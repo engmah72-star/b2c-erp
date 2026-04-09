@@ -90,8 +90,7 @@
       <select class="inp" id="f-status" onchange="renderList()" style="width:150px">
         <option value="">كل الحالات</option>
         <option value="طباعة">🖨️ طباعة</option>
-        <option value="تنفيذ">🏭 تنفيذ</option>
-        <option value="شحن">🚚 شحن</option>
+        <option value="جاهز">📦 جاهز للشحن</option>
         <option value="مكتمل">✅ مكتمل</option>
       </select>
       <select class="inp" id="f-pay" onchange="renderList()" style="width:150px">
@@ -114,7 +113,6 @@
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="openPDFModal()">📄 PDF</button>
-        <button class="btn btn-r btn-sm" id="pn-prod-btn" onclick="goToProduction()" style="display:none">🏭 إرسال للتنفيذ</button>
         <button class="btn btn-c btn-sm" id="pn-ship-btn" onclick="goToShipping()" style="display:none">🚚 إرسال للشحن</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
@@ -219,11 +217,10 @@ import {
 const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app); const db=getFirestore(app);
 
-const STAGES=['طباعة','تنفيذ','شحن','مكتمل'];
+const STAGES=['طباعة','جاهز','مكتمل'];
 const SCFG={
   'طباعة': {col:'var(--y)',ico:'🖨️',cls:'bg-y'},
-  'تنفيذ': {col:'var(--r)',ico:'🏭',cls:'bg-r'},
-  'شحن':   {col:'var(--c)',ico:'🚚',cls:'bg-c'},
+  'جاهز':  {col:'var(--b)',ico:'📦',cls:'bg-b'},
   'مكتمل': {col:'var(--g)',ico:'✅',cls:'bg-g'},
 };
 
@@ -237,15 +234,15 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();currentRole=d.role||'customer_service';const r=ROLES_CFG[currentRole]||ROLES_CFG.customer_service;document.getElementById('nav-name').textContent=d.name||u.email;document.getElementById('nav-av').textContent=(d.name||'P')[0].toUpperCase();document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col};`;document.getElementById('role-badge').textContent=r.label;document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col};`;}
-  // ✅ FIX: handle ?design=ID from design.html redirect
   const urlParams=new URLSearchParams(window.location.search);
   const designId=urlParams.get('design');
-  const prodId=urlParams.get('prod');
+  const prodId  =urlParams.get('prod');
+
   if(designId){
-    // create new print order from design order
-    setTimeout(async()=>{
+    const tryOpen=async(attempt=0)=>{
       const existing=printOrders.find(o=>o.designOrderId===designId);
       if(existing){openOrder(existing._id);return;}
+      if(attempt<8){setTimeout(()=>tryOpen(attempt+1),600);return;}
       const dSnap=await getDoc(doc(db,'design_orders',designId));
       if(dSnap.exists()){
         const d=dSnap.data();
@@ -253,15 +250,23 @@ onAuthStateChanged(auth,async u=>{
           id:'PRN-'+Date.now().toString().slice(-6),
           designOrderId:designId,
           clientId:d.clientId||'',clientName:d.clientName||'',clientPhone:d.clientPhone||'',
-          printType:'',status:'طباعة',prodStatus:'in_production',
+          printType:'',status:'طباعة',prodStatus:'done',
           notes:d.request||'',date:new Date().toLocaleDateString('ar-EG'),
           expectedDate:'',createdBy:currentUser?.uid||'',createdAt:serverTimestamp(),
         });
         setTimeout(()=>openOrder(ref2.id),600);
       }
-    },1000);
+    };
+    setTimeout(()=>tryOpen(),600);
   } else if(prodId){
-    setTimeout(()=>openOrder(prodId),1000);
+    // ✅ retry حتى يتحمل الأوردر من Firebase
+    const tryOpenProd=(attempt=0)=>{
+      const o=printOrders.find(x=>x._id===prodId);
+      if(o){openOrder(prodId);return;}
+      if(attempt<10){setTimeout(()=>tryOpenProd(attempt+1),500);return;}
+      toast('⚠️ لم يُعثر على الأوردر','err');
+    };
+    setTimeout(()=>tryOpenProd(),500);
   }
 });
 
@@ -304,7 +309,7 @@ function renderStats(){
   const rem=printItems.reduce((s,i)=>s+(i.remaining||0),0);
   const late=printOrders.filter(o=>calcDelay(o)>0&&o.status!=='مكتمل').length;
   setText('st-total',printOrders.length);
-  setText('st-prog',printOrders.filter(o=>['طباعة','تنفيذ'].includes(o.status)).length);
+  setText('st-prog',printOrders.filter(o=>o.status==='طباعة').length);
   setText('st-done',printOrders.filter(o=>o.status==='مكتمل').length);
   setText('st-rem',fn(rem)+' ج');setText('st-late',late);
 }
@@ -362,12 +367,9 @@ function renderPanel(id){
   const dOrder=designOrders.find(d=>d._id===o.designOrderId);
 
   document.getElementById('pn-hdr').innerHTML=`<div><div style="font-size:10px;color:var(--y);font-weight:700;margin-bottom:3px">${o.id||'—'} · ${o.printType==='digital'?'💻 ديجيتال':'🖨️ أوفست'} · ${o.date||'—'}</div><div style="font-size:16px;font-weight:800">${o.clientName||'—'}</div><div style="font-size:11px;color:var(--dim2)">${o.clientPhone||''}</div></div>`;
-  // ✅ إرسال للتنفيذ: يظهر لما الأوردر في مرحلة طباعة
-  const prodBtn = document.getElementById('pn-prod-btn');
-  if(prodBtn) prodBtn.style.display = o.status==='طباعة' ? '' : 'none';
-  // ✅ إرسال للشحن: يظهر بس لما التنفيذ خلص
+  // ✅ إرسال للشحن: يظهر لما الأوردر جاهز
   const shipBtn = document.getElementById('pn-ship-btn');
-  if(shipBtn) shipBtn.style.display = o.status==='تنفيذ' ? '' : 'none';
+  if(shipBtn) shipBtn.style.display = o.status==='جاهز' ? '' : 'none';
 
   document.getElementById('panel-body').innerHTML=`
 
@@ -575,13 +577,12 @@ window.printDoc=function(type){
   cM('pdf');toast('🖨️ جاري الطباعة...','ok');
 };
 
-window.goToProduction=function(){
+// ✅ FIXED WORKFLOW: الطباعة → الشحن مباشرة
+window.goToShipping=function(){
   if(!activeId) return;
-  // update status to تنفيذ then go to production page
-  updateOrder(activeId,'status','تنفيذ');
-  setTimeout(()=>window.location.href='production.html?prod='+activeId, 400);
+  updateOrder(activeId,'status','جاهز');
+  setTimeout(()=>window.location.href='shipping.html?order='+activeId, 400);
 };
-window.goToShipping=function(){if(!activeId)return;window.location.href='shipping.html?order='+activeId;};
 function calcDelay(o){if(!o.expectedDate||o.status==='مكتمل')return 0;const diff=Math.floor((new Date()-new Date(o.expectedDate))/(1000*60*60*24));return diff>0?diff:0;}
 window.exportCSV=function(){const rows=[['رقم','العميل','نوع الطباعة','الحالة','إجمالي','محصّل','باقي','التاريخ']];printOrders.forEach(o=>{const oi=printItems.filter(i=>i.orderId===o._id);const tot=oi.reduce((s,i)=>s+(i.salePrice||0),0);const col=oi.reduce((s,i)=>s+(i.paid||0),0);const rem=oi.reduce((s,i)=>s+(i.remaining||0),0);rows.push([o.id||'',o.clientName||'',o.printType||'',o.status,tot,col,rem,o.date||'']);});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n')],{type:'text/csv;charset=utf-8;'}));a.download='print-orders.csv';a.click();toast('📥 تم التصدير','ok');};
 window.logout=async function(){await signOut(auth);window.location.href='login.html';};
