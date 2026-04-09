@@ -103,10 +103,9 @@
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">🏭</div><div class="stat-val" id="kpi-suppliers">—</div><div class="stat-lbl">مستحق للموردين</div></div>
     </div>
 
-    <!-- SECTION TABS -->
+    <!-- SECTION TABS — محافظ وكاش في قسم واحد -->
     <div class="sec-tabs">
-      <button class="stab on" onclick="switchSec(this,'wallets')">💼 المحافظ</button>
-      <button class="stab" onclick="switchSec(this,'cash')">💵 الكاش</button>
+      <button class="stab on" onclick="switchSec(this,'wallets')">💼 الحسابات</button>
       <button class="stab" onclick="switchSec(this,'transactions')">📋 سجل الحركات</button>
       <button class="stab" onclick="switchSec(this,'suppliers')">🏭 حسابات الموردين</button>
     </div>
@@ -369,45 +368,82 @@ function renderSection(){
   else if(currentSection==='suppliers') renderSupplierAccounts();
 }
 
-// ═══ WALLETS ═══
+// ═══ WALLETS + CASH — UNIFIED VIEW ═══
 function renderWallets(){
-  // ✅ FIX: filter by role here — single source of truth
   const myWallets = currentRole==='wallet_manager'
     ? wallets.filter(w=>w.managerId===currentUser?.uid)
     : wallets;
 
   const el=document.getElementById('section-content');
   if(!myWallets.length){
-    el.innerHTML=`<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد محافظ — أضفها من صفحة الإعدادات</div><a href="settings.html" class="btn btn-g btn-sm">⚙️ الإعدادات</a></div>`;
+    el.innerHTML=`<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد حسابات — أضفها من صفحة الإعدادات</div><a href="settings.html" class="btn btn-g btn-sm">⚙️ الإعدادات</a></div>`;
     return;
   }
 
-  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px">
-    ${myWallets.map((w,i)=>{
-      const col=WALLET_COLORS[i%WALLET_COLORS.length];
-      const wTx=transactions.filter(t=>t.walletId===w._id);
-      const todayIn =wTx.filter(t=>t.type==='in' &&isToday(t.createdAt)).reduce((s,t)=>s+(t.amount||0),0);
-      const todayOut=wTx.filter(t=>t.type==='out'&&isToday(t.createdAt)).reduce((s,t)=>s+(t.amount||0),0);
-      // ✅ FIX: show manager name from users list, not raw managerId
-      const mgr=users.find(u=>u._id===w.managerId);
-      const mgrName=mgr?.name||mgr?.email||'غير محدد';
-      return`<div class="wallet-card" style="--wc:${col}" onclick="openWallet('${w._id}')">
-        <div class="wc-type">${WALLET_ICONS[w.type]||'💼'} ${w.type==='cash'?'كاش':w.type==='bank'?'بنك':'محفظة إلكترونية'}</div>
-        <div class="wc-name">${w.name}</div>
-        <div class="wc-balance" style="color:${col}">${fn(w.balance||0)} <span style="font-size:14px;font-weight:400;color:var(--dim2)">ج.م</span></div>
-        <div class="wc-manager">المسؤول: <strong>${mgrName}</strong></div>
-        <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
-          <span style="color:var(--g)">↑ ${fn(todayIn)} ج اليوم</span>
-          <span style="color:var(--r)">↓ ${fn(todayOut)} ج اليوم</span>
-        </div>
-        <div class="wc-actions">
-          <button class="btn btn-g btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','in')">📥 دخل</button>
-          <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','out')">📤 خرج</button>
-          ${w.type==='cash'?`<button class="btn btn-y btn-xs" onclick="event.stopPropagation();prepCashSession('${w._id}')">📋 جلسة</button>`:''}
-        </div>
-      </div>`;
-    }).join('')}
-  </div>`;
+  // separate by type for display but show in one page
+  const elecWallets = myWallets.filter(w=>w.type==='wallet'||w.type==='bank');
+  const cashWallets = myWallets.filter(w=>w.type==='cash');
+  const totalAll    = myWallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+  const totalElec   = elecWallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+  const totalCash   = cashWallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+
+  const renderCards = (list) => list.map((w,i)=>{
+    const col=WALLET_COLORS[i%WALLET_COLORS.length];
+    const wTx=transactions.filter(t=>t.walletId===w._id);
+    const todayIn =wTx.filter(t=>t.type==='in' &&isToday(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+    const todayOut=wTx.filter(t=>t.type==='out'&&isToday(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+    const mgr=users.find(u=>u._id===w.managerId);
+    const mgrName=mgr?.name||mgr?.email||'غير محدد';
+    return`<div class="wallet-card" style="--wc:${col}" onclick="openWallet('${w._id}')">
+      <div class="wc-type">${WALLET_ICONS[w.type]||'💼'} ${w.type==='cash'?'كاش':w.type==='bank'?'بنك':'محفظة إلكترونية'}</div>
+      <div class="wc-name">${w.name}</div>
+      <div class="wc-balance" style="color:${col}">${fn(w.balance||0)} <span style="font-size:14px;font-weight:400;color:var(--dim2)">ج.م</span></div>
+      <div class="wc-manager">المسؤول: <strong>${mgrName}</strong></div>
+      <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
+        <span style="color:var(--g)">↑ ${fn(todayIn)} ج اليوم</span>
+        <span style="color:var(--r)">↓ ${fn(todayOut)} ج اليوم</span>
+      </div>
+      <div class="wc-actions">
+        <button class="btn btn-g btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','in')">📥 دخل</button>
+        <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','out')">📤 خرج</button>
+        ${w.type==='cash'?`<button class="btn btn-y btn-xs" onclick="event.stopPropagation();prepCashSession('${w._id}')">📋 جلسة</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`
+    <!-- TOTAL SUMMARY BAR -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px">
+      <div style="background:linear-gradient(135deg,rgba(0,217,126,.1),rgba(0,217,126,.04));border:1px solid rgba(0,217,126,.2);border-radius:var(--rad2);padding:16px;text-align:center">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:4px">💼 إجمالي الأرصدة</div>
+        <div style="font-size:22px;font-weight:900;color:var(--g)">${fn(totalAll)} ج</div>
+      </div>
+      <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.18);border-radius:var(--rad2);padding:16px;text-align:center">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:4px">💳 محافظ إلكترونية</div>
+        <div style="font-size:22px;font-weight:900;color:var(--b)">${fn(totalElec)} ج</div>
+      </div>
+      <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.18);border-radius:var(--rad2);padding:16px;text-align:center">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:4px">💵 كاش</div>
+        <div style="font-size:22px;font-weight:900;color:var(--y)">${fn(totalCash)} ج</div>
+      </div>
+    </div>
+
+    ${elecWallets.length?`
+      <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">💳 المحافظ الإلكترونية</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:13px;margin-bottom:22px">
+        ${renderCards(elecWallets)}
+      </div>`:''}
+
+    ${cashWallets.length?`
+      <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">💵 الكاش</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:13px;margin-bottom:22px">
+        ${renderCards(cashWallets)}
+      </div>
+
+      <!-- CASH SESSIONS TODAY -->
+      <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">📋 جلسات الكاش اليوم</div>
+      ${renderCashSessions()}`:''}
+  `;
 }
 
 // ═══ OPEN WALLET ═══
@@ -448,33 +484,32 @@ function txRow(t){
   </div>`;
 }
 
-// ═══ CASH SESSIONS ═══
-function renderCash(){
+// ═══ CASH SESSIONS — helper used inside renderWallets ═══
+function renderCashSessions(){
   const cashWallets=wallets.filter(w=>w.type==='cash');
-  const el=document.getElementById('section-content');
-  if(!cashWallets.length){el.innerHTML=`<div class="empty"><div class="empty-icon">💵</div><div class="empty-text">لا توجد محافظ كاش</div></div>`;return;}
+  if(!cashWallets.length) return '<div style="color:var(--dim2);font-size:12px">لا توجد محافظ كاش</div>';
   const PERIODS=['صباح','ظهر','عصر','مساء'];
   const today=new Date().toLocaleDateString('ar-EG');
   const todaySessions=cashSessions.filter(s=>s.date===today);
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-size:13px;font-weight:800">جلسات الكاش اليوم — ${today}</div>
-      <button class="btn btn-y btn-sm" onclick="oM('cash-session')">＋ فتح جلسة</button>
+  return`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--dim2)">${today}</div>
+      <button class="btn btn-y btn-xs" onclick="oM('cash-session')">＋ فتح جلسة</button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px">
       ${PERIODS.map(p=>{
         const s=todaySessions.find(x=>x.period===p);
-        return`<div style="background:var(--bg2);border:1px solid ${s?'rgba(0,217,126,.2)':'var(--line)'};border-radius:var(--rad2);padding:14px;text-align:center">
-          <div style="font-size:16px;margin-bottom:6px">${p==='صباح'?'🌅':p==='ظهر'?'☀️':p==='عصر'?'🌤':'🌙'}</div>
-          <div style="font-size:12px;font-weight:800;margin-bottom:4px">${p}</div>
-          ${s?`<span class="badge bg-g" style="font-size:9px">مكتملة ✅</span>`:
+        return`<div style="background:var(--bg2);border:1px solid ${s?'rgba(0,217,126,.2)':'var(--line)'};border-radius:var(--rad2);padding:12px;text-align:center">
+          <div style="font-size:15px;margin-bottom:5px">${p==='صباح'?'🌅':p==='ظهر'?'☀️':p==='عصر'?'🌤':'🌙'}</div>
+          <div style="font-size:11px;font-weight:800;margin-bottom:4px">${p}</div>
+          ${s?`<span class="badge bg-g" style="font-size:9px">✅ مكتملة</span>`:
               `<span class="badge bg-d" style="font-size:9px">لم تُفتح</span>`}
-          ${s&&!s.closedAt?`<div style="margin-top:8px"><button class="btn btn-y btn-xs" onclick="prepCloseSession('${s._id}','${p}',${s.openBalance||0})">إغلاق</button></div>`:''}
+          ${s&&!s.closedAt?`<div style="margin-top:6px"><button class="btn btn-y btn-xs" onclick="prepCloseSession('${s._id}','${p}',${s.openBalance||0})">إغلاق</button></div>`:''}
         </div>`;
       }).join('')}
     </div>
-    <div style="font-size:13px;font-weight:800;margin-bottom:14px">آخر الجلسات</div>
-    ${cashSessions.slice(0,20).map(s=>`
+    <div style="font-size:12px;font-weight:700;color:var(--dim2);margin-bottom:10px">آخر الجلسات</div>
+    ${cashSessions.slice(0,10).map(s=>`
       <div class="session-card">
         <div class="session-head">
           <div><div class="session-title">${wallets.find(w=>w._id===s.walletId)?.name||'—'} · ${s.period||'—'}</div><div class="session-date">${s.date||'—'}</div></div>
@@ -487,6 +522,12 @@ function renderCash(){
           <div class="sg-item"><div class="sg-lbl">المسؤول</div><div class="sg-val" style="font-size:11px">${s.managedBy||'—'}</div></div>
         </div>
       </div>`).join('')}`;
+}
+
+// keep old renderCash pointing to section-content for backward compat
+function renderCash(){
+  const el=document.getElementById('section-content');
+  el.innerHTML=renderCashSessions();
 }
 
 // ═══ TRANSACTIONS ═══
