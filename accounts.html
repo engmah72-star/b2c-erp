@@ -253,7 +253,8 @@ const auth=getAuth(app); const db=getFirestore(app);
 
 // ═══ STATE ═══
 let wallets=[],transactions=[],cashSessions=[],suppliers=[],printCosts=[],supplierPays=[],users=[];
-let currentUser=null,currentRole='wallet_manager',currentSection='wallets';
+let currentUser=null,currentRole='admin',currentSection='wallets';
+let authReady=false;
 let activeWalletId=null,closeSessionId=null,paySupId=null;
 
 const WALLET_COLORS=['var(--g)','var(--b)','var(--p)','var(--c)','var(--y)','var(--r)'];
@@ -267,12 +268,8 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
-    const d=snap.data();currentRole=d.role||'admin';
-    // ✅ FIXED: allow operation_manager too
-    if(!['admin','wallet_manager','operation_manager'].includes(currentRole)){
-      toast('⚠️ هذه الصفحة للمسؤول المالي فقط','err');
-      setTimeout(()=>window.location.href='index.html',2000);return;
-    }
+    const d=snap.data();
+    currentRole=d.role||'admin';
     const r=ROLES_CFG[currentRole]||ROLES_CFG.admin;
     document.getElementById('nav-name').textContent=d.name||u.email;
     document.getElementById('nav-av').textContent=(d.name||'A')[0].toUpperCase();
@@ -280,7 +277,8 @@ onAuthStateChanged(auth,async u=>{
     document.getElementById('role-badge').textContent=r.label;
     document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col};`;
   }
-  // ✅ FIXED: render after auth — now role and uid are known
+  // ✅ auth is ready — re-render everything now
+  authReady=true;
   fillWalletSelects();
   renderSection();
   updateKPIs();
@@ -294,7 +292,8 @@ onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{
     seen.add(w._id); return true;
   });
   fillWalletSelects();
-  if(currentUser) { renderSection(); updateKPIs(); }
+  renderSection();
+  updateKPIs();
 });
 onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{
   transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -392,8 +391,8 @@ function renderWallets(){
     return;
   }
 
-  // separate by type for display but show in one page
-  const elecWallets = myWallets.filter(w=>w.type==='wallet'||w.type==='bank');
+  // ✅ FIXED: show ALL wallets regardless of type
+  const elecWallets = myWallets.filter(w=>w.type!=='cash');
   const cashWallets = myWallets.filter(w=>w.type==='cash');
   const totalAll    = myWallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
   const totalElec   = elecWallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
@@ -407,7 +406,7 @@ function renderWallets(){
     const mgr=users.find(u=>u._id===w.managerId);
     const mgrName=mgr?.name||mgr?.email||'غير محدد';
     return`<div class="wallet-card" style="--wc:${col}" onclick="openWallet('${w._id}')">
-      <div class="wc-type">${WALLET_ICONS[w.type]||'💼'} ${w.type==='cash'?'كاش':w.type==='bank'?'بنك':'محفظة إلكترونية'}</div>
+      <div class="wc-type">${WALLET_ICONS[w.type]||'💼'} ${w.type==='cash'?'كاش':w.type==='bank'?'بنك':'محفظة'}</div>
       <div class="wc-name">${w.name}</div>
       <div class="wc-balance" style="color:${col}">${fn(w.balance||0)} <span style="font-size:14px;font-weight:400;color:var(--dim2)">ج.م</span></div>
       <div class="wc-manager">المسؤول: <strong>${mgrName}</strong></div>
@@ -441,7 +440,7 @@ function renderWallets(){
     </div>
 
     ${elecWallets.length?`
-      <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">💳 المحافظ الإلكترونية</div>
+      <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">💳 المحافظ والحسابات</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:13px;margin-bottom:22px">
         ${renderCards(elecWallets)}
       </div>`:''}
@@ -451,10 +450,12 @@ function renderWallets(){
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:13px;margin-bottom:22px">
         ${renderCards(cashWallets)}
       </div>
-
-      <!-- CASH SESSIONS TODAY -->
       <div style="font-size:12px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:12px">📋 جلسات الكاش اليوم</div>
       ${renderCashSessions()}`:''}
+
+    ${!elecWallets.length&&!cashWallets.length?`
+      <div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد حسابات</div>
+      <a href="settings.html" class="btn btn-g btn-sm" style="margin-top:12px">⚙️ أضف من الإعدادات</a></div>`:''}
   `;
 }
 
