@@ -267,28 +267,34 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
-    const d=snap.data();currentRole=d.role||'wallet_manager';
-    // Only admin and wallet_manager can access
-    if(!['admin','wallet_manager'].includes(currentRole)){toast('⚠️ هذه الصفحة للمسؤول المالي فقط','err');setTimeout(()=>window.location.href='index.html',2000);return;}
-    const r=ROLES_CFG[currentRole]||ROLES_CFG.wallet_manager;
+    const d=snap.data();currentRole=d.role||'admin';
+    // ✅ FIXED: allow operation_manager too
+    if(!['admin','wallet_manager','operation_manager'].includes(currentRole)){
+      toast('⚠️ هذه الصفحة للمسؤول المالي فقط','err');
+      setTimeout(()=>window.location.href='index.html',2000);return;
+    }
+    const r=ROLES_CFG[currentRole]||ROLES_CFG.admin;
     document.getElementById('nav-name').textContent=d.name||u.email;
-    document.getElementById('nav-av').textContent=(d.name||'W')[0].toUpperCase();
+    document.getElementById('nav-av').textContent=(d.name||'A')[0].toUpperCase();
     document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col};`;
     document.getElementById('role-badge').textContent=r.label;
     document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col};`;
   }
+  // ✅ FIXED: render after auth — now role and uid are known
+  fillWalletSelects();
+  renderSection();
+  updateKPIs();
 });
 
 // ═══ LISTENERS ═══
 onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{
-  // ✅ FIX: deduplicate by _id to prevent double rendering
   const seen=new Set();
   wallets=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(w=>{
     if(seen.has(w._id)) return false;
     seen.add(w._id); return true;
   });
   fillWalletSelects();
-  renderSection(); updateKPIs();
+  if(currentUser) { renderSection(); updateKPIs(); }
 });
 onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{
   transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -318,12 +324,13 @@ onSnapshot(query(collection(db,'users'),orderBy('name','asc')),snap=>{
 
 // ═══ FILL SELECTS ═══
 function fillWalletSelects(){
-  // ✅ FIX: filter by role here, not in listener
-  const myWallets = currentRole==='wallet_manager'
-    ? wallets.filter(w=>w.managerId===currentUser?.uid)
-    : wallets;
-  const opts='<option value="">— اختر المحفظة —</option>'+myWallets.map(w=>`<option value="${w._id}">${WALLET_ICONS[w.type]||'💼'} ${w.name}</option>`).join('');
-  ['tx-wallet','css-wallet','ps-wallet'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=opts;});
+  // ✅ FIXED: show all wallets in selects — filter only in display
+  const opts='<option value="">— اختر المحفظة —</option>'+
+    wallets.map(w=>`<option value="${w._id}">${WALLET_ICONS[w.type]||'💼'} ${w.name}</option>`).join('');
+  ['tx-wallet','css-wallet','ps-wallet'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.innerHTML=opts;
+  });
 }
 
 // ═══ KPIs ═══
@@ -370,13 +377,20 @@ function renderSection(){
 
 // ═══ WALLETS + CASH — UNIFIED VIEW ═══
 function renderWallets(){
-  const myWallets = currentRole==='wallet_manager'
-    ? wallets.filter(w=>w.managerId===currentUser?.uid)
+  // ✅ FIXED: wallet_manager يشوف محافظه بس، الباقي يشوف الكل
+  const myWallets = (currentRole==='wallet_manager' && currentUser)
+    ? wallets.filter(w=>!w.managerId || w.managerId===currentUser.uid)
     : wallets;
 
   const el=document.getElementById('section-content');
+  if(!el) return;
+
   if(!myWallets.length){
-    el.innerHTML=`<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد حسابات — أضفها من صفحة الإعدادات</div><a href="settings.html" class="btn btn-g btn-sm">⚙️ الإعدادات</a></div>`;
+    el.innerHTML=`<div class="empty">
+      <div class="empty-icon">💼</div>
+      <div class="empty-text">لا توجد حسابات بعد</div>
+      <a href="settings.html" class="btn btn-g btn-sm" style="margin-top:12px">⚙️ أضف من الإعدادات</a>
+    </div>`;
     return;
   }
 
