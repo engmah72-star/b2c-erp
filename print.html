@@ -219,7 +219,7 @@ const auth=getAuth(app); const db=getFirestore(app);
 const STAGES=['طباعة','شحن','مكتمل'];
 const SCFG={'طباعة':{col:'var(--y)',ico:'🖨️',cls:'bg-y'},'شحن':{col:'var(--c)',ico:'🚚',cls:'bg-c'},'مكتمل':{col:'var(--g)',ico:'✅',cls:'bg-g'}};
 
-let printOrders=[],printItems=[],printCosts=[],products=[],settings={},designOrders=[],activeId=null,collectItemId=null;
+let printOrders=[],printItems=[],printCosts=[],products=[],settings={},activeId=null,collectItemId=null;
 let currentUser=null,currentRole='customer_service';
 
 const ROLES_CFG={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Manager',col:'var(--b)'},customer_service:{label:'Cust. Service',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op.',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet Mgr',col:'var(--g)'}};
@@ -229,39 +229,15 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();currentRole=d.role||'customer_service';const r=ROLES_CFG[currentRole]||ROLES_CFG.customer_service;document.getElementById('nav-name').textContent=d.name||u.email;document.getElementById('nav-av').textContent=(d.name||'P')[0].toUpperCase();document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col};`;document.getElementById('role-badge').textContent=r.label;document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col};`;}
-  // ✅ FIX: handle ?design=ID from design.html redirect
+  // check URL param
   const urlParams=new URLSearchParams(window.location.search);
-  const designId=urlParams.get('design');
   const prodId=urlParams.get('prod');
-  if(designId){
-    // create new print order from design order
-    setTimeout(async()=>{
-      const existing=printOrders.find(o=>o.designOrderId===designId);
-      if(existing){openOrder(existing._id);return;}
-      const dSnap=await getDoc(doc(db,'design_orders',designId));
-      if(dSnap.exists()){
-        const d=dSnap.data();
-        const ref2=await addDoc(collection(db,'print_orders_v2'),{
-          id:'PRN-'+Date.now().toString().slice(-6),
-          designOrderId:designId,
-          clientId:d.clientId||'',clientName:d.clientName||'',clientPhone:d.clientPhone||'',
-          printType:'',status:'طباعة',prodStatus:'in_production',
-          notes:d.request||'',date:new Date().toLocaleDateString('ar-EG'),
-          expectedDate:'',createdBy:currentUser?.uid||'',createdAt:serverTimestamp(),
-        });
-        setTimeout(()=>openOrder(ref2.id),600);
-      }
-    },1000);
-  } else if(prodId){
-    setTimeout(()=>openOrder(prodId),1000);
-  }
+  if(prodId) setTimeout(()=>openOrder(prodId),1000);
 });
 
 onSnapshot(query(collection(db,'print_orders_v2'),orderBy('createdAt','desc')),snap=>{printOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));renderList();renderStats();if(activeId)renderPanel(activeId);});
 onSnapshot(query(collection(db,'print_items_v2'),orderBy('createdAt','asc')),snap=>{printItems=snap.docs.map(d=>({...d.data(),_id:d.id}));renderList();renderStats();if(activeId)renderPanel(activeId);});
 onSnapshot(query(collection(db,'print_costs_v2'),orderBy('createdAt','asc')),snap=>{printCosts=snap.docs.map(d=>({...d.data(),_id:d.id}));if(activeId)renderPanel(activeId);});
-// ✅ FIX 4: load design orders so production_agent can see design details
-onSnapshot(query(collection(db,'design_orders'),orderBy('createdAt','desc')),snap=>{designOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 onSnapshot(query(collection(db,'products_v2'),orderBy('name','asc')),snap=>{products=snap.docs.map(d=>({...d.data(),_id:d.id}));fillProducts();});
 onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())settings=snap.data();fillPayMethods();});
 
@@ -323,27 +299,14 @@ function renderPanel(id){
   const costs=printCosts.filter(c=>c.printOrderId===id);const totCost=costs.reduce((s,c)=>s+(c.totalCost||0),0);
   const margin=tot-totCost;const pct=tot>0?Math.min(col/tot*100,100):0;
   const delay=calcDelay(o);const sc=SCFG[o.status]||SCFG['طباعة'];
-  // ✅ FIX 4: production_agent can't see sale prices
-  const isProd=currentRole==='production_agent';
-  // find linked design order
-  const dOrder=designOrders.find(d=>d._id===o.designOrderId);
 
   document.getElementById('pn-hdr').innerHTML=`<div><div style="font-size:10px;color:var(--y);font-weight:700;margin-bottom:3px">${o.id||'—'} · ${o.printType==='digital'?'💻 ديجيتال':'🖨️ أوفست'} · ${o.date||'—'}</div><div style="font-size:16px;font-weight:800">${o.clientName||'—'}</div><div style="font-size:11px;color:var(--dim2)">${o.clientPhone||''}</div></div>`;
   document.getElementById('pn-ship-btn').style.display=o.status==='شحن'||o.status==='مكتمل'?'':'';
 
   document.getElementById('panel-body').innerHTML=`
 
-    ${/* DESIGN DETAILS — visible to production_agent */''}
-    ${dOrder?`<div style="background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.15);border-radius:var(--rad2);padding:14px;margin-bottom:14px">
-      <div style="font-size:10px;color:var(--p);font-weight:700;margin-bottom:6px">✏️ طلب التصميم</div>
-      <div style="font-size:13px;line-height:1.7">${dOrder.request||'—'}</div>
-      ${(dOrder.files||[]).length?`<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-        ${dOrder.files.map(f=>`<a href="${f.url}" target="_blank" style="font-size:11px;color:var(--b);background:rgba(59,158,255,.1);padding:4px 10px;border-radius:20px;text-decoration:none">📎 ${f.name}</a>`).join('')}
-      </div>`:''}
-    </div>`:''}
-
-    <!-- FINANCIAL SUMMARY — hidden from production_agent -->
-    ${!isProd?`<div style="background:linear-gradient(135deg,rgba(255,170,0,.08),rgba(0,217,126,.04));border:1px solid rgba(255,170,0,.15);border-radius:var(--rad2);padding:18px;margin-bottom:16px">
+    <!-- FINANCIAL SUMMARY -->
+    <div style="background:linear-gradient(135deg,rgba(255,170,0,.08),rgba(0,217,126,.04));border:1px solid rgba(255,170,0,.15);border-radius:var(--rad2);padding:18px;margin-bottom:16px">
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
         <div style="text-align:center"><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">سعر البيع</div><div style="font-size:18px;font-weight:900;color:var(--y)">${fn(tot)} ج</div></div>
         <div style="text-align:center"><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">التكلفة</div><div style="font-size:18px;font-weight:900;color:var(--r)">${fn(totCost)} ج</div></div>
@@ -355,7 +318,7 @@ function renderPanel(id){
         <span style="color:${rem>0?'var(--r)':'var(--dim2)'}">باقي: ${rem?fn(rem)+' ج':'صفر ✅'}</span>
       </div>
       ${delay>0?`<div style="margin-top:10px;background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:8px;font-size:12px;color:var(--r)">⚠️ متأخر ${delay} يوم</div>`:''}
-    </div>`:`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.15);border-radius:var(--rad);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--r)">🔒 سعر البيع غير متاح لمندوب التنفيذ</div>`}
+    </div>
 
     <!-- STAGE -->
     <div class="section" style="margin-bottom:14px">
@@ -369,13 +332,13 @@ function renderPanel(id){
       </div>
     </div>
 
-    <!-- ITEMS — sale price hidden from production_agent -->
+    <!-- ITEMS -->
     <div class="section">
       <div class="section-head">
         <div class="section-title"><div class="section-ico" style="background:rgba(255,170,0,.15);color:var(--y)">📦</div>البنود (${oi.length})</div>
-        ${!isProd?`<button class="btn btn-y btn-xs" onclick="prepAddItem('${id}')">＋ بند</button>`:''}
+        <button class="btn btn-y btn-xs" onclick="prepAddItem('${id}')">＋ بند</button>
       </div>
-      ${oi.length?oi.map(item=>itemCard(item,isProd)).join(''):`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد بنود بعد</div>`}
+      ${oi.length?oi.map(item=>itemCard(item)).join(''):`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد بنود — أضف بند</div>`}
     </div>
 
     <!-- NOTES -->
@@ -386,22 +349,24 @@ function renderPanel(id){
   `;
 }
 
-function itemCard(item,hidePrices=false){
+function itemCard(item){
   const pct=item.salePrice>0?Math.min((item.paid||0)/item.salePrice*100,100):0;
   return`<div class="item-card">
     <div class="ic-head">
       <div><div class="ic-name">${item.product||'—'}</div><div class="ic-qty">الكمية: ${item.qty||'—'}</div></div>
-      ${!hidePrices?`<button class="btn btn-danger btn-xs" onclick="deleteItem('${item._id}')">🗑</button>`:''}
+      <button class="btn btn-danger btn-xs" onclick="deleteItem('${item._id}')">🗑</button>
     </div>
-    ${!hidePrices?`<div class="ic-fields">
+    <div class="ic-fields">
       <div><div class="if-lbl">سعر البيع</div><div class="if-val" style="color:var(--y)">${fn(item.salePrice)} ج</div></div>
       <div><div class="if-lbl">المقدم</div><div class="if-val" style="color:var(--g)">${fn(item.paid||0)} ج</div></div>
       <div><div class="if-lbl">الباقي</div><div class="if-val" style="color:${(item.remaining||0)>0?'var(--r)':'var(--dim2)'}">${(item.remaining||0)>0?fn(item.remaining)+' ج':'مدفوع ✅'}</div></div>
       <div><div class="if-lbl">الطريقة</div><div class="if-val" style="font-size:11px">${item.paymentMethod||'—'}</div></div>
     </div>
-    <div class="pay-prog"><div class="pay-fill" style="width:${pct}%"></div></div>`:''}
+    <div class="pay-prog"><div class="pay-fill" style="width:${pct}%"></div></div>
     ${item.note?`<div style="font-size:11px;color:var(--dim2);margin-top:7px">📝 ${item.note}</div>`:''}
-    ${!hidePrices&&(item.remaining||0)>0?`<div class="ic-foot"><button class="btn btn-g btn-xs" onclick="prepCollect('${item._id}','${item.product||''}',${item.remaining||0})">💰 تحصيل</button></div>`:''}
+    <div class="ic-foot">
+      ${(item.remaining||0)>0?`<button class="btn btn-g btn-xs" onclick="prepCollect('${item._id}','${item.product||''}',${item.remaining||0})">💰 تحصيل</button>`:''}
+    </div>
   </div>`;
 }
 

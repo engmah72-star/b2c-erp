@@ -329,21 +329,14 @@ function fillWalletSelects(){
 
 // ═══ KPIs ═══
 function updateKPIs(){
-  const totalBal=wallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+  const totalBal=wallets.reduce((s,w)=>s+(w.balance||0),0);
   const now=new Date();const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
-  // ✅ FIX: safe date comparison — handle both Timestamp and string dates
-  const monthTx=transactions.filter(t=>{
-    const ts=t.createdAt?.toDate?.();
-    if(ts) return ts>=monthStart;
-    // fallback: try parsing string date
-    if(t.date){const d=new Date(t.date.split(' ')[0].split('/').reverse().join('-'));return d>=monthStart;}
-    return false;
-  });
-  const monthIn =monthTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const monthOut=monthTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const monthTx=transactions.filter(t=>t.createdAt?.toDate?.()>=monthStart);
+  const monthIn =monthTx.filter(t=>t.type==='in').reduce((s,t)=>s+(t.amount||0),0);
+  const monthOut=monthTx.filter(t=>t.type==='out').reduce((s,t)=>s+(t.amount||0),0);
   // supplier dues
-  const totalCosts=printCosts.reduce((s,c)=>s+(parseFloat(c.totalCost)||0),0);
-  const totalPaid=supplierPays.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  const totalCosts=printCosts.reduce((s,c)=>s+(c.totalCost||0),0);
+  const totalPaid=supplierPays.reduce((s,p)=>s+(p.amount||0),0);
   const due=Math.max(0,totalCosts-totalPaid);
 
   setText('kpi-total',  fn(totalBal)+' ج');
@@ -555,22 +548,16 @@ function renderSupplierAccounts(){
 // ═══ SAVE TX ═══
 window.prepTx=function(walletId,type){if(walletId)sv('tx-wallet',walletId);sv('tx-type',type);oM('new-tx');};
 window.saveTx=async function(){
-  const walletId=gv('tx-wallet');const type=gv('tx-type');
-  const amount=parseFloat(gv('tx-amount'))||0;const desc=gv('tx-desc');
+  const walletId=gv('tx-wallet');const type=gv('tx-type');const amount=parseFloat(gv('tx-amount'))||0;const desc=gv('tx-desc');
   if(!walletId)  return toast('⚠️ اختر المحفظة','err');
   if(!amount)    return toast('⚠️ أدخل المبلغ','err');
   if(!desc)      return toast('⚠️ أدخل البيان','err');
-  // ✅ FIX: re-fetch wallet balance from state to avoid stale value
-  const w=wallets.find(x=>x._id===walletId);if(!w)return toast('⚠️ المحفظة غير موجودة','err');
+  const w=wallets.find(x=>x._id===walletId);if(!w)return;
   const fees=parseFloat(gv('tx-fees'))||0;
-  const balBefore=parseFloat(w.balance)||0;
-  // ✅ FIX: correct formula — fees always deducted from balance
-  const balAfter = type==='in'
-    ? balBefore + amount - fees
-    : balBefore - amount - fees;
+  const balBefore=w.balance||0;
+  const balAfter=type==='in'?balBefore+amount-fees:balBefore-amount-fees;
   const now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
   try{
-    // 1. write transaction first
     await addDoc(collection(db,'transactions_v2'),{
       walletId,type,amount,fees,description:desc,
       category:gv('tx-cat'),ref:gv('tx-ref'),
@@ -579,10 +566,9 @@ window.saveTx=async function(){
       createdByName:document.getElementById('nav-name')?.textContent||'',
       createdAt:serverTimestamp(),
     });
-    // 2. update wallet balance
     await updateDoc(doc(db,'wallets',walletId),{balance:balAfter});
-    cM('new-tx');clearF(['tx-amount','tx-fees','tx-desc','tx-ref']);sv('tx-type','in');
-    toast(`✅ ${type==='in'?'تم تسجيل الدخل (+'+fn(amount)+' ج)':'تم تسجيل المصروف (-'+fn(amount)+' ج)'}`,'ok');
+    cM('new-tx');clearF(['tx-amount','tx-fees','tx-desc','tx-ref']);
+    toast(`✅ ${type==='in'?'تم تسجيل الدخل':'تم تسجيل المصروف'}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
