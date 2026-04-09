@@ -114,6 +114,7 @@
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="openPDFModal()">📄 PDF</button>
+        <button class="btn btn-r btn-sm" id="pn-prod-btn" onclick="goToProduction()" style="display:none">🏭 إرسال للتنفيذ</button>
         <button class="btn btn-c btn-sm" id="pn-ship-btn" onclick="goToShipping()" style="display:none">🚚 إرسال للشحن</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
@@ -159,6 +160,7 @@
       <div class="fg"><label>طريقة التحصيل</label>
         <div class="collect-methods" id="col-methods"></div>
         <input type="hidden" id="col-method">
+        <input type="hidden" id="col-method-name">
       </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('collect')">إلغاء</button><button class="btn btn-g" onclick="saveCollect()">✓ تسجيل الدفعة</button></div>
@@ -269,12 +271,34 @@ onSnapshot(query(collection(db,'print_costs_v2'),orderBy('createdAt','asc')),sna
 // ✅ FIX 4: load design orders so production_agent can see design details
 onSnapshot(query(collection(db,'design_orders'),orderBy('createdAt','desc')),snap=>{designOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 onSnapshot(query(collection(db,'products_v2'),orderBy('name','asc')),snap=>{products=snap.docs.map(d=>({...d.data(),_id:d.id}));fillProducts();});
-onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())settings=snap.data();fillPayMethods();});
+onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())settings=snap.data();});
+// ✅ FIX: طرق الدفع = المحافظ من Firestore مباشرة
+onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{
+  const ws=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  fillPayMethods(ws);
+});
+// load design orders for production agent
+onSnapshot(query(collection(db,'design_orders'),orderBy('createdAt','desc')),snap=>{designOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 
 function fillProducts(){const sel=document.getElementById('ai-prod');if(!sel)return;sel.innerHTML='<option value="">اختر منتج...</option>'+products.map(p=>`<option value="${p._id}" data-price="${p.defaultPrice||0}">${p.name}${p.defaultPrice?' — '+fn(p.defaultPrice)+' ج':''}</option>`).join('');}
-function fillPayMethods(){const m=settings.paymentMethods||['محفظة 018','محفظة 9080','إنستا باي','كاش'];const s=document.getElementById('ai-wallet');if(s)s.innerHTML=m.map(x=>`<option>${x}</option>`).join('');const cm=document.getElementById('col-methods');if(cm)cm.innerHTML=m.map(x=>`<div class="cm-btn" onclick="selColMethod('${x}',this)">${x}</div>`).join('');}
 
-window.selColMethod=function(m,el){sv('col-method',m);document.querySelectorAll('.cm-btn').forEach(b=>b.classList.remove('on'));el.classList.add('on');};
+const WICO={wallet:'💳',cash:'💵',bank:'🏦'};
+let cachedWallets=[];
+function fillPayMethods(ws){
+  if(ws) cachedWallets=ws;
+  const list=cachedWallets;
+  const opts=list.length?list.map(w=>`<option value="${w._id}">${WICO[w.type]||'💼'} ${w.name}</option>`).join(''):'<option value="كاش">💵 كاش</option>';
+  const s=document.getElementById('ai-wallet');if(s)s.innerHTML=opts;
+  const cm=document.getElementById('col-methods');
+  if(cm)cm.innerHTML=list.map(w=>`<div class="cm-btn" onclick="selColMethod('${w._id}','${w.name}',this)">${WICO[w.type]||'💼'} ${w.name}</div>`).join('');
+}
+
+window.selColMethod=function(walletId,walletName,el){
+  sv('col-method',walletId);
+  sv('col-method-name',walletName||walletId);
+  document.querySelectorAll('.cm-btn').forEach(b=>b.classList.remove('on'));
+  el.classList.add('on');
+};
 
 function renderStats(){
   const rem=printItems.reduce((s,i)=>s+(i.remaining||0),0);
@@ -338,7 +362,12 @@ function renderPanel(id){
   const dOrder=designOrders.find(d=>d._id===o.designOrderId);
 
   document.getElementById('pn-hdr').innerHTML=`<div><div style="font-size:10px;color:var(--y);font-weight:700;margin-bottom:3px">${o.id||'—'} · ${o.printType==='digital'?'💻 ديجيتال':'🖨️ أوفست'} · ${o.date||'—'}</div><div style="font-size:16px;font-weight:800">${o.clientName||'—'}</div><div style="font-size:11px;color:var(--dim2)">${o.clientPhone||''}</div></div>`;
-  document.getElementById('pn-ship-btn').style.display = (o.status==='تنفيذ'||o.status==='شحن'||o.status==='مكتمل') ? '' : 'none';
+  // ✅ إرسال للتنفيذ: يظهر لما الأوردر في مرحلة طباعة
+  const prodBtn = document.getElementById('pn-prod-btn');
+  if(prodBtn) prodBtn.style.display = o.status==='طباعة' ? '' : 'none';
+  // ✅ إرسال للشحن: يظهر بس لما التنفيذ خلص
+  const shipBtn = document.getElementById('pn-ship-btn');
+  if(shipBtn) shipBtn.style.display = o.status==='تنفيذ' ? '' : 'none';
 
   document.getElementById('panel-body').innerHTML=`
 
@@ -425,24 +454,77 @@ window.saveItem=async function(){
   if(!price) return toast('⚠️ أدخل سعر البيع','err');
   const pname=document.getElementById('ai-prod')?.options[document.getElementById('ai-prod').selectedIndex]?.text?.split(' —')[0]||prod;
   const adv=parseFloat(gv('ai-adv'))||0;
+  const walletId=gv('ai-wallet');
+  const now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
   try{
-    await addDoc(collection(db,'print_items_v2'),{orderId:addItemOrderId,product:pname,productId:prod,qty:gv('ai-qty'),salePrice:price,paid:adv,remaining:Math.max(0,price-adv),paymentMethod:gv('ai-wallet'),note:gv('ai-note'),createdAt:serverTimestamp()});
+    await addDoc(collection(db,'print_items_v2'),{
+      orderId:addItemOrderId,product:pname,productId:prod,
+      qty:gv('ai-qty'),salePrice:price,paid:adv,
+      remaining:Math.max(0,price-adv),
+      paymentMethod:walletId,note:gv('ai-note'),createdAt:serverTimestamp()
+    });
+    // ✅ تسجيل المقدم في المحفظة تلقائياً
+    if(adv>0&&walletId){
+      const wSnap=await getDoc(doc(db,'wallets',walletId)).catch(()=>null);
+      if(wSnap&&wSnap.exists()){
+        const wBal=parseFloat(wSnap.data().balance)||0;
+        await updateDoc(doc(db,'wallets',walletId),{balance:wBal+adv});
+        await addDoc(collection(db,'transactions_v2'),{
+          walletId,type:'in',amount:adv,fees:0,
+          description:`مقدم — ${pname}`,category:'collection',
+          balanceBefore:wBal,balanceAfter:wBal+adv,
+          date:now,createdBy:currentUser?.uid||'',
+          createdByName:document.getElementById('nav-name')?.textContent||'',
+          createdAt:serverTimestamp(),
+        });
+      }
+    }
     cM('add-item');clearF(['ai-qty','ai-price','ai-adv','ai-rem','ai-note']);toast('✅ تم إضافة البند','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 window.deleteItem=async function(id){if(!confirm('حذف هذا البند؟'))return;try{await deleteDoc(doc(db,'print_items_v2',id));toast('✅ تم الحذف','ok');}catch(e){toast('❌ '+e.message,'err');}};
 
 // COLLECT
-window.prepCollect=function(itemId,name,rem){collectItemId=itemId;setText('col-item-name',name);setText('col-rem',fn(rem)+' ج.م');sv('col-amt',rem);fillPayMethods();oM('collect');};
+window.prepCollect=function(itemId,name,rem){
+  collectItemId=itemId;setText('col-item-name',name);setText('col-rem',fn(rem)+' ج.م');
+  sv('col-amt',rem);sv('col-method','');sv('col-method-name','');
+  document.querySelectorAll('.cm-btn').forEach(b=>b.classList.remove('on'));
+  oM('collect');
+};
 window.saveCollect=async function(){
-  const amt=parseFloat(gv('col-amt'))||0;const method=gv('col-method');
-  if(!amt) return toast('⚠️ أدخل المبلغ','err');
-  if(!method) return toast('⚠️ اختر طريقة التحصيل','err');
+  const amt      = parseFloat(gv('col-amt'))||0;
+  const walletId = gv('col-method');
+  const walletNm = gv('col-method-name')||walletId;
+  if(!amt)      return toast('⚠️ أدخل المبلغ','err');
+  if(!walletId) return toast('⚠️ اختر المحفظة','err');
   const item=printItems.find(x=>x._id===collectItemId);if(!item)return;
   if(amt>(item.remaining||0)) return toast('⚠️ المبلغ أكبر من الباقي','err');
+  const now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
   try{
-    await updateDoc(doc(db,'print_items_v2',collectItemId),{paid:(item.paid||0)+amt,remaining:Math.max(0,(item.remaining||0)-amt),paymentMethod:method});
-    cM('collect');toast(`✅ تم تسجيل ${fn(amt)} ج.م`,'ok');
+    // 1. update item
+    await updateDoc(doc(db,'print_items_v2',collectItemId),{
+      paid:(item.paid||0)+amt,
+      remaining:Math.max(0,(item.remaining||0)-amt),
+      paymentMethod:walletNm,
+    });
+    // 2. ✅ update wallet balance automatically
+    const wSnap=await getDoc(doc(db,'wallets',walletId)).catch(()=>null);
+    if(wSnap&&wSnap.exists()){
+      const wBal=parseFloat(wSnap.data().balance)||0;
+      await updateDoc(doc(db,'wallets',walletId),{balance:wBal+amt});
+      // 3. record transaction
+      await addDoc(collection(db,'transactions_v2'),{
+        walletId, type:'in', amount:amt, fees:0,
+        description:`تحصيل — ${item.product||''}`,
+        category:'collection',
+        balanceBefore:wBal, balanceAfter:wBal+amt,
+        date:now, createdBy:currentUser?.uid||'',
+        createdByName:document.getElementById('nav-name')?.textContent||'',
+        createdAt:serverTimestamp(),
+      });
+    }
+    cM('collect');
+    toast(`✅ تم تسجيل ${fn(amt)} ج.م في ${walletNm}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -493,6 +575,12 @@ window.printDoc=function(type){
   cM('pdf');toast('🖨️ جاري الطباعة...','ok');
 };
 
+window.goToProduction=function(){
+  if(!activeId) return;
+  // update status to تنفيذ then go to production page
+  updateOrder(activeId,'status','تنفيذ');
+  setTimeout(()=>window.location.href='production.html?prod='+activeId, 400);
+};
 window.goToShipping=function(){if(!activeId)return;window.location.href='shipping.html?order='+activeId;};
 function calcDelay(o){if(!o.expectedDate||o.status==='مكتمل')return 0;const diff=Math.floor((new Date()-new Date(o.expectedDate))/(1000*60*60*24));return diff>0?diff:0;}
 window.exportCSV=function(){const rows=[['رقم','العميل','نوع الطباعة','الحالة','إجمالي','محصّل','باقي','التاريخ']];printOrders.forEach(o=>{const oi=printItems.filter(i=>i.orderId===o._id);const tot=oi.reduce((s,i)=>s+(i.salePrice||0),0);const col=oi.reduce((s,i)=>s+(i.paid||0),0);const rem=oi.reduce((s,i)=>s+(i.remaining||0),0);rows.push([o.id||'',o.clientName||'',o.printType||'',o.status,tot,col,rem,o.date||'']);});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n')],{type:'text/csv;charset=utf-8;'}));a.download='print-orders.csv';a.click();toast('📥 تم التصدير','ok');};
