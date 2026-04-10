@@ -113,7 +113,7 @@
 <!-- MAIN -->
 <div class="main">
   <div class="topbar">
-    <div class="topbar-left"><h1>✏️ أوردرات التصميم</h1><p id="design-sub">جاري التحميل...</p></div>
+    <div class="topbar-left"><button class="mob-menu-btn" onclick="document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show')">☰</button><h1>✏️ أوردرات التصميم</h1><p id="design-sub">جاري التحميل...</p></div>
     <div class="topbar-right">
       <div class="view-toggle">
         <button class="vt-btn on" id="vt-kanban" onclick="setView('kanban')">⬛ كانبان</button>
@@ -212,7 +212,19 @@
       <!-- REQUEST -->
       <div class="divider"><div class="div-line"></div><div class="div-text">✏️ طلب التصميم</div><div class="div-line"></div></div>
 
-      <div class="fg"><label>طلب العميل *</label><textarea class="inp" id="o-request" placeholder="وصف التصميم بالتفصيل — نوع المنتج، المواصفات، الألوان، النص..." style="min-height:90px"></textarea></div>
+      <div class="fg">
+        <label>المنتج *</label>
+        <select class="inp" id="o-product" onchange="fillProductDetails()">
+          <option value="">— اختر من قائمة المنتجات —</option>
+        </select>
+        <div style="font-size:11px;color:var(--dim2);margin-top:5px">
+          لا يوجد المنتج؟ <a href="products.html" target="_blank" style="color:var(--b)">أضفه من صفحة المنتجات</a>
+        </div>
+      </div>
+
+      <div id="product-details-box" style="display:none;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:10px 13px;margin-bottom:12px;font-size:12px;color:var(--dim2)"></div>
+
+      <div class="fg"><label>تفاصيل إضافية / ملاحظات العميل</label><textarea class="inp" id="o-request" placeholder="النص المطلوب، الألوان، أي تعديلات خاصة..." style="min-height:70px"></textarea></div>
 
       <div class="g2">
         <div class="fg"><label>الأولوية</label>
@@ -353,6 +365,7 @@ let orders       = [];
 let followups    = [];
 let clients      = [];
 let designers    = [];
+let products     = [];
 let currentUser  = null;
 let currentRole  = 'customer_service';
 let activeId     = null;
@@ -411,6 +424,37 @@ onSnapshot(query(collection(db,'designers_v2'), orderBy('name','asc')), snap=>{
   if(!designers.length) seedDesigners();
   fillDesignerSelects();
 });
+
+// ✅ products listener
+onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc')), snap=>{
+  products = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  fillProductSelect();
+});
+
+function fillProductSelect(){
+  const el=document.getElementById('o-product');
+  if(!el) return;
+  el.innerHTML='<option value="">— اختر من قائمة المنتجات —</option>'+
+    products.map(p=>`<option value="${p._id}" data-type="${p.printType||''}" data-paper="${p.paper||''}" data-size="${p.size||''}" data-price="${p.defaultPrice||0}">${p.name} ${p.printType==='digital'?'💻':'🖨️'}</option>`).join('');
+}
+
+window.fillProductDetails=function(){
+  const sel=document.getElementById('o-product');
+  const opt=sel?.options[sel.selectedIndex];
+  const box=document.getElementById('product-details-box');
+  if(!opt||!opt.value){if(box)box.style.display='none';return;}
+  const p=products.find(x=>x._id===opt.value);
+  if(!p||!box) return;
+  box.style.display='';
+  box.innerHTML=`
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <span>🖨️ ${p.printType==='digital'?'ديجيتال':'أوفست'}</span>
+      ${p.paper?`<span>📄 ${p.paper} ${p.weight?p.weight+'جم':''}</span>`:''}
+      ${p.size?`<span>📐 ${p.size}</span>`:''}
+      ${p.defaultPrice?`<span style="color:var(--y);font-weight:700">💰 ${fn(p.defaultPrice)} ج</span>`:''}
+      ${p.notes?`<span>📝 ${p.notes}</span>`:''}
+    </div>`;
+};
 
 async function seedDesigners(){
   for(const n of ['اماني','صلاح','احمد'])
@@ -903,12 +947,18 @@ document.addEventListener('click', e=>{
 // SAVE ORDER
 // ═══════════════════
 window.saveOrder = async function(){
-  const clientId = gv('cs-id');
-  const request  = gv('o-request');
-  if(!clientId) return toast('⚠️ اختر عميل أولاً','err');
-  if(!request)  return toast('⚠️ أدخل طلب العميل','err');
+  const clientId  = gv('cs-id');
+  const productId = gv('o-product');
+  const notes     = gv('o-request'); // تفاصيل إضافية
+  if(!clientId)  return toast('⚠️ اختر عميل أولاً','err');
+  if(!productId) return toast('⚠️ اختر المنتج أولاً','err');
 
-  const client = clients.find(c=>c._id===clientId);
+  const client  = clients.find(c=>c._id===clientId);
+  const product = products.find(p=>p._id===productId);
+  // بناء طلب التصميم من المنتج + التفاصيل
+  const request = product
+    ? `${product.name}${product.size?' — '+product.size:''}${product.paper?' — '+product.paper:''}${notes?'\n'+notes:''}`
+    : notes;
   const id = 'DES-'+Date.now().toString().slice(-6);
   const now = new Date().toLocaleDateString('ar-EG');
 
@@ -1009,5 +1059,16 @@ function sv(id,v){const e=document.getElementById(id);if(e)e.value=v;}
 function clearF(ids){ids.forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})}
 function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
 </script>
+<nav class="mob-nav">
+  <div class="mob-nav-items">
+    <a class="mob-nav-item " href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
+    <a class="mob-nav-item " href="clients.html"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
+    <a class="mob-nav-item active" href="design.html"><div class="mob-nav-ico">✏️</div><div class="mob-nav-lbl">تصميم</div></a>
+    <a class="mob-nav-item " href="print.html"><div class="mob-nav-ico">🖨</div><div class="mob-nav-lbl">طباعة</div></a>
+    <a class="mob-nav-item " href="settings.html"><div class="mob-nav-ico">⚙️</div><div class="mob-nav-lbl">إعدادات</div></a>
+  </div>
+</nav>
+<div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav').classList.remove('mob-open');this.classList.remove('show')"></div>
+
 </body>
 </html>

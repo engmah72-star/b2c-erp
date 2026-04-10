@@ -75,7 +75,7 @@
 <!-- MAIN -->
 <div class="main">
   <div class="topbar">
-    <div class="topbar-left"><h1>⚙️ الإعدادات</h1><p>إدارة النظام والمستخدمين</p></div>
+    <div class="topbar-left"><button class="mob-menu-btn" onclick="document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show')">☰</button><h1>⚙️ الإعدادات</h1><p>إدارة النظام والمستخدمين</p></div>
   </div>
 
   <div class="content">
@@ -255,7 +255,142 @@
   </div>
 </div>
 
+<!-- MODAL: PERMISSIONS -->
+<div class="overlay" id="ov-perms">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">🔒 صلاحيات — <span id="perm-username">—</span></div>
+        <div style="font-size:11px;color:var(--dim2);margin-top:3px">اختر إيه اللي يشوفه هذا المستخدم</div>
+      </div>
+      <button class="modal-x" onclick="cM('perms')">✕</button>
+    </div>
+    <div class="modal-body" id="perms-body"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('perms')">إلغاء</button>
+      <button class="btn btn-p" onclick="savePerms()">✓ حفظ الصلاحيات</button>
+    </div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
+<script>
+// ══ PERMISSIONS SYSTEM ══
+const PERM_FIELDS = [
+  {
+    section: '👤 بيانات العملاء',
+    col: 'var(--b)',
+    fields: [
+      {key:'client_phone',    label:'رقم الهاتف'},
+      {key:'client_address',  label:'المحافظة والمدينة'},
+      {key:'client_source',   label:'مصدر العميل'},
+      {key:'client_notes',    label:'الملاحظات'},
+    ]
+  },
+  {
+    section: '💰 المالية والأسعار',
+    col: 'var(--g)',
+    fields: [
+      {key:'price_sale',      label:'سعر البيع'},
+      {key:'price_paid',      label:'المبلغ المحصّل'},
+      {key:'price_remaining', label:'الباقي للتحصيل'},
+      {key:'price_cost',      label:'تكلفة التنفيذ'},
+      {key:'price_margin',    label:'هامش الربح'},
+    ]
+  },
+  {
+    section: '🏭 التنفيذ والموردين',
+    col: 'var(--y)',
+    fields: [
+      {key:'supplier_name',   label:'اسم المورد'},
+      {key:'supplier_cost',   label:'تكلفة المورد'},
+      {key:'prod_details',    label:'تفاصيل التنفيذ'},
+    ]
+  },
+  {
+    section: '📊 التقارير والإحصائيات',
+    col: 'var(--p)',
+    fields: [
+      {key:'reports_sales',   label:'تقارير المبيعات'},
+      {key:'reports_perf',    label:'تقارير الأداء'},
+      {key:'kpi_revenue',     label:'إجمالي الإيرادات'},
+    ]
+  },
+  {
+    section: '🚚 الشحن والتسليم',
+    col: 'var(--c)',
+    fields: [
+      {key:'ship_cost',       label:'تكلفة الشحن'},
+      {key:'ship_company',    label:'شركة الشحن'},
+    ]
+  },
+];
+
+let permUserId = null;
+let currentPerms = {};
+
+window.openPerms = function(uid, name, role) {
+  permUserId = uid;
+  window.permUserId = uid;  // expose to module scope
+  document.getElementById('perm-username').textContent = name + ' (' + (ROLES[role]?.label||role) + ')';
+  const u = users.find(x=>x._id===uid);
+  currentPerms = {...(u?.permissions||{})};
+  window.currentPerms = currentPerms;
+
+  // default: all true if not set
+  PERM_FIELDS.forEach(sec=>sec.fields.forEach(f=>{
+    if(currentPerms[f.key]===undefined) currentPerms[f.key]=true;
+  }));
+
+  document.getElementById('perms-body').innerHTML = PERM_FIELDS.map(sec=>`
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;color:${sec.col};margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        ${sec.section}
+        <button onclick="toggleSection('${sec.fields.map(f=>f.key).join(',')}')" style="font-size:9px;padding:2px 8px;border-radius:20px;background:rgba(255,255,255,.07);border:none;color:var(--dim2);cursor:pointer">تبديل الكل</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${sec.fields.map(f=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer;border:1px solid ${currentPerms[f.key]!==false?'rgba(0,217,126,.15)':'rgba(255,61,110,.15)'}" id="perm-label-${f.key}">
+            <input type="checkbox" id="perm-${f.key}" ${currentPerms[f.key]!==false?'checked':''} onchange="togglePerm('${f.key}')" style="width:16px;height:16px;accent-color:var(--g);cursor:pointer">
+            <span style="font-size:12px;font-weight:600;color:${currentPerms[f.key]!==false?'var(--snow)':'var(--dim2)'}">${f.label}</span>
+            <span style="margin-right:auto;font-size:10px;font-weight:700;color:${currentPerms[f.key]!==false?'var(--g)':'var(--r)'}">${currentPerms[f.key]!==false?'✓ ظاهر':'✕ مخفي'}</span>
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+
+  oM('perms');
+};
+
+window.togglePerm = function(key) {
+  const cb = document.getElementById('perm-'+key);
+  currentPerms[key] = cb.checked;
+  window.currentPerms = currentPerms;
+  // update label style
+  const lbl = document.getElementById('perm-label-'+key);
+  if(lbl){
+    lbl.style.borderColor = cb.checked?'rgba(0,217,126,.15)':'rgba(255,61,110,.15)';
+    const span = lbl.querySelectorAll('span');
+    if(span[0]) span[0].style.color = cb.checked?'var(--snow)':'var(--dim2)';
+    if(span[1]) { span[1].textContent = cb.checked?'✓ ظاهر':'✕ مخفي'; span[1].style.color = cb.checked?'var(--g)':'var(--r)'; }
+  }
+};
+
+window.toggleSection = function(keys) {
+  const keyArr = keys.split(',');
+  const allOn = keyArr.every(k=>currentPerms[k]!==false);
+  keyArr.forEach(k=>{
+    currentPerms[k] = !allOn;
+    const cb=document.getElementById('perm-'+k);
+    if(cb) { cb.checked=!allOn; togglePerm(k); }
+  });
+};
+
+window.savePerms = function() {
+  // will be set by module scope
+  if(window._savePermsImpl) window._savePermsImpl();
+  else toast('⚠️ جاري التحضير...','warn');
+};
+</script>
 
 <script type="module">
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -444,15 +579,21 @@ function renderUsers() {
   if(!users.length) { el.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">لا يوجد مستخدمين</div></div>'; return; }
   el.innerHTML = users.map(u => {
     const r = ROLES[u.role]||ROLES.customer_service;
+    const perms = u.permissions||{};
+    const hiddenCount = Object.values(perms).filter(v=>v===false).length;
     return `
       <div class="user-card" style="margin-bottom:8px">
         <div class="u-av" style="background:${r.col}20;color:${r.col}">${(u.name||'U')[0].toUpperCase()}</div>
-        <div>
+        <div style="flex:1;min-width:0">
           <div class="u-name">${u.name||'—'}</div>
           <div class="u-email">${u.email||'—'}</div>
-          <span class="u-role" style="background:${r.col}18;color:${r.col}">${r.ico} ${r.label}</span>
+          <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">
+            <span class="u-role" style="background:${r.col}18;color:${r.col}">${r.ico} ${r.label}</span>
+            ${hiddenCount>0?`<span style="font-size:9px;background:rgba(255,61,110,.1);color:var(--r);border-radius:20px;padding:2px 7px;font-weight:700">${hiddenCount} مخفي</span>`:''}
+          </div>
         </div>
         <div class="u-actions">
+          <button class="btn btn-ghost btn-xs" onclick="openPerms('${u._id}','${u.name||''}','${u.role||''}')">🔒 صلاحيات</button>
           <select class="role-select" onchange="changeRole('${u._id}',this.value)">
             ${Object.entries(ROLES).map(([k,v])=>`<option value="${k}" ${k===u.role?'selected':''}>${v.ico} ${v.label}</option>`).join('')}
           </select>
@@ -512,6 +653,16 @@ window.saveUser = async function() {
     const msg = {'auth/email-already-in-use':'البريد مستخدم بالفعل','auth/weak-password':'كلمة المرور ضعيفة'};
     toast('❌ '+(msg[e.code]||e.message),'err');
   }
+};
+
+// ✅ savePerms implementation inside module scope (has access to db, updateDoc, doc)
+window._savePermsImpl = async function() {
+  if(!window.permUserId) return;
+  try {
+    await updateDoc(doc(db,'users',window.permUserId), {permissions: window.currentPerms});
+    cM('perms');
+    toast('✅ تم حفظ الصلاحيات','ok');
+  } catch(e) { toast('❌ '+e.message,'err'); }
 };
 
 window.changeRole = async function(uid, role) {
@@ -581,5 +732,16 @@ window.removeItem=window.removeItem; window.changeRole=window.changeRole;
 // field helper
 function field(l,v){return `<div class="field"><span class="fn">${l}</span><span style="font-size:12px;color:var(--dim2)">${v}</span></div>`;}
 </script>
+<nav class="mob-nav">
+  <div class="mob-nav-items">
+    <a class="mob-nav-item " href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
+    <a class="mob-nav-item " href="clients.html"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
+    <a class="mob-nav-item " href="accounts.html"><div class="mob-nav-ico">💰</div><div class="mob-nav-lbl">حسابات</div></a>
+    <a class="mob-nav-item " href="reports.html"><div class="mob-nav-ico">📊</div><div class="mob-nav-lbl">تقارير</div></a>
+    <a class="mob-nav-item active" href="settings.html"><div class="mob-nav-ico">⚙️</div><div class="mob-nav-lbl">إعدادات</div></a>
+  </div>
+</nav>
+<div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav').classList.remove('mob-open');this.classList.remove('show')"></div>
+
 </body>
 </html>
