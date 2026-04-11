@@ -15,6 +15,14 @@
 .irow{background:var(--bg3);border-radius:8px;padding:8px 10px}
 .irow-l{font-size:10px;color:var(--dim2);margin-bottom:2px}
 .irow-v{font-size:12px;font-weight:700}
+.ship-opt{flex:1;min-width:100px;padding:10px 8px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg3);cursor:pointer;text-align:center;transition:var(--trans)}
+.ship-opt:hover{border-color:var(--c);background:rgba(6,214,209,.08)}
+.ship-opt.active{border-color:var(--c);background:rgba(6,214,209,.12)}
+.ship-opt-ico{font-size:20px;margin-bottom:4px}
+.ship-opt-lbl{font-size:11px;font-weight:700;color:var(--text)}
+.w-btn{flex:1;min-width:90px;text-align:center;padding:8px 6px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg3);cursor:pointer;font-size:12px;font-weight:600;transition:var(--trans);color:var(--text)}
+.w-btn:hover{border-color:var(--g)}
+.w-btn.active{border-color:var(--g);background:rgba(0,217,126,.12);color:var(--g)}
 </style>
 </head>
 <body>
@@ -40,13 +48,16 @@
 <div class="main">
   <div class="topbar">
     <div class="topbar-left"><button class="mob-menu-btn" onclick="toggleNav()">☰</button><div><h1>🚚 الشحن</h1><p id="sub">جاري التحميل...</p></div></div>
-    <div class="topbar-right"><div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث..." oninput="renderList()"></div></div>
+    <div class="topbar-right">
+      <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث..." oninput="renderList()"></div>
+    </div>
   </div>
   <div class="content">
     <div class="stats" style="margin-bottom:18px">
       <div class="stat" style="--sc:var(--c)"><div class="stat-icon">🚚</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">جاري الشحن</div></div>
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">💰</div><div class="stat-val" id="s-rem">0</div><div class="stat-lbl">باقي تحصيل ج</div></div>
-      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⚠️</div><div class="stat-val" id="s-late">0</div><div class="stat-lbl">متأخر</div></div>
+      <div class="stat" style="--sc:var(--b)"><div class="stat-icon">🏠</div><div class="stat-val" id="s-pickup">0</div><div class="stat-lbl">استلام بالمحل</div></div>
+      <div class="stat" style="--sc:var(--c)"><div class="stat-icon">📦</div><div class="stat-val" id="s-delivery">0</div><div class="stat-lbl">توصيل</div></div>
     </div>
     <div id="list"><div class="loader"><div class="spinner"></div></div></div>
   </div>
@@ -59,7 +70,7 @@
     <div class="panel-head">
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:6px">
-        <button class="btn btn-g btn-sm" onclick="oM('deliver')">✅ تسليم → أرشيف</button>
+        <button class="btn btn-g btn-sm" onclick="openDeliver()">✅ تسليم → أرشيف</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
     </div>
@@ -69,23 +80,67 @@
 
 <!-- MODAL: تسليم -->
 <div class="overlay" id="ov-deliver">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-head"><span class="modal-title">✅ تسجيل التسليم</span><button class="modal-x" onclick="cM('deliver')">✕</button></div>
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head"><span class="modal-title">✅ تسجيل التسليم</span><button class="modal-x" onclick="closeDeliver()">✕</button></div>
     <div class="modal-body">
-      <div id="rem-alert" style="display:none;background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:10px 12px;margin-bottom:12px;text-align:center">
-        <div style="font-size:11px;color:var(--dim2)">⚠️ باقي التحصيل</div>
-        <div style="font-size:22px;font-weight:900;color:var(--r)" id="rem-val">—</div>
+
+      <!-- المالية -->
+      <div id="del-finance" style="display:none">
+        <div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:12px;margin-bottom:12px">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;margin-bottom:10px">
+            <div><div style="font-size:9px;color:var(--dim2)">الإجمالي</div><div style="font-size:14px;font-weight:900;color:var(--b)" id="df-sale">—</div></div>
+            <div><div style="font-size:9px;color:var(--dim2)">محصّل</div><div style="font-size:14px;font-weight:900;color:var(--g)" id="df-paid">—</div></div>
+            <div><div style="font-size:9px;color:var(--dim2)">الباقي</div><div style="font-size:14px;font-weight:900;color:var(--r)" id="df-rem">—</div></div>
+          </div>
+          <div class="fg" style="margin:0"><label style="font-size:11px;color:var(--r);font-weight:700">💰 محصّل عند التسليم</label><input class="inp" id="del-amt" type="number" placeholder="0" oninput="updateDelPreview()"></div>
+        </div>
+        <div id="del-wallet-row" class="fg" style="display:none">
+          <label>طريقة الدفع *</label>
+          <div id="del-wallets" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+          <input type="hidden" id="del-wid"><input type="hidden" id="del-wname">
+        </div>
       </div>
-      <div class="fg"><label>محصّل عند التسليم</label><input class="inp" id="del-amt" type="number" placeholder="0" value="0" oninput="toggleWalletRow()"></div>
-      <div id="wallet-row" class="fg" style="display:none">
-        <label>طريقة الدفع *</label>
-        <div id="del-wallets" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div>
-        <input type="hidden" id="del-wid"><input type="hidden" id="del-wname">
+
+      <!-- طريقة الشحن -->
+      <div class="fg">
+        <label>طريقة الاستلام *</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <div class="ship-opt" id="so-pickup" onclick="setShipMethod('pickup')">
+            <div class="ship-opt-ico">🏠</div>
+            <div class="ship-opt-lbl">استلام بالمحل</div>
+          </div>
+          <div class="ship-opt" id="so-courier" onclick="setShipMethod('courier')">
+            <div class="ship-opt-ico">🏍️</div>
+            <div class="ship-opt-lbl">مندوب توصيل</div>
+          </div>
+          <div class="ship-opt" id="so-shipping" onclick="setShipMethod('shipping_company')">
+            <div class="ship-opt-ico">📦</div>
+            <div class="ship-opt-lbl">شركة شحن</div>
+          </div>
+        </div>
+        <input type="hidden" id="del-method">
       </div>
-      <div class="fg"><label>تاريخ التسليم</label><input class="inp" id="del-date" type="date"></div>
-      <div class="fg"><label>ملاحظة</label><input class="inp" id="del-note" placeholder="حالة البضاعة..."></div>
+
+      <!-- تفاصيل الشحن (تظهر عند الاختيار) -->
+      <div id="ship-details" style="display:none">
+        <div class="fg"><label>اسم المندوب / شركة الشحن</label><input class="inp" id="del-carrier" placeholder="اسم المندوب أو شركة الشحن..."></div>
+        <div class="g2">
+          <div class="fg"><label>تكلفة الشحن</label><input class="inp" id="del-ship-cost" type="number" placeholder="0"></div>
+          <div class="fg"><label>العنوان / المحافظة</label><input class="inp" id="del-address" placeholder="المحافظة / العنوان..."></div>
+        </div>
+      </div>
+
+      <div class="g2">
+        <div class="fg"><label>تاريخ التسليم</label><input class="inp" id="del-date" type="date"></div>
+        <div class="fg"><label>ملاحظة</label><input class="inp" id="del-note" placeholder="حالة البضاعة..."></div>
+      </div>
+
+      <div id="del-preview" style="display:none;background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:10px 12px;font-size:12px;color:var(--g);margin-top:4px"></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('deliver')">إلغاء</button><button class="btn btn-g" onclick="saveDeliver()">✅ تأكيد → الأرشيف</button></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeDeliver()">إلغاء</button>
+      <button class="btn btn-g" onclick="saveDeliver()">✅ تأكيد التسليم → الأرشيف</button>
+    </div>
   </div>
 </div>
 
@@ -100,8 +155,6 @@
 <div class="toasts" id="toasts"></div>
 
 <script type="module">
-// shipping.html — stage == 'shipping' فقط
-// التسليم → stage = 'archived'
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -110,16 +163,16 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app); const db=getFirestore(app);
 
 let orders=[],wallets=[],currentUser=null,userName='',activeId=null;
+let selShipMethod='';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
-window.cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
-const cM=window.cM;
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const delay=dl=>dl?Math.max(0,Math.floor((new Date()-new Date(dl))/(864e5))):0;
 const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Mgr',col:'var(--b)'},customer_service:{label:'CS',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet',col:'var(--g)'}};
+const SHIP_LABELS={pickup:'🏠 استلام بالمحل',courier:'🏍️ مندوب توصيل',shipping_company:'📦 شركة شحن'};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -131,13 +184,13 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();const r=ROLES[d.role||'admin']||ROLES.admin;userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0].toUpperCase();document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col}`;document.getElementById('role-badge').textContent=r.label;document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;}
-  // ✅ stage == 'shipping' فقط
   onSnapshot(query(collection(db,'orders'),where('stage','==','shipping'),orderBy('createdAt','desc')),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderList();
-    const rem=orders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
-    setText('s-total',orders.length);setText('s-rem',fn(rem)+' ج');
-    setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+    setText('s-total',orders.length);
+    setText('s-rem',fn(orders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0))+' ج');
+    setText('s-pickup',orders.filter(o=>o.shipMethod==='pickup').length);
+    setText('s-delivery',orders.filter(o=>o.shipMethod&&o.shipMethod!=='pickup').length);
     setText('sub',orders.length+' طلب شحن');
   });
   onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
@@ -149,15 +202,20 @@ window.renderList=function(){
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">${orders.length?'لا نتائج':'لا توجد طلبات شحن'}</div></div>`;return;}
   el.innerHTML=data.map(o=>{
-    const d=delay(o.deadline);const rem=parseFloat(o.remaining)||0;
+    const d=delay(o.deadline);const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;
     return`<div class="ocard" onclick="openOrder('${o._id}')">
       ${d>0?`<div style="position:absolute;top:8px;left:8px;font-size:9px;background:rgba(255,61,110,.15);color:var(--r);border-radius:20px;padding:1px 7px;font-weight:700">⚠️ ${d} يوم</div>`:''}
       <div class="oc-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
       <div class="oc-client">${o.clientName||'—'}</div>
-      <div class="oc-product">${o.product||'—'} ${o.qty?'× '+o.qty:''}</div>
+      <div class="oc-product">${o.product||'—'}</div>
+      ${sale>0?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;text-align:center">
+        <div style="background:var(--bg3);border-radius:6px;padding:4px"><div style="font-size:9px;color:var(--dim2)">الإجمالي</div><div style="font-size:11px;font-weight:800;color:var(--b)">${fn(sale)}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:4px"><div style="font-size:9px;color:var(--dim2)">محصّل</div><div style="font-size:11px;font-weight:800;color:var(--g)">${fn(o.paid||0)}</div></div>
+        <div style="background:${rem>0?'rgba(255,61,110,.08)':'var(--bg3)'};border-radius:6px;padding:4px"><div style="font-size:9px;color:var(--dim2)">باقي</div><div style="font-size:11px;font-weight:800;color:${rem>0?'var(--r)':'var(--g)'}">${fn(rem)}</div></div>
+      </div>`:''}
       <div class="oc-foot">
-        <span class="badge bg-c">🚚 في الشحن</span>
-        ${rem>0?`<span style="font-size:11px;color:var(--r);font-weight:700">باقي: ${fn(rem)} ج</span>`:`<span class="badge bg-g">✅ محصّل كامل</span>`}
+        <span class="badge bg-c">${o.shipMethod?SHIP_LABELS[o.shipMethod]||'🚚 شحن':'🚚 في الشحن'}</span>
+        ${rem>0?`<span style="font-size:11px;font-weight:700;color:var(--r)">باقي: ${fn(rem)} ج</span>`:`<span class="badge bg-g">✅ محصّل</span>`}
       </div>
     </div>`;
   }).join('');
@@ -167,16 +225,33 @@ window.openOrder=function(id){
   activeId=id;const o=orders.find(x=>x._id===id);if(!o)return;
   document.getElementById('pn-hdr').innerHTML=`<div><div style="font-size:10px;color:var(--c);font-weight:700">🚚 شحن · ${o.orderId||id.slice(-6)}</div><div style="font-size:16px;font-weight:800">${o.clientName||'—'}</div><div style="font-size:12px;color:var(--dim2)">${o.clientPhone||''}</div></div>`;
   document.getElementById('panel-ov').classList.add('open');
-  const rem=parseFloat(o.remaining)||0;
+  const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;
+  const prods=o.products||[];
   document.getElementById('panel-body').innerHTML=`
-    <div class="section"><div class="section-title" style="margin-bottom:10px">📦 تفاصيل</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      ${iRow('المنتج',o.product||'—')}${iRow('الكمية',o.qty||'—')}
-      ${iRow('العميل',o.clientName||'—')}${iRow('الهاتف',o.clientPhone||'—')}
-      ${iRow('سعر البيع',fn(o.salePrice)+' ج','var(--b)')}${iRow('المحصّل',fn(o.paid)+' ج','var(--g)')}
-      ${iRow('الباقي',fn(rem)+' ج',rem>0?'var(--r)':'var(--g)')}${iRow('طريقة الدفع',o.paymentMethod||'—')}
-    </div></div>
-    ${rem>0?`<div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:12px;margin-bottom:12px;text-align:center"><div style="font-size:11px;color:var(--dim2)">⚠️ باقي التحصيل عند التسليم</div><div style="font-size:22px;font-weight:900;color:var(--r)">${fn(rem)} ج</div></div>`:''}
+    <div class="section">
+      <div class="section-title" style="margin-bottom:10px">📦 تفاصيل</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${iRow('العميل',o.clientName||'—')}${iRow('الهاتف',o.clientPhone||'—')}
+        ${iRow('موعد التسليم',o.deadline||'—')}${iRow('نوع الطباعة',o.printType||'—')}
+      </div>
+      ${prods.length?`<div style="margin-top:10px">${prods.map(p=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid var(--line)"><span>${p.name}</span><span style="color:var(--b);font-weight:700">× ${p.qty}</span></div>`).join('')}</div>`:iRow('المنتج',o.product||'—')}
+    </div>
+    ${sale>0?`<div class="section">
+      <div class="section-title" style="margin-bottom:10px">💰 المالية</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        ${iRow('الإجمالي',fn(sale)+' ج','var(--b)')}
+        ${iRow('المحصّل',fn(o.paid||0)+' ج','var(--g)')}
+        ${iRow('الباقي',fn(rem)+' ج',rem>0?'var(--r)':'var(--g)')}
+      </div>
+    </div>`:''}
+    ${o.shipMethod?`<div class="section">
+      <div class="section-title" style="margin-bottom:8px">🚚 طريقة الشحن</div>
+      <div class="badge bg-c">${SHIP_LABELS[o.shipMethod]||o.shipMethod}</div>
+      ${o.shipCarrier?`<div style="font-size:12px;color:var(--dim2);margin-top:6px">${o.shipCarrier}</div>`:''}
+      ${o.shipAddress?`<div style="font-size:12px;color:var(--dim2)">${o.shipAddress}</div>`:''}
+      ${o.shipCost?`<div style="font-size:12px;color:var(--r);margin-top:4px">تكلفة شحن: ${fn(o.shipCost)} ج</div>`:''}
+    </div>`:''}
+    ${rem>0?`<div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:12px;margin-bottom:14px;text-align:center"><div style="font-size:11px;color:var(--dim2)">⚠️ يوجد باقي للتحصيل</div><div style="font-size:22px;font-weight:900;color:var(--r)">${fn(rem)} ج</div></div>`:''}
     ${o.notes?`<div class="section"><div class="section-title">📝 ملاحظات</div><div style="font-size:13px;line-height:1.7;margin-top:8px">${o.notes}</div></div>`:''}
     <div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>${tlHtml(o.timeline)}</div>`;
 };
@@ -184,52 +259,101 @@ window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('ope
 function iRow(lbl,val,col=null){return`<div class="irow"><div class="irow-l">${lbl}</div><div class="irow-v"${col?` style="color:${col}"`:''}>${val}</div></div>`;}
 function tlHtml(tl){return(tl||[]).slice().reverse().map(t=>`<div style="font-size:11px;color:var(--dim2);padding:4px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}</div>`).join('')||'—';}
 
-// فتح modal التسليم
-window.oM=function(id){
-  if(id==='deliver'){
-    const o=orders.find(x=>x._id===activeId);if(!o)return;
-    const rem=parseFloat(o.remaining)||0;
-    const remAlert=document.getElementById('rem-alert');
-    remAlert.style.display=rem>0?'':'none';
-    setText('rem-val',fn(rem)+' ج');
-    sv('del-amt',rem>0?rem:'0');
-    sv('del-date',new Date().toISOString().split('T')[0]);
-    sv('del-note','');
-    document.getElementById('del-wid').value='';document.getElementById('del-wname').value='';
-    document.getElementById('del-wallets').innerHTML=wallets.map(w=>`<button class="btn btn-ghost btn-sm" onclick="selW('${w._id}','${(w.name||'').replace(/'/g,"\\'")}',this)" style="flex:1;min-width:80px">${w.type==='cash'?'💵':'💳'} ${w.name}</button>`).join('');
-    document.getElementById('wallet-row').style.display=rem>0?'':'none';
-  }
-  document.getElementById('ov-'+id)?.classList.add('open');
-};
-window.cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
-window.toggleWalletRow=function(){const amt=parseFloat(gv('del-amt'))||0;document.getElementById('wallet-row').style.display=amt>0?'':'none';};
-window.selW=function(id,name,btn){document.getElementById('del-wid').value=id;document.getElementById('del-wname').value=name;document.querySelectorAll('#del-wallets button').forEach(b=>{b.classList.remove('btn-g');b.classList.add('btn-ghost');});btn.classList.remove('btn-ghost');btn.classList.add('btn-g');};
-
-// ✅ التسليم: stage = 'archived' → يختفي من هنا
-window.saveDeliver=async function(){
+// ── modal التسليم ──
+window.openDeliver=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;
+  // مالية
+  const df=document.getElementById('del-finance');
+  df.style.display=rem>0?'block':'none';
+  if(rem>0){
+    setText('df-sale',fn(sale)+' ج');setText('df-paid',fn(o.paid||0)+' ج');setText('df-rem',fn(rem)+' ج');
+    sv('del-amt',rem);
+  }
+  // الشحن
+  selShipMethod=o.shipMethod||'';
+  document.querySelectorAll('.ship-opt').forEach(el=>el.classList.remove('active'));
+  if(selShipMethod)document.getElementById('so-'+selShipMethod.replace('_company',''))?.classList.add('active');
+  document.getElementById('del-method').value=selShipMethod;
+  document.getElementById('ship-details').style.display=selShipMethod&&selShipMethod!=='pickup'?'block':'none';
+  sv('del-carrier',o.shipCarrier||'');sv('del-ship-cost',o.shipCost||'');sv('del-address',o.shipAddress||'');
+  sv('del-date',new Date().toISOString().split('T')[0]);sv('del-note','');
+  document.getElementById('del-wid').value='';document.getElementById('del-wname').value='';
+  document.getElementById('del-wallet-row').style.display='none';
+  document.getElementById('del-preview').style.display='none';
+  // محافظ
+  document.getElementById('del-wallets').innerHTML=wallets.map(w=>`
+    <div class="w-btn" id="dw-${w._id}" onclick="selDelWallet('${w._id}','${(w.name||'').replace(/'/g,"\\'")}')">
+      <div>${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'}</div>
+      <div style="font-size:11px;margin-top:2px">${w.name}</div>
+    </div>`).join('');
+  document.getElementById('ov-deliver').classList.add('open');
+};
+window.closeDeliver=()=>document.getElementById('ov-deliver').classList.remove('open');
+
+window.setShipMethod=function(method){
+  selShipMethod=method;
+  document.getElementById('del-method').value=method;
+  document.querySelectorAll('.ship-opt').forEach(el=>el.classList.remove('active'));
+  document.getElementById('so-'+method.replace('_company',''))?.classList.add('active');
+  document.getElementById('ship-details').style.display=method!=='pickup'?'block':'none';
+};
+
+window.selDelWallet=function(id,name){
+  document.getElementById('del-wid').value=id;document.getElementById('del-wname').value=name;
+  document.querySelectorAll('.w-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('dw-'+id)?.classList.add('active');
+};
+
+window.updateDelPreview=function(){
   const amt=parseFloat(gv('del-amt'))||0;
-  const wId=document.getElementById('del-wid').value;
-  const wName=document.getElementById('del-wname').value;
-  if(amt>0&&!wId)return toast('⚠️ اختر طريقة الدفع','err');
-  const paid=(parseFloat(o.paid)||0)+amt;
-  const remaining=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+  const wRow=document.getElementById('del-wallet-row');
+  wRow.style.display=amt>0?'block':'none';
+  const prev=document.getElementById('del-preview');
+  if(amt>0){prev.style.display='block';prev.textContent=`سيتم تحصيل ${fn(amt)} ج عند التسليم`;}
+  else{prev.style.display='none';}
+};
+
+window.saveDeliver=async function(){
+  const method=gv('del-method');if(!method)return toast('⚠️ اختر طريقة الاستلام','err');
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const rem=parseFloat(o.remaining)||0;
+  const collectAmt=rem>0?(parseFloat(gv('del-amt'))||0):0;
+  const wId=document.getElementById('del-wid').value;const wName=document.getElementById('del-wname').value;
+  if(collectAmt>0&&!wId)return toast('⚠️ اختر طريقة الدفع','err');
+  const paid=(parseFloat(o.paid)||0)+collectAmt;
+  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+  const shipCost=parseFloat(gv('del-ship-cost'))||0;
   try{
-    if(amt>0&&wId){
+    if(collectAmt>0&&wId){
       const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
-      await updateDoc(doc(db,'wallets',wId),{balance:bb+amt});
-      await addDoc(collection(db,'transactions_v2'),{walletId:wId,type:'in',amount:amt,fees:0,description:`تحصيل تسليم — ${o.clientName||''} — ${o.product||''}`,category:'collection',ref:activeId,balanceBefore:bb,balanceAfter:bb+amt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      await updateDoc(doc(db,'wallets',wId),{balance:bb+collectAmt});
+      await addDoc(collection(db,'transactions_v2'),{
+        walletId:wId,type:'in',amount:collectAmt,fees:0,
+        description:`تحصيل تسليم — ${o.clientName||''}`,
+        category:'collection',ref:activeId,
+        balanceBefore:bb,balanceAfter:bb+collectAmt,
+        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp()
+      });
     }
-    // ✅ stage → 'archived'
     await updateDoc(doc(db,'orders',activeId),{
       stage:'archived',
-      paid, remaining,
-      deliveredAt:nowStr(), deliveredDate:gv('del-date'),
+      paid,remaining:newRem,
+      shipMethod:method,
+      shipCarrier:gv('del-carrier'),
+      shipAddress:gv('del-address'),
+      shipCost,
+      deliveredAt:nowStr(),deliveredDate:gv('del-date'),
       deliveryNote:gv('del-note'),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ تم التسليم${amt>0?' — محصّل '+fn(amt)+' ج':''}`,by:userName}],
+      timeline:[...(o.timeline||[]),{
+        date:nowStr(),
+        action:`✅ تم التسليم — ${SHIP_LABELS[method]}${collectAmt>0?' — محصّل '+fn(collectAmt)+' ج':''}`,
+        by:userName
+      }],
       updatedAt:serverTimestamp()
     });
-    cM('deliver');closePanel();
+    closeDeliver();closePanel();
     toast('✅ تم التسليم — انتقل للأرشيف 📁','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
