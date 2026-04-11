@@ -157,16 +157,24 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();const r=ROLES[d.role||'admin']||ROLES.admin;userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0].toUpperCase();document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col}`;document.getElementById('role-badge').textContent=r.label;document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;}
-  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),orderBy('createdAt','desc')),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderList();
-    setText('s-total',orders.length);
-    setText('s-rev',fn(orders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0))+' ج');
-    setText('s-rem',fn(orders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0))+' ج');
-    setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-    setText('sub',orders.length+' طلب طباعة');
+  // بدون orderBy — الترتيب في JavaScript عشان مش محتاج index
+  onSnapshot(
+    query(collection(db,'orders'),where('stage','==','printing')),
+    snap=>{
+      orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderList();
+      setText('s-total',orders.length);
+      setText('s-rev',fn(orders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0))+' ج');
+      setText('s-rem',fn(orders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0))+' ج');
+      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+      setText('sub',orders.length+' طلب طباعة');
+    }
+  );
+  onSnapshot(collection(db,'wallets'),snap=>{
+    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });
-  onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 });
 
 window.renderList=function(){
@@ -310,7 +318,7 @@ window.openCollect=function(){
   // محافظ
   document.getElementById('col-wallets').innerHTML=wallets.map(w=>`
     <div class="w-btn" id="wb-${w._id}" onclick="selWallet('${w._id}','${(w.name||'').replace(/'/g,"\\'")}')">
-      <div>${w.type==='cash'?'💵':'w.type==='bank'?'🏦':'💳'}</div>
+      <div>${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'}</div>
       <div style="font-size:11px;margin-top:3px">${w.name}</div>
       <div style="font-size:10px;color:var(--dim2)">${fn(w.balance)} ج</div>
     </div>`).join('');

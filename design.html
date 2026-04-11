@@ -204,15 +204,17 @@ onAuthStateChanged(auth,async u=>{
 });
 
 function startListeners(){
-  onSnapshot(query(collection(db,'orders'),where('stage','==','design'),orderBy('createdAt','desc')),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderKanban();
-    setText('sub',orders.length+' طلب تصميم');
-    setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-    setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-    setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-    setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-  });
+  onSnapshot(
+    query(collection(db,'orders'),where('stage','==','design')),
+    snap=>{
+      orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderList();
+      const n=orders.length;
+      const setText2=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+      setText2('sub',n+' طلب');
+    }
+  );
   onSnapshot(query(collection(db,'clients'),orderBy('name','asc')),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(query(collection(db,'products_v2'),orderBy('name','asc')),snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -302,6 +304,21 @@ window.openOrder=function(id){
         <button class="btn btn-sm ${o.designStage==='pending'?'btn-y':'btn-ghost'}" onclick="setDS('pending')">⏳ انتظار</button>
         <button class="btn btn-sm ${o.designStage==='wip'?'btn-b':'btn-ghost'}" onclick="setDS('wip')">🎨 جاري</button>
       </div>
+    </div>
+    <div class="section" style="background:rgba(59,158,255,.04);border:1px solid rgba(59,158,255,.12)">
+      <div class="section-title" style="margin-bottom:10px;color:var(--b)">🎨 بطاقة المصمم</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        ${iRow('المصمم المكلف',o.designerName||'لم يُكلف')}
+        ${iRow('موعد التسليم',o.deadline||'لم يُحدد',delay(o.deadline)>0?'var(--r)':null)}
+        ${iRow('تاريخ الإنشاء',o.createdDate||'—')}
+        ${iRow('الأوردر رقم',o.orderId||'—')}
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--rad);padding:10px;margin-bottom:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px">📦 المنتجات المطلوبة:</div>
+        ${(o.products||[]).map(p=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line)"><strong>${p.name}</strong> × ${p.qty}</div>`).join('')||`<div style="font-size:12px">${o.product||'—'}</div>`}
+      </div>
+      ${o.notes?`<div style="background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.15);border-radius:var(--rad);padding:10px"><div style="font-size:10px;color:var(--y);font-weight:700;margin-bottom:4px">📝 تعليمات العميل:</div><div style="font-size:12px;line-height:1.7;white-space:pre-wrap">${o.notes}</div></div>`:''}
+      ${parseFloat(o.deposit)>0?`<div style="margin-top:8px;background:rgba(0,217,126,.07);border-radius:var(--rad);padding:8px;font-size:12px"><span style="color:var(--g)">💰 عربون مدفوع: ${fn(parseFloat(o.deposit)||0)} ج</span></div>`:''}
     </div>
     ${o.rejectReason?`<div class="section" style="border:1px solid rgba(255,61,110,.2)"><div class="section-title" style="color:var(--r)">✕ سبب الرفض</div><div style="font-size:13px;margin-top:8px">${o.rejectReason}</div></div>`:''}
     <div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>${tlHtml(o.timeline)}</div>`;
