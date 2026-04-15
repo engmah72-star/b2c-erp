@@ -187,7 +187,7 @@ const QUICK_LINKS=[
   {ico:'📊',name:'التقارير',desc:'أداء وإحصائيات',href:'reports.html',col:'var(--p)'},
 ];
 
-let designOrders=[],printOrders=[],printItems=[],shipments=[],clients=[],wallets=[],transactions=[];
+let allOrders=[],clients=[],wallets=[],transactions=[];
 let currentRole='admin';
 
 // DATE GREETING
@@ -226,20 +226,23 @@ function renderQuickLinks(pages){
 }
 
 // LISTENERS
-onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc')),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();});
-onSnapshot(query(collection(db,'design_orders'),orderBy('createdAt','desc')),snap=>{designOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();renderPipeline();renderAlerts();renderActiveOrders();});
-onSnapshot(query(collection(db,'print_orders_v2'),orderBy('createdAt','desc')),snap=>{printOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();renderPipeline();renderAlerts();renderActiveOrders();});
-onSnapshot(query(collection(db,'print_items_v2'),orderBy('createdAt','asc')),snap=>{printItems=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();renderFinSnap();});
-onSnapshot(query(collection(db,'shipments_v2'),orderBy('createdAt','desc')),snap=>{shipments=snap.docs.map(d=>({...d.data(),_id:d.id}));renderPipeline();renderAlerts();});
-onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));renderFinSnap();});
+// ── Listeners — unified orders collection ──
+onSnapshot(collection(db,'orders'),snap=>{
+  allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  updateKPIs();renderPipeline();renderAlerts();renderActiveOrders();
+});
+onSnapshot(collection(db,'clients'),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();});
+onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));renderFinSnap();});
 onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));renderFinSnap();});
 
 // KPIs
 function updateKPIs(){
   const monthStart=new Date();monthStart.setDate(1);monthStart.setHours(0,0,0,0);
-  const monthItems=printItems.filter(i=>{const o=printOrders.find(o=>o._id===i.orderId);return o?.createdAt?.toDate?.()>=monthStart;});
+  const monthItems=allOrders.filter(i=>{const o=printOrders.find(o=>o._id===i.orderId);return o?.createdAt?.toDate?.()>=monthStart;});
   const revenue=monthItems.reduce((s,i)=>s+(i.salePrice||0),0);
-  const remaining=printItems.reduce((s,i)=>s+(i.remaining||0),0);
+  const active=allOrders.filter(o=>o.stage!=='archived');
+  const remaining=active.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const totalRev=allOrders.filter(o=>o.stage==='archived').reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   setText('k-clients',clients.length);
   setText('k-design',designOrders.filter(o=>!['اعتمد','ملغي'].includes(o.status)).length);
   setText('k-print',printOrders.filter(o=>o.status==='طباعة').length);
@@ -279,7 +282,7 @@ function renderAlerts(){
     alerts.push({ico:'🖨️',title:`طباعة متأخرة — ${o.clientName||'—'}`,desc:`تأخير ${calcDelay(o.expectedDate)} يوم`,href:'print.html',col:'var(--y)'});
   });
   // remaining collection
-  const bigRem=printItems.filter(i=>(i.remaining||0)>500);
+  const bigRem=allOrders.filter(i=>(i.remaining||0)>500);
   bigRem.slice(0,3).forEach(i=>{
     const o=printOrders.find(x=>x._id===i.orderId);
     alerts.push({ico:'💰',title:`باقي تحصيل — ${o?.clientName||'—'}`,desc:`${fn(i.remaining)} ج.م`,href:'print.html',col:'var(--r)'});
@@ -310,15 +313,20 @@ function renderActiveOrders(){
     ...shipments.filter(s=>s.status!=='تم التسليم').slice(0,3).map(s=>({type:'ship',name:s.client||'—',status:'في الطريق',col:'var(--c)',ico:'🚚',href:'shipping.html'})),
   ];
   const el=document.getElementById('active-orders');
-  if(!active.length){el.innerHTML=`<div style="padding:16px;text-align:center;color:var(--dim2)">لا توجد أوردرات جارية</div>`;return;}
-  el.innerHTML=active.map(a=>`
-    <div class="today-row" onclick="location.href='${a.href}'" style="cursor:pointer">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:14px">${a.ico}</span>
-        <span style="font-weight:700">${a.name}</span>
+  if(!el)return;
+  const recent=allOrders.filter(o=>o.stage!=='archived').sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,8);
+  if(!recent.length){el.innerHTML='<div style="color:var(--dim2);font-size:12px;padding:12px">لا توجد أوردرات نشطة</div>';return;}
+  const stageAr={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن'};
+  el.innerHTML=recent.map(o=>{
+    const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;
+    return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="location.href='${o.stage==='design'?'design':o.stage==='printing'?'print':o.stage==='production'?'production':'shipping'}.html'">
+      <div><div style="font-size:13px;font-weight:700">${o.clientName||'—'}</div><div style="font-size:11px;color:var(--dim2)">${o.product||''}</div></div>
+      <div style="text-align:left">
+        <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--bg4)">${stageAr[o.stage]||o.stage}</span>
+        ${rem>0?`<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">${fn(rem)} ج</div>`:''}
       </div>
-      <span class="badge" style="background:${a.col}18;color:${a.col}">${a.status}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // FINANCIAL SNAPSHOT
