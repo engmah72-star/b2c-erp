@@ -159,14 +159,7 @@
         <div class="fg" style="margin-bottom:8px">
           <label>شركة الشحن / اسم المندوب</label>
           <select class="inp" id="del-company" onchange="toggleOtherCompany(this.value)">
-            <option value="">— اختر —</option>
-            <option value="bosta">🟠 بوسطة</option>
-            <option value="aramex">🔴 أرامكس</option>
-            <option value="jt">🟢 J&amp;T Express</option>
-            <option value="mylerz">🔵 مايلرز</option>
-            <option value="r2s">🟡 R2S</option>
-            <option value="vhubs">🟣 VHubs</option>
-            <option value="other">✏️ أخرى / مندوب خاص</option>
+            <option value="">— اختر شركة الشحن —</option>
           </select>
         </div>
         <div id="del-company-other-row" style="display:none" class="fg" style="margin-bottom:8px">
@@ -213,7 +206,7 @@ import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, q
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app); const db=getFirestore(app);
 
-let orders=[],wallets=[],currentUser=null,userName='',activeId=null,selMethod='';
+let orders=[],wallets=[],suppliers=[],currentUser=null,userName='',activeId=null,selMethod='';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
@@ -245,6 +238,14 @@ onAuthStateChanged(auth,async u=>{
     setText('sub',orders.length+' طلب شحن');
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  // شركات الشحن من الموردين (specialty = شحن)
+  onSnapshot(collection(db,'suppliers_v2'),snap=>{
+    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(s=>(s.specialty||'').includes('شحن')||(s.type||'').includes('شحن'));
+    // لو مفيش موردين شحن — جيب كل الموردين
+    if(!suppliers.length)
+      suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  });
 });
 
 window.renderList=function(){
@@ -365,6 +366,14 @@ window.openDeliver=function(){
   document.getElementById('col-now-btn').classList.add('active');
   document.getElementById('del-method').value=selMethod;
   document.getElementById('ship-details').style.display=selMethod&&selMethod!=='pickup'?'block':'none';
+  // ملء شركات الشحن من الموردين
+  const coSel=document.getElementById('del-company');
+  if(coSel){
+    coSel.innerHTML='<option value="">— اختر شركة الشحن —</option>'+
+      suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'')}">${s.name||''}</option>`).join('')+
+      '<option value="other">✏️ أخرى / مندوب خاص</option>';
+    coSel.value=o.shipCompany||'';
+  }
   sv('del-company',o.shipCompany||'');
   sv('del-company-name',o.shipCompanyName||'');
   toggleOtherCompany(o.shipCompany||'');
@@ -410,6 +419,11 @@ window.setMethod=function(method){
 window.toggleOtherCompany=function(val){
   document.getElementById('del-company-other-row').style.display=val==='other'?'block':'none';
 };
+function getCompanyName(val){
+  if(!val||val==='other')return gv('del-company-name');
+  const s=suppliers.find(x=>x._id===val);
+  return s?.name||val;
+}
 
 window.selDelW=function(id,name){
   document.getElementById('del-wid').value=id;document.getElementById('del-wname').value=name;
@@ -443,7 +457,7 @@ window.saveDeliver=async function(){
   const paid=(parseFloat(o.paid)||0)+collectAmt;
   const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
   const shipCompany=gv('del-company');
-  const shipCompanyName=shipCompany==='other'?gv('del-company-name'):CO_NAMES[shipCompany]||shipCompany;
+  const shipCompanyName=getCompanyName(shipCompany);
   const shipCost=parseFloat(gv('del-ship-cost'))||0;
   const actionParts=[`✅ تم التسليم — ${METHOD_LABELS[method]}`];
   if(shipCompanyName&&method!=='pickup')actionParts.push(shipCompanyName);
