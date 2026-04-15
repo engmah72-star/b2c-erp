@@ -183,7 +183,7 @@
 
       <!-- السعر -->
       <div class="fg">
-        <label>💲 سعر هذا المنتج (ج) *</label>
+        <label>💲 إجمالي سعر هذا المنتج * <span id='ep-qty-hint' style='color:var(--dim2);font-weight:400;font-size:11px'></span></label>
         <input class="inp" id="ep-price" type="number" placeholder="0" oninput="calcEpTotal()">
       </div>
       <div id="ep-total-preview" style="display:none;font-size:12px;color:var(--dim2);margin-bottom:12px"></div>
@@ -242,10 +242,11 @@ import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, q
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+// Storage: Base64 in Firestore (no Firebase Storage needed)
 
 const FB_CFG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB_CFG);
-const auth=getAuth(app); const db=getFirestore(app); const storage=getStorage(app);
+const auth=getAuth(app); const db=getFirestore(app); const storage=getStorage(app); // No storage instance needed
 
 // ══ STATE ══
 let orders=[],wallets=[],currentUser=null,userName='',activeId=null,editProdIdx=null,tempAddons=[];
@@ -658,9 +659,12 @@ window.calcEpTotal=function(){
   const price=parseFloat(gv('ep-price'))||0;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const p=(o.products||[])[editProdIdx];if(!p)return;
-  const qty=parseInt(p.qty)||1;const total=price*qty;
+  const qty=parseInt(p.qty)||1;
+  // تلميح: سعر القطعة
+  const hint=document.getElementById('ep-qty-hint');
+  if(hint)hint.textContent=qty>1?`(الكمية: ${qty} — سعر القطعة: ${price>0?fn(Math.round(price/qty))+' ج':'—'})`:``;
   const prev=document.getElementById('ep-total-preview');
-  if(price>0){prev.style.display='block';prev.textContent=`${fn(price)} ج × ${qty} = ${fn(total)} ج`;}
+  if(price>0){prev.style.display='block';prev.innerHTML=`إجمالي: <strong style="color:var(--b)">${fn(price)} ج</strong>${qty>1?` = ${fn(Math.round(price/qty))} ج × ${qty}`:''}  `;}
   else prev.style.display='none';
 };
 
@@ -680,17 +684,14 @@ window.saveProductDetails=async function(){
   const prods=[...(o.products||[])];
   const p={...prods[editProdIdx]};
   p.unitPrice=price;p.addons=[...tempAddons];p.instructions=gv('ep-instructions');
-  // رفع الصورة لو في ملف جديد
   const imgInp=document.getElementById('ep-img-inp');
   if(imgInp.files[0]){
     toast('جاري رفع الصورة...','');
     try{
-      const file=imgInp.files[0];
-      const storageRef=ref(storage,`designs/${activeId}_prod${editProdIdx}_${Date.now()}`);
-      await uploadBytes(storageRef,file);
-      const url=await getDownloadURL(storageRef);
-      p.designImageUrl=url;
-    }catch(e){toast('❌ خطأ في رفع الصورة: '+e.message,'err');return;}
+      const storageRef=ref(storage,`designs/${activeId}_p${editProdIdx}_${Date.now()}`);
+      await uploadBytes(storageRef,imgInp.files[0]);
+      p.designImageUrl=await getDownloadURL(storageRef);
+    }catch(e){toast('❌ خطأ في رفع الصورة','err');return;}
   }
   prods[editProdIdx]=p;
   // إعادة حساب إجمالي الأوردر
@@ -773,16 +774,14 @@ window.saveCollect=async function(){
   const rem=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
   const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
   const transferTo=gv('col-transfer-to');
-  // رفع صورة التحويل
   let transferImgUrl=o.transferImageUrl||'';
   const imgInp=document.getElementById('col-img-inp');
   if(imgInp.files[0]){
-    toast('جاري رفع الصورة...','');
     try{
       const storageRef=ref(storage,`transfers/${activeId}_${Date.now()}`);
       await uploadBytes(storageRef,imgInp.files[0]);
       transferImgUrl=await getDownloadURL(storageRef);
-    }catch(e){toast('⚠️ تعذر رفع الصورة — سيتم التحصيل بدونها','warn');}
+    }catch(e){toast('⚠️ تعذر رفع الصورة','warn');}
   }
   try{
     await updateDoc(doc(db,'orders',activeId),{

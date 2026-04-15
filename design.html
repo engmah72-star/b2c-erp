@@ -139,24 +139,36 @@
   </div>
 </div>
 
-<!-- MODAL: رفع ملف التصميم -->
+<!-- MODAL: رفع ملف/صورة التصميم -->
 <div class="overlay" id="ov-upload">
-  <div class="modal" style="max-width:440px">
+  <div class="modal" style="max-width:480px">
     <div class="modal-head"><span class="modal-title">📎 رفع ملف التصميم النهائي</span><button class="modal-x" onclick="closeUpload()">✕</button></div>
     <div class="modal-body">
+      <!-- رفع صورة مباشر -->
       <div class="fg">
-        <label>رابط التصميم (Google Drive / Dropbox / أي رابط)</label>
+        <label>🖼️ رفع صورة التصميم مباشرة <span style="color:var(--g);font-size:11px">(مفضّل)</span></label>
+        <div class="upload-area" onclick="document.getElementById('design-img-inp').click()">
+          <div id="design-img-preview">
+            <div style="font-size:32px;margin-bottom:8px">🖼️</div>
+            <div style="font-size:13px;color:var(--dim2)">اضغط لاختيار صورة التصميم</div>
+            <div style="font-size:11px;color:var(--dim2);margin-top:4px">PNG / JPG — سترفع لـ Firebase مباشرة</div>
+          </div>
+        </div>
+        <input type="file" id="design-img-inp" accept="image/*" style="display:none" onchange="previewDesignImg(this)">
+        <input type="hidden" id="design-img-url">
+      </div>
+      <!-- أو رابط -->
+      <div style="text-align:center;color:var(--dim2);font-size:12px;margin:8px 0">— أو —</div>
+      <div class="fg">
+        <label>🔗 رابط التصميم (Google Drive / Dropbox)</label>
         <input class="inp" id="design-url" placeholder="https://drive.google.com/..." type="url">
       </div>
       <div class="fg">
-        <label>ملاحظة للمنفذ</label>
+        <label>📋 ملاحظة للمنفذ</label>
         <textarea class="inp" id="design-note" placeholder="أي تعليمات للطباعة أو التنفيذ..." style="min-height:60px"></textarea>
       </div>
-      <div style="background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:10px 12px;font-size:12px;color:var(--y)">
-        💡 الملف هيظهر لمندوب التنفيذ والطباعة في الأوردر
-      </div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeUpload()">إلغاء</button><button class="btn btn-b" onclick="saveDesignFile()">✓ حفظ الرابط</button></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeUpload()">إلغاء</button><button class="btn btn-b" onclick="saveDesignFile()">✓ رفع وحفظ</button></div>
   </div>
 </div>
 
@@ -174,9 +186,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
-const auth=getAuth(app); const db=getFirestore(app);
+const auth=getAuth(app); const db=getFirestore(app); const storage=getStorage(app);
 
 let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentUser=null,userName='',activeId=null,selClient=null;
@@ -367,16 +380,34 @@ window.openUpload=function(){
   document.getElementById('ov-upload').classList.add('open');
 };
 window.closeUpload=()=>document.getElementById('ov-upload').classList.remove('open');
+window.previewDesignImg=function(inp){
+  const file=inp.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{document.getElementById('design-img-preview').innerHTML=`<img src="${e.target.result}" style="width:100%;max-height:180px;object-fit:contain;border-radius:var(--rad)"><div style="font-size:11px;color:var(--g);margin-top:6px">✓ جاهز للرفع</div>`;};
+  reader.readAsDataURL(file);
+};
+
 window.saveDesignFile=async function(){
-  const url=gv('design-url');if(!url)return toast('⚠️ أدخل رابط الملف','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const imgInp=document.getElementById('design-img-inp');
+  let finalUrl=gv('design-url');
+  // رفع الصورة لو في ملف
+  if(imgInp.files[0]){
+    toast('جاري رفع الصورة...','');
+    try{
+      const storageRef=ref(storage,`designs/final_${activeId}_${Date.now()}`);
+      await uploadBytes(storageRef,imgInp.files[0]);
+      finalUrl=await getDownloadURL(storageRef);
+    }catch(e){toast('❌ فشل رفع الصورة: '+e.message,'err');return;}
+  }
+  if(!finalUrl)return toast('⚠️ ارفع صورة أو أدخل رابط','err');
   try{
     await updateDoc(doc(db,'orders',activeId),{
-      designFileUrl:url,designFileNote:gv('design-note'),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'📎 رُفع ملف التصميم النهائي',by:userName}],
+      designFileUrl:finalUrl,designFileNote:gv('design-note'),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:'🖼️ رُفعت صورة التصميم النهائي',by:userName}],
       updatedAt:serverTimestamp()
     });
-    closeUpload();toast('✅ تم رفع رابط التصميم','ok');
+    closeUpload();toast('✅ تم رفع التصميم','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
