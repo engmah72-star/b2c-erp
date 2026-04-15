@@ -191,12 +191,43 @@ onAuthStateChanged(auth,async u=>{
   setDateFilter(null,'week');
 });
 
-// ═══ LISTENERS ═══
-onSnapshot(query(collection(db,'design_orders'),orderBy('createdAt','desc')),snap=>{designOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
-onSnapshot(query(collection(db,'print_orders_v2'),orderBy('createdAt','desc')),snap=>{printOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
-onSnapshot(query(collection(db,'print_items_v2'),orderBy('createdAt','asc')),snap=>{printItems=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
-onSnapshot(query(collection(db,'print_costs_v2'),orderBy('createdAt','asc')),snap=>{printCosts=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
-onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc')),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
+// ═══ LISTENERS — unified orders collection ═══
+// كل الأوردرات من collection واحدة مع stage
+const handleOrdersSnap = snap=>{
+  const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // تصنيف حسب الـ stage
+  designOrders = all.filter(o=>o.stage==='design'||o.designStage==='approved');
+  printOrders  = all.filter(o=>o.stage==='printing');
+  // printItems: كل أوردر له سعر = item
+  printItems   = all.filter(o=>parseFloat(o.salePrice)>0).map(o=>({
+    orderId:o._id, salePrice:o.salePrice||0, paid:o.paid||0, remaining:o.remaining||0,
+    createdAt:o.createdAt, clientName:o.clientName
+  }));
+  // printCosts: من costItems
+  printCosts   = all.flatMap(o=>(o.costItems||[]).map(ci=>({
+    ...ci, orderId:o._id, totalCost:ci.total||0, createdAt:o.createdAt
+  })));
+  // allOrders للتقارير العامة
+  window._allOrders = all;
+  renderSection();
+};
+
+// محاولة مع index — fallback بدون orderBy
+onSnapshot(
+  query(collection(db,'orders'),orderBy('createdAt','desc')),
+  handleOrdersSnap,
+  _=>onSnapshot(collection(db,'orders'),snap=>{
+    snap={docs:snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))};
+    // restructure to match expected format
+    const all=snap.docs;
+    designOrders=all.filter(o=>o.stage==='design'||o.designStage==='approved');
+    printOrders=all.filter(o=>o.stage==='printing');
+    printItems=all.filter(o=>parseFloat(o.salePrice)>0).map(o=>({orderId:o._id,salePrice:o.salePrice||0,paid:o.paid||0,remaining:o.remaining||0,createdAt:o.createdAt,clientName:o.clientName}));
+    printCosts=all.flatMap(o=>(o.costItems||[]).map(ci=>({...ci,orderId:o._id,totalCost:ci.total||0,createdAt:o.createdAt})));
+    window._allOrders=all;renderSection();
+  })
+);
+onSnapshot(query(collection(db,'clients'),orderBy('name','asc')),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
 onSnapshot(query(collection(db,'users'),orderBy('name','asc')),snap=>{users=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
 onSnapshot(query(collection(db,'designers_v2'),orderBy('name','asc')),snap=>{designers=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
 onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));renderSection();});
@@ -241,13 +272,15 @@ function renderSection(){
 
 // ═══ OVERVIEW ═══
 function renderOverview(){
-  const dOrds=designOrders.filter(inRange);
-  const pOrds=printOrders.filter(inRange);
-  const oi=printItems.filter(i=>pOrds.find(o=>o._id===i.orderId));
-  const tot=oi.reduce((s,i)=>s+(i.salePrice||0),0);
-  const col=oi.reduce((s,i)=>s+(i.paid||0),0);
-  const rem=oi.reduce((s,i)=>s+(i.remaining||0),0);
-  const costs=printCosts.filter(inRange).reduce((s,c)=>s+(c.totalCost||0),0);
+  const all=window._allOrders||[];
+  const dOrds=all.filter(o=>o.stage==='design'||o.designStage).filter(inRange);
+  const pOrds=all.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).filter(inRange);
+  // حساب من كل الأوردرات اللي عندها سعر
+  const withPrice=all.filter(o=>parseFloat(o.salePrice)>0).filter(inRange);
+  const tot=withPrice.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const col=withPrice.reduce((s,o)=>s+(parseFloat(o.paid)||0),0);
+  const rem=withPrice.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const costs=all.flatMap(o=>o.costItems||[]).filter((_,i,arr)=>inRange(all[Math.floor(i/arr.length)]||{})||true).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const profit=tot-costs;
   const newClients=clients.filter(inRange).length;
   const approved=dOrds.filter(o=>o.status==='اعتمد').length;
@@ -299,12 +332,12 @@ function barRow(lbl,val,max,col){const pct=max>0?Math.min(val/max*100,100):0;ret
 // ═══ DESIGNERS ═══
 function renderDesigners(){
   const dOrds=designOrders.filter(inRange);
-  const allDesigners=[...new Set(dOrds.map(o=>o.designer).filter(Boolean)),...designers.map(d=>d.name)].filter((v,i,a)=>v&&a.indexOf(v)===i);
+  const allDesigners=[...new Set(dOrds.map(o=>o.designerName||o.designer).filter(Boolean)),...designers.map(d=>d.name)].filter((v,i,a)=>v&&a.indexOf(v)===i);
 
   if(!allDesigners.length){document.getElementById('section-content').innerHTML=`<div class="empty"><div class="empty-icon">✏️</div><div class="empty-text">لا يوجد مصممين</div></div>`;return;}
 
   const desStats=allDesigners.map((name,i)=>{
-    const orders=dOrds.filter(o=>o.designer===name);
+    const orders=dOrds.filter(o=>(o.designerName||o.designer)===name);
     const total=orders.length;
     const done=orders.filter(o=>o.status==='اعتمد').length;
     const rejected=orders.filter(o=>o.status==='رفض').length;
@@ -520,9 +553,9 @@ window.exportExcel=function(type){
   if(type==='designers'){
     filename='designer-performance.csv';
     rows=[['المصمم','الإجمالي','اعتمد','رفض','نسبة الرفض%','الالتزام%','متوسط الوقت','التقييم']];
-    const allDes=[...new Set(dOrds.map(o=>o.designer).filter(Boolean))];
+    const allDes=[...new Set(dOrds.map(o=>o.designerName||o.designer).filter(Boolean))];
     allDes.forEach(name=>{
-      const orders=dOrds.filter(o=>o.designer===name);
+      const orders=dOrds.filter(o=>(o.designerName||o.designer)===name);
       const total=orders.length;const done=orders.filter(o=>o.status==='اعتمد').length;
       const rejected=orders.filter(o=>o.status==='رفض').length;
       const rejRate=total>0?Math.round(rejected/total*100):0;
