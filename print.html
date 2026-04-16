@@ -181,12 +181,18 @@
     <div class="modal-body">
       <div id="ep-prod-name" style="font-size:15px;font-weight:800;margin-bottom:14px;color:var(--b)"></div>
 
-      <!-- السعر -->
-      <div class="fg">
-        <label>💲 إجمالي سعر هذا المنتج * <span id='ep-qty-hint' style='color:var(--dim2);font-weight:400;font-size:11px'></span></label>
-        <input class="inp" id="ep-price" type="number" placeholder="0" oninput="calcEpTotal()">
+      <!-- الكمية والسعر -->
+      <div class="g2">
+        <div class="fg">
+          <label>📦 الكمية</label>
+          <input class="inp" id="ep-qty" type="number" placeholder="1" min="1" oninput="calcEpTotal()">
+        </div>
+        <div class="fg">
+          <label>💲 إجمالي السعر (ج) *</label>
+          <input class="inp" id="ep-price" type="number" placeholder="0" oninput="calcEpTotal()">
+        </div>
       </div>
-      <div id="ep-total-preview" style="display:none;font-size:12px;color:var(--dim2);margin-bottom:12px"></div>
+      <div id="ep-total-preview" style="display:none;background:var(--bg3);border-radius:var(--rad);padding:8px 12px;margin-bottom:12px;font-size:12px"></div>
 
       <!-- الإضافات -->
       <div class="fg">
@@ -412,7 +418,10 @@ function renderPanel(o){
             </div>
           </div>
           <div class="prod-block-body">
-            ${price>0?`<div style="font-size:11px;color:var(--dim2);margin-bottom:6px">سعر الوحدة: ${fn(price)} ج × ${p.qty} = <strong style="color:var(--b)">${fn(total)} ج</strong></div>`:''}
+            ${price>0?`<div style="font-size:11px;color:var(--dim2);margin-bottom:6px">
+              الإجمالي: <strong style="color:var(--b)">${fn(price)} ج</strong>
+              ${parseInt(p.qty)>1?` = ${fn(Math.round(price/(parseInt(p.qty)||1)))} ج × ${p.qty} قطعة`:''}
+            </div>`:''}
             ${addons.length?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">${addons.map(a=>`<span class="addon-tag">${a}</span>`).join('')}</div>`:''}
             ${p.instructions?`<div style="background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.15);border-radius:var(--rad);padding:8px 10px;font-size:12px;line-height:1.6;margin-bottom:8px"><span style="font-size:10px;color:var(--y);font-weight:700">📋 تعليمات: </span>${p.instructions}</div>`:''}
             ${hasImg?`<img src="${p.designImageUrl}" class="img-thumb" onclick="window.open('${p.designImageUrl}','_blank')" style="cursor:zoom-in" alt="التصميم">`:'<div style="font-size:11px;color:var(--dim2)">لم تُرفع صورة التصميم</div>'}
@@ -456,7 +465,7 @@ function renderPanel(o){
       </div>
       ${sale>0?`<div class="pay-prog"><div class="pay-fill" style="width:${pct}%"></div></div>`:''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button class="btn btn-sm btn-b" onclick="openSetTotal()">💲 ${sale>0?'تعديل الإجمالي':'تحديد الإجمالي'}</button>
+        <button class="btn btn-sm btn-ghost" onclick="recalcTotal()" style="font-size:11px">🔄 إعادة حساب الإجمالي</button>
         ${sale>0&&!o.advancePaid?`<button class="btn btn-sm btn-y" onclick="openAdvance()">💵 تسجيل مقدم</button>`:''}
         ${sale>0&&o.advancePaid&&rem>0?`<button class="btn btn-sm btn-g" onclick="openCollect()">💰 تحصيل دفعة</button>`:''}
         ${sale>0&&rem>0&&!o.advancePaid?`<button class="btn btn-sm btn-g" onclick="openCollect()">💰 تحصيل دفعة</button>`:''}
@@ -620,7 +629,7 @@ window.openEditProd=function(idx){
   const p=(o.products||[])[idx];if(!p)return;
   document.getElementById('ep-title').textContent='✏️ '+p.name;
   document.getElementById('ep-prod-name').textContent=p.name+' × '+p.qty;
-  sv('ep-price',p.unitPrice||'');sv('ep-instructions',p.instructions||'');sv('ep-img-url',p.designImageUrl||'');
+  sv('ep-qty',p.qty||1);sv('ep-price',p.unitPrice||'');sv('ep-instructions',p.instructions||'');sv('ep-img-url',p.designImageUrl||'');
   // صورة موجودة
   const wrap=document.getElementById('ep-img-preview-wrap');
   if(p.designImageUrl){
@@ -657,15 +666,15 @@ window.addCustomAddon=function(){
 };
 window.calcEpTotal=function(){
   const price=parseFloat(gv('ep-price'))||0;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const p=(o.products||[])[editProdIdx];if(!p)return;
-  const qty=parseInt(p.qty)||1;
-  // تلميح: سعر القطعة
-  const hint=document.getElementById('ep-qty-hint');
-  if(hint)hint.textContent=qty>1?`(الكمية: ${qty} — سعر القطعة: ${price>0?fn(Math.round(price/qty))+' ج':'—'})`:``;
+  const qty=parseInt(gv('ep-qty'))||1;
   const prev=document.getElementById('ep-total-preview');
-  if(price>0){prev.style.display='block';prev.innerHTML=`إجمالي: <strong style="color:var(--b)">${fn(price)} ج</strong>${qty>1?` = ${fn(Math.round(price/qty))} ج × ${qty}`:''}  `;}
-  else prev.style.display='none';
+  if(price>0){
+    const perUnit=Math.round(price/qty);
+    prev.style.display='block';
+    prev.innerHTML=qty>1
+      ?`<span style="color:var(--b);font-weight:900">${fn(price)} ج</span> إجمالي = <span style="color:var(--dim2)">${fn(perUnit)} ج × ${qty} قطعة</span>`
+      :`<span style="color:var(--b);font-weight:900">${fn(price)} ج</span>`;
+  } else prev.style.display='none';
 };
 
 // رفع صورة التصميم
@@ -680,10 +689,11 @@ window.previewEpImg=function(inp){
 
 window.saveProductDetails=async function(){
   const price=parseFloat(gv('ep-price'))||0;
+  const newQty=parseInt(gv('ep-qty'))||1;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const prods=[...(o.products||[])];
   const p={...prods[editProdIdx]};
-  p.unitPrice=price;p.addons=[...tempAddons];p.instructions=gv('ep-instructions');
+  p.unitPrice=price;p.qty=newQty;p.addons=[...tempAddons];p.instructions=gv('ep-instructions');
   const imgInp=document.getElementById('ep-img-inp');
   if(imgInp.files[0]){
     toast('جاري رفع الصورة...','');
@@ -695,9 +705,12 @@ window.saveProductDetails=async function(){
   }
   prods[editProdIdx]=p;
   // إعادة حساب إجمالي الأوردر
-  const newTotal=prods.reduce((s,x)=>s+(parseFloat(x.unitPrice)||0)*(parseInt(x.qty)||1),0);
+  // الإجمالي = مجموع كل المنتجات تلقائياً
+  const newTotal=prods.reduce((s,x)=>s+(parseFloat(x.unitPrice)||0),0);
   const dep=parseFloat(o.deposit)||0;
-  const rem=Math.max(0,newTotal-dep);
+  const advAmt=parseFloat(o.advanceAmount)||0;
+  const totalPaid=(parseFloat(o.paid)||0);
+  const rem=Math.max(0,newTotal-totalPaid);
   try{
     await updateDoc(doc(db,'orders',activeId),{
       products:prods,
