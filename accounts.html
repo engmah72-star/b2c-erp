@@ -72,7 +72,7 @@
     </div>
     <div class="topbar-right">
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ تصدير</button>
-      <button class="btn btn-g" onclick="oM('new-tx')">＋ حركة مالية</button>
+      <button class="btn btn-g" onclick="oM('new-tx');setTimeout(updateTxCats,100)">＋ حركة مالية</button>
     </div>
   </div>
   <div class="content">
@@ -256,7 +256,7 @@ const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops 
 const WICO={wallet:'💳',cash:'💵',bank:'🏦'};
 const WNAME={wallet:'محفظة إلكترونية',cash:'كاش',bank:'بنك'};
 const WCOLS=['var(--g)','var(--b)','var(--p)','var(--c)','var(--y)','var(--r)','var(--o)'];
-const CAT={collection:'💰 تحصيل',supplier:'🏭 مورد',salary:'👤 مرتب',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',other:'📦 أخرى'};
+const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',other:'📦 أخرى'};
 const SPCOL={ورق:'var(--b)',زنكات:'var(--p)',طباعة:'var(--y)',قص:'var(--r)',سلفنة:'var(--g)',شحن:'var(--c)'};
 
 // ── Utils ──
@@ -267,6 +267,7 @@ const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
 window.oM=oM;
 const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
+window.cM=cM;
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const isThisMonth=ts=>{const d=ts?.toDate?.()||(ts?new Date(ts):null);if(!d)return false;const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
 
@@ -321,7 +322,11 @@ function startListeners(){
   // أوردرات الـ ERP الجديد — collection واحدة
   onSnapshot(collection(db,'orders'),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateKPIs(); renderSection();
+    // force update الـ KPIs بعد ما الأوردرات توصل
+    updateKPIs();
+    renderSection();
+    // تحديث الـ pending/earned مرة ثانية للتأكد
+    setTimeout(()=>updateKPIs(),500);
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}))
@@ -342,7 +347,7 @@ function startListeners(){
 
 // ══ SELECTS ══
 function fillSelects(){
-  const wOpts='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${WICO[w.type]||'💼'} ${w.name}</option>`).join('');
+  const wOpts='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${WICO[w.type]||'💼'} ${w.name} (${fn(w.balance)} ج)</option>`).join('');
   ['tx-wallet','ps-wallet'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=wOpts;});
   const sOpts='<option value="">— اختر المورد —</option>'+suppliers.map(s=>`<option value="${s._id}">${s.name} (${s.specialty||''})</option>`).join('');
   const psEl=document.getElementById('ps-sup');if(psEl)psEl.innerHTML=sOpts;
@@ -407,10 +412,11 @@ function updateKPIs(){
     return s+(o.costItems||[]).reduce((cs,ci)=>cs+(parseFloat(ci.total)||0),0);
   },0);
 
-  setText('kpi-pending',fn(pendTotal)+' ج');
-  setText('kpi-pending-count',pendCount+' طلب نشط');
-  setText('kpi-earned',fn(earnTotal)+' ج');
-  setText('kpi-earned-count',earnCount+' طلب مكتمل');
+  // دايماً عرض القيم (حتى لو 0)
+  document.getElementById('kpi-pending').textContent=fn(pendTotal)+' ج';
+  document.getElementById('kpi-pending-count').textContent=pendCount+' طلب نشط';
+  document.getElementById('kpi-earned').textContent=fn(earnTotal)+' ج';
+  document.getElementById('kpi-earned-count').textContent=earnCount+' طلب مكتمل';
 
   // ── ديون العملاء وشركات الشحن ──
   const debtEl=document.getElementById('kpi-client-debt');
