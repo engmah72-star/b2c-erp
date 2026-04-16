@@ -278,24 +278,16 @@ onAuthStateChanged(auth, async u=>{
 
 // ══ LISTENERS — بعد auth فقط ══
 function startListeners(){
-  onSnapshot(query(collection(db,'wallets'),orderBy('name','asc')),
+  onSnapshot(collection(db,'wallets'),
     snap=>{
-      wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      wallets=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
       fillSelects(); updateKPIs(); renderSection();
     },
     err=>{
-      // Firebase Rules ممكن تكون بتمنع الوصول
-      console.error('wallets error:',err.code, err.message);
-      const el=document.getElementById('section-content');
-      if(el) el.innerHTML=`<div class="empty">
-        <div class="empty-icon">🔒</div>
-        <div class="empty-text">تعذّر تحميل البيانات</div>
-        <div style="font-size:11px;color:var(--dim2);margin-top:8px;text-align:center">
-          ${err.code==='permission-denied'
-            ? 'Firebase Rules تمنع الوصول — يلزم تحديث الـ Rules<br><br><a href="https://console.firebase.google.com/project/business2card-c041b/firestore/rules" target="_blank" class="btn btn-g btn-sm" style="margin-top:8px">⚙️ افتح Firebase Rules</a>'
-            : 'خطأ: '+err.message}
-        </div>
-      </div>`;
+      console.error('wallets error:',err.code);
+      document.getElementById('section-content').innerHTML=
+        `<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">خطأ: ${err.message}</div></div>`;
     }
   );
   onSnapshot(collection(db,'transactions_v2'),snap=>{
@@ -308,16 +300,18 @@ function startListeners(){
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     updateKPIs(); renderSection();
   });
-  onSnapshot(query(collection(db,'suppliers_v2'),orderBy('name','asc')),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  onSnapshot(collection(db,'suppliers_v2'),snap=>{
+    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     fillSelects(); renderSection();
   });
   // print_costs_v2 replaced by costItems inside orders
-  onSnapshot(query(collection(db,'supplier_payments'),orderBy('createdAt','desc')),snap=>{
-    supplierPays=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  onSnapshot(collection(db,'supplier_payments'),snap=>{
+    supplierPays=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     updateKPIs(); renderSection();
   });
-  onSnapshot(query(collection(db,'users'),orderBy('name','asc')),snap=>{
+  onSnapshot(collection(db,'users'),snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));
     fillSelects(); renderSection();
   });
@@ -471,8 +465,27 @@ function renderWallets(){
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div style="font-size:12px;font-weight:700;color:var(--dim2)">الحسابات (${wallets.length})</div>
-      <button class="btn btn-g btn-xs" onclick="oM('new-wallet')">＋ حساب جديد</button>
+      <button class="btn btn-g btn-xs" onclick="document.getElementById('ov-new-wallet')?.classList.add('open')">＋ حساب جديد</button>
     </div>
+    <!-- ملخص الأوردرات السريع -->
+    ${(()=>{
+      const active=allOrders.filter(o=>o.stage!=='archived');
+      const totalRem=active.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+      const stages={design:0,printing:0,production:0,shipping:0};
+      active.forEach(o=>{if(stages[o.stage]!==undefined)stages[o.stage]++;});
+      return totalRem>0?`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.15);border-radius:var(--rad2);padding:12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;color:var(--dim2)">💳 باقي التحصيل من <strong style="color:var(--snow)">${active.length} أوردر نشط</strong></div>
+        <div style="font-size:20px;font-weight:900;color:var(--r)">${fn(totalRem)} ج</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px">
+        ${[['✏️','تصميم','design','var(--p)'],['🖨️','طباعة','printing','var(--b)'],['🏭','تنفيذ','production','var(--r)'],['🚚','شحن','shipping','var(--c)']].map(([ico,lbl,st,col])=>
+          `<a href="${st==='printing'?'print':st==='production'?'production':st}.html" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:8px;text-align:center;text-decoration:none;display:block;transition:var(--trans)" onmouseover="this.style.borderColor='${col}'" onmouseout="this.style.borderColor='var(--line)'">
+            <div style="font-size:16px">${ico}</div>
+            <div style="font-size:11px;color:var(--dim2)">${lbl}</div>
+            <div style="font-size:18px;font-weight:900;color:${col}">${stages[st]}</div>
+          </a>`).join('')}
+      </div>`:'';
+    })()}
     ${nonCash.length?`<div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.7px">💳 المحافظ الإلكترونية</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:20px">${renderCards(nonCash)}</div>`:''}
     ${cash.length?`<div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.7px">💵 الكاش</div>
