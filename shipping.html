@@ -79,7 +79,8 @@
     <div class="panel-head">
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:6px">
-        <button class="btn btn-g btn-sm" onclick="openDeliver()">✅ إنهاء وأرشفة</button>
+        <button class="btn btn-c btn-sm" onclick="openShipSetup()">🚚 تسجيل شحن</button>
+        <button class="btn btn-g btn-sm" onclick="openDeliver()">✅ أرشفة</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
     </div>
@@ -87,10 +88,71 @@
   </div>
 </div>
 
+<!-- MODAL: تسجيل عملية الشحن -->
+<div class="overlay" id="ov-ship-setup">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head"><span class="modal-title">🚚 تسجيل عملية الشحن</span><button class="modal-x" onclick="cM('ship-setup')">✕</button></div>
+    <div class="modal-body">
+
+      <!-- طريقة الاستلام -->
+      <div class="fg">
+        <label style="font-weight:700">طريقة الاستلام *</label>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+          <div class="ship-btn" id="ss-pickup" onclick="setSSMethod('pickup')"><div class="ship-btn-ico">🏠</div><div class="ship-btn-lbl">بالمحل</div></div>
+          <div class="ship-btn" id="ss-courier" onclick="setSSMethod('courier')"><div class="ship-btn-ico">🏍️</div><div class="ship-btn-lbl">مندوب</div></div>
+          <div class="ship-btn" id="ss-company" onclick="setSSMethod('company')"><div class="ship-btn-ico">📦</div><div class="ship-btn-lbl">شركة شحن</div></div>
+        </div>
+        <input type="hidden" id="ss-method">
+      </div>
+
+      <!-- تفاصيل الشحن -->
+      <div id="ss-details" style="display:none;background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-top:8px">
+        <div class="fg" style="margin-bottom:8px">
+          <label>شركة الشحن / المندوب</label>
+          <select class="inp" id="ss-company-sel" onchange="toggleSSother(this.value)">
+            <option value="">— اختر —</option>
+          </select>
+        </div>
+        <div id="ss-co-other" style="display:none" class="fg" style="margin-bottom:8px">
+          <label>اسم آخر</label>
+          <input class="inp" id="ss-co-name" placeholder="اسم المندوب أو الشركة...">
+        </div>
+        <div class="g2">
+          <div class="fg" style="margin-bottom:8px"><label>تكلفة الشحن (ج)</label><input class="inp" id="ss-cost" type="number" placeholder="0"></div>
+          <div class="fg" style="margin-bottom:8px"><label>المحافظة</label><input class="inp" id="ss-gov" placeholder="القاهرة..."></div>
+        </div>
+        <div class="fg" style="margin-bottom:0">
+          <label>عنوان التسليم الكامل</label>
+          <textarea class="inp" id="ss-address" placeholder="الشارع / البناية / الدور / الشقة..." style="min-height:50px"></textarea>
+        </div>
+      </div>
+
+      <!-- المرحلة بعد التسجيل -->
+      <div class="fg" style="margin-top:12px">
+        <label style="font-weight:700">حالة الأوردر بعد الشحن</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <div class="ship-btn active" id="ss-stage-wait_delivery" onclick="setSSStage('wait_delivery')">
+            <div class="ship-btn-ico">🚚</div><div class="ship-btn-lbl">انتظار تسليم</div>
+          </div>
+          <div class="ship-btn" id="ss-stage-wait_collection" onclick="setSSStage('wait_collection')">
+            <div class="ship-btn-ico">💰</div><div class="ship-btn-lbl">انتظار تحصيل</div>
+          </div>
+        </div>
+        <input type="hidden" id="ss-stage" value="wait_delivery">
+      </div>
+
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('ship-setup')">إلغاء</button>
+      <button class="btn btn-c" onclick="saveShipSetup()">🚚 تسجيل الشحن</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: تسليم وأرشفة -->
 <div class="overlay" id="ov-deliver">
   <div class="modal" style="max-width:540px">
-    <div class="modal-head"><span class="modal-title">✅ إنهاء الأوردر</span><button class="modal-x" onclick="cM('deliver')">✕</button></div>
+    <div class="modal-head"><span class="modal-title">✅ أرشفة الأوردر</span><button class="modal-x" onclick="cM('deliver')">✕</button></div>
     <div class="modal-body">
 
       <!-- المالية -->
@@ -361,18 +423,19 @@ window.openDeliver=function(){
   document.getElementById('del-finance').style.display=rem>0?'block':'none';
   if(rem>0){setText('df-sale',fn(o.salePrice)+' ج');setText('df-paid',fn(o.paid)+' ج');setText('df-rem',fn(rem)+' ج');setText('col-later-amt',fn(rem)+' ج');sv('del-amt',rem);}
   setColMode('now');setDebtType('client');setRating(0);
-  selMethod=o.shipMethod||'';
-  document.querySelectorAll('.ship-btn').forEach(b=>b.classList.remove('active'));
-  if(selMethod)document.getElementById('sm-'+selMethod)?.classList.add('active');
-  document.getElementById('col-now-btn').classList.add('active');
-  document.getElementById('del-method').value=selMethod;
-  document.getElementById('ship-details').style.display=selMethod&&selMethod!=='pickup'?'block':'none';
-  // ملء شركات الشحن
-  const coSel=document.getElementById('del-company');
-  coSel.innerHTML='<option value="">— اختر —</option>'+shippers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('')+'<option value="other">✏️ أخرى</option>';
-  coSel.value=o.shipCompany||'';
-  sv('del-co-name',o.shipCompanyName||'');toggleOtherCo(o.shipCompany||'');
-  sv('del-gov',o.shipGov||'');sv('del-address',o.shipAddress||'');sv('del-ship-cost',o.shipCost||'');
+  // عرض ملخص بيانات الشحن المسجّلة
+  const shipSummary=document.getElementById('del-ship-summary');
+  if(shipSummary){
+    const parts=[];
+    if(o.shipMethod)parts.push(METHOD_LABELS[o.shipMethod]||o.shipMethod);
+    if(o.shipCompanyName)parts.push('📦 '+o.shipCompanyName);
+    if(o.shipGov)parts.push('📍 '+o.shipGov);
+    if(o.shipAddress)parts.push(o.shipAddress);
+    if(o.shipCost>0)parts.push('تكلفة: '+fn(o.shipCost)+' ج');
+    shipSummary.innerHTML=parts.length
+      ?parts.map(p=>`<span style="margin-left:10px">${p}</span>`).join('')
+      :'<span style="color:var(--r)">⚠️ لم يُسجَّل بيانات الشحن بعد — اضغط "تسجيل شحن" أولاً</span>';
+  }
   sv('del-date',new Date().toISOString().split('T')[0]);sv('del-note','');
   document.getElementById('del-wid').value='';document.getElementById('del-wname').value='';
   document.getElementById('del-preview').style.display='none';
@@ -443,7 +506,7 @@ window.previewReviewImg=async function(inp){
 };
 
 window.saveDeliver=async function(){
-  const method=gv('del-method');if(!method)return toast('⚠️ اختر طريقة الاستلام','err');
+  const method=o.shipMethod||''; // من البيانات المحفوظة
   const rating=parseInt(gv('del-rating'))||0;
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
@@ -488,14 +551,9 @@ window.saveDeliver=async function(){
       const debtType=gv('debt-type')||'client';
       await addDoc(collection(db,'transactions_v2'),{type:'deferred',amount:newRem,description:debtType==='company'?`مستحق من ${shipCompanyName||'شركة الشحن'} — ${o.clientName||''}`:`دين على العميل — ${o.clientName||''} — ${o.orderId||''}`,category:debtType==='company'?'shipping_company_debt':'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompany,shipCompanyName,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
-    if(shipCost>0){
-      await addDoc(collection(db,'transactions_v2'),{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-    }
     await updateDoc(doc(db,'orders',activeId),{
       stage:'archived',paid,remaining:newRem,
       clientRating:rating,clientComment:gv('del-comment'),clientReviewUrl:reviewUrl,
-      shipMethod:method,shipCompany,shipCompanyName,
-      shipGov:gv('del-gov'),shipAddress:gv('del-address'),shipCost,
       deliveredAt:nowStr(),deliveredDate:gv('del-date'),deliveryNote:gv('del-note'),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:actionParts.join(' — '),by:userName}],
       updatedAt:serverTimestamp()
