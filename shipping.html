@@ -194,14 +194,46 @@
   </div>
 </div>
 
-<!-- MODAL: أرشفة — رأي العميل فقط -->
+<!-- MODAL: أرشفة — ملخص + رأي العميل -->
 <div class="overlay" id="ov-deliver">
-  <div class="modal" style="max-width:420px">
+  <div class="modal" style="max-width:460px">
     <div class="modal-head"><span class="modal-title">✅ أرشفة الأوردر</span><button class="modal-x" onclick="cM('deliver')">✕</button></div>
     <div class="modal-body">
-      <div id="del-ship-summary" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:10px 14px;margin-bottom:14px;font-size:12px"></div>
+
+      <!-- ملخص الأوردر -->
+      <div id="del-order-summary" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-size:15px;font-weight:800" id="del-client-name">—</div>
+            <a id="del-client-phone" href="#" style="font-size:13px;color:var(--b);font-weight:700;text-decoration:none">📞 —</a>
+          </div>
+          <div style="text-align:left">
+            <div style="font-size:10px;color:var(--dim2)">الباقي</div>
+            <div style="font-size:20px;font-weight:900;color:var(--r)" id="del-rem-big">—</div>
+          </div>
+        </div>
+        <div id="del-products-list" style="margin-bottom:10px"></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+          <div style="background:var(--bg4);border-radius:var(--rad);padding:6px;text-align:center">
+            <div style="font-size:9px;color:var(--dim2)">الإجمالي</div>
+            <div style="font-size:13px;font-weight:900;color:var(--b)" id="del-sale-sm">—</div>
+          </div>
+          <div style="background:var(--bg4);border-radius:var(--rad);padding:6px;text-align:center">
+            <div style="font-size:9px;color:var(--dim2)">محصّل</div>
+            <div style="font-size:13px;font-weight:900;color:var(--g)" id="del-paid-sm">—</div>
+          </div>
+          <div style="background:${rem>0?'rgba(255,61,110,.1)':'var(--bg4)'};border-radius:var(--rad);padding:6px;text-align:center">
+            <div style="font-size:9px;color:var(--dim2)">باقي</div>
+            <div style="font-size:13px;font-weight:900;color:var(--r)" id="del-rem-sm">—</div>
+          </div>
+        </div>
+        <!-- بيانات الشحن -->
+        <div id="del-ship-summary" style="margin-top:8px;font-size:11px;color:var(--dim2);padding-top:8px;border-top:1px solid var(--line)"></div>
+      </div>
+
+      <!-- رأي العميل -->
       <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:14px">
-        <div style="font-size:12px;font-weight:700;color:var(--p);margin-bottom:12px">⭐ رأي العميل (مطلوب)</div>
+        <div style="font-size:12px;font-weight:700;color:var(--p);margin-bottom:12px">⭐ رأي العميل (مطلوب للأرشفة)</div>
         <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:12px">
           <div class="ship-btn" id="rate-1" onclick="setRating(1)"><div style="font-size:22px">😞</div><div style="font-size:10px">ضعيف</div></div>
           <div class="ship-btn" id="rate-2" onclick="setRating(2)"><div style="font-size:22px">😐</div><div style="font-size:10px">مقبول</div></div>
@@ -430,34 +462,41 @@ window.setShipStage=async function(stage){
 window.openDeliver=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const rem=parseFloat(o.remaining)||0;
-  document.getElementById('del-finance').style.display=rem>0?'block':'none';
-  if(rem>0){setText('df-sale',fn(o.salePrice)+' ج');setText('df-paid',fn(o.paid)+' ج');setText('df-rem',fn(rem)+' ج');setText('col-later-amt',fn(rem)+' ج');sv('del-amt',rem);}
-  setColMode('now');setDebtType('client');setRating(0);
-  // عرض ملخص بيانات الشحن المسجّلة
-  const shipSummary=document.getElementById('del-ship-summary');
-  if(shipSummary){
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.paid)||0;
+  // ملخص الأوردر
+  setText('del-client-name',o.clientName||'—');
+  const ph=document.getElementById('del-client-phone');
+  if(ph){ph.textContent='📞 '+(o.clientPhone||'—');ph.href='tel:'+(o.clientPhone||'');}
+  setText('del-rem-big',rem>0?fn(rem)+' ج':'✅ مكتمل');
+  const remBig=document.getElementById('del-rem-big');
+  if(remBig)remBig.style.color=rem>0?'var(--r)':'var(--g)';
+  setText('del-sale-sm',fn(sale)+' ج');
+  setText('del-paid-sm',fn(paid)+' ج');
+  setText('del-rem-sm',fn(rem)+' ج');
+  // المنتجات
+  const prods=o.products||[];
+  const prodEl=document.getElementById('del-products-list');
+  if(prodEl)prodEl.innerHTML=prods.length
+    ?prods.map(p=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="font-weight:700">${p.name}</span><span style="color:var(--dim2)">×${p.qty} — <strong style="color:var(--b)">${fn(p.unitPrice||0)} ج</strong></span></div>`).join('')
+    :`<div style="font-size:12px;color:var(--dim2)">${o.product||'—'}</div>`;
+  // بيانات الشحن
+  const shipEl=document.getElementById('del-ship-summary');
+  if(shipEl){
     const parts=[];
     if(o.shipMethod)parts.push(METHOD_LABELS[o.shipMethod]||o.shipMethod);
     if(o.shipCompanyName)parts.push('📦 '+o.shipCompanyName);
     if(o.shipGov)parts.push('📍 '+o.shipGov);
-    if(o.shipAddress)parts.push(o.shipAddress);
     if(o.shipCost>0)parts.push('تكلفة: '+fn(o.shipCost)+' ج');
-    shipSummary.innerHTML=parts.length
-      ?parts.map(p=>`<span style="margin-left:10px">${p}</span>`).join('')
-      :'<span style="color:var(--r)">⚠️ لم يُسجَّل بيانات الشحن بعد — اضغط "تسجيل شحن" أولاً</span>';
+    shipEl.innerHTML=parts.length?parts.join(' · '):'⚠️ لم يُسجَّل بيانات الشحن';
   }
-  sv('del-date',new Date().toISOString().split('T')[0]);sv('del-note','');
-  document.getElementById('del-wid').value='';document.getElementById('del-wname').value='';
-  document.getElementById('del-preview').style.display='none';
-  document.getElementById('del-review-img').value='';
-  document.getElementById('del-review-url').value='';
-  document.getElementById('del-review-preview').innerHTML=`<div style="font-size:24px;margin-bottom:6px">📸</div><div style="font-size:12px;color:var(--dim2)">اضغط لرفع اسكرين شوت رأي العميل</div>`;
-  document.getElementById('del-wallets').innerHTML=wallets.map(w=>`
-    <div class="w-btn" id="dw-${w._id}" onclick="selDelW('${w._id}','${(w.name||'').replace(/'/g,"\\'")}')">
-      <div style="font-size:20px">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'}</div>
-      <div style="font-size:11px;font-weight:700;margin-top:3px">${w.name}</div>
-      <div style="font-size:10px;color:var(--dim2)">${fn(w.balance)} ج</div>
-    </div>`).join('');
+  // رأي العميل — reset
+  setRating(0);
+  sv('del-comment','');
+  const ri=document.getElementById('del-review-img');if(ri)ri.value='';
+  sv('del-review-url','');
+  const rp=document.getElementById('del-review-preview');
+  if(rp)rp.innerHTML='<div style="font-size:24px;margin-bottom:6px">📸</div><div style="font-size:12px;color:var(--dim2)">اضغط لرفع الصورة</div>';
   oM('deliver');
 };
 
@@ -516,40 +555,32 @@ window.previewReviewImg=async function(inp){
 };
 
 window.saveDeliver=async function(){
-  const method=o.shipMethod||''; // من البيانات المحفوظة
   const rating=parseInt(gv('del-rating'))||0;
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const paid=parseFloat(o.paid)||0;
   const newRem=parseFloat(o.remaining)||0;
-  // شركة الشحن
-  const coCel=document.getElementById('del-company');
-  const coOpt=coCel?.options[coCel.selectedIndex];
-  const shipCompany=gv('del-company');
-  const shipCompanyName=shipCompany==='other'?gv('del-co-name'):coOpt?.dataset?.name||shipCompany;
-  const shipCost=parseFloat(gv('del-ship-cost'))||0;
+  const shipCompany=o.shipCompany||'';
+  const shipCompanyName=o.shipCompanyName||'';
+  const shipCost=parseFloat(o.shipCost)||0;
   // رفع صورة رأي العميل
   let reviewUrl='';
   const reviewInp=document.getElementById('del-review-img');
-  if(reviewInp.files[0]){
+  if(reviewInp?.files[0]){
     try{
       const storageRef=ref(storage,`reviews/${activeId}_${Date.now()}`);
       await uploadBytes(storageRef,reviewInp.files[0]);
       reviewUrl=await getDownloadURL(storageRef);
     }catch(e){toast('⚠️ تعذر رفع الصورة','warn');}
   }
-  const actionParts=[`✅ أُرشف — ${METHOD_LABELS[method]}`];
-  if(shipCompanyName&&method!=='pickup')actionParts.push(shipCompanyName);
-  if(collectAmt>0)actionParts.push(`محصّل ${fn(collectAmt)} ج`);
-  if(colMode==='later'&&newRem>0)actionParts.push(`⏳ باقي ${fn(newRem)} ج`);
-  actionParts.push(`⭐ ${rating}/5`);
   try{
-    // التحصيل يتم من زرار التحصيل السريع أو من تسجيل الشحن
     await updateDoc(doc(db,'orders',activeId),{
       stage:'archived',paid,remaining:newRem,
-      clientRating:rating,clientComment:gv('del-comment'),clientReviewUrl:reviewUrl,
-      deliveredAt:nowStr(),deliveredDate:gv('del-date'),deliveryNote:gv('del-note'),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:actionParts.join(' — '),by:userName}],
+      clientRating:rating,
+      clientComment:gv('del-comment'),
+      clientReviewUrl:reviewUrl,
+      deliveredAt:nowStr(),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ أُرشف — تقييم ${rating}/5 ⭐`,by:userName}],
       updatedAt:serverTimestamp()
     });
     cM('deliver');closePanel();
