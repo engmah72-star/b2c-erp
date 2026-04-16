@@ -188,6 +188,9 @@ const QUICK_LINKS=[
 ];
 
 let allOrders=[],clients=[],wallets=[],transactions=[];
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const delay=dl=>{if(!dl)return 0;const d=new Date(dl);const now=new Date();return d<now?Math.floor((now-d)/(864e5)):0;};
+const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 let currentRole='admin';
 
 // DATE GREETING
@@ -233,96 +236,92 @@ onSnapshot(collection(db,'orders'),snap=>{
 });
 onSnapshot(collection(db,'clients'),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));updateKPIs();});
 onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));renderFinSnap();});
-onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));renderFinSnap();});
+onSnapshot(collection(db,'transactions_v2'),snap=>{transactions=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));renderFinSnap();});
 
 // KPIs
 function updateKPIs(){
   const monthStart=new Date();monthStart.setDate(1);monthStart.setHours(0,0,0,0);
-  const monthItems=allOrders.filter(i=>{const o=printOrders.find(o=>o._id===i.orderId);return o?.createdAt?.toDate?.()>=monthStart;});
-  const revenue=monthItems.reduce((s,i)=>s+(i.salePrice||0),0);
   const active=allOrders.filter(o=>o.stage!=='archived');
+  const archived=allOrders.filter(o=>o.stage==='archived');
+  const monthOrders=allOrders.filter(o=>(o.createdAt?.toDate?.())>=monthStart);
+  const revenue=monthOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   const remaining=active.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
-  const totalRev=allOrders.filter(o=>o.stage==='archived').reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   setText('k-clients',clients.length);
-  setText('k-design',designOrders.filter(o=>!['اعتمد','ملغي'].includes(o.status)).length);
-  setText('k-print',printOrders.filter(o=>o.status==='طباعة').length);
+  setText('k-design',allOrders.filter(o=>o.stage==='design').length);
+  setText('k-print',allOrders.filter(o=>o.stage==='printing').length);
   setText('k-revenue',fn(revenue)+' ج');
   setText('k-remaining',fn(remaining)+' ج');
 }
 
 // PIPELINE
 function renderPipeline(){
-  const inDesign=designOrders.filter(o=>['جاري التصميم','في المراجعة'].includes(o.status));
-  const inProd=printOrders.filter(o=>o.prodStatus==='in_production');
-  const inPrint=printOrders.filter(o=>o.status==='طباعة');
-  const inShip=shipments.filter(s=>s.status!=='تم التسليم');
-  const done=shipments.filter(s=>s.status==='تم التسليم');
-  const lateDesign=inDesign.filter(o=>calcDelay(o.expectedDate)>0).length;
-  const latePrint=inPrint.filter(o=>calcDelay(o.expectedDate)>0).length;
-  const lateShip=inShip.filter(s=>calcDelay(s.expectedDelivery)>0).length;
-  setText('p-design',inDesign.length);
-  setText('p-prod',inProd.length);
-  setText('p-print',inPrint.length);
-  setText('p-ship',inShip.length);
-  setText('p-done',done.length);
-  const dl=document.getElementById('p-design-late');if(dl)dl.textContent=lateDesign>0?`⚠️ ${lateDesign} متأخر`:'';
-  const pl=document.getElementById('p-print-late');if(pl)pl.textContent=latePrint>0?`⚠️ ${latePrint} متأخر`:'';
-  const sl=document.getElementById('p-ship-late');if(sl)sl.textContent=lateShip>0?`⚠️ ${lateShip} متأخر`:'';
+  const stageMap={design:0,printing:0,production:0,shipping:0,archived:0};
+  allOrders.forEach(o=>{if(stageMap[o.stage]!==undefined)stageMap[o.stage]++;});
+  const total=allOrders.length;
+  const renderBar=(stage,lbl,ico,col)=>{
+    const n=stageMap[stage]||0;const pct=total>0?Math.round(n/total*100):0;
+    return`<div style="text-align:center;cursor:pointer" onclick="location.href='${stage==='printing'?'print':stage==='design'?'design':stage}.html'">
+      <div style="font-size:20px;margin-bottom:4px">${ico}</div>
+      <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">${lbl}</div>
+      <div style="height:60px;background:var(--bg3);border-radius:8px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:4px;overflow:hidden">
+        <div style="width:100%;background:${col};border-radius:8px;transition:.5s" height="${pct}%" style="height:${Math.max(pct,5)}%"></div>
+      </div>
+      <div style="font-size:18px;font-weight:900;color:${col}">${n}</div>
+    </div>`;
+  };
+  const el=document.getElementById('pipeline-bars');
+  if(el)el.innerHTML=`
+    ${renderBar('design','تصميم','✏️','var(--p)')}
+    <div style="font-size:18px;color:var(--dim2);align-self:center">→</div>
+    ${renderBar('printing','طباعة','🖨️','var(--b)')}
+    <div style="font-size:18px;color:var(--dim2);align-self:center">→</div>
+    ${renderBar('production','تنفيذ','🏭','var(--r)')}
+    <div style="font-size:18px;color:var(--dim2);align-self:center">→</div>
+    ${renderBar('shipping','شحن','🚚','var(--c)')}
+    <div style="font-size:18px;color:var(--dim2);align-self:center">→</div>
+    ${renderBar('archived','مكتمل','✅','var(--g)')}`;
 }
+
 
 // ALERTS
 function renderAlerts(){
+  const el=document.getElementById('alerts-list');if(!el)return;
   const alerts=[];
-  // late design
-  designOrders.filter(o=>!['اعتمد','ملغي','رفض'].includes(o.status)&&calcDelay(o.expectedDate)>0).forEach(o=>{
-    alerts.push({ico:'✏️',title:`تصميم متأخر — ${o.clientName||'—'}`,desc:`تأخير ${calcDelay(o.expectedDate)} يوم · ${o.designer||'بدون مصمم'}`,href:'design.html',col:'var(--p)'});
+  const active=allOrders.filter(o=>o.stage!=='archived');
+  // أوردرات متأخرة
+  active.filter(o=>o.deadline&&delay(o.deadline)>0).slice(0,5).forEach(o=>{
+    alerts.push({ico:'⏰',title:`متأخر — ${o.clientName||'—'}`,desc:`${delay(o.deadline)} يوم تأخير — ${stageAr(o.stage)}`,href:`${stageHref(o.stage)}.html`,col:'var(--r)'});
   });
-  // late print
-  printOrders.filter(o=>o.status==='طباعة'&&calcDelay(o.expectedDate)>0).forEach(o=>{
-    alerts.push({ico:'🖨️',title:`طباعة متأخرة — ${o.clientName||'—'}`,desc:`تأخير ${calcDelay(o.expectedDate)} يوم`,href:'print.html',col:'var(--y)'});
+  // باقي تحصيل كبير
+  active.filter(o=>(parseFloat(o.remaining)||0)>500).slice(0,3).forEach(o=>{
+    alerts.push({ico:'💰',title:`باقي — ${o.clientName||'—'}`,desc:`${fn(o.remaining)} ج — ${stageAr(o.stage)}`,href:`${stageHref(o.stage)}.html`,col:'var(--y)'});
   });
-  // remaining collection
-  const bigRem=allOrders.filter(i=>(i.remaining||0)>500);
-  bigRem.slice(0,3).forEach(i=>{
-    const o=printOrders.find(x=>x._id===i.orderId);
-    alerts.push({ico:'💰',title:`باقي تحصيل — ${o?.clientName||'—'}`,desc:`${fn(i.remaining)} ج.م`,href:'print.html',col:'var(--r)'});
-  });
-  // late shipments
-  shipments.filter(s=>s.status!=='تم التسليم'&&calcDelay(s.expectedDelivery)>0).forEach(s=>{
-    alerts.push({ico:'🚚',title:`شحنة متأخرة — ${s.client||'—'}`,desc:`تأخير ${calcDelay(s.expectedDelivery)} يوم`,href:'shipping.html',col:'var(--c)'});
-  });
-
-  const el=document.getElementById('alerts-list');
-  if(!alerts.length){el.innerHTML=`<div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.15);border-radius:var(--rad2);padding:16px;text-align:center;color:var(--g);font-weight:700">✅ كل حاجة تمام — لا توجد تنبيهات</div>`;return;}
-  el.innerHTML=alerts.slice(0,6).map(a=>`
-    <div class="alert-card" onclick="location.href='${a.href}'">
-      <div class="alert-ico">${a.ico}</div>
-      <div>
-        <div class="alert-title">${a.title}</div>
-        <div class="alert-desc">${a.desc}</div>
-      </div>
-      <span style="color:var(--dim2);margin-right:auto">←</span>
-    </div>`).join('');
+  if(!alerts.length){el.innerHTML='<div style="font-size:12px;color:var(--dim2);text-align:center;padding:16px">✅ لا توجد تنبيهات</div>';return;}
+  el.innerHTML=alerts.map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--rad);background:var(--bg3);margin-bottom:6px;cursor:pointer" onclick="location.href='${a.href}'">
+    <div style="font-size:18px">${a.ico}</div>
+    <div style="flex:1"><div style="font-size:12px;font-weight:700;color:${a.col}">${a.title}</div><div style="font-size:11px;color:var(--dim2)">${a.desc}</div></div>
+  </div>`).join('');
 }
+
+function stageAr(s){return{design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'}[s]||s;}
+function stageHref(s){return{printing:'print',production:'production',design:'design',shipping:'shipping'}[s]||s;}
+
 
 // ACTIVE ORDERS
 function renderActiveOrders(){
-  const active=[
-    ...designOrders.filter(o=>['جاري التصميم','في المراجعة'].includes(o.status)).slice(0,4).map(o=>({type:'design',name:o.clientName||'—',status:o.status,col:'var(--p)',ico:'✏️',href:'design.html'})),
-    ...printOrders.filter(o=>o.status==='طباعة').slice(0,4).map(o=>({type:'print',name:o.clientName||'—',status:'طباعة',col:'var(--y)',ico:'🖨️',href:'print.html'})),
-    ...shipments.filter(s=>s.status!=='تم التسليم').slice(0,3).map(s=>({type:'ship',name:s.client||'—',status:'في الطريق',col:'var(--c)',ico:'🚚',href:'shipping.html'})),
-  ];
-  const el=document.getElementById('active-orders');
-  if(!el)return;
-  const recent=allOrders.filter(o=>o.stage!=='archived').sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,8);
-  if(!recent.length){el.innerHTML='<div style="color:var(--dim2);font-size:12px;padding:12px">لا توجد أوردرات نشطة</div>';return;}
-  const stageAr={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن'};
+  const el=document.getElementById('active-orders');if(!el)return;
+  const recent=allOrders.filter(o=>o.stage!=='archived')
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,8);
+  if(!recent.length){el.innerHTML='<div style="color:var(--dim2);font-size:12px;padding:12px 16px">لا توجد أوردرات نشطة</div>';return;}
   el.innerHTML=recent.map(o=>{
-    const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;
-    return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="location.href='${o.stage==='design'?'design':o.stage==='printing'?'print':o.stage==='production'?'production':'shipping'}.html'">
-      <div><div style="font-size:13px;font-weight:700">${o.clientName||'—'}</div><div style="font-size:11px;color:var(--dim2)">${o.product||''}</div></div>
+    const rem=parseFloat(o.remaining)||0;
+    return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="location.href='${stageHref(o.stage)}.html'">
+      <div>
+        <div style="font-size:13px;font-weight:700">${o.clientName||'—'}</div>
+        <div style="font-size:11px;color:var(--dim2)">${o.product||o.orderId||'—'}</div>
+      </div>
       <div style="text-align:left">
-        <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--bg4)">${stageAr[o.stage]||o.stage}</span>
+        <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--bg4)">${stageAr(o.stage)}</span>
         ${rem>0?`<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">${fn(rem)} ج</div>`:''}
       </div>
     </div>`;
@@ -332,7 +331,7 @@ function renderActiveOrders(){
 // FINANCIAL SNAPSHOT
 function renderFinSnap(){
   const totalBal=wallets.reduce((s,w)=>s+(w.balance||0),0);
-  const totalRem=printItems.reduce((s,i)=>s+(i.remaining||0),0);
+  const totalRem=allOrders.filter(o=>o.stage!=='archived').reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
   const monthStart=new Date();monthStart.setDate(1);
   const monthTx=transactions.filter(t=>t.createdAt?.toDate?.()>=monthStart);
   const monthIn=monthTx.filter(t=>t.type==='in').reduce((s,t)=>s+(t.amount||0),0);
