@@ -86,19 +86,37 @@
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">🏭</div><div class="stat-val" id="kpi-sup-due">—</div><div class="stat-lbl">مستحق للموردين</div></div>
     </div>
 
-    <!-- إيرادات معلقة ومكتسبة -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+    <!-- إيرادات معلقة ومكتسبة + مديونيات -->
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px">
       <div class="rev-card" style="--rc:var(--y)">
         <div class="rev-title">⏳ إيرادات معلقة</div>
         <div class="rev-val" id="kpi-pending">—</div>
-        <div class="rev-sub">عربون دُفع — لم يُستلم المنتج بعد</div>
-        <div class="rev-pill" style="background:rgba(255,170,0,.12);color:var(--y)" id="kpi-pending-count">— طلب</div>
+        <div class="rev-sub">محصّل من أوردرات لم تُسلَّم بعد</div>
+        <div class="rev-pill" style="background:rgba(255,170,0,.12);color:var(--y)" id="kpi-pending-count">— طلب نشط</div>
       </div>
       <div class="rev-card" style="--rc:var(--g)">
         <div class="rev-title">✅ إيرادات مكتسبة</div>
         <div class="rev-val" id="kpi-earned">—</div>
-        <div class="rev-sub">تم التسليم وتحصّل المبلغ كاملاً</div>
-        <div class="rev-pill" style="background:rgba(0,217,126,.12);color:var(--g)" id="kpi-earned-count">— طلب</div>
+        <div class="rev-sub">أوردرات أُرشفت ومكتملة</div>
+        <div class="rev-pill" style="background:rgba(0,217,126,.12);color:var(--g)" id="kpi-earned-count">— طلب مكتمل</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+      <div class="rev-card" style="--rc:var(--r)">
+        <div class="rev-title">💳 باقي التحصيل</div>
+        <div class="rev-val" style="color:var(--r)" id="kpi-rem-total">—</div>
+        <div class="rev-sub">إجمالي المبالغ الباقية على العملاء</div>
+      </div>
+      <div class="rev-card" style="--rc:var(--b)">
+        <div class="rev-title">📦 مستحق من شركات الشحن</div>
+        <div class="rev-val" style="color:var(--b)" id="kpi-ship-debt">—</div>
+        <div class="rev-sub">شركات الشحن حصّلت ولم ترجع</div>
+        <button class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b);border:none;cursor:pointer" onclick="switchSec(document.querySelector('[onclick*=pending]'),'pending')">عرض التفاصيل</button>
+      </div>
+      <div class="rev-card" style="--rc:var(--r)">
+        <div class="rev-title">👤 ديون على العملاء</div>
+        <div class="rev-val" style="color:var(--r)" id="kpi-client-debt">—</div>
+        <div class="rev-sub">مؤجّل — لم يدفعوا عند التسليم</div>
       </div>
     </div>
 
@@ -106,6 +124,7 @@
     <div class="sec-tabs" style="margin-bottom:16px">
       <button class="stab on"  onclick="switchSec(this,'wallets')">💼 الحسابات</button>
       <button class="stab"     onclick="switchSec(this,'pending')">⏳ المعلق</button>
+      <button class="stab"     onclick="switchSec(this,'shipping_debts')">📦 ديون الشحن</button>
       <button class="stab"     onclick="switchSec(this,'transactions')">📋 الحركات</button>
       <button class="stab"     onclick="switchSec(this,'suppliers')">🏭 الموردين</button>
     </div>
@@ -279,8 +298,9 @@ function startListeners(){
       </div>`;
     }
   );
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc')),snap=>{
-    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  onSnapshot(collection(db,'transactions_v2'),snap=>{
+    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     updateKPIs(); renderSection();
   });
   // أوردرات الـ ERP الجديد — collection واحدة
@@ -392,10 +412,11 @@ window.switchSec=function(btn,sec){
 };
 
 function renderSection(){
-  if(currentSection==='wallets')      renderWallets();
-  else if(currentSection==='pending') renderPending();
-  else if(currentSection==='transactions') renderTransactions();
-  else if(currentSection==='suppliers')    renderSuppliers();
+  if(currentSection==='wallets')          renderWallets();
+  else if(currentSection==='pending')     renderPending();
+  else if(currentSection==='shipping_debts') renderShippingDebts();
+  else if(currentSection==='transactions')   renderTransactions();
+  else if(currentSection==='suppliers')      renderSuppliers();
 }
 
 // ── محافظ ──
@@ -512,6 +533,46 @@ function renderPending(){
 }
 
 // ── حركات ──
+function renderShippingDebts(){
+  const el=document.getElementById('section-content');if(!el)return;
+  const shipDebts=transactions.filter(t=>t.category==='shipping_company_debt');
+  const clientDebts=transactions.filter(t=>t.category==='deferred_collection');
+  const totalShip=shipDebts.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const totalClient=clientDebts.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+      <div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad2);padding:14px;text-align:center">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">📦 مستحق من شركات الشحن</div>
+        <div style="font-size:24px;font-weight:900;color:var(--b)">${fn(totalShip)} ج</div>
+      </div>
+      <div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad2);padding:14px;text-align:center">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">👤 ديون على العملاء</div>
+        <div style="font-size:24px;font-weight:900;color:var(--r)">${fn(totalClient)} ج</div>
+      </div>
+    </div>
+    ${shipDebts.length?`
+      <div style="font-size:13px;font-weight:800;margin-bottom:10px;color:var(--b)">📦 مستحق من شركات الشحن</div>
+      ${shipDebts.map(t=>`<div style="background:var(--bg2);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad2);padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:14px;font-weight:800">${t.shipCompanyName||'شركة شحن'}</div>
+          <div style="font-size:11px;color:var(--dim2)">${t.clientName||'—'} · ${t.date||''}</div>
+          <div style="font-size:11px;color:var(--dim2)">${t.description||''}</div>
+        </div>
+        <div style="font-size:20px;font-weight:900;color:var(--b)">${fn(t.amount)} ج</div>
+      </div>`).join('')}`:'<div style="text-align:center;padding:20px;color:var(--dim2)">لا توجد ديون على شركات الشحن</div>'}
+    ${clientDebts.length?`
+      <div style="font-size:13px;font-weight:800;margin:16px 0 10px;color:var(--r)">👤 ديون على العملاء</div>
+      ${clientDebts.map(t=>`<div style="background:var(--bg2);border:1px solid rgba(255,61,110,.15);border-radius:var(--rad2);padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:14px;font-weight:800">${t.clientName||'—'}</div>
+          <div style="font-size:11px;color:var(--dim2)">${t.date||''}</div>
+          <div style="font-size:11px;color:var(--b)">${t.clientPhone?'📞 '+t.clientPhone:''}</div>
+        </div>
+        <div style="font-size:20px;font-weight:900;color:var(--r)">${fn(t.amount)} ج</div>
+      </div>`).join('')}`:''}
+  `;
+}
+
 function renderTransactions(){
   const el=document.getElementById('section-content');if(!el)return;
   if(!transactions.length){
