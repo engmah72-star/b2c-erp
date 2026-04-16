@@ -144,28 +144,50 @@
 
 <!-- MODAL: حركة مالية -->
 <div class="overlay" id="ov-new-tx">
-  <div class="modal">
+  <div class="modal" style="max-width:480px">
     <div class="modal-head"><span class="modal-title">＋ حركة مالية</span><button class="modal-x" onclick="cM('new-tx')">✕</button></div>
     <div class="modal-body">
       <div class="g2">
-        <div class="fg"><label>النوع *</label><select class="inp" id="tx-type"><option value="in">📥 دخل</option><option value="out">📤 خرج</option></select></div>
+        <div class="fg"><label>النوع *</label>
+          <select class="inp" id="tx-type" onchange="updateTxCats()">
+            <option value="in">📥 دخل</option>
+            <option value="out">📤 خرج</option>
+          </select>
+        </div>
         <div class="fg"><label>المحفظة *</label><select class="inp" id="tx-wallet"></select></div>
       </div>
       <div class="g2">
         <div class="fg"><label>المبلغ *</label><input class="inp" id="tx-amount" type="number" placeholder="0"></div>
         <div class="fg"><label>التصنيف</label>
-          <select class="inp" id="tx-cat">
-            <option value="other">📦 أخرى</option>
-            <option value="collection">💰 تحصيل</option>
-            <option value="supplier">🏭 دفع مورد</option>
-            <option value="salary">👤 مرتب</option>
+          <select class="inp" id="tx-cat" onchange="updateTxRelated()">
+            <option value="collection">💰 تحصيل من عميل</option>
+            <option value="advance">💵 مقدم تنفيذ</option>
+            <option value="supplier">🏭 دفع لمورد</option>
+            <option value="salary">👤 مرتب موظف</option>
+            <option value="designer_fee">🎨 أتعاب مصمم</option>
+            <option value="shipping_cost">🚚 تكلفة شحن</option>
             <option value="marketing">📣 تسويق</option>
             <option value="rent">🏢 إيجار</option>
-            <option value="delivery">🚚 شحن</option>
+            <option value="other">📦 أخرى</option>
           </select>
         </div>
       </div>
-      <div class="fg"><label>الوصف</label><input class="inp" id="tx-desc" placeholder="وصف الحركة..."></div>
+      <!-- ربط بعميل / مورد / موظف / مصمم -->
+      <div id="tx-related-section" style="display:none;background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
+        <div id="tx-client-row" style="display:none" class="fg" style="margin-bottom:0">
+          <label style="font-size:11px;color:var(--dim2)">العميل</label>
+          <input class="inp" id="tx-client-name" placeholder="اسم العميل...">
+        </div>
+        <div id="tx-supplier-row" style="display:none" class="fg" style="margin-bottom:0">
+          <label style="font-size:11px;color:var(--dim2)">المورد</label>
+          <select class="inp" id="tx-supplier-sel"><option value="">— اختر المورد —</option></select>
+        </div>
+        <div id="tx-employee-row" style="display:none" class="fg" style="margin-bottom:0">
+          <label style="font-size:11px;color:var(--dim2)">الموظف / المصمم</label>
+          <select class="inp" id="tx-employee-sel"><option value="">— اختر —</option></select>
+        </div>
+      </div>
+      <div class="fg"><label>الوصف / الملاحظة</label><input class="inp" id="tx-desc" placeholder="وصف الحركة..."></div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('new-tx')">إلغاء</button><button class="btn btn-g" onclick="saveTx()">✓ تسجيل</button></div>
   </div>
@@ -243,6 +265,7 @@ const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
+window.oM=oM;
 const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const isThisMonth=ts=>{const d=ts?.toDate?.()||(ts?new Date(ts):null);if(!d)return false;const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
@@ -356,12 +379,20 @@ function updateKPIs(){
     const sale=parseFloat(o.salePrice)||0;
     const paid=parseFloat(o.paid)||0;
     const rem=parseFloat(o.remaining)||0;
-    if(paid>0||sale>0){pendTotal+=paid;pendCount++;remTotal+=rem;}
+    if(sale>0||paid>0){
+      pendTotal+=paid;   // المعلق = كل ما تم تحصيله في أوردر لسه ما اتسلمش
+      pendCount++;
+      remTotal+=rem;
+    }
   });
   archivedOrders.forEach(o=>{
     const sale=parseFloat(o.salePrice)||0;
-    if(sale>0){earnTotal+=sale;earnCount++;}
-    remTotal+=parseFloat(o.remaining)||0; // دين مؤجل بعد الأرشفة
+    const paid=parseFloat(o.paid)||0;
+    if(sale>0){
+      earnTotal+=sale;   // المكتسب = إجمالي الأوردرات المكتملة
+      earnCount++;
+    }
+    remTotal+=parseFloat(o.remaining)||0;
   });
 
   // مديونيات شركات الشحن
@@ -677,7 +708,45 @@ window.openWallet=function(id){
 window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeWalletId=null;};
 
 // ══ ACTIONS ══
-window.prepTx=function(walletId,type){sv('tx-wallet',walletId);sv('tx-type',type);sv('tx-amount','');sv('tx-desc','');oM('new-tx');};
+// ── تحديث modal الحركة حسب التصنيف ──
+window.updateTxCats=function(){
+  const type=document.getElementById('tx-type')?.value;
+  const cat=document.getElementById('tx-cat');
+  if(!cat)return;
+  if(type==='in'){
+    cat.innerHTML=`<option value="collection">💰 تحصيل من عميل</option><option value="advance">💵 مقدم تنفيذ</option><option value="other">📦 أخرى</option>`;
+  } else {
+    cat.innerHTML=`<option value="supplier">🏭 دفع لمورد</option><option value="salary">👤 مرتب موظف</option><option value="designer_fee">🎨 أتعاب مصمم</option><option value="shipping_cost">🚚 تكلفة شحن</option><option value="marketing">📣 تسويق</option><option value="rent">🏢 إيجار</option><option value="other">📦 أخرى</option>`;
+  }
+  updateTxRelated();
+};
+
+window.updateTxRelated=function(){
+  const cat=document.getElementById('tx-cat')?.value;
+  const sec=document.getElementById('tx-related-section');
+  const clientRow=document.getElementById('tx-client-row');
+  const supplierRow=document.getElementById('tx-supplier-row');
+  const employeeRow=document.getElementById('tx-employee-row');
+  if(!sec)return;
+  // إخفاء كل الـ rows
+  [clientRow,supplierRow,employeeRow].forEach(r=>{if(r)r.style.display='none';});
+  if(['collection','advance'].includes(cat)){
+    sec.style.display='block';clientRow.style.display='block';
+  } else if(['supplier','shipping_cost'].includes(cat)){
+    sec.style.display='block';supplierRow.style.display='block';
+    // ملء الموردين
+    const sel=document.getElementById('tx-supplier-sel');
+    if(sel)sel.innerHTML='<option value="">— اختر المورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('');
+  } else if(['salary','designer_fee'].includes(cat)){
+    sec.style.display='block';employeeRow.style.display='block';
+    const sel=document.getElementById('tx-employee-sel');
+    if(sel)sel.innerHTML='<option value="">— اختر —</option>'+users.map(u=>`<option value="${u._id}">${u.name||u.email}</option>`).join('');
+  } else {
+    sec.style.display='none';
+  }
+};
+
+window.prepTx=function(walletId,type){sv('tx-wallet',walletId);sv('tx-type',type);sv('tx-amount','');sv('tx-desc','');updateTxCats();oM('new-tx');};
 
 window.saveTx=async function(){
   const walletId=gv('tx-wallet'),type=gv('tx-type'),amount=parseFloat(gv('tx-amount'))||0,desc=gv('tx-desc'),cat=gv('tx-cat');
@@ -689,7 +758,15 @@ window.saveTx=async function(){
   if(type==='out'&&balAfter<0)return toast('⚠️ الرصيد غير كافٍ','err');
   try{
     await updateDoc(doc(db,'wallets',walletId),{balance:balAfter});
-    await addDoc(collection(db,'transactions_v2'),{walletId,type,amount,fees:0,description:desc||CAT[cat]||'حركة مالية',category:cat,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
+    // بيانات الربط
+    const clientName=document.getElementById('tx-client-name')?.value||'';
+    const supSel=document.getElementById('tx-supplier-sel');const supOpt=supSel?.options[supSel?.selectedIndex];
+    const supplierName=supOpt?.dataset?.name||supOpt?.text||'';
+    const empSel=document.getElementById('tx-employee-sel');const empOpt=empSel?.options[empSel?.selectedIndex];
+    const employeeName=empOpt?.text||'';
+    const relatedName=clientName||supplierName||employeeName||'';
+    const fullDesc=(desc||(CAT[cat]||'حركة مالية'))+(relatedName?' — '+relatedName:'');
+    await addDoc(collection(db,'transactions_v2'),{walletId,type,amount,fees:0,description:fullDesc,category:cat,clientName,supplierName,employeeName,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
     cM('new-tx');toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
