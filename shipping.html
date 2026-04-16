@@ -562,6 +562,96 @@ window.saveDeliver=async function(){
     toast(`✅ تم الأرشفة — تقييم ${rating}/5 ⭐`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
+
+// ══ تسجيل عملية الشحن ══
+let ssMethod='';let ssStage='wait_delivery';
+
+window.openShipSetup=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  ssMethod=o.shipMethod||'';
+  ssStage=o.shipStage==='ready'?'wait_delivery':o.shipStage||'wait_delivery';
+  // reset buttons
+  ['ss-pickup','ss-courier','ss-company'].forEach(id=>document.getElementById(id)?.classList.remove('active'));
+  if(ssMethod)document.getElementById('ss-'+ssMethod)?.classList.add('active');
+  document.getElementById('ss-method').value=ssMethod;
+  document.getElementById('ss-details').style.display=ssMethod&&ssMethod!=='pickup'?'block':'none';
+  // ملء شركات الشحن
+  const coSel=document.getElementById('ss-company-sel');
+  if(coSel){
+    coSel.innerHTML='<option value="">— اختر —</option>'+
+      shippers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'')}">${s.name||''}</option>`).join('')+
+      '<option value="other">✏️ أخرى</option>';
+    coSel.value=o.shipCompany||'';
+  }
+  sv('ss-co-name',o.shipCompanyName||'');
+  toggleSSother(o.shipCompany||'');
+  sv('ss-gov',o.shipGov||'');
+  sv('ss-address',o.shipAddress||'');
+  sv('ss-cost',o.shipCost||'');
+  // مرحلة الشحن الافتراضية
+  document.getElementById('ss-stage-wait_delivery')?.classList.toggle('active',ssStage==='wait_delivery');
+  document.getElementById('ss-stage-wait_collection')?.classList.toggle('active',ssStage==='wait_collection');
+  document.getElementById('ss-stage').value=ssStage;
+  document.getElementById('ov-ship-setup').classList.add('open');
+};
+
+window.setSSMethod=function(method){
+  ssMethod=method;
+  document.getElementById('ss-method').value=method;
+  ['ss-pickup','ss-courier','ss-company'].forEach(id=>document.getElementById(id)?.classList.remove('active'));
+  document.getElementById('ss-'+method)?.classList.add('active');
+  document.getElementById('ss-details').style.display=method!=='pickup'?'block':'none';
+};
+
+window.setSSStage=function(stage){
+  ssStage=stage;
+  document.getElementById('ss-stage').value=stage;
+  document.getElementById('ss-stage-wait_delivery')?.classList.toggle('active',stage==='wait_delivery');
+  document.getElementById('ss-stage-wait_collection')?.classList.toggle('active',stage==='wait_collection');
+};
+
+window.toggleSSother=function(val){
+  const el=document.getElementById('ss-co-other');
+  if(el)el.style.display=val==='other'?'block':'none';
+};
+
+window.saveShipSetup=async function(){
+  const method=gv('ss-method');
+  if(!method)return toast('⚠️ اختر طريقة الاستلام','err');
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const coSel=document.getElementById('ss-company-sel');
+  const coVal=coSel?.value||'';
+  const coOpt=coSel?.options[coSel.selectedIndex];
+  const shipCompanyName=coVal==='other'?gv('ss-co-name'):(coOpt?.dataset?.name||coOpt?.text||coVal);
+  const shipCost=parseFloat(gv('ss-cost'))||0;
+  const stage=gv('ss-stage')||'wait_delivery';
+  const stageLabels={wait_delivery:'🚚 انتظار تسليم',wait_collection:'💰 انتظار تحصيل'};
+  const actionParts=[`📦 شحن — ${METHOD_LABELS[method]}`];
+  if(shipCompanyName&&method!=='pickup')actionParts.push(shipCompanyName);
+  if(shipCost>0)actionParts.push(`تكلفة ${fn(shipCost)} ج`);
+  actionParts.push(stageLabels[stage]);
+  try{
+    if(shipCost>0){
+      await addDoc(collection(db,'transactions_v2'),{
+        type:'out',amount:shipCost,
+        description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,
+        category:'shipping_cost',orderId:activeId,
+        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+    }
+    await updateDoc(doc(db,'orders',activeId),{
+      shipStage:stage,shipMethod:method,
+      shipCompany:coVal,shipCompanyName,
+      shipGov:gv('ss-gov'),shipAddress:gv('ss-address'),shipCost,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:actionParts.join(' — '),by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    document.getElementById('ov-ship-setup').classList.remove('open');
+    toast(`✅ تم تسجيل الشحن — ${stageLabels[stage]}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 </script>
 </body>
 </html>
