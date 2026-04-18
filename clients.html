@@ -306,7 +306,7 @@ const EGYPT = {
 // ═══════════════════
 // STATE
 // ═══════════════════
-let clients      = [];
+let clients      = [], allOrders = [];
 let designOrders = [];
 let printOrders  = [];
 let printItems   = [];
@@ -375,6 +375,13 @@ onSnapshot(query(collection(db,'clients'), orderBy('createdAt','desc')), snap=>{
   clients = snap.docs.map(d=>({...d.data(),_id:d.id}));
   renderGrid(); updateStats();
   if(activeId) renderPanel(activeId);
+});
+onSnapshot(collection(db,'orders'), snap=>{
+  allOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  updateStats();
+  if(document.getElementById('panel-ov')?.classList.contains('open') && window._activeClientId){
+    renderPanel(window._activeClientId);
+  }
 });
 onSnapshot(query(collection(db,'design_orders'), orderBy('createdAt','desc')), snap=>{
   designOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -602,7 +609,7 @@ function renderPanel(id){
           🖨️ أوردر طباعة
         </button>
       </div>
-      <div id="panel-orders-container"></div>
+      <div id="panel-orders-list"></div>
     </div>
 
 </div>
@@ -613,7 +620,6 @@ function renderPanel(id){
       <button class="btn btn-danger btn-sm" onclick="deleteClientConfirm('${id}','${c.name}')">🗑 حذف العميل</button>
     </div>
   `;
-  renderClientOrders(clientOrders);
 }
 
 function infoRow(l,v){
@@ -884,32 +890,49 @@ function renderListView(data){
 }
 
 
-window.renderClientOrders=function(clientOrders){
-  const el=document.getElementById('panel-orders-container');
-  if(!el)return;
-  if(!clientOrders.length){
-    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:16px">لا توجد أوردرات بعد</div>';
+window.renderClientOrders = function(orders){
+  const el = document.getElementById('panel-orders-list');
+  if(!el) return;
+  if(!orders||!orders.length){
+    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد أوردرات</div>';
     return;
   }
   const SA={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',archived:'✅ مكتمل'};
   const SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
-  const sorted=clientOrders.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
   let html='';
-  for(const o of sorted){
+  for(const o of orders){
     const sa=SA[o.stage]||o.stage;
-    const sh=(SH[o.stage]||'index')+'.html';
+    const href=(SH[o.stage]||'index')+'.html';
     const rem=parseFloat(o.remaining)||0;
-    const pname=o.product||(o.products||[]).map(p=>p.name).join(' + ')||'—';
-    const oid=o.orderId||o._id.slice(-6);
-    html+='<div onclick="location.href=\"'+sh+'\"" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer">';
-    html+='<div style="display:flex;justify-content:space-between;align-items:center">';
-    html+='<div><div style="font-size:11px;color:var(--dim2)">'+oid+'</div>';
-    html+='<div style="font-size:13px;font-weight:700">'+pname+'</div></div>';
+    const name=o.product||(o.products||[]).map(p=>p.name).join(' + ')||'—';
+    html+='<div onclick="location.href=\"'+href+'\"" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+    html+='<div><div style="font-size:11px;color:var(--dim2)">'+(o.orderId||'—')+'</div>';
+    html+='<div style="font-size:13px;font-weight:700">'+name+'</div></div>';
     html+='<div style="text-align:left"><span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--bg4)">'+sa+'</span>';
     if(rem>0)html+='<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">'+rem.toLocaleString('ar-EG')+' ج</div>';
-    html+='</div></div></div>';
+    html+='</div></div>';
   }
   el.innerHTML=html;
+};
+
+window.newOrderForClient = async function(clientId, stage){
+  const cl=clients.find(x=>x._id===clientId);if(!cl)return;
+  const orderId='ORD-'+Date.now().toString().slice(-8);
+  const nowFull=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+  try{
+    await addDoc(collection(db,'orders'),{
+      orderId, clientId,
+      clientName:cl.name||'', clientPhone:cl.phone1||'',
+      stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
+      createdDate:new Date().toLocaleDateString('ar-EG'),
+      createdBy:currentUser?.uid||'', createdByName:userName||'',
+      timeline:[{date:nowFull, action:'📋 طلب جديد', by:userName||''}],
+      createdAt:serverTimestamp(), updatedAt:serverTimestamp()
+    });
+    const href=stage==='design'?'design.html':'print.html';
+    alert('✅ تم إنشاء الأوردر');
+    window.location.href=href;
+  }catch(e){alert('❌ '+e.message);}
 };
 
 </script>
