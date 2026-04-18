@@ -270,6 +270,8 @@ const app = initializeApp({
 });
 const auth = getAuth(app);
 const db   = getFirestore(app);
+window._erp_db = db;
+
 
 // ═══════════════════
 // EGYPT REGIONS
@@ -357,8 +359,6 @@ function loadTags(tags){resetTags();if(!tags)return;(typeof tags==='string'?tags
 onAuthStateChanged(auth, async u => {
   if(!u){ window.location.href='login.html'; return; }
   currentUser = u;
-  window.currentUser = u;
-  window.userName = userName;
   const snap = await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
     const d = snap.data();
@@ -377,7 +377,7 @@ onAuthStateChanged(auth, async u => {
 // ═══════════════════
 onSnapshot(query(collection(db,'clients'), orderBy('createdAt','desc')), snap=>{
   clients = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  window.clients = clients;
+  window._erp_clients = clients;
   renderGrid(); updateStats();
   if(activeId) renderPanel(activeId);
 });
@@ -395,8 +395,9 @@ onSnapshot(query(collection(db,'print_items_v2'), orderBy('createdAt','asc')), s
 });
 onSnapshot(collection(db,'orders'), snap=>{
   allOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  window.allOrders = allOrders;
+  window._erp_allOrders = allOrders;
 });
+window._erp_db = null;
 onSnapshot(doc(db,'settings','main'), snap=>{
   if(snap.exists()) settings = snap.data();
   fillSelects(); fillFilters();
@@ -611,6 +612,7 @@ function renderPanel(id){
           🖨️ أوردر طباعة
         </button>
       </div>
+      <div id="erp-ord-list"></div>
     </div>
 
 </div>
@@ -621,7 +623,7 @@ function renderPanel(id){
       <button class="btn btn-danger btn-sm" onclick="deleteClientConfirm('${id}','${c.name}')">🗑 حذف العميل</button>
     </div>
   `;
-  setTimeout(function(){window.renderOrders(id, clientOrders);}, 10);
+  setTimeout(function(){window._showOrders(id,clientOrders);},10);
 }
 
 function infoRow(l,v){
@@ -892,65 +894,58 @@ function renderListView(data){
 }
 
 
-window.renderOrders = function(clientId, orders){
-  var el = document.getElementById('cord-'+clientId);
+window._showOrders = function(cid, orders){
+  var el = document.getElementById('erp-ord-list');
   if(!el) return;
-  if(!orders || !orders.length){
-    el.innerHTML = '<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد أوردرات بعد</div>';
+  if(!orders||!orders.length){
+    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد أوردرات بعد</div>';
     return;
   }
-  var SA = {design:'تصميم', printing:'طباعة', production:'تنفيذ', shipping:'شحن', archived:'مكتمل'};
-  var SH = {design:'design', printing:'print', production:'production', shipping:'shipping', archived:'archive'};
-  var sorted = orders.slice().sort(function(a,b){return (b.createdAt&&b.createdAt.seconds||0)-(a.createdAt&&a.createdAt.seconds||0);});
-  var html = '';
+  var SA={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'مكتمل'};
+  var SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
+  var sorted=orders.slice().sort(function(a,b){
+    return ((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);
+  });
+  var html='';
   for(var i=0;i<sorted.length;i++){
-    var o = sorted[i];
-    var sa = SA[o.stage] || o.stage;
-    var href = (SH[o.stage]||'index') + '.html';
-    var rem = parseFloat(o.remaining) || 0;
-    var name = o.product || ((o.products||[]).map(function(p){return p.name;}).join(' + ')) || '---';
-    var oid = o.orderId || o._id.slice(-6);
-    html += '<div onclick="location.href=\'' + href + '\'" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
-    html += '<div><div style="font-size:10px;color:var(--dim2)">' + oid + '</div><div style="font-size:13px;font-weight:700">' + name + '</div></div>';
-    html += '<div style="text-align:left"><span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--bg3)">' + sa + '</span>';
-    if(rem > 0) html += '<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">' + rem.toLocaleString('ar-EG') + ' ج</div>';
-    html += '</div></div>';
+    var o=sorted[i];
+    var href=(SH[o.stage]||'index')+'.html';
+    var rem=parseFloat(o.remaining)||0;
+    var nm=o.product||((o.products||[]).map(function(p){return p.name;}).join(' + '))||'---';
+    html+='<div onclick="location.href=\"'+href+'\"" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+    html+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||o._id.slice(-6))+'</div>';
+    html+='<div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
+    html+='<div style="text-align:left"><span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
+    if(rem>0)html+='<div style="font-size:11px;color:var(--r);font-weight:700">'+rem.toLocaleString('ar-EG')+' ج</div>';
+    html+='</div></div>';
   }
-  el.innerHTML = html;
+  el.innerHTML=html;
 };
 
-window.newOrder = async function(clientId, stage){
-  var cl = window.clients && window.clients.find(function(x){return x._id===clientId;});
-  if(!cl){ alert('لم يعثر على العميل'); return; }
-  var cu = window.currentUser;
-  if(!cu){ alert('يلزم تسجيل الدخول'); return; }
-  var uname = window.userName || '';
-  var orderId = 'ORD-' + Date.now().toString().slice(-8);
-  var now = new Date().toLocaleDateString('ar-EG') + ' ' + new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  // إظهار loading
-  var btn = event && event.target;
-  if(btn){ btn.disabled=true; btn.textContent='جاري الإنشاء...'; }
-  try{
-    var {addDoc, collection, serverTimestamp} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    var {initializeApp,getApps} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-    var {getFirestore} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    var app = getApps()[0];
-    var db2 = getFirestore(app);
-    await addDoc(collection(db2,'orders'),{
-      orderId: orderId, clientId: clientId,
-      clientName: cl.name||'', clientPhone: cl.phone1||'',
-      stage: stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
-      createdDate: new Date().toLocaleDateString('ar-EG'),
-      createdBy: cu.uid, createdByName: uname,
-      timeline:[{date:now, action:'📋 طلب جديد', by:uname}],
-      createdAt: serverTimestamp(), updatedAt: serverTimestamp()
-    });
-    var href = stage==='design' ? 'design.html' : 'print.html';
-    window.location.href = href;
-  }catch(e){
-    if(btn){ btn.disabled=false; btn.textContent=stage==='design'?'✏️ تصميم جديد':'🖨️ طباعة جديدة'; }
-    alert('خطأ: '+e.message);
-  }
+window._newOrder = function(clientId, stage){
+  var db = window._erp_db;
+  var user = window._erp_user;
+  var uname = window._erp_userName || '';
+  var cls = window._erp_clients || [];
+  var cl = cls.find(function(x){return x._id===clientId;});
+  if(!cl){alert('لم يعثر على العميل');return;}
+  if(!user){alert('يلزم تسجيل الدخول');return;}
+  if(!db){alert('خطأ في الاتصال');return;}
+  var orderId='ORD-'+Date.now().toString().slice(-8);
+  var now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+  import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js").then(function(fs){
+    fs.addDoc(fs.collection(db,'orders'),{
+      orderId:orderId, clientId:clientId,
+      clientName:cl.name||'', clientPhone:cl.phone1||'',
+      stage:stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
+      createdDate:new Date().toLocaleDateString('ar-EG'),
+      createdBy:user.uid, createdByName:uname,
+      timeline:[{date:now,action:'طلب جديد',by:uname}],
+      createdAt:fs.serverTimestamp(), updatedAt:fs.serverTimestamp()
+    }).then(function(){
+      window.location.href = stage==='design'?'design.html':'print.html';
+    }).catch(function(e){alert('خطأ: '+e.message);});
+  });
 };
 
 </script>
