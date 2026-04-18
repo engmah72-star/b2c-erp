@@ -281,6 +281,19 @@
       </div>
       <div class="fg"><label>المبلغ المحصّل *</label><input class="inp" id="qc-amt" type="number" placeholder="0" oninput="qcPreview()"></div>
       <div id="qc-preview" style="display:none;font-size:12px;padding:8px;border-radius:var(--rad);margin-bottom:10px"></div>
+      <!-- من أين جاءت الفلوس؟ -->
+      <div id="qc-source-row" style="display:none;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:8px;font-weight:700">الفلوس جت من:</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="ship-btn active" id="qcs-client" onclick="setQCSource('client')">
+            <div class="ship-btn-ico">👤</div><div class="ship-btn-lbl">العميل دفع</div>
+          </div>
+          <div class="ship-btn" id="qcs-company" onclick="setQCSource('company')">
+            <div class="ship-btn-ico">📦</div><div class="ship-btn-lbl">شركة الشحن دفعت</div>
+          </div>
+        </div>
+        <input type="hidden" id="qc-debt-source" value="client">
+      </div>
       <div class="fg">
         <label>طريقة الدفع *</label>
         <div id="qc-wallets" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
@@ -303,7 +316,7 @@
 <script type="module">
 import { initializeApp }    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp }
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp, getDocs, deleteDoc }
        from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL }
        from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -774,6 +787,11 @@ window.saveShipSetup=async function(){
 
 
 // ══ تحصيل سريع من بطاقة الأوردر ══
+window.setQCSource=function(src){
+  document.getElementById('qc-debt-source').value=src;
+  document.getElementById('qcs-client').classList.toggle('active',src==='client');
+  document.getElementById('qcs-company').classList.toggle('active',src==='company');
+};
 window.openQuickCollect=function(id){
   activeId=id;
   const o=orders.find(x=>x._id===id);if(!o)return;
@@ -783,6 +801,15 @@ window.openQuickCollect=function(id){
   sv('qc-amt',o.remaining);
   document.getElementById('qc-preview').style.display='none';
   document.getElementById('qc-wid').value='';document.getElementById('qc-wname').value='';
+  // هل في دين مسجّل على شركة الشحن لهذا الأوردر؟
+  const hasShipDebt=transactions.some(t=>t.orderId===id&&t.category==='shipping_company_debt');
+  const hasClientDebt=transactions.some(t=>t.orderId===id&&t.category==='deferred_collection');
+  const sourceRow=document.getElementById('qc-source-row');
+  if(sourceRow){
+    sourceRow.style.display=(hasShipDebt||hasClientDebt)?'block':'none';
+    // اختر تلقائياً حسب نوع الدين
+    setQCSource(hasShipDebt?'company':'client');
+  }
   document.getElementById('qc-wallets').innerHTML=wallets.map(w=>`
     <div class="w-btn" id="qw-${w._id}" onclick="selQCW('${w._id}','${(w.name||'').replace(/'/g,"\'")}')">
       <div style="font-size:18px">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'}</div>
@@ -815,24 +842,41 @@ window.saveQuickCollect=async function(){
   const paid=(parseFloat(o.paid)||0)+amt;
   const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
   const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
+  const debtSource=gv('qc-debt-source')||'client'; // من أين جاءت الفلوس
   try{
+    // 1. تحديث المحفظة
     if(w)await updateDoc(doc(db,'wallets',wId),{balance:bb+amt});
+    // 2. تسجيل الدخل
     await addDoc(collection(db,'transactions_v2'),{
       walletId:wId,type:'in',amount:amt,
-      description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,
+      description:`تحصيل ${debtSource==='company'?'من شركة الشحن':'من عميل'} — ${o.clientName||''} — ${o.orderId||''}`,
       category:'collection',orderId:activeId,clientName:o.clientName,
+      debtSource,shipCompanyName:o.shipCompanyName||'',
       balanceBefore:bb,balanceAfter:bb+amt,
       date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()
     });
-    const newStage=newRem===0?'collected':(o.shipStage||'wait_collection');
+    // 3. إغلاق الديون المرتبطة بهذا الأوردر
+    const debtCat=debtSource==='company'?'shipping_company_debt':'deferred_collection';
+    const debtSnap=await getDocs(query(collection(db,'transactions_v2'),
+      where('orderId','==',activeId),
+      where('category','==',debtCat)
+    ));
+    for(const d of debtSnap.docs){
+      await deleteDoc(doc(db,'transactions_v2',d.id));
+    }
+    // 4. تحديث الأوردر
     await updateDoc(doc(db,'orders',activeId),{
       paid,remaining:newRem,
       shipStage:newRem===0?'collected':o.shipStage,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج عبر ${wName} — باقي: ${fn(newRem)} ج`,by:userName}],
+      timeline:[...(o.timeline||[]),{
+        date:nowStr(),
+        action:`💰 تحصيل ${fn(amt)} ج عبر ${wName}${debtSource==='company'?' (من شركة الشحن)':''} — باقي: ${fn(newRem)} ج`,
+        by:userName
+      }],
       updatedAt:serverTimestamp()
     });
     document.getElementById('ov-quick-collect').classList.remove('open');
-    toast(`✅ تحصيل ${fn(amt)} ج — ${newRem===0?'مكتمل ✅':'باقي '+fn(newRem)+' ج'}`,'ok');
+    toast(`✅ تحصيل ${fn(amt)} ج${debtSource==='company'?' من شركة الشحن':''} — ${newRem===0?'مكتمل ✅':'باقي '+fn(newRem)+' ج'}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
