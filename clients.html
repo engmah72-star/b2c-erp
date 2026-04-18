@@ -269,9 +269,7 @@ const app = initializeApp({
   appId:"1:235622448899:web:d8652ff71082f7d003f336"
 });
 const auth = getAuth(app);
-const db   = getFirestore(app);
-window._erp_db = db;
-
+const db=getFirestore(app); window.__db=db;
 
 // ═══════════════════
 // EGYPT REGIONS
@@ -314,9 +312,7 @@ let printOrders  = [];
 let printItems   = [];
 let settings     = {};
 let editId       = null;
-let activeId     = null;
-let allOrders    = [];
-let userName     = '';
+let activeId=null, allOrders=[], userName='';
 let currentUser  = null;
 let currentRole  = 'customer_service';
 
@@ -376,8 +372,7 @@ onAuthStateChanged(auth, async u => {
 // LISTENERS
 // ═══════════════════
 onSnapshot(query(collection(db,'clients'), orderBy('createdAt','desc')), snap=>{
-  clients = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  window._erp_clients = clients;
+  clients=snap.docs.map(d=>({...d.data(),_id:d.id})); window.__clients=clients;
   renderGrid(); updateStats();
   if(activeId) renderPanel(activeId);
 });
@@ -393,11 +388,7 @@ onSnapshot(query(collection(db,'print_items_v2'), orderBy('createdAt','asc')), s
   printItems = snap.docs.map(d=>({...d.data(),_id:d.id}));
   if(activeId) renderPanel(activeId);
 });
-onSnapshot(collection(db,'orders'), snap=>{
-  allOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  window._erp_allOrders = allOrders;
-});
-window._erp_db = null;
+onSnapshot(collection(db,'orders'),snap=>{allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 onSnapshot(doc(db,'settings','main'), snap=>{
   if(snap.exists()) settings = snap.data();
   fillSelects(); fillFilters();
@@ -612,7 +603,7 @@ function renderPanel(id){
           🖨️ أوردر طباعة
         </button>
       </div>
-      <div id="erp-ord-list"></div>
+      
     </div>
 
 </div>
@@ -623,7 +614,7 @@ function renderPanel(id){
       <button class="btn btn-danger btn-sm" onclick="deleteClientConfirm('${id}','${c.name}')">🗑 حذف العميل</button>
     </div>
   `;
-  setTimeout(function(){window._showOrders(id,clientOrders);},10);
+  doShowOrders(id,clientOrders);
 }
 
 function infoRow(l,v){
@@ -830,32 +821,24 @@ function fn(n){return(n||0).toLocaleString('ar-EG');}
       navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
   
-window.newOrderForClient=function(clientId,stage){
-  var allCl=window._erp_clients;
-  if(!allCl||!allCl.length){alert('البيانات لم تُحمَّل بعد، انتظر ثانية وحاول مجدداً');return;}
-  var cl=allCl.find(function(x){return x._id===clientId;});
-  if(!cl){alert('لم يُعثر على العميل');return;}
-  var u=window._erp_user;
-  if(!u){alert('يلزم تسجيل الدخول');return;}
-  var db=window._erp_db;
-  if(!db){alert('خطأ في الاتصال بقاعدة البيانات');return;}
-  var uname=window._erp_userName||'';
-  var oid='ORD-'+Date.now().toString().slice(-8);
-  var now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js').then(function(fs){
-    fs.addDoc(fs.collection(db,'orders'),{
-      orderId:oid,clientId:clientId,
+window.newOrderForClient=async function(clientId,stage){
+  const cl=clients.find(x=>x._id===clientId);if(!cl)return;
+  const orderId='ORD-'+Date.now().toString().slice(-8);
+  const nowFull=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+  try{
+    await addDoc(collection(db,'orders'),{
+      orderId,clientId,
       clientName:cl.name||'',clientPhone:cl.phone1||'',
-      stage:stage,products:[],salePrice:0,paid:0,remaining:0,deposit:0,
+      stage,products:[],salePrice:0,paid:0,remaining:0,deposit:0,
       createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:u.uid,createdByName:uname,
-      timeline:[{date:now,action:'طلب جديد',by:uname}],
-      createdAt:fs.serverTimestamp(),updatedAt:fs.serverTimestamp()
-    }).then(function(){
-      window.location.href=stage==='design'?'design.html':'print.html';
-    }).catch(function(e){alert('خطأ: '+e.message);});
-  });
-};
+      createdBy:currentUser?.uid||'',createdByName:userName||'',
+      timeline:[{date:nowFull,action:`📋 طلب جديد — ${stage==='design'?'تصميم':'طباعة'}`,by:userName||''}],
+      createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+    });
+    const href=stage==='design'?'design.html':'print.html';
+    toast('✅ تم إنشاء الأوردر','ok');
+    setTimeout(()=>window.location.href=href,800);
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 let viewMode='cards'; // cards | list
@@ -902,59 +885,47 @@ function renderListView(data){
 }
 
 
-window._showOrders = function(cid, orders){
-  var el = document.getElementById('erp-ord-list');
-  if(!el) return;
-  if(!orders||!orders.length){
-    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد أوردرات بعد</div>';
-    return;
-  }
+function doShowOrders(cid,orders){
+  var el=document.getElementById('ol-'+cid);
+  if(!el)return;
+  if(!orders||!orders.length){el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:8px">لا توجد أوردرات</div>';return;}
   var SA={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'مكتمل'};
   var SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
-  var sorted=orders.slice().sort(function(a,b){
-    return ((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);
-  });
-  var html='';
-  for(var i=0;i<sorted.length;i++){
-    var o=sorted[i];
-    var href=(SH[o.stage]||'index')+'.html';
-    var rem=parseFloat(o.remaining)||0;
-    var nm=o.product||((o.products||[]).map(function(p){return p.name;}).join(' + '))||'---';
-    html+='<div onclick="location.href=\"'+href+'\"" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
-    html+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||o._id.slice(-6))+'</div>';
-    html+='<div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
-    html+='<div style="text-align:left"><span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
-    if(rem>0)html+='<div style="font-size:11px;color:var(--r);font-weight:700">'+rem.toLocaleString('ar-EG')+' ج</div>';
-    html+='</div></div>';
+  var s=orders.slice().sort(function(a,b){return((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);});
+  var h='';
+  for(var i=0;i<s.length;i++){
+    var o=s[i],href=(SH[o.stage]||'index')+'.html',rem=parseFloat(o.remaining)||0;
+    var nm=o.product||((o.products||[]).map(function(p){return p.name;}).join('/'))||'---';
+    h+='<div onclick="location.href=\"'+href+'\"" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||'---')+'</div><div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
+    h+='<div style="text-align:left"><span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
+    if(rem>0)h+='<div style="font-size:11px;color:var(--r);font-weight:700">'+rem.toLocaleString('ar-EG')+' ج</div>';
+    h+='</div></div>';
   }
-  el.innerHTML=html;
-};
+  el.innerHTML=h;
+}
 
-window._newOrder = function(clientId, stage){
-  var db = window._erp_db;
-  var user = window._erp_user;
-  var uname = window._erp_userName || '';
-  var cls = window._erp_clients || [];
-  var cl = cls.find(function(x){return x._id===clientId;});
-  if(!cl){alert('لم يعثر على العميل');return;}
+function doNewOrder(clientId,stage){
+  var db=window.__db, user=window.__user, uname=window.__uname||'', cls=window.__clients||[];
+  var cl=cls.find(function(x){return x._id===clientId;});
+  if(!db){alert('لم يتصل بقاعدة البيانات بعد، انتظر ثانية');return;}
   if(!user){alert('يلزم تسجيل الدخول');return;}
-  if(!db){alert('خطأ في الاتصال');return;}
-  var orderId='ORD-'+Date.now().toString().slice(-8);
+  if(!cl){alert('لم يعثر على العميل (id='+clientId+')');return;}
+  var oid='ORD-'+Date.now().toString().slice(-8);
   var now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js").then(function(fs){
-    fs.addDoc(fs.collection(db,'orders'),{
-      orderId:orderId, clientId:clientId,
-      clientName:cl.name||'', clientPhone:cl.phone1||'',
-      stage:stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
+  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js').then(function(fs){
+    return fs.addDoc(fs.collection(db,'orders'),{
+      orderId:oid,clientId:clientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
+      stage:stage,products:[],salePrice:0,paid:0,remaining:0,deposit:0,
       createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:user.uid, createdByName:uname,
+      createdBy:user.uid,createdByName:uname,
       timeline:[{date:now,action:'طلب جديد',by:uname}],
-      createdAt:fs.serverTimestamp(), updatedAt:fs.serverTimestamp()
-    }).then(function(){
-      window.location.href = stage==='design'?'design.html':'print.html';
-    }).catch(function(e){alert('خطأ: '+e.message);});
-  });
-};
+      createdAt:fs.serverTimestamp(),updatedAt:fs.serverTimestamp()
+    });
+  }).then(function(){
+    window.location.href=stage==='design'?'design.html':'print.html';
+  }).catch(function(e){alert('خطأ: '+e.message);});
+}
 
 </script>
 </body>
