@@ -2,15 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#ff3d6e">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="B2C ERP">
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <meta name="mobile-web-app-capable" content="yes">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Business2Card ERP — تسجيل الدخول</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -112,8 +104,8 @@ body{font-family:'IBM Plex Sans Arabic',sans-serif;background:var(--bg);color:va
     </div>
 
     <div class="fg">
-      <label>البريد الإلكتروني</label>
-      <input class="inp" id="email" type="email" placeholder="admin@business2card.com" autocomplete="email">
+      <label>رقم الهاتف أو البريد الإلكتروني</label>
+      <input class="inp" id="email" type="email" placeholder="رقم الهاتف أو البريد الإلكتروني" autocomplete="email">
     </div>
 
     <div class="fg">
@@ -179,21 +171,21 @@ const db   = getFirestore(app);
 
 /* ROLE → REDIRECT MAP */
 const ROLE_PAGES = {
-  admin:           'index.html',
-  operation_manager:'index.html',
-  customer_service: 'clients.html',
-  graphic_designer: 'design.html',
-  design_operator:  'design.html',
-  production_agent: 'production.html',
-  shipping_officer: 'shipping.html',
-  wallet_manager:   'accounts.html',
+  admin:             'index.html',
+  operation_manager: 'index.html',
+  customer_service:  'cs-dashboard.html',
+  graphic_designer:  'designer-dashboard.html',
+  design_operator:   'designer-dashboard.html',
+  production_agent:  'production-dashboard.html',
+  shipping_officer:  'shipping-dashboard.html',
+  wallet_manager:    'accounts.html',
 };
 
 /* CHECK IF ALREADY LOGGED IN */
 onAuthStateChanged(auth, async user => {
   if(user) {
     const role = await getUserRole(user.uid);
-    redirect(role);
+    redirect(role, user.uid);
   } else {
     // show login
     document.getElementById('loading').classList.add('hide');
@@ -208,7 +200,16 @@ async function getUserRole(uid) {
   return 'customer_service';
 }
 
-function redirect(role) {
+async function redirect(role, uid) {
+  // check if password must be changed
+  try{
+    const { getDoc, doc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    const snap = await getDoc(doc(db, 'users', uid));
+    if(snap.exists() && snap.data().mustChangePassword){
+      window.location.href = 'change-password.html';
+      return;
+    }
+  }catch(e){}
   const page = ROLE_PAGES[role] || 'index.html';
   window.location.href = page;
 }
@@ -219,7 +220,13 @@ window.doLogin = async function() {
   const pw    = document.getElementById('password').value;
   const rem   = document.getElementById('remember').checked;
 
-  if(!email || !pw) return showErr('أدخل البريد الإلكتروني وكلمة المرور');
+  if(!email || !pw) return showErr('أدخل اسم المستخدم وكلمة المرور');
+  
+  // إذا كان رقم هاتف مصري، حوّله إلى email
+  let loginEmail = email;
+  if(/^01[0125][0-9]{8}$/.test(email)){
+    loginEmail = email + '@b2c.local';
+  }
 
   const btn = document.getElementById('login-btn');
   btn.disabled = true;
@@ -232,9 +239,9 @@ window.doLogin = async function() {
     await setPersistence(auth, persist);
 
     // sign in
-    const cred = await signInWithEmailAndPassword(auth, email, pw);
+    const cred = await signInWithEmailAndPassword(auth, loginEmail, pw);
     const role = await getUserRole(cred.user.uid);
-    redirect(role);
+    redirect(role, cred.user.uid);
 
   } catch(e) {
     btn.disabled = false;
@@ -270,10 +277,5 @@ window.togglePw = function() {
   inp.type = inp.type === 'password' ? 'text' : 'password';
 };
 </script>
-  <script>
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.register('sw.js').catch(()=>{});
-    }
-  </script>
 </body>
 </html>
