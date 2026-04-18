@@ -312,7 +312,7 @@ let printOrders  = [];
 let printItems   = [];
 let settings     = {};
 let editId       = null;
-let activeId=null, allOrders=[], userName='';
+let activeId     = null;
 let currentUser  = null;
 let currentRole  = 'customer_service';
 
@@ -355,8 +355,7 @@ function loadTags(tags){resetTags();if(!tags)return;(typeof tags==='string'?tags
 onAuthStateChanged(auth, async u => {
   if(!u){ window.location.href='login.html'; return; }
   currentUser = u;
-  window.__user=u;
-  window.__uname=userName;
+  window.__user = u;
   const snap = await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
     const d = snap.data();
@@ -390,7 +389,7 @@ onSnapshot(query(collection(db,'print_items_v2'), orderBy('createdAt','asc')), s
   printItems = snap.docs.map(d=>({...d.data(),_id:d.id}));
   if(activeId) renderPanel(activeId);
 });
-onSnapshot(collection(db,'orders'),snap=>{allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+onSnapshot(collection(db,'orders'),snap=>{window.__orders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 onSnapshot(doc(db,'settings','main'), snap=>{
   if(snap.exists()) settings = snap.data();
   fillSelects(); fillFilters();
@@ -598,10 +597,10 @@ function renderPanel(id){
       </div>
       <!-- زراري الإضافة السريعة -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-        <button class="btn btn-p" onclick="doNewOrder('${id}','design')" style="font-size:12px;padding:10px">
+        <button class="btn btn-p" onclick="clientNewOrder('${id}','design')" style="font-size:12px;padding:10px">
           ✏️ أوردر تصميم
         </button>
-        <button class="btn btn-b" onclick="doNewOrder('${id}','printing')" style="font-size:12px;padding:10px">
+        <button class="btn btn-b" onclick="clientNewOrder('${id}','printing')" style="font-size:12px;padding:10px">
           🖨️ أوردر طباعة
         </button>
       </div>
@@ -616,7 +615,7 @@ function renderPanel(id){
       <button class="btn btn-danger btn-sm" onclick="deleteClientConfirm('${id}','${c.name}')">🗑 حذف العميل</button>
     </div>
   `;
-  doShowOrders(id,clientOrders);
+  clientShowOrders(id,clientOrders);
 }
 
 function infoRow(l,v){
@@ -886,49 +885,69 @@ function renderListView(data){
   }).join('');
 }
 
+</script>
 
-function doShowOrders(cid,orders){
+<script>
+function clientShowOrders(cid, orders){
   var el=document.getElementById('ol-'+cid);
   if(!el)return;
-  if(!orders||!orders.length){el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:8px">لا توجد أوردرات</div>';return;}
+  if(!orders||!orders.length){
+    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:8px">لا توجد أوردرات</div>';
+    return;
+  }
   var SA={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'مكتمل'};
   var SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
-  var s=orders.slice().sort(function(a,b){return((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);});
+  var sorted=orders.slice().sort(function(a,b){
+    return((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);
+  });
   var h='';
-  for(var i=0;i<s.length;i++){
-    var o=s[i],href=(SH[o.stage]||'index')+'.html',rem=parseFloat(o.remaining)||0;
+  for(var i=0;i<sorted.length;i++){
+    var o=sorted[i];
+    var href=(SH[o.stage]||'index')+'.html';
+    var rem=parseFloat(o.remaining)||0;
     var nm=o.product||((o.products||[]).map(function(p){return p.name;}).join('/'))||'---';
-    h+='<div onclick="location.href=\"'+href+'\"" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
-    h+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||'---')+'</div><div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
-    h+='<div style="text-align:left"><span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
+    h+='<div onclick="location.href=\''+href+'\'" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||'---')+'</div>';
+    h+='<div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
+    h+='<div style="text-align:left">';
+    h+='<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
     if(rem>0)h+='<div style="font-size:11px;color:var(--r);font-weight:700">'+rem.toLocaleString('ar-EG')+' ج</div>';
     h+='</div></div>';
   }
   el.innerHTML=h;
 }
 
-function doNewOrder(clientId,stage){
-  var db=window.__db, user=window.__user, uname=window.__uname||'', cls=window.__clients||[];
+function clientNewOrder(clientId, stage){
+  var db=window.__db;
+  var user=window.__user;
+  var uname=window.__uname||'';
+  var cls=window.__clients||[];
   var cl=cls.find(function(x){return x._id===clientId;});
-  if(!db){alert('لم يتصل بقاعدة البيانات بعد، انتظر ثانية');return;}
+  
+  if(!db)  {alert('جاري التحميل، انتظر ثانية وحاول مجدداً');return;}
   if(!user){alert('يلزم تسجيل الدخول');return;}
-  if(!cl){alert('لم يعثر على العميل (id='+clientId+')');return;}
+  if(!cl)  {alert('لم يعثر على العميل');return;}
+  
   var oid='ORD-'+Date.now().toString().slice(-8);
   var now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js').then(function(fs){
+  
+  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js')
+  .then(function(fs){
     return fs.addDoc(fs.collection(db,'orders'),{
-      orderId:oid,clientId:clientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
-      stage:stage,products:[],salePrice:0,paid:0,remaining:0,deposit:0,
+      orderId:oid, clientId:clientId,
+      clientName:cl.name||'', clientPhone:cl.phone1||'',
+      stage:stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
       createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:user.uid,createdByName:uname,
+      createdBy:user.uid, createdByName:uname,
       timeline:[{date:now,action:'طلب جديد',by:uname}],
-      createdAt:fs.serverTimestamp(),updatedAt:fs.serverTimestamp()
+      createdAt:fs.serverTimestamp(), updatedAt:fs.serverTimestamp()
     });
-  }).then(function(){
+  })
+  .then(function(){
     window.location.href=stage==='design'?'design.html':'print.html';
-  }).catch(function(e){alert('خطأ: '+e.message);});
+  })
+  .catch(function(e){alert('خطأ: '+e.message);});
 }
-
 </script>
 </body>
 </html>
