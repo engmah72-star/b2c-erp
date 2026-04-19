@@ -2,15 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#ff3d6e">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="B2C ERP">
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <meta name="mobile-web-app-capable" content="yes">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Business2Card — الحسابات</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css">
@@ -65,7 +57,7 @@
     <div class="nav-group">الإدارة</div>
     <a class="nav-link active" href="accounts.html"><span class="nav-ico">💰</span> الحسابات</a>
     <a class="nav-link" href="products.html"><span class="nav-ico">◈</span> المنتجات</a>
-    <a class="nav-link" href="employees.html"><span class="nav-ico">👥</span> الموظفين</a>
+    <a class="nav-link" href="shipping-accounts.html"><span class="nav-ico">📦</span> حسابات الشحن</a>
     <a class="nav-link" href="suppliers.html"><span class="nav-ico">▣</span> الموردين</a>
     <a class="nav-link" href="reports.html"><span class="nav-ico">📊</span> التقارير</a>
     <a class="nav-link" href="settings.html"><span class="nav-ico">⚙️</span> الإعدادات</a>
@@ -116,11 +108,11 @@
         <div class="rev-val" style="color:var(--r)" id="kpi-rem-total">—</div>
         <div class="rev-sub">إجمالي المبالغ الباقية على العملاء</div>
       </div>
-      <div class="rev-card" style="--rc:var(--b)">
+      <div class="rev-card" style="--rc:var(--b);cursor:pointer" onclick="location.href='shipping-accounts.html'">
         <div class="rev-title">📦 مستحق من شركات الشحن</div>
         <div class="rev-val" style="color:var(--b)" id="kpi-ship-debt">—</div>
-        <div class="rev-sub">شركات الشحن حصّلت ولم ترجع</div>
-        <button class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b);border:none;cursor:pointer" onclick="switchSec(document.querySelector('[onclick*=pending]'),'pending')">عرض التفاصيل</button>
+        <div class="rev-sub">اضغط لإدارة حسابات الشحن</div>
+        <div class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b)">📦 فتح حسابات الشحن ←</div>
       </div>
       <div class="rev-card" style="--rc:var(--r)">
         <div class="rev-title">👤 ديون على العملاء</div>
@@ -133,7 +125,7 @@
     <div class="sec-tabs" style="margin-bottom:16px">
       <button class="stab on"  onclick="switchSec(this,'wallets')">💼 الحسابات</button>
       <button class="stab"     onclick="switchSec(this,'pending')">⏳ المعلق</button>
-      <button class="stab"     onclick="switchSec(this,'shipping_debts')">📦 ديون الشحن</button>
+      <button class="stab" onclick="location.href='shipping-accounts.html'">📦 حسابات الشحن ↗</button>
       <button class="stab"     onclick="switchSec(this,'transactions')">📋 الحركات</button>
       <button class="stab"     onclick="switchSec(this,'suppliers')">🏭 الموردين</button>
     </div>
@@ -297,17 +289,6 @@ onAuthStateChanged(auth, async u=>{
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
     const d=snap.data();
-
-  // ══ ROLE GUARD ══
-  const _allowedRoles = ['admin', 'operation_manager', 'wallet_manager'];
-  const _role = d.role || '';
-  if(!_allowedRoles.includes(_role)){
-    const _home = {"admin": "index.html", "operation_manager": "index.html", "customer_service": "cs-dashboard.html", "graphic_designer": "designer-dashboard.html", "design_operator": "designer-dashboard.html", "production_agent": "production-dashboard.html", "shipping_officer": "shipping-dashboard.html", "wallet_manager": "accounts.html"}[_role] || 'login.html';
-    window.location.href = _home;
-    return;
-  }
-  // ════════════════
-
     currentRole=d.role||'admin';
     const r=ROLES[currentRole]||ROLES.admin;
     setText('nav-name',d.name||u.email);
@@ -422,9 +403,12 @@ function updateKPIs(){
     remTotal+=parseFloat(o.remaining)||0;
   });
 
-  // مديونيات شركات الشحن
-  const shippingDebt=transactions.filter(t=>t.category==='shipping_company_debt')
-    .reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  // مستحق من شركات الشحن — من orders مباشرة (غير مسوّاة)
+  const shippingDebt=allOrders.filter(o=>
+    o.shipCompanyName &&
+    ['shipping','archived'].includes(o.stage) &&
+    !o.shipSettled
+  ).reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   // دين على العملاء
   const clientDebt=transactions.filter(t=>t.category==='deferred_collection')
     .reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
@@ -467,7 +451,7 @@ window.switchSec=function(btn,sec){
 function renderSection(){
   if(currentSection==='wallets')          renderWallets();
   else if(currentSection==='pending')     renderPending();
-  else if(currentSection==='shipping_debts') renderShippingDebts();
+  else if(currentSection==='shipping_debts') location.href='shipping-accounts.html';
   else if(currentSection==='transactions')   renderTransactions();
   else if(currentSection==='suppliers')      renderSuppliers();
 }
@@ -555,6 +539,30 @@ function renderWallets(){
 // ── معلق ──
 function renderPending(){
   const el=document.getElementById('section-content');if(!el)return;
+  // ── ملخص شركات الشحن ──
+  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&['shipping','archived'].includes(o.stage)&&!o.shipSettled);
+  const shipCos={};
+  shipOrders.forEach(o=>{
+    if(!shipCos[o.shipCompanyName])shipCos[o.shipCompanyName]={count:0,total:0};
+    shipCos[o.shipCompanyName].count++;
+    shipCos[o.shipCompanyName].total+=parseFloat(o.salePrice)||0;
+  });
+  const shipSummaryHtml=Object.keys(shipCos).length?`
+    <div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad2);padding:14px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:800;color:var(--b)">📦 مستحق من شركات الشحن</div>
+        <a href="shipping-accounts.html" class="btn btn-b btn-xs">إدارة ←</a>
+      </div>
+      ${Object.entries(shipCos).map(([name,data])=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:5px">
+          <span style="font-size:13px;font-weight:700">📦 ${name}</span>
+          <div style="text-align:left">
+            <span style="font-size:11px;color:var(--dim2)">${data.count} شحنة · </span>
+            <span style="font-size:13px;font-weight:800;color:var(--b)">${fn(data.total)} ج</span>
+          </div>
+        </div>`).join('')}
+    </div>`:'';
+
   // أوردرات نشطة عندها باقي
   const active=allOrders.filter(o=>o.stage!=='archived'&&(parseFloat(o.remaining)||0)>0);
   // ديون مؤجلة في الأرشيف
@@ -563,7 +571,7 @@ function renderPending(){
   const shipDebts=transactions.filter(t=>t.category==='shipping_company_debt');
 
   if(!active.length&&!deferred.length){
-    el.innerHTML=`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مبالغ معلقة</div></div>`;
+    el.innerHTML=shipSummaryHtml+`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مبالغ معلقة</div></div>`;
     return;
   }
   el.innerHTML=`
@@ -831,10 +839,5 @@ window.exportCSV=function(){
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download='حركات-مالية.csv';a.click();
 };
 </script>
-  <script>
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.register('sw.js').catch(()=>{});
-    }
-  </script>
 </body>
 </html>

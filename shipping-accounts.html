@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#22d3ee">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Business2Card — حسابات شركات الشحن</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+<style>
+.co-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);overflow:hidden;margin-bottom:16px}
+.co-head{padding:16px;display:flex;justify-content:space-between;align-items:center;background:var(--bg3);border-bottom:1px solid var(--line)}
+.co-name{font-size:16px;font-weight:900}
+.co-body{padding:16px}
+.co-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.co-kpi{background:var(--bg3);border-radius:var(--rad);padding:10px;text-align:center}
+.co-kpi-val{font-size:18px;font-weight:900}
+.co-kpi-lbl{font-size:9px;color:var(--dim2);margin-top:2px;font-weight:700}
+.order-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--rad);background:var(--bg3);margin-bottom:5px;font-size:12px}
+.order-row.returned{background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.15)}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.pay-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.15);border-radius:var(--rad);margin-bottom:5px;font-size:12px}
+.settle-checkbox{width:16px;height:16px;accent-color:var(--c);cursor:pointer}
+@media(max-width:600px){.co-kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav">
+  <div class="nav-brand"><div class="nav-logo">🎨</div><div><div class="nav-brand-name">Business2Card</div><div class="nav-brand-role" id="role-badge">ERP</div></div></div>
+  <div class="nav-scroll">
+    <a class="nav-link" href="index.html"><span class="nav-ico">⬡</span> لوحة التحكم</a>
+    <a class="nav-link" href="clients.html"><span class="nav-ico">👤</span> العملاء</a>
+    <a class="nav-link" href="shipping.html"><span class="nav-ico">🚚</span> الشحن</a>
+    <a class="nav-link" href="accounts.html"><span class="nav-ico">💰</span> الحسابات</a>
+    <a class="nav-link active" href="shipping-accounts.html"><span class="nav-ico">📦</span> حسابات الشحن</a>
+    <a class="nav-link" href="reports.html"><span class="nav-ico">📊</span> التقارير</a>
+    <a class="nav-link" href="settings.html"><span class="nav-ico">⚙️</span> الإعدادات</a>
+  </div>
+  <div class="nav-foot"><div class="nav-user" onclick="doLogout()"><div class="nav-avatar" id="nav-av">A</div><div><div class="nav-user-name" id="nav-name">User</div><div class="nav-user-role">تسجيل خروج</div></div></div></div>
+</aside>
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <button class="mob-menu-btn" onclick="toggleNav()">☰</button>
+      <div><h1>📦 حسابات شركات الشحن</h1><p id="sub">جاري التحميل...</p></div>
+    </div>
+    <div class="topbar-right">
+      <select class="inp" id="f-month" onchange="render()" style="max-width:160px">
+        <option value="">كل الأشهر</option>
+      </select>
+    </div>
+  </div>
+  <div class="content">
+    <!-- إجماليات -->
+    <div class="stats" style="margin-bottom:18px">
+      <div class="stat" style="--sc:var(--b)"><div class="stat-icon">📦</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">إجمالي شحنات</div></div>
+      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💰</div><div class="stat-val" id="s-due">0</div><div class="stat-lbl">مستحق ج</div></div>
+      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-collected">0</div><div class="stat-lbl">محصّل ج</div></div>
+      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-remaining">0</div><div class="stat-lbl">باقي ج</div></div>
+      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">↩️</div><div class="stat-val" id="s-returns">0</div><div class="stat-lbl">مرتجعات</div></div>
+    </div>
+    <div id="companies-list"><div class="loader"><div class="spinner"></div></div></div>
+  </div>
+</div>
+</div>
+
+<!-- MODAL: تسجيل دفعة وصلت -->
+<div class="overlay" id="ov-settle">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <span class="modal-title">💰 تسجيل دفعة من <span id="settle-co-name"></span></span>
+      <button class="modal-x" onclick="closeSettle()">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- ملخص -->
+      <div style="background:var(--bg3);border-radius:var(--rad);padding:12px;margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+        <div><div style="font-size:10px;color:var(--dim2)">المستحق</div><div style="font-size:18px;font-weight:900;color:var(--y)" id="settle-due">—</div></div>
+        <div><div style="font-size:10px;color:var(--dim2)">المبلغ الوارد</div><div style="font-size:18px;font-weight:900;color:var(--g)" id="settle-incoming-preview">—</div></div>
+        <div><div style="font-size:10px;color:var(--dim2)">الفرق</div><div style="font-size:18px;font-weight:900" id="settle-diff">—</div></div>
+      </div>
+
+      <!-- اختار الأوردرات -->
+      <div class="fg">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label>📦 الأوردرات المشمولة في الدفعة</label>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-xs" onclick="selectAllOrders(true)">الكل</button>
+            <button class="btn btn-ghost btn-xs" onclick="selectAllOrders(false)">لا شيء</button>
+          </div>
+        </div>
+        <div id="settle-orders" style="max-height:200px;overflow-y:auto;background:var(--bg3);border-radius:var(--rad);padding:8px"></div>
+      </div>
+
+      <div class="g2">
+        <div class="fg">
+          <label>💰 المبلغ الفعلي الوارد (ج) *</label>
+          <input class="inp" id="settle-amount" type="number" placeholder="0" oninput="calcSettleDiff()">
+        </div>
+        <div class="fg">
+          <label>💼 المحفظة *</label>
+          <select class="inp" id="settle-wallet"><option value="">— اختر —</option></select>
+        </div>
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>📋 رقم التحويل / المرجع</label>
+          <input class="inp" id="settle-ref" placeholder="TR-12345">
+        </div>
+        <div class="fg">
+          <label>📅 تاريخ الاستلام</label>
+          <input class="inp" id="settle-date" type="date">
+        </div>
+      </div>
+
+      <!-- الفرق — لو في -->
+      <div id="settle-diff-section" style="display:none;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:800;color:var(--r);margin-bottom:8px">⚠️ فرق في المبلغ</div>
+        <div class="fg" style="margin-bottom:0">
+          <label>سبب الفرق</label>
+          <select class="inp" id="settle-diff-reason">
+            <option value="return_cost">↩️ تكلفة مرتجعات</option>
+            <option value="company_fee">📦 عمولة الشركة</option>
+            <option value="damaged">🚨 بضاعة تالفة</option>
+            <option value="other">📌 أخرى</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="fg">
+        <label>📝 ملاحظات</label>
+        <textarea class="inp" id="settle-notes" placeholder="أي تفاصيل..." style="min-height:50px"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeSettle()">إلغاء</button>
+      <button class="btn btn-g" onclick="saveSettle()">✓ تسجيل الدفعة</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: تسجيل مرتجع -->
+<div class="overlay" id="ov-return">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">↩️ تسجيل مرتجع</span>
+      <button class="modal-x" onclick="document.getElementById('ov-return').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:14px">
+        <div style="font-size:10px;color:var(--dim2)">الأوردر</div>
+        <div style="font-size:14px;font-weight:800" id="return-order-info">—</div>
+      </div>
+      <div class="fg">
+        <label>↩️ سبب الإرجاع *</label>
+        <select class="inp" id="return-reason">
+          <option value="refused">🚫 العميل رفض الاستلام</option>
+          <option value="absent">📵 العميل غير متاح</option>
+          <option value="wrong_address">📍 عنوان غلط</option>
+          <option value="damaged">🚨 بضاعة تالفة</option>
+          <option value="other">📌 أخرى</option>
+        </select>
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>💸 تكلفة الإرجاع (ج) <span style="color:var(--dim2);font-weight:400">— عليك</span></label>
+          <input class="inp" id="return-cost" type="number" placeholder="25">
+        </div>
+        <div class="fg">
+          <label>💼 المحفظة (لتسجيل المصروف)</label>
+          <select class="inp" id="return-wallet"><option value="">— اختر —</option></select>
+        </div>
+      </div>
+      <div class="fg">
+        <label>📝 ملاحظات</label>
+        <textarea class="inp" id="return-notes" placeholder="تفاصيل..." style="min-height:50px"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-return').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-r" onclick="saveReturn()">↩️ تسجيل المرتجع</button>
+    </div>
+  </div>
+</div>
+
+<div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+firebase.initializeApp(FB);
+const db=firebase.firestore(), auth=firebase.auth();
+
+// ══ STATE ══
+let allOrders=[], wallets=[], settlements=[], returns=[];
+let currentUser=null, userName='';
+let settleCompanyId='', settleCompanyOrders=[];
+
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const gv=id=>document.getElementById(id)?.value||'';
+const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
+const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+
+function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+function toggleNav(){document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');}
+function closeNav(){document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');}
+function doLogout(){auth.signOut().then(()=>window.location.href='login.html');}
+function nowStr(){return new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});}
+
+auth.onAuthStateChanged(async u=>{
+  if(!u){window.location.href='login.html';return;}
+  currentUser=u;
+  const snap=await db.collection('users').doc(u.uid).get();
+  if(snap.exists){
+    const d=snap.data();
+    userName=d.name||u.email;
+    setText('nav-name',userName);
+    document.getElementById('nav-av').textContent=userName[0].toUpperCase();
+    document.getElementById('role-badge').textContent=d.role||'Admin';
+  }
+
+  // Listeners
+  db.collection('orders').onSnapshot(snap=>{
+    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    fillMonthFilter();
+    render();
+  });
+  db.collection('wallets').onSnapshot(snap=>{
+    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    fillWalletSelects();
+  });
+  db.collection('shipping_settlements').onSnapshot(snap=>{
+    settlements=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    render();
+  });
+  db.collection('shipping_returns').onSnapshot(snap=>{
+    returns=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    render();
+  });
+
+  // استقبال مرتجع من صفحة الشحن
+  const urlParams=new URLSearchParams(window.location.search);
+  if(urlParams.get('action')==='return'){
+    const returnData=sessionStorage.getItem('returnOrder');
+    if(returnData){
+      const {orderId,clientName,coName}=JSON.parse(returnData);
+      sessionStorage.removeItem('returnOrder');
+      setTimeout(()=>openReturnOrder(orderId,clientName,coName),1000);
+    }
+  }
+});
+
+function fillMonthFilter(){
+  const months=new Set();
+  allOrders.filter(o=>o.shipCompanyName).forEach(o=>{
+    const d=o.createdAt?.toDate?.();
+    if(d)months.add(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
+  });
+  const sel=document.getElementById('f-month');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">كل الأشهر</option>'+[...months].sort().reverse().map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+}
+
+function fillWalletSelects(){
+  const opts='<option value="">— اختر —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
+  ['settle-wallet','return-wallet'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=opts;});
+}
+
+// ══ RENDER COMPANIES ══
+function render(){
+  const fMonth=gv('f-month');
+
+  // فلتر الأوردرات المشحونة بشركة شحن
+  let shippedOrders=allOrders.filter(o=>
+    o.shipCompanyName &&
+    ['shipping','archived'].includes(o.stage)
+  );
+  if(fMonth){
+    shippedOrders=shippedOrders.filter(o=>{
+      const d=o.createdAt?.toDate?.();
+      if(!d)return false;
+      const m=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+      return m===fMonth;
+    });
+  }
+
+  // جمّع الأوردرات حسب شركة الشحن
+  const companies={};
+  shippedOrders.forEach(o=>{
+    const key=o.shipCompanyName;
+    if(!companies[key])companies[key]={
+      name:key, orders:[],
+      totalDue:0, totalCollected:0, totalRemaining:0, returnsCount:0
+    };
+    const sale=parseFloat(o.salePrice)||0;
+    const paid=parseFloat(o.paid)||0;
+    const rem=parseFloat(o.remaining)||0;
+    const isReturn=returns.some(r=>r.orderId===o._id&&r.status!=='cancelled');
+    companies[key].orders.push({...o,isReturn});
+    if(!isReturn){
+      companies[key].totalDue+=sale;
+      companies[key].totalCollected+=paid;
+      companies[key].totalRemaining+=rem;
+    } else {
+      companies[key].returnsCount++;
+    }
+  });
+
+  // إجماليات
+  const allCos=Object.values(companies);
+  const totalDue=allCos.reduce((s,c)=>s+c.totalDue,0);
+  const totalCollected=allCos.reduce((s,c)=>s+c.totalCollected,0);
+  const totalRemaining=allCos.reduce((s,c)=>s+c.totalRemaining,0);
+  const totalReturns=allCos.reduce((s,c)=>s+c.returnsCount,0);
+  setText('s-total',shippedOrders.length);
+  setText('s-due',fn(totalDue)+' ج');
+  setText('s-collected',fn(totalCollected)+' ج');
+  setText('s-remaining',fn(totalRemaining)+' ج');
+  setText('s-returns',totalReturns);
+  setText('sub',allCos.length+' شركة شحن');
+
+  const el=document.getElementById('companies-list');if(!el)return;
+  if(!allCos.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">📦</div><div class="empty-text">لا توجد شحنات بشركات خارجية</div></div>';
+    return;
+  }
+
+  // الدفعات السابقة
+  el.innerHTML=allCos.sort((a,b)=>b.totalRemaining-a.totalRemaining).map(co=>{
+    const coSettlements=settlements.filter(s=>s.companyName===co.name).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const pct=co.totalDue>0?Math.min(co.totalCollected/co.totalDue*100,100):0;
+    return`<div class="co-card">
+      <div class="co-head">
+        <div>
+          <div class="co-name">📦 ${co.name}</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${co.orders.length} شحنة${co.returnsCount>0?` · ${co.returnsCount} مرتجع`:''}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-r btn-sm" onclick="openReturn('${co.name}')">↩️ مرتجع</button>
+          <button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسجيل دفعة</button>
+        </div>
+      </div>
+      <div class="co-body">
+        <!-- KPIs -->
+        <div class="co-kpis">
+          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--b)">${fn(co.totalDue)}</div><div class="co-kpi-lbl">إجمالي مستحق ج</div></div>
+          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--g)">${fn(co.totalCollected)}</div><div class="co-kpi-lbl">محصّل ج</div></div>
+          <div class="co-kpi" style="${co.totalRemaining>0?'background:rgba(255,61,110,.08)':''}"><div class="co-kpi-val" style="color:${co.totalRemaining>0?'var(--r)':'var(--g)'}">${co.totalRemaining>0?fn(co.totalRemaining):'✅'}</div><div class="co-kpi-lbl">باقي ج</div></div>
+          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--r)">${co.returnsCount}</div><div class="co-kpi-lbl">مرتجعات</div></div>
+        </div>
+
+        <!-- Progress -->
+        <div style="height:6px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin-bottom:14px">
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px;transition:width .5s"></div>
+        </div>
+
+        <!-- الأوردرات -->
+        <div style="margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">الشحنات</div>
+          ${co.orders.slice(0,5).map(o=>{
+            const isRet=o.isReturn;
+            const rem=parseFloat(o.remaining)||0;
+            const sale=parseFloat(o.salePrice)||0;
+            return`<div class="order-row${isRet?' returned':''}">
+              <div class="status-dot" style="background:${isRet?'var(--r)':rem===0?'var(--g)':'var(--y)'}"></div>
+              <div style="flex:1">
+                <span style="font-weight:700">${o.clientName||'—'}</span>
+                <span style="color:var(--dim2);margin-right:8px">${o.orderId||''}</span>
+              </div>
+              <span style="color:var(--b);font-weight:700">${fn(sale)} ج</span>
+              ${rem>0&&!isRet?`<span style="color:var(--r);font-weight:700;font-size:11px">باقي ${fn(rem)} ج</span>`:''}
+              ${isRet?`<span style="color:var(--r);font-size:11px">↩️ مرتجع</span>`:''}
+              ${!isRet?`<button class="btn btn-ghost btn-xs" onclick="openReturnOrder('${o._id}','${o.clientName||''}','${co.name}')">↩️</button>`:''}
+            </div>`;
+          }).join('')}
+          ${co.orders.length>5?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px">... و ${co.orders.length-5} شحنة أخرى</div>`:''}
+        </div>
+
+        <!-- آخر الدفعات -->
+        ${coSettlements.length?`<div>
+          <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">آخر الدفعات</div>
+          ${coSettlements.slice(0,3).map(s=>`
+            <div class="pay-row">
+              <div>
+                <span style="font-weight:700;color:var(--g)">${fn(s.amount)} ج</span>
+                <span style="color:var(--dim2);margin-right:8px;font-size:11px">${s.date||'—'}</span>
+                ${s.ref?`<span style="color:var(--dim2);font-size:10px">· ${s.ref}</span>`:''}
+              </div>
+              <div style="font-size:10px;color:var(--dim2)">${s.ordersCount||0} أوردر</div>
+            </div>`).join('')}
+        </div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══ SETTLE ══
+function openSettle(companyName){
+  settleCompanyId=companyName;
+  setText('settle-co-name',companyName);
+
+  // الأوردرات المستحقة من هذه الشركة
+  settleCompanyOrders=allOrders.filter(o=>
+    o.shipCompanyName===companyName &&
+    ['shipping','archived'].includes(o.stage) &&
+    !returns.some(r=>r.orderId===o._id&&r.status!=='cancelled')
+  );
+
+  const totalDue=settleCompanyOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  setText('settle-due',fn(totalDue)+' ج');
+  setText('settle-incoming-preview','—');
+  setText('settle-diff','—');
+
+  // عرض الأوردرات للاختيار
+  const el=document.getElementById('settle-orders');
+  if(el){
+    el.innerHTML=settleCompanyOrders.map(o=>{
+      const sale=parseFloat(o.salePrice)||0;
+      const rem=parseFloat(o.remaining)||0;
+      return`<label style="display:flex;align-items:center;gap:8px;padding:7px;border-radius:6px;cursor:pointer;margin-bottom:3px">
+        <input type="checkbox" class="settle-checkbox settle-order-cb" value="${o._id}" data-amount="${sale}" checked>
+        <span style="flex:1;font-size:12px"><strong>${o.clientName||'—'}</strong> <span style="color:var(--dim2)">${o.orderId||''}</span></span>
+        <span style="font-size:12px;font-weight:700;color:var(--b)">${fn(sale)} ج</span>
+        ${rem>0?`<span style="font-size:11px;color:var(--r)">باقي ${fn(rem)} ج</span>`:''}
+      </label>`;
+    }).join('') || '<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد شحنات مستحقة</div>';
+  }
+
+  sv('settle-amount',''); sv('settle-ref','');
+  sv('settle-date',new Date().toISOString().slice(0,10));
+  sv('settle-notes','');
+  document.getElementById('settle-diff-section').style.display='none';
+  document.getElementById('ov-settle').classList.add('open');
+
+  // event listeners للـ checkboxes
+  setTimeout(()=>{
+    document.querySelectorAll('.settle-order-cb').forEach(cb=>{
+      cb.addEventListener('change',calcSettleDiff);
+    });
+    calcSettleDiff();
+  },100);
+}
+
+function closeSettle(){document.getElementById('ov-settle').classList.remove('open');}
+
+function selectAllOrders(state){
+  document.querySelectorAll('.settle-order-cb').forEach(cb=>{cb.checked=state;});
+  calcSettleDiff();
+}
+
+function calcSettleDiff(){
+  const selectedAmt=Array.from(document.querySelectorAll('.settle-order-cb:checked'))
+    .reduce((s,cb)=>s+(parseFloat(cb.dataset.amount)||0),0);
+  const incoming=parseFloat(gv('settle-amount'))||0;
+  const diff=incoming-selectedAmt;
+
+  setText('settle-incoming-preview',incoming>0?fn(incoming)+' ج':'—');
+  if(incoming>0&&selectedAmt>0){
+    const diffEl=document.getElementById('settle-diff');
+    if(diffEl){
+      diffEl.textContent=(diff>=0?'+':'')+fn(diff)+' ج';
+      diffEl.style.color=diff===0?'var(--g)':diff>0?'var(--b)':'var(--r)';
+    }
+    document.getElementById('settle-diff-section').style.display=diff!==0?'block':'none';
+  }
+}
+
+async function saveSettle(){
+  const amount=parseFloat(gv('settle-amount'));
+  if(!amount){toast('⚠️ أدخل المبلغ','err');return;}
+  const wId=gv('settle-wallet');
+  if(!wId){toast('⚠️ اختر المحفظة','err');return;}
+
+  const selectedOrders=Array.from(document.querySelectorAll('.settle-order-cb:checked'))
+    .map(cb=>cb.value);
+  if(!selectedOrders.length){toast('⚠️ اختر أوردر على الأقل','err');return;}
+
+  const w=wallets.find(x=>x._id===wId);
+  const bb=parseFloat(w?.balance)||0;
+  const selectedAmt=Array.from(document.querySelectorAll('.settle-order-cb:checked'))
+    .reduce((s,cb)=>s+(parseFloat(cb.dataset.amount)||0),0);
+  const diff=amount-selectedAmt;
+  const now=nowStr();
+
+  try{
+    // 1. تحديث المحفظة
+    await db.collection('wallets').doc(wId).update({balance:bb+amount});
+
+    // 2. transaction الدخل
+    await db.collection('transactions_v2').add({
+      walletId:wId,type:'in',amount,
+      description:`دفعة من ${settleCompanyId} — ${selectedOrders.length} أوردر`,
+      category:'shipping_settlement',
+      companyName:settleCompanyId,ordersCount:selectedOrders.length,
+      ref:gv('settle-ref'),
+      balanceBefore:bb,balanceAfter:bb+amount,
+      date:now,createdBy:currentUser.uid,createdByName:userName,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    // 3. تسجيل التسوية
+    await db.collection('shipping_settlements').add({
+      companyName:settleCompanyId,
+      orderIds:selectedOrders,
+      ordersCount:selectedOrders.length,
+      expectedAmount:selectedAmt,
+      amount,diff,
+      diffReason:diff!==0?gv('settle-diff-reason'):'',
+      walletId:wId,walletName:w?.name||'',
+      ref:gv('settle-ref'),
+      notes:gv('settle-notes'),
+      date:gv('settle-date'),
+      createdBy:currentUser.uid,createdByName:userName,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    // 4. حدّث الأوردرات المشمولة — mark as settled
+    for(const oid of selectedOrders){
+      const o=allOrders.find(x=>x._id===oid);if(!o)continue;
+      await db.collection('orders').doc(oid).update({
+        shipSettled:true,
+        shipSettledAmount:parseFloat(o.salePrice)||0,
+        paid:parseFloat(o.salePrice)||0,
+        remaining:0,
+        timeline:[...(o.timeline||[]),{date:now,action:`✅ تسوية مع ${settleCompanyId} — ${fn(amount)} ج`,by:userName}],
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    closeSettle();
+    toast(`✅ تم تسجيل ${fn(amount)} ج من ${settleCompanyId}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+
+// ══ RETURN ══
+let returnOrderId='';
+function openReturnOrder(orderId,clientName,coName){
+  returnOrderId=orderId;
+  setText('return-order-info',clientName+' — '+coName);
+  sv('return-cost','');sv('return-notes','');
+  document.getElementById('ov-return').classList.add('open');
+}
+function openReturn(coName){
+  // اختر من قائمة الأوردرات
+  const coOrders=allOrders.filter(o=>o.shipCompanyName===coName&&['shipping','archived'].includes(o.stage));
+  if(!coOrders.length){toast('⚠️ لا توجد شحنات لهذه الشركة','err');return;}
+  // افتح أول أوردر كمثال — المستخدم يختار من القائمة
+  openReturnOrder(coOrders[0]._id,coOrders[0].clientName||'—',coName);
+}
+
+async function saveReturn(){
+  const reason=gv('return-reason');
+  const cost=parseFloat(gv('return-cost'))||0;
+  const wId=gv('return-wallet');
+  const o=allOrders.find(x=>x._id===returnOrderId);if(!o)return;
+  const now=nowStr();
+
+  try{
+    // 1. سجّل المرتجع
+    await db.collection('shipping_returns').add({
+      orderId:returnOrderId,clientName:o.clientName||'',
+      companyName:o.shipCompanyName||'',
+      reason,cost,
+      notes:gv('return-notes'),
+      status:'returned',
+      date:now,createdBy:currentUser.uid,createdByName:userName,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    // 2. تكلفة الإرجاع — مصروف عليك
+    if(cost>0&&wId){
+      const w=wallets.find(x=>x._id===wId);
+      const bb=parseFloat(w?.balance)||0;
+      await db.collection('wallets').doc(wId).update({balance:bb-cost});
+      await db.collection('transactions_v2').add({
+        walletId:wId,type:'out',amount:cost,
+        description:`تكلفة إرجاع — ${o.clientName||''} — ${o.shipCompanyName||''}`,
+        category:'return_cost',orderId:returnOrderId,
+        balanceBefore:bb,balanceAfter:bb-cost,
+        date:now,createdBy:currentUser.uid,createdByName:userName,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    // 3. حدّث الأوردر
+    await db.collection('orders').doc(returnOrderId).update({
+      shipStage:'returned',
+      shipReturnReason:reason,
+      shipReturnCost:cost,
+      timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع — ${reason}${cost>0?' — تكلفة '+fn(cost)+' ج':''}`,by:userName}],
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    document.getElementById('ov-return').classList.remove('open');
+    toast('✅ تم تسجيل المرتجع'+(cost>0?` — مصروف ${fn(cost)} ج`:''),'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+</script>
+</body>
+</html>
