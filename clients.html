@@ -68,6 +68,12 @@
 .field-hint.err{color:var(--r)}
 
 @media(max-width:640px){.quick-type{grid-template-columns:1fr 1fr}}
+
+/* ── List View ── */
+.on-view{background:rgba(59,158,255,.15)!important;color:var(--b)!important;border-color:var(--b)!important}
+.list-row{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:12px 16px;margin-bottom:6px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:var(--trans)}
+.list-row:hover{border-color:var(--line2);transform:translateX(-2px)}
+.list-av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -114,6 +120,10 @@
     </div>
     <div class="topbar-right">
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ CSV</button>
+      <div style="display:flex;gap:4px;background:var(--bg3);border-radius:var(--rad);padding:3px">
+        <button id="view-grid" class="btn btn-ghost btn-sm on-view" onclick="setView('grid')" title="كروت" style="padding:6px 10px">⊞</button>
+        <button id="view-list" class="btn btn-ghost btn-sm" onclick="setView('list')" title="قائمة" style="padding:6px 10px">≡</button>
+      </div>
       <button class="btn btn-b" onclick="openAddClient()">＋ عميل جديد</button>
     </div>
   </div>
@@ -456,7 +466,9 @@ function renderGrid(){
     if(fs&&c.source!==fs)return false;
     return true;
   });
+  if(viewMode==='list'){renderListView(data);return;}
   const el=document.getElementById('clients-grid');if(!el)return;
+  el.style.display='grid';
   if(!data.length){
     el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">👤</div><div class="empty-text">${clients.length?'لا نتائج للبحث':'لا يوجد عملاء بعد'}</div><button class="btn btn-b btn-sm" onclick="openAddClient()" style="margin-top:12px">＋ أضف أول عميل</button></div>`;
     return;
@@ -775,6 +787,56 @@ function deleteClient(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
   if(!confirm(`حذف ${c.name}؟ لا يمكن التراجع.`))return;
   db.collection('clients').doc(id).delete().then(()=>{toast('✅ تم الحذف','ok');closePanel();}).catch(e=>toast('❌ '+e.message,'err'));
+}
+
+// ══ VIEW ══
+let viewMode='grid';
+function setView(mode){
+  viewMode=mode;
+  document.getElementById('view-grid').className='btn btn-ghost btn-sm'+(mode==='grid'?' on-view':'');
+  document.getElementById('view-list').className='btn btn-ghost btn-sm'+(mode==='list'?' on-view':'');
+  renderGrid();
+}
+
+function renderListView(data){
+  const el=document.getElementById('clients-grid');if(!el)return;
+  el.style.display='block';
+  if(!data.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">👤</div><div class="empty-text">لا يوجد عملاء</div></div>';
+    return;
+  }
+  el.innerHTML=data.map((c,i)=>{
+    const col=COLORS[i%COLORS.length];
+    const cOrds=getClientOrders(c);
+    const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+    const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+    const active=cOrds.filter(o=>o.stage!=='archived').length;
+    const tags=c.tags||[];
+    return`<div class="list-row" onclick="openClient('${c._id}')">
+      <div class="list-av" style="background:${col}18;color:${col}">${(c.name||'?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:800">${c.name||'—'}
+          ${tags.map(t=>`<span class="tag" style="background:${TAG_COL[t]||'rgba(255,255,255,.06)'};font-size:9px">${TAG_LABELS[t]||t}</span>`).join('')}
+        </div>
+        <div style="font-size:11px;color:var(--dim2);margin-top:2px">📞 ${c.phone1||'—'} ${c.job?'· 💼 '+c.job:''} ${c.governorate?'· 📍 '+c.governorate:''}</div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;flex-shrink:0">
+        <div style="text-align:center">
+          <div style="font-size:13px;font-weight:800;color:var(--b)">${active}</div>
+          <div style="font-size:9px;color:var(--dim2)">نشط</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:13px;font-weight:800;color:var(--g)">${fn(tot)}</div>
+          <div style="font-size:9px;color:var(--dim2)">مبيعات ج</div>
+        </div>
+        <div style="text-align:center;min-width:60px">
+          <div style="font-size:13px;font-weight:800;color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem):'✅'}</div>
+          <div style="font-size:9px;color:var(--dim2)">${rem>0?'باقي ج':'محصّل'}</div>
+        </div>
+        <a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ══ EXPORT ══
