@@ -300,7 +300,7 @@ const FB_CONFIG = {
 };
 
 // ══ STATE ══
-let clients=[], allOrders=[], settings={};
+let clients=[], allOrders=[], settings={}, products=[];
 let editId=null, activeId=null;
 let currentUser=null, currentRole='customer_service', userName='';
 let activeTags=new Set();
@@ -371,6 +371,12 @@ function initApp(){
       clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
       renderGrid(); updateStats();
       if(activeId) renderPanel(activeId);
+    });
+
+    // ── Products listener ──
+    db.collection('products_v2').onSnapshot(snap=>{
+      products=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     });
 
     // ── Orders listener ──
@@ -591,14 +597,55 @@ function createOrder(clientId, stage){
   document.getElementById('no-notes').value='';
   document.getElementById('no-price').value='';
 
+  // ملأ dropdown المنتجات
+  const sel=document.getElementById('no-product-sel');
+  if(sel){
+    sel.innerHTML='<option value="">— اختر من القائمة —</option>'
+      + products.map(p=>`<option value="${p._id}" data-name="${(p.name||'').replace(/"/g,'')}" data-price="${p.defaultPrice||0}">${p.name}</option>`).join('')
+      + '<option value="__custom__">✏️ منتج آخر (يدوي)</option>';
+  }
+  document.getElementById('no-product').value='';
+  document.getElementById('no-custom-row').style.display='none';
+
   // اغلق panel وافتح modal
   document.getElementById('ov-new-order').classList.add('open');
-  setTimeout(()=>document.getElementById('no-product').focus(), 100);
+  setTimeout(()=>document.getElementById('no-product-sel').focus(), 100);
+}
+
+function onProductSelect(){
+  const sel=document.getElementById('no-product-sel');
+  const val=sel.value;
+  const customRow=document.getElementById('no-custom-row');
+  if(val==='__custom__'){
+    customRow.style.display='block';
+    setTimeout(()=>document.getElementById('no-product').focus(),50);
+  } else {
+    customRow.style.display='none';
+    // ملأ السعر تلقائياً لو طباعة
+    const opt=sel.options[sel.selectedIndex];
+    const defPrice=parseFloat(opt?.dataset?.price)||0;
+    const priceInp=document.getElementById('no-price');
+    if(priceInp&&defPrice>0) priceInp.value=defPrice;
+  }
 }
 
 function saveNewOrder(){
-  const product = document.getElementById('no-product').value.trim();
-  if(!product){toast('⚠️ أدخل اسم المنتج','err');return;}
+  const sel=document.getElementById('no-product-sel');
+  const selVal=sel?.value||'';
+  let product='', productId='', productPrice=0;
+
+  if(selVal==='__custom__'||selVal===''){
+    // يدوي
+    product=document.getElementById('no-product').value.trim();
+    if(!product){toast('⚠️ أدخل اسم المنتج','err');return;}
+  } else {
+    // من القائمة
+    const opt=sel.options[sel.selectedIndex];
+    product=opt?.dataset?.name||opt?.text||'';
+    productId=selVal;
+    productPrice=parseFloat(opt?.dataset?.price)||0;
+  }
+  if(!product){toast('⚠️ اختر المنتج','err');return;}
 
   const {clientId, stage} = pendingOrder;
   const cl = clients.find(x=>x._id===clientId);
@@ -623,8 +670,8 @@ function saveNewOrder(){
     clientName:cl.name||'', clientPhone:cl.phone1||'',
     stage,
     product, // اسم المنتج الأساسي
-    products:[{name:product, qty, unitPrice:price, addons:[], instructions:notes}],
-    salePrice:price, paid:0, remaining:price, deposit:0,
+    products:[{productId:productId||'', name:product, qty, unitPrice:price||productPrice, addons:[], instructions:notes}],
+    salePrice:price||productPrice, paid:0, remaining:price||productPrice, deposit:0,
     deadline, notes,
     createdDate:new Date().toLocaleDateString('ar-EG'),
     createdBy:currentUser.uid, createdByName:userName,
@@ -775,6 +822,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   window.deleteClient=deleteClient;
   window.createOrder=createOrder;
   window.saveNewOrder=saveNewOrder;
+  window.onProductSelect=onProductSelect;
   window.fillCities=fillCities;
   window.toggleTag=toggleTag;
   window.renderGrid=renderGrid;
@@ -823,7 +871,13 @@ window.addEventListener('DOMContentLoaded',()=>{
       <!-- المنتج -->
       <div class="fg">
         <label>📦 المنتج *</label>
-        <input class="inp" id="no-product" placeholder="مثال: كارت شخصي، بروشور A5، بنر...">
+        <select class="inp" id="no-product-sel" onchange="onProductSelect()">
+          <option value="">— اختر من القائمة —</option>
+        </select>
+      </div>
+      <div class="fg" id="no-custom-row" style="display:none">
+        <label>📦 اسم المنتج (يدوي)</label>
+        <input class="inp" id="no-product" placeholder="اكتب اسم المنتج...">
       </div>
       <div class="g2">
         <div class="fg">
