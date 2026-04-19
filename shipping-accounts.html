@@ -289,37 +289,62 @@ function render(){
     });
   }
 
-  // جمّع الأوردرات حسب شركة الشحن
+  // ══ المنطق الحسابي الصح ══
+  // مستحق من الشركة = salePrice (الشركة حصّلت من العميل)
+  // محصّل فعلاً     = مجموع التسويات الواردة من الشركة
+  // باقي             = مستحق - محصّل
+
   const companies={};
   shippedOrders.forEach(o=>{
     const key=o.shipCompanyName;
     if(!companies[key])companies[key]={
-      name:key, orders:[],
-      totalDue:0, totalCollected:0, totalRemaining:0, returnsCount:0
+      name:key, orders:[], pendingOrders:[], settledOrders:[],
+      totalDue:0,       // إجمالي اللي الشركة المفروض ترجعه
+      totalSettled:0,   // إجمالي التسويات الفعلية
+      totalRemaining:0, // الباقي
+      returnsCost:0,    // تكلفة المرتجعات
+      returnsCount:0
     };
     const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.paid)||0;
-    const rem=parseFloat(o.remaining)||0;
     const isReturn=returns.some(r=>r.orderId===o._id&&r.status!=='cancelled');
-    companies[key].orders.push({...o,isReturn});
-    if(!isReturn){
-      companies[key].totalDue+=sale;
-      companies[key].totalCollected+=paid;
-      companies[key].totalRemaining+=rem;
-    } else {
+    const isSettled=o.shipSettled===true;
+    companies[key].orders.push({...o,isReturn,isSettled});
+    if(isReturn){
       companies[key].returnsCount++;
+    } else {
+      companies[key].totalDue+=sale;
+      if(isSettled){
+        companies[key].settledOrders.push(o);
+        companies[key].totalSettled+=sale;
+      } else {
+        companies[key].pendingOrders.push(o);
+      }
     }
+  });
+
+  // احسب totalRemaining من التسويات الفعلية
+  Object.values(companies).forEach(co=>{
+    // جمع كل التسويات الواردة من هذه الشركة
+    const coSettlementsTotal=settlements
+      .filter(s=>s.companyName===co.name)
+      .reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+    co.totalSettled=coSettlementsTotal;
+    co.totalRemaining=Math.max(0,co.totalDue-coSettlementsTotal);
+    // تكلفة مرتجعات هذه الشركة
+    co.returnsCost=returns
+      .filter(r=>r.companyName===co.name)
+      .reduce((s,r)=>s+(parseFloat(r.cost)||0),0);
   });
 
   // إجماليات
   const allCos=Object.values(companies);
   const totalDue=allCos.reduce((s,c)=>s+c.totalDue,0);
-  const totalCollected=allCos.reduce((s,c)=>s+c.totalCollected,0);
+  const totalSettled=allCos.reduce((s,c)=>s+c.totalSettled,0);
   const totalRemaining=allCos.reduce((s,c)=>s+c.totalRemaining,0);
   const totalReturns=allCos.reduce((s,c)=>s+c.returnsCount,0);
-  setText('s-total',shippedOrders.length);
+  setText('s-total',shippedOrders.filter(o=>!returns.some(r=>r.orderId===o._id)).length);
   setText('s-due',fn(totalDue)+' ج');
-  setText('s-collected',fn(totalCollected)+' ج');
+  setText('s-collected',fn(totalSettled)+' ج');
   setText('s-remaining',fn(totalRemaining)+' ج');
   setText('s-returns',totalReturns);
   setText('sub',allCos.length+' شركة شحن');
@@ -348,10 +373,28 @@ function render(){
       <div class="co-body">
         <!-- KPIs -->
         <div class="co-kpis">
-          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--b)">${fn(co.totalDue)}</div><div class="co-kpi-lbl">إجمالي مستحق ج</div></div>
-          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--g)">${fn(co.totalCollected)}</div><div class="co-kpi-lbl">محصّل ج</div></div>
-          <div class="co-kpi" style="${co.totalRemaining>0?'background:rgba(255,61,110,.08)':''}"><div class="co-kpi-val" style="color:${co.totalRemaining>0?'var(--r)':'var(--g)'}">${co.totalRemaining>0?fn(co.totalRemaining):'✅'}</div><div class="co-kpi-lbl">باقي ج</div></div>
-          <div class="co-kpi"><div class="co-kpi-val" style="color:var(--r)">${co.returnsCount}</div><div class="co-kpi-lbl">مرتجعات</div></div>
+          <div class="co-kpi">
+            <div class="co-kpi-val" style="color:var(--b)">${fn(co.totalDue)}</div>
+            <div class="co-kpi-lbl">مستحق من الشركة ج</div>
+            <div style="font-size:9px;color:var(--dim2);margin-top:2px">${co.pendingOrders.length} شحنة بانتظار التسوية</div>
+          </div>
+          <div class="co-kpi">
+            <div class="co-kpi-val" style="color:var(--g)">${fn(co.totalSettled)}</div>
+            <div class="co-kpi-lbl">تسويات واردة ج</div>
+            <div style="font-size:9px;color:var(--dim2);margin-top:2px">${settlements.filter(s=>s.companyName===co.name).length} دفعة</div>
+          </div>
+          <div class="co-kpi" style="${co.totalRemaining>0?'background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2)':''}">
+            <div class="co-kpi-val" style="color:${co.totalRemaining>0?'var(--r)':'var(--g)'}">
+              ${co.totalRemaining>0?fn(co.totalRemaining)+' ج':'✅ مسوّى'}
+            </div>
+            <div class="co-kpi-lbl">باقي للتسوية</div>
+          </div>
+          <div class="co-kpi" style="${co.returnsCount>0?'background:rgba(255,61,110,.06)':''}">
+            <div class="co-kpi-val" style="color:${co.returnsCount>0?'var(--r)':'var(--dim2)'}">
+              ${co.returnsCount>0?co.returnsCount+' ↩️':'—'}
+            </div>
+            <div class="co-kpi-lbl">مرتجعات${co.returnsCost>0?' ('+fn(co.returnsCost)+' ج)':''}</div>
+          </div>
         </div>
 
         <!-- Progress -->
@@ -362,23 +405,44 @@ function render(){
         <!-- الأوردرات -->
         <div style="margin-bottom:12px">
           <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">الشحنات</div>
-          ${co.orders.slice(0,5).map(o=>{
-            const isRet=o.isReturn;
-            const rem=parseFloat(o.remaining)||0;
+          <!-- الشحنات غير المسوّاة — الأهم -->
+        ${co.pendingOrders.slice(0,5).map(o=>{
             const sale=parseFloat(o.salePrice)||0;
-            return`<div class="order-row${isRet?' returned':''}">
-              <div class="status-dot" style="background:${isRet?'var(--r)':rem===0?'var(--g)':'var(--y)'}"></div>
+            return`<div class="order-row">
+              <div class="status-dot" style="background:var(--y)"></div>
               <div style="flex:1">
                 <span style="font-weight:700">${o.clientName||'—'}</span>
-                <span style="color:var(--dim2);margin-right:8px">${o.orderId||''}</span>
+                <span style="color:var(--dim2);margin-right:8px;font-size:10px">${o.orderId||''}</span>
               </div>
-              <span style="color:var(--b);font-weight:700">${fn(sale)} ج</span>
-              ${rem>0&&!isRet?`<span style="color:var(--r);font-weight:700;font-size:11px">باقي ${fn(rem)} ج</span>`:''}
-              ${isRet?`<span style="color:var(--r);font-size:11px">↩️ مرتجع</span>`:''}
-              ${!isRet?`<button class="btn btn-ghost btn-xs" onclick="openReturnOrder('${o._id}','${o.clientName||''}','${co.name}')">↩️</button>`:''}
+              <span style="color:var(--y);font-weight:700">${fn(sale)} ج</span>
+              <button class="btn btn-ghost btn-xs" onclick="openReturnOrder('${o._id}','${(o.clientName||'').replace(/'/g,"\'")}','${co.name}')">↩️</button>
             </div>`;
           }).join('')}
-          ${co.orders.length>5?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px">... و ${co.orders.length-5} شحنة أخرى</div>`:''}
+        <!-- الشحنات المسوّاة -->
+        ${co.settledOrders.slice(0,3).map(o=>{
+            const sale=parseFloat(o.salePrice)||0;
+            return`<div class="order-row" style="opacity:.5">
+              <div class="status-dot" style="background:var(--g)"></div>
+              <div style="flex:1">
+                <span style="font-weight:700">${o.clientName||'—'}</span>
+                <span style="color:var(--dim2);margin-right:8px;font-size:10px">${o.orderId||''}</span>
+              </div>
+              <span style="color:var(--g);font-weight:700">${fn(sale)} ج</span>
+              <span style="font-size:10px;color:var(--g)">✅ مسوّى</span>
+            </div>`;
+          }).join('')}
+        <!-- المرتجعات -->
+        ${co.orders.filter(o=>o.isReturn).map(o=>{
+            const retData=returns.find(r=>r.orderId===o._id);
+            return`<div class="order-row returned">
+              <div class="status-dot" style="background:var(--r)"></div>
+              <div style="flex:1">
+                <span style="font-weight:700">${o.clientName||'—'}</span>
+              </div>
+              <span style="color:var(--r);font-size:11px">↩️ مرتجع${retData?.cost>0?' — '+fn(retData.cost)+' ج':''}</span>
+            </div>`;
+          }).join('')}
+        ${co.orders.length>8?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px">... و ${co.orders.length-8} شحنة أخرى</div>`:''}
         </div>
 
         <!-- آخر الدفعات -->
@@ -408,6 +472,7 @@ function openSettle(companyName){
   settleCompanyOrders=allOrders.filter(o=>
     o.shipCompanyName===companyName &&
     ['shipping','archived'].includes(o.stage) &&
+    !o.shipSettled &&
     !returns.some(r=>r.orderId===o._id&&r.status!=='cancelled')
   );
 
