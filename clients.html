@@ -571,37 +571,76 @@ function renderClientOrders(orders){
 }
 
 // ══ إنشاء أوردر جديد ══
+// pending order data
+let pendingOrder = {clientId:'', stage:''};
+
 function createOrder(clientId, stage){
   const cl=clients.find(x=>x._id===clientId);
   if(!cl){toast('❌ لم يعثر على العميل','err');return;}
+
+  // ملأ الـ modal
+  pendingOrder = {clientId, stage};
+  document.getElementById('no-title').textContent = stage==='design'?'✏️ أوردر تصميم جديد':'🖨️ أوردر طباعة جديد';
+  document.getElementById('no-client-name').textContent = cl.name||'—';
+  document.getElementById('no-client-phone').textContent = cl.phone1||'—';
+  document.getElementById('no-page-hint').textContent = stage==='design'?'التصميم':'الطباعة';
+  document.getElementById('no-price-row').style.display = stage==='printing'?'block':'none';
+  document.getElementById('no-product').value='';
+  document.getElementById('no-qty').value='';
+  document.getElementById('no-deadline').value='';
+  document.getElementById('no-notes').value='';
+  document.getElementById('no-price').value='';
+
+  // اغلق panel وافتح modal
+  document.getElementById('ov-new-order').classList.add('open');
+  setTimeout(()=>document.getElementById('no-product').focus(), 100);
+}
+
+function saveNewOrder(){
+  const product = document.getElementById('no-product').value.trim();
+  if(!product){toast('⚠️ أدخل اسم المنتج','err');return;}
+
+  const {clientId, stage} = pendingOrder;
+  const cl = clients.find(x=>x._id===clientId);
+  if(!cl){toast('❌ لم يعثر على العميل','err');return;}
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
 
-  const db=window.__db;
+  const db = window.__db;
   if(!db){toast('❌ خطأ في الاتصال','err');return;}
 
-  const orderId='ORD-'+Date.now().toString().slice(-8);
-  const now=nowStr();
-  const btn=event.target;
-  btn.disabled=true;
-  btn.textContent='جاري...';
+  const qty = parseInt(document.getElementById('no-qty').value)||1;
+  const deadline = document.getElementById('no-deadline').value||'';
+  const notes = document.getElementById('no-notes').value.trim();
+  const price = parseFloat(document.getElementById('no-price').value)||0;
 
-  db.collection('orders').add({
+  const orderId = 'ORD-'+Date.now().toString().slice(-8);
+  const now = nowStr();
+  const btn = document.getElementById('no-save-btn');
+  btn.disabled=true; btn.textContent='جاري...';
+
+  const orderData = {
     orderId, clientId,
     clientName:cl.name||'', clientPhone:cl.phone1||'',
-    stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
+    stage,
+    product, // اسم المنتج الأساسي
+    products:[{name:product, qty, unitPrice:price, addons:[], instructions:notes}],
+    salePrice:price, paid:0, remaining:price, deposit:0,
+    deadline, notes,
     createdDate:new Date().toLocaleDateString('ar-EG'),
     createdBy:currentUser.uid, createdByName:userName,
-    timeline:[{date:now, action:'📋 طلب جديد', by:userName}],
+    timeline:[{date:now, action:`📋 طلب جديد — ${product} × ${qty}`, by:userName}],
     createdAt:firebase.firestore.FieldValue.serverTimestamp(),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-  }).then(()=>{
-    const href=stage==='design'?'design.html':'print.html';
-    toast('✅ تم إنشاء الأوردر','ok');
-    setTimeout(()=>window.location.href=href, 600);
+  };
+
+  db.collection('orders').add(orderData).then(()=>{
+    document.getElementById('ov-new-order').classList.remove('open');
+    const href = stage==='design'?'design.html':'print.html';
+    toast('✅ تم إنشاء الأوردر — جاري الانتقال...','ok');
+    setTimeout(()=>window.location.href=href, 700);
   }).catch(e=>{
     toast('❌ '+e.message,'err');
-    btn.disabled=false;
-    btn.textContent=stage==='design'?'✏️ تصميم جديد':'🖨️ طباعة جديدة';
+    btn.disabled=false; btn.textContent='✓ إنشاء وانتقال';
   });
 }
 
@@ -735,6 +774,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   window.saveClient=saveClient;
   window.deleteClient=deleteClient;
   window.createOrder=createOrder;
+  window.saveNewOrder=saveNewOrder;
   window.fillCities=fillCities;
   window.toggleTag=toggleTag;
   window.renderGrid=renderGrid;
@@ -759,5 +799,64 @@ window.addEventListener('DOMContentLoaded',()=>{
 
   
 <script>if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}</script>
+
+<!-- MODAL: أوردر جديد سريع -->
+<div class="overlay" id="ov-new-order">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <span class="modal-title" id="no-title">＋ أوردر جديد</span>
+      <button class="modal-x" onclick="document.getElementById('ov-new-order').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- بيانات العميل -->
+      <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:10px;color:var(--dim2)">العميل</div>
+          <div style="font-size:14px;font-weight:800" id="no-client-name">—</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--dim2)">الهاتف</div>
+          <div style="font-size:13px;font-weight:700;color:var(--b)" id="no-client-phone">—</div>
+        </div>
+      </div>
+
+      <!-- المنتج -->
+      <div class="fg">
+        <label>📦 المنتج *</label>
+        <input class="inp" id="no-product" placeholder="مثال: كارت شخصي، بروشور A5، بنر...">
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>📏 الكمية</label>
+          <input class="inp" id="no-qty" type="number" placeholder="1000" min="1">
+        </div>
+        <div class="fg">
+          <label>📅 موعد التسليم</label>
+          <input class="inp" id="no-deadline" type="date">
+        </div>
+      </div>
+      <div class="fg">
+        <label>📝 ملاحظات العميل</label>
+        <textarea class="inp" id="no-notes" placeholder="أي تفاصيل إضافية..." style="min-height:60px"></textarea>
+      </div>
+
+      <!-- السعر — للطباعة فقط -->
+      <div id="no-price-row" style="display:none">
+        <div class="fg">
+          <label>💰 سعر البيع (ج)</label>
+          <input class="inp" id="no-price" type="number" placeholder="0">
+        </div>
+      </div>
+
+      <div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:10px 12px;font-size:11px;color:var(--dim2)">
+        💡 ستنتقل بعد الحفظ لصفحة <strong id="no-page-hint" style="color:var(--snow)">التصميم</strong> لإكمال التفاصيل
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-new-order').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-g" id="no-save-btn" onclick="saveNewOrder()">✓ إنشاء وانتقال</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
