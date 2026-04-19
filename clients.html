@@ -251,29 +251,11 @@
 
 <div class="toasts" id="toasts"></div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {
-  getFirestore, collection, doc,
-  onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
-  query, orderBy, where, getDocs, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-const app = initializeApp({
-  apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
-  authDomain:"business2card-c041b.firebaseapp.com",
-  projectId:"business2card-c041b",
-  storageBucket:"business2card-c041b.firebasestorage.app",
-  messagingSenderId:"235622448899",
-  appId:"1:235622448899:web:d8652ff71082f7d003f336"
-});
-const auth = getAuth(app);
-const db=getFirestore(app); window.__db=db;
-
-// ═══════════════════
-// EGYPT REGIONS
-// ═══════════════════
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+// EGYPT regions
 const EGYPT = {
   'القاهرة':    ['مدينة نصر','المعادي','التجمع الأول','التجمع الخامس','حلوان','مصر الجديدة','الزيتون','شبرا','عين شمس','المطرية','النزهة','المنيل','الدقي','الهرم'],
   'الجيزة':    ['الجيزة','الدقي','العجوزة','المهندسين','إمبابة','بولاق الدكرور','الشيخ زايد','أكتوبر','الواحات'],
@@ -302,24 +284,28 @@ const EGYPT = {
   'الإسماعيلية':['الإسماعيلية','فايد','القنطرة','التل الكبير'],
   'السويس':    ['السويس','الأربعين','عتاقة','فيصل'],
 };
+window.EGYPT = EGYPT;
+</script>
+<script>
+// ══════════════════════════════════════
+// FIREBASE SDK — compat (non-module)
+// ══════════════════════════════════════
+const FB_CONFIG = {
+  apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
+  authDomain:"business2card-c041b.firebaseapp.com",
+  projectId:"business2card-c041b",
+  storageBucket:"business2card-c041b.firebasestorage.app",
+  messagingSenderId:"235622448899",
+  appId:"1:235622448899:web:d8652ff71082f7d003f336"
+};
 
-// ═══════════════════
-// STATE
-// ═══════════════════
-let clients      = [];
-let designOrders = [];
-let printOrders  = [];
-let printItems   = [];
-let settings     = {};
-let editId       = null;
-let activeId     = null;
-let currentUser  = null;
-let currentRole  = 'customer_service';
+// ══ STATE ══
+let clients=[], allOrders=[], settings={};
+let editId=null, activeId=null;
+let currentUser=null, currentRole='customer_service', userName='';
+let activeTags=new Set();
 
-// ═══════════════════
-// AUTH
-// ═══════════════════
-const ROLES = {
+const ROLES={
   admin:{label:'Admin',ico:'👑',col:'var(--p)'},
   operation_manager:{label:'Ops Manager',ico:'📋',col:'var(--b)'},
   customer_service:{label:'Cust. Service',ico:'💬',col:'var(--c)'},
@@ -330,230 +316,175 @@ const ROLES = {
   wallet_manager:{label:'Wallet Mgr',ico:'💰',col:'var(--g)'},
 };
 
-// ── TAGS ──
-let activeTags = new Set();
-const TAG_COLORS = {
-  vip: 'rgba(167,139,250,.3)',regular: 'rgba(59,158,255,.2)',new: 'rgba(0,217,126,.2)',
-  wholesale: 'rgba(255,170,0,.2)',delayed: 'rgba(255,61,110,.2)',blocked: 'rgba(255,61,110,.3)'
+const TAG_COLORS={
+  vip:'rgba(167,139,250,.3)',regular:'rgba(59,158,255,.2)',new:'rgba(0,217,126,.2)',
+  wholesale:'rgba(255,170,0,.2)',delayed:'rgba(255,61,110,.2)',blocked:'rgba(255,61,110,.3)'
 };
-window.toggleTag = function(tag){
-  if(activeTags.has(tag)) activeTags.delete(tag);
-  else activeTags.add(tag);
-  document.querySelectorAll('.tag-opt').forEach(el=>{
-    const t=el.id.replace('tag-','');
-    el.style.background=activeTags.has(t)?TAG_COLORS[t]||'rgba(99,179,237,.2)':'var(--bg3)';
-    el.style.borderColor=activeTags.has(t)?'rgba(99,179,237,.4)':'var(--line)';
-    el.style.color=activeTags.has(t)?'var(--b)':'var(--text)';
+
+const COLORS=['var(--r)','var(--b)','var(--g)','var(--y)','var(--p)','var(--c)'];
+
+// ══ UTILS ══
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const gv=id=>document.getElementById(id)?.value||'';
+const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
+const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+
+function toast(msg,t=''){
+  const c=document.getElementById('toasts');if(!c)return;
+  const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;
+  c.appendChild(el);setTimeout(()=>el.remove(),3200);
+}
+
+// ══ NAV ══
+function toggleNav(){document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');}
+function closeNav(){document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');}
+function doLogout(){firebase.auth().signOut().then(()=>window.location.href='login.html');}
+
+// ══ FIREBASE INIT ══
+function initApp(){
+  if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+  const db=firebase.firestore();
+  const auth=firebase.auth();
+
+  auth.onAuthStateChanged(async u=>{
+    if(!u){window.location.href='login.html';return;}
+    currentUser=u;
+    const snap=await db.collection('users').doc(u.uid).get();
+    if(snap.exists){
+      const d=snap.data();
+      currentRole=d.role||'customer_service';
+      const r=ROLES[currentRole]||ROLES.admin;
+      userName=d.name||u.email;
+      setText('nav-name',userName);
+      document.getElementById('nav-av').textContent=userName[0].toUpperCase();
+      document.getElementById('nav-av').style.cssText=`background:${r.col}20;color:${r.col}`;
+      document.getElementById('role-badge').textContent=r.label;
+      document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;
+    }
+
+    const isAdmin=['admin','operation_manager'].includes(currentRole);
+
+    // ── Clients listener ──
+    db.collection('clients').orderBy('createdAt','desc').onSnapshot(snap=>{
+      const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
+      renderGrid(); updateStats();
+      if(activeId) renderPanel(activeId);
+    });
+
+    // ── Orders listener ──
+    db.collection('orders').onSnapshot(snap=>{
+      allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      updateStats();
+      if(activeId) renderPanel(activeId);
+    });
+
+    // ── Settings listener ──
+    db.collection('settings').doc('main').onSnapshot(snap=>{
+      if(snap.exists) settings=snap.data();
+      fillSelects(); fillFilters();
+    });
   });
-  document.getElementById('c-category').value=[...activeTags].join(',');
-};
-function resetTags(){activeTags.clear();document.querySelectorAll('.tag-opt').forEach(el=>{el.style.background='var(--bg3)';el.style.borderColor='var(--line)';el.style.color='var(--text)';});document.getElementById('c-category').value='';}
-function loadTags(tags){resetTags();if(!tags)return;(typeof tags==='string'?tags.split(','):tags).forEach(t=>{if(t)toggleTag(t.trim());});}
 
-
-
-onAuthStateChanged(auth, async u => {
-  if(!u){ window.location.href='login.html'; return; }
-  currentUser = u;
-  window.__user = u;
-  const snap = await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){
-    const d = snap.data();
-    currentRole = d.role||'customer_service';
-    const r = ROLES[currentRole]||ROLES.customer_service;
-    document.getElementById('nav-name').textContent = d.name||u.email;
-    document.getElementById('nav-av').textContent   = (d.name||'C')[0].toUpperCase();
-    document.getElementById('nav-av').style.cssText = `background:${r.col}20;color:${r.col};`;
-    document.getElementById('role-badge').textContent = r.label;
-    document.getElementById('role-badge').style.cssText = `background:${r.col}18;color:${r.col};`;
-  }
-});
-
-// ═══════════════════
-// LISTENERS
-// ═══════════════════
-onSnapshot(query(collection(db,'clients'), orderBy('createdAt','desc')), snap=>{
-  clients=snap.docs.map(d=>({...d.data(),_id:d.id})); window.__clients=clients;
-  renderGrid(); updateStats();
-  if(activeId) renderPanel(activeId);
-});
-onSnapshot(query(collection(db,'design_orders'), orderBy('createdAt','desc')), snap=>{
-  designOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  if(activeId) renderPanel(activeId);
-});
-onSnapshot(query(collection(db,'print_orders_v2'), orderBy('createdAt','desc')), snap=>{
-  printOrders = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  if(activeId) renderPanel(activeId);
-});
-onSnapshot(query(collection(db,'print_items_v2'), orderBy('createdAt','asc')), snap=>{
-  printItems = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  if(activeId) renderPanel(activeId);
-});
-onSnapshot(collection(db,'orders'),snap=>{window.__orders=snap.docs.map(d=>({...d.data(),_id:d.id}));});
-onSnapshot(doc(db,'settings','main'), snap=>{
-  if(snap.exists()) settings = snap.data();
-  fillSelects(); fillFilters();
-});
-
-// ═══════════════════
-// FILL SELECTS
-// ═══════════════════
-function fillSelects(){
-  // sources
-  const srcs = settings.clientSources||['واتساب','فيسبوك','إنستجرام','توصية','مباشر'];
-  const sEl = document.getElementById('c-source');
-  if(sEl) sEl.innerHTML='<option value="">— اختر —</option>'+srcs.map(s=>`<option>${s}</option>`).join('');
-
-  // categories
-  const cats = settings.clientCategories||['VIP','محامي','طبيب'];
-  const cEl = document.getElementById('c-category');
-  if(cEl) cEl.innerHTML='<option value="">— اختر —</option>'+cats.map(c=>`<option>${c}</option>`).join('');
-
-  // governorates
-  const gEl = document.getElementById('c-gov');
-  if(gEl) gEl.innerHTML='<option value="">— اختر المحافظة —</option>'+
-    Object.keys(EGYPT).map(g=>`<option>${g}</option>`).join('');
+  // ── EXPOSE DB للـ functions ──
+  window.__db=db;
+  window.__auth=auth;
 }
 
-function fillFilters(){
-  const cats = settings.clientCategories||[];
-  const fcat = document.getElementById('f-cat');
-  if(fcat){const cur=fcat.value;fcat.innerHTML='<option value="">كل التصنيفات</option>'+cats.map(c=>`<option>${c}</option>`).join('');fcat.value=cur;}
+// ══ STATS ══
+function updateStats(){
+  const now=new Date();
+  const thisMonth=clients.filter(c=>{
+    const d=c.createdAt?.toDate?.();
+    return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+  });
+  const totalRem=allOrders.filter(o=>clients.find(c=>c._id===o.clientId))
+    .reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const totalSales=allOrders.filter(o=>clients.find(c=>c._id===o.clientId))
+    .reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const active=allOrders.filter(o=>o.stage!=='archived'&&clients.find(c=>c._id===o.clientId));
 
-  const srcs = settings.clientSources||[];
-  const fsrc = document.getElementById('f-src');
-  if(fsrc){const cur=fsrc.value;fsrc.innerHTML='<option value="">كل المصادر</option>'+srcs.map(s=>`<option>${s}</option>`).join('');fsrc.value=cur;}
-
-  // governorates in filter
-  const fgov = document.getElementById('f-gov');
-  if(fgov){const cur=fgov.value;fgov.innerHTML='<option value="">كل المحافظات</option>'+Object.keys(EGYPT).map(g=>`<option>${g}</option>`).join('');fgov.value=cur;}
+  setText('s-total',clients.length);
+  setText('s-month',thisMonth.length);
+  setText('s-revenue',fn(totalSales)+' ج');
+  setText('s-remaining',fn(totalRem)+' ج');
+  setText('s-active',active.length);
 }
 
-window.fillCities = function(){
-  const gov  = gv('c-gov');
-  const sel  = document.getElementById('c-city');
-  const cities = EGYPT[gov]||[];
-  sel.innerHTML = '<option value="">— اختر المدينة —</option>'+cities.map(c=>`<option>${c}</option>`).join('');
-};
+// ══ GRID ══
+function renderGrid(){
+  const q=gv('q').toLowerCase();
+  const ft=gv('f-tag');
+  const fg=gv('f-gov');
+  const fs=gv('f-source');
 
-// ═══════════════════
-// RENDER GRID
-// ═══════════════════
-const COLORS = ['var(--r)','var(--b)','var(--g)','var(--y)','var(--p)','var(--c)'];
+  let data=clients.filter(c=>{
+    if(q&&!(c.name||'').toLowerCase().includes(q)&&!(c.phone1||'').includes(q)&&!(c.phone2||'').includes(q))return false;
+    if(ft&&!(c.tags||[]).includes(ft))return false;
+    if(fg&&c.governorate!==fg)return false;
+    if(fs&&c.source!==fs)return false;
+    if(activeTags.size>0&&![...activeTags].every(t=>(c.tags||[]).includes(t)))return false;
+    return true;
+  });
 
-window.renderGrid = function(){
-  const q    = gv('q').toLowerCase();
-  const fcat = gv('f-cat');
-  const fgov = gv('f-gov');
-  const fsrc = gv('f-src');
-
-  const data = clients.filter(c=>
-    (!q   || c.name?.toLowerCase().includes(q)||c.phone1?.includes(q)||c.phone2?.includes(q)) &&
-    (!fcat|| c.category===fcat) &&
-    (!fgov|| c.governorate===fgov) &&
-    (!fsrc|| c.source===fsrc)
-  );
-
-  document.getElementById('clients-sub').textContent = `${data.length} عميل`;
-
-  const el = document.getElementById('clients-grid');
+  const el=document.getElementById('clients-grid');if(!el)return;
   if(!data.length){
-    el.innerHTML=`<div style="grid-column:1/-1"><div class="empty"><div class="empty-icon">👥</div><div class="empty-text">${clients.length?'لا توجد نتائج':'لا يوجد عملاء بعد'}</div>${!clients.length?`<button class="btn btn-b" onclick="oM('new-client')">＋ أضف أول عميل</button>`:''}</div></div>`;
+    el.innerHTML=`<div class="empty"><div class="empty-icon">👤</div><div class="empty-text">${clients.length?'لا نتائج للبحث':'لا يوجد عملاء بعد'}</div><button class="btn btn-g btn-sm" onclick="openAddClient()" style="margin-top:12px">＋ أضف أول عميل</button></div>`;
     return;
   }
 
-  el.innerHTML = data.map((c,i)=>{
-    const col   = COLORS[i%COLORS.length];
-    const oi    = printItems.filter(x=>printOrders.find(o=>o.clientId===c._id&&o._id===x.orderId));
-    const tot   = oi.reduce((s,x)=>s+(x.salePrice||x.price||0),0);
-    const rem   = oi.reduce((s,x)=>s+(x.remaining||x.rem||0),0);
-    const dOrd  = designOrders.filter(o=>o.clientId===c._id).length;
-    const pOrd  = printOrders.filter(o=>o.clientId===c._id).length;
-    const thisMonth = new Date();thisMonth.setDate(1);
-    const isNew = c.createdAt?.toDate?.()>thisMonth;
-
-    return `<div class="client-card" style="--cc:${col}" onclick="openClient('${c._id}')">
-      <div class="cc-top">
-        <div class="cc-av" style="background:${col}18;color:${col}">${(c.name||'?')[0]}</div>
-        <div style="flex:1;min-width:0">
-          <div class="cc-name">${c.name}</div>
-          <div class="cc-job">${c.job||''}${c.governorate?' · '+c.governorate:''}</div>
+  el.innerHTML=data.map((c,i)=>{
+    const col=COLORS[i%COLORS.length];
+    const cOrders=allOrders.filter(o=>o.clientId===c._id||(c.phone1&&o.clientPhone===c.phone1));
+    const tot=cOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+    const rem=cOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+    const tags=(c.tags||[]);
+    return`<div class="client-card" style="--cc:${col}" onclick="openClient('${c._id}')">
+      <div class="cc-head">
+        <div class="cc-avatar" style="background:${col}18;color:${col}">${(c.name||'?')[0].toUpperCase()}</div>
+        <div class="cc-info">
+          <div class="cc-name">${c.name||'—'}</div>
+          <div class="cc-phone">${c.phone1||'—'}</div>
         </div>
-        ${isNew?'<span class="badge bg-g" style="font-size:9px">جديد</span>':''}
+        <a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn" title="واتساب">💬</a>
       </div>
-      <div class="cc-badges">
-        ${c.category?`<span class="badge bg-b">${c.category}</span>`:''}
-        ${c.source?`<span class="badge bg-d">${c.source}</span>`:''}
-      </div>
+      ${tags.length?`<div class="cc-tags">${tags.map(t=>`<span class="cc-tag" style="background:${TAG_COLORS[t]||'rgba(255,255,255,.06)'}">${t}</span>`).join('')}</div>`:''}
       <div class="cc-stats">
-        <div class="cc-stat"><div class="cc-stat-val" style="color:${col}">${dOrd+pOrd}</div><div class="cc-stat-lbl">أوردر</div></div>
-        <div class="cc-stat"><div class="cc-stat-val" style="color:var(--y)">${tot?fn(tot)+' ج':'—'}</div><div class="cc-stat-lbl">إجمالي</div></div>
-        <div class="cc-stat"><div class="cc-stat-val" style="color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem)+' ج':'مدفوع'}</div><div class="cc-stat-lbl">باقي</div></div>
+        <div><div class="cc-stat-val" style="color:var(--b)">${cOrders.length}</div><div class="cc-stat-lbl">أوردر</div></div>
+        <div><div class="cc-stat-val" style="color:var(--g)">${fn(tot)}</div><div class="cc-stat-lbl">مبيعات ج</div></div>
+        <div><div class="cc-stat-val" style="color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem):'✅'}</div><div class="cc-stat-lbl">${rem>0?'باقي ج':'محصّل'}</div></div>
       </div>
-      <div class="cc-footer">
-        <a class="wa-btn" href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()">
-          <span>💬</span> واتساب
-        </a>
-        <div style="display:flex;gap:5px" onclick="event.stopPropagation()">
-          <button class="btn btn-ghost btn-xs" onclick="editClient('${c._id}')">✏️</button>
-          <button class="btn btn-danger btn-xs" onclick="deleteClientConfirm('${c._id}','${c.name}')">🗑</button>
-        </div>
-      </div>
+      ${c.governorate?`<div class="cc-loc">📍 ${c.governorate}${c.city?' — '+c.city:''}</div>`:''}
     </div>`;
   }).join('');
-};
-
-// ═══════════════════
-// STATS
-// ═══════════════════
-function updateStats(){
-  const thisMonth = new Date(); thisMonth.setDate(1);
-  const newCount  = clients.filter(c=>c.createdAt?.toDate?.()>thisMonth).length;
-  const allRem    = printItems.reduce((s,i)=>s+(i.remaining||i.rem||0),0);
-  const allTot    = printItems.reduce((s,i)=>s+(i.salePrice||i.price||0),0);
-
-  // top gov
-  const govCount = {};
-  clients.forEach(c=>{if(c.governorate)govCount[c.governorate]=(govCount[c.governorate]||0)+1;});
-  const topGov = Object.entries(govCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'—';
-
-  setText('st-total', clients.length);
-  setText('st-new',   newCount);
-  setText('st-rev',   fn(allTot)+' ج');
-  setText('st-rem',   fn(allRem)+' ج');
-  setText('st-gov',   topGov);
 }
 
-// ═══════════════════
-// OPEN CLIENT PANEL
-// ═══════════════════
-window.openClient = function(id){
-  activeId = id;
+// ══ PANEL ══
+function openClient(id){
+  activeId=id;
   document.getElementById('panel-ov').classList.add('open');
   renderPanel(id);
-};
-window.closePanel = function(){
-  activeId = null;
+}
+
+function closePanel(){
+  activeId=null;
   document.getElementById('panel-ov').classList.remove('open');
-};
+}
 
 function renderPanel(id){
-  const c = clients.find(x=>x._id===id); if(!c) return;
-  const ords = window.__orders || [];
-  const clientOrders = ords.filter(o=>
-    o.clientId===id ||
-    (c.phone1 && o.clientPhone===c.phone1) ||
-    (c.name && o.clientName===c.name)
+  const c=clients.find(x=>x._id===id);if(!c)return;
+  const cOrders=allOrders.filter(o=>
+    o.clientId===id||
+    (c.phone1&&o.clientPhone===c.phone1)||
+    (c.name&&o.clientName===c.name)
   );
-  const tot = clientOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-  const col = clientOrders.reduce((s,o)=>s+(parseFloat(o.paid)||0),0);
-  const rem = clientOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
-  const pct = tot>0?Math.min(col/tot*100,100):0;
+  const tot=cOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const col=cOrders.reduce((s,o)=>s+(parseFloat(o.paid)||0),0);
+  const rem=cOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const pct=tot>0?Math.min(col/tot*100,100):0;
+  const color=COLORS[clients.indexOf(c)%COLORS.length];
 
-  const colorIdx = clients.indexOf(c);
-  const color = COLORS[colorIdx%COLORS.length];
-
-  // header
   document.getElementById('pn-header').innerHTML=`
     <div style="display:flex;align-items:center;gap:12px">
       <div style="width:44px;height:44px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900">${(c.name||'?')[0]}</div>
@@ -564,245 +495,257 @@ function renderPanel(id){
     </div>`;
 
   document.getElementById('panel-body').innerHTML=`
-
-    <!-- CLIENT HEADER -->
     <div class="client-header">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-        ${infoRow('📞 هاتف 1',`<a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" style="color:var(--g);display:flex;align-items:center;gap:4px">💬 ${c.phone1}</a>`)}
+        ${infoRow('📞 هاتف',`<a href="tel:${c.phone1}" style="color:var(--b)">${c.phone1}</a> <a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" style="color:var(--g);margin-right:8px">💬</a>`)}
         ${c.phone2?infoRow('📞 هاتف 2',c.phone2):''}
-        ${c.email? infoRow('📧 إيميل',c.email):''}
         ${c.governorate?infoRow('📍 العنوان',c.governorate+(c.city?' — '+c.city:'')):''}
-        ${c.source?  infoRow('📣 المصدر',c.source):''}
+        ${c.source?infoRow('📣 المصدر',c.source):''}
         ${c.category?infoRow('🏷️ التصنيف',`<span class="badge bg-b">${c.category}</span>`):''}
+        ${c.job?infoRow('💼 المهنة',c.job):''}
       </div>
       ${c.notes?`<div style="font-size:12px;color:var(--dim2);padding:8px;background:var(--bg4);border-radius:8px">📝 ${c.notes}</div>`:''}
     </div>
 
-    <!-- FINANCIAL SUMMARY -->
+    <!-- المالي -->
     <div class="section">
       <div class="section-head"><div class="section-title"><div class="section-ico" style="background:rgba(0,217,126,.15);color:var(--g)">💰</div>الملخص المالي</div></div>
-      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">إجمالي الطلبات</span><strong style="color:var(--y)">${fn(tot)} ج.م</strong></div>
-      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">تم تحصيله</span><strong style="color:var(--g)">${fn(col)} ج.م</strong></div>
-      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">الباقي</span><strong style="color:${rem>0?'var(--r)':'var(--dim2)'}">${rem?fn(rem)+' ج.م':'صفر ✅'}</strong></div>
+      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">إجمالي الطلبات</span><strong style="color:var(--b)">${fn(tot)} ج</strong></div>
+      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">تم تحصيله</span><strong style="color:var(--g)">${fn(col)} ج</strong></div>
+      <div class="fin-row"><span style="font-size:12px;color:var(--dim2)">الباقي</span><strong style="color:${rem>0?'var(--r)':'var(--dim2)'}"> ${rem?fn(rem)+' ج':'صفر ✅'}</strong></div>
       ${tot>0?`<div class="prog" style="margin-top:10px"><div class="prog-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g))"></div></div>`:''}
     </div>
 
-    <!-- أوردرات العميل + إضافة سريعة -->
+    <!-- الأوردرات -->
     <div class="section">
       <div class="section-head">
-        <div class="section-title"><div class="section-ico" style="background:rgba(255,61,110,.15);color:var(--r)">📦</div>الأوردرات (${clientOrders.length})</div>
+        <div class="section-title"><div class="section-ico" style="background:rgba(255,61,110,.15);color:var(--r)">📦</div>الأوردرات (${cOrders.length})</div>
       </div>
-      <!-- زراري الإضافة السريعة -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-        <button class="btn btn-p" onclick="clientNewOrder('${id}','design')" style="font-size:12px;padding:10px">
-          ✏️ أوردر تصميم
-        </button>
-        <button class="btn btn-b" onclick="clientNewOrder('${id}','printing')" style="font-size:12px;padding:10px">
-          🖨️ أوردر طباعة
-        </button>
+        <button class="btn btn-p btn-sm" onclick="createOrder('${id}','design')">✏️ تصميم جديد</button>
+        <button class="btn btn-b btn-sm" onclick="createOrder('${id}','printing')">🖨️ طباعة جديدة</button>
       </div>
-      
+      <div id="panel-orders"></div>
     </div>
-
-</div>
 
     <!-- ACTIONS -->
-    <div style="display:flex;gap:8px;padding-top:4px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="editClient('${id}');closePanel()">✏️ تعديل بيانات العميل</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteClientConfirm('${id}','${c.name}')">🗑 حذف العميل</button>
-    </div>
-  `;
-  clientShowOrders(id,clientOrders);
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
+      <a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" class="btn btn-g btn-sm">💬 واتساب</a>
+      <a href="tel:${c.phone1}" class="btn btn-b btn-sm">📞 اتصال</a>
+      <button class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
+    </div>`;
+
+  // render أوردرات
+  renderClientOrders(cOrders);
+}
+
+function renderClientOrders(orders){
+  const el=document.getElementById('panel-orders');if(!el)return;
+  if(!orders.length){
+    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد أوردرات بعد</div>';
+    return;
+  }
+  const SA={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',archived:'✅ مكتمل'};
+  const SC={design:'var(--p)',printing:'var(--b)',production:'var(--r)',shipping:'var(--c)',archived:'var(--g)'};
+  const SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
+  const sorted=orders.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  let html='';
+  sorted.forEach(o=>{
+    const sc=SC[o.stage]||'var(--dim2)';
+    const href=(SH[o.stage]||'index')+'.html';
+    const rem=parseFloat(o.remaining)||0;
+    const name=o.product||(o.products||[]).map(p=>p.name).join(' + ')||'—';
+    html+=`<div onclick="location.href='${href}'" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div>
+        <div style="font-size:13px;font-weight:700">${name}</div>
+      </div>
+      <div style="text-align:left">
+        <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${sc}15;color:${sc}">${SA[o.stage]||o.stage}</span>
+        ${rem>0?`<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">${fn(rem)} ج</div>`:''}
+      </div>
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+// ══ إنشاء أوردر جديد ══
+function createOrder(clientId, stage){
+  const cl=clients.find(x=>x._id===clientId);
+  if(!cl){toast('❌ لم يعثر على العميل','err');return;}
+  if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
+
+  const db=window.__db;
+  if(!db){toast('❌ خطأ في الاتصال','err');return;}
+
+  const orderId='ORD-'+Date.now().toString().slice(-8);
+  const now=nowStr();
+  const btn=event.target;
+  btn.disabled=true;
+  btn.textContent='جاري...';
+
+  db.collection('orders').add({
+    orderId, clientId,
+    clientName:cl.name||'', clientPhone:cl.phone1||'',
+    stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
+    createdDate:new Date().toLocaleDateString('ar-EG'),
+    createdBy:currentUser.uid, createdByName:userName,
+    timeline:[{date:now, action:'📋 طلب جديد', by:userName}],
+    createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(()=>{
+    const href=stage==='design'?'design.html':'print.html';
+    toast('✅ تم إنشاء الأوردر','ok');
+    setTimeout(()=>window.location.href=href, 600);
+  }).catch(e=>{
+    toast('❌ '+e.message,'err');
+    btn.disabled=false;
+    btn.textContent=stage==='design'?'✏️ تصميم جديد':'🖨️ طباعة جديدة';
+  });
 }
 
 function infoRow(l,v){
   return`<div style="background:var(--bg4);border-radius:8px;padding:8px 10px">
     <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;font-weight:700;margin-bottom:3px">${l}</div>
-    <div style="font-size:12px;font-weight:600">${v}</div>
+    <div style="font-size:13px;font-weight:600">${v}</div>
   </div>`;
 }
 
-// ═══════════════════
-// PHONE VALIDATION
-// ═══════════════════
-window.checkPhone = async function(fieldId) {
-  const val  = document.getElementById(fieldId).value.trim();
-  const hint = document.getElementById(fieldId+'-hint');
-  const inp  = document.getElementById(fieldId);
-  if(!val){ inp.className='inp'; hint.textContent=''; return; }
+// ══ ADD / EDIT CLIENT ══
+function openAddClient(){
+  editId=null;
+  document.getElementById('modal-title').textContent='＋ عميل جديد';
+  document.getElementById('save-client-btn').textContent='✓ إضافة العميل';
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes'].forEach(id=>sv(id,''));
+  sv('c-source','');sv('c-category','');sv('c-governorate','');sv('c-city','');
+  document.querySelectorAll('.tag-opt').forEach(el=>el.classList.remove('on'));
+  document.getElementById('ov-add').classList.add('open');
+}
 
-  // format check
-  if(!/^01[0125][0-9]{8}$/.test(val)){
-    inp.className='inp invalid';
-    hint.className='field-hint err';
-    hint.textContent='⚠️ رقم غير صحيح (01x + 8 أرقام)';
-    return;
-  }
+function editClient(id){
+  const c=clients.find(x=>x._id===id);if(!c)return;
+  editId=id;
+  document.getElementById('modal-title').textContent='✏️ تعديل '+c.name;
+  document.getElementById('save-client-btn').textContent='✓ حفظ التعديلات';
+  sv('c-name',c.name);sv('c-phone1',c.phone1);sv('c-phone2',c.phone2);
+  sv('c-email',c.email);sv('c-job',c.job);sv('c-notes',c.notes);
+  sv('c-source',c.source);sv('c-category',c.category);
+  sv('c-governorate',c.governorate);
+  fillCities();sv('c-city',c.city);
+  document.querySelectorAll('.tag-opt').forEach(el=>{
+    el.classList.toggle('on',(c.tags||[]).includes(el.dataset.tag));
+  });
+  closePanel();
+  document.getElementById('ov-add').classList.add('open');
+}
 
-  // uniqueness check
-  const existing = clients.find(c=>(c.phone1===val||c.phone2===val)&&c._id!==editId);
-  if(existing){
-    inp.className='inp invalid';
-    hint.className='field-hint err';
-    hint.textContent=`⚠️ الرقم مسجل لـ "${existing.name}"`;
-    return;
-  }
+function saveClient(){
+  const name=gv('c-name').trim();
+  const phone1=gv('c-phone1').trim();
+  if(!name)return toast('⚠️ أدخل اسم العميل','err');
+  if(!phone1)return toast('⚠️ هاتف 1 مطلوب','err');
+  if(!/^01[0125][0-9]{8}$/.test(phone1))return toast('⚠️ رقم الهاتف غير صحيح','err');
 
-  inp.className='inp valid';
-  hint.className='field-hint ok';
-  hint.textContent='✓ رقم متاح';
-};
+  const dup=clients.find(c=>c.phone1===phone1&&c._id!==editId);
+  if(dup)return toast(`⚠️ هاتف 1 مسجل لـ "${dup.name}"`,'err');
 
-window.checkEmail = function() {
-  const val  = gv('c-email');
-  const hint = document.getElementById('c-email-hint');
-  const inp  = document.getElementById('c-email');
-  if(!val){ inp.className='inp'; hint.textContent=''; return; }
+  const tags=[...document.querySelectorAll('.tag-opt.on')].map(el=>el.dataset.tag);
+  const db=window.__db;
+  const btn=document.getElementById('save-client-btn');
+  btn.disabled=true; btn.textContent='جاري...';
 
-  const existing = clients.find(c=>c.email===val&&c._id!==editId);
-  if(existing){
-    inp.className='inp invalid';
-    hint.className='field-hint err';
-    hint.textContent=`⚠️ الإيميل مسجل لـ "${existing.name}"`;
-    return;
-  }
-  inp.className='inp valid';
-  hint.className='field-hint ok';
-  hint.textContent='✓ إيميل متاح';
-};
-
-// ═══════════════════
-// JOB AUTOCOMPLETE — من البيانات السابقة
-window.updateJobSuggestions = function(){
-  const val = gv('c-job').toLowerCase();
-  const dl  = document.getElementById('job-suggestions');
-  if(!dl||!val) return;
-  const jobs=[...new Set(clients.map(c=>c.job).filter(j=>j&&j.toLowerCase().includes(val)))].slice(0,8);
-  dl.innerHTML=jobs.map(j=>`<option value="${j}">`).join('');
-};
-
-// SAVE CLIENT
-// ═══════════════════
-window.saveClient = async function() {
-  const name   = gv('c-name');
-  const phone1 = gv('c-phone1').trim();
-  if(!name)   return toast('⚠️ أدخل اسم العميل','err');
-  if(!phone1) return toast('⚠️ هاتف 1 مطلوب','err');
-  if(!/^01[0125][0-9]{8}$/.test(phone1)) return toast('⚠️ رقم الهاتف غير صحيح','err');
-
-  // check uniqueness
-  const dup1 = clients.find(c=>(c.phone1===phone1||c.phone2===phone1)&&c._id!==editId);
-  if(dup1) return toast(`⚠️ هاتف 1 مسجل لـ "${dup1.name}"`, 'err');
-
-  const phone2 = gv('c-phone2').trim();
-  if(phone2){
-    const dup2 = clients.find(c=>(c.phone1===phone2||c.phone2===phone2)&&c._id!==editId);
-    if(dup2) return toast(`⚠️ هاتف 2 مسجل لـ "${dup2.name}"`, 'err');
-  }
-
-  const email = gv('c-email').trim();
-  if(email){
-    const dupE = clients.find(c=>c.email===email&&c._id!==editId);
-    if(dupE) return toast(`⚠️ الإيميل مسجل لـ "${dupE.name}"`, 'err');
-  }
-
-  const data = {
-    name, phone1, phone2, email,
-    job:         gv('c-job'),
-    governorate: gv('c-gov'),
-    city:        gv('c-city'),
-    source:      gv('c-source'),
-    category:    gv('c-category'),
-    notes:       gv('c-notes'),
-    updatedAt:   serverTimestamp(),
+  const data={
+    name, phone1, phone2:gv('c-phone2'), email:gv('c-email'),
+    job:gv('c-job'), notes:gv('c-notes'), source:gv('c-source'),
+    category:gv('c-category'), governorate:gv('c-governorate'), city:gv('c-city'),
+    tags, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
 
-  try {
-    if(editId) {
-      await updateDoc(doc(db,'clients',editId), data);
-      toast('✅ تم تحديث بيانات العميل','ok');
-    } else {
-      const id = 'CLT-'+Date.now().toString().slice(-6);
-      await addDoc(collection(db,'clients'), {
-        ...data, id,
-        createdBy:  currentUser?.uid||'',
-        createdAt:  serverTimestamp(),
-      });
-      toast('✅ تم إضافة العميل','ok');
-    }
-    cM('new-client'); resetForm();
-  } catch(e) {
-    toast('❌ '+e.message,'err');
+  const done=()=>{
+    document.getElementById('ov-add').classList.remove('open');
+    toast(editId?'✅ تم تحديث بيانات العميل':'✅ تم إضافة العميل','ok');
+    btn.disabled=false; btn.textContent='✓ حفظ';
+  };
+
+  if(editId){
+    db.collection('clients').doc(editId).update(data).then(done).catch(e=>{
+      toast('❌ '+e.message,'err'); btn.disabled=false; btn.textContent='✓ حفظ';
+    });
+  } else {
+    data.createdBy=currentUser.uid;
+    data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+    db.collection('clients').add(data).then(done).catch(e=>{
+      toast('❌ '+e.message,'err'); btn.disabled=false; btn.textContent='✓ حفظ';
+    });
   }
-};
+}
 
-// EDIT
-window.editClient = function(id) {
-  editId = id;
-  const c = clients.find(x=>x._id===id); if(!c) return;
-  document.getElementById('client-modal-title').textContent = '✏️ تعديل بيانات العميل';
-  sv('c-name',     c.name||'');
-  sv('c-phone1',   c.phone1||'');
-  sv('c-phone2',   c.phone2||'');
-  sv('c-email',    c.email||'');
-  sv('c-job',      c.job||'');
-  sv('c-source',   c.source||'');
-  sv('c-category', c.category||'');
-  sv('c-notes',    c.notes||'');
-  sv('c-gov',      c.governorate||'');
-  if(c.governorate) { window.fillCities(); setTimeout(()=>sv('c-city',c.city||''),100); }
-  oM('new-client');
-};
-
-window.resetForm = function() {
-  editId = null;
-  document.getElementById('client-modal-title').textContent = '＋ عميل جديد';
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes'].forEach(id=>{
-    const e=document.getElementById(id); if(e){e.value='';e.className='inp';}
-  });
-  ['c-phone1-hint','c-phone2-hint','c-email-hint'].forEach(id=>{
-    const e=document.getElementById(id); if(e)e.textContent='';
-  });
-  sv('c-gov',''); sv('c-city',''); sv('c-source',''); sv('c-category','');
-};
-
-// DELETE
-window.deleteClientConfirm = function(id, name) {
-  if(!confirm(`حذف عميل "${name}"؟\nهذا سيحذف العميل فقط — الأوردرات لن تُحذف.`)) return;
-  deleteDoc(doc(db,'clients',id))
-    .then(()=>toast('✅ تم الحذف','ok'))
+function deleteClient(id){
+  const c=clients.find(x=>x._id===id);if(!c)return;
+  if(!confirm(`حذف ${c.name}؟ لا يمكن التراجع.`))return;
+  window.__db.collection('clients').doc(id).delete()
+    .then(()=>{toast('✅ تم الحذف','ok');closePanel();})
     .catch(e=>toast('❌ '+e.message,'err'));
-};
+}
 
-// EXPORT
-window.exportCSV = function() {
-  const rows = [['رقم','الاسم','هاتف1','هاتف2','إيميل','الوظيفة','المحافظة','المدينة','المصدر','التصنيف','التاريخ']];
-  clients.forEach(c=>{
-    rows.push([c.id||'',c.name||'',c.phone1||'',c.phone2||'',c.email||'',c.job||'',c.governorate||'',c.city||'',c.source||'',c.category||'',c.createdAt?.toDate?.().toLocaleDateString('ar-EG')||'']);
-  });
-  const csv=rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
-  a.download='clients.csv'; a.click();
-  toast('📥 تم التصدير','ok');
-};
+// ══ FILTERS ══
+function fillSelects(){
+  const srcs=settings.clientSources||['واتساب','فيسبوك','إنستجرام','توصية','مباشر'];
+  const sEl=document.getElementById('c-source');
+  if(sEl)sEl.innerHTML='<option value="">— اختر —</option>'+srcs.map(s=>`<option>${s}</option>`).join('');
+  const cats=settings.clientCategories||['VIP','محامي','طبيب','شركة'];
+  const cEl=document.getElementById('c-category');
+  if(cEl)cEl.innerHTML='<option value="">— اختر —</option>'+cats.map(c=>`<option>${c}</option>`).join('');
+}
 
-window.logout = async function(){ await signOut(auth); window.location.href='login.html'; };
+function fillFilters(){
+  const govs=Object.keys(window.EGYPT||{});
+  const fEl=document.getElementById('f-gov');
+  if(fEl)fEl.innerHTML='<option value="">كل المحافظات</option>'+govs.map(g=>`<option>${g}</option>`).join('');
+  const srcs=settings.clientSources||['واتساب','فيسبوك','إنستجرام','توصية','مباشر'];
+  const fsEl=document.getElementById('f-source');
+  if(fsEl)fsEl.innerHTML='<option value="">كل المصادر</option>'+srcs.map(s=>`<option>${s}</option>`).join('');
+}
 
-// MODAL HELPERS
-window.oM=n=>document.getElementById('ov-'+n)?.classList.add('open');
-window.cM=n=>document.getElementById('ov-'+n)?.classList.remove('open');
-document.querySelectorAll('.overlay').forEach(el=>el.addEventListener('click',e=>{if(e.target===el){el.classList.remove('open');resetForm();}}));
+function fillCities(){
+  const gov=gv('c-governorate');
+  const cityEl=document.getElementById('c-city');
+  if(!cityEl)return;
+  const cities=(window.EGYPT||{})[gov]||[];
+  cityEl.innerHTML='<option value="">— اختر المدينة —</option>'+cities.map(c=>`<option>${c}</option>`).join('');
+}
 
-// TOAST
-function toast(m,t=''){const e=document.createElement('div');e.className='toast'+(t?' '+t:'');e.textContent=m;document.getElementById('toasts').appendChild(e);setTimeout(()=>e.remove(),3200);}
+function toggleTag(tag){
+  const el=document.getElementById('tag-'+tag);
+  if(!el)return;
+  el.classList.toggle('on');
+  if(activeTags.has(tag))activeTags.delete(tag);
+  else activeTags.add(tag);
+  renderGrid();
+}
 
-// UTILS
-function gv(id){return document.getElementById(id)?.value||'';}
-function sv(id,v){const e=document.getElementById(id);if(e)e.value=v;}
-function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
-function fn(n){return(n||0).toLocaleString('ar-EG');}
+// ══ START ══
+window.addEventListener('DOMContentLoaded',()=>{
+  // expose functions globally
+  window.openClient=openClient;
+  window.closePanel=closePanel;
+  window.openAddClient=openAddClient;
+  window.editClient=editClient;
+  window.saveClient=saveClient;
+  window.deleteClient=deleteClient;
+  window.createOrder=createOrder;
+  window.fillCities=fillCities;
+  window.toggleTag=toggleTag;
+  window.renderGrid=renderGrid;
+  window.toggleNav=toggleNav;
+  window.closeNav=closeNav;
+  window.doLogout=doLogout;
+  initApp();
+});
+
 </script>
+
 <nav class="mob-nav">
   <div class="mob-nav-items">
     <a class="mob-nav-item " href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
@@ -814,137 +757,7 @@ function fn(n){return(n||0).toLocaleString('ar-EG');}
 </nav>
 <div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav').classList.remove('mob-open');this.classList.remove('show')"></div>
 
-  <script>
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.register('sw.js').catch(()=>{});
-    }
   
-window.newOrderForClient=async function(clientId,stage){
-  const cl=clients.find(x=>x._id===clientId);if(!cl)return;
-  const orderId='ORD-'+Date.now().toString().slice(-8);
-  const nowFull=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    await addDoc(collection(db,'orders'),{
-      orderId,clientId,
-      clientName:cl.name||'',clientPhone:cl.phone1||'',
-      stage,products:[],salePrice:0,paid:0,remaining:0,deposit:0,
-      createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:currentUser?.uid||'',createdByName:userName||'',
-      timeline:[{date:nowFull,action:`📋 طلب جديد — ${stage==='design'?'تصميم':'طباعة'}`,by:userName||''}],
-      createdAt:serverTimestamp(),updatedAt:serverTimestamp()
-    });
-    const href=stage==='design'?'design.html':'print.html';
-    toast('✅ تم إنشاء الأوردر','ok');
-    setTimeout(()=>window.location.href=href,800);
-  }catch(e){toast('❌ '+e.message,'err');}
-};
-
-let viewMode='cards'; // cards | list
-window.toggleView=function(){
-  viewMode=viewMode==='cards'?'list':'cards';
-  const btn=document.getElementById('view-toggle');
-  if(btn)btn.textContent=viewMode==='cards'?'☰ قائمة':'⊞ كروت';
-  renderClients();
-};
-
-function renderListView(data){
-  const el=document.getElementById('clients-grid');if(!el)return;
-  if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">👤</div><div class="empty-text">لا يوجد عملاء</div></div>`;return;}
-  el.style.display='block';
-  el.innerHTML=data.map(cl=>{
-    const clOrders=(window.__orders||[]).filter(o=>o.clientId===cl._id||(cl.phone1&&o.clientPhone===cl.phone1));
-    const tot=clOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-    const rem=clOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
-    return`<div class="client-list-item" onclick="openClient('${cl._id}')">
-      <div style="display:flex;align-items:center;gap:12px;flex:1">
-        <div style="width:36px;height:36px;border-radius:50%;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;flex-shrink:0">${(cl.name||'?')[0]}</div>
-        <div>
-          <div style="font-size:13px;font-weight:800">${cl.name||'—'}</div>
-          <div style="font-size:11px;color:var(--dim2)">${cl.phone1||''} ${cl.job?' · '+cl.job:''}</div>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:12px;text-align:left">
-        <div>
-          <div style="font-size:10px;color:var(--dim2)">أوردرات</div>
-          <div style="font-size:13px;font-weight:700">${clOrders.length}</div>
-        </div>
-        ${tot>0?`<div>
-          <div style="font-size:10px;color:var(--dim2)">إجمالي</div>
-          <div style="font-size:13px;font-weight:700;color:var(--b)">${(tot/1000).toFixed(1)}k</div>
-        </div>`:''}
-        ${rem>0?`<div style="background:rgba(255,61,110,.1);border-radius:var(--rad);padding:4px 10px">
-          <div style="font-size:10px;color:var(--dim2)">باقي</div>
-          <div style="font-size:12px;font-weight:900;color:var(--r)">${(parseFloat(rem)||0).toLocaleString('ar-EG')} ج</div>
-        </div>`:'<span style="font-size:10px;color:var(--g)">✅ مكتمل</span>'}
-        <a href="https://wa.me/20${(cl.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" style="font-size:18px;text-decoration:none">💬</a>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-</script>
-
-<script>
-function clientShowOrders(cid, orders){
-  var el=document.getElementById('ol-'+cid);
-  if(!el)return;
-  if(!orders||!orders.length){
-    el.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:8px">لا توجد أوردرات</div>';
-    return;
-  }
-  var SA={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'مكتمل'};
-  var SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
-  var sorted=orders.slice().sort(function(a,b){
-    return((b.createdAt&&b.createdAt.seconds)||0)-((a.createdAt&&a.createdAt.seconds)||0);
-  });
-  var h='';
-  for(var i=0;i<sorted.length;i++){
-    var o=sorted[i];
-    var href=(SH[o.stage]||'index')+'.html';
-    var rem=parseFloat(o.remaining)||0;
-    var nm=o.product||((o.products||[]).map(function(p){return p.name;}).join('/'))||'---';
-    h+='<div onclick="location.href=\''+href+'\'" style="background:var(--bg4);border:1px solid var(--line);border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">';
-    h+='<div><div style="font-size:10px;color:var(--dim2)">'+(o.orderId||'---')+'</div>';
-    h+='<div style="font-size:13px;font-weight:700">'+nm+'</div></div>';
-    h+='<div style="text-align:left">';
-    h+='<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3)">'+(SA[o.stage]||o.stage)+'</span>';
-    if(rem>0)h+='<div style="font-size:11px;color:var(--r);font-weight:700">'+rem.toLocaleString('ar-EG')+' ج</div>';
-    h+='</div></div>';
-  }
-  el.innerHTML=h;
-}
-
-function clientNewOrder(clientId, stage){
-  var db=window.__db;
-  var user=window.__user;
-  var uname=window.__uname||'';
-  var cls=window.__clients||[];
-  var cl=cls.find(function(x){return x._id===clientId;});
-  
-  if(!db)  {alert('جاري التحميل، انتظر ثانية وحاول مجدداً');return;}
-  if(!user){alert('يلزم تسجيل الدخول');return;}
-  if(!cl)  {alert('لم يعثر على العميل');return;}
-  
-  var oid='ORD-'+Date.now().toString().slice(-8);
-  var now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  
-  import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js')
-  .then(function(fs){
-    return fs.addDoc(fs.collection(db,'orders'),{
-      orderId:oid, clientId:clientId,
-      clientName:cl.name||'', clientPhone:cl.phone1||'',
-      stage:stage, products:[], salePrice:0, paid:0, remaining:0, deposit:0,
-      createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:user.uid, createdByName:uname,
-      timeline:[{date:now,action:'طلب جديد',by:uname}],
-      createdAt:fs.serverTimestamp(), updatedAt:fs.serverTimestamp()
-    });
-  })
-  .then(function(){
-    window.location.href=stage==='design'?'design.html':'print.html';
-  })
-  .catch(function(e){alert('خطأ: '+e.message);});
-}
-</script>
+<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}</script>
 </body>
 </html>
