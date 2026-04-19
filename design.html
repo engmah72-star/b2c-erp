@@ -172,6 +172,24 @@
   </div>
 </div>
 
+<!-- MODAL: تعديل المنتجات -->
+<div class="overlay" id="ov-edit-products">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-head">
+      <span class="modal-title">📦 تعديل المنتجات</span>
+      <button class="modal-x" onclick="document.getElementById('ov-edit-products').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ep-prod-rows"></div>
+      <button type="button" class="btn btn-ghost btn-xs" onclick="addEpRow()" style="margin-top:6px">＋ إضافة منتج</button>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-edit-products').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="saveEditProducts()">✓ حفظ المنتجات</button>
+    </div>
+  </div>
+</div>
+
 <nav class="mob-nav"><div class="mob-nav-items">
   <a class="mob-nav-item" href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
   <a class="mob-nav-item" href="clients.html"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
@@ -304,7 +322,7 @@ function renderPanel(o){
   const prods=o.products||[];
   const d=delay(o.deadline);
   document.getElementById('panel-body').innerHTML=`
-    <!-- بيانات العميل والأوردر -->
+    <!-- 👤 العميل -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">👤 العميل والطلب</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -312,64 +330,76 @@ function renderPanel(o){
         ${iRow('الهاتف',`<a href="tel:${o.clientPhone}" style="color:var(--b);text-decoration:none">${o.clientPhone||'—'}</a>`)}
         ${iRow('الأوردر',o.orderId||'—')}
         ${iRow('تاريخ الطلب',o.createdDate||'—')}
-        ${iRow('موعد التسليم',o.deadline||'لم يُحدد',d>0?'var(--r)':null)}
-        ${iRow('المصمم',o.designerName||'—')}
       </div>
     </div>
 
-    <!-- المنتجات -->
+    <!-- 📦 المنتجات — قابلة للتعديل -->
     <div class="section">
-      <div class="section-title" style="margin-bottom:8px">📦 المنتجات المطلوبة</div>
+      <div class="section-head" style="margin-bottom:10px">
+        <div class="section-title">📦 المنتجات</div>
+        <button class="btn btn-ghost btn-xs" onclick="openEditProducts()">✏️ تعديل</button>
+      </div>
       ${prods.length?prods.map(p=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:5px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:5px">
           <span style="font-size:13px;font-weight:700">${p.name}</span>
           <span class="badge bg-b">× ${p.qty}</span>
-        </div>`).join(''):`<div style="font-size:13px;padding:8px;background:var(--bg3);border-radius:var(--rad)">${o.product||'—'}</div>`}
+        </div>`).join(''):`<div style="font-size:12px;color:var(--dim2);padding:8px">${o.product||'لم تُحدد المنتجات'}</div>`}
     </div>
 
-    <!-- ملف التصميم -->
+    <!-- 📅 موعد التسليم + المصمم — قابلان للتعديل -->
+    <div class="section">
+      <div class="section-title" style="margin-bottom:10px">⚙️ تفاصيل الأوردر</div>
+      <div style="display:grid;gap:8px">
+        <!-- موعد التسليم -->
+        <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border-radius:var(--rad);padding:10px 12px">
+          <span style="font-size:11px;color:var(--dim2);flex:1">📅 موعد التسليم</span>
+          <input type="date" class="inp" id="edit-deadline" value="${o.deadline||''}" 
+            onchange="saveField('deadline',this.value,'📅 موعد التسليم: '+this.value)"
+            style="width:150px;padding:5px 8px;font-size:12px;${d>0?'border-color:rgba(255,61,110,.4);color:var(--r)':''}">
+          ${d>0?`<span style="font-size:10px;color:var(--r);font-weight:700">⚠️ ${d} يوم</span>`:''}
+        </div>
+        <!-- المصمم -->
+        <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border-radius:var(--rad);padding:10px 12px">
+          <span style="font-size:11px;color:var(--dim2);flex:1">🎨 المصمم</span>
+          <select class="inp" id="edit-designer" onchange="saveDesigner(this)"
+            style="width:180px;padding:5px 8px;font-size:12px">
+            <option value="">— بدون مصمم —</option>
+            ${designers.map(d2=>`<option value="${d2._id}" ${o.designerId===d2._id?'selected':''}>${d2.name||d2.email||'—'}</option>`).join('')}
+          </select>
+        </div>
+        <!-- الملاحظات -->
+        <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px">
+          <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">📝 ملاحظات / تعليمات</div>
+          <textarea class="inp" id="edit-notes" rows="3" 
+            style="font-size:12px;resize:vertical"
+            onblur="saveField('notes',this.value,'📝 تعديل الملاحظات')"
+            placeholder="النص / الألوان / التفاصيل...">${o.notes||''}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 📎 ملف التصميم -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">📎 ملف التصميم النهائي</div>
       ${o.designFileUrl?`
-        <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
-          <div style="font-size:11px;color:var(--dim2);margin-bottom:4px">رابط الملف:</div>
-          <a href="${o.designFileUrl}" target="_blank" style="color:var(--b);font-size:12px;word-break:break-all">${o.designFileUrl}</a>
-          ${o.designFileNote?`<div style="font-size:11px;color:var(--y);margin-top:6px">📝 ${o.designFileNote}</div>`:''}
+        <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);padding:12px;margin-bottom:8px">
+          <a href="${o.designFileUrl}" target="_blank" style="color:var(--b);font-size:12px;word-break:break-all">🔗 ${o.designFileUrl}</a>
+          ${o.designFileNote?`<div style="font-size:11px;color:var(--y);margin-top:4px">📝 ${o.designFileNote}</div>`:''}
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل الرابط</button>`
-      :`<button class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع رابط التصميم</button>
+        <button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل الملف</button>`
+      :`<button class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع ملف التصميم</button>
         <div style="font-size:11px;color:var(--dim2);margin-top:6px">لم يُرفع ملف التصميم بعد</div>`}
     </div>
 
-    <!-- العربون -->
+    <!-- 💰 العربون -->
     ${dep>0?`<div class="section" style="background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.15)">
       <div class="section-title" style="color:var(--g);margin-bottom:8px">💰 العربون المدفوع</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
-        <div class="fin-box"><div class="fin-box-lbl">العربون</div><div class="fin-box-val" style="color:var(--g)">${fn(dep)} ج</div></div>
-        <div class="fin-box"><div class="fin-box-lbl">المحفظة</div><div class="fin-box-val" style="font-size:12px">${o.depositWallet||'—'}</div></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px">
+        <span style="color:var(--dim2)">المبلغ</span><strong style="color:var(--g)">${fn(dep)} ج عبر ${o.depositWallet||'—'}</strong>
       </div>
     </div>`:''}
 
-    <!-- ملاحظات العميل -->
-    ${o.notes?`<div class="section" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
-      <div class="section-title" style="color:var(--y);margin-bottom:8px">📝 تعليمات العميل</div>
-      <div style="font-size:13px;line-height:1.8;white-space:pre-wrap">${o.notes}</div>
-    </div>`:''}
-
-    <!-- حالة التصميم -->
-    <!-- تعيين المصمم -->
-    <div class="section">
-      <div class="section-title" style="margin-bottom:10px">🎨 المصمم المكلّف</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select class="inp" id="designer-sel" style="flex:1" onchange="assignDesigner()">
-          <option value="">— اختر المصمم —</option>
-          ${designers.map(d=>`<option value="${d._id}" data-name="${d.name||''}" ${o.designerId===d._id?'selected':''}>${d.name||d.email||'—'}</option>`).join('')}
-        </select>
-        ${o.designerName?`<span style="font-size:11px;color:var(--g);font-weight:700">✅ ${o.designerName}</span>`:'<span style="font-size:11px;color:var(--y)">⚠️ لم يُعيَّن</span>'}
-      </div>
-    </div>
-
-    <!-- حالة التصميم -->
+    <!-- 🔄 حالة التصميم -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">🔄 حالة التصميم</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -382,20 +412,90 @@ function renderPanel(o){
     <div class="section"><div class="section-title" style="margin-bottom:8px">📋 سجل الأوردر</div>${tlHtml(o.timeline)}</div>`;
 }
 
-window.assignDesigner=async function(){
-  const sel=document.getElementById('designer-sel');
-  if(!sel)return;
-  const dId=sel.value;
-  const opt=sel.options[sel.selectedIndex];
-  const dName=opt?.dataset?.name||opt?.text||'';
+// ── تعديل حقل مباشر ──
+window.saveField=async function(field,value,logMsg){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   try{
     await updateDoc(doc(db,'orders',activeId),{
+      [field]:value,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:'✏️ '+logMsg,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الحفظ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.saveDesigner=async function(sel){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const dId=sel.value;
+  const dName=sel.options[sel.selectedIndex]?.text||'';
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
       designerId:dId, designerName:dName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🎨 تعيين المصمم: ${dName}`,by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🎨 تعيين المصمم: ${dName||'بدون'}`,by:userName}],
       updatedAt:serverTimestamp()
     });
     toast('✅ تم تعيين '+dName,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ── تعديل المنتجات ──
+window.openEditProducts=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const prods=o.products||[];
+  // ملأ الـ modal
+  document.getElementById('ep-prod-rows').innerHTML='';
+  if(prods.length){
+    prods.forEach(p=>addEpRow(p));
+  } else {
+    addEpRow();
+  }
+  document.getElementById('ov-edit-products').classList.add('open');
+};
+
+function addEpRow(p=null){
+  const div=document.createElement('div');
+  div.className='prod-row';
+  div.innerHTML=`<select class="prod-select">
+    <option value="">— اختر المنتج —</option>
+    ${products.map(pr=>`<option value="${pr._id}" data-name="${(pr.name||'').replace(/"/g,'')}" data-price="${pr.defaultPrice||0}" ${p&&p.name===pr.name?'selected':''}>${pr.name}</option>`).join('')}
+    ${p&&!products.find(pr=>pr.name===p.name)?`<option value="__custom__" data-name="${p.name}" data-price="0" selected>${p.name}</option>`:''}
+  </select>
+  <input type="number" value="${p?.qty||1}" min="1" placeholder="كمية">
+  <button type="button" onclick="this.closest('.prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">✕</button>`;
+  document.getElementById('ep-prod-rows').appendChild(div);
+}
+
+window.addEpRow=addEpRow;
+
+window.saveEditProducts=async function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const rows=document.querySelectorAll('#ep-prod-rows .prod-row');
+  const prods=[];
+  for(const row of rows){
+    const sel=row.querySelector('select');
+    const qty=row.querySelector('input[type="number"]');
+    if(!sel||!sel.value)continue;
+    const opt=sel.options[sel.selectedIndex];
+    prods.push({
+      productId:sel.value==='__custom__'?'':sel.value,
+      name:opt.dataset.name||opt.text,
+      qty:parseInt(qty?.value)||1,
+      unitPrice:parseFloat(opt.dataset.price)||0,
+      addons:[],instructions:''
+    });
+  }
+  if(!prods.length){toast('⚠️ أضف منتجاً على الأقل','err');return;}
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      products:prods,
+      product:prods.map(p=>p.name).join(' + '),
+      qty:prods.reduce((s,p)=>s+p.qty,0),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`📦 تعديل المنتجات: ${prods.map(p=>p.name+'×'+p.qty).join(' + ')}`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    document.getElementById('ov-edit-products').classList.remove('open');
+    toast('✅ تم تحديث المنتجات','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
