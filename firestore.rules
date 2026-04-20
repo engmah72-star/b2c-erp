@@ -6,41 +6,37 @@ service cloud.firestore {
     function isAuth() {
       return request.auth != null;
     }
-    function userDoc() {
+    function getUserDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
-    function userData() {
-      return userDoc().data;
-    }
     function userExists() {
-      return userDoc() != null;
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
     function role() {
-      return userExists() ? userData().role : 'none';
-    }
-    function perms() {
-      return userExists() ? userData().get('permissions', {}) : {};
+      return userExists() ? getUserDoc().data.role : '';
     }
     function isAdmin() {
       return role() in ['admin', 'operation_manager'];
     }
-    function hasPage(page) {
-      return isAdmin() ||
-             (userExists() && perms().get('pages', []).hasAny([page, '*']));
+    function perms() {
+      return userExists() ? getUserDoc().data.get('permissions', {}) : {};
     }
-    function canDo(perm) {
-      return isAdmin() ||
-             (userExists() && perms().get(perm, false) == true);
+    function pages() {
+      return perms().get('pages', []);
+    }
+    function hasPage(page) {
+      return isAdmin() || pages().hasAny([page, '*']);
+    }
+    function can(perm) {
+      return isAdmin() || perms().get(perm, false) == true;
     }
 
     // ══ Users ══
+    // كل موظف logged in يقرأ users (محتاجه لـ permissions)
     match /users/{userId} {
-      allow read: if isAuth();  // كل موظف يقرأ users (عشان employee data)
+      allow read: if isAuth();
       allow create: if isAdmin();
-      allow update: if isAuth() && (
-        request.auth.uid == userId ||
-        isAdmin()
-      );
+      allow update: if isAuth() && (request.auth.uid == userId || isAdmin());
       allow delete: if isAdmin();
     }
 
@@ -50,51 +46,58 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ══ Orders ══
+    match /orders/{orderId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        can('canSeeAllOrders') ||
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('designerId','__') == request.auth.uid ||
+        resource.data.get('productionAgent','__') == request.auth.uid ||
+        resource.data.get('shippingOfficer','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (isAdmin() || can('canAddOrders'));
+      allow update: if isAuth() && (
+        isAdmin() ||
+        can('canAddOrders') ||
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('designerId','__') == request.auth.uid ||
+        resource.data.get('productionAgent','__') == request.auth.uid ||
+        resource.data.get('shippingOfficer','__') == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
     // ══ Clients ══
     match /clients/{clientId} {
       allow read: if isAuth() && (
         isAdmin() ||
         hasPage('clients') ||
-        resource.data.createdBy == request.auth.uid
+        resource.data.get('createdBy','__') == request.auth.uid
       );
-      allow create: if isAuth() && (isAdmin() || canDo('canAddClients'));
+      allow create: if isAuth() && (isAdmin() || can('canAddClients'));
       allow update: if isAuth() && (
         isAdmin() ||
-        canDo('canAddClients') ||
-        resource.data.createdBy == request.auth.uid
+        can('canAddClients') ||
+        resource.data.get('createdBy','__') == request.auth.uid
       );
       allow delete: if isAdmin();
     }
 
-    // ══ Orders ══
-    match /orders/{orderId} {
-      allow read: if isAuth() && (
-        isAdmin() ||
-        canDo('canSeeAllOrders') ||
-        resource.data.get('createdBy','') == request.auth.uid ||
-        resource.data.get('designerId','') == request.auth.uid ||
-        resource.data.get('productionAgent','') == request.auth.uid ||
-        resource.data.get('shippingOfficer','') == request.auth.uid
-      );
-      allow create: if isAuth() && (isAdmin() || canDo('canAddOrders'));
-      allow update: if isAuth() && (
-        isAdmin() ||
-        canDo('canAddOrders') ||
-        resource.data.createdBy == request.auth.uid ||
-        resource.data.designerId == request.auth.uid ||
-        resource.data.productionAgent == request.auth.uid ||
-        resource.data.shippingOfficer == request.auth.uid
-      );
-      allow delete: if isAdmin();
-    }
-
-    // ══ Wallets & Transactions ══
+    // ══ Wallets ══
     match /wallets/{walletId} {
       allow read: if isAuth() && (isAdmin() || hasPage('accounts'));
       allow write: if isAuth() && (isAdmin() || hasPage('accounts'));
     }
+
+    // ══ Transactions ══
     match /transactions_v2/{txId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('accounts') || hasPage('shipping'));
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('accounts') ||
+        hasPage('shipping') ||
+        hasPage('shipping-accounts')
+      );
       allow create: if isAuth();
       allow update, delete: if isAdmin();
     }
@@ -121,18 +124,23 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ══ Designers (legacy) ══
+    match /designers_v2/{desId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
     // ══ Attendance ══
     match /attendance/{attId} {
       allow read: if isAuth() && (
         isAdmin() ||
-        resource.data.employeeUid == request.auth.uid
+        resource.data.get('employeeUid','__') == request.auth.uid
       );
-      allow create: if isAuth() && (
-        request.resource.data.employeeUid == request.auth.uid
-      );
+      allow create: if isAuth() &&
+        request.resource.data.employeeUid == request.auth.uid;
       allow update: if isAuth() && (
         isAdmin() ||
-        resource.data.employeeUid == request.auth.uid
+        resource.data.get('employeeUid','__') == request.auth.uid
       );
       allow delete: if isAdmin();
     }
@@ -141,35 +149,34 @@ service cloud.firestore {
     match /tasks/{taskId} {
       allow read: if isAuth() && (
         isAdmin() ||
-        resource.data.assignedTo == request.auth.uid ||
-        resource.data.assignedBy == request.auth.uid
+        resource.data.get('assignedTo','__') == request.auth.uid ||
+        resource.data.get('assignedBy','__') == request.auth.uid
       );
-      allow create: if isAuth() && (isAdmin() || canDo('canAssignTasks'));
+      allow create: if isAuth() && (isAdmin() || can('canAssignTasks'));
       allow update: if isAuth() && (
         isAdmin() ||
-        resource.data.assignedTo == request.auth.uid
+        resource.data.get('assignedTo','__') == request.auth.uid
       );
       allow delete: if isAdmin();
     }
 
     // ══ Shipping ══
     match /shipping_settlements/{settId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
-      allow write: if isAuth() && (isAdmin() || hasPage('shipping-accounts'));
+      allow read: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
+      );
+      allow write: if isAuth() && (
+        isAdmin() || hasPage('shipping-accounts')
+      );
     }
     match /shipping_returns/{retId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
-      allow write: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
+      allow read, write: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
+      );
     }
 
     // ══ Settings ══
     match /settings/{settingId} {
-      allow read: if isAuth();
-      allow write: if isAdmin();
-    }
-
-    // ══ Designers (legacy) ══
-    match /designers_v2/{desId} {
       allow read: if isAuth();
       allow write: if isAdmin();
     }
