@@ -6,23 +6,31 @@ service cloud.firestore {
     function isAuth() {
       return request.auth != null;
     }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
     function userData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return userDoc().data;
+    }
+    function userExists() {
+      return userDoc() != null;
     }
     function role() {
-      return userData().role;
+      return userExists() ? userData().role : 'none';
     }
     function perms() {
-      return userData().get('permissions', {});
+      return userExists() ? userData().get('permissions', {}) : {};
     }
     function isAdmin() {
       return role() in ['admin', 'operation_manager'];
     }
     function hasPage(page) {
-      return isAdmin() || (page in perms().get('pages', []));
+      return isAdmin() ||
+             (userExists() && perms().get('pages', []).hasAny([page, '*']));
     }
     function canDo(perm) {
-      return isAdmin() || perms().get(perm, false) == true;
+      return isAdmin() ||
+             (userExists() && perms().get(perm, false) == true);
     }
 
     // ══ Users ══
@@ -44,7 +52,11 @@ service cloud.firestore {
 
     // ══ Clients ══
     match /clients/{clientId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('clients'));
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('clients') ||
+        resource.data.createdBy == request.auth.uid
+      );
       allow create: if isAuth() && (isAdmin() || canDo('canAddClients'));
       allow update: if isAuth() && (
         isAdmin() ||
@@ -59,10 +71,10 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() ||
         canDo('canSeeAllOrders') ||
-        resource.data.createdBy == request.auth.uid ||
-        resource.data.designerId == request.auth.uid ||
-        resource.data.productionAgent == request.auth.uid ||
-        resource.data.shippingOfficer == request.auth.uid
+        resource.data.get('createdBy','') == request.auth.uid ||
+        resource.data.get('designerId','') == request.auth.uid ||
+        resource.data.get('productionAgent','') == request.auth.uid ||
+        resource.data.get('shippingOfficer','') == request.auth.uid
       );
       allow create: if isAuth() && (isAdmin() || canDo('canAddOrders'));
       allow update: if isAuth() && (
