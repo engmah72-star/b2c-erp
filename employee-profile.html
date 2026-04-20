@@ -433,17 +433,29 @@ function renderPermissions(){
     el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة</div>';
     return;
   }
-  // جيب الـ permissions الحالية من users collection
-  if(emp.authUid){
-    db.collection('users').doc(emp.authUid).get().then(snap=>{
+  const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false};
+  // حاول تجيب من users أولاً، لو مش موجود استخدم defaults
+  const uid=emp.authUid||null;
+  if(uid){
+    db.collection('users').doc(uid).get().then(snap=>{
       const userData=snap.exists?snap.data():{};
-      const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false};
       const current={...defaults,...(userData.permissions||{})};
       renderPermsUI(current);
-    });
+    }).catch(()=>renderPermsUI(defaults));
   } else {
-    const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{};
-    renderPermsUI(defaults);
+    // مش عنده authUid — ابحث في users عن نفس الـ email
+    const email=emp.email||emp.phone+'@b2c.local';
+    db.collection('users').where('email','==',email).limit(1).get().then(snap=>{
+      if(!snap.empty){
+        const userData=snap.docs[0].data();
+        // احفظ الـ authUid في emp للاستخدام في savePermissions
+        emp.authUid=snap.docs[0].id;
+        const current={...defaults,...(userData.permissions||{})};
+        renderPermsUI(current);
+      } else {
+        renderPermsUI(defaults);
+      }
+    }).catch(()=>renderPermsUI(defaults));
   }
 }
 
@@ -478,7 +490,13 @@ function renderPermsUI(current){
 }
 
 window.savePermissions=async function(){
-  if(!emp?.authUid){toast('⚠️ الموظف مش عنده حساب بعد','err');return;}
+  // لو مش عنده authUid — ابحث عنه
+  if(!emp?.authUid){
+    const email=emp.email||emp.phone+'@b2c.local';
+    const snap=await db.collection('users').where('email','==',email).limit(1).get();
+    if(!snap.empty){emp.authUid=snap.docs[0].id;}
+    else{toast('⚠️ الموظف مش عنده حساب Firebase بعد','err');return;}
+  }
   const pages=[...document.querySelectorAll('.perm-page:checked')].map(cb=>cb.value);
   const perms={pages};
   document.querySelectorAll('.perm-data').forEach(cb=>{perms[cb.value]=cb.checked;});
