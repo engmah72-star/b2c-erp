@@ -305,32 +305,50 @@ window.doAtt=async function(){
 
 
 function startListeners(){
-  // للأدمن: كل أوردرات التصميم
-  // للمصمم: أوردراته فقط (query منفصلة) + غير مكلّف
   const isAdmin2=['admin','operation_manager'].includes(currentRole);
   const currentUid=auth.currentUser?.uid;
 
   if(isAdmin2){
+    // Admin — كل أوردرات التصميم
     onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    renderKanban();
-    setText('sub',orders.length+' طلب تصميم');
-    setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-    setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-    setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-    setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-  });
-
+      renderKanban();
+      setText('sub',orders.length+' طلب تصميم');
+      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
     });
   } else {
     // المصمم — أوردراته المكلّف بيها
     onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design')),snap=>{
       const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      // + الأوردرات اللي مش مكلّف حد (متاحة للسحب)
       window.__assignedDesign=assigned;
       const unassigned=(window.__unassignedDesign||[]);
-      orders=[...assigned,...unassigned].sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));  onSnapshot(collection(db,'clients'),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+      const ids=new Set(assigned.map(o=>o._id));
+      orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderKanban();
+      setText('sub',orders.length+' طلب تصميم');
+      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+    });
+    // أوردرات التصميم بدون مصمم (للسحب)
+    onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+      window.__unassignedDesign=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(o=>!o.designerId);
+      const assigned=(window.__assignedDesign||[]);
+      const unassigned=window.__unassignedDesign;
+      const ids=new Set(assigned.map(o=>o._id));
+      orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderKanban();
+    });
+  }
+
+  onSnapshot(collection(db,'clients'),snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(collection(db,'products_v2'),snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
   });
@@ -345,6 +363,7 @@ function startListeners(){
     s.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');
   });
 }
+
 
 // ── KANBAN ──
 function renderKanban(){
