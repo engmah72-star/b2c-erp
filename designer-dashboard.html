@@ -108,7 +108,7 @@
   </div>
   <div class="nav-scroll">
     <a class="nav-link active" href="designer-dashboard.html"><span class="nav-ico">⬡</span> لوحتي</a>
-    <a class="nav-link" href="design.html"><span class="nav-ico">✏️</span> التصاميم</a>
+    <a class="nav-link" href="design.html" data-page="design"><span class="nav-ico">✏️</span> التصاميم</a>
   </div>
   <div class="nav-foot">
     <div class="nav-user" onclick="doLogout()">
@@ -128,7 +128,7 @@
 
 <nav class="mob-nav"><div class="mob-nav-items">
   <a class="mob-nav-item active" href="designer-dashboard.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">لوحتي</div></a>
-  <a class="mob-nav-item" href="design.html"><div class="mob-nav-ico">✏️</div><div class="mob-nav-lbl">التصاميم</div></a>
+  <a class="mob-nav-item" href="design.html" data-page="design"><div class="mob-nav-ico">✏️</div><div class="mob-nav-lbl">التصاميم</div></a>
 </div></nav>
 <div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show')"></div>
 <div class="toasts" id="toasts"></div>
@@ -194,12 +194,27 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(collection(db,'employees'),snap=>{
     const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid||e.email===u.email);
     myEmployee=emp||{baseSalary:0,commissionPct:0};
+    myEmpId=emp?._id||'';  // احفظ الـ employee doc ID
   });
 
-  // الأوردرات
-  onSnapshot(collection(db,'orders'),snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    myOrders=all.filter(o=>o.designerId===uid||o.stage==='design'&&!o.designerId);
+  // الأوردرات — query محددة للمصمم
+  let myEmpId='';
+  // 1. أوردرات مكلّف بيها (designerId = uid)
+  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid)),snap=>{
+    const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    // 2. أوردرات stage=design بدون مصمم (متاحة للكل)
+    const unassigned=(window.__allDesignOrders||[]).filter(o=>!o.designerId);
+    myOrders=[...assigned,...unassigned];
+    render();
+  });
+  // أوردرات التصميم الكلية (للـ unassigned)
+  onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+    window.__allDesignOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const assigned=myOrders.filter(o=>o.designerId===uid||o.designerId===myEmpId);
+    const unassigned=window.__allDesignOrders.filter(o=>!o.designerId);
+    // دمج بدون تكرار
+    const ids=new Set(assigned.map(o=>o._id));
+    myOrders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))];
     render();
   });
 
