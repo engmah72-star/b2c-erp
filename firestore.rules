@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ══ Helper Functions ══
+    function isAuth() {
+      return request.auth != null;
+    }
+    function userData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function role() {
+      return userData().role;
+    }
+    function perms() {
+      return userData().get('permissions', {});
+    }
+    function isAdmin() {
+      return role() in ['admin', 'operation_manager'];
+    }
+    function hasPage(page) {
+      return isAdmin() || (page in perms().get('pages', []));
+    }
+    function canDo(perm) {
+      return isAdmin() || perms().get(perm, false) == true;
+    }
+
+    // ══ Users ══
+    match /users/{userId} {
+      allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAdmin();
+      allow update: if isAuth() && (
+        request.auth.uid == userId ||  // يغير بياناته هو
+        isAdmin()                       // الأدمن يغير أي حد
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ Employees ══
+    match /employees/{empId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ══ Clients ══
+    match /clients/{clientId} {
+      allow read: if isAuth() && hasPage('clients');
+      allow create: if isAuth() && canDo('canAddClients');
+      allow update: if isAuth() && (
+        canDo('canAddClients') ||
+        (resource.data.createdBy == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ Orders ══
+    match /orders/{orderId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canDo('canSeeAllOrders') ||
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.designerId == request.auth.uid ||
+        resource.data.productionAgent == request.auth.uid ||
+        resource.data.shippingOfficer == request.auth.uid
+      );
+      allow create: if isAuth() && canDo('canAddOrders');
+      allow update: if isAuth() && (
+        isAdmin() ||
+        canDo('canAddOrders') ||
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.designerId == request.auth.uid ||
+        resource.data.productionAgent == request.auth.uid ||
+        resource.data.shippingOfficer == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ Wallets & Transactions ══
+    match /wallets/{walletId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('accounts'));
+      allow write: if isAuth() && (isAdmin() || hasPage('accounts'));
+    }
+    match /transactions_v2/{txId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('accounts') || hasPage('shipping'));
+      allow create: if isAuth();
+      allow update, delete: if isAdmin();
+    }
+
+    // ══ Products ══
+    match /products_v2/{prodId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ══ Suppliers ══
+    match /suppliers_v2/{supId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('suppliers'));
+      allow write: if isAdmin();
+    }
+    match /supplier_payments/{payId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('suppliers'));
+      allow write: if isAdmin();
+    }
+
+    // ══ Shippers ══
+    match /shippers_v2/{shipId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ══ Attendance ══
+    match /attendance/{attId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        resource.data.employeeUid == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        request.resource.data.employeeUid == request.auth.uid
+      );
+      allow update: if isAuth() && (
+        isAdmin() ||
+        resource.data.employeeUid == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ Tasks ══
+    match /tasks/{taskId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        resource.data.assignedTo == request.auth.uid ||
+        resource.data.assignedBy == request.auth.uid
+      );
+      allow create: if isAuth() && (isAdmin() || canDo('canAssignTasks'));
+      allow update: if isAuth() && (
+        isAdmin() ||
+        resource.data.assignedTo == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ Shipping ══
+    match /shipping_settlements/{settId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
+      allow write: if isAuth() && (isAdmin() || hasPage('shipping-accounts'));
+    }
+    match /shipping_returns/{retId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
+      allow write: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('shipping-accounts'));
+    }
+
+    // ══ Settings ══
+    match /settings/{settingId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ══ Designers (legacy) ══
+    match /designers_v2/{desId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+  }
+}

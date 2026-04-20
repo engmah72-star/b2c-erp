@@ -44,12 +44,12 @@
   <div class="nav-brand"><div class="nav-logo">🎨</div><div><div class="nav-brand-name">Business2Card</div><div class="nav-brand-role" id="role-badge">Admin</div></div></div>
   <div class="nav-scroll">
     <a class="nav-link" href="index.html"><span class="nav-ico">⬡</span> لوحة التحكم</a>
-    <a class="nav-link" href="clients.html"><span class="nav-ico">👤</span> العملاء</a>
-    <a class="nav-link" href="design.html"><span class="nav-ico">✏️</span> التصميم</a>
-    <a class="nav-link" href="accounts.html"><span class="nav-ico">💰</span> الحسابات</a>
-    <a class="nav-link active" href="employees.html"><span class="nav-ico">👥</span> الموظفين</a>
-    <a class="nav-link" href="reports.html"><span class="nav-ico">📊</span> التقارير</a>
-    <a class="nav-link" href="settings.html"><span class="nav-ico">⚙️</span> الإعدادات</a>
+    <a class="nav-link" href="clients.html" data-page="clients"><span class="nav-ico">👤</span> العملاء</a>
+    <a class="nav-link" href="design.html" data-page="design"><span class="nav-ico">✏️</span> التصميم</a>
+    <a class="nav-link" href="accounts.html" data-page="accounts"><span class="nav-ico">💰</span> الحسابات</a>
+    <a class="nav-link active" href="employees.html" data-page="employees"><span class="nav-ico">👥</span> الموظفين</a>
+    <a class="nav-link" href="reports.html" data-page="reports"><span class="nav-ico">📊</span> التقارير</a>
+    <a class="nav-link" href="settings.html" data-page="settings"><span class="nav-ico">⚙️</span> الإعدادات</a>
   </div>
   <div class="nav-foot"><div class="nav-user" onclick="doLogout()"><div class="nav-avatar" id="nav-av">A</div><div><div class="nav-user-name" id="nav-name">Admin</div><div class="nav-user-role">تسجيل خروج</div></div></div></div>
 </aside>
@@ -189,7 +189,7 @@ function isThisMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();return 
 function todayStr(){return now.toISOString().slice(0,10);}
 function monthKey(){return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');}
 
-if(!empId){document.getElementById('main-content').innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">لم يُحدد موظف</div><a href="employees.html" class="btn btn-b btn-sm" style="margin-top:12px">← العودة</a></div>';}
+if(!empId){document.getElementById('main-content').innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">لم يُحدد موظف</div><a href="employees.html" data-page="employees" class="btn btn-b btn-sm" style="margin-top:12px">← العودة</a></div>';}
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
@@ -376,13 +376,117 @@ function renderAll(){
         <button class="btn btn-g btn-xs" onclick="openSalary()">💰 صرف مرتب</button>
       </div>
       <div id="salaries-container"></div>
+    </div>
+
+    <!-- الصلاحيات -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🔐 الصلاحيات</div>
+        <button class="btn btn-b btn-xs" onclick="savePermissions()">💾 حفظ</button>
+      </div>
+      <div id="permissions-container"></div>
     </div>`;
 
   // render المكونات الديناميكية
   renderTasks();
   renderAttendance();
   renderSalaries();
+  renderPermissions();
 }
+
+// ══ PERMISSIONS ══
+const ALL_PAGES=[
+  {key:'clients',label:'👤 العملاء'},
+  {key:'design',label:'✏️ التصميم'},
+  {key:'print',label:'🖨️ الطباعة'},
+  {key:'production',label:'🏭 التنفيذ'},
+  {key:'shipping',label:'🚚 الشحن'},
+  {key:'shipping-accounts',label:'📦 حسابات الشحن'},
+  {key:'accounts',label:'💰 الحسابات'},
+  {key:'reports',label:'📊 التقارير'},
+  {key:'suppliers',label:'▣ الموردين'},
+  {key:'products',label:'◈ المنتجات'},
+  {key:'settings',label:'⚙️ الإعدادات'},
+  {key:'employees',label:'👥 الموظفين'},
+];
+const ALL_PERMS=[
+  {key:'canSeePrices',label:'💰 يشوف الأسعار'},
+  {key:'canSeeAllOrders',label:'📋 يشوف أوردرات الكل'},
+  {key:'canAddOrders',label:'➕ يضيف أوردرات'},
+  {key:'canAddClients',label:'👤 يضيف عملاء'},
+  {key:'canAssignDesigner',label:'🎨 يعين المصمم'},
+  {key:'canAssignTasks',label:'✅ يضيف مهام للموظفين'},
+];
+const ROLE_DEFAULTS_PROFILE={
+  customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false},
+  graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+  design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true,canAssignTasks:false},
+  production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+  shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+  wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+  operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true},
+};
+
+function renderPermissions(){
+  const el=document.getElementById('permissions-container');if(!el||!emp)return;
+  if(['admin','operation_manager'].includes(emp.role)){
+    el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة</div>';
+    return;
+  }
+  // جيب الـ permissions الحالية من users collection
+  if(emp.authUid){
+    db.collection('users').doc(emp.authUid).get().then(snap=>{
+      const userData=snap.exists?snap.data():{};
+      const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false};
+      const current={...defaults,...(userData.permissions||{})};
+      renderPermsUI(current);
+    });
+  } else {
+    const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{};
+    renderPermsUI(defaults);
+  }
+}
+
+function renderPermsUI(current){
+  const el=document.getElementById('permissions-container');if(!el)return;
+  const currentPages=current.pages||[];
+  const isAllPages=currentPages.includes('*');
+  el.innerHTML=`
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📄 الصفحات المتاحة</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${ALL_PAGES.map(p=>{
+          const isChecked=isAllPages||currentPages.includes(p.key);
+          return`<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
+            <input type="checkbox" class="perm-page" value="${p.key}" ${isChecked?'checked':''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
+            <span style="font-size:12px;font-weight:600">${p.label}</span>
+          </label>`;
+        }).join('')}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🔐 صلاحيات البيانات</div>
+      <div style="display:grid;gap:6px">
+        ${ALL_PERMS.map(p=>
+          `<label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
+            <input type="checkbox" class="perm-data" value="${p.key}" ${current[p.key]?'checked':''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
+            <span style="font-size:13px;font-weight:600">${p.label}</span>
+          </label>`
+        ).join('')}
+      </div>
+    </div>`;
+}
+
+window.savePermissions=async function(){
+  if(!emp?.authUid){toast('⚠️ الموظف مش عنده حساب بعد','err');return;}
+  const pages=[...document.querySelectorAll('.perm-page:checked')].map(cb=>cb.value);
+  const perms={pages};
+  document.querySelectorAll('.perm-data').forEach(cb=>{perms[cb.value]=cb.checked;});
+  try{
+    await updateDoc(doc(db,'users',emp.authUid),{permissions:perms});
+    toast('✅ تم حفظ الصلاحيات','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ TASKS ══
 function renderTasks(){
