@@ -151,7 +151,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, serverTimestamp }
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -427,36 +427,40 @@ const ROLE_DEFAULTS_PROFILE={
   operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true},
 };
 
-function renderPermissions(){
+async function renderPermissions(){
   const el=document.getElementById('permissions-container');if(!el||!emp)return;
   if(['admin','operation_manager'].includes(emp.role)){
     el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة</div>';
     return;
   }
   const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false};
-  // حاول تجيب من users أولاً، لو مش موجود استخدم defaults
-  const uid=emp.authUid||null;
-  if(uid){
-    db.collection('users').doc(uid).get().then(snap=>{
-      const userData=snap.exists?snap.data():{};
-      const current={...defaults,...(userData.permissions||{})};
-      renderPermsUI(current);
-    }).catch(()=>renderPermsUI(defaults));
-  } else {
-    // مش عنده authUid — ابحث في users عن نفس الـ email
-    const email=emp.email||emp.phone+'@b2c.local';
-    db.collection('users').where('email','==',email).limit(1).get().then(snap=>{
-      if(!snap.empty){
-        const userData=snap.docs[0].data();
-        // احفظ الـ authUid في emp للاستخدام في savePermissions
-        emp.authUid=snap.docs[0].id;
-        const current={...defaults,...(userData.permissions||{})};
-        renderPermsUI(current);
-      } else {
-        renderPermsUI(defaults);
+  let current={...defaults};
+  try{
+    // ابحث عن الـ user document
+    let userDoc=null;
+    if(emp.authUid){
+      const snap=await getDoc(doc(db,'users',emp.authUid));
+      if(snap.exists()) userDoc=snap.data();
+    }
+    if(!userDoc){
+      // ابحث بالـ email
+      const email=emp.email||(emp.phone||'')+'@b2c.local';
+      if(email){
+        const q=await getDocs(query(collection(db,'users'),where('email','==',email)));
+        if(!q.empty){
+          const d=q.docs[0];
+          emp.authUid=d.id; // احفظه
+          userDoc=d.data();
+        }
       }
-    }).catch(()=>renderPermsUI(defaults));
+    }
+    if(userDoc?.permissions){
+      current={...defaults,...userDoc.permissions};
+    }
+  }catch(e){
+    console.log('permissions fetch:',e.message);
   }
+  renderPermsUI(current);
 }
 
 function renderPermsUI(current){
@@ -490,12 +494,14 @@ function renderPermsUI(current){
 }
 
 window.savePermissions=async function(){
-  // لو مش عنده authUid — ابحث عنه
   if(!emp?.authUid){
-    const email=emp.email||emp.phone+'@b2c.local';
-    const snap=await db.collection('users').where('email','==',email).limit(1).get();
-    if(!snap.empty){emp.authUid=snap.docs[0].id;}
-    else{toast('⚠️ الموظف مش عنده حساب Firebase بعد','err');return;}
+    // ابحث بالـ email
+    const email=emp.email||(emp.phone||'')+'@b2c.local';
+    try{
+      const q=await getDocs(query(collection(db,'users'),where('email','==',email)));
+      if(!q.empty){emp.authUid=q.docs[0].id;}
+      else{toast('⚠️ الموظف مش عنده حساب Firebase بعد — أضفه من صفحة الموظفين','err');return;}
+    }catch(e){toast('❌ '+e.message,'err');return;}
   }
   const pages=[...document.querySelectorAll('.perm-page:checked')].map(cb=>cb.value);
   const perms={pages};

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2C — إعداد الصلاحيات</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;font-family:IBM Plex Sans Arabic,sans-serif">
+  <div style="background:var(--bg2);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:520px;width:100%">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:40px;margin-bottom:10px">🔐</div>
+      <h1 style="font-size:20px;font-weight:800;margin-bottom:6px">إعداد الصلاحيات</h1>
+      <p style="font-size:13px;color:var(--dim2)">هذه الصفحة تضبط صلاحيات كل المستخدمين الموجودين</p>
+    </div>
+
+    <div id="status" style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:16px;font-size:12px;min-height:60px"></div>
+
+    <button onclick="runSetup()" class="btn btn-g" style="width:100%;padding:14px;font-size:14px">
+      🚀 تشغيل الإعداد التلقائي
+    </button>
+    <p style="font-size:11px;color:var(--dim2);text-align:center;margin-top:10px">
+      سيضيف permissions افتراضية لكل المستخدمين حسب دورهم
+    </p>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, getDocs, updateDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+const app=initializeApp(FB);
+const auth=getAuth(app), db=getFirestore(app);
+
+const DEFAULTS={
+  admin:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:true},
+  operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:false},
+  customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false,canAccessAccounts:false,canAccessEmployees:false},
+  graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canAccessAccounts:false,canAccessEmployees:false},
+  design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true,canAssignTasks:false,canAccessAccounts:false,canAccessEmployees:false},
+  production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canAccessAccounts:false,canAccessEmployees:false},
+  shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canAccessAccounts:false,canAccessEmployees:false},
+  wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canAccessAccounts:true,canAccessEmployees:false},
+};
+
+const log=(msg,c='var(--snow)')=>{
+  const el=document.getElementById('status');
+  if(el)el.innerHTML+=`<div style="color:${c};margin-bottom:4px">${msg}</div>`;
+};
+
+onAuthStateChanged(auth,u=>{
+  if(!u){window.location.href='login.html';return;}
+});
+
+window.runSetup=async function(){
+  const btn=document.querySelector('button');
+  btn.disabled=true;btn.textContent='جاري الإعداد...';
+  document.getElementById('status').innerHTML='';
+  try{
+    const snap=await getDocs(collection(db,'users'));
+    log(`وجدنا ${snap.size} مستخدم`,'var(--b)');
+    let updated=0,skipped=0;
+    for(const userDoc of snap.docs){
+      const data=userDoc.data();
+      const role=data.role||'customer_service';
+      const perms=DEFAULTS[role]||DEFAULTS.customer_service;
+      // أضف permissions لو مش موجودة أو للأدمن دايماً
+      if(!data.permissions||role==='admin'||role==='operation_manager'){
+        await updateDoc(doc(db,'users',userDoc.id),{permissions:perms});
+        log(`✅ ${data.name||data.email||userDoc.id} (${role})`,'var(--g)');
+        updated++;
+      } else {
+        log(`⏭️ ${data.name||userDoc.id} — له صلاحيات بالفعل`,'var(--dim2)');
+        skipped++;
+      }
+    }
+    log(`\n✅ تم الإعداد: ${updated} مستخدم تحدّث، ${skipped} موجود مسبقاً`,'var(--g)');
+    log('يمكنك الآن إغلاق هذه الصفحة','var(--y)');
+    btn.textContent='✅ تم الإعداد';
+  }catch(e){
+    log('❌ خطأ: '+e.message,'var(--r)');
+    btn.disabled=false;btn.textContent='إعادة المحاولة';
+  }
+};
+</script>
+</body>
+</html>
