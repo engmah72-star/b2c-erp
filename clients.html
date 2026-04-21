@@ -832,7 +832,7 @@ function fillFilters(){
     fEl.innerHTML='<option value="">كل المحافظات</option>'+govs.map(g=>`<option>${g}</option>`).join('');
 }
 
-function saveClient(){
+async function saveClient(){
   const name=gv('c-name').trim();
   const phone1=gv('c-phone1').trim();
   const btn=document.getElementById('save-client-btn'); // أولاً
@@ -841,10 +841,18 @@ function saveClient(){
   if(!/^01[0125][0-9]{8}$/.test(phone1)){toast('⚠️ رقم الهاتف غير صحيح','err');return;}
   // تحقق من تكرار رقم التليفون
   const phone2=gv('c-phone2').trim();
-  const dup=clients.find(cl=>
+  // أولاً: تحقق من الـ array المحلي
+  let dup=clients.find(cl=>
     (cl.phone1===phone1||cl.phone2===phone1||(phone2&&(cl.phone1===phone2||cl.phone2===phone2)))
     &&cl._id!==editId
   );
+  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة
+  if(!dup){
+    try{
+      const q=await firebase.firestore().collection('clients').where('phone1','==',phone1).limit(1).get();
+      if(!q.empty&&q.docs[0].id!==editId) dup={...q.docs[0].data(),_id:q.docs[0].id};
+    }catch(e){}
+  }
   if(dup){
     showDupModal(dup);
     return;
