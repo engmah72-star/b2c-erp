@@ -108,34 +108,21 @@
 
 <script type="module">
 
-// ══ Dynamic Sidebar ══
+
+// ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
+  const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
+  if (!nav) return;
+  
   try {
     const usnap = await getDoc(doc(db,'users',uid));
-    if (!usnap.exists()) return;
-    const ud = usnap.data();
-    const role = ud.role || 'customer_service';
+    const ud = usnap.exists() ? usnap.data() : {};
+    const role = ud.role || 'admin';
     const perms = ud.permissions || {};
-    const pages = perms.pages || [];
+    const userPages = perms.pages || [];
     const isAdm = ['admin','operation_manager'].includes(role);
-
-    const ALL_PAGES = [
-      {file:'clients.html',       label:'العملاء',         ico:'👤'},
-      {file:'design.html',        label:'التصميم',         ico:'✏️'},
-      {file:'print.html',         label:'الطباعة',         ico:'🖨️'},
-      {file:'production.html',    label:'التنفيذ',         ico:'🏭'},
-      {file:'shipping.html',      label:'الشحن',           ico:'🚚'},
-      {file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦'},
-      {file:'archive.html',       label:'الأرشيف',         ico:'📁'},
-      {file:'accounts.html',      label:'الحسابات',        ico:'💰'},
-      {file:'suppliers.html',     label:'الموردين',        ico:'▣'},
-      {file:'products.html',      label:'المنتجات',        ico:'◈'},
-      {file:'employees.html',     label:'الموظفين',        ico:'👥'},
-      {file:'reports.html',       label:'التقارير',        ico:'📊'},
-      {file:'settings.html',      label:'الإعدادات',       ico:'⚙️'},
-    ];
-
-    const DASH = {
+    
+    const ROLE_DASH = {
       admin:'index.html', operation_manager:'index.html',
       customer_service:'cs-dashboard.html',
       graphic_designer:'designer-dashboard.html',
@@ -144,25 +131,51 @@ async function buildDynamicSidebar(uid, currentPage) {
       shipping_officer:'shipping-dashboard.html',
       wallet_manager:'accounts.html',
     };
-
-    const ADMIN_ONLY = ['employees.html','settings.html'];
-    const dashPage = DASH[role] || 'index.html';
-
-    let html = `<a class="nav-link${currentPage===dashPage?' active':''}" href="${dashPage}"><span class="nav-ico">⬡</span> داشبوردي</a>`;
-
-    for (const pg of ALL_PAGES) {
-      if (!isAdm && ADMIN_ONLY.includes(pg.file)) continue;
-      const perm = pg.file.replace('.html','');
-      const allowed = isAdm || pages.includes('*') || pages.includes(perm);
-      if (!allowed) continue;
-      html += `<a class="nav-link${currentPage===pg.file?' active':''}" href="${pg.file}"><span class="nav-ico">${pg.ico}</span> ${pg.label}</a>`;
+    
+    const ALL = [
+      {f:'clients.html',         l:'العملاء',       i:'👤', p:'clients'},
+      {f:'design.html',          l:'التصميم',       i:'✏️', p:'design'},
+      {f:'print.html',           l:'الطباعة',       i:'🖨️', p:'print'},
+      {f:'production.html',      l:'التنفيذ',       i:'🏭', p:'production'},
+      {f:'shipping.html',        l:'الشحن',         i:'🚚', p:'shipping'},
+      {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦', p:'shipping-accounts'},
+      {f:'archive.html',         l:'الأرشيف',       i:'📁', p:'archive'},
+      {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
+      {f:'suppliers.html',       l:'الموردين',      i:'▣',  p:'suppliers'},
+      {f:'products.html',        l:'المنتجات',      i:'◈',  p:'products'},
+      {f:'employees.html',       l:'الموظفين',      i:'👥', p:'employees', adminOnly:true},
+      {f:'reports.html',         l:'التقارير',      i:'📊', p:'reports'},
+      {f:'settings.html',        l:'الإعدادات',     i:'⚙️', p:'settings', adminOnly:true},
+    ];
+    
+    const dash = ROLE_DASH[role] || 'index.html';
+    const dashLabel = isAdm ? 'لوحة التحكم' : 'داشبوردي';
+    
+    let html = `<a class="nav-link${currentPage===dash?' active':''}" href="${dash}">
+      <span class="nav-ico">⬡</span> ${dashLabel}
+    </a>`;
+    
+    for (const pg of ALL) {
+      if (pg.adminOnly && !isAdm) continue;
+      const ok = isAdm || userPages.includes('*') || userPages.includes(pg.p);
+      if (!ok) continue;
+      html += `<a class="nav-link${currentPage===pg.f?' active':''}" href="${pg.f}">
+        <span class="nav-ico">${pg.i}</span> ${pg.l}
+      </a>`;
     }
-
-    const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
-    if (nav) nav.innerHTML = html;
-  } catch(e) { console.warn('sidebar:', e.message); }
+    
+    nav.innerHTML = html;
+  } catch(e) {
+    // fallback - show basic links
+    nav.innerHTML = `
+      <a class="nav-link" href="index.html"><span class="nav-ico">⬡</span> الرئيسية</a>
+      <a class="nav-link" href="clients.html"><span class="nav-ico">👤</span> العملاء</a>
+      <a class="nav-link" href="design.html"><span class="nav-ico">✏️</span> التصميم</a>
+    `;
+    console.warn('sidebar fallback:', e.message);
+  }
 }
-// ════════════════
+// ═══════════════════════════════
 
 // ── Global Error Handler ──
 window.addEventListener('unhandledrejection',e=>{
