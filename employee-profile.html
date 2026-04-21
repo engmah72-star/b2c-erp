@@ -124,6 +124,37 @@
   </div>
 </div>
 
+<!-- MODAL: تعديل المرتب الأساسي -->
+<div class="overlay" id="ov-edit-salary">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head">
+      <span class="modal-title">✏️ تعديل بيانات المرتب</span>
+      <button class="modal-x" onclick="document.getElementById('ov-edit-salary').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>💰 المرتب الأساسي (ج)</label>
+        <input class="inp" id="edit-base-salary" type="number" placeholder="0">
+      </div>
+      <div class="fg">
+        <label>📊 نسبة العمولة (%)</label>
+        <input class="inp" id="edit-commission" type="number" placeholder="0" min="0" max="100">
+      </div>
+      <div class="fg">
+        <label>📋 الحالة</label>
+        <select class="inp" id="edit-status">
+          <option value="active">✅ نشط</option>
+          <option value="inactive">⏸️ غير نشط</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-edit-salary').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="saveEmpData()">✓ حفظ</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: صرف مرتب -->
 <div class="overlay" id="ov-salary">
   <div class="modal" style="max-width:440px">
@@ -382,7 +413,9 @@ onAuthStateChanged(auth,async u=>{
   document.getElementById('topbar-actions').innerHTML=`
     <button class="btn btn-ghost btn-sm" onclick="location.href='employees.html'">← الموظفين</button>
     <button class="btn btn-b btn-sm" onclick="openAddTask()">＋ مهمة</button>
-    <button class="btn btn-g btn-sm" onclick="openSalary()">💰 صرف مرتب</button>`;
+    <button class="btn btn-g btn-sm" onclick="openSalary()">💰 صرف مرتب</button>
+    <button class="btn btn-ghost btn-sm" onclick="openEditSalary()">✏️ تعديل مرتب</button>
+    <button class="btn btn-r btn-sm" onclick="confirmDelete()">🗑 حذف</button>`;
 
   // Listeners
   onSnapshot(collection(db,'orders'),snap=>{
@@ -650,6 +683,43 @@ function renderPermsUI(current){
       </div>
     </div>`;
 }
+
+// ══ تعديل بيانات الموظف ══
+window.openEditSalary=function(){
+  if(!emp)return;
+  document.getElementById('edit-base-salary').value = emp.baseSalary||0;
+  document.getElementById('edit-commission').value = emp.commissionPct||0;
+  document.getElementById('edit-status').value = emp.status||'active';
+  document.getElementById('ov-edit-salary').classList.add('open');
+};
+
+window.saveEmpData=async function(){
+  const baseSalary=parseFloat(document.getElementById('edit-base-salary').value)||0;
+  const commissionPct=parseFloat(document.getElementById('edit-commission').value)||0;
+  const status=document.getElementById('edit-status').value;
+  try{
+    await updateDoc(doc(db,'employees',empId),{baseSalary,commissionPct,status,updatedAt:serverTimestamp()});
+    document.getElementById('ov-edit-salary').classList.remove('open');
+    toast('✅ تم حفظ البيانات','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.confirmDelete=async function(){
+  if(!emp)return;
+  if(!confirm(`حذف موظف "${emp.name}"؟
+لن يستطيع الدخول للنظام.`))return;
+  try{
+    // حذف من employees
+    const {deleteDoc} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await deleteDoc(doc(db,'employees',empId));
+    // حذف من users لو عنده authUid
+    if(emp.authUid){
+      try{ await deleteDoc(doc(db,'users',emp.authUid)); }catch(e){}
+    }
+    toast('✅ تم حذف الموظف','ok');
+    setTimeout(()=>location.href='employees.html',1500);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 window.savePermissions=async function(){
   if(!emp?.authUid){

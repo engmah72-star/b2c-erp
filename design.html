@@ -454,12 +454,28 @@ window.doAtt=async function(){
 
 function startListeners(){
   const isAdmin2=['admin','operation_manager'].includes(currentRole);
+  const isCS=['customer_service','design_operator'].includes(currentRole);
   const currentUid=auth.currentUser?.uid;
 
   if(isAdmin2){
     // Admin — كل أوردرات التصميم
     onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderKanban();
+      setText('sub',orders.length+' طلب تصميم');
+      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+    });
+  } else if(isCS){
+    // CS — الأوردرات اللي هي عملتها
+    onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+      window.markSynced&&window.markSynced();
+      const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      // CS تشوف اللي عملتها + اللي مش مكلّف
+      orders=all.filter(o=>o.createdBy===currentUid||!o.designerId)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       renderKanban();
       setText('sub',orders.length+' طلب تصميم');
