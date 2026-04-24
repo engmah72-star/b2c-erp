@@ -238,6 +238,96 @@ window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-o
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
+// ══ Admin Order Management ══
+function showAdminSection(o, isAdmin){
+  const sec = document.getElementById('admin-mgmt-section');
+  if(!sec) return;
+  if(!isAdmin){ sec.style.display='none'; return; }
+  sec.style.display='block';
+  const sp=document.getElementById('adm-sale-price');
+  const sp2=document.getElementById('adm-paid');
+  const sp3=document.getElementById('adm-discount');
+  if(sp)sp.value=o.salePrice||0;
+  if(sp2)sp2.value=o.totalPaid||o.deposit||o.paid||0;
+  if(sp3)sp3.value=o.discount||0;
+  calcAdmRemaining();
+}
+
+window.calcAdmRemaining=function(){
+  const sale=parseFloat(document.getElementById('adm-sale-price')?.value)||0;
+  const paid=parseFloat(document.getElementById('adm-paid')?.value)||0;
+  const disc=parseFloat(document.getElementById('adm-discount')?.value)||0;
+  const net=Math.max(0,sale-disc);
+  const rem=Math.max(0,net-paid);
+  const el=document.getElementById('adm-remaining-preview');
+  if(el)el.textContent=`الصافي: ${fn(net)} ج | الباقي: ${fn(rem)} ج`;
+};
+
+window.moveStage=async function(stage){
+  if(!activeId)return;
+  const labels={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف'};
+  if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟`))return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      stage,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 نُقل إلى ${labels[stage]} (أدمن)`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    closePanel();
+    toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.saveAdminFinance=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const sale=parseFloat(document.getElementById('adm-sale-price').value)||0;
+  const paid=parseFloat(document.getElementById('adm-paid').value)||0;
+  const discount=parseFloat(document.getElementById('adm-discount').value)||0;
+  const net=Math.max(0,sale-discount);
+  const remaining=Math.max(0,net-paid);
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      salePrice:sale,totalPaid:paid,paid,deposit:paid,
+      discount,remaining,
+      paymentStatus:remaining===0?'paid':paid>0?'partial':'pending',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✏️ تعديل مالي: سعر ${fn(sale)} ج | مدفوع ${fn(paid)} ج | خصم ${fn(discount)} ج`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم التعديل المالي','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.deleteOrderFull=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع.`))return;
+  if(!confirm('تأكيد الحذف النهائي؟'))return;
+  try{
+    // رجّع العربون للمحفظة لو موجود
+    const dep=parseFloat(o.deposit)||parseFloat(o.totalPaid)||0;
+    const wId=o.depositWalletId||o.walletId||'';
+    if(dep>0&&wId){
+      const w=wallets?.find(x=>x._id===wId);
+      if(w)await updateDoc(doc(db,'wallets',wId),{balance:(parseFloat(w.balance)||0)+dep});
+    }
+    // حذف transactions المرتبطة
+    try{
+      const {getDocs,query:qry,where:whr,deleteDoc:delDoc}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+      const txSnap=await getDocs(qry(collection(db,'transactions_v2'),whr('orderId','==',activeId)));
+      for(const tx of txSnap.docs)await delDoc(tx.ref);
+    }catch(e2){console.warn('tx del:',e2.message);}
+    // حذف الأوردر
+    const {deleteDoc}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await deleteDoc(doc(db,'orders',activeId));
+    closePanel();
+    toast('✅ تم الحذف النهائي','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+// ════════════════════════
+
+
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
