@@ -943,6 +943,28 @@ window.updateTxCats=function(){
   updateTxRelated();
 };
 
+// ══ اختيار الأوردر ══
+window.onOrderSelect=function(){
+  const sel=document.getElementById('tx-order-sel');
+  const orderId=sel?.value;
+  const info=document.getElementById('tx-order-info');
+  if(!orderId){info.style.display='none';return;}
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){info.style.display='none';return;}
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.deposit)||0;
+  const rem=parseFloat(o.remaining)||sale-paid;
+  document.getElementById('toi-total').textContent=fn(sale)+' ج';
+  document.getElementById('toi-paid').textContent=fn(paid)+' ج';
+  document.getElementById('toi-rem').textContent=fn(rem)+' ج';
+  info.style.display='block';
+  // حط الحد الأقصى على الـ input
+  document.getElementById('tx-amount').max=rem;
+  document.getElementById('tx-amount').placeholder='الحد الأقصى: '+fn(rem)+' ج';
+  // اسم العميل تلقائي
+  document.getElementById('tx-client-name').value=o.clientName||'';
+};
+
 window.updateTxRelated=function(){
   const cat=document.getElementById('tx-cat')?.value;
   const sec=document.getElementById('tx-related-section');
@@ -954,6 +976,13 @@ window.updateTxRelated=function(){
   [clientRow,supplierRow,employeeRow].forEach(r=>{if(r)r.style.display='none';});
   if(['collection','advance'].includes(cat)){
     sec.style.display='block';clientRow.style.display='block';
+    // ملء الأوردرات المعلقة
+    const sel=document.getElementById('tx-order-sel');
+    if(sel){
+      const pending=allOrders.filter(o=>(parseFloat(o.remaining)||0)>0&&o.stage!=='archived');
+      sel.innerHTML='<option value="">— اختر الأوردر (اختياري) —</option>'+
+        pending.map(o=>`<option value="${o._id}">${o.clientName||'—'} — ${o.orderId||o._id.slice(-6)} — باقي: ${fn(parseFloat(o.remaining)||0)} ج</option>`).join('');
+    }
   } else if(['supplier','shipping_cost'].includes(cat)){
     sec.style.display='block';supplierRow.style.display='block';
     // ملء الموردين
@@ -975,21 +1004,65 @@ window.saveTx=async function(){
   if(!walletId)return toast('⚠️ اختر المحفظة','err');
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const w=wallets.find(x=>x._id===walletId);if(!w)return;
+
+  // ══ تحقق من الأوردر لو مختار ══
+  const orderId=document.getElementById('tx-order-sel')?.value||'';
+  const o=orderId?allOrders.find(x=>x._id===orderId):null;
+  if(o && type==='in'){
+    const rem=parseFloat(o.remaining)||0;
+    if(amount>rem){
+      return toast(`⚠️ المبلغ أكبر من الباقي (${fn(rem)} ج)`,'err');
+    }
+  }
+
   const balBefore=parseFloat(w.balance)||0;
   const balAfter=type==='in'?balBefore+amount:balBefore-amount;
   if(type==='out'&&balAfter<0)return toast('⚠️ الرصيد غير كافٍ','err');
+
   try{
     await updateDoc(doc(db,'wallets',walletId),{balance:balAfter});
-    // بيانات الربط
-    const clientName=document.getElementById('tx-client-name')?.value||'';
+
+    // ══ تحديث الأوردر لو مختار ══
+    if(o && type==='in'){
+      const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.deposit)||0;
+      const newPaid=oldPaid+amount;
+      const oldRem=parseFloat(o.remaining)||parseFloat(o.salePrice)||0;
+      const newRem=Math.max(0,oldRem-amount);
+      const tl=[...(o.timeline||[]),{date:nowStr(),action:`💰 دفعة: ${fn(amount)} ج — باقي: ${fn(newRem)} ج`,by:document.getElementById('nav-name')?.textContent||''}];
+      await updateDoc(doc(db,'orders',orderId),{
+        totalPaid:newPaid,
+        remaining:newRem,
+        lastPaymentDate:nowStr(),
+        ...(newRem===0?{paymentStatus:'paid'}:{paymentStatus:'partial'}),
+        timeline:tl,
+      });
+    }
+
+    // ══ تسجيل الحركة ══
+    const clientName=document.getElementById('tx-client-name')?.value||o?.clientName||'';
     const supSel=document.getElementById('tx-supplier-sel');const supOpt=supSel?.options[supSel?.selectedIndex];
     const supplierName=supOpt?.dataset?.name||supOpt?.text||'';
     const empSel=document.getElementById('tx-employee-sel');const empOpt=empSel?.options[empSel?.selectedIndex];
     const employeeName=empOpt?.text||'';
     const relatedName=clientName||supplierName||employeeName||'';
     const fullDesc=(desc||(CAT[cat]||'حركة مالية'))+(relatedName?' — '+relatedName:'');
-    await addDoc(collection(db,'transactions_v2'),{walletId,type,amount,fees:0,description:fullDesc,category:cat,clientName,supplierName,employeeName,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
-    cM('new-tx');toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
+    await addDoc(collection(db,'transactions_v2'),{
+      walletId,type,amount,fees:0,
+      description:fullDesc,category:cat,
+      clientName,supplierName,employeeName,
+      orderId:orderId||'',
+      balanceBefore:balBefore,balanceAfter:balAfter,
+      date:nowStr(),
+      createdBy:currentUser?.uid||'',
+      createdByName:document.getElementById('nav-name')?.textContent||'',
+      createdAt:serverTimestamp()
+    });
+
+    cM('new-tx');
+    toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
+    if(o && type==='in' && (parseFloat(o.remaining)-amount)===0){
+      toast('🎉 تم سداد الأوردر بالكامل!','ok');
+    }
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
