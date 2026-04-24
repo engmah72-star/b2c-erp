@@ -38,6 +38,8 @@
 .kpi-val{font-size:22px;font-weight:900;margin-bottom:4px}
 .kpi-lbl{font-size:11px;color:var(--dim2);font-weight:700}
 .type-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:10px;font-weight:800;background:rgba(255,170,0,.12);color:var(--y)}
+.ftab{padding:6px 14px;border-radius:20px;border:1.5px solid var(--line);background:var(--bg2);font-size:11px;font-weight:700;color:var(--dim2);cursor:pointer;font-family:inherit;transition:var(--trans)}
+.ftab.active{background:rgba(255,61,110,.12);color:var(--r);border-color:rgba(255,61,110,.3)}
 </style>
 </head>
 <body>
@@ -71,6 +73,15 @@
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('printers',this)">🏭 مطابع</button>
       <button class="tab-btn" onclick="switchTab('shippers',this)">🚚 شحن</button>
+    </div>
+    <!-- فلتر الترتيب -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span style="font-size:12px;color:var(--dim2);font-weight:700">الترتيب حسب:</span>
+      <div style="display:flex;gap:6px">
+        <button class="ftab active" id="sort-due" onclick="setSort('due',this)">💰 المستحق</button>
+        <button class="ftab" id="sort-purchases" onclick="setSort('purchases',this)">📦 المشتريات</button>
+        <button class="ftab" id="sort-name" onclick="setSort('name',this)">🔤 الاسم</button>
+      </div>
     </div>
     <div id="list"></div>
   </div>
@@ -268,6 +279,28 @@ window.switchTab=function(tab,btn){
   renderList();
 };
 
+let currentSort='due';
+window.setSort=function(sort,btn){
+  currentSort=sort;
+  document.querySelectorAll('.ftab[id^="sort-"]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderList();
+};
+
+function sortSuppliers(data){
+  if(currentSort==='due') return [...data].sort((a,b)=>getSupBalance(b._id).due-getSupBalance(a._id).due);
+  if(currentSort==='purchases') return [...data].sort((a,b)=>getSupBalance(b._id).purchases-getSupBalance(a._id).purchases);
+  if(currentSort==='name') return [...data].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  return data;
+}
+
+function sortShippers(data){
+  if(currentSort==='due') return [...data].sort((a,b)=>getShipperStats(b._id).pendingSettlement-getShipperStats(a._id).pendingSettlement);
+  if(currentSort==='purchases') return [...data].sort((a,b)=>getShipperStats(b._id).total-getShipperStats(a._id).total);
+  if(currentSort==='name') return [...data].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  return data;
+}
+
 function renderAll(){updateKPIs();renderList();}
 
 function renderList(){
@@ -278,7 +311,7 @@ function renderList(){
 
 function renderPrinters(el){
   if(!suppliers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد مطابع</div></div>';return;}
-  el.innerHTML=suppliers.map(s=>{
+  el.innerHTML=sortSuppliers(suppliers).map(s=>{
     const {purchases,paid,due}=getSupBalance(s._id);
     const creditLimit=parseFloat(s.creditLimit)||0;
     const overCredit=creditLimit>0&&due>creditLimit;
@@ -308,7 +341,7 @@ function renderPrinters(el){
 
 function renderShippers(el){
   if(!shippers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">لا توجد شركات شحن</div></div>';return;}
-  el.innerHTML=shippers.map(s=>{
+  el.innerHTML=sortShippers(shippers).map(s=>{
     const {total,delivered,returned,rate,pendingSettlement}=getShipperStats(s._id);
     return`<div class="sup-card" onclick="openSup('${s._id}','shipper')">
       <div class="sup-card-head">
