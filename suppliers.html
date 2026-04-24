@@ -413,14 +413,65 @@ function renderPanelContent(sup){
   ].filter(Boolean).join('');
   infoEl.innerHTML=infoRows||'<div style="color:var(--dim2);font-size:12px">لا توجد بيانات إضافية</div>';
 
-  // الحساب الجاري
+  // ══ الحساب الجاري الموحد ══
   const balEl=document.getElementById('pn-balance');
   if(sup.supType==='printer'){
     const {purchases,paid,due}=getSupBalance(sup._id);
+    const supPays=payments.filter(p=>p.supplierId===sup._id).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const relOrds=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===sup._id)).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+
+    // حساب سجل موحد مرتب بالتاريخ
+    const allTx=[
+      ...relOrds.map(o=>{
+        const ci=(o.costItems||[]).filter(c=>c.supplierId===sup._id);
+        const total=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+        return{type:'purchase',date:o.createdAt?.seconds||0,dateStr:o.createdDate||'—',label:o.clientName||'—',sub:(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'',orderId:o.orderId||o._id.slice(-6),amount:total,items:ci};
+      }),
+      ...supPays.map(p=>({type:'payment',date:p.createdAt?.seconds||0,dateStr:p.date||'—',label:'دفعة',sub:p.note||'',amount:p.amount,payId:p._id,walletId:p.walletId||''}))
+    ].sort((a,b)=>b.date-a.date);
+
     balEl.innerHTML=`
-      <div class="balance-row" style="background:rgba(59,158,255,.08)"><span style="color:var(--dim2);font-size:12px">المشتريات</span><span style="font-weight:800;color:var(--b)">${fn(purchases)} ج</span></div>
-      <div class="balance-row" style="background:rgba(0,217,126,.08)"><span style="color:var(--dim2);font-size:12px">المدفوع</span><span style="font-weight:800;color:var(--g)">${fn(paid)} ج</span></div>
-      <div class="balance-row" style="background:rgba(255,61,110,.08)"><span style="color:var(--dim2);font-size:12px">المستحق</span><span style="font-weight:900;font-size:18px;color:var(--r)">${fn(due)} ج</span></div>`;
+      <!-- ملخص -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+        <div style="background:rgba(59,158,255,.08);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:16px;font-weight:900;color:var(--b)">${fn(purchases)} ج</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">مشتريات</div>
+        </div>
+        <div style="background:rgba(0,217,126,.08);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:16px;font-weight:900;color:var(--g)">${fn(paid)} ج</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">مدفوع</div>
+        </div>
+        <div style="background:rgba(255,61,110,.08);border:1.5px solid rgba(255,61,110,.2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:900;color:var(--r)">${fn(due)} ج</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">مستحق</div>
+        </div>
+      </div>
+      <!-- سجل الحركات الموحد -->
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">📋 سجل الحركات</div>
+      ${allTx.length?allTx.map(tx=>`
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                <span style="font-size:10px;padding:2px 7px;border-radius:20px;font-weight:800;${tx.type==='purchase'?'background:rgba(255,61,110,.12);color:var(--r)':'background:rgba(0,217,126,.12);color:var(--g)'}">
+                  ${tx.type==='purchase'?'📦 مشتريات':'💳 دفعة'}
+                </span>
+                <span style="font-size:10px;color:var(--dim2)">${tx.dateStr}</span>
+              </div>
+              <div style="font-size:13px;font-weight:800">${tx.label}</div>
+              ${tx.sub?`<div style="font-size:11px;color:var(--dim2);margin-top:1px">${tx.sub}</div>`:''}
+              ${tx.orderId?`<div style="font-size:10px;color:var(--b);margin-top:1px">${tx.orderId}</div>`:''}
+              ${tx.items?.length?`<div style="margin-top:6px;background:var(--bg3);border-radius:6px;padding:6px 8px">${tx.items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0"><span style="color:var(--dim2)">${it.type||'—'}</span><span style="font-weight:700">${fn(it.total)} ج</span></div>`).join('')}</div>`:''}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-right:8px">
+              <span style="font-size:15px;font-weight:900;color:${tx.type==='purchase'?'var(--r)':'var(--g)'}">
+                ${tx.type==='purchase'?'-':'+'}${fn(tx.amount)} ج
+              </span>
+              ${tx.type==='payment'?`<button onclick="delPay('${tx.payId}',${tx.amount},'${tx.walletId}')" style="width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:11px">✕</button>`:''}
+            </div>
+          </div>
+        </div>`).join('')
+      :'<div style="color:var(--dim2);font-size:12px;text-align:center;padding:16px">لا توجد حركات</div>'}`;
   } else {
     const {total,delivered,returned,rate,pendingSettlement}=getShipperStats(sup._id);
     balEl.innerHTML=`
@@ -430,54 +481,9 @@ function renderPanelContent(sup){
       <div class="balance-row" style="background:rgba(255,61,110,.08)"><span style="color:var(--dim2);font-size:12px">تسويات معلقة</span><span style="font-weight:900;color:var(--r)">${fn(pendingSettlement)} ج</span></div>`;
   }
 
-  // الأوردرات المرتبطة — تفاصيل كاملة
+  // الأوردرات مدموجة في الحساب الجاري
   const ordEl=document.getElementById('pn-orders');
-  const relOrders=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===sup._id)||o.shipCompanyId===sup._id||o.shipperId===sup._id)
-    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  
-  if(!relOrders.length){
-    ordEl.innerHTML='<div style="color:var(--dim2);font-size:12px">لا توجد أوردرات</div>';
-  } else {
-    ordEl.innerHTML=relOrders.map(o=>{
-      const ci=(o.costItems||[]).filter(c=>c.supplierId===sup._id);
-      const total=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-      const stageMap={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',archived:'📁 أرشيف'};
-      const stageLabel=stageMap[o.stage]||o.stage||'—';
-      const prodNames=(o.products||[]).map(p=>`${p.name}×${p.qty}`).join(' · ')||o.product||'—';
-      return`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px">
-        <!-- Header الأوردر -->
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-          <div>
-            <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
-            <div style="font-size:10px;color:var(--dim2);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-            <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:700">${stageLabel}</span>
-            <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(total)} ج</span>
-          </div>
-        </div>
-        <!-- المنتجات -->
-        <div style="font-size:11px;color:var(--b);font-weight:700;margin-bottom:6px">📦 ${prodNames}</div>
-        <!-- بنود التكلفة المرتبطة -->
-        ${ci.length?`<div style="background:var(--bg3);border-radius:8px;padding:8px">
-          ${ci.map(item=>`<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px">
-            <span style="color:var(--dim2)">${item.type||'—'}</span>
-            <span style="font-weight:700">${fn(item.total)} ج</span>
-          </div>`).join('')}
-        </div>`:''}
-      </div>`;
-    }).join('');
-    
-    // إجمالي في الأسفل
-    const grandTotal=relOrders.reduce((sum,o)=>{
-      const ci=(o.costItems||[]).filter(c=>c.supplierId===sup._id);
-      return sum+ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    },0);
-    ordEl.innerHTML+=`<div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-top:4px">
-      <span style="font-size:12px;font-weight:800;color:var(--dim2)">إجمالي المشتريات</span>
-      <span style="font-size:16px;font-weight:900;color:var(--r)">${fn(grandTotal)} ج</span>
-    </div>`;
-  }
+  ordEl.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center">مدمجة في سجل الحركات أعلاه ↑</div>';
 
   // سجل المدفوعات
   const payEl=document.getElementById('pn-payments');
