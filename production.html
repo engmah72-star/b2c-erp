@@ -328,19 +328,30 @@ window.deleteOrderFull=async function(){
 // ════════════════════════
 
 
+let __listenersStarted=false; // منع التكرار
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');}
+  if(__listenersStarted)return; // لو الـ listeners اتسجلوا قبل كده، مش هنسجلهم تاني
+  __listenersStarted=true;
+  let __lastOrderHash='';
   onSnapshot(query(collection(db,'orders'),where('stage','==','production')),snap=>{
     window.markSynced&&window.markSynced();
     orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    
+    // Smart render — فقط لو البيانات اتغيرت فعلاً
+    const hash=orders.map(o=>o._id+'|'+o.prodStatus+'|'+o.supplierId+'|'+(o.costItems?.length||0)).join(',');
+    const changed = hash !== __lastOrderHash;
+    __lastOrderHash = hash;
+    
     setText('s-pending',orders.filter(o=>!o.prodStatus||o.prodStatus==='pending').length);
     setText('s-wip',orders.filter(o=>['wip','received'].includes(o.prodStatus)).length);
     setText('s-done',orders.filter(o=>o.prodStatus==='done').length);
     setText('sub',orders.length+' طلب تنفيذ');
-    renderList();
+    
+    if(changed) renderList(); // إعادة رسم الـ list بس لو في تغيير
     if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
@@ -364,7 +375,9 @@ function buildSupFilter(){
   bar.innerHTML=`<button class="ftab active" onclick="setSupFilter('',this)">كل المطابع</button>`+usedSups.map(s=>`<button class="ftab" onclick="setSupFilter('${s._id}',this)">${s.name}</button>`).join('');
 }
 
-window.renderList=function(){
+let __pageSize=20,__currentPage=1;
+window.renderList=function(resetPage=true){
+  if(resetPage)__currentPage=1;
   let data=orders;
   if(currentFilter==='pending')data=orders.filter(o=>!o.prodStatus||o.prodStatus==='pending');
   else if(currentFilter==='wip')data=orders.filter(o=>['wip','received'].includes(o.prodStatus));
@@ -373,6 +386,8 @@ window.renderList=function(){
   if(currentSupFilter)data=data.filter(o=>o.supplierId===currentSupFilter);
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد طلبات</div></div>`;return;}
+  const total=data.length;
+  data=data.slice(0,__currentPage*__pageSize); // عرض بس الصفحة الحالية
   const SM={pending:{cls:'sp-pending',lbl:'⏳ انتظار',cc:''},received:{cls:'sp-wip',lbl:'📥 استلمت',cc:'card-wip'},wip:{cls:'sp-wip',lbl:'🔄 جاري',cc:'card-wip'},done:{cls:'sp-done',lbl:'✅ خلصت',cc:'card-done'},problem:{cls:'sp-prob',lbl:'⚠️ مشكلة',cc:'card-prob'}};
   el.innerHTML=data.map(o=>{
     const ps=o.prodStatus||'pending';const st=SM[ps]||SM.pending;
@@ -395,14 +410,18 @@ window.renderList=function(){
           ${tc>0?`<span style="font-size:11px;color:var(--r);font-weight:700">💰${fn(tc)}ج</span>`:''}
         </div>
       </div>
-      ${firstImg?`<img src="${firstImg}" class="ord-img" onclick="event.stopPropagation();window.open('${firstImg}','_blank')">`:'' }
+      ${firstImg?`<img src="${firstImg}" class="ord-img" loading="lazy" decoding="async" onclick="event.stopPropagation();window.open('${firstImg}','_blank')">`:'' }
       <div class="ord-foot">
         ${sup?`<span class="sup-tag">🏭 ${sup.name}</span>`:`<span class="sup-tag" style="color:var(--r)">⚠️ بدون مطبعة</span>`}
         ${urgent?`<span class="delay-tag">منذ ${days} أيام</span>`:''}
         ${o.finalImageUrl?`<span class="sup-tag" style="color:var(--g)">✅ صورة</span>`:''}
       </div>
     </div>`;
-  }).join('');
+  }).join('')
+  + (total > __currentPage*__pageSize ? 
+    `<button onclick="__currentPage++;renderList(false)" style="width:100%;padding:14px;background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;color:var(--dim2);font-size:13px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit">
+      ⬇️ تحميل المزيد (${total - __currentPage*__pageSize} متبقي)
+    </button>` : '');
 };
 
 window.openOrder=function(id){
@@ -437,7 +456,7 @@ function renderPanel(o){
         </div>`;
       }).join('');
       return`<div style="margin-bottom:16px">
-        ${imgs.length>1?`<div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:800">📦 ${img.name}</div>`:''}
+        ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div><button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button></div>`:''}
         <div class="design-img-wrap">
           <img src="${img.url}" class="design-img" onclick="window.open('${img.url}','_blank')">
         </div>
@@ -565,6 +584,44 @@ window.saveCost=async function(){
   try{
     await updateDoc(doc(db,'orders',activeId),{costItems:[...(o.costItems||[]),item],timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 ${type}: ${fn(total)} ج`,by:userName}],updatedAt:serverTimestamp()});
     cM('cost');toast('✅ تم','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.rmProduct=async function(prodIdx){
+  if(!confirm('حذف هذا المنتج وكل بنود تكلفته من الأوردر؟'))return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  
+  // احذف المنتج من الـ array
+  const prods=[...(o.products||[])];
+  if(prodIdx>=0&&prodIdx<prods.length){
+    prods.splice(prodIdx,1);
+  }
+  
+  // احذف بنود التكلفة المرتبطة بالمنتج + أعد ترقيم الباقي
+  const ci=[...(o.costItems||[])];
+  const newCi=ci
+    .filter(c=>c.prodIdx!==prodIdx) // احذف بنود المنتج
+    .map(c=>({...c,prodIdx:c.prodIdx>prodIdx?(c.prodIdx-1):c.prodIdx})); // أعد الترقيم
+  
+  // أعد حساب السعر بعد حذف المنتج
+  const removedProd=o.products?.[prodIdx];
+  const removedPrice=parseFloat(removedProd?.salePrice||removedProd?.price||0);
+  const newSalePrice=Math.max(0,(parseFloat(o.salePrice)||0)-removedPrice);
+  const newRemaining=Math.max(0,newSalePrice-(parseFloat(o.totalPaid)||parseFloat(o.deposit)||0));
+  
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      products:prods,
+      costItems:newCi,
+      ...(removedPrice>0?{salePrice:newSalePrice,remaining:newRemaining}:{}),
+      timeline:[...(o.timeline||[]),{
+        date:nowStr(),
+        action:`🗑 حُذف منتج: ${removedProd?.name||'—'} × ${removedProd?.qty||0}`,
+        by:userName
+      }],
+      updatedAt:serverTimestamp()
+    });
+    toast(`✅ حُذف ${removedProd?.name||'المنتج'} وبنوده`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
