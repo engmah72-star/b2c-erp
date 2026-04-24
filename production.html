@@ -135,8 +135,8 @@
     <div class="psec"><div class="psec-title">🖼️ صورة التصميم</div><div id="design-imgs"></div></div>
     <!-- 2. المطبعة -->
     <div class="psec"><div class="psec-title">🏭 المطبعة</div><div class="sup-grid" id="sup-btns"></div><button class="wa-btn" id="wa-btn" onclick="sendWhatsApp()" style="display:none"><span>📱</span> إرسال للمطبعة واتساب</button></div>
-    <!-- 3. بنود التكلفة -->
-    <div class="psec"><div class="psec-title">💰 بنود التكلفة</div><div id="costs-list"></div><div class="cost-total-bar"><span style="font-size:12px;color:var(--dim2);font-weight:700">إجمالي التكاليف</span><span style="font-size:18px;font-weight:900;color:var(--r)" id="cost-total">0 ج</span></div></div>
+    <!-- إجمالي التكاليف فقط -->
+    <div class="psec" style="padding:12px 16px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--dim2);font-weight:800">💰 إجمالي التكاليف</span><span style="font-size:18px;font-weight:900;color:var(--r)" id="cost-total">0 ج</span></div></div>
     <!-- 4. حالة الطباعة -->
     <div class="psec">
       <div class="psec-title">📊 حالة الطباعة</div>
@@ -198,7 +198,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='';
+let orders=[],suppliers=[],printers=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -230,7 +230,10 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    // المطابع فقط للـ panel
+    printers=suppliers.filter(s=>s.type==='مطبعة'||s.category==='مطبعة');
     buildSupFilter();
+    // كل الموردين في بنود التكلفة
     const s=document.getElementById('ac-sup');if(!s)return;
     s.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}">${x.name}</option>`).join('');
   });
@@ -302,11 +305,45 @@ window.closePanel=function(){
 
 function renderPanel(o){
   const prods=o.products||[];const ci=o.costItems||[];const ps=o.prodStatus||'pending';
-  // 1. التصميم
+  // 1. التصاميم + بنود التكلفة تحت كل منتج
   const dEl=document.getElementById('design-imgs');
-  const imgs=prods.filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name}));
-  if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم'});
-  dEl.innerHTML=imgs.length?imgs.map(img=>`<div style="margin-bottom:8px">${imgs.length>1?`<div style="font-size:11px;color:var(--dim2);margin-bottom:4px;font-weight:700">${img.name}</div>`:''}<div class="design-img-wrap"><img src="${img.url}" class="design-img" onclick="window.open('${img.url}','_blank')"></div></div>`).join(''):`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>`;
+  const imgs=prods.filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name,idx:prods.indexOf(p)}));
+  if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم',idx:-1});
+
+  if(imgs.length){
+    dEl.innerHTML=imgs.map(img=>{
+      const prodCi=ci.filter(c2=>c2.prodIdx===img.idx||(img.idx===-1&&c2.prodIdx==null));
+      const ciTotal=prodCi.reduce((s,c2)=>s+(parseFloat(c2.total)||0),0);
+      const ciRows=prodCi.map((item,i)=>{
+        const gi=ci.indexOf(item);
+        return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)">
+          <div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
+        </div>`;
+      }).join('');
+      return`<div style="margin-bottom:16px">
+        ${imgs.length>1?`<div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:800">📦 ${img.name}</div>`:''}
+        <div class="design-img-wrap">
+          <img src="${img.url}" class="design-img" onclick="window.open('${img.url}','_blank')">
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
+          <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span>
+            ${ciTotal>0?`<span style="font-size:12px;font-weight:900;color:var(--r)">${fn(ciTotal)} ج</span>`:''}
+          </div>
+          ${ciRows||'<div style="padding:8px 10px;font-size:11px;color:var(--dim2)">لا توجد بنود</div>'}
+          <button class="cost-add-btn" style="margin:6px;width:calc(100% - 12px)" onclick="openAddCost(${img.idx})">＋ إضافة بند</button>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    dEl.innerHTML=`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
+      <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line)"><span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span></div>
+      ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}</div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
+      <button class="cost-add-btn" style="margin:6px;width:calc(100% - 12px)" onclick="openAddCost(-1)">＋ إضافة بند</button>
+    </div>`;
+  }
   // 2. المطبعة
   const sEl=document.getElementById('sup-btns');
   sEl.innerHTML=suppliers.map(s=>`<button class="sup-btn${o.supplierId===s._id?' selected':''}" onclick="selectSupplier('${s._id}','${s.name}','${s.phone||s.whatsapp||''}')"><div class="sup-btn-name">${s.name}</div><div class="sup-btn-phone">${s.phone||s.whatsapp||''}</div></button>`).join('');
@@ -334,7 +371,7 @@ function renderPanel(o){
 function renderCosts(o){
   const prods=o.products||[];const ci=o.costItems||[];
   const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-  const el=document.getElementById('costs-list');
+  const el=document.getElementById('costs-list');if(!el){setText('cost-total',fn(tc)+' ج');return;}
   function ciRow(item,globalIdx){
     return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
   }
@@ -456,8 +493,56 @@ window.moveToShipping=async function(){
   if(!o.finalImageUrl){toast('⚠️ ارفع صورة المنتج أولاً','err');return;}
   if(!confirm('تحويل للشحن؟'))return;
   try{
-    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:nowStr(),timeline:[...(o.timeline||[]),{date:nowStr(),action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
-    closePanel();toast('✅ انتقل للشحن 🚚','ok');
+    // ══ حفظ التكاليف في كل منتج ══
+    const prods=o.products||[];
+    const ci=o.costItems||[];
+    const now=nowStr();
+
+    for(const prod of prods){
+      if(!prod.productId)continue;
+      const pi=prods.indexOf(prod);
+      const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&pi===0));
+      if(!prodCi.length)continue;
+      const total=prodCi.reduce((s,x)=>s+(parseFloat(x.total)||0),0);
+
+      // جيب المنتج من Firestore
+      try{
+        const pSnap=await getDoc(doc(db,'products_v2',prod.productId));
+        if(!pSnap.exists())continue;
+        const pData=pSnap.data();
+        const history=pData.costHistory||[];
+
+        // آخر تكلفة للمقارنة
+        const lastEntry=history[history.length-1];
+        const lastTotal=lastEntry?.total||0;
+        const pctChange=lastTotal>0?Math.round((total-lastTotal)/lastTotal*100):0;
+
+        // تنبيه لو في زيادة > 10%
+        if(lastTotal>0 && pctChange>10){
+          toast(`⚠️ تكلفة ${prod.name} زادت ${pctChange}% (كانت ${fn(lastTotal)} ج — دلوقتي ${fn(total)} ج)`,'err');
+        }
+
+        // حفظ في السجل
+        const newEntry={
+          date:now,
+          orderId:activeId,
+          orderClient:o.clientName||'',
+          qty:parseFloat(prod.qty)||0,
+          total,
+          items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),
+          pctChange:pctChange||0,
+        };
+        history.push(newEntry);
+        // احتفظ بآخر 50 سجل بس
+        if(history.length>50)history.splice(0,history.length-50);
+        await updateDoc(doc(db,'products_v2',prod.productId),{costHistory:history,lastCostTotal:total,lastCostDate:now});
+      }catch(e){console.warn('cost history:',e.message);}
+    }
+
+    // تحويل للشحن
+    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
+    closePanel();
+    toast('✅ انتقل للشحن 🚚','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
