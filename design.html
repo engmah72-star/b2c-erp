@@ -145,6 +145,22 @@
         <label>📋 بيانات التصميم</label>
         <textarea class="inp" id="np-notes" style="min-height:100px" placeholder="اكتب بيانات التصميم هنا&#10;مثال:&#10;الاسم: أحمد محمد&#10;المسمى: دكتور أسنان&#10;موبايل: 01xxxxxxxxx&#10;العنوان: مدينة نصر&#10;الألوان: أزرق وأبيض"></textarea>
       </div>
+      <!-- رفع ملف مرجعي -->
+      <div class="fg">
+        <label>📎 ملف مرجعي (صورة أو PDF) — اختياري</label>
+        <div id="ref-drop-zone" onclick="document.getElementById('ref-file-inp').click()" style="border:2px dashed var(--line);border-radius:10px;padding:16px;text-align:center;cursor:pointer;background:var(--bg3);transition:border-color .2s">
+          <div style="font-size:22px;margin-bottom:4px">📁</div>
+          <div style="font-size:12px;color:var(--dim2)">اضغط للرفع أو Ctrl+V للصق</div>
+          <div id="ref-file-label" style="font-size:11px;color:var(--g);margin-top:4px;display:none"></div>
+        </div>
+        <input type="file" id="ref-file-inp" accept="image/*,application/pdf" style="display:none" onchange="onRefPick(this)">
+        <div id="ref-prog-wrap" style="display:none;margin-top:8px">
+          <div style="height:5px;background:var(--bg2);border-radius:3px;overflow:hidden">
+            <div id="ref-prog-bar" style="height:100%;background:var(--p);width:0%;transition:width .3s;border-radius:3px"></div>
+          </div>
+          <div id="ref-prog-txt" style="font-size:11px;color:var(--dim2);text-align:center;margin-top:3px">0%</div>
+        </div>
+      </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeNewOrder()">إلغاء</button><button class="btn btn-p" onclick="saveOrder()">✓ إنشاء الطلب</button></div>
   </div>
@@ -632,9 +648,10 @@ function renderPanel(o){
       </div>
     </div>`:''}
 
-    ${o.notes?`<div class="section" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
+    ${(o.notes||o.refFileUrl)?`<div class="section" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
       <div class="section-title" style="color:var(--y);margin-bottom:8px">📋 بيانات التصميم</div>
-      <div style="font-size:13px;line-height:1.9;white-space:pre-wrap">${o.notes}</div>
+      ${o.notes?`<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-bottom:${o.refFileUrl?'10px':'0'}">${o.notes}</div>`:''}
+      ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:8px;color:var(--p);font-size:12px;font-weight:700;text-decoration:none">${o.refFileType?.includes('pdf')?'📄':'🖼️'} عرض الملف المرجعي</a>`:''}
     </div>`:''}
 
     <!-- حالة التصميم -->
@@ -751,7 +768,38 @@ window.openNewOrder=function(){
   addProdRow();
   document.getElementById('ov-new').classList.add('open');
 };
-window.closeNewOrder=()=>document.getElementById('ov-new').classList.remove('open');
+window.closeNewOrder=()=>{
+  document.getElementById('ov-new').classList.remove('open');
+  window.__refFile=null;
+  document.getElementById('ref-file-label').style.display='none';
+  document.getElementById('ref-drop-zone').style.borderColor='';
+};
+
+// Paste في modal الأوردر
+document.addEventListener('paste',function(e){
+  if(!document.getElementById('ov-new')?.classList.contains('open'))return;
+  const items=e.clipboardData?.items;if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      const f=item.getAsFile();if(!f)return;
+      setRefFile(f,'صورة ملصقة ✅');
+      toast('✅ صورة جاهزة للرفع مع الطلب','ok');
+      break;
+    }
+  }
+});
+
+window.onRefPick=function(inp){
+  const f=inp.files[0];if(!f)return;
+  setRefFile(f,f.name+' ✅');
+};
+
+function setRefFile(f,label){
+  window.__refFile=f;
+  const lbl=document.getElementById('ref-file-label');
+  lbl.textContent=label;lbl.style.display='block';
+  document.getElementById('ref-drop-zone').style.borderColor='var(--g)';
+}
 
 window.saveOrder=async function(){
   if(!selClient)return toast('⚠️ اختر العميل أولاً','err');
@@ -798,6 +846,31 @@ window.saveOrder=async function(){
       createdAt:serverTimestamp(),updatedAt:serverTimestamp(),
       timeline:[{date:nowStr(),action:`🆕 طلب جديد${dep>0?' — عربون '+fn(dep)+' ج عبر '+wName:''}`,by:userName}],
     });
+    // رفع الملف المرجعي لو موجود
+    if(window.__refFile){
+      try{
+        const pw=document.getElementById('ref-prog-wrap');
+        const pb=document.getElementById('ref-prog-bar');
+        const pt=document.getElementById('ref-prog-txt');
+        pw.style.display='block';
+        const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+        const storage=getStorage();
+        const sRefPath=sRef(storage,`design-refs/${docRef.id}_${Date.now()}`);
+        const task=uploadBytesResumable(sRefPath,window.__refFile);
+        await new Promise((res,rej)=>{
+          task.on('state_changed',
+            s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);pb.style.width=p+'%';pt.textContent=p+'%';},
+            rej,
+            async()=>{
+              const url=await getDownloadURL(task.snapshot.ref);
+              await updateDoc(doc(db,'orders',docRef.id),{refFileUrl:url,refFileType:window.__refFile.type});
+              window.__refFile=null;res();
+            }
+          );
+        });
+        pw.style.display='none';
+      }catch(e){console.warn('ref upload:',e.message);}
+    }
     closeNewOrder();toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
