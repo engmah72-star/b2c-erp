@@ -170,6 +170,20 @@
 </div>
 
 <!-- MODAL: رفض -->
+<!-- Upload Progress Overlay -->
+<div id="upload-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+  <div style="background:var(--bg1);border-radius:16px;padding:28px 32px;width:300px;text-align:center;border:1px solid var(--line)">
+    <div style="font-size:32px;margin-bottom:12px">📤</div>
+    <div style="font-size:14px;font-weight:800;margin-bottom:4px">جاري رفع الملف</div>
+    <div id="upl-filename" style="font-size:11px;color:var(--dim2);margin-bottom:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+    <div style="height:10px;background:var(--bg3);border-radius:5px;overflow:hidden;margin-bottom:8px">
+      <div id="upl-bar" style="height:100%;background:linear-gradient(90deg,var(--p),var(--b));width:0%;transition:width .2s;border-radius:5px"></div>
+    </div>
+    <div id="upl-pct" style="font-size:20px;font-weight:900;color:var(--p)">0%</div>
+    <div style="font-size:11px;color:var(--dim2);margin-top:6px">الرجاء الانتظار...</div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-reject">
   <div class="modal" style="max-width:380px">
     <div class="modal-head"><span class="modal-title">سبب الرفض</span><button class="modal-x" onclick="closeReject()">✕</button></div>
@@ -849,22 +863,24 @@ window.saveOrder=async function(){
       createdAt:serverTimestamp(),updatedAt:serverTimestamp(),
       timeline:[{date:nowStr(),action:`🆕 طلب جديد${dep>0?' — عربون '+fn(dep)+' ج عبر '+wName:''}`,by:userName}],
     });
+    closeNewOrder();
+
     // رفع الملف المرجعي لو موجود
     if(window.__refFile){
+      const ov=document.getElementById('upload-overlay');
+      const bar=document.getElementById('upl-bar');
+      const pct=document.getElementById('upl-pct');
+      const fn2=document.getElementById('upl-filename');
+      fn2.textContent=window.__refFile.name||'جاري الرفع...';
+      ov.style.display='flex';
       try{
-        const pw=document.getElementById('ref-prog-wrap');
-        const pb=document.getElementById('ref-prog-bar');
-        const pt=document.getElementById('ref-prog-txt');
-        pw.style.display='block';
-        document.getElementById('ref-drop-zone').style.opacity='0.5';
-        document.querySelector('#ov-new .btn-p').disabled=true;
         const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
         const storage=getStorage();
         const sRefPath=sRef(storage,`design-refs/${docRef.id}_${Date.now()}`);
         const task=uploadBytesResumable(sRefPath,window.__refFile);
         await new Promise((res,rej)=>{
           task.on('state_changed',
-            s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);pb.style.width=p+'%';pt.textContent=p+'%';},
+            s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);bar.style.width=p+'%';pct.textContent=p+'%';},
             rej,
             async()=>{
               const url=await getDownloadURL(task.snapshot.ref);
@@ -873,12 +889,16 @@ window.saveOrder=async function(){
             }
           );
         });
-        pw.style.display='none';
-        document.getElementById('ref-drop-zone').style.opacity='1';
-        document.querySelector('#ov-new .btn-p').disabled=false;
-      }catch(e){console.warn('ref upload:',e.message);}
+        ov.style.display='none';
+        toast('✅ تم إنشاء الطلب ورفع الملف','ok');
+      }catch(e){
+        ov.style.display='none';
+        console.warn('ref upload:',e.message);
+        toast('✅ تم إنشاء الطلب (الملف لم يُرفع)','ok');
+      }
+    } else {
+      toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
     }
-    closeNewOrder();toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
