@@ -385,6 +385,96 @@ window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-o
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
+// ══ Admin Order Management ══
+function showAdminSection(o, isAdmin){
+  const sec = document.getElementById('admin-mgmt-section');
+  if(!sec) return;
+  if(!isAdmin){ sec.style.display='none'; return; }
+  sec.style.display='block';
+  // ملء القيم الحالية
+  document.getElementById('adm-sale-price').value = o.salePrice||0;
+  document.getElementById('adm-paid').value = o.totalPaid||o.deposit||o.paid||0;
+  document.getElementById('adm-discount').value = o.discount||0;
+  calcAdmRemaining();
+}
+
+window.calcAdmRemaining=function(){
+  const sale = parseFloat(document.getElementById('adm-sale-price')?.value)||0;
+  const paid = parseFloat(document.getElementById('adm-paid')?.value)||0;
+  const disc = parseFloat(document.getElementById('adm-discount')?.value)||0;
+  const net  = Math.max(0, sale - disc);
+  const rem  = Math.max(0, net - paid);
+  const el   = document.getElementById('adm-remaining-preview');
+  if(el) el.textContent = `الصافي: ${fn(net)} ج | الباقي: ${fn(rem)} ج`;
+};
+
+window.moveStage=async function(stage){
+  if(!activeId) return;
+  const labels={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف'};
+  if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟`)) return;
+  const o = orders.find(x=>x._id===activeId); if(!o) return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      stage,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 نُقل إلى ${labels[stage]} (أدمن)`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    closePanel();
+    toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.saveAdminFinance=async function(){
+  if(!activeId) return;
+  const o = orders.find(x=>x._id===activeId); if(!o) return;
+  const sale     = parseFloat(document.getElementById('adm-sale-price').value)||0;
+  const paid     = parseFloat(document.getElementById('adm-paid').value)||0;
+  const discount = parseFloat(document.getElementById('adm-discount').value)||0;
+  const net      = Math.max(0, sale - discount);
+  const remaining= Math.max(0, net - paid);
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      salePrice:sale, totalPaid:paid, paid,
+      discount, remaining,
+      paymentStatus: remaining===0?'paid':paid>0?'partial':'pending',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✏️ تعديل مالي: سعر ${fn(sale)} ج | مدفوع ${fn(paid)} ج | خصم ${fn(discount)} ج`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم التعديل المالي','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.deleteOrderFull=async function(){
+  if(!activeId) return;
+  const o = orders.find(x=>x._id===activeId); if(!o) return;
+  if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع عن هذا الإجراء.`)) return;
+  if(!confirm('تأكيد الحذف النهائي؟')) return;
+  try{
+    const {deleteDoc:delDoc, getDocs, query:qry, where:whr} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    
+    // حذف المعاملات المرتبطة
+    const txSnap = await getDocs(qry(collection(db,'transactions_v2'),whr('orderId','==',activeId)));
+    for(const tx of txSnap.docs){
+      // رجّع رصيد المحفظة لو دفعة واردة
+      if(tx.data().type==='in' && tx.data().walletId){
+        const w = wallets?.find(x=>x._id===tx.data().walletId);
+        if(w){
+          const newBal = Math.max(0,(parseFloat(w.balance)||0)-(parseFloat(tx.data().amount)||0));
+          await updateDoc(doc(db,'wallets',tx.data().walletId),{balance:newBal});
+        }
+      }
+      await delDoc(tx.ref);
+    }
+    
+    // حذف الأوردر
+    await delDoc(doc(db,'orders',activeId));
+    closePanel();
+    toast('✅ تم حذف الأوردر نهائياً','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+// ════════════════════════
+
+
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
@@ -537,7 +627,30 @@ function renderPanel(o){
     </div>
     ${o.transferImageUrl?`<div class="section"><div class="section-title" style="margin-bottom:8px">📸 إيصال التحويل</div><img src="${o.transferImageUrl}" style="width:100%;max-height:200px;object-fit:contain;border-radius:var(--rad);border:1px solid var(--line)" onclick="window.open('${o.transferImageUrl}','_blank')"></div>`:''}
     ${o.notes?`<div class="section"><div class="section-title">📝 ملاحظات</div><div style="font-size:13px;line-height:1.7;margin-top:8px">${o.notes}</div></div>`:''}
-    <div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>${tlHtml(o.timeline)}</div>`;
+    <div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>${tlHtml(o.timeline)}</div>
+    <div style="margin-top:12px;background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:14px" id="admin-mgmt-section" style="display:none">
+      <div style="font-size:11px;font-weight:800;color:var(--r);margin-bottom:12px">⚙️ إدارة الأوردر (أدمن)</div>
+      <div style="margin-bottom:10px">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:700">🔄 نقل لمرحلة</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="moveStage('design')"    style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">✏️ تصميم</button>
+          <button onclick="moveStage('production')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🏭 تنفيذ</button>
+          <button onclick="moveStage('shipping')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🚚 شحن</button>
+          <button onclick="moveStage('archived')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📁 أرشيف</button>
+        </div>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:700">💰 تعديل مالي</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+          <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">السعر (ج)</div><input id="adm-sale-price" type="number" style="width:100%;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit" placeholder="0"></div>
+          <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">المدفوع (ج)</div><input id="adm-paid" type="number" style="width:100%;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit" placeholder="0"></div>
+        </div>
+        <div style="margin-bottom:6px"><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">الخصم (ج)</div><input id="adm-discount" type="number" style="width:100%;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit" placeholder="0" oninput="calcAdmRemaining()"></div>
+        <div id="adm-remaining-preview" style="font-size:12px;color:var(--dim2);margin-bottom:8px"></div>
+        <button onclick="saveAdminFinance()" style="width:100%;padding:9px;background:rgba(0,217,126,.12);border:1px solid rgba(0,217,126,.3);border-radius:8px;color:var(--g);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">✓ حفظ التعديل المالي</button>
+      </div>
+      <button onclick="deleteOrderFull()" style="width:100%;padding:10px;background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.3);border-radius:8px;color:var(--r);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">🗑 حذف نهائي</button>
+    </div>`;
 }
 
 window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeId=null;};
