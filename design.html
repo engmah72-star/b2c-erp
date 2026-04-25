@@ -1077,13 +1077,22 @@ window.saveOrder=async function(){
 window.openAssignDesigner=async function(){
   const sel=document.getElementById('assign-des-sel');
   if(sel){
-    // جيب المصممين من users
-    const snap=await getDocs(collection(db,'users'));
-    const designers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+    // جيب من users + employees
+    const [usersSnap,empSnap]=await Promise.all([
+      getDocs(collection(db,'users')),
+      getDocs(collection(db,'employees'))
+    ]);
+    const fromUsers=usersSnap.docs.map(d=>({...d.data(),_id:d.id}))
       .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
+    const fromEmps=empSnap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''));
+    // دمج الاتنين بدون تكرار
+    const allMap={};
+    fromUsers.forEach(u=>allMap[u._id]={id:u._id,name:u.name||u.email||'—'});
+    fromEmps.forEach(e=>{const id=e.authUid||e._id;if(!allMap[id])allMap[id]={id,name:e.name||'—'};});
+    const designers=Object.values(allMap);
     sel.innerHTML='<option value="">— بدون مصمم —</option>'+
-      designers.map(d=>`<option value="${d._id}" data-name="${d.name||d.email||'—'}">${d.name||d.email||'—'}</option>`).join('');
-    // اختر المصمم الحالي
+      designers.map(d=>`<option value="${d.id}" data-name="${d.name}">${d.name}</option>`).join('');
     const o=orders.find(x=>x._id===activeId);
     if(o?.designerId) sel.value=o.designerId;
   }
