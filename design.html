@@ -1076,26 +1076,29 @@ window.saveOrder=async function(){
 // ══ تعيين المصمم من الـ Panel ══
 window.openAssignDesigner=async function(){
   const sel=document.getElementById('assign-des-sel');
-  if(sel){
-    // جيب من users + employees
-    const [usersSnap,empSnap]=await Promise.all([
-      getDocs(collection(db,'users')),
-      getDocs(collection(db,'employees'))
-    ]);
-    const fromUsers=usersSnap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
-    const fromEmps=empSnap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''));
-    // دمج الاتنين بدون تكرار
-    const allMap={};
-    fromUsers.forEach(u=>allMap[u._id]={id:u._id,name:u.name||u.email||'—'});
-    fromEmps.forEach(e=>{const id=e.authUid||e._id;if(!allMap[id])allMap[id]={id,name:e.name||'—'};});
-    const designers=Object.values(allMap);
+  if(!sel)return;
+  try{
+    // جيب المصممين من employees مباشرة
+    const empSnap=await getDocs(collection(db,'employees'));
+    const designers=empSnap.docs
+      .map(d=>({...d.data(),_id:d.id}))
+      .filter(e=>e.role==='graphic_designer'||e.role==='design_operator');
+    
+    if(!designers.length){
+      // fallback من users
+      const usersSnap=await getDocs(collection(db,'users'));
+      const fromUsers=usersSnap.docs.map(d=>({...d.data(),_id:d.id}))
+        .filter(u=>['graphic_designer','design_operator'].includes(u.role));
+      designers.push(...fromUsers);
+    }
+
     sel.innerHTML='<option value="">— بدون مصمم —</option>'+
-      designers.map(d=>`<option value="${d.id}" data-name="${d.name}">${d.name}</option>`).join('');
+      designers.map(d=>`<option value="${d._id}" data-name="${d.name||'—'}">${d.name||'—'}</option>`).join('');
+    
+    // اختر الحالي
     const o=orders.find(x=>x._id===activeId);
     if(o?.designerId) sel.value=o.designerId;
-  }
+  }catch(e){console.error('assign:',e.message);}
   oM('assign-des');
 };
 
