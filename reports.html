@@ -110,6 +110,29 @@
   </div>
 </div>
 
+<!-- Drawer: تفاصيل الإيرادات -->
+<div id="rev-drawer-ov" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)" onclick="if(event.target===this)closeRevDrawer()">
+  <div id="rev-drawer" style="position:absolute;left:0;top:0;bottom:0;width:420px;max-width:100%;background:var(--bg1);overflow-y:auto;border-left:1px solid var(--line)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg1);z-index:10">
+      <div>
+        <div style="font-size:17px;font-weight:800">💰 تفاصيل الإيرادات</div>
+        <div id="rev-drawer-sub" style="font-size:12px;color:var(--dim2);margin-top:2px"></div>
+      </div>
+      <button onclick="closeRevDrawer()" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:none;color:var(--snow);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <!-- ملخص سريع -->
+    <div id="rev-summary" style="padding:16px 20px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(3,1fr);gap:8px"></div>
+    <!-- فلتر -->
+    <div style="padding:10px 20px;border-bottom:1px solid var(--line);display:flex;gap:8px">
+      <button class="d-btn active" id="rf-all" onclick="filterRevOrders('all',this)">الكل</button>
+      <button class="d-btn" id="rf-paid" onclick="filterRevOrders('paid',this)">✅ مدفوع</button>
+      <button class="d-btn" id="rf-partial" onclick="filterRevOrders('partial',this)">⚡ جزئي</button>
+      <button class="d-btn" id="rf-pending" onclick="filterRevOrders('pending',this)">⏳ باقي</button>
+    </div>
+    <div id="rev-orders-list" style="padding:12px 20px"></div>
+  </div>
+</div>
+
 <div id="toasts" class="toasts"></div>
 
 <script type="module">
@@ -250,7 +273,9 @@ function renderOverview(f,prev){
 
     <!-- KPIs -->
     <div class="kpi-grid">
-      ${kpi(fn(tot)+' ج','إجمالي الإيرادات','var(--b)',pTot)}
+      <div onclick="openRevDrawer()" style="cursor:pointer;transform:scale(1);transition:transform .15s" onmouseover="this.style.transform='scale(1.02)'" onmouseleave="this.style.transform='scale(1)'">
+        ${kpi(fn(tot)+' ج','إجمالي الإيرادات ↗','var(--b)',pTot)}
+      </div>
       ${kpi(fn(col)+' ج','المحصّل','var(--g)',pCol)}
       ${kpi(fn(rem)+' ج','باقي التحصيل','var(--y)')}
       ${kpi(fn(profit)+' ج','الربح الصافي',profit>=0?'var(--g)':'var(--r)',pProfit)}
@@ -418,6 +443,97 @@ function renderSales(f,prev){
 }
 
 // ══ Export ══
+// ══ Revenue Drawer ══
+let __revOrders=[], __revFilter='all';
+
+window.openRevDrawer=function(){
+  const range=getRange(filterMode);
+  __revOrders=orders.filter(o=>inRange(o,range)&&parseFloat(o.salePrice)>0)
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  
+  const tot=__revOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const paid=__revOrders.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
+  const rem=__revOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+
+  document.getElementById('rev-drawer-sub').textContent=__revOrders.length+' أوردر في الفترة المحددة';
+  document.getElementById('rev-summary').innerHTML=`
+    <div style="background:rgba(59,158,255,.08);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:16px;font-weight:900;color:var(--b)">${fn(tot)} ج</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px;font-weight:700">إجمالي</div>
+    </div>
+    <div style="background:rgba(0,217,126,.08);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:16px;font-weight:900;color:var(--g)">${fn(paid)} ج</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px;font-weight:700">محصّل</div>
+    </div>
+    <div style="background:rgba(255,61,110,.08);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:16px;font-weight:900;color:var(--r)">${fn(rem)} ج</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px;font-weight:700">باقي</div>
+    </div>`;
+
+  __revFilter='all';
+  document.querySelectorAll('[id^="rf-"]').forEach(b=>b.classList.remove('active'));
+  document.getElementById('rf-all').classList.add('active');
+  renderRevOrders();
+  document.getElementById('rev-drawer-ov').style.display='block';
+};
+
+window.closeRevDrawer=function(){
+  document.getElementById('rev-drawer-ov').style.display='none';
+};
+
+window.filterRevOrders=function(filter,btn){
+  __revFilter=filter;
+  document.querySelectorAll('[id^="rf-"]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderRevOrders();
+};
+
+function renderRevOrders(){
+  let data=__revOrders;
+  if(__revFilter==='paid') data=data.filter(o=>(parseFloat(o.remaining)||0)<=0);
+  else if(__revFilter==='partial') data=data.filter(o=>{const r=parseFloat(o.remaining)||0;const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;return r>0&&p>0;});
+  else if(__revFilter==='pending') data=data.filter(o=>{const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;return p<=0;});
+
+  const el=document.getElementById('rev-orders-list');
+  if(!data.length){el.innerHTML='<div style="text-align:center;padding:30px;color:var(--dim2)">لا توجد أوردرات</div>';return;}
+
+  const stageMap={design:'✏️',printing:'🖨️',production:'🏭',shipping:'🚚',archived:'📁'};
+  el.innerHTML=data.map(o=>{
+    const sale=parseFloat(o.salePrice)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
+    const pct=sale>0?Math.round(paid/sale*100):0;
+    const status=rem<=0?{c:'var(--g)',l:'✅ مدفوع'}:paid>0?{c:'var(--y)',l:'⚡ جزئي'}:{c:'var(--r)',l:'⏳ لم يُدفع'};
+    return`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div>
+          <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${stageMap[o.stage]||''} ${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
+        </div>
+        <span style="font-size:10px;padding:3px 8px;border-radius:20px;background:${status.c}18;color:${status.c};font-weight:800">${status.l}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px">
+        <div style="text-align:center">
+          <div style="font-size:13px;font-weight:900;color:var(--b)">${fn(sale)} ج</div>
+          <div style="font-size:9px;color:var(--dim2);font-weight:700">الإجمالي</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:13px;font-weight:900;color:var(--g)">${fn(paid)} ج</div>
+          <div style="font-size:9px;color:var(--dim2);font-weight:700">محصّل</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:13px;font-weight:900;color:${rem>0?'var(--r)':'var(--g)'}">${fn(rem)} ج</div>
+          <div style="font-size:9px;color:var(--dim2);font-weight:700">باقي</div>
+        </div>
+      </div>
+      <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--g)':pct>0?'var(--y)':'var(--r)'};border-radius:3px;transition:width .3s"></div>
+      </div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:3px;text-align:left">${pct}% محصّل</div>
+    </div>`;
+  }).join('');
+}
+
 window.exportExcel=function(){
   const range=getRange(filterMode);
   const f=orders.filter(o=>inRange(o,range));
