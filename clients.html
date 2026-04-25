@@ -309,12 +309,20 @@
         <div class="fg" id="designer-field-wrap"><label>🎨 المصمم</label><select class="inp" id="no-designer"><option value="">— بدون مصمم —</option></select></div>
       </div>
 
-      <!-- العربون -->
+      <!-- المالية -->
       <div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
-        <div style="font-size:12px;font-weight:700;color:var(--g);margin-bottom:10px">💰 عربون التصميم (اختياري)</div>
+        <div style="font-size:12px;font-weight:700;color:var(--g);margin-bottom:10px">💰 المالية</div>
+        <div class="fg" style="margin-bottom:10px">
+          <label>السعر الكلي (ج)</label>
+          <input class="inp" id="no-sale-price" type="number" placeholder="0" value="0" oninput="calcNoRemaining()">
+        </div>
         <div class="g2">
-          <div class="fg" style="margin:0"><label>مبلغ العربون</label><input class="inp" id="no-deposit" type="number" placeholder="0" value="0"></div>
+          <div class="fg" style="margin:0"><label>العربون / المقدم (ج)</label><input class="inp" id="no-deposit" type="number" placeholder="0" value="0" oninput="calcNoRemaining()"></div>
           <div class="fg" style="margin:0"><label>المحفظة</label><select class="inp" id="no-wallet"><option value="">— اختر —</option></select></div>
+        </div>
+        <div id="no-remaining-preview" style="display:flex;justify-content:space-between;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,.1);border-radius:8px;font-size:12px;display:none">
+          <span style="color:var(--dim2)">الباقي على العميل</span>
+          <span id="no-rem-val" style="font-weight:900;color:var(--r)">0 ج</span>
         </div>
       </div>
 
@@ -500,8 +508,19 @@ auth.onAuthStateChanged(async u=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
   db.collection('users').onSnapshot(snap=>{
-    designers=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(u=>['graphic_designer','design_operator','admin'].includes(u.role));
+    const fromUsers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
+    designers=fromUsers;
+  });
+  // أضف المصممين من employees (اللي مش عندهم users account)
+  db.collection('employees').onSnapshot(snap=>{
+    const empDesigners=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
+      .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
+    // دمج بدون تكرار
+    const existingIds=new Set(designers.map(d=>d._id));
+    const newDesigners=[...designers,...empDesigners.filter(e=>e._id&&!existingIds.has(e._id))];
+    designers=newDesigners;
   });
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();
@@ -699,7 +718,7 @@ function openNewOrder(){
   ['tc-design','tc-printing'].forEach(id=>{const el=document.getElementById(id);if(el)el.className='type-card';});
   document.getElementById('no-prod-rows').innerHTML='';
   addNoProdRow();
-  sv('no-deadline','');sv('no-notes','');sv('no-deposit','0');
+  sv('no-deadline','');sv('no-notes','');sv('no-deposit','0');sv('no-sale-price','0');const noPreview=document.getElementById('no-remaining-preview');if(noPreview)noPreview.style.display='none';
   // تعيين المصمم — للأدمن وخدمة العملاء فقط
   const canAssign=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const desWrap=document.getElementById('designer-field-wrap');
@@ -712,6 +731,18 @@ function openNewOrder(){
   document.getElementById('ov-order').classList.add('open');
 }
 function closeOrderModal(){document.getElementById('ov-order').classList.remove('open');}
+
+window.calcNoRemaining=function(){
+  const sale=parseFloat(document.getElementById('no-sale-price')?.value)||0;
+  const dep=parseFloat(document.getElementById('no-deposit')?.value)||0;
+  const rem=Math.max(0,sale-dep);
+  const preview=document.getElementById('no-remaining-preview');
+  const remVal=document.getElementById('no-rem-val');
+  if(preview&&remVal){
+    preview.style.display=sale>0?'flex':'none';
+    remVal.textContent=fn(rem)+' ج';
+  }
+};
 function selectOrderType(type){
   document.getElementById('no-stage').value=type;
   document.getElementById('tc-design').className='type-card'+(type==='design'?' sel-design':'');
@@ -753,7 +784,11 @@ function saveNewOrder(){
     orderId,stage,designStage:stage==='design'?'pending':'',
     clientId:pendingClientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
     products:prods,product:productName,qty:prods.reduce((s,p)=>s+p.qty,0),
-    salePrice:0,deposit:dep,paid:dep,remaining:0,depositWallet:dep>0?wName:'',
+    salePrice:parseFloat(gv('no-sale-price'))||0,
+      deposit:dep,paid:dep,totalPaid:dep,
+      remaining:Math.max(0,(parseFloat(gv('no-sale-price'))||0)-dep),
+      paymentStatus:dep>0&&dep>=(parseFloat(gv('no-sale-price'))||0)?'paid':dep>0?'partial':'pending',
+      depositWallet:dep>0?wName:'',
     designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
     designFileUrl:'',designFileNote:'',costItems:[],printAddons:[],
     createdDate:new Date().toLocaleDateString('ar-EG'),
