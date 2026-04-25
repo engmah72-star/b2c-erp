@@ -856,18 +856,41 @@ function renderTransactions(){
 // ── موردين ──
 // ══ حذف دفعة ══
 window.deleteTx=async function(txId, walletId, amount, type, balanceBefore){
-  if(!confirm('حذف هذه الدفعة؟\nسيتم استرجاع الرصيد تلقائياً.'))return;
+  if(!confirm('حذف هذه الدفعة؟\nسيتم استرجاع الرصيد وتحديث الأوردر تلقائياً.'))return;
   try{
-    // استرجاع الرصيد
+    // 1. استرجاع رصيد المحفظة
     const w=wallets.find(x=>x._id===walletId);
     if(w){
       const currentBal=parseFloat(w.balance)||0;
-      // لو كانت دفعة واردة (in) → نطرح / لو صادرة (out) → نضيف
-      const newBal = type==='in' ? currentBal-amount : currentBal+amount;
+      const newBal=type==='in'?currentBal-amount:currentBal+amount;
       await updateDoc(doc(db,'wallets',walletId),{balance:Math.max(0,newBal)});
     }
-    // حذف الدفعة
-    const {deleteDoc} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    // 2. جيب بيانات الدفعة عشان نعرف الأوردر المرتبط
+    const txSnap=await getDoc(doc(db,'transactions_v2',txId));
+    const txData=txSnap.exists()?txSnap.data():{};
+    const orderId=txData.orderId||'';
+
+    // 3. لو مرتبطة بأوردر → حدّث totalPaid و remaining
+    if(orderId){
+      const ordSnap=await getDoc(doc(db,'orders',orderId));
+      if(ordSnap.exists()){
+        const ord=ordSnap.data();
+        const oldPaid=parseFloat(ord.totalPaid)||parseFloat(ord.paid)||parseFloat(ord.deposit)||0;
+        const newPaid=Math.max(0,oldPaid-amount);
+        const sale=parseFloat(ord.salePrice)||0;
+        const disc=parseFloat(ord.discount)||0;
+        const newRem=Math.max(0,(sale-disc)-newPaid);
+        await updateDoc(doc(db,'orders',orderId),{
+          totalPaid:newPaid,
+          paid:newPaid,
+          remaining:newRem,
+          paymentStatus:newPaid<=0?'pending':newRem<=0?'paid':'partial',
+        });
+      }
+    }
+
+    // 4. حذف الدفعة
+    const {deleteDoc}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
     await deleteDoc(doc(db,'transactions_v2',txId));
     toast('✅ تم حذف الدفعة واسترجاع الرصيد','ok');
   }catch(e){toast('❌ '+e.message,'err');}
