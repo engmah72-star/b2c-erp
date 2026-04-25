@@ -184,6 +184,28 @@
   </div>
 </div>
 
+<!-- Modal: تعيين مصمم -->
+<div class="overlay" id="ov-assign-des">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head">
+      <span class="modal-title">🎨 تعيين مصمم</span>
+      <button class="modal-x" onclick="cM('assign-des')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>اختر المصمم</label>
+        <select class="inp" id="assign-des-sel">
+          <option value="">— بدون مصمم —</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('assign-des')">إلغاء</button>
+      <button class="btn btn-b" onclick="saveAssignDesigner()">✓ تعيين</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-reject">
   <div class="modal" style="max-width:380px">
     <div class="modal-head"><span class="modal-title">سبب الرفض</span><button class="modal-x" onclick="closeReject()">✕</button></div>
@@ -721,7 +743,19 @@ function renderPanel(o){
         ${iRow('الأوردر',o.orderId||'—')}
         ${iRow('تاريخ الطلب',o.createdDate||'—')}
         ${iRow('موعد التسليم',o.deadline||'لم يُحدد',d>0?'var(--r)':null)}
-        ${iRow('المصمم',o.designerName||'—')}
+        ${(()=>{
+          const canAssign=['admin','operation_manager','customer_service'].includes(currentRole);
+          if(canAssign){
+            return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:4px">
+              <span style="font-size:12px;color:var(--dim2);font-weight:700">المصمم</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:13px;font-weight:700;color:${o.designerName?'var(--snow)':'var(--r)'}">${o.designerName||'⚠️ لم يُعيَّن'}</span>
+                <button onclick="openAssignDesigner()" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">تعيين ✏️</button>
+              </div>
+            </div>`;
+          }
+          return iRow('المصمم',o.designerName||'—');
+        })()}
       </div>
     </div>
 
@@ -1036,6 +1070,40 @@ window.saveOrder=async function(){
     } else {
       toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
     }
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ تعيين المصمم من الـ Panel ══
+window.openAssignDesigner=async function(){
+  const sel=document.getElementById('assign-des-sel');
+  if(sel){
+    // جيب المصممين من users
+    const snap=await getDocs(collection(db,'users'));
+    const designers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
+    sel.innerHTML='<option value="">— بدون مصمم —</option>'+
+      designers.map(d=>`<option value="${d._id}" data-name="${d.name||d.email||'—'}">${d.name||d.email||'—'}</option>`).join('');
+    // اختر المصمم الحالي
+    const o=orders.find(x=>x._id===activeId);
+    if(o?.designerId) sel.value=o.designerId;
+  }
+  oM('assign-des');
+};
+
+window.saveAssignDesigner=async function(){
+  const sel=document.getElementById('assign-des-sel');
+  const desId=sel?.value||'';
+  const desName=sel?.options[sel.selectedIndex]?.dataset?.name||sel?.options[sel.selectedIndex]?.text||'';
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      designerId:desId,
+      designerName:desId?desName:'',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName}`:'👤 إلغاء تعيين المصمم',by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    cM('assign-des');
+    toast(desId?`✅ تم تعيين ${desName}`:'✅ تم إلغاء التعيين','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
