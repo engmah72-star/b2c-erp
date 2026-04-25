@@ -80,6 +80,8 @@
 .no-prod-row{display:grid;grid-template-columns:1fr 70px auto;gap:6px;align-items:center;background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:8px 10px;margin-bottom:6px}
 .no-prod-row select,.no-prod-row input{background:var(--bg4);border:1px solid var(--line);border-radius:6px;color:var(--snow);padding:5px 8px;font-family:inherit;font-size:12px;width:100%;outline:none}
 .no-prod-row select:focus,.no-prod-row input:focus{border-color:rgba(167,139,250,.4)}
+.ftab{padding:6px 14px;border-radius:20px;border:1.5px solid var(--line);background:var(--bg2);font-size:11px;font-weight:700;color:var(--dim2);cursor:pointer;font-family:inherit;transition:var(--trans)}
+.ftab.active{background:rgba(255,61,110,.12);color:var(--r);border-color:rgba(255,61,110,.3)}
 </style>
 </head>
 <body>
@@ -534,7 +536,7 @@ function updateStats(){
   const monthClients=clients.filter(c=>isThisMonth(c.createdAt));
   const cIds=new Set(clients.map(c=>c._id));
   const myOrders=allOrders.filter(o=>cIds.has(o.clientId)||(o.clientPhone&&clients.find(c=>c.phone1===o.clientPhone)));
-  const sales=myOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const sales=myOrders.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const rem=myOrders.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
   const active=myOrders.filter(o=>o.stage!=='archived').length;
   setText('s-total',clients.length);
@@ -556,6 +558,18 @@ function renderGrid(){
     if(ft&&!(c.tags||[]).includes(ft))return false;
     if(fg&&c.gov!==fg&&c.governorate!==fg)return false;
     if(fs&&c.source!==fs)return false;
+    // فلتر مالي
+    if(__clientFilter!=='all'){
+      const cOrds2=getClientOrders(c);
+      const rem2=cOrds2.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0))),0);
+      const hasActive=cOrds2.some(o=>o.stage!=='archived');
+      const lastOrd=cOrds2.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
+      const daysSinceLast=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):999;
+      if(__clientFilter==='rem'&&rem2<=0)return false;
+      if(__clientFilter==='active'&&!hasActive)return false;
+      if(__clientFilter==='inactive'&&daysSinceLast<90)return false;
+      if(__clientFilter==='vip'&&cOrds2.length<3)return false;
+    }
     return true;
   });
   if(viewMode==='list'){renderListView(data);return;}
@@ -569,10 +583,15 @@ function renderGrid(){
     const col=COLORS[i%COLORS.length];
     const cOrds=getClientOrders(c);
     const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-    const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+    const paid2=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
+    const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0))),0);
     const active=cOrds.filter(o=>o.stage!=='archived').length;
     const tags=c.tags||[];
     const hasLate=cOrds.some(o=>o.stage!=='archived'&&o.deadline&&new Date(o.deadline)<new Date());
+    const lastOrd=cOrds.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
+    const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):null;
+    const isVip=cOrds.length>=3;
+    const isInactive=daysSince!==null&&daysSince>90;
     return`<div class="cc" style="--cc:${col}" onclick="openClient('${c._id}')">
       <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
         <div class="cc-av" style="background:${col}18;color:${col}">${(c.name||'?')[0].toUpperCase()}</div>
@@ -613,8 +632,8 @@ function renderPanel(id){
   const col=COLORS[clients.indexOf(c)%COLORS.length];
   const cOrds=getClientOrders(c);
   const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-  const paid=cOrds.reduce((s,o)=>s+(parseFloat(o.paid)||0),0);
-  const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const paid=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
+  const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0))),0);
   const pct=tot>0?Math.min(paid/tot*100,100):0;
   const active=cOrds.filter(o=>o.stage!=='archived');
   const tags=c.tags||[];
@@ -679,10 +698,12 @@ function renderPanel(id){
           <div>
             <div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
             <div style="font-size:13px;font-weight:700;margin-top:2px">${nm}</div>
+            ${o.deadline?`<div style="font-size:10px;color:${new Date(o.deadline)<new Date()&&o.stage!=='archived'?'var(--r)':'var(--dim2)'};margin-top:1px">📅 ${o.deadline}</div>`:''}
           </div>
           <div style="text-align:left">
             <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage]||o.stage}</span>
-            ${rem2>0?`<div style="font-size:11px;color:var(--r);font-weight:700;margin-top:2px">${fn(rem2)} ج</div>`:''}
+            ${parseFloat(o.salePrice)>0?`<div style="font-size:11px;color:var(--dim2);margin-top:2px">${fn(parseFloat(o.salePrice)||0)} ج</div>`:''}
+            ${rem2>0?`<div style="font-size:11px;color:var(--r);font-weight:800;margin-top:1px">باقي: ${fn(rem2)} ج</div>`:''}
           </div>
         </div>`;
       }).join(''):`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:16px">لا توجد أوردرات بعد</div>`}
@@ -954,7 +975,8 @@ function renderListView(data){
     const col=COLORS[i%COLORS.length];
     const cOrds=getClientOrders(c);
     const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-    const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+    const paid2=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
+    const rem=cOrds.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0))),0);
     const active=cOrds.filter(o=>o.stage!=='archived').length;
     const tags=c.tags||[];
     return`<div class="list-row" onclick="openClient('${c._id}')">
