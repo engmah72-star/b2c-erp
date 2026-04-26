@@ -70,6 +70,13 @@
     <div class="topbar-right"><button class="btn btn-p" onclick="openNewOrder()">＋ طلب جديد</button></div>
   </div>
   <div class="content">
+    <!-- بحث سريع -->
+    <div style="position:relative;margin-bottom:14px">
+      <input id="design-search" class="inp" placeholder="🔍 بحث باسم العميل أو رقم الأوردر..." 
+        oninput="filterKanban(this.value)"
+        style="padding-right:36px;background:var(--bg2)">
+      <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--dim2);font-size:14px">🔍</span>
+    </div>
     <div class="stats" style="margin-bottom:18px">
       <div class="stat" style="--sc:var(--y)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-pending">0</div><div class="stat-lbl">انتظار</div></div>
       <div class="stat" style="--sc:var(--b)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-wip">0</div><div class="stat-lbl">جاري</div></div>
@@ -546,11 +553,12 @@ onAuthStateChanged(auth,async u=>{
     initAttendance();
     setTimeout(updateDesignerUI,100);
     window.__myEmpId='';
-    onSnapshot(collection(db,'employees'),snap=>{
+    // جيب بيانات الموظف مرة واحدة (مش onSnapshot)
+    getDocs(collection(db,'employees')).then(snap=>{
       const uid2=auth.currentUser?.uid;
       const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid2||e.email===auth.currentUser?.email);
       window.__myEmpId=emp?._id||'';
-    });
+    }).catch(()=>{});
   }
 });
 
@@ -667,10 +675,11 @@ function startListeners(){
   onSnapshot(collection(db,'products_v2'),snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
   });
-  onSnapshot(collection(db,'designers_v2'),snap=>{
+  // جيب المصممين من employees مباشرة (مش designers_v2)
+  onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator'])),snap=>{
     designers=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const s=document.getElementById('np-des');if(!s)return;
-    s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d._id}">${d.name}</option>`).join('');
+    s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
   });
   onSnapshot(collection(db,'wallets'),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -681,6 +690,21 @@ function startListeners(){
 
 
 // ── KANBAN ──
+window.filterKanban=function(q){
+  const search=(q||'').toLowerCase().trim();
+  document.querySelectorAll('.ko').forEach(card=>{
+    const text=(card.dataset.name||'').toLowerCase()+(card.dataset.id||'').toLowerCase();
+    card.style.display=!search||text.includes(search)?'':'none';
+  });
+  // عداد لكل عمود
+  ['pending','wip','rejected'].forEach(col=>{
+    const el=document.getElementById('co-'+col);if(!el)return;
+    const visible=[...el.querySelectorAll('.ko')].filter(c2=>c2.style.display!=='none').length;
+    const cnt=document.getElementById('cnt-'+col);
+    if(cnt)cnt.textContent=visible;
+  });
+};
+
 function renderKanban(){
   const cols={pending:[],wip:[],rejected:[]};
   orders.forEach(o=>{const k=o.designStage||'pending';if(cols[k])cols[k].push(o);});
@@ -768,6 +792,22 @@ function renderPanel(o){
           <span class="badge bg-b">× ${p.qty}</span>
         </div>`).join(''):`<div style="font-size:13px;padding:8px;background:var(--bg3);border-radius:var(--rad)">${o.product||'—'}</div>`}
     </div>
+
+    <!-- صور التصميم المرفوعة -->
+    ${(()=>{
+      const imgs=[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name}))];
+      if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم'});
+      if(!imgs.length)return '';
+      return`<div class="section">
+        <div class="section-title" style="margin-bottom:10px">🖼️ صور التصميم</div>
+        ${imgs.map(img=>`
+          <div style="margin-bottom:10px">
+            ${imgs.length>1?`<div style="font-size:10px;color:var(--dim2);margin-bottom:4px;font-weight:700">📦 ${img.name}</div>`:''}
+            <img src="${img.url}" onclick="window.open('${img.url}','_blank')"
+              style="width:100%;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;max-height:220px;object-fit:contain;background:var(--bg3);display:block">
+          </div>`).join('')}
+      </div>`;
+    })()}
 
     <!-- ملف التصميم -->
     <div class="section">
