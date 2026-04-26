@@ -429,6 +429,7 @@ onAuthStateChanged(auth,async u=>{
     renderTasks();
   });
   onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid||empId)),snap=>{
+    attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
     empAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderAttendance();
   });
@@ -450,8 +451,11 @@ function renderAll(){
   // حساب KPIs حسب الدور
   let kpis=[], income={base:parseFloat(emp.baseSalary)||0, commission:0};
 
-  if(emp.role==='graphic_designer'){
-    const myOrders=monthly.filter(o=>o.designerId===emp.authUid||o.designerId===empId);
+  // ── أوردرات الموظف حسب دوره ──
+  const uid=emp.authUid||empId;
+  let myOrders=[];
+  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
+    myOrders=monthly.filter(o=>o.designerId===uid||o.designerId===empId);
     const assigned=myOrders.length;
     const printed=myOrders.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
     const rejected=myOrders.filter(o=>o.designStatus==='rejected').length;
@@ -881,19 +885,70 @@ function renderSalaries(){
 let salaryData={};
 window.openSalary=function(){
   if(!emp)return;
-  // حساب العمولة هذا الشهر
-  const commission=emp.role==='graphic_designer'?
-    allOrders.filter(o=>isThisMonth(o.createdAt)&&
-      (o.designerId===emp.authUid||o.designerId===empId)&&
-      ['printing','production','shipping','archived'].includes(o.stage))
-    .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0):0;
+
   const base=parseFloat(emp.baseSalary)||0;
-  const total=base+commission;
-  salaryData={base,commission,total,month:monthKey()};
+  const uid=emp.authUid||empId;
+
+  // ── حساب الغياب من الحضور ──
+  const thisMonthKey=monthKey();
+  const thisMonthAtt=attendanceRecords.filter(a=>a.monthKey===thisMonthKey||
+    (a.date&&a.date.startsWith(now.getFullYear()+'-'+(now.getMonth()+1).toString().padStart(2,'0'))));
+  const workDays=26; // أيام العمل الشهرية
+  const daysPresent=thisMonthAtt.length;
+  const daysAbsent=Math.max(0,workDays-daysPresent);
+  const dailyRate=base/workDays;
+  const absenceDeduction=Math.round(dailyRate*daysAbsent);
+  const attendanceBonus=daysAbsent===0?(parseFloat(emp.attendanceBonus)||0):0;
+
+  // ── حساب العمولة ──
+  let commission=0;
+  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
+    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&
+      (o.designerId===uid)&&
+      ['printing','production','shipping','archived'].includes(o.stage))
+      .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
+  } else if(emp.role==='production_agent'){
+    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&o.productionAgentId===uid)
+      .length * (parseFloat(emp.commissionPerOrder)||0);
+  } else if(emp.role==='shipping_officer'){
+    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&o.shippingOfficerId===uid)
+      .length * (parseFloat(emp.commissionPerOrder)||0);
+  } else if(emp.role==='customer_service'){
+    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&(o.createdBy===uid))
+      .length * (parseFloat(emp.commissionPerOrder)||0);
+  }
+
+  const total=Math.max(0,base-absenceDeduction+attendanceBonus+commission);
+  salaryData={base,commission,total,month:monthKey(),
+    absenceDeduction,attendanceBonus,daysPresent,daysAbsent,workDays};
   setText('sal-month-label',MONTHS[now.getMonth()]+' '+now.getFullYear());
   setText('sal-base',fn(base)+' ج');
-  setText('sal-commission',commission>0?fn(commission)+' ج':'—');
+  setText('sal-commission',commission>0?fn(Math.round(commission))+' ج':'—');
   setText('sal-total',fn(total)+' ج');
+  // عرض تفاصيل الحضور في الـ modal
+  const attEl=document.getElementById('sal-attendance-detail');
+  if(attEl){
+    if(daysAbsent>0||attendanceBonus>0){
+      attEl.style.display='block';
+      attEl.innerHTML=`
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="color:var(--dim2)">أيام الحضور</span>
+            <span style="font-weight:700;color:var(--g)">${daysPresent} / ${workDays} يوم</span>
+          </div>
+          ${daysAbsent>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="color:var(--dim2)">خصم غياب (${daysAbsent} يوم)</span>
+            <span style="font-weight:700;color:var(--r)">- ${fn(absenceDeduction)} ج</span>
+          </div>`:''}
+          ${attendanceBonus>0?`<div style="display:flex;justify-content:space-between">
+            <span style="color:var(--dim2)">بدل حضور كامل</span>
+            <span style="font-weight:700;color:var(--g)">+ ${fn(attendanceBonus)} ج</span>
+          </div>`:''}
+        </div>`;
+    } else {
+      attEl.style.display='none';
+    }
+  }
   sv('sal-notes',`مرتب ${MONTHS[now.getMonth()]} ${now.getFullYear()} — ${emp.name}`);
   // تحقق لو مصروف
   const alreadyPaid=empSalaries.find(s=>s.month===monthKey());
