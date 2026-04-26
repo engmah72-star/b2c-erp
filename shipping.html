@@ -922,7 +922,7 @@ window.saveShip=async function(){
     wId=gv('ss-wid');wName=gv('ss-wname');transferRef=gv('ss-ref');
     if(collectAmt>0&&!wId)return toast('⚠️ اختر طريقة الدفع','err');
   }
-  const newPaid=(parseFloat(o.paid)||0)+collectAmt;
+  const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+collectAmt;
   const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-newPaid);
   const debtType=gv('ss-debt-type')||'client';
   const parts=[`🚚 ${METHOD_LABELS[method]||method}`];
@@ -947,7 +947,10 @@ window.saveShip=async function(){
       shipStage:stage,shipMethod:method,shipCompany:coVal,shipCompanyName,
       shipGov:gv('ss-gov'),shipAddress:gv('ss-address'),shipCost,
       shipTracking:gv('ss-tracking'),shipSettled:false,
-      paid:newPaid,remaining:newRem,
+      paid:newPaid,
+      totalPaid:newPaid,        // ← ده اللي بتقراه حسابات الشحن والتقارير
+      remaining:newRem,
+      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — '),by:userName}],
       updatedAt:serverTimestamp()
     });
@@ -976,8 +979,14 @@ window.saveDeliver=async function(){
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   try{
+    const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
+    const finalRem=parseFloat(o.remaining)||0;
     await updateDoc(doc(db,'orders',activeId),{
-      stage:'archived',paid:parseFloat(o.paid)||0,remaining:parseFloat(o.remaining)||0,
+      stage:'archived',
+      paid:finalPaid,
+      totalPaid:finalPaid,      // ← مزامنة مع باقي السيستم
+      remaining:finalRem,
+      paymentStatus:finalRem<=0?'paid':finalPaid>0?'partial':'pending',
       clientRating:rating,clientComment:gv('del-comment'),
       deliveredAt:nowStr(),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ أُرشف — تقييم ${rating}/5 ${RATING_LABELS[rating]||''}`,by:userName}],
