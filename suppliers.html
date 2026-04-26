@@ -134,11 +134,29 @@
       <div class="fg"><label>العنوان</label><input class="inp" id="f-address" placeholder="العنوان"></div>
       <!-- خاص بالمطبعة -->
       <div id="printer-fields">
-        <div class="fg"><label>نوع الطباعة</label>
-          <select class="inp" id="f-printtype">
-            <option value="">— اختر —</option>
-            <option>أوفست</option><option>ديجيتال</option><option>لارج فورمات</option><option>أوفست + ديجيتال</option>
-          </select>
+        <div class="fg"><label>التصنيف / نوع الخدمة *</label>
+          <div style="display:flex;gap:8px">
+            <select class="inp" id="f-printtype" style="flex:1">
+              <option value="">— اختر أو أدخل يدوي —</option>
+              <option>أوفست</option>
+              <option>ديجيتال</option>
+              <option>لارج فورمات</option>
+              <option>أوفست + ديجيتال</option>
+              <option>سلفنة</option>
+              <option>قص وتجميع</option>
+              <option>ورق</option>
+              <option>زنكات</option>
+              <option>دعاية وإعلان</option>
+              <option>أخرى</option>
+            </select>
+          </div>
+          <input class="inp" id="f-printtype-custom" placeholder="أو اكتب تصنيف جديد..." style="margin-top:6px;display:none">
+        </div>
+        <div style="margin-top:-4px;margin-bottom:8px">
+          <button type="button" onclick="document.getElementById('f-printtype-custom').style.display=document.getElementById('f-printtype-custom').style.display==='none'?'block':'none'" 
+            style="font-size:11px;color:var(--b);background:none;border:none;cursor:pointer;font-family:inherit">
+            ＋ إضافة تصنيف جديد
+          </button>
         </div>
         <div class="g2">
           <div class="fg"><label>شروط الدفع</label>
@@ -274,10 +292,34 @@ function updateKPIs(){
 // ══ Tabs ══
 window.switchTab=function(tab,btn){
   currentTab=tab;
+  currentCatFilter='';
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildCatFilter();
+  renderList();
+};
+
+let currentCatFilter='';
+
+window.setCatFilter=function(cat,btn){
+  currentCatFilter=cat;
+  document.querySelectorAll('[id^="cat-"]').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   renderList();
 };
+
+function buildCatFilter(){
+  if(currentTab!=='printers'){
+    document.getElementById('category-filter').style.display='none';
+    return;
+  }
+  document.getElementById('category-filter').style.display='flex';
+  // جيب كل التصنيفات الموجودة
+  const cats=[...new Set(suppliers.map(s=>s.printType).filter(Boolean))].sort();
+  const dynEl=document.getElementById('cat-dynamic-btns');
+  if(!dynEl)return;
+  dynEl.innerHTML=cats.map((cat,i)=>`<button class="ftab" id="cat-${i}" onclick="setCatFilter('${cat}',this)">${cat}</button>`).join('');
+}
 
 let currentSort='due';
 window.setSort=function(sort,btn){
@@ -301,7 +343,7 @@ function sortShippers(data){
   return data;
 }
 
-function renderAll(){updateKPIs();renderList();}
+function renderAll(){updateKPIs();buildCatFilter();renderList();}
 
 function renderList(){
   const el=document.getElementById('list');if(!el)return;
@@ -311,7 +353,10 @@ function renderList(){
 
 function renderPrinters(el){
   if(!suppliers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد مطابع</div></div>';return;}
-  el.innerHTML=sortSuppliers(suppliers).map(s=>{
+  let data=suppliers;
+  if(currentCatFilter) data=suppliers.filter(s=>s.printType===currentCatFilter);
+  if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">لا يوجد موردين في تصنيف "${currentCatFilter}"</div></div>`;return;}
+  el.innerHTML=sortSuppliers(data).map(s=>{
     const {purchases,paid,due}=getSupBalance(s._id);
     const creditLimit=parseFloat(s.creditLimit)||0;
     const overCredit=creditLimit>0&&due>creditLimit;
