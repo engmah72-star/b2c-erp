@@ -289,13 +289,18 @@ auth.onAuthStateChanged(async u=>{
 
 function fillMonthFilter(){
   const months=new Set();
+  const companies=new Set();
   allOrders.filter(o=>o.shipCompanyName).forEach(o=>{
     const d=o.createdAt?.toDate?.();
     if(d)months.add(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
+    if(o.shipCompanyName)companies.add(o.shipCompanyName);
   });
   const sel=document.getElementById('f-month');
-  const cur=sel.value;
-  sel.innerHTML='<option value="">كل الأشهر</option>'+[...months].sort().reverse().map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+  const cur=sel?.value;
+  if(sel)sel.innerHTML='<option value="">كل الأشهر</option>'+[...months].sort().reverse().map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+  const coSel=document.getElementById('f-company');
+  const curCo=coSel?.value;
+  if(coSel)coSel.innerHTML='<option value="">كل الشركات</option>'+[...companies].sort().map(co=>`<option value="${co}" ${co===curCo?'selected':''}>${co}</option>`).join('');
 }
 
 function fillWalletSelects(){
@@ -308,11 +313,13 @@ function render(){
   const fMonth=gv('f-month');
 
   // فلتر الأوردرات المشحونة بشركة شحن
+  const fCompany=gv('f-company');
   let shippedOrders=allOrders.filter(o=>
     o.shipCompanyName &&
     ['shipping','archived'].includes(o.stage) &&
-    o.shipMethod !== 'pickup' // مش يعرض الاستلام بالمكتب
+    o.shipMethod !== 'pickup'
   );
+  if(fCompany) shippedOrders=shippedOrders.filter(o=>o.shipCompanyName===fCompany);
   if(fMonth){
     shippedOrders=shippedOrders.filter(o=>{
       const d=o.createdAt?.toDate?.();
@@ -551,6 +558,21 @@ function openSettle(companyName){
 
 function closeSettle(){document.getElementById('ov-settle').classList.remove('open');}
 
+async function deleteSettle(settleId,amount,walletId){
+  if(!confirm('حذف هذه التسوية؟
+سيتم خصم المبلغ من المحفظة.'))return;
+  try{
+    // رجّع المبلغ من المحفظة
+    const w=wallets.find(x=>x._id===walletId);
+    if(w){
+      const newBal=Math.max(0,(parseFloat(w.balance)||0)-amount);
+      await db.collection('wallets').doc(walletId).update({balance:newBal});
+    }
+    await db.collection('shipping_settlements').doc(settleId).delete();
+    toast('✅ تم حذف التسوية','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+
 function selectAllOrders(state){
   document.querySelectorAll('.settle-order-cb').forEach(cb=>{cb.checked=state;});
   calcSettleDiff();
@@ -625,12 +647,19 @@ async function saveSettle(){
     // 4. حدّث الأوردرات المشمولة — mark as settled
     for(const oid of selectedOrders){
       const o=allOrders.find(x=>x._id===oid);if(!o)continue;
+      // حساب المبلغ الصح
+      const oPaidBefore=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const oSale=parseFloat(o.salePrice)||0;
+      const oDueByCo=Math.max(0,oSale-oPaidBefore); // ما على الشركة فعلاً
+      const oNewPaid=oPaidBefore+oDueByCo; // بعد التسوية
       await db.collection('orders').doc(oid).update({
         shipSettled:true,
-        shipSettledAmount:parseFloat(o.salePrice)||0,
-        paid:parseFloat(o.salePrice)||0,
+        shipSettledAmount:oDueByCo,
+        paid:oNewPaid,
+        totalPaid:oNewPaid,
         remaining:0,
-        timeline:[...(o.timeline||[]),{date:now,action:`✅ تسوية مع ${settleCompanyId} — ${fn(amount)} ج`,by:userName}],
+        paymentStatus:'paid',
+        timeline:[...(o.timeline||[]),{date:now,action:`✅ تسوية شحن مع ${settleCompanyId} — ${fn(oDueByCo)} ج`,by:userName}],
         updatedAt:firebase.firestore.FieldValue.serverTimestamp()
       });
     }
