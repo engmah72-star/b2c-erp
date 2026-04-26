@@ -365,18 +365,21 @@ function render(){
     }
   });
 
-  // احسب totalRemaining من التسويات الفعلية
+  // ══ حساب الأرصدة الصح ══
   Object.values(companies).forEach(co=>{
-    // جمع كل التسويات الواردة من هذه الشركة
+    // totalSettled = مجموع التسويات الفعلية الواردة
     const coSettlementsTotal=settlements
       .filter(s=>s.companyName===co.name)
-      .reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+      .reduce((sum,s)=>sum+(parseFloat(s.amount)||0),0);
     co.totalSettled=coSettlementsTotal;
+    // totalRemaining = مستحق - محصّل فعلاً
     co.totalRemaining=Math.max(0,co.totalDue-coSettlementsTotal);
-    // تكلفة مرتجعات هذه الشركة
+    // تكلفة المرتجعات (مصروف عليك)
     co.returnsCost=returns
       .filter(r=>r.companyName===co.name)
-      .reduce((s,r)=>s+(parseFloat(r.cost)||0),0);
+      .reduce((sum,r)=>sum+(parseFloat(r.cost)||0),0);
+    // صافي المستحق = مستحق - مرتجعات
+    co.netDue=Math.max(0,co.totalDue-co.returnsCost);
   });
 
   // إجماليات
@@ -386,10 +389,11 @@ function render(){
   const totalRemaining=allCos.reduce((s,c)=>s+c.totalRemaining,0);
   const totalReturns=allCos.reduce((s,c)=>s+c.returnsCount,0);
   setText('s-total',shippedOrders.filter(o=>!returns.some(r=>r.orderId===o._id)).length);
+  const totalReturnsCost=allCos.reduce((s,c2)=>s+c2.returnsCost,0);
   setText('s-due',fn(totalDue)+' ج');
   setText('s-collected',fn(totalSettled)+' ج');
   setText('s-remaining',fn(totalRemaining)+' ج');
-  setText('s-returns',totalReturns);
+  setText('s-returns',totalReturns+(totalReturnsCost>0?' ('+fn(totalReturnsCost)+' ج)':''));
   setText('sub',allCos.length+' شركة شحن');
 
   const el=document.getElementById('companies-list');if(!el)return;
@@ -567,17 +571,58 @@ function openSettle(companyName){
 
 function closeSettle(){document.getElementById('ov-settle').classList.remove('open');}
 
-async function deleteSettle(settleId,amount,walletId){
-  if(!confirm('حذف هذه التسوية؟ سيتم خصم المبلغ من المحفظة.'))return;
+async async function deleteSettle(settleId,amount,walletId){
+  if(!confirm('حذف هذه التسوية؟ سيتم عكس كل العمليات المالية.'))return;
   try{
-    // رجّع المبلغ من المحفظة
+    // 1. جيب بيانات التسوية
+    const settleSnap=await db.collection('shipping_settlements').doc(settleId).get();
+    const settleData=settleSnap.exists?settleSnap.data():{};
+    const orderIds=settleData.orderIds||[];
+
+    // 2. رجّع رصيد المحفظة
     const w=wallets.find(x=>x._id===walletId);
     if(w){
       const newBal=Math.max(0,(parseFloat(w.balance)||0)-amount);
       await db.collection('wallets').doc(walletId).update({balance:newBal});
     }
+
+    // 3. سجّل transaction عكسية
+    if(walletId&&amount>0){
+      const wBal=parseFloat(w?.balance)||0;
+      await db.collection('transactions_v2').add({
+        walletId,type:'out',amount,
+        description:`إلغاء تسوية شحن — ${settleData.companyName||''}`,
+        category:'settle_reversal',
+        settleId,
+        balanceBefore:wBal,balanceAfter:Math.max(0,wBal-amount),
+        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    // 4. ارجع الأوردرات لـ unsettled
+    const now=nowStr();
+    for(const oid of orderIds){
+      const o=allOrders.find(x=>x._id===oid);if(!o)continue;
+      // ارجع totalPaid للحالة قبل التسوية
+      const oPaidBefore=Math.max(0,(parseFloat(o.totalPaid)||0)-(parseFloat(o.shipSettledAmount)||0));
+      const oSale=parseFloat(o.salePrice)||0;
+      const oRem=Math.max(0,oSale-oPaidBefore);
+      await db.collection('orders').doc(oid).update({
+        shipSettled:false,
+        shipSettledAmount:0,
+        paid:oPaidBefore,
+        totalPaid:oPaidBefore,
+        remaining:oRem,
+        paymentStatus:oRem<=0?'paid':oPaidBefore>0?'partial':'pending',
+        timeline:[...(o.timeline||[]),{date:now,action:`↩️ إلغاء تسوية شحن — ${settleData.companyName||''}`,by:userName}],
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    // 5. احذف التسوية
     await db.collection('shipping_settlements').doc(settleId).delete();
-    toast('✅ تم حذف التسوية','ok');
+    toast('✅ تم إلغاء التسوية وعكس كل العمليات','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 }
 
@@ -603,7 +648,7 @@ function calcSettleDiff(){
   }
 }
 
-async function saveSettle(){
+async async function saveSettle(){
   const amount=parseFloat(gv('settle-amount'));
   if(!amount){toast('⚠️ أدخل المبلغ','err');return;}
   const wId=gv('settle-wallet');
@@ -693,7 +738,7 @@ function openReturn(coName){
   openReturnOrder(coOrders[0]._id,coOrders[0].clientName||'—',coName);
 }
 
-async function saveReturn(){
+async async function saveReturn(){
   const reason=gv('return-reason');
   const cost=parseFloat(gv('return-cost'))||0;
   const wId=gv('return-wallet');
@@ -727,11 +772,16 @@ async function saveReturn(){
       });
     }
 
-    // 3. حدّث الأوردر
+    // 3. حدّث الأوردر — المرتجع يروح أرشيف
     await db.collection('orders').doc(returnOrderId).update({
+      stage:'archived',           // ← ينتقل للأرشيف
       shipStage:'returned',
+      shipSettled:true,           // ← مش يظهر في التسويات
       shipReturnReason:reason,
       shipReturnCost:cost,
+      totalPaid:parseFloat(o.totalPaid)||parseFloat(o.paid)||0, // يحتفظ بما دفعه
+      remaining:parseFloat(o.remaining)||0,                     // والباقي
+      paymentStatus:'returned',   // حالة خاصة للمرتجع
       timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع — ${reason}${cost>0?' — تكلفة '+fn(cost)+' ج':''}`,by:userName}],
       updatedAt:firebase.firestore.FieldValue.serverTimestamp()
     });
