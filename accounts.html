@@ -554,22 +554,25 @@ function updateKPIs(){
 
   activeOrders.forEach(o=>{
     const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.paid)||0;
-    const rem=parseFloat(o.remaining)||0;
+    const disc=parseFloat(o.discount)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,(sale-disc)-paid);
     if(sale>0||paid>0){
-      pendTotal+=paid;   // المعلق = كل ما تم تحصيله في أوردر لسه ما اتسلمش
+      pendTotal+=paid;
       pendCount++;
       remTotal+=rem;
     }
   });
   archivedOrders.forEach(o=>{
     const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.paid)||0;
+    const disc=parseFloat(o.discount)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,(sale-disc)-paid);
     if(sale>0){
-      earnTotal+=sale;   // المكتسب = إجمالي الأوردرات المكتملة
+      earnTotal+=paid;   // المكتسب = ما تم تحصيله فعلاً (مش salePrice)
       earnCount++;
     }
-    remTotal+=parseFloat(o.remaining)||0;
+    remTotal+=rem;
   });
 
   // مستحق من شركات الشحن — من orders مباشرة (غير مسوّاة)
@@ -714,7 +717,10 @@ function renderPending(){
   shipOrders.forEach(o=>{
     if(!shipCos[o.shipCompanyName])shipCos[o.shipCompanyName]={count:0,total:0};
     shipCos[o.shipCompanyName].count++;
-    shipCos[o.shipCompanyName].total+=parseFloat(o.salePrice)||0;
+    // ما على الشركة = الباقي بعد ما دفعه العميل
+    const _paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const _due=Math.max(0,(parseFloat(o.salePrice)||0)-_paid);
+    shipCos[o.shipCompanyName].total+=_due;
   });
   const shipSummaryHtml=Object.keys(shipCos).length?`
     <div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad2);padding:14px;margin-bottom:16px">
@@ -733,7 +739,13 @@ function renderPending(){
     </div>`:'';
 
   // أوردرات نشطة عندها باقي
-  const active=allOrders.filter(o=>o.stage!=='archived'&&(parseFloat(o.remaining)||0)>0);
+  const active=allOrders.filter(o=>{
+    if(o.stage==='archived')return false;
+    const _sale=parseFloat(o.salePrice)||0;
+    const _paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const _rem=parseFloat(o.remaining)||Math.max(0,_sale-_paid);
+    return _rem>0;
+  });
   // ديون مؤجلة في الأرشيف
   const deferred=transactions.filter(t=>t.category==='deferred_collection'||t.category==='shipping_company_debt');
   // شركات الشحن المديونة
@@ -747,7 +759,9 @@ function renderPending(){
     ${active.length?`
     <div style="font-size:13px;font-weight:800;margin-bottom:10px;color:var(--y)">⏳ أوردرات نشطة — باقي تحصيل</div>
     ${active.map(o=>{
-      const rem=parseFloat(o.remaining)||0;const sale=parseFloat(o.salePrice)||0;const paid=parseFloat(o.paid)||0;
+      const paid_=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const sale_=parseFloat(o.salePrice)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,sale_-paid_);const sale=parseFloat(o.salePrice)||0;const paid=parseFloat(o.paid)||0;
       const pct=sale>0?Math.min(paid/sale*100,100):0;
       const stageAr={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'}[o.stage]||o.stage;
       return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:8px">
@@ -1050,10 +1064,11 @@ window.saveTx=async function(){
 
     // ══ تحديث الأوردر لو مختار ══
     if(o && type==='in'){
-      const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.deposit)||0;
+      const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
       const newPaid=oldPaid+amount;
-      const oldRem=parseFloat(o.remaining)||parseFloat(o.salePrice)||0;
-      const newRem=Math.max(0,oldRem-amount);
+      const sale=parseFloat(o.salePrice)||0;
+      const disc=parseFloat(o.discount)||0;
+      const newRem=Math.max(0,(sale-disc)-newPaid);
       const tl=[...(o.timeline||[]),{date:nowStr(),action:`💰 دفعة: ${fn(amount)} ج — باقي: ${fn(newRem)} ج`,by:document.getElementById('nav-name')?.textContent||''}];
       await updateDoc(doc(db,'orders',orderId),{
         totalPaid:newPaid,
@@ -1112,8 +1127,22 @@ window.saveWallet=async function(){
   const name=gv('nw-name'),type=gv('nw-type'),bal=parseFloat(gv('nw-bal'))||0,mgr=gv('nw-manager');
   if(!name)return toast('⚠️ أدخل اسم الحساب','err');
   try{
-    await addDoc(collection(db,'wallets'),{name,type,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
-    cM('new-wallet');sv('nw-name','');sv('nw-bal','0');toast('✅ تم إضافة الحساب','ok');
+    const ref=await addDoc(collection(db,'wallets'),{name,type,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
+    // سجّل رصيد افتتاحي لو موجود
+    if(bal>0){
+      await addDoc(collection(db,'transactions_v2'),{
+        walletId:ref.id,type:'in',amount:bal,fees:0,
+        description:'رصيد افتتاحي — '+name,
+        category:'opening_balance',
+        balanceBefore:0,balanceAfter:bal,
+        date:nowStr(),
+        createdBy:currentUser?.uid||'',
+        createdByName:document.getElementById('nav-name')?.textContent||'',
+        createdAt:serverTimestamp()
+      });
+    }
+    cM('new-wallet');sv('nw-name','');sv('nw-bal','0');
+    toast('✅ تم إضافة الحساب'+(bal>0?` برصيد ${fn(bal)} ج`:''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
