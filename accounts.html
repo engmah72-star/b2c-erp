@@ -579,8 +579,13 @@ function updateKPIs(){
   const shippingDebt=allOrders.filter(o=>
     o.shipCompanyName &&
     ['shipping','archived'].includes(o.stage) &&
-    !o.shipSettled
-  ).reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+    !o.shipSettled &&
+    o.shipMethod !== 'pickup'
+  ).reduce((s,o)=>{
+    const _sale=parseFloat(o.salePrice)||0;
+    const _paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    return s+Math.max(0,_sale-_paid); // ما على الشركة فعلاً
+  },0);
   // دين على العملاء
   const clientDebt=transactions.filter(t=>t.category==='deferred_collection')
     .reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
@@ -798,41 +803,86 @@ function renderPending(){
 // ── حركات ──
 function renderShippingDebts(){
   const el=document.getElementById('section-content');if(!el)return;
-  const shipDebts=transactions.filter(t=>t.category==='shipping_company_debt');
+
+  // ── حسابات شركات الشحن من الأوردرات مباشرة ──
+  const shipOrders=allOrders.filter(o=>
+    o.shipCompanyName &&
+    ['shipping','archived'].includes(o.stage) &&
+    !o.shipSettled &&
+    o.shipMethod!=='pickup'
+  );
+
+  // تجميع حسب الشركة
+  const coMap={};
+  shipOrders.forEach(o=>{
+    const co=o.shipCompanyName;
+    if(!coMap[co])coMap[co]={name:co,count:0,due:0,orders:[]};
+    const sale=parseFloat(o.salePrice)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const due=Math.max(0,sale-paid);
+    coMap[co].count++;
+    coMap[co].due+=due;
+    coMap[co].orders.push({...o,due});
+  });
+
+  const cos=Object.values(coMap).sort((a,b)=>b.due-a.due);
+  const totalShip=cos.reduce((s,co)=>s+co.due,0);
+
+  // ديون العملاء (مؤجّل)
   const clientDebts=transactions.filter(t=>t.category==='deferred_collection');
-  const totalShip=shipDebts.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const totalClient=clientDebts.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+
   el.innerHTML=`
+    <!-- ملخص -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
-      <div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad2);padding:14px;text-align:center">
-        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">📦 مستحق من شركات الشحن</div>
+      <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:12px;padding:14px;text-align:center">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:6px;font-weight:700">📦 مستحق من شركات الشحن</div>
         <div style="font-size:24px;font-weight:900;color:var(--b)">${fn(totalShip)} ج</div>
+        <div style="font-size:11px;color:var(--dim2);margin-top:4px">${shipOrders.length} شحنة غير مسوّاة</div>
       </div>
-      <div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad2);padding:14px;text-align:center">
-        <div style="font-size:11px;color:var(--dim2);margin-bottom:6px">👤 ديون على العملاء</div>
+      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:14px;text-align:center">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:6px;font-weight:700">👤 ديون على العملاء</div>
         <div style="font-size:24px;font-weight:900;color:var(--r)">${fn(totalClient)} ج</div>
+        <div style="font-size:11px;color:var(--dim2);margin-top:4px">${clientDebts.length} دين مؤجّل</div>
       </div>
     </div>
-    ${shipDebts.length?`
-      <div style="font-size:13px;font-weight:800;margin-bottom:10px;color:var(--b)">📦 مستحق من شركات الشحن</div>
-      ${shipDebts.map(t=>`<div style="background:var(--bg2);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad2);padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-size:14px;font-weight:800">${t.shipCompanyName||'شركة شحن'}</div>
-          <div style="font-size:11px;color:var(--dim2)">${t.clientName||'—'} · ${t.date||''}</div>
-          <div style="font-size:11px;color:var(--dim2)">${t.description||''}</div>
-        </div>
-        <div style="font-size:20px;font-weight:900;color:var(--b)">${fn(t.amount)} ج</div>
-      </div>`).join('')}`:'<div style="text-align:center;padding:20px;color:var(--dim2)">لا توجد ديون على شركات الشحن</div>'}
+
+    <!-- تفاصيل الشركات -->
+    ${cos.length?`
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px">📦 تفاصيل شركات الشحن</div>
+      ${cos.map(co=>`
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:14px;font-weight:800">${co.name}</div>
+            <div style="font-size:16px;font-weight:900;color:var(--b)">${fn(co.due)} ج</div>
+          </div>
+          <div style="font-size:11px;color:var(--dim2);margin-bottom:8px">${co.count} شحنة غير مسوّاة</div>
+          ${co.orders.slice(0,5).map(o=>`
+            <div style="display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-bottom:1px solid var(--line)">
+              <span style="font-weight:700">${o.clientName||'—'}</span>
+              <div style="display:flex;gap:8px">
+                ${parseFloat(o.totalPaid||o.paid||o.deposit||0)>0?`<span style="color:var(--g)">دفع ${fn(parseFloat(o.totalPaid||o.paid||o.deposit||0))} ج</span>`:''}
+                <span style="color:var(--b);font-weight:800">${fn(o.due)} ج</span>
+              </div>
+            </div>`).join('')}
+          <a href="shipping-accounts.html" style="display:block;margin-top:8px;text-align:center;font-size:11px;color:var(--b);font-weight:700;text-decoration:none">إدارة التسويات ←</a>
+        </div>`).join('')}
+    </div>`:''}
+
+    <!-- ديون العملاء -->
     ${clientDebts.length?`
-      <div style="font-size:13px;font-weight:800;margin:16px 0 10px;color:var(--r)">👤 ديون على العملاء</div>
-      ${clientDebts.map(t=>`<div style="background:var(--bg2);border:1px solid rgba(255,61,110,.15);border-radius:var(--rad2);padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-size:14px;font-weight:800">${t.clientName||'—'}</div>
-          <div style="font-size:11px;color:var(--dim2)">${t.date||''}</div>
-          <div style="font-size:11px;color:var(--b)">${t.clientPhone?'📞 '+t.clientPhone:''}</div>
-        </div>
-        <div style="font-size:20px;font-weight:900;color:var(--r)">${fn(t.amount)} ج</div>
-      </div>`).join('')}`:''}
+    <div>
+      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px">👤 ديون العملاء المؤجّلة</div>
+      ${clientDebts.map(t=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+          <div>
+            <div style="font-size:13px;font-weight:700">${t.clientName||'—'}</div>
+            <div style="font-size:10px;color:var(--dim2)">${t.date||'—'}</div>
+          </div>
+          <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(parseFloat(t.amount)||0)} ج</span>
+        </div>`).join('')}
+    </div>`:'<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد ديون مؤجّلة</div>'}
   `;
 }
 
