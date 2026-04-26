@@ -985,19 +985,30 @@ window.saveShip=async function(){
     if(shipCost>0){
       await addDoc(collection(db,'transactions_v2'),{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
+    // لو pickup وتحصيل كامل → أرشف تلقائياً
+    const shouldArchive = method==='pickup' && newRem<=0;
+
     await updateDoc(doc(db,'orders',activeId),{
-      shipStage:stage,shipMethod:method,shipCompany:coVal,shipCompanyName,
+      shipStage: shouldArchive ? 'collected' : stage,
+      stage: shouldArchive ? 'archived' : o.stage,
+      shipMethod:method,shipCompany:coVal,shipCompanyName,
       shipGov:gv('ss-gov'),shipAddress:gv('ss-address'),shipCost,
-      shipTracking:gv('ss-tracking'),shipSettled:false,
+      shipTracking:gv('ss-tracking'),shipSettled:method!=='company',
       paid:newPaid,
-      totalPaid:newPaid,        // ← ده اللي بتقراه حسابات الشحن والتقارير
+      totalPaid:newPaid,
       remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — '),by:userName}],
+      ...(shouldArchive?{deliveredAt:nowStr()}:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
       updatedAt:serverTimestamp()
     });
     closeModal('ov-ship');
-    toast('✅ تم تسجيل الشحن','ok');
+    if(shouldArchive){
+      closePanel();
+      toast('✅ تم التسليم بالمكتب وأرشفة الأوردر','ok');
+    } else {
+      toast('✅ تم تسجيل الشحن','ok');
+    }
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
