@@ -519,7 +519,12 @@ function openSettle(companyName){
     !returns.some(r=>r.orderId===o._id&&r.status!=='cancelled')
   );
 
-  const totalDue=settleCompanyOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  // المبلغ الصح = ما على الشركة فعلاً (الباقي بعد ما دفعه العميل)
+  const totalDue=settleCompanyOrders.reduce((s,o)=>{
+    const sale=parseFloat(o.salePrice)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    return s+Math.max(0,sale-paid);
+  },0);
   setText('settle-due',fn(totalDue)+' ج');
   setText('settle-incoming-preview','—');
   setText('settle-diff','—');
@@ -530,13 +535,17 @@ function openSettle(companyName){
     el.innerHTML=settleCompanyOrders.map(o=>{
       const sale=parseFloat(o.salePrice)||0;
       const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-      const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
-      return`<label style="display:flex;align-items:center;gap:8px;padding:7px;border-radius:6px;cursor:pointer;margin-bottom:3px">
-        <input type="checkbox" class="settle-checkbox settle-order-cb" value="${o._id}" data-amount="${sale}" checked>
-        <span style="flex:1;font-size:12px"><strong>${o.clientName||'—'}</strong> <span style="color:var(--dim2)">${o.orderId||''}</span></span>
-        <span style="font-size:12px;font-weight:700;color:var(--b)">${fn(sale)} ج</span>
-        ${paid>0?`<span style="font-size:11px;color:var(--g)">دفع ${fn(paid)} ج</span>`:''}
-        ${rem>0?`<span style="font-size:11px;color:var(--r)">باقي ${fn(rem)} ج</span>`:'<span style="font-size:11px;color:var(--g)">✅</span>'}
+      const dueByCo=Math.max(0,sale-paid); // ما على الشركة فعلاً
+      return`<label style="display:flex;align-items:center;gap:8px;padding:7px;border-radius:6px;cursor:pointer;margin-bottom:3px;background:var(--bg2);border:1px solid var(--line)">
+        <input type="checkbox" class="settle-checkbox settle-order-cb" value="${o._id}" data-amount="${dueByCo}" checked>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-weight:400;font-size:11px">${o.orderId||''}</span></div>
+          ${paid>0?`<div style="font-size:10px;color:var(--g)">دفع مسبقاً: ${fn(paid)} ج</div>`:''}
+        </div>
+        <div style="text-align:left;flex-shrink:0">
+          <div style="font-size:14px;font-weight:900;color:var(--b)">${fn(dueByCo)} ج</div>
+          <div style="font-size:9px;color:var(--dim2)">من ${fn(sale)} ج</div>
+        </div>
       </label>`;
     }).join('') || '<div style="color:var(--dim2);font-size:12px;text-align:center;padding:12px">لا توجد شحنات مستحقة</div>';
   }
