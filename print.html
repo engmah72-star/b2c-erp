@@ -79,6 +79,12 @@
     <div class="topbar-right"><div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث باسم العميل..." oninput="renderList()"></div></div>
   </div>
   <div class="content">
+    <!-- بحث سريع -->
+    <div style="position:relative;margin-bottom:14px">
+      <input id="print-search" class="inp" placeholder="🔍 بحث باسم العميل أو رقم الأوردر..."
+        oninput="filterPrintList(this.value)"
+        style="background:var(--bg2)">
+    </div>
     <div class="stats" style="margin-bottom:18px">
       <div class="stat" style="--sc:var(--b)"><div class="stat-icon">🖨️</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">إجمالي</div></div>
       <div class="stat" style="--sc:var(--g)"><div class="stat-icon">💰</div><div class="stat-val" id="s-rev">0</div><div class="stat-lbl">إيرادات ج</div></div>
@@ -98,6 +104,7 @@
       <div style="display:flex;gap:6px">
         <button class="btn btn-b btn-sm" onclick="moveTo('production')">🏭 للتنفيذ</button>
         <button class="btn btn-c btn-sm" id="pn-ship" onclick="moveTo('shipping')" style="display:none">🚚 للشحن</button>
+        <a id="pn-wa-btn" href="#" target="_blank" style="display:none;padding:6px 12px;border-radius:8px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.3);color:#25D366;font-size:12px;font-weight:700;text-decoration:none">💬</a>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
     </div>
@@ -503,6 +510,14 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 });
 
+window.filterPrintList=function(q){
+  const s=(q||'').toLowerCase().trim();
+  document.querySelectorAll('.ord-card').forEach(card=>{
+    const t=(card.dataset.client||'').toLowerCase()+(card.dataset.id||'').toLowerCase();
+    card.style.display=!s||t.includes(s)?'':'none';
+  });
+};
+
 window.renderList=function(){
   const q=gv('q').toLowerCase();
   const data=orders.filter(o=>!q||(o.clientName||'').toLowerCase().includes(q)||(o.orderId||'').includes(q));
@@ -553,6 +568,14 @@ window.openOrder=function(id){
 };
 
 function renderPanel(o){
+  // واتساب العميل
+  const waBtn=document.getElementById('pn-wa-btn');
+  if(waBtn&&o.clientPhone){
+    const phone=o.clientPhone.replace(/^0/,'');
+    waBtn.href=`https://wa.me/2${phone}`;
+    waBtn.style.display='inline-flex';
+    waBtn.title='واتساب '+o.clientName;
+  } else if(waBtn) waBtn.style.display='none';
   const prods=o.products||[];
   const dep=parseFloat(o.deposit)||0;
   const paid=parseFloat(o.paid)||0;
@@ -867,6 +890,65 @@ window.saveAdvance=async function(){
 };
 
 // ── نقل الأوردر ──
+// ══ رفع ملف نهائي للمطبعة ══
+window.openPrintUpload=function(){
+  document.getElementById('print-final-inp')?.click();
+};
+
+window.uploadPrintFinal=async function(inp){
+  const file=inp?.files?.[0];if(!file)return;
+  await _uploadPrintFile(file);
+};
+
+// Paste
+document.addEventListener('paste',function(e){
+  const panel=document.getElementById('panel-ov');
+  if(!panel?.classList.contains('open'))return;
+  const items=e.clipboardData?.items;if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      const f=item.getAsFile();if(f)_uploadPrintFile(f);
+      break;
+    }
+  }
+});
+
+async function _uploadPrintFile(file){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const pw=document.getElementById('print-prog-wrap');
+  const pb=document.getElementById('print-prog-bar');
+  const pt=document.getElementById('print-prog-txt');
+  if(pw)pw.style.display='block';
+  try{
+    const {getStorage,ref,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+    const storage=getStorage();
+    const sRef=ref(storage,`print-finals/${activeId}_${Date.now()}`);
+    const task=uploadBytesResumable(sRef,file);
+    await new Promise((res,rej)=>{
+      task.on('state_changed',
+        s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);if(pb)pb.style.width=p+'%';if(pt)pt.textContent=p+'%';},
+        rej,
+        async()=>{
+          const url=await getDownloadURL(task.snapshot.ref);
+          const nowS=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+          await db.collection('orders').doc(activeId).update({
+            printFinalUrl:url,
+            printFinalType:file.type,
+            timeline:[...(o.timeline||[]),{date:nowS,action:'📁 رُفع الملف النهائي للمطبعة',by:userName}]
+          });
+          if(pw)pw.style.display='none';
+          toast('✅ تم رفع الملف النهائي','ok');
+          res();
+        }
+      );
+    });
+  }catch(e){
+    if(pw)pw.style.display='none';
+    toast('❌ '+e.message,'err');
+  }
+}
+
 window.moveTo=async function(stage){
   if(!activeId)return;const o=orders.find(x=>x._id===activeId);
   const labels={production:'التنفيذ 🏭',shipping:'الشحن 🚚'};
