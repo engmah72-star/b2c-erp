@@ -122,6 +122,25 @@
   </div>
 
   <div class="content">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center">
+          <div style="font-size:20px;font-weight:900;color:var(--b)" id="sk-total">—</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">📦 إجمالي</div>
+        </div>
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:12px;padding:12px 8px;text-align:center">
+          <div style="font-size:20px;font-weight:900;color:var(--y)" id="sk-pending">—</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">⏳ جاري</div>
+        </div>
+        <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);border-radius:12px;padding:12px 8px;text-align:center">
+          <div style="font-size:20px;font-weight:900;color:var(--g)" id="sk-collected">—</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">✅ محصّل</div>
+        </div>
+        <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:12px 8px;text-align:center">
+          <div style="font-size:18px;font-weight:900;color:var(--r)" id="sk-rem">—</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">💰 باقي ج</div>
+        </div>
+      </div>
+
 
     <!-- STATS -->
     <div class="stat-strip">
@@ -656,7 +675,7 @@ onAuthStateChanged(auth,async u=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
       .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     updateStats();
-    renderList();
+    updateShipKPIs();renderList();
     setText('sub',orders.length+' طلب شحن');
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
@@ -676,10 +695,26 @@ window.setFilter=function(f,btn){
   currentFilter=f;
   document.querySelectorAll('.stat-pill').forEach(b=>b.classList.remove('on'));
   btn?.classList.add('on');
-  renderList();
+  updateShipKPIs();renderList();
 };
 
 // ══ LIST ══
+window.updateShipKPIs=function(){
+  const total=orders.length;
+  const pending=orders.filter(o=>!o.shipStage||o.shipStage==='ready'||o.shipStage==='wait_delivery').length;
+  const collected=orders.filter(o=>o.shipStage==='collected').length;
+  const totRem=orders.reduce((s,o)=>{
+    const sale=parseFloat(o.salePrice)||0;
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    return s+Math.max(0,sale-paid);
+  },0);
+  const setText2=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  setText2('sk-total',total);
+  setText2('sk-pending',pending);
+  setText2('sk-collected',collected);
+  setText2('sk-rem',fn(totRem)+' ج');
+};
+
 window.renderList=function(){
   const q=gv('q').toLowerCase();
   let data=orders.filter(o=>{
@@ -696,7 +731,9 @@ window.renderList=function(){
   el.innerHTML=data.map(o=>{
     const ss=o.shipStage||'ready';
     const sc=STAGE_COL[ss]||'var(--c)';
-    const rem=parseFloat(o.remaining)||0;
+    const sale2=parseFloat(o.salePrice)||0;
+    const paid2=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,sale2-paid2);
     const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
     return`<div class="ocard" style="--oc:${sc}" onclick="openOrder('${o._id}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
@@ -714,7 +751,7 @@ window.renderList=function(){
       ${o.shipGov?`<div style="font-size:11px;color:var(--dim2);margin-top:4px">📍 ${o.shipGov}${o.shipAddress?' · '+o.shipAddress:''}</div>`:''}
       <div class="ocard-bottom">
         <div style="font-size:11px;color:var(--dim2)">${o.shipMethod?METHOD_LABELS[o.shipMethod]||o.shipMethod:'لم يُسجَّل الشحن'}</div>
-        ${rem>0?`<span class="rem-badge">💰 باقي ${fn(rem)} ج</span>`:'<span style="font-size:12px;color:var(--g);font-weight:700">✅ محصّل</span>'}
+        ${rem>0?`<span class="rem-badge">💰 ${fn(rem)} ج</span>`:'<span style="font-size:12px;color:var(--g);font-weight:700">✅ محصّل</span>'}
       </div>
     </div>`;
   }).join('');
@@ -726,17 +763,20 @@ window.openOrder=function(id){
   const o=orders.find(x=>x._id===id);if(!o)return;
   const ss=o.shipStage||'ready';
   const sc=STAGE_COL[ss]||'var(--c)';
-  const rem=parseFloat(o.remaining)||0;
   const sale=parseFloat(o.salePrice)||0;
-  const paid=parseFloat(o.paid)||0;
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
   document.getElementById('pn-hdr').innerHTML=`
-    <div>
+    <div style="flex:1">
       <div style="font-size:10px;color:${sc};font-weight:700;margin-bottom:2px">🚚 ${STAGE_LABELS[ss]||ss}</div>
       <div style="font-size:17px;font-weight:900">${o.clientName||'—'}</div>
       <a href="tel:${o.clientPhone}" style="font-size:12px;color:var(--b);text-decoration:none">📞 ${o.clientPhone||'—'}</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      ${o.clientPhone?`<a href="https://wa.me/2${(o.clientPhone||'').replace(/^0/,'')}" target="_blank" style="padding:8px 12px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.3);border-radius:8px;color:#25D366;font-size:14px;text-decoration:none">💬</a>`:''}
     </div>`;
 
   document.getElementById('panel-body').innerHTML=`
@@ -757,7 +797,9 @@ window.openOrder=function(id){
         <div class="fin-cell"><div class="fin-cell-lbl">محصّل</div><div class="fin-cell-val" style="color:var(--g)">${fn(paid)}</div></div>
         <div class="fin-cell" style="${rem>0?'background:rgba(255,61,110,.1)':''}">
           <div class="fin-cell-lbl">باقي</div>
-          <div class="fin-cell-val" style="color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem):'✅'}</div>
+          <div class="fin-cell-val" style="color:${rem>0?'var(--r)':'var(--g)'}">
+            ${rem>0?fn(rem):'✅'}
+          </div>
         </div>
       </div>
       ${sale>0?`<div style="height:8px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div></div>`:''}
