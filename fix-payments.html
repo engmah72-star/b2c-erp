@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>إصلاح المدفوعات</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#0d0f1c;color:#fff;padding:20px;direction:rtl}
+.card{background:#1a1d2e;border-radius:12px;padding:16px;margin-bottom:12px;border:1px solid #2a2d3e}
+button{padding:10px 20px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-family:Arial;margin:4px;font-weight:700}
+.btn-b{background:rgba(59,158,255,.2);color:#3b9eff;border:1px solid rgba(59,158,255,.4)}
+.btn-g{background:rgba(0,217,126,.2);color:#00d97e;border:1px solid rgba(0,217,126,.4)}
+.btn-r{background:rgba(255,61,110,.2);color:#ff3d6e;border:1px solid rgba(255,61,110,.4)}
+.btn-y{background:rgba(255,170,0,.2);color:#ffaa00;border:1px solid rgba(255,170,0,.4)}
+#log{background:#0a0c1a;border-radius:8px;padding:12px;font-size:12px;color:#888;max-height:400px;overflow-y:auto;margin-top:16px;font-family:monospace}
+.stat{display:inline-block;padding:8px 16px;border-radius:8px;margin:4px;font-weight:700;font-size:14px}
+.ok{background:rgba(0,217,126,.15);color:#00d97e}
+.warn{background:rgba(255,170,0,.15);color:#ffaa00}
+.err{background:rgba(255,61,110,.15);color:#ff3d6e}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:8px 10px;border-bottom:1px solid #2a2d3e;text-align:right}
+th{background:#0a0c1a;font-weight:800;color:#888}
+.fixed{color:#00d97e}
+.skipped{color:#888}
+.problem{color:#ff3d6e}
+</style>
+</head>
+<body>
+<h2>🔧 إصلاح المدفوعات القديمة</h2>
+
+<div class="card">
+  <div style="margin-bottom:12px;font-size:13px;color:#888">
+    هذه الأداة تصلح الأوردرات القديمة التي عندها <code>paid</code> بدون <code>totalPaid</code><br>
+    وتضيف <code>paymentStatus</code> الصحيح لكل أوردر
+  </div>
+  <button class="btn-b" onclick="scanOrders()">🔍 فحص الأوردرات</button>
+  <button class="btn-g" id="fix-btn" onclick="fixAll()" style="display:none">✅ إصلاح الكل</button>
+  <button class="btn-y" id="fix-shipping-btn" onclick="fixShippingOnly()" style="display:none">🚚 إصلاح الشحن فقط</button>
+  <div id="stats" style="margin-top:12px"></div>
+</div>
+
+<div id="preview-wrap" style="display:none" class="card">
+  <div style="font-weight:800;margin-bottom:10px">📋 الأوردرات المحتاجة إصلاح:</div>
+  <div id="preview-table"></div>
+</div>
+
+<div id="log"></div>
+
+<script type="module">
+import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {getAuth,onAuthStateChanged} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {getFirestore,collection,getDocs,updateDoc,doc,query,where} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
+const auth=getAuth(app),db=getFirestore(app);
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+
+function log(msg,cls=''){
+  const el=document.getElementById('log');
+  el.innerHTML+=`<div style="padding:2px 0;${cls==='ok'?'color:#00d97e':cls==='err'?'color:#ff3d6e':cls==='warn'?'color:#ffaa00':''}">${msg}</div>`;
+  el.scrollTop=el.scrollHeight;
+}
+
+let allOrders=[], toFix=[], toFixShipping=[];
+
+onAuthStateChanged(auth,u=>{
+  if(!u){document.body.innerHTML='<div style="padding:40px;text-align:center"><p style="color:#ff3d6e">سجل دخول أولاً</p><a href="login.html" style="color:#3b9eff">تسجيل الدخول</a></div>';}
+  else{log('✅ مسجل دخول: '+u.email,'ok');}
+});
+
+window.scanOrders=async function(){
+  log('🔍 جاري الفحص...');
+  document.getElementById('stats').innerHTML='<div style="color:#888">جاري التحميل...</div>';
+
+  try{
+    const snap=await getDocs(collection(db,'orders'));
+    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    log(`📦 إجمالي الأوردرات: ${allOrders.length}`);
+
+    // تصنيف الأوردرات
+    toFix=[];
+    toFixShipping=[];
+    let ok=0,noPrice=0;
+
+    allOrders.forEach(o=>{
+      const sale=parseFloat(o.salePrice)||0;
+      const paid=parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const totalPaid=parseFloat(o.totalPaid)||0;
+      const remaining=parseFloat(o.remaining)||0;
+
+      // الأوردرات اللي محتاجة إصلاح
+      const needsFix=
+        totalPaid===0&&paid>0 || // عندها paid بس مفيش totalPaid
+        (sale>0&&remaining===0&&totalPaid===0&&paid===0) || // مدفوع بالكامل بدون تسجيل
+        !o.paymentStatus; // مفيش paymentStatus
+
+      if(!sale&&!paid&&!totalPaid){noPrice++;return;}
+
+      if(needsFix){
+        const correctPaid=Math.max(totalPaid,paid);
+        const correctRem=Math.max(0,sale-correctPaid);
+        const status=correctRem<=0?'paid':correctPaid>0?'partial':'pending';
+        
+        toFix.push({
+          _id:o._id,
+          clientName:o.clientName||'—',
+          orderId:o.orderId||o._id.slice(-6),
+          stage:o.stage||'—',
+          sale,paid,totalPaid,remaining,
+          correctPaid,correctRem,status,
+          isShipping:['shipping','archived'].includes(o.stage)
+        });
+
+        if(['shipping','archived'].includes(o.stage)){
+          toFixShipping.push(o._id);
+        }
+      } else {
+        ok++;
+      }
+    });
+
+    // عرض الإحصائيات
+    document.getElementById('stats').innerHTML=`
+      <span class="stat ok">✅ سليم: ${ok}</span>
+      <span class="stat warn">⚠️ محتاج إصلاح: ${toFix.length}</span>
+      <span class="stat" style="background:rgba(59,158,255,.15);color:#3b9eff">🚚 شحن منهم: ${toFixShipping.length}</span>
+      <span class="stat" style="background:rgba(100,100,100,.15);color:#888">بدون سعر: ${noPrice}</span>
+    `;
+
+    log(`⚠️ محتاج إصلاح: ${toFix.length} أوردر`,'warn');
+    log(`🚚 في الشحن: ${toFixShipping.length} أوردر`,'warn');
+
+    if(toFix.length>0){
+      // عرض جدول
+      document.getElementById('preview-wrap').style.display='block';
+      document.getElementById('preview-table').innerHTML=`
+        <table>
+          <thead><tr>
+            <th>الأوردر</th><th>العميل</th><th>المرحلة</th>
+            <th>السعر</th><th>paid قديم</th><th>totalPaid</th>
+            <th>الصح</th><th>الباقي</th><th>الحالة</th>
+          </tr></thead>
+          <tbody>
+            ${toFix.map(o=>`<tr>
+              <td>${o.orderId}</td>
+              <td>${o.clientName}</td>
+              <td>${o.stage}</td>
+              <td>${fn(o.sale)} ج</td>
+              <td style="color:#ffaa00">${fn(o.paid)} ج</td>
+              <td style="color:${o.totalPaid>0?'#00d97e':'#ff3d6e'}">${fn(o.totalPaid)} ج</td>
+              <td class="fixed">${fn(o.correctPaid)} ج</td>
+              <td style="color:${o.correctRem>0?'#ff3d6e':'#00d97e'}">${fn(o.correctRem)} ج</td>
+              <td>${o.status==='paid'?'✅ مكتمل':o.status==='partial'?'⚡ جزئي':'⏳ معلق'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+
+      document.getElementById('fix-btn').style.display='inline';
+      document.getElementById('fix-shipping-btn').style.display=toFixShipping.length>0?'inline':'none';
+    }
+  }catch(e){log('❌ خطأ: '+e.message,'err');}
+};
+
+window.fixShippingOnly=async function(){
+  const shippingOrders=toFix.filter(o=>['shipping','archived'].includes(o.stage));
+  await doFix(shippingOrders,'🚚 إصلاح الشحن');
+};
+
+window.fixAll=async function(){
+  if(!confirm(`إصلاح ${toFix.length} أوردر؟`))return;
+  await doFix(toFix,'✅ إصلاح الكل');
+};
+
+async function doFix(orders,label){
+  log(`\n${label} — ${orders.length} أوردر...`,'warn');
+  let fixed=0,errors=0;
+
+  for(const o of orders){
+    try{
+      await updateDoc(doc(db,'orders',o._id),{
+        totalPaid:o.correctPaid,
+        paid:o.correctPaid,
+        remaining:o.correctRem,
+        paymentStatus:o.status,
+      });
+      log(`  ✅ ${o.orderId} — ${o.clientName} → totalPaid=${fn(o.correctPaid)} ج، باقي=${fn(o.correctRem)} ج`,'ok');
+      fixed++;
+    }catch(e){
+      log(`  ❌ ${o.orderId} — ${e.message}`,'err');
+      errors++;
+    }
+  }
+
+  log(`\n✅ انتهى: ${fixed} تم إصلاحهم، ${errors} فشلوا`,'ok');
+  document.getElementById('fix-btn').style.display='none';
+  document.getElementById('fix-shipping-btn').style.display='none';
+
+  // أعد الفحص
+  setTimeout(()=>scanOrders(),1500);
+}
+</script>
+</body>
+</html>
