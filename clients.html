@@ -1149,6 +1149,132 @@ function exportCSV(){
 }
 
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+
+
+// ══════════════════════════════════════
+// Global Functions
+// ══════════════════════════════════════
+
+window.__clientFilter = 'all';
+
+window.setClientFilter = function(filter, btn) {
+  window.__clientFilter = filter;
+  document.querySelectorAll('[id^="flt-"]').forEach(b => b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  renderGrid();
+};
+
+window.showStatsDrawer = function(type) {
+  const fn2 = window._fn || (n => (parseFloat(n)||0).toLocaleString('ar-EG'));
+  const titles = {
+    total: '👥 كل العملاء',
+    month: '🆕 عملاء هذا الشهر',
+    sales: '💰 تفاصيل المبيعات',
+    rem:   '💳 باقي التحصيل',
+    orders:'📦 الأوردرات النشطة'
+  };
+  const titleEl = document.getElementById('drawer-title');
+  const el = document.getElementById('drawer-content');
+  if(titleEl) titleEl.textContent = titles[type] || 'التفاصيل';
+  if(!el) return;
+
+  const now = new Date(); const y = now.getFullYear(), m = now.getMonth();
+  const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
+
+  if(type === 'total') {
+    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--dim2);font-size:16px;font-weight:800">${clients.length} عميل</div>` +
+      clients.slice(0,30).map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-size:13px;font-weight:800">${c2.name||'—'}</div><div style="font-size:11px;color:var(--dim2)">${c2.phone1||'—'} · ${c2.job||'—'}</div></div>
+        <a href="https://wa.me/20${(c2.phone1||'').replace(/^0/,'')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
+      </div>`).join('');
+  }
+  else if(type === 'month') {
+    const monthC = clients.filter(c2 => { const d=c2.createdAt?.seconds?new Date(c2.createdAt.seconds*1000):null; return d&&d.getFullYear()===y&&d.getMonth()===m; });
+    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--g);font-size:18px;font-weight:900">${monthC.length} عميل جديد</div>` +
+      (monthC.length ? monthC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-size:13px;font-weight:800">${c2.name||'—'}</div><div style="font-size:11px;color:var(--dim2)">${c2.phone1||'—'}</div></div>
+        <a href="https://wa.me/20${(c2.phone1||'').replace(/^0/,'')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
+      </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:20px">لا يوجد عملاء جدد</div>');
+  }
+  else if(type === 'sales') {
+    const ords = allOrders.filter(o => parseFloat(o.salePrice)>0).sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const tot = ords.reduce((s,o) => s+(parseFloat(o.salePrice)||0), 0);
+    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--y);font-size:18px;font-weight:900">${fn(tot)} ج</div>` +
+      ords.slice(0,20).map(o => {
+        const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+        const rem = Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+        const pct = parseFloat(o.salePrice)>0 ? Math.min(100,paid/parseFloat(o.salePrice)*100) : 0;
+        return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
+              <div style="font-size:11px;color:var(--dim2)">${o.product||(o.products||[]).map(p=>p.name).join('+')||'—'}</div>
+              <div style="font-size:10px;color:var(--dim2)">${o.clientPhone||'—'} · ${o.createdDate||'—'}</div>
+            </div>
+            <div style="text-align:left;flex-shrink:0;margin-right:8px">
+              <div style="font-size:14px;font-weight:900;color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>
+              ${rem>0?`<div style="font-size:11px;color:var(--r);font-weight:700">باقي: ${fn(rem)} ج</div>`:'<div style="font-size:11px;color:var(--g)">✅ مكتمل</div>'}
+            </div>
+          </div>
+          <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:5px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${rem<=0?'var(--g)':'var(--b)'}"></div>
+          </div>
+        </div>`;
+      }).join('');
+  }
+  else if(type === 'rem') {
+    const remOrds = allOrders.filter(o => {
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const rem=parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+      return rem>0;
+    }).sort((a,b) => {
+      const ra=parseFloat(a.remaining)||0, rb=parseFloat(b.remaining)||0;
+      return rb-ra;
+    });
+    const totRem = remOrds.reduce((s,o) => {
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      return s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-paid));
+    }, 0);
+    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--r);font-size:18px;font-weight:900">${fn(totRem)} ج إجمالي باقي</div>` +
+      (remOrds.length ? remOrds.map(o => {
+        const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+        const rem=parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
+            <div style="font-size:11px;color:var(--dim2)">${o.clientPhone||'—'} · ${o.orderId||o._id.slice(-6)}</div>
+            <div style="font-size:10px;color:var(--dim2)">${o.product||(o.products||[]).map(p=>p.name).join('+')||'—'}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+            <span style="font-size:15px;font-weight:900;color:var(--r)">${fn(rem)} ج</span>
+            <a href="https://wa.me/20${(o.clientPhone||'').replace(/^0/,'')}" target="_blank" style="font-size:11px;color:var(--g);text-decoration:none;background:rgba(37,211,102,.1);padding:2px 8px;border-radius:20px">💬 تذكير</a>
+          </div>
+        </div>`;
+      }).join('') : '<div style="color:var(--g);text-align:center;padding:20px;font-weight:800">✅ لا يوجد متبقي</div>');
+  }
+  else if(type === 'orders') {
+    const activeOrds = allOrders.filter(o => o.stage!=='archived').sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const stageMap = {design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن'};
+    const byStage = {};
+    activeOrds.forEach(o => { if(!byStage[o.stage])byStage[o.stage]=[]; byStage[o.stage].push(o); });
+    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--p);font-size:18px;font-weight:900">${activeOrds.length} أوردر نشط</div>` +
+      Object.entries(byStage).map(([stage,ords]) => `
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:800;color:var(--dim2);padding:6px 10px;background:var(--bg2);border-radius:8px;margin-bottom:6px">${stageMap[stage]||stage} — ${ords.length} أوردر</div>
+          ${ords.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700">${o.clientName||'—'}</div>
+              <div style="font-size:11px;color:var(--dim2)">${o.product||(o.products||[]).map(p=>p.name).join('+')||'—'}</div>
+              ${o.deadline&&new Date(o.deadline)<new Date()?'<div style="font-size:10px;color:var(--r);font-weight:700">⚠️ متأخر</div>':''}
+            </div>
+            <span style="font-size:12px;font-weight:800;color:var(--b);flex-shrink:0">${fn(parseFloat(o.salePrice)||0)} ج</span>
+          </div>`).join('')}
+        </div>`).join('');
+  }
+
+  document.getElementById('stats-drawer-ov').style.display = 'block';
+};
+
 </script>
 
 <!-- MODAL: رقم مكرر -->
