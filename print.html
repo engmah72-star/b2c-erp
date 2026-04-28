@@ -201,7 +201,340 @@
 <div id="toasts" class="toasts"></div>
 
 <script type="module">
-import {initializeApp} from\"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js\";\nimport {getAuth,onAuthStateChanged,signOut} from\"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js\";\nimport {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp} from\"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js\";\nimport {getStorage,ref,uploadBytesResumable,getDownloadURL} from\"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js\";\n\nconst app=initializeApp({apiKey:\"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk\",authDomain:\"business2card-c041b.firebaseapp.com\",projectId:\"business2card-c041b\",storageBucket:\"business2card-c041b.firebasestorage.app\",messagingSenderId:\"235622448899\",appId:\"1:235622448899:web:d8652ff71082f7d003f336\"});\nconst auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);\n\nlet orders=[],suppliers=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='';\nconst fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');\nconst gv=id=>document.getElementById(id)?.value||'';\nconst sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};\nconst setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};\nconst oM=id=>document.getElementById('ov-'+id)?.classList.add('open');\nconst cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');\nwindow.cM=cM;window.oM=oM;\nconst nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});\n\nfunction toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}\nwindow.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};\nwindow.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};\nwindow.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};\n\nonAuthStateChanged(auth,async u=>{\n  if(!u){window.location.href='login.html';return;}\n  currentUser=u;\n  const snap=await getDoc(doc(db,'users',u.uid));\n  if(snap.exists()){const d=snap.data();userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');}\n  onSnapshot(query(collection(db,'orders'),where('stage','==','production')),snap=>{\n    window.markSynced&&window.markSynced();\n    orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));\n    setText('s-pending',orders.filter(o=>!o.prodStatus||o.prodStatus==='pending').length);\n    setText('s-wip',orders.filter(o=>['wip','received'].includes(o.prodStatus)).length);\n    setText('s-done',orders.filter(o=>o.prodStatus==='done').length);\n    setText('sub',orders.length+' \u0637\u0644\u0628 \u062a\u0646\u0641\u064a\u0630');\n    renderList();\n    if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}\n  });\n  onSnapshot(collection(db,'suppliers_v2'),snap=>{\n    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));\n    buildSupFilter();\n    const s=document.getElementById('ac-sup');if(!s)return;\n    s.innerHTML='<option value=\"\">\u2014 \u0627\u062e\u062a\u064a\u0627\u0631\u064a \u2014</option>'+suppliers.map(x=>`<option value=\"${x._id}\" data-name=\"${x.name}\" data-phone=\"${x.phone||x.whatsapp||''}\">${x.name}</option>`).join('');\n  });\n});\n\nwindow.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};\nwindow.setSupFilter=function(id,btn){currentSupFilter=id;document.querySelectorAll('#sup-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};\n\nfunction buildSupFilter(){\n  const bar=document.getElementById('sup-filter-bar');if(!bar)return;\n  const used=new Set(orders.map(o=>o.supplierId).filter(Boolean));\n  const usedSups=suppliers.filter(s=>used.has(s._id));\n  bar.innerHTML=`<button class=\"ftab active\" onclick=\"setSupFilter('',this)\">\u0643\u0644 \u0627\u0644\u0645\u0637\u0627\u0628\u0639</button>`+usedSups.map(s=>`<button class=\"ftab\" onclick=\"setSupFilter('${s._id}',this)\">${s.name}</button>`).join('');\n}\n\nwindow.renderList=function(){\n  let data=orders;\n  if(currentFilter==='pending')data=orders.filter(o=>!o.prodStatus||o.prodStatus==='pending');\n  else if(currentFilter==='wip')data=orders.filter(o=>['wip','received'].includes(o.prodStatus));\n  else if(currentFilter==='done')data=orders.filter(o=>o.prodStatus==='done');\n  else if(currentFilter==='problem')data=orders.filter(o=>o.prodStatus==='problem');\n  if(currentSupFilter)data=data.filter(o=>o.supplierId===currentSupFilter);\n  const el=document.getElementById('list');if(!el)return;\n  if(!data.length){el.innerHTML=`<div class=\"empty\"><div class=\"empty-icon\">\ud83c\udfed</div><div class=\"empty-text\">\u0644\u0627 \u062a\u0648\u062c\u062f \u0637\u0644\u0628\u0627\u062a</div></div>`;return;}\n  const SM={pending:{cls:'sp-pending',lbl:'\u23f3 \u0627\u0646\u062a\u0638\u0627\u0631',cc:''},received:{cls:'sp-wip',lbl:'\ud83d\udce5 \u0627\u0633\u062a\u0644\u0645\u062a',cc:'card-wip'},wip:{cls:'sp-wip',lbl:'\ud83d\udd04 \u062c\u0627\u0631\u064a',cc:'card-wip'},done:{cls:'sp-done',lbl:'\u2705 \u062e\u0644\u0635\u062a',cc:'card-done'},problem:{cls:'sp-prob',lbl:'\u26a0\ufe0f \u0645\u0634\u0643\u0644\u0629',cc:'card-prob'}};\n  el.innerHTML=data.map(o=>{\n    const ps=o.prodStatus||'pending';const st=SM[ps]||SM.pending;\n    const prods=o.products||[];\n    const firstImg=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||'';\n    const sup=o.supplierId?suppliers.find(s=>s._id===o.supplierId):null;\n    const ci=o.costItems||[];const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);\n    const prodNames=prods.map(p=>`${p.name}\u00d7${p.qty}`).join(' \u00b7 ')||o.product||'\u2014';\n    const days=o.createdAt?.seconds?Math.floor((Date.now()/1000-o.createdAt.seconds)/86400):0;\n    const urgent=days>2&&ps==='pending';\n    return`<div class=\"ord-card ${st.cc}${urgent?' card-urgent':''}\" onclick=\"openOrder('${o._id}')\">\n      <div class=\"ord-top\">\n        <div style=\"flex:1;min-width:0\">\n          <div class=\"ord-id\">${o.orderId||o._id.slice(-6)} \u00b7 ${o.createdDate||'\u2014'}</div>\n          <div class=\"ord-name\">${o.clientName||'\u2014'}</div>\n          <div class=\"ord-prods\">${prodNames}</div>\n        </div>\n        <div style=\"display:flex;flex-direction:column;align-items:flex-end;gap:6px\">\n          <span class=\"status-pill ${st.cls}\">${st.lbl}</span>\n          ${tc>0?`<span style=\"font-size:11px;color:var(--r);font-weight:700\">\ud83d\udcb0${fn(tc)}\u062c</span>`:''}\n        </div>\n      </div>\n      ${firstImg?`<img src=\"${firstImg}\" class=\"ord-img\" onclick=\"event.stopPropagation();window.open('${firstImg}','_blank')\">`:'' }\n      <div class=\"ord-foot\">\n        ${sup?`<span class=\"sup-tag\">\ud83c\udfed ${sup.name}</span>`:`<span class=\"sup-tag\" style=\"color:var(--r)\">\u26a0\ufe0f \u0628\u062f\u0648\u0646 \u0645\u0637\u0628\u0639\u0629</span>`}\n        ${urgent?`<span class=\"delay-tag\">\u0645\u0646\u0630 ${days} \u0623\u064a\u0627\u0645</span>`:''}\n        ${o.finalImageUrl?`<span class=\"sup-tag\" style=\"color:var(--g)\">\u2705 \u0635\u0648\u0631\u0629</span>`:''}\n      </div>\n    </div>`;\n  }).join('');\n};\n\nwindow.openOrder=function(id){\n  activeId=id;const o=orders.find(x=>x._id===id);if(!o)return;\n  setText('pn-name',o.clientName||'\u2014');\n  setText('pn-sub',(o.orderId||id.slice(-6))+' \u00b7 '+(o.clientPhone||''));\n  const pov=document.getElementById('panel-ov');pov.style.display='flex';\n  setTimeout(()=>pov.classList.add('open'),10);\n  renderPanel(o);\n};\nwindow.closePanel=function(){\n  const pov=document.getElementById('panel-ov');pov.classList.remove('open');\n  setTimeout(()=>pov.style.display='none',200);activeId=null;\n};\n\nfunction renderPanel(o){\n  const prods=o.products||[];const ci=o.costItems||[];const ps=o.prodStatus||'pending';\n  // 1. \u0627\u0644\u062a\u0635\u0645\u064a\u0645\n  const dEl=document.getElementById('design-imgs');\n  const imgs=prods.filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name}));\n  if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'\u0627\u0644\u062a\u0635\u0645\u064a\u0645'});\n  dEl.innerHTML=imgs.length?imgs.map(img=>`<div style=\"margin-bottom:8px\">${imgs.length>1?`<div style=\"font-size:11px;color:var(--dim2);margin-bottom:4px;font-weight:700\">${img.name}</div>`:''}<div class=\"design-img-wrap\"><img src=\"${img.url}\" class=\"design-img\" onclick=\"window.open('${img.url}','_blank')\"></div></div>`).join(''):`<div class=\"design-img-wrap\"><div class=\"design-placeholder\">\ud83d\udcf7<br>\u0644\u0627 \u062a\u0648\u062c\u062f \u0635\u0648\u0631\u0629 \u062a\u0635\u0645\u064a\u0645</div></div>`;\n  // 2. \u0627\u0644\u0645\u0637\u0628\u0639\u0629\n  const sEl=document.getElementById('sup-btns');\n  sEl.innerHTML=suppliers.map(s=>`<button class=\"sup-btn${o.supplierId===s._id?' selected':''}\" onclick=\"selectSupplier('${s._id}','${s.name}','${s.phone||s.whatsapp||''}')\"><div class=\"sup-btn-name\">${s.name}</div><div class=\"sup-btn-phone\">${s.phone||s.whatsapp||''}</div></button>`).join('');\n  const waBtn=document.getElementById('wa-btn');\n  if(o.supplierId){const sup=suppliers.find(s=>s._id===o.supplierId);waBtn.style.display='flex';waBtn.innerHTML=`<span>\ud83d\udcf1</span> \u0625\u0631\u0633\u0627\u0644 \u0644\u0640 ${sup?.name||'\u0627\u0644\u0645\u0637\u0628\u0639\u0629'} \u0648\u0627\u062a\u0633\u0627\u0628`;}\n  else{waBtn.style.display='none';}\n  // 3. \u0628\u0646\u0648\u062f \u0627\u0644\u062a\u0643\u0644\u0641\u0629\n  renderCosts(o);\n  // 4. \u062d\u0627\u0644\u0629\n  ['recv','wip','done','prob'].forEach(s=>{const b=document.getElementById('sbtn-'+s);if(b)b.className='status-btn';});\n  const smap={received:'recv',wip:'wip',done:'done',problem:'prob'};\n  const cur=smap[ps];if(cur){const b=document.getElementById('sbtn-'+cur);if(b)b.classList.add('act-'+cur);}\n  sv('prod-note',o.prodNote||'');\n  // 5. \u0627\u0644\u0646\u0647\u0627\u0626\u064a\n  const fw=document.getElementById('final-img-wrap');\n  fw.innerHTML=o.finalImageUrl?`<img src=\"${o.finalImageUrl}\" class=\"final-img\" onclick=\"window.open('${o.finalImageUrl}','_blank')\">`:'' ;\n  const sb=document.getElementById('ship-btn');\n  sb.disabled=!o.finalImageUrl;\n  sb.textContent=o.finalImageUrl?'\ud83d\ude9a \u062a\u062d\u0648\u064a\u0644 \u0644\u0644\u0634\u062d\u0646':'\ud83d\ude9a \u0627\u0631\u0641\u0639 \u0635\u0648\u0631\u0629 \u0627\u0644\u0645\u0646\u062a\u062c \u0623\u0648\u0644\u0627\u064b';\n  // \u0627\u0644\u0633\u062c\u0644\n  const tl=(o.timeline||[]).slice().reverse().slice(0,10);\n  document.getElementById('pn-timeline').innerHTML=tl.map(t=>`<div style=\"font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)\">${t.date} \u2014 ${t.action}</div>`).join('')||'<div style=\"color:var(--dim2);font-size:12px\">\u0644\u0627 \u064a\u0648\u062c\u062f \u0633\u062c\u0644</div>';\n}\n\nfunction renderCosts(o){\n  const prods=o.products||[];const ci=o.costItems||[];\n  const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);\n  const el=document.getElementById('costs-list');\n  function ciRow(item,globalIdx){\n    return`<div class=\"cost-item-row\"><div style=\"flex:1;min-width:0\"><div class=\"cost-item-name\">${item.type||'\u2014'}</div><div class=\"cost-item-sup\">${item.supplierName||'\u2014'}${item.note?' \u00b7 '+item.note:''}</div></div><div style=\"display:flex;align-items:center;gap:10px\"><span style=\"font-size:14px;font-weight:900;color:var(--r)\">${fn(item.total)} \u062c</span><button onclick=\"rmCost(${globalIdx})\" style=\"width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px\">\u2715</button></div></div>`;\n  }\n  if(!prods.length){\n    el.innerHTML=ci.map((item,i)=>ciRow(item,i)).join('')+`<button class=\"cost-add-btn\" onclick=\"openAddCost(-1)\">\uff0b \u0625\u0636\u0627\u0641\u0629 \u0628\u0646\u062f</button>`;\n  } else {\n    el.innerHTML=prods.map((p,pi)=>{\n      const prodCi=ci.map((c,i)=>({...c,gi:i})).filter(c=>c.prodIdx===pi||(c.prodIdx==null&&pi===prods.length-1));\n      return`<div class=\"cost-prod-block\"><div class=\"cost-prod-hdr\"><span class=\"cost-prod-name\">\ud83d\udce6 ${p.name}</span><span class=\"cost-prod-qty\">\u00d7${p.qty}</span></div>${prodCi.length?prodCi.map(c=>ciRow(c,c.gi)).join(''):'<div style=\"padding:10px 14px;font-size:12px;color:var(--dim2)\">\u0644\u0627 \u062a\u0648\u062c\u062f \u0628\u0646\u0648\u062f</div>'}<button class=\"cost-add-btn\" onclick=\"openAddCost(${pi})\">\uff0b \u0625\u0636\u0627\u0641\u0629 \u0628\u0646\u062f \u0644\u0640 ${p.name}</button></div>`;\n    }).join('');\n  }\n  setText('cost-total',fn(tc)+' \u062c');\n}\n\nwindow.selectSupplier=async function(id,name,phone){\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  try{\n    await updateDoc(doc(db,'orders',activeId),{supplierId:id,supplierName:name,supplierPhone:phone,timeline:[...(o.timeline||[]),{date:nowStr(),action:`\ud83c\udfed \u0645\u0637\u0628\u0639\u0629: ${name}`,by:userName}],updatedAt:serverTimestamp()});\n    toast(`\u2705 ${name}`,'ok');\n    document.getElementById('wa-btn').style.display='flex';\n    document.getElementById('wa-btn').innerHTML=`<span>\ud83d\udcf1</span> \u0625\u0631\u0633\u0627\u0644 \u0644\u0640 ${name} \u0648\u0627\u062a\u0633\u0627\u0628`;\n    document.querySelectorAll('.sup-btn').forEach(b=>b.classList.remove('selected'));\n    event.target.closest('.sup-btn')?.classList.add('selected');\n  }catch(e){toast('\u274c '+e.message,'err');}\n};\n\nwindow.sendWhatsApp=function(){\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  const sup=suppliers.find(s=>s._id===o.supplierId);if(!sup)return;\n  const phone=(sup.phone||sup.whatsapp||'').replace(/[^0-9]/g,'');\n  if(!phone){toast('\u26a0\ufe0f \u0627\u0644\u0645\u0637\u0628\u0639\u0629 \u0645\u0634 \u0639\u0646\u062f\u0647\u0627 \u0648\u0627\u062a\u0633\u0627\u0628','err');return;}\n  const prods=o.products||[];\n  const prodsText=prods.map(p=>`\u2022 ${p.name} \u00d7 ${p.qty}`).join('\\n');\n  const imgUrl=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||'';\n  const msg=`\ud83d\udda8\ufe0f \u0637\u0644\u0628 \u0637\u0628\u0627\u0639\u0629\\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n\u0627\u0644\u0639\u0645\u064a\u0644: ${o.clientName||'\u2014'}\\n\u0627\u0644\u0645\u0646\u062a\u062c\u0627\u062a:\\n${prodsText||'\u2014'}\\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\\n${imgUrl?'\u0631\u0627\u0628\u0637 \u0627\u0644\u062a\u0635\u0645\u064a\u0645: '+imgUrl+'\\n':''}\u0627\u0644\u0631\u062c\u0627\u0621 \u0627\u0644\u062a\u0623\u0643\u064a\u062f \ud83d\ude4f`;\n  const waNum=phone.startsWith('0')?'2'+phone:phone.startsWith('2')?phone:'2'+phone;\n  window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`,'_blank');\n};\n\nwindow.setPrintStatus=async function(status){\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  const labels={received:'\ud83d\udce5 \u0627\u0633\u062a\u0644\u0645\u062a',wip:'\ud83d\udd04 \u062c\u0627\u0631\u064a \u0627\u0644\u0637\u0628\u0627\u0639\u0629',done:'\u2705 \u062e\u0644\u0635\u062a \u0627\u0644\u0637\u0628\u0627\u0639\u0629',problem:'\u26a0\ufe0f \u0645\u0634\u0643\u0644\u0629'};\n  try{await updateDoc(doc(db,'orders',activeId),{prodStatus:status,timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status],by:userName}],updatedAt:serverTimestamp()});toast(labels[status],'ok');}\n  catch(e){toast('\u274c '+e.message,'err');}\n};\n\nwindow.saveNote=async function(){\n  if(!activeId)return;\n  try{await updateDoc(doc(db,'orders',activeId),{prodNote:gv('prod-note'),updatedAt:serverTimestamp()});}catch(e){}\n};\n\nlet addCostProdIdx=-1;\nwindow.openAddCost=function(pi){\n  addCostProdIdx=pi;\n  const o=orders.find(x=>x._id===activeId);\n  const prods=o?.products||[];\n  const sel=document.getElementById('cost-prod-idx');\n  sel.innerHTML='<option value=\"-1\">\u2014 \u0639\u0627\u0645 \u0644\u0644\u0623\u0648\u0631\u062f\u0631 \u2014</option>'+prods.map((p,i)=>`<option value=\"${i}\">${p.name} \u00d7 ${p.qty}</option>`).join('');\n  sel.value=pi;\n  if(o?.supplierId){const ac=document.getElementById('ac-sup');if(ac)ac.value=o.supplierId;}\n  sv('ac-total','');sv('ac-note','');\n  oM('cost');\n};\n\nwindow.saveCost=async function(){\n  const type=gv('ac-type');const total=parseFloat(gv('ac-total'))||0;\n  if(!type)return toast('\u26a0\ufe0f \u0627\u062e\u062a\u0631 \u0646\u0648\u0639 \u0627\u0644\u0628\u0646\u062f','err');\n  if(!total)return toast('\u26a0\ufe0f \u0623\u062f\u062e\u0644 \u0627\u0644\u062a\u0643\u0644\u0641\u0629','err');\n  const supSel=document.getElementById('ac-sup');\n  const supOpt=supSel?.options[supSel.selectedIndex];\n  const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};\n  try{\n    await updateDoc(doc(db,'orders',activeId),{costItems:[...(o.costItems||[]),item],timeline:[...(o.timeline||[]),{date:nowStr(),action:`\ud83d\udcb0 ${type}: ${fn(total)} \u062c`,by:userName}],updatedAt:serverTimestamp()});\n    cM('cost');toast('\u2705 \u062a\u0645','ok');\n  }catch(e){toast('\u274c '+e.message,'err');}\n};\n\nwindow.rmCost=async function(idx){\n  if(!confirm('\u062d\u0630\u0641\u061f'))return;\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  const ci=[...(o.costItems||[])];ci.splice(idx,1);\n  try{await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});toast('\u2705 \u062d\u064f\u0630\u0641','ok');}\n  catch(e){toast('\u274c '+e.message,'err');}\n};\n\nwindow.handleFinalImg=function(inp){const f=inp.files[0];if(f)uploadFinal(f);};\n\ndocument.addEventListener('paste',function(e){\n  if(!activeId)return;\n  const items=e.clipboardData?.items;if(!items)return;\n  for(const item of items){if(item.type.startsWith('image/')){const f=item.getAsFile();if(f)uploadFinal(f);break;}}\n});\n\nfunction uploadFinal(file){\n  const o=orders.find(x=>x._id===activeId);if(!o)return;\n  const pw=document.getElementById('prog-wrap');\n  const pb=document.getElementById('prog-fill');\n  const pt=document.getElementById('prog-txt');\n  pw.style.display='block';\n  const sRef=ref(storage,`production/${activeId}_final_${Date.now()}`);\n  const task=uploadBytesResumable(sRef,file);\n  task.on('state_changed',\n    snap=>{const p=Math.round(snap.bytesTransferred/snap.totalBytes*100);pb.style.width=p+'%';pt.textContent=p+'%';},\n    err=>{toast('\u274c '+err.message,'err');pw.style.display='none';},\n    async()=>{\n      const url=await getDownloadURL(task.snapshot.ref);\n      await updateDoc(doc(db,'orders',activeId),{finalImageUrl:url,timeline:[...(o.timeline||[]),{date:nowStr(),action:'\ud83d\udcf8 \u0635\u0648\u0631\u0629 \u0627\u0644\u0645\u0646\u062a\u062c \u0627\u0644\u0646\u0647\u0627\u0626\u064a',by:userName}],updatedAt:serverTimestamp()});\n      pw.style.display='none';\n      toast('\u2705 \u062a\u0645 \u0631\u0641\u0639 \u0627\u0644\u0635\u0648\u0631\u0629','ok');\n    }\n  );\n}\n\nwindow.moveToShipping=async function(){\n  if(!activeId)return;\n  const o=orders.find(x=>x._id===activeId);\n  if(!o.finalImageUrl){toast('\u26a0\ufe0f \u0627\u0631\u0641\u0639 \u0635\u0648\u0631\u0629 \u0627\u0644\u0645\u0646\u062a\u062c \u0623\u0648\u0644\u0627\u064b','err');return;}\n  if(!confirm('\u062a\u062d\u0648\u064a\u0644 \u0644\u0644\u0634\u062d\u0646\u061f'))return;\n  try{\n    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:nowStr(),timeline:[...(o.timeline||[]),{date:nowStr(),action:'\u2705 \u062a\u0646\u0641\u064a\u0630 \u0645\u0646\u062a\u0647\u064a \u2014 \u0627\u0646\u062a\u0642\u0644 \u0644\u0644\u0634\u062d\u0646 \ud83d\ude9a',by:userName}],updatedAt:serverTimestamp()});\n    closePanel();toast('\u2705 \u0627\u0646\u062a\u0642\u0644 \u0644\u0644\u0634\u062d\u0646 \ud83d\ude9a','ok');\n  }catch(e){toast('\u274c '+e.message,'err');}\n};\n
+import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,query,where,serverTimestamp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+
+const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+const app=initializeApp(FB);
+const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
+
+// ══ Sidebar ══
+const SBPAGES=[{file:'index.html',label:'لوحة التحكم',ico:'⬡',adminOnly:true},{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
+function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const pages=(ud?.permissions?.pages)||[];const isAdm=['admin','operation_manager'].includes(role);const nav=document.getElementById('nav-scroll-dynamic');if(!nav)return;let html='';for(const p of SBPAGES){const ok=isAdm||(p.adminOnly?false:pages.includes('*')||pages.includes(p.perm||''));if(!ok)continue;html+=`<a class="nav-link${cur===p.file?' active':''}" href="${p.file}"><span class="nav-ico">${p.ico}</span> ${p.label}</a>`;}nav.innerHTML=html;}
+
+// ══ State ══
+let orders=[],wallets=[],settings={},currentUser=null,userName='',currentRole='admin',activeId=null;
+let isAdmin=true;
+
+// ══ Helpers ══
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const gv=id=>document.getElementById(id)?.value||'';
+const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
+const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
+const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
+window.cM=cM;window.oM=oM;
+const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const toast=(msg,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
+const delay=dl=>{if(!dl)return 0;const d=new Date(dl);return d<new Date()?Math.floor((new Date()-d)/864e5):0;};
+
+window.toggleNav=()=>{document.querySelector('.sidenav')?.classList.toggle('mob-open');document.getElementById('nav-ov')?.classList.toggle('show');};
+window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-open');document.getElementById('nav-ov')?.classList.remove('show');};
+window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
+
+// ══ Auth ══
+let __started=false;
+onAuthStateChanged(auth,async u=>{
+  if(!u){window.location.href='login.html';return;}
+  if(__started)return;__started=true;
+  currentUser=u;
+  const snap=await getDoc(doc(db,'users',u.uid));
+  if(snap.exists()){
+    const d=snap.data();
+    userName=d.name||u.email;
+    currentRole=d.role||'admin';
+    isAdmin=['admin','operation_manager','customer_service'].includes(currentRole);
+    setText('nav-name',userName);
+    document.getElementById('nav-av').textContent=(userName[0]||'A').toUpperCase();
+    document.getElementById('role-badge').textContent=currentRole;
+    buildSidebar(d,'print.html');
+  }
+  startListeners();
+});
+
+function startListeners(){
+  onSnapshot(query(collection(db,'orders'),where('stage','==','printing')),snap=>{
+    window.markSynced&&window.markSynced();
+    orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    updateKPIs();renderList();
+    if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+  });
+  onSnapshot(collection(db,'wallets'),snap=>{
+    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  });
+  onSnapshot(collection(db,'settings').doc('main'),snap=>{
+    if(snap.exists())settings=snap.data();
+  });
+}
+
+// ══ KPIs ══
+function updateKPIs(){
+  const late=orders.filter(o=>delay(o.deadline)>0).length;
+  const rev=orders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const rem=orders.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||0))),0);
+  setText('s-total',orders.length);
+  setText('s-late',late||'—');
+  setText('s-rev',fn(rev)+' ج');
+  setText('s-rem',fn(rem)+' ج');
+  setText('sub',orders.length+' أوردر طباعة');
+}
+
+// ══ Filter ══
+window.filterPrintList=function(q){
+  const s=(q||'').toLowerCase().trim();
+  document.querySelectorAll('.ocard').forEach(card=>{
+    const t=(card.dataset.client||'').toLowerCase()+(card.dataset.id||'').toLowerCase();
+    card.style.display=!s||t.includes(s)?'':'none';
+  });
+};
+
+// ══ Render List ══
+window.renderList=function(){
+  const el=document.getElementById('list');if(!el)return;
+  if(!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">🖨️</div><div class="empty-text">لا توجد أوردرات طباعة</div></div>';return;}
+  el.innerHTML=orders.map(o=>{
+    const d=delay(o.deadline);
+    const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const rem=parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+    return`<div class="ocard ${d>0?'late':''}" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" onclick="openOrder('${o._id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:15px;font-weight:900">${o.clientName||'—'} ${d>0?`<span style="color:var(--r);font-size:11px">⚠️${d}يوم</span>`:''}</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:3px">${prods}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+          <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.12);color:var(--b);font-weight:700">${o.printType||'⏳ لم يُحدد'}</span>
+          ${parseFloat(o.salePrice)>0?`<span style="font-size:12px;font-weight:900;color:var(--b)">${fn(parseFloat(o.salePrice))} ج</span>`:''}
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--line)">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${o.printFinalUrl?'<span style="font-size:11px;color:var(--g);font-weight:700">📁 ملف مرفق ✅</span>':'<span style="font-size:11px;color:var(--dim2)">⏳ لا يوجد ملف</span>'}
+          ${o.qty?`<span style="font-size:11px;color:var(--dim2)">📦${o.qty} قطعة</span>`:''}
+        </div>
+        ${rem>0?`<span style="font-size:11px;font-weight:800;color:var(--r)">باقي ${fn(rem)} ج</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
+};
+
+// ══ Open Order ══
+window.openOrder=function(id){
+  activeId=id;
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  document.getElementById('pn-hdr').innerHTML=`
+    <div>
+      <div style="font-size:10px;color:var(--y);font-weight:700">🖨️ طباعة · ${o.orderId||id.slice(-6)}</div>
+      <div style="font-size:16px;font-weight:800">${o.clientName||'—'}</div>
+      <div style="font-size:12px;color:var(--dim2)">${o.clientPhone||'—'}</div>
+    </div>`;
+  // واتساب
+  const waBtn=document.getElementById('pn-wa-btn');
+  if(waBtn&&o.clientPhone){waBtn.href='https://wa.me/2'+(o.clientPhone||'').replace(/^0/,'');waBtn.style.display='inline-flex';}
+  else if(waBtn)waBtn.style.display='none';
+  // ship btn
+  const shipBtn=document.getElementById('pn-ship');
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const rem=parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+  if(shipBtn)shipBtn.style.display=(rem===0&&parseFloat(o.salePrice)>0)?'':'none';
+  document.getElementById('panel-ov').classList.add('open');
+  renderPanel(o);
+};
+
+window.closePanel=function(){
+  document.getElementById('panel-ov').classList.remove('open');
+  activeId=null;
+};
+
+// ══ Render Panel ══
+function renderPanel(o){
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const sale=parseFloat(o.salePrice)||0;
+  const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
+  const pct=sale>0?Math.min(paid/sale*100,100):0;
+  const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
+  document.getElementById('panel-body').innerHTML=`
+    <!-- بيانات الأوردر -->
+    <div class="section">
+      <div class="section-title">📋 بيانات الأوردر</div>
+      ${pRow('الأوردر',o.orderId||o._id.slice(-6))}
+      ${pRow('التاريخ',o.createdDate||'—')}
+      ${pRow('المنتجات',prods)}
+      ${o.qty?pRow('الكمية',fn(o.qty||0)+' قطعة'):''}
+      ${pRow('نوع الطباعة',o.printType||'—')}
+      ${o.deadline?pRow('موعد التسليم',`<span style="color:${delay(o.deadline)>0?'var(--r)':'inherit'}">${o.deadline}${delay(o.deadline)>0?' ⚠️':''}</span>`):''}
+      ${o.salePrice?pRow('السعر الكلي',fn(sale)+' ج'):''}
+      ${rem>0?pRow('الباقي',`<span style="color:var(--r);font-weight:900">${fn(rem)} ج</span>`):''}
+    </div>
+
+    <!-- التصميم المرجعي -->
+    ${o.refFileUrl||o.designNote?`<div class="section">
+      <div class="section-title">🎨 بيانات التصميم</div>
+      ${o.designNote?`<div style="padding:8px;background:var(--bg3);border-radius:8px;font-size:12px;color:var(--dim2);margin-bottom:8px">${o.designNote}</div>`:''}
+      ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:flex;align-items:center;gap:8px;padding:10px;background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:10px;color:var(--b);text-decoration:none;font-weight:700;font-size:12px">📎 الملف المرجعي</a>`:''}
+    </div>`:''}
+
+    <!-- صورة التصميم -->
+    ${o.designImageUrl||((o.products||[]).some(p=>p.designImageUrl))?`<div class="section">
+      <div class="section-title">🖼️ صورة التصميم النهائية للطبع</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
+        ${[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name})),
+           ...(o.designImageUrl&&!(o.products||[]).some(p=>p.designImageUrl)?[{url:o.designImageUrl,name:'التصميم'}]:[])
+        ].map(img=>`<div onclick="window.open('${img.url}','_blank')" style="cursor:zoom-in;border-radius:10px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)">
+          <img src="${img.url}" loading="lazy" style="width:100%;height:90px;object-fit:contain;display:block">
+          <div style="font-size:9px;color:var(--dim2);padding:3px 6px;text-align:center">${img.name}</div>
+        </div>`).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- رفع الملف النهائي للمطبعة -->
+    <div class="section">
+      <div class="section-title">📁 الملف النهائي للمطبعة</div>
+      ${o.printFinalUrl?`
+        <div style="margin-bottom:10px">
+          ${o.printFinalType?.includes('pdf')?
+            `<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:8px;padding:12px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:10px;color:var(--p);text-decoration:none;font-weight:700">📄 فتح الملف النهائي (PDF)</a>`:
+            `<img src="${o.printFinalUrl}" onclick="window.open('${o.printFinalUrl}','_blank')" style="width:100%;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;max-height:180px;object-fit:contain;background:var(--bg3)">`}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('print-final-inp').click()">🔄 تغيير الملف</button>
+      `:`
+        <div class="upload-zone" onclick="document.getElementById('print-final-inp').click()">
+          <div style="font-size:28px;margin-bottom:8px">📁</div>
+          <div style="font-size:13px;font-weight:700">ارفع الملف النهائي للمطبعة</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:4px">صورة أو PDF · Ctrl+V للصق</div>
+        </div>
+      `}
+      <div id="print-prog-wrap" style="display:none;margin-top:8px">
+        <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+          <div id="print-prog-bar" style="height:100%;background:var(--p);border-radius:3px;width:0%;transition:width .3s"></div>
+        </div>
+        <div id="print-prog-txt" style="font-size:11px;color:var(--dim2);text-align:center;margin-top:4px">0%</div>
+      </div>
+    </div>
+
+    <!-- المالية -->
+    ${sale>0?`<div class="section">
+      <div class="section-title">💰 المالية</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+        <div style="text-align:center;background:var(--bg3);border-radius:8px;padding:8px">
+          <div style="font-size:14px;font-weight:900;color:var(--b)">${fn(sale)} ج</div>
+          <div style="font-size:10px;color:var(--dim2)">الإجمالي</div>
+        </div>
+        <div style="text-align:center;background:var(--bg3);border-radius:8px;padding:8px">
+          <div style="font-size:14px;font-weight:900;color:var(--g)">${fn(paid)} ج</div>
+          <div style="font-size:10px;color:var(--dim2)">محصّل</div>
+        </div>
+        <div style="text-align:center;background:${rem>0?'rgba(255,61,110,.08)':'var(--bg3)'};border-radius:8px;padding:8px">
+          <div style="font-size:14px;font-weight:900;color:${rem>0?'var(--r)':'var(--g)'}">
+            ${rem>0?fn(rem)+' ج':'✅'}
+          </div>
+          <div style="font-size:10px;color:var(--dim2)">باقي</div>
+        </div>
+      </div>
+      ${sale>0?`<div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'};border-radius:3px;transition:width .4s"></div>
+      </div><div style="font-size:10px;color:var(--dim2);text-align:left;margin-top:3px">${Math.round(pct)}% محصّل</div>`:''}
+    </div>`:''}
+
+    <!-- السجل -->
+    <div class="section" style="border-bottom:none">
+      <div class="section-title">📋 السجل</div>
+      ${(o.timeline||[]).slice().reverse().slice(0,8).map(t=>`
+        <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line);line-height:1.4">
+          <span style="color:var(--b);font-weight:700">${t.date}</span> — ${t.action}
+        </div>`).join('')||'<div style="color:var(--dim2);font-size:12px">لا يوجد سجل</div>'}
+    </div>
+  `;
+}
+
+function pRow(l,v){return`<div class="prow"><span class="prow-lbl">${l}</span><span class="prow-val">${v}</span></div>`;}
+
+// ══ Move to Production ══
+window.moveTo=async function(stage){
+  if(!activeId)return;
+  if(!confirm(`تحويل للمرحلة التالية؟`))return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      stage,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🏭 انتقل من الطباعة → ${stage==='production'?'التنفيذ':'الشحن'}`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    closePanel();
+    toast(`✅ انتقل للمرحلة التالية`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ Upload Print Final ══
+window.uploadPrintFinal=async function(inp){
+  const file=inp?.files?.[0];if(!file)return;
+  await _uploadPrintFile(file);
+};
+
+document.addEventListener('paste',function(e){
+  const panel=document.getElementById('panel-ov');
+  if(!panel?.classList.contains('open'))return;
+  const items=e.clipboardData?.items;if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){const f=item.getAsFile();if(f)_uploadPrintFile(f);break;}
+  }
+});
+
+async function _uploadPrintFile(file){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const pw=document.getElementById('print-prog-wrap');
+  const pb=document.getElementById('print-prog-bar');
+  const pt=document.getElementById('print-prog-txt');
+  if(pw)pw.style.display='block';
+  try{
+    // ضغط الصورة
+    let uploadFile=file;
+    if(file.type.startsWith('image/')){
+      uploadFile=await new Promise(res=>{
+        const img=new Image();
+        const url=URL.createObjectURL(file);
+        img.onload=()=>{
+          URL.revokeObjectURL(url);
+          const canvas=document.createElement('canvas');
+          let {width,height}=img;
+          if(width>1200){height=Math.round(height*1200/width);width=1200;}
+          canvas.width=width;canvas.height=height;
+          canvas.getContext('2d').drawImage(img,0,0,width,height);
+          canvas.toBlob(blob=>{res(new File([blob],file.name,{type:'image/jpeg'}));},'image/jpeg',0.8);
+        };
+        img.onerror=()=>res(file);
+        img.src=url;
+      });
+    }
+    const sRef=ref(storage,`print-finals/${activeId}_${Date.now()}`);
+    const task=uploadBytesResumable(sRef,uploadFile);
+    await new Promise((res,rej)=>{
+      task.on('state_changed',
+        s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);if(pb)pb.style.width=p+'%';if(pt)pt.textContent=p+'%';},
+        rej,
+        async()=>{
+          const url=await getDownloadURL(task.snapshot.ref);
+          await updateDoc(doc(db,'orders',activeId),{
+            printFinalUrl:url,printFinalType:file.type,
+            timeline:[...(o.timeline||[]),{date:nowStr(),action:'📁 رُفع الملف النهائي للمطبعة',by:userName}],
+            updatedAt:serverTimestamp()
+          });
+          if(pw)pw.style.display='none';
+          toast('✅ تم رفع الملف','ok');
+          // أعد رسم الـ panel
+          const updated=orders.find(x=>x._id===activeId);
+          if(updated)renderPanel({...updated,printFinalUrl:url,printFinalType:file.type});
+          res();
+        }
+      );
+    });
+  }catch(e){if(pw)pw.style.display='none';toast('❌ '+e.message,'err');}
+}
 </script>
 </body>
 </html>
