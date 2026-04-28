@@ -652,7 +652,29 @@ function uploadFinal(file){
   const pt=document.getElementById('prog-txt');
   pw.style.display='block';
   const sRef=ref(storage,`production/${activeId}_final_${Date.now()}`);
-  const task=uploadBytesResumable(sRef,file);
+  // ضغط الصورة تلقائياً قبل الرفع
+  let uploadFile=file;
+  if(file.type.startsWith('image/')){
+    uploadFile=await new Promise(res=>{
+      const img=new Image();
+      const url=URL.createObjectURL(file);
+      img.onload=()=>{
+        URL.revokeObjectURL(url);
+        const canvas=document.createElement('canvas');
+        let {width,height}=img;
+        if(width>900){height=Math.round(height*900/width);width=900;}
+        canvas.width=width;canvas.height=height;
+        canvas.getContext('2d').drawImage(img,0,0,width,height);
+        canvas.toBlob(blob=>{
+          res(new File([blob],file.name,{type:'image/jpeg'}));
+          console.log(`ضغط: ${(file.size/1024).toFixed(0)}KB → ${(blob.size/1024).toFixed(0)}KB`);
+        },'image/jpeg',0.75);
+      };
+      img.onerror=()=>res(file);
+      img.src=url;
+    });
+  }
+  const task=uploadBytesResumable(sRef,uploadFile);
   task.on('state_changed',
     snap=>{const p=Math.round(snap.bytesTransferred/snap.totalBytes*100);pb.style.width=p+'%';pt.textContent=p+'%';},
     err=>{toast('❌ '+err.message,'err');pw.style.display='none';},
