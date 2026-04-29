@@ -133,6 +133,17 @@
   </div>
 </div>
 
+<!-- Drawer: تفاصيل الأوردر -->
+<div id="ord-drawer-ov" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)" onclick="if(event.target===this)closeOrdDrawer()">
+  <div id="ord-drawer" style="position:absolute;right:0;top:0;bottom:0;width:460px;max-width:100%;background:var(--bg1);overflow-y:auto;border-left:1px solid var(--line)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg1);z-index:10">
+      <div id="ord-drawer-hdr"></div>
+      <button onclick="closeOrdDrawer()" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:none;color:var(--snow);font-size:18px;cursor:pointer;flex-shrink:0">✕</button>
+    </div>
+    <div id="ord-drawer-body" style="padding:16px 20px"></div>
+  </div>
+</div>
+
 <!-- Modal: تعديل الأوردر الكامل -->
 <div class="overlay" id="ov-edit-order">
   <div class="modal" style="max-width:520px">
@@ -583,6 +594,137 @@ window.closeRevDrawer=function(){
   document.getElementById('rev-drawer-ov').style.display='none';
 };
 
+window.closeOrdDrawer=function(){
+  document.getElementById('ord-drawer-ov').style.display='none';
+};
+
+window.openOrdDrawer=function(id){
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const salePrice=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const rem=parseFloat(o.remaining)||Math.max(0,salePrice-paid);
+  const cost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const profit=paid-cost;
+  const pct=salePrice>0?Math.round(paid/salePrice*100):0;
+  const stageAr={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',archived:'📁 أرشيف'}[o.stage]||o.stage||'—';
+  const allImgs=[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name})),...(o.designImageUrl&&!(o.products||[]).some(p=>p.designImageUrl)?[{url:o.designImageUrl,name:'التصميم'}]:[])];
+
+  const iR=(l,v,col)=>`<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${l}</div><div style="font-size:12px;font-weight:700${col?';color:'+col:''}">${v||'—'}</div></div>`;
+
+  document.getElementById('ord-drawer-hdr').innerHTML=`
+    <div>
+      <div style="font-size:10px;color:var(--dim2);font-weight:700">${stageAr} · ${o.orderId||id.slice(-6)}</div>
+      <div style="font-size:17px;font-weight:900">${o.clientName||'—'}</div>
+      <div style="font-size:12px;color:var(--b)">${o.clientPhone||''}</div>
+    </div>`;
+
+  document.getElementById('ord-drawer-body').innerHTML=`
+    <!-- الصور -->
+    ${allImgs.length||o.finalImageUrl||o.printFinalUrl?`
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">🖼️ الصور</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px">
+        ${allImgs.map(img=>`<div onclick="window.open('${img.url}','_blank')" style="cursor:zoom-in;border-radius:10px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)">
+          <img src="${img.url}" loading="lazy" style="width:100%;height:70px;object-fit:contain;display:block">
+          <div style="font-size:9px;color:var(--dim2);padding:3px 5px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${img.name}</div>
+        </div>`).join('')}
+        ${o.finalImageUrl?`<div onclick="window.open('${o.finalImageUrl}','_blank')" style="cursor:zoom-in;border-radius:10px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)">
+          <img src="${o.finalImageUrl}" loading="lazy" style="width:100%;height:70px;object-fit:contain;display:block">
+          <div style="font-size:9px;color:var(--dim2);padding:3px 5px;text-align:center">المنتج النهائي</div>
+        </div>`:''}
+        ${o.printFinalUrl&&!(o.printFinalType?.includes('pdf'))?`<div onclick="window.open('${o.printFinalUrl}','_blank')" style="cursor:zoom-in;border-radius:10px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)">
+          <img src="${o.printFinalUrl}" loading="lazy" style="width:100%;height:70px;object-fit:contain;display:block">
+          <div style="font-size:9px;color:var(--dim2);padding:3px 5px;text-align:center">ملف الطباعة</div>
+        </div>`:''}
+      </div>
+      ${o.printFinalUrl&&o.printFinalType?.includes('pdf')?`<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:10px;color:var(--p);text-decoration:none;font-weight:700;font-size:12px;margin-top:8px">📄 ملف الطباعة PDF</a>`:''}
+    </div>`:''}
+
+    <!-- ملخص مالي -->
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:10px">💰 الملخص المالي</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;margin-bottom:10px">
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">سعر البيع</div><div style="font-size:17px;font-weight:900;color:var(--b)">${fn(salePrice)} ج</div></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">المحصّل</div><div style="font-size:17px;font-weight:900;color:var(--g)">${fn(paid)} ج</div></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">المتبقي</div><div style="font-size:17px;font-weight:900;color:${rem>0?'var(--r)':'var(--dim2)'}">${rem>0?fn(rem)+' ج':'—'}</div></div>
+      </div>
+      <div style="height:6px;background:var(--bg3);border-radius:99px;overflow:hidden;margin-bottom:10px">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">التكلفة</div><div style="font-size:17px;font-weight:900;color:var(--r)">${fn(cost)} ج</div></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">الربح</div><div style="font-size:17px;font-weight:900;color:${profit>=0?'var(--g)':'var(--r)'}">${profit>=0?'+':''}${fn(profit)} ج</div></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">نسبة التحصيل</div><div style="font-size:17px;font-weight:900;color:var(--b)">${pct}%</div></div>
+      </div>
+    </div>
+
+    <!-- تفاصيل الأوردر -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">📦 تفاصيل الأوردر</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${iR('رقم الأوردر',o.orderId||id.slice(-6))}
+        ${iR('المرحلة',stageAr)}
+        ${iR('المنتج',(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product)}
+        ${iR('الكمية',o.qty)}
+        ${iR('تاريخ الطلب',o.createdDate)}
+        ${iR('موعد التسليم',o.deadline||'—')}
+        ${iR('المصمم',o.designerName||o.designerId||'—')}
+        ${iR('خدمة العملاء',o.csName||o.assignedTo||'—')}
+        ${iR('المورد',o.supplierName||(o.supplierId&&suppliers.find(s=>s._id===o.supplierId)?.name)||'—')}
+        ${iR('طريقة الشحن',{pickup:'استلام بالمكتب',company:'شركة شحن',courier:'مندوب'}[o.shipMethod]||o.shipMethod||'—')}
+        ${o.shipCompanyName?iR('شركة الشحن',o.shipCompanyName):''}
+        ${o.shipGov?iR('المحافظة',o.shipGov+(o.shipAddress?' · '+o.shipAddress:'')):''}
+        ${o.discount>0?iR('الخصم',fn(o.discount)+' ج','var(--y)'):''}
+      </div>
+    </div>
+
+    <!-- بنود التكلفة -->
+    ${(o.costItems||[]).length?`
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">🏭 بنود التكلفة</div>
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden">
+        ${o.costItems.map((c,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;${i?'border-top:1px solid var(--line)':''}">
+          <div>
+            <div style="font-size:12px;font-weight:700">${c.type||'بند'}</div>
+            ${c.supplierName?`<div style="font-size:10px;color:var(--dim2)">${c.supplierName}</div>`:''}
+          </div>
+          <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(c.total)} ج</div>
+        </div>`).join('')}
+        <div style="display:flex;justify-content:space-between;padding:8px 12px;border-top:1px solid var(--line);background:var(--bg3)">
+          <span style="font-size:11px;font-weight:800;color:var(--dim2)">الإجمالي</span>
+          <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(cost)} ج</span>
+        </div>
+      </div>
+    </div>`:'<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:12px;font-weight:700;color:var(--r)">⚠️ لم تُسجَّل تكاليف لهذا الأوردر</div>'}
+
+    <!-- المنتجات التفصيلية -->
+    ${(o.products||[]).length>1?`
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">🗂️ المنتجات</div>
+      ${o.products.map(p=>`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
+        ${p.designImageUrl?`<img src="${p.designImageUrl}" onclick="window.open('${p.designImageUrl}','_blank')" style="width:44px;height:44px;border-radius:8px;object-fit:contain;background:var(--bg3);cursor:zoom-in;flex-shrink:0">`:'<div style="width:44px;height:44px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">📦</div>'}
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:800">${p.name||'—'}</div>
+          <div style="font-size:11px;color:var(--dim2)">الكمية: ${p.qty||'—'} ${p.size?'· '+p.size:''} ${p.material?'· '+p.material:''}</div>
+        </div>
+      </div>`).join('')}
+    </div>`:''}
+
+    <!-- السجل الزمني -->
+    ${(o.timeline||[]).length?`
+    <div>
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">📋 السجل الزمني</div>
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden">
+        ${[...(o.timeline||[])].reverse().slice(0,15).map((t,i)=>`<div style="padding:8px 12px;${i?'border-top:1px solid var(--line)':''}">
+          <div style="font-size:11px;font-weight:700">${t.action||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.date||''} ${t.by?'· '+t.by:''}</div>
+        </div>`).join('')}
+      </div>
+    </div>`:''}
+  `;
+  document.getElementById('ord-drawer-ov').style.display='block';
+};
+
 window.filterRevOrders=function(filter,btn){
   __revFilter=filter;
   document.querySelectorAll('[id^="rf-"]').forEach(b=>b.classList.remove('active'));
@@ -685,7 +827,7 @@ function renderCollectionRows(data){
     const pct=sale>0?Math.round(paid/sale*100):0;
     const status=rem<=0?{c:'var(--g)',t:'✅',bg:'rgba(0,217,126,.08)'}:paid>0?{c:'var(--y)',t:'⚡',bg:'rgba(255,170,0,.05)'}:{c:'var(--r)',t:'⏳',bg:'rgba(255,61,110,.05)'};
     const stage={design:'✏️',printing:'🖨️',production:'🏭',shipping:'🚚',archived:'📁'}[o.stage]||'';
-    return`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);background:${status.bg};align-items:center" class="col-row" data-rem="${rem}" data-paid="${paid}">
+    return`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);background:${status.bg};align-items:center;cursor:pointer" class="col-row" data-rem="${rem}" data-paid="${paid}" onclick="openOrdDrawer('${o._id}')" title="اضغط لعرض التفاصيل">
       <div>
         <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
         <div style="font-size:10px;color:var(--dim2);margin-top:2px">
@@ -708,7 +850,7 @@ function renderCollectionRows(data){
         <span style="font-size:16px">${status.t}</span>
         <div style="font-size:9px;color:${status.c};font-weight:800">${pct}%</div>
       </div>
-      <div style="text-align:center">
+      <div style="text-align:center" onclick="event.stopPropagation()">
         <button onclick="deleteOrderFromReport('${o._id}','${(o.clientName||'').replace(/'/g,'')}',${paid},'${o.depositWalletId||o.walletId||''}')"
           style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
           🗑
