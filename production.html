@@ -223,7 +223,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin';
+let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -354,6 +354,9 @@ onAuthStateChanged(auth,async u=>{
     
     if(changed) renderList(); // إعادة رسم الـ list بس لو في تغيير
     if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}
+  });
+  onSnapshot(collection(db,'products_v2'),snap=>{
+    productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -673,10 +676,32 @@ window.rmCost=async function(idx){
 window.importLastCosts=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if((o.costItems||[]).length&&!confirm('الأوردر فيه تكاليف بالفعل، تستبدلها بالمستورد؟'))return;
-  const prodNames=(o.products||[]).map(p=>(p.name||'').trim().toLowerCase()).filter(Boolean);
+  const prods=o.products||[];
   toast('⏳ جاري البحث...','');
   try{
-    // جلب بدون orderBy لتجنب الحاجة لـ composite index
+    // ── الأولوية 1: كتالوج المنتجات (costVariants) ──
+    if(prods.length&&productsCatalog.length){
+      const importedItems=[];
+      for(let pi=0;pi<prods.length;pi++){
+        const prod=prods[pi];
+        const pName=(prod.name||'').trim().toLowerCase();
+        const pQty=parseFloat(prod.qty)||0;
+        const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
+        if(!catProd||(catProd.costVariants||[]).length===0)continue;
+        const variants=catProd.costVariants;
+        const variant=variants.find(v=>parseFloat(v.qty)===pQty)||[...variants].sort((a,b)=>Math.abs(parseFloat(a.qty)-pQty)-Math.abs(parseFloat(b.qty)-pQty))[0];
+        if(variant&&(variant.items||[]).length){
+          variant.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'catalog'}));
+        }
+      }
+      if(importedItems.length){
+        await updateDoc(doc(db,'orders',activeId),{costItems:importedItems,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${importedItems.length} بند من كتالوج المنتجات`,by:userName}],updatedAt:serverTimestamp()});
+        toast(`✅ استُورد ${importedItems.length} بند من كتالوج المنتجات`,'ok');
+        return;
+      }
+    }
+    // ── الأولوية 2: أوردرات سابقة ──
+    const prodNames=prods.map(p=>(p.name||'').trim().toLowerCase()).filter(Boolean);
     const snap=await getDocs(collection(db,'orders'));
     const all=snap.docs.map(d=>({...d.data(),_id:d.id}))
       .filter(prev=>{
@@ -687,14 +712,10 @@ window.importLastCosts=async function(){
         return prodNames.some(n=>prevNames.includes(n));
       })
       .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    if(!all.length)return toast('⚠️ لم يُعثر على أوردر سابق بنفس المنتج وله تكاليف','err');
+    if(!all.length)return toast('⚠️ لم يُعثر على تكاليف سابقة — أضف تركيبة في كتالوج المنتجات','err');
     const src=all[0];
     const imported=src.costItems.map(c=>({...c,addedAt:nowStr(),importedFrom:src._id}));
-    await updateDoc(doc(db,'orders',activeId),{
-      costItems:imported,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد تكاليف من أوردر ${src.clientName||src._id} (${imported.length} بند)`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
+    await updateDoc(doc(db,'orders',activeId),{costItems:imported,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${imported.length} بند من أوردر ${src.clientName||src._id}`,by:userName}],updatedAt:serverTimestamp()});
     toast(`✅ استُورد ${imported.length} بند من أوردر ${src.clientName||'—'}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -759,45 +780,30 @@ window.moveToShipping=async function(){
     const ci=o.costItems||[];
     const now=nowStr();
 
-    for(const prod of prods){
-      if(!prod.productId)continue;
-      const pi=prods.indexOf(prod);
-      const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&pi===0));
+    for(let pi=0;pi<prods.length;pi++){
+      const prod=prods[pi];
+      const pName=(prod.name||'').trim().toLowerCase();
+      const pQty=parseFloat(prod.qty)||0;
+      const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&(prods.length===1||pi===prods.length-1)));
       if(!prodCi.length)continue;
       const total=prodCi.reduce((s,x)=>s+(parseFloat(x.total)||0),0);
-
-      // جيب المنتج من Firestore
       try{
-        const pSnap=await getDoc(doc(db,'products_v2',prod.productId));
-        if(!pSnap.exists())continue;
-        const pData=pSnap.data();
-        const history=pData.costHistory||[];
-
-        // آخر تكلفة للمقارنة
-        const lastEntry=history[history.length-1];
-        const lastTotal=lastEntry?.total||0;
+        const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
+        if(!catProd)continue;
+        const variants=[...(catProd.costVariants||[])];
+        const varIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty);
+        const targetIdx=varIdx>=0?varIdx:variants.findIndex(v=>v); // fallback: first variant
+        if(targetIdx<0)continue;
+        const v=variants[targetIdx];
+        const lastTotal=((v.history||[]).slice(-1)[0]?.total)||v.lastTotal||0;
         const pctChange=lastTotal>0?Math.round((total-lastTotal)/lastTotal*100):0;
-
-        // تنبيه لو في زيادة > 10%
-        if(lastTotal>0 && pctChange>10){
-          toast(`⚠️ تكلفة ${prod.name} زادت ${pctChange}% (كانت ${fn(lastTotal)} ج — دلوقتي ${fn(total)} ج)`,'err');
-        }
-
-        // حفظ في السجل
-        const newEntry={
-          date:now,
-          orderId:activeId,
-          orderClient:o.clientName||'',
-          qty:parseFloat(prod.qty)||0,
-          total,
-          items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),
-          pctChange:pctChange||0,
-        };
-        history.push(newEntry);
-        // احتفظ بآخر 50 سجل بس
+        if(pctChange>15)toast(`🚨 تكلفة ${prod.name} زادت ${pctChange}% (${fn(lastTotal)} ← ${fn(total)} ج)`,'err');
+        const newEntry={date:now,orderId:activeId,orderClient:o.clientName||'',qty:pQty,total,items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),pctChange};
+        const history=[...(v.history||[]),newEntry];
         if(history.length>50)history.splice(0,history.length-50);
-        await updateDoc(doc(db,'products_v2',prod.productId),{costHistory:history,lastCostTotal:total,lastCostDate:now});
-      }catch(e){console.warn('cost history:',e.message);}
+        variants[targetIdx]={...v,history,lastTotal:total};
+        await updateDoc(doc(db,'products_v2',catProd._id),{costVariants:variants,lastCostTotal:total,lastCostDate:now});
+      }catch(e){console.warn('variant history:',e.message);}
     }
 
     // تحويل للشحن
