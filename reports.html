@@ -323,8 +323,8 @@ function renderOverview(f,prev){
   const range=getRange(filterMode);
   const prev2=getPrevRange(filterMode);
   
-  // المحصّل فعلاً في الفترة (من transactions)
-  const inTx=payments.filter(p=>{
+  // المحصّل فعلاً في الفترة (من transactions_v2)
+  const inTx=transactions.filter(p=>{
     if(p.type!=='in'&&p.category!=='collection'&&p.category!=='advance'&&p.category!=='deposit')return false;
     if(!p.createdAt?.seconds)return false;
     const d=new Date(p.createdAt.seconds*1000);
@@ -333,7 +333,7 @@ function renderOverview(f,prev){
   const tot=inTx.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
 
   // المحصّل في الفترة السابقة
-  const prevInTx=payments.filter(p=>{
+  const prevInTx=transactions.filter(p=>{
     if(p.type!=='in'&&p.category!=='collection'&&p.category!=='advance'&&p.category!=='deposit')return false;
     if(!p.createdAt?.seconds)return false;
     const d=new Date(p.createdAt.seconds*1000);
@@ -349,13 +349,15 @@ function renderOverview(f,prev){
   
   // التكاليف
   const costs=f.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);
+  const shippingCosts=transactions.filter(t=>t.category==='shipping_cost'&&t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=range.from&&new Date(t.createdAt.seconds*1000)<=range.to).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const salaries=employees.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   const supDue=suppliers.reduce((s,sup)=>{const p=payments.filter(x=>x.supplierId===sup._id).reduce((ps,x)=>ps+(parseFloat(x.amount)||0),0);const pur=orders.reduce((os,o)=>os+(o.costItems||[]).filter(c2=>c2.supplierId===sup._id).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);return s+Math.max(0,pur-p);},0);
-  
-  // الربح = الكاش الفعلي - التكاليف
-  const profit=tot-costs;
+
+  // الربح = الكاش الفعلي - التكاليف - تكاليف الشحن
+  const profit=tot-costs-shippingCosts;
   const pCol=pTot; // نفس الإيرادات
-  const pCosts=prev.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);
+  const pShippingCosts=transactions.filter(t=>t.category==='shipping_cost'&&t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=prev2.from&&new Date(t.createdAt.seconds*1000)<=prev2.to).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const pCosts=prev.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0)+pShippingCosts;
   const pProfit=pTot-pCosts;
 
   const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage));
