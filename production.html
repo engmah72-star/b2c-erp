@@ -196,7 +196,7 @@
 <!-- Modal: إضافة بند -->
 <div class="overlay" id="ov-cost">
   <div class="modal">
-    <div class="modal-head"><span class="modal-title">＋ إضافة بند تكلفة</span><button class="modal-x" onclick="cM('cost')">✕</button></div>
+    <div class="modal-head"><span class="modal-title" id="cost-modal-title">＋ إضافة بند تكلفة</span><button class="modal-x" onclick="cM('cost')">✕</button></div>
     <div class="modal-body">
       <div class="fg"><label>📦 المنتج</label><select class="inp" id="cost-prod-idx"><option value="-1">— عام للأوردر —</option></select></div>
       <div class="fg"><label>📋 نوع البند</label><select class="inp" id="ac-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select></div>
@@ -204,7 +204,7 @@
       <div class="fg"><label>💰 التكلفة (ج)</label><input class="inp" id="ac-total" type="number" placeholder="0"></div>
       <div class="fg"><label>📝 ملاحظة</label><input class="inp" id="ac-note" type="text" placeholder="اختياري..."></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('cost')">إلغاء</button><button class="btn btn-r" onclick="saveCost()">＋ إضافة</button></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('cost')">إلغاء</button><button class="btn btn-r" id="cost-save-btn" onclick="saveCost()">＋ إضافة</button></div>
   </div>
 </div>
 
@@ -515,7 +515,7 @@ function renderCosts(o){
   const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const el=document.getElementById('costs-list');if(!el){setText('cost-total',fn(tc)+' ج');return;}
   function ciRow(item,globalIdx){
-    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
+    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
   }
   if(!prods.length){
     el.innerHTML=ci.map((item,i)=>ciRow(item,i)).join('')+`<button class="cost-add-btn" onclick="openAddCost(-1)">＋ إضافة بند</button>`;
@@ -565,8 +565,9 @@ window.saveNote=async function(){
   try{await updateDoc(doc(db,'orders',activeId),{prodNote:gv('prod-note'),updatedAt:serverTimestamp()});}catch(e){}
 };
 
-let addCostProdIdx=-1;
+let addCostProdIdx=-1,editCostIdx=-1;
 window.openAddCost=function(pi){
+  editCostIdx=-1;
   addCostProdIdx=pi;
   const o=orders.find(x=>x._id===activeId);
   const prods=o?.products||[];
@@ -574,7 +575,25 @@ window.openAddCost=function(pi){
   sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
   sel.value=pi;
   if(o?.supplierId){const ac=document.getElementById('ac-sup');if(ac)ac.value=o.supplierId;}
-  sv('ac-total','');sv('ac-note','');
+  sv('ac-type','');sv('ac-total','');sv('ac-note','');
+  document.getElementById('cost-modal-title').textContent='＋ إضافة بند تكلفة';
+  document.getElementById('cost-save-btn').textContent='＋ إضافة';
+  oM('cost');
+};
+window.openEditCost=function(globalIdx){
+  editCostIdx=globalIdx;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item=(o.costItems||[])[globalIdx];if(!item)return;
+  const prods=o.products||[];
+  const sel=document.getElementById('cost-prod-idx');
+  sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
+  sel.value=item.prodIdx??-1;
+  sv('ac-type',item.type||'');
+  sv('ac-total',item.total||'');
+  sv('ac-note',item.note||'');
+  const ac=document.getElementById('ac-sup');if(ac&&item.supplierId)ac.value=item.supplierId;
+  document.getElementById('cost-modal-title').textContent='✏️ تعديل بند تكلفة';
+  document.getElementById('cost-save-btn').textContent='💾 حفظ التعديل';
   oM('cost');
 };
 
@@ -587,9 +606,18 @@ window.saveCost=async function(){
   const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};
+  const ci=[...(o.costItems||[])];
+  let action;
+  if(editCostIdx>=0&&editCostIdx<ci.length){
+    ci[editCostIdx]={...ci[editCostIdx],...item,editedAt:nowStr()};
+    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
+  } else {
+    ci.push(item);
+    action=`💰 ${type}: ${fn(total)} ج`;
+  }
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:[...(o.costItems||[]),item],timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 ${type}: ${fn(total)} ج`,by:userName}],updatedAt:serverTimestamp()});
-    cM('cost');toast('✅ تم','ok');
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    cM('cost');toast('✅ تم','ok');editCostIdx=-1;
   }catch(e){toast('❌ '+e.message,'err');}
 };
 

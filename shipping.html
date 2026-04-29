@@ -361,6 +361,27 @@
   </div>
 </div>
 
+<!-- Modal: تكاليف الأوردر (الشحن) -->
+<div class="overlay" id="ov-ship-cost">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title" id="ship-cost-modal-title">＋ إضافة بند تكلفة</span>
+      <button class="modal-x" onclick="closeModal('ov-ship-cost')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg"><label>📦 المنتج</label><select class="inp" id="sc-prod-idx"><option value="-1">— عام للأوردر —</option></select></div>
+      <div class="fg"><label>📋 نوع البند</label><select class="inp" id="sc-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select></div>
+      <div class="fg"><label>🏭 المورد</label><select class="inp" id="sc-sup"><option value="">— اختياري —</option></select></div>
+      <div class="fg"><label>💰 التكلفة (ج)</label><input class="inp" id="sc-total" type="number" placeholder="0"></div>
+      <div class="fg"><label>📝 ملاحظة</label><input class="inp" id="sc-note" type="text" placeholder="اختياري..."></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('ov-ship-cost')">إلغاء</button>
+      <button class="btn btn-r" id="ship-cost-save-btn" onclick="saveCostShip()">＋ إضافة</button>
+    </div>
+  </div>
+</div>
+
 <nav class="mob-nav"><div class="mob-nav-items">
   <a class="mob-nav-item" href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
   <a class="mob-nav-item" href="clients.html" data-page="clients"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
@@ -533,7 +554,7 @@ const app=initializeApp(FB);
 const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 
 // ══ STATE ══
-let orders=[], wallets=[], shippers=[];
+let orders=[], wallets=[], shippers=[], suppliers=[];
 let currentUser=null, userName='', activeId=null;
 let currentFilter='all', ssMethod='', ssStage='wait_delivery';
 
@@ -646,6 +667,73 @@ window.deleteOrderFull=async function(){
 window.closeModal=id=>document.getElementById(id)?.classList.remove('open');
 window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeId=null;};
 
+// ══ COST MANAGEMENT (from shipping page) ══
+let __scEditIdx=-1;
+function __openShipCostModal(o,editIdx){
+  const prods=o.products||[];
+  const sel=document.getElementById('sc-prod-idx');
+  sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
+  const sup=document.getElementById('sc-sup');
+  if(sup)sup.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  if(editIdx>=0){
+    __scEditIdx=editIdx;
+    const item=(o.costItems||[])[editIdx];
+    sel.value=item.prodIdx??-1;
+    sv('sc-type',item.type||'');sv('sc-total',item.total||'');sv('sc-note',item.note||'');
+    if(sup&&item.supplierId)sup.value=item.supplierId;
+    document.getElementById('ship-cost-modal-title').textContent='✏️ تعديل بند تكلفة';
+    document.getElementById('ship-cost-save-btn').textContent='💾 حفظ التعديل';
+  } else {
+    __scEditIdx=-1;
+    sel.value=-1;sv('sc-type','');sv('sc-total','');sv('sc-note','');
+    document.getElementById('ship-cost-modal-title').textContent='＋ إضافة بند تكلفة';
+    document.getElementById('ship-cost-save-btn').textContent='＋ إضافة';
+  }
+  document.getElementById('ov-ship-cost').classList.add('open');
+}
+window.openAddCostShip=function(pi){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  __openShipCostModal(o,-1);
+  document.getElementById('sc-prod-idx').value=pi;
+};
+window.openEditCostShip=function(idx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  __openShipCostModal(o,idx);
+};
+window.saveCostShip=async function(){
+  const type=gv('sc-type');const total=parseFloat(gv('sc-total'))||0;
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!total)return toast('⚠️ أدخل التكلفة','err');
+  const supSel=document.getElementById('sc-sup');
+  const supOpt=supSel?.options[supSel.selectedIndex];
+  const prodIdx=parseInt(document.getElementById('sc-prod-idx')?.value??-1);
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('sc-note'),addedAt:nowStr()};
+  const ci=[...(o.costItems||[])];
+  let action;
+  if(__scEditIdx>=0&&__scEditIdx<ci.length){
+    ci[__scEditIdx]={...ci[__scEditIdx],...item,editedAt:nowStr()};
+    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
+  } else {
+    ci.push(item);
+    action=`💰 ${type}: ${fn(total)} ج`;
+  }
+  try{
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    closeModal('ov-ship-cost');toast('✅ تم','ok');__scEditIdx=-1;
+    openOrder(activeId);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+window.rmCostShip=async function(idx){
+  if(!confirm('حذف البند؟'))return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const ci=[...(o.costItems||[])];ci.splice(idx,1);
+  try{
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
+    toast('✅ حُذف','ok');openOrder(activeId);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 // ══ AUTH + GUARD ══
 let __listenersStarted=false;
 onAuthStateChanged(auth,async u=>{
@@ -686,6 +774,11 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(collection(db,'shippers_v2'),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  onSnapshot(collection(db,'suppliers_v2'),snap=>{
+    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const s=document.getElementById('sc-sup');
+    if(s)s.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  });
 });
 
 // ══ STATS ══
@@ -842,6 +935,30 @@ window.openOrder=function(id){
         ${o.shipGov?pRow('العنوان',o.shipGov+(o.shipAddress?' · '+o.shipAddress:'')):''}
         ${o.shipCost>0?pRow('تكلفة الشحن',fn(o.shipCost)+' ج'):''}
         ${o.shipTracking?pRow('رقم التتبع',o.shipTracking):''}
+      </div>
+    </div>
+
+    <!-- بنود التكلفة -->
+    <div class="section" style="${!(o.costItems||[]).length?'background:rgba(255,61,110,.04);border:1px solid rgba(255,61,110,.15)':'background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.1)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="section-title" style="margin-bottom:0;color:${!(o.costItems||[]).length?'var(--r)':'var(--g)'}">🏭 التكاليف ${!(o.costItems||[]).length?'⚠️ لا توجد تكلفة':''}</div>
+        <button onclick="openAddCostShip(-1)" style="font-size:11px;font-weight:800;padding:5px 12px;border-radius:20px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);cursor:pointer">＋ بند</button>
+      </div>
+      <div id="ship-costs-list">
+        ${(o.costItems||[]).length?(()=>{
+          const prods=o.products||[];
+          return (o.costItems||[]).map((item,i)=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:800">${item.type||'—'}${item.prodIdx!=null&&prods[item.prodIdx]?' — '+prods[item.prodIdx].name:''}</div>
+                <div style="font-size:11px;color:var(--dim2)">${item.supplierName||''}${item.note?' · '+item.note:''}</div>
+              </div>
+              <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span>
+              <button onclick="openEditCostShip(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:12px">✏️</button>
+              <button onclick="rmCostShip(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:13px">✕</button>
+            </div>`).join('')
+          +'<div style="text-align:left;font-size:12px;font-weight:900;padding:6px 0 0;color:var(--g)">الإجمالي: '+fn((o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0))+' ج</div>';
+        })():`<div style="font-size:12px;color:var(--r);padding:8px 0">لم يتم تسجيل أي تكاليف لهذا الأوردر</div>`}
       </div>
     </div>
 
