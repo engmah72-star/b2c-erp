@@ -352,11 +352,13 @@ onAuthStateChanged(auth,async u=>{
     setText('s-done',orders.filter(o=>o.prodStatus==='done').length);
     setText('sub',orders.length+' طلب تنفيذ');
     
-    if(changed) renderList(); // إعادة رسم الـ list بس لو في تغيير
+    if(changed){renderList();orders.filter(o=>!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));}
     if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}
   });
   onSnapshot(collection(db,'products_v2'),snap=>{
     productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    // لو في أوردرات منتظرة استيراد، جرّبها بعد ما الكتالوج يتحمل
+    orders.filter(o=>!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -378,6 +380,44 @@ function buildSupFilter(){
   const usedSups=suppliers.filter(s=>used.has(s._id));
   bar.innerHTML=`<button class="ftab active" onclick="setSupFilter('',this)">كل المطابع</button>`+usedSups.map(s=>`<button class="ftab" onclick="setSupFilter('${s._id}',this)">${s.name}</button>`).join('');
 }
+
+// ══ AUTO IMPORT ══
+const _autoTried=new Set();
+async function tryAutoImport(o){
+  if(_autoTried.has(o._id)||!productsCatalog.length)return;
+  _autoTried.add(o._id);
+  const prods=o.products||[];if(!prods.length)return;
+  const importedItems=[];
+  for(let pi=0;pi<prods.length;pi++){
+    const prod=prods[pi];
+    const pName=(prod.name||'').trim().toLowerCase();
+    const pQty=parseFloat(prod.qty)||0;
+    const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
+    if(!catProd||(catProd.costVariants||[]).length===0)continue;
+    const variant=(catProd.costVariants||[]).find(v=>parseFloat(v.qty)===pQty)||[...(catProd.costVariants||[])].sort((a,b)=>Math.abs(parseFloat(a.qty)-pQty)-Math.abs(parseFloat(b.qty)-pQty))[0];
+    if(variant&&(variant.items||[]).length){
+      variant.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'catalog_auto'}));
+    }
+  }
+  if(!importedItems.length)return;
+  try{
+    await updateDoc(doc(db,'orders',o._id),{costItems:importedItems,autoImportDone:true,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🤖 استيراد تلقائي ${importedItems.length} بند`,by:'النظام'}],updatedAt:serverTimestamp()});
+  }catch(e){console.warn('autoImport:',e.message);}
+}
+
+// ══ SAVE PRODUCT SPECS ══
+window.saveProdSpecs=async function(pi){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const paper=document.getElementById(`prod-paper-${pi}`)?.value||'';
+  const weight=parseFloat(document.getElementById(`prod-weight-${pi}`)?.value)||0;
+  const prods=[...(o.products||[])];
+  if(!prods[pi])return;
+  prods[pi]={...prods[pi],paper,weight};
+  try{
+    await updateDoc(doc(db,'orders',activeId),{products:prods,updatedAt:serverTimestamp()});
+    toast('✅ تم الحفظ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 let __pageSize=20,__currentPage=1;
 window.renderList=function(resetPage=true){
@@ -465,10 +505,19 @@ function renderPanel(o){
           <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
         </div>`;
       }).join('');
+      const prodObj=img.idx>=0?prods[img.idx]:null;
+      const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===(img.name||'').trim().toLowerCase());
+      const defPaper=prodObj?.paper||catProd?.paper||'';
+      const defWeight=prodObj?.weight||catProd?.weight||'';
       return`<div style="margin-bottom:16px">
         ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div><button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button></div>`:''}
         <div class="design-img-wrap">
           <img src="${img.url}" class="design-img" onclick="window.open('${img.url}','_blank')">
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:flex-end">
+          <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-${img.idx}" class="inp" type="text" value="${defPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px"></div>
+          <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-${img.idx}" class="inp" type="number" value="${defWeight}" placeholder="300" style="font-size:12px;padding:7px 10px"></div>
+          <button onclick="saveProdSpecs(${img.idx})" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.08);color:var(--g);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">💾 حفظ</button>
         </div>
         <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
           <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
@@ -482,7 +531,15 @@ function renderPanel(o){
     }).join('');
   } else {
     const importBanner2=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
+    const gCatProd=productsCatalog.find(cp=>prods.some(p=>(cp.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase()));
+    const gDefPaper=prods[0]?.paper||gCatProd?.paper||'';
+    const gDefWeight=prods[0]?.weight||gCatProd?.weight||'';
     dEl.innerHTML=importBanner2+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
+    <div style="display:flex;gap:6px;margin-top:8px;align-items:flex-end">
+      <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-0" class="inp" type="text" value="${gDefPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px"></div>
+      <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-0" class="inp" type="number" value="${gDefWeight}" placeholder="300" style="font-size:12px;padding:7px 10px"></div>
+      <button onclick="saveProdSpecs(0)" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.08);color:var(--g);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">💾 حفظ</button>
+    </div>
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
       <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line)"><span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span></div>
       ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}</div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
