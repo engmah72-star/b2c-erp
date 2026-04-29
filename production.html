@@ -846,14 +846,31 @@ window.moveToShipping=async function(){
         const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
         if(!catProd)continue;
         const variants=[...(catProd.costVariants||[])];
-        const varIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty);
-        const targetIdx=varIdx>=0?varIdx:variants.findIndex(v=>v); // fallback: first variant
+        const actualPaper=(prod.paper||'').trim().toLowerCase();
+        const actualWeight=parseFloat(prod.weight)||0;
+        // ابحث عن variant مطابق بالكمية + الورق
+        let targetIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty&&(v.paper||'').trim().toLowerCase()===(actualPaper||''));
+        // لو مفيش تطابق كامل، ابحث بالكمية بس
+        if(targetIdx<0)targetIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty);
+        const newEntry={date:now,orderId:activeId,orderClient:o.clientName||'',qty:pQty,total,items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),pctChange:0};
+        // لو الورق أو الوزن مختلف عن التركيبة الأصلية → أضف تركيبة جديدة
+        const srcVariant=targetIdx>=0?variants[targetIdx]:null;
+        const paperDiffers=actualPaper&&srcVariant&&(srcVariant.paper||'').trim().toLowerCase()!==actualPaper;
+        const weightDiffers=actualWeight&&srcVariant&&srcVariant.weight&&srcVariant.weight!==actualWeight;
+        if(paperDiffers||weightDiffers){
+          // تركيبة جديدة
+          const newVar={qty:pQty,paper:prod.paper||srcVariant?.paper||'',weight:actualWeight||srcVariant?.weight||0,extras:srcVariant?.extras||[],items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),lastTotal:total,lastUpdated:now,history:[{...newEntry,pctChange:0}]};
+          variants.push(newVar);
+          toast(`📋 تركيبة جديدة: ${prod.paper||''} ${actualWeight?actualWeight+' جم':''}`,'ok');
+          await updateDoc(doc(db,'products_v2',catProd._id),{costVariants:variants,lastCostTotal:total,lastCostDate:now});
+          continue;
+        }
         if(targetIdx<0)continue;
         const v=variants[targetIdx];
         const lastTotal=((v.history||[]).slice(-1)[0]?.total)||v.lastTotal||0;
         const pctChange=lastTotal>0?Math.round((total-lastTotal)/lastTotal*100):0;
         if(pctChange>15)toast(`🚨 تكلفة ${prod.name} زادت ${pctChange}% (${fn(lastTotal)} ← ${fn(total)} ج)`,'err');
-        const newEntry={date:now,orderId:activeId,orderClient:o.clientName||'',qty:pQty,total,items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),pctChange};
+        newEntry.pctChange=pctChange;
         const history=[...(v.history||[]),newEntry];
         if(history.length>50)history.splice(0,history.length-50);
         variants[targetIdx]={...v,history,lastTotal:total};
