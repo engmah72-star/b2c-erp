@@ -347,17 +347,16 @@ function renderOverview(f,prev){
   // الباقي على العملاء
   const rem=f.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||0))),0);
   
-  // التكاليف
-  const costs=f.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);
-  const shippingCosts=transactions.filter(t=>t.category==='shipping_cost'&&t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=range.from&&new Date(t.createdAt.seconds*1000)<=range.to).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  // المصروفات الفعلية = كل transactions type='out' في الفترة (موردين + شحن + مرتجعات + غيرها)
+  const inRange2=(t,r)=>t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=r.from&&new Date(t.createdAt.seconds*1000)<=r.to;
+  const costs=transactions.filter(t=>t.type==='out'&&inRange2(t,range)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const salaries=employees.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   const supDue=suppliers.reduce((s,sup)=>{const p=payments.filter(x=>x.supplierId===sup._id).reduce((ps,x)=>ps+(parseFloat(x.amount)||0),0);const pur=orders.reduce((os,o)=>os+(o.costItems||[]).filter(c2=>c2.supplierId===sup._id).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);return s+Math.max(0,pur-p);},0);
 
-  // الربح = الكاش الفعلي - التكاليف - تكاليف الشحن
-  const profit=tot-costs-shippingCosts;
-  const pCol=pTot; // نفس الإيرادات
-  const pShippingCosts=transactions.filter(t=>t.category==='shipping_cost'&&t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=prev2.from&&new Date(t.createdAt.seconds*1000)<=prev2.to).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const pCosts=prev.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0)+pShippingCosts;
+  // الربح = الكاش الفعلي - المصروفات الفعلية
+  const profit=tot-costs;
+  const pCol=pTot;
+  const pCosts=transactions.filter(t=>t.type==='out'&&inRange2(t,prev2)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const pProfit=pTot-pCosts;
 
   const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage));
@@ -385,7 +384,7 @@ function renderOverview(f,prev){
       <div class="chart-title">📊 مقارنة بالفترة السابقة</div>
       <div class="compare-row"><span>محصّل فعلاً</span><div style="display:flex;gap:12px"><span style="color:var(--g);font-weight:800">${fn(tot)} ج</span><span style="color:var(--dim2)">${fn(pTot)} ج</span></div></div>
       <div class="compare-row"><span>قيمة الأوردرات</span><div style="display:flex;gap:12px"><span style="color:var(--b);font-weight:800">${fn(ordersTotal)} ج</span><span style="color:var(--dim2)">—</span></div></div>
-      <div class="compare-row"><span>المصروفات</span><div style="display:flex;gap:12px"><span style="color:var(--r);font-weight:800">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
+      <div class="compare-row"><span>المصروفات الفعلية (موردين+شحن+غيره)</span><div style="display:flex;gap:12px"><span style="color:var(--r);font-weight:800">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
       <div class="compare-row"><span>الربح</span><div style="display:flex;gap:12px"><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:800">${fn(profit)} ج</span><span style="color:var(--dim2)">${fn(pProfit)} ج</span></div></div>
     </div>
 
@@ -853,7 +852,7 @@ window.saveEditOrder=async function(){
       deadline:document.getElementById('eo-deadline').value,
       stage:document.getElementById('eo-stage').value,
       salePrice:newSale,discount:newDisc,
-      totalPaid:newPaid,paid:newPaid,deposit:newPaid,
+      totalPaid:newPaid,
       remaining:newRem,
       depositWalletId:newWalletId,walletId:newWalletId,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',

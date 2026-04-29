@@ -70,7 +70,6 @@ window.FinanceCore = {
     const newRem = Math.max(0, net - newPaid);
     return {
       totalPaid: newPaid,
-      paid: newPaid,
       remaining: newRem,
       paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending'
     };
@@ -84,7 +83,6 @@ window.FinanceCore = {
     const newRem = Math.max(0, net - newPaid);
     return {
       totalPaid: newPaid,
-      paid: newPaid,
       remaining: newRem,
       paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending'
     };
