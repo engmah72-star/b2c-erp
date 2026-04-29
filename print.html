@@ -157,6 +157,7 @@
     <div class="panel-body" id="panel-body"></div>
     <div class="panel-footer" style="flex-wrap:wrap;gap:6px">
       <button class="btn btn-ghost btn-sm" onclick="openEditProds()" style="flex:1;min-width:80px">📦 تعديل</button>
+      <button class="btn btn-ghost btn-sm" id="pn-advance-btn" onclick="openPrintAdvance()" style="flex:1;display:none;min-width:80px;color:var(--g);border-color:rgba(0,217,126,.3)">💵 مقدم</button>
       <button class="btn btn-ghost btn-sm" id="pn-collect-btn" onclick="openCollect()" style="flex:1;display:none;min-width:80px">💰 تحصيل</button>
       <button class="btn btn-b" id="pn-prod-btn" onclick="moveTo('production')" style="flex:2;min-width:100px">🏭 → التنفيذ</button>
     </div>
@@ -194,6 +195,41 @@
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="cM('collect')">إلغاء</button>
       <button class="btn btn-g" onclick="saveCollect()">✓ تأكيد</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: مقدم طباعة -->
+<div class="overlay" id="ov-print-advance">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head"><span class="modal-title">💵 مقدم طباعة</span><button class="modal-x" onclick="cM('print-advance')">✕</button></div>
+    <div class="modal-body">
+      <div id="pa-summary" style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px"></div>
+      <div class="fg">
+        <label>مبلغ المقدم (ج)</label>
+        <input class="inp" id="pa-amount" type="number" placeholder="0" min="0" oninput="updatePaPreview()">
+        <div id="pa-hint" style="font-size:11px;color:var(--dim2);margin-top:4px"></div>
+      </div>
+      <div class="fg">
+        <label>طريقة الدفع</label>
+        <div id="pa-wallets" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+        <input type="hidden" id="pa-wid"><input type="hidden" id="pa-wname">
+      </div>
+      <div id="pa-transfer-row" style="display:none" class="fg">
+        <label>إيصال التحويل (اختياري)</label>
+        <div class="upload-zone" onclick="document.getElementById('pa-img-inp').click()">
+          <div style="font-size:22px">📸</div><div style="font-size:11px;color:var(--dim2)">ارفع الإيصال</div>
+        </div>
+        <input type="file" id="pa-img-inp" accept="image/*" style="display:none">
+      </div>
+      <div class="fg">
+        <label>ملاحظة (اختياري)</label>
+        <input class="inp" id="pa-note" type="text" placeholder="مثال: مقدم أوفست...">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('print-advance')">إلغاء</button>
+      <button class="btn btn-g" onclick="savePrintAdvance()">✓ تسجيل المقدم</button>
     </div>
   </div>
 </div>
@@ -432,6 +468,8 @@ window.openOrder=function(id){
   const isAdm=['admin','operation_manager','customer_service'].includes(currentRole);
   const rBtn=document.getElementById('pn-reject-btn');if(rBtn)rBtn.style.display=isAdm?'':'none';
   const rem=getRem(o),sale=getNet(o);
+  const advBtn=document.getElementById('pn-advance-btn');
+  if(advBtn)advBtn.style.display=rem>0&&sale>0?'':'none';
   const colBtn=document.getElementById('pn-collect-btn');
   if(colBtn)colBtn.style.display=rem>0&&sale>0?'':'none';
   const prodBtn=document.getElementById('pn-prod-btn');
@@ -478,6 +516,7 @@ function renderPanel(o){
       </div>
       ${o.discount>0?`<div class="prow" style="margin-top:8px"><span class="prow-lbl">خصم</span><span class="prow-val" style="color:var(--r)">- ${fn(o.discount)} ج</span></div>`:''}
       ${o.deposit>0&&o.deposit!=o.totalPaid?`<div class="prow"><span class="prow-lbl">عربون</span><span class="prow-val" style="color:var(--g)">${fn(o.deposit)} ج</span></div>`:''}
+      ${o.printAdvance>0?`<div class="prow"><span class="prow-lbl">💵 مقدم طباعة</span><span class="prow-val" style="color:var(--g)">${fn(o.printAdvance)} ج</span></div>`:''}
     </div>`:''}
 
     ${o.refFileUrl||o.designNote?`<div class="psec">
@@ -694,6 +733,92 @@ async function _uploadFile(file){
     });
   }catch(e){if(pw)pw.style.display='none';toast('❌ '+e.message,'err');}
 }
+
+// ════════════════════════════════════════
+// PRINT ADVANCE (مقدم طباعة)
+// ════════════════════════════════════════
+window.openPrintAdvance=function(){
+  if(!activeOrder)return;
+  const o=activeOrder;
+  const paid=getPaid(o),sale=getNet(o),rem=getRem(o);
+  const sum=document.getElementById('pa-summary');
+  if(sum)sum.innerHTML=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">الإجمالي</span><span style="font-weight:800">${fn(sale)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">محصّل</span><span style="font-weight:800;color:var(--g)">${fn(paid)} ج</span></div>
+    ${o.printAdvance>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">مقدم سابق</span><span style="font-weight:800;color:var(--g)">${fn(o.printAdvance)} ج</span></div>`:''}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:var(--r);font-weight:800">الباقي</span><span style="font-weight:900;color:var(--r);font-size:15px">${fn(rem)} ج</span></div>`;
+  const inp=document.getElementById('pa-amount');
+  if(inp){inp.max=rem;inp.value='';inp.placeholder=fn(rem)+' ج';}
+  const hint=document.getElementById('pa-hint');
+  if(hint){hint.style.color='var(--dim2)';hint.textContent=`الحد الأقصى: ${fn(rem)} ج`;}
+  document.getElementById('pa-wid').value='';
+  document.getElementById('pa-wname').value='';
+  document.getElementById('pa-note').value='';
+  document.getElementById('pa-transfer-row').style.display='none';
+  renderPaWallets();
+  document.getElementById('ov-print-advance')?.classList.add('open');
+};
+
+function renderPaWallets(){
+  const el=document.getElementById('pa-wallets');if(!el)return;
+  el.innerHTML=wallets.map(w=>`<button onclick="selectPaWallet('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}') " id="pw-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fn(w.balance)} ج</button>`).join('');
+}
+
+window.selectPaWallet=function(id,name){
+  document.getElementById('pa-wid').value=id;
+  document.getElementById('pa-wname').value=name;
+  document.querySelectorAll('[id^="pw-"]').forEach(b=>{b.style.background='var(--bg3)';b.style.color='var(--dim2)';b.style.borderColor='var(--line)';});
+  const b=document.getElementById('pw-'+id);
+  if(b){b.style.background='rgba(0,217,126,.12)';b.style.color='var(--g)';b.style.borderColor='var(--g)';}
+  const tr=document.getElementById('pa-transfer-row');
+  if(tr)tr.style.display=name.includes('كاش')||name.includes('نقد')?'none':'block';
+};
+
+window.updatePaPreview=function(){
+  const amt=parseFloat(document.getElementById('pa-amount')?.value)||0;
+  if(!activeOrder)return;
+  const rem=getRem(activeOrder);
+  const hint=document.getElementById('pa-hint');if(!hint)return;
+  if(amt>rem){hint.style.color='var(--r)';hint.textContent=`⚠️ يتجاوز الباقي (${fn(rem)} ج)`;}
+  else if(amt>0&&Math.abs(amt-rem)<0.01){hint.style.color='var(--g)';hint.textContent='✅ سيُغلق الأوردر كمدفوع كاملاً';}
+  else if(amt>0){hint.style.color='var(--dim2)';hint.textContent=`سيتبقى ${fn(rem-amt)} ج`;}
+  else{hint.style.color='var(--dim2)';hint.textContent=`الحد الأقصى: ${fn(rem)} ج`;}
+};
+
+window.savePrintAdvance=async function(){
+  if(!activeId||!activeOrder)return;
+  const o=activeOrder;
+  const amt=parseFloat(document.getElementById('pa-amount')?.value)||0;
+  const wid=document.getElementById('pa-wid')?.value;
+  const wname=document.getElementById('pa-wname')?.value;
+  const note=document.getElementById('pa-note')?.value||'';
+  if(!amt||amt<=0){toast('⚠️ أدخل مبلغاً','err');return;}
+  if(!wid){toast('⚠️ اختر طريقة الدفع','err');return;}
+  const rem=getRem(o);
+  if(amt>rem+0.01){toast(`⚠️ يتجاوز الباقي (${fn(rem)} ج)`,'err');return;}
+  const newPaid=getPaid(o)+amt;
+  const newRem=Math.max(0,getNet(o)-newPaid);
+  const status=newRem<=0?'paid':newPaid>0?'partial':'pending';
+  const newPrintAdvance=(parseFloat(o.printAdvance)||0)+amt;
+  const label=note?`مقدم طباعة — ${note}`:'مقدم طباعة';
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      totalPaid:newPaid,paid:newPaid,remaining:newRem,paymentStatus:status,
+      printAdvance:newPrintAdvance,updatedAt:serverTimestamp(),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💵 ${label} ${fn(amt)} ج عبر ${wname}`,by:userName}]
+    });
+    await addDoc(collection(db,'transactions_v2'),{
+      type:'in',amount:amt,walletId:wid,walletName:wname,
+      orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'—',
+      note:`${label} — ${o.clientName||'—'}`,category:'print_advance',
+      createdAt:serverTimestamp(),by:userName
+    });
+    const w=wallets.find(x=>x._id===wid);
+    if(w)await updateDoc(doc(db,'wallets',wid),{balance:(parseFloat(w.balance)||0)+amt});
+    window.cM('print-advance');
+    toast(`✅ تم تسجيل مقدم ${fn(amt)} ج`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ════════════════════════════════════════
 // EDIT PRODUCTS MODAL
