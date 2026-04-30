@@ -142,6 +142,7 @@
       <button class="stab" onclick="location.href='shipping-accounts.html'">📦 حسابات الشحن ↗</button>
       <button class="stab"     onclick="switchSec(this,'transactions')">📋 الحركات</button>
       <button class="stab"     onclick="switchSec(this,'suppliers')">🏭 الموردين</button>
+      <button class="stab"     onclick="switchSec(this,'reconcile')">🔄 تطابق الأرصدة</button>
     </div>
 
     <div id="section-content"><div class="loader"><div class="spinner"></div></div></div>
@@ -237,6 +238,26 @@
       </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('ov-new-wallet').classList.remove('open')">إلغاء</button><button class="btn btn-g" onclick="saveWallet()">✓ إضافة</button></div>
+  </div>
+</div>
+
+<!-- MODAL: ضبط رصيد بداية الشهر -->
+<div class="overlay" id="ov-set-opening">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><span class="modal-title">📅 ضبط رصيد بداية الشهر</span><button class="modal-x" onclick="cM('set-opening')">✕</button></div>
+    <div class="modal-body">
+      <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--y)">
+        ⚠️ سيتم تعديل رصيد المحفظة وتسجيل حركة رصيد افتتاحي بالتاريخ المحدد
+      </div>
+      <input type="hidden" id="sop-wallet-id">
+      <div class="fg"><label>اسم الحساب</label><input class="inp" id="sop-wallet-name" readonly style="opacity:.6"></div>
+      <div class="g2">
+        <div class="fg"><label>الرصيد الفعلي *</label><input class="inp" id="sop-balance" type="number" placeholder="0"></div>
+        <div class="fg"><label>التاريخ</label><input class="inp" id="sop-date" type="date"></div>
+      </div>
+      <div class="fg"><label>ملاحظة</label><input class="inp" id="sop-note" placeholder="بداية شهر مايو..."></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('set-opening')">إلغاء</button><button class="btn btn-g" onclick="saveSetOpening()">✓ ضبط الرصيد</button></div>
   </div>
 </div>
 
@@ -412,7 +433,7 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 // ── State ──
-let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], users=[];
+let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], users=[], reconciliations=[];
 let currentUser=null, currentRole='admin', currentSection='wallets';
 let activeWalletId=null;
 
@@ -421,7 +442,7 @@ const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops 
 const WICO={wallet:'💳',cash:'💵',bank:'🏦'};
 const WNAME={wallet:'محفظة إلكترونية',cash:'كاش',bank:'بنك'};
 const WCOLS=['var(--g)','var(--b)','var(--p)','var(--c)','var(--y)','var(--r)','var(--o)'];
-const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',other:'📦 أخرى'};
+const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',other:'📦 أخرى',adjustment:'🔄 تسوية',opening_balance:'📅 رصيد افتتاحي'};
 const SPCOL={ورق:'var(--b)',زنكات:'var(--p)',طباعة:'var(--y)',قص:'var(--r)',سلفنة:'var(--g)',شحن:'var(--c)'};
 
 // ── Utils ──
@@ -512,6 +533,11 @@ function startListeners(){
   onSnapshot(collection(db,'users'),snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));
     fillSelects(); renderSection();
+  });
+  onSnapshot(collection(db,'reconciliations'),snap=>{
+    reconciliations=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    renderSection();
   });
 }
 
@@ -635,6 +661,7 @@ function renderSection(){
   else if(currentSection==='shipping_debts') location.href='shipping-accounts.html';
   else if(currentSection==='transactions')   renderTransactions();
   else if(currentSection==='suppliers')      renderSuppliers();
+  else if(currentSection==='reconcile')      renderReconciliation();
 }
 
 // ── محافظ ──
@@ -652,6 +679,7 @@ function renderWallets(){
     const wTx=transactions.filter(t=>t.walletId===w._id);
     const todayIn=wTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const todayOut=wTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+    const lastRec=reconciliations.filter(r=>r.walletId===w._id)[0];
     return`<div class="wcard" style="--wc:${col}" onclick="openWallet('${w._id}')">
       <div class="wc-type">${WICO[w.type]||'💼'} ${WNAME[w.type]||'حساب'}</div>
       <div class="wc-name">${w.name}</div>
@@ -661,9 +689,11 @@ function renderWallets(){
         <span style="color:var(--g)">↑ ${fn(todayIn)} ج وارد</span>
         <span style="color:var(--r)">↓ ${fn(todayOut)} ج صادر</span>
       </div>
+      ${lastRec?`<div style="font-size:10px;color:var(--dim2);margin-top:6px">🔄 آخر تسوية: ${lastRec.date||'—'}${lastRec.diff!=null&&lastRec.diff!==0?' · '+(lastRec.diff>0?'زيادة ':'عجز ')+fn(Math.abs(lastRec.diff))+' ج':' · مطابق'}</div>`:''}
       <div class="wc-actions">
         <button class="btn btn-g btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','in')">📥 دخل</button>
         <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();prepTx('${w._id}','out')">📤 خرج</button>
+        <button class="btn btn-sm btn-xs" style="background:rgba(255,170,0,.12);color:var(--y);border:1px solid rgba(255,170,0,.25)" onclick="event.stopPropagation();openSetOpening('${w._id}')">📅 ضبط</button>
       </div>
     </div>`;
   }).join('');
@@ -991,6 +1021,177 @@ function renderSuppliers(){
       </div>`;
     }).join('')}`;
 }
+
+// ── تطابق الأرصدة ──
+function renderReconciliation(){
+  const el=document.getElementById('section-content');if(!el)return;
+  el.innerHTML=`
+    <div style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad2);padding:14px 16px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:800;color:var(--y);margin-bottom:4px">🔄 مطابقة الأرصدة</div>
+      <div style="font-size:12px;color:var(--dim2)">أدخل الرصيد الفعلي لكل حساب · البرنامج يحسب الفرق ويسجّل تسوية — زيادة أو عجز — بتاريخ اليوم</div>
+    </div>
+    ${wallets.length?wallets.map(w=>{
+      const lastRec=reconciliations.filter(r=>r.walletId===w._id)[0];
+      const recHistory=reconciliations.filter(r=>r.walletId===w._id).slice(0,5);
+      return`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="font-size:22px">${WICO[w.type]||'💼'}</div>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:800">${w.name}</div>
+            <div style="font-size:11px;color:var(--dim2)">${WNAME[w.type]||'حساب'}</div>
+          </div>
+          <div style="text-align:left">
+            <div style="font-size:10px;color:var(--dim2)">رصيد النظام</div>
+            <div style="font-size:22px;font-weight:900;color:var(--b)">${fn(w.balance||0)} ج</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 120px auto;gap:10px;align-items:end;margin-bottom:8px">
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px;color:var(--dim2)">الرصيد الفعلي</label>
+            <input class="inp" id="rec-${w._id}" type="number" placeholder="أدخل الرصيد الفعلي..." oninput="updateRecDiff('${w._id}',${parseFloat(w.balance)||0})">
+          </div>
+          <div id="rec-diff-${w._id}" style="background:var(--bg3);border-radius:var(--rad);padding:10px;text-align:center;height:42px;display:flex;flex-direction:column;justify-content:center">
+            <div style="font-size:9px;color:var(--dim2)">الفرق</div>
+            <div style="font-size:15px;font-weight:900">—</div>
+          </div>
+          <button class="btn btn-g btn-sm" onclick="saveReconciliation('${w._id}',${parseFloat(w.balance)||0})">✓ تسوية</button>
+        </div>
+        ${lastRec?`<div style="font-size:10px;color:var(--dim2);padding:6px 8px;background:var(--bg3);border-radius:var(--rad)">
+          🔄 آخر تسوية: <strong style="color:var(--snow)">${lastRec.date||'—'}</strong>
+          ${lastRec.diff!=null?` · ${lastRec.diff===0?'<span style="color:var(--g)">✓ مطابق</span>'
+            :lastRec.diff>0?`<span style="color:var(--g)">زيادة ${fn(Math.abs(lastRec.diff))} ج</span>`
+            :`<span style="color:var(--r)">عجز ${fn(Math.abs(lastRec.diff))} ج</span>`}`:''}
+        </div>`:'<div style="font-size:10px;color:var(--dim2)">لا توجد تسويات سابقة</div>'}
+      </div>`;
+    }).join(''):`<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد حسابات</div></div>`}
+    ${reconciliations.length?`
+    <div style="margin-top:20px">
+      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.7px">📋 سجل التسويات</div>
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px">
+        ${reconciliations.slice(0,30).map(r=>{
+          const wn=wallets.find(x=>x._id===r.walletId)?.name||r.walletName||'—';
+          const diffVal=parseFloat(r.diff)||0;
+          const col=diffVal>0?'var(--g)':diffVal<0?'var(--r)':'var(--dim2)';
+          const lbl=r.type==='opening_balance'?'📅 رصيد افتتاحي':diffVal===0?'✓ مطابق':diffVal>0?'زيادة':'عجز';
+          return`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.03)">
+            <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:700">${wn}</div>
+              <div style="font-size:10px;color:var(--dim2)">${r.date||'—'} · ${r.createdByName||'—'}</div>
+            </div>
+            <div style="text-align:left">
+              <div style="font-size:13px;font-weight:900;color:${col}">${lbl}${diffVal!==0?' '+fn(Math.abs(diffVal))+' ج':''}</div>
+              <div style="font-size:10px;color:var(--dim2)">${fn(r.sysBal||0)} ← ${fn(r.actualBal||0)} ج</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+  `;
+}
+
+window.updateRecDiff=function(walletId,sysBal){
+  const val=document.getElementById('rec-'+walletId)?.value;
+  const diffEl=document.getElementById('rec-diff-'+walletId);
+  if(!diffEl)return;
+  if(val===''||val===null){
+    diffEl.innerHTML=`<div style="font-size:9px;color:var(--dim2)">الفرق</div><div style="font-size:15px;font-weight:900">—</div>`;
+    return;
+  }
+  const actual=parseFloat(val);
+  const diff=actual-sysBal;
+  const col=diff>0?'var(--g)':diff<0?'var(--r)':'var(--g)';
+  const lbl=diff===0?'✓ مطابق':diff>0?'+'+fn(diff):'-'+fn(Math.abs(diff));
+  diffEl.innerHTML=`<div style="font-size:9px;color:var(--dim2)">الفرق</div><div style="font-size:15px;font-weight:900;color:${col}">${lbl}</div>`;
+};
+
+window.saveReconciliation=async function(walletId,sysBal){
+  const val=document.getElementById('rec-'+walletId)?.value;
+  if(val===''||val===null)return toast('⚠️ أدخل الرصيد الفعلي','err');
+  const actual=parseFloat(val);
+  if(isNaN(actual))return toast('⚠️ رقم غير صحيح','err');
+  const w=wallets.find(x=>x._id===walletId);if(!w)return;
+  const diff=actual-sysBal;
+  const dateStr=nowStr();
+  try{
+    await updateDoc(doc(db,'wallets',walletId),{balance:actual});
+    if(diff!==0){
+      const type=diff>0?'in':'out';
+      const amount=Math.abs(diff);
+      await addDoc(collection(db,'transactions_v2'),{
+        walletId,type,amount,fees:0,
+        description:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
+        category:'adjustment',
+        adjustmentType:diff>0?'surplus':'deficit',
+        balanceBefore:sysBal,balanceAfter:actual,
+        date:dateStr,
+        createdBy:currentUser?.uid||'',
+        createdByName:document.getElementById('nav-name')?.textContent||'',
+        createdAt:serverTimestamp()
+      });
+    }
+    await addDoc(collection(db,'reconciliations'),{
+      walletId,walletName:w.name,
+      sysBal,actualBal:actual,diff,
+      adjustmentType:diff>0?'surplus':diff<0?'deficit':'match',
+      date:dateStr,
+      createdBy:currentUser?.uid||'',
+      createdByName:document.getElementById('nav-name')?.textContent||'',
+      createdAt:serverTimestamp()
+    });
+    document.getElementById('rec-'+walletId).value='';
+    updateRecDiff(walletId,actual);
+    if(diff===0) toast('✅ الأرصدة متطابقة — لا توجد فروقات','ok');
+    else toast(`✅ تسوية: ${diff>0?'زيادة':'عجز'} ${fn(Math.abs(diff))} ج — رصيد جديد: ${fn(actual)} ج`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.openSetOpening=function(walletId){
+  const w=wallets.find(x=>x._id===walletId);if(!w)return;
+  document.getElementById('sop-wallet-id').value=walletId;
+  document.getElementById('sop-wallet-name').value=w.name;
+  document.getElementById('sop-balance').value=w.balance||0;
+  document.getElementById('sop-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('sop-note').value='';
+  oM('set-opening');
+};
+
+window.saveSetOpening=async function(){
+  const walletId=document.getElementById('sop-wallet-id').value;
+  const newBal=parseFloat(document.getElementById('sop-balance').value);
+  const dateStr=document.getElementById('sop-date').value;
+  const note=document.getElementById('sop-note').value;
+  if(!walletId)return toast('⚠️ خطأ: لا توجد محفظة','err');
+  if(isNaN(newBal))return toast('⚠️ أدخل الرصيد','err');
+  const w=wallets.find(x=>x._id===walletId);if(!w)return;
+  const oldBal=parseFloat(w.balance)||0;
+  const diff=newBal-oldBal;
+  const displayDate=dateStr?new Date(dateStr).toLocaleDateString('ar-EG'):nowStr();
+  try{
+    await updateDoc(doc(db,'wallets',walletId),{balance:newBal});
+    await addDoc(collection(db,'transactions_v2'),{
+      walletId,type:diff>=0?'in':'out',amount:Math.abs(diff)||newBal,fees:0,
+      description:'رصيد افتتاحي'+(note?' — '+note:'')+' · '+displayDate,
+      category:'opening_balance',
+      balanceBefore:oldBal,balanceAfter:newBal,
+      date:displayDate,
+      createdBy:currentUser?.uid||'',
+      createdByName:document.getElementById('nav-name')?.textContent||'',
+      createdAt:serverTimestamp()
+    });
+    await addDoc(collection(db,'reconciliations'),{
+      walletId,walletName:w.name,
+      type:'opening_balance',
+      sysBal:oldBal,actualBal:newBal,diff,
+      note,date:displayDate,
+      createdBy:currentUser?.uid||'',
+      createdByName:document.getElementById('nav-name')?.textContent||'',
+      createdAt:serverTimestamp()
+    });
+    cM('set-opening');
+    toast(`✅ رصيد "${w.name}" ضُبط على ${fn(newBal)} ج`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ WALLET PANEL ══
 window.openWallet=function(id){
