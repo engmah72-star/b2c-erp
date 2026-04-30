@@ -92,12 +92,22 @@
   </div>
   <div class="content">
 
+    <!-- فلتر الفترة الزمنية -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <span style="font-size:11px;color:var(--dim2);font-weight:700;white-space:nowrap">📅 الفترة:</span>
+      <button class="period-btn" data-period="today"      onclick="setPeriod('today')"      style="padding:5px 16px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s">اليوم</button>
+      <button class="period-btn" data-period="week"       onclick="setPeriod('week')"       style="padding:5px 16px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s">الأسبوع</button>
+      <button class="period-btn" data-period="month"      onclick="setPeriod('month')"      style="padding:5px 16px;border-radius:20px;border:1px solid var(--p);background:rgba(167,139,250,.15);color:var(--p);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s">الشهر</button>
+      <button class="period-btn" data-period="last_month" onclick="setPeriod('last_month')" style="padding:5px 16px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s">الشهر السابق</button>
+      <span style="font-size:11px;color:var(--dim2);margin-right:4px" id="period-label-sub"></span>
+    </div>
+
     <!-- KPIs الأرصدة -->
     <div class="stats" style="margin-bottom:12px">
       <div class="stat" style="--sc:var(--g)"><div class="stat-icon">💼</div><div class="stat-val" id="kpi-bal">—</div><div class="stat-lbl">إجمالي الأرصدة</div></div>
-      <div class="stat" style="--sc:var(--b)"><div class="stat-icon">📥</div><div class="stat-val" id="kpi-in">—</div><div class="stat-lbl">إيرادات الشهر</div></div>
-      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">📤</div><div class="stat-val" id="kpi-out">—</div><div class="stat-lbl">مصروفات الشهر</div></div>
-      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💹</div><div class="stat-val" id="kpi-profit">—</div><div class="stat-lbl">صافي الشهر</div></div>
+      <div class="stat" style="--sc:var(--b)"><div class="stat-icon">📥</div><div class="stat-val" id="kpi-in">—</div><div class="stat-lbl" id="kpi-in-lbl">إيرادات الفترة</div></div>
+      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">📤</div><div class="stat-val" id="kpi-out">—</div><div class="stat-lbl" id="kpi-out-lbl">مصروفات الفترة</div></div>
+      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💹</div><div class="stat-val" id="kpi-profit">—</div><div class="stat-lbl" id="kpi-profit-lbl">صافي الفترة</div></div>
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">🏭</div><div class="stat-val" id="kpi-sup-due">—</div><div class="stat-lbl">مستحق للموردين</div></div>
     </div>
     <!-- ملخص المديونيات السريع -->
@@ -459,6 +469,67 @@ window.cM=cM;
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const isThisMonth=ts=>{const d=ts?.toDate?.()||(ts?new Date(ts):null);if(!d)return false;const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
 
+// ── فلتر الفترة الزمنية ──
+let activePeriod='month';
+const PERIOD_NAMES_AR={today:'اليوم',week:'الأسبوع',month:'الشهر',last_month:'الشهر السابق'};
+const MONTHS_AR_ACC=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+
+function getPeriodRange(period){
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const tomorrow=new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  if(period==='today') return {from:today,to:tomorrow};
+  if(period==='week'){
+    const dow=now.getDay(),sinceMon=dow===0?6:dow-1;
+    const mon=new Date(today); mon.setDate(mon.getDate()-sinceMon);
+    const nextMon=new Date(mon); nextMon.setDate(nextMon.getDate()+7);
+    return {from:mon,to:nextMon};
+  }
+  if(period==='month') return {from:new Date(now.getFullYear(),now.getMonth(),1),to:new Date(now.getFullYear(),now.getMonth()+1,1)};
+  if(period==='last_month') return {from:new Date(now.getFullYear(),now.getMonth()-1,1),to:new Date(now.getFullYear(),now.getMonth(),1)};
+  return null;
+}
+
+function isInPeriod(ts){
+  const range=getPeriodRange(activePeriod);
+  if(!range) return true;
+  const d=ts?.toDate?ts.toDate():(ts?new Date(ts):null);
+  if(!d) return false;
+  return d>=range.from&&d<range.to;
+}
+
+function getPeriodSubLabel(){
+  const now=new Date();
+  if(activePeriod==='today') return now.toLocaleDateString('ar-EG');
+  if(activePeriod==='week'){
+    const dow=now.getDay(),sinceMon=dow===0?6:dow-1;
+    const mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-sinceMon);
+    const sun=new Date(mon); sun.setDate(sun.getDate()+6);
+    return mon.toLocaleDateString('ar-EG')+' — '+sun.toLocaleDateString('ar-EG');
+  }
+  if(activePeriod==='month') return MONTHS_AR_ACC[now.getMonth()]+' '+now.getFullYear();
+  if(activePeriod==='last_month'){
+    const m=now.getMonth()===0?11:now.getMonth()-1,y=now.getMonth()===0?now.getFullYear()-1:now.getFullYear();
+    return MONTHS_AR_ACC[m]+' '+y;
+  }
+  return '';
+}
+
+window.setPeriod=function(period){
+  activePeriod=period;
+  // تحديث أزرار الفلتر
+  document.querySelectorAll('.period-btn').forEach(btn=>{
+    const active=btn.dataset.period===period;
+    btn.style.borderColor=active?'var(--p)':'var(--line)';
+    btn.style.background=active?'rgba(167,139,250,.15)':'transparent';
+    btn.style.color=active?'var(--p)':'var(--dim2)';
+  });
+  // مزامنة مع فلتر الحركات
+  txFilter.period=period;
+  updateKPIs();
+  renderSection();
+};
+
 function toast(msg,type=''){
   const c=document.getElementById('toasts');if(!c)return;
   const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;
@@ -557,14 +628,22 @@ function fillSelects(){
 function updateKPIs(){
   // أرصدة
   setText('kpi-bal',fn(wallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0))+' ج');
-  // الشهر
-  const mIn =transactions.filter(t=>t.type==='in' &&isThisMonth(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const mOut=transactions.filter(t=>t.type==='out'&&isThisMonth(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+
+  // تحديث labels الـ KPI + sub-label
+  const pName=PERIOD_NAMES_AR[activePeriod]||'الفترة';
+  setText('kpi-in-lbl','إيرادات '+pName);
+  setText('kpi-out-lbl','مصروفات '+pName);
+  setText('kpi-profit-lbl','صافي '+pName);
+  setText('period-label-sub',getPeriodSubLabel());
+
+  // الفترة المختارة
+  const mIn =transactions.filter(t=>t.type==='in' &&isInPeriod(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const mOut=transactions.filter(t=>t.type==='out'&&isInPeriod(t.createdAt)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   setText('kpi-in',fn(mIn)+' ج');
   setText('kpi-out',fn(mOut)+' ج');
   const profit=mIn-mOut;
   const pEl=document.getElementById('kpi-profit');
-  if(pEl){pEl.textContent=fn(Math.abs(profit))+' ج';pEl.style.color=profit>=0?'var(--g)':'var(--r)';}
+  if(pEl){pEl.textContent=(profit>=0?'+':'-')+fn(Math.abs(profit))+' ج';pEl.style.color=profit>=0?'var(--g)':'var(--r)';}
   // موردين
   // التكاليف من costItems داخل الأوردرات
   const totalCostsCalc=allOrders.reduce((s,o)=>(o.costItems||[]).reduce((cs,ci)=>cs+(parseFloat(ci.total)||0),s),0);
@@ -678,7 +757,7 @@ function renderWallets(){
   const renderCards=list=>list.map((w,i)=>{
     const col=WCOLS[i%WCOLS.length];
     const mgr=users.find(u=>u._id===w.managerId);
-    const wTx=transactions.filter(t=>t.walletId===w._id);
+    const wTx=transactions.filter(t=>t.walletId===w._id&&isInPeriod(t.createdAt));
     const todayIn=wTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const todayOut=wTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const lastRec=reconciliations.filter(r=>r.walletId===w._id)[0];
@@ -688,8 +767,9 @@ function renderWallets(){
       <div class="wc-bal">${fn(w.balance||0)} <span style="font-size:14px;font-weight:400;color:var(--dim2)">ج</span></div>
       <div class="wc-mgr">المسؤول: <strong style="color:var(--snow)">${mgr?.name||'—'}</strong></div>
       <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
-        <span style="color:var(--g)">↑ ${fn(todayIn)} ج وارد</span>
-        <span style="color:var(--r)">↓ ${fn(todayOut)} ج صادر</span>
+        <span style="color:var(--g)">↑ ${fn(todayIn)} ج</span>
+        <span style="color:var(--r)">↓ ${fn(todayOut)} ج</span>
+        <span style="color:var(--dim2)">${PERIOD_NAMES_AR[activePeriod]||''}</span>
       </div>
       ${lastRec?`<div style="font-size:10px;color:var(--dim2);margin-top:6px">🔄 آخر تسوية: ${lastRec.date||'—'}${lastRec.diff!=null&&lastRec.diff!==0?' · '+(lastRec.diff>0?'زيادة ':'عجز ')+fn(Math.abs(lastRec.diff))+' ج':' · مطابق'}</div>`:''}
       <div class="wc-actions">
