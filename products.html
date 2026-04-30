@@ -276,7 +276,7 @@ const auth=getAuth(app); const db=getFirestore(app);
 const ROLES_CFG={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Manager',col:'var(--b)'},customer_service:{label:'Cust. Service',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op.',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet Mgr',col:'var(--g)'}};
 
 let products=[],editId=null,currentUser=null,currentRole='admin';
-let suppliers=[],activeProductId=null,editVariantIdx=-1,variantItems=[];
+let suppliers=[],activeProductId=null;
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
@@ -299,7 +299,7 @@ onSnapshot(query(collection(db,'products_v2'),orderBy('name','asc')),snap=>{
   products=snap.docs.map(d=>({...d.data(),_id:d.id}));
   if(!products.length) seedProducts();
   render(); updateStats();
-  if(activeProductId&&document.getElementById('ov-variants')?.classList.contains('open')) showVariantsList();
+  if(activeProductId&&document.getElementById('ov-cost-history')?.classList.contains('open')){const p=products.find(x=>x._id===activeProductId);if(p)renderCostHistory(p);}
 });
 onSnapshot(collection(db,'suppliers_v2'),snap=>{
   suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -344,11 +344,11 @@ window.render=function(){
       <div class="pc-price" style="color:${col}">${p.defaultPrice?fn(p.defaultPrice)+' ج.م':'بدون سعر'}</div>
       ${p.notes?`<div style="font-size:11px;color:var(--dim2);margin-bottom:10px">📝 ${p.notes}</div>`:''}
       <div class="pc-actions">
-        <button class="btn btn-ghost btn-xs" onclick="showCostVariants('${p._id}')">💰 التركيبات</button>
+        <button class="btn btn-ghost btn-xs" onclick="showCostHistory('${p._id}')">📋 التكاليف</button>
         <button class="btn btn-ghost btn-xs" onclick="editProd('${p._id}')">✏️ تعديل</button>
         <button class="btn btn-danger btn-xs" onclick="delProd('${p._id}','${p.name}')">🗑</button>
       </div>
-      ${(p.costVariants||[]).length?`<div style="margin-top:6px;font-size:11px;color:var(--dim2);padding:4px 0">${(p.costVariants||[]).length} تركيبة مسعّرة</div>`:''}
+      ${(p.costHistory||[]).length?`<div style="margin-top:6px;font-size:11px;color:var(--dim2);padding:4px 0">📋 ${(p.costHistory||[]).length} سجل · آخر: ${fn((p.costHistory||[]).slice(-1)[0]?.total||0)} ج</div>`:''}
       ${p.lastCostTotal?`<div style="margin-top:4px;padding:6px 8px;background:rgba(255,61,110,.08);border-radius:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--dim2)">آخر تكلفة</span><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(p.lastCostTotal)} ج</span></div>`:''}
     </div>`;
   }).join('');
@@ -428,144 +428,57 @@ window.exportCSV=function(){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n')],{type:'text/csv;charset=utf-8;'}));a.download='products.csv';a.click();toast('📥 تم التصدير','ok');
 };
 
-// ══ COST VARIANTS ══
-const COST_TYPES=['طباعة','ورق','قص','سلفنة','زنكات','تجميع','شحن','تصميم','أخرى'];
-const EXTRAS_LIST=['سلفنة','زنكات','تجميع','قص','تصميم','وجهين'];
-const PAPER_LIST=['كوشيه','بريستول','فينيل','كرتون','مطفي','صيني','أخرى'];
-
-window.showCostVariants=function(id){
-  activeProductId=id;editVariantIdx=-1;
+// ══ COST HISTORY ══
+window.showCostHistory=function(id){
+  activeProductId=id;
   const p=products.find(x=>x._id===id);if(!p)return;
-  document.getElementById('var-prod-name').textContent=p.name;
-  showVariantsList();
-  oM('variants');
+  document.getElementById('ch-title').textContent=`📋 تكاليف — ${p.name}`;
+  renderCostHistory(p);
+  oM('cost-history');
 };
 
-window.showVariantsList=function(){
-  document.getElementById('var-list-sec').style.display='block';
-  document.getElementById('var-form-sec').style.display='none';
-  document.getElementById('var-footer-list').style.display='flex';
-  document.getElementById('var-footer-form').style.display='none';
-  const p=products.find(x=>x._id===activeProductId);if(!p)return;
-  const variants=p.costVariants||[];
-  const el=document.getElementById('variants-list');
-  if(!variants.length){el.innerHTML='<div style="text-align:center;padding:30px;color:var(--dim2)">لا توجد تركيبات — أضف تركيبة جديدة</div>';return;}
-  el.innerHTML=variants.map((v,i)=>{
-    const lastH=(v.history||[]).slice(-1)[0];
-    const pct=lastH?.pctChange||0;
-    const dispTotal=lastH?.total||v.lastTotal||0;
-    const extrasStr=(v.extras||[]).join(' · ')||'—';
-    const alertBadge=pct>15?`<span style="background:rgba(255,61,110,.15);color:var(--r);font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;margin-right:6px">🚨 +${pct}%</span>`:'';
-    return`<div style="background:var(--bg3);border:1px solid ${pct>15?'rgba(255,61,110,.4)':'var(--line)'};border-radius:12px;padding:12px 14px;margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div><div style="font-size:14px;font-weight:900">${fn(v.qty)} قطعة · ${v.paper||'—'}${v.weight?' · '+v.weight+' جم':''}</div>
-          <div style="font-size:11px;color:var(--dim2);margin-top:2px">إضافات: ${extrasStr} ${alertBadge}</div></div>
-        <div style="text-align:left">
-          ${dispTotal?`<div style="font-size:16px;font-weight:900;color:var(--r)">${fn(dispTotal)} ج</div>`:''}
-          ${pct?`<div style="font-size:11px;font-weight:800;color:${pct>0?'var(--r)':'var(--g)'}">${pct>0?'↑':'↓'}${Math.abs(pct)}%</div>`:''}
-        </div>
-      </div>
-      <div style="margin-bottom:8px">
-        ${(v.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line);font-size:11px"><span style="color:var(--dim2)">${it.type}${it.supplierName?' — '+it.supplierName:''}</span><span style="font-weight:700">${fn(it.total)} ج</span></div>`).join('')}
-        <div style="text-align:left;font-size:12px;font-weight:900;color:var(--r);padding-top:5px">الإجمالي: ${fn((v.items||[]).reduce((s,it)=>s+(parseFloat(it.total)||0),0))} ج</div>
-      </div>
-      <div style="display:flex;gap:6px;justify-content:flex-end">
-        <button onclick="showVariantHistory(${i})" style="font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);cursor:pointer">📊 السجل</button>
-        <button onclick="openVariantForm(${i})" style="font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer">✏️ تعديل</button>
-        <button onclick="deleteVariant(${i})" style="font-size:11px;padding:5px 10px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer">🗑</button>
-      </div>
-    </div>`;
-  }).join('');
-};
-
-window.openVariantForm=function(idx){
-  editVariantIdx=idx;
-  const p=products.find(x=>x._id===activeProductId);
-  const v=idx>=0?(p?.costVariants||[])[idx]:null;
-  document.getElementById('var-list-sec').style.display='none';
-  document.getElementById('var-form-sec').style.display='block';
-  document.getElementById('var-footer-list').style.display='none';
-  document.getElementById('var-footer-form').style.display='flex';
-  document.getElementById('var-form-title').textContent=idx>=0?'✏️ تعديل تركيبة':'＋ تركيبة جديدة';
-  sv('vf-qty',v?.qty||'');
-  sv('vf-paper',v?.paper||'');
-  sv('vf-weight',v?.weight||'');
-  document.getElementById('vf-extras').querySelectorAll('input[type=checkbox]').forEach(cb=>{cb.checked=(v?.extras||[]).includes(cb.value);});
-  variantItems=(v?.items||[]).map(it=>({...it}));
-  renderVarItems();
-};
-window.cancelVariantForm=showVariantsList;
-
-function renderVarItems(){
-  const el=document.getElementById('vf-items');
-  const supOpts='<option value="">— اختياري —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('');
-  el.innerHTML=variantItems.map((item,i)=>`
-    <div style="display:flex;gap:5px;align-items:center;margin-bottom:6px">
-      <select class="inp" style="flex:2;font-size:12px;padding:7px 8px" onchange="variantItems[${i}].type=this.value">${COST_TYPES.map(t=>`<option ${item.type===t?'selected':''}>${t}</option>`).join('')}</select>
-      <select class="inp" style="flex:2;font-size:12px;padding:7px 8px" onchange="variantItems[${i}].supplierId=this.value;variantItems[${i}].supplierName=this.options[this.selectedIndex].dataset.name||''">${supOpts.replace(`value="${item.supplierId}"`,`value="${item.supplierId}" selected`)}</select>
-      <input class="inp" type="number" style="flex:1;font-size:12px;padding:7px 8px" value="${item.total||''}" placeholder="ج" oninput="variantItems[${i}].total=parseFloat(this.value)||0">
-      <button onclick="removeVarItem(${i})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;flex-shrink:0">✕</button>
-    </div>`).join('')+
-  `<button onclick="addVarItem()" style="width:100%;padding:8px;border-radius:8px;border:1px dashed rgba(34,211,238,.3);background:rgba(34,211,238,.04);color:var(--c);font-size:12px;cursor:pointer;margin-top:4px">＋ إضافة بند</button>`;
-}
-window.addVarItem=function(){variantItems.push({type:'طباعة',supplierId:'',supplierName:'',total:0});renderVarItems();};
-window.removeVarItem=function(i){variantItems.splice(i,1);renderVarItems();};
-
-window.saveVariant=async function(){
-  const qty=parseFloat(gv('vf-qty'))||0;
-  if(!qty)return toast('⚠️ أدخل الكمية','err');
-  if(!variantItems.length)return toast('⚠️ أضف بند تكلفة واحد على الأقل','err');
-  const paper=gv('vf-paper');
-  const weight=parseFloat(gv('vf-weight'))||0;
-  const extras=[...document.querySelectorAll('#vf-extras input:checked')].map(c=>c.value);
-  const items=variantItems.map(it=>({type:it.type,supplierId:it.supplierId||'',supplierName:it.supplierName||'',total:parseFloat(it.total)||0}));
-  const total=items.reduce((s,it)=>s+it.total,0);
-  const p=products.find(x=>x._id===activeProductId);if(!p)return;
-  const variants=[...(p.costVariants||[])];
-  const varObj={qty,paper,weight,extras,items,lastTotal:total,lastUpdated:new Date().toLocaleDateString('ar-EG'),history:editVariantIdx>=0?(variants[editVariantIdx].history||[]):[]};
-  if(editVariantIdx>=0)variants[editVariantIdx]=varObj;
-  else variants.push(varObj);
-  try{
-    await updateDoc(doc(db,'products_v2',activeProductId),{costVariants:variants,updatedAt:serverTimestamp()});
-    const li=products.findIndex(x=>x._id===activeProductId);if(li>=0)products[li]={...products[li],costVariants:variants};
-    toast('✅ تم الحفظ','ok');showVariantsList();
-  }catch(e){toast('❌ '+e.message,'err');}
-};
-
-window.deleteVariant=async function(idx){
-  if(!confirm('حذف هذه التركيبة؟'))return;
-  const p=products.find(x=>x._id===activeProductId);if(!p)return;
-  const variants=[...(p.costVariants||[])];variants.splice(idx,1);
-  try{
-    await updateDoc(doc(db,'products_v2',activeProductId),{costVariants:variants,updatedAt:serverTimestamp()});
-    const li=products.findIndex(x=>x._id===activeProductId);if(li>=0)products[li]={...products[li],costVariants:variants};
-    toast('✅ حُذفت','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-};
-
-window.showVariantHistory=function(varIdx){
-  const p=products.find(x=>x._id===activeProductId);if(!p)return;
-  const v=(p.costVariants||[])[varIdx];if(!v)return;
-  const history=(v.history||[]).slice().reverse();
-  document.getElementById('ch-title').textContent=`📊 ${p.name} · ${fn(v.qty)} قطعة · ${v.paper||''}${(v.extras||[]).length?' + '+(v.extras||[]).join(' + '):''}`;
+function renderCostHistory(p){
+  const history=(p.costHistory||[]).slice().reverse();
   const body=document.getElementById('ch-body');
-  body.innerHTML=!history.length?'<div style="text-align:center;padding:30px;color:var(--dim2)">لا يوجد سجل بعد<br><small>سيُسجَّل تلقائياً عند تحويل أوردر للشحن</small></div>':
-  history.map(h=>{
-    const pct=h.pctChange||0;
-    const alert=pct>15?`<div style="background:rgba(255,61,110,.12);color:var(--r);font-size:11px;font-weight:800;padding:6px 10px;border-radius:8px;margin-bottom:8px">🚨 زيادة مفاجئة ${pct}% — يُنصح بالمراجعة</div>`:'';
-    return`<div style="background:var(--bg2);border:1px solid ${pct>15?'rgba(255,61,110,.4)':'var(--line)'};border-radius:12px;margin-bottom:12px;overflow:hidden">
-      <div style="padding:10px 14px;background:${pct>15?'rgba(255,61,110,.06)':'var(--bg3)'};border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <div><div style="font-size:13px;font-weight:800">${h.date}</div><div style="font-size:11px;color:var(--dim2)">${h.orderClient||'—'}</div></div>
-        <div style="text-align:left">
-          ${pct?`<div style="font-size:11px;font-weight:800;color:${pct>0?'var(--r)':'var(--g)'}">${pct>0?'↑':'↓'}${Math.abs(pct)}%</div>`:'<div style="font-size:10px;color:var(--dim2)">أول إدخال</div>'}
-          <div style="font-size:16px;font-weight:900;color:var(--r)">${fn(h.total)} ج</div>
+  if(!history.length){
+    body.innerHTML='<div style="text-align:center;padding:40px;color:var(--dim2)">لا يوجد سجل تكاليف بعد<br><small style="display:block;margin-top:6px">تُسجَّل تلقائياً عند تحويل أوردر للشحن</small></div>';
+    return;
+  }
+  // تجميع حسب الكمية لعرض آخر سعر لكل كمية
+  const byQty={};
+  [...history].reverse().forEach(h=>{const k=parseFloat(h.qty)||0;if(!byQty[k])byQty[k]=h;});
+  const summaryHtml=Object.entries(byQty).sort((a,b)=>a[0]-b[0]).map(([qty,h])=>
+    `<div style="display:inline-flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:0 4px 8px 0;font-size:12px">
+      <span style="font-weight:800">${fn(qty)} قطعة</span>
+      <span style="color:var(--r);font-weight:900">${fn(h.total)} ج</span>
+      ${h.paper?`<span style="color:var(--dim2)">${h.paper}</span>`:''}
+    </div>`
+  ).join('');
+  body.innerHTML=`
+    <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:8px">آخر تكلفة لكل كمية</div>
+      <div style="flex-wrap:wrap;display:flex">${summaryHtml}</div>
+    </div>
+    ${history.map(h=>{
+      const items=h.items||[];
+      const prevSameQty=[...history].reverse().find(x=>parseFloat(x.qty)===parseFloat(h.qty)&&x!==h);
+      const pct=prevSameQty&&prevSameQty.total>0?Math.round((h.total-prevSameQty.total)/prevSameQty.total*100):0;
+      const alert=Math.abs(pct)>15?`<div style="background:rgba(255,61,110,.1);color:var(--r);font-size:11px;font-weight:800;padding:5px 10px;border-radius:8px;margin-bottom:8px">🚨 ${pct>0?'زيادة':'انخفاض'} ${Math.abs(pct)}%</div>`:'';
+      return`<div style="background:var(--bg2);border:1px solid ${Math.abs(pct)>15?'rgba(255,61,110,.3)':'var(--line)'};border-radius:12px;margin-bottom:10px;overflow:hidden">
+        <div style="padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:800">${h.date}</div>
+            <div style="font-size:11px;color:var(--dim2)">${h.clientName||'—'} · ${fn(h.qty)} قطعة${h.paper?' · '+h.paper:''}</div>
+          </div>
+          <div style="text-align:left">
+            ${pct?`<div style="font-size:11px;font-weight:800;color:${pct>0?'var(--r)':'var(--g)'}">${pct>0?'↑':'↓'}${Math.abs(pct)}%</div>`:''}
+            <div style="font-size:16px;font-weight:900;color:var(--r)">${fn(h.total)} ج</div>
+          </div>
         </div>
-      </div>
-      <div style="padding:8px 14px">${alert}${(h.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="color:var(--dim2)">${it.type}${it.supplierName?' — '+it.supplierName:''}</span><span style="font-weight:700">${fn(it.total)} ج</span></div>`).join('')}</div>
-    </div>`;
-  }).join('');
-  cM('variants');oM('cost-history');
-};
+        <div style="padding:8px 14px">${alert}${items.map(it=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="color:var(--dim2)">${it.type}${it.supplierName?' — '+it.supplierName:''}</span><span style="font-weight:700">${fn(it.total)} ج</span></div>`).join('')}</div>
+      </div>`;
+    }).join('')}`;
+}
 
 window.logout=async function(){await signOut(auth);window.location.href='login.html';};
 window.oM=n=>document.getElementById('ov-'+n)?.classList.add('open');
@@ -587,70 +500,17 @@ function fn(n){return(n||0).toLocaleString('ar-EG');}
     <a class="mob-nav-item " href="settings.html"><div class="mob-nav-ico">⚙️</div><div class="mob-nav-lbl">إعدادات</div></a>
   </div>
 </nav>
-<!-- Modal: تركيبات التكلفة -->
-<div class="overlay" id="ov-variants">
-  <div class="modal" style="max-width:540px">
-    <div class="modal-head">
-      <span class="modal-title">💰 تركيبات — <span id="var-prod-name"></span></span>
-      <button class="modal-x" onclick="cM('variants')">✕</button>
-    </div>
-    <div class="modal-body" style="max-height:65vh;overflow-y:auto">
-      <!-- قائمة التركيبات -->
-      <div id="var-list-sec">
-        <div id="variants-list"></div>
-      </div>
-      <!-- فورم إضافة/تعديل -->
-      <div id="var-form-sec" style="display:none">
-        <div style="font-size:13px;font-weight:800;margin-bottom:14px" id="var-form-title">＋ تركيبة جديدة</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
-          <div class="fg"><label>الكمية</label><input class="inp" id="vf-qty" type="number" placeholder="300"></div>
-          <div class="fg"><label>نوع الورق</label>
-            <input class="inp" id="vf-paper" type="text" list="paper-suggestions" placeholder="كوشيه / بريستول / ...">
-            <datalist id="paper-suggestions">
-              <option>كوشيه</option><option>بريستول</option><option>فينيل</option>
-              <option>كرتون</option><option>مطفي</option><option>صيني</option>
-            </datalist>
-          </div>
-          <div class="fg"><label>الوزن (جم)</label><input class="inp" id="vf-weight" type="number" placeholder="300"></div>
-        </div>
-        <div class="fg" style="margin-bottom:12px">
-          <label>الإضافات</label>
-          <div id="vf-extras" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 0">
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="سلفنة"> سلفنة</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="زنكات"> زنكات</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="تجميع"> تجميع</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="قص"> قص</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="تصميم"> تصميم</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" value="وجهين"> وجهين</label>
-          </div>
-        </div>
-        <div class="fg">
-          <label>بنود التكلفة</label>
-          <div id="vf-items"></div>
-        </div>
-      </div>
-    </div>
-    <div class="modal-foot" id="var-footer-list">
-      <button class="btn btn-ghost" onclick="cM('variants')">إغلاق</button>
-      <button class="btn btn-b" onclick="openVariantForm(-1)">＋ تركيبة جديدة</button>
-    </div>
-    <div class="modal-foot" id="var-footer-form" style="display:none">
-      <button class="btn btn-ghost" onclick="cancelVariantForm()">← رجوع</button>
-      <button class="btn btn-b" onclick="saveVariant()">💾 حفظ التركيبة</button>
-    </div>
-  </div>
-</div>
-
 <!-- Modal: سجل التكاليف -->
 <div class="overlay" id="ov-cost-history">
   <div class="modal" style="max-width:520px">
     <div class="modal-head">
-      <span class="modal-title" id="ch-title">📊 سجل التكاليف</span>
+      <span class="modal-title" id="ch-title">📋 سجل التكاليف</span>
       <button class="modal-x" onclick="cM('cost-history')">✕</button>
     </div>
-    <div class="modal-body" id="ch-body" style="max-height:60vh;overflow-y:auto">
+    <div class="modal-body" id="ch-body" style="max-height:65vh;overflow-y:auto">
       <div style="text-align:center;padding:20px;color:var(--dim2)">جاري التحميل...</div>
     </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('cost-history')">إغلاق</button></div>
   </div>
 </div>
 
