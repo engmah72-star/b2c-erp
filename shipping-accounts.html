@@ -137,6 +137,13 @@
   </div>
 </div>
 
+<nav class="mob-nav"><div class="mob-nav-items">
+  <a class="mob-nav-item" href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
+  <a class="mob-nav-item" href="shipping.html"><div class="mob-nav-ico">🚚</div><div class="mob-nav-lbl">الشحن</div></a>
+  <a class="mob-nav-item active" href="shipping-accounts.html"><div class="mob-nav-ico">📦</div><div class="mob-nav-lbl">حسابات</div></a>
+  <a class="mob-nav-item" href="accounts.html"><div class="mob-nav-ico">💰</div><div class="mob-nav-lbl">مالية</div></a>
+</div></nav>
+<div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div id="toasts" class="toasts"></div>
 
 <script>
@@ -144,6 +151,7 @@ const SBPAGES=[{file:'index.html',label:'لوحة التحكم',ico:'⬡',adminO
 function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const pages=(ud?.permissions?.pages)||[];const isAdm=['admin','operation_manager'].includes(role);const nav=document.getElementById('nav-scroll-dynamic');if(!nav)return;let html='';for(const p of SBPAGES){const ok=isAdm||(p.adminOnly?false:pages.includes('*')||pages.includes(p.perm||''));if(!ok)continue;html+=`<a class="nav-link${cur===p.file?' active':''}" href="${p.file}"><span class="nav-ico">${p.ico}</span> ${p.label}</a>`;}nav.innerHTML=html;}
 window.toggleNav=()=>{document.querySelector('.sidenav')?.classList.toggle('mob-open');document.getElementById('nav-ov')?.classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-open');document.getElementById('nav-ov')?.classList.remove('show');};
+window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");await signOut(getAuth());window.location.href='login.html';};
 </script>
 
 <script type="module">
@@ -283,15 +291,17 @@ window.render=function(){
 
   el.innerHTML=cos.map(co=>{
     const coSettles=settlements.filter(s=>s.companyName===co.name).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const coReturns=returns.filter(r=>r.companyName===co.name&&r.status!=='cancelled').sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const totalReturnCost=coReturns.reduce((s,r)=>s+(parseFloat(r.cost)||0),0);
     return`<div class="co-card">
       <div class="co-head">
         <div>
           <div class="co-name">📦 ${co.name}</div>
-          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${co.allOrders.length} شحنة · ${co.pendingOrds.length} بانتظار تسوية</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${co.allOrders.length} شحنة · ${co.pendingOrds.length} بانتظار تسوية${coReturns.length?` · <span style="color:var(--y)">${coReturns.length} مرتجع</span>`:''}</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-r btn-sm" onclick="openReturn('${co.name}')">↩️ مرتجع</button>
-          <button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسجيل دفعة</button>
+          ${co.pendingOrds.length?`<button class="btn btn-r btn-sm" onclick="openReturn('${co.name}')">↩️ مرتجع</button>`:''}
+          ${co.totalRemaining>0?`<button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسوية</button>`:'<span style="font-size:11px;color:var(--g);font-weight:700;padding:4px 8px">✅ مسوّى</span>'}
         </div>
       </div>
       <div class="co-body">
@@ -299,7 +309,7 @@ window.render=function(){
         <div class="co-kpis">
           <div class="co-kpi">
             <div class="co-kpi-val" style="color:var(--b)">${fn(co.totalDue)} ج</div>
-            <div class="co-kpi-lbl">مستحق من الشركة</div>
+            <div class="co-kpi-lbl">إجمالي مستحق</div>
           </div>
           <div class="co-kpi">
             <div class="co-kpi-val" style="color:var(--g)">${fn(co.totalCollected)} ج</div>
@@ -307,9 +317,9 @@ window.render=function(){
           </div>
           <div class="co-kpi" style="${co.totalRemaining>0?'background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.2)':''}">
             <div class="co-kpi-val" style="color:${co.totalRemaining>0?'var(--r)':'var(--g)'}">
-              ${co.totalRemaining>0?fn(co.totalRemaining)+' ج':'✅ مسوّى'}
+              ${co.totalRemaining>0?fn(co.totalRemaining)+' ج':'✅'}
             </div>
-            <div class="co-kpi-lbl">باقي للتسوية</div>
+            <div class="co-kpi-lbl">باقي</div>
           </div>
         </div>
 
@@ -318,33 +328,58 @@ window.render=function(){
         <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">⏳ بانتظار التسوية (${co.pendingOrds.length})</div>
         ${co.pendingOrds.slice(0,5).map(o=>{
           const paid=FC.getPaid(o);const due=FC.getDueByCo(o);
+          const stageAr={shipping:'شحن',archived:'أرشيف'}[o.stage]||o.stage;
           return`<div class="settle-row">
             <div style="flex:1;min-width:0">
-              <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||''}</span></div>
-              ${paid>0?`<div style="font-size:10px;color:var(--g)">دفع مسبقاً: ${fn(paid)} ج</div>`:''}
+              <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
+              <div style="font-size:10px;color:var(--dim2)">${stageAr}${paid>0?' · دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}</div>
             </div>
             <div style="text-align:left;flex-shrink:0">
-              <div style="font-size:13px;font-weight:900;color:var(--b)">${fn(due)} ج</div>
+              <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(due)} ج</div>
               <div style="font-size:9px;color:var(--dim2)">من ${fn(parseFloat(o.salePrice)||0)} ج</div>
             </div>
           </div>`;
         }).join('')}
-        ${co.pendingOrds.length>5?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px">+${co.pendingOrds.length-5} أوردر أخرى</div>`:''}
+        ${co.pendingOrds.length>5?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px;cursor:pointer" onclick="openSettle('${co.name}')">+${co.pendingOrds.length-5} أوردر أخرى ← اضغط للتسوية</div>`:''}
         `:''}
+
+        <!-- المرتجعات -->
+        ${coReturns.length?`
+        <details style="margin-top:10px">
+          <summary style="font-size:11px;font-weight:800;color:var(--y);cursor:pointer;padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px">
+            <span>↩️ المرتجعات (${coReturns.length})</span>
+            ${totalReturnCost>0?`<span style="background:rgba(255,170,0,.15);color:var(--y);font-size:10px;padding:2px 8px;border-radius:20px">تكلفة: ${fn(totalReturnCost)} ج</span>`:''}
+          </summary>
+          <div style="margin-top:8px">
+          ${coReturns.map(r=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.15);border-radius:8px;margin-bottom:5px">
+              <div style="font-size:18px">↩️</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:800">${r.clientName||'—'}</div>
+                <div style="font-size:10px;color:var(--dim2)">${r.date||'—'}${r.note?' · '+r.note:''}</div>
+              </div>
+              ${r.cost>0?`<span style="font-size:12px;font-weight:900;color:var(--y);flex-shrink:0">${fn(r.cost)} ج</span>`:'<span style="font-size:10px;color:var(--dim2)">بلا تكلفة</span>'}
+            </div>`).join('')}
+          </div>
+        </details>`:''}
 
         <!-- سجل التسويات -->
         ${coSettles.length?`
-        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin:12px 0 8px">📋 سجل التسويات (${coSettles.length})</div>
-        ${coSettles.map(s=>`
+        <details style="margin-top:10px" ${coSettles.length<=2?'open':''}>
+          <summary style="font-size:11px;font-weight:800;color:var(--dim2);cursor:pointer;padding:6px 0;list-style:none">📋 سجل التسويات (${coSettles.length})</summary>
+          <div style="margin-top:8px">
+          ${coSettles.map(s=>`
           <div class="settle-item">
             <div>
-              <div style="font-size:12px;font-weight:800">${fn(s.amount)} ج</div>
-              <div style="font-size:10px;color:var(--dim2)">${s.date||s.createdAt?.toDate?.().toLocaleDateString('ar-EG')||'—'} ${s.note?'· '+s.note:''}</div>
+              <div style="font-size:12px;font-weight:800;color:var(--g)">${fn(s.amount)} ج</div>
+              <div style="font-size:10px;color:var(--dim2)">${s.date||'—'} ${s.note?'· '+s.note:''}</div>
+              <div style="font-size:10px;color:var(--dim2)">${s.createdByName||''}</div>
             </div>
             <button onclick="deleteSettle('${s._id}',${s.amount||0},'${s.walletId||''}','${co.name}')"
               style="width:28px;height:28px;border-radius:6px;background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.3);color:var(--r);cursor:pointer;font-size:12px">✕</button>
           </div>`).join('')}
-        `:''}
+          </div>
+        </details>`:''}
       </div>
     </div>`;
   }).join('');
