@@ -917,14 +917,57 @@ function renderShippingDebts(){
   `;
 }
 
-let txFilter={type:'all',walletId:'',search:''};
+let txFilter={type:'all',walletId:'',search:'',period:'month'};
+
+// ── حساب نطاق التاريخ ──
+function getDateRange(period){
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const tomorrow=new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  if(period==='today') return {from:today,to:tomorrow};
+  if(period==='week'){
+    // الأسبوع يبدأ الاثنين وينتهي الأحد
+    const dow=now.getDay(); // 0=أحد..6=سبت
+    const sinceMon=dow===0?6:dow-1;
+    const mon=new Date(today); mon.setDate(mon.getDate()-sinceMon);
+    const nextMon=new Date(mon); nextMon.setDate(nextMon.getDate()+7);
+    return {from:mon,to:nextMon};
+  }
+  if(period==='month') return {from:new Date(now.getFullYear(),now.getMonth(),1),to:new Date(now.getFullYear(),now.getMonth()+1,1)};
+  if(period==='last_month') return {from:new Date(now.getFullYear(),now.getMonth()-1,1),to:new Date(now.getFullYear(),now.getMonth(),1)};
+  return null; // all
+}
+
+function inRange(ts,range){
+  if(!range)return true;
+  const d=ts?.toDate?ts.toDate():(ts?new Date(ts):null);
+  if(!d)return false;
+  return d>=range.from&&d<range.to;
+}
+
+function periodLabel(period){
+  const now=new Date();
+  const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  if(period==='today') return 'اليوم '+now.toLocaleDateString('ar-EG');
+  if(period==='week'){
+    const dow=now.getDay(),sinceMon=dow===0?6:dow-1;
+    const mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-sinceMon);
+    const sun=new Date(mon); sun.setDate(sun.getDate()+6);
+    return mon.toLocaleDateString('ar-EG')+' — '+sun.toLocaleDateString('ar-EG');
+  }
+  if(period==='month') return MONTHS_AR[now.getMonth()]+' '+now.getFullYear();
+  if(period==='last_month'){const m=now.getMonth()===0?11:now.getMonth()-1,y=now.getMonth()===0?now.getFullYear()-1:now.getFullYear();return MONTHS_AR[m]+' '+y;}
+  return 'كل الحركات';
+}
 
 function renderTransactions(){
   const el=document.getElementById('section-content');if(!el)return;
   if(!transactions.length){
     el.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">لا توجد حركات</div></div>`;return;
   }
+  const range=getDateRange(txFilter.period);
   let filtered=transactions;
+  if(range) filtered=filtered.filter(t=>inRange(t.createdAt,range));
   if(txFilter.type!=='all') filtered=filtered.filter(t=>t.type===txFilter.type);
   if(txFilter.walletId) filtered=filtered.filter(t=>t.walletId===txFilter.walletId);
   if(txFilter.search){
@@ -933,9 +976,21 @@ function renderTransactions(){
   }
   const totalIn=filtered.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const totalOut=filtered.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const periods=[
+    {k:'today',l:'اليوم'},
+    {k:'week',l:'الأسبوع'},
+    {k:'month',l:'الشهر'},
+    {k:'last_month',l:'الشهر السابق'},
+    {k:'all',l:'الكل'},
+  ];
   el.innerHTML=`
     <!-- فلتر سريع -->
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:12px">
+      <!-- فلتر الفترة الزمنية -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        ${periods.map(p=>`<button onclick="setTxFilter('period','${p.k}')" style="padding:5px 14px;border-radius:20px;border:1px solid ${txFilter.period===p.k?'var(--p)':'var(--line)'};background:${txFilter.period===p.k?'rgba(167,139,250,.15)':'transparent'};color:${txFilter.period===p.k?'var(--p)':'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">${p.l}</button>`).join('')}
+      </div>
+      <!-- فلتر النوع + الحساب + بحث -->
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         ${['all','in','out'].map(v=>`<button onclick="setTxFilter('type','${v}')" style="padding:5px 14px;border-radius:20px;border:1px solid ${txFilter.type===v?'var(--b)':'var(--line)'};background:${txFilter.type===v?'rgba(59,158,255,.15)':'transparent'};color:${txFilter.type===v?'var(--b)':'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">${v==='all'?'الكل':v==='in'?'📥 دخل':'📤 خرج'}</button>`).join('')}
         <select class="inp" style="flex:1;min-width:140px;font-size:12px;padding:6px 10px" onchange="setTxFilter('walletId',this.value)">
@@ -944,11 +999,12 @@ function renderTransactions(){
         </select>
         <input class="inp" style="flex:2;min-width:140px;font-size:12px;padding:6px 10px" placeholder="🔍 بحث..." value="${txFilter.search}" oninput="setTxFilter('search',this.value)">
       </div>
-      <div style="display:flex;gap:16px;font-size:12px">
-        <span style="color:var(--dim2)">${filtered.length} حركة</span>
+      <!-- ملخص النتائج -->
+      <div style="display:flex;gap:16px;font-size:12px;flex-wrap:wrap">
+        <span style="color:var(--dim2)">${filtered.length} حركة · ${periodLabel(txFilter.period)}</span>
         <span style="color:var(--g)">↑ ${fn(totalIn)} ج دخل</span>
         <span style="color:var(--r)">↓ ${fn(totalOut)} ج خرج</span>
-        <span style="color:${totalIn-totalOut>=0?'var(--g)':'var(--r)'}">صافي: ${fn(Math.abs(totalIn-totalOut))} ج</span>
+        <span style="font-weight:800;color:${totalIn-totalOut>=0?'var(--g)':'var(--r)'}">صافي: ${totalIn-totalOut>=0?'+':'−'} ${fn(Math.abs(totalIn-totalOut))} ج</span>
       </div>
     </div>
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px">
