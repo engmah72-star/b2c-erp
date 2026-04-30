@@ -381,7 +381,7 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n.style.display='block';}
 
 // State
-let orders=[],wallets=[],activeId=null,activeOrder=null,userName='',currentRole='admin';
+let orders=[],wallets=[],appSettings={},activeId=null,activeOrder=null,userName='',currentRole='admin';
 
 // Auth
 let _s=false;
@@ -401,7 +401,7 @@ function startListeners(){
     if(window.markSynced)window.markSynced();
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
-  onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists()){}});
+  onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
 }
 
 // KPIs
@@ -491,8 +491,7 @@ function renderPanel(o){
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
   const d=delay(o.deadline);
-  const designImgs=[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name,printType:p.printType,paper:p.paper,weight:p.weight,size:p.size,notes:p.notes})),...(o.designImageUrl&&!(o.products||[]).some(p=>p.designImageUrl)?[{url:o.designImageUrl,name:'التصميم'}]:[])];
-  // مواصفات المنتجات من الكتالوج كـ fallback
+  const designImgs=[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name,printType:p.printType,paper:p.paper,weight:p.weight,size:p.size,notes:p.notes,extras:p.extras||[]})),...(o.designImageUrl&&!(o.products||[]).some(p=>p.designImageUrl)?[{url:o.designImageUrl,name:'التصميم'}]:[])];
   if(productsCatalog.length){designImgs.forEach(img=>{if(!img.printType){const cat=productsCatalog.find(c=>(c.name||'').trim().toLowerCase()===(img.name||'').trim().toLowerCase());if(cat){img.printType=cat.printType;img.paper=cat.paper;img.weight=cat.weight;img.size=cat.size;}}});}
 
   document.getElementById('panel-body').innerHTML=`
@@ -547,15 +546,17 @@ function renderPanel(o){
         ${designImgs.map(img=>{
           const ptCol=img.printType?.includes('offset')?'var(--y)':img.printType?.includes('digital')?'var(--b)':'var(--dim2)';
           const hasSpecs=img.printType||img.paper||img.weight||img.size;
+          const hasExtras=(img.extras||[]).length>0;
           return`<div style="border-radius:12px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)">
             <img src="${img.url}" loading="lazy" onclick="window.open('${img.url}','_blank')" style="width:100%;max-height:180px;object-fit:contain;display:block;cursor:zoom-in">
             <div style="padding:8px 10px">
-              <div style="font-size:12px;font-weight:800;margin-bottom:${hasSpecs?'6':'0'}px">${img.name}</div>
-              ${hasSpecs?`<div style="display:flex;flex-wrap:wrap;gap:5px">
+              <div style="font-size:12px;font-weight:800;margin-bottom:${hasSpecs||hasExtras?'6':'0'}px">${img.name}</div>
+              ${hasSpecs?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:${hasExtras?'5':'0'}px">
                 ${img.printType?`<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${ptCol}18;color:${ptCol}">${img.printType}</span>`:''}
                 ${img.paper?`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg2);color:var(--dim2);border:1px solid var(--line)">📄 ${img.paper}${img.weight?' · '+img.weight+'جم':''}</span>`:''}
                 ${img.size?`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg2);color:var(--dim2);border:1px solid var(--line)">📐 ${img.size}</span>`:''}
               </div>`:''}
+              ${hasExtras?`<div style="display:flex;flex-wrap:wrap;gap:4px">${(img.extras||[]).map(ex=>`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2)">✓ ${ex}</span>`).join('')}</div>`:''}
               ${img.notes?`<div style="font-size:11px;color:var(--dim2);margin-top:5px;padding:5px 8px;background:var(--bg2);border-radius:6px">${img.notes}</div>`:''}
             </div>
           </div>`;
@@ -581,15 +582,8 @@ function renderPanel(o){
     </div>
 
     <div class="psec">
-      <div class="psec-ttl">⚙️ إعدادات الطباعة</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-        ${['digital','offset','لاصق','فلكس','بنر','كتالوج'].map(t=>`
-          <button onclick="setPrintType('${t}')"
-            style="padding:5px 12px;border-radius:20px;border:1px solid ${o.printType===t?'var(--b)':'var(--line)'};background:${o.printType===t?'rgba(59,158,255,.12)':'var(--bg3)'};color:${o.printType===t?'var(--b)':'var(--dim2)'};font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
-            ${t}
-          </button>`).join('')}
-      </div>
-      <textarea class="inp" id="print-notes-inp" rows="2" placeholder="ملاحظات للمطبعة...">${o.printNotes||''}</textarea>
+      <div class="psec-ttl">📝 ملاحظات للمطبعة</div>
+      <textarea class="inp" id="print-notes-inp" rows="2" placeholder="ملاحظات عامة للمطبعة...">${o.printNotes||''}</textarea>
       <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="savePrintNotes()">💾 حفظ الملاحظات</button>
     </div>
 
@@ -900,7 +894,7 @@ function renderEditProdsList() {
         <button onclick="removeEditProd(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>
       </div>
       <!-- كمية + سعر -->
-      <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
           <div style="font-size:9px;color:var(--dim2);font-weight:700;margin-bottom:4px">الكمية</div>
           <input type="number" class="inp" value="${p.qty||1}" min="1"
@@ -914,6 +908,31 @@ function renderEditProdsList() {
             oninput="editProdsData[${i}].unitPrice=parseFloat(this.value)||0;calcAutoPrice()">
         </div>
       </div>
+      <!-- نوع الطباعة لكل منتج -->
+      <div style="margin-bottom:10px">
+        <div style="font-size:9px;color:var(--dim2);font-weight:700;margin-bottom:5px">نوع الطباعة</div>
+        <div style="display:flex;gap:6px">
+          ${['digital','offset'].map(t=>`<button onclick="setProdPrintType(${i},'${t}')"
+            style="padding:4px 14px;border-radius:20px;border:1px solid ${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--line)'};background:${p.printType===t?(t==='digital'?'rgba(59,158,255,.12)':'rgba(255,170,0,.12)'):'var(--bg2)'};color:${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--dim2)'};font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
+            ${t==='digital'?'💻 ديجيتال':'🖨️ أوفست'}
+          </button>`).join('')}
+        </div>
+      </div>
+      <!-- الإضافات حسب نوع الطباعة -->
+      ${(()=>{
+        const extrasList=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+        if(!extrasList.length)return'';
+        const sel=p.extras||[];
+        return`<div style="margin-bottom:10px">
+          <div style="font-size:9px;color:var(--dim2);font-weight:700;margin-bottom:5px">الإضافات</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${extrasList.map(ex=>{const on=sel.includes(ex);return`<button onclick="toggleProdExtra(${i},'${ex}',${!on})"
+              style="padding:3px 12px;border-radius:20px;border:1px solid ${on?'var(--g)':'var(--line)'};background:${on?'rgba(0,217,126,.12)':'var(--bg2)'};color:${on?'var(--g)':'var(--dim2)'};font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
+              ${on?'✓ ':''} ${ex}
+            </button>`;}).join('')}
+          </div>
+        </div>`;
+      })()}
       <!-- صورة المنتج -->
       <div style="display:flex;align-items:center;gap:8px">
         ${p.designImageUrl
@@ -926,6 +945,19 @@ function renderEditProdsList() {
     </div>`;
   }).join('');
 }
+
+window.setProdPrintType=function(i,type){
+  editProdsData[i].printType=type;
+  editProdsData[i].extras=[];
+  renderEditProdsList();
+};
+
+window.toggleProdExtra=function(i,extra,add){
+  if(!editProdsData[i].extras)editProdsData[i].extras=[];
+  if(add){if(!editProdsData[i].extras.includes(extra))editProdsData[i].extras.push(extra);}
+  else{editProdsData[i].extras=editProdsData[i].extras.filter(e=>e!==extra);}
+  renderEditProdsList();
+};
 
 // ── حساب السعر التلقائي ──
 window.calcAutoPrice = function() {
