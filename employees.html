@@ -72,8 +72,10 @@
       <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-active">0</div><div class="stat-lbl">نشط</div></div>
       <div class="stat" style="--sc:var(--p)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-design">0</div><div class="stat-lbl">مصممين</div></div>
       <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💰</div><div class="stat-val" id="s-salaries">0</div><div class="stat-lbl">مرتبات ج</div></div>
+      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">💸</div><div class="stat-val" id="s-paid">—</div><div class="stat-lbl">مصروف هذا الشهر</div></div>
+      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-unpaid">—</div><div class="stat-lbl">لم يُصرف</div></div>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:14px">
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
       <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث..." oninput="renderList()"></div>
       <select class="inp" id="f-role" onchange="renderList()" style="max-width:200px">
         <option value="">كل الأدوار</option>
@@ -85,6 +87,7 @@
         <option value="shipping_officer">موظف شحن</option>
         <option value="wallet_manager">محاسب</option>
       </select>
+      <button class="btn btn-ghost btn-sm" id="f-sal-unpaid" onclick="toggleSalFilter()" style="font-size:12px;white-space:nowrap">⏳ لم يُصرف فقط</button>
     </div>
     <div id="list"><div class="loader"><div class="spinner"></div></div></div>
   </div>
@@ -340,7 +343,7 @@ const ROLES={
 };
 
 let employees=[], allOrders=[], transactions=[];
-let currentUser=null, userName='', editingId=null;
+let currentUser=null, userName='', editingId=null, salFilterUnpaid=false;
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
@@ -396,33 +399,56 @@ function updateStats(){
   setText('s-total',employees.length);
   setText('s-active',employees.filter(e=>e.status==='active').length);
   setText('s-design',employees.filter(e=>e.role==='graphic_designer').length);
-  const totalSalaries=employees.filter(e=>e.status==='active').reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
+  const activeEmps=employees.filter(e=>e.status==='active');
+  const totalSalaries=activeEmps.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('s-salaries',fn(totalSalaries));
-  
-  // تذكير المرتبات — أول الشهر
+
   const today=new Date();
+  const curMonthKey=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0');
+  const paidIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===curMonthKey).map(t=>t.employeeId));
+  const paidCount=activeEmps.filter(e=>paidIds.has(e._id)).length;
+  const unpaidCount=activeEmps.length-paidCount;
+  setText('s-paid',paidCount+'/'+activeEmps.length);
+  setText('s-unpaid',unpaidCount||'—');
+
+  const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
   if(today.getDate()<=5){
-    const monthKey=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0');
-    // اعرض تذكير بسيط في الـ sub
-    setText('sub',employees.length+' موظف · ⚠️ تذكير: صرف مرتبات '+
-      ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'][today.getMonth()]);
+    setText('sub',employees.length+' موظف · ⚠️ تذكير: صرف مرتبات '+MONTHS_AR[today.getMonth()]);
   } else {
-    setText('sub',employees.length+' موظف');
+    setText('sub',employees.length+' موظف · صرف '+paidCount+' من '+activeEmps.length+' هذا الشهر');
   }
 }
 
+window.toggleSalFilter=function(){
+  salFilterUnpaid=!salFilterUnpaid;
+  const btn=document.getElementById('f-sal-unpaid');
+  if(btn){
+    btn.style.background=salFilterUnpaid?'rgba(255,170,0,.15)':'';
+    btn.style.borderColor=salFilterUnpaid?'rgba(255,170,0,.4)':'';
+    btn.style.color=salFilterUnpaid?'var(--y)':'';
+  }
+  renderList();
+};
+
 window.renderList=function(){
+  const today2=new Date();
+  const curMonthKey=today2.getFullYear()+'-'+String(today2.getMonth()+1).padStart(2,'0');
+  const paidIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===curMonthKey).map(t=>t.employeeId));
+
   const q=gv('q').toLowerCase();
   const fr=gv('f-role');
   const data=employees.filter(e=>{
     if(q && !(e.name||'').toLowerCase().includes(q) && !(e.phone||'').includes(q)) return false;
     if(fr && e.role!==fr) return false;
+    if(salFilterUnpaid && e.status!=='active') return false;
+    if(salFilterUnpaid && paidIds.has(e._id)) return false;
     return true;
   });
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">${employees.length?'لا نتائج':'لا يوجد موظفين بعد'}</div></div>`;return;}
   el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">${data.map(e=>{
     const r=ROLES[e.role]||{label:e.role,col:'#4e5672',ico:'👤'};
+    const isPaid=paidIds.has(e._id);
     const designOrders=allOrders.filter(o=>o.designerId===e._id).length;
     return `<div class="emp-card" style="--ec:${r.col}" onclick="location.href='employee-profile.html?id=${e._id}'">
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
@@ -433,11 +459,19 @@ window.renderList=function(){
         </div>
         ${e.status==='active'?'<span style="font-size:10px;color:var(--g)">●</span>':'<span style="font-size:10px;color:var(--dim)">○</span>'}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${e.status==='active'?'8':'0'}px">
         <span class="emp-chip" style="background:${r.col}18;color:${r.col}">${r.ico} ${r.label}</span>
         <span style="font-size:12px;color:var(--g);font-weight:700">${fn(e.baseSalary||0)} ج</span>
       </div>
-      ${e.role==='graphic_designer'?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:11px;color:var(--dim2)">🎨 ${designOrders} تصميم · عمولة ${e.commissionPct||0}%</div>`:''}
+      ${e.status==='active'?`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--line)">
+        ${isPaid
+          ?`<span style="font-size:10px;background:rgba(0,217,126,.12);color:var(--g);padding:2px 9px;border-radius:12px;font-weight:700">✅ مصروف</span><span></span>`
+          :`<span style="font-size:10px;background:rgba(255,170,0,.12);color:var(--y);padding:2px 9px;border-radius:12px;font-weight:700">⏳ لم يُصرف</span>
+           <a href="employee-profile.html?id=${e._id}&pay=1" class="btn btn-g btn-xs" onclick="event.stopPropagation()" style="font-size:10px;padding:3px 10px">💰 صرف</a>`
+        }
+      </div>`:''}
+      ${e.role==='graphic_designer'?`<div style="margin-top:8px;font-size:11px;color:var(--dim2)">🎨 ${designOrders} تصميم · عمولة ${e.commissionPct||0}%</div>`:''}
     </div>`;
   }).join('')}</div>`;
 };

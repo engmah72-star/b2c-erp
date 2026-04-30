@@ -164,7 +164,11 @@
       <button class="modal-x" onclick="document.getElementById('ov-salary').classList.remove('open')">✕</button>
     </div>
     <div class="modal-body">
-      <div style="background:var(--bg3);border-radius:var(--rad);padding:14px;margin-bottom:14px">
+      <div class="fg" style="margin-bottom:12px">
+        <label>📅 الشهر</label>
+        <select class="inp" id="sal-month-sel" onchange="updateSalaryCalc()"></select>
+      </div>
+      <div style="background:var(--bg3);border-radius:var(--rad);padding:14px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px">
           <span style="font-size:12px;color:var(--dim2)">الشهر</span>
           <strong id="sal-month-label">—</strong>
@@ -182,17 +186,19 @@
           <strong style="font-size:18px;color:var(--g)" id="sal-total">—</strong>
         </div>
       </div>
+      <div id="sal-attendance-detail" style="display:none;margin-bottom:10px"></div>
       <div class="fg">
         <label>💼 المحفظة *</label>
         <select class="inp" id="sal-wallet"><option value="">— اختر —</option></select>
       </div>
+      <div id="sal-paid-warn" style="display:none;font-size:12px;color:var(--y);background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:8px 12px;margin-bottom:10px"></div>
       <div class="fg">
         <label>📝 ملاحظات</label>
-        <input class="inp" id="sal-notes" placeholder="مثال: مرتب أبريل 2026">
+        <input class="inp" id="sal-notes" placeholder="مثال: مرتب أبريل 2026" oninput="this.dataset.edited='1'">
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="document.getElementById('ov-salary').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-salary').classList.remove('open');document.getElementById('sal-notes').removeAttribute('data-edited')">إلغاء</button>
       <button class="btn btn-g" onclick="confirmSalary()">✓ تأكيد الصرف</button>
     </div>
   </div>
@@ -437,10 +443,13 @@ onAuthStateChanged(auth,async u=>{
     empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderSalaries();
   });
+  const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
+  let autoPayFired=false;
   onSnapshot(collection(db,'wallets'),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const sel=document.getElementById('sal-wallet');
     if(sel)sel.innerHTML='<option value="">— اختر —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
+    if(autoPayNow&&!autoPayFired&&emp){autoPayFired=true;openSalary();}
   });
 });
 
@@ -555,7 +564,10 @@ function renderAll(){
     <div class="section" style="margin-bottom:14px">
       <div class="section-head" style="margin-bottom:8px">
         <div class="section-title">📅 حضور ${MONTHS[now.getMonth()]}</div>
-        <span style="font-size:11px;color:var(--dim2)" id="att-summary">جاري...</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:11px;color:var(--dim2)" id="att-summary">جاري...</span>
+          <button class="btn btn-b btn-xs" onclick="recordAttendanceToday()">✓ حضور اليوم</button>
+        </div>
       </div>
       <div class="att-cal" id="att-cal"></div>
       <div style="display:flex;gap:14px;margin-top:8px;font-size:10px">
@@ -883,79 +895,109 @@ function renderSalaries(){
 
 // ══ SALARY ══
 // salaryData declared above
-window.openSalary=function(){
+window.openSalary=function(preMonth){
   if(!emp)return;
+  // ملأ قائمة الأشهر (4 أشهر ماضية + الحالي)
+  const sel=document.getElementById('sal-month-sel');
+  if(sel){
+    const opts=[];
+    for(let i=0;i<4;i++){
+      const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+      const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+      opts.push(`<option value="${k}">${MONTHS[d.getMonth()]} ${d.getFullYear()}</option>`);
+    }
+    sel.innerHTML=opts.join('');
+    if(preMonth)sel.value=preMonth;
+  }
+  updateSalaryCalc();
+  document.getElementById('ov-salary').classList.add('open');
+};
+
+window.updateSalaryCalc=function(){
+  if(!emp)return;
+  const sel=document.getElementById('sal-month-sel');
+  const mKey=sel?sel.value:monthKey();
+  const [yearStr,monStr]=mKey.split('-');
+  const mYear=parseInt(yearStr), mMon=parseInt(monStr)-1;
 
   const base=parseFloat(emp.baseSalary)||0;
   const uid=emp.authUid||empId;
 
-  // ── حساب الغياب من الحضور ──
-  const thisMonthKey=monthKey();
-  const thisMonthAtt=attendanceRecords.filter(a=>a.monthKey===thisMonthKey||
-    (a.date&&a.date.startsWith(now.getFullYear()+'-'+(now.getMonth()+1).toString().padStart(2,'0'))));
-  const workDays=26; // أيام العمل الشهرية
-  const daysPresent=thisMonthAtt.length;
+  // حضور هذا الشهر
+  const mAtt=attendanceRecords.filter(a=>
+    a.monthKey===mKey||(a.date&&a.date.startsWith(mKey)));
+  const workDays=26;
+  const daysPresent=mAtt.length;
   const daysAbsent=Math.max(0,workDays-daysPresent);
   const dailyRate=base/workDays;
   const absenceDeduction=Math.round(dailyRate*daysAbsent);
   const attendanceBonus=daysAbsent===0?(parseFloat(emp.attendanceBonus)||0):0;
 
-  // ── حساب العمولة ──
+  // عمولة هذا الشهر
   let commission=0;
+  const mOrders=allOrders.filter(o=>{
+    if(!o.createdAt?.toDate)return false;
+    const d=o.createdAt.toDate();
+    return d.getMonth()===mMon&&d.getFullYear()===mYear;
+  });
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&
-      (o.designerId===uid)&&
+    commission=mOrders.filter(o=>(o.designerId===uid||o.designerId===empId)&&
       ['printing','production','shipping','archived'].includes(o.stage))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
   } else if(emp.role==='production_agent'){
-    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&o.productionAgentId===uid)
-      .length * (parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders.filter(o=>o.productionAgentId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   } else if(emp.role==='shipping_officer'){
-    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&o.shippingOfficerId===uid)
-      .length * (parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders.filter(o=>o.shippingOfficerId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   } else if(emp.role==='customer_service'){
-    commission=allOrders.filter(o=>isThisMonth(o.createdAt)&&(o.createdBy===uid))
-      .length * (parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   }
 
   const total=Math.max(0,base-absenceDeduction+attendanceBonus+commission);
-  salaryData={base,commission,total,month:monthKey(),
-    absenceDeduction,attendanceBonus,daysPresent,daysAbsent,workDays};
-  setText('sal-month-label',MONTHS[now.getMonth()]+' '+now.getFullYear());
+  salaryData={base,commission,total,month:mKey,absenceDeduction,attendanceBonus,daysPresent,daysAbsent,workDays};
+
+  setText('sal-month-label',MONTHS[mMon]+' '+mYear);
   setText('sal-base',fn(base)+' ج');
   setText('sal-commission',commission>0?fn(Math.round(commission))+' ج':'—');
   setText('sal-total',fn(total)+' ج');
-  // عرض تفاصيل الحضور في الـ modal
+
   const attEl=document.getElementById('sal-attendance-detail');
   if(attEl){
     if(daysAbsent>0||attendanceBonus>0){
       attEl.style.display='block';
-      attEl.innerHTML=`
-        <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12px">
-          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-            <span style="color:var(--dim2)">أيام الحضور</span>
-            <span style="font-weight:700;color:var(--g)">${daysPresent} / ${workDays} يوم</span>
-          </div>
-          ${daysAbsent>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px">
-            <span style="color:var(--dim2)">خصم غياب (${daysAbsent} يوم)</span>
-            <span style="font-weight:700;color:var(--r)">- ${fn(absenceDeduction)} ج</span>
-          </div>`:''}
-          ${attendanceBonus>0?`<div style="display:flex;justify-content:space-between">
-            <span style="color:var(--dim2)">بدل حضور كامل</span>
-            <span style="font-weight:700;color:var(--g)">+ ${fn(attendanceBonus)} ج</span>
-          </div>`:''}
-        </div>`;
+      attEl.innerHTML=`<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="color:var(--dim2)">أيام الحضور</span>
+          <span style="font-weight:700;color:var(--g)">${daysPresent} / ${workDays} يوم</span>
+        </div>
+        ${daysAbsent>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="color:var(--dim2)">خصم غياب (${daysAbsent} يوم)</span>
+          <span style="font-weight:700;color:var(--r)">- ${fn(absenceDeduction)} ج</span>
+        </div>`:''}
+        ${attendanceBonus>0?`<div style="display:flex;justify-content:space-between">
+          <span style="color:var(--dim2)">بدل حضور كامل</span>
+          <span style="font-weight:700;color:var(--g)">+ ${fn(attendanceBonus)} ج</span>
+        </div>`:''}
+      </div>`;
     } else {
       attEl.style.display='none';
     }
   }
-  sv('sal-notes',`مرتب ${MONTHS[now.getMonth()]} ${now.getFullYear()} — ${emp.name}`);
-  // تحقق لو مصروف
-  const alreadyPaid=empSalaries.find(s=>s.month===monthKey());
-  if(alreadyPaid){
-    if(!confirm(`⚠️ تم صرف مرتب ${MONTHS[now.getMonth()]} مسبقاً (${fn(alreadyPaid.amount)} ج)\nتكرار الصرف؟`))return;
+
+  const alreadyPaid=empSalaries.find(s=>s.month===mKey);
+  const notesEl=document.getElementById('sal-notes');
+  if(notesEl&&!notesEl.dataset.edited){
+    sv('sal-notes',`مرتب ${MONTHS[mMon]} ${mYear} — ${emp.name}`);
   }
-  document.getElementById('ov-salary').classList.add('open');
+  // تحذير لو مصروف
+  const warnEl=document.getElementById('sal-paid-warn');
+  if(warnEl){
+    if(alreadyPaid){
+      warnEl.style.display='block';
+      warnEl.textContent=`⚠️ تم صرف هذا الشهر مسبقاً (${fn(alreadyPaid.amount)} ج) — سيُضاف صرف إضافي`;
+    } else {
+      warnEl.style.display='none';
+    }
+  }
 };
 
 window.confirmSalary=async function(){
@@ -984,9 +1026,33 @@ window.confirmSalary=async function(){
       createdAt:serverTimestamp()
     });
     document.getElementById('ov-salary').classList.remove('open');
+    document.getElementById('sal-notes').removeAttribute('data-edited');
     toast(`✅ تم صرف ${fn(salaryData.total)} ج لـ ${emp.name}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
   btn.disabled=false;btn.textContent='✓ تأكيد الصرف';
+};
+
+// ══ ATTENDANCE RECORDING ══
+window.recordAttendanceToday=async function(){
+  if(!emp)return;
+  const dateStr=todayStr();
+  const mKey=monthKey();
+  const existing=empAttendance.find(a=>a.date===dateStr);
+  if(existing){toast('⚠️ تم تسجيل حضور '+emp.name+' اليوم مسبقاً','err');return;}
+  try{
+    await addDoc(collection(db,'attendance'),{
+      employeeUid:emp.authUid||empId,
+      employeeId:empId,
+      employeeName:emp.name||'',
+      date:dateStr,
+      monthKey:mKey,
+      checkInStr:new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
+      recordedBy:currentUser.uid,
+      recordedByName:adminName,
+      createdAt:serverTimestamp()
+    });
+    toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>
