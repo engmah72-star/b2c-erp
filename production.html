@@ -400,6 +400,25 @@ onAuthStateChanged(auth,async u=>{
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
 window.setSupFilter=function(id,btn){currentSupFilter=id;document.querySelectorAll('#sup-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
+window.filterSupsByType=function(typeVal,supId){
+  const el=document.getElementById(supId);if(!el)return;
+  const map={
+    'طباعة':['مطبعة','طباعة'],
+    'ورق':['ورق','مواد'],
+    'قص':['مطبعة','تشطيب','قص'],
+    'سلفنة':['مطبعة','تشطيب','سلفنة'],
+    'زنكات':['مطبعة','زنكات'],
+    'تجميع':['مطبعة','تجميع','تعبئة'],
+    'شحن':['شحن','مناديب','توصيل'],
+    'تصميم':['تصميم','ديزاين'],
+  };
+  const cats=map[typeVal]||[];
+  const filtered=cats.length
+    ?suppliers.filter(s=>cats.some(c=>(s.type||s.category||'').toLowerCase().includes(c.toLowerCase())))
+    :[];
+  const list=filtered.length?filtered:suppliers;
+  el.innerHTML='<option value="">المورد...</option>'+list.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+};
 window.setStatusDirect=async function(id,status){
   const o=orders.find(x=>x._id===id);if(!o)return;
   const labels={received:'📥 استلمت',wip:'🔄 جاري',done:'✅ خلصت',problem:'⚠️ مشكلة'};
@@ -543,8 +562,12 @@ function renderPanel(o){
       const ciRows=prodCi.map((item,i)=>{
         const gi=ci.indexOf(item);
         return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)">
-          <div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div>
-          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700">${item.type||'—'}</div>
+            <div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>
+            ${item.addedBy?`<div style="font-size:9px;color:var(--dim);margin-top:1px">سجّله: ${item.addedBy}</div>`:''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
         </div>`;
       }).join('');
       const prodObj=img.idx>=0?prods[img.idx]:null;
@@ -552,7 +575,7 @@ function renderPanel(o){
       const defPaper=prodObj?.paper||catProd?.paper||'';
       const defWeight=prodObj?.weight||catProd?.weight||'';
       const idSfx=img.idx<0?'g':String(img.idx);
-      const inlineForm=`<div style="display:flex;gap:5px;padding:8px 10px;background:var(--bg3);border-top:1px dashed var(--line);flex-wrap:wrap"><select id="ic-type-${idSfx}" style="flex:2;min-width:100px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-${idSfx}" style="flex:2;min-width:100px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select><div style="display:flex;gap:5px;flex:1;min-width:110px;align-items:center"><input type="number" id="ic-total-${idSfx}" placeholder="ج" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;min-width:0"><button onclick="addInlineCost(${img.idx})" style="flex-shrink:0;padding:6px 12px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;white-space:nowrap;font-family:inherit">＋ أضف</button></div></div>`;
+      const inlineForm=`<div style="background:var(--bg3);border-top:1px dashed var(--line);padding:8px 10px"><div style="display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap"><select id="ic-type-${idSfx}" onchange="filterSupsByType(this.value,'ic-sup-${idSfx}')" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-${idSfx}" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select></div><div style="display:flex;gap:5px;align-items:center"><input type="number" id="ic-total-${idSfx}" placeholder="ج" style="width:72px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;flex-shrink:0"><input type="text" id="ic-note-${idSfx}" placeholder="ملاحظة..." style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><button onclick="addInlineCost(${img.idx})" style="flex-shrink:0;padding:6px 14px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;font-family:inherit">＋</button></div></div>`;
       return`<div style="margin-bottom:16px">
         ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div><button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button></div>`:''}
         <div class="design-img-wrap">
@@ -584,8 +607,8 @@ function renderPanel(o){
     </div>
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
       <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line)"><span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span></div>
-      ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}</div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
-      <div style="display:flex;gap:5px;padding:8px 10px;background:var(--bg3);border-top:1px dashed var(--line);flex-wrap:wrap"><select id="ic-type-g" style="flex:2;min-width:100px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-g" style="flex:2;min-width:100px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select><div style="display:flex;gap:5px;flex:1;min-width:110px;align-items:center"><input type="number" id="ic-total-g" placeholder="ج" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;min-width:0"><button onclick="addInlineCost(-1)" style="flex-shrink:0;padding:6px 12px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;white-space:nowrap;font-family:inherit">＋ أضف</button></div></div>
+      ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>${item.addedBy?`<div style="font-size:9px;color:var(--dim);margin-top:1px">سجّله: ${item.addedBy}</div>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
+      <div style="background:var(--bg3);border-top:1px dashed var(--line);padding:8px 10px"><div style="display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap"><select id="ic-type-g" onchange="filterSupsByType(this.value,'ic-sup-g')" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-g" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select></div><div style="display:flex;gap:5px;align-items:center"><input type="number" id="ic-total-g" placeholder="ج" style="width:72px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;flex-shrink:0"><input type="text" id="ic-note-g" placeholder="ملاحظة..." style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><button onclick="addInlineCost(-1)" style="flex-shrink:0;padding:6px 14px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;font-family:inherit">＋</button></div></div>
     </div>`;
   }
   // 2. المطبعة — dropdown
@@ -657,14 +680,18 @@ window.addInlineCost=async function(prodIdx){
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const supSel=document.getElementById('ic-sup-'+sfx);
   const supOpt=supSel?.options[supSel?.selectedIndex];
+  const note=document.getElementById('ic-note-'+sfx)?.value?.trim()||'';
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,addedAt:nowStr()};
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,addedAt:nowStr(),addedBy:userName};
   const ci=[...(o.costItems||[])];ci.push(item);
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 ${type}: ${fn(total)} ج`,by:userName}],updatedAt:serverTimestamp()});
+    const action=`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
     toast('✅ تم','ok');
     const tE=document.getElementById('ic-type-'+sfx);if(tE)tE.value='';
     const totE=document.getElementById('ic-total-'+sfx);if(totE)totE.value='';
+    const nE=document.getElementById('ic-note-'+sfx);if(nE)nE.value='';
+    filterSupsByType('',supSel?.id||'');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
