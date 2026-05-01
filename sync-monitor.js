@@ -1,16 +1,7 @@
-// ══ Sync Monitor - يراقب الاتصال ويعيد التشغيل ══
+// ══ Sync Monitor - يراقب الاتصال الفعلي بالإنترنت ══
 (function(){
-  const TIMEOUT = 30000; // 30 ثانية بدون بيانات = مشكلة
-  let lastUpdate = Date.now();
   let syncBanner = null;
 
-  // تسجيل آخر تحديث
-  window.markSynced = function(){
-    lastUpdate = Date.now();
-    hideBanner();
-  };
-
-  // إنشاء بانر تحذير
   function showBanner(){
     if(syncBanner) return;
     syncBanner = document.createElement('div');
@@ -32,19 +23,18 @@
     if(syncBanner){ syncBanner.remove(); syncBanner = null; }
   }
 
-  // راقب الاتصال كل 15 ثانية
-  setInterval(function(){
-    if(Date.now() - lastUpdate > TIMEOUT){
-      showBanner();
-    }
-  }, 15000);
+  // لو الصفحة اتفتحت وهي offline
+  if(!navigator.onLine) showBanner();
 
-  // راقب online/offline
   window.addEventListener('online', function(){
     hideBanner();
-    location.reload(); // أعد التحميل لما يرجع الاتصال
+    location.reload();
   });
+
   window.addEventListener('offline', function(){
     showBanner();
   });
+
+  // متاح للصفحات اللي بتستخدمه
+  window.markSynced = function(){ hideBanner(); };
 })();
