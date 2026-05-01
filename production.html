@@ -533,9 +533,16 @@ function renderCostPanel(o,prodIdx){
     }).join('');
   }
 
+  // ── ملخص حسابات الموردين لهذا الأوردر ──
+  const supTotals={};
+  ci.forEach(c=>{if(c.supplierId&&c.supplierName){if(!supTotals[c.supplierId])supTotals[c.supplierId]={name:c.supplierName,total:0};supTotals[c.supplierId].total+=parseFloat(c.total)||0;}});
+  const supSummaryHtml=Object.values(supTotals).length?`<div style="background:rgba(34,211,238,.04);border:1px solid rgba(34,211,238,.15);border-radius:10px;padding:10px 12px;margin-bottom:10px"><div style="font-size:10px;font-weight:800;color:var(--c);margin-bottom:6px">🏦 حسابات الموردين — هذا الأوردر</div>${Object.values(supTotals).map(s=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="color:var(--dim2)">${s.name}</span><span style="font-weight:800;color:var(--r)">${fn(s.total)} ج</span></div>`).join('')}</div>`:'';
+  document.getElementById('cpanel-items').insertAdjacentHTML('afterend',supSummaryHtml.replace('<div ',`<div id="sup-summary-${sfx}" `));
+
   // ── فورم الإضافة ──
   const sfx=prodIdx<0?'g':String(prodIdx);
-  const supOpts=suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}">${x.name}${x.phone||x.whatsapp?' · '+(x.phone||x.whatsapp):''}</option>`).join('');
+  const defSup=o.supplierId||'';
+  const supOpts=suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}" ${x._id===defSup?'selected':''}>${x.name}${x.phone||x.whatsapp?' · '+(x.phone||x.whatsapp):''}</option>`).join('');
   const inp='padding:11px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--snow);font-size:15px;font-family:inherit;width:100%;direction:rtl;-webkit-appearance:none';
   document.getElementById('cpanel-form').innerHTML=`
     <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">➕ إضافة بند</div>
@@ -631,7 +638,14 @@ window.addCostFromPanel=async function(prodIdx){
   try{
     const action=isEdit?`✏️ تعديل بند ${type}: ${fn(total)} ج`:`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
     await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-    toast(isEdit?'✅ تم التعديل':'✅ تم الإضافة','ok');
+    // toast يُظهر إجمالي المورد لهذا الأوردر
+    const supId=newItem.supplierId;const supName=newItem.supplierName;
+    if(supId&&supName){
+      const supTotal=ci.filter(c=>c.supplierId===supId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      toast(`✅ ${isEdit?'تعديل':'إضافة'} · مستحق لـ ${supName}: ${fn(supTotal)} ج`,'ok');
+    } else {
+      toast(isEdit?'✅ تم التعديل':'✅ تم الإضافة','ok');
+    }
     _clearCpForm(sfx);
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -660,6 +674,9 @@ window.filterSupsByType=function(typeVal,supId){
     el.innerHTML='<option value="">المورد...</option>'+suppliers.map(optHtml).join('');
   }
   const sfx=supId.replace('cp-sup-','');
+  // أعِد تحديد المورد المبدئي للأوردر لو كان محدداً قبل التصفية
+  const o2=orders.find(x=>x._id===activeId);
+  if(o2?.supplierId&&el.value===''){el.value=o2.supplierId;}
   const calcEl=document.getElementById('cp-paper-calc-'+sfx);
   if(calcEl)calcEl.style.display=typeVal==='ورق'?'block':'none';
 };
