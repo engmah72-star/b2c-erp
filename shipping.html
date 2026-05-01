@@ -382,6 +382,28 @@
   </div>
 </div>
 
+<!-- Modal: تسجيل مرتجع مباشر -->
+<div class="overlay" id="ov-return-direct">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head">
+      <span class="modal-title">↩️ تسجيل مرتجع</span>
+      <button class="modal-x" onclick="closeModal('ov-return-direct')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg3);border-radius:12px;padding:12px 16px;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:800" id="ret-client-name">—</div>
+        <div style="font-size:11px;color:var(--dim2);margin-top:3px" id="ret-co-name">—</div>
+      </div>
+      <div class="fg"><label>💸 تكلفة المرتجع (ج)</label><input class="inp" id="ret-cost" type="number" placeholder="0 — اختياري"></div>
+      <div class="fg"><label>📝 سبب الإرجاع</label><input class="inp" id="ret-note" placeholder="العميل رفض الاستلام / تالف..."></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('ov-return-direct')">إلغاء</button>
+      <button class="btn btn-r" onclick="saveReturnDirect()">↩️ تأكيد المرتجع</button>
+    </div>
+  </div>
+</div>
+
 <nav class="mob-nav"><div class="mob-nav-items">
   <a class="mob-nav-item" href="index.html"><div class="mob-nav-ico">⬡</div><div class="mob-nav-lbl">الرئيسية</div></a>
   <a class="mob-nav-item" href="clients.html" data-page="clients"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
@@ -885,6 +907,7 @@ window.openOrder=function(id){
     </div>`;
 
   const allImgs=[...(o.products||[]).filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name})),...(o.designImageUrl&&!(o.products||[]).some(p=>p.designImageUrl)?[{url:o.designImageUrl,name:'التصميم'}]:[])];
+  if(o.printFinalUrl&&!allImgs.some(i=>i.url===o.printFinalUrl))allImgs.push({url:o.printFinalUrl,name:'الملف النهائي'});
 
   document.getElementById('panel-body').innerHTML=`
     ${allImgs.length?`<div class="section">
@@ -977,8 +1000,10 @@ window.openOrder=function(id){
         <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}</div>`).join('')||'—'}
     </div>
 
-    <!-- إرجاع من الشحن -->
+    <!-- أزرار سريعة -->
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap">
+      ${rem>0?`<button onclick="openShipSetup()" style="padding:8px 14px;border-radius:8px;border:none;background:var(--g);color:#0d0f1c;font-size:12px;font-weight:800;cursor:pointer">💰 تحصيل</button>`:''}
+      ${(()=>{const ph=(o.clientPhone||'').replace(/^0/,'').replace(/[^0-9]/g,'');const name=o.clientName||'';if(!ph)return '';const trackMsg=o.shipTracking?`مرحباً ${name}، طلبك في الطريق 🚚\nرقم التتبع: ${o.shipTracking}`:`مرحباً ${name}، طلبك في الطريق 🚚\nسيصلك قريباً إن شاء الله 🙏`;if(['wait_delivery','wait_collection'].includes(ss))return`<a href="https://wa.me/2${ph}?text=${encodeURIComponent(trackMsg)}" target="_blank" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(37,211,102,.3);background:rgba(37,211,102,.1);color:#25D366;font-size:12px;font-weight:800;text-decoration:none">💬 إبلاغ العميل</a>`;return '';})()}
       <button class="btn btn-r btn-sm" onclick="openReturnFromShip('${o._id}','${(o.clientName||'').replace(/'/g,"\\'")}','${o.shipCompanyName||''}')">↩️ مرتجع</button>
     </div>`;
 
@@ -1010,8 +1035,8 @@ window.openShipSetup=function(){
   const rem=parseFloat(o.remaining)||0;
   document.getElementById('ss-finance').style.display=rem>0?'block':'none';
   if(rem>0){
-    setText('ss-f-sale',fn(o.salePrice)+' ج');
-    setText('ss-f-paid',fn(o.paid)+' ج');
+    setText('ss-f-sale',fn(parseFloat(o.salePrice)||0)+' ج');
+    setText('ss-f-paid',fn(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+' ج');
     setText('ss-f-rem',fn(rem)+' ج');
     sv('ss-col-amt',rem);
   }
@@ -1090,7 +1115,7 @@ window.setMethod=function(m){
 };
 window.setSSStage=function(s){
   ssStage=s;sv('ss-stage',s);
-  ['wait_delivery','wait_collection'].forEach(x=>{document.getElementById('ss-s-'+x)?.classList.toggle('active',x===s);});
+  ['wait_delivery','wait_collection','collected'].forEach(x=>{document.getElementById('ss-s-'+x)?.classList.toggle('active',x===s);});
 };
 window.onCoChange=function(){
   const sel=document.getElementById('ss-company-sel');
@@ -1225,8 +1250,44 @@ window.saveDeliver=async function(){
 
 // ══ RETURN ══
 window.openReturnFromShip=function(orderId,clientName,coName){
-  sessionStorage.setItem('returnOrder',JSON.stringify({orderId,clientName,coName}));
-  window.location.href='shipping-accounts.html?action=return';
+  const modal=document.getElementById('ov-return-direct');
+  if(!modal)return;
+  modal.dataset.orderId=orderId;
+  modal.dataset.coName=coName||'';
+  setText('ret-client-name',clientName||'—');
+  setText('ret-co-name',coName?'📦 شركة الشحن: '+coName:'🏍️ مندوب / تسليم مباشر');
+  document.getElementById('ret-cost').value='';
+  document.getElementById('ret-note').value='';
+  modal.classList.add('open');
+};
+
+window.saveReturnDirect=async function(){
+  const modal=document.getElementById('ov-return-direct');
+  const orderId=modal?.dataset.orderId;
+  const coName=modal?.dataset.coName||'';
+  const cost=parseFloat(document.getElementById('ret-cost').value)||0;
+  const note=document.getElementById('ret-note').value;
+  if(!orderId)return toast('⚠️ خطأ: لا يوجد أوردر','err');
+  const o=orders.find(x=>x._id===orderId);
+  if(!o)return toast('⚠️ الأوردر غير موجود','err');
+  try{
+    const now=nowStr();
+    await addDoc(collection(db,'shipping_returns'),{
+      orderId,companyName:coName,
+      clientName:o.clientName||'',cost,note,status:'returned',
+      date:now,createdBy:currentUser?.uid||'',createdByName:userName,
+      createdAt:serverTimestamp()
+    });
+    const tl=[...(o.timeline||[]),{date:now,action:`↩️ مرتجع${coName?' من '+coName:''}${note?' — '+note:''}`,by:userName}];
+    await updateDoc(doc(db,'orders',orderId),{
+      shipStage:'returned',
+      timeline:tl,
+      updatedAt:serverTimestamp()
+    });
+    closeModal('ov-return-direct');
+    closePanel();
+    toast('✅ تم تسجيل المرتجع','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>

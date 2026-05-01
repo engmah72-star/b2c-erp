@@ -393,10 +393,11 @@ async function tryAutoImport(o){
     const pName=(prod.name||'').trim().toLowerCase();
     const pQty=parseFloat(prod.qty)||0;
     const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-    if(!catProd||(catProd.costVariants||[]).length===0)continue;
-    const variant=(catProd.costVariants||[]).find(v=>parseFloat(v.qty)===pQty)||[...(catProd.costVariants||[])].sort((a,b)=>Math.abs(parseFloat(a.qty)-pQty)-Math.abs(parseFloat(b.qty)-pQty))[0];
-    if(variant&&(variant.items||[]).length){
-      variant.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'catalog_auto'}));
+    if(!catProd||(catProd.costHistory||[]).length===0)continue;
+    const history=catProd.costHistory||[];
+    const match=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0]||history.slice(-1)[0];
+    if(match&&(match.items||[]).length){
+      match.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'history_auto'}));
     }
   }
   if(!importedItems.length)return;
@@ -436,7 +437,7 @@ window.renderList=function(resetPage=true){
   el.innerHTML=data.map(o=>{
     const ps=o.prodStatus||'pending';const st=SM[ps]||SM.pending;
     const prods=o.products||[];
-    const firstImg=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||'';
+    const firstImg=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.printFinalUrl||'';
     const sup=o.supplierId?suppliers.find(s=>s._id===o.supplierId):null;
     const ci=o.costItems||[];const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const prodNames=prods.map(p=>`${p.name}×${p.qty}`).join(' · ')||o.product||'—';
@@ -492,6 +493,7 @@ function renderPanel(o){
   const dEl=document.getElementById('design-imgs');
   const imgs=prods.filter(p=>p.designImageUrl).map(p=>({url:p.designImageUrl,name:p.name,idx:prods.indexOf(p)}));
   if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم',idx:-1});
+  if(o.printFinalUrl&&!imgs.length)imgs.push({url:o.printFinalUrl,name:'الملف النهائي',idx:-1});
 
   if(imgs.length){
     const importBanner=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
@@ -608,7 +610,7 @@ window.sendWhatsApp=function(){
   if(!phone){toast('⚠️ المطبعة مش عندها واتساب','err');return;}
   const prods=o.products||[];
   const prodsText=prods.map(p=>`• ${p.name} × ${p.qty}`).join('\n');
-  const imgUrl=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||'';
+  const imgUrl=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.printFinalUrl||'';
   const msg=`🖨️ طلب طباعة\n─────────────\nالعميل: ${o.clientName||'—'}\nالمنتجات:\n${prodsText||'—'}\n─────────────\n${imgUrl?'رابط التصميم: '+imgUrl+'\n':''}الرجاء التأكيد 🙏`;
   const waNum=phone.startsWith('0')?'2'+phone:phone.startsWith('2')?phone:'2'+phone;
   window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`,'_blank');
@@ -734,7 +736,7 @@ window.importLastCosts=async function(){
   const prods=o.products||[];
   toast('⏳ جاري البحث...','');
   try{
-    // ── الأولوية 1: كتالوج المنتجات (costVariants) ──
+    // ── الأولوية 1: سجل تكاليف المنتج ──
     if(prods.length&&productsCatalog.length){
       const importedItems=[];
       for(let pi=0;pi<prods.length;pi++){
@@ -742,16 +744,16 @@ window.importLastCosts=async function(){
         const pName=(prod.name||'').trim().toLowerCase();
         const pQty=parseFloat(prod.qty)||0;
         const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-        if(!catProd||(catProd.costVariants||[]).length===0)continue;
-        const variants=catProd.costVariants;
-        const variant=variants.find(v=>parseFloat(v.qty)===pQty)||[...variants].sort((a,b)=>Math.abs(parseFloat(a.qty)-pQty)-Math.abs(parseFloat(b.qty)-pQty))[0];
-        if(variant&&(variant.items||[]).length){
-          variant.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'catalog'}));
+        if(!catProd||(catProd.costHistory||[]).length===0)continue;
+        const history=catProd.costHistory||[];
+        const match=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0]||history.slice(-1)[0];
+        if(match&&(match.items||[]).length){
+          match.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'history'}));
         }
       }
       if(importedItems.length){
-        await updateDoc(doc(db,'orders',activeId),{costItems:importedItems,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${importedItems.length} بند من كتالوج المنتجات`,by:userName}],updatedAt:serverTimestamp()});
-        toast(`✅ استُورد ${importedItems.length} بند من كتالوج المنتجات`,'ok');
+        await updateDoc(doc(db,'orders',activeId),{costItems:importedItems,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${importedItems.length} بند من سجل المنتجات`,by:userName}],updatedAt:serverTimestamp()});
+        toast(`✅ استُورد ${importedItems.length} بند من سجل التكاليف`,'ok');
         return;
       }
     }
@@ -831,7 +833,7 @@ window.moveToShipping=async function(){
   if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن التحويل للشحن — سجّل تكلفة الأوردر أولاً','err');
   if(!confirm('تحويل للشحن؟'))return;
   try{
-    // ══ حفظ التكاليف في كل منتج ══
+    // ══ حفظ التكاليف في سجل المنتج ══
     const prods=o.products||[];
     const ci=o.costItems||[];
     const now=nowStr();
@@ -846,37 +848,17 @@ window.moveToShipping=async function(){
       try{
         const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
         if(!catProd)continue;
-        const variants=[...(catProd.costVariants||[])];
-        const actualPaper=(prod.paper||'').trim().toLowerCase();
-        const actualWeight=parseFloat(prod.weight)||0;
-        // ابحث عن variant مطابق بالكمية + الورق
-        let targetIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty&&(v.paper||'').trim().toLowerCase()===(actualPaper||''));
-        // لو مفيش تطابق كامل، ابحث بالكمية بس
-        if(targetIdx<0)targetIdx=variants.findIndex(v=>parseFloat(v.qty)===pQty);
-        const newEntry={date:now,orderId:activeId,orderClient:o.clientName||'',qty:pQty,total,items:prodCi.map(x=>({type:x.type,supplierName:x.supplierName||'',total:x.total})),pctChange:0};
-        // لو الورق أو الوزن مختلف عن التركيبة الأصلية → أضف تركيبة جديدة
-        const srcVariant=targetIdx>=0?variants[targetIdx]:null;
-        const paperDiffers=actualPaper&&srcVariant&&(srcVariant.paper||'').trim().toLowerCase()!==actualPaper;
-        const weightDiffers=actualWeight&&srcVariant&&srcVariant.weight&&srcVariant.weight!==actualWeight;
-        if(paperDiffers||weightDiffers){
-          // تركيبة جديدة
-          const newVar={qty:pQty,paper:prod.paper||srcVariant?.paper||'',weight:actualWeight||srcVariant?.weight||0,extras:srcVariant?.extras||[],items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),lastTotal:total,lastUpdated:now,history:[{...newEntry,pctChange:0}]};
-          variants.push(newVar);
-          toast(`📋 تركيبة جديدة: ${prod.paper||''} ${actualWeight?actualWeight+' جم':''}`,'ok');
-          await updateDoc(doc(db,'products_v2',catProd._id),{costVariants:variants,lastCostTotal:total,lastCostDate:now});
-          continue;
+        const history=[...(catProd.costHistory||[])];
+        // تنبيه لو التكلفة تغيرت أكتر من 15%
+        const lastSameQty=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0];
+        if(lastSameQty&&lastSameQty.total>0){
+          const pct=Math.round((total-lastSameQty.total)/lastSameQty.total*100);
+          if(Math.abs(pct)>15)toast(`🚨 تكلفة ${prod.name} ${pct>0?'زادت':'انخفضت'} ${Math.abs(pct)}% (${fn(lastSameQty.total)} ← ${fn(total)} ج)`,'err');
         }
-        if(targetIdx<0)continue;
-        const v=variants[targetIdx];
-        const lastTotal=((v.history||[]).slice(-1)[0]?.total)||v.lastTotal||0;
-        const pctChange=lastTotal>0?Math.round((total-lastTotal)/lastTotal*100):0;
-        if(pctChange>15)toast(`🚨 تكلفة ${prod.name} زادت ${pctChange}% (${fn(lastTotal)} ← ${fn(total)} ج)`,'err');
-        newEntry.pctChange=pctChange;
-        const history=[...(v.history||[]),newEntry];
-        if(history.length>50)history.splice(0,history.length-50);
-        variants[targetIdx]={...v,history,lastTotal:total};
-        await updateDoc(doc(db,'products_v2',catProd._id),{costVariants:variants,lastCostTotal:total,lastCostDate:now});
-      }catch(e){console.warn('variant history:',e.message);}
+        history.push({date:now,orderId:activeId,clientName:o.clientName||'',qty:pQty,paper:prod.paper||'',items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),total});
+        if(history.length>100)history.splice(0,history.length-100);
+        await updateDoc(doc(db,'products_v2',catProd._id),{costHistory:history,lastCostTotal:total,lastCostDate:now});
+      }catch(e){console.warn('costHistory save:',e.message);}
     }
 
     // تحويل للشحن
