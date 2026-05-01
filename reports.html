@@ -227,6 +227,7 @@ const auth=getAuth(app),db=getFirestore(app);
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
@@ -356,7 +357,7 @@ function renderOverview(f,prev){
   const ordersTotal=f.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   
   // الباقي على العملاء
-  const rem=f.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||0))),0);
+  const rem=f.reduce((s,o)=>s+calcRem(o),0);
   
   // المصروفات الفعلية = كل transactions type='out' في الفترة (موردين + شحن + مرتجعات + غيرها)
   const inRange2=(t,r)=>t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=r.from&&new Date(t.createdAt.seconds*1000)<=r.to;
@@ -602,7 +603,7 @@ window.openOrdDrawer=function(id){
   const o=orders.find(x=>x._id===id);if(!o)return;
   const salePrice=parseFloat(o.salePrice)||0;
   const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-  const rem=parseFloat(o.remaining)||Math.max(0,salePrice-paid);
+  const rem=calcRem(o);
   const cost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const profit=paid-cost;
   const pct=salePrice>0?Math.round(paid/salePrice*100):0;
@@ -768,11 +769,11 @@ function renderCollection(f){
 
   const totSale=withSale.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   const totPaid=withSale.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const totRem=withSale.reduce((s,o)=>s+(parseFloat(o.remaining)||Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0))),0);
+  const totRem=withSale.reduce((s,o)=>s+calcRem(o),0);
   const totCost=withSale.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c)=>cs+(parseFloat(c.total)||0),0),0);
   const totProfit=totPaid-totCost;
-  const fullPaid=withSale.filter(o=>(parseFloat(o.remaining)||0)<=0).length;
-  const partial=withSale.filter(o=>{const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;return p>0&&(parseFloat(o.remaining)||0)>0;}).length;
+  const fullPaid=withSale.filter(o=>calcRem(o)<=0).length;
+  const partial=withSale.filter(o=>{const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;return p>0&&calcRem(o)>0;}).length;
   const noPay=withSale.filter(o=>(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)<=0).length;
 
   return`
@@ -821,7 +822,7 @@ function renderCollectionRows(data){
   return data.map(o=>{
     const sale=parseFloat(o.salePrice)||0;
     const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
+    const rem=calcRem(o);
     const cost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const profit=paid-cost;
     const pct=sale>0?Math.round(paid/sale*100):0;
