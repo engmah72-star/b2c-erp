@@ -219,6 +219,22 @@
   </div>
 </div>
 
+<!-- Cost Panel -->
+<div class="panel-ov" id="cpanel-ov" onclick="if(event.target===this)closeCostPanel()" style="z-index:210">
+  <div class="panel">
+    <div class="panel-drag"></div>
+    <div class="panel-sticky-head">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div class="panel-hdr-name" id="cpanel-title">💰 البنود</div><div class="panel-hdr-sub" id="cpanel-sub">—</div></div>
+        <button class="panel-close" onclick="closeCostPanel()">✕</button>
+      </div>
+    </div>
+    <div id="cpanel-ref"></div>
+    <div id="cpanel-items" style="padding:0 16px"></div>
+    <div id="cpanel-form" style="padding:12px 16px;border-top:1px solid var(--line)"></div>
+  </div>
+</div>
+
 <!-- Modal: إضافة بند -->
 <div class="overlay" id="ov-cost">
   <div class="modal">
@@ -250,7 +266,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin';
+let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,activeProdIdx=-1,currentFilter='all',currentSupFilter='',currentRole='admin';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -380,7 +396,7 @@ onAuthStateChanged(auth,async u=>{
     setText('sub',orders.length+' طلب تنفيذ');
     
     if(changed){renderList();orders.filter(o=>!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));}
-    if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}
+    if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
   });
   onSnapshot(collection(db,'products_v2'),snap=>{
     productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -400,6 +416,116 @@ onAuthStateChanged(auth,async u=>{
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
 window.setSupFilter=function(id,btn){currentSupFilter=id;document.querySelectorAll('#sup-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
+window.openCostPanel=function(prodIdx){
+  activeProdIdx=prodIdx;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  renderCostPanel(o,prodIdx);
+  const ov=document.getElementById('cpanel-ov');ov.style.display='flex';setTimeout(()=>ov.classList.add('open'),10);
+};
+window.closeCostPanel=function(){
+  const ov=document.getElementById('cpanel-ov');ov.classList.remove('open');setTimeout(()=>ov.style.display='none',200);
+};
+
+function renderCostPanel(o,prodIdx){
+  const ci=o.costItems||[];const prods=o.products||[];
+  const prod=prodIdx>=0?prods[prodIdx]:null;
+  const prodName=prod?.name||(prods[0]?.name)||'عام';
+  const prodCi=prodIdx>=0
+    ?ci.filter(c=>c.prodIdx===prodIdx)
+    :ci.filter(c=>c.prodIdx==null||c.prodIdx<0);
+  const ciTotal=prodCi.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  setText('cpanel-title','💰 البنود'+(prod?` — ${prodName}`:''));
+  setText('cpanel-sub',`${prodCi.length} بند · ${fn(ciTotal)} ج`);
+
+  // ── السابقة: آخر تكلفة من سجل المنتجات ──
+  const refEl=document.getElementById('cpanel-ref');
+  const catProd=prod
+    ?productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===(prod.name||'').trim().toLowerCase())
+    :productsCatalog.find(cp=>prods.some(p=>(cp.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase()));
+  const history=catProd?.costHistory||[];
+  const pQty=prod?.qty?parseFloat(prod.qty):null;
+  const relevant=pQty?history.filter(h=>parseFloat(h.qty)===pQty):history;
+  const last=relevant.slice(-1)[0]||history.slice(-1)[0];
+  if(last&&(last.items||[]).length){
+    const diffPct=ciTotal&&last.total?Math.round((ciTotal-last.total)/last.total*100):null;
+    const diffStr=diffPct!=null?` <span style="color:${diffPct>15?'var(--r)':diffPct<-15?'var(--g)':'var(--dim2)'};font-size:10px">${diffPct>0?'+':''}${diffPct}%</span>`:'';
+    refEl.innerHTML=`<div style="padding:12px 16px;border-bottom:1px solid var(--line);background:rgba(34,211,238,.04)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:800;color:var(--c)">📋 آخر تكلفة مسجّلة${pQty?' (×'+pQty+')':''}</span>
+        <span style="font-size:10px;color:var(--dim2)">${last.date||''}</span>
+      </div>
+      ${(last.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)"><span style="font-size:11px;color:var(--dim2)">${it.type||'—'}${it.supplierName?' · '+it.supplierName:''}</span><span style="font-size:11px;font-weight:700;color:var(--snow)">${fn(it.total)} ج</span></div>`).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <button onclick="importLastCosts();closeCostPanel()" style="font-size:11px;font-weight:800;padding:5px 12px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-family:inherit">⬇️ استيراد</button>
+        <span style="font-size:15px;font-weight:900;color:var(--c)">${fn(last.total)} ج${diffStr}</span>
+      </div>
+    </div>`;
+  } else { refEl.innerHTML=''; }
+
+  // ── البنود الحالية ──
+  const itemsEl=document.getElementById('cpanel-items');
+  if(!prodCi.length){
+    itemsEl.innerHTML=`<div style="padding:20px;text-align:center;color:var(--dim2);font-size:13px">لا توجد بنود بعد</div>`;
+  } else {
+    itemsEl.innerHTML=prodCi.map(item=>{
+      const gi=ci.indexOf(item);
+      return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700">${item.type||'—'}</div>
+          <div style="font-size:11px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>
+          ${item.addedBy?`<div style="font-size:9px;color:var(--dim)">سجّله: ${item.addedBy}</div>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span>
+          <button onclick="rmCost(${gi})" style="width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── فورم الإضافة ──
+  const sfx=prodIdx<0?'g':String(prodIdx);
+  const supOpts=suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  document.getElementById('cpanel-form').innerHTML=`
+    <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">➕ إضافة بند</div>
+    <div style="display:flex;gap:5px;margin-bottom:6px;flex-wrap:wrap">
+      <select id="cp-type-${sfx}" onchange="filterSupsByType(this.value,'cp-sup-${sfx}')" style="flex:2;min-width:110px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+        <option value="">نوع البند...</option>
+        <option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option>
+      </select>
+      <select id="cp-sup-${sfx}" style="flex:2;min-width:110px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+        <option value="">المورد...</option>${supOpts}
+      </select>
+    </div>
+    <div style="display:flex;gap:5px;align-items:center">
+      <input type="number" id="cp-total-${sfx}" placeholder="المبلغ (ج)" style="width:90px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;text-align:center;flex-shrink:0">
+      <input type="text" id="cp-note-${sfx}" placeholder="ملاحظة..." style="flex:1;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+      <button onclick="addCostFromPanel(${prodIdx})" style="flex-shrink:0;padding:8px 18px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">＋</button>
+    </div>`;
+}
+
+window.addCostFromPanel=async function(prodIdx){
+  const sfx=prodIdx<0?'g':String(prodIdx);
+  const type=document.getElementById('cp-type-'+sfx)?.value||'';
+  const total=parseFloat(document.getElementById('cp-total-'+sfx)?.value)||0;
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!total)return toast('⚠️ أدخل التكلفة','err');
+  const supSel=document.getElementById('cp-sup-'+sfx);
+  const supOpt=supSel?.options[supSel?.selectedIndex];
+  const note=document.getElementById('cp-note-'+sfx)?.value?.trim()||'';
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,addedAt:nowStr(),addedBy:userName};
+  const ci=[...(o.costItems||[])];ci.push(item);
+  try{
+    const action=`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    toast('✅ تم','ok');
+    const tE=document.getElementById('cp-type-'+sfx);if(tE)tE.value='';
+    const totE=document.getElementById('cp-total-'+sfx);if(totE)totE.value='';
+    const nE=document.getElementById('cp-note-'+sfx);if(nE)nE.value='';
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 window.filterSupsByType=function(typeVal,supId){
   const el=document.getElementById(supId);if(!el)return;
   const map={
@@ -555,27 +681,13 @@ function renderPanel(o){
   const supOpts0=suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
 
   if(imgs.length){
-    const importBanner=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
-    dEl.innerHTML=importBanner+imgs.map(img=>{
+    dEl.innerHTML=imgs.map(img=>{
       const prodCi=ci.filter(c2=>c2.prodIdx===img.idx||(img.idx===-1&&c2.prodIdx==null));
       const ciTotal=prodCi.reduce((s,c2)=>s+(parseFloat(c2.total)||0),0);
-      const ciRows=prodCi.map((item,i)=>{
-        const gi=ci.indexOf(item);
-        return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)">
-          <div style="flex:1;min-width:0">
-            <div style="font-size:12px;font-weight:700">${item.type||'—'}</div>
-            <div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>
-            ${item.addedBy?`<div style="font-size:9px;color:var(--dim);margin-top:1px">سجّله: ${item.addedBy}</div>`:''}
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
-        </div>`;
-      }).join('');
       const prodObj=img.idx>=0?prods[img.idx]:null;
       const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===(img.name||'').trim().toLowerCase());
       const defPaper=prodObj?.paper||catProd?.paper||'';
       const defWeight=prodObj?.weight||catProd?.weight||'';
-      const idSfx=img.idx<0?'g':String(img.idx);
-      const inlineForm=`<div style="background:var(--bg3);border-top:1px dashed var(--line);padding:8px 10px"><div style="display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap"><select id="ic-type-${idSfx}" onchange="filterSupsByType(this.value,'ic-sup-${idSfx}')" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-${idSfx}" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select></div><div style="display:flex;gap:5px;align-items:center"><input type="number" id="ic-total-${idSfx}" placeholder="ج" style="width:72px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;flex-shrink:0"><input type="text" id="ic-note-${idSfx}" placeholder="ملاحظة..." style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><button onclick="addInlineCost(${img.idx})" style="flex-shrink:0;padding:6px 14px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;font-family:inherit">＋</button></div></div>`;
       return`<div style="margin-bottom:16px">
         ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div><button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button></div>`:''}
         <div class="design-img-wrap">
@@ -585,31 +697,26 @@ function renderPanel(o){
           <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-${img.idx}" class="inp" type="text" value="${defPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(${img.idx})"></div>
           <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-${img.idx}" class="inp" type="number" value="${defWeight}" placeholder="300" style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(${img.idx})"></div>
         </div>
-        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
-          <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span>
-            ${ciTotal>0?`<span style="font-size:12px;font-weight:900;color:var(--r)">${fn(ciTotal)} ج</span>`:''}
-          </div>
-          ${ciRows||'<div style="padding:8px 10px;font-size:11px;color:var(--dim2)">لا توجد بنود</div>'}
-          ${inlineForm}
-        </div>
+        <button onclick="openCostPanel(${img.idx})" style="width:100%;margin-top:8px;padding:12px 14px;background:${ciTotal>0?'var(--bg2)':'rgba(255,61,110,.05)'};border:1.5px solid ${ciTotal>0?'var(--line)':'rgba(255,61,110,.3)'};border-radius:10px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-family:inherit">
+          <div style="display:flex;align-items:center;gap:6px"><span>💰</span><span style="font-size:13px;font-weight:800;color:var(--snow)">البنود${prodCi.length?' ('+prodCi.length+')':''}</span></div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:14px;font-weight:900;color:${ciTotal>0?'var(--r)':'var(--dim2)'}">${ciTotal>0?fn(ciTotal)+' ج':'لا توجد بنود'}</span><span style="font-size:18px;color:var(--dim2)">›</span></div>
+        </button>
       </div>`;
     }).join('');
   } else {
-    const importBanner2=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
     const gCatProd=productsCatalog.find(cp=>prods.some(p=>(cp.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase()));
     const gDefPaper=prods[0]?.paper||gCatProd?.paper||'';
     const gDefWeight=prods[0]?.weight||gCatProd?.weight||'';
-    dEl.innerHTML=importBanner2+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
+    const ciTotal0=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    dEl.innerHTML=`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
     <div style="display:flex;gap:6px;margin-top:8px;align-items:flex-end">
       <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-0" class="inp" type="text" value="${gDefPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(0)"></div>
       <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-0" class="inp" type="number" value="${gDefWeight}" placeholder="300" style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(0)"></div>
     </div>
-    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
-      <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line)"><span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span></div>
-      ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>${item.addedBy?`<div style="font-size:9px;color:var(--dim);margin-top:1px">سجّله: ${item.addedBy}</div>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-shrink:0"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
-      <div style="background:var(--bg3);border-top:1px dashed var(--line);padding:8px 10px"><div style="display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap"><select id="ic-type-g" onchange="filterSupsByType(this.value,'ic-sup-g')" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">نوع البند...</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select><select id="ic-sup-g" style="flex:2;min-width:110px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><option value="">المورد...</option>${supOpts0}</select></div><div style="display:flex;gap:5px;align-items:center"><input type="number" id="ic-total-g" placeholder="ج" style="width:72px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;text-align:center;flex-shrink:0"><input type="text" id="ic-note-g" placeholder="ملاحظة..." style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl"><button onclick="addInlineCost(-1)" style="flex-shrink:0;padding:6px 14px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:13px;font-weight:900;cursor:pointer;font-family:inherit">＋</button></div></div>
-    </div>`;
+    <button onclick="openCostPanel(-1)" style="width:100%;margin-top:8px;padding:12px 14px;background:${ciTotal0>0?'var(--bg2)':'rgba(255,61,110,.05)'};border:1.5px solid ${ciTotal0>0?'var(--line)':'rgba(255,61,110,.3)'};border-radius:10px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-family:inherit">
+      <div style="display:flex;align-items:center;gap:6px"><span>💰</span><span style="font-size:13px;font-weight:800;color:var(--snow)">البنود${ci.length?' ('+ci.length+')':''}</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:14px;font-weight:900;color:${ciTotal0>0?'var(--r)':'var(--dim2)'}">${ciTotal0>0?fn(ciTotal0)+' ج':'لا توجد بنود'}</span><span style="font-size:18px;color:var(--dim2)">›</span></div>
+    </button>`;
   }
   // 2. المطبعة — dropdown
   const sEl=document.getElementById('sup-select');
