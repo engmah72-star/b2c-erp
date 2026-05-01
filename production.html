@@ -83,6 +83,20 @@
 .stat-mini{display:flex;flex-direction:column;align-items:center;background:rgba(255,61,110,.08);border-radius:10px;padding:6px 12px;font-size:11px;color:var(--dim2)}
 .stat-mini span:first-child{font-size:18px;font-weight:900;color:var(--r)}
 @media(min-width:768px){.panel{max-width:480px;margin:auto;border-radius:20px;max-height:90vh}.panel-ov.open{align-items:center}.sup-grid{grid-template-columns:repeat(3,1fr)}}
+.prod-tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:12px;background:rgba(59,158,255,.1);border:1px solid rgba(59,158,255,.2);font-size:10px;font-weight:700;color:var(--b)}
+.prod-tag.qty-tag{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.2);color:var(--y)}
+.prod-tag.extra-tag{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.2);color:var(--p)}
+.prod-info-row{background:var(--bg3);border-radius:10px;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line)}
+.cost-open-btn{width:100%;margin-top:8px;padding:13px 14px;background:var(--bg3);border:1px solid var(--line);border-radius:10px;color:var(--snow);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;justify-content:space-between;align-items:center;transition:var(--trans)}
+.cost-open-btn:active{transform:scale(.98);background:var(--bg2)}
+.paper-calc{background:rgba(255,193,7,.05);border:1px solid rgba(255,193,7,.2);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:none}
+.day-chip{display:inline-flex;align-items:center;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:800}
+.day-ok{background:rgba(0,217,126,.1);color:var(--g)}
+.day-warn{background:rgba(255,170,0,.1);color:var(--y)}
+.day-late{background:rgba(255,61,110,.12);color:var(--r)}
+button{min-height:36px}
+.ship-btn{min-height:52px}
+.card-shipping{border-color:rgba(255,170,0,.4)!important}
 </style>
 </head>
 <body>
@@ -193,6 +207,20 @@
   </div>
 </div>
 
+<!-- Cost Panel (z-index:210) -->
+<div class="panel-ov" id="cpanel-ov" onclick="if(event.target===this)closeCostPanel()" style="z-index:210;display:none">
+  <div class="panel">
+    <div class="panel-drag"></div>
+    <div class="panel-hdr">
+      <div><div class="panel-hdr-name" id="cpanel-title">💰 البنود</div><div class="panel-hdr-sub" id="cpanel-sub">—</div></div>
+      <button class="panel-close" onclick="closeCostPanel()">✕</button>
+    </div>
+    <div id="cpanel-ref"></div>
+    <div id="cpanel-items" style="padding:0 16px"></div>
+    <div id="cpanel-form" style="padding:12px 16px;border-top:1px solid var(--line)"></div>
+  </div>
+</div>
+
 <!-- Modal: إضافة بند -->
 <div class="overlay" id="ov-cost">
   <div class="modal">
@@ -223,7 +251,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin';
+let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -338,22 +366,23 @@ onAuthStateChanged(auth,async u=>{
   if(__listenersStarted)return; // لو الـ listeners اتسجلوا قبل كده، مش هنسجلهم تاني
   __listenersStarted=true;
   let __lastOrderHash='';
-  onSnapshot(query(collection(db,'orders'),where('stage','==','production')),snap=>{
+  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','shipping'])),snap=>{
     window.markSynced&&window.markSynced();
     orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    
-    // Smart render — فقط لو البيانات اتغيرت فعلاً
-    const hash=orders.map(o=>o._id+'|'+o.prodStatus+'|'+o.supplierId+'|'+(o.costItems?.length||0)).join(',');
+
+    const hash=orders.map(o=>o._id+'|'+o.stage+'|'+o.prodStatus+'|'+o.supplierId+'|'+(o.costItems?.length||0)).join(',');
     const changed = hash !== __lastOrderHash;
     __lastOrderHash = hash;
-    
-    setText('s-pending',orders.filter(o=>!o.prodStatus||o.prodStatus==='pending').length);
-    setText('s-wip',orders.filter(o=>['wip','received'].includes(o.prodStatus)).length);
-    setText('s-done',orders.filter(o=>o.prodStatus==='done').length);
-    setText('sub',orders.length+' طلب تنفيذ');
-    
-    if(changed){renderList();orders.filter(o=>!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));}
-    if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderPanel(u);}
+
+    const prodOrders=orders.filter(o=>o.stage==='production');
+    setText('s-pending',prodOrders.filter(o=>!o.prodStatus||o.prodStatus==='pending').length);
+    setText('s-wip',prodOrders.filter(o=>['wip','received'].includes(o.prodStatus)).length);
+    setText('s-done',prodOrders.filter(o=>o.prodStatus==='done').length);
+    const shipMissing=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length).length;
+    setText('sub',prodOrders.length+' تنفيذ'+(shipMissing?` · ${shipMissing} شحن بدون تكلفة`:''));
+
+    if(changed){renderList();orders.filter(o=>o.stage==='production'&&!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));}
+    if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
   });
   onSnapshot(collection(db,'products_v2'),snap=>{
     productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -453,22 +482,36 @@ function renderCostPanel(o,prodIdx){
   // ── فورم الإضافة ──
   const sfx=prodIdx<0?'g':String(prodIdx);
   const supOpts=suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  const inp='padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;width:100%;direction:rtl';
   document.getElementById('cpanel-form').innerHTML=`
     <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">➕ إضافة بند</div>
-    <div style="display:flex;gap:5px;margin-bottom:6px;flex-wrap:wrap">
-      <select id="cp-type-${sfx}" onchange="filterSupsByType(this.value,'cp-sup-${sfx}')" style="flex:2;min-width:110px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+      <select id="cp-type-${sfx}" onchange="filterSupsByType(this.value,'cp-sup-${sfx}')" style="${inp}">
         <option value="">نوع البند...</option>
         <option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option>
       </select>
-      <select id="cp-sup-${sfx}" style="flex:2;min-width:110px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+      <select id="cp-sup-${sfx}" style="${inp}">
         <option value="">المورد...</option>${supOpts}
       </select>
     </div>
-    <div style="display:flex;gap:5px;align-items:center">
-      <input type="number" id="cp-total-${sfx}" placeholder="المبلغ (ج)" style="width:90px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;text-align:center;flex-shrink:0">
-      <input type="text" id="cp-note-${sfx}" placeholder="ملاحظة..." style="flex:1;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
-      <button onclick="addCostFromPanel(${prodIdx})" style="flex-shrink:0;padding:8px 18px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">＋</button>
-    </div>`;
+    <div class="paper-calc" id="cp-paper-calc-${sfx}">
+      <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:8px">📄 حاسبة الورق</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">نوع الورق</div><input id="cp-ptype-${sfx}" type="text" placeholder="كوشيه / بريستول" style="${inp}"></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">الوزن (جم)</div><input id="cp-pw-${sfx}" type="number" placeholder="300" style="${inp}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">قطعة/فرخة</div><input id="cp-pcut-${sfx}" type="number" placeholder="4" oninput="calcPaperCost('${sfx}')" style="${inp}"></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">عدد الأفرخ</div><input id="cp-psheets-${sfx}" type="number" placeholder="0" oninput="calcPaperCost('${sfx}')" style="${inp}"></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">سعر الفرخة</div><input id="cp-pprice-${sfx}" type="number" placeholder="0.00" oninput="calcPaperCost('${sfx}')" style="${inp}"></div>
+      </div>
+      <div style="font-size:12px;font-weight:800;color:var(--y)" id="cp-paper-result-${sfx}">الإجمالي: —</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="number" id="cp-total-${sfx}" placeholder="الإجمالي (ج)" style="flex:1;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:14px;font-weight:800;text-align:center">
+      <input type="text" id="cp-note-${sfx}" placeholder="ملاحظة..." style="flex:2;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
+    </div>
+    <button onclick="addCostFromPanel(${prodIdx})" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--r);color:#fff;font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">＋ إضافة البند</button>`;
 }
 
 window.addCostFromPanel=async function(prodIdx){
@@ -479,17 +522,30 @@ window.addCostFromPanel=async function(prodIdx){
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const supSel=document.getElementById('cp-sup-'+sfx);
   const supOpt=supSel?.options[supSel?.selectedIndex];
-  const note=document.getElementById('cp-note-'+sfx)?.value?.trim()||'';
+  let note=document.getElementById('cp-note-'+sfx)?.value?.trim()||'';
+  // paper extra metadata
+  let paperMeta={};
+  if(type==='ورق'){
+    const pType=document.getElementById('cp-ptype-'+sfx)?.value?.trim()||'';
+    const pW=document.getElementById('cp-pw-'+sfx)?.value||'';
+    const pSheets=document.getElementById('cp-psheets-'+sfx)?.value||'';
+    const pCut=document.getElementById('cp-pcut-'+sfx)?.value||'';
+    const pPrice=document.getElementById('cp-pprice-'+sfx)?.value||'';
+    if(!note&&(pType||pW||pSheets)){note=[pType,pW?pW+'جم':'',pSheets?pSheets+' فرخة':''].filter(Boolean).join(' · ');}
+    if(pType||pSheets)paperMeta={paperType:pType,paperWeight:pW,sheets:pSheets,cutSize:pCut,pricePerSheet:pPrice};
+  }
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,addedAt:nowStr(),addedBy:userName};
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName};
   const ci=[...(o.costItems||[])];ci.push(item);
   try{
     const action=`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
     await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
     toast('✅ تم','ok');
-    const tE=document.getElementById('cp-type-'+sfx);if(tE)tE.value='';
-    const totE=document.getElementById('cp-total-'+sfx);if(totE)totE.value='';
-    const nE=document.getElementById('cp-note-'+sfx);if(nE)nE.value='';
+    document.getElementById('cp-type-'+sfx).value='';
+    document.getElementById('cp-total-'+sfx).value='';
+    document.getElementById('cp-note-'+sfx).value='';
+    const calcEl=document.getElementById('cp-paper-calc-'+sfx);
+    if(calcEl){calcEl.style.display='none';['cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});}
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -511,6 +567,19 @@ window.filterSupsByType=function(typeVal,supId){
     :[];
   const list=filtered.length?filtered:suppliers;
   el.innerHTML='<option value="">المورد...</option>'+list.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  const sfx=supId.replace('cp-sup-','');
+  const calcEl=document.getElementById('cp-paper-calc-'+sfx);
+  if(calcEl)calcEl.style.display=typeVal==='ورق'?'block':'none';
+};
+
+window.calcPaperCost=function(sfx){
+  const sheets=parseFloat(document.getElementById('cp-psheets-'+sfx)?.value)||0;
+  const price=parseFloat(document.getElementById('cp-pprice-'+sfx)?.value)||0;
+  const total=sheets*price;
+  const res=document.getElementById('cp-paper-result-'+sfx);
+  if(res)res.textContent=`الإجمالي: ${fn(total)} ج (${sheets} فرخة × ${fn(price)} ج)`;
+  const totEl=document.getElementById('cp-total-'+sfx);
+  if(totEl&&total>0)totEl.value=total;
 };
 window.setStatusDirect=async function(id,status){
   const o=orders.find(x=>x._id===id);if(!o)return;
@@ -569,43 +638,54 @@ let __pageSize=20,__currentPage=1;
 window.renderList=function(resetPage=true){
   if(resetPage)__currentPage=1;
   let data=orders;
-  if(currentFilter==='pending')data=orders.filter(o=>!o.prodStatus||o.prodStatus==='pending');
-  else if(currentFilter==='wip')data=orders.filter(o=>['wip','received'].includes(o.prodStatus));
-  else if(currentFilter==='done')data=orders.filter(o=>o.prodStatus==='done');
-  else if(currentFilter==='problem')data=orders.filter(o=>o.prodStatus==='problem');
+  const prodAll=orders.filter(o=>o.stage==='production');
+  const shipNoCost=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length);
+  if(currentFilter==='pending')data=prodAll.filter(o=>!o.prodStatus||o.prodStatus==='pending');
+  else if(currentFilter==='wip')data=prodAll.filter(o=>['wip','received'].includes(o.prodStatus));
+  else if(currentFilter==='done')data=prodAll.filter(o=>o.prodStatus==='done');
+  else if(currentFilter==='problem')data=prodAll.filter(o=>o.prodStatus==='problem');
+  else data=[...prodAll,...shipNoCost]; // 'all': production + shipping without cost
   if(currentSupFilter)data=data.filter(o=>o.supplierId===currentSupFilter);
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد طلبات</div></div>`;return;}
   const total=data.length;
-  data=data.slice(0,__currentPage*__pageSize); // عرض بس الصفحة الحالية
+  data=data.slice(0,__currentPage*__pageSize);
   const SM={pending:{cls:'sp-pending',lbl:'⏳ انتظار',cc:''},received:{cls:'sp-wip',lbl:'📥 استلمت',cc:'card-wip'},wip:{cls:'sp-wip',lbl:'🔄 جاري',cc:'card-wip'},done:{cls:'sp-done',lbl:'✅ خلصت',cc:'card-done'},problem:{cls:'sp-prob',lbl:'⚠️ مشكلة',cc:'card-prob'}};
   el.innerHTML=data.map(o=>{
+    const isShipping=o.stage==='shipping';
     const ps=o.prodStatus||'pending';const st=SM[ps]||SM.pending;
     const prods=o.products||[];
     const firstImg=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.printFinalUrl||'';
     const sup=o.supplierId?suppliers.find(s=>s._id===o.supplierId):null;
     const ci=o.costItems||[];const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    const prodNames=prods.map(p=>`${p.name}×${p.qty}`).join(' · ')||o.product||'—';
     const days=o.createdAt?.seconds?Math.floor((Date.now()/1000-o.createdAt.seconds)/86400):0;
-    const urgent=days>2&&ps==='pending';
-    return`<div class="ord-card ${st.cc}${urgent?' card-urgent':''}" onclick="openOrder('${o._id}')">
+    const urgent=days>2&&ps==='pending'&&!isShipping;
+    const dayChip=days>0?`<span class="day-chip ${days<=1?'day-ok':days<=3?'day-warn':'day-late'}">${days}ي</span>`:'';
+    const prodDetails=prods.map(p=>{
+      const extras=(p.extras||[]).map(e=>`<span class="prod-tag extra-tag">${e}</span>`).join('');
+      return`<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px">
+        <span style="font-size:12px;font-weight:800">${p.name}</span>
+        <span class="prod-tag qty-tag">× ${p.qty}</span>
+        ${p.size?`<span class="prod-tag">${p.size}</span>`:''}
+        ${extras}
+      </div>`;
+    }).join('')||(o.product?`<div style="font-size:12px;margin-top:3px">${o.product}</div>`:'');
+    return`<div class="ord-card ${isShipping?'card-shipping':st.cc}${urgent?' card-urgent':''}" onclick="openOrder('${o._id}')">
       <div class="ord-top">
         <div style="flex:1;min-width:0">
-          <div class="ord-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
+          <div class="ord-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${dayChip}</div>
           <div class="ord-name">${o.clientName||'—'}</div>
-          <div class="ord-prods">${prodNames}</div>
+          ${prodDetails}
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          <span class="status-pill ${st.cls}">${st.lbl}</span>
-          ${tc>0?`<span style="font-size:11px;color:var(--r);font-weight:700">💰${fn(tc)}ج</span>`:''}
-          ${ci.length===0?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+          ${isShipping?`<span class="status-pill" style="background:rgba(255,170,0,.15);color:var(--y)">🚚 شحن</span>`:`<span class="status-pill ${st.cls}">${st.lbl}</span>`}
+          ${tc>0?`<span style="font-size:11px;color:var(--r);font-weight:700">💰 ${fn(tc)} ج</span>`:''}
+          ${ci.length===0?`<span style="font-size:10px;background:rgba(255,61,110,.15);color:var(--r);border:1px solid rgba(255,61,110,.3);border-radius:20px;padding:3px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
         </div>
       </div>
-      ${firstImg?`<div style="border-top:1px solid var(--line);background:var(--bg3);overflow:hidden;position:relative;min-height:60px">
-        <img src="${firstImg}" loading="lazy" decoding="async"
-          style="width:100%;max-height:120px;object-fit:contain;display:block"
-          onclick="event.stopPropagation();window.open('${firstImg}','_blank')">
-      </div>`:'' }
+      ${firstImg?`<div style="border-top:1px solid var(--line);background:var(--bg3);overflow:hidden">
+        <img src="${firstImg}" loading="lazy" decoding="async" style="width:100%;max-height:120px;object-fit:contain;display:block" onclick="event.stopPropagation();window.open('${firstImg}','_blank')">
+      </div>`:''}
       <div class="ord-foot">
         ${sup?`<span class="sup-tag">🏭 ${sup.name}</span>`:`<span class="sup-tag" style="color:var(--r)">⚠️ بدون مطبعة</span>`}
         ${urgent?`<span class="delay-tag">منذ ${days} أيام</span>`:''}
@@ -613,7 +693,7 @@ window.renderList=function(resetPage=true){
       </div>
     </div>`;
   }).join('')
-  + (total > __currentPage*__pageSize ? 
+  + (total > __currentPage*__pageSize ?
     `<button onclick="__currentPage++;renderList(false)" style="width:100%;padding:14px;background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;color:var(--dim2);font-size:13px;font-weight:700;cursor:pointer;margin-top:4px;font-family:inherit">
       ⬇️ تحميل المزيد (${total - __currentPage*__pageSize} متبقي)
     </button>` : '');
@@ -640,56 +720,47 @@ function renderPanel(o){
   if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم',idx:-1});
   if(o.printFinalUrl&&!imgs.length)imgs.push({url:o.printFinalUrl,name:'الملف النهائي',idx:-1});
 
+  const importBanner=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
+  function prodInfoHtml(prod){
+    if(!prod)return'';
+    const extras=(prod.extras||[]).map(e=>`<span class="prod-tag extra-tag">${e}</span>`).join('');
+    return`<div class="prod-info-row">
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+        <span style="font-size:14px;font-weight:800">${prod.name}</span>
+        <span class="prod-tag qty-tag">× ${prod.qty}</span>
+        ${prod.size?`<span class="prod-tag">${prod.size}</span>`:''}
+        ${extras}
+      </div>
+      ${prod.notes?`<div style="font-size:11px;color:var(--dim2);margin-top:4px">📝 ${prod.notes}</div>`:''}
+    </div>`;
+  }
   if(imgs.length){
-    const importBanner=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
     dEl.innerHTML=importBanner+imgs.map(img=>{
       const prodCi=ci.filter(c2=>c2.prodIdx===img.idx||(img.idx===-1&&c2.prodIdx==null));
       const ciTotal=prodCi.reduce((s,c2)=>s+(parseFloat(c2.total)||0),0);
-      const ciRows=prodCi.map((item,i)=>{
-        const gi=ci.indexOf(item);
-        return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)">
-          <div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div>
-          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div>
-        </div>`;
-      }).join('');
       const prodObj=img.idx>=0?prods[img.idx]:null;
-      const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===(img.name||'').trim().toLowerCase());
-      const defPaper=prodObj?.paper||catProd?.paper||'';
-      const defWeight=prodObj?.weight||catProd?.weight||'';
       return`<div style="margin-bottom:16px">
-        ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div><button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button></div>`:''}
+        ${imgs.length>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;color:var(--dim2);font-weight:800">📦 ${img.name}</div>
+          <button onclick="rmProduct(${img.idx})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🗑 حذف المنتج</button>
+        </div>`:''}
+        ${prodInfoHtml(prodObj)}
         <div class="design-img-wrap">
           <img src="${img.url}" class="design-img" onclick="window.open('${img.url}','_blank')">
         </div>
-        <div style="display:flex;gap:6px;margin-top:8px;align-items:flex-end">
-          <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-${img.idx}" class="inp" type="text" value="${defPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(${img.idx})"></div>
-          <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-${img.idx}" class="inp" type="number" value="${defWeight}" placeholder="300" style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(${img.idx})"></div>
-        </div>
-        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
-          <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span>
-            ${ciTotal>0?`<span style="font-size:12px;font-weight:900;color:var(--r)">${fn(ciTotal)} ج</span>`:''}
-          </div>
-          ${ciRows||'<div style="padding:8px 10px;font-size:11px;color:var(--dim2)">لا توجد بنود</div>'}
-          <button class="cost-add-btn" style="margin:6px;width:calc(100% - 12px)" onclick="openAddCost(${img.idx})">＋ إضافة بند</button>
-        </div>
+        <button class="cost-open-btn" onclick="openCostPanel(${img.idx})">
+          <span>💰 البنود${prodCi.length?' ('+prodCi.length+')':''}</span>
+          <span style="color:${ciTotal>0?'var(--r)':'var(--dim2)'}">${ciTotal>0?fn(ciTotal)+' ج ›':'لا توجد — اضغط للإضافة ›'}</span>
+        </button>
       </div>`;
     }).join('');
   } else {
-    const importBanner2=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
-    const gCatProd=productsCatalog.find(cp=>prods.some(p=>(cp.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase()));
-    const gDefPaper=prods[0]?.paper||gCatProd?.paper||'';
-    const gDefWeight=prods[0]?.weight||gCatProd?.weight||'';
-    dEl.innerHTML=importBanner2+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
-    <div style="display:flex;gap:6px;margin-top:8px;align-items:flex-end">
-      <div style="flex:2"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">📄 نوع الورق</div><input id="prod-paper-0" class="inp" type="text" value="${gDefPaper}" placeholder="كوشيه / بريستول / ..." style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(0)"></div>
-      <div style="flex:1"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:3px">⚖️ الوزن (جم)</div><input id="prod-weight-0" class="inp" type="number" value="${gDefWeight}" placeholder="300" style="font-size:12px;padding:7px 10px" onblur="saveProdSpecs(0)"></div>
-    </div>
-    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-top:8px;overflow:hidden">
-      <div style="padding:8px 10px;background:var(--bg3);border-bottom:1px solid var(--line)"><span style="font-size:11px;font-weight:800;color:var(--dim2)">💰 بنود التكلفة</span></div>
-      ${ci.map((item,gi)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${item.type||'—'}</div><div style="font-size:10px;color:var(--dim2)">${item.supplierName||'—'}</div></div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="rmCost(${gi})" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button></div></div>`).join('')}
-      <button class="cost-add-btn" style="margin:6px;width:calc(100% - 12px)" onclick="openAddCost(-1)">＋ إضافة بند</button>
-    </div>`;
+    const gCiTotal=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    dEl.innerHTML=importBanner+prodInfoHtml(prods[0])+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
+    <button class="cost-open-btn" onclick="openCostPanel(-1)">
+      <span>💰 البنود${ci.length?' ('+ci.length+')':''}</span>
+      <span style="color:${gCiTotal>0?'var(--r)':'var(--dim2)'}">${gCiTotal>0?fn(gCiTotal)+' ج ›':'لا توجد — اضغط للإضافة ›'}</span>
+    </button>`;
   }
   // 2. المطبعة
   const sEl=document.getElementById('sup-btns');
