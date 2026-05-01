@@ -30,9 +30,14 @@ service cloud.firestore {
     function can(perm) {
       return isAdmin() || perms().get(perm, false) == true;
     }
+    function validTx() {
+      let d = request.resource.data;
+      return d.amount is number && d.amount > 0
+          && d.type in ['in', 'out']
+          && d.walletId is string && d.walletId.size() > 0;
+    }
 
     // ══ Users ══
-    // كل موظف logged in يقرأ users (محتاجه لـ permissions)
     match /users/{userId} {
       allow read: if isAuth();
       allow create: if isAdmin();
@@ -86,8 +91,10 @@ service cloud.firestore {
 
     // ══ Wallets ══
     match /wallets/{walletId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('accounts'));
-      allow write: if isAuth() && (isAdmin() || hasPage('accounts'));
+      allow read: if isAuth() && (isAdmin() || hasPage('accounts') || hasPage('shipping-accounts'));
+      allow create: if isAdmin();
+      allow update: if isAuth() && (isAdmin() || hasPage('accounts') || hasPage('shipping-accounts'));
+      allow delete: if isAdmin();
     }
 
     // ══ Transactions ══
@@ -98,7 +105,9 @@ service cloud.firestore {
         hasPage('shipping') ||
         hasPage('shipping-accounts')
       );
-      allow create: if isAuth();
+      allow create: if isAuth()
+        && (isAdmin() || hasPage('accounts') || hasPage('shipping') || hasPage('shipping-accounts'))
+        && validTx();
       allow update, delete: if isAdmin();
     }
 
@@ -114,8 +123,9 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     match /supplier_payments/{payId} {
-      allow read: if isAuth() && (isAdmin() || hasPage('suppliers'));
-      allow write: if isAdmin();
+      allow read: if isAuth() && (isAdmin() || hasPage('suppliers') || hasPage('accounts'));
+      allow create: if isAuth() && (isAdmin() || hasPage('accounts'));
+      allow update, delete: if isAdmin();
     }
 
     // ══ Shippers ══
@@ -136,8 +146,10 @@ service cloud.firestore {
         isAdmin() ||
         resource.data.get('employeeUid','__') == request.auth.uid
       );
-      allow create: if isAuth() &&
-        request.resource.data.employeeUid == request.auth.uid;
+      allow create: if isAuth() && (
+        isAdmin() ||
+        request.resource.data.get('employeeUid','') == request.auth.uid
+      );
       allow update: if isAuth() && (
         isAdmin() ||
         resource.data.get('employeeUid','__') == request.auth.uid
@@ -170,15 +182,38 @@ service cloud.firestore {
       );
     }
     match /shipping_returns/{retId} {
-      allow read, write: if isAuth() && (
+      allow read: if isAuth() && (
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
       );
+      allow create: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // ══ Reconciliations ══
+    match /reconciliations/{recId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('accounts'));
+      allow create: if isAuth() && (isAdmin() || hasPage('accounts'));
+      allow update, delete: if isAdmin();
     }
 
     // ══ Settings ══
     match /settings/{settingId} {
       allow read: if isAuth();
       allow write: if isAdmin();
+    }
+
+    // ══ Print Jobs ══
+    match /print_jobs/{jobId} {
+      allow read: if isAuth() && (
+        isAdmin() || hasPage('print') || hasPage('production')
+      );
+      allow create: if isAuth() && (isAdmin() || hasPage('print'));
+      allow update: if isAuth() && (
+        isAdmin() || hasPage('print') || hasPage('production')
+      );
+      allow delete: if isAdmin();
     }
   }
 }
