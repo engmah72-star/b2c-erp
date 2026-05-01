@@ -125,6 +125,7 @@ button{min-height:36px}
   <div class="content">
     <div class="filter-bar" id="status-filter-bar">
       <button class="ftab active" onclick="setFilter('all',this)">الكل</button>
+      <button class="ftab" onclick="setFilter('nocost',this)" id="ftab-nocost">⚠️ بدون تكلفة</button>
       <button class="ftab" onclick="setFilter('pending',this)">⏳ انتظار</button>
       <button class="ftab" onclick="setFilter('wip',this)">🔄 جاري</button>
       <button class="ftab" onclick="setFilter('done',this)">✅ خلصت</button>
@@ -262,7 +263,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1;
+let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -472,19 +473,22 @@ function renderCostPanel(o,prodIdx){
   // ── البنود الحالية ──
   const itemsEl=document.getElementById('cpanel-items');
   if(!prodCi.length){
-    itemsEl.innerHTML=`<div style="padding:20px;text-align:center;color:var(--dim2);font-size:13px">لا توجد بنود بعد</div>`;
+    itemsEl.innerHTML=`<div style="padding:20px;text-align:center;color:var(--dim2);font-size:13px">لا توجد بنود بعد — استخدم الفورم أدناه</div>`;
   } else {
     itemsEl.innerHTML=prodCi.map(item=>{
       const gi=ci.indexOf(item);
-      return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)">
+      return`<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:700">${item.type||'—'}</div>
-          <div style="font-size:11px;color:var(--dim2)">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>
-          ${item.addedBy?`<div style="font-size:9px;color:var(--dim)">سجّله: ${item.addedBy}</div>`:''}
+          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${item.supplierName||'—'}${item.note?` · <span style="color:var(--c)">${item.note}</span>`:''}</div>
+          ${item.addedBy?`<div style="font-size:9px;color:var(--dim);margin-top:1px">سجّله: ${item.addedBy}</div>`:''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
           <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span>
-          <button onclick="rmCost(${gi})" style="width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button>
+          <div style="display:flex;gap:4px">
+            <button onclick="startCostEdit(${gi})" style="width:30px;height:30px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:13px">✏️</button>
+            <button onclick="rmCost(${gi})" style="width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button>
+          </div>
         </div>
       </div>`;
     }).join('');
@@ -522,8 +526,43 @@ function renderCostPanel(o,prodIdx){
       <input type="number" id="cp-total-${sfx}" placeholder="الإجمالي (ج)" style="flex:1;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:14px;font-weight:800;text-align:center">
       <input type="text" id="cp-note-${sfx}" placeholder="ملاحظة..." style="flex:2;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:13px;font-family:inherit;direction:rtl">
     </div>
-    <button onclick="addCostFromPanel(${prodIdx})" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--r);color:#fff;font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">＋ إضافة البند</button>`;
+    <button id="cp-save-btn-${sfx}" onclick="addCostFromPanel(${prodIdx})" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--r);color:#fff;font-size:15px;font-weight:900;cursor:pointer;font-family:inherit">＋ إضافة البند</button>`;
 }
+
+function _clearCpForm(sfx){
+  ['cp-type-','cp-sup-','cp-total-','cp-note-','cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});
+  const calcEl=document.getElementById('cp-paper-calc-'+sfx);if(calcEl)calcEl.style.display='none';
+  const btn=document.getElementById('cp-save-btn-'+sfx);if(btn)btn.textContent='＋ إضافة البند';
+  __editCostIdx=-1;
+}
+
+window.startCostEdit=function(gi){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item=(o.costItems||[])[gi];if(!item)return;
+  const sfx=activeProdIdx<0?'g':String(activeProdIdx);
+  __editCostIdx=gi;
+  // اختر النوع ثم حدّث الموردين
+  const typeEl=document.getElementById('cp-type-'+sfx);
+  if(typeEl){typeEl.value=item.type||'';filterSupsByType(item.type||'','cp-sup-'+sfx);}
+  // اختر المورد
+  const supEl=document.getElementById('cp-sup-'+sfx);
+  if(supEl&&item.supplierId){supEl.value=item.supplierId;}
+  sv('cp-total-'+sfx,item.total||'');
+  sv('cp-note-'+sfx,item.note||'');
+  // paper meta
+  if(item.type==='ورق'&&item.paperMeta){
+    sv('cp-ptype-'+sfx,item.paperMeta.paperType||'');
+    sv('cp-pw-'+sfx,item.paperMeta.paperWeight||'');
+    sv('cp-pcut-'+sfx,item.paperMeta.cutSize||'');
+    sv('cp-psheets-'+sfx,item.paperMeta.sheets||'');
+    sv('cp-pprice-'+sfx,item.paperMeta.pricePerSheet||'');
+    const calcEl=document.getElementById('cp-paper-calc-'+sfx);if(calcEl)calcEl.style.display='block';
+  }
+  const btn=document.getElementById('cp-save-btn-'+sfx);if(btn)btn.textContent='💾 تعديل البند';
+  // Scroll to form
+  document.getElementById('cpanel-form')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+  toast('✏️ جاهز للتعديل','');
+};
 
 window.addCostFromPanel=async function(prodIdx){
   const sfx=prodIdx<0?'g':String(prodIdx);
@@ -534,7 +573,6 @@ window.addCostFromPanel=async function(prodIdx){
   const supSel=document.getElementById('cp-sup-'+sfx);
   const supOpt=supSel?.options[supSel?.selectedIndex];
   let note=document.getElementById('cp-note-'+sfx)?.value?.trim()||'';
-  // paper extra metadata
   let paperMeta={};
   if(type==='ورق'){
     const pType=document.getElementById('cp-ptype-'+sfx)?.value?.trim()||'';
@@ -546,17 +584,15 @@ window.addCostFromPanel=async function(prodIdx){
     if(pType||pSheets)paperMeta={paperType:pType,paperWeight:pW,sheets:pSheets,cutSize:pCut,pricePerSheet:pPrice};
   }
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName};
-  const ci=[...(o.costItems||[])];ci.push(item);
+  const newItem={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName};
+  const ci=[...(o.costItems||[])];
+  const isEdit=__editCostIdx>=0;
+  if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
   try{
-    const action=`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
+    const action=isEdit?`✏️ تعديل بند ${type}: ${fn(total)} ج`:`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
     await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-    toast('✅ تم','ok');
-    document.getElementById('cp-type-'+sfx).value='';
-    document.getElementById('cp-total-'+sfx).value='';
-    document.getElementById('cp-note-'+sfx).value='';
-    const calcEl=document.getElementById('cp-paper-calc-'+sfx);
-    if(calcEl){calcEl.style.display='none';['cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});}
+    toast(isEdit?'✅ تم التعديل':'✅ تم الإضافة','ok');
+    _clearCpForm(sfx);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -631,27 +667,18 @@ async function tryAutoImport(o){
   }catch(e){console.warn('autoImport:',e.message);}
 }
 
-// ══ SAVE PRODUCT SPECS ══
-window.saveProdSpecs=async function(pi){
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const paper=document.getElementById(`prod-paper-${pi}`)?.value||'';
-  const weight=parseFloat(document.getElementById(`prod-weight-${pi}`)?.value)||0;
-  const prods=[...(o.products||[])];
-  if(!prods[pi])return;
-  prods[pi]={...prods[pi],paper,weight};
-  try{
-    await updateDoc(doc(db,'orders',activeId),{products:prods,updatedAt:serverTimestamp()});
-    toast('✅ تم الحفظ','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-};
-
 let __pageSize=20,__currentPage=1;
 window.renderList=function(resetPage=true){
   if(resetPage)__currentPage=1;
   let data=orders;
   const prodAll=orders.filter(o=>o.stage==='production');
+  const noCostAll=orders.filter(o=>!(o.costItems||[]).length);
   const shipNoCost=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length);
-  if(currentFilter==='pending')data=prodAll.filter(o=>!o.prodStatus||o.prodStatus==='pending');
+  // بادج على تاب "بدون تكلفة"
+  const noCostTab=document.getElementById('ftab-nocost');
+  if(noCostTab)noCostTab.textContent=`⚠️ بدون تكلفة${noCostAll.length?' ('+noCostAll.length+')':''}`;
+  if(currentFilter==='nocost')data=noCostAll;
+  else if(currentFilter==='pending')data=prodAll.filter(o=>!o.prodStatus||o.prodStatus==='pending');
   else if(currentFilter==='wip')data=prodAll.filter(o=>['wip','received'].includes(o.prodStatus));
   else if(currentFilter==='done')data=prodAll.filter(o=>o.prodStatus==='done');
   else if(currentFilter==='problem')data=prodAll.filter(o=>o.prodStatus==='problem');
