@@ -283,7 +283,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, serverTimestamp, writeBatch, increment, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, writeBatch, increment, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const FB_CONFIG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB_CONFIG);const auth=getAuth(app);const db=getFirestore(app);
@@ -712,8 +712,15 @@ window.saveEmp=async function(){
         authUid=cred.user.uid;
         await signOut(secondaryAuth);await deleteApp(secondaryApp);
       }catch(authErr){
-        if(authErr.code==='auth/email-already-in-use'){toast('⚠️ رقم الهاتف له حساب بالفعل','err');btn.disabled=false;btn.textContent='✓ إضافة';return;}
-        throw authErr;
+        if(authErr.code==='auth/email-already-in-use'){
+          // حساب Auth موجود — ابحث عن users doc محذوف بنفس الإيميل
+          const snap=await getDocs(query(collection(db,'users'),where('email','==',email)));
+          if(!snap.empty){
+            authUid=snap.docs[0].id; // أعد استخدام نفس الـ authUid
+          } else {
+            toast('⚠️ رقم الهاتف له حساب نشط بالفعل','err');btn.disabled=false;btn.textContent='✓ إضافة';return;
+          }
+        } else { throw authErr; }
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;
       const ref=await addDoc(collection(db,'employees'),empData);
