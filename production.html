@@ -261,13 +261,13 @@ function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const page
 
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],productsCatalog=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1;
+let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -359,12 +359,10 @@ window.deleteOrderFull=async function(){
     }
     // حذف transactions المرتبطة
     try{
-      const {getDocs,query:qry,where:whr,deleteDoc:delDoc}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-      const txSnap=await getDocs(qry(collection(db,'transactions_v2'),whr('orderId','==',activeId)));
-      for(const tx of txSnap.docs)await delDoc(tx.ref);
+      const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',activeId)));
+      for(const tx of txSnap.docs)await deleteDoc(tx.ref);
     }catch(e2){console.warn('tx del:',e2.message);}
     // حذف الأوردر
-    const {deleteDoc}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
     await deleteDoc(doc(db,'orders',activeId));
     closePanel();
     toast('✅ تم الحذف النهائي','ok');
@@ -414,6 +412,7 @@ onAuthStateChanged(auth,async u=>{
     const s=document.getElementById('ac-sup');if(!s)return;
     s.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}">${x.name}</option>`).join('');
   });
+  onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
 });
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
@@ -567,12 +566,16 @@ function renderCostPanel(o,prodIdx){
       <div style="font-size:13px;font-weight:800;color:var(--y);padding:8px 10px;background:rgba(255,193,7,.06);border-radius:8px;margin-bottom:8px" id="cp-paper-result-${sfx}">↕️ اكتب الأفرخ × السعر أو الإجمالي</div>
     </div>
     <input type="number" id="cp-total-${sfx}" placeholder="💰 الإجمالي (ج)" oninput="const c=document.getElementById('cp-paper-calc-${sfx}');if(c&&c.style.display!=='none')calcPaperCost('${sfx}',true)" style="${inp};margin-bottom:8px;font-size:18px;font-weight:900;text-align:center">
-    <input type="text" id="cp-note-${sfx}" placeholder="📝 ملاحظة (اختياري)" style="${inp};margin-bottom:10px">
+    <input type="text" id="cp-note-${sfx}" placeholder="📝 ملاحظة (اختياري)" style="${inp};margin-bottom:8px">
+    <select id="cp-wallet-${sfx}" style="${inp};margin-bottom:10px">
+      <option value="">💼 بدون خصم من محفظة (تسجيل فقط)</option>
+      ${wallets.map(w=>`<option value="${w._id}">${w.name} · رصيد: ${fn(w.balance)} ج</option>`).join('')}
+    </select>
     <button id="cp-save-btn-${sfx}" onclick="addCostFromPanel(${prodIdx})" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--r);color:#fff;font-size:16px;font-weight:900;cursor:pointer;font-family:inherit;min-height:52px">＋ إضافة البند</button>`;
 }
 
 function _clearCpForm(sfx){
-  ['cp-type-','cp-sup-','cp-total-','cp-note-','cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});
+  ['cp-type-','cp-sup-','cp-total-','cp-note-','cp-wallet-','cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});
   const calcEl=document.getElementById('cp-paper-calc-'+sfx);if(calcEl)calcEl.style.display='none';
   const btn=document.getElementById('cp-save-btn-'+sfx);if(btn)btn.textContent='＋ إضافة البند';
   __editCostIdx=-1;
@@ -614,6 +617,7 @@ window.addCostFromPanel=async function(prodIdx){
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const supSel=document.getElementById('cp-sup-'+sfx);
   const supOpt=supSel?.options[supSel?.selectedIndex];
+  const walletId=document.getElementById('cp-wallet-'+sfx)?.value||'';
   let note=document.getElementById('cp-note-'+sfx)?.value?.trim()||'';
   let paperMeta={};
   if(type==='ورق'){
@@ -626,20 +630,41 @@ window.addCostFromPanel=async function(prodIdx){
     if(pType||pSheets)paperMeta={paperType:pType,paperWeight:pW,sheets:pSheets,cutSize:pCut,pricePerSheet:pPrice};
   }
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const newItem={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName};
-  const ci=[...(o.costItems||[])];
   const isEdit=__editCostIdx>=0;
+  // validate wallet balance before deducting
+  if(walletId&&!isEdit){
+    const w=wallets.find(x=>x._id===walletId);
+    if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
+  }
+  const supplierId=supOpt?.value||'';
+  const supplierName=supOpt?.dataset?.name||'';
+  const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
+  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{})};
+  const ci=[...(o.costItems||[])];
   if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
   try{
     const action=isEdit?`✏️ تعديل بند ${type}: ${fn(total)} ج`:`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-    // toast يُظهر إجمالي المورد لهذا الأوردر
-    const supId=newItem.supplierId;const supName=newItem.supplierName;
-    if(supId&&supName){
-      const supTotal=ci.filter(c=>c.supplierId===supId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-      toast(`✅ ${isEdit?'تعديل':'إضافة'} · مستحق لـ ${supName}: ${fn(supTotal)} ج`,'ok');
+    if(txRef){
+      // atomic: order + wallet debit + transaction record
+      const batch=writeBatch(db);
+      batch.update(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+      batch.update(doc(db,'wallets',walletId),{balance:increment(-total)});
+      const walletName=(wallets.find(x=>x._id===walletId)||{}).name||'';
+      batch.set(txRef,{type:'out',walletId,walletName,amount:total,category:type==='تصميم'?'designer_fee':'supplier',description:`${type}${note?' — '+note:''} · ${o.clientName||o._id}`,supplierId,supplierName,orderId:activeId,orderClient:o.clientName||'',date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
+      if(supplierId){
+        const spRef=doc(collection(db,'supplier_payments'));
+        batch.set(spRef,{supplierId,supplierName,amount:total,orderId:activeId,orderClient:o.clientName||'',note:`${type}${note?' — '+note:''}`,walletId,walletName,date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
+      }
+      await batch.commit();
     } else {
-      toast(isEdit?'✅ تم التعديل':'✅ تم الإضافة','ok');
+      await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    }
+    // toast
+    if(supplierId&&supplierName){
+      const supTotal=ci.filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      toast(`✅ ${isEdit?'تعديل':'إضافة'} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
+    } else {
+      toast(isEdit?'✅ تم التعديل':`✅ تم الإضافة${walletId?' · خُصم من المحفظة':''}`,'ok');
     }
     _clearCpForm(sfx);
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1075,9 +1100,23 @@ window.rmProduct=async function(prodIdx){
 window.rmCost=async function(idx){
   if(!confirm('حذف؟'))return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const ci=[...(o.costItems||[])];ci.splice(idx,1);
-  try{await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});toast('✅ حُذف','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const ci=[...(o.costItems||[])];
+  const item=ci[idx];
+  ci.splice(idx,1);
+  try{
+    if(item?.txId&&item?.walletId){
+      // atomic: restore wallet balance + delete transaction + update order
+      const batch=writeBatch(db);
+      batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
+      batch.update(doc(db,'wallets',item.walletId),{balance:increment(parseFloat(item.total)||0)});
+      batch.delete(doc(db,'transactions_v2',item.txId));
+      await batch.commit();
+      toast('✅ حُذف · رُجِّع المبلغ للمحفظة','ok');
+    } else {
+      await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
+      toast('✅ حُذف','ok');
+    }
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.importLastCosts=async function(){
