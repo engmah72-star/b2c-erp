@@ -390,6 +390,14 @@
           <div id="no-design-img-preview" style="color:var(--dim2);font-size:13px">📁 اضغط لاختيار صورة أو PDF</div>
         </div>
         <input type="file" id="no-design-img-inp" accept="image/*,application/pdf" style="display:none" onchange="previewOrderDesignImg(this)">
+        <div id="no-upload-progress" style="display:none;margin-top:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim2);margin-bottom:4px">
+            <span>جاري الرفع...</span><span id="no-upload-pct">0%</span>
+          </div>
+          <div style="height:6px;background:var(--bg3);border-radius:99px;overflow:hidden">
+            <div id="no-upload-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--b),var(--p));border-radius:99px;transition:width .2s"></div>
+          </div>
+        </div>
         <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">أو رابط مباشر</label><input class="inp" id="no-design-url" type="url" placeholder="https://..."></div>
         <div class="fg" style="margin:0"><label style="font-size:11px">ملاحظة على التصميم</label><input class="inp" id="no-design-note" type="text" placeholder="وصف التصميم..."></div>
       </div>
@@ -915,7 +923,9 @@ function openNewOrder(){
   sv('no-deadline','');sv('no-notes','');sv('no-deposit','0');sv('no-sale-price','0');const noPreview=document.getElementById('no-remaining-preview');if(noPreview)noPreview.style.display='none';
   sv('no-design-url','');sv('no-design-note','');
   const noImgInp=document.getElementById('no-design-img-inp');if(noImgInp)noImgInp.value='';
-  const noImgPrev=document.getElementById('no-design-img-preview');if(noImgPrev)noImgPrev.innerHTML='📁 اضغط لاختيار صورة';
+  const noImgPrev=document.getElementById('no-design-img-preview');if(noImgPrev)noImgPrev.innerHTML='📁 اضغط لاختيار صورة أو PDF';
+  const noProgWrap=document.getElementById('no-upload-progress');if(noProgWrap)noProgWrap.style.display='none';
+  const noProgBar=document.getElementById('no-upload-bar');if(noProgBar)noProgBar.style.width='0%';
   // تعيين المصمم — للأدمن وخدمة العملاء فقط
   const canAssign=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const desWrap=document.getElementById('designer-field-wrap');
@@ -985,16 +995,22 @@ function saveNewOrder(){
   const productName=prods.map(p=>p.name).join(' + ');
   const btn=document.getElementById('no-save-btn');btn.disabled=true;btn.textContent='جاري...';
   const designNote=gv('no-design-note');
-  const uploadDesignFile=async()=>{
+  const uploadDesignFile=()=>new Promise((resolve,reject)=>{
     const imgInp=document.getElementById('no-design-img-inp');
-    if(imgInp&&imgInp.files&&imgInp.files[0]){
-      btn.textContent='جاري رفع الصورة...';
-      const storageRef=firebase.storage().ref(`designs/order_${orderId}_${Date.now()}`);
-      await storageRef.put(imgInp.files[0]);
-      return await storageRef.getDownloadURL();
-    }
-    return gv('no-design-url')||'';
-  };
+    if(!imgInp||!imgInp.files||!imgInp.files[0]){resolve(gv('no-design-url')||'');return;}
+    const progWrap=document.getElementById('no-upload-progress');
+    const progBar=document.getElementById('no-upload-bar');
+    const progPct=document.getElementById('no-upload-pct');
+    progWrap.style.display='block';
+    btn.textContent='جاري الرفع...';
+    const storageRef=firebase.storage().ref(`designs/order_${orderId}_${Date.now()}`);
+    const task=storageRef.put(imgInp.files[0]);
+    task.on('state_changed',
+      snap=>{const pct=Math.round(snap.bytesTransferred/snap.totalBytes*100);progBar.style.width=pct+'%';progPct.textContent=pct+'%';},
+      err=>{progWrap.style.display='none';reject(err);},
+      async()=>{progWrap.style.display='none';resolve(await storageRef.getDownloadURL());}
+    );
+  });
   const saveDeposit=()=>{
     if(dep<=0||!wId)return Promise.resolve();
     const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
