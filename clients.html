@@ -70,6 +70,11 @@
 
 @media(max-width:640px){.quick-type{grid-template-columns:1fr 1fr}}
 
+/* ── Status Tabs (نشط / قديم) ── */
+.stab{padding:7px 18px;border-radius:20px;border:2px solid var(--line);background:var(--bg2);font-size:12px;font-weight:800;color:var(--dim2);cursor:pointer;font-family:inherit;transition:var(--trans)}
+.stab.on{background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.3)}
+.stab-legacy.on{background:rgba(150,150,170,.1);color:#aaa;border-color:rgba(150,150,170,.3)}
+
 /* ── List View ── */
 .on-view{background:rgba(59,158,255,.15)!important;color:var(--b)!important;border-color:var(--b)!important}
 .list-row{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:12px 16px;margin-bottom:6px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:var(--trans)}
@@ -200,6 +205,13 @@
       <select class="inp" id="f-src" onchange="renderGrid()" style="max-width:150px"><option value="">كل المصادر</option></select>
     </div>
 
+    <!-- تبويب الحالة: نشط / قديم -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
+      <button class="stab stab-legacy" id="stab-legacy" onclick="setStatusTab('legacy',this)">📁 قديم</button>
+      <button class="btn btn-ghost btn-sm" id="add-legacy-btn" onclick="openAddLegacy()" style="margin-right:auto;display:none">＋ عميل قديم</button>
+    </div>
+
     <!-- فلتر مالي سريع -->
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
       <button class="ftab active" id="flt-all" onclick="window.setClientFilter('all',this)">الكل</button>
@@ -302,6 +314,17 @@
         </div>
       </div>
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="c-notes" placeholder="أي تفاصيل إضافية..." style="min-height:70px"></textarea></div>
+
+      <!-- حقول خاصة بالعميل القديم — تظهر فقط في وضع قديم -->
+      <div id="legacy-fields-section" style="display:none">
+        <div class="divider" style="margin-top:8px"><div class="div-line"></div><div class="div-text">📁 بيانات العميل القديم</div><div class="div-line"></div></div>
+        <div class="g2">
+          <div class="fg"><label>إجمالي ما أنفقه تقريباً (ج)</label><input class="inp" id="c-legacy-spent" type="number" placeholder="0" min="0"></div>
+          <div class="fg"><label>تاريخ آخر طلب قديم</label><input class="inp" id="c-legacy-last-order" type="date"></div>
+        </div>
+        <div class="fg"><label>المشاريع / المنتجات السابقة</label><input class="inp" id="c-legacy-projects" placeholder="بطاقات عمل، ليتر هيد، بروشور..."></div>
+        <div class="fg"><label>ملاحظات خاصة</label><textarea class="inp" id="c-legacy-notes" placeholder="سبب التسجيل، أولويات التواصل..." style="min-height:60px"></textarea></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeClientModal()">إلغاء</button>
@@ -632,7 +655,11 @@ function renderGrid(){
   const ft=gv('f-tag');
   const fg=gv('f-gov');
   const fs=gv('f-src');
+  const isLegacyTab=window.__statusTab==='legacy';
   let data=clients.filter(c=>{
+    // فلتر حسب تبويب الحالة
+    if(isLegacyTab){if(c.status!=='legacy')return false;}
+    else{if(c.status==='legacy')return false;}
     if(q&&!(c.name||'').toLowerCase().includes(q)&&!(c.phone1||'').includes(q)&&!(c.phone2||'').includes(q))return false;
     if(ft&&!(c.tags||[]).includes(ft))return false;
     if(fg&&c.gov!==fg&&c.governorate!==fg)return false;
@@ -661,7 +688,7 @@ function renderGrid(){
   const el=document.getElementById('clients-grid');if(!el)return;
   el.style.display='grid';
   if(!data.length){
-    el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">👤</div><div class="empty-text">${clients.length?'لا نتائج للبحث':'لا يوجد عملاء بعد'}</div><button class="btn btn-b btn-sm" onclick="openAddClient()" style="margin-top:12px">＋ أضف أول عميل</button></div>`;
+    el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">${isLegacyTab?'📁':'👤'}</div><div class="empty-text">${isLegacyTab?'لا يوجد عملاء قدامى مسجلين':'لا نتائج للبحث'}</div><button class="btn btn-ghost btn-sm" onclick="${isLegacyTab?'openAddLegacy()':'openAddClient()'}" style="margin-top:12px">${isLegacyTab?'＋ سجّل عميل قديم':'＋ أضف عميل'}</button></div>`;
     return;
   }
   el.innerHTML=data.map((c,i)=>{
@@ -747,6 +774,9 @@ function closePanel(){
 }
 function renderPanel(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
+  // إخفاء/إظهار زر الأوردر حسب حالة العميل
+  const pnOrdBtn=document.querySelector('#panel-ov .btn-g');
+  if(pnOrdBtn)pnOrdBtn.style.display=c.status==='legacy'?'none':'';
   const col=COLORS[clients.indexOf(c)%COLORS.length];
   const cOrds=getClientOrders(c);
   const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
@@ -761,7 +791,7 @@ function renderPanel(id){
     <div style="display:flex;align-items:center;gap:12px">
       <div style="width:48px;height:48px;border-radius:50%;background:${col}18;color:${col};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900">${(c.name||'?')[0]}</div>
       <div>
-        <div style="font-size:16px;font-weight:800">${c.name}</div>
+        <div style="font-size:16px;font-weight:800">${c.name} ${c.status==='legacy'?'<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:800;margin-right:6px">📁 قديم</span>':''}</div>
         <div style="font-size:11px;color:var(--dim2)">${c.phone1||''} ${c.job?'· '+c.job:''}</div>
       </div>
     </div>`;
@@ -838,9 +868,22 @@ function renderPanel(id){
       </div>
     </div>
 
+    ${c.status==='legacy'?`
+    <!-- بيانات العميل القديم -->
+    <div class="section" style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:12px">
+      <div style="font-size:11px;font-weight:800;color:#aaa;margin-bottom:10px">📁 بيانات العميل القديم</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${c.totalSpentLegacy>0?pRow('💰 إجمالي الإنفاق',fn(c.totalSpentLegacy)+' ج'):''}
+        ${c.lastOrderDateLegacy?pRow('📅 آخر طلب',c.lastOrderDateLegacy):''}
+        ${c.legacyProjects?pRow('📦 مشاريع سابقة',c.legacyProjects):''}
+      </div>
+      ${c.legacyNotes?`<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:12px;color:var(--dim2)">📝 ${c.legacyNotes}</div>`:''}
+    </div>`:''}
+
     <!-- Actions -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)">
       <button class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
+      ${c.status==='legacy'?`<button class="btn btn-g btn-sm" onclick="window.convertToActive('${id}')">🟢 تحويل لنشط</button>`:''}
       <button class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
     </div>`;
 
@@ -1095,12 +1138,31 @@ function saveNewOrder(){
 // ══ MODAL: إضافة/تعديل عميل ══
 function openAddClient(){
   editId=null;
+  window.__isLegacyMode=false;
+  const lfs=document.getElementById('legacy-fields-section');
+  if(lfs)lfs.style.display='none';
   setText('client-title','＋ عميل جديد');
   setText('save-client-btn','✓ إضافة العميل');
   ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes'].forEach(id=>sv(id,''));
   sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
+  fillGovSelect();
+  document.getElementById('ov-client').classList.add('open');
+  setTimeout(()=>document.getElementById('c-name').focus(),100);
+}
+
+function openAddLegacy(){
+  editId=null;
+  window.__isLegacyMode=true;
+  setText('client-title','＋ تسجيل عميل قديم');
+  setText('save-client-btn','✓ حفظ العميل القديم');
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  sv('c-legacy-last-order',''); sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
+  document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('hint-phone1').textContent='';
+  const lfs=document.getElementById('legacy-fields-section');
+  if(lfs)lfs.style.display='block';
   fillGovSelect();
   document.getElementById('ov-client').classList.add('open');
   setTimeout(()=>document.getElementById('c-name').focus(),100);
@@ -1113,6 +1175,7 @@ function closeClientModal(){
 function editClient(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
   editId=id;
+  window.__isLegacyMode=c.status==='legacy';
   setText('client-title','✏️ تعديل '+c.name);
   setText('save-client-btn','✓ حفظ التعديلات');
   sv('c-name',c.name); sv('c-phone1',c.phone1); sv('c-phone2',c.phone2||'');
@@ -1121,6 +1184,14 @@ function editClient(id){
   fillGovSelect(); sv('c-gov',c.governorate||c.gov||'');
   fillCities(); sv('c-city',c.city||'');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.toggle('on',(c.tags||[]).includes(b.dataset.tag)));
+  const lfs=document.getElementById('legacy-fields-section');
+  if(lfs)lfs.style.display=window.__isLegacyMode?'block':'none';
+  if(window.__isLegacyMode){
+    sv('c-legacy-spent',c.totalSpentLegacy||'');
+    sv('c-legacy-last-order',c.lastOrderDateLegacy||'');
+    sv('c-legacy-projects',c.legacyProjects||'');
+    sv('c-legacy-notes',c.legacyNotes||'');
+  }
   closePanel();
   document.getElementById('ov-client').classList.add('open');
 }
@@ -1189,11 +1260,19 @@ async function saveClient(){
   }
   const tags=[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag);
   btn.disabled=true; btn.textContent='جاري...';
+  const isLegacy=window.__isLegacyMode||false;
   const data={
     name, phone1, phone2:gv('c-phone2')||'', email:gv('c-email')||'',
     job:gv('c-job')||'', notes:gv('c-notes')||'',
     source:gv('c-source')||'', sector:gv('c-sector')||'',
     governorate:gv('c-gov')||'', city:gv('c-city')||'', tags,
+    status: isLegacy ? 'legacy' : 'active',
+    ...(isLegacy ? {
+      legacyNotes: gv('c-legacy-notes')||'',
+      totalSpentLegacy: parseFloat(gv('c-legacy-spent'))||0,
+      lastOrderDateLegacy: gv('c-legacy-last-order')||'',
+      legacyProjects: gv('c-legacy-projects')||''
+    } : {}),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   const done=()=>{
@@ -1317,6 +1396,31 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch
 // ══════════════════════════════════════
 
 window.__clientFilter = 'all';
+window.__statusTab = 'active';
+window.__isLegacyMode = false;
+
+window.setStatusTab = function(tab, btn) {
+  window.__statusTab = tab;
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('on'));
+  if(btn) btn.classList.add('on');
+  const legacyBtn = document.getElementById('add-legacy-btn');
+  if(legacyBtn) legacyBtn.style.display = tab === 'legacy' ? 'inline-flex' : 'none';
+  renderGrid();
+};
+
+window.convertToActive = function(id) {
+  const c = clients.find(x => x._id === id);
+  if(!c) return;
+  if(!confirm(`تحويل "${c.name}" من عميل قديم إلى نشط؟\nسيظهر في قائمة العملاء النشطين.`)) return;
+  db.collection('clients').doc(id).update({
+    status: 'active',
+    convertedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(() => {
+    toast('✅ تم تحويل العميل للنشطين', 'ok');
+    closePanel();
+    window.setStatusTab('active', document.getElementById('stab-active'));
+  }).catch(e => toast('❌ ' + e.message, 'err'));
+};
 
 window.setClientFilter = function(filter, btn) {
   window.__clientFilter = filter;
