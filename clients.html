@@ -383,6 +383,17 @@
       <!-- الملاحظات -->
       <div class="fg"><label>📝 تعليمات العميل</label><textarea class="inp" id="no-notes" style="min-height:65px" placeholder="النص / الألوان / التفاصيل..."></textarea></div>
 
+      <!-- ملف التصميم -->
+      <div style="border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-top:2px">
+        <div style="font-size:12px;font-weight:700;color:var(--dim2);margin-bottom:10px">🖼️ صورة التصميم (اختياري)</div>
+        <div id="no-design-upload-area" onclick="document.getElementById('no-design-img-inp').click()" style="border:2px dashed var(--line);border-radius:var(--rad);padding:14px;text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .2s" onmouseover="this.style.borderColor='var(--b)'" onmouseout="this.style.borderColor='var(--line)'">
+          <div id="no-design-img-preview" style="color:var(--dim2);font-size:13px">📁 اضغط لاختيار صورة</div>
+        </div>
+        <input type="file" id="no-design-img-inp" accept="image/*" style="display:none" onchange="previewOrderDesignImg(this)">
+        <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">أو رابط مباشر</label><input class="inp" id="no-design-url" type="url" placeholder="https://..."></div>
+        <div class="fg" style="margin:0"><label style="font-size:11px">ملاحظة على التصميم</label><input class="inp" id="no-design-note" type="text" placeholder="وصف التصميم..."></div>
+      </div>
+
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeOrderModal()">إلغاء</button>
@@ -442,6 +453,7 @@ function initSidebar(userData,currentPage){if(!guardPage(userData,currentPage))r
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <script>
 
@@ -900,6 +912,9 @@ function openNewOrder(){
   document.getElementById('no-prod-rows').innerHTML='';
   addNoProdRow();
   sv('no-deadline','');sv('no-notes','');sv('no-deposit','0');sv('no-sale-price','0');const noPreview=document.getElementById('no-remaining-preview');if(noPreview)noPreview.style.display='none';
+  sv('no-design-url','');sv('no-design-note','');
+  const noImgInp=document.getElementById('no-design-img-inp');if(noImgInp)noImgInp.value='';
+  const noImgPrev=document.getElementById('no-design-img-preview');if(noImgPrev)noImgPrev.innerHTML='📁 اضغط لاختيار صورة';
   // تعيين المصمم — للأدمن وخدمة العملاء فقط
   const canAssign=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const desWrap=document.getElementById('designer-field-wrap');
@@ -929,6 +944,15 @@ function selectOrderType(type){
   document.getElementById('tc-design').className='type-card'+(type==='design'?' sel-design':'');
   document.getElementById('tc-printing').className='type-card'+(type==='printing'?' sel-printing':'');
 }
+function previewOrderDesignImg(inp){
+  if(!inp.files||!inp.files[0])return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    document.getElementById('no-design-img-preview').innerHTML=`<img src="${e.target.result}" style="width:100%;max-height:160px;object-fit:contain;border-radius:var(--rad)"><div style="font-size:11px;color:var(--g);margin-top:4px">✓ جاهز للرفع</div>`;
+  };
+  reader.readAsDataURL(inp.files[0]);
+  document.getElementById('no-design-url').value='';
+}
 function saveNewOrder(){
   const stage=gv('no-stage');if(!stage){toast('⚠️ اختر نوع الأوردر','err');return;}
   const rows=document.querySelectorAll('#no-prod-rows .no-prod-row');
@@ -954,6 +978,17 @@ function saveNewOrder(){
   const now=nowStr();
   const productName=prods.map(p=>p.name).join(' + ');
   const btn=document.getElementById('no-save-btn');btn.disabled=true;btn.textContent='جاري...';
+  const designNote=gv('no-design-note');
+  const uploadDesignFile=async()=>{
+    const imgInp=document.getElementById('no-design-img-inp');
+    if(imgInp&&imgInp.files&&imgInp.files[0]){
+      btn.textContent='جاري رفع الصورة...';
+      const storageRef=firebase.storage().ref(`designs/order_${orderId}_${Date.now()}`);
+      await storageRef.put(imgInp.files[0]);
+      return await storageRef.getDownloadURL();
+    }
+    return gv('no-design-url')||'';
+  };
   const saveDeposit=()=>{
     if(dep<=0||!wId)return Promise.resolve();
     const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
@@ -961,6 +996,7 @@ function saveNewOrder(){
       db.collection('transactions_v2').add({walletId:wId,type:'in',amount:dep,fees:0,description:`عربون — ${cl.name} — ${orderId}`,category:'deposit',orderId,clientName:cl.name,balanceBefore:bb,balanceAfter:bb+dep,date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:firebase.firestore.FieldValue.serverTimestamp()})
     );
   };
+  uploadDesignFile().then(designFileUrl=>
   saveDeposit().then(()=>db.collection('orders').add({
     orderId,stage,designStage:stage==='design'?'pending':'',
     clientId:pendingClientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
@@ -971,12 +1007,12 @@ function saveNewOrder(){
       paymentStatus:dep>0&&dep>=(parseFloat(gv('no-sale-price'))||0)?'paid':dep>0?'partial':'pending',
       depositWallet:dep>0?wName:'',
     designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
-    designFileUrl:'',designFileNote:'',costItems:[],printAddons:[],
+    designFileUrl,designFileNote:designNote,costItems:[],printAddons:[],
     createdDate:new Date().toLocaleDateString('ar-EG'),
     createdBy:currentUser.uid,createdByName:userName,
     timeline:[{date:now,action:`🆕 طلب جديد — ${productName}${dep>0?' · عربون '+fn(dep)+' ج':''}${designerName?' · '+designerName:''}`,by:userName}],
     createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-  })).then(()=>{
+  }))).then(()=>{
     closeOrderModal();
     toast('✅ تم إنشاء الطلب'+(dep>0?' مع العربون':''),'ok');
     setTimeout(()=>window.location.href=stage==='design'?'design.html':'print.html',700);
