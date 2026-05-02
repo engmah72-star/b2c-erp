@@ -578,7 +578,7 @@ window.addEventListener('unhandledrejection', e=>{
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp, increment, writeBatch }
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, serverTimestamp, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
@@ -1292,11 +1292,52 @@ window.saveReturnDirect=async function(){
       createdAt:serverTimestamp()
     });
     const tl=[...(o.timeline||[]),{date:now,action:`↩️ مرتجع${coName?' من '+coName:''}${note?' — '+note:''}`,by:userName}];
-    await updateDoc(doc(db,'orders',orderId),{
-      shipStage:'returned',
-      timeline:tl,
-      updatedAt:serverTimestamp()
-    });
+    const orderUpdates={
+      shipStage:'returned',shippingStatus:'returned',
+      totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
+      timeline:tl,updatedAt:serverTimestamp()
+    };
+    // عكس التسوية لو كانت مسوّاة
+    const settledAmt=parseFloat(o.shipSettledAmount)||0;
+    if(o.shipSettled&&settledAmt>0){
+      Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
+      await addDoc(collection(db,'transactions_v2'),{
+        type:'out',amount:settledAmt,
+        description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+        category:'settlement_reversal',orderId,
+        clientName:o.clientName,shipCompanyName:coName,
+        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+    }
+    // عكس العربون لو اتدفع
+    const depAmt=parseFloat(o.deposit)||0;
+    if(depAmt>0){
+      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
+      const depTx=depSnap.docs[0]?.data();
+      const depWalletId=depTx?.walletId||'';
+      await addDoc(collection(db,'transactions_v2'),{
+        type:'out',amount:depAmt,
+        description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+        category:'deposit_reversal',orderId,
+        clientName:o.clientName,walletId:depWalletId,
+        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+      if(depWalletId){
+        await updateDoc(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
+      }
+    }
+    if(cost>0){
+      await addDoc(collection(db,'transactions_v2'),{
+        type:'out',amount:cost,
+        description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,
+        category:'return_cost',orderId,clientName:o.clientName,
+        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+    }
+    await updateDoc(doc(db,'orders',orderId),orderUpdates);
     closeModal('ov-return-direct');
     closePanel();
     toast('✅ تم تسجيل المرتجع','ok');

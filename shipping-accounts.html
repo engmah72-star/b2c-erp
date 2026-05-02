@@ -154,7 +154,7 @@ window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gsta
 <script type="module">
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,deleteDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,getDocs,deleteDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
@@ -542,27 +542,21 @@ window.saveReturn=async function(){
   try{
     const now=nowStr();
     await addDoc(collection(db,'shipping_returns'),{
-      orderId,companyName:returnCompanyName,
+      orderId:ordId,companyName:returnCompanyName,
       clientName:o.clientName||'',cost,note,status:'returned',
       date:now,createdBy:currentUser.uid,createdByName:userName,
       createdAt:serverTimestamp()
     });
     const orderUpdates={
       shippingStatus:'returned',shipStage:'returned',
+      totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
       timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع من ${returnCompanyName}${note?' — '+note:''}`,by:userName}],
       updatedAt:serverTimestamp()
     };
     // عكس التسوية لو كانت مسوّاة
     const settledAmt=parseFloat(o.shipSettledAmount)||0;
     if(o.shipSettled&&settledAmt>0){
-      const oldPaid=FC.getPaid(o);
-      const newPaid=Math.max(0,oldPaid-settledAmt);
-      const newRem=Math.max(0,FC.getNet(o)-newPaid);
-      Object.assign(orderUpdates,{
-        shipSettled:false,shipSettledAmount:0,
-        totalPaid:newPaid,remaining:newRem,
-        paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending'
-      });
+      Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
       await addDoc(collection(db,'transactions_v2'),{
         type:'out',amount:settledAmt,
         description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
@@ -571,6 +565,24 @@ window.saveReturn=async function(){
         date:now,createdBy:currentUser.uid,createdByName:userName,
         createdAt:serverTimestamp()
       });
+    }
+    // عكس العربون لو اتدفع
+    const depAmt=parseFloat(o.deposit)||0;
+    if(depAmt>0){
+      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','deposit')));
+      const depTx=depSnap.docs[0]?.data();
+      const depWalletId=depTx?.walletId||'';
+      await addDoc(collection(db,'transactions_v2'),{
+        type:'out',amount:depAmt,
+        description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+        category:'deposit_reversal',orderId:ordId,
+        clientName:o.clientName,walletId:depWalletId,
+        date:now,createdBy:currentUser.uid,createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+      if(depWalletId){
+        await updateDoc(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
+      }
     }
     if(cost>0){
       await addDoc(collection(db,'transactions_v2'),{
