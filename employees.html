@@ -319,6 +319,8 @@ const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+// تحقق من أن المعاملة دفعة مرتب أساسية لموظف
+const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||(!t.salaryType&&(t.category==='salary'||t.category==='designer_fee')));
 const now=new Date();
 const curMonthKey=()=>now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 const todayStr=()=>now.toISOString().slice(0,10);
@@ -389,7 +391,7 @@ function updateStats(){
   const totalSalaries=active.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('s-salaries',fn(totalSalaries));
   // مبالغ مدفوعة هذا الشهر
-  const salTx=transactions.filter(t=>t.category==='salary'&&t.month===mKey);
+  const salTx=transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey);
   const paidAmt=salTx.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const paidEmpIds=new Set(salTx.map(t=>t.employeeId));
   const unpaidAmt=active.filter(e=>!paidEmpIds.has(e._id)).reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
@@ -427,7 +429,7 @@ function styleFilterBtn(id,active,col,bg,border){
 window.renderList=function(){
   const mKey=curMonthKey();
   const today=todayStr();
-  const paidEmpIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===mKey).map(t=>t.employeeId));
+  const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
   const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
   const attendedThisMonth={}; // empId → count
   attendanceRecords.filter(a=>a.date?.startsWith(mKey)).forEach(a=>{
@@ -622,7 +624,7 @@ window.openPayroll=function(){
   const mKey=curMonthKey();
   setText('payroll-title','💰 يوم الرواتب — '+MONTHS_AR[now.getMonth()]+' '+now.getFullYear());
   sv('pr-note','رواتب '+MONTHS_AR[now.getMonth()]+' '+now.getFullYear());
-  const paidEmpIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===mKey).map(t=>t.employeeId));
+  const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
   const unpaid=employees.filter(e=>e.status==='active'&&!paidEmpIds.has(e._id));
   const total=unpaid.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('payroll-total-amt',fn(total)+' ج');
@@ -654,7 +656,7 @@ window.openPayroll=function(){
 
 window.recalcPayrollTotal=function(){
   const mKey=curMonthKey();
-  const paidIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===mKey).map(t=>t.employeeId));
+  const paidIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
   const unpaid=employees.filter(e=>e.status==='active'&&!paidIds.has(e._id));
   let total=0;
   unpaid.forEach(e=>{
@@ -681,7 +683,7 @@ window.checkPayrollWallet=function(){
   const w=wallets.find(x=>x._id===wId);if(!w){warnEl.style.display='none';return;}
   // حساب الإجمالي المختار
   const mKey=curMonthKey();
-  const paidIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===mKey).map(t=>t.employeeId));
+  const paidIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
   const unpaid=employees.filter(e=>e.status==='active'&&!paidIds.has(e._id));
   let total=0;
   unpaid.forEach(e=>{const rowEl=document.getElementById('pr-row-'+e._id);if(rowEl&&rowEl.classList.contains('selected'))total+=parseFloat(document.getElementById('pr-amt-'+e._id)?.value)||parseFloat(e.baseSalary)||0;});
@@ -700,7 +702,7 @@ window.confirmPayroll=async function(){
   const w=wallets.find(x=>x._id===wId);
   if(!w)return toast('❌ محفظة غير موجودة','err');
   const mKey=curMonthKey();
-  const paidIds=new Set(transactions.filter(t=>t.category==='salary'&&t.month===mKey).map(t=>t.employeeId));
+  const paidIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
   const unpaid=employees.filter(e=>e.status==='active'&&!paidIds.has(e._id));
   const selected=unpaid.filter(e=>{const rowEl=document.getElementById('pr-row-'+e._id);return rowEl&&rowEl.classList.contains('selected');});
   if(!selected.length)return toast('⚠️ لا يوجد موظفون مختارون','err');
@@ -755,7 +757,7 @@ window.openPayOne=function(empId,preType){
   const commission=Math.round(calcEmpCommission(e));
   const suggested=base+commission;
   // ما دُفع هذا الشهر
-  const paidThisMonth=transactions.filter(t=>t.category==='salary'&&t.month===mKey&&t.employeeId===empId&&!t.isDeduction).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const paidThisMonth=transactions.filter(t=>t.month===mKey&&t.employeeId===empId&&!t.isDeduction).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const remaining=Math.max(0,suggested-paidThisMonth);
   document.getElementById('pay-one-calc').innerHTML=`
     <div style="display:flex;justify-content:space-between;margin-bottom:5px">
@@ -795,7 +797,7 @@ window.updatePayOneAmount=function(){
   const base=parseFloat(e.baseSalary)||0;
   const commission=Math.round(calcEmpCommission(e));
   const suggested=base+commission;
-  const paid=transactions.filter(t=>t.category==='salary'&&t.month===mKey&&t.employeeId===payOneEmpId&&!t.isDeduction).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const paid=transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey&&t.employeeId===payOneEmpId&&!t.isDeduction).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   amtEl.value=Math.max(0,suggested-paid)||suggested;
 };
 
