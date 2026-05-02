@@ -92,11 +92,30 @@
       </select>
       <button class="btn btn-ghost btn-sm" id="f-sal-unpaid" onclick="toggleSalFilter()" style="font-size:12px;white-space:nowrap">⏳ لم يُصرف فقط</button>
       <button class="btn btn-ghost btn-sm" id="f-att-today" onclick="toggleAttFilter()" style="font-size:12px;white-space:nowrap">📅 حضر اليوم</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAbsentWa()" style="font-size:12px;white-space:nowrap;color:var(--g);border-color:rgba(0,217,126,.35)">💬 واتساب للغائبين</button>
     </div>
 
     <div id="list"><div class="loader"><div class="spinner"></div></div></div>
   </div>
 </div>
+</div>
+
+<!-- MODAL: واتساب للغائبين -->
+<div class="overlay" id="ov-absent-wa">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title">💬 إرسال تذكير للغائبين</span>
+      <button class="modal-x" onclick="document.getElementById('ov-absent-wa').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg" style="margin-bottom:12px">
+        <label style="font-size:11px;color:var(--dim2)">نص الرسالة</label>
+        <textarea class="inp" id="wa-msg-text" rows="3" style="resize:vertical;font-size:13px">مرحباً {الاسم}، نذكرك بتسجيل حضورك اليوم 🙏
+إدارة Business2Card</textarea>
+      </div>
+      <div id="absent-emp-list"></div>
+    </div>
+  </div>
 </div>
 
 <!-- MODAL: موظف جديد / تعديل -->
@@ -485,6 +504,38 @@ function styleFilterBtn(id,active,col,bg,border){
   const btn=document.getElementById(id);if(!btn)return;
   btn.style.color=active?col:'';btn.style.background=active?bg:'';btn.style.borderColor=active?border:'';
 }
+
+// ══ WHATSAPP للغائبين ══
+window.openAbsentWa=function(){
+  const today=todayStr();
+  const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
+  const absent=employees.filter(e=>e.status==='active'&&e.phone&&!attendedToday.has(e._id)&&!attendedToday.has(e.authUid));
+  const listEl=document.getElementById('absent-emp-list');
+  if(!listEl)return;
+  function buildList(){
+    const msgTpl=(document.getElementById('wa-msg-text')?.value||'مرحباً {الاسم}، نذكرك بتسجيل حضورك اليوم 🙏');
+    if(!absent.length){
+      listEl.innerHTML='<div style="text-align:center;padding:20px;color:var(--g);font-weight:700">✅ الكل سجّل حضور اليوم!</div>';
+      return;
+    }
+    listEl.innerHTML=`<div style="font-size:11px;color:var(--dim2);margin-bottom:10px">${absent.length} موظف لم يسجّل حضور اليوم</div>`+
+      absent.map(e=>{
+        const msg=encodeURIComponent(msgTpl.replace(/{الاسم}/g,e.name||''));
+        const waLink=`https://wa.me/2${e.phone.replace(/^0/,'')}?text=${msg}`;
+        const r=ROLES[e.role]||{label:e.role,col:'#666',ico:'👤'};
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px;border-right:3px solid ${r.col}">
+          <div>
+            <div style="font-size:13px;font-weight:800">${e.name}</div>
+            <div style="font-size:10px;color:var(--dim2)">${e.phone} · ${r.ico} ${r.label}</div>
+          </div>
+          <a href="${waLink}" target="_blank" class="btn btn-g btn-xs" style="text-decoration:none;flex-shrink:0">💬 إرسال</a>
+        </div>`;
+      }).join('');
+  }
+  buildList();
+  document.getElementById('wa-msg-text')?.addEventListener('input',buildList,{once:false});
+  document.getElementById('ov-absent-wa').classList.add('open');
+};
 
 // ══ RENDER LIST ══
 window.renderList=function(){

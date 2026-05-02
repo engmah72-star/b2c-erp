@@ -14,6 +14,8 @@
 .profile-hero{background:linear-gradient(135deg,var(--bg2),var(--bg3));border:1px solid var(--line);border-radius:var(--rad2);padding:20px;margin-bottom:16px;display:flex;gap:16px;align-items:center}
 .profile-av{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;flex-shrink:0}
 .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.prof-pp{padding:5px 13px;border-radius:20px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;transition:var(--trans);white-space:nowrap;font-family:inherit}
+.prof-pp.active{background:rgba(59,158,255,.15);color:var(--b);border-color:rgba(59,158,255,.4)}
 .kpi{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:12px;border-top:3px solid var(--kc,var(--b))}
 .kpi-val{font-size:22px;font-weight:900;color:var(--kc,var(--b))}
 .kpi-lbl{font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px}
@@ -381,6 +383,7 @@ const auth=getAuth(app), db=getFirestore(app);
 // ══ STATE ══
 let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={};
 let currentUser=null, adminRole='', adminName='';
+let profilePeriod='month_cur', attViewMonth=null;
 const empId=new URLSearchParams(location.search).get('id');
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -409,6 +412,42 @@ function nowStr(){return new Date().toLocaleDateString('ar-EG')+' '+new Date().t
 function isThisMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
 function todayStr(){return now.toISOString().slice(0,10);}
 function monthKey(){return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');}
+function profPrevMonthKey(){const d=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function profWeekStart(){const d=new Date(now);d.setDate(d.getDate()-6);return d.toISOString().slice(0,10);}
+function getProfPeriodLabel(){
+  if(profilePeriod==='today')return 'اليوم';
+  if(profilePeriod==='week')return 'الأسبوع';
+  if(profilePeriod==='month_prev'){const d=new Date(now.getFullYear(),now.getMonth()-1,1);return MONTHS[d.getMonth()];}
+  if(profilePeriod==='all')return 'كل الوقت';
+  return MONTHS[now.getMonth()];
+}
+function ordersForProfPeriod(){
+  return allOrders.filter(o=>{
+    if(!o.createdAt?.toDate)return false;
+    const d=o.createdAt.toDate();
+    if(profilePeriod==='all')return true;
+    const iso=d.toISOString().slice(0,10);
+    if(profilePeriod==='today')return iso===todayStr();
+    if(profilePeriod==='week')return iso>=profWeekStart();
+    if(profilePeriod==='month_cur')return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+    if(profilePeriod==='month_prev'){const pm=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getMonth()===pm.getMonth()&&d.getFullYear()===pm.getFullYear();}
+    return false;
+  });
+}
+window.setProfilePeriod=function(p){
+  profilePeriod=p;
+  document.querySelectorAll('.prof-pp').forEach(b=>b.classList.toggle('active',b.dataset.p===p));
+  renderAll();
+};
+window.navigateAttMonth=function(dir){
+  if(!attViewMonth)attViewMonth=monthKey();
+  const[y,m]=attViewMonth.split('-').map(Number);
+  const nd=new Date(y,m-1+dir,1);
+  const nk=nd.getFullYear()+'-'+String(nd.getMonth()+1).padStart(2,'0');
+  if(nk>monthKey())return;
+  attViewMonth=nk;
+  renderAttendance();
+};
 
 if(!empId){document.getElementById('main-content').innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">لم يُحدد موظف</div><a href="employees.html" data-page="employees" class="btn btn-b btn-sm" style="margin-top:12px">← العودة</a></div>';}
 
@@ -480,8 +519,10 @@ onAuthStateChanged(auth,async u=>{
 });
 
 function renderAll(){
+  if(!attViewMonth)attViewMonth=monthKey();
   const r=ROLES[emp.role]||{label:emp.role,col:'var(--dim2)',ico:'👤'};
-  const monthly=allOrders.filter(o=>isThisMonth(o.createdAt));
+  const monthly=ordersForProfPeriod();
+  const pLblP=getProfPeriodLabel();
 
   // حساب KPIs حسب الدور
   let kpis=[], income={base:parseFloat(emp.baseSalary)||0, commission:0};
@@ -577,6 +618,15 @@ function renderAll(){
       ${kpis.map(k=>`<div class="kpi" style="--kc:${k.col}"><div class="kpi-val">${k.val}</div><div class="kpi-lbl">${k.lbl}</div></div>`).join('')}
     </div>
 
+    <!-- فلتر الفترة -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="prof-pp${profilePeriod==='today'?' active':''}" data-p="today" onclick="setProfilePeriod('today')">اليوم</button>
+      <button class="prof-pp${profilePeriod==='week'?' active':''}" data-p="week" onclick="setProfilePeriod('week')">الأسبوع</button>
+      <button class="prof-pp${profilePeriod==='month_cur'?' active':''}" data-p="month_cur" onclick="setProfilePeriod('month_cur')">الشهر الحالي</button>
+      <button class="prof-pp${profilePeriod==='month_prev'?' active':''}" data-p="month_prev" onclick="setProfilePeriod('month_prev')">الشهر الماضي</button>
+      <button class="prof-pp${profilePeriod==='all'?' active':''}" data-p="all" onclick="setProfilePeriod('all')">كل الوقت</button>
+    </div>
+
     <!-- ذكاء: تحليل الأداء -->
     <div id="insights-wrap" style="margin-bottom:14px"></div>
 
@@ -601,10 +651,14 @@ function renderAll(){
     <!-- الحضور الشهري -->
     <div class="section" style="margin-bottom:14px">
       <div class="section-head" style="margin-bottom:8px">
-        <div class="section-title">📅 حضور ${MONTHS[now.getMonth()]}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-ghost btn-xs" onclick="navigateAttMonth(-1)" style="padding:2px 8px;font-size:13px">←</button>
+          <div class="section-title" id="att-title">📅 حضور ${MONTHS[now.getMonth()]}</div>
+          <button class="btn btn-ghost btn-xs" id="att-next-btn" onclick="navigateAttMonth(1)" style="padding:2px 8px;font-size:13px">→</button>
+        </div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:11px;color:var(--dim2)" id="att-summary">جاري...</span>
-          <button class="btn btn-b btn-xs" onclick="recordAttendanceToday()">✓ حضور اليوم</button>
+          <button class="btn btn-b btn-xs" onclick="recordAttendanceToday()">✓ اليوم</button>
         </div>
       </div>
       <div class="att-cal" id="att-cal"></div>
@@ -646,19 +700,19 @@ function renderAll(){
 // ══ HELPERS ══
 const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||(!t.salaryType&&(t.category==='salary'||t.category==='designer_fee')));
 function isLastMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();const pm=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getMonth()===pm.getMonth()&&d.getFullYear()===pm.getFullYear();}
-function getEmpOrders(){
+function getEmpOrders(orders=allOrders){
   const uid=emp.authUid||empId;
-  if(emp.role==='customer_service')return allOrders.filter(o=>o.createdBy===uid||o.createdBy===empId);
-  if(emp.role==='graphic_designer'||emp.role==='design_operator')return allOrders.filter(o=>o.designerId===uid||o.designerId===empId);
-  if(emp.role==='production_agent')return allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===empId);
-  if(emp.role==='shipping_officer')return allOrders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId);
+  if(emp.role==='customer_service')return orders.filter(o=>o.createdBy===uid||o.createdBy===empId);
+  if(emp.role==='graphic_designer'||emp.role==='design_operator')return orders.filter(o=>o.designerId===uid||o.designerId===empId);
+  if(emp.role==='production_agent')return orders.filter(o=>o.productionAgent===uid||o.productionAgent===empId);
+  if(emp.role==='shipping_officer')return orders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId);
   return [];
 }
 
 // ══ CLIENTS ══
 function renderClients(){
   const el=document.getElementById('clients-container');if(!el||!emp)return;
-  const empOrders=getEmpOrders();
+  const empOrders=getEmpOrders(ordersForProfPeriod());
   if(!empOrders.length){
     el.innerHTML='<div style="text-align:center;color:var(--dim2);font-size:12px;padding:16px 0">لا يوجد عملاء مرتبطون بعد</div>';
     setText('clients-count','');return;
@@ -997,23 +1051,31 @@ window.saveTask=async function(){
 // ══ ATTENDANCE ══
 function renderAttendance(){
   const cal=document.getElementById('att-cal');if(!cal)return;
-  const daysInMonth=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-  const firstDay=new Date(now.getFullYear(),now.getMonth(),1).getDay();
-  const presentDays=empAttendance.filter(a=>a.date?.startsWith(monthKey())).length;
+  const vm=attViewMonth||monthKey();
+  const[vy,vm2]=vm.split('-').map(Number);
+  const isCurrentMonth=vm===monthKey();
+  const daysInMonth=new Date(vy,vm2,0).getDate();
+  const firstDay=new Date(vy,vm2-1,1).getDay();
+  const presentDays=empAttendance.filter(a=>a.date?.startsWith(vm)).length;
+  const today=todayStr();
   const workDays=Array.from({length:daysInMonth},(_,i)=>{
-    const d=new Date(now.getFullYear(),now.getMonth(),i+1);
-    return d.getDay()!==5&&d.getDay()!==6; // الجمعة والسبت عطلة
+    const d=new Date(vy,vm2-1,i+1);
+    return d.getDay()!==5&&d.getDay()!==6;
   }).filter(Boolean).length;
   setText('att-summary',`${presentDays} من ${workDays} يوم عمل`);
+  const titleEl=document.getElementById('att-title');
+  if(titleEl)titleEl.textContent=`📅 حضور ${MONTHS[vm2-1]} ${vy}`;
+  const nextBtn=document.getElementById('att-next-btn');
+  if(nextBtn)nextBtn.disabled=isCurrentMonth;
   let html='';
   for(let i=0;i<firstDay;i++)html+='<div></div>';
   for(let d=1;d<=daysInMonth;d++){
-    const dateStr=monthKey()+'-'+String(d).padStart(2,'0');
+    const dateStr=vm+'-'+String(d).padStart(2,'0');
     const att=empAttendance.find(a=>a.date===dateStr);
-    const dayOfWeek=new Date(now.getFullYear(),now.getMonth(),d).getDay();
+    const dayOfWeek=new Date(vy,vm2-1,d).getDay();
     const isWeekend=dayOfWeek===5||dayOfWeek===6;
-    const isTodayDay=d===now.getDate();
-    const isFuture=d>now.getDate();
+    const isTodayDay=dateStr===today;
+    const isFuture=dateStr>today;
     let cls='att-day ';
     if(att)cls+='present';
     else if(isWeekend||isFuture)cls+='off';
