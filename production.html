@@ -647,7 +647,7 @@ window.addCostFromPanel=async function(prodIdx){
     if(txRef){
       // atomic: order + wallet debit + transaction record
       const batch=writeBatch(db);
-      batch.update(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+      batch.update(doc(db,'orders',activeId),{costItems:ci,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
       batch.update(doc(db,'wallets',walletId),{balance:increment(-total)});
       const walletName=(wallets.find(x=>x._id===walletId)||{}).name||'';
       batch.set(txRef,{type:'out',walletId,walletName,amount:total,category:type==='تصميم'?'designer_fee':'supplier',description:`${type}${note?' — '+note:''} · ${o.clientName||o._id}`,supplierId,supplierName,orderId:activeId,orderClient:o.clientName||'',date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
@@ -657,7 +657,7 @@ window.addCostFromPanel=async function(prodIdx){
       }
       await batch.commit();
     } else {
-      await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+      await updateDoc(doc(db,'orders',activeId),{costItems:ci,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
     }
     // toast
     if(supplierId&&supplierName){
@@ -721,7 +721,7 @@ window.calcPaperCost=function(sfx,fromTotal){
 window.setStatusDirect=async function(id,status){
   const o=orders.find(x=>x._id===id);if(!o)return;
   const labels={received:'📥 استلمت',wip:'🔄 جاري',done:'✅ خلصت',problem:'⚠️ مشكلة'};
-  try{await updateDoc(doc(db,'orders',id),{prodStatus:status,timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status],by:userName}],updatedAt:serverTimestamp()});toast(labels[status],'ok');}
+  try{await updateDoc(doc(db,'orders',id),{prodStatus:status,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status],by:userName}],updatedAt:serverTimestamp()});toast(labels[status],'ok');}
   catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -1251,7 +1251,7 @@ window.moveToShipping=async function(){
     }
 
     // تحويل للشحن
-    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,productionAgent:currentUser?.uid||o.productionAgent||'',productionAgentName:userName,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
     closePanel();
     toast('✅ انتقل للشحن 🚚','ok');
   }catch(e){toast('❌ '+e.message,'err');}

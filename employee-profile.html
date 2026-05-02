@@ -553,14 +553,13 @@ function renderAll(){
 
   // ── أوردرات الموظف حسب دوره ──
   const uid=emp.authUid||empId;
-  let myOrders=[];
+  const myOrders=getEmpOrders(monthly);
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    myOrders=monthly.filter(o=>o.designerId===uid||o.designerId===empId);
     const assigned=myOrders.length;
     const printed=myOrders.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
     const rejected=myOrders.filter(o=>o.designStatus==='rejected').length;
     const rate=assigned>0?Math.round(printed/assigned*100):0;
-    income.commission=monthly.filter(o=>(o.designerId===emp.authUid||o.designerId===empId)&&['printing','production','shipping','archived'].includes(o.stage))
+    income.commission=myOrders.filter(o=>['printing','production','shipping','archived'].includes(o.stage))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
     kpis=[
       {val:assigned,lbl:'كُلّفت',col:'var(--b)'},
@@ -568,10 +567,9 @@ function renderAll(){
       {val:rejected,lbl:'مرفوض',col:'var(--r)'},
       {val:rate+'%',lbl:'نسبة النجاح',col:'var(--y)'},
     ];
-  } else if(emp.role==='customer_service'){
-    const myOrders=monthly.filter(o=>o.createdBy===emp.authUid);
+  } else if(emp.role==='customer_service'||emp.role==='operation_manager'){
     const totalSales=myOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-    const clients=new Set(myOrders.map(o=>o.clientId)).size;
+    const clients=new Set(myOrders.map(o=>o.clientId||o.clientPhone||o.clientName)).size;
     const closed=myOrders.filter(o=>o.stage==='archived').length;
     kpis=[
       {val:myOrders.length,lbl:'أوردرات',col:'var(--b)'},
@@ -580,29 +578,35 @@ function renderAll(){
       {val:myOrders.length>0?Math.round(closed/myOrders.length*100)+'%':'—',lbl:'إغلاق',col:'var(--y)'},
     ];
   } else if(emp.role==='production_agent'){
-    const myOrders=monthly.filter(o=>o.productionAgent===emp.authUid||o.productionAgent===empId);
     const done=myOrders.filter(o=>['shipping','archived'].includes(o.stage)).length;
+    const wip=myOrders.filter(o=>o.stage==='production').length;
+    const totalCost=myOrders.reduce((s,o)=>{
+      const empName=emp.name||'';
+      const costs=(o.costItems||[]).filter(c=>!empName||c.addedBy===empName||o.productionAgent===uid);
+      return s+costs.reduce((s2,c)=>s2+(parseFloat(c.total)||0),0);
+    },0);
     kpis=[
-      {val:myOrders.length,lbl:'كُلّفت',col:'var(--b)'},
-      {val:done,lbl:'مكتمل',col:'var(--g)'},
-      {val:myOrders.length-done,lbl:'جاري',col:'var(--y)'},
-      {val:myOrders.length>0?Math.round(done/myOrders.length*100)+'%':'—',lbl:'نسبة الإنجاز',col:'var(--p)'},
+      {val:myOrders.length,lbl:'أوردرات تنفيذ',col:'var(--b)'},
+      {val:done,lbl:'مكتمل ✅',col:'var(--g)'},
+      {val:wip,lbl:'جاري 🏭',col:'var(--y)'},
+      {val:fn(totalCost),lbl:'تكلفة تنفيذ ج',col:'var(--r)'},
     ];
   } else if(emp.role==='shipping_officer'){
-    const myOrders=monthly.filter(o=>['shipping','archived'].includes(o.stage)&&o.shippingOfficer===emp.authUid);
-    const collected=myOrders.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||0),0);
+    const shipped=myOrders.filter(o=>['shipping','archived'].includes(o.stage));
+    const collected=shipped.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||0),0);
+    const done=shipped.filter(o=>o.stage==='archived').length;
     kpis=[
-      {val:myOrders.length,lbl:'شحنات',col:'var(--c)'},
+      {val:shipped.length,lbl:'شحنات',col:'var(--c)'},
       {val:fn(collected),lbl:'محصّل ج',col:'var(--g)'},
-      {val:myOrders.filter(o=>o.stage==='archived').length,lbl:'مكتمل',col:'var(--b)'},
-      {val:'—',lbl:'تقييم',col:'var(--y)'},
+      {val:done,lbl:'مكتمل',col:'var(--b)'},
+      {val:shipped.length>0?Math.round(done/shipped.length*100)+'%':'—',lbl:'نسبة الإتمام',col:'var(--y)'},
     ];
   } else {
     kpis=[
       {val:emp.baseSalary||0,lbl:'المرتب ج',col:'var(--g)'},
       {val:emp.startDate||'—',lbl:'تاريخ التعيين',col:'var(--b)'},
       {val:emp.status==='active'?'✅':'⏸️',lbl:'الحالة',col:'var(--y)'},
-      {val:'—',lbl:'',col:'var(--dim2)'},
+      {val:myOrders.length||'—',lbl:'أوردرات',col:'var(--dim2)'},
     ];
   }
 
@@ -1034,10 +1038,36 @@ const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||
 function isLastMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();const pm=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getMonth()===pm.getMonth()&&d.getFullYear()===pm.getFullYear();}
 function getEmpOrders(orders=allOrders){
   const uid=emp.authUid||empId;
-  if(emp.role==='customer_service')return orders.filter(o=>o.createdBy===uid||o.createdBy===empId);
-  if(emp.role==='graphic_designer'||emp.role==='design_operator')return orders.filter(o=>o.designerId===uid||o.designerId===empId);
-  if(emp.role==='production_agent')return orders.filter(o=>o.productionAgent===uid||o.productionAgent===empId);
-  if(emp.role==='shipping_officer')return orders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId);
+  const name=emp.name||'';
+  if(emp.role==='customer_service'||emp.role==='operation_manager'||emp.role==='admin'){
+    return orders.filter(o=>
+      o.createdBy===uid || o.createdBy===empId ||
+      (name && o.createdByName===name)
+    );
+  }
+  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
+    return orders.filter(o=>
+      o.designerId===uid || o.designerId===empId ||
+      (name && o.designerName===name)
+    );
+  }
+  if(emp.role==='production_agent'){
+    return orders.filter(o=>
+      o.productionAgent===uid || o.productionAgent===empId ||
+      (name && ['production','shipping','archived'].includes(o.stage) && (
+        o.productionAgentName===name ||
+        o.costItems?.some(c=>c.addedBy===name) ||
+        o.timeline?.some(t=>t.by===name && ((t.action||'').includes('تنفيذ')||(t.action||'').includes('💰')||(t.action||'').includes('بند')||(t.action||'').includes('منتهي')))
+      ))
+    );
+  }
+  if(emp.role==='shipping_officer'){
+    return orders.filter(o=>
+      o.shippingOfficerId===uid || o.shippingOfficerId===empId ||
+      o.shippingOfficer===uid || o.shippingOfficer===empId ||
+      (name && (o.shippingOfficerName===name || o.collectedByName===name))
+    );
+  }
   return [];
 }
 
@@ -1107,18 +1137,11 @@ function renderInsights(){
   // مقارنة الأداء هذا الشهر مقابل الماضي
   const thisM=allOrders.filter(o=>isThisMonth(o.createdAt));
   const lastM=allOrders.filter(o=>isLastMonth(o.createdAt));
-  function empCount(orders){
-    if(emp.role==='customer_service')return orders.filter(o=>o.createdBy===uid||o.createdBy===empId).length;
-    if(emp.role==='graphic_designer'||emp.role==='design_operator')return orders.filter(o=>o.designerId===uid||o.designerId===empId).length;
-    if(emp.role==='production_agent')return orders.filter(o=>o.productionAgent===uid||o.productionAgent===empId).length;
-    if(emp.role==='shipping_officer')return orders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId).length;
-    return 0;
-  }
-  const thisCnt=empCount(thisM), lastCnt=empCount(lastM);
+  const thisCnt=getEmpOrders(thisM).length, lastCnt=getEmpOrders(lastM).length;
   if(lastCnt>0||thisCnt>0){
     const diff=thisCnt-lastCnt;
     const pct=lastCnt>0?Math.round(Math.abs(diff)/lastCnt*100):100;
-    const lbl={customer_service:'أوردر',graphic_designer:'تصميم',design_operator:'تصميم',production_agent:'أوردر تنفيذ',shipping_officer:'شحنة'}[emp.role]||'أوردر';
+    const lbl={customer_service:'أوردر',operation_manager:'أوردر',admin:'أوردر',graphic_designer:'تصميم',design_operator:'تصميم',production_agent:'أوردر تنفيذ',shipping_officer:'شحنة'}[emp.role]||'أوردر';
     insights.push({ico:diff>=0?'📈':'📉',title:`${diff>=0?'+':''}${diff} ${lbl} عن الشهر الماضي`,sub:`هذا الشهر: ${thisCnt} · الماضي: ${lastCnt} · ${diff>=0?'↑':'↓'} ${pct}%`,col:diff>=0?'var(--g)':'var(--r)'});
   }
   // تحذير حضور
