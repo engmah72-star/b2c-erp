@@ -24,6 +24,8 @@
 .payroll-row.selected{border-right-color:var(--g);background:rgba(0,217,126,.04)}
 .payroll-row.skip{opacity:.45}
 .att-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:3px}
+.pp-btn{padding:5px 13px;border-radius:20px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;transition:var(--trans);white-space:nowrap;font-family:inherit}
+.pp-btn.active{background:rgba(59,158,255,.15);color:var(--b);border-color:rgba(59,158,255,.4)}
 </style>
 </head>
 <body>
@@ -61,9 +63,18 @@
       <div class="stat" style="--sc:var(--b)"><div class="stat-icon">👥</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">إجمالي</div></div>
       <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-active">0</div><div class="stat-lbl">نشط</div></div>
       <div class="stat" style="--sc:var(--p)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-design">0</div><div class="stat-lbl">مصممين</div></div>
-      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💰</div><div class="stat-val" id="s-salaries">0</div><div class="stat-lbl">رواتب الشهر ج</div></div>
-      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-paid-amt">—</div><div class="stat-lbl">مصروف ج</div></div>
-      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-unpaid-amt">—</div><div class="stat-lbl">متبقي ج</div></div>
+      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💰</div><div class="stat-val" id="s-salaries">0</div><div class="stat-lbl" id="s-salaries-lbl">رواتب الشهر ج</div></div>
+      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-paid-amt">—</div><div class="stat-lbl" id="s-paid-lbl">مصروف ج</div></div>
+      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-unpaid-amt">—</div><div class="stat-lbl" id="s-unpaid-lbl">متبقي ج</div></div>
+    </div>
+
+    <!-- Period Filter -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="pp-btn" data-p="today" onclick="setPeriod('today')">اليوم</button>
+      <button class="pp-btn" data-p="week" onclick="setPeriod('week')">الأسبوع</button>
+      <button class="pp-btn active" data-p="month_cur" onclick="setPeriod('month_cur')">الشهر الحالي</button>
+      <button class="pp-btn" data-p="month_prev" onclick="setPeriod('month_prev')">الشهر الماضي</button>
+      <button class="pp-btn" data-p="all" onclick="setPeriod('all')">كل الوقت</button>
     </div>
 
     <!-- Filters -->
@@ -313,7 +324,7 @@ const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو',
 // ══ STATE ══
 let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[];
 let currentUser=null,userName='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
-let payOneEmpId=null;
+let payOneEmpId=null,periodFilter='month_cur';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
@@ -324,6 +335,53 @@ const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||
 const now=new Date();
 const curMonthKey=()=>now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 const todayStr=()=>now.toISOString().slice(0,10);
+function prevMonthKey(){const d=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function weekStartStr(){const d=new Date(now);d.setDate(d.getDate()-6);return d.toISOString().slice(0,10);}
+function getPeriodLabel(){
+  if(periodFilter==='today')return 'اليوم';
+  if(periodFilter==='week')return 'الأسبوع';
+  if(periodFilter==='month_prev'){const d=new Date(now.getFullYear(),now.getMonth()-1,1);return MONTHS_AR[d.getMonth()];}
+  if(periodFilter==='all')return 'كل الوقت';
+  return MONTHS_AR[now.getMonth()];
+}
+function txInPeriod(t){
+  if(periodFilter==='all')return true;
+  if(periodFilter==='month_cur')return t.month===curMonthKey();
+  if(periodFilter==='month_prev')return t.month===prevMonthKey();
+  const d=t.createdAt?.toDate?.();if(!d)return false;
+  const iso=d.toISOString().slice(0,10);
+  if(periodFilter==='today')return iso===todayStr();
+  if(periodFilter==='week')return iso>=weekStartStr();
+  return false;
+}
+function attInPeriod(dateStr){
+  if(!dateStr)return false;
+  if(periodFilter==='all')return true;
+  if(periodFilter==='today')return dateStr===todayStr();
+  if(periodFilter==='week')return dateStr>=weekStartStr();
+  if(periodFilter==='month_cur')return dateStr.startsWith(curMonthKey());
+  if(periodFilter==='month_prev')return dateStr.startsWith(prevMonthKey());
+  return false;
+}
+function ordersInPeriod(){
+  return allOrders.filter(o=>{
+    if(!o.createdAt?.toDate)return false;
+    const d=o.createdAt.toDate();
+    if(periodFilter==='all')return true;
+    const iso=d.toISOString().slice(0,10);
+    if(periodFilter==='today')return iso===todayStr();
+    if(periodFilter==='week')return iso>=weekStartStr();
+    if(periodFilter==='month_cur')return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+    if(periodFilter==='month_prev'){const pm=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getMonth()===pm.getMonth()&&d.getFullYear()===pm.getFullYear();}
+    return false;
+  });
+}
+
+window.setPeriod=function(p){
+  periodFilter=p;
+  document.querySelectorAll('.pp-btn').forEach(b=>b.classList.toggle('active',b.dataset.p===p));
+  updateStats();renderList();
+};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -383,27 +441,30 @@ function fillWalletSelects(){
 
 // ══ STATS ══
 function updateStats(){
-  const mKey=curMonthKey();
   const active=employees.filter(e=>e.status==='active');
   setText('s-total',employees.length);
   setText('s-active',active.length);
   setText('s-design',employees.filter(e=>e.role==='graphic_designer').length);
   const totalSalaries=active.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('s-salaries',fn(totalSalaries));
-  // مبالغ مدفوعة هذا الشهر
-  const salTx=transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey);
+  const salTx=transactions.filter(t=>isMainSalaryTx(t)&&txInPeriod(t));
   const paidAmt=salTx.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const paidEmpIds=new Set(salTx.map(t=>t.employeeId));
   const unpaidAmt=active.filter(e=>!paidEmpIds.has(e._id)).reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('s-paid-amt',fn(paidAmt));
-  setText('s-unpaid-amt',fn(unpaidAmt));
+  const isMonthPeriod=periodFilter==='month_cur'||periodFilter==='month_prev';
+  setText('s-unpaid-amt',isMonthPeriod?fn(unpaidAmt):'—');
+  const lbl=getPeriodLabel();
+  setText('s-salaries-lbl','رواتب '+lbl+' ج');
+  setText('s-paid-lbl','مصروف '+lbl+' ج');
+  setText('s-unpaid-lbl',isMonthPeriod?'متبقي '+lbl+' ج':'متبقي ج');
 
-  const today=todayStr();
-  if(now.getDate()<=5){
+  if(periodFilter==='month_cur'&&now.getDate()<=5){
     setText('sub',employees.length+' موظف · ⚠️ تذكير: صرف مرتبات '+MONTHS_AR[now.getMonth()]);
   } else {
     const unpaidCount=active.filter(e=>!paidEmpIds.has(e._id)).length;
-    setText('sub',employees.length+' موظف · '+paidEmpIds.size+' مصروف · '+(unpaidCount?`${unpaidCount} متبقي`:'الكل مصروف ✅'));
+    const unpaidPart=isMonthPeriod&&unpaidCount?` · ${unpaidCount} متبقي`:(paidEmpIds.size===active.length&&isMonthPeriod?' · الكل مصروف ✅':'');
+    setText('sub',employees.length+' موظف · '+paidEmpIds.size+' مصروف '+lbl+unpaidPart);
   }
 }
 
@@ -427,14 +488,13 @@ function styleFilterBtn(id,active,col,bg,border){
 
 // ══ RENDER LIST ══
 window.renderList=function(){
-  const mKey=curMonthKey();
   const today=todayStr();
-  const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&t.month===mKey).map(t=>t.employeeId));
+  const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&txInPeriod(t)).map(t=>t.employeeId));
   const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
-  const attendedThisMonth={}; // empId → count
-  attendanceRecords.filter(a=>a.date?.startsWith(mKey)).forEach(a=>{
+  const attendedInPeriod={}; // empId → count
+  attendanceRecords.filter(a=>attInPeriod(a.date)).forEach(a=>{
     const eid=a.employeeId||a.employeeUid||'';
-    if(eid)attendedThisMonth[eid]=(attendedThisMonth[eid]||0)+1;
+    if(eid)attendedInPeriod[eid]=(attendedInPeriod[eid]||0)+1;
   });
 
   const q=gv('q').toLowerCase();
@@ -453,22 +513,20 @@ window.renderList=function(){
     return;
   }
 
+  const periodOrders=ordersInPeriod();
+  const pLbl=getPeriodLabel();
   el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">${data.map(e=>{
     const r=ROLES[e.role]||{label:e.role,col:'#4e5672',ico:'👤'};
     const isPaid=paidEmpIds.has(e._id);
     const isActive=e.status==='active';
     const uid=e.authUid||e._id;
     const hasTodayAtt=attendedToday.has(e._id)||attendedToday.has(uid);
-    const monthAtt=attendedThisMonth[e._id]||attendedThisMonth[uid]||0;
+    const monthAtt=attendedInPeriod[e._id]||attendedInPeriod[uid]||0;
     const phone=e.phone||'';
     const waHref=phone?'https://wa.me/2'+phone.replace(/^0/,''):'';
 
     // أداء حسب الدور
-    const myOrders=allOrders.filter(o=>{
-      if(!o.createdAt?.toDate)return false;
-      const d=o.createdAt.toDate();
-      return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
-    });
+    const myOrders=periodOrders;
     let perfHtml='';
     if(e.role==='graphic_designer'||e.role==='design_operator'){
       const mine=myOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
@@ -476,7 +534,7 @@ window.renderList=function(){
       const commission=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage))
         .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(e.commissionPct)||0)/100),0);
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
-        <span style="font-size:11px;color:var(--dim2)">🎨 هذا الشهر</span>
+        <span style="font-size:11px;color:var(--dim2)">🎨 ${pLbl}</span>
         <span style="font-size:12px;font-weight:800">${mine.length} تصميم · ${printed} طُبع</span>
       </div>
       ${commission>0?`<div class="emp-metric" style="margin-bottom:6px">
@@ -532,17 +590,17 @@ window.renderList=function(){
 
       <!-- الحضور -->
       ${isActive?`<div class="emp-metric" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim2)">📅 حضور ${MONTHS_AR[now.getMonth()]}</span>
+        <span style="font-size:11px;color:var(--dim2)">📅 حضور ${pLbl}</span>
         <span style="font-size:12px;font-weight:800;color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم</span>
       </div>`:''}
 
       <!-- حالة المرتب -->
       ${isActive?`<div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;border-top:1px solid var(--line);margin-bottom:10px">
         ${isPaid
-          ?`<span style="font-size:10px;background:rgba(0,217,126,.12);color:var(--g);padding:3px 10px;border-radius:12px;font-weight:700">✅ مصروف ${MONTHS_AR[now.getMonth()]}</span>`
+          ?`<span style="font-size:10px;background:rgba(0,217,126,.12);color:var(--g);padding:3px 10px;border-radius:12px;font-weight:700">✅ مصروف ${pLbl}</span>`
           :`<span style="font-size:10px;background:rgba(255,170,0,.12);color:var(--y);padding:3px 10px;border-radius:12px;font-weight:700">⏳ لم يُصرف</span>`
         }
-        ${!isPaid?`<button class="btn btn-g btn-xs" onclick="event.stopPropagation();openPayOne('${e._id}')" style="font-size:10px;padding:3px 12px">💰 صرف</button>`:''}
+        ${!isPaid&&periodFilter==='month_cur'?`<button class="btn btn-g btn-xs" onclick="event.stopPropagation();openPayOne('${e._id}')" style="font-size:10px;padding:3px 12px">💰 صرف</button>`:''}
       </div>`:''}
 
       <!-- أزرار التواصل + البروفايل -->
