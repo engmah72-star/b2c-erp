@@ -62,6 +62,16 @@
 .month-badge{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px}
 .paid-badge{background:rgba(0,217,126,.15);color:var(--g)}
 .unpaid-badge{background:rgba(255,170,0,.15);color:var(--y)}
+.day-pill{padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;transition:var(--trans);user-select:none}
+.day-pill.on{background:rgba(59,158,255,.15);color:var(--b);border-color:rgba(59,158,255,.4)}
+.leave-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px}
+.lv-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0}
+.lv-annual{background:rgba(59,158,255,.15);color:var(--b)}
+.lv-sick{background:rgba(255,61,110,.15);color:var(--r)}
+.lv-emergency{background:rgba(255,170,0,.15);color:var(--y)}
+.lv-official{background:rgba(167,139,250,.15);color:var(--p)}
+.lv-unpaid{background:rgba(74,82,112,.2);color:var(--dim2)}
+.att-day.leave{background:rgba(255,170,0,.18);color:var(--y)}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}.hero-body{flex-direction:column;text-align:center}.hero-chips{justify-content:center}.hero-stats-row{grid-template-columns:repeat(2,1fr)}.hstat:nth-child(2n){border-left:none}.hstat:nth-child(n+3){border-top:1px solid var(--line)}}
 </style>
 </head>
@@ -405,7 +415,7 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app), db=getFirestore(app);
 
 // ══ STATE ══
-let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={};
+let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[];
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 const empId=new URLSearchParams(location.search).get('id');
@@ -531,6 +541,10 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'transactions_v2'),where('employeeId','==',empId)),snap=>{
     empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderSalaries();renderInsights();
+  });
+  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',empId)),snap=>{
+    empLeaves=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
+    renderLeaves();renderAttendance();
   });
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
@@ -710,6 +724,24 @@ function renderAll(){
       <div id="tasks-container"></div>
     </div>
 
+    <!-- جدول العمل -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🕐 جدول العمل</div>
+        <button class="btn btn-ghost btn-xs" onclick="openEditSchedule()">✏️ تعديل</button>
+      </div>
+      <div id="schedule-container"></div>
+    </div>
+
+    <!-- الإجازات -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🏖️ الإجازات والغيابات</div>
+        <button class="btn btn-b btn-xs" onclick="openAddLeave()">＋ إجازة</button>
+      </div>
+      <div id="leaves-container"></div>
+    </div>
+
     <!-- الحضور الشهري -->
     <div class="section" style="margin-bottom:14px">
       <div class="section-head" style="margin-bottom:8px">
@@ -724,9 +756,10 @@ function renderAll(){
         </div>
       </div>
       <div class="att-cal" id="att-cal"></div>
-      <div style="display:flex;gap:14px;margin-top:8px;font-size:10px">
+      <div style="display:flex;gap:14px;margin-top:8px;font-size:10px;flex-wrap:wrap">
         <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:rgba(0,217,126,.2);margin-left:4px"></span>حضر</span>
         <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:rgba(255,61,110,.12);margin-left:4px"></span>غياب</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:rgba(255,170,0,.18);margin-left:4px"></span>إجازة</span>
         <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--bg3);margin-left:4px"></span>عطلة</span>
       </div>
     </div>
@@ -760,16 +793,21 @@ function renderAll(){
   renderScore();
   renderSkillsAndProducts();
   renderBehavior();
+  renderSchedule();
+  renderLeaves();
 }
 
 // ══ SCORE ══
 function calcScore(){
   if(!emp)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{}};
   const mKey=monthKey();
-  // حضور (35 نقطة)
+  // حضور (35 نقطة) — يحسب بناءً على جدول العمل ويستثني الإجازات
   const present=empAttendance.filter(a=>a.date?.startsWith(mKey)).length;
   let workDays=0;
-  for(let d=1;d<=now.getDate();d++){const day=new Date(now.getFullYear(),now.getMonth(),d).getDay();if(day!==5&&day!==6)workDays++;}
+  for(let d=1;d<=now.getDate();d++){
+    const ds=mKey+'-'+String(d).padStart(2,'0');
+    if(isWorkDay(ds)&&!isLeaveDay(ds))workDays++;
+  }
   const attPct=workDays>0?Math.min(1,present/workDays):0.5;
   const attScore=Math.round(attPct*35);
   // إنتاجية (40 نقطة)
@@ -1404,6 +1442,15 @@ window.saveTask=async function(){
 };
 
 // ══ ATTENDANCE ══
+function isWorkDay(dateStr){
+  const ws=emp?.workSchedule;
+  if(!ws?.days?.length)return new Date(dateStr).getDay()!==5&&new Date(dateStr).getDay()!==6;
+  return ws.days.includes(new Date(dateStr).getDay());
+}
+function isLeaveDay(dateStr){
+  return empLeaves.some(lv=>dateStr>=(lv.startDate||'')&&dateStr<=(lv.endDate||lv.startDate||''));
+}
+
 function renderAttendance(){
   const cal=document.getElementById('att-cal');if(!cal)return;
   const vm=attViewMonth||monthKey();
@@ -1413,11 +1460,12 @@ function renderAttendance(){
   const firstDay=new Date(vy,vm2-1,1).getDay();
   const presentDays=empAttendance.filter(a=>a.date?.startsWith(vm)).length;
   const today=todayStr();
-  const workDays=Array.from({length:daysInMonth},(_,i)=>{
-    const d=new Date(vy,vm2-1,i+1);
-    return d.getDay()!==5&&d.getDay()!==6;
-  }).filter(Boolean).length;
-  setText('att-summary',`${presentDays} من ${workDays} يوم عمل`);
+  let workDays=0;
+  for(let d=1;d<=daysInMonth;d++){
+    const ds=vm+'-'+String(d).padStart(2,'0');
+    if(isWorkDay(ds)&&!isLeaveDay(ds)&&ds<=today)workDays++;
+  }
+  setText('att-summary',`${presentDays} حضور | ${workDays} يوم عمل`);
   const titleEl=document.getElementById('att-title');
   if(titleEl)titleEl.textContent=`📅 حضور ${MONTHS[vm2-1]} ${vy}`;
   const nextBtn=document.getElementById('att-next-btn');
@@ -1427,18 +1475,143 @@ function renderAttendance(){
   for(let d=1;d<=daysInMonth;d++){
     const dateStr=vm+'-'+String(d).padStart(2,'0');
     const att=empAttendance.find(a=>a.date===dateStr);
-    const dayOfWeek=new Date(vy,vm2-1,d).getDay();
-    const isWeekend=dayOfWeek===5||dayOfWeek===6;
+    const isOff=!isWorkDay(dateStr);
+    const isLeave=isLeaveDay(dateStr);
     const isTodayDay=dateStr===today;
     const isFuture=dateStr>today;
+    const lv=isLeave?empLeaves.find(lv=>dateStr>=(lv.startDate||'')&&dateStr<=(lv.endDate||lv.startDate||'')):null;
     let cls='att-day ';
     if(att)cls+='present';
-    else if(isWeekend||isFuture)cls+='off';
+    else if(isLeave)cls+='leave';
+    else if(isOff||isFuture)cls+='off';
     else cls+='absent';
-    html+=`<div class="${cls}${isTodayDay?' today':''}" title="${dateStr}${att?'\n'+att.checkInStr+' → '+(att.checkOutStr||'لم ينصرف'):''}">${d}</div>`;
+    const tip=att?`${dateStr}\n${att.checkInStr||''}${att.checkOutStr?' → '+att.checkOutStr:''}`:isLeave?`${dateStr}\nإجازة${lv?.reason?' — '+lv.reason:''}`:`${dateStr}`;
+    html+=`<div class="${cls}${isTodayDay?' today':''}" title="${tip}">${d}</div>`;
   }
   cal.innerHTML=html;
 }
+
+// ══ SCHEDULE ══
+const DAY_NAMES_AR=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+const LEAVE_TYPES={annual:{lbl:'إجازة سنوية',cls:'lv-annual',ico:'🌴'},sick:{lbl:'إجازة مرضية',cls:'lv-sick',ico:'🏥'},emergency:{lbl:'إجازة طارئة',cls:'lv-emergency',ico:'⚡'},official:{lbl:'إجازة رسمية',cls:'lv-official',ico:'📋'},unpaid:{lbl:'غياب بدون راتب',cls:'lv-unpaid',ico:'⚠️'}};
+
+function renderSchedule(){
+  const el=document.getElementById('schedule-container');if(!el)return;
+  const ws=emp.workSchedule||{days:[0,1,2,3,4],startTime:'09:00',endTime:'17:00'};
+  const days=ws.days||[0,1,2,3,4];
+  el.innerHTML=`
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${[0,1,2,3,4,5,6].map(d=>`<span class="day-pill${days.includes(d)?' on':''}">${DAY_NAMES_AR[d]}</span>`).join('')}
+    </div>
+    <div style="display:flex;gap:20px;font-size:12px;color:var(--dim2)">
+      <span>⏰ بدء: <strong style="color:var(--snow)">${ws.startTime||'09:00'}</strong></span>
+      <span>🏁 نهاية: <strong style="color:var(--snow)">${ws.endTime||'17:00'}</strong></span>
+      <span>📅 <strong style="color:var(--b)">${days.length} أيام/أسبوع</strong></span>
+    </div>`;
+}
+
+let schedDays=[];
+window.openEditSchedule=function(){
+  const ws=emp.workSchedule||{days:[0,1,2,3,4],startTime:'09:00',endTime:'17:00'};
+  schedDays=[...(ws.days||[0,1,2,3,4])];
+  document.getElementById('sched-start').value=ws.startTime||'09:00';
+  document.getElementById('sched-end').value=ws.endTime||'17:00';
+  renderSchedPills();
+  document.getElementById('ov-schedule').classList.add('open');
+};
+function renderSchedPills(){
+  const el=document.getElementById('sched-day-pills');if(!el)return;
+  el.innerHTML=[0,1,2,3,4,5,6].map(d=>`<span class="day-pill${schedDays.includes(d)?' on':''}" onclick="toggleSchedDay(${d})">${DAY_NAMES_AR[d]}</span>`).join('');
+}
+window.toggleSchedDay=function(d){
+  const i=schedDays.indexOf(d);
+  if(i>=0)schedDays.splice(i,1);else schedDays.push(d);
+  schedDays.sort((a,b)=>a-b);
+  renderSchedPills();
+};
+window.saveSchedule=async function(){
+  if(!schedDays.length)return toast('⚠️ اختر يوم عمل واحد على الأقل','err');
+  const startTime=document.getElementById('sched-start').value||'09:00';
+  const endTime=document.getElementById('sched-end').value||'17:00';
+  try{
+    await updateDoc(doc(db,'employees',empId),{workSchedule:{days:schedDays,startTime,endTime},updatedAt:serverTimestamp()});
+    emp.workSchedule={days:schedDays,startTime,endTime};
+    document.getElementById('ov-schedule').classList.remove('open');
+    renderSchedule();renderAttendance();
+    toast('✅ تم حفظ جدول العمل','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ LEAVES ══
+function renderLeaves(){
+  const el=document.getElementById('leaves-container');if(!el)return;
+  const now2=new Date();
+  const upcoming=empLeaves.filter(lv=>lv.endDate>=now2.toISOString().slice(0,10)||lv.startDate>=now2.toISOString().slice(0,10));
+  const past=empLeaves.filter(lv=>lv.endDate<now2.toISOString().slice(0,10)&&lv.startDate<now2.toISOString().slice(0,10));
+  if(!empLeaves.length){el.innerHTML='<div style="text-align:center;color:var(--dim2);font-size:12px;padding:12px 0">لا توجد إجازات مسجّلة</div>';return;}
+  const render=arr=>arr.map(lv=>{
+    const t=LEAVE_TYPES[lv.type]||LEAVE_TYPES.annual;
+    const isCur=lv.startDate<=now2.toISOString().slice(0,10)&&lv.endDate>=now2.toISOString().slice(0,10);
+    return`<div class="leave-row"${isCur?' style="border-right:3px solid var(--y)"':''}>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+          <span class="lv-badge ${t.cls}">${t.ico} ${t.lbl}</span>
+          ${isCur?'<span style="font-size:9px;background:rgba(255,170,0,.15);color:var(--y);padding:1px 6px;border-radius:8px;font-weight:700">جارية الآن</span>':''}
+          ${lv.reason?`<span style="font-size:11px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lv.reason}</span>`:''}
+        </div>
+        <div style="font-size:11px;color:var(--dim2)">${lv.startDate}${lv.endDate!==lv.startDate?' → '+lv.endDate:''} · <strong>${lv.days} يوم</strong></div>
+      </div>
+      <button onclick="deleteLeave('${lv._id}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55">✕</button>
+    </div>`;
+  }).join('');
+  let html='';
+  if(upcoming.length)html+=render(upcoming);
+  if(past.length)html+=`<div style="font-size:10px;font-weight:700;color:var(--dim2);margin:8px 0 5px;text-transform:uppercase;letter-spacing:.5px">السابقة</div>`+render(past);
+  el.innerHTML=html;
+}
+
+window.openAddLeave=function(){
+  document.getElementById('lv-type').value='annual';
+  document.getElementById('lv-start').value='';
+  document.getElementById('lv-end').value='';
+  document.getElementById('lv-reason').value='';
+  document.getElementById('lv-days-preview').textContent='';
+  document.getElementById('ov-leave').classList.add('open');
+};
+window.calcLeaveDays=function(){
+  const s=document.getElementById('lv-start').value;
+  const e=document.getElementById('lv-end').value||s;
+  if(!s){document.getElementById('lv-days-preview').textContent='';return;}
+  const d1=new Date(s),d2=new Date(e||s);
+  let days=0;
+  const cur=new Date(d1);
+  while(cur<=d2){
+    if(isWorkDay(cur.toISOString().slice(0,10)))days++;
+    cur.setDate(cur.getDate()+1);
+  }
+  document.getElementById('lv-days-preview').textContent=days+' يوم عمل';
+};
+window.saveLeave=async function(){
+  const type=document.getElementById('lv-type').value;
+  const startDate=document.getElementById('lv-start').value;
+  const endDate=document.getElementById('lv-end').value||startDate;
+  const reason=document.getElementById('lv-reason').value.trim();
+  if(!startDate)return toast('⚠️ حدد تاريخ البداية','err');
+  if(endDate<startDate)return toast('⚠️ تاريخ النهاية قبل البداية','err');
+  let days=0;
+  const cur=new Date(startDate);
+  while(cur<=new Date(endDate)){if(isWorkDay(cur.toISOString().slice(0,10)))days++;cur.setDate(cur.getDate()+1);}
+  try{
+    await addDoc(collection(db,'employee_leaves'),{employeeId:empId,employeeName:emp.name||'',type,startDate,endDate,days,reason,createdAt:serverTimestamp(),createdBy:adminName});
+    document.getElementById('ov-leave').classList.remove('open');
+    toast('✅ تم تسجيل الإجازة','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+window.deleteLeave=async function(id){
+  if(!confirm('حذف هذه الإجازة؟'))return;
+  try{await deleteDoc(doc(db,'employee_leaves',id));toast('✅ تم الحذف','ok');}
+  catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ SALARIES ══
 const SAL_TYPE_LABELS={salary:'مرتب',advance:'سلفة',bonus:'مكافأة',deduction:'خصم',other:'أخرى'};
@@ -1717,6 +1890,77 @@ window.recordAttendanceToday=async function(){
         <button class="btn btn-g" style="flex:1" onclick="saveSkills()">💾 حفظ</button>
         <button class="btn btn-ghost" onclick="document.getElementById('ov-edit-skills').classList.remove('open')">إلغاء</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: جدول العمل -->
+<div class="overlay" id="ov-schedule">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">🕐 تعديل جدول العمل</span>
+      <button class="modal-x" onclick="document.getElementById('ov-schedule').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>📅 أيام العمل</label>
+        <div id="sched-day-pills" style="display:flex;gap:7px;flex-wrap:wrap;padding:4px 0"></div>
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>⏰ وقت البدء</label>
+          <input class="inp" id="sched-start" type="time" value="09:00">
+        </div>
+        <div class="fg">
+          <label>🏁 وقت الانتهاء</label>
+          <input class="inp" id="sched-end" type="time" value="17:00">
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-schedule').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="saveSchedule()">💾 حفظ الجدول</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: إضافة إجازة -->
+<div class="overlay" id="ov-leave">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">🏖️ تسجيل إجازة / غياب</span>
+      <button class="modal-x" onclick="document.getElementById('ov-leave').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>🏷️ نوع الإجازة</label>
+        <select class="inp" id="lv-type">
+          <option value="annual">🌴 إجازة سنوية</option>
+          <option value="sick">🏥 إجازة مرضية</option>
+          <option value="emergency">⚡ إجازة طارئة</option>
+          <option value="official">📋 إجازة رسمية</option>
+          <option value="unpaid">⚠️ غياب بدون راتب</option>
+        </select>
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>📅 من تاريخ</label>
+          <input class="inp" id="lv-start" type="date" oninput="calcLeaveDays()">
+        </div>
+        <div class="fg">
+          <label>📅 إلى تاريخ</label>
+          <input class="inp" id="lv-end" type="date" oninput="calcLeaveDays()">
+        </div>
+      </div>
+      <div id="lv-days-preview" style="font-size:13px;font-weight:700;color:var(--b);margin-bottom:8px;text-align:center"></div>
+      <div class="fg">
+        <label>📝 السبب / ملاحظة (اختياري)</label>
+        <input class="inp" id="lv-reason" placeholder="مثال: إجازة عيد الأضحى">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-leave').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="saveLeave()">✓ تسجيل الإجازة</button>
     </div>
   </div>
 </div>
