@@ -34,6 +34,16 @@
 .pri-urgent{background:rgba(255,61,110,.15);color:var(--r)}
 .pri-normal{background:rgba(59,158,255,.15);color:var(--b)}
 .pri-low{background:rgba(74,82,112,.2);color:var(--dim2)}
+.skill-tag{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;background:rgba(167,139,250,.12);color:var(--p);border:1px solid rgba(167,139,250,.3);font-size:11px;font-weight:700}
+.skill-tag .rm{cursor:pointer;opacity:.6;font-size:10px}
+.skill-tag .rm:hover{opacity:1}
+.prod-bar-wrap{height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;flex:1}
+.prod-bar-fill{height:100%;border-radius:3px;transition:.4s}
+.day-bar{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1}
+.day-bar-inner{width:100%;border-radius:3px 3px 0 0;transition:.4s;min-height:2px}
+.score-gauge{position:relative;width:80px;height:80px;flex-shrink:0}
+.score-gauge svg{transform:rotate(-90deg)}
+.score-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900}
 .salary-row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px}
 .month-badge{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px}
 .paid-badge{background:rgba(0,217,126,.15);color:var(--g)}
@@ -613,9 +623,27 @@ function renderAll(){
       ${income.commission>0?`<div style="font-size:12px;color:var(--dim2);margin-top:6px">مرتب ${fn(income.base)} ج + عمولة ${fn(income.commission)} ج</div>`:`<div style="font-size:12px;color:var(--dim2);margin-top:4px">مرتب ثابت</div>`}
     </div>
 
-    <!-- KPIs -->
+    <!-- Score & KPIs -->
+    <div id="score-container" style="margin-bottom:14px"></div>
     <div class="kpi-row">
       ${kpis.map(k=>`<div class="kpi" style="--kc:${k.col}"><div class="kpi-val">${k.val}</div><div class="kpi-lbl">${k.lbl}</div></div>`).join('')}
+    </div>
+
+    <!-- المهارات والمنتجات -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🏷️ المهارات والمنتجات</div>
+        <button class="btn btn-ghost btn-xs" onclick="openEditSkills()">✏️ تعديل</button>
+      </div>
+      <div id="skills-products-container"></div>
+    </div>
+
+    <!-- تحليل السلوك -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🧠 تحليل السلوك والأداء</div>
+      </div>
+      <div id="behavior-container"></div>
     </div>
 
     <!-- فلتر الفترة -->
@@ -695,7 +723,281 @@ function renderAll(){
   renderPermissions();
   renderClients();
   renderInsights();
+  renderScore();
+  renderSkillsAndProducts();
+  renderBehavior();
 }
+
+// ══ SCORE ══
+function calcScore(){
+  if(!emp)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{}};
+  const mKey=monthKey();
+  // حضور (35 نقطة)
+  const present=empAttendance.filter(a=>a.date?.startsWith(mKey)).length;
+  let workDays=0;
+  for(let d=1;d<=now.getDate();d++){const day=new Date(now.getFullYear(),now.getMonth(),d).getDay();if(day!==5&&day!==6)workDays++;}
+  const attPct=workDays>0?Math.min(1,present/workDays):0.5;
+  const attScore=Math.round(attPct*35);
+  // إنتاجية (40 نقطة)
+  const empOrds=getEmpOrders(allOrders);
+  const total=empOrds.length;
+  const done=empOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
+  const prodPct=total>0?done/total:0.5;
+  const prodScore=Math.round(prodPct*40);
+  // جودة (25 نقطة)
+  let qualPct=0.8;
+  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
+    const rej=empOrds.filter(o=>o.designStatus==='rejected').length;
+    qualPct=total>0?1-(rej/total):0.8;
+  }else if(emp.role==='customer_service'){
+    const arch=empOrds.filter(o=>o.stage==='archived').length;
+    qualPct=total>0?arch/total:0.5;
+  }else if(emp.role==='production_agent'){
+    const arch=empOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
+    qualPct=total>0?arch/total:0.5;
+  }
+  const qualScore=Math.round(qualPct*25);
+  const score=Math.min(100,attScore+prodScore+qualScore);
+  const grade=score>=85?'ممتاز ⭐':score>=70?'جيد جداً':score>=50?'متوسط':'يحتاج تطوير';
+  const col=score>=85?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
+  return{score,grade,col,breakdown:{att:{score:attScore,pct:Math.round(attPct*100)},prod:{score:prodScore,pct:Math.round(prodPct*100)},qual:{score:qualScore,pct:Math.round(qualPct*100)}}};
+}
+
+function renderScore(){
+  const el=document.getElementById('score-container');if(!el)return;
+  const{score,grade,col,breakdown}=calcScore();
+  const circ=Math.round(2*Math.PI*32);
+  const fill=Math.round(score/100*circ);
+  el.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px;display:flex;gap:20px;align-items:center">
+    <div class="score-gauge">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="var(--bg3)" stroke-width="7"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="${col}" stroke-width="7"
+          stroke-dasharray="${fill} ${circ}" stroke-linecap="round"/>
+      </svg>
+      <div class="score-num" style="color:${col}">${score}</div>
+    </div>
+    <div style="flex:1">
+      <div style="font-size:16px;font-weight:900;color:${col};margin-bottom:8px">${grade}</div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px">
+          <span style="width:60px;color:var(--dim2)">حضور</span>
+          <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.att.pct}%;background:var(--g)"></div></div>
+          <span style="font-weight:700;width:30px;text-align:left">${breakdown.att.score}/35</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px">
+          <span style="width:60px;color:var(--dim2)">إنتاجية</span>
+          <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.prod.pct}%;background:var(--b)"></div></div>
+          <span style="font-weight:700;width:30px;text-align:left">${breakdown.prod.score}/40</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px">
+          <span style="width:60px;color:var(--dim2)">جودة</span>
+          <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.qual.pct}%;background:var(--p)"></div></div>
+          <span style="font-weight:700;width:30px;text-align:left">${breakdown.qual.score}/25</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ══ SKILLS & PRODUCTS ══
+function calcProductStats(){
+  const empOrds=getEmpOrders(allOrders);
+  const map={};
+  for(const o of empOrds){
+    const names=o.products?.length?o.products.map(p=>p.name).filter(Boolean):(o.product?[o.product]:[]);
+    for(const n of names){
+      if(!map[n])map[n]={total:0,done:0,revenue:0};
+      map[n].total++;
+      if(['printing','production','shipping','archived'].includes(o.stage))map[n].done++;
+      map[n].revenue+=parseFloat(o.salePrice)||0;
+    }
+  }
+  return Object.entries(map)
+    .map(([name,d])=>({name,...d,rate:d.total>0?Math.round(d.done/d.total*100):0}))
+    .filter(p=>p.total>0).sort((a,b)=>b.total-a.total).slice(0,8);
+}
+
+function renderSkillsAndProducts(){
+  const el=document.getElementById('skills-products-container');if(!el||!emp)return;
+  const skills=emp.skills||[];
+  const products=calcProductStats();
+  let html='';
+  // Skills tags
+  if(skills.length){
+    html+=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">
+      ${skills.map(s=>`<span class="skill-tag">🏷️ ${s}</span>`).join('')}
+    </div>`;
+  }else{
+    html+=`<div style="font-size:11px;color:var(--dim2);margin-bottom:12px">لا توجد مهارات مُضافة بعد — <button class="btn btn-ghost btn-xs" onclick="openEditSkills()">أضف الآن</button></div>`;
+  }
+  // Product performance
+  if(products.length){
+    const maxTotal=products[0].total||1;
+    html+=`<div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">المنتجات حسب الأداء — إجمالي ${getEmpOrders(allOrders).length} أوردر</div>`;
+    html+=products.map(p=>{
+      const rateCol=p.rate>=80?'var(--g)':p.rate>=50?'var(--y)':'var(--r)';
+      const isTopSkill=skills.some(s=>s.toLowerCase().includes(p.name.toLowerCase())||p.name.toLowerCase().includes(s.toLowerCase()));
+      return`<div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:700">${isTopSkill?'⭐ ':''}${p.name}</span>
+          <div style="display:flex;gap:12px;font-size:11px">
+            <span style="color:var(--dim2)">${p.total} أوردر</span>
+            <span style="font-weight:800;color:${rateCol}">${p.rate}%</span>
+            <span style="color:var(--g);font-weight:700">${fn(p.revenue)} ج</span>
+          </div>
+        </div>
+        <div class="prod-bar-wrap">
+          <div class="prod-bar-fill" style="width:${Math.round(p.total/maxTotal*100)}%;background:${rateCol}"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }else{
+    html+=`<div style="text-align:center;color:var(--dim2);font-size:12px;padding:12px 0">لا توجد أوردرات مرتبطة بعد</div>`;
+  }
+  el.innerHTML=html;
+}
+
+// ══ BEHAVIOR ANALYSIS ══
+function renderBehavior(){
+  const el=document.getElementById('behavior-container');if(!el||!emp)return;
+  const DAYS_AR=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+  // توزيع الحضور حسب اليوم
+  const dayCounts=Array(7).fill(0);
+  for(const a of empAttendance){
+    if(!a.date)continue;
+    const[y,m,d]=a.date.split('-').map(Number);
+    const day=new Date(y,m-1,d).getDay();
+    dayCounts[day]++;
+  }
+  const maxDay=Math.max(...dayCounts,1);
+  const bestDayIdx=dayCounts.indexOf(Math.max(...dayCounts));
+  // الترند الشهري — آخر 6 أشهر
+  const empOrds=getEmpOrders(allOrders);
+  const trend=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const cnt=empOrds.filter(o=>{const od=o.createdAt?.toDate?.();return od&&od.getMonth()===d.getMonth()&&od.getFullYear()===d.getFullYear();}).length;
+    const att=empAttendance.filter(a=>a.date?.startsWith(key)).length;
+    trend.push({lbl:MONTHS[d.getMonth()].slice(0,3),cnt,att,key});
+  }
+  const maxTrend=Math.max(...trend.map(t=>t.cnt),1);
+  const maxAtt=Math.max(...trend.map(t=>t.att),1);
+  // كشف الأنماط
+  const patterns=[];
+  const mKey=monthKey();
+  const curMonthCnt=trend.find(t=>t.key===mKey)?.cnt||0;
+  const prevMonthCnt=trend[4]?.cnt||0;
+  if(prevMonthCnt>0){const chg=Math.round((curMonthCnt-prevMonthCnt)/prevMonthCnt*100);patterns.push({ico:chg>=0?'📈':'📉',txt:`إنتاج ${chg>=0?'+':''}${chg}% عن الشهر الماضي`,col:chg>=0?'var(--g)':'var(--r)'});}
+  const streak=calcAttStreak();
+  if(streak>2)patterns.push({ico:'🔥',txt:`${streak} أيام حضور متتالية`,col:'var(--y)'});
+  if(dayCounts[bestDayIdx]>0)patterns.push({ico:'⭐',txt:`أفضل يوم: ${DAYS_AR[bestDayIdx]}`,col:'var(--b)'});
+  const absent3=checkAbsent3();
+  if(absent3)patterns.push({ico:'⚠️',txt:'غياب 3+ أيام عمل متتالية مؤخراً',col:'var(--r)'});
+
+  el.innerHTML=`
+  ${patterns.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+    ${patterns.map(p=>`<div style="background:var(--bg3);border-right:3px solid ${p.col};border-radius:var(--rad);padding:7px 12px;font-size:12px;font-weight:700">${p.ico} ${p.txt}</div>`).join('')}
+  </div>`:''}
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <!-- حضور حسب اليوم -->
+    <div>
+      <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:10px">📅 توزيع الحضور بالأيام</div>
+      <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
+        ${dayCounts.map((c,i)=>{
+          const h=maxDay>0?Math.max(4,Math.round(c/maxDay*100)):4;
+          const col=i===bestDayIdx?'var(--g)':i===5||i===6?'var(--bg3)':'var(--b)';
+          return`<div class="day-bar">
+            <div style="font-size:9px;color:var(--dim2);font-weight:700">${c||''}</div>
+            <div class="day-bar-inner" style="height:${h}%;background:${col}"></div>
+            <div style="font-size:8px;color:var(--dim2)">${DAYS_AR[i].slice(0,3)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <!-- ترند الإنتاج -->
+    <div>
+      <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:10px">📊 إنتاج آخر 6 أشهر</div>
+      <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
+        ${trend.map((t,i)=>{
+          const h=maxTrend>0?Math.max(4,Math.round(t.cnt/maxTrend*100)):4;
+          const isNow=i===5;
+          return`<div class="day-bar">
+            <div style="font-size:9px;color:var(--dim2);font-weight:700">${t.cnt||''}</div>
+            <div class="day-bar-inner" style="height:${h}%;background:${isNow?'var(--p)':'var(--b)'}"></div>
+            <div style="font-size:8px;color:${isNow?'var(--p)':'var(--dim2)'};font-weight:${isNow?'800':'400'}">${t.lbl}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function calcAttStreak(){
+  let streak=0;
+  const today=new Date(now);
+  for(let i=0;i<30;i++){
+    const d=new Date(today);d.setDate(today.getDate()-i);
+    const day=d.getDay();if(day===5||day===6)continue;
+    const str=d.toISOString().slice(0,10);
+    if(empAttendance.some(a=>a.date===str))streak++;
+    else break;
+  }
+  return streak;
+}
+function checkAbsent3(){
+  let consec=0;
+  const today=new Date(now);
+  for(let i=1;i<=20;i++){
+    const d=new Date(today);d.setDate(today.getDate()-i);
+    const day=d.getDay();if(day===5||day===6)continue;
+    const str=d.toISOString().slice(0,10);
+    if(!empAttendance.some(a=>a.date===str)){consec++;if(consec>=3)return true;}
+    else{consec=0;}
+  }
+  return false;
+}
+
+// ══ SKILLS EDIT ══
+let editSkillsArr=[];
+window.openEditSkills=function(){
+  editSkillsArr=[...(emp.skills||[])];
+  renderSkillsEdit();
+  // اقتراحات من المنتجات الموجودة في الأوردرات
+  const prodNames=[...new Set(allOrders.flatMap(o=>o.products?.map(p=>p.name)||[]).concat(allOrders.map(o=>o.product).filter(Boolean)))].slice(0,12);
+  const sugEl=document.getElementById('skill-suggestions');
+  if(sugEl)sugEl.innerHTML=prodNames.filter(n=>!editSkillsArr.includes(n)).map(n=>`<button class="btn btn-ghost btn-xs" onclick="addSkillFromSug('${n.replace(/'/g,'\\\'')}')" style="font-size:10px">${n}</button>`).join('');
+  document.getElementById('ov-edit-skills').classList.add('open');
+};
+function renderSkillsEdit(){
+  const el=document.getElementById('skill-tags-edit');if(!el)return;
+  el.innerHTML=editSkillsArr.length?editSkillsArr.map((s,i)=>`<span class="skill-tag">🏷️ ${s}<span class="rm" onclick="removeSkill(${i})">✕</span></span>`).join(''):'<span style="color:var(--dim2);font-size:11px">لا توجد مهارات بعد</span>';
+}
+window.addSkillTag=function(){
+  const inp=document.getElementById('skill-input');
+  const val=(inp?.value||'').trim();
+  if(!val)return;
+  if(!editSkillsArr.includes(val))editSkillsArr.push(val);
+  if(inp)inp.value='';
+  renderSkillsEdit();
+};
+window.addSkillFromSug=function(n){
+  if(!editSkillsArr.includes(n))editSkillsArr.push(n);
+  renderSkillsEdit();
+  const sugEl=document.getElementById('skill-suggestions');
+  if(sugEl)sugEl.querySelectorAll('button').forEach(b=>{if(b.textContent===n)b.remove();});
+};
+window.removeSkill=function(i){editSkillsArr.splice(i,1);renderSkillsEdit();};
+window.saveSkills=async function(){
+  try{
+    await updateDoc(doc(db,'employees',empId),{skills:editSkillsArr});
+    emp.skills=editSkillsArr;
+    document.getElementById('ov-edit-skills').classList.remove('open');
+    renderSkillsAndProducts();
+    toast('✅ تم حفظ المهارات','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ HELPERS ══
 const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||(!t.salaryType&&(t.category==='salary'||t.category==='designer_fee')));
@@ -1340,5 +1642,30 @@ window.recordAttendanceToday=async function(){
 };
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>
+
+<!-- MODAL: تعديل المهارات -->
+<div class="overlay" id="ov-edit-skills">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title">🏷️ المهارات والتخصصات</span>
+      <button class="modal-x" onclick="document.getElementById('ov-edit-skills').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg" style="margin-bottom:10px">
+        <label style="font-size:11px;color:var(--dim2)">أضف مهارة أو منتج</label>
+        <div style="display:flex;gap:8px">
+          <input class="inp" id="skill-input" placeholder="مثال: بطاقات عمل، سريع التسليم..." onkeydown="if(event.key==='Enter')addSkillTag()">
+          <button class="btn btn-b btn-sm" onclick="addSkillTag()">＋</button>
+        </div>
+        <div id="skill-suggestions" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px"></div>
+      </div>
+      <div id="skill-tags-edit" style="display:flex;gap:7px;flex-wrap:wrap;min-height:40px;padding:10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-g" style="flex:1" onclick="saveSkills()">💾 حفظ</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('ov-edit-skills').classList.remove('open')">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
