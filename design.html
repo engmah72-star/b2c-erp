@@ -717,7 +717,7 @@ function renderKanban(){
       const d=delay(o.deadline);
       const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||o.product||'—';
       const dep=parseFloat(o.deposit)||0;
-      const hasFile=!!o.designFileUrl;
+      const hasFile=!!(o.designFileUrl||(o.designFiles&&o.designFiles.length));
       const noCost=!(o.costItems||[]).length;
       return`<div class="ocard" style="--oc:${cfg[key]}" onclick="openOrder('${o._id}')">
         <div class="ocard-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
@@ -813,16 +813,23 @@ function renderPanel(o){
 
     <!-- ملف التصميم -->
     <div class="section">
-      <div class="section-title" style="margin-bottom:10px">📎 ملف التصميم النهائي</div>
-      ${o.designFileUrl?`
-        <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
-          <div style="font-size:11px;color:var(--dim2);margin-bottom:4px">رابط الملف:</div>
-          <a href="${o.designFileUrl}" target="_blank" style="color:var(--b);font-size:12px;word-break:break-all">${o.designFileUrl}</a>
-          ${o.designFileNote?`<div style="font-size:11px;color:var(--y);margin-top:6px">📝 ${o.designFileNote}</div>`:''}
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل الرابط</button>`
-      :`<button class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع رابط التصميم</button>
-        <div style="font-size:11px;color:var(--dim2);margin-top:6px">لم يُرفع ملف التصميم بعد</div>`}
+      <div class="section-title" style="margin-bottom:10px">📎 ملفات التصميم</div>
+      ${(()=>{
+        const files=o.designFiles&&o.designFiles.length?o.designFiles
+          :(o.designFileUrl?[{url:o.designFileUrl,name:'ملف التصميم',type:''}]:[]);
+        if(!files.length) return `<button class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع ملف التصميم</button>
+          <div style="font-size:11px;color:var(--dim2);margin-top:6px">لم يُرفع ملف التصميم بعد</div>`;
+        return files.map(f=>{
+          const isPdf=f.type==='application/pdf'||f.url?.includes('.pdf')||f.name?.endsWith('.pdf');
+          return`<a href="${f.url}" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);margin-bottom:8px;text-decoration:none">
+            <span style="font-size:22px;flex-shrink:0">${isPdf?'📄':'🖼️'}</span>
+            <span style="flex:1;font-size:12px;font-weight:700;color:var(--b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name||'عرض الملف'}</span>
+            <span style="font-size:11px;color:var(--dim2);flex-shrink:0">فتح ↗</span>
+          </a>`;
+        }).join('')
+        +(o.designFileNote?`<div style="font-size:11px;color:var(--y);margin-top:4px;margin-bottom:8px">📝 ${o.designFileNote}</div>`:'')
+        +`<button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل</button>`;
+      })()}
     </div>
 
     <!-- العربون — للإدارة وخدمة العملاء فقط -->
@@ -1168,7 +1175,7 @@ window.setDS=async function(stage){
 
 window.approveOrder=async function(){
   if(!activeId)return;const o=orders.find(x=>x._id===activeId);
-  if(!o.designFileUrl){
+  if(!o.designFileUrl&&!(o.designFiles&&o.designFiles.length)){
     if(!confirm('لم يُرفع ملف التصميم بعد. هل تريد الاعتماد بدون ملف؟'))return;
   }
   try{
