@@ -395,13 +395,11 @@ onAuthStateChanged(auth,async u=>{
     const shipMissing=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length).length;
     setText('sub',prodOrders.length+' تنفيذ'+(shipMissing?` · ${shipMissing} شحن بدون تكلفة`:''));
 
-    if(changed){renderList();orders.filter(o=>o.stage==='production'&&!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));}
+    if(changed){renderList();}
     if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
   });
   onSnapshot(collection(db,'products_v2'),snap=>{
     productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    // لو في أوردرات منتظرة استيراد، جرّبها بعد ما الكتالوج يتحمل
-    orders.filter(o=>!(o.costItems||[]).length&&!o.autoImportDone).forEach(o=>tryAutoImport(o));
   });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -498,8 +496,7 @@ function renderCostPanel(o,prodIdx){
     ${pmStr?`<div style="font-size:10px;color:var(--dim2);margin-top:1px">📄 ${pmStr}</div>`:''}
   </div>`;
 }).join('')}
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-        <button onclick="importLastCosts()" style="font-size:11px;font-weight:800;padding:5px 12px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-family:inherit">⬇️ استيراد</button>
+      <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:8px">
         <span style="font-size:15px;font-weight:900;color:var(--c)">${fn(last.total)} ج${diffStr}</span>
       </div>
     </div>`;
@@ -732,31 +729,6 @@ function buildSupFilter(){
   bar.innerHTML=`<button class="ftab active" onclick="setSupFilter('',this)">كل المطابع</button>`+usedSups.map(s=>`<button class="ftab" onclick="setSupFilter('${s._id}',this)">${s.name}</button>`).join('');
 }
 
-// ══ AUTO IMPORT ══
-const _autoTried=new Set();
-async function tryAutoImport(o){
-  if(_autoTried.has(o._id)||!productsCatalog.length)return;
-  _autoTried.add(o._id);
-  const prods=o.products||[];if(!prods.length)return;
-  const importedItems=[];
-  for(let pi=0;pi<prods.length;pi++){
-    const prod=prods[pi];
-    const pName=(prod.name||'').trim().toLowerCase();
-    const pQty=parseFloat(prod.qty)||0;
-    const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-    if(!catProd||(catProd.costHistory||[]).length===0)continue;
-    const history=catProd.costHistory||[];
-    const match=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0]||history.slice(-1)[0];
-    if(match&&(match.items||[]).length){
-      match.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'history_auto'}));
-    }
-  }
-  if(!importedItems.length)return;
-  try{
-    await updateDoc(doc(db,'orders',o._id),{costItems:importedItems,autoImportDone:true,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🤖 استيراد تلقائي ${importedItems.length} بند`,by:'النظام'}],updatedAt:serverTimestamp()});
-  }catch(e){console.warn('autoImport:',e.message);}
-}
-
 let __pageSize=20,__currentPage=1;
 window.renderList=function(resetPage=true){
   if(resetPage)__currentPage=1;
@@ -850,7 +822,6 @@ function renderPanel(o){
   if(o.designImageUrl&&!imgs.length)imgs.push({url:o.designImageUrl,name:'التصميم',idx:-1});
   if(o.printFinalUrl&&!imgs.length)imgs.push({url:o.printFinalUrl,name:'الملف النهائي',idx:-1});
 
-  const importBanner=!ci.length?`<div style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
   // تعليمات الطباعة كمرجع
   const printRef=o.printNotes?`<div style="background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.25);border-radius:10px;padding:10px 12px;margin-bottom:12px"><div style="font-size:10px;font-weight:800;color:var(--y);margin-bottom:4px">📋 تعليمات الطباعة</div><div style="font-size:12px;color:var(--snow);white-space:pre-wrap;line-height:1.6">${o.printNotes}</div></div>`:'';
   function prodInfoHtml(prod){
@@ -876,7 +847,7 @@ function renderPanel(o){
     </div>`;
   }
   if(imgs.length){
-    dEl.innerHTML=printRef+importBanner+imgs.map(img=>{
+    dEl.innerHTML=printRef+imgs.map(img=>{
       const prodCi=img.idx>=0?ci.filter(c2=>c2.prodIdx===img.idx||c2.prodIdx==null):ci;
       const ciTotal=prodCi.reduce((s,c2)=>s+(parseFloat(c2.total)||0),0);
       const prodObj=img.idx>=0?prods[img.idx]:null;
@@ -897,7 +868,7 @@ function renderPanel(o){
     }).join('');
   } else {
     const gCiTotal=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    dEl.innerHTML=printRef+importBanner+prodInfoHtml(prods[0])+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
+    dEl.innerHTML=printRef+prodInfoHtml(prods[0])+`<div class="design-img-wrap"><div class="design-placeholder">📷<br>لا توجد صورة تصميم</div></div>
     <button class="cost-open-btn" onclick="openCostPanel(-1)">
       <span>💰 البنود${ci.length?' ('+ci.length+')':''}</span>
       <span style="color:${gCiTotal>0?'var(--r)':'var(--dim2)'}">${gCiTotal>0?fn(gCiTotal)+' ج ›':'لا توجد — اضغط للإضافة ›'}</span>
@@ -952,11 +923,10 @@ function renderCosts(o){
   function ciRow(item,globalIdx){
     return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:14px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span><button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
   }
-  const importBanner=!ci.length?`<div id="import-cost-banner" style="background:rgba(34,211,238,.07);border:1px dashed rgba(34,211,238,.3);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--c)">💡 استيراد آخر تكاليف لنفس المنتج؟</span><button onclick="importLastCosts()" style="font-size:11px;font-weight:900;padding:5px 12px;border-radius:20px;border:none;background:var(--c);color:#0d0f1c;cursor:pointer">استيراد</button></div>`:'';
   if(!prods.length){
-    el.innerHTML=importBanner+ci.map((item,i)=>ciRow(item,i)).join('')+`<button class="cost-add-btn" onclick="openAddCost(-1)">＋ إضافة بند</button>`;
+    el.innerHTML=ci.map((item,i)=>ciRow(item,i)).join('')+`<button class="cost-add-btn" onclick="openAddCost(-1)">＋ إضافة بند</button>`;
   } else {
-    el.innerHTML=importBanner+prods.map((p,pi)=>{
+    el.innerHTML=prods.map((p,pi)=>{
       const prodCi=ci.map((c,i)=>({...c,gi:i})).filter(c=>c.prodIdx===pi||(c.prodIdx==null&&pi===prods.length-1));
       return`<div class="cost-prod-block"><div class="cost-prod-hdr"><span class="cost-prod-name">📦 ${p.name}</span><span class="cost-prod-qty">×${p.qty}</span></div>${prodCi.length?prodCi.map(c=>ciRow(c,c.gi)).join(''):'<div style="padding:10px 14px;font-size:12px;color:var(--dim2)">لا توجد بنود</div>'}<button class="cost-add-btn" onclick="openAddCost(${pi})">＋ إضافة بند لـ ${p.name}</button></div>`;
     }).join('');
@@ -1119,52 +1089,6 @@ window.rmCost=async function(idx){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-window.importLastCosts=async function(){
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  if((o.costItems||[]).length&&!confirm('الأوردر فيه تكاليف بالفعل، تستبدلها بالمستورد؟'))return;
-  const prods=o.products||[];
-  toast('⏳ جاري البحث...','');
-  try{
-    // ── الأولوية 1: سجل تكاليف المنتج ──
-    if(prods.length&&productsCatalog.length){
-      const importedItems=[];
-      for(let pi=0;pi<prods.length;pi++){
-        const prod=prods[pi];
-        const pName=(prod.name||'').trim().toLowerCase();
-        const pQty=parseFloat(prod.qty)||0;
-        const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-        if(!catProd||(catProd.costHistory||[]).length===0)continue;
-        const history=catProd.costHistory||[];
-        const match=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0]||history.slice(-1)[0];
-        if(match&&(match.items||[]).length){
-          match.items.forEach(item=>importedItems.push({...item,prodIdx:pi,addedAt:nowStr(),importedFrom:'history'}));
-        }
-      }
-      if(importedItems.length){
-        await updateDoc(doc(db,'orders',activeId),{costItems:importedItems,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${importedItems.length} بند من سجل المنتجات`,by:userName}],updatedAt:serverTimestamp()});
-        toast(`✅ استُورد ${importedItems.length} بند من سجل التكاليف`,'ok');
-        return;
-      }
-    }
-    // ── الأولوية 2: أوردرات سابقة ──
-    const prodNames=prods.map(p=>(p.name||'').trim().toLowerCase()).filter(Boolean);
-    const snap=await getDocs(collection(db,'orders'));
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(prev=>{
-        if(prev._id===activeId)return false;
-        if(!(prev.costItems||[]).length)return false;
-        if(!prodNames.length)return true;
-        const prevNames=(prev.products||[]).map(p=>(p.name||'').trim().toLowerCase());
-        return prodNames.some(n=>prevNames.includes(n));
-      })
-      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    if(!all.length)return toast('⚠️ لم يُعثر على تكاليف سابقة — أضف تركيبة في كتالوج المنتجات','err');
-    const src=all[0];
-    const imported=src.costItems.map(c=>({...c,prodIdx:null,addedAt:nowStr(),importedFrom:src._id}));
-    await updateDoc(doc(db,'orders',activeId),{costItems:imported,timeline:[...(o.timeline||[]),{date:nowStr(),action:`📋 استيراد ${imported.length} بند من أوردر ${src.clientName||src._id}`,by:userName}],updatedAt:serverTimestamp()});
-    toast(`✅ استُورد ${imported.length} بند من أوردر ${src.clientName||'—'}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-};
 
 window.handleFinalImg=function(inp){const f=inp.files[0];if(f)uploadFinal(f);};
 
