@@ -463,11 +463,11 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid||empId)),snap=>{
     attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
     empAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderAttendance();
+    renderAttendance();renderInsights();
   });
   onSnapshot(query(collection(db,'transactions_v2'),where('employeeId','==',empId)),snap=>{
     empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    renderSalaries();
+    renderSalaries();renderInsights();
   });
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
@@ -577,6 +577,18 @@ function renderAll(){
       ${kpis.map(k=>`<div class="kpi" style="--kc:${k.col}"><div class="kpi-val">${k.val}</div><div class="kpi-lbl">${k.lbl}</div></div>`).join('')}
     </div>
 
+    <!-- ذكاء: تحليل الأداء -->
+    <div id="insights-wrap" style="margin-bottom:14px"></div>
+
+    <!-- العملاء المرتبطون — للإدارة فقط -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">👤 العملاء المرتبطون <span id="clients-count" style="font-size:11px;color:var(--dim2);font-weight:400"></span></div>
+        <span style="font-size:10px;background:rgba(255,61,110,.12);color:var(--r);padding:2px 8px;border-radius:10px;font-weight:700">🔒 إدارة فقط</span>
+      </div>
+      <div id="clients-container"></div>
+    </div>
+
     <!-- المهام -->
     <div class="section" style="margin-bottom:14px">
       <div class="section-head" style="margin-bottom:12px">
@@ -627,6 +639,124 @@ function renderAll(){
   renderAttendance();
   renderSalaries();
   renderPermissions();
+  renderClients();
+  renderInsights();
+}
+
+// ══ HELPERS ══
+const isMainSalaryTx=t=>t.employeeId&&!t.isDeduction&&(t.salaryType==='salary'||(!t.salaryType&&(t.category==='salary'||t.category==='designer_fee')));
+function isLastMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();const pm=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getMonth()===pm.getMonth()&&d.getFullYear()===pm.getFullYear();}
+function getEmpOrders(){
+  const uid=emp.authUid||empId;
+  if(emp.role==='customer_service')return allOrders.filter(o=>o.createdBy===uid||o.createdBy===empId);
+  if(emp.role==='graphic_designer'||emp.role==='design_operator')return allOrders.filter(o=>o.designerId===uid||o.designerId===empId);
+  if(emp.role==='production_agent')return allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===empId);
+  if(emp.role==='shipping_officer')return allOrders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId);
+  return [];
+}
+
+// ══ CLIENTS ══
+function renderClients(){
+  const el=document.getElementById('clients-container');if(!el||!emp)return;
+  const empOrders=getEmpOrders();
+  if(!empOrders.length){
+    el.innerHTML='<div style="text-align:center;color:var(--dim2);font-size:12px;padding:16px 0">لا يوجد عملاء مرتبطون بعد</div>';
+    setText('clients-count','');return;
+  }
+  // تجميع حسب العميل
+  const map={};
+  for(const o of empOrders){
+    const key=o.clientPhone||o.clientId||o.clientName||'?';
+    if(!map[key])map[key]={name:o.clientName||'—',phone:o.clientPhone||'',orders:[],revenue:0,lastDate:null};
+    map[key].orders.push(o);
+    map[key].revenue+=parseFloat(o.salePrice)||0;
+    const d=o.createdAt?.toDate?.();
+    if(d&&(!map[key].lastDate||d>map[key].lastDate))map[key].lastDate=d;
+  }
+  const clients=Object.values(map).sort((a,b)=>b.revenue-a.revenue);
+  setText('clients-count',`(${clients.length})`);
+  el.innerHTML=clients.map((c,i)=>{
+    const archived=c.orders.filter(o=>o.stage==='archived').length;
+    const rate=c.orders.length>0?Math.round(archived/c.orders.length*100):0;
+    const rateCol=rate>=70?'var(--g)':rate>=40?'var(--y)':'var(--r)';
+    const lastStr=c.lastDate?c.lastDate.toLocaleDateString('ar-EG'):'—';
+    const waHref=c.phone?`https://wa.me/2${c.phone.replace(/^0/,'')}`:'';
+    const isTop=i===0&&clients.length>1;
+    const isRepeat=c.orders.length>1;
+    return `<div style="display:flex;gap:12px;align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop?'box-shadow:0 2px 8px rgba(0,217,126,.12)':''}">
+      <div style="width:38px;height:38px;border-radius:50%;background:${isTop?'rgba(0,217,126,.15)':'var(--bg2)'};color:${isTop?'var(--g)':'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;flex-shrink:0">${(c.name||'?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:800;margin-bottom:3px;display:flex;gap:6px;align-items:center">
+          ${c.name}
+          ${isTop?'<span style="font-size:9px;background:rgba(0,217,126,.15);color:var(--g);padding:1px 6px;border-radius:8px;font-weight:700">★ الأعلى</span>':''}
+          ${isRepeat?'<span style="font-size:9px;background:rgba(59,158,255,.12);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:700">↩ متكرر</span>':''}
+        </div>
+        <div style="font-size:10px;color:var(--dim2)">${c.phone||'—'} · آخر أوردر: ${lastStr}</div>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center;flex-shrink:0">
+        <div style="text-align:center">
+          <div style="font-size:14px;font-weight:900">${c.orders.length}</div>
+          <div style="font-size:9px;color:var(--dim2)">أوردر</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:14px;font-weight:900;color:var(--g)">${fn(c.revenue)}</div>
+          <div style="font-size:9px;color:var(--dim2)">ج</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:14px;font-weight:900;color:${rateCol}">${rate}%</div>
+          <div style="font-size:9px;color:var(--dim2)">مكتمل</div>
+        </div>
+        ${waHref?`<a href="${waHref}" target="_blank" style="font-size:18px;text-decoration:none;opacity:.8" onclick="event.stopPropagation()">💬</a>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══ SMART INSIGHTS ══
+function renderInsights(){
+  const el=document.getElementById('insights-wrap');if(!el||!emp)return;
+  const uid=emp.authUid||empId;
+  const mKey=monthKey();
+  const insights=[];
+  // مقارنة الأداء هذا الشهر مقابل الماضي
+  const thisM=allOrders.filter(o=>isThisMonth(o.createdAt));
+  const lastM=allOrders.filter(o=>isLastMonth(o.createdAt));
+  function empCount(orders){
+    if(emp.role==='customer_service')return orders.filter(o=>o.createdBy===uid||o.createdBy===empId).length;
+    if(emp.role==='graphic_designer'||emp.role==='design_operator')return orders.filter(o=>o.designerId===uid||o.designerId===empId).length;
+    if(emp.role==='production_agent')return orders.filter(o=>o.productionAgent===uid||o.productionAgent===empId).length;
+    if(emp.role==='shipping_officer')return orders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===empId).length;
+    return 0;
+  }
+  const thisCnt=empCount(thisM), lastCnt=empCount(lastM);
+  if(lastCnt>0||thisCnt>0){
+    const diff=thisCnt-lastCnt;
+    const pct=lastCnt>0?Math.round(Math.abs(diff)/lastCnt*100):100;
+    const lbl={customer_service:'أوردر',graphic_designer:'تصميم',design_operator:'تصميم',production_agent:'أوردر تنفيذ',shipping_officer:'شحنة'}[emp.role]||'أوردر';
+    insights.push({ico:diff>=0?'📈':'📉',title:`${diff>=0?'+':''}${diff} ${lbl} عن الشهر الماضي`,sub:`هذا الشهر: ${thisCnt} · الماضي: ${lastCnt} · ${diff>=0?'↑':'↓'} ${pct}%`,col:diff>=0?'var(--g)':'var(--r)'});
+  }
+  // تحذير حضور
+  const presentDays=empAttendance.filter(a=>a.date?.startsWith(mKey)).length;
+  const elapsed=Math.max(1,now.getDate());
+  const attPct=Math.round(presentDays/elapsed*100);
+  if(attPct<60&&emp.status==='active')insights.push({ico:'⚠️',title:`نسبة حضور منخفضة — ${attPct}%`,sub:`حضر ${presentDays} من ${elapsed} يوم هذا الشهر`,col:'var(--r)'});
+  // تحذير مرتب
+  const salPaid=empSalaries.some(t=>isMainSalaryTx(t)&&t.month===mKey);
+  if(!salPaid&&emp.status==='active')insights.push({ico:'💸',title:'لم يُصرف مرتب هذا الشهر بعد',sub:`المرتب الأساسي: ${fn(emp.baseSalary||0)} ج`,col:'var(--y)'});
+  // أعلى عميل
+  const empOrd=getEmpOrders();
+  if(empOrd.length){
+    const map={};
+    for(const o of empOrd){const k=o.clientPhone||o.clientName||'?';if(!map[k])map[k]={name:o.clientName||'—',rev:0,cnt:0};map[k].rev+=parseFloat(o.salePrice)||0;map[k].cnt++;}
+    const top=Object.values(map).sort((a,b)=>b.rev-a.rev)[0];
+    if(top)insights.push({ico:'⭐',title:`أعلى عميل: ${top.name}`,sub:`${top.cnt} أوردر · ${fn(top.rev)} ج إجمالي`,col:'var(--p)'});
+  }
+  if(!insights.length){el.innerHTML='';return;}
+  el.innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap">${insights.map(i=>`
+    <div style="flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${i.col};border-radius:var(--rad2);padding:10px 14px">
+      <div style="font-size:13px;font-weight:800;margin-bottom:3px">${i.ico} ${i.title}</div>
+      <div style="font-size:11px;color:var(--dim2)">${i.sub}</div>
+    </div>`).join('')}</div>`;
 }
 
 // ══ PERMISSIONS ══
