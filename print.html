@@ -356,7 +356,7 @@
 <script type="module">
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -713,17 +713,24 @@ window.saveCollect=async function(){
   const newRem=Math.max(0,getNet(o)-newPaid);
   const status=newRem<=0?'paid':newPaid>0?'partial':'pending';
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const w=wallets.find(x=>x._id===wid);
+    const bb=parseFloat(w?.balance)||0;
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
       totalPaid:newPaid,remaining:newRem,paymentStatus:status,updatedAt:serverTimestamp(),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج عبر ${wname}`,by:userName}]
     });
-    await addDoc(collection(db,'transactions_v2'),{
-      type:'in',amount:amt,walletId:wid,walletName:wname,
+    const txRef=doc(collection(db,'transactions_v2'));
+    batch.set(txRef,{
+      type:'in',category:'collection',amount:amt,
+      walletId:wid,walletName:wname,
       orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'—',
-      note:`تحصيل — ${o.clientName||'—'}`,createdAt:serverTimestamp(),by:userName
+      note:`تحصيل — ${o.clientName||'—'}`,
+      balanceBefore:bb,balanceAfter:bb+amt,
+      date:nowStr(),createdAt:serverTimestamp(),by:userName
     });
-    const w=wallets.find(x=>x._id===wid);
-    if(w)await updateDoc(doc(db,'wallets',wid),{balance:increment(amt)});
+    if(w)batch.update(doc(db,'wallets',wid),{balance:increment(amt)});
+    await batch.commit();
     window.cM('collect');toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };

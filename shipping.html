@@ -568,7 +568,7 @@ window.addEventListener('unhandledrejection', e=>{
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp, increment }
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
@@ -1169,14 +1169,17 @@ window.saveShip=async function(){
   try{
     if(collectAmt>0&&wId){
       const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
-      if(w)await updateDoc(doc(db,'wallets',wId),{balance:increment(collectAmt)});
-      await addDoc(collection(db,'transactions_v2'),{walletId:wId,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const colBatch=writeBatch(db);
+      const colTxRef=doc(collection(db,'transactions_v2'));
+      colBatch.set(colTxRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      if(w)colBatch.update(doc(db,'wallets',wId),{balance:increment(collectAmt)});
+      await colBatch.commit();
     }
     if(colMode==='later'&&rem>0&&debtType!=='company'){
-      await addDoc(collection(db,'transactions_v2'),{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      await addDoc(collection(db,'transactions_v2'),{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
     if(shipCost>0&&!(parseFloat(o.shipCost)>0)){
-      await addDoc(collection(db,'transactions_v2'),{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      await addDoc(collection(db,'transactions_v2'),{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
     // لو pickup وتحصيل كامل → أرشف تلقائياً
     const shouldArchive = method==='pickup' && newRem<=0;
