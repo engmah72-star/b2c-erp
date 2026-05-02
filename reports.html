@@ -209,6 +209,44 @@
   </div>
 </div>
 
+<!-- Modal: إضافة تكلفة -->
+<div class="overlay" id="ov-add-cost">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head">
+      <span class="modal-title">💰 إضافة تكلفة</span>
+      <button class="modal-x" onclick="document.getElementById('ov-add-cost').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ac-order-id">
+      <div id="ac-order-info" style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:14px;font-size:13px;font-weight:800"></div>
+      <div class="fg">
+        <label>نوع البند *</label>
+        <select class="inp" id="ac-type">
+          <option value="">— اختر —</option>
+          <option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option>
+          <option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>المورد (اختياري)</label>
+        <select class="inp" id="ac-supplier"><option value="">— بدون مورد —</option></select>
+      </div>
+      <div class="g2">
+        <div class="fg"><label>المبلغ (ج) *</label><input class="inp" id="ac-amount" type="number" placeholder="0" min="0"></div>
+        <div class="fg">
+          <label>المحفظة (اختياري)</label>
+          <select class="inp" id="ac-wallet"><option value="">— بدون خصم —</option></select>
+        </div>
+      </div>
+      <div class="fg"><label>ملاحظة</label><input class="inp" id="ac-note" type="text" placeholder="وصف البند..."></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-add-cost').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-r" id="ac-save-btn" onclick="saveOrderCost()">＋ إضافة</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts" class="toasts"></div>
 
 <script type="module">
@@ -219,7 +257,7 @@ function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const page
 
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,getDoc,getDocs,deleteDoc,updateDoc,addDoc,query,where,serverTimestamp,increment} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,getDoc,getDocs,deleteDoc,updateDoc,addDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
@@ -870,6 +908,10 @@ function renderCollectionRows(data){
           style="padding:4px 8px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">
           ✏️
         </button>
+        <button onclick="openAddCostModal('${o._id}','${(o.clientName||'').replace(/'/g,'')}')"
+          style="padding:4px 8px;border-radius:6px;border:1px solid ${cost>0?'rgba(255,170,0,.3)':'rgba(255,61,110,.5)'};background:${cost>0?'rgba(255,170,0,.08)':'rgba(255,61,110,.12)'};color:${cost>0?'var(--y)':'var(--r)'};font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">
+          💰
+        </button>
       </div>
     </div>`;
   }).join('');
@@ -1023,6 +1065,64 @@ window.saveEditOrder=async function(){
     document.getElementById('ov-edit-order').classList.remove('open');
     toast('✅ تم حفظ التعديلات في كل السيستم','ok');
   }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ إضافة تكلفة من جرد التحصيل ══
+window.openAddCostModal=function(orderId,clientName){
+  document.getElementById('ac-order-id').value=orderId;
+  document.getElementById('ac-order-info').textContent='👤 '+clientName;
+  document.getElementById('ac-type').value='';
+  document.getElementById('ac-amount').value='';
+  document.getElementById('ac-note').value='';
+  // موردين
+  const supSel=document.getElementById('ac-supplier');
+  supSel.innerHTML='<option value="">— بدون مورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('');
+  supSel.value='';
+  // محافظ
+  const walSel=document.getElementById('ac-wallet');
+  walSel.innerHTML='<option value="">— بدون خصم من محفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
+  walSel.value='';
+  document.getElementById('ov-add-cost').classList.add('open');
+};
+
+window.saveOrderCost=async function(){
+  const orderId=document.getElementById('ac-order-id').value;
+  const type=document.getElementById('ac-type').value;
+  const amount=parseFloat(document.getElementById('ac-amount').value)||0;
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!amount)return toast('⚠️ أدخل المبلغ','err');
+  const note=document.getElementById('ac-note').value.trim();
+  const walletId=document.getElementById('ac-wallet').value;
+  const supSel=document.getElementById('ac-supplier');
+  const supOpt=supSel?.options[supSel.selectedIndex];
+  const supplierId=supOpt?.value||'';
+  const supplierName=supplierId?(supOpt?.dataset?.name||supOpt?.text||''):'';
+  const btn=document.getElementById('ac-save-btn');
+  btn.disabled=true;btn.textContent='جاري...';
+  try{
+    const snap=await getDoc(doc(db,'orders',orderId));
+    if(!snap.exists())throw new Error('الأوردر غير موجود');
+    const o=snap.data();
+    const now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+    const newItem={type,supplierId,supplierName,total:amount,note,addedAt:now,addedBy:userName||''};
+    const ci=[...(o.costItems||[]),newItem];
+    if(walletId){
+      const w=wallets.find(x=>x._id===walletId);
+      if(w&&(parseFloat(w.balance)||0)<amount)throw new Error(`رصيد ${w.name} غير كافٍ`);
+      const batch=writeBatch(db);
+      const txRef=doc(collection(db,'transactions_v2'));
+      newItem.txId=txRef.id;newItem.walletId=walletId;
+      batch.update(doc(db,'orders',orderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:now,action:`💰 ${type}: ${fn(amount)} ج${note?' — '+note:''}`,by:userName||''}],updatedAt:serverTimestamp()});
+      batch.update(doc(db,'wallets',walletId),{balance:increment(-amount)});
+      batch.set(txRef,{type:'out',walletId,amount,category:'supplier',description:`${type}${note?' — '+note:''} · ${o.clientName||''}`,supplierId,supplierName,orderId,orderClient:o.clientName||'',date:new Date().toLocaleDateString('ar-EG'),createdAt:serverTimestamp(),createdBy:userName||''});
+      await batch.commit();
+    } else {
+      await updateDoc(doc(db,'orders',orderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:now,action:`💰 ${type}: ${fn(amount)} ج${note?' — '+note:''}`,by:userName||''}],updatedAt:serverTimestamp()});
+    }
+    document.getElementById('ov-add-cost').classList.remove('open');
+    toast('✅ تم إضافة التكلفة','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+  finally{btn.disabled=false;btn.textContent='＋ إضافة';}
 };
 
 window.exportExcel=function(){
