@@ -247,6 +247,7 @@ const auth=getAuth(app),db=getFirestore(app);
 let myOrders=[],myClients=[],myTasks=[],myAttendance=[],todayAtt=null;
 let currentUser=null,userName='',uid='',activeTab='active';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const now=new Date();
 const MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -302,10 +303,10 @@ function render(){
   const monthly=myOrders.filter(o=>isThisMonth(o.createdAt));
   const active=myOrders.filter(o=>o.stage!=='archived');
   const monthClients=myClients.filter(c=>isThisMonth(c.createdAt));
-  const sales=monthly.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const sales=monthly.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const closed=monthly.filter(o=>o.stage==='archived').length;
   const rate=monthly.length>0?Math.round(closed/monthly.length*100):0;
-  const withRem=active.filter(o=>(parseFloat(o.remaining)||0)>0);
+  const withRem=active.filter(o=>calcRem(o)>0);
   const presentDays=myAttendance.filter(a=>a.date?.startsWith(monthKey())).length;
   const workDays=Math.round(new Date(now.getFullYear(),now.getMonth()+1,0).getDate()*5/7);
   let attState='none',attText='',attDetail='',attBtnText='',attBtnClass='in';
@@ -365,7 +366,7 @@ function render(){
         ${withRem.slice(0,4).map(o=>`<div class="alert-item" onclick="location.href='design.html'">
           <span style="font-size:16px">💰</span>
           <div style="flex:1"><strong>${o.clientName||'—'}</strong> <span style="font-size:11px;color:var(--dim2)">${o.orderId||''}</span></div>
-          <span style="color:var(--r);font-weight:700">${fn(o.remaining)} ج</span>
+          <span style="color:var(--r);font-weight:700">${fn(calcRem(o))} ج</span>
         </div>`).join('')}
       </div>`:''}
       <!-- حضور الشهر -->
@@ -411,7 +412,7 @@ function renderOrders(active,withRem,tab,monthly){
   const SA={design:'✏️',printing:'🖨️',production:'🏭',shipping:'🚚',archived:'✅'};
   const SC={design:'var(--p)',printing:'var(--b)',production:'var(--r)',shipping:'var(--c)',archived:'var(--g)'};
   const SH={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
-  return data.map(o=>{const rem=parseFloat(o.remaining)||0;const sc=SC[o.stage]||'var(--dim2)';return`<div class="ocard" onclick="location.href='${SH[o.stage]||'index'}.html'">
+  return data.map(o=>{const rem=calcRem(o);const sc=SC[o.stage]||'var(--dim2)';return`<div class="ocard" onclick="location.href='${SH[o.stage]||'index'}.html'">
     <div style="display:flex;justify-content:space-between;margin-bottom:6px">
       <div><div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div><div style="font-size:15px;font-weight:800">${o.clientName||'—'}</div></div>
       <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${sc}15;color:${sc};height:fit-content">${SA[o.stage]||o.stage}</span>
@@ -422,7 +423,7 @@ function renderOrders(active,withRem,tab,monthly){
     </div>
   </div>`;}).join('');
 }
-window.switchTab=function(t){activeTab=t;const active=myOrders.filter(o=>o.stage!=='archived');const withRem=active.filter(o=>(parseFloat(o.remaining)||0)>0);const monthly=myOrders.filter(o=>isThisMonth(o.createdAt));const el=document.getElementById('orders-list');if(el)el.innerHTML=renderOrders(active,withRem,t,monthly);document.querySelectorAll('.tab-item').forEach((btn,i)=>{btn.classList.toggle('active',['active','pending','done'][i]===t);});};
+window.switchTab=function(t){activeTab=t;const active=myOrders.filter(o=>o.stage!=='archived');const withRem=active.filter(o=>calcRem(o)>0);const monthly=myOrders.filter(o=>isThisMonth(o.createdAt));const el=document.getElementById('orders-list');if(el)el.innerHTML=renderOrders(active,withRem,t,monthly);document.querySelectorAll('.tab-item').forEach((btn,i)=>{btn.classList.toggle('active',['active','pending','done'][i]===t);});};
 window.doAtt=async function(){if(!currentUser)return;const today=todayStr();const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});try{if(!todayAtt){await addDoc(collection(db,'attendance'),{employeeUid:uid,employeeName:userName,date:today,checkIn:serverTimestamp(),checkInStr:timeStr,checkOut:null,hoursWorked:0,createdAt:serverTimestamp()});toast('✅ تم تسجيل الحضور — '+timeStr,'ok');}else if(!todayAtt.checkOut){const inTime=todayAtt.checkIn?.toDate?.();const hours=inTime?((new Date()-inTime)/(1000*60*60)).toFixed(1):0;await updateDoc(doc(db,'attendance',todayAtt._id),{checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hours)});toast('✅ تم الانصراف — '+hours+' ساعة','ok');}}catch(e){toast('❌ '+e.message,'err');}};
 window.doneTask=async function(id){try{await updateDoc(doc(db,'tasks',id),{status:'done',doneAt:serverTimestamp()});toast('✅ تم إنجاز المهمة','ok');}catch(e){toast('❌ '+e.message,'err');}};
 </script>

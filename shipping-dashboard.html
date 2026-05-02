@@ -246,6 +246,7 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app),db=getFirestore(app);
 let allOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='ready';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const now=new Date();
 const MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -282,12 +283,12 @@ function updateKPIs(){
   const shipped=allOrders.filter(o=>o.shipStage==='wait_delivery'&&o.stage==='shipping');
   const monthly=allOrders.filter(o=>isThisMonth(o.createdAt));
   const collected=monthly.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||0),0);
-  const remaining=monthly.reduce((s,o)=>s+(parseFloat(o.remaining)||0),0);
+  const remaining=allOrders.filter(o=>o.stage!=='archived').reduce((s,o)=>s+calcRem(o),0);
   setText('k-ready',ready.length);setText('k-shipped',shipped.length);
   setText('k-collected',fn(collected));setText('k-remaining',fn(remaining));
 }
 function renderAlerts(){
-  const withRem=allOrders.filter(o=>(parseFloat(o.remaining)||0)>0&&o.stage!=='archived');
+  const withRem=allOrders.filter(o=>calcRem(o)>0&&o.stage!=='archived');
   const box=document.getElementById('alerts-box');
   const list=document.getElementById('alerts-list');
   if(!withRem.length||!box||!list){if(box)box.style.display='none';return;}
@@ -295,7 +296,7 @@ function renderAlerts(){
   list.innerHTML=withRem.slice(0,5).map(o=>`
     <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px">
       <span style="font-weight:700">${o.clientName||'—'} <span style="color:var(--dim2)">·</span> <a href="tel:${o.clientPhone}" style="color:var(--b)">${o.clientPhone||''}</a></span>
-      <span style="color:var(--r);font-weight:700">${fn(o.remaining)} ج</span>
+      <span style="color:var(--r);font-weight:700">${fn(calcRem(o))} ج</span>
     </div>`).join('');
 }
 function renderAttBox(){
@@ -344,7 +345,7 @@ function renderOrders(){
   else data=allOrders.filter(o=>o.stage==='archived'&&isThisMonth(o.createdAt));
   if(!data.length){el.innerHTML='<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">لا توجد أوردرات</div></div>';return;}
   el.innerHTML=data.map(o=>{
-    const rem=parseFloat(o.remaining)||0;
+    const rem=calcRem(o);
     const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||o.product||'—';
     return`<div class="ocard" onclick="location.href='shipping.html'">
       <div style="display:flex;justify-content:space-between;margin-bottom:6px">

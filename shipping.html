@@ -582,6 +582,7 @@ let currentUser=null, userName='', activeId=null;
 let currentFilter='all', ssMethod='', ssStage='wait_delivery';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -825,11 +826,7 @@ window.updateShipKPIs=function(){
   const total=orders.length;
   const pending=orders.filter(o=>!o.shipStage||o.shipStage==='ready'||o.shipStage==='wait_delivery').length;
   const collected=orders.filter(o=>o.shipStage==='collected').length;
-  const totRem=orders.reduce((s,o)=>{
-    const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    return s+Math.max(0,sale-paid);
-  },0);
+  const totRem=orders.reduce((s,o)=>s+calcRem(o),0);
   const setText2=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
   setText2('sk-total',total);
   setText2('sk-pending',pending);
@@ -855,7 +852,7 @@ window.renderList=function(){
     const sc=STAGE_COL[ss]||'var(--c)';
     const sale2=parseFloat(o.salePrice)||0;
     const paid2=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const rem=parseFloat(o.remaining)||Math.max(0,sale2-paid2);
+    const rem=calcRem(o);
     const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
     const firstImg=(o.products||[]).find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.finalImageUrl||'';
     const noCost=!(o.costItems||[]).length;
@@ -893,7 +890,7 @@ window.openOrder=function(id){
   const sc=STAGE_COL[ss]||'var(--c)';
   const sale=parseFloat(o.salePrice)||0;
   const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-  const rem=parseFloat(o.remaining)||Math.max(0,sale-paid);
+  const rem=calcRem(o);
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
@@ -1033,7 +1030,7 @@ window.openShipSetup=function(){
   setText('ss-product',(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—');
   const ph=document.getElementById('ss-phone-link');
   if(ph){ph.href='tel:'+o.clientPhone;}
-  const rem=parseFloat(o.remaining)||0;
+  const rem=calcRem(o);
   document.getElementById('ss-finance').style.display=rem>0?'block':'none';
   if(rem>0){
     setText('ss-f-sale',fn(parseFloat(o.salePrice)||0)+' ج');
@@ -1132,7 +1129,7 @@ window.updatePreview=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const prev=document.getElementById('ss-col-preview');if(!prev)return;
   if(!amt){prev.style.display='none';return;}
-  const rem=parseFloat(o.remaining)||0;
+  const rem=calcRem(o);
   const after=Math.max(0,rem-amt);
   prev.style.display='block';
   prev.style.background=after===0?'rgba(0,217,126,.1)':'rgba(255,170,0,.08)';
@@ -1150,7 +1147,7 @@ window.saveShip=async function(){
   const shipCost=parseFloat(gv('ss-cost'))||0;
   const stage=gv('ss-stage')||'wait_delivery';
   const colMode=gv('ss-col-mode')||'now';
-  const rem=parseFloat(o.remaining)||0;
+  const rem=calcRem(o);
   let collectAmt=0,wId='',wName='',transferRef='';
   if(rem>0&&colMode==='now'){
     collectAmt=parseFloat(gv('ss-col-amt'))||0;
@@ -1158,7 +1155,7 @@ window.saveShip=async function(){
     if(collectAmt>0&&!wId)return toast('⚠️ اختر طريقة الدفع','err');
   }
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+collectAmt;
-  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-newPaid);
+  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-newPaid);
   const debtType=gv('ss-debt-type')||'client';
   const parts=[`🚚 ${METHOD_LABELS[method]||method}`];
   if(shipCompanyName&&method!=='pickup')parts.push(shipCompanyName);
@@ -1236,7 +1233,7 @@ window.saveDeliver=async function(){
   if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
   try{
     const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
-    const finalRem=parseFloat(o.remaining)||0;
+    const finalRem=calcRem(o);
     await updateDoc(doc(db,'orders',activeId),{
       stage:'archived',
       totalPaid:finalPaid,
