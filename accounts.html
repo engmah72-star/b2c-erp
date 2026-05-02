@@ -754,10 +754,32 @@ function renderSection(){
 }
 
 // ══ KPI DRILL-DOWN PANEL ══
-window.openKpiDrill=function(drillType){
+window.openKpiDrill=function(drillType, walletFilter){
+  if(walletFilter===undefined)walletFilter='';
   const label=getPeriodSubLabel();
   const periodTx=transactions.filter(t=>isInPeriod(t.createdAt));
   let title='',html='';
+
+  // ── شريط فلتر المحافظ ──
+  function walletBar(txType){
+    const col=txType==='in'?'var(--g)':'var(--r)';
+    const colBg=txType==='in'?'rgba(0,217,126,':'rgba(255,61,110,';
+    const wData=wallets.map(w=>{
+      const tot=periodTx.filter(t=>t.type===txType&&t.walletId===w._id).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+      return{...w,tot};
+    }).filter(w=>w.tot>0).sort((a,b)=>b.tot-a.tot);
+    if(!wData.length)return'';
+    return`<div style="margin-bottom:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--dim2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">📲 طريقة الدفع</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button onclick="openKpiDrill('${drillType}','')" style="padding:6px 12px;border-radius:20px;border:1px solid ${walletFilter===''?col:'var(--line)'};background:${walletFilter===''?colBg+'.15)':'transparent'};color:${walletFilter===''?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">الكل</button>
+        ${wData.map(w=>`<button onclick="openKpiDrill('${drillType}','${w._id}')" style="padding:6px 12px;border-radius:20px;border:1px solid ${walletFilter===w._id?col:'var(--line)'};background:${walletFilter===w._id?colBg+'.15)':'transparent'};color:${walletFilter===w._id?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:1px">
+          <span>${WICO[w.type]||'💼'} ${w.name}</span>
+          <span style="font-size:10px;font-weight:900;color:${col}">${fn(w.tot)} ج</span>
+        </button>`).join('')}
+      </div>
+    </div>`;
+  }
 
   function catBlock(cat,txs,isIn){
     if(!txs.length)return'';
@@ -768,38 +790,45 @@ window.openKpiDrill=function(drillType){
         <span style="font-size:13px;font-weight:800">${CAT[cat]||cat}</span>
         <span style="font-size:14px;font-weight:900;color:${col}">${fn(total)} ج</span>
       </div>
-      ${txs.slice(0,7).map(t=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-        <div style="flex:1;min-width:0">
-          <div style="color:var(--snow);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description||'—'}</div>
-          <div style="color:var(--dim2)">${t.date||''}${t.clientName?' · '+t.clientName:''}${t.supplierName?' · '+t.supplierName:''}${t.employeeName?' · '+t.employeeName:''}</div>
-        </div>
-        <span style="font-weight:800;color:${col};white-space:nowrap;margin-right:8px">${fn(t.amount)} ج</span>
-      </div>`).join('')}
+      ${txs.slice(0,7).map(t=>{
+        const w=wallets.find(x=>x._id===t.walletId);
+        return`<div style="display:flex;justify-content:space-between;align-items:flex-start;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--snow);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description||'—'}</div>
+            <div style="color:var(--dim2)">${t.date||''}${t.clientName?' · '+t.clientName:''}${t.supplierName?' · '+t.supplierName:''}${t.employeeName?' · '+t.employeeName:''}${w?' · '+w.name:''}</div>
+          </div>
+          <span style="font-weight:800;color:${col};white-space:nowrap;margin-right:8px">${fn(t.amount)} ج</span>
+        </div>`;
+      }).join('')}
       ${txs.length>7?`<div style="font-size:10px;color:var(--dim2);margin-top:4px;text-align:center">+ ${txs.length-7} حركة أخرى</div>`:''}
     </div>`;
   }
 
   if(drillType==='in'){
     title=`📥 الإيرادات — ${label}`;
-    const inTx=periodTx.filter(t=>t.type==='in');
+    let inTx=periodTx.filter(t=>t.type==='in');
+    if(walletFilter)inTx=inTx.filter(t=>t.walletId===walletFilter);
     const total=inTx.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const byCat={};inTx.forEach(t=>{const c=t.category||'other';(byCat[c]=byCat[c]||[]).push(t);});
     const sorted=Object.entries(byCat).sort(([,a],[,b])=>b.reduce((s,t)=>s+(parseFloat(t.amount)||0),0)-a.reduce((s,t)=>s+(parseFloat(t.amount)||0),0));
-    html=`<div style="background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${inTx.length} حركة دخل</span>
+    const wName=walletFilter?wallets.find(w=>w._id===walletFilter)?.name:'';
+    html=walletBar('in')+`<div style="background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${inTx.length} حركة${wName?' · '+wName:''}</span>
       <span style="font-size:22px;font-weight:900;color:var(--g)">${fn(total)} ج</span>
-    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,true)).join('')}`;
+    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,true)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد إيرادات للفترة المحددة</div>`}`;
 
   } else if(drillType==='out'){
     title=`📤 المصروفات — ${label}`;
-    const outTx=periodTx.filter(t=>t.type==='out');
+    let outTx=periodTx.filter(t=>t.type==='out');
+    if(walletFilter)outTx=outTx.filter(t=>t.walletId===walletFilter);
     const total=outTx.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const byCat={};outTx.forEach(t=>{const c=t.category||'other';(byCat[c]=byCat[c]||[]).push(t);});
     const sorted=Object.entries(byCat).sort(([,a],[,b])=>b.reduce((s,t)=>s+(parseFloat(t.amount)||0),0)-a.reduce((s,t)=>s+(parseFloat(t.amount)||0),0));
-    html=`<div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${outTx.length} حركة خرج</span>
+    const wName=walletFilter?wallets.find(w=>w._id===walletFilter)?.name:'';
+    html=walletBar('out')+`<div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${outTx.length} حركة${wName?' · '+wName:''}</span>
       <span style="font-size:22px;font-weight:900;color:var(--r)">${fn(total)} ج</span>
-    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,false)).join('')}`;
+    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,false)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد مصروفات للفترة المحددة</div>`}`;
 
   } else if(drillType==='profit'){
     title=`💹 الصافي — ${label}`;
