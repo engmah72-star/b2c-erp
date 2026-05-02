@@ -210,6 +210,11 @@
         <div class="fg"><label>المقاس</label><input class="inp" id="p-size" placeholder="9×5 / A4..."></div>
         <div class="fg"><label>السعر الافتراضي (ج.م)</label><input class="inp" id="p-price" type="number" placeholder="450"></div>
       </div>
+      <div class="fg">
+        <label>الكمية الافتراضية للأوردر</label>
+        <input class="inp" id="p-qty" type="number" placeholder="مثال: 10 أو 500" min="1">
+        <div style="font-size:11px;color:var(--dim2);margin-top:4px">مثال: لو بتبيع ليتر هيد بـ 750ج لـ 10 قطع → اكتب 10 · بيُحسب سعر الوحدة تلقائياً</div>
+      </div>
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="p-notes" placeholder="مواصفات إضافية..."></textarea></div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('add-prod');resetForm()">إلغاء</button><button class="btn btn-b" id="p-save-btn" onclick="saveProd()">✓ حفظ</button></div>
@@ -458,7 +463,8 @@ window.render=function(){
 
 window.saveProd=async function(){
   const name=gv('p-name');if(!name)return toast('⚠️ أدخل اسم المنتج','err');
-  const data={name,printType:gv('p-type'),paper:gv('p-paper'),weight:parseFloat(gv('p-weight'))||0,size:gv('p-size'),defaultPrice:parseFloat(gv('p-price'))||0,notes:gv('p-notes')};
+  const defaultQty=parseInt(gv('p-qty'))||0;
+  const data={name,printType:gv('p-type'),paper:gv('p-paper'),weight:parseFloat(gv('p-weight'))||0,size:gv('p-size'),defaultPrice:parseFloat(gv('p-price'))||0,defaultQty,notes:gv('p-notes')};
   try{
     if(editId) await updateDoc(doc(db,'products_v2',editId),data);
     else await addDoc(collection(db,'products_v2'),{...data,createdAt:serverTimestamp()});
@@ -471,7 +477,8 @@ window.editProd=function(id){
   document.getElementById('prod-modal-title').textContent='✏️ تعديل المنتج';
   document.getElementById('p-save-btn').textContent='✓ حفظ التعديلات';
   sv('p-name',p.name||'');sv('p-type',p.printType||'digital');sv('p-paper',p.paper||'');
-  sv('p-weight',p.weight||'');sv('p-size',p.size||'');sv('p-price',p.defaultPrice||'');sv('p-notes',p.notes||'');
+  sv('p-weight',p.weight||'');sv('p-size',p.size||'');sv('p-price',p.defaultPrice||'');
+  sv('p-qty',p.defaultQty||'');sv('p-notes',p.notes||'');
   oM('add-prod');
 };
 
@@ -485,7 +492,7 @@ window.resetForm=function(){
   editId=null;
   document.getElementById('prod-modal-title').textContent='＋ منتج جديد';
   document.getElementById('p-save-btn').textContent='✓ حفظ';
-  clearF(['p-name','p-paper','p-weight','p-size','p-price','p-notes']);sv('p-type','digital');
+  clearF(['p-name','p-paper','p-weight','p-size','p-price','p-qty','p-notes']);sv('p-type','digital');
 };
 
 // ══ سجل التكاليف ══
@@ -608,10 +615,16 @@ window.setView=function(v){
   renderCosts();
 };
 function cpUnit(h){return h&&h.qty>0?h.total/h.qty:0;}
+// سعر الوحدة = السعر الافتراضي ÷ الكمية الافتراضية (لو محددة)
+function salePricePerUnit(p){
+  if(!p.defaultPrice)return 0;
+  return p.defaultQty>0?p.defaultPrice/p.defaultQty:0;
+}
 function marginPct(p){
-  const h=(p.costHistory||[]);if(!h.length||!p.defaultPrice)return null;
-  const cpu=cpUnit(h[h.length-1]);
-  return Math.round((p.defaultPrice-cpu)/p.defaultPrice*100);
+  const h=(p.costHistory||[]);if(!h.length)return null;
+  const cpu=cpUnit(h[h.length-1]);if(!cpu)return null;
+  const spu=salePricePerUnit(p);if(!spu)return null;
+  return Math.round((spu-cpu)/spu*100);
 }
 function marginColor(m){return m===null?'var(--dim2)':m>=40?'var(--g)':m>=20?'var(--y)':'var(--r)';}
 function trendPct(p){
@@ -705,8 +718,11 @@ function renderCostsCards(data){
             <div style="font-size:16px;font-weight:900;color:var(--r)">${cpu>0?fn(Math.round(cpu))+' ج':'—'}</div>
           </div>
           <div style="flex:1;min-width:80px;background:var(--bg3);border-radius:8px;padding:8px 10px">
-            <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:2px">سعر البيع</div>
-            <div style="font-size:16px;font-weight:900;color:var(--g)">${p.defaultPrice?fn(p.defaultPrice)+' ج':'—'}</div>
+            <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:2px">سعر الوحدة</div>
+            ${(()=>{const spu=salePricePerUnit(p);return spu>0
+              ?`<div style="font-size:16px;font-weight:900;color:var(--g)">${fn(Math.round(spu))} ج</div><div style="font-size:10px;color:var(--dim2)">${fn(p.defaultPrice)} ج × ${fn(p.defaultQty)} قطعة</div>`
+              :`<div style="font-size:12px;color:var(--y);font-weight:700">⚠️ حدد الكمية<br>الافتراضية</div>`;
+            })()}
           </div>
         </div>
         ${history.length>=2?`<div style="margin-bottom:8px">${sparkHtml(history)}<div style="font-size:9px;color:var(--dim2);margin-top:2px">آخر ${Math.min(7,history.length)} سجلات</div></div>`:''}
@@ -731,7 +747,7 @@ function renderCostsTable(data){
   return`<div style="overflow-x:auto;border-radius:12px;border:1px solid var(--line)">
   <table class="ctbl">
     <thead><tr>
-      <th>المنتج</th><th>تكلفة الوحدة</th><th>سعر البيع</th>
+      <th>المنتج</th><th>تكلفة الوحدة</th><th>سعر الوحدة</th>
       <th>هامش الربح</th><th>الاتجاه</th><th>آخر كمية</th><th>سجلات</th><th></th>
     </tr></thead>
     <tbody>${data.map(p=>{
@@ -748,7 +764,9 @@ function renderCostsTable(data){
           <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:${col}18;color:${col}">${isDig?'ديجيتال':'أوفست'}</span>
         </td>
         <td style="font-weight:900;color:var(--r);font-size:15px">${cpu>0?fn(Math.round(cpu))+' ج':'—'}</td>
-        <td style="font-weight:800;color:var(--g)">${p.defaultPrice?fn(p.defaultPrice)+' ج':'—'}</td>
+        <td>${(()=>{const spu=salePricePerUnit(p);return spu>0
+          ?`<span style="font-weight:900;color:var(--g);font-size:15px">${fn(Math.round(spu))} ج</span><br><span style="font-size:10px;color:var(--dim2)">${fn(p.defaultPrice)} ج / ${fn(p.defaultQty)} ق</span>`
+          :`<span style="color:var(--y);font-size:11px">⚠️ كمية غير محددة</span>`;})()}</td>
         <td>
           ${m!==null?`<div style="display:flex;align-items:center;gap:8px">
             <div style="width:60px;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden"><div style="width:${mBar}%;height:100%;background:${mc};border-radius:3px"></div></div>
