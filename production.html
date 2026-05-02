@@ -440,44 +440,6 @@ window.deleteTlEntry=async function(idx){
 
 const COST_ICO={طباعة:'🖨️',ورق:'📄',قص:'✂️',سلفنة:'✨',زنكات:'🔵',تجميع:'📦',شحن:'🚚',تصميم:'✏️',أخرى:'📌'};
 
-window.importLastCost=async function(prodIdx){
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const prods=o.products||[];
-  const prod=prodIdx>=0?prods[prodIdx]:prods[0];
-  const ci=o.costItems||[];
-  // ابحث عن آخر سجل تكلفة
-  const catProd=prod
-    ?productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===(prod.name||'').trim().toLowerCase())
-    :productsCatalog.find(cp=>prods.some(p=>(cp.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase()));
-  const history=catProd?.costHistory||[];
-  const pQty=prod?.qty?parseFloat(prod.qty):null;
-  const relevant=pQty?history.filter(h=>parseFloat(h.qty)===pQty):history;
-  const last=relevant.slice(-1)[0]||history.slice(-1)[0];
-  if(!last||(last.items||[]).length===0)return toast('⚠️ لا توجد بنود سابقة للاستيراد','err');
-  // تحقق من وجود بنود حالية
-  const existing=prodIdx>=0?ci.filter(c=>c.prodIdx===prodIdx):ci;
-  if(existing.length){
-    if(!confirm(`الأوردر يحتوي على ${existing.length} بند بالفعل.\nسيتم حذف البنود الحالية لهذا المنتج واستبدالها. متأكد؟`))return;
-    // احذف البنود الحالية لهذا المنتج
-    const filtered=prodIdx>=0?ci.filter(c=>c.prodIdx!==prodIdx):[];
-    const now=nowStr();
-    const newItems=last.items.map(it=>({type:it.type||'أخرى',supplierId:it.supplierId||'',supplierName:it.supplierName||'',prodIdx:prodIdx>=0?prodIdx:null,total:parseFloat(it.total)||0,note:`مستورد من ${last.date||'—'}`,addedAt:now,addedBy:userName,imported:true,...(it.paperMeta?{paperMeta:it.paperMeta}:{})}));
-    const newCi=[...filtered,...newItems];
-    try{
-      await updateDoc(doc(db,'orders',activeId),{costItems:newCi,timeline:[...(o.timeline||[]),{date:now,action:`📥 استيراد تكلفة من ${last.date||'—'}: ${fn(last.total)} ج`,by:userName}],updatedAt:serverTimestamp()});
-      toast(`✅ تم استيراد ${newItems.length} بند — ${fn(last.total)} ج`,'ok');
-    }catch(e){toast('❌ '+e.message,'err');}
-  } else {
-    const now=nowStr();
-    const newItems=last.items.map(it=>({type:it.type||'أخرى',supplierId:it.supplierId||'',supplierName:it.supplierName||'',prodIdx:prodIdx>=0?prodIdx:null,total:parseFloat(it.total)||0,note:`مستورد من ${last.date||'—'}`,addedAt:now,addedBy:userName,imported:true,...(it.paperMeta?{paperMeta:it.paperMeta}:{})}));
-    const newCi=[...ci,...newItems];
-    try{
-      await updateDoc(doc(db,'orders',activeId),{costItems:newCi,timeline:[...(o.timeline||[]),{date:now,action:`📥 استيراد تكلفة من ${last.date||'—'}: ${fn(last.total)} ج`,by:userName}],updatedAt:serverTimestamp()});
-      toast(`✅ تم استيراد ${newItems.length} بند — ${fn(last.total)} ج`,'ok');
-    }catch(e){toast('❌ '+e.message,'err');}
-  }
-};
-
 function renderCostPanel(o,prodIdx){
   const sfx=prodIdx<0?'g':String(prodIdx);
   const ci=o.costItems||[];const prods=o.products||[];
@@ -522,7 +484,6 @@ function renderCostPanel(o,prodIdx){
   if(last&&(last.items||[]).length){
     const diffPct=ciTotal&&last.total?Math.round((ciTotal-last.total)/last.total*100):null;
     const diffStr=diffPct!=null?` <span style="color:${diffPct>15?'var(--r)':diffPct<-15?'var(--g)':'var(--dim2)'};font-size:10px">${diffPct>0?'+':''}${diffPct}%</span>`:'';
-    const alreadyImported=prodCi.some(c=>c.imported);
     refEl.innerHTML=`<div style="padding:12px 16px;border-bottom:1px solid var(--line);background:rgba(34,211,238,.04)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:11px;font-weight:800;color:var(--c)">📋 آخر تكلفة مسجّلة${pQty?' (×'+pQty+')':''}</span>
@@ -541,11 +502,8 @@ function renderCostPanel(o,prodIdx){
     ${pmStr?`<div style="font-size:10px;color:var(--dim2);margin-top:1px">📄 ${pmStr}</div>`:''}
   </div>`;
 }).join('')}
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
-        <button onclick="window.importLastCost(${prodIdx})" style="flex:1;padding:9px 12px;border-radius:10px;border:1.5px solid ${alreadyImported?'rgba(255,170,0,.4)':'rgba(34,211,238,.4)'};background:${alreadyImported?'rgba(255,170,0,.08)':'rgba(34,211,238,.08)'};color:${alreadyImported?'var(--y)':'var(--c)'};font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
-          ${alreadyImported?'🔄 إعادة استيراد':'📥 استيراد للأوردر'}
-        </button>
-        <span style="font-size:15px;font-weight:900;color:var(--c);flex-shrink:0">${fn(last.total)} ج${diffStr}</span>
+      <div style="display:flex;justify-content:flex-end;margin-top:8px">
+        <span style="font-size:15px;font-weight:900;color:var(--c)">${fn(last.total)} ج${diffStr}</span>
       </div>
     </div>`;
   } else { refEl.innerHTML=''; }
@@ -556,7 +514,7 @@ function renderCostPanel(o,prodIdx){
     itemsEl.innerHTML=`<div style="padding:24px 16px;text-align:center">
       <div style="font-size:32px;margin-bottom:8px">💰</div>
       <div style="font-size:13px;color:var(--dim2)">لا توجد بنود بعد</div>
-      <div style="font-size:11px;color:var(--dim2);margin-top:4px">${last&&(last.items||[]).length?'اضغط "استيراد" لنسخ البنود السابقة أو استخدم الفورم أدناه':'استخدم الفورم أدناه لإضافة بند'}</div>
+      <div style="font-size:11px;color:var(--dim2);margin-top:4px">استخدم الفورم أدناه لإضافة بند</div>
     </div>`;
   } else {
     // ملخص التكاليف بالنوع
@@ -574,8 +532,7 @@ function renderCostPanel(o,prodIdx){
         [item.paperMeta.paperType,item.paperMeta.paperWeight?item.paperMeta.paperWeight+'جم':'',item.paperMeta.sheets?item.paperMeta.sheets+' فرخة':'',item.paperMeta.pricePerSheet?fn(item.paperMeta.pricePerSheet)+' ج/فرخة':''].filter(Boolean).join(' · ')
       ):'';
       const ico=COST_ICO[item.type]||'📌';
-      return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;position:relative">
-        ${item.imported?`<span style="position:absolute;top:8px;left:8px;font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(34,211,238,.12);color:var(--c);font-weight:800;border:1px solid rgba(34,211,238,.25)">مستورد</span>`:''}
+      return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
           <div>
             <span style="font-size:15px;font-weight:800">${ico} ${item.type||'—'}</span>
