@@ -433,7 +433,9 @@ function renderList(){
     const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
     const paid=getPaid(o),sale=getNet(o),rem=getRem(o);
     const pct=sale>0?Math.min(paid/sale*100,100):0;
-    const ptColor=o.printType?.includes('offset')?'var(--p)':o.printType?.includes('digital')?'var(--b)':'var(--dim)';
+    const effPt=o.printType||(o.products||[]).map(p=>p.printType).filter(Boolean).join('+');
+    const ptColor=effPt.includes('offset')?'var(--p)':effPt.includes('digital')?'var(--b)':'var(--dim)';
+    const ptLabel=effPt.includes('offset')&&effPt.includes('digital')?'ديجيتال + أوفست':effPt.includes('offset')?'أوفست':effPt.includes('digital')?'ديجيتال':'⏳ غير محدد';
     const p0=(o.products||[])[0];
     const extrasHtml=(p0?.extras||[]).map(e=>`<span style="display:inline-flex;padding:1px 6px;border-radius:10px;background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2);font-size:10px;font-weight:700">✓ ${e}</span>`).join('');
     const hasFinal=!!(o.printFinalUrl||(o.products||[]).some(p=>p.designImageUrl));
@@ -446,7 +448,7 @@ function renderList(){
           <div style="font-size:10px;color:var(--dim);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
-          <span style="font-size:10px;padding:2px 9px;border-radius:20px;background:${ptColor}18;color:${ptColor};font-weight:800">${o.printType||'⏳ غير محدد'}</span>
+          <span style="font-size:10px;padding:2px 9px;border-radius:20px;background:${ptColor}18;color:${ptColor};font-weight:800">${ptLabel}</span>
           ${sale>0?`<span style="font-size:13px;font-weight:900;color:var(--snow)">${fn(sale)} ج</span>`:''}
         </div>
       </div>
@@ -460,7 +462,7 @@ function renderList(){
       <div class="ocard-footer">
         <div style="display:flex;gap:8px;align-items:center">
           ${hasFinal?'<span style="font-size:11px;color:var(--g);font-weight:700">📁 ملف ✅</span>':'<span style="font-size:11px;color:var(--r);font-weight:700">📁 لا يوجد ملف</span>'}
-          ${o.qty?`<span style="font-size:10px;color:var(--dim2)">📦${o.qty}ق</span>`:''}
+          ${(()=>{const tq=(o.products||[]).reduce((s,p)=>s+(parseInt(p.qty)||1),0)||o.qty||0;return tq?`<span style="font-size:10px;color:var(--dim2)">📦${tq}ق</span>`:'';})()}
         </div>
         <span style="font-size:10px;font-weight:800;color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
@@ -752,7 +754,7 @@ async function _uploadFile(file){
     if(file.type.startsWith('image/')){
       upload=await new Promise(res=>{
         const img=new Image(),url=URL.createObjectURL(file);
-        img.onload=()=>{URL.revokeObjectURL(url);const c=document.createElement('canvas');let{width:w,height:h}=img;if(w>1400){h=Math.round(h*1400/w);w=1400;}c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>res(new File([b],file.name,{type:'image/jpeg'})),'image/jpeg',.82);};
+        img.onload=()=>{URL.revokeObjectURL(url);const c=document.createElement('canvas');let{width:w,height:h}=img;const MAX=800;if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);const fmt=c.toDataURL('image/webp',0.1).startsWith('data:image/webp')?'image/webp':'image/jpeg';c.toBlob(b=>res(new File([b],file.name,{type:fmt})),fmt,.65);};
         img.onerror=()=>res(file);img.src=url;
       });
     }
@@ -798,10 +800,10 @@ window.openPrintAdvance=function(){
   if(inp){inp.max=rem;inp.value='';inp.placeholder=fn(rem)+' ج';}
   const hint=document.getElementById('pa-hint');
   if(hint){hint.style.color='var(--dim2)';hint.textContent=`الحد الأقصى: ${fn(rem)} ج`;}
-  document.getElementById('pa-wid').value='';
-  document.getElementById('pa-wname').value='';
-  document.getElementById('pa-note').value='';
-  document.getElementById('pa-transfer-row').style.display='none';
+  const paWid=document.getElementById('pa-wid');if(paWid)paWid.value='';
+  const paWname=document.getElementById('pa-wname');if(paWname)paWname.value='';
+  const paNote=document.getElementById('pa-note');if(paNote)paNote.value='';
+  const paTr=document.getElementById('pa-transfer-row');if(paTr)paTr.style.display='none';
   renderPaWallets();
   document.getElementById('ov-print-advance')?.classList.add('open');
 };
