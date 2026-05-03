@@ -130,7 +130,18 @@ async function handleVendorPayment(db, p) {
     note: p.note || '', date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdAt: serverTimestamp(), createdBy: p.userId || '',
   });
-  console.log('[FSE] 🏭 module updated: supplier_payments');
+
+  const txRef = doc(collection(db, 'transactions_v2'));
+  batch.set(txRef, {
+    walletId: p.walletId || '', walletName: p.walletName || '',
+    type: 'out', amount: p.amount, fees: 0,
+    description: p.note || `دفعة مورد — ${p.supplierName}`, category: 'supplier',
+    supplierId: p.supplierId, supplierName: p.supplierName,
+    date: p.date || new Date().toLocaleDateString('ar-EG'),
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+  console.log('[FSE] 🏭 module updated: supplier_payments + transactions_v2');
 
   addLedgerToBatch(batch, db, 'VENDOR_PAYMENT', {
     ...p, vendorId: p.supplierId, vendorName: p.supplierName, notes: p.note,
@@ -139,7 +150,7 @@ async function handleVendorPayment(db, p) {
   await batch.commit();
   console.log('[FSE] 📊 dashboard updated via financial_ledger');
   console.log('[FSE] ✅ completed: VENDOR_PAYMENT', { payId: payRef.id });
-  return { payId: payRef.id };
+  return { payId: payRef.id, txId: txRef.id };
 }
 
 async function handleVendorPaymentReversal(db, p) {
@@ -151,7 +162,19 @@ async function handleVendorPaymentReversal(db, p) {
   }
 
   batch.delete(doc(db, 'supplier_payments', p.paymentId));
-  console.log('[FSE] 🏭 module updated: supplier_payment deleted');
+
+  const revTxRef = doc(collection(db, 'transactions_v2'));
+  batch.set(revTxRef, {
+    walletId: p.walletId || '', walletName: p.walletName || '',
+    type: 'in', amount: p.amount, fees: 0,
+    description: `إلغاء دفعة — ${p.supplierName}`, category: 'supplier',
+    supplierId: p.supplierId, supplierName: p.supplierName,
+    isReversal: true,
+    date: new Date().toLocaleDateString('ar-EG'),
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+  console.log('[FSE] 🏭 module updated: supplier_payment deleted + reversal transactions_v2');
 
   addLedgerToBatch(batch, db, 'VENDOR_PAYMENT_REVERSAL', {
     ...p, vendorId: p.supplierId, vendorName: p.supplierName,
