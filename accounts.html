@@ -119,10 +119,11 @@
         <div class="rev-val" style="color:var(--r)" id="kpi-rem-total">—</div>
         <div style="font-size:10px;color:var(--dim2);margin-top:4px" id="kpi-pending-count">— طلب نشط</div>
       </div>
-      <div class="rev-card" style="--rc:var(--b);cursor:pointer" onclick="location.href='shipping-accounts.html'">
+      <div class="rev-card" style="--rc:var(--b);cursor:pointer" onclick="switchSec(document.querySelector('.stab[onclick*=shipping_debts]'),'shipping_debts')">
         <div class="rev-title">📦 شركات الشحن</div>
         <div class="rev-val" style="color:var(--b)" id="kpi-ship-debt">—</div>
-        <div class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b)">إدارة ←</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px" id="kpi-ship-collected">—</div>
+        <div class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b)">تفاصيل ↓</div>
       </div>
       <div class="rev-card" style="--rc:var(--y)">
         <div class="rev-title">✅ إيرادات مكتسبة</div>
@@ -138,7 +139,7 @@
     <div class="sec-tabs" style="margin-bottom:16px">
       <button class="stab on"  onclick="switchSec(this,'wallets')">💼 الحسابات</button>
       <button class="stab"     onclick="switchSec(this,'pending')">⏳ المعلق</button>
-      <button class="stab" onclick="location.href='shipping-accounts.html'">📦 حسابات الشحن ↗</button>
+      <button class="stab" onclick="switchSec(this,'shipping_debts')">📦 الشحن</button>
       <button class="stab"     onclick="switchSec(this,'transactions')">📋 الحركات</button>
       <button class="stab"     onclick="switchSec(this,'suppliers')">🏭 الموردين</button>
       <button class="stab"     onclick="switchSec(this,'employees')">👥 الموظفين</button>
@@ -468,7 +469,7 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 // ── State ──
-let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[];
+let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[], shippingSettlements=[], shippingReturns=[];
 let currentUser=null, currentRole='admin', currentSection='wallets';
 let activeWalletId=null;
 let editTxId=null, editTxData=null;
@@ -653,6 +654,16 @@ function startListeners(){
       .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderSection();
   });
+  onSnapshot(collection(db,'shipping_settlements'),snap=>{
+    shippingSettlements=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    updateKPIs(); renderSection();
+  });
+  onSnapshot(collection(db,'shipping_returns'),snap=>{
+    shippingReturns=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    renderSection();
+  });
 }
 
 // ══ SELECTS ══
@@ -757,6 +768,10 @@ function updateKPIs(){
   if(debtEl)debtEl.textContent=fn(clientDebt)+' ج';
   const shipDebtEl=document.getElementById('kpi-ship-debt');
   if(shipDebtEl)shipDebtEl.textContent=fn(shippingDebt)+' ج';
+  // مُحصَّل من شركات الشحن (الفترة الحالية)
+  const shipCollected=shippingSettlements.filter(s=>isInPeriod(s.createdAt)).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const shipCollectedEl=document.getElementById('kpi-ship-collected');
+  if(shipCollectedEl)shipCollectedEl.textContent='تحصّل: '+fn(shipCollected)+' ج';
 
   // ── باقي التحصيل الكلي ──
   const remEl=document.getElementById('kpi-rem-total');
@@ -779,7 +794,7 @@ window.switchSec=function(btn,sec){
 function renderSection(){
   if(currentSection==='wallets')          renderWallets();
   else if(currentSection==='pending')     renderPending();
-  else if(currentSection==='shipping_debts') location.href='shipping-accounts.html';
+  else if(currentSection==='shipping_debts') renderShippingDebts();
   else if(currentSection==='transactions')   renderTransactions();
   else if(currentSection==='suppliers')      renderSuppliers();
   else if(currentSection==='employees')      renderEmployees();
@@ -1112,33 +1127,29 @@ function renderPending(){
     ${!active.length?`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مبالغ معلقة</div></div>`:''}`;
 }
 
-// ── حركات ──
+// ── شحن ──
 function renderShippingDebts(){
   const el=document.getElementById('section-content');if(!el)return;
 
-  // ── حسابات شركات الشحن من الأوردرات مباشرة ──
-  const shipOrders=allOrders.filter(o=>
-    o.shipCompanyName &&
-    ['shipping','archived'].includes(o.stage) &&
-    !o.shipSettled &&
-    o.shipMethod!=='pickup'
-  );
-
-  // تجميع حسب الشركة
+  // مستحق من شركات الشحن (أوردرات غير مسوّاة)
+  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&['shipping','archived'].includes(o.stage)&&!o.shipSettled&&o.shipMethod!=='pickup');
   const coMap={};
   shipOrders.forEach(o=>{
     const co=o.shipCompanyName;
     if(!coMap[co])coMap[co]={name:co,count:0,due:0,orders:[]};
-    const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const due=Math.max(0,sale-paid);
-    coMap[co].count++;
-    coMap[co].due+=due;
-    coMap[co].orders.push({...o,due});
+    const due=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
+    coMap[co].count++;coMap[co].due+=due;coMap[co].orders.push({...o,due});
   });
-
   const cos=Object.values(coMap).sort((a,b)=>b.due-a.due);
   const totalShip=cos.reduce((s,co)=>s+co.due,0);
+
+  // التسويات المنجزة (من shipping_settlements)
+  const totalCollected=shippingSettlements.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const recentSettles=shippingSettlements.slice(0,8);
+
+  // المرتجعات
+  const totalReturns=shippingReturns.reduce((s,r)=>s+(parseFloat(r.cost)||0),0);
+  const recentReturns=shippingReturns.slice(0,5);
 
   // ديون العملاء (مؤجّل)
   const clientDebts=transactions.filter(t=>t.category==='deferred_collection');
@@ -1146,55 +1157,88 @@ function renderShippingDebts(){
 
   el.innerHTML=`
     <!-- ملخص -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
-      <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:12px;padding:14px;text-align:center">
-        <div style="font-size:10px;color:var(--dim2);margin-bottom:6px;font-weight:700">📦 مستحق من شركات الشحن</div>
-        <div style="font-size:24px;font-weight:900;color:var(--b)">${fn(totalShip)} ج</div>
-        <div style="font-size:11px;color:var(--dim2);margin-top:4px">${shipOrders.length} شحنة غير مسوّاة</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:18px">
+      <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:12px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px;font-weight:700">⏳ مستحق من الشحن</div>
+        <div style="font-size:20px;font-weight:900;color:var(--b)">${fn(totalShip)} ج</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${shipOrders.length} شحنة</div>
       </div>
-      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:14px;text-align:center">
-        <div style="font-size:10px;color:var(--dim2);margin-bottom:6px;font-weight:700">👤 ديون على العملاء</div>
-        <div style="font-size:24px;font-weight:900;color:var(--r)">${fn(totalClient)} ج</div>
-        <div style="font-size:11px;color:var(--dim2);margin-top:4px">${clientDebts.length} دين مؤجّل</div>
+      <div style="background:rgba(0,200,120,.08);border:1px solid rgba(0,200,120,.2);border-radius:12px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px;font-weight:700">✅ تحصّل من الشحن</div>
+        <div style="font-size:20px;font-weight:900;color:var(--g)">${fn(totalCollected)} ج</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${shippingSettlements.length} تسوية</div>
+      </div>
+      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px;font-weight:700">↩️ ديون العملاء</div>
+        <div style="font-size:20px;font-weight:900;color:var(--r)">${fn(totalClient)} ج</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${clientDebts.length} مؤجّل</div>
       </div>
     </div>
 
-    <!-- تفاصيل الشركات -->
+    <!-- مستحق من شركات الشحن -->
     ${cos.length?`
-    <div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px">📦 تفاصيل شركات الشحن</div>
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--b);margin-bottom:8px">📦 مستحق من شركات الشحن</div>
       ${cos.map(co=>`
-        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:14px;font-weight:800">${co.name}</div>
-            <div style="font-size:16px;font-weight:900;color:var(--b)">${fn(co.due)} ج</div>
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="font-size:13px;font-weight:800">${co.name}</div>
+            <div style="font-size:15px;font-weight:900;color:var(--b)">${fn(co.due)} ج</div>
           </div>
-          <div style="font-size:11px;color:var(--dim2);margin-bottom:8px">${co.count} شحنة غير مسوّاة</div>
-          ${co.orders.slice(0,5).map(o=>`
-            <div style="display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-bottom:1px solid var(--line)">
-              <span style="font-weight:700">${o.clientName||'—'}</span>
-              <div style="display:flex;gap:8px">
-                ${parseFloat(o.totalPaid||o.paid||o.deposit||0)>0?`<span style="color:var(--g)">دفع ${fn(parseFloat(o.totalPaid||o.paid||o.deposit||0))} ج</span>`:''}
-                <span style="color:var(--b);font-weight:800">${fn(o.due)} ج</span>
-              </div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:6px">${co.count} شحنة غير مسوّاة</div>
+          ${co.orders.slice(0,4).map(o=>`
+            <div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-top:1px solid var(--line)">
+              <span>${o.clientName||'—'}</span>
+              <span style="color:var(--b);font-weight:700">${fn(o.due)} ج</span>
             </div>`).join('')}
           <a href="shipping-accounts.html" style="display:block;margin-top:8px;text-align:center;font-size:11px;color:var(--b);font-weight:700;text-decoration:none">إدارة التسويات ←</a>
         </div>`).join('')}
+    </div>`:'<div style="background:rgba(0,200,120,.06);border:1px solid rgba(0,200,120,.2);border-radius:10px;padding:12px;text-align:center;font-size:12px;color:var(--g);margin-bottom:12px">✅ لا توجد شحنات غير مسوّاة</div>'}
+
+    <!-- سجل التسويات المنجزة -->
+    ${recentSettles.length?`
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:800;color:var(--g)">✅ سجل التسويات المنجزة</div>
+        <a href="shipping-accounts.html" style="font-size:11px;color:var(--b);font-weight:700;text-decoration:none">الكل ←</a>
+      </div>
+      ${recentSettles.map(s=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border:1px solid rgba(0,200,120,.15);border-radius:8px;margin-bottom:5px">
+          <div>
+            <div style="font-size:12px;font-weight:700">${s.companyName||'—'}</div>
+            <div style="font-size:10px;color:var(--dim2)">${s.date||'—'}${s.walletName?' · '+s.walletName:''}${s.note?' · '+s.note:''}</div>
+          </div>
+          <span style="font-size:13px;font-weight:900;color:var(--g)">+${fn(s.amount)} ج</span>
+        </div>`).join('')}
     </div>`:''}
 
-    <!-- ديون العملاء -->
+    <!-- المرتجعات -->
+    ${recentReturns.length?`
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--y);margin-bottom:8px">↩️ المرتجعات الأخيرة</div>
+      ${recentReturns.map(r=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border:1px solid rgba(255,170,0,.15);border-radius:8px;margin-bottom:5px">
+          <div>
+            <div style="font-size:12px;font-weight:700">${r.clientName||'—'}</div>
+            <div style="font-size:10px;color:var(--dim2)">${r.date||'—'}${r.companyName?' · '+r.companyName:''}${r.returnType?' · '+r.returnType:''}</div>
+          </div>
+          <span style="font-size:13px;font-weight:900;color:var(--y)">${fn(r.cost||0)} ج</span>
+        </div>`).join('')}
+    </div>`:''}
+
+    <!-- ديون العملاء المؤجّلة -->
     ${clientDebts.length?`
     <div>
-      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px">👤 ديون العملاء المؤجّلة</div>
+      <div style="font-size:12px;font-weight:800;color:var(--r);margin-bottom:8px">👤 ديون العملاء المؤجّلة</div>
       ${clientDebts.map(t=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border:1px solid rgba(255,61,110,.15);border-radius:8px;margin-bottom:5px">
           <div>
-            <div style="font-size:13px;font-weight:700">${t.clientName||'—'}</div>
+            <div style="font-size:12px;font-weight:700">${t.clientName||'—'}</div>
             <div style="font-size:10px;color:var(--dim2)">${t.date||'—'}</div>
           </div>
-          <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(parseFloat(t.amount)||0)} ج</span>
+          <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(t.amount||0)} ج</span>
         </div>`).join('')}
-    </div>`:'<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد ديون مؤجّلة</div>'}
+    </div>`:''}
   `;
 }
 
