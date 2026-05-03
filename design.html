@@ -27,6 +27,21 @@
 .fin-box{background:var(--bg3);border-radius:var(--rad);padding:10px 12px;text-align:center}
 .fin-box-lbl{font-size:10px;color:var(--dim2);margin-bottom:3px}
 .fin-box-val{font-size:16px;font-weight:900}
+.design-dash{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+@media(max-width:640px){.design-dash{grid-template-columns:repeat(2,1fr)}}
+.dd-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:12px 14px}
+.dd-card-ico{font-size:20px;margin-bottom:5px}
+.dd-card-val{font-size:18px;font-weight:900;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-card-lbl{font-size:10px;color:var(--dim2);font-weight:600}
+.dsgn-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:800;background:rgba(167,139,250,.15);color:var(--p);border:1px solid rgba(167,139,250,.2)}
+.time-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px}
+.time-badge.late{background:rgba(255,61,110,.15);color:var(--r)}
+.time-badge.ok{background:rgba(0,217,126,.12);color:var(--g)}
+.time-badge.warn{background:rgba(240,160,32,.15);color:var(--y)}
+.rev-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;background:rgba(16,196,222,.12);color:var(--c)}
+.card-actions{display:flex;gap:4px;margin-top:7px}
+.card-act-btn{padding:4px 10px;border-radius:8px;font-size:10px;font-weight:800;cursor:pointer;border:none;font-family:inherit;transition:opacity .15s}
+.card-act-btn:hover{opacity:.8}
 </style>
 </head>
 <body>
@@ -71,6 +86,8 @@
     <div class="topbar-right"><button class="btn btn-p" onclick="openNewOrder()">＋ طلب جديد</button></div>
   </div>
   <div class="content">
+    <!-- داشبورد التصميم -->
+    <div id="design-dashboard" class="design-dash"></div>
     <!-- بحث سريع -->
     <div style="position:relative;margin-bottom:14px">
       <input id="design-search" class="inp" placeholder="🔍 بحث باسم العميل أو رقم الأوردر..." 
@@ -628,6 +645,7 @@ function startListeners(){
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+      renderDesignDashboard();
     });
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها
@@ -643,6 +661,7 @@ function startListeners(){
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+      renderDesignDashboard();
     });
   } else {
     // المصمم — أوردراته المكلّف بيها
@@ -659,6 +678,7 @@ function startListeners(){
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+      renderDesignDashboard();
     });
     // أوردرات التصميم بدون مصمم (للسحب)
     onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
@@ -669,6 +689,7 @@ function startListeners(){
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       renderKanban();
+      renderDesignDashboard();
     });
   }
 
@@ -710,6 +731,7 @@ function renderKanban(){
   const cols={pending:[],wip:[],rejected:[]};
   orders.forEach(o=>{const k=o.designStage||'pending';if(cols[k])cols[k].push(o);});
   const cfg={pending:'var(--y)',wip:'var(--b)',rejected:'var(--r)'};
+  const today=new Date().toISOString().slice(0,10);
   Object.keys(cols).forEach(key=>{
     const el=document.getElementById('col-'+key);if(!el)return;
     setText('cnt-'+key,cols[key].length);
@@ -720,23 +742,82 @@ function renderKanban(){
       const dep=parseFloat(o.deposit)||0;
       const hasFile=!!(o.designFileUrl||(o.designFiles&&o.designFiles.length));
       const noCost=!(o.costItems||[]).length;
-      return`<div class="ocard" style="--oc:${cfg[key]}" onclick="openOrder('${o._id}')">
+      const isDesigner=['graphic_designer','design_operator'].includes(currentRole);
+      const rem=o.deadline?Math.floor((new Date(o.deadline)-new Date(today))/(864e5)):null;
+      let timeBadge='';
+      if(rem!==null){
+        if(rem<0)timeBadge=`<span class="time-badge late">متأخر ${-rem} يوم</span>`;
+        else if(rem===0)timeBadge=`<span class="time-badge warn">⚡ آخر يوم</span>`;
+        else if(rem<=2)timeBadge=`<span class="time-badge warn">⚠️ ${rem} يوم</span>`;
+        else timeBadge=`<span class="time-badge ok">✓ ${rem} يوم</span>`;
+      }
+      const revBadge=(o.revisions||0)>0?`<span class="rev-badge">🔄 ${o.revisions}</span>`:'';
+      let actionBtns='';
+      if(isDesigner){
+        const btns=[];
+        if(key==='pending')btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.15);color:var(--g)" onclick="startWork('${o._id}')">▶ بدء العمل</button>`);
+        if(key==='wip'){
+          btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.15);color:var(--y)" onclick="pauseWork('${o._id}')">⏸ إيقاف</button>`);
+          btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.15);color:var(--b)" onclick="finishWork('${o._id}')">✓ إنهاء</button>`);
+        }
+        if(btns.length)actionBtns=`<div class="card-actions" onclick="event.stopPropagation()">${btns.join('')}</div>`;
+      }
+      return`<div class="ocard ko" data-name="${(o.clientName||'').replace(/"/g,'')}" data-id="${o.orderId||''}" style="--oc:${cfg[key]}" onclick="openOrder('${o._id}')">
         <div class="ocard-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
         <div class="ocard-client">${o.clientName||'—'} <span style="font-size:10px;color:var(--dim2)">${o.clientPhone||''}</span></div>
         <div class="ocard-product" style="margin-top:3px">${prods}</div>
-        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">
+        ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}</span></div>`:''}
+        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center">
+          ${timeBadge}${revBadge}
           ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
           ${dep>0?`<span style="font-size:10px;background:rgba(0,217,126,.15);color:var(--g);border-radius:20px;padding:1px 8px">💰 عربون ${fn(dep)} ج</span>`:''}
           ${hasFile?`<span style="font-size:10px;background:rgba(59,158,255,.15);color:var(--b);border-radius:20px;padding:1px 8px">📎 ملف</span>`:''}
-          ${d>0?`<span style="font-size:10px;background:rgba(255,61,110,.15);color:var(--r);border-radius:20px;padding:1px 8px">⚠️ ${d} يوم</span>`:''}
         </div>
+        ${actionBtns}
         <div class="ocard-foot">
           ${o.deadline?`<span style="font-size:10px;color:var(--dim2)">📅 ${o.deadline}</span>`:'<span></span>'}
-          <span style="font-size:10px;color:var(--dim2)">${o.designerName||'—'}</span>
+          <span style="font-size:10px;color:var(--dim2)">${o.createdDate||'—'}</span>
         </div>
       </div>`;
     }).join('');
   });
+}
+
+function renderDesignDashboard(){
+  const el=document.getElementById('design-dashboard');if(!el)return;
+  const today=new Date().toISOString().slice(0,10);
+  const late=orders.filter(o=>delay(o.deadline)>0).length;
+  const atRisk=orders.filter(o=>{
+    if(!o.deadline)return false;
+    const r=Math.floor((new Date(o.deadline)-new Date(today))/(864e5));
+    return r>=0&&r<=2;
+  }).length;
+  const dsCount={};
+  orders.filter(o=>o.designerName).forEach(o=>{dsCount[o.designerName]=(dsCount[o.designerName]||0)+1;});
+  const top=Object.entries(dsCount).sort((a,b)=>b[1]-a[1])[0];
+  const topName=top?top[0]:'—';const topCnt=top?top[1]:0;
+  el.innerHTML=`
+    <div class="dd-card" style="border-right:3px solid var(--p)">
+      <div class="dd-card-ico">🏆</div>
+      <div class="dd-card-val" style="color:var(--p)" title="${topName}">${topName}</div>
+      <div class="dd-card-lbl">أعلى إنتاج · ${topCnt} طلب</div>
+    </div>
+    <div class="dd-card" style="border-right:3px solid var(--b)">
+      <div class="dd-card-ico">🎨</div>
+      <div class="dd-card-val" style="color:var(--b)">${orders.filter(o=>o.designStage==='wip').length}</div>
+      <div class="dd-card-lbl">جاري التصميم الآن</div>
+    </div>
+    <div class="dd-card" style="border-right:3px solid var(--y)">
+      <div class="dd-card-ico">⚠️</div>
+      <div class="dd-card-val" style="color:var(--y)">${atRisk}</div>
+      <div class="dd-card-lbl">طلبات في خطر ≤ ٢ يوم</div>
+    </div>
+    <div class="dd-card" style="border-right:3px solid var(--r)">
+      <div class="dd-card-ico">🔴</div>
+      <div class="dd-card-val" style="color:var(--r)">${late}</div>
+      <div class="dd-card-lbl">الطلبات المتأخرة</div>
+    </div>
+  `;
 }
 
 // ── PANEL ──
@@ -1167,6 +1248,35 @@ window.saveAssignDesigner=async function(){
     cM('assign-des');
     toast(desId?`✅ تم تعيين ${desName}`:'✅ تم إلغاء التعيين','ok');
   }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.startWork=async function(id){
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',id),{
+      designStage:'wip',designStartedAt:nowStr(),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:'▶ بدأ المصمم العمل',by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ بدأ العمل','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.pauseWork=async function(id){
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',id),{
+      designStage:'pending',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:'⏸ إيقاف مؤقت للتصميم',by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الإيقاف المؤقت','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.finishWork=function(id){
+  activeId=id;
+  openUpload();
 };
 
 window.setDS=async function(stage){
