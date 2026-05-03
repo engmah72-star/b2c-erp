@@ -468,7 +468,7 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 // ── State ──
-let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], reconciliations=[];
+let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[];
 let currentUser=null, currentRole='admin', currentSection='wallets';
 let activeWalletId=null;
 let editTxId=null, editTxData=null;
@@ -640,6 +640,12 @@ function startListeners(){
   });
   onSnapshot(collection(db,'users'),snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    fillSelects(); renderSection();
+  });
+  onSnapshot(collection(db,'employees'),snap=>{
+    employees=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(e=>e.status!=='deleted')
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     fillSelects(); renderSection();
   });
   onSnapshot(collection(db,'reconciliations'),snap=>{
@@ -1399,7 +1405,8 @@ function renderSuppliers(){
 // ── موظفين ──
 function renderEmployees(){
   const el=document.getElementById('section-content');if(!el)return;
-  if(!users.length){
+  const empList=employees.length?employees:users;
+  if(!empList.length){
     el.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">لا يوجد موظفين في النظام</div></div>`;return;
   }
   const totalPaysPeriod=employeePays.filter(p=>isInPeriod(p.createdAt)).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
@@ -1409,8 +1416,8 @@ function renderEmployees(){
       <div style="font-size:12px;color:var(--dim2)">إجمالي الفترة: <strong style="color:var(--r)">${fn(totalPaysPeriod)} ج</strong> · الكل: <strong style="color:var(--dim2)">${fn(totalPaysAll)} ج</strong></div>
       <button class="btn btn-sm" style="background:rgba(167,139,250,.12);color:var(--p);border:1px solid rgba(167,139,250,.25)" onclick="oM('new-tx');setTimeout(()=>{document.getElementById('tx-type').value='out';updateTxCats();setTimeout(()=>{document.getElementById('tx-cat').value='salary';updateTxRelated();},50)},50)">👤 تسجيل مرتب</button>
     </div>
-    ${users.map(u=>{
-      const pays=employeePays.filter(p=>p.employeeId===u._id);
+    ${empList.map(u=>{
+      const pays=employeePays.filter(p=>p.employeeId===u._id||(u.authUid&&p.employeeId===u.authUid));
       const paysPeriod=pays.filter(p=>isInPeriod(p.createdAt));
       const totalAll=pays.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
       const totalPeriod=paysPeriod.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
@@ -1705,7 +1712,7 @@ window.updateTxRelated=function(){
   } else if(['salary','designer_fee'].includes(cat)){
     sec.style.display='block';employeeRow.style.display='block';
     const sel=document.getElementById('tx-employee-sel');
-    if(sel)sel.innerHTML='<option value="">— اختر —</option>'+users.map(u=>`<option value="${u._id}">${u.name||u.email}</option>`).join('');
+    if(sel)sel.innerHTML='<option value="">— اختر —</option>'+(employees.length?employees:users).map(u=>`<option value="${u._id}">${u.name||u.email}</option>`).join('');
   } else {
     sec.style.display='none';
   }
