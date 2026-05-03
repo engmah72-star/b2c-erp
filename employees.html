@@ -27,6 +27,13 @@
 .att-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:3px}
 .pp-btn{padding:5px 13px;border-radius:20px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;transition:var(--trans);white-space:nowrap;font-family:inherit}
 .pp-btn.active{background:rgba(59,158,255,.15);color:var(--b);border-color:rgba(59,158,255,.4)}
+.status-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:9px;font-weight:800;white-space:nowrap}
+.status-pill::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.kpi-bar{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:4px}
+.kpi-fill{height:100%;border-radius:2px;transition:width .6s}
+.alert-row-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.alert-row-item:last-child{border-bottom:none}
+.alert-row-item:active{background:var(--bg3)}
 </style>
 </head>
 <body>
@@ -59,9 +66,16 @@
     </div>
   </div>
   <div class="content">
-    <!-- Stats -->
-    <div class="stats" style="margin-bottom:18px">
+    <!-- Stats Row 1 — Team Status -->
+    <div class="stats" style="margin-bottom:10px">
       <div class="stat" style="--sc:var(--b)"><div class="stat-icon">👥</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">إجمالي</div></div>
+      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">⚡</div><div class="stat-val" id="s-working-now">0</div><div class="stat-lbl">يعمل الآن</div></div>
+      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">💤</div><div class="stat-val" id="s-no-activity">0</div><div class="stat-lbl">بدون نشاط</div></div>
+      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">🔥</div><div class="stat-val" id="s-high-pressure">0</div><div class="stat-lbl">ضغط عالي</div></div>
+      <div class="stat" style="--sc:var(--p)"><div class="stat-icon">📈</div><div class="stat-val" id="s-avg-prod">—</div><div class="stat-lbl">متوسط إنتاج</div></div>
+    </div>
+    <!-- Stats Row 2 — Salary -->
+    <div class="stats" style="margin-bottom:18px">
       <div class="stat" style="--sc:var(--g)"><div class="stat-icon">✅</div><div class="stat-val" id="s-active">0</div><div class="stat-lbl">نشط</div></div>
       <div class="stat" style="--sc:var(--p)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-design">0</div><div class="stat-lbl">مصممين</div></div>
       <div class="stat" style="--sc:var(--y)"><div class="stat-icon">💰</div><div class="stat-val" id="s-salaries">0</div><div class="stat-lbl" id="s-salaries-lbl">رواتب الشهر ج</div></div>
@@ -96,6 +110,7 @@
       <button class="btn btn-ghost btn-sm" onclick="openAbsentWa()" style="font-size:12px;white-space:nowrap;color:var(--g);border-color:rgba(0,217,126,.35)">💬 واتساب للغائبين</button>
     </div>
 
+    <div id="emp-alerts" style="margin-bottom:14px"></div>
     <div id="list"><div class="loader"><div class="spinner"></div></div></div>
   </div>
 </div>
@@ -409,6 +424,166 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open');
 
+// ══ KPI CALCULATION ══
+function calcKpi(e,uid){
+  const mKey=curMonthKey();const workDays=26;
+  // 1. Commitment (25) — attendance this month
+  const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===e._id)&&(a.date||'').startsWith(mKey)).length;
+  const commitment=Math.min(25,Math.round(monthAtt/workDays*25));
+  // 2. Productivity (25) — role-based
+  let prod=10;
+  if(e.role==='graphic_designer'||e.role==='design_operator'){
+    const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
+    const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
+    prod=mine.length?Math.min(25,Math.round(done/mine.length*25)):10;
+  } else if(e.role==='customer_service'){
+    const mine=allOrders.filter(o=>o.createdBy===uid);
+    prod=Math.min(25,mine.length*2);
+  } else if(e.role==='production_agent'){
+    const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
+    const done=mine.filter(o=>['shipping','archived'].includes(o.stage)).length;
+    prod=mine.length?Math.min(25,Math.round(done/mine.length*25)):10;
+  } else if(e.role==='shipping_officer'){
+    const mine=allOrders.filter(o=>(o.shippingOfficer===uid||o.shippingOfficer===e._id)&&['shipping','archived'].includes(o.stage));
+    prod=Math.min(25,mine.length*3);
+  } else { prod=15; }
+  // 3. Speed (25) — on-time ratio on completed orders
+  const myDone=allOrders.filter(o=>(o.designerId===uid||o.createdBy===uid||o.productionAgent===uid)&&o.deadline&&['archived','delivered'].includes(o.stage));
+  let speed=15;
+  if(myDone.length){
+    const today=todayStr();
+    const onTime=myDone.filter(o=>(o.timeline||[]).slice(-1)[0]?.date<=o.deadline).length;
+    speed=Math.round(onTime/myDone.length*25);
+  }
+  // 4. Activity (25) — recent system actions from timeline
+  const mStart=mKey+'-01';
+  const acted=allOrders.filter(o=>(o.timeline||[]).some(t=>t.by===e.name&&(t.date||'')>=mStart)).length;
+  const activity=Math.min(25,acted*4);
+  return Math.min(100,commitment+prod+speed+activity);
+}
+
+// ══ EMPLOYEE STATUS ══
+function getEmpStatus(uid,empId,todayRec,activeOrderCnt){
+  if(!todayRec)return{label:'خارج الدوام',col:'var(--dim2)',bg:'rgba(78,86,114,.15)'};
+  if(todayRec.checkOut)return{label:'متاح',col:'var(--b)',bg:'rgba(74,142,245,.15)'};
+  if(activeOrderCnt>=4)return{label:'ضغط عالي',col:'var(--r)',bg:'rgba(240,54,96,.15)'};
+  return{label:'يعمل الآن',col:'var(--g)',bg:'rgba(0,200,122,.15)'};
+}
+
+// ══ ALERTS ══
+function renderAlerts(){
+  const el=document.getElementById('emp-alerts');if(!el)return;
+  const today=todayStr();
+  const todayAtts=attendanceRecords.filter(a=>a.date===today);
+  const activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const alerts=[];
+  employees.filter(e=>e.status==='active').forEach(e=>{
+    const uid=e.authUid||e._id;
+    const hasAtt=todayAtts.some(a=>a.employeeUid===uid||a.employeeId===e._id);
+    if(!hasAtt)alerts.push({ico:'💤',col:'var(--dim2)',msg:`${e.name} — لم يسجل حضور اليوم`,sub:ROLES[e.role]?.label||e.role});
+    const myActive=activeOrders.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficer===uid);
+    const lateOrders=myActive.filter(o=>o.deadline&&new Date(o.deadline)<new Date(today));
+    if(lateOrders.length)alerts.push({ico:'⏰',col:'var(--r)',msg:`${e.name} — ${lateOrders.length} أوردر متأخر`,sub:ROLES[e.role]?.label||e.role});
+    if(myActive.length>=5)alerts.push({ico:'🔥',col:'var(--y)',msg:`${e.name} — ضغط: ${myActive.length} أوردر نشط`,sub:ROLES[e.role]?.label||e.role});
+  });
+  if(!alerts.length){el.innerHTML='';return;}
+  el.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:rgba(255,61,110,.05)">
+      <span style="font-size:12px;font-weight:800;color:var(--r)">⚠️ تنبيهات الفريق (${alerts.length})</span>
+    </div>
+    ${alerts.slice(0,6).map(a=>`<div class="alert-row-item">
+      <span style="font-size:18px;flex-shrink:0">${a.ico}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:800;color:${a.col}">${a.msg}</div>
+        <div style="font-size:10px;color:var(--dim2)">${a.sub}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ══ EDIT EMPLOYEE ══
+window.openEditEmp=function(id){
+  const e=employees.find(x=>x._id===id);if(!e)return;
+  editingId=id;
+  setText('emp-title','✏️ تعديل بيانات');
+  document.getElementById('save-btn').textContent='✓ حفظ';
+  sv('e-name',e.name||'');sv('e-phone',e.phone||'');sv('e-role',e.role||'');
+  sv('e-nid',e.nationalId||'');sv('e-salary',e.baseSalary||'');sv('e-commission',e.commissionPct||'');
+  sv('e-start',e.startDate||new Date().toISOString().slice(0,10));
+  document.getElementById('e-status').value=e.status||'active';
+  updateSalaryUI();
+  document.getElementById('ov-emp').classList.add('open');
+};
+
+// ══ TOGGLE STATUS ══
+window.toggleEmpStatus=async function(id,newStatus){
+  try{
+    await updateDoc(doc(db,'employees',id),{status:newStatus,updatedAt:serverTimestamp()});
+    toast(newStatus==='active'?'✅ تم تفعيل الموظف':'⏸ تم إيقاف الموظف مؤقتاً','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ KPI PANEL ══
+window.openKpiPanel=function(empId,authUid,empName){
+  const hdr=document.getElementById('pn-hdr');
+  const body=document.getElementById('panel-body');
+  if(!hdr||!body)return;
+  const e=employees.find(x=>x._id===empId)||{name:empName,role:'',_id:empId,authUid};
+  const uid=authUid||empId;
+  const mKey=curMonthKey();
+  const score=calcKpi(e,uid);
+  const scoreCol=score>=90?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
+  const scoreLbl=score>=90?'ممتاز':score>=70?'جيد':score>=50?'يحتاج متابعة':'خطر';
+  // Breakdown values
+  const workDays=26;
+  const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===empId)&&(a.date||'').startsWith(mKey)).length;
+  const commitment=Math.min(25,Math.round(monthAtt/workDays*25));
+  const myDone=allOrders.filter(o=>(o.designerId===uid||o.createdBy===uid||o.productionAgent===uid)&&['archived','delivered'].includes(o.stage));
+  const lateOrders=myDone.filter(o=>o.deadline&&(o.timeline||[]).slice(-1)[0]?.date>o.deadline).length;
+  const speed=myDone.length?Math.round((1-lateOrders/myDone.length)*25):15;
+  const mStart=mKey+'-01';
+  const acted=allOrders.filter(o=>(o.timeline||[]).some(t=>t.by===e.name&&(t.date||'')>=mStart)).length;
+  const activity=Math.min(25,acted*4);
+  const prod=Math.max(0,score-commitment-speed-activity);
+  // Last activity
+  const lastAct=allOrders.reduce((best,o)=>{
+    const t=(o.timeline||[]).filter(t=>t.by===e.name).slice(-1)[0];
+    if(!t)return best;
+    return(!best||t.date>best.date)?{...t,clientName:o.clientName,orderId:o._id}:best;
+  },null);
+  hdr.innerHTML=`<div>
+    <div style="font-size:15px;font-weight:800">📊 تقييم — ${empName}</div>
+    <div style="font-size:11px;color:var(--dim2)">${ROLES[e.role]?.label||e.role} · ${curMonthKey()}</div>
+  </div>`;
+  body.innerHTML=`
+    <div style="text-align:center;padding:24px 16px;border-bottom:1px solid var(--line)">
+      <div style="font-size:56px;font-weight:900;color:${scoreCol};line-height:1">${score}</div>
+      <div style="font-size:14px;font-weight:800;color:${scoreCol};margin-top:4px">${scoreLbl}</div>
+      <div style="font-size:11px;color:var(--dim2);margin-top:2px">من 100 نقطة</div>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      ${[
+        {lbl:'الالتزام بالحضور',val:commitment,max:25,col:'var(--g)',sub:monthAtt+' يوم هذا الشهر'},
+        {lbl:'الإنتاجية',val:prod,max:25,col:'var(--b)',sub:myDone.length+' أوردر مكتمل'},
+        {lbl:'السرعة والالتزام بالمواعيد',val:speed,max:25,col:'var(--p)',sub:lateOrders+' متأخر من '+myDone.length},
+        {lbl:'النشاط في النظام',val:activity,max:25,col:'var(--y)',sub:acted+' أوردر تفاعل معها الشهر'},
+      ].map(k=>`<div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:12px;font-weight:700">${k.lbl}</span>
+          <span style="font-size:12px;font-weight:900;color:${k.col}">${k.val}/${k.max}</span>
+        </div>
+        <div class="kpi-bar"><div class="kpi-fill" style="width:${k.val/k.max*100}%;background:${k.col}"></div></div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${k.sub}</div>
+      </div>`).join('')}
+    </div>
+    ${lastAct?`<div style="margin:0 16px 16px;background:var(--bg3);border-radius:var(--rad);padding:10px 12px">
+      <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">آخر نشاط في النظام</div>
+      <div style="font-size:12px;font-weight:700">${lastAct.action||'—'}</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px">${lastAct.date||''} · ${lastAct.clientName||''}</div>
+    </div>`:''}`;
+  document.getElementById('panel-ov').classList.add('open');
+};
+
 window.openAttPanel=function(empId,authUid,empName){
   const hdr=document.getElementById('pn-hdr');
   const body=document.getElementById('panel-body');
@@ -515,6 +690,30 @@ function updateStats(){
   setText('s-total',employees.length);
   setText('s-active',active.length);
   setText('s-design',employees.filter(e=>e.role==='graphic_designer').length);
+  // Team status stats (derived from attendance + orders)
+  const today=todayStr();
+  const todayAtts=attendanceRecords.filter(a=>a.date===today);
+  const workingNow=todayAtts.filter(a=>a.checkIn&&!a.checkOut).length;
+  const noActivity=active.filter(e=>{
+    const uid=e.authUid||e._id;
+    return !todayAtts.some(a=>a.employeeUid===uid||a.employeeId===e._id);
+  }).length;
+  // High pressure: checked in + 4+ active orders assigned
+  const activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  let highPressure=0;
+  active.forEach(e=>{
+    const uid=e.authUid||e._id;
+    const isIn=todayAtts.some(a=>(a.employeeUid===uid||a.employeeId===e._id)&&a.checkIn&&!a.checkOut);
+    if(!isIn)return;
+    const cnt=activeOrders.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficer===uid).length;
+    if(cnt>=4)highPressure++;
+  });
+  const totalActiveOrders=activeOrders.length;
+  const avgProd=active.length?Math.round(totalActiveOrders/active.length*10)/10:0;
+  setText('s-working-now',workingNow);
+  setText('s-no-activity',noActivity);
+  setText('s-high-pressure',highPressure);
+  setText('s-avg-prod',avgProd);
   const totalSalaries=active.reduce((s,e)=>s+(parseFloat(e.baseSalary)||0),0);
   setText('s-salaries',fn(totalSalaries));
   const salTx=transactions.filter(t=>isMainSalaryTx(t)&&txInPeriod(t));
@@ -621,9 +820,20 @@ window.renderList=function(){
     return;
   }
 
+  // Build last-activity map from all order timelines
+  const lastActivityMap=new Map();
+  allOrders.forEach(o=>{
+    (o.timeline||[]).forEach(t=>{
+      if(!t.by)return;
+      const ex=lastActivityMap.get(t.by);
+      if(!ex||(t.date||'')>(ex.date||''))lastActivityMap.set(t.by,{...t,clientName:o.clientName||'',orderId:o._id});
+    });
+  });
+  renderAlerts();
+  const activeOrdsAll=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   const periodOrders=ordersInPeriod();
   const pLbl=getPeriodLabel();
-  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">${data.map(e=>{
+  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px">${data.map(e=>{
     const r=ROLES[e.role]||{label:e.role,col:'#4e5672',ico:'👤'};
     const isPaid=paidEmpIds.has(e._id);
     const isActive=e.status==='active';
@@ -633,6 +843,11 @@ window.renderList=function(){
     const monthAtt=attendedInPeriod[e._id]||attendedInPeriod[uid]||0;
     const phone=e.phone||'';
     const waHref=phone?'https://wa.me/2'+phone.replace(/^0/,''):'';
+    const activeOrderCnt=activeOrdsAll.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficer===uid||o.createdBy===uid).length;
+    const empSt=isActive?getEmpStatus(uid,e._id,todayRec,activeOrderCnt):{label:'غير نشط',col:'var(--dim2)',bg:'rgba(78,86,114,.12)'};
+    const kpiScore=isActive?calcKpi(e,uid):0;
+    const kpiCol=kpiScore>=90?'var(--g)':kpiScore>=70?'var(--b)':kpiScore>=50?'var(--y)':'var(--r)';
+    const lastAct=lastActivityMap.get(e.name)||null;
 
     // أداء حسب الدور
     const myOrders=periodOrders;
@@ -678,42 +893,60 @@ window.renderList=function(){
       </div>`;
     }
 
+    const eSafe=e.name?.replace(/'/g,'')||'';
     return `<div class="emp-card" style="--ec:${r.col}">
       <!-- رأس الكارت -->
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
-        <div class="emp-avatar" style="background:${r.col}">${(e.name||'?')[0].toUpperCase()}</div>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">
+        <div style="position:relative;flex-shrink:0">
+          <div class="emp-avatar" style="background:${r.col}">${(e.name||'?')[0].toUpperCase()}</div>
+          <div style="position:absolute;bottom:-2px;left:-2px;width:14px;height:14px;border-radius:50%;background:${empSt.col};border:2px solid var(--bg2)"></div>
+        </div>
         <div style="flex:1;min-width:0">
           <div style="font-size:15px;font-weight:800;margin-bottom:2px">${e.name||'—'}</div>
           <div style="font-size:11px;color:var(--dim2)">${phone||'—'}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-          ${isActive?`<span style="font-size:10px;color:var(--g);font-weight:700">● نشط</span>`:`<span style="font-size:10px;color:var(--dim2)">○ غير نشط</span>`}
-          ${isActive?(todayRec
-            ?`<span style="font-size:9px;padding:2px 7px;border-radius:10px;font-weight:700;background:rgba(0,217,126,.15);color:var(--g)">
-              ${todayRec.checkInStr||'—'}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:'  ●'}
-            </span>`
-            :`<span style="font-size:9px;padding:2px 7px;border-radius:10px;font-weight:700;background:rgba(255,61,110,.12);color:var(--r)">لم يحضر</span>`
-          ):''}
+          <span class="status-pill" style="background:${empSt.bg};color:${empSt.col}">${empSt.label}</span>
+          ${isActive&&todayRec?`<span style="font-size:9px;color:var(--dim2);font-weight:700">${todayRec.checkInStr||''}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:' ●'}</span>`:''}
         </div>
       </div>
 
-      <!-- الدور والمرتب -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <!-- الدور والمرتب + KPI -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span class="emp-chip" style="background:${r.col}18;color:${r.col};border:1px solid ${r.col}30">${r.ico} ${r.label}</span>
-        <span style="font-size:14px;color:var(--g);font-weight:800">${fn(e.baseSalary||0)} ج</span>
+        <div style="text-align:left">
+          <div style="font-size:14px;color:var(--g);font-weight:800">${fn(e.baseSalary||0)} ج</div>
+        </div>
       </div>
+
+      <!-- KPI bar -->
+      ${isActive?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer" onclick="event.stopPropagation();openKpiPanel('${e._id}','${uid}','${eSafe}')">
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:10px;color:var(--dim2);font-weight:700">تقييم الأداء</span>
+            <span style="font-size:11px;font-weight:900;color:${kpiCol}">${kpiScore}/100</span>
+          </div>
+          <div class="kpi-bar"><div class="kpi-fill" style="width:${kpiScore}%;background:${kpiCol}"></div></div>
+        </div>
+      </div>`:''}
 
       <!-- الأداء -->
       ${perfHtml}
 
       <!-- الحضور -->
-      ${isActive?`<div class="emp-metric" style="margin-bottom:10px;cursor:pointer" onclick="event.stopPropagation();openAttPanel('${e._id}','${(e.authUid||e._id)}','${(e.name||'').replace(/'/g,'')}')" title="اضغط لعرض السجل">
+      ${isActive?`<div class="emp-metric" style="margin-bottom:8px;cursor:pointer" onclick="event.stopPropagation();openAttPanel('${e._id}','${uid}','${eSafe}')" title="اضغط لعرض السجل">
         <span style="font-size:11px;color:var(--dim2)">📅 حضور ${pLbl}</span>
         <span style="font-size:12px;font-weight:800;color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم <span style="font-size:10px;color:var(--b);font-weight:700">← سجل</span></span>
       </div>`:''}
 
+      <!-- آخر نشاط -->
+      ${lastAct?`<div class="emp-metric" style="margin-bottom:8px;font-size:10px">
+        <span style="color:var(--dim2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">⚡ ${lastAct.action||'—'}</span>
+        <span style="color:var(--dim2);flex-shrink:0;margin-right:6px">${(lastAct.date||'').slice(5)||''}</span>
+      </div>`:''}
+
       <!-- حالة المرتب -->
-      ${isActive?`<div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;border-top:1px solid var(--line);margin-bottom:10px">
+      ${isActive?`<div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--line);margin-bottom:10px">
         ${isPaid
           ?`<span style="font-size:10px;background:rgba(0,217,126,.12);color:var(--g);padding:3px 10px;border-radius:12px;font-weight:700">✅ مصروف ${pLbl}</span>`
           :`<span style="font-size:10px;background:rgba(255,170,0,.12);color:var(--y);padding:3px 10px;border-radius:12px;font-weight:700">⏳ لم يُصرف</span>`
@@ -721,12 +954,19 @@ window.renderList=function(){
         ${!isPaid&&periodFilter==='month_cur'?`<button class="btn btn-g btn-xs" onclick="event.stopPropagation();openPayOne('${e._id}')" style="font-size:10px;padding:3px 12px">💰 صرف</button>`:''}
       </div>`:''}
 
-      <!-- أزرار التواصل + البروفايل -->
-      <div style="display:flex;gap:6px">
-        <a href="employee-profile.html?id=${e._id}" class="btn btn-ghost btn-sm" style="flex:1;text-align:center;font-size:11px" onclick="event.stopPropagation()">👤 البروفايل</a>
-        ${phone?`<a href="tel:${phone}" class="btn btn-ghost btn-sm" style="width:36px;display:flex;align-items:center;justify-content:center;font-size:15px" onclick="event.stopPropagation()">📞</a>`:''}
-        ${waHref?`<a href="${waHref}" target="_blank" class="btn btn-ghost btn-sm" style="width:36px;display:flex;align-items:center;justify-content:center;font-size:15px" onclick="event.stopPropagation()">💬</a>`:''}
+      <!-- أزرار الإجراءات -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">
+        <a href="employee-profile.html?id=${e._id}" class="btn btn-ghost btn-sm" style="font-size:11px;text-align:center" onclick="event.stopPropagation()">👤 بروفايل</a>
+        <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="event.stopPropagation();openKpiPanel('${e._id}','${uid}','${eSafe}')">📊 تقييم</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="event.stopPropagation();openEditEmp('${e._id}')">✏️ تعديل</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:11px;color:${isActive?'var(--y)':'var(--g)'}" onclick="event.stopPropagation();toggleEmpStatus('${e._id}','${isActive?'inactive':'active'}')">
+          ${isActive?'⏸ إيقاف':'▶ تفعيل'}
+        </button>
       </div>
+      ${phone?`<div style="display:flex;gap:5px;margin-top:5px">
+        <a href="tel:${phone}" class="btn btn-ghost btn-sm" style="flex:1;text-align:center;font-size:11px" onclick="event.stopPropagation()">📞 اتصال</a>
+        ${waHref?`<a href="${waHref}" target="_blank" class="btn btn-ghost btn-sm" style="flex:1;text-align:center;font-size:11px" onclick="event.stopPropagation()">💬 واتساب</a>`:''}
+      </div>`:''}
     </div>`;
   }).join('')}</div>`;
 };
