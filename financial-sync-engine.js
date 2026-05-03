@@ -199,7 +199,9 @@ async function handleSalaryPaymentReversal(db, p) {
     console.log('[FSE] 💳 balance restored:', isDeduction ? '-' : '+', p.amount);
   }
 
-  batch.delete(doc(db, 'transactions_v2', p.txId));
+  if (p.txId) {
+    batch.delete(doc(db, 'transactions_v2', p.txId));
+  }
 
   if (p.epId) {
     batch.delete(doc(db, 'employee_payments', p.epId));
@@ -243,6 +245,7 @@ async function handleSalaryPayment(db, p) {
     amount: p.amount, salaryType: p.salaryType, isDeduction,
     month: p.month, walletId: p.walletId, walletName: p.walletName || '',
     note: p.note || '', date: p.date || new Date().toLocaleDateString('ar-EG'),
+    txId: txRef.id,
     createdAt: serverTimestamp(), createdBy: p.userId || '',
   });
   console.log('[FSE] 🏭 module updated: transactions_v2 + employee_payments');
@@ -267,15 +270,16 @@ async function handlePayroll(db, p) {
 
   for (const e of p.employees) {
     const epRef = doc(collection(db, 'employee_payments'));
+    const txRef = doc(collection(db, 'transactions_v2'));
     batch.set(epRef, {
       employeeId: e.employeeId, employeeName: e.employeeName,
       amount: e.amount, month: p.month,
       walletId: p.walletId, walletName: p.walletName || '',
       note: p.note, date: p.date || new Date().toLocaleDateString('ar-EG'),
+      txId: txRef.id,
       createdAt: serverTimestamp(), createdBy: p.userId || '',
     });
 
-    const txRef = doc(collection(db, 'transactions_v2'));
     batch.set(txRef, {
       walletId: p.walletId, walletName: p.walletName || '',
       type: 'out', amount: e.amount,
