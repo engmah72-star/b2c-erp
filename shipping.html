@@ -73,21 +73,33 @@
 @media(max-width:600px){.stat-strip{grid-template-columns:repeat(2,1fr)}}
 
 /* ══ QUICK ACTIONS ══ */
-.qa-row{display:flex;gap:5px;padding:8px 0 0;border-top:1px solid var(--line);margin-top:8px;flex-wrap:wrap}
-.qa-btn{flex:1;min-width:0;padding:7px 4px;border-radius:8px;border:1px solid transparent;cursor:pointer;font-size:11px;font-weight:800;font-family:inherit;transition:all .15s;white-space:nowrap;text-align:center}
+.qa-row{display:flex;gap:5px;padding:8px 0 0;border-top:1px solid var(--line);margin-top:10px;flex-wrap:wrap}
+.qa-btn{flex:1;min-width:0;padding:8px 4px;border-radius:9px;border:1px solid transparent;cursor:pointer;font-size:11px;font-weight:800;font-family:inherit;transition:all .15s;white-space:nowrap;text-align:center}
 .qa-g{background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.25)}
 .qa-r{background:rgba(255,61,110,.1);color:var(--r);border-color:rgba(255,61,110,.25)}
 .qa-b{background:rgba(59,158,255,.1);color:var(--b);border-color:rgba(59,158,255,.25)}
 .qa-y{background:rgba(255,170,0,.1);color:var(--y);border-color:rgba(255,170,0,.25)}
 .qa-c{background:rgba(34,211,238,.1);color:var(--c);border-color:rgba(34,211,238,.25)}
-
+/* ══ STAGE TRACK ══ */
+.strack{display:flex;align-items:center;gap:0;margin:6px 0 4px}
+.strack-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:all .2s}
+.strack-dot.st-done{background:var(--g)}
+.strack-dot.st-active{background:var(--c);box-shadow:0 0 7px rgba(34,211,238,.6);width:9px;height:9px}
+.strack-dot.st-future{background:rgba(255,255,255,.12)}
+.strack-line{flex:1;height:1.5px;margin:0 2px}
+.strack-line.done{background:var(--g)}
+.strack-line.future{background:rgba(255,255,255,.1)}
+/* ══ SETTLEMENT BADGE ══ */
+.settle-need{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:800;background:rgba(255,170,0,.12);color:var(--y);border:1px solid rgba(255,170,0,.3);cursor:pointer;font-family:inherit}
+.settle-ok{background:rgba(0,217,126,.1);color:var(--g);border-color:rgba(0,217,126,.25)}
+/* ══ NEXT ACTION BANNER ══ */
+.next-banner{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:11px;margin-bottom:14px;font-size:12px;font-weight:800;border:1px solid}
 /* ══ WIZARD ══ */
 .wiz-steps{display:flex;align-items:center;gap:4px;margin-top:6px}
 .wiz-dot{width:24px;height:24px;border-radius:50%;background:var(--bg3);border:2px solid var(--line);font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;color:var(--dim2);transition:all .2s;flex-shrink:0}
 .wiz-dot.on{background:var(--c);border-color:var(--c);color:#0d0f1c}
 .wiz-dot.done{background:var(--g);border-color:var(--g);color:#0d0f1c}
-.wiz-line{flex:1;height:2px;background:var(--line);border-radius:2px}
-</style>
+.wiz-line{flex:1;height:2px;background:var(--line);border-radius:2px}</style>
 </head>
 <body>
 <div class="app-shell">
@@ -816,6 +828,42 @@ const STAGE_COL={ready:'var(--y)',collected:'var(--g)',wait_delivery:'var(--c)',
 const METHOD_LABELS={pickup:'🏠 بالمحل',courier:'🏍️ مندوب',company:'📦 شركة شحن'};
 const RATING_LABELS=['','😞 سيء','😐 مقبول','🙂 جيد','😊 جيد جداً','🤩 ممتاز'];
 
+// ══ Stage Track (mini progress dots) ══
+const TRACK_PATH=['ready','wait_delivery','wait_collection','collected'];
+function stageDots(ss){
+  if(ss==='returned')return`<span style="font-size:10px;color:var(--y);font-weight:700;letter-spacing:.2px">↩️ مرتجع</span>`;
+  if(ss==='archived')return`<span style="font-size:10px;color:var(--dim2);font-weight:700">📁 مؤرشف</span>`;
+  const idx=TRACK_PATH.indexOf(ss);
+  return`<div class="strack">`+TRACK_PATH.map((s,i)=>{
+    const cl=i<idx?'st-done':i===idx?'st-active':'st-future';
+    return`<div class="strack-dot ${cl}"></div>`+(i<TRACK_PATH.length-1?`<div class="strack-line ${i<idx?'done':'future'}"></div>`:'');
+  }).join('')+`</div>`;
+}
+// ══ Settlement status badge ══
+function settleBadge(o){
+  if(o.shipMethod!=='company'||!o.shipCompanyName)return'';
+  const ss=o.shipStage||'ready';
+  if(['returned','archived'].includes(ss)||ss==='ready')return'';
+  if(o.shipSettled)return`<span class="settle-need settle-ok">✅ مسوّى</span>`;
+  return`<button class="settle-need" onclick="event.stopPropagation();window.location.href='shipping-accounts.html'">⏳ تسوية مطلوبة</button>`;
+}
+// ══ Next action for order ══
+function nextAction(o){
+  const ss=o.shipStage||'ready';
+  const rem=calcRem(o);
+  const isComp=o.shipMethod==='company';
+  if(ss==='returned')return{c:'var(--y)',bg:'rgba(255,170,0,.08)',bc:'rgba(255,170,0,.25)',ico:'↩️',txt:'مرتجع — حالة نهائية',btn:null};
+  if(ss==='archived')return{c:'var(--g)',bg:'rgba(0,217,126,.06)',bc:'rgba(0,217,126,.2)',ico:'📁',txt:'مؤرشف بنجاح',btn:null};
+  if(!o.shipMethod)return{c:'var(--c)',bg:'rgba(34,211,238,.06)',bc:'rgba(34,211,238,.25)',ico:'🚚',txt:'الخطوة التالية: سجّل طريقة الشحن',btn:{lbl:'تسجيل الشحن',fn:`openShipSetup()`}};
+  if(rem>0&&ss!=='collected')return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.25)',ico:'💰',txt:`متبقي: ${fn(rem)} ج — حصّل من العميل`,btn:{lbl:'تحصيل الآن',fn:`openShipSetup()`}};
+  if(ss==='wait_delivery')return{c:'var(--c)',bg:'rgba(34,211,238,.06)',bc:'rgba(34,211,238,.2)',ico:'🚚',txt:`في الطريق${o.shipCompanyName?' مع '+o.shipCompanyName:''}`,btn:null};
+  if(ss==='wait_collection')return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.2)',ico:'💰',txt:'وصلت — انتظار تحصيل المبلغ من العميل',btn:{lbl:'تحصيل',fn:`openShipSetup()`}};
+  if(ss==='collected'&&isComp&&!o.shipSettled)return{c:'var(--y)',bg:'rgba(255,170,0,.08)',bc:'rgba(255,170,0,.3)',ico:'⏳',txt:`تسوية مطلوبة مع ${o.shipCompanyName||'شركة الشحن'}`,btn:{lbl:'انتقل للتسوية',fn:`window.location.href='shipping-accounts.html'`}};
+  if(ss==='collected'&&!(o.costItems||[]).length)return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.25)',ico:'⚠️',txt:'سجّل تكاليف الأوردر قبل الأرشفة',btn:{lbl:'تسجيل تكلفة',fn:`openAddCostShip(-1)`}};
+  if(ss==='collected')return{c:'var(--g)',bg:'rgba(0,217,126,.06)',bc:'rgba(0,217,126,.25)',ico:'✅',txt:'محصّل — جاهز للأرشفة',btn:{lbl:'أرشفة الأوردر',fn:`openDeliver()`}};
+  return null;
+}
+
 // ══ SINGLE ORDER STATE ENGINE ══
 // انتقالات مسموح بها فقط — كل حالة لها مسار واحد للأمام
 const ALLOWED_NEXT={
@@ -1254,39 +1302,61 @@ window.renderList=function(){
     const ss=o.shipStage||'ready';
     const sc=STAGE_COL[ss]||'var(--c)';
     const sale2=parseFloat(o.salePrice)||0;
-    const paid2=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
     const rem=calcRem(o);
     const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
     const firstImg=(o.products||[]).find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.finalImageUrl||'';
     const noCost=!(o.costItems||[]).length;
+    const isTerminal=TERMINAL_STATES.has(ss);
+    // Quick actions — contextual only
+    const qa=[];
+    if(!isTerminal){
+      if(!o.shipMethod)qa.push(`<button class="qa-btn qa-c" onclick="quickShip('${o._id}')">🚚 شحن</button>`);
+      else{
+        if(rem>0)qa.push(`<button class="qa-btn qa-g" onclick="quickCollect('${o._id}')">💰 تحصيل</button>`);
+        if((ALLOWED_NEXT[ss]||[]).length)qa.push(`<button class="qa-btn qa-b" onclick="quickStage('${o._id}')">📦 التالي</button>`);
+        if(ss==='collected'&&o.shipMethod==='company'&&!o.shipSettled)qa.push(`<button class="qa-btn qa-y" onclick="window.location.href='shipping-accounts.html'">🔗 تسوية</button>`);
+        if(ss==='collected'&&!(o.costItems||[]).length)qa.push(`<button class="qa-btn qa-y" onclick="openAddCostShip(-1)">💼 تكلفة</button>`);
+        qa.push(`<button class="qa-btn qa-r" onclick="quickReturn('${o._id}')">↩️ مرتجع</button>`);
+      }
+    }
     return`<div class="ocard" style="--oc:${sc}" onclick="openOrder('${o._id}')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div>
+      <!-- رأس البطاقة -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div style="min-width:0;flex:1">
           <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
           <div class="ocard-client">${o.clientName||'—'}</div>
           <div class="ocard-phone">${o.clientPhone?'📞 '+o.clientPhone:''}</div>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          <span class="ocard-stage" style="background:${sc}15;color:${sc}">${STAGE_LABELS[ss]||ss}</span>
-          ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;margin-right:8px">
+          ${noCost&&!isTerminal?`<span style="font-size:10px;background:rgba(255,61,110,.15);color:var(--r);border:1px solid rgba(255,61,110,.3);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
           ${o.shipCompanyName?`<span class="co-badge">${o.shipCompanyName}</span>`:''}
         </div>
       </div>
+      <!-- مسار الحالة -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        ${stageDots(ss)}
+        <span style="font-size:10px;font-weight:800;color:${sc};margin-right:6px">${STAGE_LABELS[ss]||ss}</span>
+      </div>
+      <!-- المنتجات والعنوان -->
       <div class="ocard-product">${prods}</div>
-      ${o.shipGov?`<div style="font-size:11px;color:var(--dim2);margin-top:4px">📍 ${o.shipGov}${o.shipAddress?' · '+o.shipAddress:''}</div>`:''}
+      ${o.shipGov?`<div style="font-size:11px;color:var(--dim2);margin-top:3px">📍 ${o.shipGov}${o.shipAddress?' · '+o.shipAddress:''}</div>`:''}
+      <!-- صورة -->
       ${firstImg?`<div style="margin:8px -16px 0;border-top:1px solid var(--line);background:var(--bg3);overflow:hidden" onclick="event.stopPropagation();window.open('${firstImg}','_blank')">
-        <img src="${firstImg}" loading="lazy" decoding="async" style="width:100%;max-height:110px;object-fit:contain;display:block;cursor:zoom-in">
+        <img src="${firstImg}" loading="lazy" decoding="async" style="width:100%;max-height:100px;object-fit:contain;display:block;cursor:zoom-in">
       </div>`:''}
-      <div class="ocard-bottom">
-        <div style="font-size:11px;color:var(--dim2)">${o.shipMethod?METHOD_LABELS[o.shipMethod]||o.shipMethod:'لم يُسجَّل الشحن'}</div>
-        ${rem>0?`<span class="rem-badge">💰 ${fn(rem)} ج</span>`:'<span style="font-size:12px;color:var(--g);font-weight:700">✅ محصّل</span>'}
+      <!-- الماليات + badge التسوية -->
+      <div class="ocard-bottom" style="margin-top:8px">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--dim2)">${o.shipMethod?METHOD_LABELS[o.shipMethod]||o.shipMethod:'غير محدد'}</span>
+          ${settleBadge(o)}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          ${sale2>0?`<span style="font-size:11px;color:var(--dim2)">${fn(sale2)} ج</span>`:''}
+          ${rem>0?`<span class="rem-badge">💰 ${fn(rem)} ج</span>`:'<span style="font-size:12px;color:var(--g);font-weight:700">✅</span>'}
+        </div>
       </div>
-      <div class="qa-row" onclick="event.stopPropagation()">
-        ${rem>0&&ss!=='collected'?`<button class="qa-btn qa-g" onclick="quickCollect('${o._id}')">💰 تحصيل</button>`:''}
-        <button class="qa-btn qa-r" onclick="quickReturn('${o._id}')">↩️ مرتجع</button>
-        ${ss!=='collected'&&ss!=='wait_collection'?`<button class="qa-btn qa-b" onclick="quickStage('${o._id}')">📦 التالي</button>`:''}
-        ${!o.shipMethod?`<button class="qa-btn qa-c" onclick="quickShip('${o._id}')">🚚 شحن</button>`:''}
-      </div>
+      <!-- Quick Actions — contextual -->
+      ${qa.length?`<div class="qa-row" onclick="event.stopPropagation()">${qa.join('')}</div>`:''}
     </div>`;
   }).join('');
 };
@@ -1307,13 +1377,17 @@ window.openOrder=function(id){
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
+  const na=nextAction(o);
   document.getElementById('pn-hdr').innerHTML=`
-    <div style="flex:1">
-      <div style="font-size:10px;color:${sc};font-weight:700;margin-bottom:2px">🚚 ${STAGE_LABELS[ss]||ss}</div>
-      <div style="font-size:17px;font-weight:900">${o.clientName||'—'}</div>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        ${stageDots(ss)}
+        <span style="font-size:10px;font-weight:800;color:${sc}">${STAGE_LABELS[ss]||ss}</span>
+      </div>
+      <div style="font-size:17px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.clientName||'—'}</div>
       <a href="tel:${o.clientPhone}" style="font-size:12px;color:var(--b);text-decoration:none">📞 ${o.clientPhone||'—'}</a>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
       ${o.clientPhone?`<a href="https://wa.me/2${(o.clientPhone||'').replace(/^0/,'')}" target="_blank" style="padding:8px 12px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.3);border-radius:8px;color:#25D366;font-size:14px;text-decoration:none">💬</a>`:''}
     </div>`;
 
@@ -1321,6 +1395,11 @@ window.openOrder=function(id){
   if(o.printFinalUrl&&!allImgs.some(i=>i.url===o.printFinalUrl))allImgs.push({url:o.printFinalUrl,name:'الملف النهائي'});
 
   document.getElementById('panel-body').innerHTML=`
+    ${na?`<div class="next-banner" style="background:${na.bg};border-color:${na.bc};color:${na.c}">
+      <span style="font-size:18px;flex-shrink:0">${na.ico}</span>
+      <span style="flex:1;line-height:1.4">${na.txt}</span>
+      ${na.btn?`<button onclick="${na.btn.fn}" style="padding:6px 12px;border-radius:8px;border:1px solid ${na.bc};background:transparent;color:${na.c};font-size:11px;font-weight:900;cursor:pointer;font-family:inherit;white-space:nowrap">${na.btn.lbl}</button>`:''}
+    </div>`:''}
     ${allImgs.length?`<div class="section">
       <div class="section-title" style="margin-bottom:10px">🖼️ صور التصميم</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px">
@@ -2008,7 +2087,13 @@ window.saveReturnWizard=async function(){
     // 3. Financial transactions
     if(!isPartial&&o.shipSettled){
       const settledAmt=parseFloat(o.shipSettledAmount)||0;
-      if(settledAmt>0){const sRef=doc(collection(db,'transactions_v2'));batch.set(sRef,{type:'out',amount:settledAmt,description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});}
+      const settledWId=o.shipSettledWalletId||'';
+      if(settledAmt>0){
+        if(settledWId) batch.update(doc(db,'wallets',settledWId),{balance:increment(-settledAmt)});
+        const sRef=doc(collection(db,'transactions_v2'));
+        batch.set(sRef,{type:'out',amount:settledAmt,description:`↩️ عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,walletId:settledWId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+        addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{amount:settledAmt,walletId:settledWId,walletName:wallets.find(w=>w._id===settledWId)?.name||'',notes:`عكس تسوية مرتجع — ${o.clientName||''} — ${coName}`,orderId,clientId:o.clientId||'',clientName:o.clientName||'',userId:currentUser?.uid||'',userName});
+      }
     }
     if(!isPartial&&depAmt>0){
       const dRef=doc(collection(db,'transactions_v2'));

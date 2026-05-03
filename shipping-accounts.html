@@ -422,19 +422,25 @@ window.render=function(){
   });
 
   // ══ بناء بيانات الشركات ══
+  const SETTLE_READY_STG=new Set(['wait_collection','collected','archived']);
   const coMap={};
   shipped.forEach(o=>{
     const co=o.shipCompanyName;
-    if(!coMap[co])coMap[co]={name:co,allOrders:[],pendingOrds:[],settledOrds:[],returnsCount:0,totalDue:0};
+    if(!coMap[co])coMap[co]={name:co,allOrders:[],pendingOrds:[],readyOrds:[],transitOrds:[],settledOrds:[],returnsCount:0,totalDue:0,readyDue:0};
     const due=FC.getDueByCo(o);
     const isReturn=returns.some(r=>r.orderId===o._id&&r.status!=='cancelled');
     const isSettled=o.shipSettled===true;
+    const isReady=SETTLE_READY_STG.has(o.shipStage||'ready');
     coMap[co].allOrders.push({...o,due,isReturn,isSettled});
     if(isReturn){coMap[co].returnsCount++;}
     else{
       coMap[co].totalDue+=due;
       if(isSettled)coMap[co].settledOrds.push(o);
-      else coMap[co].pendingOrds.push(o);
+      else{
+        coMap[co].pendingOrds.push(o);
+        if(isReady){coMap[co].readyOrds.push(o);coMap[co].readyDue+=due;}
+        else coMap[co].transitOrds.push(o);
+      }
     }
   });
 
@@ -470,11 +476,16 @@ window.render=function(){
       <div class="co-head">
         <div>
           <div class="co-name">📦 ${co.name}</div>
-          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${co.allOrders.length} شحنة · ${co.pendingOrds.length} بانتظار تسوية${coReturns.length?` · <span style="color:var(--y)">${coReturns.length} مرتجع</span>`:''}</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">
+            ${co.readyOrds.length?`<span style="color:var(--g);font-weight:800">✅ ${co.readyOrds.length} جاهزة للتسوية</span>`:''}
+            ${co.transitOrds.length?`<span style="color:var(--c)">🚚 ${co.transitOrds.length} في الطريق</span>`:''}
+            ${coReturns.length?`<span style="color:var(--y)">↩️ ${coReturns.length} مرتجع</span>`:''}
+            ${!co.pendingOrds.length&&!coReturns.length?`<span style="color:var(--g)">✅ لا يوجد معلق</span>`:''}
+          </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${co.pendingOrds.length?`<button class="btn btn-r btn-sm" onclick="openReturn('${co.name}')">↩️ مرتجع</button>`:''}
-          ${co.totalRemaining>0?`<button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسوية</button>`:'<span style="font-size:11px;color:var(--g);font-weight:700;padding:4px 8px">✅ مسوّى</span>'}
+          ${co.readyOrds.length?`<button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسوية (${co.readyOrds.length})</button>`:co.totalRemaining<=0?'<span style="font-size:11px;color:var(--g);font-weight:700;padding:4px 8px">✅ مسوّى</span>':''}
         </div>
       </div>
       <div class="co-body">
@@ -629,33 +640,59 @@ window.openSettle=function(coName){
   setText('sa-returns-count',coReturnsCount);
   setText('sa-deferred-count',deferredCount);
 
-  // Section B — جدول الشحنات
+  // Section B — جدول الشحنات (مقسوم: جاهزة ← في الطريق)
+  // جاهزة للتسوية = تم التسليم أو وصل العميل (wait_collection/collected/archived)
+  // في الطريق = wait_delivery (الشركة لسه بتوصل)
+  const READY_STAGES=new Set(['wait_collection','collected','archived']);
+  const readyOrds=coOrds.filter(o=>READY_STAGES.has(o.shipStage||'ready'));
+  const transitOrds=coOrds.filter(o=>!READY_STAGES.has(o.shipStage||'ready'));
+
   const ordEl=document.getElementById('settle-orders');
   if(ordEl){
     if(!coOrds.length){
       ordEl.innerHTML='<div style="color:var(--dim2);text-align:center;padding:20px;font-size:12px">لا توجد أوردرات مفتوحة للتسوية</div>';
     } else {
-      ordEl.innerHTML=coOrds.map(o=>{
+      const buildRow=(o,isReady)=>{
         const paid=FC.getPaid(o);
         const due=FC.getDueByCo(o);
         const sale=parseFloat(o.salePrice)||0;
         const stg=o.shipStage||'ready';
         const stgCol=SETTLE_STAGE_COL[stg]||'var(--dim2)';
         const stgLbl=SETTLE_STAGE_LABELS[stg]||stg;
+        if(!isReady){
+          return`<div class="stbl-row" id="srow-${o._id}" style="opacity:.5;cursor:default" title="لا يمكن التسوية حتى يتم التسليم">
+            <div style="color:var(--dim2);font-size:13px">⏸</div>
+            <div style="min-width:0"><div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim2)">${o.clientName||'—'}</div><div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div></div>
+            <div style="text-align:left;font-size:11px;color:var(--dim2)">${fn(sale)} ج</div>
+            <div class="r-prepaid" style="text-align:left;font-size:11px;color:var(--dim2)">${paid>0?fn(paid)+' ج':'—'}</div>
+            <div style="text-align:left;font-size:11px;color:var(--dim2)">${fn(due)} ج</div>
+            <div style="text-align:center;font-size:9px;font-weight:800;color:${stgCol}">${stgLbl}</div>
+          </div>`;
+        }
         return`<div class="stbl-row checked" id="srow-${o._id}" onclick="toggleSettleRow('${o._id}')">
           <input type="checkbox" class="settle-order-cb" value="${o._id}" data-amount="${due}" checked style="width:15px;height:15px;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation()" onchange="updateSettleRowStyle('${o._id}');calcSettleDiff()">
-          <div style="min-width:0">
-            <div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.clientName||'—'}</div>
-            <div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div>
-          </div>
+          <div style="min-width:0"><div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.clientName||'—'}</div><div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div></div>
           <div style="text-align:left;font-size:12px;font-weight:800;color:var(--b)">${fn(sale)} ج</div>
           <div class="r-prepaid" style="text-align:left;font-size:11px;color:var(--g)">${paid>0?fn(paid)+' ج':'—'}</div>
           <div style="text-align:left;font-size:13px;font-weight:900;color:${due>0?'var(--r)':'var(--g)'}">${due>0?fn(due)+' ج':'✅'}</div>
           <div style="text-align:center;font-size:9px;font-weight:800;color:${stgCol};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${stgLbl}</div>
         </div>`;
-      }).join('');
+      };
+      let html='';
+      if(readyOrds.length){
+        html+=`<div style="font-size:10px;font-weight:800;color:var(--g);padding:4px 6px 6px;letter-spacing:.5px">✅ جاهزة للتسوية (${readyOrds.length})</div>`;
+        html+=readyOrds.map(o=>buildRow(o,true)).join('');
+      }
+      if(transitOrds.length){
+        html+=`<div style="font-size:10px;font-weight:800;color:var(--c);padding:${readyOrds.length?'12px':'4px'} 6px 6px;letter-spacing:.5px">🚚 في الطريق — انتظار التسليم (${transitOrds.length})</div>`;
+        html+=transitOrds.map(o=>buildRow(o,false)).join('');
+      }
+      ordEl.innerHTML=html;
     }
   }
+
+  // تحديث totalDue ليشمل الجاهزة فقط في الـ auto-fill
+  const readyDue=readyOrds.reduce((s,o)=>s+FC.getDueByCo(o),0);
 
   // Section C — ملء المحافظ واختيار افتراضي
   const wSel=document.getElementById('settle-wallet');
@@ -664,7 +701,7 @@ window.openSettle=function(coName){
     const defW=wallets.find(w=>w.type==='cash')||wallets[0];
     if(defW)wSel.value=defW._id;
   }
-  sv('settle-amount',totalDue.toFixed(2));
+  sv('settle-amount',readyDue.toFixed(2));
   sv('settle-ref','');
   calcSettleDiff();
 
@@ -809,6 +846,7 @@ window.saveSettle=async function(){
       const tlEntry={date:now,action:`✅ تسوية شحن — ${settleCompanyName} — ${fn(due)} ج${diffReasonLabel?' — فرق: '+diffReasonLabel:''}`,by:userName};
       batch.update(doc(db,'orders',oid),{
         shipSettled:true,shipSettledAmount:due,
+        shipSettledWalletId:wId,
         totalPaid:newPaid,remaining:newRem,
         paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
         timeline:[...(o.timeline||[]),tlEntry],
@@ -933,15 +971,27 @@ window.saveReturn=async function(){
       updatedAt:serverTimestamp()
     });
 
-    // 3. عكس التسوية لو كانت مسوّاة
+    // 3. عكس التسوية لو كانت مسوّاة (wallet + transaction + ledger)
     if(o.shipSettled&&settledAmt>0){
+      const settledWId=o.shipSettledWalletId||'';
+      if(settledWId){
+        batch.update(doc(db,'wallets',settledWId),{balance:increment(-settledAmt)});
+      }
       batch.set(doc(collection(db,'transactions_v2')),{
         type:'out',amount:settledAmt,
-        description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+        description:`↩️ عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
         category:'settlement_reversal',orderId:ordId,
         clientName:o.clientName,shipCompanyName:returnCompanyName,
+        walletId:settledWId,
         date:now,createdBy:currentUser.uid,createdByName:byName,
         createdAt:serverTimestamp()
+      });
+      addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
+        amount:settledAmt,walletId:settledWId,
+        walletName:wallets.find(w=>w._id===settledWId)?.name||'',
+        notes:`عكس تسوية مرتجع — ${o.clientName||''} — ${returnCompanyName}`,
+        orderId:ordId,clientName:o.clientName||'',
+        userId:currentUser.uid,userName:byName
       });
     }
 
