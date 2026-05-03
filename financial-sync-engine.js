@@ -166,8 +166,10 @@ async function handleSalaryPayment(db, p) {
   const isDeduction = p.salaryType === 'deduction';
   const batch = writeBatch(db);
 
-  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? p.amount : -p.amount) });
-  console.log('[FSE] 💳 balance updated:', isDeduction ? '+' : '-', p.amount);
+  if (p.walletId) {
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? p.amount : -p.amount) });
+    console.log('[FSE] 💳 balance updated:', isDeduction ? '+' : '-', p.amount);
+  }
 
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
@@ -205,8 +207,10 @@ async function handlePayroll(db, p) {
   // p.employees: [{employeeId, employeeName, amount}]
   const batch = writeBatch(db);
 
-  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.totalAmount) });
-  console.log('[FSE] 💳 balance updated:', p.walletId, '-', p.totalAmount);
+  if (p.walletId) {
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.totalAmount) });
+    console.log('[FSE] 💳 balance updated:', p.walletId, '-', p.totalAmount);
+  }
 
   for (const e of p.employees) {
     const txRef = doc(collection(db, 'transactions_v2'));
