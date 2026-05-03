@@ -1846,45 +1846,50 @@ window.saveTx=async function(){
     const oldType=old.type||'in', oldAmount=parseFloat(old.amount)||0, oldWalletId=old.walletId||'';
     const oldCat=old.category||'', oldSupplierId=old.supplierId||'', oldEmployeeId=old.employeeId||'';
     try{
-      // تعديل رصيد المحافظ
+      const batch=writeBatch(db);
+
+      // رصيد المحفظة
       if(oldWalletId===walletId){
-        const oldEff=oldType==='in'?oldAmount:-oldAmount;
-        const newEff=type==='in'?amount:-amount;
-        const adj=newEff-oldEff;
-        if(adj!==0)await updateDoc(doc(db,'wallets',walletId),{balance:increment(adj)});
+        const adj=(type==='in'?amount:-amount)-(oldType==='in'?oldAmount:-oldAmount);
+        if(adj!==0)batch.update(doc(db,'wallets',walletId),{balance:increment(adj)});
       } else {
         const reversal=oldType==='in'?-oldAmount:oldAmount;
         const apply=type==='in'?amount:-amount;
-        if(reversal!==0)await updateDoc(doc(db,'wallets',oldWalletId),{balance:increment(reversal)});
-        if(apply!==0)await updateDoc(doc(db,'wallets',walletId),{balance:increment(apply)});
+        if(reversal!==0)batch.update(doc(db,'wallets',oldWalletId),{balance:increment(reversal)});
+        if(apply!==0)batch.update(doc(db,'wallets',walletId),{balance:increment(apply)});
       }
-      // تحديث سجل الحركة
-      await updateDoc(doc(db,'transactions_v2',editTxId),{
+
+      // سجل الحركة
+      batch.update(doc(db,'transactions_v2',editTxId),{
         walletId,type,amount,description:fullDesc,category:cat,
         clientName,supplierId,supplierName,employeeId,employeeName,
         orderId:orderId||'',date:nowStr(),
         updatedAt:serverTimestamp(),updatedBy:currentUser?.uid||''
       });
-      // تحديث supplier_payments: احذف القديم وأضف الجديد لو تغيّر شيء
+
+      // supplier_payments
       const supChanged=cat!==oldCat||supplierId!==oldSupplierId||amount!==oldAmount||walletId!==oldWalletId;
       if(oldCat==='supplier'&&oldSupplierId&&supChanged){
-        const old=supplierPays.find(p=>p.supplierId===oldSupplierId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-        if(old)await deleteDoc(doc(db,'supplier_payments',old._id));
+        const oldSP=supplierPays.find(p=>p.supplierId===oldSupplierId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
+        if(oldSP)batch.delete(doc(db,'supplier_payments',oldSP._id));
       }
       if(cat==='supplier'&&supplierId&&supChanged){
-        await addDoc(collection(db,'supplier_payments'),{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+        batch.set(doc(collection(db,'supplier_payments')),{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
-      // تحديث employee_payments
+
+      // employee_payments
       const empCats=['salary','designer_fee'];
       const empChanged=cat!==oldCat||employeeId!==oldEmployeeId||amount!==oldAmount||walletId!==oldWalletId;
       if(empCats.includes(oldCat)&&oldEmployeeId&&empChanged){
         const oldEP=employeePays.find(p=>p.employeeId===oldEmployeeId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-        if(oldEP)await deleteDoc(doc(db,'employee_payments',oldEP._id));
+        if(oldEP)batch.delete(doc(db,'employee_payments',oldEP._id));
       }
       if(empCats.includes(cat)&&employeeId&&empChanged){
-        const n3=new Date();const mk=n3.getFullYear()+'-'+String(n3.getMonth()+1).padStart(2,'0');
-        await addDoc(collection(db,'employee_payments'),{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+        const mk=new Date().toISOString().slice(0,7);
+        batch.set(doc(collection(db,'employee_payments')),{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
+
+      await batch.commit();
       closeTxModal();
       toast(`✅ تم التعديل — ${fn(amount)} ج`,'ok');
     }catch(e){toast('❌ '+e.message,'err');}
