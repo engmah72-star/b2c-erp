@@ -811,10 +811,46 @@ const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 function nowStr(){return new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});}
 
-const STAGE_LABELS={ready:'📦 جاهز',collected:'✅ تحصّل',wait_delivery:'🚚 في الطريق',wait_collection:'💰 انتظار تحصيل'};
-const STAGE_COL={ready:'var(--y)',collected:'var(--g)',wait_delivery:'var(--c)',wait_collection:'var(--r)'};
+const STAGE_LABELS={ready:'📦 جاهز',collected:'✅ تحصّل',wait_delivery:'🚚 في الطريق',wait_collection:'💰 انتظار تحصيل',returned:'↩️ مرتجع',archived:'📁 مؤرشف'};
+const STAGE_COL={ready:'var(--y)',collected:'var(--g)',wait_delivery:'var(--c)',wait_collection:'var(--r)',returned:'var(--y)',archived:'var(--dim2)'};
 const METHOD_LABELS={pickup:'🏠 بالمحل',courier:'🏍️ مندوب',company:'📦 شركة شحن'};
 const RATING_LABELS=['','😞 سيء','😐 مقبول','🙂 جيد','😊 جيد جداً','🤩 ممتاز'];
+
+// ══ SINGLE ORDER STATE ENGINE ══
+// انتقالات مسموح بها فقط — كل حالة لها مسار واحد للأمام
+const ALLOWED_NEXT={
+  ready:           ['wait_delivery','wait_collection'],
+  wait_delivery:   ['wait_collection','collected'],
+  wait_collection: ['collected'],
+  collected:       [],   // terminal — only archived via saveDeliver
+  returned:        [],   // terminal
+  archived:        [],   // terminal
+};
+const TERMINAL_STATES=new Set(['archived','returned']);
+
+// تحقق من إمكانية تعديل الأوردر
+function checkOrderEditable(o){
+  if(!o) return '⛔ الأوردر غير موجود';
+  if(o.stage==='archived') return '⛔ الأوردر مؤرشف — لا يمكن تعديله';
+  if(o.shipStage==='returned') return '⛔ الأوردر مرتجع بالفعل — لا يمكن إجراء عمليات عليه';
+  return null;
+}
+
+// تحقق من صحة الانتقال
+function checkTransition(o, newStage){
+  const err=checkOrderEditable(o);if(err)return err;
+  const cur=o.shipStage||'ready';
+  if(cur===newStage) return null; // نفس الحالة — OK
+  const allowed=ALLOWED_NEXT[cur]||[];
+  if(!allowed.includes(newStage)) return `⛔ لا يمكن الانتقال من "${STAGE_LABELS[cur]||cur}" إلى "${STAGE_LABELS[newStage]||newStage}"`;
+  if(newStage==='collected'&&calcRem(o)>0.01) return `⛔ المبلغ ${fn(calcRem(o))} ج لم يُحصَّل — حصّل المبلغ أولاً أو سجّل التحصيل`;
+  return null;
+}
+
+// تحقق من وجود مرتجع فعّال
+function hasActiveReturn(orderId){
+  return shippingReturns.some(r=>r.orderId===orderId&&r.status!=='cancelled');
+}
 
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
@@ -1301,9 +1337,11 @@ window.openOrder=function(id){
     <!-- مرحلة الشحن -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px;color:var(--c)">🚚 تغيير الحالة</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${['ready','wait_delivery','wait_collection','collected'].map(s=>`
-          <button class="btn btn-sm ${ss===s?'btn-c':'btn-ghost'}" onclick="changeStage('${s}')">${STAGE_LABELS[s]}</button>`).join('')}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:700;padding:5px 10px;border-radius:20px;background:rgba(34,211,238,.12);color:var(--c);border:1px solid rgba(34,211,238,.3)">${STAGE_LABELS[ss]||ss}</span>
+        ${(ALLOWED_NEXT[ss]||[]).map(s=>`
+          <button class="btn btn-sm btn-ghost" onclick="changeStage('${s}')" style="border-color:rgba(255,255,255,.15)">${STAGE_LABELS[s]}</button>`).join('')}
+        ${TERMINAL_STATES.has(ss)?'<span style="font-size:10px;color:var(--dim2);margin-right:4px">حالة نهائية</span>':''}
       </div>
     </div>
 
@@ -1413,12 +1451,16 @@ function pRow(l,v){return`<div style="display:flex;justify-content:space-between
 // ══ CHANGE STAGE ══
 window.changeStage=async function(stage){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const err=checkTransition(o,stage);
+  if(err)return toast(err,'err');
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
       shipStage:stage,
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`🚚 ${STAGE_LABELS[stage]}`,by:userName}],
       updatedAt:serverTimestamp()
     });
+    await batch.commit();
     toast(STAGE_LABELS[stage],'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -1543,6 +1585,7 @@ window.updatePreview=function(){
 window.saveShip=async function(){
   const method=gv('ss-method');if(!method)return toast('⚠️ اختر طريقة الاستلام','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
   const coSel=document.getElementById('ss-company-sel');
   const coVal=coSel?.value||'';
   const coOpt=coSel?.options[coSel.selectedIndex];
@@ -1664,6 +1707,7 @@ window.saveDeliver=async function(){
   const rating=parseInt(gv('del-rating'))||0;
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف بالفعل','err');
   if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
   // ═══ شروط دخول الأرشيف ═══
   const archBlocks=[];
@@ -1803,6 +1847,9 @@ window.openReturnFromShip=function(orderId){
 // ══ RETURN WIZARD ══
 window.openReturnWizard=function(orderId){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
+  if(o.shipStage==='returned')return toast('⛔ الأوردر مرتجع بالفعل','err');
+  if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف — لا يمكن تسجيل مرتجع','err');
+  if(hasActiveReturn(orderId))return toast('⛔ يوجد مرتجع نشط على هذا الأوردر — لا يمكن إضافة آخر','err');
   wizOrderId=orderId;wizStep=1;
   // reset
   sv('wiz-reason','');sv('wiz-reason-label','');sv('wiz-ret-type','full');sv('wiz-loss-party','');
@@ -1907,6 +1954,8 @@ function calcWizDeductionVal(){
 window.saveReturnWizard=async function(){
   const orderId=wizOrderId;
   const o=orders.find(x=>x._id===orderId);if(!o)return toast('⚠️ الأوردر غير موجود','err');
+  const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
+  if(hasActiveReturn(orderId))return toast('⛔ يوجد مرتجع نشط — لا يمكن إضافة مرتجع آخر','err');
   const reason=gv('wiz-reason'),reasonLabel=gv('wiz-reason-label'),note=gv('wiz-note');
   const returnType=gv('wiz-ret-type')||'full';
   const cost=parseFloat(gv('wiz-cost'))||0;
@@ -1991,12 +2040,16 @@ window.quickReturn=function(id){
 };
 window.quickStage=async function(id){
   const o=orders.find(x=>x._id===id);if(!o)return;
-  const ss=o.shipStage||'ready';
-  const next=ss==='ready'?'wait_delivery':ss==='wait_delivery'?'wait_collection':null;
-  if(!next)return toast('✅ الشحنة في نهاية المسار','');
+  const allowed=ALLOWED_NEXT[o.shipStage||'ready']||[];
+  const next=allowed[0]||null;
+  if(!next)return toast(TERMINAL_STATES.has(o.shipStage)?'⛔ الأوردر في حالة نهائية':'✅ لا توجد حالة تالية','');
+  const err=checkTransition(o,next);
+  if(err)return toast(err,'err');
   activeId=id;
   try{
-    await updateDoc(doc(db,'orders',id),{shipStage:next,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🚚 ${STAGE_LABELS[next]}`,by:userName}],updatedAt:serverTimestamp()});
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',id),{shipStage:next,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🚚 ${STAGE_LABELS[next]}`,by:userName}],updatedAt:serverTimestamp()});
+    await batch.commit();
     toast(STAGE_LABELS[next],'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
