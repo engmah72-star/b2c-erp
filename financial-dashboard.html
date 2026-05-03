@@ -321,7 +321,7 @@ import { initializeApp }        from "https://www.gstatic.com/firebasejs/10.12.0
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, query, where, getDocs, orderBy, serverTimestamp, limit }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { recordLedger, editLedgerEntry, deleteLedgerEntry, LC }
+import { recordLedger, editLedgerEntry, deleteLedgerEntry, LC, checkLedgerAccess }
   from "./finance-engine.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -361,6 +361,17 @@ onAuthStateChanged(auth, async user=>{
     userName=d.name||d.displayName||user.email||'';
     userRole=d.role||'';
     isAdmin=(userRole==='admin'||userRole==='operation_manager');
+    // Debug log on load
+    console.log('[financial-dashboard] Auth OK', {
+      uid:         user.uid,
+      email:       user.email,
+      role:        userRole,
+      isAdmin,
+      permissions: d.permissions||{},
+      pagesAllowed:(d.permissions?.pages||[]),
+    });
+  } else {
+    console.error('[financial-dashboard] ❌ No /users/'+user.uid+' document found — role will be empty');
   }
   if(!isAdmin&&userRole!=='wallet_manager'){toast('⛔ ليس لديك صلاحية هذه الصفحة','err');setTimeout(()=>location.href='index.html',1500);return;}
   setText('nav-name',userName);
@@ -374,13 +385,35 @@ onAuthStateChanged(auth, async user=>{
 });
 
 window.doLogout=()=>signOut(auth).then(()=>location.href='login.html');
+// مساعد debug في الـ console: اكتب checkFinancePerms() في DevTools
+window.checkFinancePerms=()=>checkLedgerAccess(db,auth).then(r=>console.table(r.info||r));
 
 // ══ LISTENERS ══
 function startListeners(){
-  onSnapshot(collection(db,'financial_ledger'),snap=>{
-    allLedger=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderAll();
-  });
+  onSnapshot(collection(db,'financial_ledger'),
+    snap=>{
+      allLedger=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      renderAll();
+    },
+    err=>{
+      console.error('[financial-dashboard] ❌ financial_ledger read FAILED', {
+        code: err.code, message: err.message,
+        uid: currentUser?.uid,
+        role: userRole,
+        diagnosis: err.code==='permission-denied'
+          ? '⛔ Firestore rules not deployed yet — push to main triggers CI deploy of firestore.rules'
+          : err.message,
+      });
+      if(err.code==='permission-denied'){
+        const tbl=document.getElementById('ledger-tbody');
+        if(tbl) tbl.innerHTML=`<tr><td colspan="8" style="text-align:center;color:var(--r);padding:24px;">
+          ⛔ خطأ صلاحيات — قواعد Firestore لم تُنشر بعد<br>
+          <span style="font-size:11px;color:var(--dim2);">uid: ${currentUser?.uid||'—'} | role: ${userRole||'—'}</span><br>
+          <span style="font-size:11px;color:var(--dim2);">افتح الـ DevTools Console لمزيد من التفاصيل</span>
+        </td></tr>`;
+      }
+    }
+  );
   onSnapshot(collection(db,'transactions_v2'),snap=>{
     allTxV2=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderKPIs();
@@ -699,8 +732,13 @@ window.saveAddEntry=async function(){
   const lc=lcKey?LC[lcKey]:LC.OFFICE_EXPENSE;
   const wId=gv('add-wallet');
   const w=allWallets.find(x=>x._id===wId);
-  const result=await recordLedger(db,{lc,amount,notes,walletId:wId,walletName:w?.name||'',notes:notes+' | '+gv('add-entity'),createdBy:currentUser?.uid||'',createdByName:userName});
-  if(result.error)return toast('❌ '+result.error,'err');
+  const result=await recordLedger(db,{lc,amount,notes:notes+(gv('add-entity')?' | '+gv('add-entity'):''),walletId:wId,walletName:w?.name||'',createdBy:currentUser?.uid||'',createdByName:userName});
+  if(result.error){
+    const msg=result.code==='permission-denied'
+      ? '⛔ خطأ صلاحيات — قواعد Firestore لم تُنشر بعد (uid: '+currentUser?.uid+')'
+      : '❌ '+result.error;
+    return toast(msg,'err');
+  }
   toast('✅ تم إضافة القيد','ok');
   document.getElementById('ov-add-entry').classList.remove('open');
 };

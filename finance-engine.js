@@ -50,6 +50,53 @@ export const CATEGORY_MAP = {
 };
 
 // ══════════════════════════════════════════
+// DEBUG — فحص الصلاحيات والـ Auth
+// ══════════════════════════════════════════
+/**
+ * checkLedgerAccess(db, auth)
+ * يفحص صلاحيات المستخدم الحالي ويطبع نتيجة مفصّلة في الـ console
+ * استخدم في الـ DevTools: import('./finance-engine.js').then(m => m.checkLedgerAccess(db, auth))
+ */
+export async function checkLedgerAccess(db, auth) {
+  const user = auth?.currentUser;
+  const info = {
+    collection: 'financial_ledger',
+    uid:        user?.uid    || 'NOT AUTHENTICATED',
+    email:      user?.email  || '—',
+    role:       '—',
+    permissions: {},
+    isAdmin:    false,
+    canCreate:  false,
+    rulesNote:  'allow create: if isAuth() — any authenticated user can write',
+  };
+
+  if (!user) {
+    console.error('[finance-engine] ❌ PERMISSION CHECK FAILED — user not authenticated', info);
+    return { ok: false, reason: 'not-authenticated', info };
+  }
+
+  try {
+    const userSnap = await getDoc(doc(db, 'users', user.uid));
+    if (!userSnap.exists()) {
+      info.role = 'NO USER DOCUMENT';
+      console.error('[finance-engine] ❌ PERMISSION CHECK — no /users/' + user.uid + ' document!', info);
+      return { ok: false, reason: 'no-user-doc', info };
+    }
+    const d = userSnap.data();
+    info.role        = d.role        || '(empty)';
+    info.permissions = d.permissions || {};
+    info.isAdmin     = ['admin', 'operation_manager'].includes(d.role);
+    info.canCreate   = !!user; // isAuth() = any authenticated user
+    console.log('[finance-engine] ✅ PERMISSION CHECK OK', info);
+    return { ok: true, info };
+  } catch (e) {
+    info.error = e.message;
+    console.error('[finance-engine] ❌ PERMISSION CHECK ERROR', info);
+    return { ok: false, reason: e.message, info };
+  }
+}
+
+// ══════════════════════════════════════════
 // CORE: recordLedger — تسجيل قيد في الدفتر
 // ══════════════════════════════════════════
 /**
@@ -60,45 +107,63 @@ export const CATEGORY_MAP = {
  * لا يرمي exception — يرجع { id } أو { error }
  */
 export async function recordLedger(db, entry) {
+  const lc = entry.lc || LC.OFFICE_EXPENSE;
+  const docData = {
+    // تصنيف
+    type:        lc.type,
+    category:    lc.catAr,
+    direction:   lc.dir,
+    icon:        lc.icon,
+    // مبلغ
+    amount:      parseFloat(entry.amount) || 0,
+    // روابط الكيانات
+    orderId:           entry.orderId           || '',
+    clientId:          entry.clientId          || '',
+    clientName:        entry.clientName        || '',
+    employeeId:        entry.employeeId        || '',
+    employeeName:      entry.employeeName      || '',
+    vendorId:          entry.vendorId          || '',
+    vendorName:        entry.vendorName        || '',
+    shippingCompanyId: entry.shippingCompanyId || '',
+    shippingCompanyName: entry.shippingCompanyName || '',
+    // دفع
+    walletId:    entry.walletId   || '',
+    walletName:  entry.walletName || '',
+    paymentRef:  entry.ref        || '',
+    // وصف
+    notes:       entry.notes      || '',
+    // حالة
+    isDeleted:   false,
+    editHistory: [],
+    // metadata
+    createdBy:     entry.createdBy     || '',
+    createdByName: entry.createdByName || '',
+    createdAt:     serverTimestamp(),
+  };
+
   try {
-    const lc = entry.lc || LC.OFFICE_EXPENSE;
-    const docData = {
-      // تصنيف
-      type:        lc.type,
-      category:    lc.catAr,
-      direction:   lc.dir,
-      icon:        lc.icon,
-      // مبلغ
-      amount:      parseFloat(entry.amount) || 0,
-      // روابط الكيانات
-      orderId:           entry.orderId           || '',
-      clientId:          entry.clientId          || '',
-      clientName:        entry.clientName        || '',
-      employeeId:        entry.employeeId        || '',
-      employeeName:      entry.employeeName      || '',
-      vendorId:          entry.vendorId          || '',
-      vendorName:        entry.vendorName        || '',
-      shippingCompanyId: entry.shippingCompanyId || '',
-      shippingCompanyName: entry.shippingCompanyName || '',
-      // دفع
-      walletId:    entry.walletId   || '',
-      walletName:  entry.walletName || '',
-      paymentRef:  entry.ref        || '',
-      // وصف
-      notes:       entry.notes      || '',
-      // حالة
-      isDeleted:   false,
-      editHistory: [],
-      // metadata
-      createdBy:   entry.createdBy   || '',
-      createdByName: entry.createdByName || '',
-      createdAt:   serverTimestamp(),
-    };
     const ref = await addDoc(collection(db, 'financial_ledger'), docData);
+    console.log('[finance-engine] ✅ Ledger entry recorded', {
+      id: ref.id,
+      type: lc.type,
+      direction: lc.dir,
+      amount: docData.amount,
+      createdBy: docData.createdBy,
+    });
     return { id: ref.id };
   } catch (e) {
-    console.warn('[finance-engine] recordLedger error:', e.message);
-    return { error: e.message };
+    console.error('[finance-engine] ❌ recordLedger FAILED', {
+      collection:  'financial_ledger',
+      errorCode:   e.code   || '—',
+      errorMsg:    e.message,
+      type:        lc.type,
+      amount:      docData.amount,
+      uid:         docData.createdBy,
+      diagnosis:   e.code === 'permission-denied'
+        ? '⛔ Firestore rules blocked write — check that financial_ledger rules are deployed (push to main triggers CI deploy)'
+        : '🔌 Network or Firestore error',
+    });
+    return { error: e.message, code: e.code };
   }
 }
 
@@ -122,6 +187,7 @@ export async function editLedgerEntry(db, entryId, changes, adminName, adminId) 
     });
     return { success: true };
   } catch (e) {
+    console.error('[finance-engine] ❌ editLedgerEntry FAILED', { entryId, error: e.message, code: e.code });
     return { error: e.message };
   }
 }
@@ -140,6 +206,7 @@ export async function deleteLedgerEntry(db, entryId, adminName, adminId) {
     });
     return { success: true };
   } catch (e) {
+    console.error('[finance-engine] ❌ deleteLedgerEntry FAILED', { entryId, error: e.message, code: e.code });
     return { error: e.message };
   }
 }
