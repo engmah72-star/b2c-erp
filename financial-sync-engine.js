@@ -108,10 +108,10 @@ export function inferEventType(txType, category) {
     supplier: 'VENDOR_PAYMENT',
     shipping_cost: 'SHIPPING_EXPENSE', shipping: 'SHIPPING_EXPENSE',
     shipping_settlement: 'SHIPPING_SETTLEMENT',
+    shipping_return: 'SHIPPING_RETURN',
     deposit: 'CUSTOMER_PAYMENT', collection: 'CUSTOMER_PAYMENT', client_payment: 'CUSTOMER_PAYMENT',
     transfer: 'WALLET_TRANSFER',
     return_loss: 'RETURN_LOSS', return_cost: 'RETURN_LOSS',
-    shipping_return: 'SHIPPING_RETURN',
     refund: 'CUSTOMER_REFUND',
   };
   return m[category] || (txType === 'in' ? 'CUSTOMER_PAYMENT' : 'GENERAL_EXPENSE');
@@ -194,6 +194,33 @@ async function handleVendorPaymentReversal(db, p) {
   return {};
 }
 
+async function handleSalaryPaymentReversal(db, p) {
+  const isDeduction = p.isDeduction;
+  const batch = writeBatch(db);
+
+  if (p.walletId) {
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? -p.amount : p.amount) });
+    console.log('[FSE] 💳 balance restored:', isDeduction ? '-' : '+', p.amount);
+  }
+
+  if (p.txId) {
+    batch.delete(doc(db, 'transactions_v2', p.txId));
+  }
+
+  if (p.epId) {
+    batch.delete(doc(db, 'employee_payments', p.epId));
+  }
+
+  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', {
+    ...p, employeeId: p.employeeId, employeeName: p.employeeName,
+    notes: `إلغاء راتب — ${p.employeeName}`,
+  });
+
+  await batch.commit();
+  console.log('[FSE] ✅ completed: SALARY_PAYMENT_REVERSAL');
+  return {};
+}
+
 async function handleSalaryPayment(db, p) {
   const isDeduction = p.salaryType === 'deduction';
   const batch = writeBatch(db);
@@ -203,6 +230,7 @@ async function handleSalaryPayment(db, p) {
     console.log('[FSE] 💳 balance updated:', isDeduction ? '+' : '-', p.amount);
   }
 
+  const epRef = doc(collection(db, 'employee_payments'));
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
     walletId: p.walletId, walletName: p.walletName || '',
@@ -210,13 +238,12 @@ async function handleSalaryPayment(db, p) {
     description: p.note || '', category: 'salary',
     salaryType: p.salaryType, employeeId: p.employeeId, employeeName: p.employeeName,
     baseSalary: p.baseSalary || 0, commission: p.commission || 0,
-    month: p.month, isDeduction,
+    month: p.month, isDeduction, epId: epRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
   });
 
-  const epRef = doc(collection(db, 'employee_payments'));
   batch.set(epRef, {
     employeeId: p.employeeId, employeeName: p.employeeName,
     amount: p.amount, salaryType: p.salaryType, isDeduction,
@@ -248,18 +275,6 @@ async function handlePayroll(db, p) {
   for (const e of p.employees) {
     const epRef = doc(collection(db, 'employee_payments'));
     const txRef = doc(collection(db, 'transactions_v2'));
-    batch.set(txRef, {
-      walletId: p.walletId, walletName: p.walletName || '',
-      type: 'out', amount: e.amount,
-      description: `${p.note} — ${e.employeeName}`, category: 'salary',
-      employeeId: e.employeeId, employeeName: e.employeeName,
-      epId: epRef.id,
-      month: p.month, isDeduction: false,
-      date: p.date || new Date().toLocaleDateString('ar-EG'),
-      createdBy: p.userId || '', createdByName: p.userName || '',
-      createdAt: serverTimestamp(), source: 'payroll',
-    });
-
     batch.set(epRef, {
       employeeId: e.employeeId, employeeName: e.employeeName,
       amount: e.amount, month: p.month,
@@ -267,6 +282,17 @@ async function handlePayroll(db, p) {
       note: p.note, date: p.date || new Date().toLocaleDateString('ar-EG'),
       txId: txRef.id,
       createdAt: serverTimestamp(), createdBy: p.userId || '',
+    });
+
+    batch.set(txRef, {
+      walletId: p.walletId, walletName: p.walletName || '',
+      type: 'out', amount: e.amount,
+      description: `${p.note} — ${e.employeeName}`, category: 'salary',
+      employeeId: e.employeeId, employeeName: e.employeeName,
+      month: p.month, isDeduction: false, epId: epRef.id,
+      date: p.date || new Date().toLocaleDateString('ar-EG'),
+      createdBy: p.userId || '', createdByName: p.userName || '',
+      createdAt: serverTimestamp(), source: 'payroll',
     });
 
     addLedgerToBatch(batch, db, 'SALARY_PAYMENT', {

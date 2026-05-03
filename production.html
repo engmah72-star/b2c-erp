@@ -625,7 +625,8 @@ window.addCostFromPanel=async function(prodIdx){
   const supplierId=supOpt?.value||'';
   const supplierName=supOpt?.dataset?.name||'';
   const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
-  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{})};
+  const spRef=walletId&&!isEdit&&supplierId?doc(collection(db,'supplier_payments')):null;
+  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
   const ci=[...(o.costItems||[])];
   if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
   try{
@@ -637,8 +638,7 @@ window.addCostFromPanel=async function(prodIdx){
       batch.update(doc(db,'wallets',walletId),{balance:increment(-total)});
       const walletName=(wallets.find(x=>x._id===walletId)||{}).name||'';
       batch.set(txRef,{type:'out',walletId,walletName,amount:total,category:type==='تصميم'?'designer_fee':'supplier',description:`${type}${note?' — '+note:''} · ${o.clientName||o._id}`,supplierId,supplierName,orderId:activeId,orderClient:o.clientName||'',date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
-      if(supplierId){
-        const spRef=doc(collection(db,'supplier_payments'));
+      if(spRef){
         batch.set(spRef,{supplierId,supplierName,amount:total,orderId:activeId,orderClient:o.clientName||'',note:`${type}${note?' — '+note:''}`,walletId,walletName,date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
       }
       if(!isEdit) addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
@@ -1077,18 +1077,24 @@ window.rmCost=async function(idx){
   const item=ci[idx];
   ci.splice(idx,1);
   try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
     if(item?.txId&&item?.walletId){
-      // atomic: restore wallet balance + delete transaction + update order
-      const batch=writeBatch(db);
-      batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
       batch.update(doc(db,'wallets',item.walletId),{balance:increment(parseFloat(item.total)||0)});
       batch.delete(doc(db,'transactions_v2',item.txId));
-      await batch.commit();
-      toast('✅ حُذف · رُجِّع المبلغ للمحفظة','ok');
-    } else {
-      await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
-      toast('✅ حُذف','ok');
+      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
+        amount:parseFloat(item.total)||0,
+        walletId:item.walletId,walletName:item.walletName||'',
+        notes:`إلغاء تكلفة إنتاج — ${item.type||''} ${item.supplierName?'· '+item.supplierName:''}`,
+        userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
+        direction:'in',
+      });
     }
+    if(item?.spId){
+      batch.delete(doc(db,'supplier_payments',item.spId));
+    }
+    await batch.commit();
+    toast(item?.txId?'✅ حُذف · رُجِّع المبلغ للمحفظة':'✅ حُذف','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 

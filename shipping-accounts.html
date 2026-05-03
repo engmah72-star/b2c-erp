@@ -517,9 +517,9 @@ window.saveSettle=async function(){
     const txRef=doc(collection(db,'transactions_v2'));
     batch.set(txRef,{walletId:wId,type:'in',amount,fees:0,description:`تسوية شحن — ${settleCompanyName}`,category:'shipping_settlement',companyName:settleCompanyName,orderIds:selectedIds,balanceBefore:bb,balanceAfter:bb+amount,note:gv('settle-ref'),date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
 
-    // 3. shipping_settlements
+    // 3. shipping_settlements (txId مخزّن للتتبع عند الحذف)
     const settleRef=doc(collection(db,'shipping_settlements'));
-    batch.set(settleRef,{companyName:settleCompanyName,amount,orderIds:selectedIds,expectedAmount:selectedAmt,walletId:wId,walletName:w?.name||'',note:gv('settle-ref'),date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
+    batch.set(settleRef,{companyName:settleCompanyName,amount,orderIds:selectedIds,expectedAmount:selectedAmt,walletId:wId,walletName:w?.name||'',note:gv('settle-ref'),date:now,txId:txRef.id,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
 
     // 4. كل أوردر في نفس الـ batch
     for(const oid of selectedIds){
@@ -575,59 +575,88 @@ window.saveReturn=async function(){
   const o=allOrders.find(x=>x._id===ordId);if(!o)return;
   try{
     const now=nowStr();
-    await addDoc(collection(db,'shipping_returns'),{
+    const byName=document.getElementById('nav-name')?.textContent||userName||'';
+
+    // pre-fetch: walletId للعربون قبل بناء الـ batch (لازم read قبل write)
+    const depAmt=parseFloat(o.deposit)||parseFloat(o.totalPaid)||0;
+    let depWalletId=o.depositWalletId||o.walletId||'';
+    if(!depWalletId&&depAmt>0){
+      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','deposit')));
+      depWalletId=depSnap.docs[0]?.data()?.walletId||'';
+    }
+
+    // ═══ Batch Atomic: كل عمليات المرتجع في كتابة واحدة ═══
+    const batch=writeBatch(db);
+
+    // 1. سجل المرتجع
+    const retRef=doc(collection(db,'shipping_returns'));
+    batch.set(retRef,{
       orderId:ordId,companyName:returnCompanyName,
       clientName:o.clientName||'',cost,note,status:'returned',
-      date:now,createdBy:currentUser.uid,createdByName:userName,
+      date:now,createdBy:currentUser.uid,createdByName:byName,
       createdAt:serverTimestamp()
     });
-    const orderUpdates={
+
+    // 2. تحديث الأوردر
+    const settledAmt=parseFloat(o.shipSettledAmount)||0;
+    batch.update(doc(db,'orders',ordId),{
       shippingStatus:'returned',shipStage:'returned',
       totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
-      timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع من ${returnCompanyName}${note?' — '+note:''}`,by:userName}],
+      ...(o.shipSettled&&settledAmt>0?{shipSettled:false,shipSettledAmount:0}:{}),
+      timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع من ${returnCompanyName}${note?' — '+note:''}`,by:byName}],
       updatedAt:serverTimestamp()
-    };
-    // عكس التسوية لو كانت مسوّاة
-    const settledAmt=parseFloat(o.shipSettledAmount)||0;
+    });
+
+    // 3. عكس التسوية لو كانت مسوّاة
     if(o.shipSettled&&settledAmt>0){
-      Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
-      await addDoc(collection(db,'transactions_v2'),{
+      batch.set(doc(collection(db,'transactions_v2')),{
         type:'out',amount:settledAmt,
         description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
         category:'settlement_reversal',orderId:ordId,
         clientName:o.clientName,shipCompanyName:returnCompanyName,
-        date:now,createdBy:currentUser.uid,createdByName:userName,
+        date:now,createdBy:currentUser.uid,createdByName:byName,
         createdAt:serverTimestamp()
       });
     }
-    // عكس العربون لو اتدفع
-    const depAmt=parseFloat(o.deposit)||0;
-    if(depAmt>0){
-      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','deposit')));
-      const depTx=depSnap.docs[0]?.data();
-      const depWalletId=depTx?.walletId||'';
-      await addDoc(collection(db,'transactions_v2'),{
+
+    // 4. عكس العربون + خصم المحفظة
+    if(depAmt>0&&depWalletId){
+      batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
+      batch.set(doc(collection(db,'transactions_v2')),{
         type:'out',amount:depAmt,
-        description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+        description:`استرداد عربون مرتجع — ${o.clientName||''}`,
         category:'deposit_reversal',orderId:ordId,
         clientName:o.clientName,walletId:depWalletId,
-        date:now,createdBy:currentUser.uid,createdByName:userName,
+        date:now,createdBy:currentUser.uid,createdByName:byName,
         createdAt:serverTimestamp()
       });
-      if(depWalletId){
-        await updateDoc(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
-      }
+      addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
+        amount:depAmt,walletId:depWalletId,
+        walletName:wallets.find(w=>w._id===depWalletId)?.name||'',
+        notes:`استرداد عربون مرتجع — ${o.clientName||''} — ${returnCompanyName}`,
+        orderId:ordId,clientName:o.clientName||'',
+        userId:currentUser.uid,userName:byName
+      });
     }
+
+    // 5. تكلفة المرتجع
     if(cost>0){
-      await addDoc(collection(db,'transactions_v2'),{
+      batch.set(doc(collection(db,'transactions_v2')),{
         type:'out',amount:cost,
         description:`تكلفة مرتجع — ${o.clientName||''} — ${returnCompanyName}`,
         category:'return_cost',orderId:ordId,clientName:o.clientName,
-        date:now,createdBy:currentUser.uid,createdByName:userName,
+        date:now,createdBy:currentUser.uid,createdByName:byName,
         createdAt:serverTimestamp()
       });
+      addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
+        amount:cost,
+        notes:`تكلفة مرتجع — ${o.clientName||''} — ${returnCompanyName}`,
+        orderId:ordId,clientName:o.clientName||'',
+        userId:currentUser.uid,userName:byName
+      });
     }
-    await updateDoc(doc(db,'orders',ordId),orderUpdates);
+
+    await batch.commit();
     document.getElementById('ov-return').classList.remove('open');
     toast('✅ تم تسجيل المرتجع','ok');
   }catch(e){toast('❌ '+e.message,'err');}
