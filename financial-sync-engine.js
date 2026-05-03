@@ -30,7 +30,9 @@ export const FE = {
   SHIPPING_EXPENSE:              'SHIPPING_EXPENSE',
   SHIPPING_SETTLEMENT:           'SHIPPING_SETTLEMENT',
   SHIPPING_SETTLEMENT_REVERSAL:  'SHIPPING_SETTLEMENT_REVERSAL',
+  SHIPPING_RETURN:               'SHIPPING_RETURN',
   SALARY_PAYMENT:                'SALARY_PAYMENT',
+  SALARY_PAYMENT_REVERSAL:       'SALARY_PAYMENT_REVERSAL',
   PAYROLL:                       'PAYROLL',
   BONUS_PAYMENT:                 'BONUS_PAYMENT',
   PENALTY:                       'PENALTY',
@@ -50,7 +52,9 @@ const LC = {
   SHIPPING_EXPENSE:             { type:'expense',  category:'shipping_cost',       direction:'out', icon:'🚚', label:'تكلفة شحن' },
   SHIPPING_SETTLEMENT:          { type:'income',   category:'shipping_collection', direction:'in',  icon:'📦', label:'تسوية شحن' },
   SHIPPING_SETTLEMENT_REVERSAL: { type:'reversal', category:'shipping_collection', direction:'out', icon:'🔄', label:'إلغاء تسوية شحن' },
+  SHIPPING_RETURN:              { type:'reversal', category:'shipping_return',     direction:'out', icon:'↩️', label:'مرتجع شحن' },
   SALARY_PAYMENT:               { type:'expense',  category:'salary',              direction:'out', icon:'👤', label:'راتب' },
+  SALARY_PAYMENT_REVERSAL:      { type:'reversal', category:'salary',              direction:'in',  icon:'🔄', label:'إلغاء راتب' },
   PAYROLL:                      { type:'expense',  category:'salary',              direction:'out', icon:'👥', label:'مسير رواتب' },
   BONUS_PAYMENT:                { type:'expense',  category:'bonus',               direction:'out', icon:'🎁', label:'مكافأة' },
   PENALTY:                      { type:'expense',  category:'deduction',           direction:'out', icon:'✂️', label:'خصم' },
@@ -68,6 +72,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
   const ref = doc(collection(db, 'financial_ledger'));
   batch.set(ref, {
     ...lc,
+    ...(data.direction ? {direction: data.direction} : {}),
     eventType,
     amount:       data.amount       || 0,
     orderId:      data.orderId      || null,
@@ -106,6 +111,7 @@ export function inferEventType(txType, category) {
     deposit: 'CUSTOMER_PAYMENT', collection: 'CUSTOMER_PAYMENT', client_payment: 'CUSTOMER_PAYMENT',
     transfer: 'WALLET_TRANSFER',
     return_loss: 'RETURN_LOSS', return_cost: 'RETURN_LOSS',
+    shipping_return: 'SHIPPING_RETURN',
     refund: 'CUSTOMER_REFUND',
   };
   return m[category] || (txType === 'in' ? 'CUSTOMER_PAYMENT' : 'GENERAL_EXPENSE');
@@ -137,6 +143,7 @@ async function handleVendorPayment(db, p) {
     type: 'out', amount: p.amount, fees: 0,
     description: p.note || `دفعة مورد — ${p.supplierName}`, category: 'supplier',
     supplierId: p.supplierId, supplierName: p.supplierName,
+    spId: payRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
@@ -215,6 +222,7 @@ async function handleSalaryPayment(db, p) {
     amount: p.amount, salaryType: p.salaryType, isDeduction,
     month: p.month, walletId: p.walletId, walletName: p.walletName || '',
     note: p.note || '', date: p.date || new Date().toLocaleDateString('ar-EG'),
+    txId: txRef.id,
     createdAt: serverTimestamp(), createdBy: p.userId || '',
   });
   console.log('[FSE] 🏭 module updated: transactions_v2 + employee_payments');
@@ -238,24 +246,26 @@ async function handlePayroll(db, p) {
   }
 
   for (const e of p.employees) {
+    const epRef = doc(collection(db, 'employee_payments'));
     const txRef = doc(collection(db, 'transactions_v2'));
     batch.set(txRef, {
       walletId: p.walletId, walletName: p.walletName || '',
       type: 'out', amount: e.amount,
       description: `${p.note} — ${e.employeeName}`, category: 'salary',
       employeeId: e.employeeId, employeeName: e.employeeName,
+      epId: epRef.id,
       month: p.month, isDeduction: false,
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(), source: 'payroll',
     });
 
-    const epRef = doc(collection(db, 'employee_payments'));
     batch.set(epRef, {
       employeeId: e.employeeId, employeeName: e.employeeName,
       amount: e.amount, month: p.month,
       walletId: p.walletId, walletName: p.walletName || '',
       note: p.note, date: p.date || new Date().toLocaleDateString('ar-EG'),
+      txId: txRef.id,
       createdAt: serverTimestamp(), createdBy: p.userId || '',
     });
 
@@ -347,17 +357,31 @@ async function handleGeneralExpense(db, p) {
 // ══════════════════════════════════════════════════════════════════
 // Dispatcher Map
 // ══════════════════════════════════════════════════════════════════
+async function handleSalaryPaymentReversal(db, p) {
+  const batch = writeBatch(db);
+  if (p.walletId) {
+    const refundAmt = p.isDeduction ? -p.amount : p.amount;
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(refundAmt) });
+  }
+  if (p.txId) { batch.delete(doc(db, 'transactions_v2', p.txId)); }
+  if (p.epId) { batch.delete(doc(db, 'employee_payments', p.epId)); }
+  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', { ...p, notes: p.note || 'إلغاء دفعة راتب' });
+  await batch.commit();
+}
+
 const HANDLERS = {
   CUSTOMER_PAYMENT:        handleCustomerPayment,
   CUSTOMER_REFUND:         (db, p) => handleCustomerPayment(db, { ...p, eventType: 'CUSTOMER_REFUND' }),
   VENDOR_PAYMENT:          handleVendorPayment,
   VENDOR_PAYMENT_REVERSAL: handleVendorPaymentReversal,
   SALARY_PAYMENT:          handleSalaryPayment,
+  SALARY_PAYMENT_REVERSAL: handleSalaryPaymentReversal,
   BONUS_PAYMENT:           (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'bonus' }),
   PENALTY:                 (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'deduction' }),
   PAYROLL:                 handlePayroll,
   GENERAL_EXPENSE:         handleGeneralExpense,
   SHIPPING_EXPENSE:        (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_cost', eventType: 'SHIPPING_EXPENSE', createTx: false }),
+  SHIPPING_RETURN:         (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_return', eventType: 'SHIPPING_RETURN', createTx: false }),
 };
 
 // ══════════════════════════════════════════════════════════════════
