@@ -124,7 +124,7 @@
   </div>
 
   <div class="content">
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-bottom:16px">
         <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center">
           <div style="font-size:20px;font-weight:900;color:var(--b)" id="sk-total">—</div>
           <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">📦 إجمالي</div>
@@ -141,11 +141,21 @@
           <div style="font-size:18px;font-weight:900;color:var(--r)" id="sk-rem">—</div>
           <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">💰 باقي ج</div>
         </div>
+        <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);border-radius:12px;padding:12px 8px;text-align:center" id="sk-profit-box">
+          <div style="font-size:16px;font-weight:900" id="sk-profit">—</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">📈 صافي ربح</div>
+        </div>
       </div>
 
 
+    <!-- RETURNS SUMMARY (admin) -->
+    <div id="returns-summary" style="display:none"></div>
+
+    <!-- ALERT STRIP -->
+    <div id="alert-strip" style="display:none;margin-bottom:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+
     <!-- STATS -->
-    <div class="stat-strip">
+    <div class="stat-strip" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat-pill on" style="--oc:var(--b)" onclick="setFilter('all',this)">
         <div class="stat-pill-val" id="s-all">0</div>
         <div class="stat-pill-lbl">الكل</div>
@@ -161,6 +171,14 @@
       <div class="stat-pill" style="--oc:var(--r)" onclick="setFilter('wait_collection',this)">
         <div class="stat-pill-val" id="s-wait-col">0</div>
         <div class="stat-pill-lbl">💰 انتظار تحصيل</div>
+      </div>
+      <div class="stat-pill" style="--oc:#ff6b35" onclick="setFilter('delayed',this)">
+        <div class="stat-pill-val" id="s-delayed" style="color:#ff6b35">0</div>
+        <div class="stat-pill-lbl">⏰ متأخر +5أيام</div>
+      </div>
+      <div class="stat-pill" style="--oc:var(--r)" onclick="setFilter('no_cost',this)">
+        <div class="stat-pill-val" id="s-no-cost" style="color:var(--r)">0</div>
+        <div class="stat-pill-lbl">⚠️ بدون تكلفة</div>
       </div>
     </div>
 
@@ -647,7 +665,7 @@ const app=initializeApp(FB);
 const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 
 // ══ STATE ══
-let orders=[], wallets=[], shippers=[], suppliers=[];
+let orders=[], wallets=[], shippers=[], suppliers=[], shippingReturns=[];
 let currentUser=null, userName='', activeId=null;
 let currentFilter='all', ssMethod='', ssStage='wait_delivery';
 let isAdminUser=false;
@@ -719,14 +737,27 @@ window.saveAdminFinance=async function(){
   const discount = parseFloat(document.getElementById('adm-discount').value)||0;
   const net      = Math.max(0, sale - discount);
   const remaining= Math.max(0, net - paid);
+  const oldPaid  = calcPaid(o);
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
       salePrice:sale, totalPaid:paid,
       discount, remaining,
       paymentStatus: remaining===0?'paid':paid>0?'partial':'pending',
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`✏️ تعديل مالي: سعر ${fn(sale)} ج | مدفوع ${fn(paid)} ج | خصم ${fn(discount)} ج`,by:userName}],
       updatedAt:serverTimestamp()
     });
+    const paidDiff=paid-oldPaid;
+    if(paidDiff!==0){
+      addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+        amount:Math.abs(paidDiff),walletId:'',walletName:'',
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`تعديل مالي إداري — ${o.clientName||''}`,
+        userId:currentUser?.uid||'',userName,
+        direction:paidDiff>0?'in':'out',
+      });
+    }
+    await batch.commit();
     toast('✅ تم التعديل المالي','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -737,23 +768,17 @@ window.deleteOrderFull=async function(){
   if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع عن هذا الإجراء.`)) return;
   if(!confirm('تأكيد الحذف النهائي؟')) return;
   try{
-    const {deleteDoc:delDoc, getDocs, query:qry, where:whr} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    
-    // حذف المعاملات المرتبطة
-    const txSnap = await getDocs(qry(collection(db,'transactions_v2'),whr('orderId','==',activeId)));
+    // pre-fetch قبل الـ batch
+    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',activeId)));
+    const batch=writeBatch(db);
     for(const tx of txSnap.docs){
-      // رجّع رصيد المحفظة لو دفعة واردة
       if(tx.data().type==='in' && tx.data().walletId){
-        const w = wallets?.find(x=>x._id===tx.data().walletId);
-        if(w){
-          await updateDoc(doc(db,'wallets',tx.data().walletId),{balance:increment(-(parseFloat(tx.data().amount)||0))});
-        }
+        batch.update(doc(db,'wallets',tx.data().walletId),{balance:increment(-(parseFloat(tx.data().amount)||0))});
       }
-      await delDoc(tx.ref);
+      batch.delete(tx.ref);
     }
-    
-    // حذف الأوردر
-    await delDoc(doc(db,'orders',activeId));
+    batch.delete(doc(db,'orders',activeId));
+    await batch.commit();
     closePanel();
     toast('✅ تم حذف الأوردر نهائياً','ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -833,10 +858,12 @@ window.saveCostShip=async function(){
   const prodIdx=parseInt(document.getElementById('sc-prod-idx')?.value??-1);
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const uName=userName||currentUser?.displayName||'';
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('sc-note'),addedAt:nowStr(),addedBy:uName};
+  const isEdit=__scEditIdx>=0&&__scEditIdx<(o.costItems||[]).length;
+  const txRef=isEdit?null:doc(collection(db,'transactions_v2'));
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('sc-note'),addedAt:nowStr(),addedBy:uName,...(txRef?{txId:txRef.id}:{})};
   const ci=[...(o.costItems||[])];
   let action;
-  if(__scEditIdx>=0&&__scEditIdx<ci.length){
+  if(isEdit){
     ci[__scEditIdx]={...ci[__scEditIdx],...item,editedAt:nowStr()};
     action=`✏️ تعديل ${type}: ${fn(total)} ج`;
   } else {
@@ -844,7 +871,13 @@ window.saveCostShip=async function(){
     action=`💰 ${type}: ${fn(total)} ج`;
   }
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:uName}],updatedAt:serverTimestamp()});
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:uName}],updatedAt:serverTimestamp()});
+    if(txRef){
+      batch.set(txRef,{type:'out',amount:total,category:'execution_cost',description:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,orderId:activeId,clientName:o.clientName||'',supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:uName,createdAt:serverTimestamp()});
+      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{amount:total,walletId:'',walletName:'',orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,userId:currentUser?.uid||'',userName:uName});
+    }
+    await batch.commit();
     closeModal('ov-ship-cost');toast('✅ تم','ok');__scEditIdx=-1;
     refreshCostList(activeId);
   }catch(e){toast('❌ '+e.message,'err');}
@@ -852,9 +885,14 @@ window.saveCostShip=async function(){
 window.rmCostShip=async function(idx){
   if(!confirm('حذف البند؟'))return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item=(o.costItems||[])[idx];if(!item)return;
   const ci=[...(o.costItems||[])];ci.splice(idx,1);
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
+    if(item.txId) batch.delete(doc(db,'transactions_v2',item.txId));
+    addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{amount:parseFloat(item.total)||0,walletId:'',walletName:'',orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`إلغاء تكلفة ${item.type||''} — ${o.clientName||''}`,userId:currentUser?.uid||'',userName,direction:'in'});
+    await batch.commit();
     toast('✅ حُذف','ok');refreshCostList(activeId);
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -903,6 +941,10 @@ onAuthStateChanged(auth,async u=>{
   },err=>{console.error('shipping orders listener:',err);setText('sub','خطأ في التحميل');});
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(collection(db,'shippers_v2'),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  onSnapshot(collection(db,'shipping_returns'),snap=>{
+    shippingReturns=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderReturnsSummary();
+  });
   onSnapshot(collection(db,'suppliers_v2'),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const s=document.getElementById('sc-sup');
@@ -911,11 +953,40 @@ onAuthStateChanged(auth,async u=>{
 });
 
 // ══ STATS ══
+const DAY_MS=86400000;
+function isDelayed(o){
+  if(o.shipStage==='collected')return false;
+  const ts=(o.createdAt?.seconds||o.updatedAt?.seconds||0)*1000;
+  return ts>0&&(Date.now()-ts)>5*DAY_MS;
+}
 function updateStats(){
+  const delayed=orders.filter(isDelayed);
+  const noCost=orders.filter(o=>!(o.costItems||[]).length);
   setText('s-all',orders.length);
   setText('s-ready',orders.filter(o=>!o.shipStage||o.shipStage==='ready').length);
   setText('s-wait-del',orders.filter(o=>o.shipStage==='wait_delivery').length);
   setText('s-wait-col',orders.filter(o=>o.shipStage==='wait_collection').length);
+  setText('s-delayed',delayed.length);
+  setText('s-no-cost',noCost.length);
+  // alert strip
+  const alerts=[];
+  if(delayed.length) alerts.push({icon:'⏰',label:`${delayed.length} شحنة متأخرة أكثر من 5 أيام`,color:'#ff6b35',filter:'delayed'});
+  if(noCost.length) alerts.push({icon:'⚠️',label:`${noCost.length} أوردر بدون تكلفة مسجلة`,color:'var(--r)',filter:'no_cost'});
+  const pending_settle=orders.filter(o=>o.shipMethod==='company'&&!o.shipSettled&&o.shipStage==='collected');
+  if(pending_settle.length) alerts.push({icon:'📦',label:`${pending_settle.length} شحنة تنتظر التسوية مع شركة الشحن`,color:'var(--y)',filter:'wait_collection'});
+  const strip=document.getElementById('alert-strip');
+  if(strip){
+    if(alerts.length){
+      strip.style.display='grid';
+      strip.innerHTML=alerts.map(a=>`<div onclick="setFilter('${a.filter}',null)" style="cursor:pointer;background:var(--bg2);border:1px solid ${a.color}30;border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">${a.icon}</span>
+        <span style="font-size:11px;font-weight:700;color:${a.color};flex:1">${a.label}</span>
+        <span style="font-size:10px;color:var(--dim2)">عرض ←</span>
+      </div>`).join('');
+    } else {
+      strip.style.display='none';
+    }
+  }
 }
 
 // ══ FILTER ══
@@ -925,6 +996,53 @@ window.setFilter=function(f,btn){
   btn?.classList.add('on');
   updateShipKPIs();renderList();
 };
+
+function matchFilter(o){
+  if(currentFilter==='all') return true;
+  if(currentFilter==='ready') return !o.shipStage||o.shipStage==='ready';
+  if(currentFilter==='delayed') return isDelayed(o);
+  if(currentFilter==='no_cost') return !(o.costItems||[]).length;
+  return o.shipStage===currentFilter;
+}
+
+// ══ RETURNS SUMMARY ══
+function renderReturnsSummary(){
+  const el=document.getElementById('returns-summary');if(!el)return;
+  if(!shippingReturns.length){el.style.display='none';return;}
+  const totalLoss=shippingReturns.reduce((s,r)=>s+(parseFloat(r.cost)||0)+(parseFloat(r.priceDeduction)||0),0);
+  const byReason={};
+  shippingReturns.forEach(r=>{
+    const k=r.note||'غير محدد';
+    byReason[k]=(byReason[k]||0)+1;
+  });
+  const topReasons=Object.entries(byReason).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const byComp={};
+  shippingReturns.forEach(r=>{
+    const k=r.companyName||'تسليم مباشر';
+    byComp[k]=(byComp[k]||0)+1;
+  });
+  const topComp=Object.entries(byComp).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  el.style.display='block';
+  el.innerHTML=`
+    <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.15);border-radius:12px;padding:14px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:800;color:var(--r)">↩️ ملخص المرتجعات</div>
+        <div style="font-size:18px;font-weight:900;color:var(--r)">${shippingReturns.length} مرتجع</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--dim2);font-weight:700">إجمالي الخسائر</div>
+          <div style="font-size:16px;font-weight:900;color:var(--r)">${fn(totalLoss)} ج</div>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--dim2);font-weight:700">كامل / جزئي</div>
+          <div style="font-size:14px;font-weight:900;color:var(--snow)">${shippingReturns.filter(r=>r.returnType==='full').length} / ${shippingReturns.filter(r=>r.returnType==='partial').length}</div>
+        </div>
+      </div>
+      ${topReasons.length?`<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:6px">أكثر أسباب الإرجاع</div>${topReasons.map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid var(--line)"><span>${k}</span><span style="color:var(--r);font-weight:700">${v}×</span></div>`).join('')}</div>`:''}
+      ${topComp.length?`<div><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:6px">حسب الشركة</div>${topComp.map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid var(--line)"><span>${k}</span><span style="color:var(--r);font-weight:700">${v}×</span></div>`).join('')}</div>`:''}
+    </div>`;
+}
 
 // ══ LIST ══
 window.updateShipKPIs=function(){
@@ -937,15 +1055,23 @@ window.updateShipKPIs=function(){
   setText2('sk-pending',pending);
   setText2('sk-collected',collected);
   setText2('sk-rem',fn(totRem)+' ج');
+  // صافي الربح الحقيقي = (محصّل - تكلفة تنفيذ - تكلفة شحن) لكل الأوردرات
+  const netProfit=orders.reduce((s,o)=>{
+    const paid=calcPaid(o);
+    const cost=calcCost(o)+(parseFloat(o.shipCost)||0);
+    return s+(paid-cost);
+  },0);
+  setText2('sk-profit',fn(netProfit)+' ج');
+  const profEl=document.getElementById('sk-profit');
+  if(profEl)profEl.style.color=netProfit>=0?'var(--g)':'var(--r)';
+  renderReturnsSummary();
 };
 
 window.renderList=function(){
   const q=gv('q').toLowerCase();
   let data=orders.filter(o=>{
     if(q&&!(o.clientName||'').toLowerCase().includes(q)&&!(o.clientPhone||'').includes(q)&&!(o.orderId||'').includes(q))return false;
-    if(currentFilter==='all')return true;
-    if(currentFilter==='ready')return !o.shipStage||o.shipStage==='ready';
-    return o.shipStage===currentFilter;
+    return matchFilter(o);
   });
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){
@@ -998,7 +1124,8 @@ window.openOrder=function(id){
   const rem=calcRem(o);
   const execCostO=calcCost(o);
   const shipCostO=parseFloat(o.shipCost)||0;
-  const estProfit=paid-execCostO-shipCostO;
+  const netSale=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0));
+  const estProfit=netSale-execCostO-shipCostO;
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
@@ -1405,7 +1532,8 @@ window.saveDeliver=async function(){
   try{
     const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
     const finalRem=calcRem(o);
-    await updateDoc(doc(db,'orders',activeId),{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
       stage:'archived',
       totalPaid:finalPaid,
       remaining:finalRem,
@@ -1415,6 +1543,7 @@ window.saveDeliver=async function(){
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ أُرشف — تقييم ${rating}/5 ${RATING_LABELS[rating]||''}`,by:userName}],
       updatedAt:serverTimestamp()
     });
+    await batch.commit();
     closeModal('ov-deliver');closePanel();
     toast(`✅ تم الأرشفة — ${RATING_LABELS[rating]}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1471,8 +1600,11 @@ window.saveAdminOverride=async function(){
   };
   // If exec cost override: note in costItems with a marker
   const costItemsUpdate=newExecCostTotal!==calcCost(o)?{costItems:[{type:'تعديل إداري',total:newExecCostTotal,note:reason||'تعديل إداري',addedBy:userName,addedAt:nowStr()}]}:{};
+  const oldPaid=calcPaid(o);
+  const oldShipCost=parseFloat(o.shipCost)||0;
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       shipCost:newShipCost,shipCompanyName:newShipCompany,
@@ -1488,6 +1620,27 @@ window.saveAdminOverride=async function(){
       timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔧 تعديل إداري: ${changes.map(c=>c.field+' '+c.before+'→'+c.after).join(', ')}${reason?' — '+reason:''}`,by:userName}],
       updatedAt:serverTimestamp()
     });
+    const paidDiff=newPaid-oldPaid;
+    if(paidDiff!==0){
+      addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+        amount:Math.abs(paidDiff),walletId:'',walletName:'',
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`تعديل إداري — المحصّل — ${reason||''}`,
+        userId:currentUser?.uid||'',userName,
+        direction:paidDiff>0?'in':'out',
+      });
+    }
+    const shipDiff=newShipCost-oldShipCost;
+    if(shipDiff!==0){
+      addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
+        amount:Math.abs(shipDiff),walletId:'',walletName:'',
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`تعديل إداري — تكلفة شحن — ${reason||''}`,
+        userId:currentUser?.uid||'',userName,
+        direction:shipDiff>0?'out':'in',
+      });
+    }
+    await batch.commit();
     closeModal('ov-admin-override');
     toast('✅ تم التعديل الإداري وتسجيله في السجل','ok');
     setTimeout(()=>{if(activeId)window.openOrder(activeId);},400);

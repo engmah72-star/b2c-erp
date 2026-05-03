@@ -72,6 +72,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
   const ref = doc(collection(db, 'financial_ledger'));
   batch.set(ref, {
     ...lc,
+    ...(data.direction ? {direction: data.direction} : {}),
     eventType,
     amount:       data.amount       || 0,
     orderId:      data.orderId      || null,
@@ -107,7 +108,7 @@ export function inferEventType(txType, category) {
     supplier: 'VENDOR_PAYMENT',
     shipping_cost: 'SHIPPING_EXPENSE', shipping: 'SHIPPING_EXPENSE',
     shipping_settlement: 'SHIPPING_SETTLEMENT',
-    shipping_return: 'SHIPPING_RETURN', return_cost: 'SHIPPING_RETURN',
+    shipping_return: 'SHIPPING_RETURN',
     deposit: 'CUSTOMER_PAYMENT', collection: 'CUSTOMER_PAYMENT', client_payment: 'CUSTOMER_PAYMENT',
     transfer: 'WALLET_TRANSFER',
     return_loss: 'RETURN_LOSS', return_cost: 'RETURN_LOSS',
@@ -382,6 +383,18 @@ async function handleGeneralExpense(db, p) {
 // ══════════════════════════════════════════════════════════════════
 // Dispatcher Map
 // ══════════════════════════════════════════════════════════════════
+async function handleSalaryPaymentReversal(db, p) {
+  const batch = writeBatch(db);
+  if (p.walletId) {
+    const refundAmt = p.isDeduction ? -p.amount : p.amount;
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(refundAmt) });
+  }
+  if (p.txId) { batch.delete(doc(db, 'transactions_v2', p.txId)); }
+  if (p.epId) { batch.delete(doc(db, 'employee_payments', p.epId)); }
+  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', { ...p, notes: p.note || 'إلغاء دفعة راتب' });
+  await batch.commit();
+}
+
 const HANDLERS = {
   CUSTOMER_PAYMENT:        handleCustomerPayment,
   CUSTOMER_REFUND:         (db, p) => handleCustomerPayment(db, { ...p, eventType: 'CUSTOMER_REFUND' }),
