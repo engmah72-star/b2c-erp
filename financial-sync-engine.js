@@ -139,6 +139,7 @@ async function handleVendorPayment(db, p) {
     type: 'out', amount: p.amount, fees: 0,
     description: p.note || `دفعة مورد — ${p.supplierName}`, category: 'supplier',
     supplierId: p.supplierId, supplierName: p.supplierName,
+    spId: payRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
@@ -265,18 +266,6 @@ async function handlePayroll(db, p) {
   }
 
   for (const e of p.employees) {
-    const txRef = doc(collection(db, 'transactions_v2'));
-    batch.set(txRef, {
-      walletId: p.walletId, walletName: p.walletName || '',
-      type: 'out', amount: e.amount,
-      description: `${p.note} — ${e.employeeName}`, category: 'salary',
-      employeeId: e.employeeId, employeeName: e.employeeName,
-      month: p.month, isDeduction: false,
-      date: p.date || new Date().toLocaleDateString('ar-EG'),
-      createdBy: p.userId || '', createdByName: p.userName || '',
-      createdAt: serverTimestamp(), source: 'payroll',
-    });
-
     const epRef = doc(collection(db, 'employee_payments'));
     batch.set(epRef, {
       employeeId: e.employeeId, employeeName: e.employeeName,
@@ -284,6 +273,18 @@ async function handlePayroll(db, p) {
       walletId: p.walletId, walletName: p.walletName || '',
       note: p.note, date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdAt: serverTimestamp(), createdBy: p.userId || '',
+    });
+
+    const txRef = doc(collection(db, 'transactions_v2'));
+    batch.set(txRef, {
+      walletId: p.walletId, walletName: p.walletName || '',
+      type: 'out', amount: e.amount,
+      description: `${p.note} — ${e.employeeName}`, category: 'salary',
+      employeeId: e.employeeId, employeeName: e.employeeName,
+      month: p.month, isDeduction: false, epId: epRef.id,
+      date: p.date || new Date().toLocaleDateString('ar-EG'),
+      createdBy: p.userId || '', createdByName: p.userName || '',
+      createdAt: serverTimestamp(), source: 'payroll',
     });
 
     addLedgerToBatch(batch, db, 'SALARY_PAYMENT', {

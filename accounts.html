@@ -1402,6 +1402,10 @@ window.deleteTx=async function(txId, walletId, amount, type, balanceBefore){
       }
     }
 
+    // حذف السجلات المرتبطة (إن وُجدت)
+    if(txData.spId){batch.delete(doc(db,'supplier_payments',txData.spId));}
+    if(txData.epId){batch.delete(doc(db,'employee_payments',txData.epId));}
+
     // حذف الدفعة
     batch.delete(doc(db,'transactions_v2',txId));
     addLedgerToBatch(batch,db,inferEventType(type==='in'?'out':'in',txData.category||''),{
@@ -1865,34 +1869,52 @@ window.saveTx=async function(){
         if(apply!==0)batch.update(doc(db,'wallets',walletId),{balance:increment(apply)});
       }
 
-      // سجل الحركة
+      // supplier_payments / employee_payments — pre-compute before tx update
+      const supChanged=cat!==oldCat||supplierId!==oldSupplierId||amount!==oldAmount||walletId!==oldWalletId;
+      const empCats=['salary','designer_fee'];
+      const empChanged=cat!==oldCat||employeeId!==oldEmployeeId||amount!==oldAmount||walletId!==oldWalletId;
+      const needNewSp=cat==='supplier'&&supplierId&&supChanged;
+      const needNewEp=empCats.includes(cat)&&employeeId&&empChanged;
+      const newSpRef=needNewSp?doc(collection(db,'supplier_payments')):null;
+      const newEpRef=needNewEp?doc(collection(db,'employee_payments')):null;
+
+      // سجل الحركة — include cross-reference IDs when changed
       batch.update(doc(db,'transactions_v2',editTxId),{
         walletId,type,amount,description:fullDesc,category:cat,
         clientName,supplierId,supplierName,employeeId,employeeName,
         orderId:orderId||'',date:nowStr(),
-        updatedAt:serverTimestamp(),updatedBy:currentUser?.uid||''
+        updatedAt:serverTimestamp(),updatedBy:currentUser?.uid||'',
+        ...(supChanged?{spId:newSpRef?.id||null}:{}),
+        ...(empChanged?{epId:newEpRef?.id||null}:{}),
       });
 
       // supplier_payments
-      const supChanged=cat!==oldCat||supplierId!==oldSupplierId||amount!==oldAmount||walletId!==oldWalletId;
       if(oldCat==='supplier'&&oldSupplierId&&supChanged){
-        const oldSP=supplierPays.find(p=>p.supplierId===oldSupplierId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-        if(oldSP)batch.delete(doc(db,'supplier_payments',oldSP._id));
+        if(old.spId){
+          batch.delete(doc(db,'supplier_payments',old.spId));
+        } else {
+          // fallback for records without spId cross-reference
+          const oldSP=supplierPays.find(p=>p.supplierId===oldSupplierId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
+          if(oldSP)batch.delete(doc(db,'supplier_payments',oldSP._id));
+        }
       }
-      if(cat==='supplier'&&supplierId&&supChanged){
-        batch.set(doc(collection(db,'supplier_payments')),{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+      if(newSpRef){
+        batch.set(newSpRef,{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
 
       // employee_payments
-      const empCats=['salary','designer_fee'];
-      const empChanged=cat!==oldCat||employeeId!==oldEmployeeId||amount!==oldAmount||walletId!==oldWalletId;
       if(empCats.includes(oldCat)&&oldEmployeeId&&empChanged){
-        const oldEP=employeePays.find(p=>p.employeeId===oldEmployeeId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-        if(oldEP)batch.delete(doc(db,'employee_payments',oldEP._id));
+        if(old.epId){
+          batch.delete(doc(db,'employee_payments',old.epId));
+        } else {
+          // fallback for records without epId cross-reference
+          const oldEP=employeePays.find(p=>p.employeeId===oldEmployeeId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
+          if(oldEP)batch.delete(doc(db,'employee_payments',oldEP._id));
+        }
       }
-      if(empCats.includes(cat)&&employeeId&&empChanged){
+      if(newEpRef){
         const mk=new Date().toISOString().slice(0,7);
-        batch.set(doc(collection(db,'employee_payments')),{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+        batch.set(newEpRef,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
 
       const byName=document.getElementById('nav-name')?.textContent||'';
@@ -1961,22 +1983,25 @@ window.saveTx=async function(){
     }
     const n2=new Date();
     const curMonthKey=n2.getFullYear()+'-'+String(n2.getMonth()+1).padStart(2,'0');
+    // pre-create sub-doc refs so we can store their IDs in the tx record (prevents orphans on delete)
+    const spRef2=cat==='supplier'&&supplierId?doc(collection(db,'supplier_payments')):null;
+    const epRef2=(cat==='salary'||cat==='designer_fee')&&employeeId?doc(collection(db,'employee_payments')):null;
     const txRef=doc(collection(db,'transactions_v2'));
     batch.set(txRef,{
       walletId,type,amount,fees:0,description:fullDesc,category:cat,
       clientName,supplierId,supplierName,employeeId,employeeName,
       orderId:orderId||'',balanceBefore:balBefore,balanceAfter:balAfter,
       ...((cat==='salary'||cat==='designer_fee')&&employeeId?{month:curMonthKey,salaryType:cat==='designer_fee'?'designer_fee':'salary'}:{}),
+      ...(spRef2?{spId:spRef2.id}:{}),
+      ...(epRef2?{epId:epRef2.id}:{}),
       date:nowStr(),createdBy:currentUser?.uid||'',
       createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()
     });
-    if(cat==='supplier'&&supplierId){
-      const spRef=doc(collection(db,'supplier_payments'));
-      batch.set(spRef,{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+    if(spRef2){
+      batch.set(spRef2,{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     }
-    if((cat==='salary'||cat==='designer_fee')&&employeeId){
-      const epRef=doc(collection(db,'employee_payments'));
-      batch.set(epRef,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:curMonthKey,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+    if(epRef2){
+      batch.set(epRef2,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:curMonthKey,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     }
     addLedgerToBatch(batch,db,inferEventType(type,cat),{
       amount,walletId,walletName:w.name||'',
@@ -2014,7 +2039,7 @@ window.savePaySup=async function(){
     const spRef=doc(collection(db,'supplier_payments'));
     batch.set(spRef,{supplierId:supId,supplierName:sup?.name||'',amount,walletId,note,date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:'supplier',balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
+    batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:'supplier',supplierId:supId,supplierName:sup?.name||'',spId:spRef.id,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
     addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT,{
       amount,walletId,walletName:w?.name||'',
       vendorId:supId,vendorName:sup?.name||'',
