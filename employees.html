@@ -299,8 +299,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, writeBatch, increment, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { recordLedger, entrySalary } from "./finance-engine.js";
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 
 const FB_CONFIG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB_CONFIG);const auth=getAuth(app);const db=getFirestore(app);
@@ -1137,21 +1137,16 @@ window.confirmPayroll=async function(){
   const note=gv('pr-note')||'رواتب '+MONTHS_AR[now.getMonth()]+' '+now.getFullYear();
   const date=todayStr();
   try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',wId),{balance:increment(-total)});
-    for(const e of selected){
-      const amount=parseFloat(document.getElementById('pr-amt-'+e._id)?.value)||parseFloat(e.baseSalary)||0;
-      const txRef=doc(collection(db,'transactions_v2'));
-      batch.set(txRef,{walletId:wId,walletName:w.name||'',type:'out',amount,description:`${note} — ${e.name}`,category:'salary',employeeId:e._id,employeeName:e.name||'',month:mKey,date,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp(),source:'payroll'});
-      const epRef=doc(collection(db,'employee_payments'));
-      batch.set(epRef,{employeeId:e._id,employeeName:e.name||'',amount,month:mKey,walletId:wId,walletName:w.name||'',note,date,createdAt:serverTimestamp(),createdBy:currentUser.uid});
-    }
-    await batch.commit();
-    // سجّل في دفتر الأستاذ المالي
-    for(const e of selected){
-      const amt=parseFloat(document.getElementById('pr-amt-'+e._id)?.value)||parseFloat(e.baseSalary)||0;
-      recordLedger(db,entrySalary(e._id,e.name||'',amt,'salary',mKey,note,userName,currentUser.uid,wId,w.name||''));
-    }
+    await dispatchFinancialEvent(db,FE.PAYROLL,{
+      employees:selected.map(e=>({
+        employeeId:e._id,employeeName:e.name||'',
+        amount:parseFloat(document.getElementById('pr-amt-'+e._id)?.value)||parseFloat(e.baseSalary)||0,
+      })),
+      totalAmount:total,
+      walletId:wId,walletName:w.name||'',
+      note,month:mKey,date,
+      userId:currentUser.uid,userName,
+    });
     document.getElementById('ov-payroll').classList.remove('open');
     toast(`✅ تم صرف ${selected.length} مرتب · إجمالي ${fn(total)} ج`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1247,15 +1242,13 @@ window.confirmPayOne=async function(){
   const commission=Math.round(calcEmpCommission(e));
   const btn=document.getElementById('pay-one-btn');btn.disabled=true;btn.textContent='جاري...';
   try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',wId),{balance:increment(isDeduction?amount:-amount)});
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{walletId:wId,walletName:w.name||'',type:isDeduction?'in':'out',amount,description:note,category:'salary',salaryType:salType,employeeId:e._id,employeeName:e.name||'',baseSalary:base,commission,month:mKey,isDeduction,date:todayStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
-    const epRef=doc(collection(db,'employee_payments'));
-    batch.set(epRef,{employeeId:e._id,employeeName:e.name||'',amount,salaryType:salType,isDeduction,month:mKey,walletId:wId,walletName:w.name||'',note,date:todayStr(),createdAt:serverTimestamp(),createdBy:currentUser.uid});
-    await batch.commit();
-    // سجّل في دفتر الأستاذ المالي
-    recordLedger(db,entrySalary(e._id,e.name||'',amount,salType,mKey,note,userName,currentUser.uid,wId,w.name||''));
+    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT,{
+      employeeId:e._id,employeeName:e.name||'',
+      amount,salaryType:salType,isDeduction,
+      walletId:wId,walletName:w.name||'',
+      note,month:mKey,baseSalary:base,commission,
+      date:todayStr(),userId:currentUser.uid,userName,
+    });
     closePayOne();
     toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${e.name}`,'ok');
   }catch(err){toast('❌ '+err.message,'err');}

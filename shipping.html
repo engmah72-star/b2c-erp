@@ -640,7 +640,7 @@ import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, serverTimestamp, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { recordLedger, entryCollection, entryShippingCost, entryReturnLoss, entryRefund } from "./finance-engine.js";
+import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -1338,11 +1338,25 @@ window.saveShip=async function(){
       timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
       updatedAt:serverTimestamp()
     });
+    if(collectAmt>0) addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+      amount:collectAmt,walletId:wId,walletName:w?.name||wName,
+      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,
+      userId:currentUser?.uid||'',userName,
+    });
+    if(colMode==='later'&&rem>0&&debtType!=='company') addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+      amount:rem,walletId:'',walletName:'',
+      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`دين مؤجل — ${o.clientName||''} — ${o.orderId||''}`,
+      userId:currentUser?.uid||'',userName,
+    });
+    if(shipCost>0&&!(parseFloat(o.shipCost)>0)) addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
+      amount:shipCost,walletId:'',walletName:'',
+      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,
+      userId:currentUser?.uid||'',userName,
+    });
     await batch.commit();
-    // audit trail بعد النجاح
-    if(collectAmt>0) recordLedger(db,entryCollection({...o,_id:activeId},collectAmt,userName,currentUser?.uid||'',wId,w?.name||wName,transferRef));
-    if(colMode==='later'&&rem>0&&debtType!=='company') recordLedger(db,{lc:{type:'deferred_collection',dir:'income',icon:'🕐',catAr:'دين مؤجل'},amount:rem,orderId:activeId,clientId:o.clientId||'',clientName:o.clientName,notes:`دين مؤجل — ${o.clientName||''} — ${o.orderId||''}`,createdBy:currentUser?.uid||'',createdByName:userName});
-    if(shipCost>0&&!(parseFloat(o.shipCost)>0)) recordLedger(db,entryShippingCost({...o,_id:activeId},shipCost,shipCompanyName,userName,currentUser?.uid||''));
     closeModal('ov-ship');
     if(shouldArchive){
       closePanel();
@@ -1610,15 +1624,18 @@ window.saveReturnDirect=async function(){
       const cRef=doc(collection(db,'transactions_v2'));
       batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
-    await batch.commit();
-
-    // audit trail بعد النجاح
-    if(isPartial&&priceDeduction>0){
-      recordLedger(db,entryReturnLoss({...o,_id:orderId},priceDeduction,`مرتجع جزئي — ${note||''}`,userName,currentUser?.uid||''));
-    } else if(!isPartial){
+    if(isPartial&&priceDeduction>0) addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
+      amount:priceDeduction,orderId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`مرتجع جزئي — ${note||''}`,userId:currentUser?.uid||'',userName,
+    });
+    if(!isPartial){
       const lostAmt=(parseFloat(o.totalPaid)||0)+(parseFloat(o.deposit)||0);
-      if(lostAmt>0) recordLedger(db,entryReturnLoss({...o,_id:orderId},lostAmt,`مرتجع كامل — ${note||''}`,userName,currentUser?.uid||''));
+      if(lostAmt>0) addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
+        amount:lostAmt,orderId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`مرتجع كامل — ${note||''}`,userId:currentUser?.uid||'',userName,
+      });
     }
+    await batch.commit();
     closeModal('ov-return-direct');
     closePanel();
     toast('✅ تم تسجيل المرتجع','ok');

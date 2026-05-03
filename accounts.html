@@ -461,6 +461,7 @@ import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/fireb
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, query, orderBy, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { addLedgerToBatch, inferEventType, FE } from "./financial-sync-engine.js";
 
 const app  = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -1895,6 +1896,14 @@ window.saveTx=async function(){
       const epRef=doc(collection(db,'employee_payments'));
       batch.set(epRef,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:curMonthKey,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     }
+    addLedgerToBatch(batch,db,inferEventType(type,cat),{
+      amount,walletId,walletName:w.name||'',
+      orderId:orderId||null,clientName,
+      vendorId:supplierId||null,vendorName:supplierName||null,
+      employeeId:employeeId||null,employeeName:employeeName||null,
+      notes:fullDesc,
+      userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
+    });
     await batch.commit();
     closeTxModal();
     toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
@@ -1924,6 +1933,12 @@ window.savePaySup=async function(){
     batch.set(spRef,{supplierId:supId,supplierName:sup?.name||'',amount,walletId,note,date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     const txRef=doc(collection(db,'transactions_v2'));
     batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:'supplier',balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
+    addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT,{
+      amount,walletId,walletName:w?.name||'',
+      vendorId:supId,vendorName:sup?.name||'',
+      notes:note||`دفعة مورد — ${sup?.name||''}`,
+      userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
+    });
     await batch.commit();
     cM('pay-sup');toast(`✅ تم دفع ${fn(amount)} ج لـ ${sup?.name||'المورد'}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1962,6 +1977,11 @@ window.saveTransfer=async function(){
     batch.set(outRef,{walletId:fromId,type:'out',amount,fees:0,description:'🔄 تحويل إلى: '+toW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
     const inRef=doc(collection(db,'transactions_v2'));
     batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:'🔄 تحويل من: '+fromW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
+    addLedgerToBatch(batch,db,FE.WALLET_TRANSFER,{
+      amount,walletId:fromId,walletName:fromW.name||'',
+      notes:`تحويل من ${fromW.name} إلى ${toW.name}${note?' — '+note:''}`,
+      userId:currentUser?.uid||'',userName:byName,
+    });
     await batch.commit();
     cM('transfer');
     sv('tr-amount','');sv('tr-note','');
