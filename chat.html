@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#08090f">
+<title>Business2Card — دردشة الفريق</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── Layout ── */
+.chat-shell{display:flex;height:100vh;overflow:hidden;}
+.chat-sidebar{width:var(--nav-w);background:var(--bg2);border-left:1px solid var(--line);display:flex;flex-direction:column;position:fixed;top:0;right:0;bottom:0;z-index:100;transition:var(--trans);}
+.chat-main{flex:1;margin-right:var(--nav-w);display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+
+/* ── Topbar ── */
+.chat-topbar{background:var(--bg2);border-bottom:1px solid var(--line);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;position:sticky;top:0;z-index:50;}
+.chat-topbar-title{flex:1;}
+.chat-topbar-title h1{font-size:16px;font-weight:800;}
+.chat-topbar-sub{font-size:11px;color:var(--dim2);margin-top:1px;}
+.online-dot{width:8px;height:8px;border-radius:50%;background:var(--g);display:inline-block;margin-left:4px;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Messages area ── */
+.messages-wrap{flex:1;overflow-y:auto;padding:16px 12px;display:flex;flex-direction:column;gap:4px;-webkit-overflow-scrolling:touch;}
+.messages-wrap::-webkit-scrollbar{width:3px;}
+.messages-wrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px;}
+
+/* ── Date separator ── */
+.date-sep{text-align:center;margin:12px 0 6px;position:relative;}
+.date-sep span{font-size:10px;font-weight:700;color:var(--dim2);background:var(--bg);padding:3px 12px;border-radius:20px;border:1px solid var(--line);position:relative;z-index:1;}
+
+/* ── Message bubble ── */
+.msg-row{display:flex;flex-direction:column;max-width:78%;margin-bottom:2px;}
+.msg-row.me{align-self:flex-start;align-items:flex-start;}
+.msg-row.other{align-self:flex-end;align-items:flex-end;}
+.msg-row.me+.msg-row.other,.msg-row.other+.msg-row.me{margin-top:10px;}
+
+.msg-sender{font-size:10px;font-weight:800;margin-bottom:3px;display:flex;align-items:center;gap:5px;}
+.msg-role-badge{font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;}
+
+.msg-bubble{padding:10px 13px;border-radius:16px;font-size:13px;font-weight:500;line-height:1.5;word-break:break-word;position:relative;}
+.msg-row.me .msg-bubble{background:var(--b);color:#fff;border-radius:16px 16px 4px 16px;}
+.msg-row.other .msg-bubble{background:var(--bg3);color:var(--snow);border-radius:16px 16px 16px 4px;border:1px solid var(--line);}
+
+.msg-time{font-size:9px;color:var(--dim2);margin-top:3px;padding:0 4px;}
+.msg-row.me .msg-time{text-align:right;}
+.msg-row.other .msg-time{text-align:left;}
+
+/* ── System message ── */
+.sys-msg{text-align:center;font-size:10px;color:var(--dim2);padding:4px 12px;background:var(--bg3);border-radius:20px;align-self:center;margin:6px 0;max-width:80%;}
+
+/* ── Input bar ── */
+.input-bar{background:var(--bg2);border-top:1px solid var(--line);padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:8px;align-items:flex-end;flex-shrink:0;}
+.msg-input{flex:1;background:var(--bg3);border:1px solid var(--line);border-radius:22px;padding:10px 16px;color:var(--snow);font-family:inherit;font-size:14px;outline:none;resize:none;min-height:42px;max-height:120px;overflow-y:auto;direction:rtl;-webkit-appearance:none;line-height:1.4;}
+.msg-input:focus{border-color:var(--b);}
+.msg-input::placeholder{color:var(--dim);}
+.send-btn{width:42px;height:42px;border-radius:50%;background:var(--b);border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .1s;-webkit-tap-highlight-color:transparent;}
+.send-btn:active{transform:scale(.92);}
+.send-btn:disabled{background:var(--bg4);cursor:not-allowed;}
+
+/* ── Online members ── */
+.online-bar{padding:8px 16px;font-size:11px;color:var(--dim2);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;}
+.online-member{display:flex;align-items:center;gap:4px;font-weight:700;font-size:11px;}
+.online-av{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;}
+
+/* ── Empty state ── */
+.chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dim2);}
+.chat-empty-ico{font-size:48px;opacity:.5;}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .chat-sidebar{transform:translateX(100%);}
+  .chat-sidebar.mob-open{transform:translateX(0);box-shadow:-20px 0 60px rgba(0,0,0,.6);}
+  .chat-main{margin-right:0!important;}
+  .mob-menu-btn{display:flex!important;}
+  .msg-row{max-width:88%;}
+  .messages-wrap{padding:12px 8px;}
+}
+</style>
+</head>
+<body>
+<div class="chat-shell">
+
+<!-- SIDEBAR -->
+<aside class="chat-sidebar sidenav">
+  <div class="nav-brand">
+    <div class="nav-logo">🎨</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="role-badge">—</div>
+    </div>
+  </div>
+  <div class="nav-scroll" id="nav-links"></div>
+  <div class="nav-foot">
+    <div class="nav-user" onclick="doLogout()">
+      <div class="nav-avatar" id="nav-av">A</div>
+      <div>
+        <div class="nav-user-name" id="nav-name">—</div>
+        <div class="nav-user-role">تسجيل خروج</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="chat-main">
+
+  <!-- Topbar -->
+  <div class="chat-topbar">
+    <button class="mob-menu-btn" style="display:none;flex-shrink:0" onclick="toggleNav()">☰</button>
+    <div style="font-size:26px;flex-shrink:0">💬</div>
+    <div class="chat-topbar-title">
+      <h1>دردشة الفريق</h1>
+      <div class="chat-topbar-sub"><span class="online-dot"></span><span id="members-count">يتحمّل...</span></div>
+    </div>
+    <a href="javascript:history.back()" class="btn btn-ghost btn-sm">رجوع</a>
+  </div>
+
+  <!-- Messages -->
+  <div class="messages-wrap" id="messages-wrap">
+    <div class="chat-empty">
+      <div class="chat-empty-ico">💬</div>
+      <div style="font-size:14px;font-weight:700">جاري تحميل المحادثة...</div>
+    </div>
+  </div>
+
+  <!-- Input bar -->
+  <div class="input-bar">
+    <button class="send-btn" id="send-btn" onclick="sendMessage()" title="إرسال">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+    <textarea class="msg-input" id="msg-input" placeholder="اكتب رسالة للفريق..." rows="1"
+      oninput="autoResize(this)" onkeydown="handleKey(event)"></textarea>
+  </div>
+
+</div>
+</div>
+
+<div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
+<div id="toasts" class="toasts"></div>
+
+<script type="module">
+import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {getFirestore,collection,doc,onSnapshot,addDoc,getDoc,query,orderBy,limitToLast,serverTimestamp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+const app=initializeApp(FB);
+const auth=getAuth(app),db=getFirestore(app);
+
+// ── Role config ──
+const ROLE_INFO={
+  admin:{label:'أدمن',color:'#f03660',emoji:'👑'},
+  operation_manager:{label:'تشغيل',color:'#8b7af8',emoji:'⚙️'},
+  customer_service:{label:'خدمة عملاء',color:'#10c4de',emoji:'🎧'},
+  graphic_designer:{label:'مصمم',color:'#4a8ef5',emoji:'✏️'},
+  design_operator:{label:'تصميم',color:'#4a8ef5',emoji:'✏️'},
+  production_agent:{label:'تنفيذ',color:'#f47048',emoji:'🏭'},
+  shipping_officer:{label:'شحن',color:'#00c87a',emoji:'🚚'},
+  wallet_manager:{label:'حسابات',color:'#00c87a',emoji:'💰'},
+};
+const ROLE_HOME={admin:'index.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
+
+// ── Utils ──
+const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+function fmtTime(ts){if(!ts?.toDate)return'';const d=ts.toDate();return d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});}
+function fmtDate(ts){if(!ts?.toDate)return'';const d=ts.toDate();const t=new Date();const diff=Math.floor((t-d)/864e5);if(diff===0)return'اليوم';if(diff===1)return'أمس';return d.toLocaleDateString('ar-EG',{weekday:'long',month:'long',day:'numeric'});}
+function dateKey(ts){if(!ts?.toDate)return'';const d=ts.toDate();return d.toISOString().slice(0,10);}
+
+// ── Nav helpers ──
+window.toggleNav=()=>{document.querySelector('.chat-sidebar').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
+window.closeNav=()=>{document.querySelector('.chat-sidebar').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
+window.doLogout=async()=>{await signOut(auth);location.href='login.html';};
+
+// ── Build sidebar ──
+function buildSidebar(role){
+  const home=ROLE_HOME[role]||'index.html';
+  const ri=ROLE_INFO[role]||{label:role,emoji:'👤'};
+  set('role-badge',ri.label);
+  document.getElementById('nav-links').innerHTML=`
+    <a class="nav-link" href="${home}"><span class="nav-ico">⬡</span>داشبوردي</a>
+    <a class="nav-link active" href="chat.html"><span class="nav-ico">💬</span>دردشة الفريق</a>
+  `;
+}
+
+// ── State ──
+let uid='',userName='',userRole='',sending=false;
+let messages=[],lastDateSep='';
+
+// ── Auth ──
+let _started=false;
+onAuthStateChanged(auth,async u=>{
+  if(!u){location.href='login.html';return;}
+  if(_started)return;_started=true;
+  uid=u.uid;
+  const snap=await getDoc(doc(db,'users',u.uid));
+  if(!snap.exists()){location.href='login.html';return;}
+  const d=snap.data();
+  userName=d.name||u.email;
+  userRole=d.role||'customer_service';
+  set('nav-name',userName);
+  document.getElementById('nav-av').textContent=userName[0].toUpperCase();
+  buildSidebar(userRole);
+  startChat();
+});
+
+// ── Chat listeners ──
+function startChat(){
+  // Messages — last 200
+  const q=query(collection(db,'chat_messages'),orderBy('createdAt','asc'),limitToLast(200));
+  onSnapshot(q,snap=>{
+    messages=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderMessages();
+    updateMembersCount();
+  });
+
+  // Users online (simple: count users who sent message in last 24h)
+  onSnapshot(collection(db,'users'),snap=>{
+    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const count=all.filter(u=>u.role&&u.role!=='').length;
+    set('members-count',count+' عضو في الفريق');
+  });
+}
+
+// ── Render messages ──
+function renderMessages(){
+  const wrap=document.getElementById('messages-wrap');if(!wrap)return;
+  const isAtBottom=wrap.scrollHeight-wrap.scrollTop-wrap.clientHeight<80;
+
+  if(!messages.length){
+    wrap.innerHTML=`
+      <div class="chat-empty">
+        <div class="chat-empty-ico">💬</div>
+        <div style="font-size:15px;font-weight:800">أهلاً بالفريق!</div>
+        <div style="font-size:12px;text-align:center;max-width:220px">ابدأ المحادثة — كل الزملاء يشوفون رسائلك هنا</div>
+      </div>`;
+    return;
+  }
+
+  let html='';
+  let lastDate='';
+
+  messages.forEach((msg,i)=>{
+    const isMe=msg.senderUid===uid;
+    const msgDate=dateKey(msg.createdAt);
+    const ri=ROLE_INFO[msg.senderRole]||{label:msg.senderRole||'',color:'var(--dim2)',emoji:'👤'};
+    const prev=messages[i-1];
+    const sameUser=prev&&prev.senderUid===msg.senderUid&&dateKey(prev.createdAt)===msgDate;
+    const time=fmtTime(msg.createdAt);
+
+    // Date separator
+    if(msgDate&&msgDate!==lastDate){
+      html+=`<div class="date-sep"><span>${fmtDate(msg.createdAt)}</span></div>`;
+      lastDate=msgDate;
+    }
+
+    // System message
+    if(msg.type==='system'){
+      html+=`<div class="sys-msg">${msg.text}</div>`;
+      return;
+    }
+
+    html+=`<div class="msg-row ${isMe?'me':'other'}">
+      ${!isMe&&!sameUser?`<div class="msg-sender">
+        <span style="color:${ri.color}">${ri.emoji} ${msg.senderName||'—'}</span>
+        <span class="msg-role-badge" style="background:${ri.color}18;color:${ri.color}">${ri.label}</span>
+      </div>`:''}
+      <div class="msg-bubble">${escHtml(msg.text)}</div>
+      ${!sameUser||i===messages.length-1?`<div class="msg-time">${time}</div>`:''}
+    </div>`;
+  });
+
+  wrap.innerHTML=html;
+
+  // Auto-scroll
+  if(isAtBottom||messages[messages.length-1]?.senderUid===uid){
+    wrap.scrollTop=wrap.scrollHeight;
+  }
+}
+
+function escHtml(t){return(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');}
+
+// ── Members count ──
+function updateMembersCount(){
+  // Show last active senders
+  const recent=new Map();
+  [...messages].reverse().forEach(m=>{
+    if(m.senderUid&&!recent.has(m.senderUid))recent.set(m.senderUid,m.senderName);
+  });
+  const count=recent.size;
+  if(count>0){
+    const names=[...recent.values()].slice(0,3).join('، ');
+    set('members-count',`${count} نشط مؤخراً · ${names}${count>3?'...':''}`);
+  }
+}
+
+// ── Send message ──
+window.sendMessage=async function(){
+  const input=document.getElementById('msg-input');
+  const text=(input.value||'').trim();
+  if(!text||sending)return;
+  sending=true;
+  const btn=document.getElementById('send-btn');
+  btn.disabled=true;
+  input.value='';
+  autoResize(input);
+  try{
+    await addDoc(collection(db,'chat_messages'),{
+      text,
+      senderUid:uid,
+      senderName:userName,
+      senderRole:userRole,
+      createdAt:serverTimestamp()
+    });
+  }catch(e){
+    toast('❌ لم تُرسَل — '+e.message,'err');
+    input.value=text;
+  }finally{
+    sending=false;
+    btn.disabled=false;
+    input.focus();
+  }
+};
+
+// ── Keyboard & auto-resize ──
+window.handleKey=function(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
+};
+window.autoResize=function(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,120)+'px';
+};
+</script>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
+</body>
+</html>
