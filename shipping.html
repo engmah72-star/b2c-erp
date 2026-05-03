@@ -369,6 +369,7 @@
       <span class="modal-title" id="ship-cost-modal-title">＋ إضافة بند تكلفة</span>
       <button class="modal-x" onclick="closeModal('ov-ship-cost')">✕</button>
     </div>
+    <div id="sc-order-info" style="margin:0 16px 0;padding:8px 12px;background:var(--bg3);border-radius:8px;font-size:12px;font-weight:700;display:none"></div>
     <div class="modal-body">
       <div class="fg"><label>📦 المنتج</label><select class="inp" id="sc-prod-idx"><option value="-1">— عام للأوردر —</option></select></div>
       <div class="fg"><label>📋 نوع البند</label><select class="inp" id="sc-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select></div>
@@ -709,6 +710,13 @@ function __openShipCostModal(o,editIdx){
   sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
   const sup=document.getElementById('sc-sup');
   if(sup)sup.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}">${x.name}</option>`).join('');
+  // عرض بيانات الأوردر في أعلى المودال
+  const info=document.getElementById('sc-order-info');
+  if(info){
+    const prdsText=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
+    info.style.display='block';
+    info.innerHTML=`<span style="color:var(--c)">📦 ${o.clientName||'—'}</span> <span style="color:var(--dim2);font-size:10px;font-weight:500">${prdsText}</span>`;
+  }
   if(editIdx>=0){
     __scEditIdx=editIdx;
     const item=(o.costItems||[])[editIdx];
@@ -724,6 +732,27 @@ function __openShipCostModal(o,editIdx){
     document.getElementById('ship-cost-save-btn').textContent='＋ إضافة';
   }
   document.getElementById('ov-ship-cost').classList.add('open');
+}
+
+function refreshCostList(orderId){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const prods=o.products||[];
+  const el=document.getElementById('ship-costs-list');if(!el)return;
+  if(!(o.costItems||[]).length){
+    el.innerHTML='<div style="font-size:12px;color:var(--r);padding:8px 0">لم يتم تسجيل أي تكاليف لهذا الأوردر</div>';
+    return;
+  }
+  el.innerHTML=(o.costItems||[]).map((item,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:800">${item.type||'—'}${item.prodIdx!=null&&prods[item.prodIdx]?' — '+prods[item.prodIdx].name:''}</div>
+        <div style="font-size:11px;color:var(--dim2)">${item.supplierName||''}${item.note?' · '+item.note:''}</div>
+      </div>
+      <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(item.total)} ج</span>
+      <button onclick="openEditCostShip(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:12px">✏️</button>
+      <button onclick="rmCostShip(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:13px">✕</button>
+    </div>`).join('')
+  +'<div style="text-align:left;font-size:12px;font-weight:900;padding:6px 0 0;color:var(--g)">الإجمالي: '+fn((o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0))+' ج</div>';
 }
 window.openAddCostShip=function(pi){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
@@ -742,7 +771,8 @@ window.saveCostShip=async function(){
   const supOpt=supSel?.options[supSel.selectedIndex];
   const prodIdx=parseInt(document.getElementById('sc-prod-idx')?.value??-1);
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('sc-note'),addedAt:nowStr()};
+  const uName=userName||currentUser?.displayName||'';
+  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('sc-note'),addedAt:nowStr(),addedBy:uName};
   const ci=[...(o.costItems||[])];
   let action;
   if(__scEditIdx>=0&&__scEditIdx<ci.length){
@@ -753,9 +783,9 @@ window.saveCostShip=async function(){
     action=`💰 ${type}: ${fn(total)} ج`;
   }
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:uName}],updatedAt:serverTimestamp()});
     closeModal('ov-ship-cost');toast('✅ تم','ok');__scEditIdx=-1;
-    openOrder(activeId);
+    refreshCostList(activeId);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 window.rmCostShip=async function(idx){
@@ -764,7 +794,7 @@ window.rmCostShip=async function(idx){
   const ci=[...(o.costItems||[])];ci.splice(idx,1);
   try{
     await updateDoc(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
-    toast('✅ حُذف','ok');openOrder(activeId);
+    toast('✅ حُذف','ok');refreshCostList(activeId);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
