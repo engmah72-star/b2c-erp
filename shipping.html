@@ -386,7 +386,7 @@
 
 <!-- Modal: تسجيل مرتجع مباشر -->
 <div class="overlay" id="ov-return-direct">
-  <div class="modal" style="max-width:420px">
+  <div class="modal" style="max-width:460px">
     <div class="modal-head">
       <span class="modal-title">↩️ تسجيل مرتجع</span>
       <button class="modal-x" onclick="closeModal('ov-return-direct')">✕</button>
@@ -396,12 +396,69 @@
         <div style="font-size:14px;font-weight:800" id="ret-client-name">—</div>
         <div style="font-size:11px;color:var(--dim2);margin-top:3px" id="ret-co-name">—</div>
       </div>
+      <!-- نوع المرتجع -->
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:800;margin-bottom:8px">نوع المرتجع</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="ship-btn active" id="ret-full-btn" onclick="setReturnType('full')">
+            <div class="ship-btn-ico">📦</div><div class="ship-btn-lbl">كامل</div>
+          </div>
+          <div class="ship-btn" id="ret-partial-btn" onclick="setReturnType('partial')">
+            <div class="ship-btn-ico">📋</div><div class="ship-btn-lbl">جزئي</div>
+          </div>
+        </div>
+        <input type="hidden" id="ret-type" value="full">
+      </div>
+      <!-- منتجات للمرتجع الجزئي -->
+      <div id="ret-products-sec" style="display:none;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:800;margin-bottom:8px">المنتجات المُرجعة</div>
+        <div id="ret-products-list"></div>
+        <div style="margin-top:8px;padding:8px 12px;background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:8px">
+          <div style="font-size:11px;color:var(--dim2)">تخفيض سعر البيع</div>
+          <div style="font-size:16px;font-weight:900;color:var(--r)" id="ret-deduction-preview">0 ج</div>
+        </div>
+      </div>
       <div class="fg"><label>💸 تكلفة المرتجع (ج)</label><input class="inp" id="ret-cost" type="number" placeholder="0 — اختياري"></div>
       <div class="fg"><label>📝 سبب الإرجاع</label><input class="inp" id="ret-note" placeholder="العميل رفض الاستلام / تالف..."></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('ov-return-direct')">إلغاء</button>
       <button class="btn btn-r" onclick="saveReturnDirect()">↩️ تأكيد المرتجع</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: Admin Override ══ -->
+<div class="overlay" id="ov-admin-override">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">🔧 تعديل إداري</span>
+      <button class="modal-x" onclick="closeModal('ov-admin-override')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.2);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--y);font-weight:700">
+        ⚠️ أي تعديل يُسجَّل في Audit Log تلقائياً
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg" style="margin:0"><label>المحصّل (ج)</label><input class="inp" id="ao-paid" type="number" min="0" oninput="calcAORemaining()"></div>
+        <div class="fg" style="margin:0"><label>الباقي (ج)</label><input class="inp" id="ao-remaining" type="number" min="0" placeholder="محسوب تلقائياً" readonly style="opacity:.7"></div>
+        <div class="fg" style="margin:0"><label>تكلفة الشحن (ج)</label><input class="inp" id="ao-ship-cost" type="number" min="0"></div>
+        <div class="fg" style="margin:0"><label>تكلفة التنفيذ الكلية (ج)</label><input class="inp" id="ao-exec-cost" type="number" min="0"></div>
+      </div>
+      <div class="fg"><label>شركة الشحن</label><input class="inp" id="ao-ship-company" placeholder="اسم شركة الشحن"></div>
+      <div class="fg"><label>حالة الشحن</label>
+        <select class="inp" id="ao-ship-stage">
+          <option value="ready">📦 جاهز</option>
+          <option value="wait_delivery">🚚 في الطريق</option>
+          <option value="wait_collection">💰 انتظار تحصيل</option>
+          <option value="collected">✅ تحصّل</option>
+        </select>
+      </div>
+      <div class="fg"><label>سبب التعديل</label><input class="inp" id="ao-reason" placeholder="سبب التعديل الإداري..."></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('ov-admin-override')">إلغاء</button>
+      <button class="btn" style="background:var(--y);color:#0d0f1c;font-weight:800" id="btn-save-ao" onclick="saveAdminOverride()">💾 حفظ التعديل</button>
     </div>
   </div>
 </div>
@@ -592,9 +649,12 @@ const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 let orders=[], wallets=[], shippers=[], suppliers=[];
 let currentUser=null, userName='', activeId=null;
 let currentFilter='all', ssMethod='', ssStage='wait_delivery';
+let isAdminUser=false;
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
+const calcCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+const calcPaid=o=>parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -816,6 +876,7 @@ onAuthStateChanged(auth,async u=>{
   const _perms = userData.permissions || {};
   const _pages = _perms.pages || [];
   const _isAdm = ['admin','operation_manager'].includes(role);
+  isAdminUser = _isAdm;
   const _pagePerm = 'shipping';
   const _roleOk = role === 'shipping_officer'; // shipping_officer دايمًا ليه حق الدخول
   if(!_isAdm && !_roleOk && !_pages.includes('*') && !_pages.includes(_pagePerm)){
@@ -932,8 +993,11 @@ window.openOrder=function(id){
   const ss=o.shipStage||'ready';
   const sc=STAGE_COL[ss]||'var(--c)';
   const sale=parseFloat(o.salePrice)||0;
-  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const paid=calcPaid(o);
   const rem=calcRem(o);
+  const execCostO=calcCost(o);
+  const shipCostO=parseFloat(o.shipCost)||0;
+  const estProfit=paid-execCostO-shipCostO;
   const pct=sale>0?Math.min(paid/sale*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
@@ -973,20 +1037,33 @@ window.openOrder=function(id){
       </div>
     </div>
 
-    <!-- المالية -->
+    <!-- الحساب المالي -->
     <div class="section" style="background:rgba(59,158,255,.03);border:1px solid rgba(59,158,255,.1)">
-      <div class="section-title" style="color:var(--b);margin-bottom:12px">💰 المالية</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="section-title" style="color:var(--b);margin-bottom:0">💰 الحساب المالي</div>
+        ${isAdminUser?`<button type="button" onclick="openAdminOverride()" style="padding:4px 12px;border-radius:20px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">🔧 تعديل إداري</button>`:''}
+      </div>
       <div class="fin-grid">
-        <div class="fin-cell"><div class="fin-cell-lbl">الإجمالي</div><div class="fin-cell-val" style="color:var(--b)">${fn(sale)}</div></div>
-        <div class="fin-cell"><div class="fin-cell-lbl">محصّل</div><div class="fin-cell-val" style="color:var(--g)">${fn(paid)}</div></div>
+        <div class="fin-cell"><div class="fin-cell-lbl">إجمالي الأوردر</div><div class="fin-cell-val" style="color:var(--b)">${fn(sale)}</div></div>
+        <div class="fin-cell"><div class="fin-cell-lbl">المحصّل</div><div class="fin-cell-val" style="color:var(--g)">${fn(paid)}</div></div>
         <div class="fin-cell" style="${rem>0?'background:rgba(255,61,110,.1)':''}">
-          <div class="fin-cell-lbl">باقي</div>
+          <div class="fin-cell-lbl">المتبقي</div>
           <div class="fin-cell-val" style="color:${rem>0?'var(--r)':'var(--g)'}">
             ${rem>0?fn(rem):'✅'}
           </div>
         </div>
       </div>
-      ${sale>0?`<div style="height:8px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div></div>`:''}
+      <div class="fin-grid" style="margin-top:8px">
+        <div class="fin-cell"><div class="fin-cell-lbl">تكلفة التنفيذ</div><div class="fin-cell-val" style="color:var(--r)">${fn(execCostO)}</div></div>
+        <div class="fin-cell"><div class="fin-cell-lbl">تكلفة الشحن</div><div class="fin-cell-val" style="color:var(--r)">${fn(shipCostO)}</div></div>
+        <div class="fin-cell" style="${estProfit<0?'background:rgba(255,61,110,.1)':'background:rgba(0,217,126,.06)'}">
+          <div class="fin-cell-lbl">الربح المتوقع</div>
+          <div class="fin-cell-val" style="color:${estProfit>=0?'var(--g)':'var(--r)'}">
+            ${fn(Math.abs(estProfit))}${estProfit<0?' ↓':''}
+          </div>
+        </div>
+      </div>
+      ${sale>0?`<div style="height:6px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin-top:10px"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div></div>`:''}
     </div>
 
     <!-- تفاصيل الشحن -->
@@ -1046,7 +1123,17 @@ window.openOrder=function(id){
       ${rem>0?`<button onclick="openShipSetup()" style="padding:8px 14px;border-radius:8px;border:none;background:var(--g);color:#0d0f1c;font-size:12px;font-weight:800;cursor:pointer">💰 تحصيل</button>`:''}
       ${(()=>{const ph=(o.clientPhone||'').replace(/^0/,'').replace(/[^0-9]/g,'');const name=o.clientName||'';if(!ph)return '';const trackMsg=o.shipTracking?`مرحباً ${name}، طلبك في الطريق 🚚\nرقم التتبع: ${o.shipTracking}`:`مرحباً ${name}، طلبك في الطريق 🚚\nسيصلك قريباً إن شاء الله 🙏`;if(['wait_delivery','wait_collection'].includes(ss))return`<a href="https://wa.me/2${ph}?text=${encodeURIComponent(trackMsg)}" target="_blank" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(37,211,102,.3);background:rgba(37,211,102,.1);color:#25D366;font-size:12px;font-weight:800;text-decoration:none">💬 إبلاغ العميل</a>`;return '';})()}
       <button class="btn btn-r btn-sm" onclick="openReturnFromShip('${o._id}','${(o.clientName||'').replace(/'/g,"\\'")}','${o.shipCompanyName||''}')">↩️ مرتجع</button>
-    </div>`;
+    </div>
+    <!-- Audit Log (admin only) -->
+    ${isAdminUser&&(o.auditLog||[]).length?`<div class="section" style="margin-top:12px">
+      <div class="section-title" style="font-size:10px;color:var(--y);margin-bottom:6px">📋 سجل التعديلات الإدارية</div>
+      ${[...(o.auditLog||[])].reverse().slice(0,5).map(a=>`
+        <div style="font-size:10px;padding:5px 8px;background:rgba(255,170,0,.06);border-radius:6px;margin-bottom:4px;border:1px solid rgba(255,170,0,.15)">
+          <span style="color:var(--y);font-weight:700">${a.changedBy||'—'}</span> · ${a.date||'—'}
+          ${(a.changes||[]).map(c=>`<div style="color:var(--dim2)">${c.field}: <span style="color:var(--r)">${c.before}</span> → <span style="color:var(--g)">${c.after}</span></div>`).join('')}
+        </div>`).join('')}
+    </div>`:''}
+    `;
 
   document.getElementById('panel-ov').classList.add('open');
 };
@@ -1224,6 +1311,16 @@ window.saveShip=async function(){
     // لو pickup وتحصيل كامل → أرشف تلقائياً
     const shouldArchive = method==='pickup' && newRem<=0;
 
+    const execCost=calcCost(o);
+    const financialSnapshot={
+      totalSale:parseFloat(o.salePrice)||0,
+      paidAmount:newPaid,
+      remainingAmount:newRem,
+      executionCost:execCost,
+      shippingCost:shipCost,
+      estimatedProfit:newPaid-execCost-shipCost,
+      snapshotAt:nowStr()
+    };
     await updateDoc(doc(db,'orders',activeId),{
       shipStage: shouldArchive ? 'collected' : stage,
       stage: shouldArchive ? 'archived' : o.stage,
@@ -1235,6 +1332,7 @@ window.saveShip=async function(){
       totalPaid:newPaid,
       remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
+      financialSnapshot,
       ...(shouldArchive?{deliveredAt:nowStr()}:{}),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
       updatedAt:serverTimestamp()
@@ -1302,6 +1400,81 @@ window.saveDeliver=async function(){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
+// ══ ADMIN OVERRIDE ══
+window.openAdminOverride=function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  document.getElementById('ao-paid').value=calcPaid(o);
+  document.getElementById('ao-remaining').value=calcRem(o);
+  document.getElementById('ao-ship-cost').value=parseFloat(o.shipCost)||0;
+  document.getElementById('ao-exec-cost').value=calcCost(o);
+  document.getElementById('ao-ship-company').value=o.shipCompanyName||'';
+  document.getElementById('ao-ship-stage').value=o.shipStage||'ready';
+  document.getElementById('ao-reason').value='';
+  document.getElementById('ov-admin-override').classList.add('open');
+};
+
+window.calcAORemaining=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const paid=parseFloat(document.getElementById('ao-paid')?.value)||0;
+  const sale=parseFloat(o.salePrice)||0;
+  const disc=parseFloat(o.discount)||0;
+  const rem=Math.max(0,sale-disc-paid);
+  document.getElementById('ao-remaining').value=rem;
+};
+
+window.saveAdminOverride=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const btn=document.getElementById('btn-save-ao');btn.disabled=true;btn.textContent='...';
+  const newPaid=parseFloat(document.getElementById('ao-paid').value)||0;
+  const newShipCost=parseFloat(document.getElementById('ao-ship-cost').value)||0;
+  const newExecCostTotal=parseFloat(document.getElementById('ao-exec-cost').value)||0;
+  const newShipCompany=document.getElementById('ao-ship-company').value.trim();
+  const newShipStage=document.getElementById('ao-ship-stage').value;
+  const reason=document.getElementById('ao-reason').value.trim();
+  const sale=parseFloat(o.salePrice)||0;
+  const disc=parseFloat(o.discount)||0;
+  const newRem=Math.max(0,sale-disc-newPaid);
+  // build changes audit trail
+  const changes=[];
+  const track=(field,label,before,after)=>{if(String(before)!==String(after))changes.push({field:label,before:String(before),after:String(after)});};
+  track('totalPaid','المحصّل',calcPaid(o),newPaid);
+  track('shipCost','تكلفة الشحن',parseFloat(o.shipCost)||0,newShipCost);
+  track('execCostTotal','تكلفة التنفيذ الكلية',calcCost(o),newExecCostTotal);
+  track('shipCompanyName','شركة الشحن',o.shipCompanyName||'',newShipCompany);
+  track('shipStage','حالة الشحن',o.shipStage||'ready',newShipStage);
+  if(!changes.length){toast('لا توجد تغييرات','');btn.disabled=false;btn.textContent='💾 حفظ التعديل';return;}
+  const auditEntry={
+    changedBy:userName,changedById:currentUser?.uid||'',
+    date:nowStr(),reason,changes
+  };
+  // If exec cost override: note in costItems with a marker
+  const costItemsUpdate=newExecCostTotal!==calcCost(o)?{costItems:[{type:'تعديل إداري',total:newExecCostTotal,note:reason||'تعديل إداري',addedBy:userName,addedAt:nowStr()}]}:{};
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      totalPaid:newPaid,remaining:newRem,
+      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
+      shipCost:newShipCost,shipCompanyName:newShipCompany,
+      shipStage:newShipStage,
+      ...costItemsUpdate,
+      auditLog:[...(o.auditLog||[]),auditEntry],
+      financialSnapshot:{
+        totalSale:sale,paidAmount:newPaid,remainingAmount:newRem,
+        executionCost:newExecCostTotal,shippingCost:newShipCost,
+        estimatedProfit:newPaid-newExecCostTotal-newShipCost,
+        snapshotAt:nowStr()
+      },
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔧 تعديل إداري: ${changes.map(c=>c.field+' '+c.before+'→'+c.after).join(', ')}${reason?' — '+reason:''}`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    closeModal('ov-admin-override');
+    toast('✅ تم التعديل الإداري وتسجيله في السجل','ok');
+    setTimeout(()=>{if(activeId)window.openOrder(activeId);},400);
+  }catch(e){toast('❌ '+e.message,'err');}
+  finally{btn.disabled=false;btn.textContent='💾 حفظ التعديل';}
+};
+
 // ══ RETURN ══
 window.openReturnFromShip=function(orderId,clientName,coName){
   const modal=document.getElementById('ov-return-direct');
@@ -1312,7 +1485,49 @@ window.openReturnFromShip=function(orderId,clientName,coName){
   setText('ret-co-name',coName?'📦 شركة الشحن: '+coName:'🏍️ مندوب / تسليم مباشر');
   document.getElementById('ret-cost').value='';
   document.getElementById('ret-note').value='';
+  // reset to full return
+  setReturnType('full');
+  // populate product list
+  const o=orders.find(x=>x._id===orderId);
+  const prods=o?.products||[];
+  const pList=document.getElementById('ret-products-list');
+  if(pList){
+    pList.innerHTML=prods.length?prods.map((p,i)=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px">
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700">${p.name||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2)">الكمية الأصلية: ${p.qty||0} · سعر الوحدة: ${fn(p.unitPrice||0)} ج</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:10px;color:var(--dim2)">مُرجَّع:</span>
+          <input type="number" id="ret-pqty-${i}" class="inp" min="0" max="${p.qty||0}" value="0" style="width:60px;padding:4px 6px" oninput="calcReturnDeduction()">
+        </div>
+      </div>`).join('')
+      :'<div style="font-size:11px;color:var(--dim2)">لا يوجد منتجات مسجلة</div>';
+  }
   modal.classList.add('open');
+};
+
+window.setReturnType=function(type){
+  const rt=document.getElementById('ret-type');if(rt)rt.value=type;
+  document.getElementById('ret-full-btn')?.classList.toggle('active',type==='full');
+  document.getElementById('ret-partial-btn')?.classList.toggle('active',type==='partial');
+  const ps=document.getElementById('ret-products-sec');
+  if(ps)ps.style.display=type==='partial'?'block':'none';
+};
+
+window.calcReturnDeduction=function(){
+  const modal=document.getElementById('ov-return-direct');
+  const orderId=modal?.dataset.orderId;
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const prods=o.products||[];
+  let total=0;
+  prods.forEach((p,i)=>{
+    const rqty=parseFloat(document.getElementById('ret-pqty-'+i)?.value)||0;
+    const uprice=parseFloat(p.unitPrice)||0;
+    total+=rqty*uprice;
+  });
+  setText('ret-deduction-preview',fn(total)+' ج');
 };
 
 window.saveReturnDirect=async function(){
@@ -1321,23 +1536,57 @@ window.saveReturnDirect=async function(){
   const coName=modal?.dataset.coName||'';
   const cost=parseFloat(document.getElementById('ret-cost').value)||0;
   const note=document.getElementById('ret-note').value;
+  const returnType=document.getElementById('ret-type')?.value||'full';
   if(!orderId)return toast('⚠️ خطأ: لا يوجد أوردر','err');
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
+
+  // ── Partial Return Logic ──
+  let isPartial=returnType==='partial';
+  let returnedProds=[];
+  let priceDeduction=0;
+  if(isPartial){
+    const prods=o.products||[];
+    prods.forEach((p,i)=>{
+      const rqty=parseFloat(document.getElementById('ret-pqty-'+i)?.value)||0;
+      if(rqty>0){
+        returnedProds.push({name:p.name,returnedQty:rqty,originalQty:p.qty,unitPrice:p.unitPrice||0,deduction:rqty*(p.unitPrice||0)});
+        priceDeduction+=rqty*(p.unitPrice||0);
+      }
+    });
+    if(!returnedProds.length)return toast('⚠️ حدد المنتجات المُرجَّعة','err');
+  }
+
   try{
     const now=nowStr();
     await addDoc(collection(db,'shipping_returns'),{
-      orderId,companyName:coName,
+      orderId,companyName:coName,returnType,returnedProds,priceDeduction,
       clientName:o.clientName||'',cost,note,status:'returned',
       date:now,createdBy:currentUser?.uid||'',createdByName:userName,
       createdAt:serverTimestamp()
     });
-    const tl=[...(o.timeline||[]),{date:now,action:`↩️ مرتجع${coName?' من '+coName:''}${note?' — '+note:''}`,by:userName}];
-    const orderUpdates={
-      shipStage:'returned',shippingStatus:'returned',
-      totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
-      timeline:tl,updatedAt:serverTimestamp()
-    };
+    const action=`↩️ مرتجع${isPartial?' جزئي':' كامل'}${coName?' من '+coName:''}${note?' — '+note:''}${isPartial?' (خصم '+fn(priceDeduction)+' ج)':''}`;
+    const tl=[...(o.timeline||[]),{date:now,action,by:userName}];
+    let orderUpdates;
+    if(isPartial){
+      // adjust sale and remaining, keep order intact
+      const newSale=Math.max(0,(parseFloat(o.salePrice)||0)-priceDeduction);
+      const currentPaid=calcPaid(o);
+      const newRem=Math.max(0,newSale-(parseFloat(o.discount)||0)-currentPaid);
+      orderUpdates={
+        salePrice:newSale,remaining:newRem,
+        paymentStatus:newRem<=0?'paid':currentPaid>0?'partial':'pending',
+        returnedProducts:[...(o.returnedProducts||[]),...returnedProds],
+        hasPartialReturn:true,
+        timeline:tl,updatedAt:serverTimestamp()
+      };
+    } else {
+      orderUpdates={
+        shipStage:'returned',shippingStatus:'returned',
+        totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
+        timeline:tl,updatedAt:serverTimestamp()
+      };
+    }
     // عكس التسوية لو كانت مسوّاة
     const settledAmt=parseFloat(o.shipSettledAmount)||0;
     if(o.shipSettled&&settledAmt>0){
