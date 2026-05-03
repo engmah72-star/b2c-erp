@@ -1,6 +1,6 @@
 /**
  * financial-sync-engine.js — محرك المزامنة المالية المركزي
- * Central Financial Event Bus — v1
+ * Central Financial Event Bus — v2
  *
  * كل حركة مالية من أي شاشة تمر عبر هذا المحرك:
  *   1. تسجيل في financial_ledger — atomic في نفس الـ batch
@@ -16,6 +16,8 @@
 import {
   writeBatch, doc, collection, serverTimestamp, increment,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+console.log('[FSE] 🚀 Financial Sync Engine v2 loaded — all atomic writes active');
 
 // ══════════════════════════════════════════════════════════════════
 // Event Type Constants
