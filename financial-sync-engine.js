@@ -30,6 +30,7 @@ export const FE = {
   SHIPPING_EXPENSE:              'SHIPPING_EXPENSE',
   SHIPPING_SETTLEMENT:           'SHIPPING_SETTLEMENT',
   SHIPPING_SETTLEMENT_REVERSAL:  'SHIPPING_SETTLEMENT_REVERSAL',
+  SHIPPING_RETURN:               'SHIPPING_RETURN',
   SALARY_PAYMENT:                'SALARY_PAYMENT',
   SALARY_PAYMENT_REVERSAL:       'SALARY_PAYMENT_REVERSAL',
   PAYROLL:                       'PAYROLL',
@@ -51,6 +52,7 @@ const LC = {
   SHIPPING_EXPENSE:             { type:'expense',  category:'shipping_cost',       direction:'out', icon:'🚚', label:'تكلفة شحن' },
   SHIPPING_SETTLEMENT:          { type:'income',   category:'shipping_collection', direction:'in',  icon:'📦', label:'تسوية شحن' },
   SHIPPING_SETTLEMENT_REVERSAL: { type:'reversal', category:'shipping_collection', direction:'out', icon:'🔄', label:'إلغاء تسوية شحن' },
+  SHIPPING_RETURN:              { type:'reversal', category:'shipping_return',     direction:'out', icon:'↩️', label:'مرتجع شحن' },
   SALARY_PAYMENT:               { type:'expense',  category:'salary',              direction:'out', icon:'👤', label:'راتب' },
   SALARY_PAYMENT_REVERSAL:      { type:'reversal', category:'salary',              direction:'in',  icon:'🔄', label:'إلغاء راتب' },
   PAYROLL:                      { type:'expense',  category:'salary',              direction:'out', icon:'👥', label:'مسير رواتب' },
@@ -105,6 +107,7 @@ export function inferEventType(txType, category) {
     supplier: 'VENDOR_PAYMENT',
     shipping_cost: 'SHIPPING_EXPENSE', shipping: 'SHIPPING_EXPENSE',
     shipping_settlement: 'SHIPPING_SETTLEMENT',
+    shipping_return: 'SHIPPING_RETURN', return_cost: 'SHIPPING_RETURN',
     deposit: 'CUSTOMER_PAYMENT', collection: 'CUSTOMER_PAYMENT', client_payment: 'CUSTOMER_PAYMENT',
     transfer: 'WALLET_TRANSFER',
     return_loss: 'RETURN_LOSS', return_cost: 'RETURN_LOSS',
@@ -391,6 +394,7 @@ const HANDLERS = {
   PAYROLL:                 handlePayroll,
   GENERAL_EXPENSE:         handleGeneralExpense,
   SHIPPING_EXPENSE:        (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_cost', eventType: 'SHIPPING_EXPENSE', createTx: false }),
+  SHIPPING_RETURN:         (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_return', eventType: 'SHIPPING_RETURN', createTx: false }),
 };
 
 // ══════════════════════════════════════════════════════════════════
