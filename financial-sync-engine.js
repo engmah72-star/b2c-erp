@@ -383,18 +383,6 @@ async function handleGeneralExpense(db, p) {
 // ══════════════════════════════════════════════════════════════════
 // Dispatcher Map
 // ══════════════════════════════════════════════════════════════════
-async function handleSalaryPaymentReversal(db, p) {
-  const batch = writeBatch(db);
-  if (p.walletId) {
-    const refundAmt = p.isDeduction ? -p.amount : p.amount;
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(refundAmt) });
-  }
-  if (p.txId) { batch.delete(doc(db, 'transactions_v2', p.txId)); }
-  if (p.epId) { batch.delete(doc(db, 'employee_payments', p.epId)); }
-  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', { ...p, notes: p.note || 'إلغاء دفعة راتب' });
-  await batch.commit();
-}
-
 const HANDLERS = {
   CUSTOMER_PAYMENT:        handleCustomerPayment,
   CUSTOMER_REFUND:         (db, p) => handleCustomerPayment(db, { ...p, eventType: 'CUSTOMER_REFUND' }),
