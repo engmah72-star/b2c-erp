@@ -604,6 +604,7 @@ function renderSales(f,prev){
 // ══ Export ══
 // ══ Revenue Drawer ══
 let __revOrders=[], __revFilter='all';
+let __dOrderId='',__dCostEditIdx=-1;
 
 window.openRevDrawer=function(){
   const range=getRange(filterMode);
@@ -703,7 +704,7 @@ window.openOrdDrawer=function(id){
         <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
-        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">التكلفة</div><div style="font-size:17px;font-weight:900;color:var(--r)">${fn(cost)} ج</div></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">التكلفة</div><div id="drawer-summary-cost" style="font-size:17px;font-weight:900;color:var(--r)">${fn(cost)} ج</div></div>
         <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">${profit>=0?'الربح':'الخسارة'}</div><div style="font-size:17px;font-weight:900;color:${profit>=0?'var(--g)':'var(--r)'}">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</div></div>
         <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">نسبة التحصيل</div><div style="font-size:17px;font-weight:900;color:var(--b)">${pct}%</div></div>
       </div>
@@ -729,24 +730,28 @@ window.openOrdDrawer=function(id){
       </div>
     </div>
 
-    <!-- بنود التكلفة -->
-    ${(o.costItems||[]).length?`
+    <!-- بنود التكلفة (قابلة للتعديل) -->
     <div style="margin-bottom:16px">
-      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">🏭 بنود التكلفة</div>
-      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden">
-        ${o.costItems.map((c,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;${i?'border-top:1px solid var(--line)':''}">
-          <div>
-            <div style="font-size:12px;font-weight:700">${c.type||'بند'}</div>
-            ${c.supplierName?`<div style="font-size:10px;color:var(--dim2)">${c.supplierName}</div>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2)">🏭 بنود التكلفة</div>
+        <button type="button" onclick="__drawerShowCostForm()" style="padding:4px 14px;border-radius:20px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">＋ بند جديد</button>
+      </div>
+      <div id="drawer-cost-list"></div>
+      <div id="drawer-cost-form" style="display:none;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:8px">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px" id="drawer-form-lbl">＋ إضافة بند جديد</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div class="fg" style="margin:0"><label>نوع البند</label>
+            <select class="inp" id="drawer-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select>
           </div>
-          <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(c.total)} ج</div>
-        </div>`).join('')}
-        <div style="display:flex;justify-content:space-between;padding:8px 12px;border-top:1px solid var(--line);background:var(--bg3)">
-          <span style="font-size:11px;font-weight:800;color:var(--dim2)">الإجمالي</span>
-          <span style="font-size:14px;font-weight:900;color:var(--r)">${fn(cost)} ج</span>
+          <div class="fg" style="margin:0"><label>التكلفة (ج)</label><input class="inp" id="drawer-cost-amt" type="number" placeholder="0" min="0"></div>
+        </div>
+        <div class="fg" style="margin:0 0 10px"><label>ملاحظة (اختياري)</label><input class="inp" id="drawer-cost-note" type="text" placeholder="اختياري..."></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" onclick="__drawerHideCostForm()" class="btn btn-ghost btn-sm">إلغاء</button>
+          <button type="button" id="drawer-cost-save" onclick="saveDrawerCost()" class="btn btn-r btn-sm">＋ إضافة</button>
         </div>
       </div>
-    </div>`:'<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:12px;font-weight:700;color:var(--r)">⚠️ لم تُسجَّل تكاليف لهذا الأوردر</div>'}
+    </div>
 
     <!-- المنتجات التفصيلية -->
     ${(o.products||[]).length>1?`
@@ -774,6 +779,9 @@ window.openOrdDrawer=function(id){
     </div>`:''}
   `;
   document.getElementById('ord-drawer-ov').style.display='block';
+  __dOrderId=id;
+  __dCostEditIdx=-1;
+  __renderDrawerCostList(o);
 };
 
 window.filterRevOrders=function(filter,btn){
@@ -911,7 +919,7 @@ function renderCollectionRows(data){
           style="padding:4px 8px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">
           ✏️
         </button>
-        <button onclick="openAddCostModal('${o._id}','${(o.clientName||'').replace(/'/g,'')}')"
+        <button onclick="openOrdDrawer('${o._id}')"
           style="padding:4px 8px;border-radius:6px;border:1px solid ${cost>0?'rgba(255,170,0,.3)':'rgba(255,61,110,.5)'};background:${cost>0?'rgba(255,170,0,.08)':'rgba(255,61,110,.12)'};color:${cost>0?'var(--y)':'var(--r)'};font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">
           💰
         </button>
@@ -1126,6 +1134,101 @@ window.saveOrderCost=async function(){
     toast('✅ تم إضافة التكلفة','ok');
   }catch(e){toast('❌ '+e.message,'err');}
   finally{btn.disabled=false;btn.textContent='＋ إضافة';}
+};
+
+// ══ Drawer Cost Editing ══
+function __renderDrawerCostList(o){
+  const el=document.getElementById('drawer-cost-list');
+  if(!el)return;
+  const items=o.costItems||[];
+  const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const sc=document.getElementById('drawer-summary-cost');
+  if(sc)sc.textContent=fn(total)+' ج';
+  if(!items.length){
+    el.innerHTML='<div style="text-align:center;padding:12px;color:var(--dim2);font-size:11px">لا توجد بنود تكلفة</div>';
+    return;
+  }
+  el.innerHTML=items.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin-bottom:6px">
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:700">${c.type||'—'} <span style="color:var(--r);font-weight:900">${fn(c.total)} ج</span></div>
+        ${c.note?`<div style="font-size:10px;color:var(--dim2)">${c.note}</div>`:''}
+        <div style="font-size:9px;color:var(--dim2)">${c.addedBy||''} ${c.addedAt?'· '+c.addedAt:''}</div>
+      </div>
+      <button type="button" onclick="editDrawerCost(${i})" style="padding:3px 8px;border-radius:6px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);font-size:11px;cursor:pointer;font-family:inherit">✏️</button>
+      <button type="button" onclick="rmDrawerCost(${i})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:11px;cursor:pointer;font-family:inherit">✕</button>
+    </div>`).join('');
+}
+
+window.__drawerShowCostForm=function(){
+  __dCostEditIdx=-1;
+  document.getElementById('drawer-form-lbl').textContent='＋ إضافة بند جديد';
+  document.getElementById('drawer-type').value='';
+  document.getElementById('drawer-cost-amt').value='';
+  document.getElementById('drawer-cost-note').value='';
+  const sb=document.getElementById('drawer-cost-save');
+  sb.textContent='＋ إضافة';
+  document.getElementById('drawer-cost-form').style.display='block';
+};
+
+window.__drawerHideCostForm=function(){
+  document.getElementById('drawer-cost-form').style.display='none';
+  __dCostEditIdx=-1;
+};
+
+window.editDrawerCost=function(idx){
+  const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
+  const c=(o.costItems||[])[idx];if(!c)return;
+  __dCostEditIdx=idx;
+  document.getElementById('drawer-form-lbl').textContent='✏️ تعديل البند';
+  document.getElementById('drawer-type').value=c.type||'';
+  document.getElementById('drawer-cost-amt').value=c.total||'';
+  document.getElementById('drawer-cost-note').value=c.note||'';
+  const sb=document.getElementById('drawer-cost-save');
+  sb.textContent='💾 حفظ التعديل';
+  document.getElementById('drawer-cost-form').style.display='block';
+};
+
+window.rmDrawerCost=async function(idx){
+  if(!confirm('حذف هذا البند؟'))return;
+  const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
+  const items=[...(o.costItems||[])];
+  items.splice(idx,1);
+  try{
+    const {doc:docFn,updateDoc,serverTimestamp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    await updateDoc(docFn(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    o.costItems=items;
+    __renderDrawerCostList(o);
+    toast('✅ تم الحذف','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.saveDrawerCost=async function(){
+  const type=document.getElementById('drawer-type').value.trim();
+  const total=parseFloat(document.getElementById('drawer-cost-amt').value)||0;
+  const note=document.getElementById('drawer-cost-note').value.trim();
+  if(!type){toast('اختر نوع البند','err');return;}
+  if(!total){toast('أدخل التكلفة','err');return;}
+  const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
+  const btn=document.getElementById('drawer-cost-save');
+  btn.disabled=true;btn.textContent='...';
+  const items=[...(o.costItems||[])];
+  const now=new Date().toLocaleString('ar-EG');
+  const who=userName||auth.currentUser?.displayName||auth.currentUser?.email||'';
+  if(__dCostEditIdx>=0&&__dCostEditIdx<items.length){
+    items[__dCostEditIdx]={...items[__dCostEditIdx],type,total,note,addedBy:who,addedAt:now};
+  }else{
+    items.push({type,total,note,addedBy:who,addedAt:now});
+  }
+  try{
+    const {doc:docFn,updateDoc,serverTimestamp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    await updateDoc(docFn(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    o.costItems=items;
+    __renderDrawerCostList(o);
+    __drawerHideCostForm();
+    toast('✅ تم الحفظ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+  finally{btn.disabled=false;btn.textContent=__dCostEditIdx>=0?'💾 حفظ التعديل':'＋ إضافة';}
 };
 
 window.exportExcel=function(){
