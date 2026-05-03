@@ -118,6 +118,36 @@
   </div>
 </div>
 
+<!-- Modal: تعديل التكاليف -->
+<div class="overlay" id="ov-cost-acc">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <div>
+        <span class="modal-title">💰 تكاليف الأوردر</span>
+        <div id="ca-order-info" style="font-size:11px;color:var(--c);font-weight:700;margin-top:2px"></div>
+      </div>
+      <button class="modal-x" onclick="closeCostAcc()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ca-list" style="margin-bottom:14px"></div>
+      <div style="background:var(--bg3);border-radius:10px;padding:12px;border:1px solid var(--line)">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:10px" id="ca-form-title">＋ إضافة بند جديد</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div class="fg" style="margin:0"><label>نوع البند</label>
+            <select class="inp" id="ca-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select>
+          </div>
+          <div class="fg" style="margin:0"><label>التكلفة (ج)</label><input class="inp" id="ca-total" type="number" placeholder="0"></div>
+        </div>
+        <div class="fg" style="margin:0"><label>ملاحظة (اختياري)</label><input class="inp" id="ca-note" type="text" placeholder="اختياري..."></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeCostAcc()">إغلاق</button>
+      <button class="btn btn-r" id="ca-save-btn" onclick="saveCostAcc()">＋ إضافة</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: تسجيل مرتجع -->
 <div class="overlay" id="ov-return">
   <div class="modal" style="max-width:420px">
@@ -328,14 +358,22 @@ window.render=function(){
         ${co.pendingOrds.slice(0,5).map(o=>{
           const paid=FC.getPaid(o);const due=FC.getDueByCo(o);
           const stageAr={shipping:'شحن',archived:'أرشيف'}[o.stage]||o.stage;
+          const costTotal=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+          const noCost=!(o.costItems||[]).length;
           return`<div class="settle-row">
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
               <div style="font-size:10px;color:var(--dim2)">${stageAr}${paid>0?' · دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}</div>
+              ${noCost
+                ?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>'
+                :'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
             </div>
-            <div style="text-align:left;flex-shrink:0">
-              <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(due)} ج</div>
-              <div style="font-size:9px;color:var(--dim2)">من ${fn(parseFloat(o.salePrice)||0)} ج</div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <button onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
+              <div style="text-align:left">
+                <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(due)} ج</div>
+                <div style="font-size:9px;color:var(--dim2)">من ${fn(parseFloat(o.salePrice)||0)} ج</div>
+              </div>
             </div>
           </div>`;
         }).join('')}
@@ -644,6 +682,101 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
     // 3. احذف التسوية
     await deleteDoc(doc(db,'shipping_settlements',settleId));
     toast('✅ تم إلغاء التسوية','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ إدارة التكاليف ══
+let __caOrderId='',__caEditIdx=-1;
+
+function renderCostAccList(o){
+  const el=document.getElementById('ca-list');if(!el)return;
+  const prods=o.products||[];
+  if(!(o.costItems||[]).length){
+    el.innerHTML='<div style="font-size:12px;color:var(--dim2);padding:6px 0;text-align:center">لا توجد تكاليف مسجلة</div>';
+    return;
+  }
+  const total=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  el.innerHTML=(o.costItems||[]).map((item,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:5px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:800">${item.type||'—'}${item.prodIdx!=null&&prods[item.prodIdx]?' — '+prods[item.prodIdx].name:''}</div>
+        <div style="font-size:10px;color:var(--dim2)">${item.note||''}</div>
+      </div>
+      <span style="font-size:13px;font-weight:900;color:var(--r);flex-shrink:0">${fn(item.total)} ج</span>
+      <button onclick="editCostAccItem(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:12px">✏️</button>
+      <button onclick="rmCostAccItem(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:13px">✕</button>
+    </div>`).join('')
+  +`<div style="text-align:left;font-size:12px;font-weight:900;padding:6px 0 2px;color:var(--g)">الإجمالي: ${fn(total)} ج</div>`;
+}
+
+window.openCostAcc=function(orderId){
+  __caOrderId=orderId;__caEditIdx=-1;
+  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
+  const info=document.getElementById('ca-order-info');
+  if(info){const prds=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';info.textContent=o.clientName+' · '+prds;}
+  document.getElementById('ca-type').value='';
+  document.getElementById('ca-total').value='';
+  document.getElementById('ca-note').value='';
+  document.getElementById('ca-form-title').textContent='＋ إضافة بند جديد';
+  document.getElementById('ca-save-btn').textContent='＋ إضافة';
+  renderCostAccList(o);
+  document.getElementById('ov-cost-acc').classList.add('open');
+};
+window.closeCostAcc=()=>{document.getElementById('ov-cost-acc').classList.remove('open');__caOrderId='';__caEditIdx=-1;};
+
+window.editCostAccItem=function(idx){
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+  const item=(o.costItems||[])[idx];if(!item)return;
+  __caEditIdx=idx;
+  document.getElementById('ca-type').value=item.type||'';
+  document.getElementById('ca-total').value=item.total||'';
+  document.getElementById('ca-note').value=item.note||'';
+  document.getElementById('ca-form-title').textContent='✏️ تعديل البند';
+  document.getElementById('ca-save-btn').textContent='💾 حفظ';
+};
+
+window.rmCostAccItem=async function(idx){
+  if(!confirm('حذف البند؟'))return;
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+  const ci=[...(o.costItems||[])];ci.splice(idx,1);
+  try{
+    await updateDoc(doc(db,'orders',__caOrderId),{costItems:ci,updatedAt:serverTimestamp()});
+    toast('✅ حُذف','ok');
+    const i=allOrders.findIndex(x=>x._id===__caOrderId);
+    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};renderCostAccList(allOrders[i]);}
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.saveCostAcc=async function(){
+  const type=document.getElementById('ca-type')?.value||'';
+  const total=parseFloat(document.getElementById('ca-total')?.value)||0;
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!total)return toast('⚠️ أدخل التكلفة','err');
+  const note=document.getElementById('ca-note')?.value||'';
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+  const uName=userName||currentUser?.displayName||'';
+  const item={type,supplierId:'',supplierName:'',prodIdx:null,total,note,addedAt:nowStr(),addedBy:uName};
+  const ci=[...(o.costItems||[])];
+  let action;
+  if(__caEditIdx>=0&&__caEditIdx<ci.length){
+    ci[__caEditIdx]={...ci[__caEditIdx],...item,editedAt:nowStr()};
+    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
+    __caEditIdx=-1;
+  } else {
+    ci.push(item);
+    action=`💰 ${type}: ${fn(total)} ج`;
+  }
+  try{
+    await updateDoc(doc(db,'orders',__caOrderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:uName}],updatedAt:serverTimestamp()});
+    toast('✅ تم','ok');
+    const i=allOrders.findIndex(x=>x._id===__caOrderId);
+    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};}
+    document.getElementById('ca-type').value='';
+    document.getElementById('ca-total').value='';
+    document.getElementById('ca-note').value='';
+    document.getElementById('ca-form-title').textContent='＋ إضافة بند جديد';
+    document.getElementById('ca-save-btn').textContent='＋ إضافة';
+    renderCostAccList(allOrders[allOrders.findIndex(x=>x._id===__caOrderId)]);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
