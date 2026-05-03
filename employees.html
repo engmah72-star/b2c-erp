@@ -409,6 +409,56 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open');
 
+window.openAttPanel=function(empId,authUid,empName){
+  const hdr=document.getElementById('pn-hdr');
+  const body=document.getElementById('panel-body');
+  if(!hdr||!body)return;
+  hdr.innerHTML=`<div style="font-size:15px;font-weight:800">📅 سجل حضور — ${empName}</div>`;
+  // Gather records for this employee (any matching key)
+  const recs=attendanceRecords
+    .filter(a=>a.employeeId===empId||a.employeeUid===authUid||a.employeeId===authUid||a.employeeUid===empId)
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!recs.length){
+    body.innerHTML=`<div style="text-align:center;padding:32px;color:var(--dim2)">لا توجد سجلات حضور</div>`;
+    document.getElementById('panel-ov').classList.add('open');
+    return;
+  }
+  const totalDays=recs.length;
+  const totalHours=recs.reduce((s,a)=>s+(parseFloat(a.hoursWorked)||0),0);
+  const avgHours=totalDays?(totalHours/totalDays).toFixed(1):0;
+  const rows=recs.slice(0,60).map(a=>{
+    const d=new Date(a.date+'T00:00:00');
+    const dayName=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'][d.getDay()];
+    const h=parseFloat(a.hoursWorked)||0;
+    const hCol=h>=8?'var(--g)':h>=6?'var(--y)':'var(--r)';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line)">
+      <div style="width:46px;font-size:10px;font-weight:700;color:var(--dim2);text-align:center;flex-shrink:0">${dayName}<br><span style="color:var(--snow)">${a.date?.slice(5)||''}</span></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:800;color:var(--g)">${a.checkInStr||'—'}</div>
+        ${a.checkOutStr?`<div style="font-size:11px;color:var(--dim2)">→ ${a.checkOutStr}</div>`:`<div style="font-size:10px;color:var(--y)">لم يُسجَّل انصراف</div>`}
+      </div>
+      <div style="font-size:13px;font-weight:800;color:${hCol};text-align:left;flex-shrink:0">${h?h+'h':'—'}</div>
+    </div>`;
+  }).join('');
+  body.innerHTML=`
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--line)">
+      <div style="flex:1;text-align:center;padding:12px 6px;border-left:1px solid var(--line)">
+        <div style="font-size:20px;font-weight:900;color:var(--b)">${totalDays}</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">يوم حضور</div>
+      </div>
+      <div style="flex:1;text-align:center;padding:12px 6px;border-left:1px solid var(--line)">
+        <div style="font-size:20px;font-weight:900;color:var(--g)">${avgHours}</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">متوسط ساعات</div>
+      </div>
+      <div style="flex:1;text-align:center;padding:12px 6px">
+        <div style="font-size:20px;font-weight:900;color:var(--p)">${Math.round(totalHours)}</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">إجمالي ساعات</div>
+      </div>
+    </div>
+    <div style="overflow-y:auto;max-height:400px">${rows}</div>`;
+  document.getElementById('panel-ov').classList.add('open');
+};
+
 // ══ AUTH & LISTENERS ══
 let __listenersStarted=false;
 onAuthStateChanged(auth,async u=>{
@@ -543,6 +593,12 @@ window.renderList=function(){
   const today=todayStr();
   const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&txInPeriod(t)).map(t=>t.employeeId));
   const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
+  // Map: uid/empId → today's full record (for times display)
+  const todayAttMap=new Map();
+  attendanceRecords.filter(a=>a.date===today).forEach(a=>{
+    if(a.employeeUid)todayAttMap.set(a.employeeUid,a);
+    if(a.employeeId)todayAttMap.set(a.employeeId,a);
+  });
   const attendedInPeriod={}; // empId → count
   attendanceRecords.filter(a=>attInPeriod(a.date)).forEach(a=>{
     const eid=a.employeeId||a.employeeUid||'';
@@ -573,6 +629,7 @@ window.renderList=function(){
     const isActive=e.status==='active';
     const uid=e.authUid||e._id;
     const hasTodayAtt=attendedToday.has(e._id)||attendedToday.has(uid);
+    const todayRec=todayAttMap.get(uid)||todayAttMap.get(e._id)||null;
     const monthAtt=attendedInPeriod[e._id]||attendedInPeriod[uid]||0;
     const phone=e.phone||'';
     const waHref=phone?'https://wa.me/2'+phone.replace(/^0/,''):'';
@@ -631,9 +688,12 @@ window.renderList=function(){
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           ${isActive?`<span style="font-size:10px;color:var(--g);font-weight:700">● نشط</span>`:`<span style="font-size:10px;color:var(--dim2)">○ غير نشط</span>`}
-          ${isActive?`<span style="font-size:9px;padding:2px 6px;border-radius:10px;font-weight:700;${hasTodayAtt?'background:rgba(0,217,126,.15);color:var(--g)':'background:rgba(255,61,110,.12);color:var(--r)'}">
-            ${hasTodayAtt?'حضر اليوم':'لم يحضر'}
-          </span>`:''}
+          ${isActive?(todayRec
+            ?`<span style="font-size:9px;padding:2px 7px;border-radius:10px;font-weight:700;background:rgba(0,217,126,.15);color:var(--g)">
+              ${todayRec.checkInStr||'—'}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:'  ●'}
+            </span>`
+            :`<span style="font-size:9px;padding:2px 7px;border-radius:10px;font-weight:700;background:rgba(255,61,110,.12);color:var(--r)">لم يحضر</span>`
+          ):''}
         </div>
       </div>
 
@@ -647,9 +707,9 @@ window.renderList=function(){
       ${perfHtml}
 
       <!-- الحضور -->
-      ${isActive?`<div class="emp-metric" style="margin-bottom:10px">
+      ${isActive?`<div class="emp-metric" style="margin-bottom:10px;cursor:pointer" onclick="event.stopPropagation();openAttPanel('${e._id}','${(e.authUid||e._id)}','${(e.name||'').replace(/'/g,'')}')" title="اضغط لعرض السجل">
         <span style="font-size:11px;color:var(--dim2)">📅 حضور ${pLbl}</span>
-        <span style="font-size:12px;font-weight:800;color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم</span>
+        <span style="font-size:12px;font-weight:800;color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم <span style="font-size:10px;color:var(--b);font-weight:700">← سجل</span></span>
       </div>`:''}
 
       <!-- حالة المرتب -->
