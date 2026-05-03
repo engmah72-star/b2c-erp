@@ -506,49 +506,36 @@ window.saveSettle=async function(){
     const w=wallets.find(x=>x._id===wId);
     const bb=parseFloat(w?.balance)||0;
 
-    // 1. أضف للمحفظة — atomic increment
-    await updateDoc(doc(db,'wallets',wId),{balance:increment(amount)});
+    // ═══ Batch Atomic: محفظة + transaction + settlement + كل الأوردرات ═══
+    const batch=writeBatch(db);
 
-    // 2. سجّل transaction
-    await addDoc(collection(db,'transactions_v2'),{
-      walletId:wId,type:'in',amount,fees:0,
-      description:`تسوية شحن — ${settleCompanyName}`,
-      category:'shipping_settlement',
-      companyName:settleCompanyName,
-      orderIds:selectedIds,
-      balanceBefore:bb,balanceAfter:bb+amount,
-      note:gv('settle-ref'),
-      date:now,createdBy:currentUser.uid,createdByName:userName,
-      createdAt:serverTimestamp()
-    });
+    // 1. محفظة
+    batch.update(doc(db,'wallets',wId),{balance:increment(amount)});
 
-    // 3. سجّل في shipping_settlements
-    const settleRef=await addDoc(collection(db,'shipping_settlements'),{
-      companyName:settleCompanyName,amount,
-      orderIds:selectedIds,expectedAmount:selectedAmt,
-      walletId:wId,walletName:w?.name||'',
-      note:gv('settle-ref'),date:now,
-      createdBy:currentUser.uid,createdByName:userName,
-      createdAt:serverTimestamp()
-    });
+    // 2. transaction_v2
+    const txRef=doc(collection(db,'transactions_v2'));
+    batch.set(txRef,{walletId:wId,type:'in',amount,fees:0,description:`تسوية شحن — ${settleCompanyName}`,category:'shipping_settlement',companyName:settleCompanyName,orderIds:selectedIds,balanceBefore:bb,balanceAfter:bb+amount,note:gv('settle-ref'),date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
 
-    // 4. حدّث كل أوردر: shipSettled + totalPaid
+    // 3. shipping_settlements
+    const settleRef=doc(collection(db,'shipping_settlements'));
+    batch.set(settleRef,{companyName:settleCompanyName,amount,orderIds:selectedIds,expectedAmount:selectedAmt,walletId:wId,walletName:w?.name||'',note:gv('settle-ref'),date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()});
+
+    // 4. كل أوردر في نفس الـ batch
     for(const oid of selectedIds){
       const o=allOrders.find(x=>x._id===oid);if(!o)continue;
       const due=FC.getDueByCo(o);
       const oldPaid=FC.getPaid(o);
       const newPaid=oldPaid+due;
       const newRem=Math.max(0,FC.getNet(o)-newPaid);
-      await updateDoc(doc(db,'orders',oid),{
-        shipSettled:true,
-        shipSettledAmount:due,
-        totalPaid:newPaid,
-        remaining:newRem,
+      batch.update(doc(db,'orders',oid),{
+        shipSettled:true,shipSettledAmount:due,
+        totalPaid:newPaid,remaining:newRem,
         paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
         timeline:[...(o.timeline||[]),{date:now,action:`✅ تسوية شحن — ${settleCompanyName} — ${fn(due)} ج`,by:userName}],
         updatedAt:serverTimestamp()
       });
     }
+    await batch.commit();
 
     closeSettle();
     toast(`✅ تم تسجيل ${fn(amount)} ج من ${settleCompanyName}`,'ok');
@@ -659,9 +646,7 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
       date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
       createdAt:serverTimestamp()
     });
-    await revBatch.commit();
-
-    // 2. جيب بيانات التسوية وارجع الأوردرات
+    // 2. جيب بيانات التسوية وارجع الأوردرات — كلها في نفس الـ batch
     const settleSnap=await getDoc(doc(db,'shipping_settlements',settleId));
     const settleData=settleSnap.exists()?settleSnap.data():{};
     const orderIds=settleData.orderIds||[];
@@ -672,7 +657,7 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
       const oldPaid=FC.getPaid(o);
       const newPaid=Math.max(0,oldPaid-settled);
       const newRem=Math.max(0,FC.getNet(o)-newPaid);
-      await updateDoc(doc(db,'orders',oid),{
+      revBatch.update(doc(db,'orders',oid),{
         shipSettled:false,shipSettledAmount:0,
         totalPaid:newPaid,remaining:newRem,
         paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
@@ -680,9 +665,9 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
         updatedAt:serverTimestamp()
       });
     }
+    revBatch.delete(doc(db,'shipping_settlements',settleId));
+    await revBatch.commit();
 
-    // 3. احذف التسوية
-    await deleteDoc(doc(db,'shipping_settlements',settleId));
     toast('✅ تم إلغاء التسوية','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };

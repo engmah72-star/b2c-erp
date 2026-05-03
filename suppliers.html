@@ -214,7 +214,7 @@ function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const page
 
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,deleteDoc,getDoc,getDocs,query,where,serverTimestamp,increment} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,deleteDoc,getDoc,getDocs,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { recordLedger, entryVendorPayment } from "./finance-engine.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -630,15 +630,18 @@ window.savePay=async function(){
   const amount=parseFloat(gv('pay-amount'))||0;
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const walletId=gv('pay-wallet');
+  const note=gv('pay-note');
   try{
-    // خصم من المحفظة
-    if(walletId){
-      const w=wallets.find(x=>x._id===walletId);
-      if(w){if((parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');await updateDoc(doc(db,'wallets',walletId),{balance:increment(-amount)});}
-    }
-    await addDoc(collection(db,'supplier_payments'),{supplierId:activeId,supplierName:activeSup.name,amount,walletId,date:nowStr(),note:gv('pay-note'),createdAt:serverTimestamp()});
     const w=wallets.find(x=>x._id===walletId);
-    recordLedger(db,entryVendorPayment(activeId,activeSup.name,amount,gv('pay-note'),userName,auth.currentUser?.uid||'',walletId,w?.name||''));
+    if(walletId&&w&&(parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');
+    // batch atomic: wallet + supplier_payment في عملية واحدة
+    const batch=writeBatch(db);
+    if(walletId&&w) batch.update(doc(db,'wallets',walletId),{balance:increment(-amount)});
+    const payRef=doc(collection(db,'supplier_payments'));
+    batch.set(payRef,{supplierId:activeId,supplierName:activeSup.name,amount,walletId,date:nowStr(),note,createdAt:serverTimestamp()});
+    await batch.commit();
+    // audit trail بعد النجاح
+    recordLedger(db,entryVendorPayment(activeId,activeSup.name,amount,note,userName,auth.currentUser?.uid||'',walletId,w?.name||''));
     cM('pay');toast('✅ تم تسجيل الدفعة','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -646,8 +649,12 @@ window.savePay=async function(){
 window.delPay=async function(payId,amount,walletId){
   if(!confirm('حذف هذه الدفعة؟'))return;
   try{
-    if(walletId){const w=wallets.find(x=>x._id===walletId);if(w)await updateDoc(doc(db,'wallets',walletId),{balance:increment(amount)});}
-    await deleteDoc(doc(db,'supplier_payments',payId));
+    // batch atomic: wallet reversal + delete في عملية واحدة
+    const batch=writeBatch(db);
+    const w=wallets.find(x=>x._id===walletId);
+    if(walletId&&w) batch.update(doc(db,'wallets',walletId),{balance:increment(amount)});
+    batch.delete(doc(db,'supplier_payments',payId));
+    await batch.commit();
     toast('✅ تم حذف الدفعة','ok');
     if(activeSup)renderPanelContent(activeSup);
   }catch(e){toast('❌ '+e.message,'err');}

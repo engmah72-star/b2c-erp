@@ -1295,57 +1295,54 @@ window.saveShip=async function(){
   if(shipCost>0)parts.push(`تكلفة شحن ${fn(shipCost)} ج`);
   parts.push(STAGE_LABELS[stage]);
   try{
-    if(collectAmt>0&&wId){
-      const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
-      const colBatch=writeBatch(db);
-      const colTxRef=doc(collection(db,'transactions_v2'));
-      colBatch.set(colTxRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-      if(w)colBatch.update(doc(db,'wallets',wId),{balance:increment(collectAmt)});
-      await colBatch.commit();
-    }
-    if(colMode==='later'&&rem>0&&debtType!=='company'){
-      await addDoc(collection(db,'transactions_v2'),{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-    }
-    if(shipCost>0&&!(parseFloat(o.shipCost)>0)){
-      await addDoc(collection(db,'transactions_v2'),{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-    }
-    // لو pickup وتحصيل كامل → أرشف تلقائياً
+    // ═══ Batch Atomic: كل العمليات في transaction واحدة ═══
     const shouldArchive = method==='pickup' && newRem<=0;
-
     const execCost=calcCost(o);
     const financialSnapshot={
       totalSale:parseFloat(o.salePrice)||0,
-      paidAmount:newPaid,
-      remainingAmount:newRem,
-      executionCost:execCost,
-      shippingCost:shipCost,
-      estimatedProfit:newPaid-execCost-shipCost,
-      snapshotAt:nowStr()
+      paidAmount:newPaid,remainingAmount:newRem,
+      executionCost:execCost,shippingCost:shipCost,
+      estimatedProfit:newPaid-execCost-shipCost,snapshotAt:nowStr()
     };
-    await updateDoc(doc(db,'orders',activeId),{
+    const batch=writeBatch(db);
+    const w=wallets.find(x=>x._id===wId);
+    const bb=parseFloat(w?.balance)||0;
+    // 1. تحصيل: wallet + transaction
+    if(collectAmt>0&&wId){
+      if(w) batch.update(doc(db,'wallets',wId),{balance:increment(collectAmt)});
+      const colTxRef=doc(collection(db,'transactions_v2'));
+      batch.set(colTxRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+    }
+    // 2. دين مؤجل
+    if(colMode==='later'&&rem>0&&debtType!=='company'){
+      const defRef=doc(collection(db,'transactions_v2'));
+      batch.set(defRef,{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+    }
+    // 3. تكلفة شحن (مرة واحدة فقط)
+    if(shipCost>0&&!(parseFloat(o.shipCost)>0)){
+      const scRef=doc(collection(db,'transactions_v2'));
+      batch.set(scRef,{type:'out',amount:shipCost,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+    }
+    // 4. تحديث الأوردر
+    batch.update(doc(db,'orders',activeId),{
       shipStage: shouldArchive ? 'collected' : stage,
       stage: shouldArchive ? 'archived' : o.stage,
-      shippingOfficerId:currentUser?.uid||'',
-      shippingOfficerName:userName,
+      shippingOfficerId:currentUser?.uid||'',shippingOfficerName:userName,
       shipMethod:method,shipCompany:coVal,shipCompanyName,
       shipGov:gv('ss-gov'),shipAddress:gv('ss-address'),shipCost,
       shipTracking:gv('ss-tracking'),shipSettled:method!=='company',
-      totalPaid:newPaid,
-      remaining:newRem,
+      totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       financialSnapshot,
       ...(shouldArchive?{deliveredAt:nowStr()}:{}),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
       updatedAt:serverTimestamp()
     });
-    // سجّل في دفتر الأستاذ المالي
-    if(collectAmt>0){
-      const w=wallets.find(x=>x._id===wId);
-      recordLedger(db,entryCollection({...o,_id:activeId},collectAmt,userName,currentUser?.uid||'',wId,w?.name||wName,transferRef));
-    }
-    if(shipCost>0&&!(parseFloat(o.shipCost)>0)){
-      recordLedger(db,entryShippingCost({...o,_id:activeId},shipCost,shipCompanyName,userName,currentUser?.uid||''));
-    }
+    await batch.commit();
+    // audit trail بعد النجاح
+    if(collectAmt>0) recordLedger(db,entryCollection({...o,_id:activeId},collectAmt,userName,currentUser?.uid||'',wId,w?.name||wName,transferRef));
+    if(colMode==='later'&&rem>0&&debtType!=='company') recordLedger(db,{lc:{type:'deferred_collection',dir:'income',icon:'🕐',catAr:'دين مؤجل'},amount:rem,orderId:activeId,clientId:o.clientId||'',clientName:o.clientName,notes:`دين مؤجل — ${o.clientName||''} — ${o.orderId||''}`,createdBy:currentUser?.uid||'',createdByName:userName});
+    if(shipCost>0&&!(parseFloat(o.shipCost)>0)) recordLedger(db,entryShippingCost({...o,_id:activeId},shipCost,shipCompanyName,userName,currentUser?.uid||''));
     closeModal('ov-ship');
     if(shouldArchive){
       closePanel();
@@ -1568,76 +1565,54 @@ window.saveReturnDirect=async function(){
 
   try{
     const now=nowStr();
-    await addDoc(collection(db,'shipping_returns'),{
-      orderId,companyName:coName,returnType,returnedProds,priceDeduction,
-      clientName:o.clientName||'',cost,note,status:'returned',
-      date:now,createdBy:currentUser?.uid||'',createdByName:userName,
-      createdAt:serverTimestamp()
-    });
+    // نجمع بيانات العربون قبل الـ batch لأنه يحتاج query
+    let depWalletId='';
+    const depAmt=parseFloat(o.deposit)||0;
+    if(!isPartial&&depAmt>0){
+      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
+      depWalletId=depSnap.docs[0]?.data()?.walletId||'';
+    }
+
+    // ═══ Batch Atomic: كل عمليات المرتجع في transaction واحدة ═══
+    const batch=writeBatch(db);
     const action=`↩️ مرتجع${isPartial?' جزئي':' كامل'}${coName?' من '+coName:''}${note?' — '+note:''}${isPartial?' (خصم '+fn(priceDeduction)+' ج)':''}`;
     const tl=[...(o.timeline||[]),{date:now,action,by:userName}];
+
+    // 1. سجل المرتجع
+    const retRef=doc(collection(db,'shipping_returns'));
+    batch.set(retRef,{orderId,companyName:coName,returnType,returnedProds,priceDeduction,clientName:o.clientName||'',cost,note,status:'returned',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+
+    // 2. حساب التحديثات على الأوردر
     let orderUpdates;
+    const settledAmt=parseFloat(o.shipSettledAmount)||0;
     if(isPartial){
-      // adjust sale and remaining, keep order intact
       const newSale=Math.max(0,(parseFloat(o.salePrice)||0)-priceDeduction);
       const currentPaid=calcPaid(o);
       const newRem=Math.max(0,newSale-(parseFloat(o.discount)||0)-currentPaid);
-      orderUpdates={
-        salePrice:newSale,remaining:newRem,
-        paymentStatus:newRem<=0?'paid':currentPaid>0?'partial':'pending',
-        returnedProducts:[...(o.returnedProducts||[]),...returnedProds],
-        hasPartialReturn:true,
-        timeline:tl,updatedAt:serverTimestamp()
-      };
+      orderUpdates={salePrice:newSale,remaining:newRem,paymentStatus:newRem<=0?'paid':currentPaid>0?'partial':'pending',returnedProducts:[...(o.returnedProducts||[]),...returnedProds],hasPartialReturn:true,timeline:tl,updatedAt:serverTimestamp()};
     } else {
-      orderUpdates={
-        shipStage:'returned',shippingStatus:'returned',
-        totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
-        timeline:tl,updatedAt:serverTimestamp()
-      };
+      orderUpdates={shipStage:'returned',shippingStatus:'returned',totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',timeline:tl,updatedAt:serverTimestamp()};
+      if(o.shipSettled&&settledAmt>0) Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
     }
-    // عكس التسوية لو كانت مسوّاة
-    const settledAmt=parseFloat(o.shipSettledAmount)||0;
-    if(o.shipSettled&&settledAmt>0){
-      Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
-      await addDoc(collection(db,'transactions_v2'),{
-        type:'out',amount:settledAmt,
-        description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
-        category:'settlement_reversal',orderId,
-        clientName:o.clientName,shipCompanyName:coName,
-        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
-        createdAt:serverTimestamp()
-      });
+    batch.update(doc(db,'orders',orderId),orderUpdates);
+
+    // 3. transactions للعكس
+    if(!isPartial&&o.shipSettled&&settledAmt>0){
+      const sRef=doc(collection(db,'transactions_v2'));
+      batch.set(sRef,{type:'out',amount:settledAmt,description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
-    // عكس العربون لو اتدفع
-    const depAmt=parseFloat(o.deposit)||0;
-    if(depAmt>0){
-      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
-      const depTx=depSnap.docs[0]?.data();
-      const depWalletId=depTx?.walletId||'';
-      await addDoc(collection(db,'transactions_v2'),{
-        type:'out',amount:depAmt,
-        description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
-        category:'deposit_reversal',orderId,
-        clientName:o.clientName,walletId:depWalletId,
-        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
-        createdAt:serverTimestamp()
-      });
-      if(depWalletId){
-        await updateDoc(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
-      }
+    if(!isPartial&&depAmt>0){
+      const dRef=doc(collection(db,'transactions_v2'));
+      batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      if(depWalletId) batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
     }
     if(cost>0){
-      await addDoc(collection(db,'transactions_v2'),{
-        type:'out',amount:cost,
-        description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,
-        category:'return_cost',orderId,clientName:o.clientName,
-        date:now,createdBy:currentUser?.uid||'',createdByName:userName,
-        createdAt:serverTimestamp()
-      });
+      const cRef=doc(collection(db,'transactions_v2'));
+      batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
     }
-    await updateDoc(doc(db,'orders',orderId),orderUpdates);
-    // سجّل في دفتر الأستاذ المالي
+    await batch.commit();
+
+    // audit trail بعد النجاح
     if(isPartial&&priceDeduction>0){
       recordLedger(db,entryReturnLoss({...o,_id:orderId},priceDeduction,`مرتجع جزئي — ${note||''}`,userName,currentUser?.uid||''));
     } else if(!isPartial){
