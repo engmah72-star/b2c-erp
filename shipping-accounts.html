@@ -118,33 +118,14 @@
   </div>
 </div>
 
-<!-- Modal: تعديل التكاليف -->
-<div class="overlay" id="ov-cost-acc">
-  <div class="modal" style="max-width:480px">
-    <div class="modal-head">
-      <div>
-        <span class="modal-title">💰 تكاليف الأوردر</span>
-        <div id="ca-order-info" style="font-size:11px;color:var(--c);font-weight:700;margin-top:2px"></div>
-      </div>
-      <button class="modal-x" onclick="closeCostAcc()">✕</button>
+<!-- Panel: تفاصيل الأوردر والتكاليف -->
+<div class="panel-ov" id="acc-panel-ov" onclick="closeAccPanel()">
+  <div class="panel" onclick="event.stopPropagation()">
+    <div class="panel-head" id="acc-pn-hdr">
+      <div style="flex:1"><div style="font-size:17px;font-weight:900">—</div></div>
+      <button type="button" class="modal-x" onclick="closeAccPanel()">✕</button>
     </div>
-    <div class="modal-body">
-      <div id="ca-list" style="margin-bottom:14px"></div>
-      <div style="background:var(--bg3);border-radius:10px;padding:12px;border:1px solid var(--line)">
-        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:10px" id="ca-form-title">＋ إضافة بند جديد</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div class="fg" style="margin:0"><label>نوع البند</label>
-            <select class="inp" id="ca-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select>
-          </div>
-          <div class="fg" style="margin:0"><label>التكلفة (ج)</label><input class="inp" id="ca-total" type="number" placeholder="0"></div>
-        </div>
-        <div class="fg" style="margin:0"><label>ملاحظة (اختياري)</label><input class="inp" id="ca-note" type="text" placeholder="اختياري..."></div>
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeCostAcc()">إغلاق</button>
-      <button class="btn btn-r" id="ca-save-btn" onclick="saveCostAcc()">＋ إضافة</button>
-    </div>
+    <div class="panel-body" id="acc-pn-body"></div>
   </div>
 </div>
 
@@ -706,100 +687,180 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-// ══ إدارة التكاليف ══
-let __caOrderId='',__caEditIdx=-1;
+// ══ بانال تفاصيل الأوردر والتكاليف ══
+let __accOrderId='',__accEditIdx=-1;
 
-function renderCostAccList(o){
-  const el=document.getElementById('ca-list');if(!el)return;
-  const prods=o.products||[];
-  if(!(o.costItems||[]).length){
-    el.innerHTML='<div style="font-size:12px;color:var(--dim2);padding:6px 0;text-align:center">لا توجد تكاليف مسجلة</div>';
+function __renderAccCostList(o){
+  const el=document.getElementById('acc-cost-list');if(!el)return;
+  const ci=o.costItems||[];
+  const total=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  if(!ci.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--dim2);text-align:center;padding:16px 0">⚠️ لا توجد تكاليف مسجلة</div>';
     return;
   }
-  const total=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-  el.innerHTML=(o.costItems||[]).map((item,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:5px">
+  el.innerHTML=ci.map((item,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px">
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:800">${item.type||'—'}${item.prodIdx!=null&&prods[item.prodIdx]?' — '+prods[item.prodIdx].name:''}</div>
-        <div style="font-size:10px;color:var(--dim2)">${item.note||''}</div>
+        <div style="font-size:12px;font-weight:800">${item.type||'—'}</div>
+        <div style="font-size:10px;color:var(--dim2)">${item.note||''}${item.addedBy?' · '+item.addedBy:''}</div>
       </div>
       <span style="font-size:13px;font-weight:900;color:var(--r);flex-shrink:0">${fn(item.total)} ج</span>
-      <button onclick="editCostAccItem(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:12px">✏️</button>
-      <button onclick="rmCostAccItem(${i})" style="width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:13px">✕</button>
+      <button type="button" onclick="editAccCost(${i})" style="width:28px;height:28px;border-radius:7px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.08);color:var(--c);cursor:pointer;font-size:13px">✏️</button>
+      <button type="button" onclick="rmAccCost(${i})" style="width:28px;height:28px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button>
     </div>`).join('')
-  +`<div style="text-align:left;font-size:12px;font-weight:900;padding:6px 0 2px;color:var(--g)">الإجمالي: ${fn(total)} ج</div>`;
+  +`<div style="text-align:left;font-size:13px;font-weight:900;padding:8px 0 2px;color:var(--g)">الإجمالي: ${fn(total)} ج</div>`;
+}
+
+function __buildAccPanel(o){
+  const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=FC.getPaid(o);
+  const due=FC.getDueByCo(o);
+  const stageAr={shipping:'🚚 شحن',archived:'📦 أرشيف',pending:'⏳ معلق',design:'✏️ تصميم',print:'🖨️ طباعة',production:'🏭 تنفيذ'}[o.stage]||o.stage||'—';
+
+  document.getElementById('acc-pn-hdr').innerHTML=`
+    <div style="flex:1;min-width:0">
+      <div style="font-size:10px;color:var(--c);font-weight:700;margin-bottom:2px">${stageAr}</div>
+      <div style="font-size:17px;font-weight:900;line-height:1.2">${o.clientName||'—'}</div>
+      <div style="font-size:11px;color:var(--dim2);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${prods}</div>
+    </div>
+    <button type="button" class="modal-x" onclick="closeAccPanel()">✕</button>`;
+
+  document.getElementById('acc-pn-body').innerHTML=`
+    <!-- ملخص مالي -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
+      <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.2);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:15px;font-weight:900;color:var(--b)">${fn(sale)}</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">الإجمالي</div>
+      </div>
+      <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:15px;font-weight:900;color:var(--g)">${fn(paid)}</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">محصّل</div>
+      </div>
+      <div style="background:${due>0?'rgba(255,61,110,.1)':'rgba(0,217,126,.08)'};border:1px solid ${due>0?'rgba(255,61,110,.3)':'rgba(0,217,126,.2)'};border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:15px;font-weight:900;color:${due>0?'var(--r)':'var(--g)'}">${due>0?fn(due):'✅'}</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">باقي</div>
+      </div>
+    </div>
+
+    <!-- التكاليف -->
+    <div style="background:var(--bg3);border-radius:12px;padding:14px;border:1px solid var(--line);margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:800">💰 التكاليف</div>
+        <button type="button" onclick="__accShowForm()" style="padding:5px 14px;border-radius:20px;border:1px solid var(--line2);background:var(--bg2);color:var(--c);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">＋ بند جديد</button>
+      </div>
+      <div id="acc-cost-list"></div>
+      <div id="acc-cost-form" style="display:none;margin-top:12px;background:var(--bg2);border-radius:10px;padding:12px;border:1px solid var(--line)">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:10px" id="acc-form-lbl">＋ إضافة بند جديد</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div class="fg" style="margin:0"><label>نوع البند</label>
+            <select class="inp" id="acc-type"><option value="">— اختر —</option><option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option><option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option></select>
+          </div>
+          <div class="fg" style="margin:0"><label>التكلفة (ج)</label><input class="inp" id="acc-total" type="number" placeholder="0" min="0"></div>
+        </div>
+        <div class="fg" style="margin:0 0 10px"><label>ملاحظة (اختياري)</label><input class="inp" id="acc-note" type="text" placeholder="اختياري..."></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" onclick="__accHideForm()" class="btn btn-ghost btn-sm">إلغاء</button>
+          <button type="button" id="acc-save-btn" onclick="saveAccCost()" class="btn btn-r btn-sm">＋ إضافة</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- السجل -->
+    <div style="background:var(--bg3);border-radius:12px;padding:14px;border:1px solid var(--line)">
+      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:8px">📋 السجل</div>
+      ${(o.timeline||[]).slice().reverse().slice(0,15).map(t=>`
+        <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}${t.by?' · <span style="color:var(--b)">${t.by}</span>':''}</div>`).join('')||'<div style="font-size:12px;color:var(--dim2)">لا يوجد سجل</div>'}
+    </div>`;
 }
 
 window.openCostAcc=function(orderId){
-  __caOrderId=orderId;__caEditIdx=-1;
+  __accOrderId=orderId;__accEditIdx=-1;
   const o=allOrders.find(x=>x._id===orderId);
   if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
-  const info=document.getElementById('ca-order-info');
-  if(info){const prds=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';info.textContent=(o.clientName||'—')+' · '+prds;}
-  const typeEl=document.getElementById('ca-type');if(typeEl)typeEl.value='';
-  const totalEl=document.getElementById('ca-total');if(totalEl)totalEl.value='';
-  const noteEl=document.getElementById('ca-note');if(noteEl)noteEl.value='';
-  const titleEl=document.getElementById('ca-form-title');if(titleEl)titleEl.textContent='＋ إضافة بند جديد';
-  const saveBtn=document.getElementById('ca-save-btn');if(saveBtn)saveBtn.textContent='＋ إضافة';
-  renderCostAccList(o);
-  document.getElementById('ov-cost-acc').classList.add('open');
+  __buildAccPanel(o);
+  __renderAccCostList(o);
+  document.getElementById('acc-panel-ov').classList.add('open');
 };
-window.closeCostAcc=()=>{document.getElementById('ov-cost-acc').classList.remove('open');__caOrderId='';__caEditIdx=-1;};
 
-window.editCostAccItem=function(idx){
-  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+window.closeAccPanel=function(){
+  document.getElementById('acc-panel-ov').classList.remove('open');
+  __accOrderId='';__accEditIdx=-1;
+};
+
+window.__accShowForm=function(){
+  document.getElementById('acc-cost-form').style.display='block';
+};
+
+window.__accHideForm=function(){
+  document.getElementById('acc-cost-form').style.display='none';
+  __accEditIdx=-1;
+  document.getElementById('acc-type').value='';
+  document.getElementById('acc-total').value='';
+  document.getElementById('acc-note').value='';
+  document.getElementById('acc-form-lbl').textContent='＋ إضافة بند جديد';
+  document.getElementById('acc-save-btn').textContent='＋ إضافة';
+};
+
+window.editAccCost=function(idx){
+  const o=allOrders.find(x=>x._id===__accOrderId);if(!o)return;
   const item=(o.costItems||[])[idx];if(!item)return;
-  __caEditIdx=idx;
-  document.getElementById('ca-type').value=item.type||'';
-  document.getElementById('ca-total').value=item.total||'';
-  document.getElementById('ca-note').value=item.note||'';
-  document.getElementById('ca-form-title').textContent='✏️ تعديل البند';
-  document.getElementById('ca-save-btn').textContent='💾 حفظ';
+  __accEditIdx=idx;
+  document.getElementById('acc-type').value=item.type||'';
+  document.getElementById('acc-total').value=item.total||'';
+  document.getElementById('acc-note').value=item.note||'';
+  document.getElementById('acc-form-lbl').textContent='✏️ تعديل البند';
+  document.getElementById('acc-save-btn').textContent='💾 حفظ';
+  document.getElementById('acc-cost-form').style.display='block';
+  document.getElementById('acc-cost-form').scrollIntoView({behavior:'smooth',block:'nearest'});
 };
 
-window.rmCostAccItem=async function(idx){
+window.rmAccCost=async function(idx){
   if(!confirm('حذف البند؟'))return;
-  const o=allOrders.find(x=>x._id===__caOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
+  const o=allOrders.find(x=>x._id===__accOrderId);if(!o)return;
   const ci=[...(o.costItems||[])];ci.splice(idx,1);
   try{
-    await updateDoc(doc(db,'orders',__caOrderId),{costItems:ci,updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'orders',__accOrderId),{costItems:ci,updatedAt:serverTimestamp()});
     toast('✅ حُذف','ok');
-    const i=allOrders.findIndex(x=>x._id===__caOrderId);
-    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};renderCostAccList(allOrders[i]);}
+    const i=allOrders.findIndex(x=>x._id===__accOrderId);
+    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};__renderAccCostList(allOrders[i]);}
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-window.saveCostAcc=async function(){
-  const type=document.getElementById('ca-type')?.value||'';
-  const total=parseFloat(document.getElementById('ca-total')?.value)||0;
+window.saveAccCost=async function(){
+  const type=document.getElementById('acc-type')?.value||'';
+  const total=parseFloat(document.getElementById('acc-total')?.value)||0;
   if(!type)return toast('⚠️ اختر نوع البند','err');
   if(!total)return toast('⚠️ أدخل التكلفة','err');
-  const note=document.getElementById('ca-note')?.value||'';
-  const o=allOrders.find(x=>x._id===__caOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
+  const note=document.getElementById('acc-note')?.value||'';
+  const o=allOrders.find(x=>x._id===__accOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
   const uName=userName||auth.currentUser?.displayName||auth.currentUser?.email||'';
-  const item={type,supplierId:'',supplierName:'',prodIdx:null,total,note,addedAt:nowStr(),addedBy:uName};
+  const now=nowStr();
+  const item={type,total,note,addedAt:now,addedBy:uName,supplierId:'',supplierName:'',prodIdx:null};
   const ci=[...(o.costItems||[])];
   let action;
-  if(__caEditIdx>=0&&__caEditIdx<ci.length){
-    ci[__caEditIdx]={...ci[__caEditIdx],...item,editedAt:nowStr()};
+  if(__accEditIdx>=0&&__accEditIdx<ci.length){
+    ci[__accEditIdx]={...ci[__accEditIdx],...item,editedAt:now};
     action=`✏️ تعديل ${type}: ${fn(total)} ج`;
-    __caEditIdx=-1;
   } else {
     ci.push(item);
     action=`💰 ${type}: ${fn(total)} ج`;
   }
+  const saveBtn=document.getElementById('acc-save-btn');
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='جاري...';}
   try{
-    await updateDoc(doc(db,'orders',__caOrderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:uName}],updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,'orders',__accOrderId),{
+      costItems:ci,
+      timeline:[...(o.timeline||[]),{date:now,action,by:uName}],
+      updatedAt:serverTimestamp()
+    });
     toast('✅ تم','ok');
-    const i=allOrders.findIndex(x=>x._id===__caOrderId);
-    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};}
-    document.getElementById('ca-type').value='';
-    document.getElementById('ca-total').value='';
-    document.getElementById('ca-note').value='';
-    document.getElementById('ca-form-title').textContent='＋ إضافة بند جديد';
-    document.getElementById('ca-save-btn').textContent='＋ إضافة';
-    renderCostAccList(allOrders[allOrders.findIndex(x=>x._id===__caOrderId)]);
+    const i=allOrders.findIndex(x=>x._id===__accOrderId);
+    if(i>=0)allOrders[i]={...allOrders[i],costItems:ci};
+    __accHideForm();
+    __renderAccCostList(allOrders[allOrders.findIndex(x=>x._id===__accOrderId)]);
   }catch(e){toast('❌ '+e.message,'err');}
+  finally{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent=__accEditIdx>=0?'💾 حفظ':'＋ إضافة';}}
 };
 </script>
 </body>
