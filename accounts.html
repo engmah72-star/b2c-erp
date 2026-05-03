@@ -1583,6 +1583,7 @@ window.saveReconciliation=async function(walletId,sysBal){
       const type=diff>0?'in':'out';
       const amount=Math.abs(diff);
       const txRef=doc(collection(db,'transactions_v2'));
+      const byNameRec=document.getElementById('nav-name')?.textContent||'';
       batch.set(txRef,{
         walletId,type,amount,fees:0,
         description:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
@@ -1591,8 +1592,13 @@ window.saveReconciliation=async function(walletId,sysBal){
         balanceBefore:sysBal,balanceAfter:actual,
         date:dateStr,
         createdBy:currentUser?.uid||'',
-        createdByName:document.getElementById('nav-name')?.textContent||'',
+        createdByName:byNameRec,
         createdAt:serverTimestamp()
+      });
+      addLedgerToBatch(batch,db,diff>0?'CUSTOMER_PAYMENT':'GENERAL_EXPENSE',{
+        amount,walletId,walletName:w.name,
+        notes:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
+        userId:currentUser?.uid||'',userName:byNameRec,
       });
     }
     const recRef=doc(collection(db,'reconciliations'));
@@ -1889,6 +1895,20 @@ window.saveTx=async function(){
         batch.set(doc(collection(db,'employee_payments')),{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
 
+      const byName=document.getElementById('nav-name')?.textContent||'';
+      // لوجر: عكس القديم + تسجيل الجديد في نفس الـ batch
+      addLedgerToBatch(batch,db,inferEventType(oldType==='in'?'out':'in',oldCat),{
+        amount:oldAmount,walletId:oldWalletId,walletName:wallets.find(x=>x._id===oldWalletId)?.name||'',
+        notes:`تعديل — عكس القديم: ${old.description||oldCat||''}`,
+        userId:currentUser?.uid||'',userName:byName,
+      });
+      addLedgerToBatch(batch,db,inferEventType(type,cat),{
+        amount,walletId,walletName:wallets.find(x=>x._id===walletId)?.name||'',
+        orderId:orderId||null,clientName,supplierId,supplierName,employeeId,employeeName,
+        notes:`تعديل — جديد: ${fullDesc}`,
+        userId:currentUser?.uid||'',userName:byName,
+      });
+
       await batch.commit();
       closeTxModal();
       toast(`✅ تم التعديل — ${fn(amount)} ج`,'ok');
@@ -2066,21 +2086,17 @@ function auditBalances(){
 window.saveWallet=async function(){
   const name=gv('nw-name'),type=gv('nw-type'),bal=parseFloat(gv('nw-bal'))||0,mgr=gv('nw-manager');
   if(!name)return toast('⚠️ أدخل اسم الحساب','err');
+  const byName=document.getElementById('nav-name')?.textContent||'';
   try{
-    const ref=await addDoc(collection(db,'wallets'),{name,type,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
-    // سجّل رصيد افتتاحي لو موجود
+    const batch=writeBatch(db);
+    const walletRef=doc(collection(db,'wallets'));
+    batch.set(walletRef,{name,type,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
     if(bal>0){
-      await addDoc(collection(db,'transactions_v2'),{
-        walletId:ref.id,type:'in',amount:bal,fees:0,
-        description:'رصيد افتتاحي — '+name,
-        category:'opening_balance',
-        balanceBefore:0,balanceAfter:bal,
-        date:nowStr(),
-        createdBy:currentUser?.uid||'',
-        createdByName:document.getElementById('nav-name')?.textContent||'',
-        createdAt:serverTimestamp()
-      });
+      const txRef=doc(collection(db,'transactions_v2'));
+      batch.set(txRef,{walletId:walletRef.id,type:'in',amount:bal,fees:0,description:'رصيد افتتاحي — '+name,category:'opening_balance',balanceBefore:0,balanceAfter:bal,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
+      addLedgerToBatch(batch,db,'GENERAL_EXPENSE',{amount:bal,walletId:walletRef.id,walletName:name,notes:'رصيد افتتاحي — '+name,userId:currentUser?.uid||'',userName:byName,eventType:'CUSTOMER_PAYMENT'});
     }
+    await batch.commit();
     cM('new-wallet');sv('nw-name','');sv('nw-bal','0');
     toast('✅ تم إضافة الحساب'+(bal>0?` برصيد ${fn(bal)} ج`:''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}

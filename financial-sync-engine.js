@@ -31,6 +31,7 @@ export const FE = {
   SHIPPING_SETTLEMENT:           'SHIPPING_SETTLEMENT',
   SHIPPING_SETTLEMENT_REVERSAL:  'SHIPPING_SETTLEMENT_REVERSAL',
   SALARY_PAYMENT:                'SALARY_PAYMENT',
+  SALARY_PAYMENT_REVERSAL:       'SALARY_PAYMENT_REVERSAL',
   PAYROLL:                       'PAYROLL',
   BONUS_PAYMENT:                 'BONUS_PAYMENT',
   PENALTY:                       'PENALTY',
@@ -51,6 +52,7 @@ const LC = {
   SHIPPING_SETTLEMENT:          { type:'income',   category:'shipping_collection', direction:'in',  icon:'📦', label:'تسوية شحن' },
   SHIPPING_SETTLEMENT_REVERSAL: { type:'reversal', category:'shipping_collection', direction:'out', icon:'🔄', label:'إلغاء تسوية شحن' },
   SALARY_PAYMENT:               { type:'expense',  category:'salary',              direction:'out', icon:'👤', label:'راتب' },
+  SALARY_PAYMENT_REVERSAL:      { type:'reversal', category:'salary',              direction:'in',  icon:'🔄', label:'إلغاء راتب' },
   PAYROLL:                      { type:'expense',  category:'salary',              direction:'out', icon:'👥', label:'مسير رواتب' },
   BONUS_PAYMENT:                { type:'expense',  category:'bonus',               direction:'out', icon:'🎁', label:'مكافأة' },
   PENALTY:                      { type:'expense',  category:'deduction',           direction:'out', icon:'✂️', label:'خصم' },
@@ -187,6 +189,31 @@ async function handleVendorPaymentReversal(db, p) {
   return {};
 }
 
+async function handleSalaryPaymentReversal(db, p) {
+  const isDeduction = p.isDeduction;
+  const batch = writeBatch(db);
+
+  if (p.walletId) {
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? -p.amount : p.amount) });
+    console.log('[FSE] 💳 balance restored:', isDeduction ? '-' : '+', p.amount);
+  }
+
+  batch.delete(doc(db, 'transactions_v2', p.txId));
+
+  if (p.epId) {
+    batch.delete(doc(db, 'employee_payments', p.epId));
+  }
+
+  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', {
+    ...p, employeeId: p.employeeId, employeeName: p.employeeName,
+    notes: `إلغاء راتب — ${p.employeeName}`,
+  });
+
+  await batch.commit();
+  console.log('[FSE] ✅ completed: SALARY_PAYMENT_REVERSAL');
+  return {};
+}
+
 async function handleSalaryPayment(db, p) {
   const isDeduction = p.salaryType === 'deduction';
   const batch = writeBatch(db);
@@ -196,6 +223,7 @@ async function handleSalaryPayment(db, p) {
     console.log('[FSE] 💳 balance updated:', isDeduction ? '+' : '-', p.amount);
   }
 
+  const epRef = doc(collection(db, 'employee_payments'));
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
     walletId: p.walletId, walletName: p.walletName || '',
@@ -203,13 +231,12 @@ async function handleSalaryPayment(db, p) {
     description: p.note || '', category: 'salary',
     salaryType: p.salaryType, employeeId: p.employeeId, employeeName: p.employeeName,
     baseSalary: p.baseSalary || 0, commission: p.commission || 0,
-    month: p.month, isDeduction,
+    month: p.month, isDeduction, epId: epRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
   });
 
-  const epRef = doc(collection(db, 'employee_payments'));
   batch.set(epRef, {
     employeeId: p.employeeId, employeeName: p.employeeName,
     amount: p.amount, salaryType: p.salaryType, isDeduction,
@@ -353,6 +380,7 @@ const HANDLERS = {
   VENDOR_PAYMENT:          handleVendorPayment,
   VENDOR_PAYMENT_REVERSAL: handleVendorPaymentReversal,
   SALARY_PAYMENT:          handleSalaryPayment,
+  SALARY_PAYMENT_REVERSAL: handleSalaryPaymentReversal,
   BONUS_PAYMENT:           (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'bonus' }),
   PENALTY:                 (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'deduction' }),
   PAYROLL:                 handlePayroll,
