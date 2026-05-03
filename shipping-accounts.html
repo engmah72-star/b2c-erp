@@ -355,21 +355,18 @@ window.render=function(){
         <!-- الأوردرات المعلقة -->
         ${co.pendingOrds.length?`
         <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">⏳ بانتظار التسوية (${co.pendingOrds.length})</div>
-        ${co.pendingOrds.slice(0,5).map(o=>{
+        ${co.pendingOrds.map(o=>{
           const paid=FC.getPaid(o);const due=FC.getDueByCo(o);
-          const stageAr={shipping:'شحن',archived:'أرشيف'}[o.stage]||o.stage;
           const costTotal=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
           const noCost=!(o.costItems||[]).length;
           return`<div class="settle-row">
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
-              <div style="font-size:10px;color:var(--dim2)">${stageAr}${paid>0?' · دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}</div>
-              ${noCost
-                ?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>'
-                :'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
+              <div style="font-size:10px;color:var(--dim2)">${paid>0?'دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}</div>
+              ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-              <button onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
+              <button type="button" onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
               <div style="text-align:left">
                 <div style="font-size:14px;font-weight:900;color:var(--r)">${fn(due)} ج</div>
                 <div style="font-size:9px;color:var(--dim2)">من ${fn(parseFloat(o.salePrice)||0)} ج</div>
@@ -377,7 +374,31 @@ window.render=function(){
             </div>
           </div>`;
         }).join('')}
-        ${co.pendingOrds.length>5?`<div style="font-size:11px;color:var(--dim2);text-align:center;padding:6px;cursor:pointer" onclick="openSettle('${co.name}')">+${co.pendingOrds.length-5} أوردر أخرى ← اضغط للتسوية</div>`:''}
+        `:''}
+
+        <!-- الأوردرات المسوّاة -->
+        ${co.settledOrds.length?`
+        <details style="margin-top:8px">
+          <summary style="font-size:11px;font-weight:800;color:var(--g);cursor:pointer;padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px">
+            <span>✅ المسوّاة (${co.settledOrds.length})</span>
+          </summary>
+          <div style="margin-top:6px">
+          ${co.settledOrds.map(o=>{
+            const costTotal=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+            const noCost=!(o.costItems||[]).length;
+            return`<div class="settle-row">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
+                ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                <button type="button" onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
+                <span style="font-size:10px;color:var(--g);font-weight:700;white-space:nowrap">✅ مسوّى</span>
+              </div>
+            </div>`;
+          }).join('')}
+          </div>
+        </details>
         `:''}
 
         <!-- المرتجعات -->
@@ -711,14 +732,15 @@ function renderCostAccList(o){
 
 window.openCostAcc=function(orderId){
   __caOrderId=orderId;__caEditIdx=-1;
-  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
   const info=document.getElementById('ca-order-info');
-  if(info){const prds=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';info.textContent=o.clientName+' · '+prds;}
-  document.getElementById('ca-type').value='';
-  document.getElementById('ca-total').value='';
-  document.getElementById('ca-note').value='';
-  document.getElementById('ca-form-title').textContent='＋ إضافة بند جديد';
-  document.getElementById('ca-save-btn').textContent='＋ إضافة';
+  if(info){const prds=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';info.textContent=(o.clientName||'—')+' · '+prds;}
+  const typeEl=document.getElementById('ca-type');if(typeEl)typeEl.value='';
+  const totalEl=document.getElementById('ca-total');if(totalEl)totalEl.value='';
+  const noteEl=document.getElementById('ca-note');if(noteEl)noteEl.value='';
+  const titleEl=document.getElementById('ca-form-title');if(titleEl)titleEl.textContent='＋ إضافة بند جديد';
+  const saveBtn=document.getElementById('ca-save-btn');if(saveBtn)saveBtn.textContent='＋ إضافة';
   renderCostAccList(o);
   document.getElementById('ov-cost-acc').classList.add('open');
 };
@@ -737,7 +759,7 @@ window.editCostAccItem=function(idx){
 
 window.rmCostAccItem=async function(idx){
   if(!confirm('حذف البند؟'))return;
-  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
   const ci=[...(o.costItems||[])];ci.splice(idx,1);
   try{
     await updateDoc(doc(db,'orders',__caOrderId),{costItems:ci,updatedAt:serverTimestamp()});
@@ -753,8 +775,8 @@ window.saveCostAcc=async function(){
   if(!type)return toast('⚠️ اختر نوع البند','err');
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const note=document.getElementById('ca-note')?.value||'';
-  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
-  const uName=userName||currentUser?.displayName||'';
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
+  const uName=userName||auth.currentUser?.displayName||auth.currentUser?.email||'';
   const item={type,supplierId:'',supplierName:'',prodIdx:null,total,note,addedAt:nowStr(),addedBy:uName};
   const ci=[...(o.costItems||[])];
   let action;
