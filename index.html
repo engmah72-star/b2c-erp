@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -450,6 +451,7 @@ const auth=getAuth(app),db=getFirestore(app);
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
 const delay=dl=>{if(!dl)return 0;const d=new Date(dl),n=new Date();return d<n?Math.floor((n-d)/864e5):0};
+const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
 const stageAr=s=>({design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',delivered:'تسليم',archived:'أرشيف'}[s]||s);
 const stagePage=s=>({printing:'print',production:'production',design:'design',shipping:'shipping',archive:'archive'}[s]||s);
 const STAGE_COL={design:'var(--p)',printing:'var(--y)',production:'var(--r)',shipping:'var(--c)',delivered:'var(--g)',archived:'var(--dim)'};
@@ -457,6 +459,7 @@ const STAGE_COL={design:'var(--p)',printing:'var(--y)',production:'var(--r)',shi
 // ── Sidebar ──
 const SBPAGES=[
   {f:'index.html',l:'لوحة التحكم',i:'⬡',admin:true},
+  {f:'exec-dashboard.html',l:'لوحة التنفيذية',i:'📊',admin:true},
   {f:'clients.html',l:'العملاء',i:'👤',p:'clients'},
   {f:'design.html',l:'التصميم',i:'✏️',p:'design'},
   {f:'print.html',l:'الطباعة',i:'🖨️',p:'print'},
@@ -525,18 +528,26 @@ let _started=false;
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   if(_started)return;_started=true;
-  const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){
-    const d=snap.data();
-    set('nav-name',d.name||u.email);
-    set('role-badge',d.role||'admin');
-    const av=document.getElementById('nav-av');
-    if(av)av.textContent=(d.name||'A')[0].toUpperCase();
-    set('dash-greeting',`${greet}، ${d.name?.split(' ')[0]||''} 👋`);
-    buildSidebar(d);
-    buildQL(d);
-    startListeners();
-  }
+  try{
+    const snap=await getDoc(doc(db,'users',u.uid));
+    if(snap.exists()){
+      const d=snap.data();
+      const role=d.role||'customer_service';
+      if(!['admin'].includes(role)){
+        const ROLE_DASH={operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
+        window.location.href=ROLE_DASH[role]||'login.html';
+        return;
+      }
+      set('nav-name',d.name||u.email);
+      set('role-badge',d.role||'admin');
+      const av=document.getElementById('nav-av');
+      if(av)av.textContent=(d.name||'A')[0].toUpperCase();
+      set('dash-greeting',`${greet}، ${d.name?.split(' ')[0]||''} 👋`);
+      buildSidebar(d);
+      buildQL(d);
+      startListeners();
+    }
+  }catch(e){console.error('index auth:',e);window.location.href='login.html';}
 });
 
 function startListeners(){
@@ -565,11 +576,7 @@ function renderKPIs(){
     return t>=ms.getTime();
   });
   const rev=month.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const rem=active.reduce((s,o)=>{
-    const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    return s+Math.max(0,sale-paid);
-  },0);
+  const rem=allOrders.reduce((s,o)=>s+calcRem(o),0);
   set('k-rev',fn(rev)+' ج');
   set('k-rem',fn(rem)+' ج');
   set('k-clients',clients.length);
@@ -633,12 +640,8 @@ function renderAlerts(){
     alerts.push({i:'⏰',col:'var(--r)',t:`متأخر — ${o.clientName||'—'}`,s:`${delay(o.deadline)} يوم · ${stageAr(o.stage)}`,h:stagePage(o.stage)+'.html'});
   });
   // باقي مالي كبير
-  active.filter(o=>{
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
-    return Math.max(0,(parseFloat(o.salePrice)||0)-paid)>500;
-  }).slice(0,3).forEach(o=>{
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
-    const rem=Math.max(0,(parseFloat(o.salePrice)||0)-paid);
+  active.filter(o=>calcRem(o)>500).slice(0,3).forEach(o=>{
+    const rem=calcRem(o);
     alerts.push({i:'💰',col:'var(--y)',t:`باقي — ${o.clientName||'—'}`,s:`${fn(rem)} ج · ${stageAr(o.stage)}`,h:stagePage(o.stage)+'.html'});
   });
 
@@ -667,9 +670,7 @@ function renderOrders(){
     return;
   }
   el.innerHTML=recent.map(o=>{
-    const sale=parseFloat(o.salePrice)||0;
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const rem=Math.max(0,sale-paid);
+    const rem=calcRem(o);
     const isLate=o.deadline&&delay(o.deadline)>0;
     const col=STAGE_COL[o.stage]||'var(--dim2)';
     return`<div class="ord-row" onclick="location.href='${stagePage(o.stage)}.html'" style="${isLate?'background:rgba(255,61,110,.03)':''}">

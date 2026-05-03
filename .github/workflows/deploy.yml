@@ -1,4 +1,4 @@
-name: Deploy to Firebase Hosting
+name: Deploy to Firebase
 
 on:
   push:
@@ -12,7 +12,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Firebase
+      - name: Deploy Firestore Rules via REST API
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          token = creds.token
+
+          with open("firestore.rules") as f:
+              rules = f.read()
+
+          hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          base = f"https://firebaserules.googleapis.com/v1/projects/{PROJECT}"
+
+          # Create ruleset
+          r = requests.post(f"{base}/rulesets",
+              headers=hdrs,
+              json={"source": {"files": [{"name": "firestore.rules", "content": rules}]}}
+          )
+          r.raise_for_status()
+          ruleset_name = r.json()["name"]
+          print("Ruleset created:", ruleset_name)
+
+          # Update or create the Firestore release
+          release_name = f"projects/{PROJECT}/releases/cloud.firestore"
+          r2 = requests.get(f"{base}/releases/cloud.firestore", headers=hdrs)
+          if r2.status_code == 200:
+              r3 = requests.patch(f"{base}/releases/cloud.firestore",
+                  headers=hdrs,
+                  json={"release": {"name": release_name, "rulesetName": ruleset_name}}
+              )
+          else:
+              r3 = requests.post(f"{base}/releases",
+                  headers=hdrs,
+                  json={"name": release_name, "rulesetName": ruleset_name}
+              )
+          r3.raise_for_status()
+          print("Rules deployed successfully!")
+          PYEOF
+
+      - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
