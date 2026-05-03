@@ -582,6 +582,7 @@ import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, serverTimestamp, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { recordLedger, entryCollection, entryShippingCost, entryReturnLoss, entryRefund } from "./finance-engine.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -1209,6 +1210,14 @@ window.saveShip=async function(){
       timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
       updatedAt:serverTimestamp()
     });
+    // سجّل في دفتر الأستاذ المالي
+    if(collectAmt>0){
+      const w=wallets.find(x=>x._id===wId);
+      recordLedger(db,entryCollection({...o,_id:activeId},collectAmt,userName,currentUser?.uid||'',wId,w?.name||wName,transferRef));
+    }
+    if(shipCost>0&&!(parseFloat(o.shipCost)>0)){
+      recordLedger(db,entryShippingCost({...o,_id:activeId},shipCost,shipCompanyName,userName,currentUser?.uid||''));
+    }
     closeModal('ov-ship');
     if(shouldArchive){
       closePanel();
@@ -1339,6 +1348,13 @@ window.saveReturnDirect=async function(){
       });
     }
     await updateDoc(doc(db,'orders',orderId),orderUpdates);
+    // سجّل في دفتر الأستاذ المالي
+    if(isPartial&&priceDeduction>0){
+      recordLedger(db,entryReturnLoss({...o,_id:orderId},priceDeduction,`مرتجع جزئي — ${note||''}`,userName,currentUser?.uid||''));
+    } else if(!isPartial){
+      const lostAmt=(parseFloat(o.totalPaid)||0)+(parseFloat(o.deposit)||0);
+      if(lostAmt>0) recordLedger(db,entryReturnLoss({...o,_id:orderId},lostAmt,`مرتجع كامل — ${note||''}`,userName,currentUser?.uid||''));
+    }
     closeModal('ov-return-direct');
     closePanel();
     toast('✅ تم تسجيل المرتجع','ok');
