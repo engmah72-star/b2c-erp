@@ -464,7 +464,7 @@ import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/fireb
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, query, orderBy, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, inferEventType, getReversal, FE } from "./financial-sync-engine.js";
+import { addLedgerToBatch, inferEventType, getReversal, calcOrderPayment, FE } from "./financial-sync-engine.js";
 
 const app  = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -1392,16 +1392,8 @@ window.deleteTx=async function(txId, walletId, amount, type, balanceBefore){
       const ordSnap=await getDoc(doc(db,'orders',orderId));
       if(ordSnap.exists()){
         const ord=ordSnap.data();
-        const oldPaid=parseFloat(ord.totalPaid)||parseFloat(ord.paid)||parseFloat(ord.deposit)||0;
-        const newPaid=Math.max(0,oldPaid-amount);
-        const sale=parseFloat(ord.salePrice)||0;
-        const disc=parseFloat(ord.discount)||0;
-        const newRem=Math.max(0,(sale-disc)-newPaid);
-        batch.update(doc(db,'orders',orderId),{
-          totalPaid:newPaid,
-          remaining:newRem,
-          paymentStatus:newPaid<=0?'pending':newRem<=0?'paid':'partial',
-        });
+        const {totalPaid:newPaid,remaining:newRem,paymentStatus}=calcOrderPayment(ord,-amount);
+        batch.update(doc(db,'orders',orderId),{totalPaid:newPaid,remaining:newRem,paymentStatus});
       }
     }
 
@@ -1978,11 +1970,9 @@ window.saveTx=async function(){
     const batch=writeBatch(db);
     batch.update(doc(db,'wallets',walletId),{balance:increment(type==='in'?amount:-amount)});
     if(o&&type==='in'){
-      const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-      const newPaid=oldPaid+amount;
-      const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-newPaid);
+      const {totalPaid:newPaid,remaining:newRem,paymentStatus}=calcOrderPayment(o,amount);
       const tl=[...(o.timeline||[]),{date:nowStr(),action:`💰 دفعة: ${fn(amount)} ج — باقي: ${fn(newRem)} ج`,by:document.getElementById('nav-name')?.textContent||''}];
-      batch.update(doc(db,'orders',orderId),{totalPaid:newPaid,remaining:newRem,lastPaymentDate:nowStr(),...(newRem===0?{paymentStatus:'paid'}:{paymentStatus:'partial'}),timeline:tl});
+      batch.update(doc(db,'orders',orderId),{totalPaid:newPaid,remaining:newRem,paymentStatus,lastPaymentDate:nowStr(),timeline:tl});
     }
     const n2=new Date();
     const curMonthKey=n2.getFullYear()+'-'+String(n2.getMonth()+1).padStart(2,'0');

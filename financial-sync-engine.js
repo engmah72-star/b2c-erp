@@ -64,10 +64,36 @@ const LC = {
 };
 
 // ══════════════════════════════════════════════════════════════════
+// HELPER: المعادلة الرسمية الوحيدة لحساب دفعة الأوردر
+// استخدمها في كل صفحة بدل الحساب اليدوي
+// delta: موجب لإضافة دفعة، سالب لعكسها
+// ══════════════════════════════════════════════════════════════════
+export function calcOrderPayment(order, delta) {
+  const sale    = parseFloat(order.salePrice)       || 0;
+  const disc    = parseFloat(order.discount)         || 0;
+  const shipFee = parseFloat(order.customerShipFee)  || 0;
+  const net     = Math.max(0, sale + shipFee - disc);
+  const oldPaid = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+  const newPaid = Math.max(0, oldPaid + delta);
+  const remaining = Math.max(0, net - newPaid);
+  return {
+    totalPaid:     newPaid,
+    remaining,
+    paymentStatus: remaining <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // LOW-LEVEL: أضف إدخال ledger لـ batch موجود
 // استخدمه في الوحدات التي لديها batch منطقها الخاص
 // ══════════════════════════════════════════════════════════════════
 export function addLedgerToBatch(batch, db, eventType, data) {
+  if (!LC[eventType]) {
+    console.warn(`[FSE] ⚠️ eventType غير معروف: "${eventType}" — أضفه إلى LC map أو تحقق من الاسم`);
+  }
+  if (!(data.amount > 0)) {
+    console.warn(`[FSE] ⚠️ addLedgerToBatch: amount=${data.amount} غير صالح لـ eventType=${eventType}`);
+  }
   const lc = LC[eventType] || { type:'other', category:'unknown', direction:'in', icon:'📋', label: eventType };
   const ref = doc(collection(db, 'financial_ledger'));
   batch.set(ref, {
@@ -351,14 +377,12 @@ async function handleCustomerPayment(db, p) {
   console.log('[FSE] 🏭 module updated: transactions_v2');
 
   if (p.orderId && p.orderData) {
-    const newPaid = (parseFloat(p.orderData.totalPaid) || 0) + p.amount;
-    const newRem  = Math.max(0, (parseFloat(p.orderData.salePrice) || 0) - (parseFloat(p.orderData.discount) || 0) - newPaid);
+    const payment = calcOrderPayment(p.orderData, p.amount);
     batch.update(doc(db, 'orders', p.orderId), {
-      totalPaid: newPaid, remaining: newRem,
-      paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+      ...payment,
       lastPaymentDate: p.date || new Date().toLocaleDateString('ar-EG'),
     });
-    console.log('[FSE] 📦 module updated: order payment fields');
+    console.log('[FSE] 📦 module updated: order payment fields', payment);
   }
 
   const evtType = p.eventType || 'CUSTOMER_PAYMENT';
