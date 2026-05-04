@@ -207,6 +207,16 @@
 .btn-y{background:rgba(240,160,32,.15);color:var(--y);border:1px solid rgba(240,160,32,.3);}
 .btn-sm{padding:5px 12px;font-size:11px;}
 .btn-xs{padding:3px 8px;font-size:10px;}
+.gal-pub-btn{background:rgba(167,139,250,.18);color:var(--p);border:1px solid rgba(167,139,250,.4);padding:5px 12px;font-size:11px;font-weight:800;border-radius:var(--rad);cursor:pointer;font-family:inherit;transition:.12s;}
+.gal-pub-btn:hover{background:rgba(167,139,250,.3);}
+.gal-pub-btn.gal-pub-done{background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.35);}
+.gal-ver-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;border:1px solid var(--line);cursor:pointer;transition:.12s;background:var(--bg3);margin-bottom:5px;}
+.gal-ver-item:hover{border-color:rgba(167,139,250,.4);}
+.gal-ver-item.selected{border-color:var(--p);background:rgba(167,139,250,.1);}
+.gal-ver-thumb{width:54px;height:54px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg4);}
+.gal-ver-info{flex:1;min-width:0;}
+.gal-ver-num{font-size:11px;font-weight:800;color:var(--snow);}
+.gal-ver-date{font-size:9px;color:var(--dim2);}
 
 /* ═══ FORM ═══ */
 .inp-sm{width:100%;padding:8px 10px;background:var(--bg4);border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:inherit;font-size:12px;outline:none;}
@@ -348,6 +358,34 @@
   </div>
 </div>
 
+<!-- Gallery Publish Modal -->
+<div class="overlay" id="ov-gallery">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title">🌐 نشر في المعرض</span>
+      <button class="modal-x" onclick="document.getElementById('ov-gallery').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="aspect-ratio:16/9;background:var(--bg3);border-radius:var(--rad);overflow:hidden;margin-bottom:14px;display:flex;align-items:center;justify-content:center;">
+        <img id="gal-preview-img" style="width:100%;height:100%;object-fit:contain" src="" alt="">
+      </div>
+      <div class="fg"><label>عنوان التصميم في المعرض</label>
+        <input class="inp-sm" id="gal-title" placeholder="اسم التصميم أو العنوان المعروض...">
+      </div>
+      <div class="fg"><label>اختر النسخة للنشر</label>
+        <div id="gal-ver-list"></div>
+      </div>
+      <div class="fg"><label>الوصف (اختياري)</label>
+        <input class="inp-sm" id="gal-desc" placeholder="وصف مختصر للتصميم...">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-gallery').classList.remove('open')">إلغاء</button>
+      <button class="btn gal-pub-btn" id="gal-confirm-btn" onclick="confirmGalleryPublish()">🌐 نشر الآن</button>
+    </div>
+  </div>
+</div>
+
 <!-- Lightbox -->
 <div id="lb-overlay" onclick="closeLightboxBg(event)">
   <button id="lb-close-btn" onclick="closeLightbox()">✕</button>
@@ -391,6 +429,7 @@ let orders = [], allDesignItems = [], clientDecisions = [];
 let currentOrderId = null, currentItems = [], revTargetItemId = null, editItemId = null;
 let itemsUnsub = null, decisionsUnsub = null, ordersUnsub = null;
 let designerFilterUid = '', allDesigners = [];
+let galleryTargetItemId = null;
 
 // ── Helpers ──
 const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
@@ -903,16 +942,17 @@ function renderItemsSection(order, isAdm) {
     </div>` : '';
 
     // Action bar
+    const canGallery = (approved || printReady) && hasVersions;
     const actionBar = `<div class="item-action-bar">
       <div class="iab-primary">
         ${hasVersions?`<button class="btn btn-b btn-sm" onclick="publishToClient('${item._id}')">📤 نشر للعميل</button>`:''}
         ${!approved?`<button class="btn btn-g btn-sm" onclick="markApproved('${item._id}',false)">✅ اعتمد</button>`:`<button class="btn btn-ghost btn-sm" onclick="markApproved('${item._id}',true)">↩ إلغاء الاعتماد</button>`}
         ${approved&&!printReady?`<button class="btn btn-p btn-sm" onclick="togglePrintReady('${item._id}',false)">🖨️ للطباعة</button>`:''}
         ${printReady?`<button class="btn btn-ghost btn-sm" onclick="togglePrintReady('${item._id}',true)">↩ إلغاء الطباعة</button>`:''}
+        ${canGallery?`<button class="gal-pub-btn${hasGallery?' gal-pub-done':''}" onclick="openGalleryModal('${item._id}')">${hasGallery?'🔄 تحديث المعرض':'🌐 نشر للمعرض'}</button>`:''}
       </div>
       <div class="iab-secondary">
         <button class="btn btn-y btn-xs" onclick="openRevModal('${item._id}')">🔄 تسجيل تعديل</button>
-        ${approved&&hasVersions?`<button class="btn btn-ghost btn-xs" onclick="publishToGallery('${item._id}')">${hasGallery?'🔄 تحديث المعرض':'🌐 نشر للمعرض'}</button>`:''}
         ${lastPub?`<button class="btn btn-ghost btn-xs" onclick="copyClientMsg('${order.orderId||order._id}','${order.clientPhone||''}','${loginUrl}')">📋 إشعار العميل</button>`:''}
         ${isAdm?`<button class="btn btn-ghost btn-xs" onclick="openEditItem('${item._id}','${item.itemName}',${item.itemQty||1})">✏️ تعديل البند</button>`:''}
       </div>
@@ -1248,39 +1288,115 @@ window.publishToClient = async function(itemId) {
   } catch(e) { toast('❌ ' + e.message, 'err'); }
 };
 
-// ── Publish to Gallery ──
-window.publishToGallery = async function(itemId) {
+// ── Gallery Modal ──
+window.openGalleryModal = function(itemId) {
+  const item = currentItems.find(i => i._id === itemId);
+  if (!item) return;
+  galleryTargetItemId = itemId;
+  const versions = item.versions || [];
+  if (!versions.length) return toast('⚠️ لا توجد نسخ للنشر', 'err');
+
+  // Pre-fill title
+  const titleEl = document.getElementById('gal-title');
+  if (titleEl) titleEl.value = item.galleryTitle || item.itemName || '';
+  const descEl = document.getElementById('gal-desc');
+  if (descEl) descEl.value = item.galleryDesc || '';
+
+  // Build version selector list
+  const listEl = document.getElementById('gal-ver-list');
+  if (listEl) {
+    listEl.innerHTML = [...versions].reverse().map((v, idx) => {
+      const isLatest = idx === 0;
+      const dateStr = (v.uploadedAt||'').slice(0,10);
+      return `<div class="gal-ver-item${isLatest?' selected':''}" data-vnum="${v.vNum}" onclick="galSelectVer(this,'${v.imageUrl}')">
+        <img class="gal-ver-thumb" src="${v.imageUrl||''}" alt="">
+        <div class="gal-ver-info">
+          <div class="gal-ver-num">نسخة #${v.vNum}${isLatest?' <span style=\'font-size:9px;color:var(--g)\'>● أحدث</span>':''}</div>
+          <div class="gal-ver-date">${dateStr||'—'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Preview latest version image
+  const latestVer = versions[versions.length - 1];
+  const previewImg = document.getElementById('gal-preview-img');
+  if (previewImg) previewImg.src = latestVer?.imageUrl || '';
+
+  document.getElementById('ov-gallery').classList.add('open');
+};
+
+window.galSelectVer = function(el, imageUrl) {
+  document.querySelectorAll('#gal-ver-list .gal-ver-item').forEach(i => i.classList.remove('selected'));
+  el.classList.add('selected');
+  const previewImg = document.getElementById('gal-preview-img');
+  if (previewImg) previewImg.src = imageUrl || '';
+};
+
+window.confirmGalleryPublish = async function() {
+  const itemId = galleryTargetItemId;
+  if (!itemId) return;
   const item = currentItems.find(i => i._id === itemId);
   if (!item) return;
   const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
+
+  // Get selected version
+  const selVerEl = document.querySelector('#gal-ver-list .gal-ver-item.selected');
+  const selVNum = selVerEl ? parseInt(selVerEl.dataset.vnum) : null;
   const versions = item.versions || [];
-  if (!versions.length) return toast('⚠️ لا توجد نسخ', 'err');
-  const latest = versions[versions.length - 1];
-  if (!confirm(`نشر "${item.itemName}" في المعرض العام؟`)) return;
+  const chosenVer = selVNum != null
+    ? versions.find(v => v.vNum === selVNum) || versions[versions.length - 1]
+    : versions[versions.length - 1];
+  if (!chosenVer) return toast('⚠️ لا توجد نسخة محددة', 'err');
+
+  const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
+  const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
+
+  const btn = document.getElementById('gal-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
+
   try {
     const galleryRef = item.galleryId
-      ? doc(db,'gallery',item.galleryId)
-      : doc(collection(db,'gallery'));
+      ? doc(db, 'gallery', item.galleryId)
+      : doc(collection(db, 'gallery'));
     const batch = writeBatch(db);
     batch.set(galleryRef, {
-      title: item.itemName,
-      imageUrl: latest.imageUrl,
+      title,
+      description: desc,
+      imageUrl: chosenVer.imageUrl,
+      vNum: chosenVer.vNum,
       clientName: item.clientName || order?.clientName || '',
       designerName: item.designerName || currentUserName,
       productType: order?.products?.[item.itemIndex]?.name || item.itemName,
       orderId: item.orderDocId || '',
       publishedAt: serverTimestamp(),
-      publishedBy: currentUid, isVisible: true, tags: [],
+      publishedBy: currentUid,
+      publishedByName: currentUserName,
+      isVisible: true,
+      tags: [],
     }, { merge: true });
-    if (!item.galleryId) {
-      batch.update(doc(db,'design_items',itemId), {
-        galleryId: galleryRef.id, updatedAt: serverTimestamp(),
-        editHistory: arrayUnion({ action:'published_to_gallery', galleryId:galleryRef.id, by:currentUid, byName:currentUserName, at:new Date().toISOString() }),
-      });
-    }
+    batch.update(doc(db, 'design_items', itemId), {
+      galleryId: galleryRef.id,
+      galleryTitle: title,
+      galleryDesc: desc,
+      updatedAt: serverTimestamp(),
+      editHistory: arrayUnion({
+        action: item.galleryId ? 'gallery_updated' : 'published_to_gallery',
+        galleryId: galleryRef.id,
+        vNum: chosenVer.vNum,
+        title,
+        by: currentUid, byName: currentUserName,
+        at: new Date().toISOString(),
+      }),
+    });
     await batch.commit();
-    toast('🌐 تم النشر في المعرض العام', 'ok');
-  } catch(e) { toast('❌ ' + e.message, 'err'); }
+    document.getElementById('ov-gallery').classList.remove('open');
+    toast(item.galleryId ? '🔄 تم تحديث المعرض' : '🌐 تم النشر في المعرض العام', 'ok');
+  } catch(e) {
+    toast('❌ ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌐 نشر الآن'; }
+  }
 };
 
 // ── Copy Client Notification ──
