@@ -272,6 +272,41 @@
   </div>
 </div>
 
+<!-- MODAL: نشر في المعرض العام -->
+<div class="overlay" id="ov-gallery">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-head"><span class="modal-title">🖼️ نشر موك أب في المعرض</span><button class="modal-x" onclick="closeGallery()">✕</button></div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>🖼️ صورة الموك أب *</label>
+        <div class="upload-area" onclick="document.getElementById('gal-img-inp').click()">
+          <div id="gal-img-preview">
+            <div style="font-size:28px;margin-bottom:6px">🖼️</div>
+            <div style="font-size:13px;color:var(--dim2)">اضغط لاختيار صورة الموك أب</div>
+          </div>
+        </div>
+        <input type="file" id="gal-img-inp" accept="image/*" style="display:none" onchange="previewGalImg(this)">
+      </div>
+      <div class="fg">
+        <label>العنوان <span style="color:var(--dim2);font-size:11px">(اختياري)</span></label>
+        <input class="inp" id="gal-title" placeholder="مثال: هوية بصرية لمطعم...">
+      </div>
+      <div class="fg">
+        <label>التصنيف / التخصص *</label>
+        <input class="inp" id="gal-cat" placeholder="مثال: كارت شخصي، هوية بصرية، سوشيال ميديا، فلاير...">
+      </div>
+      <div class="fg">
+        <label>الألوان المستخدمة</label>
+        <div id="gal-color-chips" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeGallery()">إلغاء</button>
+      <button class="btn btn-p" onclick="saveToGallery()">🖼️ نشر في المعرض</button>
+    </div>
+  </div>
+</div>
+
 <nav class="mob-nav"><div class="mob-nav-items" id="mob-nav-items"></div></nav>
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div class="toasts" id="toasts"></div>
@@ -630,6 +665,78 @@ window.doAtt=async function(){
 };
 
 
+// ══ معرض التصاميم العام ══
+const GAL_COLORS=[
+  {name:'أسود',hex:'#111111'},{name:'أبيض',hex:'#f0f0f0'},{name:'ذهبي',hex:'#d4a017'},
+  {name:'فضي',hex:'#9ca3af'},{name:'أحمر',hex:'#ef4444'},{name:'برتقالي',hex:'#f97316'},
+  {name:'أصفر',hex:'#fbbf24'},{name:'أخضر',hex:'#22c55e'},{name:'أزرق',hex:'#3b82f6'},
+  {name:'بنفسجي',hex:'#a78bfa'},{name:'وردي',hex:'#f472b6'},{name:'بني',hex:'#92400e'},
+];
+let galSelColors=[];
+
+function renderGalChips(){
+  const el=document.getElementById('gal-color-chips');if(!el)return;
+  el.innerHTML=GAL_COLORS.map(c=>`
+    <div onclick="toggleGalColor('${c.hex}','${c.name}')" id="galchip-${c.hex.slice(1)}"
+      title="${c.name}"
+      style="width:34px;height:34px;border-radius:50%;background:${c.hex};cursor:pointer;
+             border:3px solid transparent;transition:all .15s;
+             box-shadow:0 1px 6px rgba(0,0,0,.5);flex-shrink:0">
+    </div>`).join('');
+}
+window.toggleGalColor=function(hex,name){
+  const i=galSelColors.findIndex(c=>c.hex===hex);
+  if(i>-1)galSelColors.splice(i,1);else galSelColors.push({hex,name});
+  GAL_COLORS.forEach(c=>{
+    const el=document.getElementById('galchip-'+c.hex.slice(1));if(!el)return;
+    el.style.border=galSelColors.some(x=>x.hex===c.hex)?'3px solid #fff':'3px solid transparent';
+    el.style.transform=galSelColors.some(x=>x.hex===c.hex)?'scale(1.15)':'scale(1)';
+  });
+};
+window.openGallery=function(){
+  galSelColors=[];
+  const el=document.getElementById('gal-img-preview');
+  if(el)el.innerHTML='<div style="font-size:28px;margin-bottom:6px">🖼️</div><div style="font-size:13px;color:var(--dim2)">اضغط لاختيار صورة الموك أب</div>';
+  const inp=document.getElementById('gal-img-inp');if(inp)inp.value='';
+  ['gal-title','gal-cat'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  renderGalChips();
+  document.getElementById('ov-gallery').classList.add('open');
+};
+window.closeGallery=()=>document.getElementById('ov-gallery').classList.remove('open');
+window.previewGalImg=function(inp){
+  const file=inp.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=e=>{
+    const el=document.getElementById('gal-img-preview');if(!el)return;
+    el.innerHTML=`<img src="${e.target.result}" style="width:100%;max-height:200px;object-fit:contain;border-radius:8px"><div style="font-size:11px;color:var(--g);margin-top:6px">✓ جاهز للنشر</div>`;
+  };
+  r.readAsDataURL(file);
+};
+window.saveToGallery=async function(){
+  const inp=document.getElementById('gal-img-inp');
+  const cat=(document.getElementById('gal-cat')?.value||'').trim();
+  const title=(document.getElementById('gal-title')?.value||'').trim()||cat;
+  if(!inp?.files[0])return toast('⚠️ اختر صورة للموك أب','err');
+  if(!cat)return toast('⚠️ أدخل التصنيف','err');
+  toast('جاري الرفع...','');
+  try{
+    const storageRef=ref(storage,`gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    await uploadBytes(storageRef,inp.files[0]);
+    const imageUrl=await getDownloadURL(storageRef);
+    await addDoc(collection(db,'design_gallery'),{
+      imageUrl,title,category:cat,
+      colors:galSelColors,
+      designerId:auth.currentUser?.uid||'',
+      designerName:userName,
+      isPublic:true,
+      createdAt:serverTimestamp()
+    });
+    closeGallery();
+    toast('✅ تم النشر في المعرض','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+
 function startListeners(){
   const isAdmin2=['admin','operation_manager'].includes(currentRole);
   const isCS=['customer_service','design_operator'].includes(currentRole);
@@ -914,6 +1021,18 @@ function renderPanel(o){
         +`<button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل</button>`;
       })()}
     </div>
+
+    <!-- 🖼️ نشر في المعرض — للمصممين -->
+    ${['graphic_designer','design_operator'].includes(currentRole)?`
+    <div class="section" style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.2)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:12px;font-weight:800;color:var(--p)">🖼️ المعرض العام</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:3px">انشر الموك أب ليراه الجميع</div>
+        </div>
+        <button class="btn btn-p btn-sm" onclick="openGallery()">＋ نشر موك أب</button>
+      </div>
+    </div>`:''}
 
     <!-- العربون — للإدارة وخدمة العملاء فقط -->
     ${(dep>0&&['admin','operation_manager','customer_service'].includes(currentRole))?`<div class="section" style="background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.15)">
