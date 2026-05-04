@@ -225,7 +225,7 @@ service cloud.firestore {
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts') || hasPage('accounts')
       );
       allow create: if isAuth() && (
-        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
+        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts') || can('canAddOrders')
       );
       allow update, delete: if isAdmin();
     }
@@ -244,9 +244,6 @@ service cloud.firestore {
     }
 
     // ══ Financial Ledger ══
-    // create: أي مستخدم مصادق عليه (يُسجَّل من كل صفحة تلقائياً)
-    // update/delete: أدمن فقط (تعديل وحذف منطقي مع سجل تدقيق)
-    // read: أدمن + أصحاب الصفحات المالية
     match /financial_ledger/{entryId} {
       allow read: if isAuth() && (
         isAdmin() ||
@@ -256,7 +253,16 @@ service cloud.firestore {
         hasPage('production') ||
         hasPage('print')
       );
-      allow create: if isAuth() && request.auth.uid != null;
+      allow create: if isAuth() && (
+        isAdmin() ||
+        hasPage('accounts') ||
+        hasPage('shipping') ||
+        hasPage('shipping-accounts') ||
+        hasPage('suppliers') ||
+        hasPage('print') ||
+        hasPage('production') ||
+        can('canAddOrders')
+      );
       allow update: if isAuth() && isAdmin();
       allow delete: if isAuth() && isAdmin();
     }
@@ -303,10 +309,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // ══ Client Decisions — public creates (client portal, no auth) ══
+    // ══ Client Decisions — client portal creates (token-based, no Firebase auth) ══
+    // العملاء يستخدمون بوابة بدون Firebase auth — نسمح create بشرط الحقول الأساسية فقط
     match /client_decisions/{decId} {
       allow read: if isAuth();
-      allow create: if true;
+      allow create: if request.resource.data.keys().hasAll(['orderId','itemId','decision'])
+                    && request.resource.data.orderId is string
+                    && request.resource.data.itemId is string
+                    && request.resource.data.decision in ['approved','revision'];
       allow update, delete: if isAdmin();
     }
   }
