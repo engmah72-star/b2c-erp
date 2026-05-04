@@ -636,9 +636,22 @@ window.saveEmpGoal=async function(empId,empName,month){
   const attDays=parseInt(document.getElementById('kpi-g-att')?.value)||0;
   const ordersT=parseInt(document.getElementById('kpi-g-ord')?.value)||0;
   const qualPct=parseInt(document.getElementById('kpi-g-qlt')?.value)||0;
+  // حوّل أيام الحضور إلى نسبة مئوية
+  const emp2=employees.find(x=>x._id===empId);
+  const wDays=Math.max(1,emp2?.annualLeaveQuota?Math.round((365-(emp2.annualLeaveQuota||21))/12):22);
+  const targetAttendancePct=attDays>0?Math.round(attDays/wDays*100):0;
   try{
     const existing=empGoals.find(g=>g.employeeId===empId&&g.month===month);
-    const data={employeeId:empId,employeeName:empName,month,targets:{attendanceDays:attDays,ordersTarget:ordersT,qualityPct:qualPct},updatedBy:currentUser?.uid||'',updatedByName:userName,updatedAt:serverTimestamp()};
+    const data={
+      employeeId:empId,employeeName:empName,month,
+      // Flat format — used by employee-profile + personal dashboards
+      targetOrdersMonthly:ordersT,
+      targetAttendancePct,
+      targetQualityPct:qualPct,
+      // Nested format — used by KPI panel in this page
+      targets:{attendanceDays:attDays,ordersTarget:ordersT,qualityPct:qualPct},
+      updatedBy:currentUser?.uid||'',updatedByName:userName,updatedAt:serverTimestamp()
+    };
     if(existing){await updateDoc(doc(db,'employee_goals',existing._id),data);}
     else{await addDoc(collection(db,'employee_goals'),{...data,createdAt:serverTimestamp()});}
     toast('✅ تم حفظ الأهداف','ok');
@@ -649,7 +662,17 @@ window.saveEmpEvaluation=async function(empId,empName,role,month,att,prod,qual,t
   const note=document.getElementById('kpi-mgr-note')?.value||'';
   try{
     const existing=empEvaluations.find(v=>v.employeeId===empId&&v.month===month);
-    const data={employeeId:empId,employeeName:empName,role,month,kpiScore:total,breakdown:{attendance:att,productivity:prod,quality:qual},managerRating:rating||null,managerNote:note,attendanceDays:attDays,savedBy:currentUser?.uid||'',savedByName:userName,savedAt:serverTimestamp()};
+    const data={
+      employeeId:empId,employeeName:empName,role,month,
+      // كلا الأسماء لضمان التوافق بين employees.html و employee-profile.html
+      kpiScore:total, totalScore:total,
+      attScore:att,   prodScore:prod,   qualScore:qual,
+      breakdown:{attendance:att,productivity:prod,quality:qual},
+      managerRating:rating||null, rating:rating||null,
+      managerNote:note,           notes:note||'',
+      attendanceDays:attDays,     attDays:attDays,
+      savedBy:currentUser?.uid||'',savedByName:userName,savedAt:serverTimestamp()
+    };
     if(existing){await updateDoc(doc(db,'employee_evaluations',existing._id),data);}
     else{await addDoc(collection(db,'employee_evaluations'),data);}
     toast('✅ تم حفظ التقييم لـ '+empName,'ok');
