@@ -148,6 +148,40 @@
 .toast.ok{border-color:rgba(0,217,126,.4);color:var(--g);}
 .toast.err{border-color:rgba(255,61,110,.4);color:var(--r);}
 @keyframes toastIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+/* ── Lightbox ── */
+#lb-overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9998;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px;}
+#lb-overlay.open{display:flex;}
+.lb-img-wrap{position:relative;display:flex;align-items:center;justify-content:center;max-width:92vw;}
+#lb-img{max-width:88vw;max-height:75vh;border-radius:10px;object-fit:contain;box-shadow:0 8px 40px rgba(0,0,0,.6);}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:22px;width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s;flex-shrink:0;}
+.lb-nav:hover{background:rgba(255,255,255,.28);}
+#lb-prev-btn{left:-58px;}
+#lb-next-btn{right:-58px;}
+.lb-caption{color:rgba(255,255,255,.65);font-size:12px;margin-top:12px;text-align:center;}
+.lb-foot{display:flex;gap:12px;margin-top:8px;align-items:center;}
+.lb-counter{color:rgba(255,255,255,.4);font-size:11px;font-weight:800;}
+#lb-close-btn{position:fixed;top:18px;left:18px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:16px;width:38px;height:38px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+/* ── Design Pipeline ── */
+.pipeline{display:flex;align-items:center;overflow-x:auto;padding:8px 12px;background:var(--bg4);gap:0;scrollbar-width:none;}
+.pipeline::-webkit-scrollbar{display:none;}
+.pipe-step{display:flex;align-items:center;flex-shrink:0;}
+.pipe-node{font-size:9px;font-weight:800;padding:3px 9px;border-radius:10px;background:var(--bg3);color:var(--dim2);white-space:nowrap;border:1px solid transparent;transition:all .3s;}
+.pipe-node.done{background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.25);}
+.pipe-node.current{background:rgba(59,158,255,.15);color:var(--b);border-color:rgba(59,158,255,.3);animation:pipePulse 1.8s ease-in-out infinite;}
+@keyframes pipePulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+.pipe-arrow{color:var(--dim2);font-size:9px;margin:0 3px;flex-shrink:0;}
+/* ── Drag & Drop ── */
+.drag-zone{border:2px dashed var(--line);border-radius:var(--rad2);padding:10px 12px;transition:all .2s;}
+.drag-zone.drag-over{border-color:var(--p);background:rgba(167,139,250,.07);}
+.drag-hint{font-size:10px;color:var(--dim2);text-align:center;margin-top:6px;padding:6px;}
+/* ── Version published indicator ── */
+.ver-thumb-container{position:relative;display:inline-block;line-height:0;}
+.ver-published-ring{position:absolute;inset:-3px;border-radius:12px;border:2.5px solid var(--b);pointer-events:none;}
+.ver-published-lbl{position:absolute;bottom:-1px;right:-1px;background:var(--b);color:#fff;font-size:7px;font-weight:800;padding:1px 4px;border-radius:5px;line-height:1.4;}
+.ver-rev-dot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:var(--y);border:2px solid var(--bg2);}
+/* ── Publish bar ── */
+.publish-bar{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);align-items:center;}
+.pub-info{font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:3px;}
 </style>
 </head>
 <body>
@@ -257,6 +291,21 @@
       <button class="btn btn-ghost" onclick="document.getElementById('ov-edit-item').classList.remove('open')">إلغاء</button>
       <button class="btn btn-p" onclick="saveEditItem()">✓ حفظ</button>
     </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lb-overlay" onclick="closeLightboxBg(event)">
+  <button id="lb-close-btn" onclick="closeLightbox()">✕</button>
+  <div class="lb-img-wrap">
+    <button class="lb-nav" id="lb-prev-btn" onclick="lbPrev()" style="position:static;margin-left:10px">‹</button>
+    <img id="lb-img" src="" alt="">
+    <button class="lb-nav" id="lb-next-btn" onclick="lbNext()" style="position:static;margin-right:10px">›</button>
+  </div>
+  <div class="lb-caption" id="lb-caption"></div>
+  <div class="lb-foot">
+    <span class="lb-counter" id="lb-counter"></span>
+    <a id="lb-dl" href="#" target="_blank" class="btn btn-ghost btn-xs" style="color:rgba(255,255,255,.7);border-color:rgba(255,255,255,.2)">⬇ تحميل</a>
   </div>
 </div>
 
@@ -598,7 +647,7 @@ function renderPanel(order) {
         </div>
         <div class="acc-body">
           <div class="stat-row"><span class="stat-lbl">العميل</span><span class="stat-val">${order.clientName||'—'}</span></div>
-          <div class="stat-row"><span class="stat-lbl">الهاتف</span><span class="stat-val"><a href="tel:${order.clientPhone}" style="color:var(--b)">${order.clientPhone||'—'}</a></span></div>
+          ${isAdm ? `<div class="stat-row"><span class="stat-lbl">الهاتف</span><span class="stat-val"><a href="tel:${order.clientPhone}" style="color:var(--b)">${order.clientPhone||'—'}</a></span></div>` : ''}
           <div class="stat-row"><span class="stat-lbl">تاريخ الدخول</span><span class="stat-val">${order.createdDate||'—'}</span></div>
           <div class="stat-row"><span class="stat-lbl">موعد التسليم</span><span class="stat-val" style="color:${pri.cls==='pri-overdue'?'var(--r)':'inherit'}">${order.deadline||'لم يُحدد'}</span></div>
           <div class="stat-row"><span class="stat-lbl">المنتجات</span><span class="stat-val">${(order.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||order.product||'—'}</span></div>
@@ -690,7 +739,7 @@ function renderPanel(order) {
             <span class="portal-url">${loginUrl}</span>
             <div style="font-size:11px;color:var(--dim2);margin-bottom:10px">
               كود الأوردر: <strong style="color:var(--text)">${order.orderId||order._id.slice(-8)}</strong>
-              · الهاتف: <strong style="color:var(--text)">${order.clientPhone||'—'}</strong>
+              ${isAdm ? `· الهاتف: <strong style="color:var(--text)">${order.clientPhone||'—'}</strong>` : ''}
             </div>
             <button class="btn btn-b btn-sm" onclick="copyPortalLink('${loginUrl}','${order.orderId||order._id}','${order.clientPhone||''}')">📋 نسخ رسالة للعميل</button>
           </div>
@@ -717,37 +766,81 @@ function renderPanel(order) {
   wsPanel.querySelectorAll('.acc-body').forEach((el, i) => {
     if (openIndices.has(i)) el.classList.add('open');
   });
+  setupDragDrop();
 }
 
 function renderItemsSection(order, isAdm) {
   if (!currentItems.length) return `<div style="text-align:center;padding:20px;color:var(--dim2);font-size:12px">⏳ يتم تهيئة البنود...</div>`;
+  const loginUrl = `${location.origin}${location.pathname.replace('design-workspace.html','')}client-login.html`;
   return currentItems.map(item => {
     const versions = item.versions || [];
-    const latestVer = versions[versions.length - 1];
-    return `
-      <div class="item-track">
-        <div class="it-head">
-          <div>
-            <div class="it-name">📦 ${item.itemName} ${stChip(item.status)}</div>
-            <div class="it-qty">كمية: ${item.itemQty||1}</div>
-          </div>
-          <div style="display:flex;gap:5px;flex-wrap:wrap">
-            ${item.isPrintReady ? '' : `<button class="btn btn-p btn-xs" onclick="togglePrintReady('${item._id}',${item.isPrintReady})">${item.isPrintReady?'↩ إلغاء':'🖨️ للطباعة'}</button>`}
-            ${item.isApproved ? '' : `<button class="btn btn-g btn-xs" onclick="markApproved('${item._id}',${item.isApproved})">${item.isApproved?'↩':'✅ اعتمد'}</button>`}
-            ${isAdm ? `<button class="btn btn-ghost btn-xs" onclick="openEditItem('${item._id}','${item.itemName}',${item.itemQty||1})">✏️</button>` : ''}
-            <button class="btn btn-y btn-xs" onclick="openRevModal('${item._id}')">🔄 تعديل</button>
-          </div>
+    const revisions = item.revisions || [];
+    const lastPub = item.clientPublishHistory?.slice(-1)[0] || null;
+    const hasGallery = !!item.galleryId;
+
+    // Pipeline stages
+    const hasVersions = versions.length > 0;
+    const hasPublished = !!lastPub;
+    const approved = item.isApproved;
+    const printReady = item.isPrintReady;
+    const PIPE = [
+      { lbl:'🎨 تصميم', done: hasVersions, cur: !hasVersions },
+      { lbl:'📤 نشر للعميل', done: hasPublished && (approved || revisions.length > 0), cur: hasVersions && !hasPublished },
+      { lbl:'💬 مراجعة', done: revisions.length > 0 || approved, cur: hasPublished && !approved && !revisions.length },
+      { lbl:'✅ اعتماد', done: approved, cur: !approved && revisions.length > 0 },
+      { lbl:'🖨️ طباعة', done: printReady, cur: approved && !printReady },
+      { lbl:'🌐 معرض', done: hasGallery, cur: printReady && !hasGallery },
+    ];
+    const pipelineHtml = `<div class="pipeline">${
+      PIPE.map((s,i) => `<div class="pipe-step">
+        <div class="pipe-node ${s.done?'done':s.cur?'current':''}">${s.lbl}</div>
+        ${i < PIPE.length-1 ? '<span class="pipe-arrow">›</span>' : ''}
+      </div>`).join('')
+    }</div>`;
+
+    // Version thumbnails with indicators
+    const verThumbsHtml = versions.map((v, vi) => {
+      const isClientVer = lastPub && v.vNum === lastPub.vNum;
+      const revAfter = revisions.some(r => r.createdAt > (v.uploadedAt||''));
+      return `<div class="ver-thumb-wrap" style="cursor:zoom-in" onclick="openLightboxItem('${item._id}',${vi})">
+        <div class="ver-thumb-container">
+          <img class="ver-thumb" src="${v.imageUrl}" title="v${v.vNum} — ${v.uploadedAt?.slice?.(0,10)||'—'}" style="pointer-events:none">
+          ${isClientVer ? `<div class="ver-published-ring"></div><div class="ver-published-lbl">👁</div>` : ''}
+          ${revAfter ? `<div class="ver-rev-dot" title="طُلب تعديل بعد هذه النسخة"></div>` : ''}
         </div>
-        <div class="it-body">
-          <!-- Versions strip -->
-          <div class="ver-strip">
-            ${versions.map(v => `
-              <div class="ver-thumb-wrap">
-                <img class="ver-thumb" src="${v.imageUrl}" title="v${v.vNum} — ${v.uploadedAt?.slice?.(0,10)||'—'}"
-                  onclick="window.open('${v.imageUrl}','_blank')">
-                <div class="ver-num-lbl">v${v.vNum}</div>
-              </div>`).join('')}
-            <!-- Upload new version -->
+        <div class="ver-num-lbl">v${v.vNum}</div>
+      </div>`;
+    }).join('');
+
+    // Publish action bar
+    const lastPubInfo = lastPub
+      ? `<span class="pub-info">👁 آخر نشر للعميل: v${lastPub.vNum} · ${(lastPub.publishedAt||'').slice(0,10)}</span>`
+      : '';
+    const publishBtns = `<div class="publish-bar">
+      ${hasVersions ? `<button class="btn btn-b btn-xs" onclick="publishToClient('${item._id}')">📤 نشر للعميل</button>` : ''}
+      ${lastPub ? `<button class="btn btn-ghost btn-xs" onclick="copyClientMsg('${order.orderId||order._id}','${order.clientPhone||''}','${loginUrl}')">📋 إشعار العميل</button>` : ''}
+      ${approved && hasVersions ? `<button class="btn btn-p btn-xs" onclick="publishToGallery('${item._id}')">${hasGallery?'🔄 تحديث المعرض':'🌐 نشر للمعرض'}</button>` : ''}
+      ${lastPubInfo}
+    </div>`;
+
+    return `<div class="item-track" id="item-${item._id}">
+      <div class="it-head">
+        <div>
+          <div class="it-name">📦 ${item.itemName} ${stChip(item.status)}</div>
+          <div class="it-qty">كمية: ${item.itemQty||1}</div>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          ${printReady ? '' : `<button class="btn btn-p btn-xs" onclick="togglePrintReady('${item._id}',${printReady})">${printReady?'↩ إلغاء':'🖨️ للطباعة'}</button>`}
+          ${approved ? '' : `<button class="btn btn-g btn-xs" onclick="markApproved('${item._id}',${approved})">${approved?'↩':'✅ اعتمد'}</button>`}
+          ${isAdm ? `<button class="btn btn-ghost btn-xs" onclick="openEditItem('${item._id}','${item.itemName}',${item.itemQty||1})">✏️</button>` : ''}
+          <button class="btn btn-y btn-xs" onclick="openRevModal('${item._id}')">🔄 تعديل</button>
+        </div>
+      </div>
+      ${pipelineHtml}
+      <div class="it-body">
+        <div class="drag-zone" data-itemid="${item._id}">
+          <div class="ver-strip" id="vs-${item._id}">
+            ${verThumbsHtml}
             <div class="ver-add-wrap">
               <label class="ver-add-btn" for="ver-inp-${item._id}" title="رفع نسخة جديدة">＋</label>
               <input type="file" id="ver-inp-${item._id}" class="ver-upload-inp" accept="image/*,application/pdf"
@@ -755,10 +848,12 @@ function renderItemsSection(order, isAdm) {
               <div class="ver-num-lbl">رفع</div>
             </div>
           </div>
-          ${versions.length === 0 ? `<div style="font-size:11px;color:var(--dim2)">لم يُرفع أي موك أب بعد — اضغط ＋ لرفع أول نسخة</div>` : ''}
-          ${(item.revisions||[]).length ? `<div style="font-size:11px;color:var(--y);margin-top:4px">🔄 ${item.revisions.length} تعديل مسجل</div>` : ''}
+          ${!hasVersions ? `<div class="drag-hint">اسحب وأفلت ملف التصميم هنا أو اضغط ＋</div>` : ''}
         </div>
-      </div>`;
+        ${revisions.length ? `<div style="font-size:11px;color:var(--y);margin-top:6px">🔄 ${revisions.length} تعديل مسجل</div>` : ''}
+        ${publishBtns}
+      </div>
+    </div>`;
   }).join('');
 }
 
@@ -980,6 +1075,115 @@ window.toggleAcc = function(head) {
 window.renderCurrentItems = function() {
   const order = orders.find(o=>o._id===currentOrderId);
   if (order) renderPanel(order);
+};
+
+// ── Lightbox ──
+let lbVersions = [], lbIndex = 0;
+window.openLightboxItem = function(itemId, startIndex) {
+  const item = currentItems.find(i => i._id === itemId);
+  if (!item?.versions?.length) return;
+  lbVersions = item.versions;
+  lbIndex = Math.min(startIndex, lbVersions.length - 1);
+  renderLb();
+  document.getElementById('lb-overlay').classList.add('open');
+};
+function renderLb() {
+  const v = lbVersions[lbIndex];
+  document.getElementById('lb-img').src = v.imageUrl;
+  document.getElementById('lb-caption').textContent =
+    `v${v.vNum} · ${(v.uploadedAt||'').slice(0,10)||'—'} · ${v.uploadedByName||''}`;
+  document.getElementById('lb-counter').textContent = `${lbIndex+1} / ${lbVersions.length}`;
+  document.getElementById('lb-prev-btn').style.opacity = lbIndex > 0 ? '1' : '.3';
+  document.getElementById('lb-next-btn').style.opacity = lbIndex < lbVersions.length-1 ? '1' : '.3';
+  document.getElementById('lb-dl').href = v.imageUrl;
+}
+window.lbPrev = () => { if(lbIndex > 0) { lbIndex--; renderLb(); }};
+window.lbNext = () => { if(lbIndex < lbVersions.length-1) { lbIndex++; renderLb(); }};
+window.closeLightbox = () => document.getElementById('lb-overlay').classList.remove('open');
+window.closeLightboxBg = e => { if(e.target.id==='lb-overlay') closeLightbox(); };
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lb-overlay').classList.contains('open')) return;
+  if (e.key==='ArrowLeft'||e.key==='ArrowRight') e.key==='ArrowLeft' ? lbPrev() : lbNext();
+  if (e.key==='Escape') closeLightbox();
+});
+
+// ── Drag & Drop ──
+function setupDragDrop() {
+  document.querySelectorAll('.drag-zone[data-itemid]').forEach(zone => {
+    const itemId = zone.dataset.itemid;
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over'); });
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0]; if (!file) return;
+      uploadVersion(itemId, { files: [file] });
+    });
+  });
+}
+
+// ── Publish to Client ──
+window.publishToClient = async function(itemId) {
+  const item = currentItems.find(i => i._id === itemId);
+  if (!item) return;
+  const versions = item.versions || [];
+  if (!versions.length) return toast('⚠️ ارفع موك أب أولاً', 'err');
+  const latest = versions[versions.length - 1];
+  try {
+    await updateDoc(doc(db,'design_items',itemId), {
+      clientPublishHistory: arrayUnion({
+        vNum: latest.vNum, imageUrl: latest.imageUrl,
+        publishedAt: new Date().toISOString(),
+        publishedBy: currentUid, publishedByName: currentUserName,
+      }),
+      lastPublishedVNum: latest.vNum, lastPublishedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      editHistory: arrayUnion({ action:'published_to_client', vNum:latest.vNum, by:currentUid, byName:currentUserName, at:new Date().toISOString() }),
+    });
+    toast(`✅ v${latest.vNum} نُشر للعميل للمراجعة`, 'ok');
+  } catch(e) { toast('❌ ' + e.message, 'err'); }
+};
+
+// ── Publish to Gallery ──
+window.publishToGallery = async function(itemId) {
+  const item = currentItems.find(i => i._id === itemId);
+  if (!item) return;
+  const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
+  const versions = item.versions || [];
+  if (!versions.length) return toast('⚠️ لا توجد نسخ', 'err');
+  const latest = versions[versions.length - 1];
+  if (!confirm(`نشر "${item.itemName}" في المعرض العام؟`)) return;
+  try {
+    const galleryRef = item.galleryId
+      ? doc(db,'gallery',item.galleryId)
+      : doc(collection(db,'gallery'));
+    const batch = writeBatch(db);
+    batch.set(galleryRef, {
+      title: item.itemName,
+      imageUrl: latest.imageUrl,
+      clientName: item.clientName || order?.clientName || '',
+      designerName: item.designerName || currentUserName,
+      productType: order?.products?.[item.itemIndex]?.name || item.itemName,
+      orderId: item.orderDocId || '',
+      publishedAt: serverTimestamp(),
+      publishedBy: currentUid, isVisible: true, tags: [],
+    }, { merge: true });
+    if (!item.galleryId) {
+      batch.update(doc(db,'design_items',itemId), {
+        galleryId: galleryRef.id, updatedAt: serverTimestamp(),
+        editHistory: arrayUnion({ action:'published_to_gallery', galleryId:galleryRef.id, by:currentUid, byName:currentUserName, at:new Date().toISOString() }),
+      });
+    }
+    await batch.commit();
+    toast('🌐 تم النشر في المعرض العام', 'ok');
+  } catch(e) { toast('❌ ' + e.message, 'err'); }
+};
+
+// ── Copy Client Notification ──
+window.copyClientMsg = function(orderId, phone, loginUrl) {
+  const msg = `مرحباً 🎨\nتصميمك جاهز للمراجعة!\nافتح الرابط وأدخل بياناتك:\n🔗 ${loginUrl}\nكود الأوردر: ${orderId}\nرقم هاتفك: ${phone}`;
+  navigator.clipboard.writeText(msg)
+    .then(() => toast('✅ تم نسخ رسالة الإشعار','ok'))
+    .catch(() => toast('⚠️ لم يتم النسخ','err'));
 };
 </script>
 </body>
