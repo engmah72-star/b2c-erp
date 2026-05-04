@@ -151,6 +151,7 @@
             <option value="operation_manager">📋 مدير عمليات</option>
             <option value="customer_service">💬 خدمة عملاء</option>
             <option value="graphic_designer">🎨 مصمم جرافيك</option>
+            <option value="design_operator">⚙️ مشغل تصميم</option>
             <option value="production_agent">🏭 مندوب تنفيذ</option>
             <option value="shipping_officer">🚚 موظف شحن</option>
             <option value="wallet_manager">💰 محاسب</option>
@@ -299,7 +300,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 
 const FB_CONFIG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -984,7 +985,7 @@ window.openAddEmp=function(){
   document.getElementById('e-phone').addEventListener('input',updatePreview,{once:true});
 };
 window.updateSalaryUI=function(){
-  const role=gv('e-role');const isD=role==='graphic_designer';
+  const role=gv('e-role');const isD=role==='graphic_designer'||role==='design_operator';
   document.getElementById('e-commission-row').style.display=isD?'':'none';
   document.getElementById('e-commission-info').style.display=isD?'block':'none';
 };
@@ -999,7 +1000,7 @@ window.saveEmp=async function(){
   if(!salary)return toast('⚠️ أدخل المرتب','err');
   if(!editingId){const dup=employees.find(e=>e.phone===phone);if(dup)return toast('⚠️ رقم الهاتف مسجّل مسبقاً لـ '+dup.name,'err');}
   const btn=document.getElementById('save-btn');btn.disabled=true;btn.textContent='جاري...';
-  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:role==='graphic_designer'?commission:0,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
+  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role==='graphic_designer'||role==='design_operator')?commission:0,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
   try{
     if(editingId){
       await updateDoc(doc(db,'employees',editingId),empData);
@@ -1025,17 +1026,22 @@ window.saveEmp=async function(){
         } else { throw authErr; }
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;
-      const ref=await addDoc(collection(db,'employees'),empData);
       const ROLE_DEFAULTS={
-        customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
-        graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+        customer_service: {pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
+        graphic_designer: {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+        design_operator:  {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true},
+        production_agent: {pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+        shipping_officer: {pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+        wallet_manager:   {pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
         operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
-        admin:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
+        admin:            {pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
       };
-      await setDoc(doc(db,'users',authUid),{name,role,email,phone,isActive:true,mustChangePassword:true,permissions:ROLE_DEFAULTS[role]||ROLE_DEFAULTS.customer_service,createdAt:serverTimestamp()});
+      // atomic: create employees + users in one batch (both succeed or both fail)
+      const batch=writeBatch(db);
+      const empRef=doc(collection(db,'employees'));
+      batch.set(empRef,empData);
+      batch.set(doc(db,'users',authUid),{name,role,email,phone,isActive:true,mustChangePassword:true,permissions:ROLE_DEFAULTS[role]||ROLE_DEFAULTS.customer_service,createdAt:serverTimestamp()});
+      await batch.commit();
       toast(`✅ تم إضافة ${name} · كلمة السر: b2c@123`,'ok');
     }
     document.getElementById('ov-emp').classList.remove('open');
