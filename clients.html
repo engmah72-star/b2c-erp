@@ -905,7 +905,6 @@ function closePanel(){
 }
 function renderPanel(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
-  // إخفاء/إظهار زر الأوردر حسب حالة العميل
   const pnOrdBtn=document.querySelector('#panel-ov .btn-g');
   if(pnOrdBtn)pnOrdBtn.style.display=c.status==='legacy'?'none':'';
   const col=COLORS[clients.indexOf(c)%COLORS.length];
@@ -913,6 +912,15 @@ function renderPanel(id){
   const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
   const paid=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const rem=cOrds.reduce((s,o)=>s+(calcRem(o)),0);
+  // ── financial deep dive ──
+  const totalCost=cOrds.reduce((s,o)=>s+((o.costItems||[]).reduce((x,ci)=>x+(parseFloat(ci.total)||0),0)||(parseFloat(o.totalCost)||0)),0);
+  const totalProfit=tot-totalCost;
+  const profitPct=tot>0?Math.round(totalProfit/tot*100):null;
+  const clientTx=cOrds.flatMap(o=>(txByOrder.get(o._id)||[]).filter(tx=>tx.type==='in'&&tx.amount>0));
+  const byWallet={};
+  clientTx.forEach(tx=>{const wn=tx.walletName||'—';byWallet[wn]=(byWallet[wn]||0)+(parseFloat(tx.amount)||0);});
+  const firstOrd=cOrds.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))[0];
+  const memberDays=firstOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-firstOrd.createdAt.seconds)/86400):null;
   const pct=tot>0?Math.min(paid/tot*100,100):0;
   const active=cOrds.filter(o=>o.stage!=='archived');
   const tags=c.tags||[];
@@ -970,6 +978,28 @@ function renderPanel(id){
       <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
         <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'};border-radius:4px;transition:width .4s"></div>
       </div>
+    </div>`:''}
+
+    <!-- المالية التفصيلية -->
+    ${(totalCost>0||Object.keys(byWallet).length>0||memberDays!==null)?`
+    <div class="section" style="margin-bottom:14px;background:rgba(59,158,255,.04);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:12px">
+      <div style="font-size:11px;font-weight:800;color:var(--b);margin-bottom:10px">💼 حياته في الشركة</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:${Object.keys(byWallet).length?'10':'0'}px">
+        ${memberDays!==null?pRow('📅 عميل منذ',memberDays+' يوم'):''}
+        ${pRow('📦 إجمالي الأوردرات',cOrds.length+' أوردر')}
+        ${pRow('💵 إجمالي المبيعات',fn(tot)+' ج')}
+        ${totalCost>0?pRow('🔴 التكلفة الإجمالية',fn(totalCost)+' ج'):''}
+        ${totalCost>0?pRow('🟢 إجمالي الربح',fn(totalProfit)+' ج'+(profitPct!==null?' ('+profitPct+'%)':'')):''}
+      </div>
+      ${Object.keys(byWallet).length?`
+      <div style="font-size:10px;font-weight:800;color:var(--dim2);margin-bottom:6px">💳 توزيع المدفوعات على المحافظ</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${Object.entries(byWallet).sort((a,b)=>b[1]-a[1]).map(([wn,amt])=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bg3);border-radius:6px">
+          <span style="font-size:11px;color:var(--dim2)">${wn}</span>
+          <span style="font-size:12px;font-weight:800;color:var(--g)">${fn(amt)} ج</span>
+        </div>`).join('')}
+      </div>`:''}
     </div>`:''}
 
     <!-- بيانات العميل -->
@@ -1885,7 +1915,7 @@ window.renderControlGrid=function(){
 
     const clientNameCell=isEdit
       ? `<td><input class="cg-inp" data-field="clientName" value="${safeClientName}" style="width:110px"></td>`
-      : `<td><span style="font-weight:700">${o.clientName||'—'}</span></td>`;
+      : `<td onclick="cgridOpenClient('${o._id}')" style="cursor:pointer" title="عرض بطاقة العميل"><span style="font-weight:700;color:var(--b);text-decoration:underline dotted">${o.clientName||'—'}</span></td>`;
     const bizCell=isEdit
       ? `<td><input class="cg-inp" data-field="clientBusiness" value="${safeBiz}" style="width:100px"></td>`
       : `<td><span style="color:var(--dim2);font-size:10px">${o.clientBusiness||o.job||'—'}</span></td>`;
@@ -2182,6 +2212,19 @@ function cgridExportSelected(ords){
   a.download='control-grid.csv';a.click();
   toast('✅ تم التصدير','ok');
 }
+
+window.cgridOpenClient=function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
+  // البحث: clientId أولاً (يشمل العملاء بدون تليفون) → هاتف → اسم
+  const c=clients.find(c=>c._id===o.clientId)
+    ||(o.clientPhone?clients.find(c=>c.phone1===o.clientPhone):null)
+    ||clients.find(c=>c.name&&c.name===o.clientName);
+  if(c){
+    openClient(c._id);
+  } else {
+    toast(`لم يُعثر على بطاقة "${o.clientName||'—'}" في قاعدة العملاء`,'err');
+  }
+};
 
 window.cgridStartEdit=function(orderId){
   __cgEditRows.add(orderId);
