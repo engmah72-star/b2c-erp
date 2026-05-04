@@ -99,6 +99,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
   batch.set(ref, {
     ...lc,
     ...(data.direction ? {direction: data.direction} : {}),
+    ...(data.categoryOverride ? {category: data.categoryOverride} : {}),
     eventType,
     amount:       data.amount       || 0,
     orderId:      data.orderId      || null,
@@ -169,6 +170,7 @@ export function getReversal(eventType) {
 
 async function handleVendorPayment(db, p) {
   const batch = writeBatch(db);
+  const supCategory = p.supplierType === 'shipper' ? 'shipper_payment' : 'printer_payment';
 
   if (p.walletId) {
     batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.amount) });
@@ -177,7 +179,7 @@ async function handleVendorPayment(db, p) {
 
   const payRef = doc(collection(db, 'supplier_payments'));
   batch.set(payRef, {
-    supplierId: p.supplierId, supplierName: p.supplierName,
+    supplierId: p.supplierId, supplierName: p.supplierName, supplierType: p.supplierType || 'printer',
     amount: p.amount, walletId: p.walletId || '',
     note: p.note || '', date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdAt: serverTimestamp(), createdBy: p.userId || '',
@@ -187,7 +189,7 @@ async function handleVendorPayment(db, p) {
   batch.set(txRef, {
     walletId: p.walletId || '', walletName: p.walletName || '',
     type: 'out', amount: p.amount, fees: 0,
-    description: p.note || `دفعة مورد — ${p.supplierName}`, category: 'supplier',
+    description: p.note || `دفعة مورد — ${p.supplierName}`, category: supCategory,
     supplierId: p.supplierId, supplierName: p.supplierName,
     spId: payRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
@@ -198,6 +200,7 @@ async function handleVendorPayment(db, p) {
 
   addLedgerToBatch(batch, db, 'VENDOR_PAYMENT', {
     ...p, vendorId: p.supplierId, vendorName: p.supplierName, notes: p.note,
+    categoryOverride: supCategory,
   });
 
   await batch.commit();
@@ -208,6 +211,7 @@ async function handleVendorPayment(db, p) {
 
 async function handleVendorPaymentReversal(db, p) {
   const batch = writeBatch(db);
+  const supCategory = p.supplierType === 'shipper' ? 'shipper_payment' : 'printer_payment';
 
   if (p.walletId) {
     batch.update(doc(db, 'wallets', p.walletId), { balance: increment(p.amount) });
@@ -220,7 +224,7 @@ async function handleVendorPaymentReversal(db, p) {
   batch.set(revTxRef, {
     walletId: p.walletId || '', walletName: p.walletName || '',
     type: 'in', amount: p.amount, fees: 0,
-    description: `إلغاء دفعة — ${p.supplierName}`, category: 'supplier',
+    description: `إلغاء دفعة — ${p.supplierName}`, category: supCategory,
     supplierId: p.supplierId, supplierName: p.supplierName,
     isReversal: true,
     date: new Date().toLocaleDateString('ar-EG'),
@@ -232,6 +236,7 @@ async function handleVendorPaymentReversal(db, p) {
   addLedgerToBatch(batch, db, 'VENDOR_PAYMENT_REVERSAL', {
     ...p, vendorId: p.supplierId, vendorName: p.supplierName,
     notes: `إلغاء دفعة — ${p.supplierName}`,
+    categoryOverride: supCategory,
   });
 
   await batch.commit();

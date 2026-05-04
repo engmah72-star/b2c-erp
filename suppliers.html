@@ -608,7 +608,13 @@ window.saveSup=async function(){
 
 window.delSup=async function(){
   if(!activeSup)return;
-  if(!confirm(`حذف "${activeSup.name}"؟`))return;
+  const linkedPayments=payments.filter(p=>p.supplierId===activeSup._id);
+  const linkedOrders=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===activeSup._id));
+  if(linkedPayments.length||linkedOrders.length){
+    if(!confirm(`⚠️ "${activeSup.name}" مرتبط بـ ${linkedOrders.length} أوردر و ${linkedPayments.length} دفعة.\n\nسيُحذف المورد فقط — البيانات المرتبطة تبقى بدون ارتباط.\n\nهل تريد الاستمرار؟`))return;
+  }else{
+    if(!confirm(`حذف "${activeSup.name}"؟`))return;
+  }
   const col=activeSup.supType==='printer'?'suppliers_v2':'shippers_v2';
   try{await deleteDoc(doc(db,col,activeId));closePanel();toast('✅ تم الحذف','ok');}
   catch(e){toast('❌ '+e.message,'err');}
@@ -632,13 +638,15 @@ window.savePay=async function(){
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const walletId=gv('pay-wallet');
   const note=gv('pay-note');
+  const {due}=getSupBalance(activeId);
+  if(amount>due&&!confirm(`⚠️ المبلغ (${fn(amount)} ج) أكبر من المستحق (${fn(due)} ج).\nهل تريد المتابعة؟`))return;
   try{
     const w=wallets.find(x=>x._id===walletId);
     if(walletId&&w&&(parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');
     console.log('[SUPPLIER] 🖱️ BUTTON CLICKED: savePay', { amount, walletId, supplierId: activeId });
     console.log('[SUPPLIER] 📤 EVENT DISPATCHED: VENDOR_PAYMENT');
     await dispatchFinancialEvent(db,FE.VENDOR_PAYMENT,{
-      supplierId:activeId,supplierName:activeSup.name,
+      supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
       amount,walletId,walletName:w?.name||'',note,
       userId:auth.currentUser?.uid||'',userName,date:nowStr(),
     });
@@ -652,7 +660,7 @@ window.delPay=async function(payId,amount,walletId){
   try{
     const w=wallets.find(x=>x._id===walletId);
     await dispatchFinancialEvent(db,FE.VENDOR_PAYMENT_REVERSAL,{
-      supplierId:activeId,supplierName:activeSup.name,
+      supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
       amount,walletId,walletName:w?.name||'',
       paymentId:payId,
       userId:auth.currentUser?.uid||'',userName,
