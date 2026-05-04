@@ -826,7 +826,7 @@ let isAdminUser=false;
 let wizStep=1, wizOrderId=null;
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
-const calcRem=o=>Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
+const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;return Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
 const calcCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
 const calcPaid=o=>parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
 const gv=id=>document.getElementById(id)?.value||'';
@@ -2161,6 +2161,12 @@ window.saveReturnWizard=async function(){
       const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
       depWalletId=depSnap.docs[0]?.data()?.walletId||'';
     }
+    // ─ Pre-fetch: عمليات التحصيل الفعلية لعكسها من المحافظ عند الإرجاع الكامل
+    let colTxDocs=[];
+    if(!isPartial){
+      const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','collection')));
+      colTxDocs=colSnap.docs;
+    }
     const batch=writeBatch(db);
     const lossLabel=lossParty==='client'?'العميل':lossParty==='company'?'الشركة':lossParty==='employee'?'موظف '+employeeName:'شركة الشحن';
     const actionParts=[`↩️ مرتجع${isPartial?' جزئي':' كامل'}`,reasonLabel];
@@ -2200,6 +2206,15 @@ window.saveReturnWizard=async function(){
       batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
       if(depWalletId)batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
     }
+    // ─ عكس التحصيلات الفعلية من المحافظ (مبالغ حُصّلت أثناء الشحن)
+    colTxDocs.forEach(tx=>{
+      const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
+      if(amt>0&&wid){
+        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        const rRef=doc(collection(db,'transactions_v2'));
+        batch.set(rRef,{type:'out',amount:amt,description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'collection_reversal',orderId,clientName:o.clientName||'',walletId:wid,walletName:d.walletName||'',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      }
+    });
     if(cost>0){
       const cRef=doc(collection(db,'transactions_v2'));
       batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
@@ -2207,7 +2222,8 @@ window.saveReturnWizard=async function(){
     }
     if(isPartial&&priceDeduction>0)addLedgerToBatch(batch,db,FE.RETURN_LOSS,{amount:priceDeduction,orderId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`مرتجع جزئي — ${fullNote}`,userId:currentUser?.uid||'',userName});
     if(!isPartial){
-      const lostAmt=(parseFloat(o.totalPaid)||0)+(parseFloat(o.deposit)||0);
+      // lostAmt = ما دُفع فعلاً (totalPaid يشمل العربون مسبقاً — لا نضيف deposit مرة ثانية)
+      const lostAmt=parseFloat(o.totalPaid)||0;
       if(lostAmt>0)addLedgerToBatch(batch,db,FE.RETURN_LOSS,{amount:lostAmt,orderId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`مرتجع كامل — ${fullNote}`,userId:currentUser?.uid||'',userName});
     }
     await batch.commit();
@@ -2300,6 +2316,12 @@ window.saveReturnDirect=async function(){
       const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
       depWalletId=depSnap.docs[0]?.data()?.walletId||'';
     }
+    // ─ Pre-fetch: عمليات التحصيل الفعلية لعكسها من المحافظ
+    let colTxDocs2=[];
+    if(!isPartial){
+      const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','collection')));
+      colTxDocs2=colSnap.docs;
+    }
 
     // ═══ Batch Atomic: كل عمليات المرتجع في transaction واحدة ═══
     const batch=writeBatch(db);
@@ -2334,6 +2356,15 @@ window.saveReturnDirect=async function(){
       batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
       if(depWalletId) batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
     }
+    // ─ عكس التحصيلات الفعلية من المحافظ
+    colTxDocs2.forEach(tx=>{
+      const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
+      if(amt>0&&wid){
+        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        const rRef=doc(collection(db,'transactions_v2'));
+        batch.set(rRef,{type:'out',amount:amt,description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'collection_reversal',orderId,clientName:o.clientName||'',walletId:wid,walletName:d.walletName||'',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      }
+    });
     if(cost>0){
       const cRef=doc(collection(db,'transactions_v2'));
       batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
@@ -2343,7 +2374,7 @@ window.saveReturnDirect=async function(){
       notes:`مرتجع جزئي — ${note||''}`,userId:currentUser?.uid||'',userName,
     });
     if(!isPartial){
-      const lostAmt=(parseFloat(o.totalPaid)||0)+(parseFloat(o.deposit)||0);
+      const lostAmt=parseFloat(o.totalPaid)||0;
       if(lostAmt>0) addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
         amount:lostAmt,orderId,clientId:o.clientId||'',clientName:o.clientName||'',
         notes:`مرتجع كامل — ${note||''}`,userId:currentUser?.uid||'',userName,
