@@ -114,6 +114,13 @@
 .cg-bulk-btn{padding:5px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg3);color:var(--snow);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
 .cg-bulk-btn.danger{border-color:rgba(240,54,96,.4);color:var(--r)}
 .cg-stats-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:10px;color:var(--dim2);align-items:center}
+.cgrid tr.edit-mode td{background:rgba(167,139,250,.06)!important;outline:1px solid rgba(167,139,250,.18)}
+.cg-edit-btn{padding:3px 9px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit}
+.cg-edit-btn.saving{border-color:var(--g);background:rgba(0,217,126,.1);color:var(--g)}
+.cg-cancel-btn{padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:10px;cursor:pointer;font-family:inherit}
+.cg-tx-list{display:flex;flex-direction:column;gap:2px;min-width:120px}
+.cg-tx-item{font-size:9px;color:var(--dim2);white-space:nowrap}
+.cg-tx-item b{color:var(--g)}
 </style>
 </head>
 <body>
@@ -318,16 +325,20 @@
               <th onclick="cgridSort('salePrice')" style="cursor:pointer">الإجمالي</th>
               <th onclick="cgridSort('paid')" style="cursor:pointer">المدفوع</th>
               <th onclick="cgridSort('rem')" style="cursor:pointer">المتبقي</th>
+              <th onclick="cgridSort('cost')" style="cursor:pointer">التكلفة</th>
+              <th onclick="cgridSort('profit')" style="cursor:pointer">الربح</th>
+              <th style="min-width:130px">تفاصيل الدفعات</th>
               <th style="min-width:110px">الحالة</th>
               <th onclick="cgridSort('createdAt')" style="cursor:pointer">الإنشاء</th>
               <th>آخر تحديث</th>
               <th>مشكلة؟</th>
               <th>مرتجع؟</th>
+              <th style="text-align:center">تعديل</th>
               <th style="text-align:center">حذف</th>
             </tr>
           </thead>
           <tbody id="cgrid-body">
-            <tr><td colspan="16" style="text-align:center;padding:30px;color:var(--dim2)">جاري التحميل...</td></tr>
+            <tr><td colspan="20" style="text-align:center;padding:30px;color:var(--dim2)">جاري التحميل...</td></tr>
           </tbody>
         </table>
       </div>
@@ -648,6 +659,7 @@ const EGYPT={
 
 // ══ STATE ══
 let clients=[], allOrders=[], products=[], settings={}, wallets=[], designers=[];
+let allTx=[], txByOrder=new Map();
 window.__clientFilter='all';
 let editId=null, activeId=null, pendingClientId='';
 let currentUser=null, currentRole='customer_service', userName='';
@@ -735,6 +747,16 @@ auth.onAuthStateChanged(async u=>{
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();
     fillGovSelect();
+  });
+  db.collection('transactions_v2').onSnapshot(snap=>{
+    allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    txByOrder.clear();
+    allTx.forEach(tx=>{
+      if(!tx.orderId)return;
+      if(!txByOrder.has(tx.orderId))txByOrder.set(tx.orderId,[]);
+      txByOrder.get(tx.orderId).push(tx);
+    });
+    if(window.__statusTab==='cgrid') renderControlGrid();
   });
 });
 
@@ -1709,6 +1731,7 @@ function cgridGetDisplayStatus(o){
 
 let __cgSort={field:'createdAt',dir:-1};
 let __cgSel=new Set();
+let __cgEditRows=new Set();
 let __cgEmpPopulated=false;
 let __cgGovPopulated=false;
 
@@ -1756,7 +1779,14 @@ function cgridGetSorted(data){
       av=a.createdAt?.seconds||(a.createdAt?.toDate?.().getTime()/1000)||0;
       bv=b.createdAt?.seconds||(b.createdAt?.toDate?.().getTime()/1000)||0;
     } else if(field==='rem'){av=calcRem(a);bv=calcRem(b);}
-    else if(field==='salePrice'||field==='paid'){av=parseFloat(a[field])||0;bv=parseFloat(b[field])||0;}
+    else if(field==='cost'){
+      av=(a.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(a.totalCost)||0);
+      bv=(b.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(b.totalCost)||0);
+    }else if(field==='profit'){
+      const costA=(a.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(a.totalCost)||0);
+      const costB=(b.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(b.totalCost)||0);
+      av=(parseFloat(a.salePrice)||0)-costA; bv=(parseFloat(b.salePrice)||0)-costB;
+    }else if(field==='salePrice'||field==='paid'){av=parseFloat(a[field])||0;bv=parseFloat(b[field])||0;}
     else{av=(a[field]||'').toString();bv=(b[field]||'').toString();}
     return av<bv?-dir:av>bv?dir:0;
   });
@@ -1796,17 +1826,24 @@ window.renderControlGrid=function(){
   const totalRev=data.reduce((s,o)=>s+(parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0),0);
   const totalPaidSum=data.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const totalRem=data.reduce((s,o)=>s+calcRem(o),0);
+  const totalCostSum=data.reduce((s,o)=>s+((o.costItems||[]).reduce((x,c)=>x+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0)),0);
+  const totalProfitSum=data.reduce((s,o)=>{
+    const cost=(o.costItems||[]).reduce((x,c)=>x+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0);
+    return s+((parseFloat(o.salePrice)||0)-cost);
+  },0);
   const statsEl=document.getElementById('cg-stats-row');
   if(statsEl) statsEl.innerHTML=`
     <span>📋 <b>${data.length}</b> أوردر</span>
     <span>💵 الإجمالي: <b style="color:var(--b)">${fn(totalRev)} ج</b></span>
     <span>✅ المحصّل: <b style="color:var(--g)">${fn(totalPaidSum)} ج</b></span>
     <span>⏳ المتبقي: <b style="color:${totalRem>0?'var(--r)':'var(--dim2)'}">${fn(totalRem)} ج</b></span>
+    ${totalCostSum>0?`<span>🔴 التكلفة: <b style="color:var(--r)">${fn(totalCostSum)} ج</b></span>`:''}
+    ${totalCostSum>0?`<span>🟢 الربح: <b style="color:${totalProfitSum>=0?'var(--g)':'var(--r)'}">${fn(totalProfitSum)} ج</b></span>`:''}
     ${__cgSel.size>0?`<b style="color:var(--b);margin-right:auto">${__cgSel.size} محدد</b>`:''}
   `;
 
   const tbody=document.getElementById('cgrid-body');
-  if(!data.length){tbody.innerHTML='<tr><td colspan="16" style="text-align:center;padding:28px;color:var(--dim2)">لا توجد نتائج</td></tr>';return;}
+  if(!data.length){tbody.innerHTML='<tr><td colspan="20" style="text-align:center;padding:28px;color:var(--dim2)">لا توجد نتائج</td></tr>';return;}
 
   const fmtDate=ts=>{
     if(!ts) return '—';
@@ -1819,29 +1856,73 @@ window.renderControlGrid=function(){
     const rem=calcRem(o);
     const sale=(parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0);
     const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const cost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0);
+    const profit=(parseFloat(o.salePrice)||0)-cost;
+    const profitPct=sale>0?Math.round(profit/sale*100):null;
     const status=cgridGetDisplayStatus(o);
     const isRet=o.paymentStatus==='returned'||o.shipStage==='returned';
     const isProb=!!o.hasProblem;
     const isSel=__cgSel.has(o._id);
+    const isEdit=__cgEditRows.has(o._id);
     const sbg=CGRID_STATUS_BG[status]||'';
     const stxt=CGRID_STATUS_CLR[status]||'var(--dim2)';
     const service=o.products?.length?o.products.map(p=>p.name).join('+'):(o.product||'—');
     const empName=o.csName||o.designerName||o.productionAgentName||'—';
     const empUid=o.assignedTo||o.designerId||o.productionAgent||'';
-    const safeClientName=(o.clientName||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-    const safeBiz=(o.clientBusiness||o.job||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const safeClientName=(o.clientName||'').replace(/"/g,'&quot;');
+    const safeBiz=(o.clientBusiness||o.job||'').replace(/"/g,'&quot;');
 
-    return`<tr class="${isSel?'sel-row':''}" data-id="${o._id}">
+    // تفاصيل الدفعات من transactions_v2
+    const txList=(txByOrder.get(o._id)||[])
+      .filter(tx=>tx.type==='in'&&tx.amount>0)
+      .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+    const txHtml=txList.length
+      ? `<div class="cg-tx-list">${txList.map(tx=>`<div class="cg-tx-item"><b>${fn(tx.amount)} ج</b> ← ${tx.walletName||'—'}</div>`).join('')}</div>`
+      : `<span style="color:var(--dim2);font-size:10px">—</span>`;
+
+    // حقول التعديل (تظهر فقط في وضع التعديل)
+    const empOptions=designers.map(e=>`<option value="${e._id||e.uid||''}"${(e._id===empUid||e.uid===empUid)?' selected':''}>${e.name||e.displayName||''}</option>`).join('');
+
+    const clientNameCell=isEdit
+      ? `<td><input class="cg-inp" data-field="clientName" value="${safeClientName}" style="width:110px"></td>`
+      : `<td><span style="font-weight:700">${o.clientName||'—'}</span></td>`;
+    const bizCell=isEdit
+      ? `<td><input class="cg-inp" data-field="clientBusiness" value="${safeBiz}" style="width:100px"></td>`
+      : `<td><span style="color:var(--dim2);font-size:10px">${o.clientBusiness||o.job||'—'}</span></td>`;
+    const empCell=isEdit
+      ? `<td><select class="cg-sel" data-field="assignedTo" style="width:90px"><option value="">— بدون —</option>${empOptions}</select></td>`
+      : `<td><span style="font-size:10px">${empName}</span></td>`;
+    const salePriceCell=isEdit
+      ? `<td><input class="cg-inp" data-field="salePrice" type="number" value="${parseFloat(o.salePrice)||0}" style="width:80px"></td>`
+      : `<td><span style="font-weight:800;color:var(--b)">${fn(sale)} ج</span></td>`;
+    const paidCell=isEdit
+      ? `<td><input class="cg-inp" data-field="totalPaid" type="number" value="${paid}" style="width:80px"></td>`
+      : `<td><span style="color:var(--g);font-weight:700">${fn(paid)} ج</span></td>`;
+    const editBtnCell=isEdit
+      ? `<td style="text-align:center;white-space:nowrap">
+           <button class="cg-edit-btn saving" onclick="cgridSaveRowEdit('${o._id}')">✅ حفظ</button>
+           <button class="cg-cancel-btn" onclick="cgridCancelEdit('${o._id}')" style="margin-right:4px">✕</button>
+         </td>`
+      : `<td style="text-align:center">
+           <button class="cg-edit-btn" onclick="cgridStartEdit('${o._id}')">✏️ تعديل</button>
+         </td>`;
+
+    return`<tr class="${isSel?'sel-row':''}${isEdit?' edit-mode':''}" data-id="${o._id}">
       <td style="text-align:center"><input type="checkbox" ${isSel?'checked':''} onchange="cgridToggleSel('${o._id}',this.checked)" style="accent-color:var(--p)"></td>
       <td style="font-weight:700;color:var(--dim2);font-size:10px">${o.orderId||o._id.slice(-6)}</td>
-      <td class="editable" onclick="cgridEditCell('${o._id}','clientName',this,'${safeClientName}')"><span style="font-weight:700">${o.clientName||'—'}</span></td>
+      ${clientNameCell}
       <td style="color:var(--dim2)">${o.clientPhone||'—'}</td>
-      <td class="editable" onclick="cgridEditCell('${o._id}','clientBusiness',this,'${safeBiz}')"><span style="color:var(--dim2);font-size:10px">${o.clientBusiness||o.job||'—'}</span></td>
+      ${bizCell}
       <td style="color:var(--dim2);font-size:10px;max-width:110px;overflow:hidden;text-overflow:ellipsis">${service}</td>
-      <td class="editable" onclick="cgridEditEmp('${o._id}','${empUid}',this)"><span style="font-size:10px">${empName}</span></td>
-      <td class="editable" onclick="cgridEditCell('${o._id}','salePrice',this,${parseFloat(o.salePrice)||0},'number')"><span style="font-weight:800;color:var(--b)">${fn(sale)} ج</span></td>
-      <td class="editable" onclick="cgridEditCell('${o._id}','totalPaid',this,${paid},'number')"><span style="color:var(--g);font-weight:700">${fn(paid)} ج</span></td>
+      ${empCell}
+      ${salePriceCell}
+      ${paidCell}
       <td style="color:${rem>0?'var(--r)':'var(--dim2)'};font-weight:${rem>0?800:400}">${rem>0?fn(rem)+' ج':'—'}</td>
+      <td style="font-size:10px;color:${cost>0?'var(--r)':'var(--dim2)'};font-weight:${cost>0?700:400}">${cost>0?fn(cost)+' ج':'—'}</td>
+      <td style="font-size:10px;font-weight:${cost>0?800:400};color:${cost>0?(profit>=0?'var(--g)':'var(--r)'):'var(--dim2)'}">
+        ${cost>0?fn(profit)+' ج'+(profitPct!==null?` <span style="font-size:8px;opacity:.7">${profitPct}%</span>`:''):'—'}
+      </td>
+      <td>${txHtml}</td>
       <td>
         <select class="cg-sel" onchange="cgridSaveStatus('${o._id}',this.value,'${status}')" style="background:${sbg};color:${stxt};font-size:10px;padding:2px 5px">
           ${Object.keys(CGRID_STATUS_MAP).map(s=>`<option value="${s}"${s===status?' selected':''}>${s}</option>`).join('')}
@@ -1855,6 +1936,7 @@ window.renderControlGrid=function(){
         </button>
       </td>
       <td style="text-align:center">${isRet?'<span style="color:var(--r);font-size:11px">↩️ نعم</span>':'<span style="color:var(--dim2);font-size:10px">لا</span>'}</td>
+      ${editBtnCell}
       <td style="text-align:center">
         <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:800;cursor:pointer" title="حذف نهائي">🗑</button>
       </td>
@@ -2100,6 +2182,94 @@ function cgridExportSelected(ords){
   a.download='control-grid.csv';a.click();
   toast('✅ تم التصدير','ok');
 }
+
+window.cgridStartEdit=function(orderId){
+  __cgEditRows.add(orderId);
+  renderControlGrid();
+};
+
+window.cgridCancelEdit=function(orderId){
+  __cgEditRows.delete(orderId);
+  renderControlGrid();
+};
+
+window.cgridSaveRowEdit=async function(orderId){
+  const row=document.querySelector(`tr[data-id="${orderId}"]`);if(!row)return;
+  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
+
+  const newName=(row.querySelector('[data-field="clientName"]')?.value||'').trim()||o.clientName||'';
+  const newBiz=(row.querySelector('[data-field="clientBusiness"]')?.value||'').trim();
+  const newSale=parseFloat(row.querySelector('[data-field="salePrice"]')?.value)||0;
+  const newPaid=parseFloat(row.querySelector('[data-field="totalPaid"]')?.value)||0;
+  const newEmpUid=row.querySelector('[data-field="assignedTo"]')?.value||'';
+
+  const oldName=o.clientName||'';
+  const oldBiz=o.clientBusiness||o.job||'';
+  const oldSale=parseFloat(o.salePrice)||0;
+  const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const oldEmpUid=o.assignedTo||o.designerId||o.productionAgent||'';
+
+  const changes=[];
+  if(newName!==oldName) changes.push(`الاسم: "${oldName}"→"${newName}"`);
+  if(newBiz!==oldBiz) changes.push(`الشركة: "${oldBiz}"→"${newBiz}"`);
+  if(Math.abs(newSale-oldSale)>0.01) changes.push(`السعر: ${fn(oldSale)}→${fn(newSale)} ج`);
+  if(Math.abs(newPaid-oldPaid)>0.01) changes.push(`المدفوع: ${fn(oldPaid)}→${fn(newPaid)} ج`);
+  if(newEmpUid&&newEmpUid!==oldEmpUid) changes.push('تغيير الموظف');
+
+  if(!changes.length){cgridCancelEdit(orderId);return;}
+
+  const tl=[...(o.timeline||[]),{date:nowStr(),action:`✏️ [أدمن] ${changes.join(' | ')}`,by:userName||'admin'}];
+  const paidDiff=newPaid-oldPaid;
+  const newCFee=parseFloat(o.customerShipFee)||0;
+  const newDisc=parseFloat(o.discount)||0;
+  const newRem=Math.max(0,newSale+newCFee-newDisc-newPaid);
+  const newPayStatus=newRem<=0?'paid':newPaid>0?'partial':'pending';
+  const emp=designers.find(e=>e._id===newEmpUid||e.uid===newEmpUid);
+  const wId=o.depositWalletId||o.walletId||'';
+  const w=wallets.find(x=>x._id===wId);
+
+  const updates={
+    clientName:newName,clientBusiness:newBiz,
+    salePrice:newSale,totalPaid:newPaid,remaining:newRem,paymentStatus:newPayStatus,
+    timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  if(newEmpUid&&newEmpUid!==oldEmpUid&&emp){
+    updates.assignedTo=newEmpUid;
+    updates.csName=emp.name||emp.displayName||'';
+  }
+
+  try{
+    if(Math.abs(paidDiff)>0.01&&wId){
+      const batch=db.batch();
+      batch.update(db.collection('orders').doc(orderId),updates);
+      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(paidDiff)});
+      const isIn=paidDiff>0;
+      batch.set(db.collection('transactions_v2').doc(),{
+        walletId:wId,walletName:w?.name||'',type:isIn?'in':'out',amount:Math.abs(paidDiff),
+        description:`تعديل أدمن — ${isIn?'دفعة':'استرداد'} — ${o.clientName||''}`,
+        category:'admin_edit',orderId,clientName:o.clientName||'',
+        date:new Date().toLocaleDateString('ar-EG'),
+        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+        createdBy:currentUser?.uid||'',createdByName:userName||'admin'
+      });
+      batch.set(db.collection('financial_ledger').doc(),{
+        eventType:isIn?'CUSTOMER_PAYMENT':'CUSTOMER_REFUND',
+        type:isIn?'income':'expense',direction:isIn?'in':'out',
+        icon:isIn?'💰':'↩️',label:isIn?'دفعة (تعديل أدمن)':'استرداد (تعديل أدمن)',
+        amount:Math.abs(paidDiff),orderId,clientId:o.clientId||null,clientName:o.clientName||null,
+        walletId:wId,walletName:w?.name||'',
+        notes:`[أدمن] ${changes.join(' | ')}`,
+        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
+        createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
+      });
+      await batch.commit();
+    } else {
+      await db.collection('orders').doc(orderId).update(updates);
+    }
+    __cgEditRows.delete(orderId);
+    toast('✅ تم الحفظ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 window.cgridDeleteOrder=async function(orderId){
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
