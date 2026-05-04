@@ -117,6 +117,26 @@ export function inferEventType(txType, category) {
   return m[category] || (txType === 'in' ? 'CUSTOMER_PAYMENT' : 'GENERAL_EXPENSE');
 }
 
+// لكل حدث → حدث العكس المقابل (للحذف والإلغاء)
+export function getReversal(eventType) {
+  const REVERSAL = {
+    CUSTOMER_PAYMENT:             'CUSTOMER_REFUND',
+    CUSTOMER_REFUND:              'CUSTOMER_PAYMENT',
+    VENDOR_PAYMENT:               'VENDOR_PAYMENT_REVERSAL',
+    VENDOR_PAYMENT_REVERSAL:      'VENDOR_PAYMENT',
+    SALARY_PAYMENT:               'SALARY_PAYMENT_REVERSAL',
+    SALARY_PAYMENT_REVERSAL:      'SALARY_PAYMENT',
+    BONUS_PAYMENT:                'SALARY_PAYMENT_REVERSAL',
+    PENALTY:                      'SALARY_PAYMENT_REVERSAL',
+    SHIPPING_SETTLEMENT:          'SHIPPING_SETTLEMENT_REVERSAL',
+    SHIPPING_SETTLEMENT_REVERSAL: 'SHIPPING_SETTLEMENT',
+    SHIPPING_EXPENSE:             'GENERAL_EXPENSE',
+    RETURN_LOSS:                  'GENERAL_EXPENSE',
+    GENERAL_EXPENSE:              'CUSTOMER_PAYMENT',
+  };
+  return REVERSAL[eventType] || eventType;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Internal Handlers
 // ══════════════════════════════════════════════════════════════════
