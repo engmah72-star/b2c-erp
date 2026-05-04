@@ -323,10 +323,11 @@
               <th>آخر تحديث</th>
               <th>مشكلة؟</th>
               <th>مرتجع؟</th>
+              <th style="text-align:center">حذف</th>
             </tr>
           </thead>
           <tbody id="cgrid-body">
-            <tr><td colspan="15" style="text-align:center;padding:30px;color:var(--dim2)">جاري التحميل...</td></tr>
+            <tr><td colspan="16" style="text-align:center;padding:30px;color:var(--dim2)">جاري التحميل...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1805,7 +1806,7 @@ window.renderControlGrid=function(){
   `;
 
   const tbody=document.getElementById('cgrid-body');
-  if(!data.length){tbody.innerHTML='<tr><td colspan="15" style="text-align:center;padding:28px;color:var(--dim2)">لا توجد نتائج</td></tr>';return;}
+  if(!data.length){tbody.innerHTML='<tr><td colspan="16" style="text-align:center;padding:28px;color:var(--dim2)">لا توجد نتائج</td></tr>';return;}
 
   const fmtDate=ts=>{
     if(!ts) return '—';
@@ -1854,6 +1855,9 @@ window.renderControlGrid=function(){
         </button>
       </td>
       <td style="text-align:center">${isRet?'<span style="color:var(--r);font-size:11px">↩️ نعم</span>':'<span style="color:var(--dim2);font-size:10px">لا</span>'}</td>
+      <td style="text-align:center">
+        <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:800;cursor:pointer" title="حذف نهائي">🗑</button>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2096,6 +2100,34 @@ function cgridExportSelected(ords){
   a.download='control-grid.csv';a.click();
   toast('✅ تم التصدير','ok');
 }
+
+window.cgridDeleteOrder=async function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
+  if(!confirm(`⚠️ حذف أوردر "${o.clientName||''}" نهائياً؟\nسيُحذف من كل السجلات ولا يمكن التراجع.`))return;
+  if(!confirm('تأكيد الحذف النهائي؟'))return;
+  try{
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const wId=o.depositWalletId||o.walletId||'';
+    const w=wallets.find(x=>x._id===wId);
+    const batch=db.batch();
+    if(paid>0&&wId){
+      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(paid)});
+      batch.set(db.collection('financial_ledger').doc(),{
+        eventType:'CUSTOMER_REFUND',type:'expense',direction:'out',icon:'↩️',label:'استرداد (حذف أوردر)',
+        amount:paid,orderId,clientId:o.clientId||null,clientName:o.clientName||null,
+        walletId:wId,walletName:w?.name||'',
+        notes:`[أدمن] حذف أوردر نهائي — استرداد ${fn(paid)} ج`,
+        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
+        createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
+      });
+    }
+    const txSnap=await db.collection('transactions_v2').where('orderId','==',orderId).get();
+    for(const tx of txSnap.docs) batch.delete(tx.ref);
+    batch.delete(db.collection('orders').doc(orderId));
+    await batch.commit();
+    toast('✅ تم الحذف النهائي','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ── Override setStatusTab to handle cgrid tab ──
 window.setStatusTab=function(tab,btn){
