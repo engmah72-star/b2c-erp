@@ -266,6 +266,11 @@
         <label>📝 ملاحظة</label>
         <input class="inp" id="pay-one-note">
       </div>
+      <!-- سجل الدفعات الأخيرة هذا الشهر -->
+      <div id="pay-one-history" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--dim2);margin-bottom:6px">↩️ إلغاء دفعة سابقة</div>
+        <div id="pay-one-history-list"></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closePayOne()">إلغاء</button>
@@ -1211,6 +1216,27 @@ window.openPayOne=function(empId,preType){
   const amtEl=document.getElementById('pay-one-amount');
   if(amtEl){amtEl.value=remaining>0?remaining:suggested;amtEl.removeAttribute('data-edited');}
   sv('pay-one-note',`${TYPE_LABELS_EMP[preType||'salary']} ${MONTHS_AR[now.getMonth()]} ${now.getFullYear()} — ${e.name}`);
+  // سجل الدفعات القابلة للإلغاء هذا الشهر
+  const empTx=transactions.filter(t=>t.employeeId===e._id&&t.month===mKey&&(t.category==='salary'||t.category==='designer_fee'||t.salaryType)).slice(-5).reverse();
+  const histEl=document.getElementById('pay-one-history');
+  const histList=document.getElementById('pay-one-history-list');
+  if(empTx.length&&histEl&&histList){
+    histEl.style.display='block';
+    histList.innerHTML=empTx.map(t=>{
+      const isDeduction=t.isDeduction||t.salaryType==='deduction';
+      const lbl=isDeduction?'خصم':t.salaryType==='bonus'?'مكافأة':t.salaryType==='advance'?'سلفة':'راتب';
+      return`<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg3);border-radius:7px;margin-bottom:5px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:700">${lbl}: ${fn(t.amount)} ج</div>
+          <div style="font-size:10px;color:var(--dim2)">${t.description||t.note||''} · ${t.date||''}</div>
+        </div>
+        <button onclick="reverseSalaryTx('${t._id}','${e._id}','${(e.name||'').replace(/'/g,'')}',${t.amount},${isDeduction},'${t.walletId||''}','${t.epId||''}')"
+          style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
+          ↩️ إلغاء
+        </button>
+      </div>`;
+    }).join('');
+  } else if(histEl) { histEl.style.display='none'; }
   document.getElementById('ov-pay-one').classList.add('open');
 };
 
@@ -1259,6 +1285,19 @@ window.confirmPayOne=async function(){
     toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${e.name}`,'ok');
   }catch(err){toast('❌ '+err.message,'err');}
   btn.disabled=false;btn.textContent='✓ تسجيل';
+};
+
+window.reverseSalaryTx=async function(txId,employeeId,employeeName,amount,isDeduction,walletId,epId){
+  if(!confirm(`إلغاء دفعة ${fn(amount)} ج لـ ${employeeName}؟`))return;
+  try{
+    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT_REVERSAL,{
+      txId,epId:epId||'',employeeId,employeeName,
+      amount,isDeduction,walletId,
+      userId:currentUser?.uid||'',userName,
+    });
+    closePayOne();
+    toast(`✅ تم إلغاء الدفعة — ${employeeName}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 </script>
