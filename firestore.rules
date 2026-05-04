@@ -34,7 +34,13 @@ service cloud.firestore {
       let d = request.resource.data;
       return d.amount is number && d.amount > 0
           && d.type in ['in', 'out']
-          && d.walletId is string && d.walletId.size() > 0;
+          && (d.walletId == null || d.walletId is string);
+    }
+    function validLedger() {
+      let d = request.resource.data;
+      return d.amount is number && d.amount > 0
+          && d.eventType is string
+          && d.type in ['income', 'expense', 'reversal', 'transfer', 'other'];
     }
 
     // ══ Users ══
@@ -145,7 +151,7 @@ service cloud.firestore {
         can('canAddOrders')
       );
       allow create: if isAuth()
-        && (isAdmin() || hasPage('accounts') || hasPage('shipping') || hasPage('shipping-accounts') || can('canAddOrders'))
+        && (isAdmin() || hasPage('accounts') || hasPage('shipping') || hasPage('shipping-accounts') || hasPage('suppliers') || hasPage('production') || can('canAddOrders'))
         && validTx();
       allow update, delete: if isAdmin();
     }
@@ -153,7 +159,8 @@ service cloud.firestore {
     // ══ Products ══
     match /products_v2/{prodId} {
       allow read: if isAuth();
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAuth() && (isAdmin() || hasPage('production') || hasPage('products'));
     }
 
     // ══ Suppliers ══
@@ -169,13 +176,13 @@ service cloud.firestore {
 
     // ══ Shippers ══
     match /shippers_v2/{shipId} {
-      allow read: if isAuth();
+      allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('suppliers') || hasPage('shipping-accounts'));
       allow write: if isAdmin();
     }
 
     // ══ Designers (legacy) ══
     match /designers_v2/{desId} {
-      allow read: if isAuth();
+      allow read: if isAuth() && (isAdmin() || hasPage('design'));
       allow write: if isAdmin();
     }
 
@@ -262,15 +269,15 @@ service cloud.firestore {
         hasPage('print') ||
         hasPage('production') ||
         can('canAddOrders')
-      );
+      ) && validLedger();
       allow update: if isAuth() && isAdmin();
       allow delete: if isAuth() && isAdmin();
     }
 
     // ══ Chat ══
     match /chat_messages/{msgId} {
-      allow read: if isAuth();
-      allow create: if isAuth() && request.auth.uid != null;
+      allow read: if isAuth() && (isAdmin() || can('canUseChat') || hasPage('chat'));
+      allow create: if isAuth() && (isAdmin() || can('canUseChat') || hasPage('chat'));
       allow update, delete: if isAdmin();
     }
 
