@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Business2Card — بوابة العملاء</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="icon" href="icon-192.png" type="image/png">
+<style>
+:root{--bg:#0a0a18;--bg2:#10101f;--bg3:#17172d;--text:#e8e8f5;--dim2:#7878a0;
+  --p:#a78bfa;--b:#3b9aff;--g:#00d97e;--r:#ff3d6e;--y:#f0a020;
+  --line:rgba(255,255,255,.08);--rad:10px;--rad2:16px;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'IBM Plex Sans Arabic',sans-serif;background:var(--bg);color:var(--text);
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+  background-image:radial-gradient(ellipse 70% 50% at 50% 0%,rgba(167,139,250,.1),transparent);}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:20px;
+  padding:36px 32px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+.logo{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,var(--p),var(--b));
+  display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 18px;}
+h1{font-size:22px;font-weight:900;text-align:center;margin-bottom:6px;}
+.sub{font-size:13px;color:var(--dim2);text-align:center;margin-bottom:28px;line-height:1.6;}
+.fg{margin-bottom:16px;}
+.fg label{display:block;font-size:12px;font-weight:700;color:var(--dim2);margin-bottom:6px;}
+.inp{width:100%;padding:12px 14px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:var(--rad);color:var(--text);font-family:inherit;font-size:14px;outline:none;
+  transition:border-color .2s;}
+.inp:focus{border-color:var(--p);}
+.inp::placeholder{color:var(--dim2);}
+.btn{width:100%;padding:13px;background:linear-gradient(135deg,var(--p),var(--b));
+  border:none;border-radius:var(--rad);color:#fff;font-family:inherit;font-size:15px;
+  font-weight:800;cursor:pointer;transition:opacity .2s;margin-top:6px;}
+.btn:hover{opacity:.88;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.err{background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.3);
+  border-radius:var(--rad);padding:11px 14px;font-size:13px;color:var(--r);
+  margin-top:14px;display:none;}
+.loader{display:none;text-align:center;color:var(--dim2);font-size:13px;margin-top:12px;}
+.hint{font-size:11px;color:var(--dim2);text-align:center;margin-top:18px;line-height:1.7;}
+.hint a{color:var(--p);text-decoration:none;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🎨</div>
+  <h1>بوابة تصميمك</h1>
+  <p class="sub">أدخل رقم هاتفك وكود الأوردر<br>لمتابعة تصميمك والاعتماد</p>
+
+  <div class="fg">
+    <label>📱 رقم الهاتف</label>
+    <input class="inp" id="inp-phone" type="tel" placeholder="01XXXXXXXXX" inputmode="numeric" autocomplete="tel">
+  </div>
+  <div class="fg">
+    <label>🔑 كود الأوردر</label>
+    <input class="inp" id="inp-code" placeholder="مثال: ORD-12345678" autocomplete="off"
+      onkeydown="if(event.key==='Enter')doLogin()">
+  </div>
+
+  <button class="btn" id="btn-login" onclick="doLogin()">دخول ←</button>
+  <div class="loader" id="loader">⟳ جاري التحقق...</div>
+  <div class="err" id="err-msg"></div>
+
+  <p class="hint">مش عارف الكود؟ تواصل مع خدمة العملاء<br>
+    <a href="gallery.html">🖼️ معرض التصاميم العام</a>
+  </p>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, query, where, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
+  authDomain:"business2card-c041b.firebaseapp.com",
+  projectId:"business2card-c041b",
+  storageBucket:"business2card-c041b.firebasestorage.app",
+  messagingSenderId:"235622448899",
+  appId:"1:235622448899:web:d8652ff71082f7d003f336"
+});
+const db = getFirestore(app);
+
+function showErr(msg) {
+  const el = document.getElementById('err-msg');
+  el.textContent = msg; el.style.display = 'block';
+}
+function hideErr() { document.getElementById('err-msg').style.display = 'none'; }
+
+window.doLogin = async function() {
+  hideErr();
+  const phone = document.getElementById('inp-phone').value.trim();
+  const code = document.getElementById('inp-code').value.trim();
+  if (!phone) return showErr('⚠️ أدخل رقم الهاتف');
+  if (!code) return showErr('⚠️ أدخل كود الأوردر');
+
+  const btn = document.getElementById('btn-login');
+  const loader = document.getElementById('loader');
+  btn.disabled = true; loader.style.display = 'block';
+
+  try {
+    let order = null;
+
+    // Try by orderId field first (human-readable code like ORD-12345678)
+    const snap1 = await getDocs(query(collection(db,'orders'), where('orderId','==',code)));
+    if (!snap1.empty) {
+      const d = snap1.docs[0];
+      order = { ...d.data(), _id: d.id };
+    }
+
+    // Fallback: try by Firestore doc ID
+    if (!order) {
+      try {
+        const d = await getDoc(doc(db,'orders',code));
+        if (d.exists()) order = { ...d.data(), _id: d.id };
+      } catch(_) {}
+    }
+
+    if (!order) return showErr('❌ الأوردر غير موجود — تأكد من الكود');
+
+    // Validate phone (strip spaces, normalize 0 vs +20)
+    const normalize = p => p.replace(/\s+/g,'').replace(/^(\+20|0020)/,'0');
+    const inputPhone = normalize(phone);
+    const orderPhone = normalize(order.clientPhone || '');
+    if (inputPhone !== orderPhone) return showErr('❌ رقم الهاتف غير مطابق');
+
+    // Save session
+    localStorage.setItem('clientSession', JSON.stringify({
+      orderDocId: order._id,
+      orderCode: order.orderId || code,
+      phone: inputPhone,
+      clientName: order.clientName || '',
+      savedAt: Date.now()
+    }));
+
+    window.location.href = 'client-portal.html';
+  } catch(e) {
+    showErr('❌ خطأ: ' + e.message);
+  } finally {
+    btn.disabled = false; loader.style.display = 'none';
+  }
+};
+
+// Auto-clear error on input
+['inp-phone','inp-code'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', hideErr);
+});
+</script>
+</body>
+</html>
