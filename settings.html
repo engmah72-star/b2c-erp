@@ -518,7 +518,7 @@ import { getAuth, createUserWithEmailAndPassword, onAuthStateChanged, signOut } 
 import {
   getFirestore, collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc,
-  setDoc, getDoc, query, orderBy, serverTimestamp
+  setDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app = initializeApp({
@@ -769,8 +769,23 @@ window._savePermsImpl = async function() {
 
 window.changeRole = async function(uid, role) {
   try {
-    await updateDoc(doc(db,'users',uid), {role});
-    toast('✅ تم تغيير الدور','ok');
+    const ROLE_PERMS_DEFAULTS={
+      admin:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:true},
+      operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:false},
+      customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
+      graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+      design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true},
+      production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+      shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+      wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
+    };
+    const permissions=ROLE_PERMS_DEFAULTS[role]||ROLE_PERMS_DEFAULTS.customer_service;
+    const batch=writeBatch(db);
+    batch.update(doc(db,'users',uid),{role,permissions});
+    const empSnap=await getDocs(query(collection(db,'employees'),where('authUid','==',uid)));
+    if(!empSnap.empty) batch.update(empSnap.docs[0].ref,{role,updatedAt:serverTimestamp()});
+    await batch.commit();
+    toast('✅ تم تغيير الدور وتحديث الصلاحيات تلقائياً','ok');
   } catch(e) { toast('❌ '+e.message,'err'); }
 };
 
