@@ -23,7 +23,7 @@
 .hero-chips{display:flex;gap:6px;flex-wrap:wrap}
 .hero-chip{font-size:11px;background:var(--bg3);border:1px solid var(--line);padding:3px 10px;border-radius:20px}
 .hero-chip-accent{background:rgba(167,139,250,.15);color:var(--p);border-color:rgba(167,139,250,.3)}
-.hero-stats-row{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line)}
+.hero-stats-row{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line)}
 .hstat{padding:12px 8px;text-align:center;border-left:1px solid var(--line)}
 .hstat:last-child{border-left:none}
 .hstat-val{font-size:20px;font-weight:900;line-height:1.15}
@@ -73,7 +73,7 @@
 .lv-official{background:rgba(167,139,250,.15);color:var(--p)}
 .lv-unpaid{background:rgba(74,82,112,.2);color:var(--dim2)}
 .att-day.leave{background:rgba(255,170,0,.18);color:var(--y)}
-@media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}.hero-body{flex-direction:column;text-align:center}.hero-chips{justify-content:center}.hero-stats-row{grid-template-columns:repeat(2,1fr)}.hstat:nth-child(2n){border-left:none}.hstat:nth-child(n+3){border-top:1px solid var(--line)}}
+@media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr)}.hero-body{flex-direction:column;text-align:center}.hero-chips{justify-content:center}.hero-stats-row{grid-template-columns:repeat(3,1fr)}.hstat:nth-child(3n){border-left:none}.hstat:nth-child(n+4){border-top:1px solid var(--line)}}
 </style>
 </head>
 <body>
@@ -420,7 +420,7 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app), db=getFirestore(app);
 
 // ══ STATE ══
-let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[];
+let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[];
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 const empId=new URLSearchParams(location.search).get('id');
@@ -551,6 +551,16 @@ onAuthStateChanged(auth,async u=>{
     empLeaves=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
     renderLeaves();renderAttendance();
   });
+  // أهداف الموظف
+  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId)),snap=>{
+    empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderGoals();
+  });
+  // تقييمات الموظف
+  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId)),snap=>{
+    empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+    renderEvaluations();
+  });
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
   onSnapshot(collection(db,'wallets'),snap=>{
@@ -673,6 +683,17 @@ function renderAll(){
           <div class="hstat-val" style="color:var(--b)">${totalEmpOrders}</div>
           <div class="hstat-lbl">إجمالي الأوردرات</div>
         </div>
+        <div class="hstat" style="border-left:none;border-top:1px solid var(--line)">
+          ${(()=>{
+            const quota=parseFloat(emp.annualLeaveQuota)||21;
+            const curYear=now.getFullYear()+'';
+            const usedDays=empLeaves.filter(lv=>lv.type==='annual'&&(lv.startDate||'').startsWith(curYear)).reduce((s,lv)=>s+(lv.days||0),0);
+            const remaining=Math.max(0,quota-usedDays);
+            const col=remaining>=10?'var(--g)':remaining>=5?'var(--y)':'var(--r)';
+            return`<div class="hstat-val" style="color:${col}">${remaining}<span style="font-size:12px;font-weight:500;color:var(--dim2)">/${quota}</span></div>
+          <div class="hstat-lbl">إجازة سنوية</div>`;
+          })()}
+        </div>
       </div>
     </div>
 
@@ -680,6 +701,14 @@ function renderAll(){
     <div id="score-container" style="margin-bottom:14px"></div>
     <div class="kpi-row">
       ${kpis.map(k=>`<div class="kpi" style="--kc:${k.col}"><div class="kpi-val">${k.val}</div><div class="kpi-lbl">${k.lbl}</div></div>`).join('')}
+    </div>
+
+    <!-- أهداف الشهر -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">🎯 أهداف ${MONTHS[now.getMonth()]}</div>
+      </div>
+      <div id="goals-container"></div>
     </div>
 
     <!-- المهارات والمنتجات -->
@@ -778,6 +807,14 @@ function renderAll(){
       <div id="salaries-container"></div>
     </div>
 
+    <!-- تاريخ التقييمات -->
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:12px">
+        <div class="section-title">📋 تاريخ التقييمات</div>
+      </div>
+      <div id="evaluations-container"></div>
+    </div>
+
     <!-- الصلاحيات -->
     <div class="section" style="margin-bottom:14px">
       <div class="section-head" style="margin-bottom:12px">
@@ -796,6 +833,8 @@ function renderAll(){
   renderClients();
   renderInsights();
   renderScore();
+  renderGoals();
+  renderEvaluations();
   renderSkillsAndProducts();
   renderBehavior();
   renderSchedule();
@@ -815,22 +854,26 @@ function calcScore(){
   }
   const attPct=workDays>0?Math.min(1,present/workDays):0.5;
   const attScore=Math.round(attPct*35);
-  // إنتاجية (40 نقطة)
-  const empOrds=getEmpOrders(allOrders);
-  const total=empOrds.length;
-  const done=empOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
-  const prodPct=total>0?done/total:0.5;
+  // إنتاجية (40 نقطة) — يستخدم أوردرات الشهر الحالي فقط
+  const mOrds=getEmpOrders(allOrders.filter(o=>{const d=o.createdAt?.toDate?.();return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}));
+  // إذا كان هناك هدف للشهر استخدمه كمرجع
+  const curGoal=empGoals.find(g=>g.month===mKey);
+  const total=mOrds.length;
+  const done=mOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
+  let prodPct;
+  if(curGoal?.targetOrdersMonthly>0){prodPct=Math.min(1,total/curGoal.targetOrdersMonthly);}
+  else{prodPct=total>0?done/total:0.5;}
   const prodScore=Math.round(prodPct*40);
   // جودة (25 نقطة)
   let qualPct=0.8;
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    const rej=empOrds.filter(o=>o.designStatus==='rejected').length;
+    const rej=mOrds.filter(o=>o.designStatus==='rejected').length;
     qualPct=total>0?1-(rej/total):0.8;
   }else if(emp.role==='customer_service'){
-    const arch=empOrds.filter(o=>o.stage==='archived').length;
+    const arch=mOrds.filter(o=>o.stage==='archived').length;
     qualPct=total>0?arch/total:0.5;
   }else if(emp.role==='production_agent'){
-    const arch=empOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
+    const arch=mOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
     qualPct=total>0?arch/total:0.5;
   }
   const qualScore=Math.round(qualPct*25);
@@ -875,6 +918,97 @@ function renderScore(){
       </div>
     </div>
   </div>`;
+}
+
+// ══ GOALS ══
+function renderGoals(){
+  const el=document.getElementById('goals-container');if(!el||!emp)return;
+  const mKey=monthKey();
+  const goal=empGoals.find(g=>g.month===mKey);
+  if(!goal){
+    el.innerHTML='<div style="text-align:center;color:var(--dim2);font-size:12px;padding:12px 0">لا توجد أهداف مُحددة لهذا الشهر</div>';
+    return;
+  }
+  // الإنتاجية الفعلية هذا الشهر
+  const mOrdsG=getEmpOrders(allOrders.filter(o=>{const d=o.createdAt?.toDate?.();return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}));
+  const actualOrders=mOrdsG.length;
+  const actualDone=mOrdsG.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
+  // حضور فعلي
+  const presentDaysG=empAttendance.filter(a=>a.date?.startsWith(mKey)).length;
+  const elapsed=Math.max(1,now.getDate());
+
+  const rows=[];
+  if(goal.targetOrdersMonthly>0){
+    const pct=Math.min(100,Math.round(actualOrders/goal.targetOrdersMonthly*100));
+    const col=pct>=100?'var(--g)':pct>=70?'var(--b)':'var(--y)';
+    rows.push({lbl:'📦 الأوردرات',actual:actualOrders,target:goal.targetOrdersMonthly,pct,col,unit:'أوردر'});
+  }
+  if(goal.targetAttendancePct>0){
+    const attPct=Math.round(presentDaysG/elapsed*100);
+    const pct=Math.min(100,Math.round(attPct/goal.targetAttendancePct*100));
+    const col=pct>=100?'var(--g)':pct>=70?'var(--b)':'var(--r)';
+    rows.push({lbl:'⏰ الحضور',actual:attPct+'%',target:goal.targetAttendancePct+'%',pct,col,unit:''});
+  }
+  if(goal.targetQualityPct>0&&mOrdsG.length>0){
+    const qualActual=Math.round(actualDone/Math.max(1,actualOrders)*100);
+    const pct=Math.min(100,Math.round(qualActual/goal.targetQualityPct*100));
+    const col=pct>=100?'var(--g)':pct>=70?'var(--b)':'var(--y)';
+    rows.push({lbl:'✅ الجودة',actual:qualActual+'%',target:goal.targetQualityPct+'%',pct,col,unit:''});
+  }
+  if(!rows.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--dim2);text-align:center;padding:10px">لم تُحدد مؤشرات للهدف</div>';
+    if(goal.notes)el.innerHTML+=`<div style="font-size:12px;color:var(--dim2);text-align:center;padding:4px 0">${goal.notes}</div>`;
+    return;
+  }
+  el.innerHTML=`<div style="background:var(--bg3);border-radius:var(--rad2);padding:14px">
+    ${rows.map(r=>`<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;font-size:12px">
+        <span style="font-weight:700">${r.lbl}</span>
+        <span style="color:var(--dim2)">${r.actual} <span style="opacity:.5">/ ${r.target}</span></span>
+      </div>
+      <div class="prod-bar-wrap">
+        <div class="prod-bar-fill" style="width:${r.pct}%;background:${r.col}"></div>
+      </div>
+      <div style="font-size:10px;color:${r.col};font-weight:700;margin-top:3px;text-align:left">${r.pct}%</div>
+    </div>`).join('')}
+    ${goal.notes?`<div style="font-size:11px;color:var(--dim2);border-top:1px solid var(--line);padding-top:8px;margin-top:4px">💬 ${goal.notes}</div>`:''}
+  </div>`;
+}
+
+// ══ EVALUATIONS ══
+function renderEvaluations(){
+  const el=document.getElementById('evaluations-container');if(!el||!emp)return;
+  if(!empEvaluations.length){
+    el.innerHTML='<div style="text-align:center;color:var(--dim2);font-size:12px;padding:12px 0">لا توجد تقييمات محفوظة بعد</div>';
+    return;
+  }
+  const last6=empEvaluations.slice(0,6);
+  el.innerHTML=last6.map(ev=>{
+    const [yr,mo]=ev.month.split('-');
+    const lbl=MONTHS[parseInt(mo)-1]+' '+yr;
+    const score=ev.totalScore||ev.total||0;
+    const grade=score>=85?'ممتاز':score>=70?'جيد جداً':score>=50?'متوسط':'يحتاج تطوير';
+    const col=score>=85?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
+    const circ=Math.round(2*Math.PI*18);
+    const fill=Math.round(score/100*circ);
+    return`<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px">
+      <svg width="44" height="44" viewBox="0 0 44 44" style="transform:rotate(-90deg);flex-shrink:0">
+        <circle cx="22" cy="22" r="18" fill="none" stroke="var(--bg2)" stroke-width="4"/>
+        <circle cx="22" cy="22" r="18" fill="none" stroke="${col}" stroke-width="4"
+          stroke-dasharray="${fill} ${circ}" stroke-linecap="round"/>
+      </svg>
+      <div style="position:absolute;width:44px;text-align:center;font-size:11px;font-weight:900;color:${col};margin-right:0;line-height:44px">${score}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:800">${lbl} <span style="font-size:11px;font-weight:500;color:${col}">— ${grade}</span></div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:3px">
+          حضور ${ev.attScore||0}/35 · إنتاجية ${ev.prodScore||0}/40 · جودة ${ev.qualScore||0}/25
+          ${ev.attDays!==undefined?` · ${ev.attDays} يوم حضور`:''}
+          ${ev.rating?` · ⭐ ${ev.rating}/5`:''}
+        </div>
+        ${ev.notes?`<div style="font-size:10px;color:var(--dim2);margin-top:2px">💬 ${ev.notes}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ══ SKILLS & PRODUCTS ══

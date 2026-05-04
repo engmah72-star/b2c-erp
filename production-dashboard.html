@@ -67,6 +67,7 @@
       <div><div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:4px">⏰ الحضور اليوم</div><div style="font-size:16px;font-weight:800" id="att-status">لم يُسجَّل</div><div style="font-size:11px;color:var(--dim2)" id="att-detail"></div></div>
       <button class="btn btn-g btn-sm" id="att-btn" onclick="doAtt()">✅ تسجيل حضور</button>
     </div>
+    <div id="goal-card" style="display:none;background:var(--bg2);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad2);padding:12px 16px;margin-bottom:14px"></div>
     <div class="kpi-row">
       <div class="kpi" style="--kc:var(--b)"><div class="kpi-val" id="k-assigned">—</div><div class="kpi-lbl">كُلّفت الشهر</div></div>
       <div class="kpi" style="--kc:var(--g)"><div class="kpi-val" id="k-done">—</div><div class="kpi-lbl">مكتمل ✅</div></div>
@@ -239,7 +240,7 @@ import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/fi
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
-let myOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='active';
+let myOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='active',myGoal=null,myEmpId2='',myLastEvalProd=null;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const now=new Date();
@@ -269,6 +270,23 @@ onAuthStateChanged(auth,async u=>{
     updateKPIs();renderOrders();
     setText('sub',myOrders.length+' أوردر تنفيذ');
   });
+  // الأهداف والتقييمات
+  onSnapshot(collection(db,'employees'),snap=>{
+    const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===u.uid||e.email===u.email);
+    myEmpId2=emp?._id||'';
+    if(myEmpId2){
+      const mk=new Date().getFullYear()+'-'+String(new Date().getMonth()+1).padStart(2,'0');
+      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId2),where('month','==',mk)),sn=>{
+        myGoal=sn.docs.length?sn.docs[0].data():null;
+        renderGoalCard();
+      });
+      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId2)),sn=>{
+        const evs=sn.docs.map(d=>d.data()).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+        myLastEvalProd=evs[0]||null;
+        renderGoalCard();
+      });
+    }
+  });
   // الحضور
   onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',u.uid)),snap=>{
     const today=new Date().toISOString().slice(0,10);
@@ -277,6 +295,34 @@ onAuthStateChanged(auth,async u=>{
     renderAttBox();
   });
 });
+function renderGoalCard(){
+  const el=document.getElementById('goal-card');if(!el)return;
+  if(!myGoal&&!myLastEvalProd){el.style.display='none';return;}
+  el.style.display='block';
+  const MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const nm=new Date();
+  let html='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">';
+  if(myGoal?.targetOrdersMonthly>0){
+    const monthly=myOrders.filter(o=>isThisMonth(o.createdAt));
+    const done=monthly.filter(o=>['shipping','archived'].includes(o.stage)).length;
+    const pct=Math.min(100,Math.round(done/myGoal.targetOrdersMonthly*100));
+    const col=pct>=100?'var(--g)':pct>=70?'var(--b)':'var(--y)';
+    html+=`<div style="flex:1;min-width:140px"><div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:4px">🎯 هدف الشهر</div>
+      <div style="font-size:14px;font-weight:900;color:${col}">${done} / ${myGoal.targetOrdersMonthly} <span style="font-size:10px;font-weight:500">أوردر</span></div>
+      <div style="height:4px;background:var(--bg3);border-radius:99px;margin-top:4px"><div style="height:4px;border-radius:99px;width:${pct}%;background:${col}"></div></div>
+    </div>`;
+  }
+  if(myLastEvalProd){
+    const s=myLastEvalProd.totalScore||0;
+    const c=s>=85?'var(--g)':s>=70?'var(--b)':s>=50?'var(--y)':'var(--r)';
+    html+=`<div style="text-align:center;padding:8px 14px;background:var(--bg3);border-radius:var(--rad)">
+      <div style="font-size:20px;font-weight:900;color:${c}">${s}</div>
+      <div style="font-size:9px;color:var(--dim2);font-weight:700">آخر تقييم</div>
+    </div>`;
+  }
+  html+='</div>';
+  el.innerHTML=html;
+}
 function updateKPIs(){
   const monthly=myOrders.filter(o=>isThisMonth(o.createdAt));
   const done=monthly.filter(o=>['shipping','archived'].includes(o.stage)).length;
@@ -326,13 +372,21 @@ function renderOrders(){
   if(!data.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد أوردرات</div></div>';return;}
   el.innerHTML=data.map(o=>{
     const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||o.product||'—';
-    return`<div class="ocard" onclick="location.href='production.html'">
+    const today2=new Date().toISOString().slice(0,10);
+    const tomorrow2=new Date(Date.now()+864e5).toISOString().slice(0,10);
+    const isLate=o.deadline&&o.deadline<today2;
+    const isToday=o.deadline===today2;
+    const isTomorrow=o.deadline===tomorrow2;
+    const deadlineBorder=isLate?'border-right:3px solid var(--r)':isToday||isTomorrow?'border-right:3px solid var(--y)':'';
+    const deadlineColor=isLate?'color:var(--r);font-weight:700':isToday||isTomorrow?'color:var(--y);font-weight:700':'color:var(--dim2)';
+    const deadlineLbl=isLate?`⚠️ ${o.deadline} (متأخر)`:isToday?`⚡ اليوم`:isTomorrow?`⏰ غداً`:o.deadline;
+    return`<div class="ocard" style="${deadlineBorder}" onclick="location.href='production.html'">
       <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        <div><div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div><div style="font-size:15px;font-weight:800">${o.clientName||'—'}</div></div>
+        <div><div style="font-size:10px;color:var(--dim2)">${o.orderId||o._id.slice(-6)}</div><div style="font-size:15px;font-weight:800">${isLate?'⚠️ ':''} ${o.clientName||'—'}</div></div>
         <span style="font-size:11px;color:var(--r);font-weight:700">${o.stage==='production'?'🏭 جاري':'✅ منتهي'}</span>
       </div>
       <div style="font-size:12px;color:var(--dim2)">${prods}</div>
-      ${o.deadline?`<div style="font-size:10px;color:var(--dim2);margin-top:6px">📅 ${o.deadline}</div>`:''}
+      ${o.deadline?`<div style="font-size:10px;margin-top:6px;${deadlineColor}">📅 ${deadlineLbl}</div>`:''}
     </div>`;
   }).join('');
 }
