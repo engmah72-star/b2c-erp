@@ -909,13 +909,13 @@ function renderPanel(id){
   if(pnOrdBtn)pnOrdBtn.style.display=c.status==='legacy'?'none':'';
   const col=COLORS[clients.indexOf(c)%COLORS.length];
   const cOrds=getClientOrders(c);
-  const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0),0);
   const paid=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const rem=cOrds.reduce((s,o)=>s+(calcRem(o)),0);
   // ── financial deep dive ──
   const totalCost=cOrds.reduce((s,o)=>s+((o.costItems||[]).reduce((x,ci)=>x+(parseFloat(ci.total)||0),0)||(parseFloat(o.totalCost)||0)),0);
-  const totalProfit=tot-totalCost;
-  const profitPct=tot>0?Math.round(totalProfit/tot*100):null;
+  const totalProfit=paid-totalCost;
+  const profitPct=paid>0?Math.round(totalProfit/paid*100):null;
   const clientTx=cOrds.flatMap(o=>(txByOrder.get(o._id)||[]).filter(tx=>tx.type==='in'&&tx.amount>0));
   const byWallet={};
   clientTx.forEach(tx=>{const wn=tx.walletName||'—';byWallet[wn]=(byWallet[wn]||0)+(parseFloat(tx.amount)||0);});
@@ -1815,7 +1815,8 @@ function cgridGetSorted(data){
     }else if(field==='profit'){
       const costA=(a.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(a.totalCost)||0);
       const costB=(b.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(b.totalCost)||0);
-      av=(parseFloat(a.salePrice)||0)-costA; bv=(parseFloat(b.salePrice)||0)-costB;
+      av=(parseFloat(a.totalPaid)||parseFloat(a.paid)||parseFloat(a.deposit)||0)-costA;
+      bv=(parseFloat(b.totalPaid)||parseFloat(b.paid)||parseFloat(b.deposit)||0)-costB;
     }else if(field==='salePrice'||field==='paid'){av=parseFloat(a[field])||0;bv=parseFloat(b[field])||0;}
     else{av=(a[field]||'').toString();bv=(b[field]||'').toString();}
     return av<bv?-dir:av>bv?dir:0;
@@ -1859,7 +1860,8 @@ window.renderControlGrid=function(){
   const totalCostSum=data.reduce((s,o)=>s+((o.costItems||[]).reduce((x,c)=>x+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0)),0);
   const totalProfitSum=data.reduce((s,o)=>{
     const cost=(o.costItems||[]).reduce((x,c)=>x+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0);
-    return s+((parseFloat(o.salePrice)||0)-cost);
+    const opaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    return s+(opaid-cost);
   },0);
   const statsEl=document.getElementById('cg-stats-row');
   if(statsEl) statsEl.innerHTML=`
@@ -1887,8 +1889,8 @@ window.renderControlGrid=function(){
     const sale=(parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0);
     const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
     const cost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(o.totalCost)||0);
-    const profit=(parseFloat(o.salePrice)||0)-cost;
-    const profitPct=sale>0?Math.round(profit/sale*100):null;
+    const profit=paid-cost;
+    const profitPct=paid>0?Math.round(profit/paid*100):null;
     const status=cgridGetDisplayStatus(o);
     const isRet=o.paymentStatus==='returned'||o.shipStage==='returned';
     const isProb=!!o.hasProblem;
