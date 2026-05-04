@@ -147,13 +147,13 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, getDoc, query, where, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, getDoc, query, where, addDoc, updateDoc, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app);
 const db=getFirestore(app);
 
-let orders=[],currentUser=null,userName='',activeId=null;
+let orders=[],currentUser=null,userName='',activeId=null,currentRole='';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
@@ -213,6 +213,7 @@ onAuthStateChanged(auth,async u=>{
   const ud=snap.exists()?snap.data():{};
   const r=ROLES_MAP[ud.role||'admin']||ROLES_MAP.admin;
   userName=ud.name||u.email;
+  currentRole=ud.role||'admin';
   setText('nav-name',userName);
   const av=document.getElementById('nav-av');
   if(av){av.textContent=userName[0].toUpperCase();av.style.cssText=`background:${r.col}20;color:${r.col}`;}
@@ -534,12 +535,55 @@ window.openOrder=function(id){
         ${tlHtml(o.timeline)}
       </div>
     </div>`:''}
+
+    <!-- Admin: Restore order -->
+    ${['admin','operation_manager'].includes(currentRole)?`<div class="sec" id="restore-section">
+      <div class="sec-t">🔄 استعادة الأوردر من الأرشيف</div>
+      <div style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.25);border-radius:12px;padding:12px">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:10px">اختر المرحلة التي تريد إعادة الأوردر إليها:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <select id="restore-stage-sel" style="flex:1;min-width:140px;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:12px;font-weight:700;">
+            <option value="design">✏️ تصميم</option>
+            <option value="printing">🖨️ طباعة</option>
+            <option value="production">🏭 تنفيذ</option>
+            <option value="shipping">🚚 شحن</option>
+          </select>
+          <button onclick="restoreOrder()" style="padding:8px 18px;background:rgba(255,170,0,.15);border:1px solid rgba(255,170,0,.4);border-radius:8px;color:var(--y);font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;">
+            ↩️ استعادة
+          </button>
+        </div>
+      </div>
+    </div>`:''}
   `;
 
   document.getElementById('panel-ov').classList.add('open');
 };
 
 window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeId=null;};
+
+// ── Restore from archive ──
+window.restoreOrder=async function(){
+  if(!activeId)return;
+  if(!['admin','operation_manager'].includes(currentRole))return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const stage=document.getElementById('restore-stage-sel')?.value||'design';
+  const stageAr={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'}[stage]||stage;
+  if(!confirm(`استعادة أوردر "${o.clientName}" إلى مرحلة ${stageAr}؟`))return;
+  try{
+    const now=new Date().toISOString();
+    await updateDoc(doc(db,'orders',activeId),{
+      stage,
+      archivedStage:undefined,
+      restoredAt:serverTimestamp(),
+      restoredBy:currentUser?.uid||'',
+      restoredByName:userName||'admin',
+      timeline:[...(o.timeline||[]),{date:now,action:`🔄 استُعيد من الأرشيف إلى ${stageAr}`,by:userName||'admin'}],
+      updatedAt:serverTimestamp()
+    });
+    closePanel();
+    toast('✅ تم استعادة الأوردر إلى '+stageAr,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ── Reorder ──
 let __reorderProds=[];
