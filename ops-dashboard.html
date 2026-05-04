@@ -99,6 +99,7 @@ const app=initializeApp(FB);
 const auth=getAuth(app),db=getFirestore(app);
 
 let allOrders=[],myTasks=[],myAttendance=[],todayAtt=null;
+let allEmployees=[],todaysAttendance=[],empPaymentsAll=[],myGoalOps=null,myLastEvalOps=null,myEmpIdOps='';
 let currentUser=null,userName='',uid='',activeTab='late';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -117,37 +118,39 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 window.toggleNav=()=>{document.querySelector('.sidenav')?.classList.toggle('mob-open');document.getElementById('nav-ov')?.classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-open');document.getElementById('nav-ov')?.classList.remove('show');};
 
-// ── Sidebar ──
-const SBPAGES=[
-  {f:'ops-dashboard.html',l:'داشبوردي',i:'⬡'},
-  {f:'index.html',l:'لوحة التحكم',i:'📊'},
-  {f:'clients.html',l:'العملاء',i:'👤'},
-  {f:'design.html',l:'التصميم',i:'✏️'},
-  {f:'print.html',l:'الطباعة',i:'🖨️'},
-  {f:'production.html',l:'التنفيذ',i:'🏭'},
-  {f:'shipping.html',l:'الشحن',i:'🚚'},
-  {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦'},
-  {f:'archive.html',l:'الأرشيف',i:'📁'},
-  {f:'accounts.html',l:'الحسابات',i:'💰'},
-  {f:'suppliers.html',l:'الموردين',i:'▣'},
-  {f:'products.html',l:'المنتجات',i:'◈'},
-  {f:'employees.html',l:'الموظفين',i:'👥'},
-  {f:'reports.html',l:'التقارير',i:'📊'},
-];
-function buildSidebar(){
+// ── Sidebar (dynamic) ──
+async function buildSidebar(){
   const nav=document.getElementById('nav-scroll-dynamic');if(!nav)return;
-  nav.innerHTML=SBPAGES.map(p=>`<a class="nav-link${p.f==='ops-dashboard.html'?' active':''}" href="${p.f}"><span class="nav-ico">${p.i}</span> ${p.l}</a>`).join('');
+  const ALL=[
+    {f:'index.html',l:'لوحة التحكم',i:'📊'},
+    {f:'clients.html',l:'العملاء',i:'👤'},
+    {f:'design.html',l:'التصميم',i:'✏️'},
+    {f:'print.html',l:'الطباعة',i:'🖨️'},
+    {f:'production.html',l:'التنفيذ',i:'🏭'},
+    {f:'shipping.html',l:'الشحن',i:'🚚'},
+    {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦'},
+    {f:'archive.html',l:'الأرشيف',i:'📁'},
+    {f:'accounts.html',l:'الحسابات',i:'💰'},
+    {f:'suppliers.html',l:'الموردين',i:'▣'},
+    {f:'products.html',l:'المنتجات',i:'◈'},
+    {f:'employees.html',l:'الموظفين',i:'👥'},
+    {f:'reports.html',l:'التقارير',i:'📊'},
+    {f:'settings.html',l:'الإعدادات',i:'⚙️'},
+  ];
+  let html=`<a class="nav-link active" href="ops-dashboard.html"><span class="nav-ico">⬡</span> داشبوردي</a>`;
+  html+=ALL.map(p=>`<a class="nav-link" href="${p.f}"><span class="nav-ico">${p.i}</span> ${p.l}</a>`).join('');
+  html+=`<a class="nav-link" href="chat.html"><span class="nav-ico">💬</span> دردشة الفريق</a>`;
+  nav.innerHTML=html;
 }
 function buildMobNav(){
   const el=document.getElementById('mob-nav-items');if(!el)return;
-  const items=[
+  el.innerHTML=[
     {h:'ops-dashboard.html',i:'⬡',l:'داشبوردي'},
     {h:'clients.html',i:'👤',l:'عملاء'},
     {h:'production.html',i:'🏭',l:'تنفيذ'},
     {h:'shipping.html',i:'🚚',l:'شحن'},
-    {h:'reports.html',i:'📊',l:'تقارير'},
-  ];
-  el.innerHTML=items.map(n=>`<a class="mob-nav-item${n.h==='ops-dashboard.html'?' active':''}" href="${n.h}"><div class="mob-nav-ico">${n.i}</div><div class="mob-nav-lbl">${n.l}</div></a>`).join('');
+    {h:'employees.html',i:'👥',l:'فريق'},
+  ].map(n=>`<a class="mob-nav-item${n.h==='ops-dashboard.html'?' active':''}" href="${n.h}"><div class="mob-nav-ico">${n.i}</div><div class="mob-nav-lbl">${n.l}</div></a>`).join('');
 }
 
 // ── Auth ──
@@ -187,6 +190,30 @@ function startListeners(){
     todayAtt=atts.find(a=>a.date===todayStr());
     myAttendance=atts;
     render();
+  });
+  let __empSubAdded=false;
+  onSnapshot(collection(db,'employees'),snap=>{
+    allEmployees=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    if(!__empSubAdded){
+      const me=allEmployees.find(e=>e.authUid===uid||e.email===currentUser?.email);
+      if(me?._id){
+        __empSubAdded=true;myEmpIdOps=me._id;
+        onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpIdOps),where('month','==',monthKey())),gs=>{
+          myGoalOps=gs.docs.length?gs.docs[0].data():null;render();
+        });
+        onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpIdOps)),es=>{
+          const sv=es.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+          myLastEvalOps=sv[0]||null;render();
+        });
+      }
+    }
+    render();
+  });
+  onSnapshot(query(collection(db,'attendance'),where('date','==',todayStr())),snap=>{
+    todaysAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
+  });
+  onSnapshot(collection(db,'employee_payments'),snap=>{
+    empPaymentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
   });
 }
 
@@ -231,6 +258,13 @@ function render(){
 
   // Tabs data
   const tabData=activeTab==='late'?lateOrds:activeTab==='rem'?remOrds:active.slice(0,20).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  // Team pulse
+  const presentUids=new Set(todaysAttendance.filter(a=>a.checkIn).map(a=>a.employeeUid));
+  const activeEmps=allEmployees.filter(e=>!['inactive','terminated'].includes(e.status));
+  const presentCount=activeEmps.filter(e=>e.authUid&&presentUids.has(e.authUid)).length;
+  const paidEmpIdsThisMonth=new Set(empPaymentsAll.filter(p=>isThisMonth(p.createdAt)&&!p.isDeduction).map(p=>p.employeeId));
+  const unpaidEmps=activeEmps.filter(e=>!paidEmpIdsThisMonth.has(e._id));
+  const attPctOps=workDays>0?Math.round(presentDays/workDays*100):0;
 
   el.innerHTML=`
   <div class="desktop-grid">
@@ -257,6 +291,18 @@ function render(){
           <button class="att-cta ${attBtnClass}" onclick="doAtt()" ${attState==='done'?'disabled':''}>${attBtnText}</button>
         </div>
       </div>
+
+      ${myGoalOps?`<div style="background:linear-gradient(135deg,rgba(59,158,255,.08),rgba(59,158,255,.03));border:1px solid rgba(59,158,255,.25);border-radius:16px;padding:16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:12px;font-weight:800">🎯 هدفي — ${MONTHS[now.getMonth()]}</div>
+          ${myLastEvalOps?`<span style="font-size:11px;padding:3px 10px;border-radius:20px;background:rgba(0,217,126,.1);color:var(--g);font-weight:700">آخر تقييم: ${myLastEvalOps.totalScore||0}/100</span>`:''}
+        </div>
+        ${myGoalOps.targetAttendancePct?`<div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:11px;color:var(--dim2)">📅 الحضور</span><span style="font-size:11px;font-weight:700">${attPctOps}% / ${myGoalOps.targetAttendancePct}%</span></div>
+          <div style="height:5px;background:var(--bg4);border-radius:3px"><div style="height:5px;border-radius:3px;transition:width .5s;background:${attPctOps>=(myGoalOps.targetAttendancePct||80)?'var(--g)':'var(--b)'};width:${Math.min(100,myGoalOps.targetAttendancePct>0?Math.round(attPctOps/myGoalOps.targetAttendancePct*100):0)}%"></div></div>
+        </div>`:''}
+        ${myGoalOps.notes?`<div style="font-size:11px;color:var(--dim2);margin-top:6px;padding:8px;background:var(--bg3);border-radius:8px">📝 ${myGoalOps.notes}</div>`:''}
+      </div>`:''}
 
       <!-- KPIs -->
       <div class="kpi-grid">
@@ -307,6 +353,22 @@ function render(){
 
     <!-- COL 2 -->
     <div class="col">
+      <!-- Team Pulse -->
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:12px;font-weight:800">👥 نبض الفريق — اليوم</div>
+          <div style="font-size:18px;font-weight:900;color:${activeEmps.length>0&&presentCount===activeEmps.length?'var(--g)':presentCount===0&&activeEmps.length>0?'var(--r)':'var(--y)'}">${presentCount}/${activeEmps.length} <span style="font-size:11px;font-weight:700;color:var(--dim2)">حاضر</span></div>
+        </div>
+        ${activeEmps.length===0?`<div style="text-align:center;padding:12px;color:var(--dim2);font-size:11px">لا يوجد موظفون مسجلون</div>`:`<div style="display:flex;flex-wrap:wrap;gap:6px">${activeEmps.map(e=>{const ip=!!(e.authUid&&presentUids.has(e.authUid));return`<div style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:${ip?'rgba(0,217,126,.1)':'rgba(255,61,110,.07)'};border:1px solid ${ip?'rgba(0,217,126,.25)':'rgba(255,61,110,.15)'}"><div style="width:6px;height:6px;border-radius:50%;background:${ip?'var(--g)':'var(--r)'}"></div><span style="font-size:11px;font-weight:700;color:${ip?'var(--g)':'var(--r)'}">${e.name||'—'}</span></div>`;}).join('')}</div>`}
+      </div>
+
+      ${unpaidEmps.length?`<div style="background:rgba(255,200,50,.05);border:1px solid rgba(255,200,50,.25);border-radius:16px;padding:16px;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:800;color:var(--y);margin-bottom:10px">⚠️ لم يستلموا الراتب — ${MONTHS[now.getMonth()]} (${unpaidEmps.length})</div>
+        ${unpaidEmps.slice(0,5).map(e=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,200,50,.1)"><span style="font-size:12px;font-weight:700">${e.name||'—'}</span><span style="font-size:11px;color:var(--dim2)">${fn(e.baseSalary||0)} ج</span></div>`).join('')}
+        ${unpaidEmps.length>5?`<div style="font-size:10px;color:var(--dim2);margin-top:6px;text-align:center">+ ${unpaidEmps.length-5} آخرين</div>`:''}
+        <a href="employees.html" style="display:block;margin-top:10px;text-align:center;font-size:11px;color:var(--b);font-weight:700;text-decoration:none">📋 صرف الرواتب ←</a>
+      </div>`:''}
+
       ${myTasks.length?`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px">
         <div style="font-size:12px;font-weight:800;margin-bottom:10px">✅ مهامي (${myTasks.length})</div>
         ${myTasks.map(t=>{const p={urgent:'var(--r)',normal:'var(--b)',low:'var(--dim2)'}[t.priority]||'var(--b)';return`<div style="display:flex;gap:10px;padding:10px;background:var(--bg3);border-radius:10px;margin-bottom:6px;cursor:pointer" onclick="doneTask('${t._id}')">
