@@ -219,9 +219,14 @@
     <div class="modal-body">
       <div class="fg">
         <label>اختر المصمم</label>
-        <select class="inp" id="assign-des-sel">
+        <select class="inp" id="assign-des-sel" onchange="updateDesignerWorkloadHint(this)">
           <option value="">— بدون مصمم —</option>
         </select>
+        <div id="des-workload-hint" style="margin-top:6px;font-size:11px;color:var(--dim2);min-height:18px"></div>
+      </div>
+      <div id="des-workload-list" style="margin-top:10px;display:none">
+        <div style="font-size:10px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">📊 حمل العمل الحالي</div>
+        <div id="des-workload-rows"></div>
       </div>
     </div>
     <div class="modal-foot">
@@ -842,6 +847,10 @@ function renderKanban(){
   orders.forEach(o=>{const k=o.designStage||'pending';if(cols[k])cols[k].push(o);});
   const cfg={pending:'var(--y)',wip:'var(--b)',rejected:'var(--r)'};
   const today=new Date().toISOString().slice(0,10);
+  // حمل العمل لكل مصمم (للأدمن)
+  const isAdmView=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
+  const dsLoad={};
+  if(isAdmView) orders.forEach(o=>{if(o.designerId)dsLoad[o.designerId]=(dsLoad[o.designerId]||0)+1;});
   Object.keys(cols).forEach(key=>{
     const el=document.getElementById('col-'+key);if(!el)return;
     setText('cnt-'+key,cols[key].length);
@@ -876,7 +885,8 @@ function renderKanban(){
         <div class="ocard-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
         <div class="ocard-client">${o.clientName||'—'} <span style="font-size:10px;color:var(--dim2)">${o.clientPhone||''}</span></div>
         <div class="ocard-product" style="margin-top:3px">${prods}</div>
-        ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}</span></div>`:''}
+        ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}${isAdmView&&o.designerId?` <span style="opacity:.7">(${dsLoad[o.designerId]||1})</span>`:''}` +
+          `</span></div>`:''}
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center">
           ${timeBadge}${revBadge}
           ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
@@ -902,14 +912,32 @@ function renderDesignDashboard(){
     const r=Math.floor((new Date(o.deadline)-new Date(today))/(864e5));
     return r>=0&&r<=2;
   }).length;
-  const dsCount={};
-  orders.filter(o=>o.designerName).forEach(o=>{dsCount[o.designerName]=(dsCount[o.designerName]||0)+1;});
-  const top=Object.entries(dsCount).sort((a,b)=>b[1]-a[1])[0];
+  // workload per designer (name → count)
+  const dsLoad={};
+  orders.filter(o=>o.designerName).forEach(o=>{dsLoad[o.designerName]=(dsLoad[o.designerName]||0)+1;});
+  const sorted=Object.entries(dsLoad).sort((a,b)=>b[1]-a[1]);
+  const top=sorted[0];
   const topName=top?top[0]:'—';const topCnt=top?top[1]:0;
+  const maxLoad=top?top[1]:1;
+
+  // workload bars per designer
+  const workloadRows=sorted.map(([name,cnt])=>{
+    const pct=Math.min(100,Math.round(cnt/maxLoad*100));
+    const col=cnt<=2?'var(--g)':cnt<=5?'var(--y)':'var(--r)';
+    const ico=cnt<=2?'🟢':cnt<=5?'🟡':'🔴';
+    return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="font-size:11px;font-weight:700;min-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--snow)">${ico} ${name}</div>
+      <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${col};border-radius:4px;transition:.4s"></div>
+      </div>
+      <div style="font-size:11px;font-weight:800;color:${col};min-width:32px;text-align:left">${cnt} أوردر</div>
+    </div>`;
+  }).join('');
+
   el.innerHTML=`
     <div class="dd-card" style="border-right:3px solid var(--p)">
       <div class="dd-card-ico">🏆</div>
-      <div class="dd-card-val" style="color:var(--p)" title="${topName}">${topName}</div>
+      <div class="dd-card-val" style="color:var(--p);font-size:14px" title="${topName}">${topName}</div>
       <div class="dd-card-lbl">أعلى إنتاج · ${topCnt} طلب</div>
     </div>
     <div class="dd-card" style="border-right:3px solid var(--b)">
@@ -927,6 +955,11 @@ function renderDesignDashboard(){
       <div class="dd-card-val" style="color:var(--r)">${late}</div>
       <div class="dd-card-lbl">الطلبات المتأخرة</div>
     </div>
+    ${sorted.length?`
+    <div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:14px 16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">📊 حمل عمل المصممين</div>
+      ${workloadRows}
+    </div>`:''}
   `;
 }
 
@@ -1354,14 +1387,60 @@ window.openAssignDesigner=async function(){
       designers.push(...fromUsers);
     }
 
+    // احسب حمل العمل لكل مصمم
+    const workload={};
+    orders.filter(o=>o.stage==='design'&&o._id!==activeId).forEach(o=>{
+      if(o.designerId)workload[o.designerId]=(workload[o.designerId]||0)+1;
+    });
+
     sel.innerHTML='<option value="">— بدون مصمم —</option>'+
-      designers.map(d=>`<option value="${d._id}" data-name="${d.name||'—'}">${d.name||'—'}</option>`).join('');
-    
+      designers.map(d=>{
+        const n=d.name||'—';
+        const load=workload[d._id]||0;
+        const ico=load===0?'🟢':load<=3?'🟡':'🔴';
+        return`<option value="${d._id}" data-name="${n}" data-load="${load}">${ico} ${n} — ${load} أوردر نشط</option>`;
+      }).join('');
+
     // اختر الحالي
     const o=orders.find(x=>x._id===activeId);
     if(o?.designerId) sel.value=o.designerId;
+
+    // بطاقة ملخص workload
+    const listEl=document.getElementById('des-workload-rows');
+    const listWrap=document.getElementById('des-workload-list');
+    if(listEl&&designers.length){
+      listEl.innerHTML=designers.map(d=>{
+        const load=workload[d._id]||0;
+        const pct=Math.min(100,load*14);
+        const col=load===0?'var(--g)':load<=3?'var(--y)':'var(--r)';
+        return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:700;min-width:90px;color:var(--snow)">${d.name||'—'}</div>
+          <div style="flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${col};border-radius:3px;transition:.3s"></div>
+          </div>
+          <div style="font-size:10px;font-weight:800;color:${col};min-width:28px;text-align:left">${load}</div>
+        </div>`;
+      }).join('');
+      listWrap.style.display='block';
+    }
+
+    // hint للمحدد حالياً
+    updateDesignerWorkloadHint(sel);
   }catch(e){console.error('assign:',e.message);}
   document.getElementById('ov-assign-des').classList.add('open');
+};
+
+window.updateDesignerWorkloadHint=function(sel){
+  const hint=document.getElementById('des-workload-hint');
+  if(!hint)return;
+  if(!sel.value){hint.textContent='';return;}
+  const opt=sel.options[sel.selectedIndex];
+  const load=parseInt(opt.dataset.load||0);
+  const msgs=['✅ متاح — حمل عمل خفيف','🟡 حمل عمل معتدل — يمكن التعيين','🔴 حمل عمل عالٍ — تأكد من الأولوية'];
+  const colors=['var(--g)','var(--y)','var(--r)'];
+  const idx=load===0?0:load<=3?1:2;
+  hint.style.color=colors[idx];
+  hint.textContent=`${load} أوردر نشط — ${msgs[idx]}`;
 };
 
 window.saveAssignDesigner=async function(){
