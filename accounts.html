@@ -1771,7 +1771,7 @@ window.updateTxRelated=function(){
       sel.innerHTML='<option value="">— اختر الأوردر (اختياري) —</option>'+
         pending.map(o=>`<option value="${o._id}">${o.clientName||'—'} — ${o.orderId||o._id.slice(-6)} — باقي: ${fn(calcRem(o))} ج</option>`).join('');
     }
-  } else if(['supplier','shipping_cost'].includes(cat)){
+  } else if(['supplier','printer_payment','shipper_payment','shipping_cost'].includes(cat)){
     sec.style.display='block';supplierRow.style.display='block';
     // ملء الموردين
     const sel=document.getElementById('tx-supplier-sel');
@@ -1888,7 +1888,8 @@ window.saveTx=async function(){
       const supChanged=cat!==oldCat||supplierId!==oldSupplierId||amount!==oldAmount||walletId!==oldWalletId;
       const empCats=['salary','designer_fee'];
       const empChanged=cat!==oldCat||employeeId!==oldEmployeeId||amount!==oldAmount||walletId!==oldWalletId;
-      const needNewSp=cat==='supplier'&&supplierId&&supChanged;
+      const supCats=['supplier','printer_payment','shipper_payment'];
+      const needNewSp=supCats.includes(cat)&&supplierId&&supChanged;
       const needNewEp=empCats.includes(cat)&&employeeId&&empChanged;
       const newSpRef=needNewSp?doc(collection(db,'supplier_payments')):null;
       const newEpRef=needNewEp?doc(collection(db,'employee_payments')):null;
@@ -1905,7 +1906,7 @@ window.saveTx=async function(){
       });
 
       // supplier_payments
-      if(oldCat==='supplier'&&oldSupplierId&&supChanged){
+      if(supCats.includes(oldCat)&&oldSupplierId&&supChanged){
         if(old.spId){
           batch.delete(doc(db,'supplier_payments',old.spId));
         } else {
@@ -1915,7 +1916,7 @@ window.saveTx=async function(){
         }
       }
       if(newSpRef){
-        batch.set(newSpRef,{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+        batch.set(newSpRef,{supplierId,supplierName,supplierType:'printer',amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
       }
 
       // employee_payments
@@ -1998,7 +1999,7 @@ window.saveTx=async function(){
     const n2=new Date();
     const curMonthKey=n2.getFullYear()+'-'+String(n2.getMonth()+1).padStart(2,'0');
     // pre-create sub-doc refs so we can store their IDs in the tx record (prevents orphans on delete)
-    const spRef2=cat==='supplier'&&supplierId?doc(collection(db,'supplier_payments')):null;
+    const spRef2=['supplier','printer_payment','shipper_payment'].includes(cat)&&supplierId?doc(collection(db,'supplier_payments')):null;
     const epRef2=(cat==='salary'||cat==='designer_fee')&&employeeId?doc(collection(db,'employee_payments')):null;
     const txRef=doc(collection(db,'transactions_v2'));
     batch.set(txRef,{
@@ -2013,7 +2014,7 @@ window.saveTx=async function(){
       createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()
     });
     if(spRef2){
-      batch.set(spRef2,{supplierId,supplierName,amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
+      batch.set(spRef2,{supplierId,supplierName,supplierType:'printer',amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     }
     if(epRef2){
       batch.set(epRef2,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:curMonthKey,note:desc||'',date:nowStr(),txId:txRef.id,createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
