@@ -164,13 +164,17 @@
         <div class="fg"><label>الحالة</label><select class="inp" id="e-status"><option value="active">✅ نشط</option><option value="inactive">⏸️ غير نشط</option></select></div>
       </div>
       <div style="background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.15);border-radius:var(--rad);padding:12px;margin-bottom:10px">
-        <div style="font-size:12px;font-weight:800;color:var(--g);margin-bottom:10px">💰 المالية</div>
+        <div style="font-size:12px;font-weight:800;color:var(--g);margin-bottom:10px">💰 المالية والإجازات</div>
         <div class="g2">
           <div class="fg"><label>المرتب الشهري (ج) *</label><input class="inp" id="e-salary" type="number" placeholder="3000"></div>
           <div class="fg" id="e-commission-row" style="display:none">
             <label>نسبة العمولة %</label>
             <input class="inp" id="e-commission" type="number" placeholder="5" step="0.5">
           </div>
+        </div>
+        <div class="g2" style="margin-top:10px">
+          <div class="fg"><label>رصيد الإجازة السنوية (يوم)</label><input class="inp" id="e-leave-quota" type="number" placeholder="21" min="0" max="365"></div>
+          <div class="fg"><label>عمولة لكل أوردر (ج)</label><input class="inp" id="e-commission-order" type="number" placeholder="0" min="0"></div>
         </div>
         <div id="e-commission-info" style="display:none;font-size:11px;color:var(--dim2);padding:6px 10px;background:var(--bg3);border-radius:6px;margin-top:6px">
           💡 العمولة تُحسب على إجمالي البيع لكل أوردر طباعة يسحبه المصمم
@@ -357,6 +361,7 @@ const ROLES={
   operation_manager:{label:'مدير عمليات',col:'#3b9eff',ico:'📋'},
   customer_service:{label:'خدمة عملاء',col:'#22d3ee',ico:'💬'},
   graphic_designer:{label:'مصمم',col:'#a78bfa',ico:'🎨'},
+  design_operator:{label:'مشغل تصميم',col:'#c084fc',ico:'⚙️'},
   production_agent:{label:'تنفيذ',col:'#ff3d6e',ico:'🏭'},
   shipping_officer:{label:'شحن',col:'#22d3ee',ico:'🚚'},
   wallet_manager:{label:'محاسب',col:'#00d97e',ico:'💰'}
@@ -364,8 +369,8 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[];
-let currentUser=null,userName='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
+let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let payOneEmpId=null,periodFilter='month_cur';
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -431,43 +436,54 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open');
 
-// ══ KPI CALCULATION ══
-function calcKpi(e,uid){
-  const mKey=curMonthKey();const workDays=26;
-  // 1. Commitment (25) — attendance this month
+// ══ KPI CALCULATION — 3 محاور موحدة ══
+function calcKpiBreakdown(e,uid,mKey){
+  if(!mKey)mKey=curMonthKey();
+  const workDays=Math.max(1,e.annualLeaveQuota?Math.round((365-e.annualLeaveQuota)/12):22);
+  // 1. الحضور (35) — أيام الحضور الفعلية هذا الشهر
   const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===e._id)&&(a.date||'').startsWith(mKey)).length;
-  const commitment=Math.min(25,Math.round(monthAtt/workDays*25));
-  // 2. Productivity (25) — role-based
-  let prod=10;
+  const attendance=Math.min(35,Math.round(monthAtt/workDays*35));
+  // 2. الإنتاجية (40) — حسب الدور
+  let productivity=20;
+  const mStart=mKey+'-01';
   if(e.role==='graphic_designer'||e.role==='design_operator'){
     const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-    const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
-    prod=mine.length?Math.min(25,Math.round(done/mine.length*25)):10;
+    const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage));
+    productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
   } else if(e.role==='customer_service'){
-    const mine=allOrders.filter(o=>o.createdBy===uid);
-    prod=Math.min(25,mine.length*2);
+    const mine=allOrders.filter(o=>o.createdBy===uid&&(o.createdAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
+    productivity=Math.min(40,mine.length*4);
   } else if(e.role==='production_agent'){
     const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-    const done=mine.filter(o=>['shipping','archived'].includes(o.stage)).length;
-    prod=mine.length?Math.min(25,Math.round(done/mine.length*25)):10;
+    const done=mine.filter(o=>['shipping','archived'].includes(o.stage));
+    productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
   } else if(e.role==='shipping_officer'){
-    const mine=allOrders.filter(o=>(o.shippingOfficer===uid||o.shippingOfficer===e._id)&&['shipping','archived'].includes(o.stage));
-    prod=Math.min(25,mine.length*3);
-  } else { prod=15; }
-  // 3. Speed (25) — on-time ratio on completed orders
-  const myDone=allOrders.filter(o=>(o.designerId===uid||o.createdBy===uid||o.productionAgent===uid)&&o.deadline&&['archived','delivered'].includes(o.stage));
-  let speed=15;
-  if(myDone.length){
-    const today=todayStr();
-    const onTime=myDone.filter(o=>(o.timeline||[]).slice(-1)[0]?.date<=o.deadline).length;
-    speed=Math.round(onTime/myDone.length*25);
-  }
-  // 4. Activity (25) — recent system actions from timeline
-  const mStart=mKey+'-01';
-  const acted=allOrders.filter(o=>(o.timeline||[]).some(t=>t.by===e.name&&(t.date||'')>=mStart)).length;
-  const activity=Math.min(25,acted*4);
-  return Math.min(100,commitment+prod+speed+activity);
+    const mine=allOrders.filter(o=>(o.shippingOfficer===uid||o.shippingOfficer===e._id)&&['shipping','archived'].includes(o.stage)&&(o.updatedAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
+    productivity=Math.min(40,mine.length*5);
+  } else { productivity=25; }
+  // 3. الجودة (25) — نسبة الإتمام بدون إعادة عمل
+  let quality=12;
+  if(e.role==='graphic_designer'||e.role==='design_operator'){
+    const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
+    const good=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)&&!(o.timeline||[]).some(t=>t.action?.includes('مراجعة')||t.action?.includes('رفض')));
+    quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
+  } else if(e.role==='customer_service'){
+    const mine=allOrders.filter(o=>o.createdBy===uid);
+    const archived=mine.filter(o=>o.stage==='archived');
+    quality=mine.length?Math.min(25,Math.round(archived.length/mine.length*25)):12;
+  } else if(e.role==='production_agent'){
+    const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
+    const good=mine.filter(o=>['shipping','archived'].includes(o.stage));
+    quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
+  } else if(e.role==='shipping_officer'){
+    const mine=allOrders.filter(o=>o.shippingOfficer===uid||o.shippingOfficer===e._id);
+    const done=mine.filter(o=>o.stage==='archived');
+    quality=mine.length?Math.min(25,Math.round(done.length/mine.length*25)):12;
+  } else { quality=15; }
+  const total=Math.min(100,attendance+productivity+quality);
+  return{attendance,productivity,quality,total,monthAtt,workDays};
 }
+function calcKpi(e,uid){return calcKpiBreakdown(e,uid,curMonthKey()).total;}
 
 // ══ EMPLOYEE STATUS ══
 function getEmpStatus(uid,empId,todayRec,activeOrderCnt){
@@ -516,6 +532,7 @@ window.openEditEmp=function(id){
   document.getElementById('save-btn').textContent='✓ حفظ';
   sv('e-name',e.name||'');sv('e-phone',e.phone||'');sv('e-role',e.role||'');
   sv('e-nid',e.nationalId||'');sv('e-salary',e.baseSalary||'');sv('e-commission',e.commissionPct||'');
+  sv('e-leave-quota',e.annualLeaveQuota??21);sv('e-commission-order',e.commissionPerOrder||0);
   sv('e-start',e.startDate||new Date().toISOString().slice(0,10));
   document.getElementById('e-status').value=e.status||'active';
   updateSalaryUI();
@@ -530,7 +547,7 @@ window.toggleEmpStatus=async function(id,newStatus){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-// ══ KPI PANEL ══
+// ══ KPI PANEL — نظام التقييم الكامل ══
 window.openKpiPanel=function(empId,authUid,empName){
   const hdr=document.getElementById('pn-hdr');
   const body=document.getElementById('panel-body');
@@ -538,57 +555,106 @@ window.openKpiPanel=function(empId,authUid,empName){
   const e=employees.find(x=>x._id===empId)||{name:empName,role:'',_id:empId,authUid};
   const uid=authUid||empId;
   const mKey=curMonthKey();
-  const score=calcKpi(e,uid);
-  const scoreCol=score>=90?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
-  const scoreLbl=score>=90?'ممتاز':score>=70?'جيد':score>=50?'يحتاج متابعة':'خطر';
-  // Breakdown values
-  const workDays=26;
-  const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===empId)&&(a.date||'').startsWith(mKey)).length;
-  const commitment=Math.min(25,Math.round(monthAtt/workDays*25));
-  const myDone=allOrders.filter(o=>(o.designerId===uid||o.createdBy===uid||o.productionAgent===uid)&&['archived','delivered'].includes(o.stage));
-  const lateOrders=myDone.filter(o=>o.deadline&&(o.timeline||[]).slice(-1)[0]?.date>o.deadline).length;
-  const speed=myDone.length?Math.round((1-lateOrders/myDone.length)*25):15;
-  const mStart=mKey+'-01';
-  const acted=allOrders.filter(o=>(o.timeline||[]).some(t=>t.by===e.name&&(t.date||'')>=mStart)).length;
-  const activity=Math.min(25,acted*4);
-  const prod=Math.max(0,score-commitment-speed-activity);
-  // Last activity
+  const {attendance,productivity,quality,total,monthAtt,workDays}=calcKpiBreakdown(e,uid,mKey);
+  const scoreCol=total>=90?'var(--g)':total>=70?'var(--b)':total>=50?'var(--y)':'var(--r)';
+  const scoreLbl=total>=90?'ممتاز ⭐':total>=70?'جيد 👍':total>=50?'يحتاج متابعة ⚠️':'خطر 🔴';
+  // أهداف الشهر
+  const goal=empGoals.find(g=>g.employeeId===empId&&g.month===mKey);
+  // آخر تقييم محفوظ
+  const savedEval=empEvaluations.find(v=>v.employeeId===empId&&v.month===mKey);
+  // آخر نشاط
   const lastAct=allOrders.reduce((best,o)=>{
     const t=(o.timeline||[]).filter(t=>t.by===e.name).slice(-1)[0];
     if(!t)return best;
-    return(!best||t.date>best.date)?{...t,clientName:o.clientName,orderId:o._id}:best;
+    return(!best||t.date>best.date)?{...t,clientName:o.clientName}:best;
   },null);
+  const isAdmin=['admin','operation_manager'].includes(currentRole);
   hdr.innerHTML=`<div>
     <div style="font-size:15px;font-weight:800">📊 تقييم — ${empName}</div>
-    <div style="font-size:11px;color:var(--dim2)">${ROLES[e.role]?.label||e.role} · ${curMonthKey()}</div>
+    <div style="font-size:11px;color:var(--dim2)">${ROLES[e.role]?.label||e.role} · ${mKey}</div>
+  </div>`;
+  const axisRow=(lbl,val,max,col,sub,goalVal)=>`<div style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:5px;align-items:center">
+      <span style="font-size:12px;font-weight:700">${lbl}</span>
+      <span style="font-size:12px;font-weight:900;color:${col}">${val}/${max}${goalVal?`<span style="font-size:10px;color:var(--dim2);font-weight:500"> (هدف: ${goalVal})</span>`:''}</span>
+    </div>
+    <div class="kpi-bar"><div class="kpi-fill" style="width:${val/max*100}%;background:${col}"></div></div>
+    <div style="font-size:10px;color:var(--dim2);margin-top:3px">${sub}</div>
   </div>`;
   body.innerHTML=`
-    <div style="text-align:center;padding:24px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:56px;font-weight:900;color:${scoreCol};line-height:1">${score}</div>
-      <div style="font-size:14px;font-weight:800;color:${scoreCol};margin-top:4px">${scoreLbl}</div>
-      <div style="font-size:11px;color:var(--dim2);margin-top:2px">من 100 نقطة</div>
+    <div style="text-align:center;padding:22px 16px 16px;border-bottom:1px solid var(--line)">
+      <div style="font-size:58px;font-weight:900;color:${scoreCol};line-height:1">${total}</div>
+      <div style="font-size:13px;font-weight:800;color:${scoreCol};margin-top:6px">${scoreLbl}</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px">من 100 نقطة · ${mKey}</div>
+      ${savedEval?`<div style="font-size:10px;color:var(--g);margin-top:6px;font-weight:700">✅ محفوظ ${savedEval.savedAt?.toDate?.()?.toLocaleDateString('ar-EG')||''}</div>`:''}
     </div>
-    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-      ${[
-        {lbl:'الالتزام بالحضور',val:commitment,max:25,col:'var(--g)',sub:monthAtt+' يوم هذا الشهر'},
-        {lbl:'الإنتاجية',val:prod,max:25,col:'var(--b)',sub:myDone.length+' أوردر مكتمل'},
-        {lbl:'السرعة والالتزام بالمواعيد',val:speed,max:25,col:'var(--p)',sub:lateOrders+' متأخر من '+myDone.length},
-        {lbl:'النشاط في النظام',val:activity,max:25,col:'var(--y)',sub:acted+' أوردر تفاعل معها الشهر'},
-      ].map(k=>`<div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:12px;font-weight:700">${k.lbl}</span>
-          <span style="font-size:12px;font-weight:900;color:${k.col}">${k.val}/${k.max}</span>
-        </div>
-        <div class="kpi-bar"><div class="kpi-fill" style="width:${k.val/k.max*100}%;background:${k.col}"></div></div>
-        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${k.sub}</div>
-      </div>`).join('')}
+    <div style="padding:16px 16px 4px">
+      ${axisRow('الحضور والالتزام',''+attendance,35,'var(--g)',monthAtt+' يوم من '+workDays+' يوم عمل',goal?.targets?.attendanceDays?Math.round(goal.targets.attendanceDays/workDays*35):null)}
+      ${axisRow('الإنتاجية',''+productivity,40,'var(--b)','حسب الأوردرات المنجزة هذا الشهر',goal?.targets?.ordersTarget?Math.min(40,goal.targets.ordersTarget*4):null)}
+      ${axisRow('الجودة',''+quality,25,'var(--p)','نسبة الأوردرات المكتملة بدون إعادة عمل',goal?.targets?.qualityPct?Math.round(goal.targets.qualityPct/100*25):null)}
     </div>
-    ${lastAct?`<div style="margin:0 16px 16px;background:var(--bg3);border-radius:var(--rad);padding:10px 12px">
-      <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">آخر نشاط في النظام</div>
-      <div style="font-size:12px;font-weight:700">${lastAct.action||'—'}</div>
-      <div style="font-size:10px;color:var(--dim2);margin-top:2px">${lastAct.date||''} · ${lastAct.clientName||''}</div>
+    ${lastAct?`<div style="margin:0 16px 12px;background:var(--bg3);border-radius:var(--rad);padding:9px 12px">
+      <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">آخر نشاط</div>
+      <div style="font-size:12px;font-weight:700">${lastAct.action||'—'} · ${lastAct.clientName||''}</div>
+      <div style="font-size:10px;color:var(--dim2)">${lastAct.date||''}</div>
+    </div>`:''}
+    ${isAdmin?`
+    <div style="margin:0 16px 12px;background:var(--bg3);border-radius:var(--rad);padding:12px">
+      <div style="font-size:11px;font-weight:800;margin-bottom:10px;color:var(--b)">🎯 أهداف ${mKey}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">أيام حضور</div>
+          <input id="kpi-g-att" type="number" min="0" max="31" placeholder="22" value="${goal?.targets?.attendanceDays||''}" style="width:100%;padding:5px 6px;border-radius:5px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;text-align:center"></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">أوردرات</div>
+          <input id="kpi-g-ord" type="number" min="0" placeholder="10" value="${goal?.targets?.ordersTarget||''}" style="width:100%;padding:5px 6px;border-radius:5px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;text-align:center"></div>
+        <div><div style="font-size:10px;color:var(--dim2);margin-bottom:3px">جودة %</div>
+          <input id="kpi-g-qlt" type="number" min="0" max="100" placeholder="80" value="${goal?.targets?.qualityPct||''}" style="width:100%;padding:5px 6px;border-radius:5px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;text-align:center"></div>
+      </div>
+      <button onclick="saveEmpGoal('${empId}','${empName}','${mKey}')" style="width:100%;padding:7px;border-radius:6px;border:none;background:var(--b);color:#fff;font-size:12px;font-weight:700;cursor:pointer">💾 حفظ الأهداف</button>
+    </div>
+    <div style="margin:0 16px 12px">
+      <div style="font-size:11px;font-weight:800;margin-bottom:8px;color:var(--p)">⭐ تقييم المدير (اختياري)</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px" id="star-row">
+        ${[1,2,3,4,5].map(s=>`<div onclick="setRating(${s})" id="star-${s}" style="font-size:22px;cursor:pointer;opacity:${(savedEval?.managerRating||0)>=s?1:0.3};transition:opacity .2s">⭐</div>`).join('')}
+      </div>
+      <textarea id="kpi-mgr-note" placeholder="ملاحظة المدير (اختياري)..." style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;resize:none;height:56px;box-sizing:border-box">${savedEval?.managerNote||''}</textarea>
+      <button onclick="saveEmpEvaluation('${empId}','${empName}','${e.role}','${mKey}',${attendance},${productivity},${quality},${total},${monthAtt})" style="width:100%;margin-top:8px;padding:8px;border-radius:6px;border:none;background:var(--g);color:#fff;font-size:12px;font-weight:700;cursor:pointer">📥 حفظ التقييم هذا الشهر</button>
+    </div>`:''}
+    ${!isAdmin&&savedEval?`<div style="margin:0 16px 12px;background:rgba(0,200,122,.06);border:1px solid rgba(0,200,122,.2);border-radius:var(--rad);padding:10px 12px">
+      <div style="font-size:11px;font-weight:800;color:var(--g);margin-bottom:4px">تقييمك هذا الشهر</div>
+      <div style="font-size:28px;font-weight:900;color:${scoreCol}">${savedEval.kpiScore}/100</div>
+      ${savedEval.managerRating?`<div style="font-size:14px;margin-top:4px">${'⭐'.repeat(savedEval.managerRating)}</div>`:''}
+      ${savedEval.managerNote?`<div style="font-size:11px;color:var(--dim2);margin-top:4px">${savedEval.managerNote}</div>`:''}
     </div>`:''}`;
+  window.__kpiRating=savedEval?.managerRating||0;
   document.getElementById('panel-ov').classList.add('open');
+};
+window.setRating=function(n){
+  window.__kpiRating=n;
+  [1,2,3,4,5].forEach(s=>{const el=document.getElementById('star-'+s);if(el)el.style.opacity=s<=n?1:0.3;});
+};
+window.saveEmpGoal=async function(empId,empName,month){
+  const attDays=parseInt(document.getElementById('kpi-g-att')?.value)||0;
+  const ordersT=parseInt(document.getElementById('kpi-g-ord')?.value)||0;
+  const qualPct=parseInt(document.getElementById('kpi-g-qlt')?.value)||0;
+  try{
+    const existing=empGoals.find(g=>g.employeeId===empId&&g.month===month);
+    const data={employeeId:empId,employeeName:empName,month,targets:{attendanceDays:attDays,ordersTarget:ordersT,qualityPct:qualPct},updatedBy:currentUser?.uid||'',updatedByName:userName,updatedAt:serverTimestamp()};
+    if(existing){await updateDoc(doc(db,'employee_goals',existing._id),data);}
+    else{await addDoc(collection(db,'employee_goals'),{...data,createdAt:serverTimestamp()});}
+    toast('✅ تم حفظ الأهداف','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+window.saveEmpEvaluation=async function(empId,empName,role,month,att,prod,qual,total,attDays){
+  const rating=window.__kpiRating||0;
+  const note=document.getElementById('kpi-mgr-note')?.value||'';
+  try{
+    const existing=empEvaluations.find(v=>v.employeeId===empId&&v.month===month);
+    const data={employeeId:empId,employeeName:empName,role,month,kpiScore:total,breakdown:{attendance:att,productivity:prod,quality:qual},managerRating:rating||null,managerNote:note,attendanceDays:attDays,savedBy:currentUser?.uid||'',savedByName:userName,savedAt:serverTimestamp()};
+    if(existing){await updateDoc(doc(db,'employee_evaluations',existing._id),data);}
+    else{await addDoc(collection(db,'employee_evaluations'),data);}
+    toast('✅ تم حفظ التقييم لـ '+empName,'ok');
+    document.getElementById('panel-ov').classList.remove('open');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.openAttPanel=function(empId,authUid,empName){
@@ -658,12 +724,19 @@ onAuthStateChanged(auth,async u=>{
       return;
     }
     userName=d.name||u.email;
+    currentRole=d.role||'';
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=userName[0].toUpperCase();
     document.getElementById('role-badge').textContent='Admin';
     initNotifications(app,u);
   }
 
+  onSnapshot(collection(db,'employee_goals'),snap=>{
+    empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  });
+  onSnapshot(collection(db,'employee_evaluations'),snap=>{
+    empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  });
   onSnapshot(collection(db,'employees'),snap=>{
     employees=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     updateStats();renderList();fillWalletSelects();
@@ -983,7 +1056,7 @@ window.openAddEmp=function(){
   editingId=null;
   setText('emp-title','＋ موظف جديد');
   document.getElementById('save-btn').textContent='✓ إضافة';
-  sv('e-name','');sv('e-phone','');sv('e-role','');sv('e-nid','');sv('e-salary','');sv('e-commission','');sv('e-start',new Date().toISOString().slice(0,10));
+  sv('e-name','');sv('e-phone','');sv('e-role','');sv('e-nid','');sv('e-salary','');sv('e-commission','');sv('e-leave-quota',21);sv('e-commission-order',0);sv('e-start',new Date().toISOString().slice(0,10));
   document.getElementById('e-status').value='active';
   updateSalaryUI();
   document.getElementById('ov-emp').classList.add('open');
@@ -1005,7 +1078,9 @@ window.saveEmp=async function(){
   if(!salary)return toast('⚠️ أدخل المرتب','err');
   const dup=employees.find(e=>e.phone===phone&&e._id!==editingId);if(dup)return toast('⚠️ رقم الهاتف مسجّل مسبقاً لـ '+dup.name,'err');
   const btn=document.getElementById('save-btn');btn.disabled=true;btn.textContent='جاري...';
-  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role==='graphic_designer'||role==='design_operator')?commission:0,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
+  const leaveQuota=parseInt(gv('e-leave-quota'))||21;
+  const commissionOrder=parseFloat(gv('e-commission-order'))||0;
+  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role==='graphic_designer'||role==='design_operator')?commission:0,commissionPerOrder:commissionOrder,annualLeaveQuota:leaveQuota,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
   try{
     if(editingId){
       await updateDoc(doc(db,'employees',editingId),empData);
@@ -1032,14 +1107,14 @@ window.saveEmp=async function(){
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;
       const ROLE_DEFAULTS={
-        customer_service: {pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
-        graphic_designer: {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        design_operator:  {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true},
-        production_agent: {pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        shipping_officer: {pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        wallet_manager:   {pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-        operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
-        admin:            {pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
+        customer_service: {pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false},
+        graphic_designer: {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+        design_operator:  {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true,canAssignTasks:false},
+        production_agent: {pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+        shipping_officer: {pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+        wallet_manager:   {pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
+        operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true},
+        admin:            {pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true},
       };
       // atomic: create employees + users in one batch (both succeed or both fail)
       const batch=writeBatch(db);

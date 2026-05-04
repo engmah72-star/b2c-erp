@@ -185,33 +185,36 @@ const ROLE_PAGES = {
 /* CHECK IF ALREADY LOGGED IN */
 onAuthStateChanged(auth, async user => {
   if(user) {
-    const role = await getUserRole(user.uid);
-    redirect(role, user.uid);
+    try {
+      const data = await getUserData(user.uid);
+      redirect(data.role || 'customer_service', user.uid);
+    } catch(e) {
+      document.getElementById('loading').classList.add('hide');
+    }
   } else {
-    // show login
     document.getElementById('loading').classList.add('hide');
   }
 });
 
-async function getUserRole(uid) {
-  try {
-    const snap = await getDoc(doc(db, 'users', uid));
-    if(snap.exists()) return snap.data().role || 'customer_service';
-  } catch(e) {}
-  return 'customer_service';
+async function getUserData(uid) {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if(!snap.exists()) throw new Error('المستخدم غير موجود في النظام');
+  return snap.data();
 }
 
 async function redirect(role, uid) {
-  // check if password must be changed
-  try{
-    const { getDoc, doc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    const snap = await getDoc(doc(db, 'users', uid));
-    if(snap.exists() && snap.data().mustChangePassword){
+  try {
+    const data = await getUserData(uid);
+    if(data.mustChangePassword){
       window.location.href = 'change-password.html';
       return;
     }
-  }catch(e){}
-  const page = ROLE_PAGES[role] || 'index.html';
+  } catch(e) {
+    showErr('خطأ في التحقق من الحساب: ' + e.message);
+    await signOut(auth);
+    return;
+  }
+  const page = ROLE_PAGES[role] || 'login.html';
   window.location.href = page;
 }
 
@@ -241,8 +244,8 @@ window.doLogin = async function() {
 
     // sign in
     const cred = await signInWithEmailAndPassword(auth, loginEmail, pw);
-    const role = await getUserRole(cred.user.uid);
-    redirect(role, cred.user.uid);
+    const data = await getUserData(cred.user.uid);
+    redirect(data.role || 'customer_service', cred.user.uid);
 
   } catch(e) {
     btn.disabled = false;
