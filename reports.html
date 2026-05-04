@@ -942,26 +942,39 @@ window.filterCollection=function(filter,btn){
   });
 };
 
-window.deleteOrderFromReport=async function(orderId,clientName,paid,walletId){
-  if(!confirm(`حذف أوردر "${clientName}" نهائياً؟`))return;
-  if(!confirm('تأكيد الحذف النهائي — لا يمكن التراجع؟'))return;
+let __delOrdId='',__delOrdClient='',__delOrdPaid=0,__delOrdWallet='';
+window.deleteOrderFromReport=function(orderId,clientName,paid,walletId){
+  __delOrdId=orderId;__delOrdClient=clientName;__delOrdPaid=paid;__delOrdWallet=walletId;
+  document.getElementById('del-ord-reason').value='';
+  document.getElementById('del-ord-note').value='';
+  document.getElementById('ov-del-order').style.display='flex';
+};
+window.confirmDeleteOrder=async function(){
+  const reason=document.getElementById('del-ord-reason').value;
+  if(!reason)return toast('⚠️ اختر سبب الحذف أولاً','err');
+  const note=document.getElementById('del-ord-note').value.trim();
+  const btn=document.getElementById('del-ord-confirm-btn');
+  btn.disabled=true;btn.textContent='جاري...';
   try{
     const batch=writeBatch(db);
-    if(paid>0&&walletId){
-      batch.update(doc(db,'wallets',walletId),{balance:increment(paid)});
+    if(__delOrdPaid>0&&__delOrdWallet){
+      batch.update(doc(db,'wallets',__delOrdWallet),{balance:increment(__delOrdPaid)});
       addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
-        orderId,clientName,amount:paid,walletId,
-        walletName:__wallets.find(w=>w._id===walletId)?.name||'',
-        notes:'حذف أوردر — استرداد مدفوع',
-        createdBy:auth.currentUser?.uid||'',createdByName:userName||'admin'
+        orderId:__delOrdId,clientName:__delOrdClient,
+        amount:__delOrdPaid,walletId:__delOrdWallet,
+        walletName:__wallets.find(w=>w._id===__delOrdWallet)?.name||'',
+        notes:`حذف أوردر [${reason}]${note?' — '+note:''}`,
+        userId:auth.currentUser?.uid||'',userName:userName||'',
       });
     }
-    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId)));
+    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',__delOrdId)));
     for(const tx of txSnap.docs) batch.delete(tx.ref);
-    batch.delete(doc(db,'orders',orderId));
+    batch.delete(doc(db,'orders',__delOrdId));
     await batch.commit();
-    toast('✅ تم الحذف النهائي','ok');
+    document.getElementById('ov-del-order').style.display='none';
+    toast('✅ تم الحذف — السبب: '+reason,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
+  btn.disabled=false;btn.textContent='🗑 حذف نهائي';
 };
 
 // ══ تعديل الأوردر الكامل ══
@@ -1248,5 +1261,39 @@ window.exportExcel=function(){
   toast('✅ تم التصدير','ok');
 };
 </script>
+
+<!-- DELETE ORDER MODAL -->
+<div class="overlay" id="ov-del-order" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center">
+  <div class="modal" style="max-width:420px;width:calc(100% - 32px)">
+    <div class="modal-head">
+      <span class="modal-title" style="color:var(--r)">🗑 حذف أوردر</span>
+      <button class="modal-x" onclick="document.getElementById('ov-del-order').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--r)">
+        ⚠️ الحذف نهائي ولا يمكن التراجع عنه
+      </div>
+      <div class="fg" style="margin-bottom:10px">
+        <label>سبب الحذف *</label>
+        <select class="inp" id="del-ord-reason">
+          <option value="">— اختر سبباً —</option>
+          <option value="خطأ إدخال">خطأ في الإدخال</option>
+          <option value="أوردر مكرر">أوردر مكرر</option>
+          <option value="إلغاء من العميل">إلغاء من العميل</option>
+          <option value="بيانات تجريبية">بيانات تجريبية</option>
+          <option value="أخرى">أخرى</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>تفاصيل إضافية</label>
+        <input class="inp" id="del-ord-note" placeholder="اختياري...">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-del-order').style.display='none'">إلغاء</button>
+      <button class="btn btn-r" id="del-ord-confirm-btn" onclick="confirmDeleteOrder()">🗑 حذف نهائي</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
