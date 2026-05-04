@@ -384,7 +384,7 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();userName=d.name||u.email;currentRole=d.role||'admin';setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');}
   if(__listenersStarted)return; // لو الـ listeners اتسجلوا قبل كده، مش هنسجلهم تاني
   __listenersStarted=true;
   let __lastOrderHash='';
@@ -1157,11 +1157,12 @@ window.moveToShipping=async function(){
   if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن التحويل للشحن — سجّل تكلفة الأوردر أولاً','err');
   if(!confirm('تحويل للشحن؟'))return;
   try{
-    // ══ حفظ التكاليف في سجل المنتج ══
     const prods=o.products||[];
     const ci=o.costItems||[];
     const now=nowStr();
+    const batch=writeBatch(db);
 
+    // ══ حفظ التكاليف في سجل المنتج (ضمن نفس الـ batch) ══
     for(let pi=0;pi<prods.length;pi++){
       const prod=prods[pi];
       const pName=(prod.name||'').trim().toLowerCase();
@@ -1169,24 +1170,21 @@ window.moveToShipping=async function(){
       const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&(prods.length===1||pi===prods.length-1)));
       if(!prodCi.length)continue;
       const total=prodCi.reduce((s,x)=>s+(parseFloat(x.total)||0),0);
-      try{
-        const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-        if(!catProd)continue;
-        const history=[...(catProd.costHistory||[])];
-        // تنبيه لو التكلفة تغيرت أكتر من 15%
-        const lastSameQty=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0];
-        if(lastSameQty&&lastSameQty.total>0){
-          const pct=Math.round((total-lastSameQty.total)/lastSameQty.total*100);
-          if(Math.abs(pct)>15)toast(`🚨 تكلفة ${prod.name} ${pct>0?'زادت':'انخفضت'} ${Math.abs(pct)}% (${fn(lastSameQty.total)} ← ${fn(total)} ج)`,'err');
-        }
-        history.push({date:now,orderId:activeId,clientName:o.clientName||'',qty:pQty,paper:prod.paper||'',items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),total});
-        if(history.length>100)history.splice(0,history.length-100);
-        await updateDoc(doc(db,'products_v2',catProd._id),{costHistory:history,lastCostTotal:total,lastCostDate:now});
-      }catch(e){console.warn('costHistory save:',e.message);}
+      const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
+      if(!catProd)continue;
+      const history=[...(catProd.costHistory||[])];
+      const lastSameQty=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0];
+      if(lastSameQty&&lastSameQty.total>0){
+        const pct=Math.round((total-lastSameQty.total)/lastSameQty.total*100);
+        if(Math.abs(pct)>15)toast(`🚨 تكلفة ${prod.name} ${pct>0?'زادت':'انخفضت'} ${Math.abs(pct)}% (${fn(lastSameQty.total)} ← ${fn(total)} ج)`,'err');
+      }
+      history.push({date:now,orderId:activeId,clientName:o.clientName||'',qty:pQty,paper:prod.paper||'',items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),total});
+      if(history.length>100)history.splice(0,history.length-100);
+      batch.update(doc(db,'products_v2',catProd._id),{costHistory:history,lastCostTotal:total,lastCostDate:now});
     }
 
-    // تحويل للشحن
-    await updateDoc(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,productionAgent:currentUser?.uid||o.productionAgent||'',productionAgentName:userName,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
+    batch.update(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,productionAgent:currentUser?.uid||o.productionAgent||'',productionAgentName:userName,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
+    await batch.commit();
     closePanel();
     toast('✅ انتقل للشحن 🚚','ok');
   }catch(e){toast('❌ '+e.message,'err');}
