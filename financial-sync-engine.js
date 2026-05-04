@@ -132,7 +132,7 @@ export function inferEventType(txType, category) {
     salary: 'SALARY_PAYMENT', designer_fee: 'SALARY_PAYMENT', advance: 'SALARY_PAYMENT',
     bonus: 'BONUS_PAYMENT',
     deduction: 'PENALTY',
-    supplier: 'VENDOR_PAYMENT',
+    supplier: 'VENDOR_PAYMENT', printer_payment: 'VENDOR_PAYMENT', shipper_payment: 'VENDOR_PAYMENT',
     shipping_cost: 'SHIPPING_EXPENSE', shipping: 'SHIPPING_EXPENSE',
     shipping_settlement: 'SHIPPING_SETTLEMENT',
     shipping_return: 'SHIPPING_RETURN',
