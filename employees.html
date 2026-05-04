@@ -439,7 +439,7 @@ window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open
 // ══ KPI CALCULATION — 3 محاور موحدة ══
 function calcKpiBreakdown(e,uid,mKey){
   if(!mKey)mKey=curMonthKey();
-  const workDays=Math.max(1,e.annualLeaveQuota?Math.round((365-e.annualLeaveQuota)/12):22);
+  const workDays=Math.max(1,Math.round((260-(e.annualLeaveQuota||21))/12));
   // 1. الحضور (35) — أيام الحضور الفعلية هذا الشهر
   const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===e._id)&&(a.date||'').startsWith(mKey)).length;
   const attendance=Math.min(35,Math.round(monthAtt/workDays*35));
@@ -1274,10 +1274,14 @@ window.closePayOne=function(){
 function calcEmpCommission(e){
   const uid=e.authUid||e._id;
   const mYear=now.getFullYear(),mMon=now.getMonth();
+  // العمولة تُحسب على أساس الأوردرات المحصّلة (paidAt) لا المُنشأة (createdAt)
+  // الأوردرات القديمة بدون paidAt: تستخدم createdAt كاحتياطي
   const mOrders=allOrders.filter(o=>{
-    if(!o.createdAt?.toDate)return false;
-    const d=o.createdAt.toDate();
-    return d.getMonth()===mMon&&d.getFullYear()===mYear;
+    if(o.paymentStatus!=='paid')return false;
+    const paidDate=o.paidAt?.toDate?.();
+    if(paidDate)return paidDate.getMonth()===mMon&&paidDate.getFullYear()===mYear;
+    const createdDate=o.createdAt?.toDate?.();
+    return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
   });
   if(e.role==='graphic_designer'||e.role==='design_operator'){
     return mOrders.filter(o=>(o.designerId===uid||o.designerId===e._id)&&['printing','production','shipping','archived'].includes(o.stage))

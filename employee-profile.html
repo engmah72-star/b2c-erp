@@ -722,7 +722,8 @@ function renderAll(){
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:11px;color:var(--dim2)" id="att-summary">جاري...</span>
-          <button class="btn btn-b btn-xs" onclick="recordAttendanceToday()">✓ اليوم</button>
+          <button class="btn btn-b btn-xs" onclick="recordAttendanceToday()">✓ حضور</button>
+          <button class="btn btn-xs" style="background:var(--r);color:#fff" onclick="recordCheckOutToday()">← انصراف</button>
         </div>
       </div>
       <div class="att-cal" id="att-cal"></div>
@@ -1713,9 +1714,16 @@ function computeSuggestedForMonth(mKey){
   const attendanceBonus=daysAbsent===0?(parseFloat(emp.attendanceBonus)||0):0;
   const uid=emp.authUid||empId;
   let commission=0;
-  const mOrders=allOrders.filter(o=>{if(!o.createdAt?.toDate)return false;const d=o.createdAt.toDate();return d.getMonth()===mMon&&d.getFullYear()===mYear;});
+  // العمولة على أساس تاريخ التحصيل (paidAt) لا الإنشاء (createdAt)
+  const mOrders=allOrders.filter(o=>{
+    if(o.paymentStatus!=='paid')return false;
+    const paidDate=o.paidAt?.toDate?.();
+    if(paidDate)return paidDate.getMonth()===mMon&&paidDate.getFullYear()===mYear;
+    const createdDate=o.createdAt?.toDate?.();
+    return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
+  });
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    commission=mOrders.filter(o=>(o.designerId===uid||o.designerId===empId)&&['printing','production','shipping','archived'].includes(o.stage))
+    commission=mOrders.filter(o=>(o.designerId===uid||o.designerId===empId))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
   } else if(emp.role==='production_agent'){
     commission=mOrders.filter(o=>o.productionAgent===uid).length*(parseFloat(emp.commissionPerOrder)||0);
@@ -1860,16 +1868,23 @@ window.updateSalaryCalc=function(){
 
   // عمولة
   let commission=0;
-  const mOrders=allOrders.filter(o=>{if(!o.createdAt?.toDate)return false;const d=o.createdAt.toDate();return d.getMonth()===mMon&&d.getFullYear()===mYear;});
+  // العمولة على أساس تاريخ التحصيل (paidAt) لا الإنشاء (createdAt)
+  const mOrders2=allOrders.filter(o=>{
+    if(o.paymentStatus!=='paid')return false;
+    const paidDate=o.paidAt?.toDate?.();
+    if(paidDate)return paidDate.getMonth()===mMon&&paidDate.getFullYear()===mYear;
+    const createdDate=o.createdAt?.toDate?.();
+    return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
+  });
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    commission=mOrders.filter(o=>(o.designerId===uid||o.designerId===empId)&&['printing','production','shipping','archived'].includes(o.stage))
+    commission=mOrders2.filter(o=>(o.designerId===uid||o.designerId===empId))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
   } else if(emp.role==='production_agent'){
-    commission=mOrders.filter(o=>o.productionAgent===uid).length*(parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders2.filter(o=>o.productionAgent===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   } else if(emp.role==='shipping_officer'){
-    commission=mOrders.filter(o=>o.shippingOfficerId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders2.filter(o=>o.shippingOfficerId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   } else if(emp.role==='customer_service'){
-    commission=mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
+    commission=mOrders2.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   }
 
   const suggested=Math.max(0,base-absenceDeduction+attendanceBonus+Math.round(commission));
@@ -1966,6 +1981,10 @@ window.confirmSalary=async function(){
       walletId:wId,walletName:w.name||'',
       note,month:salaryData.month,
       baseSalary:salaryData.base,commission:salaryData.commission,
+      absenceDeduction:salaryData.absenceDeduction||0,
+      attendanceBonus:salaryData.attendanceBonus||0,
+      daysPresent:salaryData.daysPresent??null,
+      daysAbsent:salaryData.daysAbsent??null,
       date:todayStr(),userId:currentUser.uid,userName:adminName,
     });
     console.log('[profile] ✅ sync completed: SALARY_PAYMENT');
@@ -1989,12 +2008,28 @@ window.recordAttendanceToday=async function(){
       employeeName:emp.name||'',
       date:dateStr,
       monthKey:mKey,
+      checkIn:true,
       checkInStr:new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
       recordedBy:currentUser.uid,
       recordedByName:adminName,
       createdAt:serverTimestamp()
     });
     toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.recordCheckOutToday=async function(){
+  if(!emp)return;
+  const dateStr=todayStr();
+  const existing=empAttendance.find(a=>a.date===dateStr);
+  if(!existing){toast('⚠️ لم يُسجَّل حضور '+emp.name+' اليوم بعد','err');return;}
+  if(existing.checkOut){toast('⚠️ تم تسجيل انصراف '+emp.name+' اليوم مسبقاً','err');return;}
+  try{
+    await updateDoc(doc(db,'attendance',existing._id),{
+      checkOut:true,
+      checkOutStr:new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
+    });
+    toast('✅ تم تسجيل انصراف '+emp.name,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>

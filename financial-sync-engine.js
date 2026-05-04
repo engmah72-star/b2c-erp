@@ -80,6 +80,7 @@ export function calcOrderPayment(order, delta) {
     totalPaid:     newPaid,
     remaining,
     paymentStatus: remaining <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+    ...(remaining <= 0 ? { paidAt: serverTimestamp() } : {}),
   };
 }
 
@@ -289,6 +290,8 @@ async function handleSalaryPayment(db, p) {
     description: p.note || '', category: 'salary',
     salaryType: p.salaryType, employeeId: p.employeeId, employeeName: p.employeeName,
     baseSalary: p.baseSalary || 0, commission: p.commission || 0,
+    absenceDeduction: p.absenceDeduction || 0, attendanceBonus: p.attendanceBonus || 0,
+    daysPresent: p.daysPresent ?? null, daysAbsent: p.daysAbsent ?? null,
     month: p.month, isDeduction, epId: epRef.id,
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
