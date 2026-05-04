@@ -185,25 +185,25 @@
 
     <!-- STATS -->
     <div class="stat-strip" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-pill on" style="--oc:var(--b)" onclick="setFilter('all',this)">
+      <div class="stat-pill on" style="--oc:var(--c)" onclick="setFilter('active',this)">
+        <div class="stat-pill-val" id="s-active">0</div>
+        <div class="stat-pill-lbl">🚀 نشطة</div>
+      </div>
+      <div class="stat-pill" style="--oc:var(--y)" onclick="setFilter('settle_pending',this)">
+        <div class="stat-pill-val" id="s-settle-pend" style="color:var(--y)">0</div>
+        <div class="stat-pill-lbl">⏳ تسوية</div>
+      </div>
+      <div class="stat-pill" style="--oc:var(--g)" onclick="setFilter('archive_ready',this)">
+        <div class="stat-pill-val" id="s-archive-ready" style="color:var(--g)">0</div>
+        <div class="stat-pill-lbl">✅ للأرشفة</div>
+      </div>
+      <div class="stat-pill" style="--oc:var(--b)" onclick="setFilter('all',this)">
         <div class="stat-pill-val" id="s-all">0</div>
         <div class="stat-pill-lbl">الكل</div>
       </div>
-      <div class="stat-pill" style="--oc:var(--y)" onclick="setFilter('ready',this)">
-        <div class="stat-pill-val" id="s-ready">0</div>
-        <div class="stat-pill-lbl">📦 جاهز</div>
-      </div>
-      <div class="stat-pill" style="--oc:var(--c)" onclick="setFilter('wait_delivery',this)">
-        <div class="stat-pill-val" id="s-wait-del">0</div>
-        <div class="stat-pill-lbl">🚚 في الطريق</div>
-      </div>
-      <div class="stat-pill" style="--oc:var(--r)" onclick="setFilter('wait_collection',this)">
-        <div class="stat-pill-val" id="s-wait-col">0</div>
-        <div class="stat-pill-lbl">💰 انتظار تحصيل</div>
-      </div>
       <div class="stat-pill" style="--oc:#ff6b35" onclick="setFilter('delayed',this)">
         <div class="stat-pill-val" id="s-delayed" style="color:#ff6b35">0</div>
-        <div class="stat-pill-lbl">⏰ متأخر +5أيام</div>
+        <div class="stat-pill-lbl">⏰ متأخر</div>
       </div>
       <div class="stat-pill" style="--oc:var(--r)" onclick="setFilter('no_cost',this)">
         <div class="stat-pill-val" id="s-no-cost" style="color:var(--r)">0</div>
@@ -215,6 +215,12 @@
     <div class="search-bar">
       <span style="font-size:16px;color:var(--dim2)">🔍</span>
       <input id="q" placeholder="بحث بالاسم أو الهاتف أو رقم الأوردر..." oninput="renderList()">
+    </div>
+
+    <!-- Company filter banner (shown when navigated from shipping-accounts) -->
+    <div id="co-filter-banner" style="display:none;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:8px 14px;margin-bottom:12px;align-items:center;justify-content:space-between">
+      <span style="font-size:12px;font-weight:800;color:var(--c)">📦 شحنات: <span id="co-filter-name"></span></span>
+      <button onclick="clearCompanyFilter()" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(34,211,238,.3);background:transparent;color:var(--c);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>
     </div>
 
     <!-- LIST -->
@@ -809,7 +815,8 @@ const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 // ══ STATE ══
 let orders=[], wallets=[], shippers=[], suppliers=[], shippingReturns=[], employees=[];
 let currentUser=null, userName='', activeId=null;
-let currentFilter='all', ssMethod='', ssStage='wait_delivery';
+let currentFilter='active', ssMethod='', ssStage='wait_delivery';
+let urlCompanyFilter='', __urlOrderIdParam='', __urlOrderOpened=false;
 let isAdminUser=false;
 let wizStep=1, wizOrderId=null;
 
@@ -845,7 +852,8 @@ function settleBadge(o){
   const ss=o.shipStage||'ready';
   if(['returned','archived'].includes(ss)||ss==='ready')return'';
   if(o.shipSettled)return`<span class="settle-need settle-ok">✅ مسوّى</span>`;
-  return`<button class="settle-need" onclick="event.stopPropagation();window.location.href='shipping-accounts.html'">⏳ تسوية مطلوبة</button>`;
+  const _enc=encodeURIComponent(o.shipCompanyName||'');
+  return`<button class="settle-need" onclick="event.stopPropagation();window.location.href='shipping-accounts.html?company=${_enc}'">⏳ تسوية مطلوبة</button>`;
 }
 // ══ Next action for order ══
 function nextAction(o){
@@ -858,7 +866,7 @@ function nextAction(o){
   if(rem>0&&ss!=='collected')return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.25)',ico:'💰',txt:`متبقي: ${fn(rem)} ج — حصّل من العميل`,btn:{lbl:'تحصيل الآن',fn:`openShipSetup()`}};
   if(ss==='wait_delivery')return{c:'var(--c)',bg:'rgba(34,211,238,.06)',bc:'rgba(34,211,238,.2)',ico:'🚚',txt:`في الطريق${o.shipCompanyName?' مع '+o.shipCompanyName:''}`,btn:null};
   if(ss==='wait_collection')return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.2)',ico:'💰',txt:'وصلت — انتظار تحصيل المبلغ من العميل',btn:{lbl:'تحصيل',fn:`openShipSetup()`}};
-  if(ss==='collected'&&isComp&&!o.shipSettled)return{c:'var(--y)',bg:'rgba(255,170,0,.08)',bc:'rgba(255,170,0,.3)',ico:'⏳',txt:`تسوية مطلوبة مع ${o.shipCompanyName||'شركة الشحن'}`,btn:{lbl:'انتقل للتسوية',fn:`window.location.href='shipping-accounts.html'`}};
+  if(ss==='collected'&&isComp&&!o.shipSettled){const _co=encodeURIComponent(o.shipCompanyName||'');return{c:'var(--y)',bg:'rgba(255,170,0,.08)',bc:'rgba(255,170,0,.3)',ico:'⏳',txt:`تسوية مطلوبة مع ${o.shipCompanyName||'شركة الشحن'}`,btn:{lbl:'انتقل للتسوية',fn:`window.location.href='shipping-accounts.html?company=${_co}'`}};}
   if(ss==='collected'&&!(o.costItems||[]).length)return{c:'var(--r)',bg:'rgba(255,61,110,.06)',bc:'rgba(255,61,110,.25)',ico:'⚠️',txt:'سجّل تكاليف الأوردر قبل الأرشفة',btn:{lbl:'تسجيل تكلفة',fn:`openAddCostShip(-1)`}};
   if(ss==='collected')return{c:'var(--g)',bg:'rgba(0,217,126,.06)',bc:'rgba(0,217,126,.25)',ico:'✅',txt:'محصّل — جاهز للأرشفة',btn:{lbl:'أرشفة الأوردر',fn:`openDeliver()`}};
   return null;
@@ -1146,6 +1154,19 @@ onAuthStateChanged(auth,async u=>{
   buildMobNav(role,'shipping.html');
   initNotifications(app, u);
 
+  // URL params — للتنقل من صفحة حسابات الشحن
+  (function(){
+    const up=new URLSearchParams(window.location.search);
+    urlCompanyFilter=up.get('company')||'';
+    __urlOrderIdParam=up.get('orderId')||'';
+    if(urlCompanyFilter){
+      const banner=document.getElementById('co-filter-banner');
+      const nameEl=document.getElementById('co-filter-name');
+      if(banner){banner.style.display='flex';}
+      if(nameEl)nameEl.textContent=urlCompanyFilter;
+    }
+  })();
+
   // Listeners
   onSnapshot(query(collection(db,'orders'),where('stage','==','shipping')),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
@@ -1183,9 +1204,9 @@ function updateStats(){
   const delayed=orders.filter(isDelayed);
   const noCost=orders.filter(o=>!(o.costItems||[]).length);
   setText('s-all',orders.length);
-  setText('s-ready',orders.filter(o=>!o.shipStage||o.shipStage==='ready').length);
-  setText('s-wait-del',orders.filter(o=>o.shipStage==='wait_delivery').length);
-  setText('s-wait-col',orders.filter(o=>o.shipStage==='wait_collection').length);
+  setText('s-active',orders.filter(o=>!['collected','returned','archived'].includes(o.shipStage||'ready')).length);
+  setText('s-settle-pend',orders.filter(o=>(o.shipStage||'ready')==='collected'&&o.shipMethod==='company'&&!o.shipSettled).length);
+  setText('s-archive-ready',orders.filter(o=>(o.shipStage||'ready')==='collected'&&(o.shipMethod!=='company'||o.shipSettled)).length);
   setText('s-delayed',delayed.length);
   setText('s-no-cost',noCost.length);
   // alert strip
@@ -1218,12 +1239,25 @@ window.setFilter=function(f,btn){
 };
 
 function matchFilter(o){
+  const ss=o.shipStage||'ready';
+  // شركة محددة من URL
+  if(urlCompanyFilter&&(o.shipCompanyName||'')!==urlCompanyFilter)return false;
   if(currentFilter==='all') return true;
-  if(currentFilter==='ready') return !o.shipStage||o.shipStage==='ready';
+  // نشطة = الأوردرات التي لا تزال بحاجة لعمل من فريق الشحن
+  if(currentFilter==='active') return !['collected','returned','archived'].includes(ss);
+  // في انتظار التسوية = تحصّلت لكن شركة الشحن لم تسوّ بعد
+  if(currentFilter==='settle_pending') return ss==='collected'&&o.shipMethod==='company'&&!o.shipSettled;
+  // جاهزة للأرشفة = تحصّلت وتمّت التسوية (أو ليست شركة شحن)
+  if(currentFilter==='archive_ready') return ss==='collected'&&(o.shipMethod!=='company'||o.shipSettled);
   if(currentFilter==='delayed') return isDelayed(o);
   if(currentFilter==='no_cost') return !(o.costItems||[]).length;
-  return o.shipStage===currentFilter;
+  return ss===currentFilter;
 }
+window.clearCompanyFilter=function(){
+  urlCompanyFilter='';
+  document.getElementById('co-filter-banner').style.display='none';
+  renderList();
+};
 
 // ══ RETURNS SUMMARY ══
 function renderReturnsSummary(){
@@ -1298,6 +1332,12 @@ window.renderList=function(){
     el.innerHTML=`<div class="empty-ship"><div class="empty-ship-ico">🚚</div><div class="empty-ship-text">لا توجد طلبات شحن</div><div class="empty-ship-sub">الطلبات المنتهية من التنفيذ ستظهر هنا</div></div>`;
     return;
   }
+  // فتح أوردر محدد من URL
+  if(__urlOrderIdParam&&!__urlOrderOpened){
+    const _o=orders.find(x=>x._id===__urlOrderIdParam);
+    if(_o){__urlOrderOpened=true;setTimeout(()=>openOrder(__urlOrderIdParam),300);}
+  }
+
   el.innerHTML=data.map(o=>{
     const ss=o.shipStage||'ready';
     const sc=STAGE_COL[ss]||'var(--c)';
@@ -1314,7 +1354,7 @@ window.renderList=function(){
       else{
         if(rem>0)qa.push(`<button class="qa-btn qa-g" onclick="quickCollect('${o._id}')">💰 تحصيل</button>`);
         if((ALLOWED_NEXT[ss]||[]).length)qa.push(`<button class="qa-btn qa-b" onclick="quickStage('${o._id}')">📦 التالي</button>`);
-        if(ss==='collected'&&o.shipMethod==='company'&&!o.shipSettled)qa.push(`<button class="qa-btn qa-y" onclick="window.location.href='shipping-accounts.html'">🔗 تسوية</button>`);
+        if(ss==='collected'&&o.shipMethod==='company'&&!o.shipSettled)qa.push(`<button class="qa-btn qa-y" onclick="window.location.href='shipping-accounts.html?company=${encodeURIComponent(o.shipCompanyName||'')}'">🔗 تسوية</button>`);
         if(ss==='collected'&&!(o.costItems||[]).length)qa.push(`<button class="qa-btn qa-y" onclick="openAddCostShip(-1)">💼 تكلفة</button>`);
         qa.push(`<button class="qa-btn qa-r" onclick="quickReturn('${o._id}')">↩️ مرتجع</button>`);
       }
