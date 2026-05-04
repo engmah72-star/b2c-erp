@@ -307,8 +307,17 @@
 
         <!-- تكلفة + تتبع -->
         <div class="g2">
-          <div class="fg"><label>💸 تكلفة الشحن (ج)</label><input class="inp" id="ss-cost" type="number" placeholder="0"></div>
+          <div class="fg"><label>💸 تكلفة الشحن (داخلية) (ج)</label><input class="inp" id="ss-cost" type="number" placeholder="0"></div>
           <div class="fg"><label>📋 رقم التتبع</label><input class="inp" id="ss-tracking" placeholder="اختياري"></div>
+        </div>
+
+        <!-- رسوم الشحن على العميل -->
+        <div class="fg">
+          <label style="display:flex;align-items:center;gap:6px">
+            <span>📦 رسوم الشحن على العميل (ج)</span>
+            <span style="font-size:10px;color:var(--dim2);font-weight:500">تُضاف فوق سعر المنتج</span>
+          </label>
+          <input class="inp" id="ss-cust-ship-fee" type="number" min="0" placeholder="0 — اختياري" oninput="updateCustFeePreview()">
         </div>
 
         <!-- حالة الشحن (مخفية لو pickup) -->
@@ -810,7 +819,7 @@ let isAdminUser=false;
 let wizStep=1, wizOrderId=null;
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
-const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;return Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
+const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
 const calcCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
 const calcPaid=o=>parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
 const gv=id=>document.getElementById(id)?.value||'';
@@ -1398,13 +1407,15 @@ window.openOrder=function(id){
   const ss=o.shipStage||'ready';
   const sc=STAGE_COL[ss]||'var(--c)';
   const sale=parseFloat(o.salePrice)||0;
+  const custFee=parseFloat(o.customerShipFee)||0;
+  const totalDue=sale+custFee;
   const paid=calcPaid(o);
   const rem=calcRem(o);
   const execCostO=calcCost(o);
   const shipCostO=parseFloat(o.shipCost)||0;
-  const netSale=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0));
+  const netSale=Math.max(0,totalDue-(parseFloat(o.discount)||0));
   const estProfit=netSale-execCostO-shipCostO;
-  const pct=sale>0?Math.min(paid/sale*100,100):0;
+  const pct=totalDue>0?Math.min(paid/totalDue*100,100):0;
   const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'—';
 
   const na=nextAction(o);
@@ -1460,8 +1471,15 @@ window.openOrder=function(id){
         <div class="section-title" style="color:var(--b);margin-bottom:0">💰 الحساب المالي</div>
         ${isAdminUser?`<button type="button" onclick="openAdminOverride()" style="padding:4px 12px;border-radius:20px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">🔧 تعديل إداري</button>`:''}
       </div>
+      ${custFee>0?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:rgba(59,158,255,.06);border-radius:8px;font-size:11px;font-weight:700">
+        <span style="color:var(--dim2)">المنتجات:</span><span style="color:var(--b)">${fn(sale)} ج</span>
+        <span style="color:var(--dim2);margin:0 4px">+</span>
+        <span style="color:var(--dim2)">رسوم الشحن:</span><span style="color:var(--c)">${fn(custFee)} ج</span>
+        <span style="color:var(--dim2);margin:0 4px">=</span>
+        <span style="color:var(--snow);font-weight:900">الإجمالي: ${fn(totalDue)} ج</span>
+      </div>`:''}
       <div class="fin-grid">
-        <div class="fin-cell"><div class="fin-cell-lbl">إجمالي الأوردر</div><div class="fin-cell-val" style="color:var(--b)">${fn(sale)}</div></div>
+        <div class="fin-cell"><div class="fin-cell-lbl">إجمالي الأوردر</div><div class="fin-cell-val" style="color:var(--b)">${fn(totalDue)}</div></div>
         <div class="fin-cell"><div class="fin-cell-lbl">المحصّل</div><div class="fin-cell-val" style="color:var(--g)">${fn(paid)}</div></div>
         <div class="fin-cell" style="${rem>0?'background:rgba(255,61,110,.1)':''}">
           <div class="fin-cell-lbl">المتبقي</div>
@@ -1604,9 +1622,11 @@ window.openShipSetup=function(){
   const ph=document.getElementById('ss-phone-link');
   if(ph){ph.href='tel:'+o.clientPhone;}
   const rem=calcRem(o);
+  const _custFee=parseFloat(o.customerShipFee)||0;
+  const _totalDue=(parseFloat(o.salePrice)||0)+_custFee;
   document.getElementById('ss-finance').style.display=rem>0?'block':'none';
   if(rem>0){
-    setText('ss-f-sale',fn(parseFloat(o.salePrice)||0)+' ج');
+    setText('ss-f-sale',fn(_totalDue)+(_custFee>0?` ج (${fn(parseFloat(o.salePrice)||0)} + شحن ${fn(_custFee)})`:' ج'));
     setText('ss-f-paid',fn(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+' ج');
     setText('ss-f-rem',fn(rem)+' ج');
     sv('ss-col-amt',rem);
@@ -1656,6 +1676,8 @@ window.openShipSetup=function(){
   if(govInp)govInp.disabled=!isFirstShip;
   if(addrInp)addrInp.disabled=!isFirstShip;
   sv('ss-tracking',o.shipTracking||'');
+  const custFeeInp=document.getElementById('ss-cust-ship-fee');
+  if(custFeeInp){custFeeInp.value=parseFloat(o.customerShipFee)||'';custFeeInp.disabled=!isFirstShip;}
   // حالة — تُعرض الانتقالات المسموحة فقط
   ssStage=curSS==='ready'?'wait_delivery':curSS;
   const allowedNext=ALLOWED_NEXT[curSS]||[];
@@ -1735,6 +1757,25 @@ window.updatePreview=function(){
   prev.style.color=after===0?'var(--g)':'var(--y)';
   prev.textContent=after===0?'✅ سيتم التحصيل كاملاً':'بعد التحصيل يبقى: '+fn(after)+' ج';
 };
+// يُحدّث عرض الإجمالي والباقي في مودال الشحن عند تغيير رسوم الشحن على العميل
+window.updateCustFeePreview=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const custFee=parseFloat(gv('ss-cust-ship-fee'))||0;
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const disc=parseFloat(o.discount)||0;
+  const totalDue=sale+custFee;
+  const rem=Math.max(0,totalDue-disc-paid);
+  const finSec=document.getElementById('ss-finance');
+  if(rem>0){
+    if(finSec)finSec.style.display='block';
+    setText('ss-f-sale',fn(totalDue)+(custFee>0?` ج (${fn(sale)} + شحن ${fn(custFee)})`:' ج'));
+    setText('ss-f-rem',fn(rem)+' ج');
+    sv('ss-col-amt',rem);
+  } else {
+    if(finSec)finSec.style.display='none';
+  }
+};
 
 window.saveShip=async function(){
   const method=gv('ss-method');if(!method)return toast('⚠️ اختر طريقة الاستلام','err');
@@ -1762,6 +1803,8 @@ window.saveShip=async function(){
     shipCompanyName2=o.shipCompanyName||'';
     shipCost2=parseFloat(o.shipCost)||0;
   }
+  // ─ رسوم الشحن على العميل (مرة واحدة — أول تسجيل)
+  const customerShipFee2=isFirstShip?(parseFloat(gv('ss-cust-ship-fee'))||0):(parseFloat(o.customerShipFee)||0);
 
   const stage=gv('ss-stage')||curSS;
   // ─ حماية: منع التراجع في الحالات (state machine)
@@ -1770,7 +1813,9 @@ window.saveShip=async function(){
     if(!allowed.includes(stage)) return toast(`⛔ لا يمكن الانتقال من "${STAGE_LABELS[curSS]||curSS}" إلى "${STAGE_LABELS[stage]||stage}"`, 'err');
   }
   const colMode=gv('ss-col-mode')||'now';
-  const rem=calcRem(o);
+  // الباقي يشمل رسوم الشحن على العميل
+  const liveRem=Math.max(0,(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));
+  const rem=liveRem;
   let collectAmt=0,wId='',wName='',transferRef='';
   if(rem>0&&colMode==='now'){
     collectAmt=parseFloat(gv('ss-col-amt'))||0;
@@ -1779,7 +1824,7 @@ window.saveShip=async function(){
     if(collectAmt>rem+0.01)return toast('⚠️ المبلغ المحصّل ('+fn(collectAmt)+' ج) أكبر من المتبقي ('+fn(rem)+' ج)','err');
   }
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+collectAmt;
-  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-newPaid);
+  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0)-newPaid);
   const debtType=gv('ss-debt-type')||'client';
   const parts=[`🚚 ${METHOD_LABELS[shipMethod2]||shipMethod2}`];
   if(shipCompanyName2&&shipMethod2!=='pickup')parts.push(shipCompanyName2);
@@ -1793,6 +1838,8 @@ window.saveShip=async function(){
     const execCost=calcCost(o);
     const financialSnapshot={
       totalSale:parseFloat(o.salePrice)||0,
+      customerShipFee:customerShipFee2,
+      totalDue:(parseFloat(o.salePrice)||0)+customerShipFee2,
       paidAmount:newPaid,remainingAmount:newRem,
       executionCost:execCost,shippingCost:shipCost2,
       estimatedProfit:newPaid-execCost-shipCost2,snapshotAt:nowStr()
@@ -1826,7 +1873,7 @@ window.saveShip=async function(){
       shipAddress:isFirstShip?gv('ss-address'):(o.shipAddress||''),
       shipCost:shipCost2,
       shipTracking:gv('ss-tracking'),
-      ...(isFirstShip?{shipSettled:shipMethod2!=='company'}:{}),
+      ...(isFirstShip?{shipSettled:shipMethod2!=='company',customerShipFee:customerShipFee2}:{}),
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       financialSnapshot,
@@ -1929,7 +1976,8 @@ window.saveCollect=async function(){
   const rem=calcRem(o);
   if(amt>rem+0.01)return toast(`⚠️ المبلغ (${fn(amt)} ج) أكبر من المتبقي (${fn(rem)} ج)`,'err');
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+amt;
-  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)-(parseFloat(o.discount)||0)-newPaid);
+  const _cFee=parseFloat(o.customerShipFee)||0;
+  const newRem=Math.max(0,(parseFloat(o.salePrice)||0)+_cFee-(parseFloat(o.discount)||0)-newPaid);
   const w=wallets.find(x=>x._id===wId);
   const bb=parseFloat(w?.balance)||0;
   const transferRef=gv('col-ref');
@@ -2033,8 +2081,9 @@ window.calcAORemaining=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const paid=parseFloat(document.getElementById('ao-paid')?.value)||0;
   const sale=parseFloat(o.salePrice)||0;
+  const cFee=parseFloat(o.customerShipFee)||0;
   const disc=parseFloat(o.discount)||0;
-  const rem=Math.max(0,sale-disc-paid);
+  const rem=Math.max(0,sale+cFee-disc-paid);
   document.getElementById('ao-remaining').value=rem;
 };
 
@@ -2049,8 +2098,9 @@ window.saveAdminOverride=async function(){
   const newShipStage=document.getElementById('ao-ship-stage').value;
   const reason=document.getElementById('ao-reason').value.trim();
   const sale=parseFloat(o.salePrice)||0;
+  const cFee=parseFloat(o.customerShipFee)||0;
   const disc=parseFloat(o.discount)||0;
-  const newRem=Math.max(0,sale-disc-newPaid);
+  const newRem=Math.max(0,sale+cFee-disc-newPaid);
   // build changes audit trail
   const changes=[];
   const track=(field,label,before,after)=>{if(String(before)!==String(after))changes.push({field:label,before:String(before),after:String(after)});};
