@@ -508,9 +508,11 @@ window.openOrder = async function(orderId) {
   await initDesignItems(order);
   // Listen to items for this order
   if (itemsUnsub) itemsUnsub();
+  const capturedOrderId = orderId;
   itemsUnsub = onSnapshot(
     query(collection(db,'design_items'), where('orderDocId','==',orderId)),
     snap => {
+      if (currentOrderId !== capturedOrderId) return;
       currentItems = snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(a.itemIndex||0)-(b.itemIndex||0));
       renderPanel(order);
@@ -522,15 +524,14 @@ window.openOrder = async function(orderId) {
 async function initDesignItems(order) {
   const products = order.products || [];
   if (!products.length) return;
+  const refs = products.map((_, idx) => doc(db, 'design_items', `${order._id}_${idx}`));
+  const snaps = await Promise.all(refs.map(r => getDoc(r)));
   const batch = writeBatch(db);
   let anyNew = false;
-  for (let idx = 0; idx < products.length; idx++) {
-    const p = products[idx];
-    const itemId = `${order._id}_${idx}`;
-    const itemRef = doc(db, 'design_items', itemId);
-    const snap = await getDoc(itemRef);
+  snaps.forEach((snap, idx) => {
     if (!snap.exists()) {
-      batch.set(itemRef, {
+      const p = products[idx];
+      batch.set(snap.ref, {
         orderDocId: order._id,
         orderCode: order.orderId || '',
         clientId: order.clientId || '',
@@ -552,13 +553,17 @@ async function initDesignItems(order) {
       });
       anyNew = true;
     }
-  }
+  });
   if (anyNew) await batch.commit();
 }
 
 // ── Render Panel ──
 function renderPanel(order) {
   if (!order) return;
+  const wsPanel = document.getElementById('ws-panel');
+  const openIndices = new Set(
+    [...wsPanel.querySelectorAll('.acc-body')].map((el,i)=>el.classList.contains('open')?i:-1).filter(i=>i>=0)
+  );
   const isAdm = ['admin','operation_manager'].includes(currentRole);
   const pendingDec = clientDecisions.filter(d=>d.orderDocId===order._id);
   const approved = currentItems.filter(i=>i.isApproved).length;
@@ -569,7 +574,7 @@ function renderPanel(order) {
   const portalUrl = `${location.origin}${location.pathname.replace('design-workspace.html','')}client-portal.html`;
   const loginUrl = `${location.origin}${location.pathname.replace('design-workspace.html','')}client-login.html`;
 
-  document.getElementById('ws-panel').innerHTML = `
+  wsPanel.innerHTML = `
     <div class="wp-head">
       <div>
         <div class="wp-title">${order.clientName||'—'} <span style="font-size:12px;color:var(--dim2)">${order.orderId||order._id.slice(-6)}</span></div>
@@ -709,6 +714,9 @@ function renderPanel(order) {
       </div>` : ''}
 
     </div>`;
+  wsPanel.querySelectorAll('.acc-body').forEach((el, i) => {
+    if (openIndices.has(i)) el.classList.add('open');
+  });
 }
 
 function renderItemsSection(order, isAdm) {
@@ -801,20 +809,32 @@ function renderPerformance() {
 window.uploadVersion = async function(itemId, inp) {
   const file = inp.files[0]; if (!file) return;
   toast('جاري رفع الموك أب...', '');
-  try {
-    const sRef = ref(storage, `design-items/${itemId}_v${Date.now()}`);
-    await uploadBytes(sRef, file);
-    const imageUrl = await getDownloadURL(sRef);
+  let imageUrl = null;
+  const doFirestoreWrite = async (url) => {
     const item = currentItems.find(i=>i._id===itemId);
     const vNum = (item?.versions?.length||0) + 1;
     await updateDoc(doc(db,'design_items',itemId), {
-      versions: arrayUnion({ vNum, imageUrl, fileName: file.name, uploadedAt: new Date().toISOString(), uploadedBy: currentUid, uploadedByName: currentUserName }),
+      versions: arrayUnion({ vNum, imageUrl: url, fileName: file.name, uploadedAt: new Date().toISOString(), uploadedBy: currentUid, uploadedByName: currentUserName }),
       updatedAt: serverTimestamp(),
       editHistory: arrayUnion({ action: 'version_uploaded', vNum, by: currentUid, byName: currentUserName, at: new Date().toISOString() })
     });
     inp.value = '';
     toast('✅ تم رفع v' + vNum, 'ok');
-  } catch(e) { toast('❌ ' + e.message, 'err'); }
+  };
+  try {
+    const sRef = ref(storage, `design-items/${itemId}_v${Date.now()}`);
+    await uploadBytes(sRef, file);
+    imageUrl = await getDownloadURL(sRef);
+    await doFirestoreWrite(imageUrl);
+  } catch(e) {
+    if (imageUrl) {
+      try { await doFirestoreWrite(imageUrl); }
+      catch(e2) {
+        console.error('uploadVersion Firestore retry failed', { imageUrl, e2 });
+        toast('❌ تعذّر التسجيل — الرابط محفوظ في Console للاسترداد', 'err');
+      }
+    } else { toast('❌ ' + e.message, 'err'); }
+  }
 };
 
 window.markApproved = async function(itemId, current) {
