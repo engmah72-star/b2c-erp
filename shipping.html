@@ -468,49 +468,7 @@
   </div>
 </div>
 
-<!-- Modal: تسجيل مرتجع مباشر -->
-<div class="overlay" id="ov-return-direct">
-  <div class="modal" style="max-width:460px">
-    <div class="modal-head">
-      <span class="modal-title">↩️ تسجيل مرتجع</span>
-      <button class="modal-x" onclick="closeModal('ov-return-direct')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div style="background:var(--bg3);border-radius:12px;padding:12px 16px;margin-bottom:14px">
-        <div style="font-size:14px;font-weight:800" id="ret-client-name">—</div>
-        <div style="font-size:11px;color:var(--dim2);margin-top:3px" id="ret-co-name">—</div>
-      </div>
-      <!-- نوع المرتجع -->
-      <div style="margin-bottom:14px">
-        <div style="font-size:12px;font-weight:800;margin-bottom:8px">نوع المرتجع</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="ship-btn active" id="ret-full-btn" onclick="setReturnType('full')">
-            <div class="ship-btn-ico">📦</div><div class="ship-btn-lbl">كامل</div>
-          </div>
-          <div class="ship-btn" id="ret-partial-btn" onclick="setReturnType('partial')">
-            <div class="ship-btn-ico">📋</div><div class="ship-btn-lbl">جزئي</div>
-          </div>
-        </div>
-        <input type="hidden" id="ret-type" value="full">
-      </div>
-      <!-- منتجات للمرتجع الجزئي -->
-      <div id="ret-products-sec" style="display:none;margin-bottom:14px">
-        <div style="font-size:12px;font-weight:800;margin-bottom:8px">المنتجات المُرجعة</div>
-        <div id="ret-products-list"></div>
-        <div style="margin-top:8px;padding:8px 12px;background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.2);border-radius:8px">
-          <div style="font-size:11px;color:var(--dim2)">تخفيض سعر البيع</div>
-          <div style="font-size:16px;font-weight:900;color:var(--r)" id="ret-deduction-preview">0 ج</div>
-        </div>
-      </div>
-      <div class="fg"><label>💸 تكلفة المرتجع (ج)</label><input class="inp" id="ret-cost" type="number" placeholder="0 — اختياري"></div>
-      <div class="fg"><label>📝 سبب الإرجاع</label><input class="inp" id="ret-note" placeholder="العميل رفض الاستلام / تالف..."></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeModal('ov-return-direct')">إلغاء</button>
-      <button class="btn btn-r" onclick="saveReturnDirect()">↩️ تأكيد المرتجع</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- ══ MODAL: Return Wizard ══ -->
 <div class="overlay" id="ov-return-wiz">
@@ -1693,6 +1651,10 @@ window.openShipSetup=function(){
   sv('ss-gov',o.shipGov||'');sv('ss-address',o.shipAddress||'');
   const costInp=document.getElementById('ss-cost');
   if(costInp){costInp.value=o.shipCost||'';costInp.disabled=!isFirstShip;}
+  const govInp=document.getElementById('ss-gov');
+  const addrInp=document.getElementById('ss-address');
+  if(govInp)govInp.disabled=!isFirstShip;
+  if(addrInp)addrInp.disabled=!isFirstShip;
   sv('ss-tracking',o.shipTracking||'');
   // حالة — تُعرض الانتقالات المسموحة فقط
   ssStage=curSS==='ready'?'wait_delivery':curSS;
@@ -1860,7 +1822,9 @@ window.saveShip=async function(){
       stage: shouldArchive ? 'archived' : o.stage,
       shippingOfficerId:currentUser?.uid||'',shippingOfficerName:userName,
       shipMethod:shipMethod2,shipCompany:coVal2,shipCompanyName:shipCompanyName2,
-      shipGov:gv('ss-gov'),shipAddress:gv('ss-address'),shipCost:shipCost2,
+      shipGov:isFirstShip?gv('ss-gov'):(o.shipGov||''),
+      shipAddress:isFirstShip?gv('ss-address'):(o.shipAddress||''),
+      shipCost:shipCost2,
       shipTracking:gv('ss-tracking'),
       ...(isFirstShip?{shipSettled:shipMethod2!=='company'}:{}),
       totalPaid:newPaid,remaining:newRem,
@@ -2391,134 +2355,6 @@ window.quickShip=function(id){
   activeId=id;openShipSetup();
 };
 
-window.setReturnType=function(type){
-  const rt=document.getElementById('ret-type');if(rt)rt.value=type;
-  document.getElementById('ret-full-btn')?.classList.toggle('active',type==='full');
-  document.getElementById('ret-partial-btn')?.classList.toggle('active',type==='partial');
-  const ps=document.getElementById('ret-products-sec');
-  if(ps)ps.style.display=type==='partial'?'block':'none';
-};
-
-window.calcReturnDeduction=function(){
-  const modal=document.getElementById('ov-return-direct');
-  const orderId=modal?.dataset.orderId;
-  const o=orders.find(x=>x._id===orderId);if(!o)return;
-  const prods=o.products||[];
-  let total=0;
-  prods.forEach((p,i)=>{
-    const rqty=parseFloat(document.getElementById('ret-pqty-'+i)?.value)||0;
-    const uprice=parseFloat(p.unitPrice)||0;
-    total+=rqty*uprice;
-  });
-  setText('ret-deduction-preview',fn(total)+' ج');
-};
-
-window.saveReturnDirect=async function(){
-  const modal=document.getElementById('ov-return-direct');
-  const orderId=modal?.dataset.orderId;
-  const coName=modal?.dataset.coName||'';
-  const cost=parseFloat(document.getElementById('ret-cost').value)||0;
-  const note=document.getElementById('ret-note').value;
-  const returnType=document.getElementById('ret-type')?.value||'full';
-  if(!orderId)return toast('⚠️ خطأ: لا يوجد أوردر','err');
-  const o=orders.find(x=>x._id===orderId);
-  if(!o)return toast('⚠️ الأوردر غير موجود','err');
-
-  // ── Partial Return Logic ──
-  let isPartial=returnType==='partial';
-  let returnedProds=[];
-  let priceDeduction=0;
-  if(isPartial){
-    const prods=o.products||[];
-    prods.forEach((p,i)=>{
-      const rqty=parseFloat(document.getElementById('ret-pqty-'+i)?.value)||0;
-      if(rqty>0){
-        returnedProds.push({name:p.name,returnedQty:rqty,originalQty:p.qty,unitPrice:p.unitPrice||0,deduction:rqty*(p.unitPrice||0)});
-        priceDeduction+=rqty*(p.unitPrice||0);
-      }
-    });
-    if(!returnedProds.length)return toast('⚠️ حدد المنتجات المُرجَّعة','err');
-  }
-
-  try{
-    const now=nowStr();
-    // نجمع بيانات العربون قبل الـ batch لأنه يحتاج query
-    let depWalletId='';
-    const depAmt=parseFloat(o.deposit)||0;
-    if(!isPartial&&depAmt>0){
-      const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
-      depWalletId=depSnap.docs[0]?.data()?.walletId||'';
-    }
-    // ─ Pre-fetch: عمليات التحصيل الفعلية لعكسها من المحافظ
-    let colTxDocs2=[];
-    if(!isPartial){
-      const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','collection')));
-      colTxDocs2=colSnap.docs;
-    }
-
-    // ═══ Batch Atomic: كل عمليات المرتجع في transaction واحدة ═══
-    const batch=writeBatch(db);
-    const action=`↩️ مرتجع${isPartial?' جزئي':' كامل'}${coName?' من '+coName:''}${note?' — '+note:''}${isPartial?' (خصم '+fn(priceDeduction)+' ج)':''}`;
-    const tl=[...(o.timeline||[]),{date:now,action,by:userName}];
-
-    // 1. سجل المرتجع
-    const retRef=doc(collection(db,'shipping_returns'));
-    batch.set(retRef,{orderId,companyName:coName,returnType,returnedProds,priceDeduction,clientName:o.clientName||'',cost,note,status:'returned',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-
-    // 2. حساب التحديثات على الأوردر
-    let orderUpdates;
-    const settledAmt=parseFloat(o.shipSettledAmount)||0;
-    if(isPartial){
-      const newSale=Math.max(0,(parseFloat(o.salePrice)||0)-priceDeduction);
-      const currentPaid=calcPaid(o);
-      const newRem=Math.max(0,newSale-(parseFloat(o.discount)||0)-currentPaid);
-      orderUpdates={salePrice:newSale,remaining:newRem,paymentStatus:newRem<=0?'paid':currentPaid>0?'partial':'pending',returnedProducts:[...(o.returnedProducts||[]),...returnedProds],hasPartialReturn:true,timeline:tl,updatedAt:serverTimestamp()};
-    } else {
-      orderUpdates={shipStage:'returned',shippingStatus:'returned',totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',timeline:tl,updatedAt:serverTimestamp()};
-      if(o.shipSettled&&settledAmt>0) Object.assign(orderUpdates,{shipSettled:false,shipSettledAmount:0});
-    }
-    batch.update(doc(db,'orders',orderId),orderUpdates);
-
-    // 3. transactions للعكس
-    if(!isPartial&&o.shipSettled&&settledAmt>0){
-      const sRef=doc(collection(db,'transactions_v2'));
-      batch.set(sRef,{type:'out',amount:settledAmt,description:`عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-    }
-    if(!isPartial&&depAmt>0){
-      const dRef=doc(collection(db,'transactions_v2'));
-      batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-      if(depWalletId) batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
-    }
-    // ─ عكس التحصيلات الفعلية من المحافظ
-    colTxDocs2.forEach(tx=>{
-      const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
-      if(amt>0&&wid){
-        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
-        const rRef=doc(collection(db,'transactions_v2'));
-        batch.set(rRef,{type:'out',amount:amt,description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'collection_reversal',orderId,clientName:o.clientName||'',walletId:wid,walletName:d.walletName||'',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-      }
-    });
-    if(cost>0){
-      const cRef=doc(collection(db,'transactions_v2'));
-      batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
-    }
-    if(isPartial&&priceDeduction>0) addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
-      amount:priceDeduction,orderId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`مرتجع جزئي — ${note||''}`,userId:currentUser?.uid||'',userName,
-    });
-    if(!isPartial){
-      const lostAmt=parseFloat(o.totalPaid)||0;
-      if(lostAmt>0) addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
-        amount:lostAmt,orderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`مرتجع كامل — ${note||''}`,userId:currentUser?.uid||'',userName,
-      });
-    }
-    await batch.commit();
-    closeModal('ov-return-direct');
-    closePanel();
-    toast('✅ تم تسجيل المرتجع','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-};
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>
 </body>
