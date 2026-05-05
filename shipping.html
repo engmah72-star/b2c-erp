@@ -218,6 +218,12 @@
       <input id="q" placeholder="بحث بالاسم أو الهاتف أو رقم الأوردر..." oninput="renderList()">
     </div>
 
+    <!-- MINE FILTER -->
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button id="qf-mine" class="ftab active" onclick="setMineFilter(true,this)" style="flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">👤 موكلة لي <span id="qf-mine-cnt" style="opacity:.6">(—)</span></button>
+      <button id="qf-all" class="ftab" onclick="setMineFilter(false,this)" style="flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📋 الكل <span id="qf-all-cnt" style="opacity:.6">(—)</span></button>
+    </div>
+
     <!-- Company filter banner (shown when navigated from shipping-accounts) -->
     <div id="co-filter-banner" style="display:none;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:8px 14px;margin-bottom:12px;align-items:center;justify-content:space-between">
       <span style="font-size:12px;font-weight:800;color:var(--c)">📦 شحنات: <span id="co-filter-name"></span></span>
@@ -808,7 +814,7 @@ import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, g
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge } from "./orders.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -816,7 +822,7 @@ const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 
 // ══ STATE ══
 let orders=[], wallets=[], shippers=[], suppliers=[], shippingReturns=[], employees=[];
-let currentUser=null, userName='', activeId=null, currentRole='admin';
+let currentUser=null, userName='', activeId=null, currentRole='admin', mineOnly=true;
 let currentFilter='active', ssMethod='', ssStage='wait_delivery';
 let urlCompanyFilter='', __urlOrderIdParam='', __urlOrderOpened=false;
 let isAdminUser=false;
@@ -1086,6 +1092,10 @@ onAuthStateChanged(auth,async u=>{
   const userData=snap.data();
   const role=userData.role||'admin';
   currentRole=role;
+  if(['admin','operation_manager'].includes(role)){
+    mineOnly=false;
+    setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);
+  }
 
 
   // Guard - يتحقق من permissions
@@ -1275,10 +1285,24 @@ window.updateShipKPIs=function(){
   renderReturnsSummary();
 };
 
+window.setMineFilter=function(val,btn){
+  mineOnly=val;
+  document.querySelectorAll('#qf-mine,#qf-all').forEach(b=>{b.classList.remove('active');b.style.color='var(--dim2)';});
+  if(btn){btn.classList.add('active');btn.style.color='var(--snow)';}
+  renderList();
+};
+
 window.renderList=function(){
   const q=gv('q').toLowerCase();
+  // عدّاد فلتر "موكلة لي / الكل"
+  const uid=currentUser?.uid||'';
+  const isAdm=['admin','operation_manager'].includes(currentRole);
+  const mineCnt=orders.filter(o=>o.shippingOfficerId===uid||(!o.shippingOfficerId&&!isAdm)).length;
+  const mineEl=document.getElementById('qf-mine-cnt');if(mineEl)mineEl.textContent=`(${mineCnt})`;
+  const allEl=document.getElementById('qf-all-cnt');if(allEl)allEl.textContent=`(${orders.length})`;
   let data=orders.filter(o=>{
     if(q&&!(o.clientName||'').toLowerCase().includes(q)&&!(o.clientPhone||'').includes(q)&&!(o.orderId||'').includes(q))return false;
+    if(mineOnly&&uid&&!(o.shippingOfficerId===uid||(!o.shippingOfficerId&&!isAdm)))return false;
     return matchFilter(o);
   });
   const el=document.getElementById('list');if(!el)return;
@@ -1317,7 +1341,7 @@ window.renderList=function(){
       <!-- رأس البطاقة -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
         <div style="min-width:0;flex:1">
-          <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${stageSlaBadge(o)}</div>
           <div class="ocard-client">${o.clientName||'—'}</div>
           <div class="ocard-phone">${o.clientPhone?'📞 '+o.clientPhone:''}</div>
         </div>

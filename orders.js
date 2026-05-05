@@ -65,6 +65,74 @@ export function getStageOwnership(stage) {
 }
 
 // ══════════════════════════════════════════
+// STAGE SLA — الحدود الزمنية القياسية لكل مرحلة (بالساعات)
+// ══════════════════════════════════════════
+// يمكن override عبر settings/main.stageSla لاحقاً
+export const STAGE_SLA_DEFAULTS = {
+  design:     24,
+  printing:    8,
+  production: 24,
+  shipping:   48,
+};
+
+/**
+ * عمر الأوردر في مرحلته الحالية بالساعات.
+ * يستخدم order.stageEnteredAt[stage] إن وجد، وإلا يرجع 0.
+ */
+export function getStageAge(order, slaOverride = null) {
+  if (!order || !order.stage) return 0;
+  const stage = order.stage;
+  const enteredStr = order.stageEnteredAt?.[stage];
+  if (!enteredStr) return 0;
+  const enteredMs = parseArDate(enteredStr);
+  if (!enteredMs) return 0;
+  return Math.max(0, (Date.now() - enteredMs) / (1000 * 60 * 60));
+}
+
+/** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
+export function isStageOverdue(order, slaTable = null) {
+  if (!order || !order.stage) return false;
+  const stage = order.stage;
+  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  if (!sla) return false;
+  return getStageAge(order) > sla;
+}
+
+/** SLA badge HTML للأوردر في المرحلة الحالية */
+export function stageSlaBadge(order, slaTable = null) {
+  if (!order || !order.stage) return '';
+  const age = getStageAge(order);
+  if (age <= 0) return '';
+  const stage = order.stage;
+  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  if (!sla) return '';
+  const overdue = age > sla;
+  const ageFmt = age < 1
+    ? `${Math.round(age * 60)} د`
+    : age < 24 ? `${Math.round(age)} س` : `${Math.round(age / 24)} ي`;
+  if (overdue) {
+    return `<span class="sla-badge sla-late" style="background:rgba(255,61,110,.15);color:#ff3d6e;border:1px solid rgba(255,61,110,.3);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800">⏰ ${ageFmt} متأخر</span>`;
+  }
+  return `<span class="sla-badge" style="background:rgba(120,120,160,.1);color:#7878a0;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">⏱ ${ageFmt}</span>`;
+}
+
+// helper داخلي: parse تاريخ عربي بصيغة dd/mm/yyyy hh:mm
+function parseArDate(str) {
+  if (!str) return null;
+  // محاولة 1: ISO date
+  const iso = Date.parse(str);
+  if (!isNaN(iso)) return iso;
+  // محاولة 2: dd/mm/yyyy hh:mm (ar-EG)
+  const m = String(str).match(/(\d{1,2})\D(\d{1,2})\D(\d{4})\D*(\d{1,2})?\D*(\d{1,2})?/);
+  if (m) {
+    const d = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]),
+                       parseInt(m[4] || 0), parseInt(m[5] || 0));
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+  return null;
+}
+
+// ══════════════════════════════════════════
 // ROLES
 // ══════════════════════════════════════════
 export const ROLES = {
