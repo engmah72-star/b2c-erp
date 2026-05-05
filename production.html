@@ -590,45 +590,69 @@ function renderCostPanel(o,prodIdx){
   }
   document.getElementById('cpanel-ref').innerHTML=refHtml;
 
-  // ── البنود الحالية ──
+  // ── البنود الحالية — مجموعة بالتاريخ ──
   const itemsEl=document.getElementById('cpanel-items');
+  const isAdminView=['admin','operation_manager'].includes(currentRole);
+  function _fmtDate(d){if(!d)return'—';try{return new Date(d).toLocaleDateString('ar-EG',{day:'numeric',month:'long'});}catch{return d;}}
   if(!prodCi.length){
     itemsEl.innerHTML=`<div style="padding:14px 16px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.025);border-radius:10px;margin:8px 16px;border:1px dashed var(--line)">
       <div style="font-size:20px;opacity:.5">📋</div>
       <div style="font-size:12px;color:var(--dim2);font-weight:600">لم يُسجَّل بنود بعد — استخدم الفورم أدناه</div>
     </div>`;
   } else {
-    // ملخص التكاليف بالنوع
-    const byType={};
-    prodCi.forEach(c=>{if(!byType[c.type])byType[c.type]=0;byType[c.type]+=parseFloat(c.total)||0;});
-    const summaryHtml=Object.entries(byType).map(([t,v])=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0"><span style="font-size:11px;color:var(--dim2)">${COST_ICO[t]||'📌'} ${t}</span><span style="font-size:11px;font-weight:800;color:var(--snow)">${fn(v)} ج</span></div>`).join('');
-    const summaryBlock=`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:800;color:var(--dim2);margin-bottom:6px">📊 ملخص البنود</div>
-      ${summaryHtml}
-      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:5px;margin-top:5px"><span style="font-size:12px;font-weight:800;color:var(--dim2)">الإجمالي</span><span style="font-size:14px;font-weight:900;color:var(--snow)">${fn(ciTotal)} ج</span></div>
-    </div>`;
-    itemsEl.innerHTML=summaryBlock+prodCi.map(item=>{
+    // تجميع البنود بالتاريخ
+    const byDate={};
+    prodCi.forEach(item=>{
       const gi=ci.indexOf(item);
-      const paperInfo=item.paperMeta?(
-        [item.paperMeta.paperType,item.paperMeta.paperWeight?item.paperMeta.paperWeight+'جم':'',item.paperMeta.sheets?item.paperMeta.sheets+' فرخة':'',item.paperMeta.pricePerSheet?fn(item.paperMeta.pricePerSheet)+' ج/فرخة':''].filter(Boolean).join(' · ')
-      ):'';
-      const ico=COST_ICO[item.type]||'📌';
-      return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-          <div>
-            <span style="font-size:15px;font-weight:800">${ico} ${item.type||'—'}</span>
-            ${item.supplierName?`<div style="font-size:11px;color:var(--dim2);margin-top:2px">🏭 ${item.supplierName}</div>`:''}
+      const d=item.date||item.addedAt?.slice(0,10)||'—';
+      if(!byDate[d])byDate[d]=[];
+      byDate[d].push({...item,_gi:gi});
+    });
+    const sortedDates=Object.keys(byDate).sort();
+    let itemsHtml=sortedDates.map(date=>{
+      const dayItems=byDate[date];
+      const dayTotal=dayItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      const cards=dayItems.map(item=>{
+        const gi=item._gi;
+        const ico=COST_ICO[item.type]||'📌';
+        const paperInfo=item.paperMeta?[item.paperMeta.paperType,item.paperMeta.paperWeight?item.paperMeta.paperWeight+'جم':'',item.paperMeta.sheets?item.paperMeta.sheets+' فرخة':''].filter(Boolean).join(' · '):'';
+        return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:800">${ico} ${item.type||'—'}</div>
+            ${item.supplierName?`<div style="font-size:10px;color:var(--dim2);margin-top:1px">🏭 ${item.supplierName}</div>`:''}
+            ${item.note?`<div style="font-size:10px;color:var(--dim2);margin-top:1px">💬 ${item.note}</div>`:''}
+            ${paperInfo?`<div style="font-size:10px;color:var(--dim2);margin-top:1px">📄 ${paperInfo}</div>`:''}
           </div>
-          <span style="font-size:18px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</span>
+          <div style="text-align:left;flex-shrink:0">
+            <div style="font-size:16px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</div>
+            <div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end">
+              <button onclick="startCostEdit(${gi})" style="padding:3px 8px;border-radius:6px;border:1px solid var(--line2);background:var(--bg4);color:var(--snow);cursor:pointer;font-size:10px;font-weight:700;font-family:inherit">✏️</button>
+              <button onclick="rmCost(${gi})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.06);color:var(--r);cursor:pointer;font-size:10px;font-weight:700;font-family:inherit">✕</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+      return`<div style="margin-bottom:10px;padding:0 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:10px;font-weight:800;color:var(--dim2);background:var(--bg3);border:1px solid var(--line);border-radius:20px;padding:2px 10px">📅 ${_fmtDate(date)}</span>
+          <span style="font-size:11px;font-weight:800;color:var(--dim2)">${fn(dayTotal)} ج</span>
         </div>
-        ${item.note?`<div style="font-size:11px;color:var(--dim2);padding:2px 0;margin-bottom:4px">💬 ${item.note}</div>`:''}
-        ${paperInfo?`<div style="font-size:10px;color:var(--dim2);padding:2px 0;margin-bottom:4px">📄 ${paperInfo}</div>`:''}
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button onclick="startCostEdit(${gi})" class="btn btn-ghost btn-sm" style="flex:1;font-size:11px">✏️ تعديل</button>
-          <button onclick="rmCost(${gi})" class="btn btn-sm" style="background:rgba(240,54,96,.08);border-color:rgba(240,54,96,.3);color:var(--r);font-size:11px;padding:0 14px">✕</button>
-        </div>
+        ${cards}
       </div>`;
     }).join('');
+    // شريط الإجمالي الكلي
+    itemsHtml+=`<div style="margin:4px 16px 10px;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:10px">
+      <span style="font-size:12px;font-weight:800;color:var(--dim2)">💰 إجمالي التكاليف</span>
+      <span style="font-size:18px;font-weight:900;color:var(--g)">${fn(ciTotal)} ج</span>
+    </div>`;
+    // زر الإغلاق — للأدمن فقط
+    if(isAdminView){
+      const finBtn=o.costFinalized
+        ?`<button onclick="finalizeCosts(${prodIdx})" style="width:calc(100% - 32px);margin:0 16px 12px;padding:12px;border-radius:10px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.08);color:var(--g);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">🔄 تحديث سجل المنتج</button>`
+        :`<button onclick="finalizeCosts(${prodIdx})" style="width:calc(100% - 32px);margin:0 16px 12px;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,rgba(0,217,126,.9),rgba(16,196,222,.8));color:#0d0f1c;font-size:13px;font-weight:900;cursor:pointer;font-family:inherit">✅ إغلاق وحفظ في سجل المنتجات</button>`;
+      itemsHtml+=finBtn;
+    }
+    itemsEl.innerHTML=itemsHtml;
   }
 
   // ── ملخص حسابات الموردين لهذا الأوردر ──
@@ -759,7 +783,7 @@ window.addCostFromPanel=async function(prodIdx){
   const supplierName=supOpt?.dataset?.name||'';
   const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
   const spRef=walletId&&!isEdit&&supplierId?doc(collection(db,'supplier_payments')):null;
-  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
+  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),date:new Date().toISOString().slice(0,10),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
   const ci=[...(o.costItems||[])];
   if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
   try{
@@ -804,6 +828,48 @@ window.addCostFromPanel=async function(prodIdx){
       toast(isEdit?'✅ تم التعديل':`✅ تم الإضافة${walletId?' · خُصم من المحفظة':''}`,'ok');
     }
     _clearCpForm(sfx);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ إغلاق وحفظ التكاليف في سجل المنتجات ══
+window.finalizeCosts=async function(prodIdx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const prods=o.products||[];
+  const prod=prodIdx>=0?prods[prodIdx]:prods[0];
+  if(!prod?.productId)return toast('⚠️ المنتج غير مرتبط بالكتالوج — لا يمكن الحفظ','err');
+  const ci=o.costItems||[];
+  const prodCi=prodIdx>=0?ci.filter(c=>c.prodIdx===prodIdx||c.prodIdx==null):ci;
+  if(!prodCi.length)return toast('⚠️ لا توجد بنود للحفظ','err');
+  const total=prodCi.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const today=new Date().toISOString().slice(0,10);
+  const entry={
+    date:today,
+    qty:parseFloat(prod.qty)||0,
+    paper:[prod.paper,prod.weight?prod.weight+'جم':''].filter(Boolean).join(' '),
+    notes:`أوردر ${o.orderId||o._id.slice(-6)} · ${o.clientName||''}`,
+    items:prodCi.map(c=>({type:c.type||'—',supplierId:c.supplierId||'',supplierName:c.supplierName||'',total:parseFloat(c.total)||0})),
+    total,
+    orderId:o._id,
+    clientName:o.clientName||'',
+    source:'production'
+  };
+  try{
+    const prodDocRef=doc(db,'products_v2',prod.productId);
+    const prodSnap=await getDoc(prodDocRef);
+    if(!prodSnap.exists())return toast('⚠️ المنتج غير موجود في الكتالوج','err');
+    const history=[...(prodSnap.data()?.costHistory||[])];
+    // تحديث أو إضافة — نحذف أي سجل سابق لنفس الأوردر
+    const filtered=history.filter(h=>h.orderId!==o._id);
+    filtered.push(entry);
+    const batch=writeBatch(db);
+    batch.update(prodDocRef,{costHistory:filtered,lastCostTotal:total,updatedAt:serverTimestamp()});
+    batch.update(doc(db,'orders',activeId),{
+      costFinalized:true,costFinalizedAt:serverTimestamp(),costFinalizedBy:currentUser?.uid||'',costFinalizedByName:userName,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ تم إغلاق تكاليف "${prod.name||'المنتج'}": ${fn(total)} ج → حُفظ في الكتالوج`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    await batch.commit();
+    toast(`✅ تم حفظ ${prodCi.length} بند (${fn(total)} ج) في سجل "${prod.name||'المنتج'}"`, 'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
