@@ -269,6 +269,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { buildStageAdvance, buildStageRevert } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -316,14 +317,17 @@ window.calcAdmRemaining=function(){
 
 window.moveStage=async function(stage){
   if(!activeId)return;
+  const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
+  if(!isAdmin)return toast('⛔ القفز بين المراحل متاح للأدمن فقط','err');
   const labels={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف'};
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(stage===o.stage)return;
   if(stage==='archived'&&!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
-  if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟`))return;
+  if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟ (override أدمن)`))return;
   try{
     await updateDoc(doc(db,'orders',activeId),{
       stage,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 نُقل إلى ${labels[stage]} (أدمن)`,by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage,action:`🔄 [أدمن] نُقل ${labels[o.stage]||o.stage} → ${labels[stage]}`,by:userName,byId:currentUser?.uid||''}],
       updatedAt:serverTimestamp()
     });
     closePanel();
@@ -1155,7 +1159,17 @@ async function uploadFinal(file){
 window.moveToShipping=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);
-  if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن التحويل للشحن — سجّل تكلفة الأوردر أولاً','err');
+  // المرور عبر بوابة المراحل الموحّدة (orders.js) — تتحقق من costItems والصلاحية
+  const adv=buildStageAdvance({
+    order:o, role:currentRole, userId:currentUser?.uid||'', userName,
+    extraFields:{
+      prodStatus:'done',
+      prodDoneAt:nowStr(),
+      productionAgent:currentUser?.uid||o.productionAgent||'',
+      productionAgentName:userName,
+    }
+  });
+  if(!adv.ok)return toast('⛔ '+adv.errors.join(' · '),'err');
   if(!confirm('تحويل للشحن؟'))return;
   try{
     const prods=o.products||[];
@@ -1163,7 +1177,7 @@ window.moveToShipping=async function(){
     const now=nowStr();
     const batch=writeBatch(db);
 
-    // ══ حفظ التكاليف في سجل المنتج (ضمن نفس الـ batch) ══
+    // ══ حفظ التكاليف في سجل المنتج (ضمن نفس الـ batch) — RULE 3 ══
     for(let pi=0;pi<prods.length;pi++){
       const prod=prods[pi];
       const pName=(prod.name||'').trim().toLowerCase();
@@ -1184,7 +1198,11 @@ window.moveToShipping=async function(){
       batch.update(doc(db,'products_v2',catProd._id),{costHistory:history,lastCostTotal:total,lastCostDate:now});
     }
 
-    batch.update(doc(db,'orders',activeId),{stage:'shipping',prodStatus:'done',prodDoneAt:now,productionAgent:currentUser?.uid||o.productionAgent||'',productionAgentName:userName,timeline:[...(o.timeline||[]),{date:now,action:'✅ تنفيذ منتهي — انتقل للشحن 🚚',by:userName}],updatedAt:serverTimestamp()});
+    batch.update(doc(db,'orders',activeId),{
+      ...adv.fields,
+      timeline:[...(o.timeline||[]),adv.timelineEntry],
+      updatedAt:serverTimestamp(),
+    });
     await batch.commit();
     closePanel();
     toast('✅ انتقل للشحن 🚚','ok');

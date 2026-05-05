@@ -148,6 +148,31 @@ service cloud.firestore {
     }
 
     // ══ Orders ══
+    // Stage Gate (يوافق orders.js):
+    //   design → printing → production → shipping → archived
+    // Admin/operation_manager يمكنهم القفز بين المراحل (override).
+    // أدوار التشغيل يمكنها فقط الانتقال المسموح من مرحلتها الحالية.
+    function canAdvanceFromStage(prev, next) {
+      // الانتقال للأمام بالترتيب
+      let validForward = (prev == 'design'    && next == 'printing'   && (hasPage('design') || hasPage('clients')))
+                      || (prev == 'printing'  && next == 'production' && (hasPage('print')  || hasPage('clients')))
+                      || (prev == 'production'&& next == 'shipping'   && hasPage('production'))
+                      || (prev == 'shipping'  && next == 'archived'   && hasPage('shipping'));
+      // الارتداد للخلف (مرفوض من المرحلة التالية)
+      let validRevert  = (prev == 'printing'  && next == 'design'     && (hasPage('print')      || hasPage('design')))
+                      || (prev == 'production'&& next == 'printing'   && (hasPage('production') || hasPage('print')))
+                      || (prev == 'shipping'  && next == 'production' && (hasPage('shipping')   || hasPage('production')));
+      // الإلغاء متاح من أي مرحلة قبل الأرشفة لمن له clients/admin
+      let validCancel  = next == 'cancelled' && (hasPage('clients') || hasPage('shipping'));
+      return validForward || validRevert || validCancel;
+    }
+    function isValidStageUpdate() {
+      let prev = resource.data.get('stage', '');
+      let next = request.resource.data.get('stage', '');
+      // لا يتغير stage → السماح (تحديث حقول أخرى)
+      return prev == next || isAdmin() || canAdvanceFromStage(prev, next);
+    }
+
     match /orders/{orderId} {
       allow read: if isAuth() && (
         isAdmin() ||
@@ -174,7 +199,7 @@ service cloud.firestore {
         resource.data.get('designerId','__') == request.auth.uid ||
         resource.data.get('productionAgent','__') == request.auth.uid ||
         resource.data.get('shippingOfficerId','__') == request.auth.uid
-      );
+      ) && isValidStageUpdate();
       allow delete: if isAdmin();
     }
 
