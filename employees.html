@@ -94,8 +94,8 @@
 
     <!-- Filters -->
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-      <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="renderList()"></div>
-      <select class="inp" id="f-role" onchange="renderList()" style="max-width:200px">
+      <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="resetPageAndRender()"></div>
+      <select class="inp" id="f-role" onchange="resetPageAndRender()" style="max-width:200px">
         <option value="">كل الأدوار</option>
         <option value="admin">Admin</option>
         <option value="operation_manager">مدير عمليات</option>
@@ -372,6 +372,18 @@ const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو',
 let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let payOneEmpId=null,periodFilter='month_cur';
+// Pagination
+const PAGE_SIZE=20;
+let currentPage=1;
+// Render scheduler (debounces multiple snapshot bursts into one paint)
+let __statsRaf=0,__listRaf=0,__alertsRaf=0;
+const scheduleStats=()=>{if(__statsRaf)return;__statsRaf=requestAnimationFrame(()=>{__statsRaf=0;updateStats();});};
+const scheduleList=()=>{if(__listRaf)return;__listRaf=requestAnimationFrame(()=>{__listRaf=0;renderList();});};
+const scheduleAlerts=()=>{if(__alertsRaf)return;__alertsRaf=requestAnimationFrame(()=>{__alertsRaf=0;renderAlerts();});};
+// Caches — invalidated by version counters
+let __ordersVer=0,__empVer=0,__attVer=0;
+let __lastActivityMap=null,__lastActivityVer=-1;
+const __kpiCache=new Map(); // key: empId|ordersVer|attVer|monthKey -> breakdown
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
@@ -426,9 +438,11 @@ function ordersInPeriod(){
 
 window.setPeriod=function(p){
   periodFilter=p;
+  currentPage=1;
   document.querySelectorAll('.pp-btn').forEach(b=>b.classList.toggle('active',b.dataset.p===p));
   updateStats();renderList();
 };
+window.resetPageAndRender=function(){currentPage=1;renderList();};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -439,6 +453,9 @@ window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open
 // ══ KPI CALCULATION — 3 محاور موحدة ══
 function calcKpiBreakdown(e,uid,mKey){
   if(!mKey)mKey=curMonthKey();
+  const cacheKey=`${e._id}|${uid}|${__ordersVer}|${__attVer}|${mKey}`;
+  const cached=__kpiCache.get(cacheKey);
+  if(cached)return cached;
   const workDays=Math.max(1,Math.round((260-(e.annualLeaveQuota||21))/12));
   // 1. الحضور (35) — أيام الحضور الفعلية هذا الشهر
   const monthAtt=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===e._id)&&(a.date||'').startsWith(mKey)).length;
@@ -481,7 +498,11 @@ function calcKpiBreakdown(e,uid,mKey){
     quality=mine.length?Math.min(25,Math.round(done.length/mine.length*25)):12;
   } else { quality=15; }
   const total=Math.min(100,attendance+productivity+quality);
-  return{attendance,productivity,quality,total,monthAtt,workDays};
+  const result={attendance,productivity,quality,total,monthAtt,workDays};
+  // bound cache (keep last 200 entries)
+  if(__kpiCache.size>200)__kpiCache.clear();
+  __kpiCache.set(cacheKey,result);
+  return result;
 }
 function calcKpi(e,uid){return calcKpiBreakdown(e,uid,curMonthKey()).total;}
 
@@ -762,15 +783,17 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(collection(db,'employees'),snap=>{
     employees=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    updateStats();renderList();fillWalletSelects();
+    __empVer++;
+    scheduleStats();scheduleList();scheduleAlerts();fillWalletSelects();
   });
   onSnapshot(collection(db,'orders'),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateStats();renderList();
+    __ordersVer++;
+    scheduleStats();scheduleList();scheduleAlerts();
   });
   onSnapshot(collection(db,'transactions_v2'),snap=>{
     transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateStats();renderList();
+    scheduleStats();scheduleList();
   });
   onSnapshot(collection(db,'wallets'),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -778,7 +801,8 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(collection(db,'attendance'),snap=>{
     attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderList();
+    __attVer++;
+    scheduleStats();scheduleList();scheduleAlerts();
   });
 });
 
@@ -843,12 +867,14 @@ function updateStats(){
 // ══ FILTERS ══
 window.toggleSalFilter=function(){
   salFilterUnpaid=!salFilterUnpaid;attFilterToday=false;
+  currentPage=1;
   styleFilterBtn('f-sal-unpaid',salFilterUnpaid,'var(--y)','rgba(255,170,0,.15)','rgba(255,170,0,.4)');
   styleFilterBtn('f-att-today',false,'var(--b)','rgba(59,158,255,.12)','rgba(59,158,255,.35)');
   renderList();
 };
 window.toggleAttFilter=function(){
   attFilterToday=!attFilterToday;salFilterUnpaid=false;
+  currentPage=1;
   styleFilterBtn('f-att-today',attFilterToday,'var(--b)','rgba(59,158,255,.12)','rgba(59,158,255,.35)');
   styleFilterBtn('f-sal-unpaid',false,'var(--y)','rgba(255,170,0,.15)','rgba(255,170,0,.4)');
   renderList();
@@ -922,21 +948,33 @@ window.renderList=function(){
     el.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">${employees.length?'لا نتائج':'لا يوجد موظفين بعد'}</div></div>`;
     return;
   }
+  // Pagination
+  const totalPages=Math.max(1,Math.ceil(data.length/PAGE_SIZE));
+  if(currentPage>totalPages)currentPage=totalPages;
+  if(currentPage<1)currentPage=1;
+  const pageStart=(currentPage-1)*PAGE_SIZE;
+  const pageData=data.slice(pageStart,pageStart+PAGE_SIZE);
 
-  // Build last-activity map from all order timelines
-  const lastActivityMap=new Map();
-  allOrders.forEach(o=>{
-    (o.timeline||[]).forEach(t=>{
-      if(!t.by)return;
-      const ex=lastActivityMap.get(t.by);
-      if(!ex||(t.date||'')>(ex.date||''))lastActivityMap.set(t.by,{...t,clientName:o.clientName||'',orderId:o._id});
+  // Build last-activity map from all order timelines (cached by ordersVer)
+  let lastActivityMap;
+  if(__lastActivityVer===__ordersVer&&__lastActivityMap){
+    lastActivityMap=__lastActivityMap;
+  } else {
+    lastActivityMap=new Map();
+    allOrders.forEach(o=>{
+      (o.timeline||[]).forEach(t=>{
+        if(!t.by)return;
+        const ex=lastActivityMap.get(t.by);
+        if(!ex||(t.date||'')>(ex.date||''))lastActivityMap.set(t.by,{...t,clientName:o.clientName||'',orderId:o._id});
+      });
     });
-  });
-  renderAlerts();
+    __lastActivityMap=lastActivityMap;
+    __lastActivityVer=__ordersVer;
+  }
   const activeOrdsAll=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   const periodOrders=ordersInPeriod();
   const pLbl=getPeriodLabel();
-  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px">${data.map(e=>{
+  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px">${pageData.map(e=>{
     const r=ROLES[e.role]||{label:e.role,col:'#4e5672',ico:'👤'};
     const isPaid=paidEmpIds.has(e._id);
     const isActive=e.status==='active';
@@ -1071,7 +1109,18 @@ window.renderList=function(){
         ${waHref?`<a href="${waHref}" target="_blank" class="btn btn-ghost btn-sm" style="flex:1;text-align:center;font-size:11px" onclick="event.stopPropagation()">💬 واتساب</a>`:''}
       </div>`:''}
     </div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>${totalPages>1?`<div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;padding:10px;background:var(--bg2);border-radius:var(--rad);border:1px solid var(--line);flex-wrap:wrap">
+    <button class="btn btn-ghost btn-sm" ${currentPage===1?'disabled':''} onclick="gotoPage(${currentPage-1})" style="font-size:11px;${currentPage===1?'opacity:.4;cursor:not-allowed':''}">‹ السابق</button>
+    <span style="font-size:12px;color:var(--dim2);font-weight:700">صفحة ${currentPage} من ${totalPages}</span>
+    <button class="btn btn-ghost btn-sm" ${currentPage===totalPages?'disabled':''} onclick="gotoPage(${currentPage+1})" style="font-size:11px;${currentPage===totalPages?'opacity:.4;cursor:not-allowed':''}">التالي ›</button>
+    <span style="font-size:11px;color:var(--dim2);margin-right:8px">عرض ${pageStart+1}–${Math.min(pageStart+PAGE_SIZE,data.length)} من ${data.length}</span>
+  </div>`:''}`;
+};
+
+window.gotoPage=function(n){
+  currentPage=n;
+  renderList();
+  document.getElementById('list')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
 
 // ══ MODAL: موظف جديد/تعديل ══
