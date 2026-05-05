@@ -13,11 +13,13 @@ window.FinanceCore = {
       || 0;
   },
 
-  // ══ الحصول على السعر الكلي بعد الخصم ══
+  // ══ الحصول على السعر الكلي بعد الخصم — مطابق لـ calcOrderPayment في financial-sync-engine ══
+  // يشمل customerShipFee لأنها جزء من فاتورة العميل (يحصّلها مندوب الشحن)
   getNet(order) {
-    const sale = parseFloat(order?.salePrice) || 0;
-    const disc = parseFloat(order?.discount) || 0;
-    return Math.max(0, sale - disc);
+    const sale    = parseFloat(order?.salePrice)      || 0;
+    const disc    = parseFloat(order?.discount)        || 0;
+    const shipFee = parseFloat(order?.customerShipFee) || 0;
+    return Math.max(0, sale + shipFee - disc);
   },
 
   // ══ الباقي على العميل ══
@@ -62,10 +64,10 @@ window.FinanceCore = {
     }, { salePrice: 0, paid: 0, remaining: 0, dueByCo: 0, costs: 0 });
   },
 
-  // ══ تحديث الأوردر بعد دفعة جديدة ══
+  // ══ تحديث الأوردر بعد دفعة جديدة (delta موجب) أو refund (delta سالب) ══
   calcAfterPayment(order, paymentAmount) {
     const oldPaid = this.getPaid(order);
-    const newPaid = oldPaid + paymentAmount;
+    const newPaid = Math.max(0, oldPaid + paymentAmount);
     const net = this.getNet(order);
     const newRem = Math.max(0, net - newPaid);
     return {
@@ -77,15 +79,7 @@ window.FinanceCore = {
 
   // ══ عكس دفعة (حذف) ══
   calcAfterRefund(order, refundAmount) {
-    const oldPaid = this.getPaid(order);
-    const newPaid = Math.max(0, oldPaid - refundAmount);
-    const net = this.getNet(order);
-    const newRem = Math.max(0, net - newPaid);
-    return {
-      totalPaid: newPaid,
-      remaining: newRem,
-      paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending'
-    };
+    return this.calcAfterPayment(order, -Math.abs(refundAmount));
   },
 
   // ══ فلتر أوردرات الشحن (بدون pickup + مسوّى) ══
