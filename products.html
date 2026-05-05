@@ -46,6 +46,10 @@
 .cost-history-inline.open{display:block;}
 .cost-entry-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--bg3);border-radius:10px;margin-bottom:6px;gap:8px;border:1px solid transparent;transition:border-color .15s;}
 .cost-entry-row:hover{border-color:var(--line);}
+/* Cost item card in modal */
+.ci-card{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px;position:relative}
+.ci-card-del{position:absolute;top:8px;left:8px;background:rgba(255,61,110,.12);border:none;border-radius:6px;color:var(--r);cursor:pointer;font-size:12px;padding:3px 8px;line-height:1}
+.ci-card select,.ci-card input{font-size:13px}
 /* View toggle */
 .view-toggle{display:flex;gap:3px;background:var(--bg3);border-radius:10px;padding:3px;}
 .vt-btn{padding:6px 16px;border-radius:8px;border:none;background:transparent;color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;}
@@ -800,19 +804,40 @@ window.openEditCost=function(prodId,idx){
   oM('add-cost');
 };
 
+const COST_TYPES=[
+  {v:'طباعة',l:'🖨️ طباعة'},{v:'ورق',l:'📄 ورق'},{v:'قص',l:'✂️ قص'},
+  {v:'سلفنة',l:'✨ سلفنة'},{v:'زنكات',l:'🔵 زنكات'},{v:'تجميع',l:'📦 تجميع'},
+  {v:'شحن',l:'🚚 شحن'},{v:'تصميم',l:'✏️ تصميم'},{v:'أخرى',l:'📌 أخرى'}
+];
 function renderCostItems(){
   const el=document.getElementById('ac-items-list');if(!el)return;
+  if(!window.costItems.length){
+    el.innerHTML=`<div style="text-align:center;padding:12px;color:var(--dim2);font-size:12px;border:1px dashed var(--line);border-radius:8px;margin-bottom:8px">اضغط "＋ إضافة عنصر" لإضافة بند تكلفة</div>`;
+    return;
+  }
+  const typeOpts=COST_TYPES.map(t=>`<option value="${t.v}">${t.l}</option>`).join('');
   el.innerHTML=window.costItems.map((it,i)=>`
-    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
-      <input class="inp" style="flex:2" placeholder="نوع التكلفة (ورق، طباعة...)" value="${it.type||''}"
-        oninput="window.costItems[${i}].type=this.value">
-      <select class="inp" style="flex:2" onchange="const s=suppliers.find(x=>x._id===this.value);window.costItems[${i}].supplierId=this.value;window.costItems[${i}].supplierName=s?.name||''">
-        <option value="">— مورد —</option>
-        ${suppliers.map(s=>`<option value="${s._id}"${it.supplierId===s._id?' selected':''}>${s.name}</option>`).join('')}
-      </select>
-      <input class="inp" style="flex:1;text-align:center" type="number" placeholder="0" value="${it.total||''}" min="0"
-        oninput="window.costItems[${i}].total=parseFloat(this.value)||0;calcCostTotal()">
-      <button onclick="removeCostItem(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>
+    <div class="ci-card">
+      <button class="ci-card-del" onclick="removeCostItem(${i})">✕</button>
+      <div class="fg" style="margin:0;padding-top:4px">
+        <label style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px">النوع</label>
+        <select class="inp" onchange="window.costItems[${i}].type=this.value" style="margin-top:3px">
+          <option value="">— اختر —</option>
+          ${COST_TYPES.map(t=>`<option value="${t.v}"${it.type===t.v?' selected':''}>${t.l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg" style="margin:0;padding-top:4px">
+        <label style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px">المورد</label>
+        <select class="inp" onchange="const s=suppliers.find(x=>x._id===this.value);window.costItems[${i}].supplierId=this.value;window.costItems[${i}].supplierName=s?.name||''" style="margin-top:3px">
+          <option value="">— بدون مورد —</option>
+          ${suppliers.map(s=>`<option value="${s._id}"${it.supplierId===s._id?' selected':''}>${s.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg" style="margin:0;grid-column:1/-1">
+        <label style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px">المبلغ (ج)</label>
+        <input class="inp" type="number" placeholder="0.00" value="${it.total||''}" min="0" style="margin-top:3px;font-size:16px;font-weight:900;text-align:center"
+          oninput="window.costItems[${i}].total=parseFloat(this.value)||0;calcCostTotal()">
+      </div>
     </div>`).join('');
 }
 
@@ -933,15 +958,15 @@ function fn(n){return(n||0).toLocaleString('ar-EG');}
       <div style="font-size:11px;font-weight:800;color:var(--dim2);margin:12px 0 8px">📦 عناصر التكلفة</div>
       <div id="ac-items-list"></div>
       <button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:12px" onclick="addCostItem()">＋ إضافة عنصر</button>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg3);border-radius:10px;border:1px solid var(--line)">
-        <span style="font-size:13px;font-weight:800">الإجمالي</span>
-        <span id="ac-total-display" style="font-size:18px;font-weight:900;color:var(--r)">0 ج</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:rgba(0,217,126,.06);border-radius:10px;border:1px solid rgba(0,217,126,.2)">
+        <span style="font-size:13px;font-weight:800;color:var(--dim2)">💰 إجمالي التكلفة</span>
+        <span id="ac-total-display" style="font-size:20px;font-weight:900;color:var(--g)">0 ج</span>
       </div>
       <div class="fg" style="margin-top:10px"><label>ملاحظات</label><input class="inp" id="ac-notes" placeholder="أي تفاصيل إضافية..."></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="cM('add-cost');resetCostForm()">إلغاء</button>
-      <button class="btn btn-r" id="ac-save-btn" onclick="saveCostEntry()">✓ حفظ التكلفة</button>
+      <button class="btn btn-g" id="ac-save-btn" onclick="saveCostEntry()">✓ حفظ التكلفة</button>
     </div>
   </div>
 </div>
