@@ -1053,7 +1053,7 @@ function styleFilterBtn(id,active,col,bg,border){
 // ══ WHATSAPP للغائبين ══
 window.openAbsentWa=function(){
   const today=todayStr();
-  const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
+  const attendedToday=(()=>{const s=new Set();attendanceRecords.filter(a=>a.date===today).forEach(a=>{if(a.employeeId)s.add(a.employeeId);if(a.employeeUid)s.add(a.employeeUid);});return s;})();
   const absent=employees.filter(e=>e.status==='active'&&e.phone&&!attendedToday.has(e._id)&&!attendedToday.has(e.authUid));
   const listEl=document.getElementById('absent-emp-list');
   if(!listEl)return;
@@ -1086,17 +1086,28 @@ window.openAbsentWa=function(){
 window.renderList=function(){
   const today=todayStr();
   const paidEmpIds=new Set(transactions.filter(t=>isMainSalaryTx(t)&&txInPeriod(t)).map(t=>t.employeeId));
-  const attendedToday=new Set(attendanceRecords.filter(a=>a.date===today).map(a=>a.employeeId||a.employeeUid));
+  const attendedToday=(()=>{const s=new Set();attendanceRecords.filter(a=>a.date===today).forEach(a=>{if(a.employeeId)s.add(a.employeeId);if(a.employeeUid)s.add(a.employeeUid);});return s;})();
   // Map: uid/empId → today's full record (for times display)
   const todayAttMap=new Map();
   attendanceRecords.filter(a=>a.date===today).forEach(a=>{
     if(a.employeeUid)todayAttMap.set(a.employeeUid,a);
     if(a.employeeId)todayAttMap.set(a.employeeId,a);
   });
-  const attendedInPeriod={}; // empId → count
+  // attendedInPeriod: index attendance by BOTH keys so the lookup can sum
+  // records that were written with only `employeeUid` (from staff dashboards)
+  // alongside records written with `employeeId` (from admin profile). Without
+  // this, an employee with mixed records sees only one of the two buckets.
+  const attendedInPeriod={};
+  const __seenPerEmp=new Map(); // key=empId|uid -> Set of doc ids (dedupe)
   attendanceRecords.filter(a=>attInPeriod(a.date)).forEach(a=>{
-    const eid=a.employeeId||a.employeeUid||'';
-    if(eid)attendedInPeriod[eid]=(attendedInPeriod[eid]||0)+1;
+    const docKey=a._id||(a.date+'|'+(a.employeeUid||'')+'|'+(a.employeeId||''));
+    [a.employeeId,a.employeeUid].filter(Boolean).forEach(k=>{
+      let seen=__seenPerEmp.get(k);
+      if(!seen){seen=new Set();__seenPerEmp.set(k,seen);}
+      if(seen.has(docKey))return;
+      seen.add(docKey);
+      attendedInPeriod[k]=(attendedInPeriod[k]||0)+1;
+    });
   });
 
   const q=gv('q').toLowerCase();
