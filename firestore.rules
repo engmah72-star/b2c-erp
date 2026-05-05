@@ -37,6 +37,37 @@ service cloud.firestore {
           && d.category is string
           && (d.walletId == null || d.walletId is string);
     }
+    // ══ Financial collection access — مصدر واحد للأذونات المالية ══
+    // إضافة صفحة جديدة تكتب في wallets/transactions_v2/financial_ledger:
+    //   1) أضفها هنا في canFinancialWrite()
+    //   2) أو امنح المستخدم perms.canFinancialWrite=true
+    function canFinancialWrite() {
+      return isAdmin()
+          || hasPage('accounts')
+          || hasPage('shipping')
+          || hasPage('shipping-accounts')
+          || hasPage('suppliers')
+          || hasPage('production')
+          || hasPage('design')
+          || hasPage('print')
+          || hasPage('clients')
+          || can('canAddOrders')
+          || can('canFinancialWrite');
+    }
+    function canFinancialRead() {
+      return isAdmin()
+          || hasPage('accounts')
+          || hasPage('shipping')
+          || hasPage('shipping-accounts')
+          || hasPage('suppliers')
+          || hasPage('production')
+          || hasPage('design')
+          || hasPage('print')
+          || hasPage('clients')
+          || can('canAddOrders')
+          || can('canFinancialWrite')
+          || can('canFinancialRead');
+    }
     function validLedger() {
       let d = request.resource.data;
       // كل قيد يجب أن يربط بكيان واحد على الأقل (RULE 5: full audit)
@@ -165,47 +196,16 @@ service cloud.firestore {
 
     // ══ Wallets ══
     match /wallets/{walletId} {
-      allow read: if isAuth() && (
-        isAdmin() ||
-        hasPage('accounts') ||
-        hasPage('shipping-accounts') ||
-        hasPage('shipping') ||
-        hasPage('clients') ||
-        hasPage('print') ||
-        hasPage('design') ||
-        can('canAddOrders')
-      );
+      allow read:   if isAuth() && canFinancialRead();
       allow create: if isAdmin();
-      allow update: if isAuth() && (
-        isAdmin() ||
-        hasPage('accounts') ||
-        hasPage('shipping-accounts') ||
-        hasPage('shipping') ||
-        hasPage('suppliers') ||
-        hasPage('design') ||
-        hasPage('print') ||
-        hasPage('production') ||
-        hasPage('clients') ||
-        can('canAddOrders')
-      );
+      allow update: if isAuth() && canFinancialWrite();
       allow delete: if isAdmin();
     }
 
     // ══ Transactions ══
     match /transactions_v2/{txId} {
-      allow read: if isAuth() && (
-        isAdmin() ||
-        hasPage('accounts') ||
-        hasPage('shipping') ||
-        hasPage('shipping-accounts') ||
-        hasPage('design') ||
-        hasPage('print') ||
-        hasPage('clients') ||
-        can('canAddOrders')
-      );
-      allow create: if isAuth()
-        && (isAdmin() || hasPage('accounts') || hasPage('shipping') || hasPage('shipping-accounts') || hasPage('suppliers') || hasPage('production') || hasPage('design') || hasPage('print') || hasPage('clients') || can('canAddOrders'))
-        && validTx();
+      allow read:   if isAuth() && canFinancialRead();
+      allow create: if isAuth() && canFinancialWrite() && validTx();
       allow update, delete: if isAdmin();
     }
 
@@ -305,28 +305,8 @@ service cloud.firestore {
 
     // ══ Financial Ledger ══
     match /financial_ledger/{entryId} {
-      allow read: if isAuth() && (
-        isAdmin() ||
-        hasPage('accounts') ||
-        hasPage('shipping') ||
-        hasPage('suppliers') ||
-        hasPage('production') ||
-        hasPage('print') ||
-        hasPage('design') ||
-        hasPage('clients')
-      );
-      allow create: if isAuth() && (
-        isAdmin() ||
-        hasPage('accounts') ||
-        hasPage('shipping') ||
-        hasPage('shipping-accounts') ||
-        hasPage('suppliers') ||
-        hasPage('print') ||
-        hasPage('production') ||
-        hasPage('design') ||
-        hasPage('clients') ||
-        can('canAddOrders')
-      ) && validLedger();
+      allow read:   if isAuth() && canFinancialRead();
+      allow create: if isAuth() && canFinancialWrite() && validLedger();
       allow update: if isAuth() && isAdmin();
       allow delete: if isAuth() && isAdmin();
     }
