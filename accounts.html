@@ -1678,9 +1678,10 @@ window.saveSetOpening=async function(){
       createdAt:serverTimestamp()
     });
     if(Math.abs(diff)>0){
-      addLedgerToBatch(batch,db,diff>0?'CUSTOMER_PAYMENT':'GENERAL_EXPENSE',{
+      addLedgerToBatch(batch,db,FE.WALLET_ADJUSTMENT,{
         amount:Math.abs(diff),walletId,walletName:w.name,
         notes:'ضبط رصيد افتتاحي — '+w.name+(note?' — '+note:''),
+        direction:diff>0?'in':'out',
         userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
       });
     }
@@ -2118,13 +2119,17 @@ window.saveTransfer=async function(){
 };
 
 // ══ تدقيق أرصدة ══
+// المحفظة سليمة لو: stored == computed (مع وجود opening_balance tx لتفسير أي رصيد بدائي)
+// المحفظة قديمة (بدون opening_balance) → نتجاهل الـ drift كي لا نُربك بانر التحذير
 function auditBalances(){
   return wallets.map(w=>{
     const wTx=transactions.filter(t=>t.walletId===w._id);
     const computed=wTx.reduce((s,t)=>s+(t.type==='in'?1:-1)*(parseFloat(t.amount)||0),0);
     const stored=parseFloat(w.balance)||0;
     const drift=stored-computed;
-    return{...w,computed,drift,ok:Math.abs(drift)<1};
+    const hasOpening=wTx.some(t=>t.category==='opening_balance');
+    const isLegacy=!hasOpening && Math.abs(drift)>1; // محفظة قديمة بدون رصيد افتتاحي مسجّل
+    return{...w,computed,drift,ok:Math.abs(drift)<1,isLegacy,hasOpening};
   });
 }
 
@@ -2133,7 +2138,8 @@ function renderDriftBanner(){
   const el=document.getElementById('drift-banner');
   if(!el||!wallets.length||!transactions.length)return;
   const audit=auditBalances();
-  const drifted=audit.filter(w=>!w.ok);
+  // ركّز على المحافظ التي بها opening_balance — تستبعد المحافظ القديمة
+  const drifted=audit.filter(w=>!w.ok && !w.isLegacy);
   if(!drifted.length){el.innerHTML='';return;}
   const totalDrift=drifted.reduce((s,w)=>s+Math.abs(w.drift),0);
   el.innerHTML=`
@@ -2168,7 +2174,7 @@ window.saveWallet=async function(){
     if(bal>0){
       const txRef=doc(collection(db,'transactions_v2'));
       batch.set(txRef,{walletId:walletRef.id,type:'in',amount:bal,fees:0,description:'رصيد افتتاحي — '+name,category:'opening_balance',balanceBefore:0,balanceAfter:bal,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
-      addLedgerToBatch(batch,db,'CUSTOMER_PAYMENT',{amount:bal,walletId:walletRef.id,walletName:name,notes:'رصيد افتتاحي — '+name,userId:currentUser?.uid||'',userName:byName});
+      addLedgerToBatch(batch,db,FE.OPENING_BALANCE,{amount:bal,walletId:walletRef.id,walletName:name,notes:'رصيد افتتاحي — '+name,userId:currentUser?.uid||'',userName:byName});
     }
     await batch.commit();
     cM('new-wallet');sv('nw-name','');sv('nw-bal','0');

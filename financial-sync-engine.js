@@ -25,6 +25,8 @@ console.log('[FSE] 🚀 Financial Sync Engine v2 loaded — all atomic writes ac
 export const FE = {
   CUSTOMER_PAYMENT:              'CUSTOMER_PAYMENT',
   CUSTOMER_REFUND:               'CUSTOMER_REFUND',
+  OPENING_BALANCE:               'OPENING_BALANCE',
+  WALLET_ADJUSTMENT:             'WALLET_ADJUSTMENT',
   GENERAL_EXPENSE_REVERSAL:      'GENERAL_EXPENSE_REVERSAL',
   VENDOR_PAYMENT:                'VENDOR_PAYMENT',
   VENDOR_PAYMENT_REVERSAL:       'VENDOR_PAYMENT_REVERSAL',
@@ -63,6 +65,8 @@ const LC = {
   GENERAL_EXPENSE:              { type:'expense',  category:'general_expense',     direction:'out', icon:'💸', label:'مصروف عام' },
   GENERAL_EXPENSE_REVERSAL:     { type:'reversal', category:'general_expense',     direction:'in',  icon:'🔄', label:'إلغاء مصروف عام' },
   WALLET_TRANSFER:              { type:'transfer', category:'transfer',            direction:'in',  icon:'🔄', label:'تحويل داخلي' },
+  OPENING_BALANCE:              { type:'other',    category:'opening_balance',     direction:'in',  icon:'🏦', label:'رصيد افتتاحي' },
+  WALLET_ADJUSTMENT:            { type:'other',    category:'adjustment',          direction:'in',  icon:'⚖️', label:'تسوية رصيد' },
 };
 
 // ══════════════════════════════════════════════════════════════════

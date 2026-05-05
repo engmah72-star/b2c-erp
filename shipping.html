@@ -1022,10 +1022,31 @@ window.deleteOrderFull=async function(){
     const batch=writeBatch(db);
     for(const tx of txSnap.docs){
       const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
-      // عكس أثر المحفظة قبل الحذف (in: نطرح، out: نضيف) عشان الميزانية تفضل متوازنة
+      // عكس أثر المحفظة + إنشاء tx عكسية + قيد ledger — RULE 5 (full audit)
       if(amt>0&&wid){
-        if(d.type==='in')      batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
-        else if(d.type==='out') batch.update(doc(db,'wallets',wid),{balance:increment( amt)});
+        const isReversingIn=d.type==='in';
+        if(isReversingIn)      batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        else if(d.type==='out')batch.update(doc(db,'wallets',wid),{balance:increment( amt)});
+        const wName=(wallets.find(x=>x._id===wid)||{}).name||d.walletName||'';
+        const revRef=doc(collection(db,'transactions_v2'));
+        batch.set(revRef,{
+          walletId:wid,walletName:wName,
+          type:isReversingIn?'out':'in',amount:amt,fees:0,
+          description:`عكس ${d.description||d.category||''} — حذف أوردر — ${o.clientName||''}`,
+          category:isReversingIn?'refund':'expense_reversal',
+          orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+          isReversal:true,reversesTxId:tx.id,
+          date:new Date().toLocaleDateString('ar-EG'),
+          createdBy:currentUser?.uid||'',createdByName:userName||'admin',
+          createdAt:serverTimestamp()
+        });
+        const evt=isReversingIn?FE.CUSTOMER_REFUND:FE.GENERAL_EXPENSE_REVERSAL;
+        addLedgerToBatch(batch,db,evt,{
+          amount:amt,walletId:wid,walletName:wName,
+          orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+          notes:`حذف أوردر — عكس ${d.description||''}`,
+          userId:currentUser?.uid||'',userName:userName||'admin'
+        });
       }
       batch.delete(tx.ref);
     }
@@ -1035,7 +1056,10 @@ window.deleteOrderFull=async function(){
     await batch.commit();
     closePanel();
     toast('✅ تم حذف الأوردر نهائياً','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }catch(e){
+    const handled=window.financialGuard?.(e,{operation:'حذف أوردر شحن',clientName:o.clientName,orderId:activeId});
+    if(!handled)toast('❌ '+e.message,'err');
+  }
 };
 // ════════════════════════
 
