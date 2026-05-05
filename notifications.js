@@ -84,8 +84,56 @@ export function initNotifications(app, currentUser) {
     mergeNotifs('order_ship', shipNotifs);
   });
 
+  // ── الأوردرات المُسلَّمة للطابع (printerId) ──
+  const ordersPrintQ = query(collection(db, 'orders'), where('printerId', '==', uid));
+  onSnapshot(ordersPrintQ, snap => {
+    const printNotifs = snap.docs
+      .filter(d => d.data().stage === 'printing')
+      .map(d => {
+        const o = d.data();
+        return {
+          id: 'order_print_' + d.id,
+          type: 'order',
+          ico: '🖨️',
+          title: `أوردر طباعة — ${o.clientName || ''}`,
+          desc: `${o.orderId || d.id.slice(-6)} · انتظار الطباعة`,
+          time: o.createdAt?.toDate?.() || new Date(),
+          link: `print.html?id=${d.id}`,
+        };
+      });
+    mergeNotifs('order_print', printNotifs);
+  });
+
+  // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
+  const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid));
+  onSnapshot(ordersProdQ, snap => {
+    const prodNotifs = snap.docs
+      .filter(d => d.data().stage === 'production')
+      .map(d => {
+        const o = d.data();
+        return {
+          id: 'order_prod_' + d.id,
+          type: 'order',
+          ico: '🏭',
+          title: `أوردر تنفيذ — ${o.clientName || ''}`,
+          desc: `${o.orderId || d.id.slice(-6)} · انتظار التنفيذ`,
+          time: o.createdAt?.toDate?.() || new Date(),
+          link: `production.html?id=${d.id}`,
+        };
+      });
+    mergeNotifs('order_prod', prodNotifs);
+  });
+
   function mergeNotifs(group, items) {
-    allNotifs = allNotifs.filter(n => !n.id.startsWith(group === 'task' ? 'task_' : group === 'order_design' ? 'order_design_' : 'order_ship_'));
+    const prefixMap = {
+      task:         'task_',
+      order_design: 'order_design_',
+      order_print:  'order_print_',
+      order_prod:   'order_prod_',
+      order_ship:   'order_ship_',
+    };
+    const prefix = prefixMap[group] || (group + '_');
+    allNotifs = allNotifs.filter(n => !n.id.startsWith(prefix));
     allNotifs = [...items, ...allNotifs];
     allNotifs.sort((a, b) => b.time - a.time);
     updateBadge();

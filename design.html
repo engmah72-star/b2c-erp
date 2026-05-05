@@ -237,6 +237,28 @@
   </div>
 </div>
 
+<div class="overlay" id="ov-pick-printer">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head">
+      <span class="modal-title">🖨️ تسليم الطباعة</span>
+      <button class="modal-x" onclick="document.getElementById('ov-pick-printer').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>اختر الطابع المسؤول عن هذا الأوردر</label>
+        <select class="inp" id="pick-printer-sel">
+          <option value="">— أول طابع متاح —</option>
+        </select>
+        <div style="margin-top:6px;font-size:11px;color:var(--dim2)">الطابع المختار سيرى الأوردر فوراً في إشعاراته</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-pick-printer').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="confirmApproveWithPrinter()">✓ اعتماد + تسليم</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-reject">
   <div class="modal" style="max-width:380px">
     <div class="modal-head"><span class="modal-title">سبب الرفض</span><button class="modal-x" onclick="closeReject()">✕</button></div>
@@ -831,6 +853,14 @@ function startListeners(){
     designers=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const s=document.getElementById('np-des');if(!s)return;
     s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
+  });
+  // جيب الطابعين (production_agent) لـ pick-printer modal
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+    window.__printers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const s=document.getElementById('pick-printer-sel');if(!s)return;
+    const cur=s.value;
+    s.innerHTML='<option value="">— أول طابع متاح —</option>'+(window.__printers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+    if(cur)s.value=cur;
   });
   onSnapshot(collection(db,'wallets'),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -1512,28 +1542,41 @@ window.setDS=async function(stage){
   try{await updateDoc(doc(db,'orders',activeId),{designStage:stage,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 ${stage==='pending'?'في الانتظار':'جاري التصميم'}`,by:userName}],updatedAt:serverTimestamp()});toast('✅ تم','ok');}catch(e){toast('❌ '+e.message,'err');}
 };
 
-window.approveOrder=async function(){
-  if(!activeId)return;const o=orders.find(x=>x._id===activeId);
+window.approveOrder=function(){
+  if(!activeId)return;
+  // افتح modal اختيار الطابع — التنفيذ الفعلي في confirmApproveWithPrinter
+  const sel=document.getElementById('pick-printer-sel');
+  if(sel)sel.value='';
+  document.getElementById('ov-pick-printer').classList.add('open');
+};
+
+window.confirmApproveWithPrinter=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const sel=document.getElementById('pick-printer-sel');
+  const printerId=sel?.value||'';
+  const printerName=printerId?(sel.options[sel.selectedIndex]?.text||''):'';
   // المرور عبر بوابة المراحل الموحّدة (orders.js)
   const adv=buildStageAdvance({
     order:o, role:currentRole, userId:currentUser?.uid||'', userName,
+    nextAssigneeId:printerId, nextAssigneeName:printerName,
     extraFields:{designStage:'approved',approvedAt:nowStr(),approvedBy:userName}
   });
   if(!adv.ok){
-    // السماح بـ override (admin/ops) لو الشروط ناقصة
     const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
     if(!isAdmin)return toast('⛔ '+adv.errors.join(' · '),'err');
-    if(!confirm('⚠️ '+adv.errors.join(' · ')+'\nهل تريد الاعتماد بدون استيفاء الشروط؟'))return;
+    if(!confirm('⚠️ '+adv.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟'))return;
   }
   try{
-    const fields=adv.ok?adv.fields:{stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName};
+    const fields=adv.ok?adv.fields:{stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName,...(printerId?{printerId,printerName}:{})};
     const tlEntry=adv.ok?adv.timelineEntry:{date:nowStr(),stage:'printing',action:'✅ اعتُمد التصميم (override) — انتقل للطباعة 🖨️',by:userName,byId:currentUser?.uid||''};
     await updateDoc(doc(db,'orders',activeId),{
       ...fields,
       timeline:[...(o.timeline||[]),tlEntry],
       updatedAt:serverTimestamp()
     });
-    closePanel();toast('✅ اعتُمد — انتقل للطباعة 🖨️','ok');
+    document.getElementById('ov-pick-printer').classList.remove('open');
+    closePanel();toast('✅ اعتُمد — انتقل للطباعة 🖨️'+(printerName?` (${printerName})`:''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 

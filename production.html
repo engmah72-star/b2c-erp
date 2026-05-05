@@ -241,6 +241,29 @@ button{min-height:36px}
   </div>
 </div>
 
+<!-- Modal: تسليم الشحن — اختيار موظف الشحن -->
+<div class="overlay" id="ov-pick-ship">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head">
+      <span class="modal-title">🚚 تسليم الشحن</span>
+      <button class="modal-x" onclick="document.getElementById('ov-pick-ship').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>اختر موظف الشحن المسؤول</label>
+        <select class="inp" id="pick-ship-sel">
+          <option value="">— أول موظف متاح —</option>
+        </select>
+        <div style="margin-top:6px;font-size:11px;color:var(--dim2)">سيرى الأوردر فوراً في إشعاراته</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-pick-ship').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-b" onclick="confirmMoveToShipping()">✓ تحويل + تسليم</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: إضافة بند -->
 <div class="overlay" id="ov-cost">
   <div class="modal">
@@ -424,6 +447,14 @@ onAuthStateChanged(auth,async u=>{
     s.innerHTML='<option value="">— اختياري —</option>'+suppliers.map(x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}">${x.name}</option>`).join('');
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  // موظفي الشحن (shipping_officer) لـ pick-ship modal
+  onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer')),snap=>{
+    window.__shipOfficers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const s=document.getElementById('pick-ship-sel');if(!s)return;
+    const cur=s.value;
+    s.innerHTML='<option value="">— أول موظف متاح —</option>'+(window.__shipOfficers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+    if(cur)s.value=cur;
+  });
 });
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
@@ -1156,12 +1187,28 @@ async function uploadFinal(file){
   );
 }
 
-window.moveToShipping=async function(){
+window.moveToShipping=function(){
   if(!activeId)return;
-  const o=orders.find(x=>x._id===activeId);
-  // المرور عبر بوابة المراحل الموحّدة (orders.js) — تتحقق من costItems والصلاحية
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  // فحص الشروط مبدئياً قبل فتح الـ modal
+  const v=buildStageAdvance({order:o,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!v.ok)return toast('⛔ '+v.errors.join(' · '),'err');
+  // افتح modal اختيار موظف الشحن
+  const sel=document.getElementById('pick-ship-sel');
+  if(sel)sel.value='';
+  document.getElementById('ov-pick-ship').classList.add('open');
+};
+
+window.confirmMoveToShipping=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const sel=document.getElementById('pick-ship-sel');
+  const shipId=sel?.value||'';
+  const shipName=shipId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // المرور عبر بوابة المراحل الموحّدة (orders.js)
   const adv=buildStageAdvance({
     order:o, role:currentRole, userId:currentUser?.uid||'', userName,
+    nextAssigneeId:shipId, nextAssigneeName:shipName,
     extraFields:{
       prodStatus:'done',
       prodDoneAt:nowStr(),
@@ -1170,7 +1217,6 @@ window.moveToShipping=async function(){
     }
   });
   if(!adv.ok)return toast('⛔ '+adv.errors.join(' · '),'err');
-  if(!confirm('تحويل للشحن؟'))return;
   try{
     const prods=o.products||[];
     const ci=o.costItems||[];
@@ -1204,8 +1250,9 @@ window.moveToShipping=async function(){
       updatedAt:serverTimestamp(),
     });
     await batch.commit();
+    document.getElementById('ov-pick-ship').classList.remove('open');
     closePanel();
-    toast('✅ انتقل للشحن 🚚','ok');
+    toast('✅ انتقل للشحن 🚚'+(shipName?` (${shipName})`:''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>

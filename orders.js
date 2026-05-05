@@ -48,6 +48,23 @@ export const STAGE_PERMISSIONS = {
 };
 
 // ══════════════════════════════════════════
+// STAGE OWNERSHIP — أصحاب كل مرحلة (من يستلم العمل)
+// ══════════════════════════════════════════
+// يحدد أي حقل في الأوردر يحمل id الموظف المسؤول عن المرحلة،
+// وأي أدوار يمكن تعيينها في تلك المرحلة.
+export const STAGE_OWNERSHIP = {
+  design:     { idField:'designerId',         nameField:'designerName',         roles:['graphic_designer','design_operator'] },
+  printing:   { idField:'printerId',          nameField:'printerName',          roles:['production_agent'] },
+  production: { idField:'productionAgent',    nameField:'productionAgentName',  roles:['production_agent'] },
+  shipping:   { idField:'shippingOfficerId',  nameField:'shippingOfficerName',  roles:['shipping_officer'] },
+};
+
+/** يُرجع تعريف ملكية المرحلة (الحقل + الأدوار المسموحة) */
+export function getStageOwnership(stage) {
+  return STAGE_OWNERSHIP[stage] || null;
+}
+
+// ══════════════════════════════════════════
 // ROLES
 // ══════════════════════════════════════════
 export const ROLES = {
@@ -79,9 +96,18 @@ export function createOrderData(data, userId, userName) {
     stage: 'design',
     designStage: 'pending',
 
-    // التصميم
+    // أصحاب المراحل — يُعيَّن مالك المرحلة عند دخول الأوردر إليها
     designerId:   data.designerId   || '',
     designerName: data.designerName || '',
+    printerId:    '',
+    printerName:  '',
+    productionAgent:     '',
+    productionAgentName: '',
+    shippingOfficerId:   '',
+    shippingOfficerName: '',
+
+    // طوابع زمن دخول كل مرحلة (لـ SLA tracking)
+    stageEnteredAt: { design: now },
     designFiles:  [],
     designFileUrl:'',
     designFileNote: data.designFileNote || '',
@@ -180,17 +206,17 @@ export function validateStageRequirements(order, fromStage) {
  * **لا يتصل بقاعدة البيانات** — المُتَّصِل يكتب النتيجة في batch/updateDoc بنفسه.
  *
  * @param {Object}  args
- * @param {Object}  args.order        — وثيقة الأوردر الحالية
- * @param {string}  args.role         — دور المستخدم
- * @param {string}  args.userId       — uid المستخدم
- * @param {string}  args.userName     — اسم المستخدم
- * @param {Object} [args.extraFields] — حقول إضافية تُكتب مع تغيير المرحلة (مثل designStage:'approved', prodStatus:'done')
- * @param {string} [args.targetStage] — مرحلة هدف صريحة (لتجاوز next الافتراضي عند الحاجة، يحتاج صلاحية admin)
+ * @param {Object}  args.order            — وثيقة الأوردر الحالية
+ * @param {string}  args.role             — دور المستخدم
+ * @param {string}  args.userId           — uid المستخدم
+ * @param {string}  args.userName         — اسم المستخدم
+ * @param {Object} [args.extraFields]     — حقول إضافية تُكتب مع تغيير المرحلة
+ * @param {string} [args.targetStage]     — مرحلة هدف صريحة (override، يحتاج admin)
+ * @param {string} [args.nextAssigneeId]  — uid الموظف الذي يستلم المرحلة التالية
+ * @param {string} [args.nextAssigneeName]— اسم الموظف المستلِم
  * @returns { ok, newStage, errors, fields, timelineEntry }
- *   - fields: حقول الـ update (stage + extra)
- *   - timelineEntry: عنصر يُضاف لـ timeline[]
  */
-export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null }) {
+export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '' }) {
   if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
   const cur = order.stage || 'design';
   const stageConf = STAGES[cur];
@@ -214,16 +240,36 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
   }
 
   const targetConf = STAGES[target];
+  const now = nowStr();
+
+  // ـ تعيين الموظف المستلم للمرحلة الجديدة (إن وُجد) ـ
+  const ownership = STAGE_OWNERSHIP[target];
+  const assigneeFields = {};
+  if (ownership && nextAssigneeId) {
+    assigneeFields[ownership.idField]   = nextAssigneeId;
+    assigneeFields[ownership.nameField] = nextAssigneeName || '';
+  }
+
+  // ـ طابع زمن دخول المرحلة الجديدة ـ
+  const enteredAtPath = `stageEnteredAt.${target}`;
+
   const fields = {
     stage: target,
+    [enteredAtPath]: now,
+    ...assigneeFields,
     ...extraFields,
   };
+
+  // ـ سطر timeline يوضح الانتقال + المستلم لو معيَّن ـ
+  const handoffSuffix = nextAssigneeName ? ` — تسليم إلى ${nextAssigneeName}` : '';
   const timelineEntry = {
-    date:  nowStr(),
+    date:  now,
     stage: target,
-    action: `${targetConf.ico} انتقل ${stageConf.label} → ${targetConf.label}`,
+    action: `${targetConf.ico} انتقل ${stageConf.label} → ${targetConf.label}${handoffSuffix}`,
     by:    userName || '',
     byId:  userId   || '',
+    assigneeId:   nextAssigneeId   || '',
+    assigneeName: nextAssigneeName || '',
   };
 
   return { ok:true, newStage: target, fields, timelineEntry };

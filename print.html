@@ -255,6 +255,26 @@
   </div>
 </div>
 
+<!-- ═══ MODAL: تسليم التنفيذ — اختيار المنفّذ ═══ -->
+<div class="overlay" id="ov-pick-prod">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head"><span class="modal-title">🏭 تسليم التنفيذ</span><button class="modal-x" onclick="cM('pick-prod')">✕</button></div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>اختر منفّذ الأوردر</label>
+        <select class="inp" id="pick-prod-sel">
+          <option value="">— أول منفّذ متاح —</option>
+        </select>
+        <div style="margin-top:6px;font-size:11px;color:var(--dim2)">المنفّذ المختار سيرى الأوردر فوراً في إشعاراته</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('pick-prod')">إلغاء</button>
+      <button class="btn btn-b" onclick="confirmMoveToProduction()">✓ تحويل + تسليم</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ MODAL: تعديل المنتجات ═══ -->
 <div class="overlay" id="ov-edit-prods">
   <div class="modal" style="max-width:520px">
@@ -413,6 +433,14 @@ function startListeners(){
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
+  // المنفّذين (production_agent) لـ pick-prod modal
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+    window.__prodAgents=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const s=document.getElementById('pick-prod-sel');if(!s)return;
+    const cur=s.value;
+    s.innerHTML='<option value="">— أول منفّذ متاح —</option>'+(window.__prodAgents||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+    if(cur)s.value=cur;
+  });
 }
 
 // KPIs
@@ -639,21 +667,36 @@ window.savePrintNotes=async function(){
 };
 
 // Move to Production
-window.moveTo=async function(_stage){
+window.moveTo=function(_stage){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;
   if(!o)return;
+  // افتح modal اختيار المنفّذ — التنفيذ الفعلي في confirmMoveToProduction
+  const sel=document.getElementById('pick-prod-sel');
+  if(sel)sel.value='';
+  document.getElementById('ov-pick-prod').classList.add('open');
+};
+
+window.confirmMoveToProduction=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId)||activeOrder;
+  if(!o)return;
+  const sel=document.getElementById('pick-prod-sel');
+  const prodId=sel?.value||'';
+  const prodName=prodId?(sel.options[sel.selectedIndex]?.text||''):'';
   // المرور عبر بوابة المراحل الموحّدة (orders.js)
-  const adv=buildStageAdvance({order:o,role:currentRole,userId:auth?.currentUser?.uid||'',userName});
+  const adv=buildStageAdvance({
+    order:o, role:currentRole, userId:auth?.currentUser?.uid||'', userName,
+    nextAssigneeId:prodId, nextAssigneeName:prodName,
+  });
   if(!adv.ok)return toast('⛔ '+adv.errors.join(' · '),'err');
-  if(!confirm('تحويل الأوردر للتنفيذ؟'))return;
   try{
     await updateDoc(doc(db,'orders',activeId),{
       ...adv.fields,
       timeline:[...(o.timeline||[]),adv.timelineEntry],
       updatedAt:serverTimestamp()
     });
-    closePanel();toast('✅ انتقل للتنفيذ','ok');
+    cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:''),'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
