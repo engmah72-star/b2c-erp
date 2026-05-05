@@ -499,13 +499,15 @@ function renderList(){
     const p0=(o.products||[])[0];
     const extrasHtml=(p0?.extras||[]).map(e=>`<span style="display:inline-flex;padding:1px 6px;border-radius:10px;background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2);font-size:10px;font-weight:700">✓ ${e}</span>`).join('');
     const hasFinal=!!(o.printFinalUrl||(o.products||[]).some(p=>p.designImageUrl));
+    const noOwner=!o.printerId;
     return`<div class="ocard ${d>0?'late':''}" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" onclick="openOrder('${o._id}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:15px;font-weight:900">${d>0?`<span style="color:var(--r);font-size:11px">⚠️${d}ي </span>`:''}${o.clientName||'—'} ${stageSlaBadge(o)}</div>
           <div style="font-size:11px;color:var(--dim2);margin-top:3px">${prods}</div>
           ${extrasHtml?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${extrasHtml}</div>`:''}
-          <div style="font-size:10px;color:var(--dim);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
+          <div style="font-size:10px;color:var(--dim);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}${o.printerName?` · 🖨️ ${o.printerName}`:''}</div>
+          ${noOwner?`<button onclick="event.stopPropagation();pickupOrder('${o._id}')" style="margin-top:6px;padding:5px 12px;border-radius:20px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.1);color:var(--p);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">📥 التقط</button>`:''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
           <span style="font-size:10px;padding:2px 9px;border-radius:20px;background:${ptColor}18;color:${ptColor};font-weight:800">${ptLabel}</span>
@@ -694,6 +696,24 @@ window.savePrintNotes=async function(){
 };
 
 // Move to Production
+// التقاط أوردر بدون مالك في مرحلة الطباعة
+window.pickupOrder=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);
+  if(!o)return;
+  if(o.printerId)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
+  if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
+  try{
+    const uid=auth?.currentUser?.uid||'';
+    await updateDoc(doc(db,'orders',orderId),{
+      printerId:uid,
+      printerName:userName,
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الالتقاط','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 window.moveTo=function(_stage){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;

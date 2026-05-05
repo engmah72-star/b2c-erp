@@ -846,8 +846,9 @@ window.renderList=function(resetPage=true){
       <div class="ord-top">
         <div style="flex:1;min-width:0">
           <div class="ord-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${dayChip} ${stageSlaBadge(o)}</div>
-          <div class="ord-name">${o.clientName||'—'}</div>
+          <div class="ord-name">${o.clientName||'—'}${o.productionAgentName?` <span style="font-size:10px;color:var(--dim2);font-weight:600">· 🏭 ${o.productionAgentName}</span>`:''}</div>
           ${prodDetails}
+          ${(!o.productionAgent&&!isShipping)?`<button onclick="event.stopPropagation();pickupOrder('${o._id}')" style="margin-top:6px;padding:5px 12px;border-radius:20px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.1);color:var(--p);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">📥 التقط</button>`:''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
           ${isShipping?`<span class="status-pill" style="background:rgba(255,170,0,.15);color:var(--y)">🚚 شحن</span>`:`<span class="status-pill ${st.cls}">${st.lbl}</span>`}
@@ -1235,6 +1236,24 @@ async function uploadFinal(file){
     }
   );
 }
+
+// التقاط أوردر بدون مالك في مرحلة التنفيذ
+window.pickupOrder=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);
+  if(!o)return;
+  if(o.productionAgent)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
+  if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
+  try{
+    const uid=currentUser?.uid||'';
+    await updateDoc(doc(db,'orders',orderId),{
+      productionAgent:uid,
+      productionAgentName:userName,
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الالتقاط','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 window.moveToShipping=function(){
   if(!activeId)return;
