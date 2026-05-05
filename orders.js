@@ -425,6 +425,49 @@ export const stageBadge = (stage) => {
 export const getStageLabel = (stage) => STAGES[stage]?.label || stage || '';
 
 // ══════════════════════════════════════════
+// STAGE PROGRESS VISUALIZER — شريط تقدم الأوردر
+// ══════════════════════════════════════════
+/**
+ * يبني HTML لشريط تقدم بصري يوضح المرحلة الحالية + اللي فاتت + اللي جاية.
+ * يستخدم classes من shared.css — تأكد من تضمينه في الصفحة.
+ *
+ * @param {Object} order        — وثيقة الأوردر
+ * @param {Object} [opts]
+ * @param {boolean} [opts.showAssignees=true]
+ * @returns {string} HTML
+ */
+export function stageProgressBar(order, opts = {}) {
+  if (!order) return '';
+  const showAssignees = opts.showAssignees !== false;
+  const STEPS = ['design', 'printing', 'production', 'shipping', 'archived'];
+  const cur = order.stage || 'design';
+  const isCancelled = cur === 'cancelled';
+  const curIdx = STEPS.indexOf(cur);
+  const enteredAt = order.stageEnteredAt || {};
+  const ownership = STAGE_OWNERSHIP;
+
+  const cells = STEPS.map((s, i) => {
+    const conf = STAGES[s] || {};
+    let cls = 'sp-step';
+    if (isCancelled) cls += ' cancelled';
+    else if (i < curIdx) cls += ' done';
+    else if (i === curIdx) cls += ' current';
+    const time = enteredAt[s] || '';
+    const o = ownership[s];
+    const assigneeName = o ? (order[o.nameField] || '') : '';
+    return `
+      <div class="${cls}">
+        <div class="sp-dot">${conf.ico || '•'}</div>
+        <div class="sp-name">${conf.label || s}</div>
+        ${time ? `<div class="sp-time">${time}</div>` : ''}
+        ${(showAssignees && assigneeName) ? `<div class="sp-assignee">↪ ${assigneeName}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  return `<div class="sp-wrap"><div class="sp-row">${cells}</div></div>`;
+}
+
+// ══════════════════════════════════════════
 // SIDEBAR HTML — shared across all pages
 // ══════════════════════════════════════════
 export function renderSidebar(activePage, role, userName) {
