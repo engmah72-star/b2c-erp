@@ -437,6 +437,7 @@ export function renderSidebar(activePage, role, userName) {
     { key:'production', ico:'🏭', label:'التنفيذ',       href:'production.html' },
     { key:'shipping',   ico:'🚚', label:'الشحن',         href:'shipping.html' },
     { key:'archive',    ico:'📁', label:'الأرشيف',       href:'archive.html' },
+    { key:'order-tracking', ico:'📋', label:'تتبع الأوردرات', href:'order-tracking.html' },
     { key:'accounts',            ico:'💰', label:'الحسابات',      href:'accounts.html' },
     { key:'financial-dashboard', ico:'📊', label:'لوحة المالية',   href:'financial-dashboard.html' },
     { key:'products',            ico:'◈',  label:'المنتجات',       href:'products.html' },
