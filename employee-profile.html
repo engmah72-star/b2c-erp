@@ -437,7 +437,7 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app), db=getFirestore(app);
 
 // ══ STATE ══
-let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[];
+let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 // remember tab via URL hash so refreshes / deep-links work
@@ -511,7 +511,7 @@ window.setTab=function(t){
   else if(t==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
-  else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();}
+  else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
   // scroll to top of content when switching tabs
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
@@ -621,11 +621,27 @@ onAuthStateChanged(auth,async u=>{
       .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
     renderTasks();
   });
-  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',empId)),snap=>{
-    attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // ── ATTENDANCE — match by EITHER employeeId OR employeeUid ──
+  // Dashboards (designer, ops, production, shipping) save only `employeeUid`.
+  // Profile previously queried `employeeId` only → 0 records, broken stats.
+  // Fix: subscribe to both queries and merge by doc id.
+  let __attById=new Map(),__attByUid=new Map();
+  const __mergeAtt=()=>{
+    const m=new Map([...__attById,...__attByUid]);
+    attendanceRecords=[...m.values()];
     empAttendance=attendanceRecords;
-    renderAttendance();renderInsights();
+    renderAttendance();renderInsights();renderScore();
+  };
+  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',empId)),snap=>{
+    __attById=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
+    __mergeAtt();
   });
+  if(emp?.authUid){
+    onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid)),snap=>{
+      __attByUid=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
+      __mergeAtt();
+    });
+  }
   onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',empId)),snap=>{
     empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderSalaries();renderInsights();
@@ -643,6 +659,11 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId)),snap=>{
     empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
     renderEvaluations();
+  });
+  // إخفاقات الموظف
+  onSnapshot(query(collection(db,'employee_incidents'),where('employeeId','==',empId)),snap=>{
+    empIncidents=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    renderIncidents();renderScore();
   });
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
@@ -974,6 +995,14 @@ function renderAll(){
         </div>
         <div id="evaluations-container"></div>
       </div>
+      <!-- Incidents -->
+      <div class="section" style="margin-bottom:14px">
+        <div class="section-head" style="margin-bottom:12px">
+          <div class="section-title">⚠️ الإخفاقات والملاحظات (<span id="incidents-count">0</span>)</div>
+          <button class="btn btn-r btn-xs" onclick="openAddIncident()">＋ تسجيل إخفاق</button>
+        </div>
+        <div id="incidents-container"></div>
+      </div>
       <div class="section" style="margin-bottom:14px">
         <div class="section-head" style="margin-bottom:12px">
           <div class="section-title">🔐 الصلاحيات</div>
@@ -998,37 +1027,59 @@ function renderAll(){
   else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
   else if(activeTab==='salaries'){renderSalaries();}
   else if(activeTab==='tasks'){renderTasks();}
-  else if(activeTab==='admin'){renderClients();renderEvaluations();renderPermissions();}
+  else if(activeTab==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
 }
 
 // ══ SCORE ══
-function calcScore(){
-  if(!emp)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{}};
-  const mKey=monthKey();
-  // حضور (35 نقطة) — يحسب بناءً على جدول العمل ويستثني الإجازات
-  const present=empAttendance.filter(a=>a.date?.startsWith(mKey)).length;
+// Score for ANY month (current or past). Applies proration so that early-month
+// scoring isn't unfairly penalised when only a few days have elapsed.
+function calcScoreFor(mKey){
+  if(!emp||!mKey)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{},meta:{}};
+  const[ys,ms]=mKey.split('-').map(Number);
+  const isCurMonth=mKey===monthKey();
+  const dim=new Date(ys,ms,0).getDate();
+  // For current month, consider only elapsed days; for past months, the full month.
+  const lastDay=isCurMonth?now.getDate():dim;
+
+  // ── 1. Attendance (35) ──
+  const attEntries=empAttendance.filter(a=>(a.date||'').startsWith(mKey));
+  const present=attEntries.length;
+  // Late minutes summed; threshold-based deductions
+  const lateMins=attEntries.reduce((s,a)=>s+(parseInt(a.lateMinutes)||0),0);
   let workDays=0;
-  for(let d=1;d<=now.getDate();d++){
+  for(let d=1;d<=lastDay;d++){
     const ds=mKey+'-'+String(d).padStart(2,'0');
     if(isWorkDay(ds)&&!isLeaveDay(ds))workDays++;
   }
   const attPct=workDays>0?Math.min(1,present/workDays):0.5;
-  const attScore=Math.round(attPct*35);
-  // إنتاجية (40 نقطة) — يستخدم أوردرات الشهر الحالي فقط
-  const mOrds=getEmpOrders(allOrders.filter(o=>{const d=o.createdAt?.toDate?.();return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}));
-  // إذا كان هناك هدف للشهر استخدمه كمرجع
+  // Tardiness penalty: every 60 late-minutes = -1 point off attendance, capped at 7
+  const latePenalty=Math.min(7,Math.floor(lateMins/60));
+  const attScore=Math.max(0,Math.round(attPct*35)-latePenalty);
+
+  // ── 2. Productivity (40) — prorated ──
+  const mOrds=getEmpOrders(allOrders.filter(o=>{
+    const d=o.createdAt?.toDate?.();
+    return d&&d.getMonth()===(ms-1)&&d.getFullYear()===ys;
+  }));
   const curGoal=empGoals.find(g=>g.month===mKey);
   const total=mOrds.length;
   const done=mOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
   let prodPct;
-  if(curGoal?.targetOrdersMonthly>0){prodPct=Math.min(1,total/curGoal.targetOrdersMonthly);}
-  else{prodPct=total>0?done/total:0.5;}
+  if(curGoal?.targetOrdersMonthly>0){
+    // Proration: expected = monthly target × (elapsed/total) for current month
+    const expected=isCurMonth?curGoal.targetOrdersMonthly*(lastDay/dim):curGoal.targetOrdersMonthly;
+    prodPct=expected>0?Math.min(1,total/expected):0.5;
+  } else {
+    // No goal set: use done/total ratio. Early month w/ 0 orders ≠ failure → 0.5 baseline
+    prodPct=total>0?done/total:(isCurMonth&&lastDay<=5?0.65:0.5);
+  }
   const prodScore=Math.round(prodPct*40);
-  // جودة (25 نقطة)
+
+  // ── 3. Quality (25) ──
   let qualPct=0.8;
   if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    const rej=mOrds.filter(o=>o.designStatus==='rejected').length;
-    qualPct=total>0?1-(rej/total):0.8;
+    const rej=mOrds.filter(o=>o.designStatus==='rejected'||(o.timeline||[]).some(t=>(t.action||'').includes('رفض')||(t.action||'').includes('مراجعة'))).length;
+    qualPct=total>0?Math.max(0,1-(rej/total)):0.8;
   }else if(emp.role==='customer_service'){
     const arch=mOrds.filter(o=>o.stage==='archived').length;
     qualPct=total>0?arch/total:0.5;
@@ -1036,18 +1087,45 @@ function calcScore(){
     const arch=mOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
     qualPct=total>0?arch/total:0.5;
   }
+  // Incidents penalty: each open incident reduces quality by 0.05
+  const monthIncidents=(typeof empIncidents!=='undefined'?empIncidents:[]).filter(i=>(i.date||'').startsWith(mKey));
+  const incidentPenalty=Math.min(0.6,monthIncidents.length*0.05);
+  qualPct=Math.max(0,qualPct-incidentPenalty);
   const qualScore=Math.round(qualPct*25);
+
   const score=Math.min(100,attScore+prodScore+qualScore);
   const grade=score>=85?'ممتاز ⭐':score>=70?'جيد جداً':score>=50?'متوسط':'يحتاج تطوير';
   const col=score>=85?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
-  return{score,grade,col,breakdown:{att:{score:attScore,pct:Math.round(attPct*100)},prod:{score:prodScore,pct:Math.round(prodPct*100)},qual:{score:qualScore,pct:Math.round(qualPct*100)}}};
+  return{
+    score,grade,col,
+    breakdown:{
+      att:{score:attScore,pct:Math.round(attPct*100),lateMins,latePenalty},
+      prod:{score:prodScore,pct:Math.round(prodPct*100),total,done,prorated:isCurMonth&&!!curGoal},
+      qual:{score:qualScore,pct:Math.round(qualPct*100),incidents:monthIncidents.length}
+    },
+    meta:{workDays,present,lastDay,daysInMonth:dim,isCurMonth}
+  };
 }
+
+// Backward compat: calcScore() returns current month
+function calcScore(){return calcScoreFor(monthKey());}
 
 function renderScore(){
   const el=document.getElementById('score-container');if(!el)return;
-  const{score,grade,col,breakdown}=calcScore();
+  const cur=calcScore();
+  const{score,grade,col,breakdown,meta}=cur;
+  // Previous month for comparison
+  const prevKey=(()=>{const d=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
+  const prev=calcScoreFor(prevKey);
+  const delta=score-prev.score;
+  const dArrow=delta>0?'↑':delta<0?'↓':'→';
+  const dCol=delta>0?'var(--g)':delta<0?'var(--r)':'var(--dim2)';
+  const dLbl=delta===0?'بدون تغيير':`${dArrow} ${Math.abs(delta)} ${delta>0?'تحسّن':'تراجع'} عن ${MONTHS[(now.getMonth()-1+12)%12]}`;
   const circ=Math.round(2*Math.PI*32);
   const fill=Math.round(score/100*circ);
+  const lateInfo=breakdown.att.lateMins>0?`<span style="color:var(--y);font-weight:700"> · تأخير ${breakdown.att.lateMins}د (-${breakdown.att.latePenalty})</span>`:'';
+  const incidentInfo=breakdown.qual.incidents>0?`<span style="color:var(--r);font-weight:700"> · ${breakdown.qual.incidents} إخفاق</span>`:'';
+  const proratedNote=breakdown.prod.prorated?`<span style="color:var(--dim2);font-size:9px">(متوقع لـ${meta.lastDay}/${meta.daysInMonth} يوم)</span>`:'';
   el.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px;display:flex;gap:20px;align-items:center">
     <div class="score-gauge">
       <svg width="80" height="80" viewBox="0 0 80 80">
@@ -1058,23 +1136,29 @@ function renderScore(){
       <div class="score-num" style="color:${col}">${score}</div>
     </div>
     <div style="flex:1">
-      <div style="font-size:16px;font-weight:900;color:${col};margin-bottom:8px">${grade}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+        <div style="font-size:16px;font-weight:900;color:${col}">${grade}</div>
+        <span style="font-size:10px;font-weight:800;color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:10px" title="مقارنة بالشهر السابق (${prev.score}/100)">${dLbl}</span>
+      </div>
       <div style="display:flex;flex-direction:column;gap:5px">
         <div style="display:flex;align-items:center;gap:8px;font-size:11px">
           <span style="width:60px;color:var(--dim2)">حضور</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.att.pct}%;background:var(--g)"></div></div>
           <span style="font-weight:700;width:30px;text-align:left">${breakdown.att.score}/35</span>
         </div>
+        ${lateInfo?`<div style="font-size:10px;color:var(--dim2);margin-right:68px">${lateInfo}</div>`:''}
         <div style="display:flex;align-items:center;gap:8px;font-size:11px">
           <span style="width:60px;color:var(--dim2)">إنتاجية</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.prod.pct}%;background:var(--b)"></div></div>
           <span style="font-weight:700;width:30px;text-align:left">${breakdown.prod.score}/40</span>
         </div>
+        ${proratedNote?`<div style="font-size:10px;color:var(--dim2);margin-right:68px">${proratedNote}</div>`:''}
         <div style="display:flex;align-items:center;gap:8px;font-size:11px">
           <span style="width:60px;color:var(--dim2)">جودة</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.qual.pct}%;background:var(--p)"></div></div>
           <span style="font-weight:700;width:30px;text-align:left">${breakdown.qual.score}/25</span>
         </div>
+        ${incidentInfo?`<div style="font-size:10px;color:var(--dim2);margin-right:68px">${incidentInfo}</div>`:''}
       </div>
     </div>
   </div>`;
@@ -1188,6 +1272,115 @@ function calcProductStats(){
     .map(([name,d])=>({name,...d,rate:d.total>0?Math.round(d.done/d.total*100):0}))
     .filter(p=>p.total>0).sort((a,b)=>b.total-a.total).slice(0,8);
 }
+
+// ══ INCIDENTS (الإخفاقات) ══
+// Entity Profile (RULE 7):
+//   employee_incidents/{id} = {
+//     employeeId, employeeName, authUid,
+//     date: "YYYY-MM-DD", monthKey: "YYYY-MM",
+//     type: 'design_rejected'|'order_late'|'customer_complaint'|'attendance'|'quality'|'other',
+//     severity: 'low'|'medium'|'high',
+//     title, description,
+//     orderId? (link), clientName?,
+//     createdBy, createdByName, createdAt,
+//   }
+// Events: none (informational/HR only — no financial impact directly).
+// Accounting Impact: none.
+// Dashboard Impact: -5% off quality score per incident in same month (capped 60%).
+// Reversal: deletion (admin only).
+const INCIDENT_TYPES={
+  design_rejected:{lbl:'تصميم مرفوض',ico:'🎨',col:'var(--p)'},
+  order_late:{lbl:'أوردر متأخر',ico:'⏰',col:'var(--y)'},
+  customer_complaint:{lbl:'شكوى عميل',ico:'📢',col:'var(--r)'},
+  attendance:{lbl:'مخالفة حضور',ico:'💤',col:'var(--dim2)'},
+  quality:{lbl:'مشكلة جودة',ico:'⚠️',col:'var(--y)'},
+  other:{lbl:'أخرى',ico:'📌',col:'var(--dim2)'}
+};
+const INCIDENT_SEVERITY={
+  low:{lbl:'منخفض',col:'var(--dim2)',bg:'rgba(78,86,114,.15)'},
+  medium:{lbl:'متوسط',col:'var(--y)',bg:'rgba(255,170,0,.15)'},
+  high:{lbl:'مرتفع',col:'var(--r)',bg:'rgba(255,61,110,.15)'}
+};
+
+function renderIncidents(){
+  const el=document.getElementById('incidents-container');if(!el)return;
+  setText('incidents-count',empIncidents.length);
+  if(!empIncidents.length){
+    el.innerHTML='<div class="empty-cta"><div class="empty-icon">✨</div><div class="empty-text">لا توجد إخفاقات مسجّلة</div></div>';
+    return;
+  }
+  el.innerHTML=empIncidents.slice(0,20).map(i=>{
+    const t=INCIDENT_TYPES[i.type]||INCIDENT_TYPES.other;
+    const s=INCIDENT_SEVERITY[i.severity]||INCIDENT_SEVERITY.low;
+    return`<div style="background:var(--bg3);border:1px solid var(--line);border-right:3px solid ${t.col};border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">
+      <span style="font-size:18px;flex-shrink:0">${t.ico}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+          <span style="font-size:13px;font-weight:800">${i.title||t.lbl}</span>
+          <span style="font-size:9px;font-weight:800;padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.col}">${s.lbl}</span>
+        </div>
+        ${i.description?`<div style="font-size:11px;color:var(--dim2);line-height:1.5">${i.description}</div>`:''}
+        ${i.orderId?`<a href="order.html?id=${i.orderId}" style="font-size:10px;color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName?' — '+i.clientName:''}</a>`:''}
+        <div style="font-size:10px;color:var(--dim2);margin-top:3px">${i.date||''} · ${i.createdByName||''}</div>
+      </div>
+      <button onclick="deleteIncident('${i._id}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:14px;padding:4px" title="حذف">🗑</button>
+    </div>`;
+  }).join('');
+}
+
+window.openAddIncident=function(){
+  document.getElementById('inc-title').value='';
+  document.getElementById('inc-desc').value='';
+  document.getElementById('inc-type').value='quality';
+  document.getElementById('inc-severity').value='medium';
+  document.getElementById('inc-order').value='';
+  document.getElementById('inc-date').value=todayStr();
+  // populate orders dropdown with employee's recent orders
+  const uid=emp.authUid||empId;
+  const myOrders=getEmpOrders(allOrders).slice(0,30);
+  const sel=document.getElementById('inc-order');
+  if(sel)sel.innerHTML='<option value="">— بدون أوردر —</option>'+myOrders.map(o=>`<option value="${o._id}" data-client="${(o.clientName||'').replace(/"/g,'&quot;')}">#${o._id.slice(-6)} · ${o.clientName||'—'}</option>`).join('');
+  document.getElementById('ov-incident').classList.add('open');
+};
+
+window.saveIncident=async function(){
+  const title=gv('inc-title').trim();
+  const description=gv('inc-desc').trim();
+  const type=gv('inc-type');
+  const severity=gv('inc-severity');
+  const date=gv('inc-date')||todayStr();
+  const orderId=gv('inc-order');
+  const orderSel=document.getElementById('inc-order');
+  const clientName=orderSel?.selectedOptions?.[0]?.dataset?.client||'';
+  if(!title&&type==='other'){toast('⚠️ أدخل عنواناً','err');return;}
+  try{
+    await addDoc(collection(db,'employee_incidents'),{
+      employeeId:empId,
+      employeeName:emp?.name||'',
+      authUid:emp?.authUid||'',
+      date,
+      monthKey:date.slice(0,7),
+      type,severity,
+      title:title||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
+      description,
+      orderId:orderId||null,
+      clientName:clientName||null,
+      createdBy:currentUser.uid,
+      createdByName:adminName,
+      createdAt:serverTimestamp()
+    });
+    document.getElementById('ov-incident').classList.remove('open');
+    toast('✅ تم تسجيل الإخفاق','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.deleteIncident=async function(id){
+  if(!confirm('حذف هذا الإخفاق؟'))return;
+  try{
+    await deleteDoc(doc(db,'employee_incidents',id));
+    toast('✅ تم الحذف','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 function renderSkillsAndProducts(){
   const el=document.getElementById('skills-products-container');if(!el||!emp)return;
@@ -1792,8 +1985,9 @@ function renderAttendance(){
     else if(isLeave)cls+='leave';
     else if(isOff||isFuture)cls+='off';
     else cls+='absent';
-    const tip=att?`${dateStr}\n${att.checkInStr||''}${att.checkOutStr?' → '+att.checkOutStr:''}`:isLeave?`${dateStr}\nإجازة${lv?.reason?' — '+lv.reason:''}`:`${dateStr}`;
-    html+=`<div class="${cls}${isTodayDay?' today':''}" title="${tip}">${d}</div>`;
+    const lateBadge=att&&(parseInt(att.lateMinutes)||0)>0?'⏰':'';
+    const tip=att?`${dateStr}\n${att.checkInStr||''}${att.checkOutStr?' → '+att.checkOutStr:''}${att.lateMinutes?'\nمتأخر '+att.lateMinutes+'د':''}`:isLeave?`${dateStr}\nإجازة${lv?.reason?' — '+lv.reason:''}`:`${dateStr}`;
+    html+=`<div class="${cls}${isTodayDay?' today':''}" title="${tip}" style="position:relative">${d}${lateBadge?`<span style="position:absolute;top:0;left:1px;font-size:9px;line-height:1">${lateBadge}</span>`:''}</div>`;
   }
   cal.innerHTML=html;
 }
@@ -1942,7 +2136,20 @@ function computeSuggestedForMonth(mKey){
   const daysAbsent=Math.max(0,wDays-daysPresent);
   const dailyRate=base/wDays;
   const absenceDeduction=Math.round(dailyRate*daysAbsent);
-  const attendanceBonus=daysAbsent===0?(parseFloat(emp.attendanceBonus)||0):0;
+  // Tardiness deduction: each late record costs a fraction of a day:
+  //   ≤30 min  → 0 (within grace)
+  //   31-120 min → 1/4 day
+  //   121-240 min → 1/2 day
+  //   >240 min → full day
+  let tardinessDays=0;
+  mAtt.forEach(a=>{
+    const lm=parseInt(a.lateMinutes)||0;
+    if(lm>240)tardinessDays+=1;
+    else if(lm>120)tardinessDays+=0.5;
+    else if(lm>30)tardinessDays+=0.25;
+  });
+  const tardinessDeduction=Math.round(dailyRate*tardinessDays);
+  const attendanceBonus=(daysAbsent===0&&tardinessDays===0)?(parseFloat(emp.attendanceBonus)||0):0;
   const uid=emp.authUid||empId;
   let commission=0;
   // العمولة على أساس تاريخ التحصيل (paidAt) لا الإنشاء (createdAt)
@@ -1963,7 +2170,7 @@ function computeSuggestedForMonth(mKey){
   } else if(emp.role==='customer_service'){
     commission=mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   }
-  return Math.max(0,base-absenceDeduction+attendanceBonus+Math.round(commission));
+  return Math.max(0,base-absenceDeduction-tardinessDeduction+attendanceBonus+Math.round(commission));
 }
 
 function renderSalaries(){
@@ -2095,7 +2302,17 @@ window.updateSalaryCalc=function(){
   const daysAbsent=Math.max(0,workDays-daysPresent);
   const dailyRate=base/workDays;
   const absenceDeduction=Math.round(dailyRate*daysAbsent);
-  const attendanceBonus=daysAbsent===0?(parseFloat(emp.attendanceBonus)||0):0;
+  // Tardiness ladder (same as computeSuggestedForMonth)
+  let tardinessDays=0,lateRecords=0;
+  mAtt.forEach(a=>{
+    const lm=parseInt(a.lateMinutes)||0;
+    if(lm>0)lateRecords++;
+    if(lm>240)tardinessDays+=1;
+    else if(lm>120)tardinessDays+=0.5;
+    else if(lm>30)tardinessDays+=0.25;
+  });
+  const tardinessDeduction=Math.round(dailyRate*tardinessDays);
+  const attendanceBonus=(daysAbsent===0&&tardinessDays===0)?(parseFloat(emp.attendanceBonus)||0):0;
 
   // عمولة
   let commission=0;
@@ -2118,8 +2335,8 @@ window.updateSalaryCalc=function(){
     commission=mOrders2.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
   }
 
-  const suggested=Math.max(0,base-absenceDeduction+attendanceBonus+Math.round(commission));
-  salaryData={base,commission:Math.round(commission),suggested,month:mKey,absenceDeduction,attendanceBonus,daysPresent,daysAbsent,workDays};
+  const suggested=Math.max(0,base-absenceDeduction-tardinessDeduction+attendanceBonus+Math.round(commission));
+  salaryData={base,commission:Math.round(commission),suggested,month:mKey,absenceDeduction,tardinessDeduction,attendanceBonus,daysPresent,daysAbsent,workDays,tardinessDays,lateRecords};
 
   // الكالك بوكس: يظهر فقط لنوع مرتب
   const calcBox=document.getElementById('sal-calc-box');
@@ -2146,11 +2363,13 @@ window.updateSalaryCalc=function(){
   // حضور تفصيل
   const attEl=document.getElementById('sal-attendance-detail');
   if(attEl){
-    if(salType==='salary'&&(daysAbsent>0||attendanceBonus>0)){
+    const showBlock=salType==='salary'&&(daysAbsent>0||attendanceBonus>0||tardinessDays>0);
+    if(showBlock){
       attEl.style.display='block';
       attEl.innerHTML=`<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">أيام الحضور</span><span style="font-weight:700;color:var(--g)">${daysPresent} / ${workDays} يوم</span></div>
         ${daysAbsent>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">خصم غياب</span><span style="font-weight:700;color:var(--r)">- ${fn(absenceDeduction)} ج</span></div>`:''}
+        ${tardinessDays>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">خصم تأخير (${lateRecords} مرة · ≈${tardinessDays} يوم)</span><span style="font-weight:700;color:var(--y)">- ${fn(tardinessDeduction)} ج</span></div>`:''}
         ${attendanceBonus>0?`<div style="display:flex;justify-content:space-between"><span style="color:var(--dim2)">بدل حضور كامل</span><span style="font-weight:700;color:var(--g)">+ ${fn(attendanceBonus)} ج</span></div>`:''}
       </div>`;
     } else { attEl.style.display='none'; }
@@ -2213,9 +2432,12 @@ window.confirmSalary=async function(){
       note,month:salaryData.month,
       baseSalary:salaryData.base,commission:salaryData.commission,
       absenceDeduction:salaryData.absenceDeduction||0,
+      tardinessDeduction:salaryData.tardinessDeduction||0,
       attendanceBonus:salaryData.attendanceBonus||0,
       daysPresent:salaryData.daysPresent??null,
       daysAbsent:salaryData.daysAbsent??null,
+      tardinessDays:salaryData.tardinessDays??0,
+      lateRecords:salaryData.lateRecords??0,
       date:todayStr(),userId:currentUser.uid,userName:adminName,
     });
     console.log('[profile] ✅ sync completed: SALARY_PAYMENT');
@@ -2226,6 +2448,20 @@ window.confirmSalary=async function(){
 };
 
 // ══ ATTENDANCE RECORDING ══
+// Compute how many minutes late this check-in is, given the employee's schedule.
+// Returns 0 if on-time or no schedule defined.
+function computeLateMinutes(checkInDate){
+  const exp=emp?.workSchedule?.startTime;
+  if(!exp)return 0;
+  const[eh,em]=exp.split(':').map(Number);
+  if(isNaN(eh))return 0;
+  const expectedMin=eh*60+(em||0);
+  const actualMin=checkInDate.getHours()*60+checkInDate.getMinutes();
+  // 15-min grace period
+  const diff=actualMin-expectedMin-15;
+  return Math.max(0,diff);
+}
+
 window.recordAttendanceToday=async function(){
   if(!emp)return;
   const dateStr=todayStr();
@@ -2233,6 +2469,8 @@ window.recordAttendanceToday=async function(){
   const existing=empAttendance.find(a=>a.date===dateStr);
   if(existing){toast('⚠️ تم تسجيل حضور '+emp.name+' اليوم مسبقاً','err');return;}
   try{
+    const nowD=new Date();
+    const lateMinutes=computeLateMinutes(nowD);
     await addDoc(collection(db,'attendance'),{
       employeeUid:emp.authUid||empId,
       employeeId:empId,
@@ -2240,12 +2478,14 @@ window.recordAttendanceToday=async function(){
       date:dateStr,
       monthKey:mKey,
       checkIn:true,
-      checkInStr:new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
+      checkInStr:nowD.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
+      lateMinutes,
       recordedBy:currentUser.uid,
       recordedByName:adminName,
       createdAt:serverTimestamp()
     });
-    toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
+    if(lateMinutes>0)toast(`⚠️ حضور متأخر ${lateMinutes}د — ${emp.name}`,'err');
+    else toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -2358,6 +2598,64 @@ window.recordCheckOutToday=async function(){
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="document.getElementById('ov-leave').classList.remove('open')">إلغاء</button>
       <button class="btn btn-b" onclick="saveLeave()">✓ تسجيل الإجازة</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: إضافة إخفاق -->
+<div class="overlay" id="ov-incident">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title">⚠️ تسجيل إخفاق</span>
+      <button class="modal-x" onclick="document.getElementById('ov-incident').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.18);border-radius:var(--rad);padding:9px 12px;margin-bottom:12px;font-size:11px;color:var(--y);line-height:1.6">
+        ℹ️ هذا السجل يُؤثر على نقاط الجودة في تقييم الموظف هذا الشهر (-5% لكل إخفاق، حد أقصى 60%).
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>🏷️ النوع *</label>
+          <select class="inp" id="inc-type">
+            <option value="quality">⚠️ مشكلة جودة</option>
+            <option value="design_rejected">🎨 تصميم مرفوض</option>
+            <option value="order_late">⏰ أوردر متأخر</option>
+            <option value="customer_complaint">📢 شكوى عميل</option>
+            <option value="attendance">💤 مخالفة حضور</option>
+            <option value="other">📌 أخرى</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>🔥 الأهمية *</label>
+          <select class="inp" id="inc-severity">
+            <option value="low">منخفض</option>
+            <option value="medium" selected>متوسط</option>
+            <option value="high">مرتفع</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg" style="margin-top:10px">
+        <label>📝 العنوان</label>
+        <input class="inp" id="inc-title" placeholder="مثال: تسليم متأخر يومين">
+      </div>
+      <div class="fg" style="margin-top:10px">
+        <label>💬 التفاصيل (اختياري)</label>
+        <textarea class="inp" id="inc-desc" style="min-height:70px" placeholder="ما حصل وما الإجراء المتخذ"></textarea>
+      </div>
+      <div class="g2" style="margin-top:10px">
+        <div class="fg">
+          <label>📅 التاريخ</label>
+          <input class="inp" id="inc-date" type="date">
+        </div>
+        <div class="fg">
+          <label>🔗 أوردر مرتبط (اختياري)</label>
+          <select class="inp" id="inc-order"><option value="">— بدون —</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-incident').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-r" onclick="saveIncident()">✓ تسجيل الإخفاق</button>
     </div>
   </div>
 </div>
