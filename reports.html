@@ -434,6 +434,8 @@ function renderOverview(f,prev){
   
   // الباقي على العملاء
   const rem=f.reduce((s,o)=>s+calcRem(o),0);
+  // الباقي الحرج: العميل وافق على التصميم ودخل طباعة/تنفيذ/شحن (المنتج اتصرف عليه فلوس)
+  const remCritical=f.filter(o=>['printing','production','shipping'].includes(o.stage)).reduce((s,o)=>s+calcRem(o),0);
   
   // المصروفات الفعلية = كل transactions type='out' في الفترة (موردين + شحن + مرتجعات + غيرها)
   const inRange2=(t,r)=>t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=r.from&&new Date(t.createdAt.seconds*1000)<=r.to;
@@ -459,7 +461,13 @@ function renderOverview(f,prev){
         ${kpi(fn(tot)+' ج','محصّل فعلاً ↗','var(--g)',pTot)}
       </div>
       ${kpi(fn(ordersTotal)+' ج','قيمة الأوردرات','var(--b)')}
-      ${kpi(fn(rem)+' ج','باقي التحصيل','var(--y)')}
+      <div onclick="goCollectionPostDesign()" style="cursor:pointer;transition:transform .15s" onmouseover="this.style.transform='scale(1.02)'" onmouseleave="this.style.transform='scale(1)'" title="اضغط لعرض الأوردرات اللي وافقت على التصميم ولم تُحصَّل">
+        <div class="kpi-box">
+          <div class="kpi-val" style="color:var(--y)">${fn(rem)} ج</div>
+          <div class="kpi-lbl">باقي التحصيل</div>
+          ${remCritical>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:10px;font-weight:800"><span style="color:var(--r)">⚠️ ${fn(remCritical)} ج</span><span style="color:var(--dim2)">بعد التصميم</span></div>`:''}
+        </div>
+      </div>
       ${kpi((profit>=0?'ربح ':'خسارة ')+fn(Math.abs(profit))+' ج',profit>=0?'الربح الصافي':'الخسارة الصافية',profit>=0?'var(--g)':'var(--r)',pProfit)}
     </div>
 
@@ -859,6 +867,18 @@ function renderCollection(f){
   const partial=withSale.filter(o=>{const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;return p>0&&calcRem(o)>0;}).length;
   const noPay=withSale.filter(o=>(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)<=0).length;
 
+  // تصنيف بالمراحل (للفلتر)
+  const stageCounts={
+    design:withSale.filter(o=>o.stage==='design').length,
+    printing:withSale.filter(o=>o.stage==='printing').length,
+    production:withSale.filter(o=>o.stage==='production').length,
+    shipping:withSale.filter(o=>o.stage==='shipping').length,
+    archived:withSale.filter(o=>o.stage==='archived').length,
+  };
+  // الأوردرات الحرجة: العميل وافق على التصميم وداخل طباعة/تنفيذ/شحن وفيه باقي
+  const postDesignWithRem=withSale.filter(o=>['printing','production','shipping'].includes(o.stage)&&calcRem(o)>0);
+  const postDesignAmount=postDesignWithRem.reduce((s,o)=>s+calcRem(o),0);
+
   return`
     <!-- ملخص -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
@@ -873,13 +893,38 @@ function renderCollection(f){
       <div class="kpi-box"><div class="kpi-val" style="color:${totProfit>=0?'var(--g)':'var(--r)'}">${totProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(totProfit))} ج</div><div class="kpi-lbl">💹 ${totProfit>=0?'صافي الربح':'صافي الخسارة'}</div></div>
       <div class="kpi-box"><div class="kpi-val" style="color:var(--g)">${fullPaid}</div><div class="kpi-lbl">✅ مدفوع بالكامل</div></div>
       <div class="kpi-box"><div class="kpi-val" style="color:var(--y)">${partial}</div><div class="kpi-lbl">⚡ دفع جزئي</div></div>
+      <div class="kpi-box" style="grid-column:span 2;background:rgba(255,61,110,.06);border-color:rgba(255,61,110,.25);cursor:pointer" onclick="filterByStage('post-design')" title="اضغط لفلترة الجدول">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div>
+            <div class="kpi-val" style="color:var(--r)">${fn(postDesignAmount)} ج</div>
+            <div class="kpi-lbl">⚠️ باقي بعد التصميم — حرج</div>
+          </div>
+          <div style="text-align:left">
+            <div style="font-size:24px;font-weight:900;color:var(--r)">${postDesignWithRem.length}</div>
+            <div style="font-size:10px;color:var(--dim2);font-weight:700">أوردر</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- فلتر -->
-    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <button class="d-btn active" id="cf-all" onclick="filterCollection('all',this)">الكل (${withSale.length})</button>
-      <button class="d-btn" id="cf-rem" onclick="filterCollection('rem',this)">⏳ متبقي (${partial+noPay})</button>
-      <button class="d-btn" id="cf-paid" onclick="filterCollection('paid',this)">✅ مكتمل (${fullPaid})</button>
+    <!-- فلتر بالمراحل -->
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 4px">المرحلة:</span>
+      <button class="d-btn st-btn active" data-stage="all" onclick="filterByStage('all',this)">الكل (${withSale.length})</button>
+      <button class="d-btn st-btn" data-stage="post-design" onclick="filterByStage('post-design',this)" style="border-color:rgba(255,61,110,.4);color:var(--r);background:rgba(255,61,110,.06)">⚠️ بعد التصميم (${postDesignWithRem.length})</button>
+      <button class="d-btn st-btn" data-stage="design" onclick="filterByStage('design',this)">✏️ تصميم (${stageCounts.design})</button>
+      <button class="d-btn st-btn" data-stage="printing" onclick="filterByStage('printing',this)">🖨️ طباعة (${stageCounts.printing})</button>
+      <button class="d-btn st-btn" data-stage="production" onclick="filterByStage('production',this)">🏭 تنفيذ (${stageCounts.production})</button>
+      <button class="d-btn st-btn" data-stage="shipping" onclick="filterByStage('shipping',this)">🚚 شحن (${stageCounts.shipping})</button>
+      <button class="d-btn st-btn" data-stage="archived" onclick="filterByStage('archived',this)">📁 أرشيف (${stageCounts.archived})</button>
+    </div>
+
+    <!-- فلتر بحالة الدفع -->
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 4px">الدفع:</span>
+      <button class="d-btn pf-btn active" data-pay="all" onclick="filterCollection('all',this)">الكل</button>
+      <button class="d-btn pf-btn" data-pay="rem" onclick="filterCollection('rem',this)">⏳ متبقي (${partial+noPay})</button>
+      <button class="d-btn pf-btn" data-pay="paid" onclick="filterCollection('paid',this)">✅ مكتمل (${fullPaid})</button>
     </div>
 
     <!-- الجدول -->
@@ -912,7 +957,7 @@ function renderCollectionRows(data){
     const isReturned=o.paymentStatus==='returned'||o.shipStage==='returned';
     const status=isReturned?{c:'var(--dim2)',t:'↩️',bg:'rgba(255,255,255,.02)'}:rem<=0?{c:'var(--g)',t:'✅',bg:'rgba(0,217,126,.08)'}:paid>0?{c:'var(--y)',t:'⚡',bg:'rgba(255,170,0,.05)'}:{c:'var(--r)',t:'⏳',bg:'rgba(255,61,110,.05)'};
     const stage={design:'✏️',printing:'🖨️',production:'🏭',shipping:'🚚',archived:'📁'}[o.stage]||'';
-    return`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);background:${status.bg};align-items:center;cursor:pointer" class="col-row" data-rem="${rem}" data-paid="${paid}" onclick="openOrdDrawer('${o._id}')" title="اضغط لعرض التفاصيل">
+    return`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);background:${status.bg};align-items:center;cursor:pointer" class="col-row" data-rem="${rem}" data-paid="${paid}" data-stage="${o.stage||''}" onclick="openOrdDrawer('${o._id}')" title="اضغط لعرض التفاصيل">
       <div>
         <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
         <div style="font-size:10px;color:var(--dim2);margin-top:2px">
@@ -953,17 +998,50 @@ function renderCollectionRows(data){
   }).join('');
 }
 
-window.filterCollection=function(filter,btn){
-  document.querySelectorAll('[id^="cf-"]').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  const rows=document.querySelectorAll('.col-row');
-  rows.forEach(r=>{
+let __payFilter='all',__stageFilter='all';
+
+function applyCollectionFilters(){
+  document.querySelectorAll('.col-row').forEach(r=>{
     const rem=parseFloat(r.dataset.rem)||0;
-    const paid=parseFloat(r.dataset.paid)||0;
-    if(filter==='all') r.style.display='';
-    else if(filter==='rem') r.style.display=rem>0?'':'none';
-    else if(filter==='paid') r.style.display=rem<=0?'':'none';
+    const stage=r.dataset.stage||'';
+    const payOk=__payFilter==='all'||(__payFilter==='rem'&&rem>0)||(__payFilter==='paid'&&rem<=0);
+    const stageOk=__stageFilter==='all'
+      ||(__stageFilter==='post-design'&&['printing','production','shipping'].includes(stage)&&rem>0)
+      ||stage===__stageFilter;
+    r.style.display=(payOk&&stageOk)?'':'none';
   });
+}
+
+window.filterCollection=function(filter,btn){
+  __payFilter=filter;
+  document.querySelectorAll('.pf-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  applyCollectionFilters();
+};
+
+window.filterByStage=function(stage,btn){
+  __stageFilter=stage;
+  document.querySelectorAll('.st-btn').forEach(b=>b.classList.remove('active'));
+  // لو مفيش btn (نداء برمجي)، نختار الصح يدوياً
+  const target=btn||document.querySelector(`.st-btn[data-stage="${stage}"]`);
+  if(target)target.classList.add('active');
+  applyCollectionFilters();
+};
+
+// زر مختصر: اعرض اللي بعد التصميم وفيه باقي (يُستدعى من Overview KPI)
+window.goCollectionPostDesign=function(){
+  // افتح تبويب جرد التحصيل
+  const tabBtns=document.querySelectorAll('.rep-tab');
+  let collectionBtn=null;
+  tabBtns.forEach(b=>{if(b.textContent.includes('جرد التحصيل'))collectionBtn=b;});
+  if(collectionBtn){
+    currentTab='collection';
+    document.querySelectorAll('.rep-tab').forEach(b=>b.classList.remove('active'));
+    collectionBtn.classList.add('active');
+    render();
+    // طبّق الفلتر بعد ما الـ DOM يتعمّر
+    setTimeout(()=>filterByStage('post-design'),50);
+  }
 };
 
 let __delOrdId='',__delOrdClient='',__delOrdPaid=0,__delOrdWallet='';
