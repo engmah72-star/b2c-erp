@@ -129,6 +129,10 @@
     <div style="position:relative;margin-bottom:12px">
       <input class="inp" id="search" placeholder="🔍 بحث..." oninput="filterList(this.value)" style="background:var(--bg2)">
     </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="qf-mine" class="ftab active" onclick="setMineFilter(true,this)" style="flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">👤 موكلة لي <span id="qf-mine-cnt" style="opacity:.6">(—)</span></button>
+      <button id="qf-all" class="ftab" onclick="setMineFilter(false,this)" style="flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📋 الكل <span id="qf-all-cnt" style="opacity:.6">(—)</span></button>
+    </div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-top" style="background:var(--b)"></div><div class="kpi-val" id="k-total" style="color:var(--b)">—</div><div class="kpi-lbl">🖨️ أوردرات</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--r)"></div><div class="kpi-val" id="k-late" style="color:var(--r)">—</div><div class="kpi-lbl">⚠️ متأخرة</div></div>
@@ -380,7 +384,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -412,7 +416,7 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n.style.display='block';}
 
 // State
-let orders=[],wallets=[],appSettings={},activeId=null,activeOrder=null,userName='',currentRole='admin';
+let orders=[],wallets=[],appSettings={},activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 
 // Auth
 let _s=false;
@@ -420,7 +424,7 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   if(_s)return;_s=true;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);if(isAdm){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);}}
   startListeners();
 });
 
@@ -459,10 +463,32 @@ function updateKPIs(){
 window.filterList=function(q){const s=(q||'').toLowerCase().trim();document.querySelectorAll('.ocard').forEach(c=>{const t=(c.dataset.client||'').toLowerCase()+(c.dataset.id||'').toLowerCase();c.style.display=!s||t.includes(s)?'':'none';});};
 
 // Render List
+window.setMineFilter=function(val,btn){
+  mineOnly=val;
+  document.querySelectorAll('#qf-mine,#qf-all').forEach(b=>{b.classList.remove('active');b.style.color='var(--dim2)';});
+  if(btn){btn.classList.add('active');btn.style.color='var(--snow)';}
+  renderList();
+};
+
+function getFilteredOrders(){
+  const isAdm=['admin','operation_manager'].includes(currentRole);
+  // Admin يرى الكل افتراضياً، الموظف يرى أوردراته فقط
+  if(!mineOnly||isAdm&&!mineOnly)return orders;
+  const uid=auth?.currentUser?.uid;
+  if(!uid)return orders;
+  return orders.filter(o=>o.printerId===uid||(!o.printerId&&!isAdm));
+}
+
 function renderList(){
   const el=document.getElementById('list');if(!el)return;
-  if(!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">🖨️</div><div class="empty-text">لا توجد أوردرات في الطباعة</div></div>';return;}
-  el.innerHTML=orders.map(o=>{
+  // تحديث عدّاد الفلاتر
+  const uid=auth?.currentUser?.uid||'';
+  const mineCnt=orders.filter(o=>o.printerId===uid||(!o.printerId&&!['admin','operation_manager'].includes(currentRole))).length;
+  const mineEl=document.getElementById('qf-mine-cnt');if(mineEl)mineEl.textContent=`(${mineCnt})`;
+  const allEl=document.getElementById('qf-all-cnt');if(allEl)allEl.textContent=`(${orders.length})`;
+  const list=getFilteredOrders();
+  if(!list.length){el.innerHTML='<div class="empty"><div class="empty-icon">🖨️</div><div class="empty-text">'+(mineOnly?'لا توجد أوردرات موكلة لك':'لا توجد أوردرات في الطباعة')+'</div></div>';return;}
+  el.innerHTML=list.map(o=>{
     const d=delay(o.deadline);
     const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
     const paid=getPaid(o),sale=getNet(o),rem=getRem(o);
@@ -476,7 +502,7 @@ function renderList(){
     return`<div class="ocard ${d>0?'late':''}" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" onclick="openOrder('${o._id}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">
         <div style="flex:1;min-width:0">
-          <div style="font-size:15px;font-weight:900">${d>0?`<span style="color:var(--r);font-size:11px">⚠️${d}ي </span>`:''}${o.clientName||'—'}</div>
+          <div style="font-size:15px;font-weight:900">${d>0?`<span style="color:var(--r);font-size:11px">⚠️${d}ي </span>`:''}${o.clientName||'—'} ${stageSlaBadge(o)}</div>
           <div style="font-size:11px;color:var(--dim2);margin-top:3px">${prods}</div>
           ${extrasHtml?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${extrasHtml}</div>`:''}
           <div style="font-size:10px;color:var(--dim);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
