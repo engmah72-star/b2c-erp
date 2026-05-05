@@ -965,9 +965,10 @@ window.saveReturn=async function(){
       const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','deposit')));
       depWalletId=depSnap.docs[0]?.data()?.walletId||'';
     }
-    // pre-fetch: التحصيلات المسجلة من شاشة الشحن (collection) لعكسها من المحافظ
+    // pre-fetch: التحصيلات + تعديلاتها (collection + collection_adjustment) لعكسها من المحافظ
     const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','collection')));
-    const colTxDocs=colSnap.docs;
+    const adjSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','collection_adjustment')));
+    const colTxDocs=[...colSnap.docs,...adjSnap.docs];
 
     // ═══ Batch Atomic: كل عمليات المرتجع في كتابة واحدة ═══
     const batch=writeBatch(db);
@@ -1038,18 +1039,20 @@ window.saveReturn=async function(){
       });
     }
 
-    // 4b. عكس التحصيلات الفعلية من المحافظ (مبالغ حُصّلت أثناء الشحن — category=collection)
+    // 4b. عكس التحصيلات + التعديلات (type-aware عشان downward adjustments تتعكس صح)
     colTxDocs.forEach(tx=>{
       const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
       if(amt>0&&wid){
-        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        const isIn=d.type==='in';
+        batch.update(doc(db,'wallets',wid),{balance:increment(isIn?-amt:amt)});
         const rRef=doc(collection(db,'transactions_v2'));
         batch.set(rRef,{
-          type:'out',amount:amt,
-          description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+          type:isIn?'out':'in',amount:amt,
+          description:`↩️ عكس ${d.category==='collection_adjustment'?'تعديل تحصيل':'تحصيل'} مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
           category:'collection_reversal',orderId:ordId,
           clientName:o.clientName||'',
           walletId:wid,walletName:d.walletName||'',
+          isReversal:true,reversesTxId:tx.id,
           date:now,createdBy:currentUser.uid,createdByName:byName,
           createdAt:serverTimestamp()
         });

@@ -2649,11 +2649,12 @@ window.saveReturnWizard=async function(){
       const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','deposit')));
       depWalletId=depSnap.docs[0]?.data()?.walletId||'';
     }
-    // ─ Pre-fetch: عمليات التحصيل الفعلية لعكسها من المحافظ عند الإرجاع الكامل
+    // ─ Pre-fetch: عمليات التحصيل + التعديلات لعكسها من المحافظ عند الإرجاع الكامل
     let colTxDocs=[];
     if(!isPartial){
       const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','collection')));
-      colTxDocs=colSnap.docs;
+      const adjSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId),where('category','==','collection_adjustment')));
+      colTxDocs=[...colSnap.docs,...adjSnap.docs];
     }
     const batch=writeBatch(db);
     const lossLabel=lossParty==='client'?'العميل':lossParty==='company'?'الشركة':lossParty==='employee'?'موظف '+employeeName:'شركة الشحن';
@@ -2694,13 +2695,24 @@ window.saveReturnWizard=async function(){
       batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
       if(depWalletId)batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
     }
-    // ─ عكس التحصيلات الفعلية من المحافظ (مبالغ حُصّلت أثناء الشحن)
+    // ─ عكس التحصيلات + التعديلات (type-aware عشان downward adjustments تتعكس صح)
     colTxDocs.forEach(tx=>{
       const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
       if(amt>0&&wid){
-        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        const isIn=d.type==='in';
+        // in: نطرح من المحفظة. out (downward adjustment): نضيف للمحفظة (نلغي الخصم).
+        batch.update(doc(db,'wallets',wid),{balance:increment(isIn?-amt:amt)});
         const rRef=doc(collection(db,'transactions_v2'));
-        batch.set(rRef,{type:'out',amount:amt,description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'collection_reversal',orderId,clientName:o.clientName||'',walletId:wid,walletName:d.walletName||'',date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+        batch.set(rRef,{
+          type:isIn?'out':'in',amount:amt,
+          description:`↩️ عكس ${d.category==='collection_adjustment'?'تعديل تحصيل':'تحصيل'} مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+          category:'collection_reversal',
+          orderId,clientName:o.clientName||'',
+          walletId:wid,walletName:d.walletName||'',
+          isReversal:true,reversesTxId:tx.id,
+          date:now,createdBy:currentUser?.uid||'',createdByName:userName,
+          createdAt:serverTimestamp()
+        });
       }
     });
     if(cost>0){
