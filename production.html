@@ -159,7 +159,7 @@ button{min-height:36px}
         <div><div class="panel-hdr-name" id="pn-name">—</div><div class="panel-hdr-sub" id="pn-sub">—</div><div id="pn-specs" style="font-size:11px;color:var(--dim2);margin-top:4px;display:none"></div></div>
         <button class="panel-close" onclick="closePanel()">✕</button>
       </div>
-      <a id="pn-track-link" href="#" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg2);color:var(--p);font-size:11px;font-weight:700;text-decoration:none;margin-bottom:8px">📋 تتبع كامل</a>
+      <a id="pn-track-link" href="#" class="chip-track" style="margin-bottom:8px">📋 تتبع كامل</a>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px">
         <button class="status-btn" id="sbtn-recv" onclick="setPrintStatus('received')" style="padding:8px 4px;font-size:11px">📥 استلمت</button>
         <button class="status-btn" id="sbtn-wip"  onclick="setPrintStatus('wip')"      style="padding:8px 4px;font-size:11px">🔄 جاري</button>
@@ -299,7 +299,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -415,6 +415,9 @@ window.deleteOrderFull=async function(){
 
 
 let __listenersStarted=false; // منع التكرار
+// عرض skeleton فوراً قبل البيانات
+{const __l=document.getElementById('list');if(__l)__l.innerHTML=skeletonCards(4);}
+
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
@@ -821,7 +824,12 @@ window.renderList=function(resetPage=true){
   if(currentSupFilter)data=data.filter(o=>o.supplierId===currentSupFilter);
   data=applyMineFilter(data);
   const el=document.getElementById('list');if(!el)return;
-  if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا توجد طلبات</div></div>`;return;}
+  if(!data.length){
+    el.innerHTML=mineOnly
+      ?emptyState({ico:'🎉',title:'كل أوردراتك في التنفيذ خلصت',sub:'مفيش أوردر مسلَّم لك حالياً',cta:{label:'📋 عرض الكل',onclick:`document.getElementById('qf-all').click()`}})
+      :emptyState({ico:'🏭',title:'لا توجد طلبات في التنفيذ',sub:'الأوردرات بعد الطباعة ستظهر هنا'});
+    return;
+  }
   const total=data.length;
   data=data.slice(0,__currentPage*__pageSize);
   const SM={pending:{cls:'sp-pending',lbl:'⏳ انتظار',cc:''},received:{cls:'sp-wip',lbl:'📥 استلمت',cc:'card-wip'},wip:{cls:'sp-wip',lbl:'🔄 جاري',cc:'card-wip'},done:{cls:'sp-done',lbl:'✅ خلصت',cc:'card-done'},problem:{cls:'sp-prob',lbl:'⚠️ مشكلة',cc:'card-prob'}};
@@ -850,7 +858,7 @@ window.renderList=function(resetPage=true){
           <div class="ord-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${dayChip} ${stageSlaBadge(o)}</div>
           <div class="ord-name">${o.clientName||'—'}${o.productionAgentName?` <span style="font-size:10px;color:var(--dim2);font-weight:600">· 🏭 ${o.productionAgentName}</span>`:''}</div>
           ${prodDetails}
-          ${(!o.productionAgent&&!isShipping)?`<button onclick="event.stopPropagation();pickupOrder('${o._id}')" style="margin-top:6px;padding:5px 12px;border-radius:20px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.1);color:var(--p);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">📥 التقط</button>`:''}
+          ${(!o.productionAgent&&!isShipping)?`<button onclick="event.stopPropagation();pickupOrder('${o._id}')" class="chip-pickup" style="margin-top:6px">📥 التقط</button>`:''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
           ${isShipping?`<span class="status-pill" style="background:rgba(255,170,0,.15);color:var(--y)">🚚 شحن</span>`:`<span class="status-pill ${st.cls}">${st.lbl}</span>`}

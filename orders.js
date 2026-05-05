@@ -110,10 +110,56 @@ export function stageSlaBadge(order, slaTable = null) {
   const ageFmt = age < 1
     ? `${Math.round(age * 60)} د`
     : age < 24 ? `${Math.round(age)} س` : `${Math.round(age / 24)} ي`;
-  if (overdue) {
-    return `<span class="sla-badge sla-late" style="background:rgba(255,61,110,.15);color:#ff3d6e;border:1px solid rgba(255,61,110,.3);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800">⏰ ${ageFmt} متأخر</span>`;
-  }
-  return `<span class="sla-badge" style="background:rgba(120,120,160,.1);color:#7878a0;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">⏱ ${ageFmt}</span>`;
+  if (overdue) return `<span class="bdg bdg-danger">⏰ ${ageFmt} متأخر</span>`;
+  return `<span class="bdg bdg-mute">⏱ ${ageFmt}</span>`;
+}
+
+// ══════════════════════════════════════════
+// SKELETON LOADER — placeholder cards شيمر
+// ══════════════════════════════════════════
+/** يبني HTML لعدة بطاقات skeleton أثناء التحميل */
+export function skeletonCards(count = 4) {
+  const card = `
+    <div class="skel-card">
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <div class="skel skel-circle"></div>
+        <div style="flex:1">
+          <div class="skel skel-line w-50"></div>
+          <div class="skel skel-line w-70"></div>
+          <div class="skel skel-line w-30"></div>
+        </div>
+      </div>
+    </div>`;
+  return Array(count).fill(card).join('');
+}
+
+// ══════════════════════════════════════════
+// EMPTY STATE — حالة فاضية مع CTA
+// ══════════════════════════════════════════
+/**
+ * @param {Object} opts
+ * @param {string} [opts.ico='📭']
+ * @param {string} opts.title
+ * @param {string} [opts.sub]
+ * @param {{label, href, onclick}} [opts.cta]
+ */
+export function emptyState(opts = {}) {
+  const ico   = opts.ico || '📭';
+  const title = opts.title || 'لا توجد بيانات';
+  const sub   = opts.sub || '';
+  const cta   = opts.cta || null;
+  const ctaHtml = cta
+    ? (cta.href
+        ? `<a class="empty-state-btn" href="${cta.href}">${cta.label}</a>`
+        : `<button class="empty-state-btn" onclick="${cta.onclick}">${cta.label}</button>`)
+    : '';
+  return `
+    <div class="empty-state">
+      <div class="empty-state-ico">${ico}</div>
+      <div class="empty-state-title">${title}</div>
+      ${sub ? `<div class="empty-state-sub">${sub}</div>` : ''}
+      ${ctaHtml}
+    </div>`;
 }
 
 // helper داخلي: parse تاريخ عربي بصيغة dd/mm/yyyy hh:mm
