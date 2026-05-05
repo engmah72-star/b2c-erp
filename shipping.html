@@ -936,15 +936,21 @@ window.deleteOrderFull=async function(){
   if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع عن هذا الإجراء.`)) return;
   if(!confirm('تأكيد الحذف النهائي؟')) return;
   try{
-    // pre-fetch قبل الـ batch
+    // pre-fetch قبل الـ batch (transactions + shipping_returns لهذا الأوردر)
     const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',activeId)));
+    const retSnap=await getDocs(query(collection(db,'shipping_returns'),where('orderId','==',activeId)));
     const batch=writeBatch(db);
     for(const tx of txSnap.docs){
-      if(tx.data().type==='in' && tx.data().walletId){
-        batch.update(doc(db,'wallets',tx.data().walletId),{balance:increment(-(parseFloat(tx.data().amount)||0))});
+      const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
+      // عكس أثر المحفظة قبل الحذف (in: نطرح، out: نضيف) عشان الميزانية تفضل متوازنة
+      if(amt>0&&wid){
+        if(d.type==='in')      batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        else if(d.type==='out') batch.update(doc(db,'wallets',wid),{balance:increment( amt)});
       }
       batch.delete(tx.ref);
     }
+    // حذف سجلات المرتجع المرتبطة (orphan-prevention)
+    for(const r of retSnap.docs) batch.delete(r.ref);
     batch.delete(doc(db,'orders',activeId));
     await batch.commit();
     closePanel();
@@ -1771,6 +1777,8 @@ window.saveShip=async function(){
   }
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+collectAmt;
   const newRem=Math.max(0,(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0)-newPaid);
+  // ─ حماية: لا يمكن الانتقال إلى "محصّل" والمتبقي > 0 (state machine rule)
+  if(stage==='collected'&&newRem>0.01) return toast(`⛔ لا يمكن "محصّل" والمتبقي ${fn(newRem)} ج — حصّل المبلغ كاملاً أولاً`,'err');
   const debtType=gv('ss-debt-type')||'client';
   const parts=[`🚚 ${METHOD_LABELS[shipMethod2]||shipMethod2}`];
   if(shipCompanyName2&&shipMethod2!=='pickup')parts.push(shipCompanyName2);

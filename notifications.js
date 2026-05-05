@@ -65,7 +65,7 @@ export function initNotifications(app, currentUser) {
     mergeNotifs('order_design', orderNotifs);
   });
 
-  const ordersShipQ = query(collection(db, 'orders'), where('shippingOfficer', '==', uid));
+  const ordersShipQ = query(collection(db, 'orders'), where('shippingOfficerId', '==', uid));
   onSnapshot(ordersShipQ, snap => {
     const shipNotifs = snap.docs
       .filter(d => d.data().stage === 'shipping')
