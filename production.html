@@ -683,7 +683,9 @@ window.addCostFromPanel=async function(prodIdx){
       if(spRef){
         batch.set(spRef,{supplierId,supplierName,amount:total,orderId:activeId,orderClient:o.clientName||'',note:`${type}${note?' — '+note:''}`,walletId,walletName,date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
       }
-      if(!isEdit) addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
+      // VENDOR_PAYMENT لو في مورد، GENERAL_EXPENSE لو مفيش (يربط القيد بالمورد رسمياً — RULE 5)
+      const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
+      if(!isEdit) addLedgerToBatch(batch,db,ledgerEvent,{
         amount:total,orderId:activeId,clientName:o.clientName||'',
         vendorId:supplierId,vendorName:supplierName,walletId,walletName,
         notes:`تكلفة تنفيذ — ${type}${newItem.note?' — '+newItem.note:''} · ${o.clientName||''}`,
@@ -693,7 +695,9 @@ window.addCostFromPanel=async function(prodIdx){
     } else {
       const nb=writeBatch(db);
       nb.update(doc(db,'orders',activeId),{costItems:ci,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-      if(!isEdit) addLedgerToBatch(nb,db,FE.GENERAL_EXPENSE,{
+      // VENDOR_PAYMENT لو في مورد، GENERAL_EXPENSE لو مفيش
+      const ledgerEvent2=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
+      if(!isEdit) addLedgerToBatch(nb,db,ledgerEvent2,{
         amount:total,orderId:activeId,clientName:o.clientName||'',
         vendorId:supplierId,vendorName:supplierName,
         notes:`تكلفة تنفيذ — ${type}${newItem.note?' — '+newItem.note:''} · ${o.clientName||''}`,
@@ -1080,10 +1084,13 @@ window.saveCost=async function(){
   const supOpt=supSel?.options[supSel.selectedIndex];
   const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const item={type,supplierId:supOpt?.value||'',supplierName:supOpt?.dataset?.name||'',prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};
+  const supplierId=supOpt?.value||'';
+  const supplierName=supOpt?.dataset?.name||'';
+  const item={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};
   const ci=[...(o.costItems||[])];
+  const isEdit=editCostIdx>=0&&editCostIdx<ci.length;
   let action;
-  if(editCostIdx>=0&&editCostIdx<ci.length){
+  if(isEdit){
     ci[editCostIdx]={...ci[editCostIdx],...item,editedAt:nowStr()};
     action=`✏️ تعديل ${type}: ${fn(total)} ج`;
   } else {
@@ -1091,7 +1098,20 @@ window.saveCost=async function(){
     action=`💰 ${type}: ${fn(total)} ج`;
   }
   try{
-    await updateDoc(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    // RULE 3 — atomic batch: order + ledger entry معاً
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    if(!isEdit){
+      // RULE 5 — قيد محاسبي ربط بالمورد لو موجود (VENDOR_PAYMENT) أو مصروف عام
+      const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
+      addLedgerToBatch(batch,db,ledgerEvent,{
+        amount:total,orderId:activeId,clientName:o.clientName||'',
+        vendorId:supplierId,vendorName:supplierName,
+        notes:`تكلفة تنفيذ — ${type}${item.note?' — '+item.note:''} · ${o.clientName||''}`,
+        userId:currentUser?.uid||'',userName,
+      });
+    }
+    await batch.commit();
     cM('cost');toast('✅ تم','ok');editCostIdx=-1;
   }catch(e){toast('❌ '+e.message,'err');}
 };
