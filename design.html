@@ -570,16 +570,25 @@ window.deleteOrderFull=async function(){
     const wId=o.depositWalletId||o.walletId||'';
     const batch=writeBatch(db);
     if(dep>0&&wId){
-      batch.update(doc(db,'wallets',wId),{balance:increment(dep)});
+      // استرداد العربون = خصم من المحفظة + قيد refund (direction:out)
+      batch.update(doc(db,'wallets',wId),{balance:increment(-dep)});
+      const refundTxRef=doc(collection(db,'transactions_v2'));
+      batch.set(refundTxRef,{
+        walletId:wId,walletName:wallets?.find(x=>x._id===wId)?.name||'',
+        type:'out',amount:dep,fees:0,
+        description:`استرداد عربون — حذف أوردر — ${o.clientName||''}`,
+        category:'refund',orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        isReversal:true,
+        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName||'admin',createdAt:serverTimestamp()
+      });
       addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
-        orderId:activeId,clientName:o.clientName||'',amount:dep,walletId:wId,
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',amount:dep,walletId:wId,
         walletName:wallets?.find(x=>x._id===wId)?.name||'',
         notes:'حذف أوردر نهائي — استرداد عربون',
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin'
+        userId:currentUser?.uid||'',userName:userName||'admin'
       });
     }
-    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',activeId)));
-    for(const tx of txSnap.docs) batch.delete(tx.ref);
+    // حذف الأوردر فقط — نحتفظ بـ transactions_v2 للسجل التاريخي والـ refund tx الجديدة تظهر العكس
     batch.delete(doc(db,'orders',activeId));
     await batch.commit();
     closePanel();
@@ -1295,31 +1304,15 @@ window.saveOrder=async function(){
   const desOpt=desSel?.options[desSel.selectedIndex];
   const orderId='ORD-'+Date.now().toString().slice(-8);
   try{
-    if(dep>0&&wId){
-      const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
-      const depBatch=writeBatch(db);
-      depBatch.update(doc(db,'wallets',wId),{balance:increment(dep)});
-      const depTxRef=doc(collection(db,'transactions_v2'));
-      depBatch.set(depTxRef,{
-        walletId:wId,type:'in',amount:dep,fees:0,
-        description:`عربون تصميم — ${selClient.name} — ${orderId}`,
-        category:'deposit',orderId,clientName:selClient.name,
-        balanceBefore:bb,balanceAfter:bb+dep,
-        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()
-      });
-      addLedgerToBatch(depBatch,db,FE.CUSTOMER_PAYMENT,{
-        amount:dep,walletId:wId,walletName:wName,
-        orderId,clientId:selClient._id||'',clientName:selClient.name||'',
-        notes:`عربون تصميم — ${selClient.name} — ${orderId}`,
-        userId:currentUser.uid,userName,
-      });
-      await depBatch.commit();
-    }
-    await addDoc(collection(db,'orders'),{
+    // ══ batch ذرّي واحد: order + (wallet + tx + ledger للعربون) ══
+    const batch=writeBatch(db);
+    const orderRef=doc(collection(db,'orders'));
+
+    batch.set(orderRef,{
       orderId,stage:'design',designStage:'pending',
       clientId:selClient._id,clientName:selClient.name,clientPhone:selClient.phone,
       products:prods,product:prods.map(p=>p.name).join(' + '),qty:prods.reduce((s,p)=>s+p.qty,0),
-      deposit:dep,depositWallet:dep>0?wName:'',
+      deposit:dep,depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
       totalPaid:dep,remaining:0,salePrice:0,
       designerId:desOpt?.value||'',designerName:desOpt?.value?desOpt.text:'',
       deadline:gv('np-dl'),notes:gv('np-notes'),
@@ -1329,6 +1322,26 @@ window.saveOrder=async function(){
       createdAt:serverTimestamp(),updatedAt:serverTimestamp(),
       timeline:[{date:nowStr(),action:`🆕 طلب جديد${dep>0?' — عربون '+fn(dep)+' ج عبر '+wName:''}`,by:userName}],
     });
+
+    if(dep>0&&wId){
+      batch.update(doc(db,'wallets',wId),{balance:increment(dep)});
+      const txRef=doc(collection(db,'transactions_v2'));
+      batch.set(txRef,{
+        walletId:wId,walletName:wName,type:'in',amount:dep,fees:0,
+        description:`عربون تصميم — ${selClient.name} — ${orderId}`,
+        category:'client_payment',
+        orderId:orderRef.id,clientId:selClient._id||'',clientName:selClient.name,
+        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()
+      });
+      addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+        amount:dep,walletId:wId,walletName:wName,
+        orderId:orderRef.id,clientId:selClient._id||'',clientName:selClient.name||'',
+        notes:`عربون تصميم — ${selClient.name} — ${orderId}`,
+        userId:currentUser.uid,userName,
+      });
+    }
+
+    await batch.commit();
     closeNewOrder();
 
     // رفع الملف المرجعي لو موجود
@@ -1342,7 +1355,7 @@ window.saveOrder=async function(){
       try{
         const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
         const storage=getStorage();
-        const sRefPath=sRef(storage,`design-refs/${docRef.id}_${Date.now()}`);
+        const sRefPath=sRef(storage,`design-refs/${orderRef.id}_${Date.now()}`);
         const task=uploadBytesResumable(sRefPath,window.__refFile);
         await new Promise((res,rej)=>{
           task.on('state_changed',
@@ -1350,7 +1363,7 @@ window.saveOrder=async function(){
             rej,
             async()=>{
               const url=await getDownloadURL(task.snapshot.ref);
-              await updateDoc(doc(db,'orders',docRef.id),{refFileUrl:url,refFileType:window.__refFile.type});
+              await updateDoc(doc(db,'orders',orderRef.id),{refFileUrl:url,refFileType:window.__refFile.type});
               window.__refFile=null;res();
             }
           );
