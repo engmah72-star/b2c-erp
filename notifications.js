@@ -1,7 +1,7 @@
 // ══ Notifications System ══
 // يراقب المهام والأوردرات المعيّنة للموظف ويعرض إشعارات
 
-import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, writeBatch, serverTimestamp }
+import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, updateDoc, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const STORAGE_KEY = 'b2c_notif_seen';
@@ -104,6 +104,31 @@ export function initNotifications(app, currentUser) {
     mergeNotifs('order_print', printNotifs);
   });
 
+  // ── الأوردرات اللي عليها تعديل من موظف لم يُراجَع (للأدمن فقط) ──
+  getDoc(doc(db, 'users', uid)).then(userSnap => {
+    if (!userSnap.exists()) return;
+    const role = userSnap.data().role || '';
+    if (!['admin', 'operation_manager'].includes(role)) return;
+    const auditQ = query(collection(db, 'orders'), where('hasUnreviewedAudit', '==', true));
+    onSnapshot(auditQ, snap => {
+      const auditNotifs = snap.docs.map(d => {
+        const o = d.data();
+        const lastAudit = (o.auditLog || []).filter(a => a.requiresReview).pop() || {};
+        const r = (lastAudit.reason || '').slice(0, 50);
+        return {
+          id: 'audit_' + d.id,
+          type: 'audit',
+          ico: '🚨',
+          title: `مراجعة مطلوبة — ${o.clientName || ''}`,
+          desc: `${lastAudit.changedBy || 'موظف'} عدّل ${lastAudit.type === 'collection_edit' ? 'مبلغ التحصيل' : lastAudit.type === 'shipping_edit' ? 'بيانات الشحن' : 'الأوردر'}${r ? ' — ' + r : ''}`,
+          time: lastAudit.date ? new Date() : (o.updatedAt?.toDate?.() || new Date()),
+          link: `shipping.html?orderId=${d.id}`,
+        };
+      });
+      mergeNotifs('audit', auditNotifs);
+    }, () => { /* permission errors silently */ });
+  }).catch(() => { /* user fetch failed, skip admin audit listener */ });
+
   // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
   const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid));
   onSnapshot(ordersProdQ, snap => {
@@ -131,6 +156,7 @@ export function initNotifications(app, currentUser) {
       order_print:  'order_print_',
       order_prod:   'order_prod_',
       order_ship:   'order_ship_',
+      audit:        'audit_',
     };
     const prefix = prefixMap[group] || (group + '_');
     allNotifs = allNotifs.filter(n => !n.id.startsWith(prefix));
