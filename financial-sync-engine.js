@@ -25,6 +25,7 @@ console.log('[FSE] 🚀 Financial Sync Engine v2 loaded — all atomic writes ac
 export const FE = {
   CUSTOMER_PAYMENT:              'CUSTOMER_PAYMENT',
   CUSTOMER_REFUND:               'CUSTOMER_REFUND',
+  GENERAL_EXPENSE_REVERSAL:      'GENERAL_EXPENSE_REVERSAL',
   VENDOR_PAYMENT:                'VENDOR_PAYMENT',
   VENDOR_PAYMENT_REVERSAL:       'VENDOR_PAYMENT_REVERSAL',
   SHIPPING_EXPENSE:              'SHIPPING_EXPENSE',
@@ -60,6 +61,7 @@ const LC = {
   PENALTY:                      { type:'expense',  category:'deduction',           direction:'out', icon:'✂️', label:'خصم' },
   RETURN_LOSS:                  { type:'expense',  category:'return_loss',         direction:'out', icon:'↩️', label:'خسارة مرتجع' },
   GENERAL_EXPENSE:              { type:'expense',  category:'general_expense',     direction:'out', icon:'💸', label:'مصروف عام' },
+  GENERAL_EXPENSE_REVERSAL:     { type:'reversal', category:'general_expense',     direction:'in',  icon:'🔄', label:'إلغاء مصروف عام' },
   WALLET_TRANSFER:              { type:'transfer', category:'transfer',            direction:'in',  icon:'🔄', label:'تحويل داخلي' },
 };
 
@@ -74,6 +76,10 @@ export function calcOrderPayment(order, delta) {
   const shipFee = parseFloat(order.customerShipFee)  || 0;
   const net     = Math.max(0, sale + shipFee - disc);
   const oldPaid = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+  // delta سالب يعني refund — لا يجب أن يتجاوز المدفوع الحالي
+  if (delta < 0 && Math.abs(delta) > oldPaid + 0.01) {
+    throw new Error(`[FSE] refund (${Math.abs(delta)}) أكبر من المدفوع الحالي (${oldPaid})`);
+  }
   const newPaid = Math.max(0, oldPaid + delta);
   const remaining = Math.max(0, net - newPaid);
   return {
@@ -94,6 +100,11 @@ export function addLedgerToBatch(batch, db, eventType, data) {
   }
   if (!(data.amount > 0)) {
     console.warn(`[FSE] ⚠️ addLedgerToBatch: amount=${data.amount} غير صالح لـ eventType=${eventType}`);
+  }
+  // تحذير عند غياب أي ربط بكيان (أوردر/عميل/موظف/مورد/محفظة) — قيد يتيم بدون ربط
+  const hasEntity = data.orderId || data.clientId || data.employeeId || data.vendorId || data.walletId || data.refId;
+  if (!hasEntity) {
+    console.warn(`[FSE] ⚠️ addLedgerToBatch: قيد بدون ربط بكيان — eventType=${eventType}`);
   }
   const lc = LC[eventType] || { type:'other', category:'unknown', direction:'in', icon:'📋', label: eventType };
   const ref = doc(collection(db, 'financial_ledger'));
@@ -158,9 +169,10 @@ export function getReversal(eventType) {
     PENALTY:                      'SALARY_PAYMENT_REVERSAL',
     SHIPPING_SETTLEMENT:          'SHIPPING_SETTLEMENT_REVERSAL',
     SHIPPING_SETTLEMENT_REVERSAL: 'SHIPPING_SETTLEMENT',
-    SHIPPING_EXPENSE:             'GENERAL_EXPENSE',
-    RETURN_LOSS:                  'GENERAL_EXPENSE',
-    GENERAL_EXPENSE:              'CUSTOMER_PAYMENT',
+    SHIPPING_EXPENSE:             'GENERAL_EXPENSE_REVERSAL',
+    RETURN_LOSS:                  'GENERAL_EXPENSE_REVERSAL',
+    GENERAL_EXPENSE:              'GENERAL_EXPENSE_REVERSAL',
+    GENERAL_EXPENSE_REVERSAL:     'GENERAL_EXPENSE',
   };
   return REVERSAL[eventType] || eventType;
 }
@@ -364,18 +376,23 @@ async function handlePayroll(db, p) {
 }
 
 async function handleCustomerPayment(db, p) {
-  // p.orderData: {totalPaid, salePrice, discount} — pre-fetched by caller if needed
+  // p.orderData: {totalPaid, salePrice, discount, customerShipFee} — pre-fetched by caller if needed
+  // p.eventType: 'CUSTOMER_PAYMENT' (دفعة → in) أو 'CUSTOMER_REFUND' (استرداد → out)
+  const evtType = p.eventType || 'CUSTOMER_PAYMENT';
+  const isRefund = evtType === 'CUSTOMER_REFUND';
+  const sign = isRefund ? -1 : +1;
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(p.amount) });
-    console.log('[FSE] 💳 balance updated:', p.walletId, '+', p.amount);
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(sign * p.amount) });
+    console.log('[FSE] 💳 balance updated:', p.walletId, sign > 0 ? '+' : '-', p.amount);
   }
 
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
     walletId: p.walletId || '', walletName: p.walletName || '',
-    type: 'in', amount: p.amount, category: p.txCategory || 'client_payment',
+    type: isRefund ? 'out' : 'in', amount: p.amount,
+    category: p.txCategory || (isRefund ? 'refund' : 'client_payment'),
     orderId: p.orderId || null, clientId: p.clientId || null, clientName: p.clientName || '',
     note: p.note || '',
     date: p.date || new Date().toLocaleDateString('ar-EG'),
@@ -385,7 +402,7 @@ async function handleCustomerPayment(db, p) {
   console.log('[FSE] 🏭 module updated: transactions_v2');
 
   if (p.orderId && p.orderData) {
-    const payment = calcOrderPayment(p.orderData, p.amount);
+    const payment = calcOrderPayment(p.orderData, sign * p.amount);
     batch.update(doc(db, 'orders', p.orderId), {
       ...payment,
       lastPaymentDate: p.date || new Date().toLocaleDateString('ar-EG'),
@@ -393,7 +410,6 @@ async function handleCustomerPayment(db, p) {
     console.log('[FSE] 📦 module updated: order payment fields', payment);
   }
 
-  const evtType = p.eventType || 'CUSTOMER_PAYMENT';
   addLedgerToBatch(batch, db, evtType, { ...p, notes: p.note });
 
   await batch.commit();
@@ -402,21 +418,182 @@ async function handleCustomerPayment(db, p) {
   return { txId: txRef.id };
 }
 
+async function handleShippingSettlement(db, p) {
+  // p: { walletId, walletName, amount, companyName, orderIds[], expectedAmount, difference,
+  //      diffReason, diffReasonLabel, diffNote, note, date, userId, userName,
+  //      orderUpdates: [{orderId, totalPaid, remaining, paymentStatus, dueByCo}] }
+  if (!p.walletId) throw new Error('[FSE] SHIPPING_SETTLEMENT: walletId مطلوب');
+  if (!(p.amount > 0)) throw new Error('[FSE] SHIPPING_SETTLEMENT: amount غير صالح');
+
+  const batch = writeBatch(db);
+  const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
+
+  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(p.amount) });
+
+  const txRef = doc(collection(db, 'transactions_v2'));
+  batch.set(txRef, {
+    walletId: p.walletId, walletName: p.walletName || '',
+    type: 'in', amount: p.amount, fees: 0,
+    description: `تسوية شحن — ${p.companyName || ''}`,
+    category: 'shipping_settlement',
+    companyName: p.companyName || '', orderIds: p.orderIds || [],
+    expectedAmount: p.expectedAmount || 0, difference: p.difference || 0,
+    diffReason: p.diffReason || '', diffReasonLabel: p.diffReasonLabel || '',
+    diffNote: p.diffNote || '',
+    note: p.note || '', date: dateStr,
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+
+  const settleRef = doc(collection(db, 'shipping_settlements'));
+  batch.set(settleRef, {
+    companyName: p.companyName || '', amount: p.amount,
+    orderIds: p.orderIds || [], expectedAmount: p.expectedAmount || 0,
+    difference: p.difference || 0, diffReason: p.diffReason || '',
+    diffReasonLabel: p.diffReasonLabel || '', diffNote: p.diffNote || '',
+    walletId: p.walletId, walletName: p.walletName || '',
+    note: p.note || '', date: dateStr, txId: txRef.id,
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+
+  // تحديث الأوردرات في نفس الـ batch
+  for (const u of (p.orderUpdates || [])) {
+    if (!u.orderId) continue;
+    batch.update(doc(db, 'orders', u.orderId), {
+      shipSettled: true, shipSettledAmount: u.dueByCo || 0,
+      shipSettledWalletId: p.walletId,
+      totalPaid: u.totalPaid, remaining: u.remaining,
+      paymentStatus: u.paymentStatus,
+      ...(u.timelineEntry ? { timeline: u.timeline } : {}),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT', {
+    amount: p.amount, walletId: p.walletId, walletName: p.walletName || '',
+    notes: `تسوية شحن — ${p.companyName || ''}${p.diffReasonLabel ? ' — فرق: ' + p.diffReasonLabel : ''}`,
+    refId: settleRef.id,
+    userId: p.userId, userName: p.userName,
+  });
+
+  await batch.commit();
+  console.log('[FSE] ✅ completed: SHIPPING_SETTLEMENT', { settleId: settleRef.id });
+  return { settleId: settleRef.id, txId: txRef.id };
+}
+
+async function handleShippingSettlementReversal(db, p) {
+  // p: { settlementId, walletId, walletName, amount, companyName, orderIds[],
+  //      orderUpdates: [{orderId, totalPaid, remaining, paymentStatus}], userId, userName, date? }
+  if (!p.settlementId) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: settlementId مطلوب');
+  if (!p.walletId) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: walletId مطلوب');
+  if (!(p.amount > 0)) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: amount غير صالح');
+
+  const batch = writeBatch(db);
+  const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
+
+  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.amount) });
+
+  const txRef = doc(collection(db, 'transactions_v2'));
+  batch.set(txRef, {
+    walletId: p.walletId, walletName: p.walletName || '',
+    type: 'out', amount: p.amount, fees: 0,
+    description: `إلغاء تسوية شحن — ${p.companyName || ''}`,
+    category: 'shipping_settlement', isReversal: true,
+    settlementId: p.settlementId,
+    date: dateStr,
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+
+  batch.delete(doc(db, 'shipping_settlements', p.settlementId));
+
+  for (const u of (p.orderUpdates || [])) {
+    if (!u.orderId) continue;
+    batch.update(doc(db, 'orders', u.orderId), {
+      shipSettled: false, shipSettledAmount: 0, shipSettledWalletId: '',
+      totalPaid: u.totalPaid, remaining: u.remaining,
+      paymentStatus: u.paymentStatus,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT_REVERSAL', {
+    amount: p.amount, walletId: p.walletId, walletName: p.walletName || '',
+    notes: `إلغاء تسوية شحن — ${p.companyName || ''}`,
+    refId: p.settlementId,
+    userId: p.userId, userName: p.userName,
+  });
+
+  await batch.commit();
+  console.log('[FSE] ✅ completed: SHIPPING_SETTLEMENT_REVERSAL');
+  return {};
+}
+
+async function handleWalletTransfer(db, p) {
+  // p: { fromWalletId, fromWalletName, toWalletId, toWalletName, amount, note?, date?, userId, userName }
+  if (!p.fromWalletId || !p.toWalletId) throw new Error('[FSE] WALLET_TRANSFER: fromWalletId و toWalletId مطلوبان');
+  if (p.fromWalletId === p.toWalletId) throw new Error('[FSE] WALLET_TRANSFER: المحفظتان متماثلتان');
+  if (!(p.amount > 0)) throw new Error('[FSE] WALLET_TRANSFER: amount غير صالح');
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'wallets', p.fromWalletId), { balance: increment(-p.amount) });
+  batch.update(doc(db, 'wallets', p.toWalletId),   { balance: increment(p.amount) });
+
+  const transferGroupId = doc(collection(db, 'transactions_v2')).id;
+  const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
+
+  const outRef = doc(collection(db, 'transactions_v2'));
+  batch.set(outRef, {
+    walletId: p.fromWalletId, walletName: p.fromWalletName || '',
+    type: 'out', amount: p.amount, fees: 0,
+    description: `🔄 تحويل إلى: ${p.toWalletName || ''}${p.note ? ' — ' + p.note : ''}`,
+    category: 'transfer', transferGroupId, transferTo: p.toWalletId,
+    date: dateStr,
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+
+  const inRef = doc(collection(db, 'transactions_v2'));
+  batch.set(inRef, {
+    walletId: p.toWalletId, walletName: p.toWalletName || '',
+    type: 'in', amount: p.amount, fees: 0,
+    description: `🔄 تحويل من: ${p.fromWalletName || ''}${p.note ? ' — ' + p.note : ''}`,
+    category: 'transfer', transferGroupId, transferFrom: p.fromWalletId,
+    date: dateStr,
+    createdBy: p.userId || '', createdByName: p.userName || '',
+    createdAt: serverTimestamp(),
+  });
+
+  addLedgerToBatch(batch, db, 'WALLET_TRANSFER', {
+    amount: p.amount, walletId: p.fromWalletId, walletName: p.fromWalletName || '',
+    notes: `تحويل من ${p.fromWalletName || ''} إلى ${p.toWalletName || ''}${p.note ? ' — ' + p.note : ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+
+  await batch.commit();
+  console.log('[FSE] ✅ completed: WALLET_TRANSFER');
+  return { transferGroupId };
+}
+
 async function handleGeneralExpense(db, p) {
+  const isReverse = p._reverse === true;
+  const sign = isReverse ? +1 : -1;
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.amount) });
-    console.log('[FSE] 💳 balance updated:', p.walletId, '-', p.amount);
+    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(sign * p.amount) });
+    console.log('[FSE] 💳 balance updated:', p.walletId, sign > 0 ? '+' : '-', p.amount);
   }
 
-  if (p.walletId || p.createTx !== false) {
+  if (p.walletId && p.createTx !== false) {
     const txRef = doc(collection(db, 'transactions_v2'));
     batch.set(txRef, {
       walletId: p.walletId || '', walletName: p.walletName || '',
-      type: 'out', amount: p.amount,
+      type: isReverse ? 'in' : 'out', amount: p.amount,
       description: p.note || '', category: p.txCategory || 'expense',
       orderId: p.orderId || null,
+      isReversal: isReverse || undefined,
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(),
@@ -445,9 +622,14 @@ const HANDLERS = {
   BONUS_PAYMENT:           (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'bonus' }),
   PENALTY:                 (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'deduction' }),
   PAYROLL:                 handlePayroll,
-  GENERAL_EXPENSE:         handleGeneralExpense,
-  SHIPPING_EXPENSE:        (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_cost', eventType: 'SHIPPING_EXPENSE', createTx: false }),
-  SHIPPING_RETURN:         (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_return', eventType: 'SHIPPING_RETURN', createTx: false }),
+  GENERAL_EXPENSE:          handleGeneralExpense,
+  GENERAL_EXPENSE_REVERSAL: (db, p) => handleGeneralExpense(db, { ...p, eventType: 'GENERAL_EXPENSE_REVERSAL', txCategory: p.txCategory || 'expense_reversal', _reverse: true }),
+  SHIPPING_EXPENSE:         (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_cost', eventType: 'SHIPPING_EXPENSE' }),
+  SHIPPING_RETURN:          (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'shipping_return', eventType: 'SHIPPING_RETURN' }),
+  RETURN_LOSS:              (db, p) => handleGeneralExpense(db, { ...p, txCategory: 'return_loss', eventType: 'RETURN_LOSS' }),
+  WALLET_TRANSFER:          handleWalletTransfer,
+  SHIPPING_SETTLEMENT:           handleShippingSettlement,
+  SHIPPING_SETTLEMENT_REVERSAL:  handleShippingSettlementReversal,
 };
 
 // ══════════════════════════════════════════════════════════════════
