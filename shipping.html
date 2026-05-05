@@ -808,6 +808,7 @@ import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, g
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { buildStageAdvance, buildStageRevert } from "./orders.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -815,7 +816,7 @@ const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 
 // ══ STATE ══
 let orders=[], wallets=[], shippers=[], suppliers=[], shippingReturns=[], employees=[];
-let currentUser=null, userName='', activeId=null;
+let currentUser=null, userName='', activeId=null, currentRole='admin';
 let currentFilter='active', ssMethod='', ssStage='wait_delivery';
 let urlCompanyFilter='', __urlOrderIdParam='', __urlOrderOpened=false;
 let isAdminUser=false;
@@ -1084,6 +1085,7 @@ onAuthStateChanged(auth,async u=>{
   buildDynamicSidebar(u.uid, 'shipping.html');
   const userData=snap.data();
   const role=userData.role||'admin';
+  currentRole=role;
 
 
   // Guard - يتحقق من permissions
@@ -1990,29 +1992,27 @@ window.saveDeliver=async function(){
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف بالفعل','err');
-  if(!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
-  // ═══ شروط دخول الأرشيف ═══
-  const archBlocks=[];
-  const finalRemChk=calcRem(o);
-  if(finalRemChk>0) archBlocks.push(`💰 المبلغ المتبقي (${fn(finalRemChk)} ج) لم يُسجَّل — سوِّ الحساب أو سجّل المبلغ`);
-  if(o.shipMethod==='company'&&!o.shipSettled) archBlocks.push('📦 لم تتم تسوية شركة الشحن — اذهب لحسابات الشحن أولاً');
-  if(o.shipStage==='returned') archBlocks.push('↩️ يوجد مرتجع لم تتم معالجته بعد');
-  if(archBlocks.length){toast('⛔ شروط الأرشفة غير مكتملة:\n• '+archBlocks.join('\n• '),'err');return;}
-  const hasSuppInCost=(o.costItems||[]).some(c=>c.supplierId);
-  if(hasSuppInCost&&!confirm('⚠️ هل تأكدت من تسوية الموردين المرتبطين بهذا الأوردر؟'))return;
-  // ════════════════════════════
-  try{
-    const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
-    const finalRem=calcRem(o);
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{
-      stage:'archived',
+  // المرور عبر بوابة المراحل الموحّدة (orders.js) — تتحقق من costItems + remaining + ship settlement + returns
+  const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
+  const finalRem=calcRem(o);
+  const adv=buildStageAdvance({
+    order:o, role:currentRole, userId:currentUser?.uid||'', userName,
+    extraFields:{
       totalPaid:finalPaid,
       remaining:finalRem,
       paymentStatus:finalRem<=0?'paid':finalPaid>0?'partial':'pending',
-      clientRating:rating,clientComment:gv('del-comment'),
+      clientRating:rating, clientComment:gv('del-comment'),
       deliveredAt:nowStr(),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ أُرشف — تقييم ${rating}/5 ${RATING_LABELS[rating]||''}`,by:userName}],
+    }
+  });
+  if(!adv.ok)return toast('⛔ شروط الأرشفة غير مكتملة:\n• '+adv.errors.join('\n• '),'err');
+  const hasSuppInCost=(o.costItems||[]).some(c=>c.supplierId);
+  if(hasSuppInCost&&!confirm('⚠️ هل تأكدت من تسوية الموردين المرتبطين بهذا الأوردر؟'))return;
+  try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
+      ...adv.fields,
+      timeline:[...(o.timeline||[]),{...adv.timelineEntry,action:`${adv.timelineEntry.action} — تقييم ${rating}/5 ${RATING_LABELS[rating]||''}`}],
       updatedAt:serverTimestamp()
     });
     await batch.commit();

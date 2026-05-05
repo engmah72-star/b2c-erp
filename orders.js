@@ -1,11 +1,17 @@
 /**
- * Business2Card ERP v5
- * orders.js — محرك الأوردرات المركزي
+ * Business2Card ERP — orders.js
+ * محرك الأوردرات المركزي + بوابة المراحل الموحّدة (Stage Gate)
  *
- * الـ Flow: تصميم → طباعة → تنفيذ → شحن → أرشيف
+ * الـ Flow الفعلي: design → printing → production → shipping → archived
+ * (cancelled مرحلة طرفية مستقلة)
  *
- * كل أوردر له status واحد فقط في أي وقت.
- * كل صفحة تشوف status بتاعها بس.
+ * كل أوردر له `stage` واحد فقط في أي وقت.
+ * أي انتقال بين المراحل يجب أن يمر عبر `buildStageAdvance()`
+ * وأي رجوع للخلف عبر `buildStageRevert()`.
+ *
+ * هذه الدوال **خالصة (pure)**: لا تتصل بقاعدة البيانات.
+ * المُتَّصِل (الصفحة) يأخذ النتيجة ويكتبها داخل batch/updateDoc الخاص به.
+ * هذا يسمح للصفحة بدمج تحديث المرحلة مع writes أخرى داخل batch ذرّي واحد (RULE 3).
  */
 
 // ══════════════════════════════════════════
@@ -21,26 +27,24 @@ export const FB_CONFIG = {
 };
 
 // ══════════════════════════════════════════
-// WORKFLOW — المراحل وترتيبها
+// STAGES — تعريف المراحل وترتيبها (يطابق الواقع)
 // ══════════════════════════════════════════
 export const STAGES = {
-  design:     { label:'تصميم',   ico:'✏️',  col:'#a78bfa', next:'printing',    page:'design.html',     badge:'bg-p' },
-  printing:   { label:'طباعة',   ico:'🖨️', col:'#ffaa00', next:'production',  page:'print.html',      badge:'bg-y' },
-  production: { label:'تنفيذ',   ico:'🏭',  col:'#ff3d6e', next:'shipping',    page:'production.html', badge:'bg-r' },
-  shipping:   { label:'شحن',     ico:'🚚',  col:'#22d3ee', next:'delivered',   page:'shipping.html',   badge:'bg-c' },
-  delivered:  { label:'تسليم',   ico:'✅',  col:'#00d97e', next:'archived',    page:'archive.html',    badge:'bg-g' },
-  archived:   { label:'أرشيف',   ico:'📁',  col:'#4e5672', next:null,          page:'archive.html',    badge:'bg-d' },
-  cancelled:  { label:'ملغي',    ico:'✕',   col:'#4e5672', next:null,          page:'archive.html',    badge:'bg-d' },
+  design:     { label:'تصميم', ico:'✏️', col:'#a78bfa', next:'printing',   prev:null,         page:'design.html'     },
+  printing:   { label:'طباعة', ico:'🖨️', col:'#ffaa00', next:'production', prev:'design',     page:'print.html'      },
+  production: { label:'تنفيذ', ico:'🏭', col:'#ff3d6e', next:'shipping',   prev:'printing',   page:'production.html' },
+  shipping:   { label:'شحن',   ico:'🚚', col:'#22d3ee', next:'archived',   prev:'production', page:'shipping.html'   },
+  archived:   { label:'أرشيف', ico:'📁', col:'#4e5672', next:null,         prev:'shipping',   page:'archive.html'    },
+  cancelled:  { label:'ملغي',  ico:'✕',  col:'#4e5672', next:null,         prev:null,         page:'archive.html'    },
 };
 
-// من يقدر يقدم كل مرحلة
+// من له صلاحية تقديم الأوردر **من** هذه المرحلة للتالية
 export const STAGE_PERMISSIONS = {
   design:     ['admin','operation_manager','customer_service','graphic_designer','design_operator'],
   printing:   ['admin','operation_manager','customer_service','production_agent'],
   production: ['admin','operation_manager','production_agent'],
   shipping:   ['admin','operation_manager','shipping_officer'],
-  delivered:  ['admin','operation_manager','shipping_officer'],
-  archived:   ['admin'],
+  archived:   ['admin','operation_manager'],
 };
 
 // ══════════════════════════════════════════
@@ -58,149 +62,224 @@ export const ROLES = {
 };
 
 // ══════════════════════════════════════════
-// ORDER STRUCTURE — بنية الأوردر
+// ORDER STRUCTURE — بنية الأوردر الافتراضية
 // ══════════════════════════════════════════
-/**
- * createOrderData(data) — بيبني الأوردر الجديد
- *
- * products: [{ name, qty, unitPrice, totalPrice }]
- * كل بنود البيع والتكلفة والشحن جوا الأوردر نفسه
- */
 export function createOrderData(data, userId, userName) {
   const id = 'ORD-' + Date.now().toString().slice(-8);
   const now = nowStr();
   return {
-    // معرف
-    id,
+    orderId: id,
 
-    // بيانات العميل
+    // العميل
     clientId:    data.clientId    || '',
     clientName:  data.clientName  || '',
     clientPhone: data.clientPhone || '',
 
-    // المرحلة الحالية
-    status: 'design',
+    // المرحلة الحالية — مصدر الحقيقة الوحيد
+    stage: 'design',
+    designStage: 'pending',
 
     // التصميم
-    designRequest: data.designRequest || '',  // طلب العميل
-    designerId:    data.designerId    || '',  // المصمم المكلف
-    designerName:  data.designerName  || '',
-    designFiles:   [],                        // ملفات التصميم
-    designNotes:   data.designNotes   || '',
-    designDueDate: data.designDueDate || '',
+    designerId:   data.designerId   || '',
+    designerName: data.designerName || '',
+    designFiles:  [],
+    designFileUrl:'',
+    designFileNote: data.designFileNote || '',
+    deadline:     data.deadline     || '',
+    notes:        data.notes        || '',
 
-    // المنتجات — أكتر من منتج في طلب واحد
+    // المنتجات
     products: data.products || [],
-    // كل منتج: { id, name, qty, unitPrice, totalPrice, printType, notes }
 
-    // المالية — يتحسب تلقائي من products
-    totalSale:    0,  // إجمالي البيع
-    totalPaid:    0,  // المحصّل
-    totalCost:    0,  // إجمالي التكاليف
-    remaining:    0,  // الباقي للتحصيل
+    // المالية
+    salePrice:     parseFloat(data.salePrice) || 0,
+    deposit:       parseFloat(data.deposit)   || 0,
+    totalPaid:     parseFloat(data.deposit)   || 0,
+    remaining:     0,
+    paymentStatus: 'pending',
 
-    // بنود التكلفة — بيضيفها قسم التنفيذ
-    costs: [],
-    // كل بند: { type, supplierId, supplierName, qty, sheets, totalCost, note }
+    // التنفيذ
+    costItems:    [],
+    printAddons:  [],
 
-    // بيانات الطباعة
-    printType:    '',  // digital | offset
-    printNotes:   '',
+    // الشحن
+    shipMethod:    '',
+    shipStage:     '',
+    shipCompanyName: '',
+    shipCost:      0,
+    shipSettled:   false,
 
-    // بيانات التنفيذ
-    productionNotes: '',
-    productionDueDate: '',
-
-    // بيانات الشحن
-    shipment: {
-      type:         '',  // company | internal
-      companyId:    '',
-      companyName:  '',
-      delegateName: '',
-      address:      '',
-      gov:          '',
-      shipDate:     '',
-      expectedDate: '',
-      deliveryDate: '',
-      cost:         0,
-      collectOnDelivery: 0,
-    },
-
-    // Timeline — سجل تحركات الأوردر
+    // Timeline
     timeline: [{
-      stage: 'design',
-      label: 'تم إنشاء الأوردر',
       date:  now,
+      stage: 'design',
+      action:'🆕 تم إنشاء الأوردر',
       by:    userName,
       byId:  userId,
     }],
 
     // Metadata
-    createdBy:   userId,
+    createdBy:     userId,
     createdByName: userName,
-    createdAt:   null, // serverTimestamp
-    updatedAt:   null,
+    createdAt:     null, // serverTimestamp مكان الـ caller
+    updatedAt:     null,
   };
 }
 
 // ══════════════════════════════════════════
-// ADVANCE STAGE — تقدم مرحلة
+// VALIDATE STAGE REQUIREMENTS — شروط الانتقال للأمام
 // ══════════════════════════════════════════
 /**
- * advanceStage(db, orderId, currentStatus, userId, userName, role, extraData)
- * بيحرك الأوردر للمرحلة الجاية
- * بيرجع { success, newStatus, error }
+ * يتحقق أن الأوردر مستوفي شروط الانتقال **من** المرحلة الحالية للتالية.
+ * @returns { ok, errors[] }
  */
-export async function advanceStage(db, updateDoc, doc, orderId, currentStatus, userId, userName, role, extraData = {}) {
-  const stage = STAGES[currentStatus];
-  if (!stage?.next) return { success: false, error: 'لا توجد مرحلة تالية' };
+export function validateStageRequirements(order, fromStage) {
+  const errors = [];
+  if (!order) { return { ok:false, errors:['لا يوجد أوردر'] }; }
+  const stage = fromStage || order.stage;
 
-  const allowed = STAGE_PERMISSIONS[currentStatus];
-  if (allowed && !allowed.includes(role)) {
-    return { success: false, error: 'ليس لديك صلاحية تقديم هذه المرحلة' };
+  if (stage === 'design') {
+    const hasFiles = !!(order.designFileUrl
+                     || (order.designFiles && order.designFiles.length)
+                     || (order.products || []).some(p => p.designImageUrl));
+    if (!hasFiles) errors.push('يجب رفع ملف التصميم أو اعتماده قبل الإرسال للطباعة');
+  }
+  else if (stage === 'printing') {
+    const hasImg = !!(order.designImageUrl
+                   || (order.products || []).some(p => p.designImageUrl)
+                   || order.printFinalUrl
+                   || order.designFileUrl
+                   || (order.designFiles && order.designFiles.length));
+    if (!hasImg) errors.push('يجب رفع صورة التصميم النهائي قبل التحويل للتنفيذ');
+  }
+  else if (stage === 'production') {
+    if (!(order.costItems || []).length) errors.push('يجب تسجيل تكاليف الأوردر قبل التحويل للشحن');
+  }
+  else if (stage === 'shipping') {
+    // شحن → أرشيف
+    const sale = parseFloat(order.salePrice) || 0;
+    const paid = parseFloat(order.totalPaid) || parseFloat(order.paid) || 0;
+    const rem  = Math.max(0, sale - paid);
+    if (!(order.costItems || []).length) errors.push('سجّل تكلفة الأوردر أولاً');
+    if (rem > 0) errors.push(`المتبقي ${rem} ج لم يُسوَّى — حصِّل أو سجّل المبلغ`);
+    if (order.shipMethod === 'company' && !order.shipSettled) errors.push('شركة الشحن لم تتم تسويتها');
+    if (order.shipStage === 'returned') errors.push('يوجد مرتجع لم تتم معالجته');
+  }
+  else if (stage === 'archived' || stage === 'cancelled') {
+    errors.push('لا توجد مرحلة تالية');
   }
 
-  const newStatus = stage.next;
-  const now = nowStr();
+  return { ok: errors.length === 0, errors };
+}
 
-  const updateData = {
-    status:    newStatus,
-    updatedAt: new Date().toISOString(),
-    ...extraData,
-  };
+// ══════════════════════════════════════════
+// BUILD STAGE ADVANCE — بناء تحديث الانتقال للأمام
+// ══════════════════════════════════════════
+/**
+ * بيرجع spec التحديث المطلوب عمله للانتقال للمرحلة التالية.
+ * **لا يتصل بقاعدة البيانات** — المُتَّصِل يكتب النتيجة في batch/updateDoc بنفسه.
+ *
+ * @param {Object}  args
+ * @param {Object}  args.order        — وثيقة الأوردر الحالية
+ * @param {string}  args.role         — دور المستخدم
+ * @param {string}  args.userId       — uid المستخدم
+ * @param {string}  args.userName     — اسم المستخدم
+ * @param {Object} [args.extraFields] — حقول إضافية تُكتب مع تغيير المرحلة (مثل designStage:'approved', prodStatus:'done')
+ * @param {string} [args.targetStage] — مرحلة هدف صريحة (لتجاوز next الافتراضي عند الحاجة، يحتاج صلاحية admin)
+ * @returns { ok, newStage, errors, fields, timelineEntry }
+ *   - fields: حقول الـ update (stage + extra)
+ *   - timelineEntry: عنصر يُضاف لـ timeline[]
+ */
+export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null }) {
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
+  const cur = order.stage || 'design';
+  const stageConf = STAGES[cur];
+  if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur] };
 
-  // أضف للـ timeline
-  const newEntry = {
-    stage: newStatus,
-    label: `انتقل إلى ${STAGES[newStatus]?.label || newStatus}`,
-    date:  now,
-    by:    userName,
-    byId:  userId,
-  };
+  const target = targetStage || stageConf.next;
+  if (!target) return { ok:false, errors:['لا توجد مرحلة تالية'] };
+  if (!STAGES[target]) return { ok:false, errors:['مرحلة هدف غير معروفة: ' + target] };
 
-  try {
-    await updateDoc(doc(db, 'orders', orderId), {
-      ...updateData,
-      // نضيف للـ timeline بدون نكتب كل القديم (arrayUnion)
-    });
-    // timeline update منفصل
-    const { arrayUnion } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    await updateDoc(doc(db, 'orders', orderId), {
-      timeline: arrayUnion(newEntry),
-    });
-    return { success: true, newStatus };
-  } catch (e) {
-    return { success: false, error: e.message };
+  // فحص الصلاحية
+  const allowed = STAGE_PERMISSIONS[cur] || [];
+  const isAdmin = role === 'admin' || role === 'operation_manager';
+  if (!isAdmin && !allowed.includes(role)) {
+    return { ok:false, errors:['ليس لديك صلاحية تقديم هذه المرحلة'] };
   }
+
+  // فحص الشروط (يتجاوزه admin لو حدد targetStage صراحة)
+  if (!targetStage) {
+    const v = validateStageRequirements(order, cur);
+    if (!v.ok) return { ok:false, errors: v.errors };
+  }
+
+  const targetConf = STAGES[target];
+  const fields = {
+    stage: target,
+    ...extraFields,
+  };
+  const timelineEntry = {
+    date:  nowStr(),
+    stage: target,
+    action: `${targetConf.ico} انتقل ${stageConf.label} → ${targetConf.label}`,
+    by:    userName || '',
+    byId:  userId   || '',
+  };
+
+  return { ok:true, newStage: target, fields, timelineEntry };
+}
+
+// ══════════════════════════════════════════
+// BUILD STAGE REVERT — بناء تحديث الرجوع لمرحلة سابقة
+// ══════════════════════════════════════════
+/**
+ * يُرجع الأوردر لمرحلة سابقة بسبب موثَّق (مثلاً: التصميم يحتاج تعديل).
+ * يتطلب admin/operation_manager أو دور صلاحية في المرحلة الهدف.
+ *
+ * @returns { ok, newStage, errors, fields, timelineEntry }
+ */
+export function buildStageRevert({ order, role, userId, userName, targetStage, reason = '', extraFields = {} }) {
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
+  const cur = order.stage || 'design';
+  const stageConf = STAGES[cur];
+  if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur] };
+
+  const target = targetStage || stageConf.prev;
+  if (!target) return { ok:false, errors:['لا توجد مرحلة سابقة'] };
+  if (!STAGES[target]) return { ok:false, errors:['مرحلة هدف غير معروفة: ' + target] };
+  if (!reason || !reason.trim()) return { ok:false, errors:['يجب إدخال سبب الإرجاع'] };
+
+  // الصلاحية: admin/ops دائماً، أو من له دور في المرحلة الهدف (يستلم العمل من جديد)
+  const isAdmin = role === 'admin' || role === 'operation_manager';
+  const targetAllowed = STAGE_PERMISSIONS[target] || [];
+  if (!isAdmin && !targetAllowed.includes(role)) {
+    return { ok:false, errors:['ليس لديك صلاحية إرجاع الأوردر'] };
+  }
+
+  const targetConf = STAGES[target];
+  const fields = {
+    stage: target,
+    ...extraFields,
+  };
+  const timelineEntry = {
+    date:  nowStr(),
+    stage: target,
+    action: `↩️ ارتداد ${stageConf.label} → ${targetConf.label} — ${reason.trim()}`,
+    by:    userName || '',
+    byId:  userId   || '',
+  };
+
+  return { ok:true, newStage: target, fields, timelineEntry };
 }
 
 // ══════════════════════════════════════════
 // FINANCIAL CALCULATIONS
 // ══════════════════════════════════════════
 export function calcOrderFinancials(order) {
-  const totalSale = (order.products || []).reduce((s, p) => s + (parseFloat(p.totalPrice) || 0), 0);
-  const totalCost = (order.costs || []).reduce((s, c) => s + (parseFloat(c.totalCost) || 0), 0);
-  const totalPaid = parseFloat(order.totalPaid) || 0;
+  const totalSale = parseFloat(order.salePrice) ||
+                    (order.products || []).reduce((s, p) => s + (parseFloat(p.totalPrice) || 0), 0);
+  const totalCost = (order.costItems || []).reduce((s, c) => s + (parseFloat(c.total || c.totalCost) || 0), 0);
+  const totalPaid = parseFloat(order.totalPaid) || parseFloat(order.paid) || 0;
   const remaining = Math.max(0, totalSale - totalPaid);
   const margin    = totalSale - totalCost;
   return { totalSale, totalCost, totalPaid, remaining, margin };
@@ -223,11 +302,13 @@ export const calcDelay = (dueDateStr, closedDate = null) => {
   return diff > 0 ? diff : 0;
 };
 
-export const stageBadge = (status) => {
-  const s = STAGES[status];
+export const stageBadge = (stage) => {
+  const s = STAGES[stage];
   if (!s) return '';
   return `<span class="badge" style="background:${s.col}18;color:${s.col}">${s.ico} ${s.label}</span>`;
 };
+
+export const getStageLabel = (stage) => STAGES[stage]?.label || stage || '';
 
 // ══════════════════════════════════════════
 // SIDEBAR HTML — shared across all pages
