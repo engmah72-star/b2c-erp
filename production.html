@@ -179,6 +179,11 @@ button{min-height:36px}
       </select>
       <button class="wa-btn" id="wa-btn" onclick="sendWhatsApp()" style="display:none"><span>📱</span> إرسال للمطبعة واتساب</button>
     </div>
+    <!-- 👷 مندوب التنفيذ -->
+    <div class="psec" id="prod-agent-section">
+      <div class="psec-title">👷 مندوب التنفيذ</div>
+      <div id="prod-agent-wrap"></div>
+    </div>
     <!-- إجمالي التكاليف -->
     <div class="psec" style="padding:12px 16px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--dim2);font-weight:800">💰 إجمالي التكاليف</span><span style="font-size:18px;font-weight:900;color:var(--r)" id="cost-total">0 ج</span></div></div>
     <!-- ملاحظة -->
@@ -465,6 +470,10 @@ onAuthStateChanged(auth,async u=>{
     s.innerHTML='<option value="">— أول موظف متاح —</option>'+(window.__shipOfficers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
     if(cur)s.value=cur;
   });
+  // موظفو التنفيذ (production_agent) لتعيين المندوب
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+    window.__productionAgents=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  });
 });
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
@@ -523,7 +532,38 @@ function renderCostPanel(o,prodIdx){
     specsEl.style.display=chips.length?'flex':'none';
   }
 
-  document.getElementById('cpanel-ref').innerHTML='';
+  // ── مرجع تكاليف المنتج من الكتالوج ──
+  const refProd=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  let refHtml='';
+  if(refProd){
+    const pName=(refProd.name||'').trim().toLowerCase();
+    const pQty=parseFloat(refProd.qty)||0;
+    const catProd=productsCatalog.find(cp=>
+      (cp.name||'').trim().toLowerCase()===pName||
+      pName.includes((cp.name||'').trim().toLowerCase())||
+      (cp.name||'').trim().toLowerCase().includes(pName)
+    );
+    if(catProd&&(catProd.costHistory||[]).length){
+      const history=catProd.costHistory;
+      const lastEntry=history[history.length-1];
+      const sameQty=history.filter(h=>parseFloat(h.qty)===pQty);
+      const lastSameQty=sameQty.length?sameQty[sameQty.length-1]:null;
+      const cpu=lastEntry.qty>0?Math.round(lastEntry.total/lastEntry.qty):0;
+      refHtml=`<div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:12px;padding:12px;margin:12px 16px">
+        <div style="font-size:10px;font-weight:800;color:var(--b);margin-bottom:8px">📊 مرجع التكاليف · ${catProd.name}</div>
+        ${lastSameQty?`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(59,158,255,.15);margin-bottom:4px">
+          <span style="font-size:11px;color:var(--dim2)">آخر تكلفة (${fn(pQty)} قطعة)</span>
+          <span style="font-size:15px;font-weight:900;color:var(--b)">${fn(lastSameQty.total)} ج</span>
+        </div>`:''}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0">
+          <span style="font-size:11px;color:var(--dim2)">آخر دفعة (${fn(lastEntry.qty||0)} ق)</span>
+          <span style="font-size:12px;font-weight:800;color:var(--snow)">${fn(lastEntry.total)} ج${cpu?` · ${fn(cpu)} ج/قطعة`:''}</span>
+        </div>
+        ${(lastSameQty||lastEntry)?.items?.length?`<button onclick="importCatalogCosts(${prodIdx})" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:6px">📋 استيراد البنود كمرجع</button>`:''}
+      </div>`;
+    }
+  }
+  document.getElementById('cpanel-ref').innerHTML=refHtml;
 
   // ── البنود الحالية ──
   const itemsEl=document.getElementById('cpanel-items');
@@ -961,7 +1001,9 @@ function renderPanel(o){
       <span style="color:${gCiTotal>0?'var(--r)':'var(--dim2)'}">${gCiTotal>0?fn(gCiTotal)+' ج ›':'لا توجد — اضغط للإضافة ›'}</span>
     </button>`;
   }
-  // 2. المطبعة — dropdown
+  // 2. مندوب التنفيذ
+  renderProductionAgent(o);
+  // 3. المطبعة — dropdown
   const sEl=document.getElementById('printer-select');
   if(sEl){
     sEl.innerHTML='<option value="">— اختر المطبعة —</option>'+
@@ -1199,6 +1241,82 @@ window.rmCost=async function(idx){
 };
 
 
+// ══ مندوب التنفيذ ══
+function renderProductionAgent(o){
+  const el=document.getElementById('prod-agent-wrap');if(!el)return;
+  const isAdmin=['admin','operation_manager'].includes(currentRole);
+  const agents=window.__productionAgents||[];
+  if(o.productionAgent){
+    el.innerHTML=`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg3);border-radius:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:34px;height:34px;background:rgba(255,61,110,.15);color:var(--r);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0">${(o.productionAgentName||'م')[0]?.toUpperCase()}</div>
+          <div>
+            <div style="font-size:13px;font-weight:800">${o.productionAgentName||'—'}</div>
+            <div style="font-size:11px;color:var(--g)">✅ مسؤول التنفيذ</div>
+          </div>
+        </div>
+        ${isAdmin&&agents.length?`<button onclick="showAgentPicker()" style="padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">تغيير</button>`:''}
+      </div>`;
+  } else if(isAdmin&&agents.length){
+    el.innerHTML=`
+      <select id="agent-assign-sel" class="inp" style="width:100%" onchange="assignAgentFromSel(this)">
+        <option value="">— اختر مندوب التنفيذ —</option>
+        ${agents.map(a=>`<option value="${a.authUid||a._id}" data-name="${a.name||a.email||'موظف'}">${a.name||a.email||'موظف'}</option>`).join('')}
+      </select>`;
+  } else {
+    el.innerHTML=`<div style="text-align:center;padding:12px 0;color:var(--dim2);font-size:12px">
+      لم يُعيَّن بعد
+      ${currentRole==='production_agent'?`<br><button onclick="pickupOrder('${o._id}')" style="margin-top:8px;padding:8px 16px;border-radius:8px;border:1px solid var(--b);background:rgba(59,158,255,.08);color:var(--b);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📥 التقط هذا الأوردر</button>`:''}
+    </div>`;
+  }
+}
+
+window.showAgentPicker=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const agents=window.__productionAgents||[];
+  const el=document.getElementById('prod-agent-wrap');if(!el)return;
+  el.innerHTML=`
+    <select id="agent-change-sel" class="inp" style="width:100%;margin-bottom:8px">
+      <option value="">— اختر مندوب —</option>
+      ${agents.map(a=>`<option value="${a.authUid||a._id}" data-name="${a.name||a.email||'موظف'}" ${(a.authUid||a._id)===o.productionAgent?'selected':''}>${a.name||a.email||'موظف'}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmAssignAgent()" class="btn btn-b btn-sm" style="flex:1">✓ تعيين</button>
+      <button onclick="renderProductionAgent(orders.find(x=>x._id===activeId))" class="btn btn-ghost btn-sm">إلغاء</button>
+    </div>`;
+};
+
+window.assignAgentFromSel=async function(sel){
+  if(!sel.value||!activeId)return;
+  const opt=sel.options[sel.selectedIndex];
+  const name=opt?.dataset?.name||opt?.text||'';
+  await doAssignAgent(sel.value,name);
+};
+
+window.confirmAssignAgent=async function(){
+  const sel=document.getElementById('agent-change-sel');
+  if(!sel||!sel.value)return toast('⚠️ اختر مندوب','err');
+  const opt=sel.options[sel.selectedIndex];
+  const name=opt?.dataset?.name||opt?.text||'';
+  await doAssignAgent(sel.value,name);
+};
+
+async function doAssignAgent(uid,name){
+  if(!uid||!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      productionAgent:uid,
+      productionAgentName:name,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`👷 تعيين مندوب التنفيذ: ${name}`,by:userName,byId:currentUser?.uid||''}],
+      updatedAt:serverTimestamp()
+    });
+    toast(`✅ تم تعيين ${name}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+// ════════════════════════
+
 window.handleFinalImg=function(inp){const f=inp.files[0];if(f)uploadFinal(f);};
 
 document.addEventListener('paste',function(e){
@@ -1266,6 +1384,66 @@ window.pickupOrder=async function(orderId){
     toast('✅ تم الالتقاط','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
+
+// ══ استيراد التكاليف من كتالوج المنتجات ══
+window.importCatalogCosts=async function(prodIdx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const prods=o.products||[];
+  const prod=prodIdx>=0?prods[prodIdx]:prods[0];
+  if(!prod)return toast('⚠️ لا يوجد منتج','err');
+  const pName=(prod.name||'').trim().toLowerCase();
+  const pQty=parseFloat(prod.qty)||0;
+  const catProd=productsCatalog.find(cp=>
+    (cp.name||'').trim().toLowerCase()===pName||
+    pName.includes((cp.name||'').trim().toLowerCase())||
+    (cp.name||'').trim().toLowerCase().includes(pName)
+  );
+  if(!catProd)return toast('⚠️ لم يُعثر على المنتج في الكتالوج','err');
+  const history=catProd.costHistory||[];
+  const sameQty=history.filter(h=>parseFloat(h.qty)===pQty);
+  const lastEntry=sameQty.length?sameQty[sameQty.length-1]:history[history.length-1];
+  if(!lastEntry?.items?.length)return toast('⚠️ لا يوجد تكاليف مرجعية لهذا المنتج','err');
+  const ci=[...(o.costItems||[])];
+  const existingTypes=new Set(ci.filter(c=>c.prodIdx===prodIdx||(prodIdx<0&&c.prodIdx==null)).map(c=>c.type));
+  const newItems=lastEntry.items
+    .filter(it=>!existingTypes.has(it.type))
+    .map(it=>({
+      type:it.type,
+      supplierId:it.supplierId||'',
+      supplierName:it.supplierName||'',
+      prodIdx:prodIdx>=0?prodIdx:null,
+      total:it.total,
+      note:'مستورد من الكتالوج',
+      addedAt:nowStr(),
+      addedBy:userName,
+      importedFromCatalog:true
+    }));
+  if(!newItems.length)return toast('ℹ️ كل البنود موجودة بالفعل','');
+  const importTotal=newItems.reduce((s,it)=>s+(parseFloat(it.total)||0),0);
+  if(!confirm(`استيراد ${newItems.length} بند من آخر تكاليف "${catProd.name}"؟\nالإجمالي المرجعي: ${fn(importTotal)} ج`))return;
+  const updatedCi=[...ci,...newItems];
+  try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',activeId),{
+      costItems:updatedCi,
+      ...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🤖 استيراد ${newItems.length} بند من كتالوج "${catProd.name}" · ${fn(importTotal)} ج`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    for(const item of newItems){
+      const ev=item.supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
+      addLedgerToBatch(batch,db,ev,{
+        amount:item.total,orderId:activeId,clientName:o.clientName||'',
+        vendorId:item.supplierId,vendorName:item.supplierName,
+        notes:`تكلفة مستوردة من الكتالوج — ${item.type} · ${o.clientName||''}`,
+        userId:currentUser?.uid||'',userName
+      });
+    }
+    await batch.commit();
+    toast(`✅ تم استيراد ${newItems.length} بند · ${fn(importTotal)} ج`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+// ════════════════════════
 
 window.moveToShipping=function(){
   if(!activeId)return;
