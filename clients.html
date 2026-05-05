@@ -1302,32 +1302,50 @@ function saveNewOrder(){
     progWrap.style.display='none';
     return{firstUrl:results[0]?.url||'',allFiles:results};
   };
-  const saveDeposit=()=>{
-    if(dep<=0||!wId)return Promise.resolve();
-    const w=wallets.find(x=>x._id===wId);const bb=parseFloat(w?.balance)||0;
-    const depBatch=db.batch();
-    depBatch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(dep)});
-    depBatch.set(db.collection('transactions_v2').doc(),{walletId:wId,walletName:w?.name||'',type:'in',amount:dep,fees:0,description:`عربون — ${cl.name} — ${orderId}`,category:'deposit',orderId,clientName:cl.name,balanceBefore:bb,balanceAfter:bb+dep,date:now,createdBy:currentUser.uid,createdByName:userName,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-    depBatch.set(db.collection('financial_ledger').doc(),{type:'income',category:'client_payment',direction:'in',icon:'💰',label:'دفعة عميل',eventType:'CUSTOMER_PAYMENT',amount:dep,orderId,clientId:pendingClientId||'',clientName:cl.name||'',walletId:wId,walletName:w?.name||'',notes:`عربون — ${cl.name} — ${orderId}`,createdBy:currentUser.uid,createdByName:userName,createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]});
-    return depBatch.commit();
-  };
-  uploadDesignFile().then(({firstUrl:designFileUrl,allFiles:designFiles})=>
-  saveDeposit().then(()=>db.collection('orders').add({
-    orderId,stage,designStage:stage==='design'?'pending':'',
-    clientId:pendingClientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
-    products:prods,product:productName,qty:prods.reduce((s,p)=>s+p.qty,0),
-    salePrice,
+  // ══ batch ذرّي واحد: order + (wallet + tx + ledger للعربون) — RULE 3 ══
+  uploadDesignFile().then(({firstUrl:designFileUrl,allFiles:designFiles})=>{
+    const orderRef=db.collection('orders').doc();
+    const batch=db.batch();
+    batch.set(orderRef,{
+      orderId,stage,designStage:stage==='design'?'pending':'',
+      clientId:pendingClientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
+      products:prods,product:productName,qty:prods.reduce((s,p)=>s+p.qty,0),
+      salePrice,
       deposit:dep,totalPaid:dep,
       remaining:Math.max(0,salePrice-dep),
       paymentStatus:dep>0&&dep>=salePrice?'paid':dep>0?'partial':'pending',
-      depositWallet:dep>0?wName:'',
-    designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
-    designFileUrl,designFiles,designFileNote:designNote,costItems:[],printAddons:[],
-    createdDate:new Date().toLocaleDateString('ar-EG'),
-    createdBy:currentUser.uid,createdByName:userName,
-    timeline:[{date:now,action:`🆕 طلب جديد — ${productName}${dep>0?' · عربون '+fn(dep)+' ج':''}${designerName?' · '+designerName:''}`,by:userName}],
-    createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-  }))).then(()=>{
+      depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
+      designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
+      designFileUrl,designFiles,designFileNote:designNote,costItems:[],printAddons:[],
+      createdDate:new Date().toLocaleDateString('ar-EG'),
+      createdBy:currentUser.uid,createdByName:userName,
+      timeline:[{date:now,action:`🆕 طلب جديد — ${productName}${dep>0?' · عربون '+fn(dep)+' ج':''}${designerName?' · '+designerName:''}`,by:userName}],
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    if(dep>0&&wId){
+      const w=wallets.find(x=>x._id===wId);
+      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(dep)});
+      batch.set(db.collection('transactions_v2').doc(),{
+        walletId:wId,walletName:w?.name||'',type:'in',amount:dep,fees:0,
+        description:`عربون — ${cl.name} — ${orderId}`,
+        category:'client_payment',
+        orderId:orderRef.id,clientId:pendingClientId||'',clientName:cl.name||'',
+        date:now,createdBy:currentUser.uid,createdByName:userName,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      batch.set(db.collection('financial_ledger').doc(),{
+        type:'income',category:'client_payment',direction:'in',icon:'💰',label:'دفعة عميل',
+        eventType:'CUSTOMER_PAYMENT',amount:dep,
+        orderId:orderRef.id,clientId:pendingClientId||'',clientName:cl.name||'',
+        walletId:wId,walletName:w?.name||'',
+        notes:`عربون — ${cl.name} — ${orderId}`,
+        createdBy:currentUser.uid,createdByName:userName,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+        isDeleted:false,editHistory:[]
+      });
+    }
+    return batch.commit();
+  }).then(()=>{
     closeOrderModal();
     toast('✅ تم إنشاء الطلب'+(dep>0?' مع العربون':''),'ok');
     setTimeout(()=>window.location.href=stage==='design'?'design.html':'print.html',700);
@@ -2404,6 +2422,16 @@ window.cgridDeleteOrder=async function(orderId){
     const batch=db.batch();
     if(paid>0&&wId){
       batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(-paid)});
+      // tx عكسية بدلاً من حذف الأصلية — للحفاظ على السجل التاريخي
+      batch.set(db.collection('transactions_v2').doc(),{
+        walletId:wId,walletName:w?.name||'',type:'out',amount:paid,fees:0,
+        description:`استرداد — حذف أوردر — ${o.clientName||''}`,
+        category:'refund',orderId,clientId:o.clientId||'',clientName:o.clientName||'',
+        isReversal:true,
+        date:new Date().toLocaleDateString('ar-EG'),
+        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
       batch.set(db.collection('financial_ledger').doc(),{
         eventType:'CUSTOMER_REFUND',type:'expense',direction:'out',icon:'↩️',label:'استرداد (حذف أوردر)',
         amount:paid,orderId,clientId:o.clientId||null,clientName:o.clientName||null,
@@ -2413,8 +2441,6 @@ window.cgridDeleteOrder=async function(orderId){
         createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
       });
     }
-    const txSnap=await db.collection('transactions_v2').where('orderId','==',orderId).get();
-    for(const tx of txSnap.docs) batch.delete(tx.ref);
     batch.delete(db.collection('orders').doc(orderId));
     await batch.commit();
     toast('✅ تم الحذف النهائي','ok');

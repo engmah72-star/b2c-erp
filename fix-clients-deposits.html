@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<title>استرداد عربون العملاء</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#0d0f1c;color:#fff;padding:20px;direction:rtl}
+.card{background:#1a1d2e;border-radius:12px;padding:16px;margin-bottom:12px;border:1px solid #2a2d3e}
+button{padding:10px 20px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-family:Arial;margin:4px;font-weight:700}
+.btn-b{background:rgba(59,158,255,.2);color:#3b9eff;border:1px solid rgba(59,158,255,.4)}
+.btn-g{background:rgba(0,217,126,.2);color:#00d97e;border:1px solid rgba(0,217,126,.4)}
+.btn-r{background:rgba(255,61,110,.2);color:#ff3d6e;border:1px solid rgba(255,61,110,.4)}
+.btn-y{background:rgba(255,170,0,.2);color:#ffaa00;border:1px solid rgba(255,170,0,.4)}
+button:disabled{opacity:.5;cursor:not-allowed}
+#log{background:#0a0c1a;border-radius:8px;padding:12px;font-size:12px;color:#888;max-height:400px;overflow-y:auto;margin-top:16px;font-family:monospace}
+.stat{display:inline-block;padding:8px 16px;border-radius:8px;margin:4px;font-weight:700;font-size:14px}
+.ok{background:rgba(0,217,126,.15);color:#00d97e}
+.warn{background:rgba(255,170,0,.15);color:#ffaa00}
+.err{background:rgba(255,61,110,.15);color:#ff3d6e}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+th,td{padding:8px 10px;border-bottom:1px solid #2a2d3e;text-align:right}
+th{background:#0a0c1a;font-weight:800;color:#888}
+.fixed{color:#00d97e}
+.skipped{color:#888}
+.problem{color:#ff3d6e}
+select.inp{background:#0a0c1a;color:#fff;border:1px solid #2a2d3e;padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px}
+</style>
+</head>
+<body>
+<h2>🔧 استرداد عربون العملاء — الحركات الناقصة</h2>
+
+<div class="card">
+  <div style="margin-bottom:12px;font-size:13px;color:#888">
+    هذه الأداة تكشف الأوردرات التي بها <code>totalPaid &gt; 0</code> لكن بدون حركة مقابلة في <code>transactions_v2</code>،
+    وتسمح بإصلاح الوضع: إنشاء الحركة الناقصة + قيد دفتر الأستاذ + تحديث رصيد المحفظة.
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <label style="font-size:13px">المحفظة:</label>
+    <select id="wallet-filter" class="inp">
+      <option value="">— كل المحافظ —</option>
+    </select>
+    <label style="font-size:13px">من تاريخ:</label>
+    <input type="date" id="date-from" class="inp">
+    <label style="font-size:13px">إلى تاريخ:</label>
+    <input type="date" id="date-to" class="inp">
+    <button class="btn-b" onclick="scanOrders()">🔍 فحص الأوردرات</button>
+  </div>
+  <div id="stats" style="margin-top:12px"></div>
+</div>
+
+<div id="preview-wrap" style="display:none" class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div style="font-weight:800">📋 الأوردرات بحاجة إصلاح:</div>
+    <div>
+      <button class="btn-g" id="fix-all-btn" onclick="fixAll()">✅ إصلاح الكل</button>
+    </div>
+  </div>
+  <div id="preview-table"></div>
+</div>
+
+<div id="log"></div>
+
+<script type="module">
+import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {getAuth,onAuthStateChanged} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {getFirestore,collection,getDocs,doc,setDoc,updateDoc,writeBatch,query,where,orderBy,serverTimestamp,increment} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
+const auth=getAuth(app),db=getFirestore(app);
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+
+let currentUid='',currentUserName='';
+let orphanOrders=[]; // {orderDoc, expectedPaid, walletId, walletName, txCount}
+let walletsCache=new Map();
+
+function log(msg,cls=''){
+  const el=document.getElementById('log');
+  const c=cls==='ok'?'#00d97e':cls==='err'?'#ff3d6e':cls==='warn'?'#ffaa00':'#888';
+  el.innerHTML+=`<div style="color:${c}">[${new Date().toLocaleTimeString('ar-EG')}] ${msg}</div>`;
+  el.scrollTop=el.scrollHeight;
+}
+
+onAuthStateChanged(auth,async u=>{
+  if(!u){location.href='login.html';return;}
+  currentUid=u.uid;
+  // تحميل بيانات المستخدم
+  const usnap=await getDocs(query(collection(db,'users'),where('__name__','==',u.uid)));
+  if(usnap.docs.length){currentUserName=usnap.docs[0].data().name||u.email||'admin';}
+  // تحميل المحافظ
+  const wsnap=await getDocs(collection(db,'wallets'));
+  const sel=document.getElementById('wallet-filter');
+  wsnap.docs.forEach(d=>{
+    const w={...d.data(),_id:d.id};
+    walletsCache.set(d.id,w);
+    sel.innerHTML+=`<option value="${d.id}">${w.name||d.id} (رصيد: ${fn(w.balance||0)} ج)</option>`;
+  });
+  // التواريخ الافتراضية: اليوم
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('date-from').value=today;
+  document.getElementById('date-to').value=today;
+  log(`✅ تسجيل دخول: ${currentUserName} — تم تحميل ${wsnap.docs.length} محفظة`,'ok');
+});
+
+window.scanOrders=async function(){
+  const walletFilter=document.getElementById('wallet-filter').value;
+  const dateFrom=document.getElementById('date-from').value;
+  const dateTo=document.getElementById('date-to').value;
+  const stats=document.getElementById('stats');
+  stats.innerHTML='<span class="stat warn">⏳ جاري الفحص...</span>';
+  log(`🔍 فحص الأوردرات — محفظة: ${walletFilter||'الكل'} — ${dateFrom} → ${dateTo}`);
+
+  try{
+    // جلب كل الأوردرات بـ totalPaid > 0
+    const ordersSnap=await getDocs(collection(db,'orders'));
+    const allOrders=ordersSnap.docs.map(d=>({...d.data(),_id:d.id}));
+    log(`📦 إجمالي الأوردرات: ${allOrders.length}`);
+
+    // فلترة بالتاريخ
+    const fromMs=dateFrom?new Date(dateFrom+'T00:00:00').getTime():0;
+    const toMs=dateTo?new Date(dateTo+'T23:59:59').getTime():Date.now();
+    const inRange=allOrders.filter(o=>{
+      const t=o.createdAt?.seconds?o.createdAt.seconds*1000:0;
+      return t>=fromMs && t<=toMs;
+    });
+    log(`📅 أوردرات في الفترة: ${inRange.length}`);
+
+    // الأوردرات التي بها دفعة + محفظة
+    const withPaid=inRange.filter(o=>{
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.deposit)||0;
+      const wId=o.depositWalletId||o.walletId||'';
+      return paid>0 && wId && (!walletFilter||wId===walletFilter);
+    });
+    log(`💰 أوردرات بدفعة + محفظة محددة: ${withPaid.length}`);
+
+    // جلب كل الـ tx في نفس الفترة
+    const txSnap=await getDocs(collection(db,'transactions_v2'));
+    const allTx=txSnap.docs.map(d=>({...d.data(),_id:d.id}));
+    // index by orderId for fast lookup
+    const txByOrder=new Map();
+    allTx.forEach(t=>{
+      if(!t.orderId)return;
+      if(!txByOrder.has(t.orderId))txByOrder.set(t.orderId,[]);
+      txByOrder.get(t.orderId).push(t);
+    });
+
+    // كشف الأوردرات اليتيمة (paid > 0 لكن مجموع tx أقل)
+    orphanOrders=[];
+    for(const o of withPaid){
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.deposit)||0;
+      const wId=o.depositWalletId||o.walletId||'';
+      // ابحث بالـ Firebase docId أولاً، ثم بالـ business orderId fallback
+      let txs=txByOrder.get(o._id)||[];
+      if(!txs.length && o.orderId) txs=txByOrder.get(o.orderId)||[];
+      // حساب صافي in - out
+      const txIn=txs.filter(t=>t.type==='in'&&!t.isReversal).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+      const txOut=txs.filter(t=>t.type==='out'||t.isReversal).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+      const txNet=txIn-txOut;
+      const missing=paid-txNet;
+      if(Math.abs(missing)>0.01){
+        orphanOrders.push({order:o,paid,wId,txNet,missing,txCount:txs.length});
+      }
+    }
+
+    log(`🚨 يتيمة (دفعة بدون tx مطابق): ${orphanOrders.length}`,orphanOrders.length?'warn':'ok');
+
+    const totalMissing=orphanOrders.reduce((s,x)=>s+x.missing,0);
+    stats.innerHTML=`
+      <span class="stat ok">📦 ${withPaid.length} أوردر بدفعة</span>
+      <span class="stat ${orphanOrders.length?'err':'ok'}">🚨 ${orphanOrders.length} يتيم</span>
+      <span class="stat warn">💸 ${fn(totalMissing)} ج ناقص في الحركات</span>
+    `;
+
+    if(!orphanOrders.length){
+      document.getElementById('preview-wrap').style.display='none';
+      log('✅ كل الأوردرات سليمة — لا حاجة لإصلاح','ok');
+      return;
+    }
+
+    // عرض الجدول
+    const tbody=orphanOrders.map((x,i)=>{
+      const o=x.order,w=walletsCache.get(x.wId);
+      return `<tr>
+        <td>${i+1}</td>
+        <td>${o.clientName||'—'}</td>
+        <td>${o.orderId||o._id.slice(-6)}</td>
+        <td>${o.createdDate||(o.createdAt?.seconds?new Date(o.createdAt.seconds*1000).toLocaleDateString('ar-EG'):'—')}</td>
+        <td>${w?.name||x.wId}</td>
+        <td class="ok">${fn(x.paid)} ج</td>
+        <td>${fn(x.txNet)} ج (${x.txCount} حركة)</td>
+        <td class="problem">${fn(x.missing)} ج ناقص</td>
+        <td><button class="btn-g" onclick="fixOne(${i})">إصلاح</button></td>
+      </tr>`;
+    }).join('');
+    document.getElementById('preview-table').innerHTML=`
+      <table>
+        <thead><tr>
+          <th>#</th><th>العميل</th><th>الأوردر</th><th>التاريخ</th>
+          <th>المحفظة</th><th>المدفوع</th><th>tx الحالية</th><th>الناقص</th><th>الإجراء</th>
+        </tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    `;
+    document.getElementById('preview-wrap').style.display='block';
+  }catch(e){
+    log(`❌ خطأ: ${e.message}`,'err');
+    stats.innerHTML=`<span class="stat err">❌ ${e.message}</span>`;
+  }
+};
+
+async function fixOrphan(x){
+  const o=x.order,w=walletsCache.get(x.wId);
+  if(!w){throw new Error(`المحفظة ${x.wId} غير موجودة`);}
+  const sign=x.missing>0?+1:-1;
+  const amt=Math.abs(x.missing);
+  const isRefund=sign<0;
+  const batch=writeBatch(db);
+
+  // تحديث رصيد المحفظة بالمقدار الناقص
+  batch.update(doc(db,'wallets',x.wId),{balance:increment(sign*amt)});
+
+  // tx جديدة بنفس مبلغ النقص
+  const txRef=doc(collection(db,'transactions_v2'));
+  batch.set(txRef,{
+    walletId:x.wId,walletName:w.name||'',
+    type:isRefund?'out':'in',amount:amt,fees:0,
+    description:`[استرداد] ${isRefund?'تصحيح زيادة':'حركة عربون مفقودة'} — ${o.clientName||''} — ${o.orderId||o._id.slice(-6)}`,
+    category:isRefund?'refund':'client_payment',
+    orderId:o._id,clientId:o.clientId||'',clientName:o.clientName||'',
+    isRecovery:true,recoveryDate:new Date().toISOString(),
+    date:new Date().toLocaleDateString('ar-EG'),
+    createdBy:currentUid,createdByName:currentUserName,
+    createdAt:serverTimestamp()
+  });
+
+  // قيد دفتر الأستاذ
+  const ledRef=doc(collection(db,'financial_ledger'));
+  batch.set(ledRef,{
+    eventType:isRefund?'CUSTOMER_REFUND':'CUSTOMER_PAYMENT',
+    type:isRefund?'expense':'income',
+    direction:isRefund?'out':'in',
+    icon:isRefund?'↩️':'💰',
+    label:isRefund?'استرداد (تصحيح)':'دفعة (تصحيح يتيم)',
+    category:'client_payment',
+    amount:amt,
+    orderId:o._id,clientId:o.clientId||null,clientName:o.clientName||null,
+    walletId:x.wId,walletName:w.name||'',
+    notes:`[إصلاح] حركة مفقودة — ${o.clientName||''} — ${o.orderId||o._id.slice(-6)}`,
+    isRecovery:true,
+    createdBy:currentUid,createdByName:currentUserName,
+    createdAt:serverTimestamp(),
+    isDeleted:false,editHistory:[]
+  });
+
+  await batch.commit();
+  log(`✅ أُصلح: ${o.clientName||'—'} — ${fn(amt)} ج`,'ok');
+}
+
+window.fixOne=async function(i){
+  const x=orphanOrders[i];if(!x)return;
+  if(!confirm(`إصلاح الأوردر ${x.order.clientName||''} — إضافة حركة بـ ${fn(Math.abs(x.missing))} ج؟`))return;
+  try{
+    await fixOrphan(x);
+    setTimeout(scanOrders,800);
+  }catch(e){log(`❌ ${e.message}`,'err');}
+};
+
+window.fixAll=async function(){
+  if(!orphanOrders.length){toast('لا أوردرات للإصلاح');return;}
+  if(!confirm(`إصلاح ${orphanOrders.length} أوردر يتيم؟ سيتم إنشاء tx + ledger + تعديل أرصدة المحافظ.`))return;
+  if(!confirm('تأكيد نهائي؟ لا يمكن التراجع التلقائي.'))return;
+  document.getElementById('fix-all-btn').disabled=true;
+  let ok=0,fail=0;
+  for(const x of orphanOrders){
+    try{await fixOrphan(x);ok++;}
+    catch(e){log(`❌ ${x.order.clientName||'—'}: ${e.message}`,'err');fail++;}
+  }
+  log(`────────────────────────`,'ok');
+  log(`النتيجة: ${ok} ناجح, ${fail} فاشل`,'ok');
+  document.getElementById('fix-all-btn').disabled=false;
+  setTimeout(scanOrders,1000);
+};
+</script>
+</body>
+</html>
