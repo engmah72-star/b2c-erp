@@ -113,6 +113,10 @@ button{min-height:36px}
 .cp-total-ico{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none}
 .cp-tab{flex:1;padding:11px 8px;border:none;border-bottom:2.5px solid transparent;background:transparent;color:var(--dim2);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
 .cp-tab.active{color:var(--r);border-bottom-color:var(--r);background:rgba(255,61,110,.04)}
+.agent-cat-chip{padding:6px 12px;border-radius:20px;border:1.5px solid var(--line);background:var(--bg3);font-size:11px;font-weight:700;color:var(--dim2);cursor:pointer;font-family:inherit;transition:var(--trans)}
+.agent-cat-chip.sel{border-color:var(--y);background:rgba(255,193,7,.12);color:var(--y)}
+.agent-exp-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+.agent-exp-row:last-child{border-bottom:none}
 </style>
 <script src="financial-guard.js"></script>
 </head>
@@ -267,10 +271,37 @@ button{min-height:36px}
       <div id="cpanel-vendors" style="padding:0 16px"></div>
       <div id="cpanel-form" style="padding:12px 16px;border-top:1px solid var(--line)"></div>
     </div>
-    <div id="cpanel-agent-body" style="display:none;padding:48px 16px;text-align:center">
-      <div style="font-size:48px;margin-bottom:14px;opacity:.55">👷</div>
-      <div style="font-size:15px;font-weight:800;color:var(--snow);margin-bottom:8px">بنود تكلفة المندوب</div>
-      <div style="font-size:12px;color:var(--dim2);line-height:1.8">قيد التطوير<br>سيُتاح لتسجيل تكاليف المندوب التشغيلية اليومية</div>
+    <div id="cpanel-agent-body" style="display:none">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">👷 مصاريف المندوب</div>
+        <div id="agent-exp-list"></div>
+        <div id="agent-exp-total" style="display:none;background:rgba(255,193,7,.06);border:1px solid rgba(255,193,7,.2);border-radius:10px;padding:10px 14px;margin-top:8px;display:none;justify-content:space-between;align-items:center">
+          <span style="font-size:12px;font-weight:700;color:var(--dim2)">إجمالي مصاريف المندوب</span>
+          <span style="font-size:15px;font-weight:900;color:var(--y)" id="agent-exp-total-val">0 ج</span>
+        </div>
+      </div>
+      <div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:10px">➕ إضافة مصروف جديد</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="agent-cat-chips">
+          <button class="agent-cat-chip sel" onclick="selAgentCat(this,'نقل')">🚗 نقل</button>
+          <button class="agent-cat-chip" onclick="selAgentCat(this,'وقود')">⛽ وقود</button>
+          <button class="agent-cat-chip" onclick="selAgentCat(this,'تغليف')">📦 تغليف</button>
+          <button class="agent-cat-chip" onclick="selAgentCat(this,'طباعة اضافية')">🖨️ طباعة</button>
+          <button class="agent-cat-chip" onclick="selAgentCat(this,'متفرقات')">📌 متفرقات</button>
+        </div>
+        <div style="margin-bottom:8px">
+          <div class="cp-form-lbl">المبلغ (ج)</div>
+          <div class="cp-total-wrap">
+            <span class="cp-total-ico">💸</span>
+            <input type="number" id="agent-exp-amt" class="cp-form-inp" placeholder="0" inputmode="numeric" style="padding-right:42px">
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <div class="cp-form-lbl">ملاحظة (اختياري)</div>
+          <input type="text" id="agent-exp-note" class="cp-form-inp" placeholder="مثلاً: من المكتب للمطبعة">
+        </div>
+        <button onclick="saveAgentExpense()" class="cp-import-btn">💾 تسجيل المصروف</button>
+      </div>
     </div>
   </div>
 </div>
@@ -527,6 +558,51 @@ window.switchCostTab=function(tab){
   document.getElementById('cpanel-agent-body').style.display=tab==='agent'?'':'none';
   document.getElementById('cptab-cost').classList.toggle('active',tab==='cost');
   document.getElementById('cptab-agent').classList.toggle('active',tab==='agent');
+  if(tab==='agent')renderAgentTab();
+};
+
+let _agentCat='نقل';
+window.selAgentCat=function(el,cat){
+  _agentCat=cat;
+  document.querySelectorAll('.agent-cat-chip').forEach(c=>c.classList.remove('sel'));
+  el.classList.add('sel');
+};
+
+function renderAgentTab(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const exps=o.agentExpenses||[];
+  const listEl=document.getElementById('agent-exp-list');
+  const totalEl=document.getElementById('agent-exp-total');
+  const totalValEl=document.getElementById('agent-exp-total-val');
+  const fn2=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+  if(!exps.length){
+    listEl.innerHTML='<div style="color:var(--dim2);font-size:12px;text-align:center;padding:10px 0">لا توجد مصاريف مسجلة بعد</div>';
+    if(totalEl)totalEl.style.display='none';
+    return;
+  }
+  const total=exps.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
+  listEl.innerHTML=exps.map(e=>`<div class="agent-exp-row">
+    <div><div style="font-size:12px;font-weight:700">${e.type||'—'}</div><div style="font-size:11px;color:var(--dim2)">${e.note||''} · ${e.addedAt||''}</div></div>
+    <div style="font-size:13px;font-weight:900;color:var(--y)">${fn2(e.amount)} ج</div>
+  </div>`).join('');
+  if(totalEl){totalEl.style.display='flex';if(totalValEl)totalValEl.textContent=fn2(total)+' ج';}
+}
+
+window.saveAgentExpense=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const amount=parseFloat(document.getElementById('agent-exp-amt')?.value||0);
+  if(amount<=0){toast('⚠️ أدخل مبلغ صحيح','err');return;}
+  const note=document.getElementById('agent-exp-note')?.value||'';
+  const newExp={type:_agentCat,amount,note,addedAt:nowStr(),addedBy:currentUser?.uid||'',addedByName:userName};
+  const exps=[...(o.agentExpenses||[]),newExp];
+  try{
+    await updateDoc(doc(db,'orders',activeId),{agentExpenses:exps,updatedAt:serverTimestamp()});
+    if(document.getElementById('agent-exp-amt'))document.getElementById('agent-exp-amt').value='';
+    if(document.getElementById('agent-exp-note'))document.getElementById('agent-exp-note').value='';
+    toast('✅ تم تسجيل المصروف','ok');
+    renderAgentTab();
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 function renderCostPanel(o,prodIdx){
