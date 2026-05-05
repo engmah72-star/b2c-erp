@@ -457,9 +457,12 @@ window.render=function(){
     }
   });
 
-  // إجماليات التسويات من settlements collection
+  // إجماليات التسويات من live order state — يضمن إن المرتجعات (اللي بتعكس shipSettled→false) تخصم تلقائياً
+  // settlements collection لسه موجود كـ audit history في عرض السجل أسفل
   Object.values(coMap).forEach(co=>{
-    co.totalCollected=settlements.filter(s=>s.companyName===co.name).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+    co.totalCollected=co.allOrders
+      .filter(o=>o.shipSettled===true&&!o.isReturn)
+      .reduce((s,o)=>s+(parseFloat(o.shipSettledAmount)||0),0);
     co.totalRemaining=Math.max(0,co.totalDue-co.totalCollected);
   });
 
@@ -961,6 +964,9 @@ window.saveReturn=async function(){
       const depSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','deposit')));
       depWalletId=depSnap.docs[0]?.data()?.walletId||'';
     }
+    // pre-fetch: التحصيلات المسجلة من شاشة الشحن (collection) لعكسها من المحافظ
+    const colSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',ordId),where('category','==','collection')));
+    const colTxDocs=colSnap.docs;
 
     // ═══ Batch Atomic: كل عمليات المرتجع في كتابة واحدة ═══
     const batch=writeBatch(db);
@@ -1030,6 +1036,24 @@ window.saveReturn=async function(){
         userId:currentUser.uid,userName:byName
       });
     }
+
+    // 4b. عكس التحصيلات الفعلية من المحافظ (مبالغ حُصّلت أثناء الشحن — category=collection)
+    colTxDocs.forEach(tx=>{
+      const d=tx.data();const amt=parseFloat(d.amount)||0;const wid=d.walletId;
+      if(amt>0&&wid){
+        batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+        const rRef=doc(collection(db,'transactions_v2'));
+        batch.set(rRef,{
+          type:'out',amount:amt,
+          description:`↩️ عكس تحصيل مرتجع — ${o.clientName||''} — ${o.orderId||''}`,
+          category:'collection_reversal',orderId:ordId,
+          clientName:o.clientName||'',
+          walletId:wid,walletName:d.walletName||'',
+          date:now,createdBy:currentUser.uid,createdByName:byName,
+          createdAt:serverTimestamp()
+        });
+      }
+    });
 
     // 5. تكلفة المرتجع
     if(cost>0){
