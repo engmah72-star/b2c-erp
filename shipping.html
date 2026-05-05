@@ -1341,13 +1341,15 @@ window.renderList=function(){
         qa.push(`<button class="qa-btn qa-r" onclick="quickReturn('${o._id}')">↩️ مرتجع</button>`);
       }
     }
+    const noOwner=!o.shippingOfficerId&&!isTerminal;
     return`<div class="ocard" style="--oc:${sc}" onclick="openOrder('${o._id}')">
       <!-- رأس البطاقة -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
         <div style="min-width:0;flex:1">
-          <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${stageSlaBadge(o)}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${stageSlaBadge(o)}${o.shippingOfficerName?` · 🚚 ${o.shippingOfficerName}`:''}</div>
           <div class="ocard-client">${o.clientName||'—'}</div>
           <div class="ocard-phone">${o.clientPhone?'📞 '+o.clientPhone:''}</div>
+          ${noOwner?`<button onclick="event.stopPropagation();pickupOrder('${o._id}')" style="margin-top:5px;padding:5px 12px;border-radius:20px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.1);color:var(--p);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">📥 التقط</button>`:''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;margin-right:8px">
           ${noCost&&!isTerminal?`<span style="font-size:10px;background:rgba(255,61,110,.15);color:var(--r);border:1px solid rgba(255,61,110,.3);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
@@ -1384,6 +1386,24 @@ window.renderList=function(){
 };
 
 // ══ PANEL ══
+// التقاط أوردر بدون مالك في مرحلة الشحن
+window.pickupOrder=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);
+  if(!o)return;
+  if(o.shippingOfficerId)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
+  if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
+  try{
+    const uid=currentUser?.uid||'';
+    await updateDoc(doc(db,'orders',orderId),{
+      shippingOfficerId:uid,
+      shippingOfficerName:userName,
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الالتقاط','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 window.openOrder=function(id){
   activeId=id;
   const o=orders.find(x=>x._id===id);if(!o)return;
