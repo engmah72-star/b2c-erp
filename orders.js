@@ -271,18 +271,24 @@ export function createOrderData(data, userId, userName) {
 // ══════════════════════════════════════════
 /**
  * يتحقق أن الأوردر مستوفي شروط الانتقال **من** المرحلة الحالية للتالية.
- * @returns { ok, errors[] }
+ *
+ * يُفرّق بين:
+ *  - errors:   مشاكل تمنع الانتقال نهائياً (data integrity)
+ *  - warnings: ملاحظات يمكن تجاوزها بتأكيد المستخدم (مرونة للموظف)
+ *
+ * @returns { ok, errors[], warnings[] }
  */
 export function validateStageRequirements(order, fromStage) {
   const errors = [];
-  if (!order) { return { ok:false, errors:['لا يوجد أوردر'] }; }
+  const warnings = [];
+  if (!order) { return { ok:false, errors:['لا يوجد أوردر'], warnings }; }
   const stage = fromStage || order.stage;
 
   if (stage === 'design') {
     const hasFiles = !!(order.designFileUrl
                      || (order.designFiles && order.designFiles.length)
                      || (order.products || []).some(p => p.designImageUrl));
-    if (!hasFiles) errors.push('يجب رفع ملف التصميم أو اعتماده قبل الإرسال للطباعة');
+    if (!hasFiles) warnings.push('لم يُرفع ملف التصميم — يفضّل رفعه قبل الانتقال للطباعة');
   }
   else if (stage === 'printing') {
     const hasImg = !!(order.designImageUrl
@@ -290,26 +296,27 @@ export function validateStageRequirements(order, fromStage) {
                    || order.printFinalUrl
                    || order.designFileUrl
                    || (order.designFiles && order.designFiles.length));
-    if (!hasImg) errors.push('يجب رفع صورة التصميم النهائي قبل التحويل للتنفيذ');
+    if (!hasImg) warnings.push('لم تُرفع صورة التصميم النهائي — يفضّل رفعها قبل التحويل للتنفيذ');
   }
   else if (stage === 'production') {
-    if (!(order.costItems || []).length) errors.push('يجب تسجيل تكاليف الأوردر قبل التحويل للشحن');
+    if (!(order.costItems || []).length) warnings.push('لم تُسجَّل تكاليف الأوردر — يفضّل تسجيلها قبل التحويل للشحن');
   }
   else if (stage === 'shipping') {
     // شحن → أرشيف
     const sale = parseFloat(order.salePrice) || 0;
     const paid = parseFloat(order.totalPaid) || parseFloat(order.paid) || 0;
     const rem  = Math.max(0, sale - paid);
-    if (!(order.costItems || []).length) errors.push('سجّل تكلفة الأوردر أولاً');
-    if (rem > 0) errors.push(`المتبقي ${rem} ج لم يُسوَّى — حصِّل أو سجّل المبلغ`);
-    if (order.shipMethod === 'company' && !order.shipSettled) errors.push('شركة الشحن لم تتم تسويتها');
-    if (order.shipStage === 'returned') errors.push('يوجد مرتجع لم تتم معالجته');
+    if (!(order.costItems || []).length) warnings.push('سجّل تكلفة الأوردر أولاً');
+    if (rem > 0) warnings.push(`المتبقي ${rem} ج لم يُسوَّى — حصِّل أو سجّل المبلغ`);
+    if (order.shipMethod === 'company' && !order.shipSettled) warnings.push('شركة الشحن لم تتم تسويتها');
+    // المرتجع المعلَّق = خطأ صلب (يجب معالجته فعلاً قبل الأرشفة)
+    if (order.shipStage === 'returned') errors.push('يوجد مرتجع لم تتم معالجته — اذهب لمعالجة المرتجع أولاً');
   }
   else if (stage === 'archived' || stage === 'cancelled') {
     errors.push('لا توجد مرحلة تالية');
   }
 
-  return { ok: errors.length === 0, errors };
+  return { ok: errors.length === 0 && warnings.length === 0, errors, warnings };
 }
 
 // ══════════════════════════════════════════
@@ -328,29 +335,37 @@ export function validateStageRequirements(order, fromStage) {
  * @param {string} [args.targetStage]     — مرحلة هدف صريحة (override، يحتاج admin)
  * @param {string} [args.nextAssigneeId]  — uid الموظف الذي يستلم المرحلة التالية
  * @param {string} [args.nextAssigneeName]— اسم الموظف المستلِم
- * @returns { ok, newStage, errors, fields, timelineEntry }
+ * @param {boolean}[args.bypassWarnings]  — تجاوز الـ warnings (بعد تأكيد المستخدم)
+ * @returns { ok, newStage, errors, warnings, fields, timelineEntry }
+ *   - errors:   مشاكل تمنع الانتقال نهائياً (data integrity)
+ *   - warnings: ملاحظات يمكن تجاوزها بـ bypassWarnings:true
  */
-export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '' }) {
-  if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
+export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '', bypassWarnings = false }) {
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
   const cur = order.stage || 'design';
   const stageConf = STAGES[cur];
-  if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur] };
+  if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur], warnings:[] };
 
   const target = targetStage || stageConf.next;
-  if (!target) return { ok:false, errors:['لا توجد مرحلة تالية'] };
-  if (!STAGES[target]) return { ok:false, errors:['مرحلة هدف غير معروفة: ' + target] };
+  if (!target) return { ok:false, errors:['لا توجد مرحلة تالية'], warnings:[] };
+  if (!STAGES[target]) return { ok:false, errors:['مرحلة هدف غير معروفة: ' + target], warnings:[] };
 
   // فحص الصلاحية
   const allowed = STAGE_PERMISSIONS[cur] || [];
   const isAdmin = role === 'admin' || role === 'operation_manager';
   if (!isAdmin && !allowed.includes(role)) {
-    return { ok:false, errors:['ليس لديك صلاحية تقديم هذه المرحلة'] };
+    return { ok:false, errors:['ليس لديك صلاحية تقديم هذه المرحلة'], warnings:[] };
   }
 
   // فحص الشروط (يتجاوزه admin لو حدد targetStage صراحة)
   if (!targetStage) {
     const v = validateStageRequirements(order, cur);
-    if (!v.ok) return { ok:false, errors: v.errors };
+    // errors → bloc صلب
+    if (v.errors.length > 0) return { ok:false, errors: v.errors, warnings: v.warnings };
+    // warnings → يحتاج تأكيد المستخدم (bypassWarnings:true)
+    if (v.warnings.length > 0 && !bypassWarnings) {
+      return { ok:false, errors:[], warnings: v.warnings, needsConfirmation: true };
+    }
   }
 
   const targetConf = STAGES[target];

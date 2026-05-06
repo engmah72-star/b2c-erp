@@ -1591,16 +1591,24 @@ window.confirmApproveWithPrinter=async function(){
   const sel=document.getElementById('pick-printer-sel');
   const printerId=sel?.value||'';
   const printerName=printerId?(sel.options[sel.selectedIndex]?.text||''):'';
-  // المرور عبر بوابة المراحل الموحّدة (orders.js)
-  const adv=buildStageAdvance({
+  const baseArgs={
     order:o, role:currentRole, userId:currentUser?.uid||'', userName,
     nextAssigneeId:printerId, nextAssigneeName:printerName,
     extraFields:{designStage:'approved',approvedAt:nowStr(),approvedBy:userName}
-  });
-  if(!adv.ok){
+  };
+  // محاولة أولى — تكشف warnings/errors
+  let adv=buildStageAdvance(baseArgs);
+  // errors صلبة → بلوك (مع override للأدمن فقط)
+  if(adv.errors&&adv.errors.length){
     const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
     if(!isAdmin)return toast('⛔ '+adv.errors.join(' · '),'err');
-    if(!confirm('⚠️ '+adv.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟'))return;
+    if(!confirm('⚠️ '+adv.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟ (override أدمن)'))return;
+    adv=buildStageAdvance({...baseArgs,bypassWarnings:true,targetStage:'printing'});
+  }
+  // warnings — تأكيد ثم تجاوز (متاح لكل الأدوار)
+  else if(adv.warnings&&adv.warnings.length){
+    if(!confirm('⚠️ ملاحظات قبل الاعتماد:\n• '+adv.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    adv=buildStageAdvance({...baseArgs,bypassWarnings:true});
   }
   try{
     const fields=adv.ok?adv.fields:{stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName,...(printerId?{printerId,printerName}:{})};

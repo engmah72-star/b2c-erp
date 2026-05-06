@@ -2378,7 +2378,7 @@ window.saveDeliver=async function(){
   // المرور عبر بوابة المراحل الموحّدة (orders.js) — تتحقق من costItems + remaining + ship settlement + returns
   const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
   const finalRem=calcRem(o);
-  const adv=buildStageAdvance({
+  const baseArgs={
     order:o, role:currentRole, userId:currentUser?.uid||'', userName,
     extraFields:{
       totalPaid:finalPaid,
@@ -2387,8 +2387,15 @@ window.saveDeliver=async function(){
       clientRating:rating, clientComment:gv('del-comment'),
       deliveredAt:nowStr(),
     }
-  });
-  if(!adv.ok)return toast('⛔ شروط الأرشفة غير مكتملة:\n• '+adv.errors.join('\n• '),'err');
+  };
+  let adv=buildStageAdvance(baseArgs);
+  // errors صلبة (مرتجع غير معالَج) → بلوك
+  if(adv.errors&&adv.errors.length)return toast('⛔ '+adv.errors.join(' · '),'err');
+  // warnings → تأكيد ثم تجاوز (مرونة لكل الأدوار)
+  if(adv.warnings&&adv.warnings.length){
+    if(!confirm('⚠️ ملاحظات قبل الأرشفة:\n• '+adv.warnings.join('\n• ')+'\n\nهل تريد المتابعة على مسؤوليتك؟'))return;
+    adv=buildStageAdvance({...baseArgs,bypassWarnings:true});
+  }
   const hasSuppInCost=(o.costItems||[]).some(c=>c.supplierId);
   if(hasSuppInCost&&!confirm('⚠️ هل تأكدت من تسوية الموردين المرتبطين بهذا الأوردر؟'))return;
   try{
