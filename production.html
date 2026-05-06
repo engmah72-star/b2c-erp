@@ -1697,9 +1697,17 @@ window.importCatalogCosts=async function(prodIdx){
 window.moveToShipping=function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  // فحص الشروط مبدئياً قبل فتح الـ modal
+  // فحص الشروط مبدئياً
   const v=buildStageAdvance({order:o,role:currentRole,userId:currentUser?.uid||'',userName});
-  if(!v.ok)return toast('⛔ '+v.errors.join(' · '),'err');
+  // errors صلبة → بلوك
+  if(v.errors&&v.errors.length)return toast('⛔ '+v.errors.join(' · '),'err');
+  // warnings → تأكيد قبل فتح الـ modal
+  if(v.warnings&&v.warnings.length){
+    if(!confirm('⚠️ ملاحظات قبل التحويل للشحن:\n• '+v.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    window.__bypassWarningsShipping=true;
+  } else {
+    window.__bypassWarningsShipping=false;
+  }
   // افتح modal اختيار موظف الشحن
   const sel=document.getElementById('pick-ship-sel');
   if(sel)sel.value='';
@@ -1713,9 +1721,11 @@ window.confirmMoveToShipping=async function(){
   const shipId=sel?.value||'';
   const shipName=shipId?(sel.options[sel.selectedIndex]?.text||''):'';
   // المرور عبر بوابة المراحل الموحّدة (orders.js)
+  // bypassWarnings:true لأن الـ confirm حصل قبل فتح الـ modal في moveToShipping()
   const adv=buildStageAdvance({
     order:o, role:currentRole, userId:currentUser?.uid||'', userName,
     nextAssigneeId:shipId, nextAssigneeName:shipName,
+    bypassWarnings: !!window.__bypassWarningsShipping,
     extraFields:{
       prodStatus:'done',
       prodDoneAt:nowStr(),
@@ -1723,7 +1733,10 @@ window.confirmMoveToShipping=async function(){
       productionAgentName:userName,
     }
   });
-  if(!adv.ok)return toast('⛔ '+adv.errors.join(' · '),'err');
+  if(adv.errors&&adv.errors.length)return toast('⛔ '+adv.errors.join(' · '),'err');
+  if(adv.warnings&&adv.warnings.length&&!window.__bypassWarningsShipping){
+    if(!confirm('⚠️ '+adv.warnings.join(' · ')+'\n\nالمتابعة؟'))return;
+  }
   try{
     const prods=o.products||[];
     const ci=o.costItems||[];
