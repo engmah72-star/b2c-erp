@@ -65,6 +65,65 @@ export function getStageOwnership(stage) {
 }
 
 // ══════════════════════════════════════════
+// PRODUCT STATUS — حالة المنتج داخل الأوردر
+// ══════════════════════════════════════════
+// كل منتج في order.products[] يحمل productStatus مستقل عن الأوردر،
+// فيتمكن المصمم من إنهاء بعض المنتجات بينما يبقى الباقي معلَّقاً.
+//
+// التدفق المتوقع:
+//   pending → in_progress → ready → printed → done
+//                              ↘ on_hold (مؤجَّل بطلب العميل)
+//
+// كل صفحة تفلتر المنتجات بحسب حالتها:
+//   - design.html: pending / in_progress (يعمل عليها)
+//   - print.html : ready (جاهز للطباعة)
+//   - production.html: printed (مطبوع، جاهز للتنفيذ)
+//   - shipping.html: done (كله جاهز للشحن)
+export const PRODUCT_STATUS = {
+  pending:     { label:'في الانتظار',     ico:'⏳', col:'#647298', sort:0 },
+  in_progress: { label:'جاري التصميم',    ico:'✏️', col:'#4a8ef5', sort:1 },
+  ready:       { label:'جاهز للطباعة',    ico:'✅', col:'#00c87a', sort:2 },
+  printed:     { label:'مطبوع',            ico:'🖨️', col:'#a78bfa', sort:3 },
+  done:        { label:'منتهي',            ico:'✓',  col:'#00c87a', sort:4 },
+  on_hold:     { label:'مؤجَّل',           ico:'⏸',  col:'#f0a020', sort:-1 },
+};
+
+/** badge HTML لحالة المنتج */
+export function productStatusBadge(status) {
+  const s = PRODUCT_STATUS[status] || PRODUCT_STATUS.pending;
+  return `<span class="bdg" style="background:${s.col}1f;color:${s.col};border-color:${s.col}40">${s.ico} ${s.label}</span>`;
+}
+
+/**
+ * يُرجع المنتجات المؤهَّلة لمرحلة معينة من الأوردر.
+ * @param {Object} order
+ * @param {string} stage  — design | printing | production | shipping
+ * @returns {Array<{product, idx, status}>}
+ */
+export function getProductsForStage(order, stage) {
+  if (!order || !order.products) return [];
+  const eligibleStatuses = {
+    design:     ['pending', 'in_progress'],
+    printing:   ['ready'],
+    production: ['printed'],
+    shipping:   ['done', 'printed'],
+  }[stage] || [];
+  return (order.products || [])
+    .map((p, idx) => ({ product: p, idx, status: p.productStatus || 'pending' }))
+    .filter(item => eligibleStatuses.includes(item.status));
+}
+
+/** هل كل منتجات الأوردر بنفس الحالة (أو بحالة أعلى/مساوية)؟ */
+export function allProductsAtLeast(order, status) {
+  if (!order || !order.products?.length) return true;
+  const target = PRODUCT_STATUS[status]?.sort ?? 0;
+  return order.products.every(p => {
+    const s = PRODUCT_STATUS[p.productStatus || 'pending'];
+    return (s?.sort ?? 0) >= target;
+  });
+}
+
+// ══════════════════════════════════════════
 // STAGE SLA — الحدود الزمنية القياسية لكل مرحلة (بالساعات)
 // ══════════════════════════════════════════
 // يمكن override عبر settings/main.stageSla لاحقاً
