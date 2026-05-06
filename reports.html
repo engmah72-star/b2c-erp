@@ -307,7 +307,7 @@ function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderT
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 
 // ══ Collection state (search/sort/filters) ══
-let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all';
+let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders';
 const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
@@ -320,6 +320,8 @@ function readUrlState(){
     if(h.get('q'))__search=h.get('q');
     if(h.get('pay'))__payFilter=h.get('pay');
     if(h.get('stage'))__stageFilter=h.get('stage');
+    if(h.get('flag'))__flagFilter=h.get('flag');
+    if(h.get('view'))__viewMode=h.get('view');
     if(h.get('sort'))__sortKey=h.get('sort');
     if(h.get('dir'))__sortDir=h.get('dir');
   }catch(e){}
@@ -331,6 +333,8 @@ function writeUrlState(){
   if(__search)p.set('q',__search);
   if(__payFilter&&__payFilter!=='all')p.set('pay',__payFilter);
   if(__stageFilter&&__stageFilter!=='all')p.set('stage',__stageFilter);
+  if(__flagFilter&&__flagFilter!=='all')p.set('flag',__flagFilter);
+  if(__viewMode&&__viewMode!=='orders')p.set('view',__viewMode);
   if(__sortKey&&__sortKey!=='date')p.set('sort',__sortKey);
   if(__sortDir&&__sortDir!=='desc')p.set('dir',__sortDir);
   const s=p.toString();
@@ -370,6 +374,18 @@ function sparkline(values,color='var(--r)'){
   return`<div class="sparkline">${values.map(v=>`<span style="height:${Math.max(2,(v/max)*100)}%;background:${color}"></span>`).join('')}</div>`;
 }
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
+const daysSince=ts=>{const s=ts?.seconds||0;if(!s)return 0;return Math.max(0,Math.floor((Date.now()-s*1000)/86400000));};
+const ageBucket=days=>days<=30?'0-30':days<=60?'31-60':days<=90?'61-90':'90+';
+// "stale" = آخر تحديث فات عليه > 14 يوم والأوردر مش مؤرشف ولا في الشحن
+const isStaleOrder=o=>{
+  if(['archived','shipping'].includes(o.stage))return false;
+  const ts=o.updatedAt?.seconds||o.createdAt?.seconds||0;
+  if(!ts)return false;
+  return (Date.now()-ts*1000)>14*86400000;
+};
+const orderHasCost=o=>(o.costItems||[]).some(c=>(parseFloat(c.total)||0)>0);
+const orderTotalCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+const isMissingCost=o=>parseFloat(o.salePrice)>0&&['production','shipping','archived'].includes(o.stage)&&!orderHasCost(o);
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
@@ -632,11 +648,17 @@ function renderOverview(f,prev){
   const pProfit=pTot-pCosts;
 
   const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage));
+  // الأوردرات اللي عليها باقي وقاعدة بدون حركة فترة طويلة
+  const staleWithRem=f.filter(o=>parseFloat(o.salePrice)>0&&calcRem(o)>0&&isStaleOrder(o));
+  // الأوردرات اللي وصلت لمراحل متقدّمة من غير ما حد سجّل تكلفة
+  const noCostOrders=f.filter(isMissingCost);
 
   return`
     <!-- تنبيهات -->
-    ${late.length?`<div class="alert-box">⚠️ ${late.length} أوردرات متأخرة عن موعد التسليم</div>`:''}
+    ${late.length?`<div class="alert-box" style="cursor:pointer" onclick="goCollectionPostDesign()">⚠️ ${late.length} أوردرات متأخرة عن موعد التسليم</div>`:''}
     ${supDue>0?`<div class="alert-box">⚠️ مستحق للموردين: ${fn(supDue)} ج</div>`:''}
+    ${staleWithRem.length?`<div class="alert-box" style="cursor:pointer;background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3)" onclick="goCollectionFlag('stale')">⏰ ${staleWithRem.length} أوردر بدون تحديث > 14 يوم وعليه باقي · ${fn(staleWithRem.reduce((s,o)=>s+calcRem(o),0))} ج</div>`:''}
+    ${noCostOrders.length?`<div class="alert-box" style="cursor:pointer;background:rgba(255,61,110,.08);border-color:rgba(255,61,110,.3);color:var(--r)" onclick="goCollectionFlag('no-cost')">🚫 ${noCostOrders.length} أوردر في مرحلة متقدّمة من غير تكلفة مسجّلة — مشكلة سلامة بيانات</div>`:''}
 
     <!-- KPIs -->
     <div class="kpi-grid">
@@ -1072,6 +1094,15 @@ function renderCollection(f){
   const postDesignWithRem=withSale.filter(o=>['printing','production','shipping'].includes(o.stage)&&calcRem(o)>0);
   const postDesignAmount=postDesignWithRem.reduce((s,o)=>s+calcRem(o),0);
 
+  // Aging buckets على الأوردرات اللي عليها باقي
+  const aging={'0-30':{n:0,a:0},'31-60':{n:0,a:0},'61-90':{n:0,a:0},'90+':{n:0,a:0}};
+  withSale.forEach(o=>{
+    const r=calcRem(o);if(r<=0)return;
+    const b=ageBucket(daysSince(o.createdAt));
+    aging[b].n++;aging[b].a+=r;
+  });
+  const noCostCount=withSale.filter(isMissingCost).length;
+
   return`
     <!-- ملخص -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
@@ -1100,6 +1131,20 @@ function renderCollection(f){
       </div>
     </div>
 
+    <!-- Aging Report — تقادم الديون على العملاء -->
+    <div class="chart-wrap" style="margin-bottom:12px">
+      <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>📅 تقادم الباقي على العملاء (Aging)</span><span style="font-size:10px;color:var(--dim2);font-weight:700">من تاريخ إنشاء الأوردر</span></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        ${[['0-30','var(--g)','حديث'],['31-60','var(--y)','متوسط'],['61-90','#ff8a4a','متأخر'],['90+','var(--r)','حرج جداً']].map(([k,c,lbl])=>`
+        <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--dim2);font-weight:700">${lbl}</div>
+          <div style="font-size:11px;font-weight:800;color:var(--dim2)">${k} يوم</div>
+          <div style="font-size:15px;font-weight:900;color:${c};margin-top:4px">${fn(aging[k].a)} ج</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">${aging[k].n} أوردر</div>
+        </div>`).join('')}
+      </div>
+    </div>
+
     <!-- فلتر بالمراحل -->
     <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 4px">المرحلة:</span>
@@ -1112,7 +1157,16 @@ function renderCollection(f){
       <button class="d-btn st-btn" data-stage="archived" onclick="filterByStage('archived',this)">📁 أرشيف (${stageCounts.archived})</button>
     </div>
 
-    <!-- فلتر بحالة الدفع + بحث -->
+    <!-- View mode + flag chips + الدفع + بحث -->
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 4px">عرض:</span>
+      <button class="d-btn vm-btn ${__viewMode==='orders'?'active':''}" onclick="setViewMode('orders',this)">📋 بأوردر</button>
+      <button class="d-btn vm-btn ${__viewMode==='clients'?'active':''}" onclick="setViewMode('clients',this)">👤 بالعميل</button>
+      <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 8px;border-right:1px solid var(--line);margin-right:4px">تنبيهات:</span>
+      <button class="d-btn fl-btn ${__flagFilter==='all'?'active':''}" data-flag="all" onclick="filterByFlag('all',this)">الكل</button>
+      <button class="d-btn fl-btn ${__flagFilter==='stale'?'active':''}" data-flag="stale" onclick="filterByFlag('stale',this)" style="border-color:rgba(255,170,0,.4);color:var(--y);background:rgba(255,170,0,.06)">⏰ متأخر (${withSale.filter(isStaleOrder).length})</button>
+      <button class="d-btn fl-btn ${__flagFilter==='no-cost'?'active':''}" data-flag="no-cost" onclick="filterByFlag('no-cost',this)" style="border-color:rgba(255,61,110,.4);color:var(--r);background:rgba(255,61,110,.06)">🚫 بدون تكلفة (${noCostCount})</button>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;color:var(--dim2);font-weight:800;padding:4px 4px">الدفع:</span>
       <button class="d-btn pf-btn ${__payFilter==='all'?'active':''}" data-pay="all" onclick="filterCollection('all',this)">الكل</button>
@@ -1124,9 +1178,9 @@ function renderCollection(f){
       </div>
     </div>
 
-    <!-- الجدول -->
+    ${__viewMode==='clients'?renderCollectionByClient(withSale):`
+    <!-- الجدول بأوردر -->
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden">
-      <!-- Header -->
       <div class="col-grid-head" style="background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:800;color:var(--dim2)">
         <div class="col-head-cell ${__sortKey==='client'?'active':''}" onclick="colSort('client')" style="justify-content:flex-start"><span>العميل / الأوردر</span><span class="sort-arrow">${__sortKey==='client'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
         <div class="col-head-cell ${__sortKey==='sale'?'active':''}" onclick="colSort('sale')"><span>الإجمالي</span><span class="sort-arrow">${__sortKey==='sale'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
@@ -1135,15 +1189,66 @@ function renderCollection(f){
         <div class="col-head-cell ${__sortKey==='date'?'active':''}" onclick="colSort('date')"><span>الحالة</span><span class="sort-arrow">${__sortKey==='date'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
         <div></div>
       </div>
-      <!-- Rows -->
       <div id="collection-rows">
         ${renderCollectionRows(withSale)}
       </div>
       <div id="col-no-match" style="display:none;padding:30px 16px;text-align:center;color:var(--dim2);font-size:12px">
         🔍 لا توجد نتائج تطابق البحث/الفلاتر
       </div>
-    </div>
+    </div>`}
   `;
+}
+
+// ══ Per-customer rollup view ══
+function renderCollectionByClient(orders){
+  const map={};
+  orders.forEach(o=>{
+    const k=o.clientId||o.clientName||'—';
+    if(!map[k])map[k]={name:o.clientName||'—',phone:o.clientPhone||'',count:0,sale:0,paid:0,rem:0,lastTs:0,stale:0,noCost:0};
+    const r=map[k];
+    r.count++;
+    r.sale+=parseFloat(o.salePrice)||0;
+    r.paid+=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    r.rem+=calcRem(o);
+    const ts=o.updatedAt?.seconds||o.createdAt?.seconds||0;
+    if(ts>r.lastTs)r.lastTs=ts;
+    if(isStaleOrder(o))r.stale++;
+    if(isMissingCost(o))r.noCost++;
+  });
+  const list=Object.values(map).sort((a,b)=>b.rem-a.rem);
+  if(!list.length)return`<div class="empty-pretty"><div class="ico">👤</div><div class="ttl">لا يوجد عملاء</div></div>`;
+  const totRem=list.reduce((s,c)=>s+c.rem,0);
+  return`
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden">
+      <div style="padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:800;color:var(--dim2);display:flex;justify-content:space-between">
+        <span>${list.length} عميل · إجمالي الباقي ${fn(totRem)} ج</span>
+        <span style="color:var(--dim2)">مرتّب حسب الباقي</span>
+      </div>
+      ${list.map(c=>{
+        const pct=c.sale>0?Math.round(c.paid/c.sale*100):0;
+        const status=c.rem<=0?{c:'var(--g)',t:'✅'}:c.paid>0?{c:'var(--y)',t:'⚡'}:{c:'var(--r)',t:'⏳'};
+        const lastDays=c.lastTs?Math.floor((Date.now()-c.lastTs*1000)/86400000):0;
+        const safeName=(c.name||'').replace(/'/g,"\\'");
+        return`<div class="col-row" style="cursor:pointer" onclick="focusClient('${safeName}')" title="اضغط لعرض أوردرات العميل" data-rem="${c.rem}" data-paid="${c.paid}">
+          <div style="display:block">
+            <div style="font-size:14px;font-weight:800">${c.name} <span style="font-size:11px;color:var(--dim2);font-weight:700">${status.t}</span></div>
+            <div style="font-size:11px;color:var(--dim2);margin-top:2px">${c.phone||'—'} · ${c.count} أوردر · آخر نشاط من ${lastDays} يوم</div>
+            <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:6px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${status.c};border-radius:2px"></div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:6px;font-size:10px;font-weight:700">
+              ${c.stale?`<span style="color:var(--y)">⏰ ${c.stale} متأخر</span>`:''}
+              ${c.noCost?`<span style="color:var(--r)">🚫 ${c.noCost} بدون تكلفة</span>`:''}
+            </div>
+          </div>
+          <div style="text-align:center;font-size:13px;font-weight:800;color:var(--b)"><span class="col-cell-mobile-label">الإجمالي:</span><span>${fn(c.sale)} ج</span></div>
+          <div style="text-align:center;font-size:13px;font-weight:800;color:var(--g)"><span class="col-cell-mobile-label">المحصّل:</span><span>${fn(c.paid)} ج</span></div>
+          <div style="text-align:center;font-size:14px;font-weight:900;color:${c.rem>0?'var(--r)':'var(--dim2)'}"><span class="col-cell-mobile-label">المتبقي:</span><span>${c.rem>0?fn(c.rem)+' ج':'—'}</span></div>
+          <div style="text-align:center;font-size:11px;font-weight:800;color:${status.c}">${pct}%</div>
+          <div></div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 function renderCollectionRows(data){
@@ -1159,17 +1264,20 @@ function renderCollectionRows(data){
     const stage={design:'✏️',printing:'🖨️',production:'🏭',shipping:'🚚',archived:'📁'}[o.stage]||'';
     const searchHay=`${o.clientName||''} ${o.clientPhone||''} ${o.orderId||''} ${o._id.slice(-6)}`.toLowerCase();
     const orderRef=(o.orderId||o._id.slice(-6));
-    return`<div class="col-row" style="background:${status.bg}" data-rem="${rem}" data-paid="${paid}" data-stage="${o.stage||''}" data-search="${searchHay.replace(/"/g,'&quot;')}" onclick="openOrdDrawer('${o._id}')" title="اضغط لعرض التفاصيل">
+    const stale=isStaleOrder(o);
+    const noCost=isMissingCost(o);
+    const ageD=daysSince(o.createdAt);
+    return`<div class="col-row" style="background:${status.bg}" data-rem="${rem}" data-paid="${paid}" data-stage="${o.stage||''}" data-stale="${stale?'1':'0'}" data-nocost="${noCost?'1':'0'}" data-search="${searchHay.replace(/"/g,'&quot;')}" onclick="openOrdDrawer('${o._id}')" title="اضغط لعرض التفاصيل">
       <div class="col-cell" style="display:block">
-        <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
+        <div style="font-size:13px;font-weight:800">${o.clientName||'—'} ${stale?'<span title="آخر تحديث > 14 يوم" style="font-size:11px;color:var(--y)">⏰</span>':''} ${noCost?'<span title="مرحلة متقدمة بدون تكلفة مسجّلة" style="font-size:11px;color:var(--r)">🚫</span>':''}</div>
         <div style="font-size:10px;color:var(--dim2);margin-top:2px">
-          ${stage} ${orderRef} · ${o.clientPhone||'—'}
+          ${stage} ${orderRef} · ${o.clientPhone||'—'}${ageD>0?' · <span style="color:'+(ageD>60?'var(--r)':ageD>30?'var(--y)':'var(--dim2)')+';font-weight:700">'+ageD+' يوم</span>':''}
         </div>
         <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:5px;overflow:hidden">
           <div style="height:100%;width:${pct}%;background:${status.c};border-radius:2px"></div>
         </div>
         <div style="display:flex;gap:10px;margin-top:5px;font-size:10px;font-weight:700">
-          ${cost>0?`<span style="color:var(--r)">🏭 ${fn(cost)} ج</span>`:`<span style="color:var(--dim2)">⚠️ بدون تكلفة</span>`}
+          ${cost>0?`<span style="color:var(--r)">🏭 ${fn(cost)} ج</span>`:`<span style="color:${noCost?'var(--r)':'var(--dim2)'}">${noCost?'🚫 بدون تكلفة (حرج)':'⚠️ بدون تكلفة'}</span>`}
           ${cost>0?`<span style="color:${profit>=0?'var(--g)':'var(--r)'}">💹 ${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span>`:''}
         </div>
       </div>
@@ -1201,16 +1309,20 @@ function applyCollectionFilters(){
     const rem=parseFloat(r.dataset.rem)||0;
     const stage=r.dataset.stage||'';
     const hay=(r.dataset.search||'').toLowerCase();
+    const stale=r.dataset.stale==='1';
+    const noCost=r.dataset.nocost==='1';
     const payOk=__payFilter==='all'||(__payFilter==='rem'&&rem>0)||(__payFilter==='paid'&&rem<=0);
     const stageOk=__stageFilter==='all'
       ||(__stageFilter==='post-design'&&['printing','production','shipping'].includes(stage)&&rem>0)
       ||stage===__stageFilter;
+    const flagOk=__flagFilter==='all'
+      ||(__flagFilter==='stale'&&stale)
+      ||(__flagFilter==='no-cost'&&noCost);
     const searchOk=!q||hay.includes(q);
-    const show=payOk&&stageOk&&searchOk;
+    const show=payOk&&stageOk&&flagOk&&searchOk;
     r.style.display=show?'':'none';
     if(show)visible++;
   });
-  // عرض/إخفاء empty state داخلي
   const noMatch=document.getElementById('col-no-match');
   if(noMatch)noMatch.style.display=visible===0?'':'none';
   writeUrlState();
@@ -1251,7 +1363,41 @@ window.colSearchClear=function(){
 window.colSort=function(key){
   if(__sortKey===key)__sortDir=__sortDir==='desc'?'asc':'desc';
   else{__sortKey=key;__sortDir=key==='client'?'asc':'desc';}
-  // أعد render للجدول فقط
+  render();
+};
+
+window.filterByFlag=function(flag,btn){
+  __flagFilter=flag;
+  document.querySelectorAll('.fl-btn').forEach(b=>b.classList.remove('active'));
+  const target=btn||document.querySelector(`.fl-btn[data-flag="${flag}"]`);
+  if(target)target.classList.add('active');
+  applyCollectionFilters();
+};
+
+window.setViewMode=function(mode,btn){
+  __viewMode=mode;
+  document.querySelectorAll('.vm-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  render();
+};
+
+// عرض أوردرات عميل واحد بسرعة (من جدول العملاء): يحط الاسم في خانة البحث ويرجع لـ orders view
+window.focusClient=function(name){
+  __viewMode='orders';
+  __search=name||'';
+  render();
+  setTimeout(()=>{
+    const inp=document.getElementById('col-search');
+    if(inp)inp.value=__search;
+    applyCollectionFilters();
+  },50);
+};
+
+// زر مختصر: انتقل لـ جرد التحصيل + فعّل flag filter (stale / no-cost)
+window.goCollectionFlag=function(flag){
+  __viewMode='orders';__flagFilter=flag;
+  currentTab='collection';
+  document.querySelectorAll('.rep-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab==='collection'));
   render();
 };
 
