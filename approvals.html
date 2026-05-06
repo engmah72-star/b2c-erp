@@ -6,7 +6,7 @@
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <title>الاعتمادات المالية — Business2Card</title>
-<link rel="stylesheet" href="shared.css?v=46">
+<link rel="stylesheet" href="shared.css?v=48">
 <style>
   .tabs-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:8px}
   .tab{padding:8px 16px;border-radius:var(--rad);border:1px solid transparent;background:transparent;color:var(--dim2);cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;display:flex;align-items:center;gap:8px;white-space:nowrap}
@@ -42,14 +42,33 @@
   .ac-trail span{display:inline-block;margin-left:14px}
   .empty-pl{text-align:center;padding:40px 20px;color:var(--dim2);font-size:13px}
 </style>
+<script src="financial-guard.js"></script>
 </head>
 <body>
-<div class="topbar"><div id="topbar-content"></div></div>
-<div id="sidebar-mount"></div>
-<div class="main">
-  <div class="container">
-    <div id="page-head" style="margin-bottom:14px"></div>
+<aside class="sidenav" id="sidebar">
+  <div class="nav-brand">
+    <div class="nav-logo">🎨</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="nav-role">—</div>
+    </div>
+  </div>
+  <div class="nav-scroll" id="nav-links"></div>
+</aside>
+<header class="topbar">
+  <button class="menu-btn" id="menu-btn">☰</button>
+  <div>
+    <div class="page-title">🔐 الاعتمادات المالية</div>
+    <div class="page-sub">تأكيد ops manager → اعتماد admin → أرشفة</div>
+  </div>
+  <div style="margin-right:auto;display:flex;align-items:center;gap:10px">
+    <span id="nav-name" style="font-size:13px;color:var(--dim2)"></span>
+    <button onclick="logoutBtn()" style="padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);cursor:pointer;font-family:inherit;font-size:12px">خروج</button>
+  </div>
+</header>
 
+<main class="main">
+  <div class="container">
     <div class="tabs-bar">
       <button class="tab on pending" id="tab-pending" onclick="setTab('pending')">⏳ بانتظار التأكيد <span class="badge" id="cnt-pending">0</span></button>
       <button class="tab confirmed" id="tab-confirmed" onclick="setTab('confirmed')">🔵 بانتظار الاعتماد <span class="badge" id="cnt-confirmed">0</span></button>
@@ -57,26 +76,22 @@
       <button class="tab rejected" id="tab-rejected" onclick="setTab('rejected')">❌ مرفوضة <span class="badge" id="cnt-rejected">0</span></button>
     </div>
 
-    <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--dim);line-height:1.7" id="role-banner">
-      جاري التحميل...
-    </div>
+    <div id="role-banner" style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--dim);line-height:1.7"></div>
 
     <div id="list-content"><div class="loader"><div class="spinner"></div></div></div>
   </div>
-</div>
+</main>
 
-<script src="financial-guard.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, onSnapshot, updateDoc, query, where, orderBy, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { renderSidebar, renderTopbar, initMobileMenu, toast } from "./shared.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, onSnapshot, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
-let currentUid='', currentUserName='', currentRole='';
+let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let txs = []; // كل الـ tx مع approval fields
 let activeTab = 'pending';
 let walletsMap = new Map();
@@ -85,52 +100,111 @@ const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const ICONS = { client_payment:'💰', refund:'↩️', salary:'👤', bonus:'🎁', deduction:'✂️', printer_payment:'🏭', shipper_payment:'🚚', shipping_cost:'🚚', shipping_settlement:'📦', transfer:'🔄', opening_balance:'🏦', adjustment:'⚖️', expense:'💸', expense_reversal:'↩️', refund_reversal:'🔄' };
 const CAT_AR = { client_payment:'دفعة عميل', refund:'استرداد عميل', salary:'راتب', bonus:'مكافأة', deduction:'خصم', printer_payment:'دفعة مطبعة', shipper_payment:'دفعة شركة شحن', shipping_cost:'تكلفة شحن', shipping_settlement:'تسوية شحن', transfer:'تحويل بين محافظ', opening_balance:'رصيد افتتاحي', adjustment:'تسوية رصيد', expense:'مصروف', admin_edit:'تعديل أدمن' };
 
+const ROLE_LABELS = { admin:'مدير عام', operation_manager:'مدير تشغيل', wallet_manager:'محاسب', customer_service:'خدمة عملاء', graphic_designer:'مصمم', design_operator:'مشغل تصميم', production_agent:'مندوب تنفيذ', shipping_officer:'مسؤول شحن' };
+
+const SBPAGES = [
+  {f:'index.html',l:'لوحة التحكم',i:'⬡',adminOnly:true},
+  {f:'clients.html',l:'العملاء',i:'👤',p:'clients'},
+  {f:'design.html',l:'التصميم',i:'✏️',p:'design'},
+  {f:'print.html',l:'الطباعة',i:'🖨️',p:'print'},
+  {f:'production.html',l:'التنفيذ',i:'🏭',p:'production'},
+  {f:'shipping.html',l:'الشحن',i:'🚚',p:'shipping'},
+  {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦',p:'shipping-accounts'},
+  {f:'archive.html',l:'الأرشيف',i:'📁',p:'archive'},
+  {f:'accounts.html',l:'الحسابات',i:'💰',p:'accounts'},
+  {f:'approvals.html',l:'الاعتمادات',i:'🔐',p:'approvals'},
+  {f:'suppliers.html',l:'الموردين',i:'▣',p:'suppliers'},
+  {f:'reports.html',l:'التقارير',i:'📊',p:'reports'},
+  {f:'employees.html',l:'الموظفين',i:'👥',adminOnly:true},
+  {f:'settings.html',l:'الإعدادات',i:'⚙️',adminOnly:true},
+];
+
+function buildSidebar(){
+  const isAdm = ['admin','operation_manager'].includes(currentRole);
+  const pages = currentPerms?.pages || [];
+  const navEl = document.getElementById('nav-links');
+  if(!navEl) return;
+  let html = '';
+  for(const p of SBPAGES){
+    const ok = isAdm || (p.adminOnly ? false : pages.includes('*') || pages.includes(p.p||''));
+    if(!ok) continue;
+    const active = p.f === 'approvals.html';
+    html += `<a class="nav-link${active?' active':''}" href="${p.f}"><span class="nav-ico">${p.i}</span> ${p.l}</a>`;
+  }
+  navEl.innerHTML = html;
+  document.getElementById('nav-role').textContent = ROLE_LABELS[currentRole] || currentRole;
+  document.getElementById('nav-name').textContent = currentUserName;
+}
+
+// Mobile menu
+document.getElementById('menu-btn')?.addEventListener('click', ()=>{
+  document.getElementById('sidebar')?.classList.toggle('open');
+});
+
+window.logoutBtn = async function(){
+  try{ await signOut(auth); }catch(e){}
+  window.location.href = 'login.html';
+};
+
 onAuthStateChanged(auth, async u=>{
   if(!u){ window.location.href='login.html'; return; }
   currentUid = u.uid;
-  const userSnap = await getDoc(doc(db,'users',u.uid));
-  if(!userSnap.exists()){ document.body.innerHTML='<div style="padding:40px;text-align:center">⛔ ليس لديك بيانات مستخدم</div>'; return; }
-  const ud = userSnap.data();
-  currentRole = ud.role || '';
-  currentUserName = ud.name || u.email || '';
+  try{
+    const userSnap = await getDoc(doc(db,'users',u.uid));
+    if(!userSnap.exists()){
+      document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#ff3d6e">⛔ بيانات المستخدم غير موجودة</div>';
+      return;
+    }
+    const ud = userSnap.data();
+    currentRole = ud.role || '';
+    currentUserName = ud.name || u.email || '';
+    currentPerms = ud.permissions || {};
 
-  // فقط ops manager + admin يصلون
-  if(!['admin','operation_manager'].includes(currentRole)){
-    document.body.innerHTML='<div style="padding:40px;text-align:center;color:#ff3d6e">⛔ هذه الصفحة لمدير التشغيل والأدمن فقط</div>';
-    return;
+    if(!['admin','operation_manager'].includes(currentRole)){
+      document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#ff3d6e">⛔ هذه الصفحة لمدير التشغيل والأدمن فقط</div>';
+      return;
+    }
+
+    buildSidebar();
+    updateRoleBanner();
+    startListeners();
+  }catch(e){
+    console.error('[approvals] init error:', e);
+    document.getElementById('list-content').innerHTML = `<div class="empty-pl" style="color:#ff3d6e">⛔ خطأ التحميل: ${e.message}</div>`;
   }
-
-  document.getElementById('sidebar-mount').outerHTML = renderSidebar('approvals');
-  document.getElementById('topbar-content').outerHTML = renderTopbar('🔐 الاعتمادات المالية', 'تأكيد ops manager → اعتماد admin → أرشفة');
-  initMobileMenu();
-  updateRoleBanner();
-
-  // تحميل المحافظ للأسماء
-  onSnapshot(collection(db,'wallets'), snap=>{
-    walletsMap.clear();
-    snap.docs.forEach(d=>walletsMap.set(d.id, d.data().name||d.id));
-  });
-
-  // تحميل كل tx (مع filter on approvalStatus موجود)
-  // ملاحظة: tx قديمة قبل ميزة الاعتماد ليس عندها approvalStatus → نتجاهلها (legacy)
-  onSnapshot(collection(db,'transactions_v2'), snap=>{
-    txs = snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(t=>t.approvalStatus) // فقط الـ tx الجديدة بعد ميزة الاعتماد
-      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    updateCounts();
-    render();
-  }, err=>{
-    document.getElementById('list-content').innerHTML=`<div class="empty-pl" style="color:#ff3d6e">⛔ ${err.message}</div>`;
-  });
 });
 
 function updateRoleBanner(){
   const b = document.getElementById('role-banner');
+  if(!b) return;
   if(currentRole === 'operation_manager'){
     b.innerHTML = `<strong>🔵 دورك: مدير تشغيل</strong> — تستطيع <b>تأكيد</b> العمليات بانتظار التأكيد. الاعتماد النهائي للأدمن.`;
   } else if(currentRole === 'admin'){
     b.innerHTML = `<strong>✅ دورك: أدمن</strong> — تستطيع <b>اعتماد</b> العمليات المؤكَّدة. الاعتماد يقفل العملية ويأرشفها.`;
   }
+}
+
+function startListeners(){
+  // المحافظ للأسماء
+  onSnapshot(collection(db,'wallets'),
+    snap=>{ walletsMap.clear(); snap.docs.forEach(d=>walletsMap.set(d.id, d.data().name||d.id)); },
+    err=>{ console.error('[approvals] wallets error:', err); }
+  );
+
+  // كل الحركات الجديدة (التي بها approvalStatus)
+  onSnapshot(collection(db,'transactions_v2'),
+    snap=>{
+      txs = snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .filter(t=>t.approvalStatus)
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      updateCounts();
+      render();
+    },
+    err=>{
+      console.error('[approvals] tx error:', err);
+      document.getElementById('list-content').innerHTML = `<div class="empty-pl" style="color:#ff3d6e">⛔ ${err.message}</div>`;
+    }
+  );
 }
 
 function updateCounts(){
@@ -152,6 +226,7 @@ window.setTab = function(tab){
 function render(){
   const filtered = txs.filter(t=>t.approvalStatus===activeTab);
   const el = document.getElementById('list-content');
+  if(!el) return;
   if(!filtered.length){
     const msg = activeTab==='pending' ? '✨ لا توجد عمليات بانتظار التأكيد' :
                 activeTab==='confirmed' ? '✨ لا توجد عمليات بانتظار الاعتماد' :
@@ -218,12 +293,20 @@ function renderCard(t){
         <div class="ac-field">المحفظة <b>${wName}</b></div>
         <div class="ac-field">التاريخ <b>${t.date || fmtDate(t.createdAt)}</b></div>
         <div class="ac-field">أنشأها <b>${t.createdByName || '—'}</b></div>
-        ${t.orderId?`<div class="ac-field">الأوردر <b style="font-family:monospace">${t.orderId.slice(-8)}</b></div>`:''}
+        ${t.orderId?`<div class="ac-field">الأوردر <b style="font-family:monospace">${String(t.orderId).slice(-8)}</b></div>`:''}
       </div>
       ${trail?`<div class="ac-trail">${trail}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
   `;
+}
+
+function showToast(msg, type){
+  const t = document.createElement('div');
+  t.style.cssText = `position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:10px;font-weight:700;font-size:13px;z-index:99998;background:${type==='ok'?'rgba(0,217,126,.95)':'rgba(255,61,110,.95)'};color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.4)`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 3000);
 }
 
 window.confirmTx = async function(txId){
@@ -235,10 +318,10 @@ window.confirmTx = async function(txId){
       confirmedByName: currentUserName,
       confirmedAt: serverTimestamp(),
     });
-    toast('✅ تم التأكيد — بانتظار اعتماد الأدمن','ok');
+    showToast('✅ تم التأكيد — بانتظار اعتماد الأدمن','ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'تأكيد عملية', txId});
-    if(!handled) toast('❌ '+e.message,'err');
+    if(!handled) showToast('❌ '+e.message,'err');
   }
 };
 
@@ -252,10 +335,10 @@ window.approveTx = async function(txId){
       approvedAt: serverTimestamp(),
       isLocked: true,
     });
-    toast('🔒 تم الاعتماد والأرشفة','ok');
+    showToast('🔒 تم الاعتماد والأرشفة','ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'اعتماد عملية', txId});
-    if(!handled) toast('❌ '+e.message,'err');
+    if(!handled) showToast('❌ '+e.message,'err');
   }
 };
 
@@ -270,10 +353,10 @@ window.rejectTx = async function(txId){
       rejectedAt: serverTimestamp(),
       rejectReason: reason.trim(),
     });
-    toast('❌ تم الرفض','ok');
+    showToast('❌ تم الرفض','ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'رفض عملية', txId});
-    if(!handled) toast('❌ '+e.message,'err');
+    if(!handled) showToast('❌ '+e.message,'err');
   }
 };
 </script>
