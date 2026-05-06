@@ -946,13 +946,20 @@ function renderKanban(){
         else timeBadge=`<span class="time-badge ok">✓ ${rem} يوم</span>`;
       }
       const revBadge=(o.revisions||0)>0?`<span class="rev-badge">🔄 ${o.revisions}</span>`:'';
+      const isAssignedToMe=isDesigner&&o.designerId===(auth.currentUser?.uid||'');
+      const awaitingAccept=!!o.designerId&&!o.designerAcceptedAt;
+      const ackBadge=awaitingAccept?`<span class="time-badge warn" style="background:rgba(240,160,32,.2);color:var(--y);border:1px dashed var(--y)">⏳ بانتظار تأكيد المصمم</span>`:'';
       let actionBtns='';
       if(isDesigner){
         const btns=[];
-        if(key==='pending')btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.15);color:var(--g)" onclick="startWork('${o._id}')">▶ بدء العمل</button>`);
-        if(key==='wip'){
-          btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.15);color:var(--y)" onclick="pauseWork('${o._id}')">⏸ إيقاف</button>`);
-          btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.15);color:var(--b)" onclick="finishWork('${o._id}')">✓ إنهاء</button>`);
+        if(isAssignedToMe&&awaitingAccept){
+          btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.25);color:var(--y);font-weight:800;border:1px solid var(--y)" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر</button>`);
+        } else {
+          if(key==='pending')btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.15);color:var(--g)" onclick="startWork('${o._id}')">▶ بدء العمل</button>`);
+          if(key==='wip'){
+            btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.15);color:var(--y)" onclick="pauseWork('${o._id}')">⏸ إيقاف</button>`);
+            btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.15);color:var(--b)" onclick="finishWork('${o._id}')">✓ إنهاء</button>`);
+          }
         }
         if(btns.length)actionBtns=`<div class="card-actions" onclick="event.stopPropagation()">${btns.join('')}</div>`;
       }
@@ -963,7 +970,7 @@ function renderKanban(){
         ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}${isAdmView&&o.designerId?` <span style="opacity:.7">(${dsLoad[o.designerId]||1})</span>`:''}` +
           `</span></div>`:''}
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center">
-          ${stageSlaBadge(o)}${timeBadge}${revBadge}
+          ${stageSlaBadge(o)}${timeBadge}${revBadge}${ackBadge}
           ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
           ${dep>0?`<span style="font-size:10px;background:rgba(0,217,126,.15);color:var(--g);border-radius:20px;padding:1px 8px">💰 عربون ${fn(dep)} ج</span>`:''}
           ${hasFile?`<span style="font-size:10px;background:rgba(59,158,255,.15);color:var(--b);border-radius:20px;padding:1px 8px">📎 ملف</span>`:''}
@@ -1029,6 +1036,11 @@ function renderDesignDashboard(){
       <div class="dd-card-ico">🔴</div>
       <div class="dd-card-val" style="color:var(--r)">${late}</div>
       <div class="dd-card-lbl">الطلبات المتأخرة</div>
+    </div>
+    <div class="dd-card" style="border-right:3px solid var(--y)">
+      <div class="dd-card-ico">⏳</div>
+      <div class="dd-card-val" style="color:var(--y)">${orders.filter(o=>o.designerId&&!o.designerAcceptedAt).length}</div>
+      <div class="dd-card-lbl">بانتظار تأكيد الاستلام</div>
     </div>
     ${sorted.length?`
     <div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:14px 16px">
@@ -1190,6 +1202,19 @@ function renderPanel(o){
       <div class="section-title" style="color:var(--y);margin-bottom:8px">📋 بيانات التصميم</div>
       ${o.notes?`<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-bottom:${o.refFileUrl?'10px':'0'}">${o.notes}</div>`:''}
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:8px;color:var(--p);font-size:12px;font-weight:700;text-decoration:none">${o.refFileType?.includes('pdf')?'📄':'🖼️'} عرض الملف المرجعي</a>`:''}
+    </div>`:''}
+
+    <!-- تأكيد الاستلام — للمصمم المعيَّن -->
+    ${(['graphic_designer','design_operator'].includes(currentRole)&&o.designerId===(auth.currentUser?.uid||'')&&!o.designerAcceptedAt)?`
+    <div class="section" style="background:rgba(240,160,32,.08);border:1px dashed var(--y)">
+      <div class="section-title" style="color:var(--y);margin-bottom:8px">⏳ بانتظار تأكيد استلام الأوردر</div>
+      <div style="font-size:12px;color:var(--dim2);margin-bottom:10px">تم تعيين هذا الأوردر لك. أكّد استلامه قبل بدء العمل.</div>
+      <button class="btn btn-y btn-sm" style="font-weight:800" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر — ابدأ العمل</button>
+    </div>`:''}
+
+    ${(o.designerAcceptedAt&&['admin','operation_manager','customer_service','design_operator'].includes(currentRole))?`
+    <div class="section" style="background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.15)">
+      <div style="font-size:12px;color:var(--g);font-weight:700">✓ تم تأكيد استلام المصمم للأوردر</div>
     </div>`:''}
 
     <!-- حالة التصميم -->
@@ -1441,6 +1466,9 @@ window.saveOrder=async function(){
       deposit:dep,depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
       totalPaid:dep,remaining:0,salePrice:0,
       designerId:desOpt?.value||'',designerName:desOpt?.value?desOpt.text:'',
+      designerAssignedAt:desOpt?.value?serverTimestamp():null,
+      designerAssignedBy:desOpt?.value?(currentUser.uid||''):'',
+      designerAcceptedAt:null,designerAcceptedBy:'',
       deadline:gv('np-dl'),notes:gv('np-notes'),
       designFileUrl:'',designFileNote:'',
       costItems:[],printAddons:[],
@@ -1588,19 +1616,34 @@ window.saveAssignDesigner=async function(){
   const desName=sel?.options[sel.selectedIndex]?.dataset?.name||sel?.options[sel.selectedIndex]?.text||'';
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const updates={
       designerId:desId,
       designerName:desId?desName:'',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName}`:'👤 إلغاء تعيين المصمم',by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName} — بانتظار تأكيد الاستلام`:'👤 إلغاء تعيين المصمم',by:userName}],
       updatedAt:serverTimestamp()
-    });
+    };
+    if(desId){
+      updates.designerAssignedAt=serverTimestamp();
+      updates.designerAssignedBy=auth.currentUser?.uid||'';
+      updates.designerAcceptedAt=null;
+      updates.designerAcceptedBy='';
+    }else{
+      updates.designerAssignedAt=null;
+      updates.designerAssignedBy='';
+      updates.designerAcceptedAt=null;
+      updates.designerAcceptedBy='';
+    }
+    await updateDoc(doc(db,'orders',activeId),updates);
     cM('assign-des');
-    toast(desId?`✅ تم تعيين ${desName}`:'✅ تم إلغاء التعيين','ok');
+    toast(desId?`✅ تم تعيين ${desName} — بانتظار تأكيده`:'✅ تم إلغاء التعيين','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.startWork=async function(id){
   const o=orders.find(x=>x._id===id);if(!o)return;
+  if(o.designerId&&!o.designerAcceptedAt){
+    return toast('⚠️ أكّد استلام الأوردر أولاً','err');
+  }
   try{
     await updateDoc(doc(db,'orders',id),{
       designStage:'wip',designStartedAt:nowStr(),
@@ -1608,6 +1651,23 @@ window.startWork=async function(id){
       updatedAt:serverTimestamp()
     });
     toast('✅ بدأ العمل','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.acceptOrder=async function(id){
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const uid=auth.currentUser?.uid||'';
+  if(!o.designerId){return toast('⚠️ الأوردر غير مكلّف','err');}
+  if(o.designerId!==uid){return toast('⚠️ الأوردر غير مُعيَّن لك','err');}
+  if(o.designerAcceptedAt){return toast('ℹ️ تم تأكيد الاستلام مسبقاً','');}
+  try{
+    await updateDoc(doc(db,'orders',id),{
+      designerAcceptedAt:serverTimestamp(),
+      designerAcceptedBy:uid,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✓ المصمم أكّد استلام الأوردر`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم تأكيد الاستلام — يمكنك بدء العمل','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
