@@ -95,6 +95,20 @@ export function calcOrderPayment(order, delta) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// HELPER: حقول الاعتماد الثنائي — تُضاف لكل tx + ledger جديدة
+// كل عملية تبدأ pending، تحتاج تأكيد ops manager ثم اعتماد admin
+// ══════════════════════════════════════════════════════════════════
+export function approvalFields() {
+  return {
+    approvalStatus: 'pending',  // 'pending' | 'confirmed' | 'approved' | 'rejected'
+    confirmedBy: '', confirmedByName: '', confirmedAt: null,
+    approvedBy:  '', approvedByName:  '', approvedAt:  null,
+    rejectedBy:  '', rejectedByName:  '', rejectedAt:  null, rejectReason: '',
+    isLocked:    false,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // LOW-LEVEL: أضف إدخال ledger لـ batch موجود
 // استخدمه في الوحدات التي لديها batch منطقها الخاص
 // ══════════════════════════════════════════════════════════════════
@@ -134,6 +148,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     createdAt:    serverTimestamp(),
     isDeleted:    false,
     editHistory:  [],
+    ...approvalFields(),
   });
   console.log('[FSE] 📝 ledger added to batch:', eventType, data.amount);
   return ref;
@@ -216,6 +231,7 @@ async function handleVendorPayment(db, p) {
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: supplier_payments + transactions_v2');
 
@@ -251,6 +267,7 @@ async function handleVendorPaymentReversal(db, p) {
     date: new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: supplier_payment deleted + reversal transactions_v2');
 
@@ -322,6 +339,7 @@ async function handleSalaryPayment(db, p) {
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   batch.set(epRef, {
@@ -373,6 +391,7 @@ async function handlePayroll(db, p) {
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(), source: 'payroll',
+      ...approvalFields(),
     });
 
     addLedgerToBatch(batch, db, 'SALARY_PAYMENT', {
@@ -419,6 +438,7 @@ async function handleCustomerPayment(db, p) {
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: transactions_v2');
 
@@ -464,6 +484,7 @@ async function handleShippingSettlement(db, p) {
     note: p.note || '', date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   const settleRef = doc(collection(db, 'shipping_settlements'));
@@ -525,6 +546,7 @@ async function handleShippingSettlementReversal(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   batch.delete(doc(db, 'shipping_settlements', p.settlementId));
@@ -573,6 +595,7 @@ async function handleWalletTransfer(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   const inRef = doc(collection(db, 'transactions_v2'));
@@ -584,6 +607,7 @@ async function handleWalletTransfer(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   addLedgerToBatch(batch, db, 'WALLET_TRANSFER', {
@@ -633,6 +657,7 @@ async function handleGeneralExpense(db, p) {
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(),
+      ...approvalFields(),
     });
     console.log('[FSE] 🏭 module updated: transactions_v2');
   }
