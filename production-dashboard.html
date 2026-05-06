@@ -185,11 +185,10 @@
     <!-- Supplier -->
     <div class="psec" id="pn-sup-sec">
       <div class="psec-title">🏭 المطبعة / المورد</div>
-      <div id="pn-sup-info" style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px">
-        <div style="font-size:14px;font-weight:800" id="pn-sup-name">—</div>
-        <div style="font-size:11px;color:var(--dim2);margin-top:2px" id="pn-sup-type"></div>
-      </div>
-      <button class="wa-sup-btn" id="pn-wa-btn" onclick="waSupplier()" style="display:none">📱 واتساب المورد — متابعة الأوردر</button>
+      <select id="pn-sup-sel" class="note-inp" style="padding:11px 12px;font-size:14px;direction:rtl;cursor:pointer;margin-bottom:0" onchange="saveSupplier(this.value)">
+        <option value="">— اختر المورد —</option>
+      </select>
+      <button class="wa-sup-btn" id="pn-wa-btn" onclick="waSupplier()" style="display:none;margin-top:8px">📱 واتساب المورد — متابعة الأوردر</button>
       <button class="wa-sup-btn" id="pn-wa-prob-btn" onclick="waSupplierProblem()" style="display:none;background:#ff3d6e;margin-top:6px">🚨 إبلاغ مشكلة للمورد</button>
     </div>
 
@@ -570,28 +569,19 @@ function renderPanel(o){
     dsec.style.display='';
     document.getElementById('pn-design-imgs').innerHTML=imgs.map(u=>`<img src="${u}" class="design-img" style="margin-bottom:8px" onclick="window.open('${u}')" onerror="this.style.display='none'">`).join('');
   } else {dsec.style.display='none';}
-  // Supplier
-  const sup=o.supplierId?suppliersMap[o.supplierId]:null;
-  const supNameEl=document.getElementById('pn-sup-name');
-  const supTypeEl=document.getElementById('pn-sup-type');
+  // Supplier dropdown
+  const selEl=document.getElementById('pn-sup-sel');
   const waBtn=document.getElementById('pn-wa-btn');
   const waProbBtn=document.getElementById('pn-wa-prob-btn');
-  if(sup){
-    supNameEl.textContent=sup.name||'—';
-    supTypeEl.textContent=sup.printType||sup.category||'';
-    waBtn.style.display='flex';
-    waProbBtn.style.display='flex';
-  } else if(o.supplierName){
-    supNameEl.textContent=o.supplierName;
-    supTypeEl.textContent='';
-    waBtn.style.display=o.supplierPhone?'flex':'none';
-    waProbBtn.style.display=o.supplierPhone?'flex':'none';
-  } else {
-    supNameEl.textContent='لم تُختر بعد';
-    supTypeEl.textContent='';
-    waBtn.style.display='none';
-    waProbBtn.style.display='none';
+  if(selEl){
+    const sups=Object.values(suppliersMap).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    selEl.innerHTML='<option value="">— اختر المورد —</option>'+
+      sups.map(s=>`<option value="${s._id}" data-phone="${s.phone||s.whatsapp||''}">${s.name}${s.printType?' · '+s.printType:''}</option>`).join('');
+    selEl.value=o.supplierId||'';
   }
+  const hasSup=!!(o.supplierId||o.supplierPhone);
+  waBtn.style.display=hasSup?'flex':'none';
+  waProbBtn.style.display=hasSup?'flex':'none';
   // Products detail
   document.getElementById('pn-products-detail').innerHTML=prods.map(p=>{
     const extras=(p.extras||[]).join(' · ')||'—';
@@ -650,6 +640,31 @@ window.setStatus=async function(status){
       updatedAt:serverTimestamp()
     });
     toast(labels[status]||'تم','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ── Save Supplier ──
+window.saveSupplier=async function(supId){
+  if(!activeOrderId)return;
+  const o=myOrders.find(x=>x._id===activeOrderId)||allOrders.find(x=>x._id===activeOrderId);
+  if(!o)return;
+  const sup=supId?suppliersMap[supId]:null;
+  const name=sup?.name||'';
+  const phone=sup?.phone||sup?.whatsapp||'';
+  const waBtn=document.getElementById('pn-wa-btn');
+  const waProbBtn=document.getElementById('pn-wa-prob-btn');
+  try{
+    await updateDoc(doc(db,'orders',activeOrderId),{
+      supplierId:supId||'',
+      supplierName:name,
+      supplierPhone:phone,
+      ...((!o.productionAgent&&currentUser)?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:supId?`🏭 مورد: ${name}`:'🏭 إلغاء المورد',by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    waBtn.style.display=supId&&phone?'flex':'none';
+    waProbBtn.style.display=supId&&phone?'flex':'none';
+    toast(supId?`✅ تم اختيار ${name}`:'✅ تم إلغاء المورد','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
