@@ -84,6 +84,39 @@ service cloud.firestore {
           && hasEntity
           && d.get('isDeleted', false) == false;
     }
+    // ══ Approval workflow helpers ══
+    // الـ tx/ledger الجديدة تبدأ approvalStatus='pending'
+    // ops_manager يقدر pending → confirmed أو pending → rejected
+    // admin يقدر confirmed → approved (نهائي + isLocked=true)، أو أي → rejected
+    function isOpsManager() {
+      return role() == 'operation_manager';
+    }
+    function isApprovalUpdate() {
+      // تحديث يقتصر على حقول الاعتماد فقط — لا يلمس amount/walletId/category/...
+      let allowed = ['approvalStatus','confirmedBy','confirmedByName','confirmedAt',
+                     'approvedBy','approvedByName','approvedAt',
+                     'rejectedBy','rejectedByName','rejectedAt','rejectReason',
+                     'isLocked'];
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return changedKeys.hasOnly(allowed);
+    }
+    function canConfirm() {
+      // ops_manager أو admin يقدر يأكد
+      return (isAdmin() || isOpsManager())
+          && resource.data.get('approvalStatus','pending') == 'pending'
+          && request.resource.data.approvalStatus in ['confirmed','rejected'];
+    }
+    function canApprove() {
+      // admin فقط يعتمد (والاعتماد يتطلب confirmed سابقاً)
+      // إلا لو admin اختار "اعتماد مباشر" — مسموح من pending مباشرة
+      return isAdmin()
+          && resource.data.get('approvalStatus','pending') in ['pending','confirmed']
+          && request.resource.data.approvalStatus in ['approved','rejected']
+          && request.resource.data.get('isLocked', false) == true;
+    }
+    function isLocked() {
+      return resource.data.get('isLocked', false) == true;
+    }
 
     // ══ Users ══
     match /users/{userId} {
@@ -231,7 +264,16 @@ service cloud.firestore {
     match /transactions_v2/{txId} {
       allow read:   if isAuth() && canFinancialRead();
       allow create: if isAuth() && canFinancialWrite() && validTx();
-      allow update, delete: if isAdmin();
+      // التحديث: admin يقدر يعمل أي تعديل (لكن المغلق محمي حتى من admin إلا للاعتماد)
+      // ops_manager يقدر يأكد فقط (تحديث حقول approval)
+      // أي مستخدم آخر: ممنوع
+      allow update: if isAuth() && (
+        // قفل: لا تعديل بعد الاعتماد إلا لو admin يحدّث حقول approval فقط
+        (isLocked() ? (isAdmin() && isApprovalUpdate())
+                    : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())
+                                 || (isAdmin() && isApprovalUpdate())))
+      );
+      allow delete: if isAdmin() && !isLocked();
     }
 
     // ══ Products ══
@@ -336,8 +378,13 @@ service cloud.firestore {
     match /financial_ledger/{entryId} {
       allow read:   if isAuth() && canFinancialRead();
       allow create: if isAuth() && canFinancialWrite() && validLedger();
-      allow update: if isAuth() && isAdmin();
-      allow delete: if isAuth() && isAdmin();
+      // المغلق محمي: حتى admin لا يقدر يعدّل بعد الاعتماد إلا حقول الاعتماد فقط
+      // ops_manager يقدر يأكد فقط (تحديث حقول الاعتماد)
+      allow update: if isAuth() && (
+        (isLocked() ? (isAdmin() && isApprovalUpdate())
+                    : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())))
+      );
+      allow delete: if isAuth() && isAdmin() && !isLocked();
     }
 
     // ══ Chat ══
