@@ -1,5 +1,5 @@
 // Business2Card ERP — Service Worker
-const CACHE = 'b2c-v47';
+const CACHE = 'b2c-v48';
 const OFFLINE_PAGES = [
   '/b2c-erp/login.html',
   '/b2c-erp/index.html',
