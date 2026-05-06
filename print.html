@@ -260,6 +260,31 @@
 </div>
 
 <!-- ═══ MODAL: تسليم التنفيذ — اختيار المنفّذ ═══ -->
+<!-- ═══ MODAL: فصل المنتجات الجاهزة للتنفيذ ═══ -->
+<div class="overlay" id="ov-split-order">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">✂️ فصل المنتجات المطبوعة</span>
+      <button class="modal-x" onclick="cM('split-order')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--dim2);margin-bottom:12px;line-height:1.6">
+        المنتجات المختارة ستُفصل في أوردر فرعي وتنتقل للتنفيذ مباشرة.<br>
+        الباقي يبقى في الأوردر الحالي بمرحلة الطباعة.<br>
+        <span style="color:var(--y);font-size:11px">⚠️ المالية كلها تبقى على الأوردر الأصلي.</span>
+      </p>
+      <div id="split-products-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+      <div style="font-size:11px;color:var(--dim2);background:var(--bg3);padding:8px;border-radius:8px">
+        <strong>الأوردر الفرعي سيدخل مرحلة:</strong> <span style="color:var(--g);font-weight:800">تنفيذ</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('split-order')">إلغاء</button>
+      <button class="btn btn-b" onclick="confirmSplitOrder()">✂️ افصل وأرسل للتنفيذ</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-pick-prod">
   <div class="modal" style="max-width:380px">
     <div class="modal-head"><span class="modal-title">🏭 تسليم التنفيذ</span><button class="modal-x" onclick="cM('pick-prod')">✕</button></div>
@@ -384,7 +409,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -629,6 +654,16 @@ function renderPanel(o){
           </div>
         </div>`;
       }).join('')}
+      ${(()=>{
+        // عرض زر الفصل لو في على الأقل منتج مطبوع ومنتج غير مطبوع
+        const prods=o.products||[];
+        const hasPrinted=prods.some(p=>(p.productStatus||'pending')==='printed');
+        const hasNotPrinted=prods.some(p=>{const s=p.productStatus||'pending';return s!=='printed'&&s!=='done';});
+        if(hasPrinted&&hasNotPrinted){
+          return `<button onclick="openSplitOrder()" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px dashed var(--p);background:rgba(167,139,250,.08);color:var(--p);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">✂️ افصل المنتجات المطبوعة وأرسلها للتنفيذ</button>`;
+        }
+        return '';
+      })()}
       ${!(o.products||[]).length&&o.designImageUrl?`<div style="border-radius:12px;overflow:hidden;background:var(--bg3);border:1px solid var(--line)"><img src="${o.designImageUrl}" loading="lazy" onclick="window.open('${o.designImageUrl}','_blank')" style="width:100%;max-height:240px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2)"></div>`:''}
       </div>
     </div>
@@ -774,6 +809,61 @@ window.confirmMoveToProduction=async function(){
 };
 
 // Reject
+// فتح modal فصل الأوردر
+window.openSplitOrder=function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
+  const list=document.getElementById('split-products-list');
+  if(!list)return;
+  const prods=o.products||[];
+  list.innerHTML=prods.map((p,idx)=>{
+    const status=p.productStatus||'pending';
+    const isPrinted=status==='printed';
+    return `<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg3);border-radius:8px;cursor:pointer;border:1px solid var(--line)">
+      <input type="checkbox" class="split-prod-chk" data-idx="${idx}" ${isPrinted?'checked':''} style="width:18px;height:18px;accent-color:var(--p);cursor:pointer">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:700">${p.name} <span style="color:var(--dim2);font-weight:600">× ${p.qty}</span></div>
+        <div style="font-size:10px;margin-top:2px">${productStatusBadge(status)}</div>
+      </div>
+    </label>`;
+  }).join('');
+  document.getElementById('ov-split-order').classList.add('open');
+};
+
+window.confirmSplitOrder=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
+  const checks=document.querySelectorAll('.split-prod-chk:checked');
+  const indices=[...checks].map(c=>parseInt(c.dataset.idx));
+  if(!indices.length)return toast('⚠️ اختر منتجاً واحداً على الأقل','err');
+  const split=buildOrderSplit({
+    order:o, productIndices:indices, role:currentRole,
+    userId:auth?.currentUser?.uid||'', userName,
+    targetStage:'production'
+  });
+  if(!split.ok)return toast('⛔ '+split.errors.join(' · '),'err');
+  if(!confirm(`فصل ${split.splitCount} منتجات في أوردر فرعي ينتقل للتنفيذ؟`))return;
+  try{
+    const batch=writeBatch(db);
+    const childRef=doc(collection(db,'orders'));
+    batch.set(childRef,{
+      ...split.childOrderData,
+      parentOrderId:activeId,
+      createdAt:serverTimestamp(),
+      updatedAt:serverTimestamp(),
+    });
+    batch.update(doc(db,'orders',activeId),{
+      ...split.parentUpdate.fields,
+      childOrderIds:[...(o.childOrderIds||[]),childRef.id],
+      timeline:[...(o.timeline||[]),{...split.parentUpdate.timelineEntry,childOrderId:childRef.id}],
+      updatedAt:serverTimestamp(),
+    });
+    await batch.commit();
+    cM('split-order');
+    toast(`✅ تم فصل ${split.splitCount} منتجات في أوردر فرعي`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
 window.setPrintProductStatus=async function(idx,status){
   if(!activeId)return;
