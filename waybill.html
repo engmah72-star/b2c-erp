@@ -13,7 +13,8 @@ body{background:#f0f0f0;padding:16px;color:#0d0f1c;min-height:100vh}
 @media print{
   body{background:#fff !important;padding:0 !important}
   .no-print{display:none !important}
-  .waybill{box-shadow:none !important;border:1.5px solid #000 !important;margin:0 !important;border-radius:0 !important}
+  .waybill{box-shadow:none !important;border:1.5px solid #000 !important;margin:0 !important;border-radius:0 !important;page-break-after:always}
+  .waybill:last-child{page-break-after:auto}
   .err-box,.toolbar{display:none !important}
 }
 
@@ -27,7 +28,8 @@ body{background:#f0f0f0;padding:16px;color:#0d0f1c;min-height:100vh}
 .btn-yellow:hover{background:#e69500}
 
 /* ── Waybill ── */
-.waybill{max-width:640px;margin:0 auto;background:#fff;border:2px solid #000;border-radius:8px;padding:22px;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+.waybill{max-width:640px;margin:0 auto 18px;background:#fff;border:2px solid #000;border-radius:8px;padding:22px;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+.bulk-counter{max-width:640px;margin:0 auto 14px;background:#fff;border-radius:8px;padding:10px 14px;font-size:12px;color:#666;text-align:center;font-weight:700}
 .wb-head{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:2px solid #000;margin-bottom:16px}
 .wb-logo-block{display:flex;align-items:center;gap:10px}
 .wb-logo-icon{width:46px;height:46px;border:2px solid #000;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900}
@@ -99,48 +101,8 @@ body{background:#f0f0f0;padding:16px;color:#0d0f1c;min-height:100vh}
   <button class="btn btn-primary no-print" style="margin-top:14px" onclick="goBack()">← رجوع</button>
 </div>
 
-<div class="waybill" id="waybill" style="display:none">
-  <div class="wb-head">
-    <div class="wb-logo-block">
-      <div class="wb-logo-icon">🎨</div>
-      <div>
-        <div class="wb-logo-name">Business2Card</div>
-        <div class="wb-logo-tag">بوليصة شحن — SHIPPING WAYBILL</div>
-      </div>
-    </div>
-    <div class="wb-tracking" id="wb-tracking">—</div>
-  </div>
-
-  <div class="wb-section">
-    <div class="wb-label">المُرسَل إليه — RECIPIENT</div>
-    <div class="wb-value" id="wb-name">—</div>
-    <div class="wb-sub" id="wb-phone">📞 —</div>
-    <div class="wb-sub" id="wb-address" style="margin-top:6px">📍 —</div>
-  </div>
-
-  <div class="wb-section-row">
-    <div>
-      <div class="wb-label">المحتويات — CONTENTS</div>
-      <div class="wb-cargo" id="wb-cargo">—</div>
-    </div>
-    <div class="wb-amount">
-      <div class="wb-amount-lbl">المطلوب تحصيله — TO COLLECT</div>
-      <div class="wb-amount-val"><span id="wb-amount">—</span> <span style="font-size:14px">ج</span></div>
-      <div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>
-    </div>
-  </div>
-
-  <div class="wb-notes-box" id="wb-notes-box" style="display:none">
-    <div style="font-size:9px;font-weight:800;color:#a06600;margin-bottom:3px">ملاحظات للمندوب — COURIER NOTES</div>
-    <div id="wb-notes">—</div>
-  </div>
-
-  <div class="wb-foot">
-    <div>📦 رقم الأوردر: <strong id="wb-orderId">—</strong></div>
-    <div>🚚 <span id="wb-company">—</span></div>
-    <div>📅 <strong id="wb-date">—</strong></div>
-  </div>
-</div>
+<div id="bulk-counter" class="bulk-counter no-print" style="display:none"></div>
+<div id="waybills-container"></div>
 
 <!-- Edit Modal -->
 <div class="ov" id="ov-edit">
@@ -177,8 +139,10 @@ const app=initializeApp(FB);
 const auth=getAuth(app);
 const db=getFirestore(app);
 
-let order=null,orderId=null,currentUser=null,userName='',userRole='',userPerms={};
-const orderIdParam=new URLSearchParams(location.search).get('id');
+let orders=[],currentUser=null,userName='',userRole='',userPerms={};
+const _qp=new URLSearchParams(location.search);
+const orderIdsParam=(_qp.get('ids')||_qp.get('id')||'').split(',').map(s=>s.trim()).filter(Boolean);
+const isBulk=orderIdsParam.length>1;
 
 const $ = id => document.getElementById(id);
 const setText = (id,v) => {const e=$(id);if(e)e.textContent=v;};
@@ -187,17 +151,21 @@ const sv = (id,v) => {const e=$(id);if(e)e.value=v||'';};
 const gv = id => $(id)?.value||'';
 function nowStr(){return new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});}
 function toast(msg,t=''){const c=$('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
+function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 window.goBack=()=>{if(history.length>1)history.back();else location.href='index.html';};
 
 window.printNow=()=>{
   setTimeout(()=>window.print(),100);
-  if(currentUser&&order){
-    updateDoc(doc(db,'orders',orderId),{
-      'waybill.printedAt':nowStr(),
-      'waybill.printedBy':userName,
-      'waybill.printCount':((order.waybill?.printCount)||0)+1,
-    }).catch(()=>{/* silent */});
+  // stamp printed metadata on every order in this batch (silently)
+  if(currentUser&&orders.length){
+    orders.forEach(o=>{
+      updateDoc(doc(db,'orders',o._id),{
+        'waybill.printedAt':nowStr(),
+        'waybill.printedBy':userName,
+        'waybill.printCount':((o.waybill?.printCount)||0)+1,
+      }).catch(()=>{/* silent */});
+    });
   }
 };
 
@@ -205,7 +173,7 @@ window.printNow=()=>{
 onAuthStateChanged(auth,async u=>{
   if(!u){location.href='login.html';return;}
   currentUser=u;
-  if(!orderIdParam){showError('لم يُحدَّد رقم الأوردر');return;}
+  if(!orderIdsParam.length){showError('لم يُحدَّد رقم الأوردر');return;}
   try{
     const userSnap=await getDoc(doc(db,'users',u.uid));
     if(userSnap.exists()){
@@ -214,13 +182,19 @@ onAuthStateChanged(auth,async u=>{
       userRole=ud.role||'';
       userPerms=ud.permissions||{};
     }
-    const oSnap=await getDoc(doc(db,'orders',orderIdParam));
-    if(!oSnap.exists()){showError('الأوردر غير موجود');return;}
-    order={...oSnap.data(),_id:orderIdParam};
-    orderId=orderIdParam;
+    // Load all orders in parallel
+    const snaps=await Promise.all(orderIdsParam.map(id=>getDoc(doc(db,'orders',id))));
+    const loaded=[],missing=[];
+    snaps.forEach((s,i)=>{
+      if(s.exists()) loaded.push({...s.data(),_id:orderIdsParam[i]});
+      else missing.push(orderIdsParam[i]);
+    });
+    if(!loaded.length){showError('لم يُعثر على أي أوردر');return;}
+    orders=loaded;
+    if(missing.length) toast(`⚠️ ${missing.length} أوردر مش موجود`,'err');
     render();
   }catch(e){
-    if((e.code||'').includes('permission')) showError('ليس لديك صلاحية عرض هذا الأوردر');
+    if((e.code||'').includes('permission')) showError('ليس لديك صلاحية عرض الأوردر');
     else showError('خطأ: '+(e.message||e));
   }
 });
@@ -248,28 +222,64 @@ function getWaybillView(o){
   };
 }
 
+function buildWaybillHtml(o,idx){
+  const v=getWaybillView(o);
+  const orderRef=escHtml(o.orderId||(o._id||'').slice(-6));
+  return `<div class="waybill" data-id="${escHtml(o._id)}">
+    <div class="wb-head">
+      <div class="wb-logo-block">
+        <div class="wb-logo-icon">🎨</div>
+        <div>
+          <div class="wb-logo-name">Business2Card</div>
+          <div class="wb-logo-tag">بوليصة شحن — SHIPPING WAYBILL</div>
+        </div>
+      </div>
+      <div class="wb-tracking">${escHtml(v.tracking)}</div>
+    </div>
+    <div class="wb-section">
+      <div class="wb-label">المُرسَل إليه — RECIPIENT</div>
+      <div class="wb-value">${escHtml(v.name)}</div>
+      <div class="wb-sub">📞 ${escHtml(v.phone)}</div>
+      <div class="wb-sub" style="margin-top:6px">📍 ${escHtml((v.gov!=='—'?v.gov+' — ':'')+v.address)}</div>
+    </div>
+    <div class="wb-section-row">
+      <div>
+        <div class="wb-label">المحتويات — CONTENTS</div>
+        <div class="wb-cargo">${escHtml(v.cargo)}</div>
+      </div>
+      <div class="wb-amount">
+        <div class="wb-amount-lbl">المطلوب تحصيله — TO COLLECT</div>
+        <div class="wb-amount-val">${fn(v.amount)} <span style="font-size:14px">ج</span></div>
+        <div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>
+      </div>
+    </div>
+    ${v.notes?`<div class="wb-notes-box">
+      <div style="font-size:9px;font-weight:800;color:#a06600;margin-bottom:3px">ملاحظات للمندوب — COURIER NOTES</div>
+      <div>${escHtml(v.notes)}</div>
+    </div>`:''}
+    <div class="wb-foot">
+      <div>📦 رقم الأوردر: <strong>${orderRef}</strong></div>
+      <div>🚚 ${escHtml(v.company)}</div>
+      <div>📅 <strong>${new Date().toLocaleDateString('ar-EG')}</strong></div>
+    </div>
+  </div>`;
+}
+
 function render(){
   $('loading-box').style.display='none';
-  $('waybill').style.display='block';
   $('btn-print').style.display='inline-block';
-  if(canEdit()) $('btn-edit').style.display='inline-block';
-  const v=getWaybillView(order);
-  setText('wb-name', v.name);
-  setText('wb-phone', '📞 ' + v.phone);
-  setText('wb-address', '📍 ' + (v.gov ? v.gov + ' — ' : '') + v.address);
-  setText('wb-cargo', v.cargo);
-  setText('wb-amount', fn(v.amount));
-  setText('wb-orderId', order.orderId || (order._id||'').slice(-6));
-  setText('wb-company', v.company);
-  setText('wb-tracking', v.tracking);
-  setText('wb-date', new Date().toLocaleDateString('ar-EG'));
-  if(v.notes){
-    $('wb-notes-box').style.display='block';
-    setText('wb-notes', v.notes);
-  } else {
-    $('wb-notes-box').style.display='none';
+  // Edit only available for single-order mode
+  if(!isBulk && canEdit()) $('btn-edit').style.display='inline-block';
+  // Counter for bulk mode
+  if(isBulk){
+    $('bulk-counter').style.display='block';
+    setText('bulk-counter', `🧾 ${orders.length} بوليصة — كل بوليصة في صفحة A5 منفصلة`);
   }
-  document.title='بوليصة — '+v.name;
+  const html=orders.map((o,i)=>buildWaybillHtml(o,i)).join('');
+  $('waybills-container').innerHTML=html;
+  document.title=isBulk
+    ? `بوليصات (${orders.length})`
+    : 'بوليصة — '+getWaybillView(orders[0]).name;
 }
 
 function canEdit(){
@@ -281,10 +291,11 @@ function canEdit(){
   return false;
 }
 
-// ══ Edit ══
+// ══ Edit (single-order mode only) ══
 window.openEdit=()=>{
-  if(!order) return;
-  const v=getWaybillView(order);
+  if(isBulk||!orders.length) return;
+  const o=orders[0];
+  const v=getWaybillView(o);
   sv('ed-name', v.name==='—'?'':v.name);
   sv('ed-phone', v.phone==='—'?'':v.phone);
   sv('ed-gov', v.gov==='—'?'':v.gov);
@@ -299,9 +310,10 @@ window.openEdit=()=>{
 window.closeEdit=()=>$('ov-edit').classList.remove('open');
 
 window.saveEdit=async()=>{
-  if(!order) return;
-  if(order.stage==='archived') return toast('⛔ الأوردر مؤرشف','err');
-  if(order.shipStage==='returned') return toast('⛔ الأوردر مرتجع','err');
+  if(isBulk||!orders.length) return;
+  const o=orders[0];
+  if(o.stage==='archived') return toast('⛔ الأوردر مؤرشف','err');
+  if(o.shipStage==='returned') return toast('⛔ الأوردر مرتجع','err');
   const reason=gv('ed-reason').trim();
   if(reason.length<10) return toast('⚠️ سبب التعديل لا بد ≥ 10 أحرف','err');
   const newName=gv('ed-name').trim();
@@ -311,7 +323,7 @@ window.saveEdit=async()=>{
   const newCargo=gv('ed-cargo').trim();
   const newNotes=gv('ed-notes').trim();
   // Build changes set vs current view
-  const cur=getWaybillView(order);
+  const cur=getWaybillView(o);
   const changes=[];
   const track=(field,label,before,after)=>{if(String(before||'')!==String(after||''))changes.push({field,label,before:String(before||'—'),after:String(after||'—')});};
   track('recipientName','اسم المُستلم',cur.name==='—'?'':cur.name,newName);
@@ -341,15 +353,15 @@ window.saveEdit=async()=>{
       // Sync with top-level shipping fields so openShipSetup pre-fills correctly
       shipGov: newGov,
       shipAddress: newAddress,
-      auditLog: [...(order.auditLog||[]), auditEntry],
+      auditLog: [...(o.auditLog||[]), auditEntry],
       hasUnreviewedAudit: true,
-      timeline: [...(order.timeline||[]), {date:nowStr(),action:`✏️ تعديل البوليصة — ${changes.map(c=>c.label).join(', ')} · ${reason}`,by:userName}],
+      timeline: [...(o.timeline||[]), {date:nowStr(),action:`✏️ تعديل البوليصة — ${changes.map(c=>c.label).join(', ')} · ${reason}`,by:userName}],
       updatedAt: serverTimestamp(),
     };
-    await updateDoc(doc(db,'orders',orderId), updates);
+    await updateDoc(doc(db,'orders',o._id), updates);
     // Update local state
-    order={...order, ...updates,
-      waybill:{...(order.waybill||{}),recipientName:newName,recipientPhone:newPhone,recipientGov:newGov,recipientAddress:newAddress,cargoDescription:newCargo,notes:newNotes,lastEditedAt:nowStr(),lastEditedBy:userName},
+    orders[0]={...o, ...updates,
+      waybill:{...(o.waybill||{}),recipientName:newName,recipientPhone:newPhone,recipientGov:newGov,recipientAddress:newAddress,cargoDescription:newCargo,notes:newNotes,lastEditedAt:nowStr(),lastEditedBy:userName},
     };
     closeEdit();
     toast('✅ تم التعديل · تنبيه أُرسل للأدمن','ok');
