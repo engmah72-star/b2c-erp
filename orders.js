@@ -124,6 +124,147 @@ export function allProductsAtLeast(order, status) {
 }
 
 // ══════════════════════════════════════════
+// ORDER SPLIT — تقسيم الأوردر (إرسال جزء للمرحلة التالية)
+// ══════════════════════════════════════════
+/**
+ * يبني spec لتقسيم الأوردر إلى أوردر أصلي (parent) وأوردر فرعي (child).
+ *
+ * الفرعي:
+ *   - يأخذ المنتجات المختارة فقط
+ *   - يبدأ في المرحلة التالية (printing أو production)
+ *   - **عملياتي فقط** — لا يحمل سعراً ولا دفعات (الأصلي يحتفظ بكل المالية)
+ *   - مرتبط بالأصلي عبر parentOrderId
+ *
+ * الأصلي:
+ *   - تُحذف منه المنتجات المنفصلة
+ *   - يضاف child.id إلى childOrderIds[]
+ *   - يبقى في مرحلته الحالية
+ *
+ * **لا يتصل بقاعدة البيانات** — المُتَّصِل يكتب الـ batch بنفسه.
+ *
+ * @param {Object} args
+ * @param {Object} args.order            — الأوردر الأصلي
+ * @param {Array<number>} args.productIndices — indices من products[] لفصلها
+ * @param {string} args.role             — دور المستخدم
+ * @param {string} args.userId
+ * @param {string} args.userName
+ * @param {string} [args.targetStage]    — مرحلة الفرعي (افتراضي: المرحلة التالية للأصلي)
+ * @returns { ok, errors, parentUpdate, childOrderData }
+ *   - parentUpdate: حقول لتحديث الأصلي
+ *   - childOrderData: doc كامل للأوردر الفرعي (بدون id بعد، يُولَّد بـ doc())
+ */
+export function buildOrderSplit({ order, productIndices, role, userId, userName, targetStage = null }) {
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
+  if (!Array.isArray(productIndices) || !productIndices.length)
+    return { ok:false, errors:['اختر منتجاً واحداً على الأقل'] };
+  const allProducts = order.products || [];
+  const total = allProducts.length;
+  if (productIndices.length === total)
+    return { ok:false, errors:['لا يمكن فصل كل المنتجات — حرّك الأوردر بالكامل بدلاً من ذلك'] };
+  // تحقق من صحة الـ indices
+  for (const i of productIndices) {
+    if (i < 0 || i >= total) return { ok:false, errors:[`فهرس منتج غير صالح: ${i}`] };
+  }
+
+  const cur = order.stage || 'design';
+  const stageConf = STAGES[cur];
+  if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur] };
+  const target = targetStage || stageConf.next;
+  if (!target) return { ok:false, errors:['لا توجد مرحلة تالية'] };
+  if (!STAGES[target]) return { ok:false, errors:['مرحلة هدف غير معروفة: ' + target] };
+
+  // فحص الصلاحية
+  const allowed = STAGE_PERMISSIONS[cur] || [];
+  const isAdmin = role === 'admin' || role === 'operation_manager';
+  if (!isAdmin && !allowed.includes(role)) {
+    return { ok:false, errors:['ليس لديك صلاحية فصل الأوردر'] };
+  }
+
+  const idxSet = new Set(productIndices);
+  const splitOff = allProducts.filter((_, i) => idxSet.has(i));
+  const remaining = allProducts.filter((_, i) => !idxSet.has(i));
+  const now = nowStr();
+  const parentRef = order.orderId || (order._id ? order._id.slice(-8) : '');
+  const childOrderId = (parentRef ? parentRef + '/' : 'ORD-') +
+                       String.fromCharCode(65 + ((order.childOrderIds || []).length)); // /A, /B, /C...
+
+  // بناء بيانات الأوردر الفرعي (عملياتي — بلا مالية)
+  const childOrderData = {
+    orderId:     childOrderId,
+    parentOrderId: order._id || '',
+    parentOrderRef: parentRef,
+    isSplit:     true,
+    isChildOrder:true,
+
+    // العميل
+    clientId:    order.clientId    || '',
+    clientName:  order.clientName  || '',
+    clientPhone: order.clientPhone || '',
+
+    // المرحلة
+    stage: target,
+    stageEnteredAt: { [target]: now },
+
+    // المنتجات المنفصلة
+    products: splitOff,
+
+    // المسؤولون (نسخ من الأصلي حيث ينطبق)
+    designerId:          order.designerId          || '',
+    designerName:        order.designerName        || '',
+    printerId:           order.printerId           || '',
+    printerName:         order.printerName         || '',
+    productionAgent:     order.productionAgent     || '',
+    productionAgentName: order.productionAgentName || '',
+    shippingOfficerId:   order.shippingOfficerId   || '',
+    shippingOfficerName: order.shippingOfficerName || '',
+
+    // المالية = صفر (الأصلي يحتفظ بكل المال)
+    salePrice:     0,
+    deposit:       0,
+    totalPaid:     0,
+    remaining:     0,
+    paymentStatus: 'parent_holds',
+    costItems:     [],
+
+    // متابعة
+    deadline: order.deadline || '',
+    notes:    order.notes    || '',
+
+    timeline: [
+      {
+        date:  now,
+        stage: target,
+        action: `🔀 أوردر فرعي مفصول من ${parentRef} — ${splitOff.length} منتجات`,
+        by:    userName || '',
+        byId:  userId   || '',
+      },
+    ],
+
+    createdBy:     userId   || '',
+    createdByName: userName || '',
+    createdAt:     null, // serverTimestamp في الـ caller
+    updatedAt:     null,
+  };
+
+  // تحديث الأوردر الأصلي
+  const parentUpdate = {
+    fields: {
+      products: remaining,
+    },
+    timelineEntry: {
+      date:  now,
+      stage: cur,
+      action: `🔀 فُصل ${splitOff.length} منتج → ${childOrderId}: ${splitOff.map(p => p.name).join('، ')}`,
+      by:    userName || '',
+      byId:  userId   || '',
+    },
+    childOrderIdPlaceholder: childOrderId, // الـ caller يضيف الـ docId الفعلي بعد إنشاء الفرعي
+  };
+
+  return { ok:true, parentUpdate, childOrderData, childOrderId, splitCount: splitOff.length };
+}
+
+// ══════════════════════════════════════════
 // STAGE SLA — الحدود الزمنية القياسية لكل مرحلة (بالساعات)
 // ══════════════════════════════════════════
 // يمكن override عبر settings/main.stageSla لاحقاً
