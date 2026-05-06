@@ -101,6 +101,18 @@
 .sparkline{display:inline-flex;gap:2px;align-items:flex-end;height:18px;margin-top:4px}
 .sparkline span{display:block;width:4px;background:var(--r);border-radius:1px;opacity:.7;transition:height .3s ease}
 
+/* ══ Heatmap ══ */
+.hm-grid{display:grid;grid-template-columns:repeat(30,1fr);gap:3px}
+@media(max-width:639px){.hm-grid{grid-template-columns:repeat(15,1fr)}}
+.hm-cell{aspect-ratio:1;border-radius:3px;transition:transform .12s;min-height:8px}
+.hm-cell:hover{transform:scale(1.4);z-index:1;position:relative}
+
+/* ══ Daily close table ══ */
+.dc-table{width:100%;border-collapse:collapse;font-size:11px}
+.dc-table th,.dc-table td{padding:6px 8px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+.dc-table th{color:var(--dim2);font-weight:800;background:var(--bg3);position:sticky;top:0}
+.dc-table tr:hover td{background:rgba(255,255,255,.02)}
+
 /* ══ Collection: mobile cards ══ */
 .col-grid-head,.col-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;align-items:center}
 .col-row{border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
@@ -181,6 +193,28 @@
 
     <!-- Content -->
     <div id="rep-content"></div>
+  </div>
+</div>
+
+<!-- Drawer: تفاصيل المصروفات -->
+<div id="exp-drawer-ov" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)" onclick="if(event.target===this)closeExpenseDrawer()">
+  <div style="position:absolute;left:0;top:0;bottom:0;width:460px;max-width:100%;background:var(--bg1);overflow-y:auto;border-left:1px solid var(--line)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg1);z-index:10">
+      <div>
+        <div style="font-size:17px;font-weight:800">💸 تفاصيل المصروفات</div>
+        <div id="exp-drawer-sub" style="font-size:12px;color:var(--dim2);margin-top:2px"></div>
+      </div>
+      <button onclick="closeExpenseDrawer()" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:none;color:var(--snow);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div id="exp-summary" style="padding:14px 20px;border-bottom:1px solid var(--line)"></div>
+    <div style="padding:10px 20px;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap">
+      <button class="d-btn ef-btn active" data-cat="all" onclick="filterExpense('all',this)">الكل</button>
+      <button class="d-btn ef-btn" data-cat="vendor" onclick="filterExpense('vendor',this)">🏭 موردين</button>
+      <button class="d-btn ef-btn" data-cat="shipper" onclick="filterExpense('shipper',this)">🚚 شحن</button>
+      <button class="d-btn ef-btn" data-cat="salary" onclick="filterExpense('salary',this)">👤 رواتب</button>
+      <button class="d-btn ef-btn" data-cat="general" onclick="filterExpense('general',this)">💸 عام</button>
+    </div>
+    <div id="exp-list" style="padding:12px 20px"></div>
   </div>
 </div>
 
@@ -300,7 +334,7 @@ const auth=getAuth(app),db=getFirestore(app);
 
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
-let userName='';
+let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false};
 function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,80);}
@@ -373,6 +407,60 @@ function sparkline(values,color='var(--r)'){
   const max=Math.max(...values,1);
   return`<div class="sparkline">${values.map(v=>`<span style="height:${Math.max(2,(v/max)*100)}%;background:${color}"></span>`).join('')}</div>`;
 }
+
+// آخر N يوم — يرجع array بطول N، مفهرس بالـ day index (0 = من N يوم، N-1 = اليوم)
+function dailySeries(days,filterFn,valueFn){
+  const buckets=new Array(days).fill(0);
+  const now=new Date();now.setHours(23,59,59,999);
+  const end=now.getTime();
+  transactions.forEach(t=>{
+    if(!filterFn(t))return;
+    const sec=t.createdAt?.seconds||0;if(!sec)return;
+    const ms=sec*1000;
+    const ageDays=Math.floor((end-ms)/86400000);
+    if(ageDays<0||ageDays>=days)return;
+    buckets[days-1-ageDays]+=valueFn(t);
+  });
+  return buckets;
+}
+
+// ══ Filter presets (localStorage) ══
+const PRESETS_KEY='reports.presets';
+function loadPresets(){try{return JSON.parse(localStorage.getItem(PRESETS_KEY)||'[]');}catch(e){return[];}}
+function savePresets(list){try{localStorage.setItem(PRESETS_KEY,JSON.stringify(list.slice(0,5)));}catch(e){}}
+function currentPresetState(){return{tab:currentTab,range:filterMode,pay:__payFilter,stage:__stageFilter,flag:__flagFilter,view:__viewMode,sort:__sortKey,dir:__sortDir};}
+window.savePresetPrompt=function(){
+  const name=(prompt('اسم الاختصار؟','مثال: متأخرين بعد التصميم')||'').trim();
+  if(!name)return;
+  const list=loadPresets();list.unshift({name,state:currentPresetState(),at:Date.now()});
+  savePresets(list);
+  toast('💾 اتحفظ: '+name,'ok');
+  render();
+};
+window.applyPreset=function(idx){
+  const list=loadPresets();const p=list[idx];if(!p)return;
+  const s=p.state||{};
+  if(s.tab)currentTab=s.tab;
+  if(s.range)filterMode=s.range;
+  if(s.pay)__payFilter=s.pay;
+  if(s.stage)__stageFilter=s.stage;
+  if(s.flag)__flagFilter=s.flag;
+  if(s.view)__viewMode=s.view;
+  if(s.sort)__sortKey=s.sort;
+  if(s.dir)__sortDir=s.dir;
+  document.querySelectorAll('.rep-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===currentTab));
+  document.querySelectorAll('.date-bar .d-btn').forEach(b=>{
+    const m=(b.getAttribute('onclick')||'').match(/setFilter\('(\w+)'/);
+    b.classList.toggle('active',m&&m[1]===filterMode);
+  });
+  writeUrlState();
+  render();
+  toast('🔁 طبّق: '+p.name,'ok');
+};
+window.deletePreset=function(idx){
+  if(!confirm('حذف هذا الاختصار؟'))return;
+  const list=loadPresets();list.splice(idx,1);savePresets(list);render();
+};
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
 const daysSince=ts=>{const s=ts?.seconds||0;if(!s)return 0;return Math.max(0,Math.floor((Date.now()-s*1000)/86400000));};
 const ageBucket=days=>days<=30?'0-30':days<=60?'31-60':days<=90?'61-90':'90+';
@@ -470,6 +558,7 @@ onAuthStateChanged(auth,async u=>{
     const isAdm=['admin','operation_manager'].includes(role);
     if(!isAdm&&!pages.includes('*')&&!pages.includes('reports')){window.location.href=RMAP[role]||'login.html';return;}
     userName=d.name||u.email;
+    userRole=role;userIsAdmin=isAdm;
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=(userName[0]||'U').toUpperCase();
     buildSidebar(d,'reports.html');
@@ -500,6 +589,7 @@ window.addEventListener('keydown',e=>{
   const inField=tag==='input'||tag==='textarea'||tag==='select'||e.target?.isContentEditable;
   // ESC: اقفل drawers/modals
   if(e.key==='Escape'){
+    const ov0=document.getElementById('exp-drawer-ov');if(ov0?.style.display==='block'){closeExpenseDrawer();return;}
     const ov1=document.getElementById('rev-drawer-ov');if(ov1?.style.display==='block'){closeRevDrawer();return;}
     const ov2=document.getElementById('ord-drawer-ov');if(ov2?.style.display==='block'){closeOrdDrawer();return;}
     const ov3=document.getElementById('ov-edit-order');if(ov3?.classList.contains('open')){ov3.classList.remove('open');return;}
@@ -653,6 +743,46 @@ function renderOverview(f,prev){
   // الأوردرات اللي وصلت لمراحل متقدّمة من غير ما حد سجّل تكلفة
   const noCostOrders=f.filter(isMissingCost);
 
+  // Sparkline series — آخر 30 يوم
+  const inFilter=t=>(t.type==='in'||['collection','advance','deposit'].includes(t.category));
+  const outFilter=t=>(t.type==='out');
+  const totSpark=dailySeries(30,inFilter,t=>parseFloat(t.amount)||0);
+  const costSpark=dailySeries(30,outFilter,t=>parseFloat(t.amount)||0);
+  const profitSpark=totSpark.map((v,i)=>Math.max(0,v-(costSpark[i]||0)));
+
+  // Daily close — آخر 7 أيام × المحافظ
+  const wallSorted=[...wallets].sort((a,b)=>(a.order||0)-(b.order||0)||(a.name||'').localeCompare(b.name||''));
+  const dailyByWallet={};
+  wallSorted.forEach(w=>dailyByWallet[w._id]={inSum:0,outSum:0,inDays:new Array(7).fill(0),outDays:new Array(7).fill(0)});
+  const daily7End=new Date();daily7End.setHours(23,59,59,999);
+  const daily7End_ms=daily7End.getTime();
+  transactions.forEach(t=>{
+    const sec=t.createdAt?.seconds||0;if(!sec)return;
+    const ageDays=Math.floor((daily7End_ms-sec*1000)/86400000);
+    if(ageDays<0||ageDays>=7)return;
+    const wid=t.walletId;if(!wid||!dailyByWallet[wid])return;
+    const amt=parseFloat(t.amount)||0;
+    const idx=6-ageDays;
+    if(t.type==='in'){dailyByWallet[wid].inSum+=amt;dailyByWallet[wid].inDays[idx]+=amt;}
+    else if(t.type==='out'){dailyByWallet[wid].outSum+=amt;dailyByWallet[wid].outDays[idx]+=amt;}
+  });
+
+  // Heatmap — آخر 60 يوم: kt = orders count per day
+  const hmDays=60;
+  const hm=new Array(hmDays).fill(0);
+  const hmEnd=new Date();hmEnd.setHours(23,59,59,999);
+  const hmEndMs=hmEnd.getTime();
+  orders.forEach(o=>{
+    const s=o.createdAt?.seconds||0;if(!s)return;
+    const age=Math.floor((hmEndMs-s*1000)/86400000);
+    if(age<0||age>=hmDays)return;
+    hm[hmDays-1-age]++;
+  });
+  const hmMax=Math.max(...hm,1);
+
+  // قائمة المحافظ الأكثر استخداماً للـ sparkline (لو في > 0)
+  const presets=loadPresets();
+
   return`
     <!-- تنبيهات -->
     ${late.length?`<div class="alert-box" style="cursor:pointer" onclick="goCollectionPostDesign()">⚠️ ${late.length} أوردرات متأخرة عن موعد التسليم</div>`:''}
@@ -662,10 +792,19 @@ function renderOverview(f,prev){
 
     <!-- KPIs -->
     <div class="kpi-grid">
-      <div onclick="openRevDrawer()" style="cursor:pointer;transform:scale(1);transition:transform .15s" onmouseover="this.style.transform='scale(1.02)'" onmouseleave="this.style.transform='scale(1)'">
-        ${kpi(fn(tot)+' ج','محصّل فعلاً ↗','var(--g)',pTot,tot,' ج')}
+      <div onclick="openRevDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل الإيرادات">
+        <div class="kpi-box clickable">
+          <div class="kpi-val" style="color:var(--g)"><span data-counter="${tot}" data-suffix=" ج">${fn(tot)} ج</span></div>
+          <div class="kpi-lbl">محصّل فعلاً ↗</div>
+          ${diff(tot,pTot)}
+          ${sparkline(totSpark,'var(--g)')}
+        </div>
       </div>
-      ${kpi(fn(ordersTotal)+' ج','قيمة الأوردرات','var(--b)',undefined,ordersTotal,' ج')}
+      <div class="kpi-box">
+        <div class="kpi-val" style="color:var(--b)"><span data-counter="${ordersTotal}" data-suffix=" ج">${fn(ordersTotal)} ج</span></div>
+        <div class="kpi-lbl">قيمة الأوردرات</div>
+        ${sparkline(profitSpark,'var(--b)')}
+      </div>
       <div onclick="goCollectionPostDesign()" class="clickable" style="cursor:pointer" title="اضغط لعرض الأوردرات اللي وافقت على التصميم ولم تُحصَّل">
         <div class="kpi-box clickable">
           <div class="kpi-val" style="color:var(--y)"><span data-counter="${rem}" data-suffix=" ج">${fn(rem)} ج</span></div>
@@ -673,7 +812,14 @@ function renderOverview(f,prev){
           ${remCritical>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:10px;font-weight:800"><span style="color:var(--r)">⚠️ <span data-counter="${remCritical}" data-suffix=" ج">${fn(remCritical)} ج</span></span><span style="color:var(--dim2)">بعد التصميم</span></div>`:''}
         </div>
       </div>
-      ${kpi((profit>=0?'ربح ':'خسارة ')+fn(Math.abs(profit))+' ج',profit>=0?'الربح الصافي':'الخسارة الصافية',profit>=0?'var(--g)':'var(--r)',pProfit,Math.abs(profit),' ج')}
+      <div onclick="openExpenseDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل المصروفات">
+        <div class="kpi-box clickable">
+          <div class="kpi-val" style="color:${profit>=0?'var(--g)':'var(--r)'}"><span data-counter="${Math.abs(profit)}" data-suffix=" ج">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span></div>
+          <div class="kpi-lbl">${profit>=0?'الربح الصافي':'الخسارة الصافية'}</div>
+          ${diff(profit,pProfit)}
+          ${sparkline(costSpark,'var(--r)')}
+        </div>
+      </div>
     </div>
 
     <!-- رسم بياني -->
@@ -692,6 +838,63 @@ function renderOverview(f,prev){
     <div class="chart-wrap">
       <div class="chart-title">🔄 توزيع الأوردرات بالمراحل</div>
       ${(()=>{const stages={design:'✏️ تصميم',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',archived:'📁 أرشيف'};const max=Math.max(...Object.keys(stages).map(s=>f.filter(o=>o.stage===s).length),1);return Object.entries(stages).map(([s,l])=>bar(l,f.filter(o=>o.stage===s).length,max,'var(--b)',' أوردر')).join('');})()}
+    </div>
+
+    <!-- Heatmap: نشاط الأوردرات آخر 60 يوم -->
+    <div class="chart-wrap">
+      <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>🗓️ نشاط الأوردرات — آخر 60 يوم</span><span style="font-size:10px;color:var(--dim2);font-weight:700">من الأقدم → الأحدث</span></div>
+      <div class="hm-grid">
+        ${hm.map((v,i)=>{
+          const d=new Date();d.setDate(d.getDate()-(hmDays-1-i));
+          const lvl=v===0?0:v/hmMax;
+          const color=lvl===0?'var(--bg3)':lvl<.25?'rgba(0,217,126,.25)':lvl<.5?'rgba(0,217,126,.5)':lvl<.75?'rgba(0,217,126,.75)':'var(--g)';
+          return `<div class="hm-cell" style="background:${color}" title="${d.toLocaleDateString('ar-EG')}: ${v} أوردر"></div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;font-size:10px;color:var(--dim2);margin-top:8px">
+        <span>أقل</span>
+        <div class="hm-cell" style="background:var(--bg3)"></div>
+        <div class="hm-cell" style="background:rgba(0,217,126,.25)"></div>
+        <div class="hm-cell" style="background:rgba(0,217,126,.5)"></div>
+        <div class="hm-cell" style="background:rgba(0,217,126,.75)"></div>
+        <div class="hm-cell" style="background:var(--g)"></div>
+        <span>أكثر</span>
+      </div>
+    </div>
+
+    <!-- Daily close — حركة المحافظ آخر 7 أيام -->
+    ${wallSorted.length?`
+    <div class="chart-wrap">
+      <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>💼 الإقفال اليومي — آخر 7 أيام</span><span style="font-size:10px;color:var(--dim2);font-weight:700">داخل / خارج / صافي</span></div>
+      <div style="overflow-x:auto">
+      <table class="dc-table">
+        <thead><tr>
+          <th style="text-align:right">المحفظة</th>
+          ${[...Array(7).keys()].map(i=>{const d=new Date();d.setDate(d.getDate()-(6-i));return `<th>${d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit'})}</th>`;}).join('')}
+          <th>إجمالي داخل</th><th>إجمالي خارج</th><th>الصافي</th>
+        </tr></thead>
+        <tbody>
+        ${wallSorted.map(w=>{
+          const d=dailyByWallet[w._id];if(!d||(d.inSum===0&&d.outSum===0))return'';
+          const net=d.inSum-d.outSum;
+          return`<tr>
+            <td style="text-align:right;font-weight:800">${w.name}</td>
+            ${d.inDays.map((v,i)=>{const o=d.outDays[i];const n=v-o;const cl=n>0?'var(--g)':n<0?'var(--r)':'var(--dim2)';return `<td style="color:${cl}">${n===0?'·':fn(n)}</td>`;}).join('')}
+            <td style="color:var(--g);font-weight:800">${fn(d.inSum)}</td>
+            <td style="color:var(--r);font-weight:800">${fn(d.outSum)}</td>
+            <td style="color:${net>=0?'var(--g)':'var(--r)'};font-weight:900">${fn(net)}</td>
+          </tr>`;
+        }).join('')||`<tr><td colspan="11" style="text-align:center;color:var(--dim2);padding:14px">لا توجد حركة في آخر 7 أيام</td></tr>`}
+        </tbody>
+      </table>
+      </div>
+    </div>`:''}
+
+    <!-- Filter presets -->
+    <div class="chart-wrap" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--dim2);font-weight:800">⭐ اختصاراتي:</span>
+      ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:4px"><button class="d-btn" onclick="applyPreset(${i})" title="${(p.state?.tab||'overview')+' · '+(p.state?.flag||'all')+' · '+(p.state?.stage||'all')}">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:14px;padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span style="font-size:11px;color:var(--dim2)">مفيش اختصارات محفوظة بعد</span>'}
+      <button class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)" title="احفظ التبويب + الفترة + كل الفلاتر الحالية كاختصار">💾 احفظ الحالة الحالية</button>
     </div>`;
 }
 
@@ -843,6 +1046,84 @@ function renderSales(f,prev){
 // ══ Revenue Drawer ══
 let __revOrders=[], __revFilter='all';
 let __dOrderId='',__dCostEditIdx=-1;
+
+// ══ Expense drawer ══
+let __expData=[],__expFilter='all';
+window.openExpenseDrawer=function(){
+  const range=getRange(filterMode);
+  __expData=transactions.filter(t=>{
+    if(t.type!=='out')return false;
+    const sec=t.createdAt?.seconds||0;if(!sec)return false;
+    const d=new Date(sec*1000);return d>=range.from&&d<=range.to;
+  }).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  const tot=__expData.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  // breakdown by category
+  const buckets={vendor:0,shipper:0,salary:0,general:0,other:0};
+  __expData.forEach(t=>{
+    const c=t.category||'';
+    if(c==='printer_payment'||c==='supplier'||c==='vendor_payment')buckets.vendor+=parseFloat(t.amount)||0;
+    else if(c==='shipper_payment'||c==='shipping_settlement'||c==='shipping_expense')buckets.shipper+=parseFloat(t.amount)||0;
+    else if(c==='salary'||c==='salary_payment'||c==='payroll')buckets.salary+=parseFloat(t.amount)||0;
+    else if(c==='general_expense'||c==='expense'||!c)buckets.general+=parseFloat(t.amount)||0;
+    else buckets.other+=parseFloat(t.amount)||0;
+  });
+  document.getElementById('exp-drawer-sub').textContent=`${__expData.length} حركة · إجمالي ${fn(tot)} ج`;
+  document.getElementById('exp-summary').innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+      <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:18px;font-weight:900;color:var(--r)">${fn(tot)} ج</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">إجمالي الفترة</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:18px;font-weight:900;color:var(--y)">${fn(tot/Math.max(1,__expData.length))} ج</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px">متوسط الحركة</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:10px;font-size:11px">
+      <div style="background:rgba(255,170,0,.06);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between"><span>🏭 موردين</span><b style="color:var(--y)">${fn(buckets.vendor)} ج</b></div>
+      <div style="background:rgba(59,158,255,.06);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between"><span>🚚 شحن</span><b style="color:var(--b)">${fn(buckets.shipper)} ج</b></div>
+      <div style="background:rgba(167,139,250,.06);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between"><span>👤 رواتب</span><b style="color:var(--p)">${fn(buckets.salary)} ج</b></div>
+      <div style="background:rgba(255,61,110,.06);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between"><span>💸 عام</span><b style="color:var(--r)">${fn(buckets.general)} ج</b></div>
+    </div>`;
+  __expFilter='all';
+  document.querySelectorAll('.ef-btn').forEach(b=>b.classList.toggle('active',b.dataset.cat==='all'));
+  renderExpenseList();
+  document.getElementById('exp-drawer-ov').style.display='block';
+};
+window.closeExpenseDrawer=function(){document.getElementById('exp-drawer-ov').style.display='none';};
+window.filterExpense=function(cat,btn){
+  __expFilter=cat;
+  document.querySelectorAll('.ef-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  renderExpenseList();
+};
+function renderExpenseList(){
+  const matchCat=t=>{
+    if(__expFilter==='all')return true;
+    const c=t.category||'';
+    if(__expFilter==='vendor')return c==='printer_payment'||c==='supplier'||c==='vendor_payment';
+    if(__expFilter==='shipper')return c==='shipper_payment'||c==='shipping_settlement'||c==='shipping_expense';
+    if(__expFilter==='salary')return c==='salary'||c==='salary_payment'||c==='payroll';
+    if(__expFilter==='general')return c==='general_expense'||c==='expense'||!c;
+    return false;
+  };
+  const data=__expData.filter(matchCat);
+  const el=document.getElementById('exp-list');
+  if(!data.length){el.innerHTML='<div style="text-align:center;padding:24px;color:var(--dim2);font-size:12px">لا توجد حركات في هذه الفئة</div>';return;}
+  el.innerHTML=data.map(t=>{
+    const amt=parseFloat(t.amount)||0;
+    const dateStr=t.date||(t.createdAt?.seconds?new Date(t.createdAt.seconds*1000).toLocaleDateString('ar-EG'):'—');
+    const wallName=wallets.find(w=>w._id===t.walletId)?.name||t.walletName||'—';
+    const ico={printer_payment:'🏭',supplier:'🏭',vendor_payment:'🏭',shipper_payment:'🚚',shipping_settlement:'🚚',shipping_expense:'🚚',salary:'👤',salary_payment:'👤',payroll:'👤'}[t.category]||'💸';
+    return`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;align-items:center">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:800">${ico} ${t.description||t.supplierName||t.category||'مصروف'}</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${dateStr} · ${wallName}${t.orderId?' · أوردر '+(t.orderId.slice(-6)):''}</div>
+      </div>
+      <div style="font-size:14px;font-weight:900;color:var(--r);white-space:nowrap">${fn(amt)} ج</div>
+    </div>`;
+  }).join('');
+}
 
 window.openRevDrawer=function(){
   const range=getRange(filterMode);
@@ -1291,12 +1572,12 @@ function renderCollectionRows(data){
         <span><span style="font-size:16px">${status.t}</span> <span style="font-size:11px;color:${status.c};font-weight:800">${pct}%</span></span>
       </div>
       <div class="col-actions" style="text-align:center" onclick="event.stopPropagation()">
-        <button onclick="openEditOrder('${o._id}')" title="تعديل"
-          style="padding:6px 10px;border-radius:8px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">✏️</button>
+        ${userIsAdmin?`<button onclick="openEditOrder('${o._id}')" title="تعديل"
+          style="padding:6px 10px;border-radius:8px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">✏️</button>`:''}
         <button onclick="openOrdDrawer('${o._id}')" title="تفاصيل وتكاليف"
-          style="padding:6px 10px;border-radius:8px;border:1px solid ${cost>0?'rgba(255,170,0,.3)':'rgba(255,61,110,.5)'};background:${cost>0?'rgba(255,170,0,.08)':'rgba(255,61,110,.12)'};color:${cost>0?'var(--y)':'var(--r)'};font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">💰</button>
-        <button onclick="deleteOrderFromReport('${o._id}')" title="حذف"
-          style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">🗑</button>
+          style="padding:6px 10px;border-radius:8px;border:1px solid ${cost>0?'rgba(255,170,0,.3)':'rgba(255,61,110,.5)'};background:${cost>0?'rgba(255,170,0,.08)':'rgba(255,61,110,.12)'};color:${cost>0?'var(--y)':'var(--r)'};font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;${userIsAdmin?'margin-top:4px':''}">💰</button>
+        ${userIsAdmin?`<button onclick="deleteOrderFromReport('${o._id}')" title="حذف"
+          style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px">🗑</button>`:''}
       </div>
     </div>`;
   }).join('');
