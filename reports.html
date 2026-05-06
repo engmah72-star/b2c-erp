@@ -282,44 +282,6 @@
   </div>
 </div>
 
-<!-- Modal: إضافة تكلفة -->
-<div class="overlay" id="ov-add-cost">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-head">
-      <span class="modal-title">💰 إضافة تكلفة</span>
-      <button class="modal-x" onclick="document.getElementById('ov-add-cost').classList.remove('open')">✕</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="ac-order-id">
-      <div id="ac-order-info" style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:14px;font-size:13px;font-weight:800"></div>
-      <div class="fg">
-        <label>نوع البند *</label>
-        <select class="inp" id="ac-type">
-          <option value="">— اختر —</option>
-          <option>طباعة</option><option>ورق</option><option>قص</option><option>سلفنة</option>
-          <option>زنكات</option><option>تجميع</option><option>شحن</option><option>تصميم</option><option>أخرى</option>
-        </select>
-      </div>
-      <div class="fg">
-        <label>المورد (اختياري)</label>
-        <select class="inp" id="ac-supplier"><option value="">— بدون مورد —</option></select>
-      </div>
-      <div class="g2">
-        <div class="fg"><label>المبلغ (ج) *</label><input class="inp" id="ac-amount" type="number" placeholder="0" min="0"></div>
-        <div class="fg">
-          <label>المحفظة (اختياري)</label>
-          <select class="inp" id="ac-wallet"><option value="">— بدون خصم —</option></select>
-        </div>
-      </div>
-      <div class="fg"><label>ملاحظة</label><input class="inp" id="ac-note" type="text" placeholder="وصف البند..."></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="document.getElementById('ov-add-cost').classList.remove('open')">إلغاء</button>
-      <button class="btn btn-r" id="ac-save-btn" onclick="saveOrderCost()">＋ إضافة</button>
-    </div>
-  </div>
-</div>
-
 <div id="toasts" class="toasts"></div>
 
 <script type="module">
@@ -525,7 +487,6 @@ window.addEventListener('keydown',e=>{
     const ov1=document.getElementById('rev-drawer-ov');if(ov1?.style.display==='block'){closeRevDrawer();return;}
     const ov2=document.getElementById('ord-drawer-ov');if(ov2?.style.display==='block'){closeOrdDrawer();return;}
     const ov3=document.getElementById('ov-edit-order');if(ov3?.classList.contains('open')){ov3.classList.remove('open');return;}
-    const ov4=document.getElementById('ov-add-cost');if(ov4?.classList.contains('open')){ov4.classList.remove('open');return;}
     const ov5=document.getElementById('ov-del-order');if(ov5?.style.display==='flex'){ov5.style.display='none';return;}
     if(inField&&e.target.id==='col-search'){colSearchClear();e.target.blur();return;}
   }
@@ -1329,23 +1290,59 @@ window.confirmDeleteOrder=async function(){
   const btn=document.getElementById('del-ord-confirm-btn');
   btn.disabled=true;btn.textContent='جاري...';
   try{
-    const batch=writeBatch(db);
-    if(__delOrdPaid>0&&__delOrdWallet){
-      batch.update(doc(db,'wallets',__delOrdWallet),{balance:increment(__delOrdPaid)});
-      addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
-        orderId:__delOrdId,clientName:__delOrdClient,
-        amount:__delOrdPaid,walletId:__delOrdWallet,
-        walletName:wallets.find(w=>w._id===__delOrdWallet)?.name||'',
-        notes:`حذف أوردر [${reason}]${note?' — '+note:''}`,
-        userId:auth.currentUser?.uid||'',userName:userName||'',
-      });
+    // 1) لو الأوردر مرتبط بتسويات شحن، نوقف ونوجّه المستخدم لإلغائها أولاً.
+    //    تسويات الشحن ليها flow عكسي خاص في صفحة حسابات الشحن، ومش من حق
+    //    صفحة التقارير تتجاوزه (RULE 4 — No module owns money).
+    const stSnap=await getDocs(query(collection(db,'shipping_settlements'),where('orderId','==',__delOrdId)));
+    if(!stSnap.empty){
+      throw new Error('الأوردر مرتبط بتسوية شحن — أَلغِ التسوية أولاً من صفحة حسابات الشحن');
     }
+    // 2) اجمع كل المعاملات المرتبطة بالأوردر (دفعات عملاء + مصروفات + دفعات موردين)
     const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',__delOrdId)));
-    for(const tx of txSnap.docs) batch.delete(tx.ref);
+    const batch=writeBatch(db);
+    const ledgerBase={
+      orderId:__delOrdId,clientName:__delOrdClient,
+      notes:`حذف أوردر [${reason}]${note?' — '+note:''}`,
+      userId:auth.currentUser?.uid||'',userName:userName||'',
+    };
+    let refunded=0,vendorReversed=0,generalReversed=0;
+    const walletNameOf=wid=>wallets.find(w=>w._id===wid)?.name||'';
+    for(const txDoc of txSnap.docs){
+      const tx=txDoc.data();
+      const amt=parseFloat(tx.amount)||0;
+      const wid=tx.walletId||'';
+      if(amt>0&&wid){
+        if(tx.type==='in'){
+          // دفعة عميل → ارجعها للمحفظة الأصلية مهما كانت
+          batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
+          addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||''});
+          refunded++;
+        } else if(tx.type==='out'){
+          // مصروف/دفعة مورد → ارجع المبلغ للمحفظة
+          batch.update(doc(db,'wallets',wid),{balance:increment(amt)});
+          if(tx.spId){
+            // مرتبط بـ supplier_payment → احذف الـ payment record + ledger reversal
+            batch.delete(doc(db,'supplier_payments',tx.spId));
+            addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT_REVERSAL,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||'',vendorId:tx.supplierId||'',vendorName:tx.supplierName||''});
+            vendorReversed++;
+          } else {
+            // مصروف عام بدون مورد
+            addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE_REVERSAL,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||''});
+            generalReversed++;
+          }
+        }
+      }
+      batch.delete(txDoc.ref);
+    }
+    // 3) احذف الأوردر نفسه
     batch.delete(doc(db,'orders',__delOrdId));
     await batch.commit();
     document.getElementById('ov-del-order').style.display='none';
-    toast('✅ تم الحذف — السبب: '+reason,'ok');
+    let msg='✅ تم الحذف';
+    if(refunded)msg+=` · ${refunded} دفعة عميل مستردة`;
+    if(vendorReversed)msg+=` · ${vendorReversed} دفعة مورد ملغاة`;
+    if(generalReversed)msg+=` · ${generalReversed} مصروف ملغى`;
+    toast(msg,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
   btn.disabled=false;btn.textContent='🗑 حذف نهائي';
 };
@@ -1471,73 +1468,6 @@ window.saveEditOrder=async function(){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-// ══ إضافة تكلفة من جرد التحصيل ══
-window.openAddCostModal=function(orderId,clientName){
-  document.getElementById('ac-order-id').value=orderId;
-  document.getElementById('ac-order-info').textContent='👤 '+clientName;
-  document.getElementById('ac-type').value='';
-  document.getElementById('ac-amount').value='';
-  document.getElementById('ac-note').value='';
-  // موردين
-  const supSel=document.getElementById('ac-supplier');
-  supSel.innerHTML='<option value="">— بدون مورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('');
-  supSel.value='';
-  // محافظ
-  const walSel=document.getElementById('ac-wallet');
-  walSel.innerHTML='<option value="">— بدون خصم من محفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
-  walSel.value='';
-  document.getElementById('ov-add-cost').classList.add('open');
-};
-
-window.saveOrderCost=async function(){
-  const orderId=document.getElementById('ac-order-id').value;
-  const type=document.getElementById('ac-type').value;
-  const amount=parseFloat(document.getElementById('ac-amount').value)||0;
-  if(!type)return toast('⚠️ اختر نوع البند','err');
-  if(!amount)return toast('⚠️ أدخل المبلغ','err');
-  const note=document.getElementById('ac-note').value.trim();
-  const walletId=document.getElementById('ac-wallet').value;
-  const supSel=document.getElementById('ac-supplier');
-  const supOpt=supSel?.options[supSel.selectedIndex];
-  const supplierId=supOpt?.value||'';
-  const supplierName=supplierId?(supOpt?.dataset?.name||supOpt?.text||''):'';
-  const btn=document.getElementById('ac-save-btn');
-  btn.disabled=true;btn.textContent='جاري...';
-  try{
-    const snap=await getDoc(doc(db,'orders',orderId));
-    if(!snap.exists())throw new Error('الأوردر غير موجود');
-    const o=snap.data();
-    const now=new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-    const newItem={type,supplierId,supplierName,total:amount,note,addedAt:now,addedBy:userName||''};
-    const ci=[...(o.costItems||[]),newItem];
-    if(walletId){
-      const w=wallets.find(x=>x._id===walletId);
-      if(w&&(parseFloat(w.balance)||0)<amount)throw new Error(`رصيد ${w.name} غير كافٍ`);
-      const batch=writeBatch(db);
-      const txRef=doc(collection(db,'transactions_v2'));
-      newItem.txId=txRef.id;newItem.walletId=walletId;
-      batch.update(doc(db,'orders',orderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:now,action:`💰 ${type}: ${fn(amount)} ج${note?' — '+note:''}`,by:userName||''}],updatedAt:serverTimestamp()});
-      batch.update(doc(db,'wallets',walletId),{balance:increment(-amount)});
-      const supObj=suppliers.find(s=>s._id===supplierId);
-      const supCat=supObj?.supType==='shipper'?'shipper_payment':'printer_payment';
-      batch.set(txRef,{type:'out',walletId,amount,category:supplierId?supCat:'printer_payment',description:`${type}${note?' — '+note:''} · ${o.clientName||''}`,supplierId,supplierName,orderId,orderClient:o.clientName||'',date:new Date().toLocaleDateString('ar-EG'),createdAt:serverTimestamp(),createdBy:userName||''});
-      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-        amount,walletId,walletName:w?.name||'',
-        orderId,clientName:o.clientName||'',
-        vendorId:supplierId,vendorName:supplierName,
-        notes:`${type}${note?' — '+note:''} · ${o.clientName||''}`,
-        userId:'',userName:userName||'',
-      });
-      await batch.commit();
-    } else {
-      await updateDoc(doc(db,'orders',orderId),{costItems:ci,timeline:[...(o.timeline||[]),{date:now,action:`💰 ${type}: ${fn(amount)} ج${note?' — '+note:''}`,by:userName||''}],updatedAt:serverTimestamp()});
-    }
-    document.getElementById('ov-add-cost').classList.remove('open');
-    toast('✅ تم إضافة التكلفة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-  finally{btn.disabled=false;btn.textContent='＋ إضافة';}
-};
-
 // ══ Drawer Cost Editing ══
 function __renderDrawerCostList(o){
   const el=document.getElementById('drawer-cost-list');
@@ -1550,16 +1480,22 @@ function __renderDrawerCostList(o){
     el.innerHTML='<div style="text-align:center;padding:12px;color:var(--dim2);font-size:11px">لا توجد بنود تكلفة</div>';
     return;
   }
-  el.innerHTML=items.map((c,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin-bottom:6px">
+  el.innerHTML=items.map((c,i)=>{
+    // البند مرتبط بدفعة محفظة فعلية (مدفوع من المحفظة) → ممنوع تعديله/حذفه من هنا
+    const linked=!!(c.walletId||c.txId||c.spId);
+    const linkedHint=linked?`<div style="font-size:9px;color:var(--y);margin-top:2px">💳 مدفوع من محفظة — التعديل/الحذف من صفحة الحسابات</div>`:'';
+    return`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border:1px solid ${linked?'rgba(255,170,0,.25)':'var(--line)'};border-radius:8px;margin-bottom:6px">
       <div style="flex:1">
-        <div style="font-size:11px;font-weight:700">${c.type||'—'} <span style="color:var(--r);font-weight:900">${fn(c.total)} ج</span></div>
+        <div style="font-size:11px;font-weight:700">${linked?'💳 ':''}${c.type||'—'} <span style="color:var(--r);font-weight:900">${fn(c.total)} ج</span>${c.supplierName?` <span style="color:var(--dim2);font-weight:600">· ${c.supplierName}</span>`:''}</div>
         ${c.note?`<div style="font-size:10px;color:var(--dim2)">${c.note}</div>`:''}
         <div style="font-size:9px;color:var(--dim2)">${c.addedBy||''} ${c.addedAt?'· '+c.addedAt:''}</div>
+        ${linkedHint}
       </div>
-      <button type="button" onclick="editDrawerCost(${i})" style="padding:3px 8px;border-radius:6px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);font-size:11px;cursor:pointer;font-family:inherit">✏️</button>
-      <button type="button" onclick="rmDrawerCost(${i})" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:11px;cursor:pointer;font-family:inherit">✕</button>
-    </div>`).join('');
+      <button type="button" ${linked?'disabled':''} onclick="${linked?'':`editDrawerCost(${i})`}" title="${linked?'البند مرتبط بدفعة — لا يُعدَّل من هنا':'تعديل'}" style="padding:3px 8px;border-radius:6px;border:1px solid var(--line2);background:var(--bg3);color:${linked?'var(--dim2)':'var(--c)'};font-size:11px;cursor:${linked?'not-allowed':'pointer'};opacity:${linked?'.5':'1'};font-family:inherit">✏️</button>
+      <button type="button" ${linked?'disabled':''} onclick="${linked?'':`rmDrawerCost(${i})`}" title="${linked?'البند مرتبط بدفعة — لا يُحذَف من هنا':'حذف'}" style="padding:3px 8px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:${linked?'var(--dim2)':'var(--r)'};font-size:11px;cursor:${linked?'not-allowed':'pointer'};opacity:${linked?'.5':'1'};font-family:inherit">✕</button>
+    </div>`;
+  }).join('');
 }
 
 window.__drawerShowCostForm=function(){
@@ -1578,9 +1514,14 @@ window.__drawerHideCostForm=function(){
   __dCostEditIdx=-1;
 };
 
+// Guard: لا نسمح بالتعديل/الحذف لبنود مرتبطة بدفعات محفظة فعلية،
+// لأن العكس المالي الصحيح لها يجب أن يتم عبر صفحة الحسابات (vendor reversal).
+function __isDrawerCostLinked(c){return !!(c&&(c.walletId||c.txId||c.spId));}
+
 window.editDrawerCost=function(idx){
   const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
   const c=(o.costItems||[])[idx];if(!c)return;
+  if(__isDrawerCostLinked(c))return toast('⚠️ هذا البند مرتبط بدفعة محفظة. عدّله من صفحة الحسابات','err');
   __dCostEditIdx=idx;
   document.getElementById('drawer-form-lbl').textContent='✏️ تعديل البند';
   document.getElementById('drawer-type').value=c.type||'';
@@ -1592,13 +1533,16 @@ window.editDrawerCost=function(idx){
 };
 
 window.rmDrawerCost=async function(idx){
-  if(!confirm('حذف هذا البند؟'))return;
   const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
+  const c=(o.costItems||[])[idx];
+  if(__isDrawerCostLinked(c))return toast('⚠️ هذا البند مرتبط بدفعة محفظة. احذفه من صفحة الحسابات','err');
+  if(!confirm('حذف هذا البند؟'))return;
   const items=[...(o.costItems||[])];
   items.splice(idx,1);
   try{
-    const {doc:docFn,updateDoc,serverTimestamp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    await updateDoc(docFn(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    await batch.commit();
     o.costItems=items;
     __renderDrawerCostList(o);
     toast('✅ تم الحذف','ok');
@@ -1612,9 +1556,12 @@ window.saveDrawerCost=async function(){
   if(!type){toast('اختر نوع البند','err');return;}
   if(!total){toast('أدخل التكلفة','err');return;}
   const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
+  const items=[...(o.costItems||[])];
+  if(__dCostEditIdx>=0&&__dCostEditIdx<items.length){
+    if(__isDrawerCostLinked(items[__dCostEditIdx]))return toast('⚠️ هذا البند مرتبط بدفعة محفظة. عدّله من صفحة الحسابات','err');
+  }
   const btn=document.getElementById('drawer-cost-save');
   btn.disabled=true;btn.textContent='...';
-  const items=[...(o.costItems||[])];
   const now=new Date().toLocaleString('ar-EG');
   const who=userName||auth.currentUser?.displayName||auth.currentUser?.email||'';
   if(__dCostEditIdx>=0&&__dCostEditIdx<items.length){
@@ -1623,8 +1570,9 @@ window.saveDrawerCost=async function(){
     items.push({type,total,note,addedBy:who,addedAt:now});
   }
   try{
-    const {doc:docFn,updateDoc,serverTimestamp}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-    await updateDoc(docFn(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
+    await batch.commit();
     o.costItems=items;
     __renderDrawerCostList(o);
     __drawerHideCostForm();
