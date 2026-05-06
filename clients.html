@@ -1251,6 +1251,12 @@ function renderClientFollowups(clientId){
         </div>
       </div>
       ${f.note?`<div style="font-size:12px;color:var(--snow);line-height:1.6;white-space:pre-wrap">${escapeHtml(f.note)}</div>`:''}
+      ${(f.orderId||f.productRating||f.productReview)?`
+      <div style="margin-top:8px;padding:8px 10px;background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.18);border-radius:8px">
+        ${f.orderId?(()=>{const o=allOrders.find(x=>x._id===f.orderId);const code=f.orderCode||o?.orderId||(o?._id||'').slice(-6);const pn=f.productName||o?.product||(o?.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||'';const href=o?(STAGE_HREF[o.stage]||'index')+'.html':'#';return `<div style="font-size:10px;color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:700">${code}${pn?' · '+escapeHtml(pn):''}</a></div>`;})():''}
+        ${f.productRating>0?`<div style="font-size:13px;color:var(--y);letter-spacing:2px;margin-bottom:${f.productReview?'4':'0'}px">${'★'.repeat(f.productRating)}<span style="color:var(--line2)">${'★'.repeat(5-f.productRating)}</span></div>`:''}
+        ${f.productReview?`<div style="font-size:11px;color:var(--snow);line-height:1.5;font-style:italic">"${escapeHtml(f.productReview)}"</div>`:''}
+      </div>`:''}
       ${f.nextActionDate?`<div style="margin-top:6px;font-size:10px;color:${overdue?'var(--r)':'var(--dim2)'};font-weight:700">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>`:''}
       <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim2)">
         <span>👤 ${f.createdByName||'—'}</span>
@@ -1282,7 +1288,35 @@ window.openFollowupModal=function(clientId,fId){
   document.getElementById('fu-note').value=f?.note||'';
   document.getElementById('fu-next-date').value=f?.nextActionDate?toLocalDT(f.nextActionDate):'';
   document.getElementById('fu-done').checked=!!f?.nextActionDone;
+  // Populate orders dropdown with this client's orders
+  const sel=document.getElementById('fu-order');
+  if(sel){
+    const cOrds=getClientOrders(c).slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    sel.innerHTML='<option value="">— لا يخص أوردر معيّن —</option>'+
+      cOrds.map(o=>{
+        const nm=o.product||(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||'—';
+        const code=o.orderId||o._id.slice(-6);
+        const stage=STAGE_AR[o.stage]||o.stage||'';
+        return `<option value="${o._id}">${code} · ${nm} · ${stage}</option>`;
+      }).join('');
+    sel.value=f?.orderId||'';
+  }
+  document.getElementById('fu-review').value=f?.productReview||'';
+  setFuRating(parseInt(f?.productRating)||0);
   document.getElementById('ov-followup').classList.add('open');
+};
+
+window.setFuRating=function(n){
+  const val=Math.max(0,Math.min(5,parseInt(n)||0));
+  document.getElementById('fu-rating').value=val;
+  const stars=document.querySelectorAll('#fu-rating-stars .fu-star');
+  stars.forEach(s=>{
+    const v=parseInt(s.dataset.val);
+    s.style.color=v<=val?'var(--y)':'var(--line2)';
+  });
+  const lbl=document.getElementById('fu-rating-label');
+  const labels={0:'— غير مُقيَّم —',1:'⭐ ضعيف',2:'⭐⭐ مقبول',3:'⭐⭐⭐ جيد',4:'⭐⭐⭐⭐ ممتاز',5:'⭐⭐⭐⭐⭐ رائع'};
+  if(lbl)lbl.textContent=labels[val];
 };
 function toLocalDT(s){
   const d=new Date(s);if(isNaN(d))return '';
@@ -1304,13 +1338,30 @@ window.saveFollowup=async function(){
     const note=gv('fu-note').trim();
     const nextRaw=gv('fu-next-date');
     const nextDone=document.getElementById('fu-done').checked;
+    const orderId=gv('fu-order');
+    const productRating=parseInt(gv('fu-rating'))||0;
+    const productReview=gv('fu-review').trim();
     if(!type){toast('❌ اختر نوع المتابعة','err');btnReset&&btnReset(btn);return;}
-    if(!note&&!nextRaw){toast('❌ اكتب ملاحظة أو حدّد ميعاد متابعة','err');btnReset&&btnReset(btn);return;}
+    if(!note&&!nextRaw&&!productReview&&!productRating){toast('❌ اكتب ملاحظة أو حدّد ميعاد أو سجّل تقييم منتج','err');btnReset&&btnReset(btn);return;}
+    // Snapshot order/product info for display
+    let orderCode='', productName='';
+    if(orderId){
+      const o=allOrders.find(x=>x._id===orderId);
+      if(o){
+        orderCode=o.orderId||o._id.slice(-6);
+        productName=o.product||(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||'';
+      }
+    }
     const data={
       clientId,
       clientName:c?.name||'',
       type,outcome:outcome||'',
       note,
+      orderId:orderId||'',
+      orderCode:orderCode,
+      productName:productName,
+      productRating:productRating,
+      productReview:productReview,
       nextActionDate:nextRaw?new Date(nextRaw).toISOString():'',
       nextActionDone:nextDone||!nextRaw,
       assignedTo:currentUser.uid,
@@ -2802,6 +2853,33 @@ window.setStatusTab=function(tab,btn){
       <div class="fg"><label>الملاحظة / تفاصيل التواصل</label>
         <textarea class="inp" id="fu-note" rows="3" placeholder="اكتب ما دار في التواصل، الاتفاقات، الطلبات..."></textarea>
       </div>
+
+      <!-- ══ مراجعة المنتج ورأي العميل (اختياري) ══ -->
+      <div style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:10px">⭐ مراجعة المنتج ورأي العميل (اختياري)</div>
+        <div class="fg" style="margin-bottom:10px"><label>الأوردر / المنتج المُراجَع</label>
+          <select class="inp" id="fu-order">
+            <option value="">— لا يخص أوردر معيّن —</option>
+          </select>
+        </div>
+        <div class="fg" style="margin-bottom:10px">
+          <label>تقييم المنتج</label>
+          <div id="fu-rating-stars" style="display:flex;gap:6px;align-items:center;padding:8px 0">
+            <span class="fu-star" data-val="1" onclick="setFuRating(1)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
+            <span class="fu-star" data-val="2" onclick="setFuRating(2)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
+            <span class="fu-star" data-val="3" onclick="setFuRating(3)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
+            <span class="fu-star" data-val="4" onclick="setFuRating(4)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
+            <span class="fu-star" data-val="5" onclick="setFuRating(5)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
+            <span id="fu-rating-label" style="margin-right:auto;font-size:11px;color:var(--dim2);font-weight:700">— غير مُقيَّم —</span>
+            <button type="button" onclick="setFuRating(0)" style="background:none;border:none;color:var(--dim2);font-size:11px;cursor:pointer;text-decoration:underline">مسح</button>
+          </div>
+          <input type="hidden" id="fu-rating" value="0">
+        </div>
+        <div class="fg" style="margin-bottom:0"><label>رأي العميل في المنتج</label>
+          <textarea class="inp" id="fu-review" rows="2" placeholder="مثال: العميل أبدى إعجابه بالخامة، اشتكى من تأخر التسليم، طلب تعديل المقاس..."></textarea>
+        </div>
+      </div>
+
       <div class="fg"><label>📅 موعد المتابعة القادمة (اختياري — يولّد تذكير)</label>
         <input type="datetime-local" class="inp" id="fu-next-date">
       </div>
