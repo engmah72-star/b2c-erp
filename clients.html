@@ -551,7 +551,7 @@
           <div style="font-size:10px;color:var(--dim2)">المقدم اختياري — يمكن تركه فارغاً</div>
         </div>
         <div class="fg" style="margin-bottom:10px">
-          <label>السعر الكلي (ج)</label>
+          <label>السعر الكلي (ج) <span id="no-sale-price-hint" style="font-size:10px;color:var(--dim2);font-weight:600"></span></label>
           <input class="inp" id="no-sale-price" type="number" placeholder="0" value="0" oninput="calcNoRemaining()">
         </div>
         <div class="g2">
@@ -1204,6 +1204,9 @@ function selectOrderType(type){
   document.getElementById('no-stage').value=type;
   document.getElementById('tc-design').className='type-card'+(type==='design'?' sel-design':'');
   document.getElementById('tc-printing').className='type-card'+(type==='printing'?' sel-printing':'');
+  // hint جنب حقل السعر — اختياري للتصميم، إجباري للطباعة
+  const hint=document.getElementById('no-sale-price-hint');
+  if(hint)hint.textContent=type==='design'?'(اختياري — يمكن تحديده لاحقاً)':type==='printing'?'(إجباري)':'';
 }
 window.__noDesignFiles=[];
 window.addDesignFiles=function(inp){
@@ -1246,7 +1249,9 @@ function saveNewOrder(){
   }
   if(!prods.length){toast('⚠️ أضف منتجاً على الأقل','err');return;}
   const salePrice=parseFloat(gv('no-sale-price'))||0;
-  if(salePrice<=0){toast('⚠️ يجب إدخال سعر الأوردر','err');document.getElementById('no-sale-price')?.focus();return;}
+  // السعر اختياري عند إنشاء أوردر تصميم (يمكن تحديده لاحقاً)
+  // إجباري لأوردر طباعة مباشرة (الباقي معروف من البداية)
+  if(stage==='printing'&&salePrice<=0){toast('⚠️ يجب إدخال سعر الأوردر','err');document.getElementById('no-sale-price')?.focus();return;}
   const cl=clients.find(x=>x._id===pendingClientId);if(!cl)return;
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
   const dep=parseFloat(gv('no-deposit'))||0;
@@ -1323,7 +1328,8 @@ function saveNewOrder(){
       salePrice,
       deposit:dep,totalPaid:dep,
       remaining:Math.max(0,salePrice-dep),
-      paymentStatus:dep>0&&dep>=salePrice?'paid':dep>0?'partial':'pending',
+      // عند salePrice=0 (تصميم بدون سعر بعد): partial لو في عربون، pending لو لا
+      paymentStatus:salePrice<=0?(dep>0?'partial':'pending'):(dep>0&&dep>=salePrice?'paid':dep>0?'partial':'pending'),
       depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
       designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
       // طوابع زمن دخول المراحل (لـ SLA tracking)
