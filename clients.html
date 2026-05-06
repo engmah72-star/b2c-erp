@@ -395,6 +395,7 @@
     </div>
     <div id="pn-tabs" style="display:none;gap:0;border-bottom:1px solid var(--line);padding:0 8px;flex-shrink:0">
       <button class="pn-tab on" id="ptab-summary" onclick="window.switchPanelTab('summary',this)">ملخص</button>
+      <button class="pn-tab" id="ptab-followups" onclick="window.switchPanelTab('followups',this)">📞 متابعات <span id="ptab-fu-badge" style="display:none;background:var(--r);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;margin-right:4px;font-weight:900"></span></button>
       <button class="pn-tab" id="ptab-orders" onclick="window.switchPanelTab('orders',this)">أوردرات</button>
       <button class="pn-tab" id="ptab-data" onclick="window.switchPanelTab('data',this)">بيانات</button>
     </div>
@@ -704,6 +705,7 @@ const EGYPT={
 // ══ STATE ══
 let clients=[], allOrders=[], products=[], settings={}, wallets=[], designers=[];
 let allTx=[], txByOrder=new Map();
+let allFollowups=[], followupsByClient=new Map();
 window.__clientFilter='all';
 let editId=null, activeId=null, pendingClientId='';
 let currentUser=null, currentRole='customer_service', userName='', userPerms={};
@@ -776,6 +778,21 @@ auth.onAuthStateChanged(async u=>{
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     renderGrid(); updateStats();
     if(activeId) renderPanel(activeId);
+    // Deep-link: ?openClient={id}[&tab=followups]
+    if(!window.__deepLinked){
+      const qs=new URLSearchParams(window.location.search);
+      const oc=qs.get('openClient');
+      if(oc&&clients.some(c=>c._id===oc)){
+        window.__deepLinked=true;
+        openClient(oc);
+        if(qs.get('tab')==='followups'){
+          setTimeout(()=>{
+            const btn=document.getElementById('ptab-followups');
+            if(btn)window.switchPanelTab('followups',btn);
+          },50);
+        }
+      }
+    }
   });
   db.collection('orders').onSnapshot(snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -808,6 +825,22 @@ auth.onAuthStateChanged(async u=>{
     if(snap.exists) settings=snap.data();
     fillGovSelect();
   });
+  db.collection('client_followups').onSnapshot(snap=>{
+    allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
+    followupsByClient.clear();
+    allFollowups.forEach(f=>{
+      if(!f.clientId)return;
+      if(!followupsByClient.has(f.clientId))followupsByClient.set(f.clientId,[]);
+      followupsByClient.get(f.clientId).push(f);
+    });
+    // refresh open panel followups list
+    if(activeId){
+      const list=document.getElementById('panel-followups-list');
+      if(list)list.innerHTML=renderClientFollowups(activeId);
+      updateFollowupsBadge(activeId);
+    }
+  },err=>{ console.warn('followups listener:',err.message); });
+
   db.collection('transactions_v2').onSnapshot(snap=>{
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
     txByOrder.clear();
@@ -894,8 +927,10 @@ function renderGrid(){
     const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):null;
     const isVip=cOrds.length>=3;
     const isInactive=daysSince!==null&&daysSince>90;
+    const openReminders=countOpenReminders(c._id);
     let badge='';
-    if(hasLate) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);font-weight:800">⚠️ متأخر</span>`;
+    if(openReminders>0) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(167,139,250,.15);color:var(--p);font-weight:800">⏰ ${openReminders} متابعة</span>`;
+    else if(hasLate) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);font-weight:800">⚠️ متأخر</span>`;
     else if(rem>0) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);font-weight:800">💰 ${fn(rem)} ج</span>`;
     else if(isVip) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,170,0,.15);color:var(--y);font-weight:800">⭐ VIP</span>`;
     else if(isInactive) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(100,100,100,.1);color:var(--dim2);font-weight:800">😴 غير نشط</span>`;
@@ -983,6 +1018,18 @@ function renderPanel(id){
   document.querySelectorAll('.pn-tab').forEach(b=>b.classList.remove('on'));
   const summaryBtn=document.getElementById('ptab-summary');
   if(summaryBtn)summaryBtn.classList.add('on');
+  updateFollowupsBadge(id);
+
+  // آخر متابعة (لعرضها في تاب الملخص)
+  const _fus=getClientFollowups(id);
+  const lastFu=_fus[0];
+  const lastFuLine=lastFu?`<div style="margin-bottom:14px;background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:10px 12px;cursor:pointer" onclick="window.switchPanelTab('followups',document.getElementById('ptab-followups'))">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span style="font-size:11px;font-weight:800;color:var(--p)">📞 آخر متابعة</span>
+      <span style="font-size:9px;color:var(--dim2)">${fuTimeAgo(lastFu.createdAt)}</span>
+    </div>
+    <div style="font-size:11px;color:var(--dim2)">${FU_TYPES[lastFu.type]||lastFu.type}${lastFu.outcome?' · '+(FU_OUTCOMES[lastFu.outcome]||lastFu.outcome):''}${lastFu.note?' — '+escapeHtml(lastFu.note.slice(0,60))+(lastFu.note.length>60?'…':''):''}</div>
+  </div>`:'';
 
   document.getElementById('panel-body').innerHTML=`
     <!-- ── ملخص ── -->
@@ -991,7 +1038,9 @@ function renderPanel(id){
         ${canSee('client_phone')?`<a href="tel:${c.phone1}" class="qact">📞 اتصال</a>`:''}
         ${canSee('client_phone')?`<a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" class="qact">💬 واتساب</a>`:''}
         ${canSee('client_phone')?`<a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}?text=${encodeURIComponent('أهلاً '+c.name+' 👋، طلبك جاهز 🎉')}" target="_blank" class="qact">📨 رسالة</a>`:''}
+        <a href="javascript:void(0)" class="qact" onclick="openFollowupModal('${id}')" style="background:rgba(167,139,250,.12);color:var(--p);border-color:rgba(167,139,250,.3)">📞 سجّل متابعة</a>
       </div>
+      ${lastFuLine}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
         <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
           <div style="font-size:20px;font-weight:900;color:var(--b)">${cOrds.length}</div>
@@ -1040,6 +1089,15 @@ function renderPanel(id){
       </div>`:''}
     </div>
 
+    <!-- ── متابعات ── -->
+    <div id="ptab-pane-followups" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:800;color:var(--dim2)">📞 سجل المتابعة</div>
+        <button class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
+      </div>
+      <div id="panel-followups-list">${renderClientFollowups(id)}</div>
+    </div>
+
     <!-- ── أوردرات ── -->
     <div id="ptab-pane-orders" style="display:none">
       <div id="panel-orders-list">
@@ -1086,7 +1144,7 @@ function renderPanel(id){
 window.switchPanelTab=function(tab,btn){
   document.querySelectorAll('.pn-tab').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  ['summary','orders','data'].forEach(t=>{
+  ['summary','followups','orders','data'].forEach(t=>{
     const pane=document.getElementById('ptab-pane-'+t);
     if(pane)pane.style.display=t===tab?'block':'none';
   });
@@ -1137,6 +1195,175 @@ window.filterPanelOrders=function(filter){
 };
 
 function pRow(l,v){return`<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div style="font-size:12px;font-weight:700">${v}</div></div>`;}
+
+// ══ FOLLOW-UPS (CRM) ══
+const FU_TYPES={call:'📞 مكالمة',whatsapp:'💬 واتساب',email:'📧 إيميل',visit:'🏠 زيارة',note:'📝 ملاحظة',reminder:'⏰ تذكير'};
+const FU_OUTCOMES={answered:'✅ ردّ',no_answer:'📵 لم يردّ',interested:'🎯 مهتم',not_interested:'🚫 غير مهتم',order_placed:'🛒 طلب جديد',follow_later:'⏳ متابعة لاحقاً'};
+const FU_TYPE_COL={call:'var(--g)',whatsapp:'#25d366',email:'var(--y)',visit:'var(--p)',note:'var(--dim2)',reminder:'var(--b)'};
+
+function fuTimeAgo(ts){
+  if(!ts)return '';
+  const d=ts.toDate?ts.toDate():(ts instanceof Date?ts:new Date(ts));
+  const diff=Math.floor((Date.now()-d.getTime())/1000);
+  if(diff<60)return 'الآن';
+  if(diff<3600)return `منذ ${Math.floor(diff/60)} دقيقة`;
+  if(diff<86400)return `منذ ${Math.floor(diff/3600)} ساعة`;
+  if(diff<86400*30)return `منذ ${Math.floor(diff/86400)} يوم`;
+  return d.toLocaleDateString('ar-EG');
+}
+function fuFmtDate(s){
+  if(!s)return '';
+  const d=new Date(s);if(isNaN(d))return s;
+  return d.toLocaleDateString('ar-EG')+' '+d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+}
+function getClientFollowups(clientId){
+  return (followupsByClient.get(clientId)||[]).slice().sort((a,b)=>{
+    const ta=a.createdAt?.seconds||0, tb=b.createdAt?.seconds||0;
+    return tb-ta;
+  });
+}
+function countOpenReminders(clientId){
+  const now=Date.now();
+  return (followupsByClient.get(clientId)||[]).filter(f=>!f.nextActionDone&&f.nextActionDate&&new Date(f.nextActionDate).getTime()<=now).length;
+}
+function renderClientFollowups(clientId){
+  const list=getClientFollowups(clientId);
+  if(!list.length)return`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:20px;background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad)">📭 لا يوجد متابعات بعد — اضغط <b>＋ متابعة جديدة</b> لتسجيل أول تواصل.</div>`;
+  return list.map(f=>{
+    const col=FU_TYPE_COL[f.type]||'var(--dim2)';
+    const typeLbl=FU_TYPES[f.type]||f.type;
+    const outLbl=f.outcome?(FU_OUTCOMES[f.outcome]||f.outcome):'';
+    const overdue=!f.nextActionDone&&f.nextActionDate&&new Date(f.nextActionDate).getTime()<Date.now();
+    const upcoming=!f.nextActionDone&&f.nextActionDate&&new Date(f.nextActionDate).getTime()>=Date.now();
+    return`<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${col};border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          <span style="font-size:11px;font-weight:800;color:${col}">${typeLbl}</span>
+          ${outLbl?`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:700">${outLbl}</span>`:''}
+          ${overdue?'<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.15);color:var(--r);font-weight:800">⚠️ متأخر</span>':''}
+          ${upcoming?'<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.15);color:var(--b);font-weight:800">⏰ قادم</span>':''}
+          ${f.nextActionDone?'<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:800">✅ تم</span>':''}
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          ${!f.nextActionDone&&f.nextActionDate?`<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:10px" onclick="markFollowupDone('${f._id}')">✓ تم</button>`:''}
+          <button class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:10px" onclick="editFollowup('${f._id}')">✏️</button>
+          <button class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:10px" onclick="deleteFollowup('${f._id}')">🗑</button>
+        </div>
+      </div>
+      ${f.note?`<div style="font-size:12px;color:var(--snow);line-height:1.6;white-space:pre-wrap">${escapeHtml(f.note)}</div>`:''}
+      ${f.nextActionDate?`<div style="margin-top:6px;font-size:10px;color:${overdue?'var(--r)':'var(--dim2)'};font-weight:700">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>`:''}
+      <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim2)">
+        <span>👤 ${f.createdByName||'—'}</span>
+        <span>${fuTimeAgo(f.createdAt)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);}
+
+function updateFollowupsBadge(clientId){
+  const badge=document.getElementById('ptab-fu-badge');
+  if(!badge)return;
+  const open=countOpenReminders(clientId);
+  if(open>0){badge.style.display='inline-block';badge.textContent=open;}
+  else badge.style.display='none';
+}
+
+window.openFollowupModal=function(clientId,fId){
+  const c=clients.find(x=>x._id===clientId);
+  if(!c){toast('❌ العميل غير موجود','err');return;}
+  const f=fId?allFollowups.find(x=>x._id===fId):null;
+  document.getElementById('fu-client-id').value=clientId;
+  document.getElementById('fu-id').value=fId||'';
+  document.getElementById('fu-title').textContent=fId?'✏️ تعديل متابعة':'＋ متابعة جديدة';
+  document.getElementById('fu-client-name').textContent=c.name||'';
+  document.getElementById('fu-type').value=f?.type||'call';
+  document.getElementById('fu-outcome').value=f?.outcome||'';
+  document.getElementById('fu-note').value=f?.note||'';
+  document.getElementById('fu-next-date').value=f?.nextActionDate?toLocalDT(f.nextActionDate):'';
+  document.getElementById('fu-done').checked=!!f?.nextActionDone;
+  document.getElementById('ov-followup').classList.add('open');
+};
+function toLocalDT(s){
+  const d=new Date(s);if(isNaN(d))return '';
+  const off=d.getTimezoneOffset();
+  const local=new Date(d.getTime()-off*60000);
+  return local.toISOString().slice(0,16);
+}
+window.closeFollowupModal=function(){document.getElementById('ov-followup').classList.remove('open');};
+
+window.saveFollowup=async function(){
+  if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
+  const btn=event?.target;btnLoad&&btnLoad(btn);
+  try{
+    const clientId=gv('fu-client-id');
+    const fId=gv('fu-id');
+    const c=clients.find(x=>x._id===clientId);
+    const type=gv('fu-type');
+    const outcome=gv('fu-outcome');
+    const note=gv('fu-note').trim();
+    const nextRaw=gv('fu-next-date');
+    const nextDone=document.getElementById('fu-done').checked;
+    if(!type){toast('❌ اختر نوع المتابعة','err');btnReset&&btnReset(btn);return;}
+    if(!note&&!nextRaw){toast('❌ اكتب ملاحظة أو حدّد ميعاد متابعة','err');btnReset&&btnReset(btn);return;}
+    const data={
+      clientId,
+      clientName:c?.name||'',
+      type,outcome:outcome||'',
+      note,
+      nextActionDate:nextRaw?new Date(nextRaw).toISOString():'',
+      nextActionDone:nextDone||!nextRaw,
+      assignedTo:currentUser.uid,
+      assignedToName:userName||'',
+      isDeleted:false,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:currentUser.uid,
+      updatedByName:userName||'',
+    };
+    if(fId){
+      await db.collection('client_followups').doc(fId).update(data);
+      toast('✅ تم تحديث المتابعة','ok');
+    }else{
+      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      data.createdBy=currentUser.uid;
+      data.createdByName=userName||'';
+      await db.collection('client_followups').add(data);
+      toast('✅ تم تسجيل المتابعة','ok');
+    }
+    closeFollowupModal();
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||'فشل الحفظ'),'err');
+  }finally{btnReset&&btnReset(btn);}
+};
+
+window.editFollowup=function(fId){
+  const f=allFollowups.find(x=>x._id===fId);if(!f)return;
+  openFollowupModal(f.clientId,fId);
+};
+
+window.markFollowupDone=async function(fId){
+  try{
+    await db.collection('client_followups').doc(fId).update({
+      nextActionDone:true,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:currentUser?.uid||'',updatedByName:userName||'',
+    });
+    toast('✅ تم تحديد التذكير كمنفّذ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.deleteFollowup=async function(fId){
+  if(!confirm('حذف هذه المتابعة نهائياً من السجل؟'))return;
+  try{
+    await db.collection('client_followups').doc(fId).update({
+      isDeleted:true,
+      deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      deletedBy:currentUser?.uid||'',deletedByName:userName||'',
+    });
+    toast('🗑 تم الحذف','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ MODAL: أوردر جديد ══
 function prodOptsHtml(){
@@ -2535,6 +2762,60 @@ window.setStatusTab=function(tab,btn){
 };
 
 </script>
+
+<!-- MODAL: متابعة عميل -->
+<div class="overlay" id="ov-followup">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title" id="fu-title">＋ متابعة جديدة</span>
+      <button class="modal-x" onclick="closeFollowupModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="fu-client-id">
+      <input type="hidden" id="fu-id">
+      <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:8px 12px;margin-bottom:14px;font-size:12px;color:var(--dim2)">
+        👤 العميل: <span id="fu-client-name" style="color:var(--snow);font-weight:800">—</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div class="fg"><label>نوع المتابعة *</label>
+          <select class="inp" id="fu-type">
+            <option value="call">📞 مكالمة</option>
+            <option value="whatsapp">💬 واتساب</option>
+            <option value="email">📧 إيميل</option>
+            <option value="visit">🏠 زيارة</option>
+            <option value="note">📝 ملاحظة</option>
+            <option value="reminder">⏰ تذكير</option>
+          </select>
+        </div>
+        <div class="fg"><label>النتيجة (اختياري)</label>
+          <select class="inp" id="fu-outcome">
+            <option value="">—</option>
+            <option value="answered">✅ ردّ</option>
+            <option value="no_answer">📵 لم يردّ</option>
+            <option value="interested">🎯 مهتم</option>
+            <option value="not_interested">🚫 غير مهتم</option>
+            <option value="order_placed">🛒 طلب جديد</option>
+            <option value="follow_later">⏳ متابعة لاحقاً</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg"><label>الملاحظة / تفاصيل التواصل</label>
+        <textarea class="inp" id="fu-note" rows="3" placeholder="اكتب ما دار في التواصل، الاتفاقات، الطلبات..."></textarea>
+      </div>
+      <div class="fg"><label>📅 موعد المتابعة القادمة (اختياري — يولّد تذكير)</label>
+        <input type="datetime-local" class="inp" id="fu-next-date">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <input type="checkbox" id="fu-done" style="width:16px;height:16px;cursor:pointer">
+        <label for="fu-done" style="font-size:12px;color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-b" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
+        <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- MODAL: رقم مكرر -->
 <div class="overlay" id="ov-dup">

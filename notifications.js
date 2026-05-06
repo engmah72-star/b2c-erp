@@ -129,6 +129,29 @@ export function initNotifications(app, currentUser) {
     }, () => { /* permission errors silently */ });
   }).catch(() => { /* user fetch failed, skip admin audit listener */ });
 
+  // ── متابعات العملاء — تذكيرات مستحقّة (assignedTo == current user) ──
+  const fuQ = query(collection(db, 'client_followups'), where('assignedTo', '==', uid));
+  onSnapshot(fuQ, snap => {
+    const now = Date.now();
+    const fuNotifs = snap.docs
+      .map(d => ({ ...d.data(), _id: d.id }))
+      .filter(f => !f.isDeleted && !f.nextActionDone && f.nextActionDate)
+      .filter(f => {
+        const t = new Date(f.nextActionDate).getTime();
+        return !isNaN(t) && t <= now;
+      })
+      .map(f => ({
+        id: 'followup_' + f._id,
+        type: 'followup',
+        ico: '📞',
+        title: `متابعة مستحقّة — ${f.clientName || 'عميل'}`,
+        desc: `${f.note ? f.note.slice(0, 60) : 'تذكير متابعة'}`,
+        time: new Date(f.nextActionDate),
+        link: `clients.html?openClient=${f.clientId}&tab=followups`,
+      }));
+    mergeNotifs('followup', fuNotifs);
+  }, () => { /* permission errors silently */ });
+
   // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
   const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid));
   onSnapshot(ordersProdQ, snap => {
@@ -157,6 +180,7 @@ export function initNotifications(app, currentUser) {
       order_prod:   'order_prod_',
       order_ship:   'order_ship_',
       audit:        'audit_',
+      followup:     'followup_',
     };
     const prefix = prefixMap[group] || (group + '_');
     allNotifs = allNotifs.filter(n => !n.id.startsWith(prefix));
