@@ -196,6 +196,80 @@
           </div>
         </div>
 
+        <!-- WhatsApp Integration -->
+        <div class="setting-section">
+          <div class="ss-head">
+            <div class="ss-title"><div class="ss-ico" style="background:rgba(0,217,126,.15);color:var(--g)">💬</div>واتساب — الإشعارات التلقائية</div>
+            <span class="badge" id="wa-mode-badge" style="font-size:10px">—</span>
+          </div>
+          <div class="ss-body">
+
+            <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:10px;margin-bottom:12px;font-size:11px;line-height:1.7" id="wa-mode-help">
+              ⚠️ <strong>وضع المحاكاة (Stub)</strong><br>
+              الرسائل بتتسجل في السجل بدون إرسال فعلي. لما تجهّز التوكن وأسماء القوالب من Meta، حوّل لـ <strong>وضع حي</strong>.
+            </div>
+
+            <!-- وضع التشغيل -->
+            <div class="field" style="border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px">
+              <span class="fn">وضع التشغيل</span>
+              <select class="inp" id="wa-mode" style="max-width:160px;font-size:12px" onchange="saveWhatsApp()">
+                <option value="stub">🧪 محاكاة</option>
+                <option value="live">🚀 حي</option>
+              </select>
+            </div>
+
+            <!-- اللغة -->
+            <div class="field" style="border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px">
+              <span class="fn">لغة القوالب</span>
+              <select class="inp" id="wa-lang" style="max-width:160px;font-size:12px" onchange="saveWhatsApp()">
+                <option value="ar">🇪🇬 عربي</option>
+                <option value="en">🇺🇸 إنجليزي</option>
+              </select>
+            </div>
+
+            <!-- بيانات Meta -->
+            <div style="font-size:11px;color:var(--dim2);margin:12px 0 6px;font-weight:700">🔑 بيانات Meta</div>
+            <div class="field" style="border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px">
+              <span class="fn">Phone Number ID</span>
+              <input class="inp" id="wa-phone-id" style="max-width:240px;font-size:12px;font-family:monospace" placeholder="من Meta Developers" onchange="saveWhatsApp()">
+            </div>
+            <div class="field" style="border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px">
+              <span class="fn">Business Account ID</span>
+              <input class="inp" id="wa-biz-id" style="max-width:240px;font-size:12px;font-family:monospace" placeholder="من Meta Developers" onchange="saveWhatsApp()">
+            </div>
+            <div style="background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.2);border-radius:var(--rad);padding:8px;margin-bottom:12px;font-size:10px;line-height:1.6;color:var(--dim)">
+              🔒 <strong>التوكن (Access Token)</strong> بيتخزن في Firebase Secrets مش هنا، عبر:<br>
+              <code style="background:var(--bg3);padding:1px 4px;border-radius:3px">firebase functions:secrets:set WHATSAPP_TOKEN</code>
+            </div>
+
+            <!-- الأحداث -->
+            <div style="font-size:11px;color:var(--dim2);margin:12px 0 6px;font-weight:700">📡 الأحداث الفعّالة</div>
+            <div id="wa-events"></div>
+
+            <!-- اختبار -->
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+              <div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:700">🧪 اختبار سريع</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <input class="inp" id="wa-test-to" placeholder="01xxxxxxxxx" style="flex:1;min-width:140px;font-size:12px">
+                <select class="inp" id="wa-test-event" style="max-width:160px;font-size:12px">
+                  <option value="order_created">طلب جديد</option>
+                  <option value="order_shipped">تم الشحن</option>
+                  <option value="payment_received">دفعة</option>
+                  <option value="order_delivered">تم التسليم</option>
+                </select>
+                <button class="btn btn-g btn-sm" onclick="testWhatsApp()">إرسال تجريبي</button>
+              </div>
+            </div>
+
+            <!-- آخر السجلات -->
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+              <div style="font-size:11px;color:var(--dim2);margin-bottom:6px;font-weight:700">📋 آخر 5 رسائل</div>
+              <div id="wa-logs" style="font-size:11px"></div>
+            </div>
+
+          </div>
+        </div>
+
         <!-- معلومات النظام -->
         <div class="setting-section">
           <div class="ss-head">
@@ -520,8 +594,9 @@ import { getAuth, createUserWithEmailAndPassword, onAuthStateChanged, signOut } 
 import {
   getFirestore, collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc,
-  setDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch
+  setDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
 const app = initializeApp({
   apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
@@ -533,6 +608,7 @@ const app = initializeApp({
 });
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const functions = getFunctions(app);
 
 const ROLES = {
   admin:            {label:'Admin',           ico:'👑', col:'var(--p)'},
@@ -843,6 +919,144 @@ function toast(m,t=''){const e=document.createElement('div');e.className='toast'
 function gv(id){return document.getElementById(id)?.value||'';}
 function clearF(ids){ids.forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})}
 function fn(n){return(n||0).toLocaleString('ar-EG');}
+
+// ════════════════════════════════════════════════
+// WHATSAPP INTEGRATION — UI logic
+// ════════════════════════════════════════════════
+const WA_EVENTS = [
+  { key:'order_created',    label:'طلب جديد',        ico:'🆕' },
+  { key:'order_shipped',    label:'تم الشحن',        ico:'🚚' },
+  { key:'order_delivered',  label:'تم التسليم',      ico:'✅' },
+  { key:'payment_received', label:'استلام دفعة',     ico:'💰' },
+];
+let waSettings = null;
+let waSaveTimer = null;
+
+onSnapshot(doc(db,'settings','whatsapp'), snap => {
+  waSettings = snap.exists() ? snap.data() : {
+    mode:'stub', language:'ar',
+    events: { order_created:true, order_shipped:true, order_delivered:true, payment_received:true },
+    phoneNumberId:'', businessAccountId:'',
+  };
+  renderWhatsApp();
+});
+
+onSnapshot(
+  query(collection(db,'whatsapp_logs'), orderBy('createdAt','desc'), limit(5)),
+  snap => renderWhatsAppLogs(snap.docs.map(d=>d.data())),
+  _err => { /* قبل ما تتعمل أول رسالة، الـ collection مش موجودة — تجاهل */ }
+);
+
+function renderWhatsApp(){
+  if(!waSettings) return;
+  const mode = waSettings.mode || 'stub';
+  const modeBadge = document.getElementById('wa-mode-badge');
+  if(modeBadge){
+    modeBadge.textContent = mode==='live' ? '🚀 حي' : '🧪 محاكاة';
+    modeBadge.className   = 'badge ' + (mode==='live' ? 'bg-g' : 'bg-y');
+  }
+  const help = document.getElementById('wa-mode-help');
+  if(help){
+    if(mode==='live'){
+      help.style.background='rgba(0,217,126,.08)';
+      help.style.borderColor='rgba(0,217,126,.2)';
+      help.innerHTML='✅ <strong>وضع حي</strong><br>الرسائل بتتبعت فعلياً عبر Meta. تأكد إن التوكن متضبط في Secrets والقوالب معتمدة.';
+    } else {
+      help.style.background='rgba(255,170,0,.08)';
+      help.style.borderColor='rgba(255,170,0,.2)';
+      help.innerHTML='⚠️ <strong>وضع المحاكاة (Stub)</strong><br>الرسائل بتتسجل في السجل بدون إرسال فعلي. لما تجهّز التوكن وأسماء القوالب من Meta، حوّل لـ <strong>وضع حي</strong>.';
+    }
+  }
+  const sel = id => document.getElementById(id);
+  if(sel('wa-mode'))     sel('wa-mode').value     = mode;
+  if(sel('wa-lang'))     sel('wa-lang').value     = waSettings.language || 'ar';
+  if(sel('wa-phone-id')) sel('wa-phone-id').value = waSettings.phoneNumberId    || '';
+  if(sel('wa-biz-id'))   sel('wa-biz-id').value   = waSettings.businessAccountId|| '';
+
+  const ev = sel('wa-events');
+  if(ev){
+    const evs = waSettings.events || {};
+    ev.innerHTML = WA_EVENTS.map(e => {
+      const on = evs[e.key] !== false;
+      return `<div class="field" style="border-bottom:1px solid var(--line);padding:8px 0">
+        <span class="fn">${e.ico} ${e.label}</span>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" ${on?'checked':''} onchange="toggleWaEvent('${e.key}',this.checked)">
+          <span style="font-size:11px;color:var(--dim2)">${on?'مُفعّل':'مُعطّل'}</span>
+        </label>
+      </div>`;
+    }).join('');
+  }
+}
+
+function renderWhatsAppLogs(logs){
+  const el = document.getElementById('wa-logs');
+  if(!el) return;
+  if(!logs.length){ el.innerHTML='<div style="color:var(--dim2);padding:6px 0">لا توجد رسائل بعد</div>'; return; }
+  const STATUS = {
+    sent:    {ico:'✅', col:'var(--g)',  lbl:'مُرسلة'},
+    stub:    {ico:'🧪', col:'var(--y)',  lbl:'محاكاة'},
+    failed:  {ico:'❌', col:'var(--r)',  lbl:'فشل'},
+    pending: {ico:'⏳', col:'var(--dim)',lbl:'قيد الإرسال'},
+  };
+  el.innerHTML = logs.map(l => {
+    const s = STATUS[l.status] || STATUS.pending;
+    const t = l.createdAt?.toDate ? l.createdAt.toDate().toLocaleString('ar-EG',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '—';
+    const evLabel = (WA_EVENTS.find(e=>e.key===l.event)||{}).label || l.event;
+    const err = l.error ? `<div style="font-size:10px;color:var(--r);margin-top:2px">${l.error}</div>` : '';
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:${s.col}">${s.ico} ${evLabel}</span>
+        <span style="color:var(--dim2);font-size:10px">${t}</span>
+      </div>
+      <div style="color:var(--dim2);font-size:10px;margin-top:2px">${l.to||'—'} · ${s.lbl}</div>
+      ${err}
+    </div>`;
+  }).join('');
+}
+
+window.toggleWaEvent = (key, on) => {
+  if(!waSettings) return;
+  waSettings.events = waSettings.events || {};
+  waSettings.events[key] = on;
+  saveWhatsApp();
+};
+
+window.saveWhatsApp = () => {
+  if(!waSettings) return;
+  const sel = id => document.getElementById(id);
+  waSettings.mode              = sel('wa-mode')?.value     || 'stub';
+  waSettings.language          = sel('wa-lang')?.value     || 'ar';
+  waSettings.phoneNumberId     = sel('wa-phone-id')?.value?.trim()  || '';
+  waSettings.businessAccountId = sel('wa-biz-id')?.value?.trim()    || '';
+  clearTimeout(waSaveTimer);
+  waSaveTimer = setTimeout(async ()=>{
+    try {
+      await setDoc(doc(db,'settings','whatsapp'), waSettings, {merge:true});
+      toast('✅ تم حفظ إعدادات الواتساب','ok');
+    } catch(e){
+      toast('❌ '+e.message,'err');
+    }
+  }, 400);
+};
+
+window.testWhatsApp = async () => {
+  const to = document.getElementById('wa-test-to')?.value?.trim();
+  const event = document.getElementById('wa-test-event')?.value;
+  if(!to)    return toast('⚠️ أدخل رقم تليفون','err');
+  if(!event) return toast('⚠️ اختر نوع الحدث','err');
+  try {
+    toast('⏳ جاري الإرسال...','');
+    const fn = httpsCallable(functions, 'sendWhatsAppTest');
+    const res = await fn({ to, event });
+    const r = res.data || {};
+    if(r.ok && r.stub)         toast('🧪 تم تسجيل الرسالة في وضع المحاكاة','ok');
+    else if(r.ok)              toast('✅ تم الإرسال — Message ID: '+(r.messageId||'—'),'ok');
+    else                       toast('❌ '+(r.error||r.reason||'فشل الإرسال'),'err');
+  } catch(e){
+    toast('❌ '+(e.message||'فشل الاتصال بالـ Function'),'err');
+  }
+};
 
 // EXPOSE
 window.addItem=window.addItem; window.addCostItem=window.addCostItem;
