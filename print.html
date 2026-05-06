@@ -384,7 +384,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -592,14 +592,18 @@ function renderPanel(o){
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:11px;font-weight:700;color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
       <div style="display:flex;flex-direction:column;gap:10px">
-      ${(o.products||[]).map(p=>{
+      ${(o.products||[]).map((p,idx)=>{
         const cat=productsCatalog.find(c=>(c.name||'').trim().toLowerCase()===(p.name||'').trim().toLowerCase());
         const paper=p.paper||cat?.paper;
         const weight=p.weight||cat?.weight;
         const size=p.size||cat?.size;
         const ptCol=p.printType?.includes('offset')?'var(--y)':p.printType?.includes('digital')?'var(--b)':'';
         const ptLabel=p.printType?.includes('offset')?'أوفست':p.printType?.includes('digital')?'ديجيتال':'';
-        return`<div style="border-radius:12px;background:var(--bg3);border:1px solid var(--line);overflow:hidden">
+        const pStatus=p.productStatus||'pending';
+        const sConf=PRODUCT_STATUS[pStatus]||PRODUCT_STATUS.pending;
+        const isReady=pStatus==='ready'||pStatus==='printed'||pStatus==='done';
+        const dimStyle=isReady?'':'opacity:.55';
+        return`<div style="border-radius:12px;background:var(--bg3);border:1px solid var(--line);overflow:hidden;border-left:3px solid ${sConf.col};${dimStyle}">
           ${p.designImageUrl
             ?`<img src="${p.designImageUrl}" loading="lazy" onclick="window.open('${p.designImageUrl}','_blank')" style="width:100%;max-height:240px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2);border-bottom:1px solid var(--line)">`
             :`<div style="height:80px;display:flex;align-items:center;justify-content:center;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--dim2);font-size:12px;gap:6px">🖼️ لا توجد صورة</div>`}
@@ -608,6 +612,12 @@ function renderPanel(o){
               <span style="font-size:13px;font-weight:900">${p.name||'—'}</span>
               <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.2);color:var(--y)">× ${p.qty||1}</span>
               ${p.unitPrice||p.price?`<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);color:var(--g)">${fn(p.unitPrice||p.price)} ج</span>`:''}
+              ${productStatusBadge(pStatus)}
+            </div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+              ${pStatus!=='printed'&&pStatus!=='done'?`<button onclick="setPrintProductStatus(${idx},'printed')" class="bdg bdg-purple" style="cursor:pointer;border:none">🖨️ تم طباعته</button>`:''}
+              ${pStatus==='printed'?`<button onclick="setPrintProductStatus(${idx},'ready')" class="bdg bdg-mute" style="cursor:pointer;border:none">↩ إعادة لجاهز</button>`:''}
+              ${!isReady&&pStatus!=='on_hold'?`<button onclick="setPrintProductStatus(${idx},'on_hold')" class="bdg bdg-warn" style="cursor:pointer;border:none">⏸ تأجيل</button>`:''}
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:5px">
               ${ptLabel?`<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:${ptCol}18;border:1px solid ${ptCol}44;color:${ptCol}">${ptLabel}</span>`:''}
@@ -764,6 +774,24 @@ window.confirmMoveToProduction=async function(){
 };
 
 // Reject
+// تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+window.setPrintProductStatus=async function(idx,status){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
+  const prods=[...(o.products||[])];
+  if(idx<0||idx>=prods.length)return;
+  prods[idx]={...prods[idx],productStatus:status,statusUpdatedAt:nowStr(),statusUpdatedBy:userName};
+  const sLbl=({pending:'في الانتظار',in_progress:'جاري',ready:'جاهز للطباعة',on_hold:'مؤجَّل',printed:'مطبوع',done:'منتهي'})[status]||status;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      products:prods,
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📦 ${prods[idx].name}: ${sLbl}`,by:userName,byId:auth?.currentUser?.uid||''}],
+      updatedAt:serverTimestamp()
+    });
+    toast(`✅ ${prods[idx].name}: ${sLbl}`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 window.openReject=function(){document.getElementById('ov-reject')?.classList.add('open');};
 window.confirmReject=async function(){
   if(!activeId||!activeOrder)return;
