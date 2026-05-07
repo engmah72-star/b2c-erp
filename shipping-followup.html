@@ -65,12 +65,12 @@
 
     <!-- KPI strip -->
     <div class="fl-kpis">
-      <div class="fl-kpi" style="border-top-color:var(--b)" onclick="setFilter('all',this)" id="kf-all"><div class="fl-kpi-val" id="k-all" style="color:var(--b)">—</div><div class="fl-kpi-lbl">📦 الكل</div></div>
+      <div class="fl-kpi on" style="border-top-color:var(--b)" onclick="setFilter('active',this)" id="kf-default"><div class="fl-kpi-val" id="k-active" style="color:var(--b)">—</div><div class="fl-kpi-lbl">📋 بحاجة لمتابعة</div></div>
       <div class="fl-kpi" style="border-top-color:var(--c)" onclick="setFilter('transit',this)"><div class="fl-kpi-val" id="k-transit" style="color:var(--c)">—</div><div class="fl-kpi-lbl">🚚 في الطريق</div></div>
-      <div class="fl-kpi" style="border-top-color:var(--g)" onclick="setFilter('delivered',this)"><div class="fl-kpi-val" id="k-deliv" style="color:var(--g)">—</div><div class="fl-kpi-lbl">✅ مُسلَّم</div></div>
-      <div class="fl-kpi" style="border-top-color:var(--r)" onclick="setFilter('unpaid',this)"><div class="fl-kpi-val" id="k-unpaid" style="color:var(--r)">—</div><div class="fl-kpi-lbl">⏳ غير محصّل</div></div>
+      <div class="fl-kpi" style="border-top-color:var(--y)" onclick="setFilter('deliv-unpaid',this)"><div class="fl-kpi-val" id="k-deliv-unpaid" style="color:var(--y)">—</div><div class="fl-kpi-lbl">⏳ مُسلَّم — انتظار تحصيل</div></div>
       <div class="fl-kpi" style="border-top-color:var(--p)" onclick="setFilter('ready',this)"><div class="fl-kpi-val" id="k-ready" style="color:var(--p)">—</div><div class="fl-kpi-lbl">🟢 جاهز للأرشفة</div></div>
-      <div class="fl-kpi" style="border-top-color:var(--y)" onclick="setFilter('late',this)"><div class="fl-kpi-val" id="k-late" style="color:var(--y)">—</div><div class="fl-kpi-lbl">⚠️ متأخر</div></div>
+      <div class="fl-kpi" style="border-top-color:var(--r)" onclick="setFilter('late',this)"><div class="fl-kpi-val" id="k-late" style="color:var(--r)">—</div><div class="fl-kpi-lbl">⚠️ متأخر</div></div>
+      <div class="fl-kpi" style="border-top-color:var(--dim2)" onclick="setFilter('all',this)"><div class="fl-kpi-val" id="k-all" style="color:var(--dim2)">—</div><div class="fl-kpi-lbl">📦 شامل المنجز</div></div>
     </div>
 
     <!-- Filters -->
@@ -134,7 +134,7 @@ const db=getFirestore(app);
 
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
-let currentFilter='all', __cfOrderId='';
+let currentFilter='active', __cfOrderId='';
 
 // ── Helpers ──
 const $ = id => document.getElementById(id);
@@ -273,20 +273,29 @@ function fillCompanies(){
   if(cur)sel.value=cur;
 }
 
+// "بحاجة لمتابعة" = ليست جاهزة للأرشفة + ليست مرتجع + ليست مؤرشف
+function isActiveFollowup(o){
+  if(o.shipStage==='returned')return false;
+  if(o.stage==='archived')return false;
+  if(isReadyToClose(o))return false;
+  return true;
+}
+
 function updateKpis(){
   const total=orders.length;
-  const transit=orders.filter(o=>getDeliveryStatus(o).key==='transit').length;
-  const delivered=orders.filter(o=>getDeliveryStatus(o).key==='delivered').length;
-  const unpaid=orders.filter(o=>getCollectionStatus(o).key!=='paid' && o.shipStage!=='returned').length;
+  const active=orders.filter(isActiveFollowup).length;
+  const transit=orders.filter(o=>isActiveFollowup(o) && getDeliveryStatus(o).key==='transit').length;
+  // ⏳ مُسلَّم — انتظار تحصيل: مُسلَّم + غير محصّل بالكامل (لسه مش جاهز للأرشفة)
+  const delivUnpaid=orders.filter(o=>isActiveFollowup(o) && getDeliveryStatus(o).key==='delivered' && getCollectionStatus(o).key!=='paid').length;
   const ready=orders.filter(isReadyToClose).length;
-  const late=orders.filter(isLate).length;
-  setText('k-all',total);
+  const late=orders.filter(o=>isActiveFollowup(o) && isLate(o)).length;
+  setText('k-active',active);
   setText('k-transit',transit);
-  setText('k-deliv',delivered);
-  setText('k-unpaid',unpaid);
+  setText('k-deliv-unpaid',delivUnpaid);
   setText('k-ready',ready);
   setText('k-late',late);
-  setText('sub',total+' أوردر · '+ready+' جاهز للأرشفة · '+late+' متأخر');
+  setText('k-all',total);
+  setText('sub',active+' بحاجة لمتابعة · '+ready+' جاهز للأرشفة'+(late>0?' · '+late+' متأخر':''));
 }
 
 window.setFilter=function(f,btn){
@@ -297,11 +306,14 @@ window.setFilter=function(f,btn){
 };
 
 function matchFilter(o){
+  // فلاتر صريحة تتجاوز "بحاجة لمتابعة"
   if(currentFilter==='all')return true;
-  if(currentFilter==='transit')return getDeliveryStatus(o).key==='transit';
-  if(currentFilter==='delivered')return getDeliveryStatus(o).key==='delivered';
-  if(currentFilter==='unpaid')return getCollectionStatus(o).key!=='paid' && o.shipStage!=='returned';
   if(currentFilter==='ready')return isReadyToClose(o);
+  // كل الفلاتر التانية مبنية فوق "active follow-up"
+  if(!isActiveFollowup(o))return false;
+  if(currentFilter==='active')return true;
+  if(currentFilter==='transit')return getDeliveryStatus(o).key==='transit';
+  if(currentFilter==='deliv-unpaid')return getDeliveryStatus(o).key==='delivered' && getCollectionStatus(o).key!=='paid';
   if(currentFilter==='late')return isLate(o);
   return true;
 }
