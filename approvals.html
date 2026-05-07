@@ -95,6 +95,7 @@ let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let txs = []; // كل الـ tx مع approval fields
 let activeTab = 'pending';
 let walletsMap = new Map();
+let ordersMap = new Map();   // ordersMap.get(docId) → order full data
 
 const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const ICONS = { client_payment:'💰', refund:'↩️', salary:'👤', bonus:'🎁', deduction:'✂️', printer_payment:'🏭', shipper_payment:'🚚', shipping_cost:'🚚', shipping_settlement:'📦', transfer:'🔄', opening_balance:'🏦', adjustment:'⚖️', expense:'💸', expense_reversal:'↩️', refund_reversal:'🔄' };
@@ -191,6 +192,12 @@ function startListeners(){
     err=>{ console.error('[approvals] wallets error:', err); }
   );
 
+  // الأوردرات للتفاصيل (نخزّنها في ذاكرة محلية لاستعراض كامل من بطاقة الاعتماد)
+  onSnapshot(collection(db,'orders'),
+    snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); render(); },
+    err=>{ console.error('[approvals] orders error:', err); }
+  );
+
   // كل الحركات الجديدة (التي بها approvalStatus)
   onSnapshot(collection(db,'transactions_v2'),
     snap=>{
@@ -245,12 +252,70 @@ function fmtDate(ts){
   return '—';
 }
 
+const STAGE_AR = { design:'تصميم', printing:'طباعة', production:'تنفيذ', shipping:'شحن', archived:'مؤرشف', cancelled:'ملغي' };
+const STAGE_COL = { design:'#a78bfa', printing:'#ffaa00', production:'#ff3d6e', shipping:'#3b9eff', archived:'#888', cancelled:'#666' };
+const PAY_AR    = { paid:'مسدد', partial:'جزئي', pending:'لم يُسدّد', returned:'مرتجع' };
+
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderOrderDetails(o){
+  if(!o) return '';
+  const sale = parseFloat(o.salePrice) || 0;
+  const paid = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
+  const disc = parseFloat(o.discount) || 0;
+  const sFee = parseFloat(o.customerShipFee) || 0;
+  const net  = Math.max(0, sale + sFee - disc);
+  const rem  = Math.max(0, net - paid);
+  const stage = o.stage || '—';
+  const stColor = STAGE_COL[stage] || '#888';
+  const stLabel = STAGE_AR[stage] || stage;
+  const payStatus = o.paymentStatus || (rem<=0?'paid':paid>0?'partial':'pending');
+  const products = (o.products || []).map(p => `${escapeHtml(p.name||'منتج')}${p.qty>1?' ×'+p.qty:''}`).join(' · ') || escapeHtml(o.product || '—');
+  const phone = o.clientPhone ? escapeHtml(o.clientPhone) : '';
+
+  return `
+    <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:10px;padding:10px 12px;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:11px;color:var(--dim2);font-weight:700">📋 تفاصيل الأوردر</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <span style="background:${stColor}22;color:${stColor};padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800">${stLabel}</span>
+          <span style="background:${payStatus==='paid'?'rgba(0,217,126,.15)':payStatus==='partial'?'rgba(255,170,0,.15)':'rgba(255,61,110,.15)'};color:${payStatus==='paid'?'#00d97e':payStatus==='partial'?'#ffaa00':'#ff3d6e'};padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800">${PAY_AR[payStatus]||payStatus}</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;font-size:11px;margin-bottom:6px">
+        <div><span style="color:var(--dim2)">رقم الأوردر:</span> <b style="font-family:monospace;color:var(--snow)">${escapeHtml(o.orderId || o._id.slice(-8))}</b></div>
+        <div><span style="color:var(--dim2)">العميل:</span> <b style="color:var(--snow)">${escapeHtml(o.clientName || '—')}</b></div>
+        ${phone?`<div><span style="color:var(--dim2)">تليفون:</span> <b style="font-family:monospace;color:var(--snow)">${phone}</b></div>`:''}
+        ${o.designerName?`<div><span style="color:var(--dim2)">المصمم:</span> <b style="color:var(--snow)">${escapeHtml(o.designerName)}</b></div>`:''}
+      </div>
+      <div style="font-size:11px;color:var(--dim2);margin-bottom:8px">المنتجات: <span style="color:var(--snow)">${products}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:6px;font-size:11px;padding-top:8px;border-top:1px dashed var(--line)">
+        <div><span style="color:var(--dim2)">السعر:</span> <b style="color:var(--snow)">${fn(sale)}</b></div>
+        ${disc>0?`<div><span style="color:var(--dim2)">خصم:</span> <b style="color:#ff3d6e">−${fn(disc)}</b></div>`:''}
+        ${sFee>0?`<div><span style="color:var(--dim2)">شحن:</span> <b style="color:var(--snow)">${fn(sFee)}</b></div>`:''}
+        <div><span style="color:var(--dim2)">الصافي:</span> <b style="color:var(--snow)">${fn(net)}</b></div>
+        <div><span style="color:var(--dim2)">المدفوع:</span> <b style="color:#00d97e">${fn(paid)}</b></div>
+        <div><span style="color:var(--dim2)">المتبقي:</span> <b style="color:${rem>0?'#ff3d6e':'#00d97e'}">${fn(rem)}</b></div>
+      </div>
+    </div>`;
+}
+
 function renderCard(t){
   const cat = CAT_AR[t.category] || t.category || 'حركة';
   const icon = ICONS[t.category] || '📝';
   const wName = t.walletName || walletsMap.get(t.walletId) || t.walletId || '—';
   const isIn = t.type === 'in';
   const entityName = t.clientName || t.supplierName || t.employeeName || '—';
+
+  // ابحث الأوردر بـ Firebase docId أو business orderId
+  let order = null;
+  if(t.orderId){
+    order = ordersMap.get(t.orderId);
+    if(!order){
+      // ربما orderId business id (للحركات القديمة) — ابحث في كل الأوردرات
+      for(const o of ordersMap.values()){ if(o.orderId === t.orderId){ order = o; break; } }
+    }
+  }
 
   // أزرار حسب الدور والمرحلة
   let actions = '';
@@ -272,9 +337,9 @@ function renderCard(t){
   }
 
   let trail = '';
-  if(t.confirmedByName) trail += `<span>🔵 أكّد: <b>${t.confirmedByName}</b> · ${fmtDate(t.confirmedAt)}</span>`;
-  if(t.approvedByName)  trail += `<span>✅ اعتمد: <b>${t.approvedByName}</b> · ${fmtDate(t.approvedAt)}</span>`;
-  if(t.rejectedByName)  trail += `<span style="color:#ff3d6e">❌ رفض: <b>${t.rejectedByName}</b> · ${fmtDate(t.rejectedAt)}${t.rejectReason?' · '+t.rejectReason:''}</span>`;
+  if(t.confirmedByName) trail += `<span>🔵 أكّد: <b>${escapeHtml(t.confirmedByName)}</b> · ${fmtDate(t.confirmedAt)}</span>`;
+  if(t.approvedByName)  trail += `<span>✅ اعتمد: <b>${escapeHtml(t.approvedByName)}</b> · ${fmtDate(t.approvedAt)}</span>`;
+  if(t.rejectedByName)  trail += `<span style="color:#ff3d6e">❌ رفض: <b>${escapeHtml(t.rejectedByName)}</b> · ${fmtDate(t.rejectedAt)}${t.rejectReason?' · '+escapeHtml(t.rejectReason):''}</span>`;
 
   const stCls = 'st-' + t.approvalStatus;
   const stLbl = {pending:'⏳ بانتظار التأكيد', confirmed:'🔵 مؤكَّدة (بانتظار الاعتماد)', approved:'🔒 معتمدة ومؤرشَفة', rejected:'❌ مرفوضة'}[t.approvalStatus] || t.approvalStatus;
@@ -283,18 +348,19 @@ function renderCard(t){
     <div class="approval-card">
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
-          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+entityName:''}</div>
-          <div class="ac-meta">${t.description || '—'}</div>
+          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}</div>
+          <div class="ac-meta">${escapeHtml(t.description || '—')}</div>
           <div class="ac-status ${stCls}">${stLbl}</div>
         </div>
         <div class="ac-amount ${isIn?'in':'out'}">${isIn?'+':'−'} ${fn(t.amount)} ج</div>
       </div>
       <div class="ac-body">
-        <div class="ac-field">المحفظة <b>${wName}</b></div>
-        <div class="ac-field">التاريخ <b>${t.date || fmtDate(t.createdAt)}</b></div>
-        <div class="ac-field">أنشأها <b>${t.createdByName || '—'}</b></div>
-        ${t.orderId?`<div class="ac-field">الأوردر <b style="font-family:monospace">${String(t.orderId).slice(-8)}</b></div>`:''}
+        <div class="ac-field">المحفظة <b>${escapeHtml(wName)}</b></div>
+        <div class="ac-field">التاريخ <b>${escapeHtml(t.date) || fmtDate(t.createdAt)}</b></div>
+        <div class="ac-field">أنشأها <b>${escapeHtml(t.createdByName || '—')}</b></div>
+        ${t.orderId?`<div class="ac-field">معرّف داخلي <b style="font-family:monospace">${String(t.orderId).slice(-8)}</b></div>`:''}
       </div>
+      ${order ? renderOrderDetails(order) : (t.orderId?'<div style="font-size:11px;color:var(--dim2);margin-top:8px;padding:8px;background:rgba(255,170,0,.06);border-radius:6px">⚠️ تفاصيل الأوردر غير متاحة (قد يكون محذوفاً)</div>':'')}
       ${trail?`<div class="ac-trail">${trail}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
