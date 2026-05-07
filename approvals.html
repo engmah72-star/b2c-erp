@@ -1369,23 +1369,150 @@ window.approveTx = async function(txId){
   }
 };
 
+// رفض tx مع عكس مالي كامل + cascade على كل السجلات المرتبطة
 window.rejectTx = async function(txId){
-  const reason = prompt('سبب الرفض (إجباري):');
+  const tx = txs.find(x=>x._id===txId);
+  if(!tx) return;
+  const reason = prompt(`سبب الرفض (إجباري):\n\nسيتم عكس العملية: ${fn(tx.amount)} ج ستعود لـ ${tx.walletName||'المحفظة'}`);
   if(!reason || !reason.trim()) return;
+  if(!confirm(`تأكيد الرفض؟\n\nالعملية ستُعكَس بالكامل:\n• ${fn(tx.amount)} ج تعود للمحفظة\n• tx عكسية تُنشأ\n• قيد ledger عكسي\n${tx.spId?'• supplier_payments تُعلَّم محذوفة\n':''}${tx.epId?'• employee_payments تُعلَّم محذوفة\n':''}`)) return;
+
   try{
-    await updateDoc(doc(db,'transactions_v2',txId),{
+    // pre-fetch بيانات الأوردر لو محتاج (للـ refund أو costItem)
+    let orderDoc = null;
+    if(tx.orderId && (tx.category === 'refund' || tx.paymentRequestId)){
+      try{
+        const oSnap = await getDoc(doc(db,'orders',tx.orderId));
+        if(oSnap.exists()) orderDoc = {...oSnap.data(), _id:oSnap.id};
+      }catch(_){}
+    }
+    // pre-fetch payment_request لو موجود (لمعرفة costItemIndex)
+    let req = null;
+    if(tx.paymentRequestId){
+      req = requests.find(x=>x._id === tx.paymentRequestId);
+      if(!req){
+        try{
+          const rSnap = await getDoc(doc(db,'payment_requests',tx.paymentRequestId));
+          if(rSnap.exists()) req = {...rSnap.data(), _id:rSnap.id};
+        }catch(_){}
+      }
+    }
+
+    const batch = writeBatch(db);
+    const isOut = tx.type === 'out';
+    const reverseSign = isOut ? +1 : -1; // out → نرجع +amount، in → نخصم -amount
+
+    // 1. علم الـ tx المرفوضة
+    batch.update(doc(db,'transactions_v2',txId),{
       approvalStatus: 'rejected',
       rejectedBy: currentUid, rejectedByName: currentUserName,
       rejectedAt: serverTimestamp(),
       rejectReason: reason.trim(),
+      isReversed: true,
     });
-    const tx = txs.find(x=>x._id===txId);
-    if(tx?.paymentRequestId){
-      try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'rejected', rejectedBy:currentUid, rejectedByName:currentUserName, rejectedAt:serverTimestamp(), rejectReason:reason.trim() }); }catch(_){}
+
+    // 2. عكس رصيد المحفظة
+    if(tx.walletId){
+      batch.update(doc(db,'wallets',tx.walletId),{ balance: increment(reverseSign * tx.amount) });
     }
-    showToast('❌ تم الرفض','ok');
+
+    // 3. tx عكسية تظهر للأرشيف
+    const revRef = doc(collection(db,'transactions_v2'));
+    batch.set(revRef, {
+      walletId: tx.walletId, walletName: tx.walletName,
+      type: isOut ? 'in' : 'out', amount: tx.amount, fees: 0,
+      description: `🔄 عكس رفض — ${tx.description||tx.category||''}`,
+      category: tx.category + '_reversal',
+      orderId: tx.orderId||null, clientId: tx.clientId||null, clientName: tx.clientName||null,
+      supplierId: tx.supplierId||null, supplierName: tx.supplierName||null,
+      employeeId: tx.employeeId||null, employeeName: tx.employeeName||null,
+      paymentRequestId: tx.paymentRequestId||null,
+      isReversal: true, reversesTxId: txId,
+      rejectReason: reason.trim(),
+      date: new Date().toLocaleDateString('ar-EG'),
+      createdBy: currentUid, createdByName: currentUserName,
+      createdAt: serverTimestamp(),
+      // العكس مُعتمد تلقائياً لأنه ناتج عن رفض admin/ops
+      approvalStatus: 'approved', isLocked: true,
+      approvedBy: currentUid, approvedByName: currentUserName, approvedAt: serverTimestamp(),
+      confirmedBy: '', confirmedByName: '', confirmedAt: null,
+      rejectedBy: '', rejectedByName: '', rejectedAt: null,
+    });
+
+    // 4. قيد ledger عكسي
+    const reversalEvt = (() => {
+      const c = tx.category;
+      if(c === 'client_payment') return 'CUSTOMER_REFUND';
+      if(c === 'refund') return 'CUSTOMER_PAYMENT';
+      if(c === 'salary' || c === 'printer_payment' || c === 'shipper_payment') return 'GENERAL_EXPENSE_REVERSAL';
+      return 'GENERAL_EXPENSE_REVERSAL';
+    })();
+    addLedgerToBatch(batch, db, reversalEvt, {
+      amount: tx.amount, walletId: tx.walletId, walletName: tx.walletName||'',
+      orderId: tx.orderId, clientId: tx.clientId, clientName: tx.clientName,
+      vendorId: tx.supplierId, vendorName: tx.supplierName,
+      employeeId: tx.employeeId, employeeName: tx.employeeName,
+      notes: `عكس رفض: ${reason.trim()}`,
+      refId: txId,
+      userId: currentUid, userName: currentUserName,
+    });
+
+    // 5. علم supplier_payments محذوف
+    if(tx.spId){
+      batch.update(doc(db,'supplier_payments',tx.spId),{
+        isVoided: true, voidedAt: serverTimestamp(), voidedBy: currentUid, voidReason: reason.trim()
+      });
+    }
+
+    // 6. علم employee_payments محذوف
+    if(tx.epId){
+      batch.update(doc(db,'employee_payments',tx.epId),{
+        isVoided: true, voidedAt: serverTimestamp(), voidedBy: currentUid, voidReason: reason.trim()
+      });
+    }
+
+    // 7. عكس orders (لـ refund: نرجع totalPaid؛ لـ costItem: نرجع paid=false)
+    if(tx.orderId && orderDoc){
+      const updateData = { updatedAt: serverTimestamp() };
+      // عكس refund
+      if(tx.category === 'refund'){
+        const payment = calcOrderPayment(orderDoc, +tx.amount); // نرجع المبلغ
+        Object.assign(updateData, payment);
+      }
+      // عكس costItem.paid
+      if(req?.costItemIndex !== undefined && orderDoc.costItems?.[req.costItemIndex]?.paid){
+        const items = [...(orderDoc.costItems||[])];
+        const idx = req.costItemIndex;
+        items[idx] = {
+          ...items[idx],
+          paid: false,
+          paidTxId: null, paidSpId: null, paidAt: null, paidVia: null, paidTransferRef: null,
+          paidByName: null, paymentRequestId: null,
+          unpaidAt: new Date().toISOString(),
+          unpaidReason: reason.trim(),
+        };
+        updateData.costItems = items;
+      }
+      if(Object.keys(updateData).length > 1){ // أكثر من updatedAt
+        batch.update(doc(db,'orders',tx.orderId), updateData);
+      }
+    }
+
+    // 8. علم payment_request مرفوض
+    if(tx.paymentRequestId){
+      batch.update(doc(db,'payment_requests',tx.paymentRequestId), {
+        status: 'rejected',
+        rejectedBy: currentUid, rejectedByName: currentUserName,
+        rejectedAt: serverTimestamp(),
+        rejectReason: reason.trim(),
+        isReversed: true,
+      });
+    }
+
+    await batch.commit();
+    showToast(`❌ تم الرفض + العكس الكامل: ${fn(tx.amount)} ج`,'ok');
   }catch(e){
-    const handled = window.financialGuard?.(e,{operation:'رفض', txId});
+    const handled = window.financialGuard?.(e,{operation:'رفض + عكس', txId});
     if(!handled) showToast('❌ '+e.message,'err');
   }
 };
