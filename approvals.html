@@ -178,6 +178,20 @@
   </div>
 </div>
 
+<!-- Modal: تفاصيل الأوردر الكاملة -->
+<div class="overlay" id="ov-order-details">
+  <div class="modal" style="max-width:720px;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-head" style="flex-shrink:0">
+      <span class="modal-title" id="od-title">📦 تفاصيل الأوردر</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <a id="od-external-link" target="_blank" style="display:none;padding:6px 12px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.15);color:#a78bfa;text-decoration:none;font-size:11px;font-weight:700">🔗 فتح في صفحة المرحلة</a>
+        <button class="modal-x" onclick="cM('order-details')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="od-body" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
 <!-- Modal: ضبط رصيد المحفظة -->
 <div class="overlay" id="ov-adjust">
   <div class="modal" style="max-width:480px">
@@ -707,7 +721,10 @@ function renderOrderDetails(o, costOnly=false){
   return `
     <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:10px;padding:10px 12px;margin-top:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
-        <div style="font-size:11px;color:var(--dim2);font-weight:700">📋 تفاصيل الأوردر</div>
+        <div style="font-size:11px;color:var(--dim2);font-weight:700;display:flex;align-items:center;gap:8px">
+          <span>📋 تفاصيل الأوردر</span>
+          <button onclick="openOrderDetails('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.15);color:#a78bfa;cursor:pointer;font-size:10px;font-weight:800;font-family:inherit">🔗 فتح كاملاً</button>
+        </div>
         <span style="background:${stColor}22;color:${stColor};padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800">${stLabel}</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;font-size:11px;margin-bottom:6px">
@@ -1514,6 +1531,153 @@ window.uploadReceipt = async function(){
 // ══════════════ Approval actions (existing tx flow) ══════════════
 // ══════════════ ضبط رصيد المحفظة (drift fix) ══════════════
 let adjustingWalletId = null;
+// ══════════════ Modal: تفاصيل الأوردر الكاملة ══════════════
+window.openOrderDetails = function(orderId){
+  if(!orderId) return;
+  const o = ordersMap.get(orderId);
+  if(!o){
+    showToast('⚠️ الأوردر غير موجود (قد يكون محذوفاً)','err');
+    return;
+  }
+  // الصفحة المناسبة حسب المرحلة
+  const stagePages = { design:'design.html', printing:'print.html', production:'production.html', shipping:'shipping.html', archived:'archive.html' };
+  const ext = stagePages[o.stage];
+  const extLink = document.getElementById('od-external-link');
+  if(ext){ extLink.href = ext + '?orderId=' + orderId; extLink.style.display = ''; }
+  else { extLink.style.display = 'none'; }
+
+  document.getElementById('od-title').innerHTML = `📦 ${escapeHtml(o.orderId||orderId.slice(-8))} — ${escapeHtml(o.clientName||'')}`;
+
+  const sale = parseFloat(o.salePrice)||0;
+  const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const disc = parseFloat(o.discount)||0;
+  const sFee = parseFloat(o.customerShipFee)||0;
+  const net  = Math.max(0, sale + sFee - disc);
+  const rem  = Math.max(0, net - paid);
+  const totalCost = (o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const paidCost = (o.costItems||[]).filter(c=>c.paid).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+
+  // كل tx مرتبطة بالأوردر
+  const orderTxs = allTxs.filter(t => t.orderId === orderId);
+  const orderRequests = requests.filter(r => r.orderId === orderId);
+
+  const productsHtml = (o.products || []).map(p => `<li>${escapeHtml(p.name||'منتج')}${p.qty>1?' × '+p.qty:''}${p.unitPrice?` <span style="color:var(--dim2)">(${fn(p.unitPrice)} ج)</span>`:''}</li>`).join('') || '—';
+
+  // التصميم — عرض كل الـ files
+  const designFiles = [];
+  if(o.designFileUrl) designFiles.push({url:o.designFileUrl, name:'تصميم رئيسي'});
+  (o.designFiles||[]).forEach((f,i) => designFiles.push({url:f.url||f, name:f.name||`ملف ${i+1}`}));
+  const designsHtml = designFiles.length
+    ? designFiles.map(f => `<a href="${escapeHtml(f.url)}" target="_blank" title="${escapeHtml(f.name)}"><img src="${escapeHtml(f.url)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--line);margin:4px"></a>`).join('')
+    : '<div style="font-size:11px;color:var(--dim2)">لا توجد ملفات تصميم</div>';
+
+  // costItems with paid status
+  const costItemsHtml = (o.costItems||[]).length
+    ? (o.costItems||[]).map((c,idx) => `
+      <tr>
+        <td>${escapeHtml(c.type||'بند')}</td>
+        <td>${escapeHtml(c.supplierName||'—')}</td>
+        <td style="font-family:monospace">${fn(c.total||0)} ج</td>
+        <td>${c.paid ? `<span style="color:#00d97e">✓ مدفوع</span><div style="font-size:9px;color:var(--dim2)">${escapeHtml(c.paidVia||'')} · ${escapeHtml(c.paidTransferRef||'')}</div>` : '<span style="color:#ffaa00">⏳ غير مدفوع</span>'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--dim2)">لا توجد بنود</td></tr>';
+
+  // tx history
+  const txsHtml = orderTxs.length
+    ? orderTxs.sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0)).map(t => {
+        const isIn = t.type === 'in';
+        const stIco = t.approvalStatus==='approved'?'🔒':t.approvalStatus==='confirmed'?'🔵':t.approvalStatus==='pending'?'⏳':t.approvalStatus==='rejected'?'❌':'';
+        return `<div style="padding:6px 0;border-bottom:1px dashed var(--line);font-size:11px">
+          <div style="display:flex;justify-content:space-between">
+            <span style="color:${isIn?'#00d97e':'#ff3d6e'};font-weight:700">${isIn?'+':'−'} ${fn(t.amount)} ج</span>
+            <span style="color:var(--dim2);font-family:monospace">${escapeHtml(t.date||'')}</span>
+          </div>
+          <div style="color:var(--snow)">${escapeHtml(t.description||t.category||'')}</div>
+          <div style="color:var(--dim2);font-size:10px;margin-top:2px">${stIco} ${t.approvalStatus||''} · ${escapeHtml(t.walletName||'')}${t.transferRef?' · '+escapeHtml(t.transferRef):''}</div>
+        </div>`;
+      }).join('')
+    : '<div style="font-size:11px;color:var(--dim2);padding:6px 0">لا توجد حركات مالية</div>';
+
+  // requests
+  const reqsHtml = orderRequests.length
+    ? orderRequests.sort((a,b)=>(b.requestedAt?.seconds||0)-(a.requestedAt?.seconds||0)).map(r => {
+        const stMap = {requested:'⏳ بانتظار التنفيذ', awaiting_receipt:'📥 بانتظار الاستلام', pending:'⏳ بانتظار التأكيد', confirmed:'🔵 بانتظار الاعتماد', approved:'🔒 معتمدة', rejected:'❌ مرفوضة'};
+        return `<div style="padding:6px 0;border-bottom:1px dashed var(--line);font-size:11px">
+          <div>${REQ_TYPE_LBL[r.type]||r.type} — <b>${fn(r.amount)} ج</b> — ${escapeHtml(r.supplierName||r.employeeName||'')}</div>
+          <div style="color:var(--dim2);font-size:10px">${escapeHtml(r.reason||'')} · ${stMap[r.status]||r.status} · ${escapeHtml(r.requestedByName||'')} · ${fmtDate(r.requestedAt)}</div>
+        </div>`;
+      }).join('')
+    : '<div style="font-size:11px;color:var(--dim2);padding:6px 0">لا طلبات تحويل مرتبطة</div>';
+
+  // timeline
+  const timelineHtml = (o.timeline||[]).slice().reverse().slice(0,15).map(e => `
+    <div style="padding:4px 0;border-bottom:1px dashed var(--line);font-size:11px">
+      <span style="color:var(--snow)">${escapeHtml(e.action||'')}</span>
+      <span style="color:var(--dim2);font-size:10px;margin-right:8px">${escapeHtml(e.date||'')} · ${escapeHtml(e.by||'')}</span>
+    </div>`).join('') || '<div style="font-size:11px;color:var(--dim2)">لا يوجد timeline</div>';
+
+  document.getElementById('od-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div><b style="color:var(--dim2);font-size:10px">رقم الأوردر</b><div style="font-family:monospace">${escapeHtml(o.orderId||orderId)}</div></div>
+      <div><b style="color:var(--dim2);font-size:10px">العميل</b><div>${escapeHtml(o.clientName||'—')}</div></div>
+      ${o.clientPhone?`<div><b style="color:var(--dim2);font-size:10px">التليفون</b><div style="font-family:monospace">${escapeHtml(o.clientPhone)}</div></div>`:''}
+      <div><b style="color:var(--dim2);font-size:10px">المرحلة</b><div><span style="background:${STAGE_COL[o.stage]||'#888'}22;color:${STAGE_COL[o.stage]||'#888'};padding:2px 8px;border-radius:8px;font-size:10px;font-weight:800">${STAGE_AR[o.stage]||o.stage}</span></div></div>
+      ${o.designerName?`<div><b style="color:var(--dim2);font-size:10px">المصمم</b><div>${escapeHtml(o.designerName)}</div></div>`:''}
+      ${o.deadline?`<div><b style="color:var(--dim2);font-size:10px">موعد التسليم</b><div>${escapeHtml(o.deadline)}</div></div>`:''}
+      ${o.createdDate?`<div><b style="color:var(--dim2);font-size:10px">تاريخ الإنشاء</b><div>${escapeHtml(o.createdDate)}</div></div>`:''}
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">📦 المنتجات</div>
+      <ul style="margin:0;padding-right:18px;font-size:12px;line-height:1.8">${productsHtml}</ul>
+      ${o.notes?`<div style="margin-top:6px;padding:6px 8px;background:var(--bg3);border-radius:6px;font-size:11px;color:var(--dim)">📝 ${escapeHtml(o.notes)}</div>`:''}
+    </div>
+
+    <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">💰 الأرقام المالية</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:6px;font-size:11px">
+        <div><span style="color:var(--dim2)">السعر:</span> <b>${fn(sale)}</b></div>
+        ${disc>0?`<div><span style="color:var(--dim2)">خصم:</span> <b style="color:#ff3d6e">−${fn(disc)}</b></div>`:''}
+        ${sFee>0?`<div><span style="color:var(--dim2)">شحن العميل:</span> <b>${fn(sFee)}</b></div>`:''}
+        <div><span style="color:var(--dim2)">الصافي:</span> <b>${fn(net)}</b></div>
+        <div><span style="color:var(--dim2)">المدفوع:</span> <b style="color:#00d97e">${fn(paid)}</b></div>
+        <div><span style="color:var(--dim2)">المتبقي:</span> <b style="color:${rem>0?'#ff3d6e':'#00d97e'}">${fn(rem)}</b></div>
+        <div><span style="color:var(--dim2)">التكلفة:</span> <b style="color:#ffaa00">${fn(totalCost)}</b></div>
+        <div><span style="color:var(--dim2)">المدفوع للموردين:</span> <b>${fn(paidCost)}</b></div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">🖼️ ملفات التصميم</div>
+      <div style="display:flex;flex-wrap:wrap">${designsHtml}</div>
+    </div>
+
+    <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">📋 بنود التكلفة</div>
+      <table style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--line);text-align:right;color:var(--dim2)"><th style="padding:4px">النوع</th><th style="padding:4px">المورد</th><th style="padding:4px">المبلغ</th><th style="padding:4px">الحالة</th></tr></thead>
+        <tbody>${costItemsHtml}</tbody>
+      </table>
+    </div>
+
+    <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">💸 طلبات التحويل (${orderRequests.length})</div>
+      ${reqsHtml}
+    </div>
+
+    <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">💰 الحركات المالية (${orderTxs.length})</div>
+      ${txsHtml}
+    </div>
+
+    <div>
+      <div style="font-size:11px;color:var(--dim2);font-weight:800;margin-bottom:6px">📜 Timeline (آخر 15)</div>
+      ${timelineHtml}
+    </div>
+  `;
+  oM('order-details');
+};
+
 window.openAdjustWallet = function(walletId, expected, current){
   if(!['admin','operation_manager'].includes(currentRole)){
     showToast('⛔ ضبط الرصيد للأدمن/مدير التشغيل فقط','err');
