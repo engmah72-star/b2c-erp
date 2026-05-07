@@ -266,13 +266,20 @@
         <div class="fg"><label>النوع *</label><select class="inp" id="nw-type"><option value="wallet">💳 محفظة إلكترونية</option><option value="cash">💵 كاش</option><option value="bank">🏦 بنك</option></select></div>
         <div class="fg"><label>المزود (للرسوم)</label><select class="inp" id="nw-provider">
           <option value="">— لا يوجد —</option>
-          <option value="e_money">e& money (1 ج/تحويلة داخلية)</option>
-          <option value="vodafone">فودافون كاش (0.5% بحد أقصى 15)</option>
-          <option value="orange">أورنج (0.5% بحد أقصى 15)</option>
-          <option value="we">WE (0.5% بحد أقصى 15)</option>
+          <option value="e_money">e& money</option>
+          <option value="vodafone">فودافون كاش (010)</option>
+          <option value="orange">أورنج (012)</option>
+          <option value="we">WE (015)</option>
           <option value="bank">بنك</option>
           <option value="cash">كاش</option>
         </select></div>
+      </div>
+      <div style="font-size:10px;color:var(--dim2);background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.18);border-radius:6px;padding:6px 9px;margin-bottom:10px;line-height:1.6">
+        💡 <b>الرسوم تُحسب فقط من e& money:</b><br>
+        • e& money → e& money: <b>1 ج</b><br>
+        • e& money → فودافون/أورنج/WE: <b>0.5% (بحد أقصى 15 ج)</b><br>
+        • سحب من e& money إلى كاش (≤ 5000): <b>5 ج</b><br>
+        • <span style="color:var(--dim)">prefixes: 010 فودافون · 012 أورنج · 015 WE</span>
       </div>
       <div class="g2">
         <div class="fg"><label>الرصيد الافتتاحي</label><input class="inp" id="nw-bal" type="number" placeholder="0"></div>
@@ -2118,23 +2125,32 @@ window.savePaySup=async function(){
 };
 
 // ══ تحويل بين المحافظ ══
-// رسوم التحويل حسب مزود المحفظة:
+// رسوم e& money فقط (المزود الذي نعرف رسومه):
 //   e_money → e_money            : 1 ج (ثابت)
 //   e_money → vodafone/orange/we : 0.5% بحد أقصى 15 ج
-//   باقي المحافظ                 : 0 (لا رسوم)
+//   e_money → cash (سحب)         : 5 ج للمبالغ ≤ 5000
+//   باقي الحالات                 : 0 (لا قواعد رسوم لباقي المزودين)
+// ملاحظة: قاعدة "أول تحويل شهري مجاني < 2000" مؤجلة
 function computeTransferFee(fromW, toW, amount){
-  if(!fromW || !toW || !(amount > 0)) return { fee: 0, label: '' };
+  if(!fromW || !toW || !(amount > 0)) return { fee: 0, label: '', kind: '' };
   const fp = (fromW.provider || '').toLowerCase();
   const tp = (toW.provider || '').toLowerCase();
-  if(!fp || fp === 'cash' || fp === 'bank') return { fee: 0, label: '' };
+  const tt = (toW.type || '').toLowerCase();
+  // الرسوم محسوبة فقط لو المصدر e& money
+  if(fp !== 'e_money') return { fee: 0, label: '', kind: '' };
   // داخل e& money
-  if(fp === 'e_money' && tp === 'e_money') return { fee: 1, label: '1 ج (تحويلة داخلية e& money)' };
-  // من e& money إلى محفظة أخرى
-  if(fp === 'e_money' && ['vodafone','orange','we'].includes(tp)){
-    const f = Math.min(15, +(amount * 0.005).toFixed(2));
-    return { fee: f, label: `${fn(f)} ج (0.5% × ${fn(amount)}, حد أقصى 15)` };
+  if(tp === 'e_money') return { fee: 1, label: '1 ج (تحويلة داخلية e& money)', kind: 'transfer' };
+  // سحب (e& money → كاش / محفظة كاش)
+  if(tp === 'cash' || tt === 'cash'){
+    if(amount <= 5000) return { fee: 5, label: 'رسوم سحب 5 ج (المبلغ ≤ 5000)', kind: 'withdrawal' };
+    return { fee: 5, label: '⚠️ رسوم سحب 5 ج (الشريحة ≤ 5000 — تحقق من الشرائح الأكبر)', kind: 'withdrawal' };
   }
-  return { fee: 0, label: '' };
+  // تحويل لباقي شركات المحافظ (فودافون 010 / أورنج 012 / WE 015)
+  if(['vodafone','orange','we'].includes(tp)){
+    const f = Math.min(15, +(amount * 0.005).toFixed(2));
+    return { fee: f, label: `${fn(f)} ج (0.5% × ${fn(amount)}، حد أقصى 15)`, kind: 'transfer' };
+  }
+  return { fee: 0, label: '', kind: '' };
 }
 
 window.fillTransferInfo=function(){
@@ -2142,18 +2158,21 @@ window.fillTransferInfo=function(){
   const info=document.getElementById('tr-info');if(!info)return;
   const from=wallets.find(x=>x._id===fromId),to=wallets.find(x=>x._id===toId);
   if(from&&to&&amount&&fromId!==toId){
-    const { fee, label } = computeTransferFee(from, to, amount);
+    const { fee, label, kind } = computeTransferFee(from, to, amount);
+    const isWith = kind === 'withdrawal';
     const totalDeducted = amount + fee;
     const fromAfter=(parseFloat(from.balance)||0)-totalDeducted;
     const toAfter=(parseFloat(to.balance)||0)+amount;
+    const opLabel = isWith ? '💵 عملية سحب' : '🔄 عملية تحويل';
     info.style.display='block';
     info.innerHTML=`
+      <div style="font-size:11px;color:var(--y);font-weight:700;margin-bottom:6px">${opLabel}</div>
       <strong>${from.name}</strong>: ${fn(parseFloat(from.balance)||0)} ج &rarr;
         <span style="color:${fromAfter<0?'var(--r)':'var(--snow)'};font-weight:800">${fn(fromAfter)} ج</span><br>
       <strong>${to.name}</strong>: ${fn(parseFloat(to.balance)||0)} ج &rarr;
         <span style="color:var(--g);font-weight:800">${fn(toAfter)} ج</span>
       ${fee > 0 ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:11px">
-        <div style="color:var(--y);font-weight:700">💰 رسوم التحويل: <span style="color:#ff3d6e">${fn(fee)} ج</span></div>
+        <div style="color:var(--y);font-weight:700">💰 ${isWith?'رسوم السحب':'رسوم التحويل'}: <span style="color:#ff3d6e">${fn(fee)} ج</span></div>
         <div style="color:var(--dim2);margin-top:2px">${label}</div>
         <div style="color:var(--dim);margin-top:2px">إجمالي الخصم من ${from.name}: <b>${fn(totalDeducted)} ج</b> · يستلم ${to.name}: <b>${fn(amount)} ج</b></div>
       </div>` : ''}`;
@@ -2167,7 +2186,8 @@ window.saveTransfer=async function(){
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const fromW=wallets.find(x=>x._id===fromId),toW=wallets.find(x=>x._id===toId);
   if(!fromW||!toW)return;
-  const { fee, label: feeLabel } = computeTransferFee(fromW, toW, amount);
+  const { fee, label: feeLabel, kind } = computeTransferFee(fromW, toW, amount);
+  const isWithdrawal = kind === 'withdrawal';
   const totalDeducted = amount + fee;
   if((parseFloat(fromW.balance)||0)<totalDeducted)return toast(`⚠️ الرصيد غير كافٍ — تحتاج ${fn(totalDeducted)} ج (شامل الرسوم ${fn(fee)} ج)`,'err');
   const dateStr=nowStr();
@@ -2178,26 +2198,32 @@ window.saveTransfer=async function(){
     batch.update(doc(db,'wallets',fromId),{balance:increment(-totalDeducted)});
     batch.update(doc(db,'wallets',toId),{balance:increment(amount)});
     const transferGroupId=doc(collection(db,'transactions_v2')).id;
+    const txCategory = isWithdrawal ? 'withdrawal' : 'transfer';
+    const outDescPrefix = isWithdrawal ? '💵 سحب إلى: ' : '🔄 تحويل إلى: ';
+    const inDescPrefix  = isWithdrawal ? '💵 سحب من: '  : '🔄 تحويل من: ';
     const outRef=doc(collection(db,'transactions_v2'));
-    batch.set(outRef,{walletId:fromId,type:'out',amount,fees:fee,description:'🔄 تحويل إلى: '+toW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
+    batch.set(outRef,{walletId:fromId,type:'out',amount,fees:fee,description:outDescPrefix+toW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
     const inRef=doc(collection(db,'transactions_v2'));
-    batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:'🔄 تحويل من: '+fromW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
+    batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:inDescPrefix+fromW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
     // tx منفصلة للرسوم لو > 0 — تظهر في حركات المحفظة وتحتاج اعتماد كباقي العمليات
     if(fee > 0){
       const feeRef=doc(collection(db,'transactions_v2'));
+      const feeCat = isWithdrawal ? 'withdrawal_fee' : 'transfer_fee';
+      const feeDesc = isWithdrawal
+        ? `💰 رسوم سحب — ${fromW.name} → ${toW.name}${note?' — '+note:''}`
+        : `💰 رسوم تحويل — ${fromW.name} → ${toW.name}${note?' — '+note:''}`;
       batch.set(feeRef,{
         walletId:fromId,walletName:fromW.name||'',type:'out',amount:fee,fees:0,
-        description:`💰 رسوم تحويل — ${fromW.name} → ${toW.name}${note?' — '+note:''}`,
-        category:'transfer_fee',transferGroupId,
+        description:feeDesc, category:feeCat, transferGroupId,
         balanceBefore:fromBal-amount,balanceAfter:fromBal-totalDeducted,
         date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(),
         ...approvalFields()
       });
       addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
         amount:fee,walletId:fromId,walletName:fromW.name||'',
-        notes:`رسوم تحويل ${fromW.name} → ${toW.name}: ${feeLabel}`,
+        notes:`${isWithdrawal?'رسوم سحب':'رسوم تحويل'} ${fromW.name} → ${toW.name}: ${feeLabel}`,
         userId:currentUser?.uid||'',userName:byName,
-        categoryOverride:'transfer_fee',
+        categoryOverride:feeCat,
       });
     }
     addLedgerToBatch(batch,db,FE.WALLET_TRANSFER,{
@@ -2209,7 +2235,7 @@ window.saveTransfer=async function(){
     cM('transfer');
     sv('tr-amount','');sv('tr-note','');
     document.getElementById('tr-info').style.display='none';
-    toast(`✅ تحويل ${fn(amount)} ج: ${fromW.name} ← → ${toW.name}`,'ok');
+    toast(`✅ ${isWithdrawal?'سحب':'تحويل'} ${fn(amount)} ج: ${fromW.name} ${isWithdrawal?'→':'← →'} ${toW.name}${fee>0?` (رسوم ${fn(fee)} ج)`:''}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
