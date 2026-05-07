@@ -201,23 +201,16 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
     <!-- ALERT STRIP -->
     <div id="alert-strip" style="display:none;margin-bottom:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
 
-    <!-- STATS -->
-    <div class="stat-strip" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-pill on" style="--oc:var(--c)" onclick="setFilter('active',this)">
-        <div class="stat-pill-val" id="s-active">0</div>
-        <div class="stat-pill-lbl">🚀 نشطة</div>
-      </div>
-      <div class="stat-pill" style="--oc:var(--y)" onclick="setFilter('settle_pending',this)">
-        <div class="stat-pill-val" id="s-settle-pend" style="color:var(--y)">0</div>
-        <div class="stat-pill-lbl">⏳ تسوية</div>
-      </div>
-      <div class="stat-pill" style="--oc:var(--g)" onclick="setFilter('archive_ready',this)">
-        <div class="stat-pill-val" id="s-archive-ready" style="color:var(--g)">0</div>
-        <div class="stat-pill-lbl">✅ للأرشفة</div>
-      </div>
-      <div class="stat-pill" style="--oc:var(--b)" onclick="setFilter('all',this)">
+    <!-- STATS — مرتّبة على المهام الفعلية لصفحة الشحن (الإعداد + الاستثناءات) -->
+    <!-- العدّادات اليومية المتعلقة بالمتابعة موجودة في tab "متابعة الشحن" والتسويات في "حسابات الشحن" -->
+    <div class="stat-strip" style="grid-template-columns:repeat(2,1fr)">
+      <div class="stat-pill on" style="--oc:var(--b)" onclick="setFilter('all',this)">
         <div class="stat-pill-val" id="s-all">0</div>
-        <div class="stat-pill-lbl">الكل</div>
+        <div class="stat-pill-lbl">📦 الكل</div>
+      </div>
+      <div class="stat-pill" style="--oc:var(--c)" onclick="setFilter('ready',this)">
+        <div class="stat-pill-val" id="s-ready" style="color:var(--c)">0</div>
+        <div class="stat-pill-lbl">📥 جاهز للشحن</div>
       </div>
       <div class="stat-pill" style="--oc:#ff6b35" onclick="setFilter('delayed',this)">
         <div class="stat-pill-val" id="s-delayed" style="color:#ff6b35">0</div>
@@ -922,7 +915,7 @@ const auth=getAuth(app), db=getFirestore(app), storage=getStorage(app);
 // ══ STATE ══
 let orders=[], wallets=[], shippers=[], suppliers=[], shippingReturns=[], employees=[];
 let currentUser=null, userName='', activeId=null, currentRole='admin', mineOnly=true;
-let currentFilter='active', ssMethod='', ssStage='wait_delivery';
+let currentFilter='all', ssMethod='', ssStage='wait_delivery';
 let urlCompanyFilter='', __urlOrderIdParam='', __urlOrderOpened=false;
 let isAdminUser=false;
 let canViewCosts=false;
@@ -1302,17 +1295,13 @@ function updateStats(){
   const delayed=orders.filter(isDelayed);
   const noCost=orders.filter(o=>!(o.costItems||[]).length);
   setText('s-all',orders.length);
-  setText('s-active',orders.filter(o=>!['collected','returned','archived'].includes(o.shipStage||'ready')).length);
-  setText('s-settle-pend',orders.filter(o=>(o.shipStage||'ready')==='collected'&&o.shipMethod==='company'&&!o.shipSettled).length);
-  setText('s-archive-ready',orders.filter(o=>(o.shipStage||'ready')==='collected'&&(o.shipMethod!=='company'||o.shipSettled)).length);
+  setText('s-ready',orders.filter(o=>(o.shipStage||'ready')==='ready'&&o.stage!=='archived'&&o.shipStage!=='returned').length);
   setText('s-delayed',delayed.length);
   setText('s-no-cost',noCost.length);
-  // alert strip
+  // alert strip — ملاحظات تشغيلية فقط (التسويات في "حسابات الشحن", المتابعة في "متابعة الشحن")
   const alerts=[];
   if(delayed.length) alerts.push({icon:'⏰',label:`${delayed.length} شحنة متأخرة أكثر من 5 أيام`,color:'#ff6b35',filter:'delayed'});
   if(noCost.length) alerts.push({icon:'⚠️',label:`${noCost.length} أوردر بدون تكلفة مسجلة`,color:'var(--r)',filter:'no_cost'});
-  const pending_settle=orders.filter(o=>o.shipMethod==='company'&&!o.shipSettled&&o.shipStage==='collected');
-  if(pending_settle.length) alerts.push({icon:'📦',label:`${pending_settle.length} شحنة تنتظر التسوية مع شركة الشحن`,color:'var(--y)',filter:'settle_pending'});
   const strip=document.getElementById('alert-strip');
   if(strip){
     if(alerts.length){
@@ -1340,17 +1329,14 @@ function matchFilter(o){
   const ss=o.shipStage||'ready';
   // شركة محددة من URL — يتجاوز فلتر "الشركة في الحسابات" أدناه
   if(urlCompanyFilter&&(o.shipCompanyName||'')!==urlCompanyFilter)return false;
-  // ─ أوردرات شركات الشحن المُسلَّمة → لها صفحة "حسابات الشحن" — لا تظهر في فلاتر العمل اليومي
-  // (تظهر فقط في 'all' أو في فلاتر التسوية المتعلقة بالشركة)
-  const isCompanyShipped=o.shipMethod==='company'&&['wait_delivery','wait_collection','collected'].includes(ss);
-  if(isCompanyShipped && !['all','settle_pending','archive_ready'].includes(currentFilter)) return false;
+  // ─ أوردرات شركات الشحن في الطريق/مُسلَّمة → بيتنده عليها من "متابعة" أو "حسابات الشحن"
+  // shipping.html لها هدف واحد: إعداد الشحن + التعديلات الإدارية + الأرشفة + المرتجعات
+  // (تظهر في 'all' لو المستخدم محتاج يبحث، لكن مش في الفلاتر التشغيلية)
+  const isCompanyInTransit=o.shipMethod==='company'&&['wait_delivery','wait_collection','collected'].includes(ss);
+  if(isCompanyInTransit && currentFilter!=='all') return false;
   if(currentFilter==='all') return true;
-  // نشطة = الأوردرات التي لا تزال بحاجة لعمل من فريق الشحن
-  if(currentFilter==='active') return !['collected','returned','archived'].includes(ss);
-  // في انتظار التسوية = تحصّلت لكن شركة الشحن لم تسوّ بعد
-  if(currentFilter==='settle_pending') return ss==='collected'&&o.shipMethod==='company'&&!o.shipSettled;
-  // جاهزة للأرشفة = تحصّلت وتمّت التسوية (أو ليست شركة شحن)
-  if(currentFilter==='archive_ready') return ss==='collected'&&(o.shipMethod!=='company'||o.shipSettled);
+  // جاهز للشحن = الأوردر وصل من قسم التنفيذ ومحتاج إعداد طريقة الشحن
+  if(currentFilter==='ready') return ss==='ready' && o.stage!=='archived' && o.shipStage!=='returned';
   if(currentFilter==='delayed') return isDelayed(o);
   if(currentFilter==='no_cost') return !(o.costItems||[]).length;
   return ss===currentFilter;
