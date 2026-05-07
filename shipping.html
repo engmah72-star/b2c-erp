@@ -2227,6 +2227,10 @@ window.saveCollect=async function(){
   const curSS=o.shipStage||'ready';
   // ─ انتقال تلقائي لـ collected إذا اكتمل التحصيل وكانت الحالة تسمح
   const autoCollected=newRem<=0&&(ALLOWED_NEXT[curSS]||[]).includes('collected');
+  // ─ Bypass الشركة: لو شحنة شركة + التحصيل اكتمل من العميل مباشرة → الشركة بقت بدون مديونية
+  // (السيستم لازم يفهم ده تلقائياً عشان متظهرش في "حسابات الشحن" كأن الشركة لسه عليها فلوس)
+  const isCo=o.shipMethod==='company';
+  const bypassCo=isCo && newRem<=0 && !o.shipSettled;
   const btn=document.getElementById('btn-save-collect');if(btn){btn.disabled=true;btn.textContent='...';}
   try{
     const batch=writeBatch(db);
@@ -2237,7 +2241,16 @@ window.saveCollect=async function(){
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       ...(autoCollected?{shipStage:'collected'}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج${autoCollected?' — ✅ محصّل بالكامل':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
+      ...(bypassCo?{
+        shipSettled:true,
+        shipSettledAmount:0,  // الشركة جابتلنا 0 — العميل دفع لنا مباشرة
+        shipSettledManual:true,
+        shipSettledManualReason:'تحصيل مباشر من العميل — الشركة لم تحصّل',
+        shipSettledManualAt:nowStr(),
+        shipSettledManualBy:userName,
+        shipSettledManualByUid:currentUser?.uid||'',
+      }:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج${autoCollected?' — ✅ محصّل بالكامل':''}${bypassCo?' — 🏁 الشركة بدون مديونية (تحصيل مباشر)':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
       updatedAt:serverTimestamp()
     });
     addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
