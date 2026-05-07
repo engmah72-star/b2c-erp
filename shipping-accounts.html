@@ -592,8 +592,9 @@ window.render=function(){
               <div style="font-size:10px;color:var(--dim2)">${paid>0?'دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}${o.shipCost>0||o.customerShipFee>0?` · 🚚 ${fn(parseFloat(o.shipCost)||0)} / 📦 ${fn(parseFloat(o.customerShipFee)||0)}`:''}</div>
               ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
             </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
               ${due>0?`<button type="button" onclick="openCollectAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تحصيل من العميل مباشرة (مش عن طريق الشركة)">💰 تحصيل</button>`:''}
+              <button type="button" onclick="markManualSettled('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(34,211,238,.4);background:rgba(34,211,238,.1);color:var(--c);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="مسوّى من بره (نقد/تحويل خارج النظام) — يصلح الفلاج بدون أي حركة مالية">🏁 مسوّى يدوياً</button>
               <button type="button" onclick="openShipFeeEdit('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.1);color:var(--p);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تعديل تكلفة الشحن ورسوم العميل">✏️ شحن</button>
               <button type="button" onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
               <div style="text-align:left">
@@ -1276,6 +1277,58 @@ function __buildAccPanel(o){
         <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}${t.by?' · <span style="color:var(--b)">${t.by}</span>':''}</div>`).join('')||'<div style="font-size:12px;color:var(--dim2)">لا يوجد سجل</div>'}
     </div>`;
 }
+
+// ══ Manual Settle: تسوية يدوية للأوردرات اللي اتسوّت من بره النظام ══
+// (مثلاً نقد من العميل عبر شركة الشحن قبل ما النظام يسجلها كـ shipSettled)
+window.markManualSettled=async function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
+  if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف','err');
+  if(o.shipStage==='returned')return toast('⛔ الأوردر مرتجع','err');
+  if(o.shipSettled)return toast('✅ الأوردر مسوّى بالفعل','ok');
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const totalDue=sale+cust-(parseFloat(o.discount)||0);
+  const paid=FC.getPaid(o);
+  const reason=prompt(`🏁 تسوية يدوية لـ "${o.clientName||'—'}"
+
+هذا الإجراء يضع الفلاج shipSettled=true بدون أي حركة مالية.
+استخدمه فقط لو الأوردر اتسوّى فعلياً من بره النظام (مثلاً نقد).
+
+الإجمالي: ${fn(totalDue)} ج · المحصّل في النظام: ${fn(paid)} ج
+
+اكتب سبب التسوية اليدوية (إجباري ≥ 5 أحرف):`);
+  if(reason===null)return;
+  const r=(reason||'').trim();
+  if(r.length<5)return toast('⚠️ السبب لازم ≥ 5 أحرف','err');
+  try{
+    const now=nowStr();
+    const auditEntry={
+      type:'manual_settle',
+      changedBy:userName, changedById:currentUser?.uid||'',
+      date:now, reason:r,
+      changes:[{field:'shipSettled',label:'تسوية شركة الشحن',before:'false',after:'true (يدوي)'}],
+      requiresReview:true,
+    };
+    await updateDoc(doc(db,'orders',orderId),{
+      shipSettled:true,
+      shipSettledAmount:Math.max(totalDue,paid),  // best-effort: نسجل الـ due أو الـ paid أيهما أكبر
+      shipSettledManual:true,
+      shipSettledManualBy:userName,
+      shipSettledManualByUid:currentUser?.uid||'',
+      shipSettledManualAt:now,
+      shipSettledManualReason:r,
+      // لا نلمس totalPaid/remaining/wallet — لأن الفلوس مش حركتها النظام
+      auditLog:[...(o.auditLog||[]),auditEntry],
+      hasUnreviewedAudit:true,
+      timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}`,by:userName}],
+      updatedAt:serverTimestamp(),
+    });
+    toast(`✅ تم تسجيل التسوية اليدوية · تنبيه أُرسل للأدمن`,'ok');
+  }catch(e){
+    toast('❌ '+(e.message||e),'err');
+  }
+};
 
 // ══ Quick Collect: تحصيل من العميل مباشرة (للأوردر الواحد في حسابات الشحن) ══
 let __caOrderId='';
