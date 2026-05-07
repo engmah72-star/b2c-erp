@@ -754,3 +754,68 @@ export function renderSidebar(activePage, role, userName) {
       <span class="nav-ico">${p.ico}</span> ${p.label}
     </a>`).join('');
 }
+
+// ══════════════════════════════════════════
+// SHIPPING HELPERS — مصدر واحد للحقيقة عبر shipping.html / shipping-followup.html / shipping-accounts.html
+// ══════════════════════════════════════════
+
+/** هل الأوردر مغلق نهائياً (مؤرشف أو مرتجع)؟ */
+export function isShipTerminal(order) {
+  if (!order) return false;
+  return order.stage === 'archived' || order.shipStage === 'returned';
+}
+
+/** هل الأوردر مقفول للتعديل المالي (مؤرشف أو مرتجع أو مسوّى مع شركة الشحن)؟
+ *  الإستخدام: قبل أي تعديل على totalPaid / customerShipFee — لو true، اطلب من المستخدم
+ *  يلغي التسوية أولاً (deleteSettle) ثم يعدّل ثم يعيد التسوية.
+ */
+export function isShipFinanciallyLocked(order) {
+  if (!order) return true;
+  if (isShipTerminal(order)) return true;
+  if (order.shipSettled === true) return true;
+  return false;
+}
+
+/** هل الأوردر "جاهز للأرشفة" — تم التحصيل + (تم تسوية الشركة لو ضروري)؟
+ *  مصدر واحد للحقيقة بدلاً من تكرار المنطق في 3 صفحات.
+ */
+export function isShipReadyToClose(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  const ss = order.shipStage || 'ready';
+  if (ss !== 'collected') return false;
+  // pickup/courier: محصّل = جاهز
+  if (order.shipMethod !== 'company') return true;
+  // company: محتاج تسوية مع الشركة
+  return order.shipSettled === true;
+}
+
+/** هل الأوردر "في الطريق" مع شركة شحن (لسه ما اتسوّاش)؟
+ *  بنستخدمه للتمييز إن المسؤولية حالياً على صفحة "حسابات الشحن" أو "متابعة الشحن"
+ *  بدلاً من صفحة "الشحن" الرئيسية.
+ */
+export function isShipCompanyInTransit(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  if (order.shipMethod !== 'company') return false;
+  const ss = order.shipStage || 'ready';
+  return ['wait_delivery', 'wait_collection', 'collected'].includes(ss);
+}
+
+/** هل الأوردر بحاجة لتسوية مع شركة الشحن (محصّل + شركة + لم يتم تسويته بعد)؟ */
+export function isShipPendingSettle(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  if (order.shipMethod !== 'company') return false;
+  if (order.shipSettled === true) return false;
+  return (order.shipStage || 'ready') === 'collected';
+}
+
+/** هل الأوردر "نشط" يحتاج عمل من فريق الشحن؟
+ *  (ليس مؤرشف، ليس مرتجع، ليس جاهز للأرشفة)
+ */
+export function isShipActive(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  return !isShipReadyToClose(order);
+}
