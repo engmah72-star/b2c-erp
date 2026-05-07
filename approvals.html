@@ -601,6 +601,88 @@ const STAGE_AR = { design:'تصميم', printing:'طباعة', production:'تن�
 const STAGE_COL = { design:'#a78bfa', printing:'#ffaa00', production:'#ff3d6e', shipping:'#3b9eff', archived:'#888', cancelled:'#666' };
 const PAY_AR    = { paid:'مسدد', partial:'جزئي', pending:'لم يُسدّد', returned:'مرتجع' };
 
+// ══ سجل العميل: إحصائيات + كل الحركات + آخر تصميم ══
+function getClientHistory(clientId){
+  if(!clientId) return null;
+  const clientOrders = [...ordersMap.values()].filter(o => o.clientId === clientId);
+  const clientTxs = allTxs.filter(t => t.clientId === clientId);
+  // إجماليات
+  const totalOrders = clientOrders.length;
+  const totalSale = clientOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const totalPaid = clientOrders.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
+  const totalRem  = clientOrders.reduce((s,o)=>{
+    const sale = parseFloat(o.salePrice)||0;
+    const disc = parseFloat(o.discount)||0;
+    const sFee = parseFloat(o.customerShipFee)||0;
+    const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    return s + Math.max(0, sale + sFee - disc - paid);
+  },0);
+  // أحدث تصميم
+  let latestDesignUrl = null, latestDesignDate = null;
+  for(const o of clientOrders){
+    const url = o.designFileUrl || (o.designFiles && o.designFiles[0]?.url) || null;
+    if(url){
+      const dt = o.createdAt?.seconds || 0;
+      if(!latestDesignDate || dt > latestDesignDate){ latestDesignUrl = url; latestDesignDate = dt; }
+    }
+  }
+  // آخر confirmations/approvals من allTxs (ما تأكد أو اعتمد)
+  const approvedTxs = clientTxs.filter(t => t.approvalStatus === 'approved' || t.approvalStatus === 'confirmed')
+    .sort((a,b)=>(b.approvedAt?.seconds||b.confirmedAt?.seconds||0)-(a.approvedAt?.seconds||a.confirmedAt?.seconds||0))
+    .slice(0,8);
+  return { totalOrders, totalSale, totalPaid, totalRem, latestDesignUrl, clientOrders, clientTxs, approvedTxs };
+}
+
+function renderClientHistory(t){
+  const clientId = t.clientId;
+  if(!clientId) return '';
+  const h = getClientHistory(clientId);
+  if(!h || (!h.totalOrders && !h.clientTxs.length)) return '';
+  const recentApprovals = h.approvedTxs.map(x=>{
+    const cat = CAT_AR[x.category] || x.category || 'حركة';
+    const stIco = x.approvalStatus === 'approved' ? '🔒' : '🔵';
+    const dt = fmtDate(x.approvedAt || x.confirmedAt);
+    const by = x.approvedByName || x.confirmedByName || '—';
+    return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px dashed var(--line)">
+      <span>${stIco} ${cat}${x.description?' — '+escapeHtml(x.description.slice(0,40)):''}</span>
+      <span style="color:var(--dim2);font-family:monospace">${fn(x.amount)} ج · ${dt} · ${escapeHtml(by)}</span>
+    </div>`;
+  }).join('') || '<div style="font-size:11px;color:var(--dim2)">لا اعتمادات سابقة</div>';
+
+  // آخر 5 حركات (in/out)
+  const recentTxs = h.clientTxs.slice(-5).reverse().map(x=>{
+    const isIn = x.type === 'in';
+    return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0">
+      <span style="color:${isIn?'#00d97e':'#ff3d6e'}">${isIn?'+':'−'} ${fn(x.amount)} ج</span>
+      <span style="color:var(--dim2)">${escapeHtml(x.description||x.category||'').slice(0,40)} · ${escapeHtml(x.date||'')}</span>
+    </div>`;
+  }).join('');
+
+  return `
+    <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:10px 12px;margin-top:8px">
+      <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:8px">👥 سجل العميل: ${escapeHtml(t.clientName || '—')}</div>
+      <div style="display:grid;grid-template-columns:${h.latestDesignUrl?'90px ':''}1fr;gap:10px">
+        ${h.latestDesignUrl ? `<div><a href="${escapeHtml(h.latestDesignUrl)}" target="_blank" title="آخر تصميم"><img src="${escapeHtml(h.latestDesignUrl)}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:zoom-in"></a></div>` : ''}
+        <div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:4px;font-size:11px">
+            <div><span style="color:var(--dim2)">أوردرات:</span> <b style="color:var(--snow)">${h.totalOrders}</b></div>
+            <div><span style="color:var(--dim2)">السعر الإجمالي:</span> <b style="color:var(--snow)">${fn(h.totalSale)}</b></div>
+            <div><span style="color:var(--dim2)">المدفوع:</span> <b style="color:#00d97e">${fn(h.totalPaid)}</b></div>
+            <div><span style="color:var(--dim2)">المتبقي:</span> <b style="color:${h.totalRem>0?'#ff3d6e':'#00d97e'}">${fn(h.totalRem)}</b></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">
+        <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:4px">📜 الاعتمادات السابقة (آخر 8):</div>
+        ${recentApprovals}
+      </div>
+      ${recentTxs ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">
+        <div style="font-size:10px;color:var(--dim2);font-weight:700;margin-bottom:4px">💰 آخر 5 حركات:</div>
+        ${recentTxs}
+      </div>` : ''}
+    </div>`;
+}
+
 function renderOrderDetails(o, costOnly=false){
   if(!o) return '';
   const totalCost = (o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
@@ -824,6 +906,7 @@ function renderRequestCard(r){
       ${sectionReceipt}
       ${sectionEntity}
       ${sectionOrder}
+      ${r.clientId ? renderClientHistory(r) : ''}
       ${r.rejectedByName?`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.3);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:11px;color:#ff3d6e">❌ <b>رفض من ${escapeHtml(r.rejectedByName)}</b> · ${fmtDate(r.rejectedAt)}${r.rejectReason?' · '+escapeHtml(r.rejectReason):''}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
@@ -910,6 +993,7 @@ function renderCard(t){
       </div>
       ${renderWalletState(t, wName, isIn)}
       ${order ? renderOrderDetails(order, true) : ''}
+      ${t.clientId ? renderClientHistory(t) : ''}
       ${trail?`<div class="ac-trail">${trail}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
@@ -1512,6 +1596,34 @@ window.saveAdjustment = async function(){
   }
 };
 
+// helper: إضافة قيد لسجل اعتمادات العميل (يُحفظ في clients/{id}.approvedHistory)
+async function pushClientApproval(tx, stage){
+  if(!tx?.clientId) return;
+  const entry = {
+    txId: tx._id,
+    stage, // 'confirmed' أو 'approved'
+    type: tx.type, category: tx.category||'',
+    description: tx.description || '',
+    amount: parseFloat(tx.amount)||0,
+    walletId: tx.walletId||null, walletName: tx.walletName||'',
+    orderId: tx.orderId||null,
+    transferRef: tx.transferRef||null,
+    by: currentUid, byName: currentUserName,
+    at: new Date().toISOString(), // serverTimestamp غير مدعوم داخل arrayUnion
+  };
+  try{
+    const cRef = doc(db,'clients',tx.clientId);
+    const { arrayUnion } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await updateDoc(cRef, {
+      approvedHistory: arrayUnion(entry),
+      lastApprovedAt: serverTimestamp(),
+      lastApprovedTxId: tx._id,
+    });
+  }catch(e){
+    console.warn('[client-history] فشل حفظ السجل في كارت العميل:', e.message);
+  }
+}
+
 window.confirmTx = async function(txId){
   const tx = txs.find(x=>x._id===txId);
   // مبدأ الأربع عيون لـ recovery: من أنشأها لا يقدر يأكدها
@@ -1529,7 +1641,9 @@ window.confirmTx = async function(txId){
     if(tx?.paymentRequestId){
       try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'confirmed', confirmedBy:currentUid, confirmedByName:currentUserName, confirmedAt:serverTimestamp() }); }catch(_){}
     }
-    showToast('✅ تم التأكيد','ok');
+    // حفظ السجل في كارت العميل (لو tx مرتبطة بعميل)
+    await pushClientApproval(tx, 'confirmed');
+    showToast('✅ تم التأكيد' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'تأكيد عملية', txId});
     if(!handled) showToast('❌ '+e.message,'err');
@@ -1543,7 +1657,6 @@ window.approveTx = async function(txId){
     showToast('⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد','err');
     return;
   }
-  // لو الـ tx اللي بياعتمدها admin أكدها بنفسه قبل كده، نسمح. لو موجودة من شخص ثاني أكدها، نسمح.
   if(!confirm('اعتماد نهائي؟ سيتم قفل العملية.')) return;
   try{
     await updateDoc(doc(db,'transactions_v2',txId),{
@@ -1555,7 +1668,8 @@ window.approveTx = async function(txId){
     if(tx?.paymentRequestId){
       try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'approved', approvedBy:currentUid, approvedByName:currentUserName, approvedAt:serverTimestamp() }); }catch(_){}
     }
-    showToast('🔒 تم الاعتماد والأرشفة','ok');
+    await pushClientApproval(tx, 'approved');
+    showToast('🔒 تم الاعتماد والأرشفة' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'اعتماد', txId});
     if(!handled) showToast('❌ '+e.message,'err');
