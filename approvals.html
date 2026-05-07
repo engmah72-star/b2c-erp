@@ -143,6 +143,14 @@
       </div>
       <div id="rq-order-info" style="display:none;font-size:11px;color:var(--dim2);background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:8px;padding:8px 10px;margin-bottom:10px"></div>
 
+      <!-- بند تكلفة من الأوردر — auto-fill المورد والمبلغ -->
+      <div id="fg-cost-item" class="fg" style="display:none">
+        <label>📋 بند التكلفة <span style="font-size:10px;color:var(--g);font-weight:500">— اختر للملء التلقائي</span></label>
+        <select class="inp" id="rq-cost-item">
+          <option value="">— اختر أو املأ يدوياً —</option>
+        </select>
+      </div>
+
       <div class="fg"><label>السبب / الملاحظة *</label><textarea class="inp" id="rq-reason" style="min-height:60px" placeholder="مثال: دفعة مقدم لطباعة 200 كارت — أحمد محمد"></textarea></div>
     </div>
     <div class="modal-foot">
@@ -312,9 +320,11 @@ function canExecute(){
   return ['admin','operation_manager'].includes(currentRole);
 }
 
-// أنواع الطلبات المسموحة لكل دور (كل واحد حسب شغله):
+// أنواع الطلبات المسموحة لكل دور:
+// السيناريو: مندوب التنفيذ يضع بند تكلفة في الأوردر، ثم يطلب تسديده للمورد.
+// الطلب يُربط بالأوردر + بند التكلفة (auto-fill).
 //   • admin/ops: كل الأنواع
-//   • production_agent (التنفيذ): دفعة مورد + مرتب — هو الوحيد المتعامل مع الموردين
+//   • production_agent (التنفيذ): دفعة مورد + مرتب — الوحيد المتعامل مع الموردين
 //   • customer_service: استرداد عميل + مرتب
 //   • أي دور آخر (مصمم/طباعة/شحن/إلخ): مرتب فقط
 function allowedRequestTypes(){
@@ -754,12 +764,51 @@ window.setReqType = function(type){
 document.getElementById('rq-order')?.addEventListener('change', e=>{
   const oid = e.target.value;
   const info = document.getElementById('rq-order-info');
-  if(!oid){ info.style.display='none'; return; }
+  const fgCost = document.getElementById('fg-cost-item');
+  const ciSel = document.getElementById('rq-cost-item');
+  if(!oid){
+    info.style.display='none';
+    if(fgCost) fgCost.style.display='none';
+    return;
+  }
   const o = ordersMap.get(oid);
   if(!o){ info.style.display='none'; return; }
   const totalCost = (o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   info.style.display='block';
   info.innerHTML = `📦 <b>${escapeHtml(o.orderId||o._id.slice(-6))}</b> — ${escapeHtml(o.clientName||'')} — مرحلة: <b>${STAGE_AR[o.stage]||o.stage}</b><br>💰 تكلفة الأوردر التراكمية: <b style="color:#ffaa00">${fn(totalCost)} ج</b> (${(o.costItems||[]).length} بند)`;
+  // بنود التكلفة (للـsupplier_payment فقط)
+  if(activeReqType === 'supplier_payment' && (o.costItems||[]).length){
+    fgCost.style.display = '';
+    ciSel.innerHTML = '<option value="">— اختر بنداً للملء التلقائي —</option>' +
+      (o.costItems||[]).map((c,idx)=>{
+        const lbl = `${c.type||'بند'} — ${fn(c.total||0)} ج${c.supplierName?' — '+c.supplierName:''}`;
+        return `<option value="${idx}" data-amount="${c.total||0}" data-supplier-id="${c.supplierId||''}" data-supplier-name="${escapeHtml(c.supplierName||'')}" data-type="${escapeHtml(c.type||'')}">${escapeHtml(lbl)}</option>`;
+      }).join('');
+  } else if(fgCost){
+    fgCost.style.display = 'none';
+  }
+});
+
+document.getElementById('rq-cost-item')?.addEventListener('change', e=>{
+  const opt = e.target.selectedOptions[0];
+  if(!opt || !opt.value) return;
+  const amt = parseFloat(opt.dataset.amount)||0;
+  const supId = opt.dataset.supplierId;
+  const supName = opt.dataset.supplierName;
+  // ملء المبلغ
+  document.getElementById('rq-amount').value = amt;
+  // ملء المورد
+  if(supId){
+    const supSel = document.getElementById('rq-supplier');
+    // لو المورد موجود في الـ dropdown نختاره
+    const matchOpt = [...supSel.options].find(o => o.value === supId);
+    if(matchOpt) supSel.value = supId;
+  }
+  // ملء السبب
+  const reasonEl = document.getElementById('rq-reason');
+  if(!reasonEl.value.trim()){
+    reasonEl.value = `سداد بند تكلفة: ${opt.dataset.type||''}${supName?' — '+supName:''}`;
+  }
 });
 
 window.saveRequest = async function(){
