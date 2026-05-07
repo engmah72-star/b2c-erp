@@ -428,53 +428,10 @@ export function isToday(ts) {
 }
 
 // ═══════════════════════════════════════
-// WALLET OPERATIONS (shared between print/accounts)
+// WALLET OPERATIONS — REMOVED
+// كانت هنا recordCollection/recordPayment كـ helpers مباشرة على wallets+transactions_v2،
+// تم حذفها لمخالفتها RULE 2/3/5. للعمليات المالية استخدم financial-sync-engine.js.
 // ═══════════════════════════════════════
-export async function recordCollection(walletId, amount, description, refOrderId) {
-  const w = AppState.wallets.find(x => x._id === walletId);
-  if (!w) throw new Error('المحفظة غير موجودة');
-  const balBefore = parseFloat(w.balance) || 0;
-  const balAfter  = balBefore + amount;
-  const now = nowStr();
-
-  await Promise.all([
-    updateDoc(doc(db, 'wallets', walletId), { balance: balAfter }),
-    addDoc(collection(db, 'transactions_v2'), {
-      walletId, type: 'in', amount, fees: 0,
-      description, category: 'collection',
-      ref: refOrderId || '',
-      balanceBefore: balBefore, balanceAfter: balAfter,
-      date: now,
-      createdBy:     AppState.currentUser?.uid || '',
-      createdByName: AppState.userName,
-      createdAt:     serverTimestamp(),
-    }),
-  ]);
-  return balAfter;
-}
-
-export async function recordPayment(walletId, amount, description, category='other') {
-  const w = AppState.wallets.find(x => x._id === walletId);
-  if (!w) throw new Error('المحفظة غير موجودة');
-  const balBefore = parseFloat(w.balance) || 0;
-  const balAfter  = balBefore - amount;
-  if (balAfter < 0) throw new Error('الرصيد غير كافٍ');
-  const now = nowStr();
-
-  await Promise.all([
-    updateDoc(doc(db, 'wallets', walletId), { balance: balAfter }),
-    addDoc(collection(db, 'transactions_v2'), {
-      walletId, type: 'out', amount, fees: 0,
-      description, category,
-      balanceBefore: balBefore, balanceAfter: balAfter,
-      date: now,
-      createdBy:     AppState.currentUser?.uid || '',
-      createdByName: AppState.userName,
-      createdAt:     serverTimestamp(),
-    }),
-  ]);
-  return balAfter;
-}
 
 // ═══════════════════════════════════════
 // STAGE BADGE HTML

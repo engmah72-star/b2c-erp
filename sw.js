@@ -1,5 +1,5 @@
 // Business2Card ERP — Service Worker
-const CACHE = 'b2c-v65';
+const CACHE = 'b2c-v66';
 const OFFLINE_PAGES = [
   '/b2c-erp/login.html',
   '/b2c-erp/index.html',
@@ -27,7 +27,7 @@ self.addEventListener('activate', e => {
 // Fetch — Network First (Firebase محتاج internet)
 self.addEventListener('fetch', e => {
   // Firebase requests — مش نعمل cache
-  if (e.request.url.includes('firebase') || 
+  if (e.request.url.includes('firebase') ||
       e.request.url.includes('googleapis') ||
       e.request.url.includes('gstatic')) {
     return;

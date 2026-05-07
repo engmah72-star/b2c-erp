@@ -1849,7 +1849,7 @@ async function saveClient(){
     try{
       const q=await firebase.firestore().collection('clients').where('phone1','==',phone1).limit(1).get();
       if(!q.empty&&q.docs[0].id!==editId) dup={...q.docs[0].data(),_id:q.docs[0].id};
-    }catch(e){}
+    }catch(e){console.warn('[clients] dedup query failed — proceeding with local check only:',e.code||e.message);}
   }
   if(dup){
     showDupModal(dup);
@@ -2712,7 +2712,7 @@ window.cgridBulkAction=async function(action){
     for(let i=0;i<ords.length;i+=400){
       const chunk=ords.slice(i,i+400);
       const batch=db.batch();
-      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived',timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
+      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived','stageEnteredAt.archived':now2,timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
     toast(`✅ تم أرشفة ${ids.length} أوردر`,'ok');cgridSelNone();return;
@@ -2723,7 +2723,7 @@ window.cgridBulkAction=async function(action){
     for(let i=0;i<ords.length;i+=400){
       const chunk=ords.slice(i,i+400);
       const batch=db.batch();
-      chunk.forEach(o=>{const ts=o.stage==='archived'?'design':o.stage;batch.update(db.collection('orders').doc(o._id),{stage:ts,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] إعادة فتح → ${ts}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});});
+      chunk.forEach(o=>{const ts=o.stage==='archived'?'design':o.stage;batch.update(db.collection('orders').doc(o._id),{stage:ts,[`stageEnteredAt.${ts}`]:now2,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] إعادة فتح → ${ts}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});});
       await batch.commit();
     }
     toast(`✅ إعادة فتح ${ids.length} أوردر`,'ok');cgridSelNone();return;
@@ -2738,7 +2738,7 @@ window.cgridBulkAction=async function(action){
     for(let i=0;i<ords.length;i+=400){
       const chunk=ords.slice(i,i+400);
       const batch=db.batch();
-      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{...mapping,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] نقل جماعي → ${choice}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
+      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{...mapping,...(mapping.stage&&mapping.stage!==o.stage?{[`stageEnteredAt.${mapping.stage}`]:now2}:{}),timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] نقل جماعي → ${choice}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
     toast(`✅ نُقل ${ids.length} أوردر إلى ${choice}`,'ok');cgridSelNone();return;
