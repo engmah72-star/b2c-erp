@@ -350,7 +350,7 @@ function buildSidebar(ud,cur){const role=ud?.role||'customer_service';const page
 
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc,addDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -1507,7 +1507,17 @@ function renderCosts(o){
   const tc=ci.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const el=document.getElementById('costs-list');if(!el){setText('cost-total',fn(tc)+' ج');return;}
   function ciRow(item,globalIdx){
-    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:14px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</span><button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid var(--line2);background:var(--bg4);color:var(--snow);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
+    const isPaid=item.paid===true;
+    const hasPendingReq=!!item.pendingPaymentRequestId && !isPaid;
+    let payBtn='';
+    if(isPaid){
+      payBtn=`<span title="مدفوع${item.paidAt?' · '+item.paidAt:''}" style="padding:4px 8px;border-radius:7px;background:rgba(0,217,126,.12);color:var(--g);font-size:10px;font-weight:900;border:1px solid rgba(0,217,126,.3)">✓ مدفوع</span>`;
+    } else if(hasPendingReq){
+      payBtn=`<span title="طلب الدفع قيد المراجعة" style="padding:4px 8px;border-radius:7px;background:rgba(255,193,7,.12);color:var(--y);font-size:10px;font-weight:900;border:1px solid rgba(255,193,7,.3)">⏳ طلب مُرسَل</span>`;
+    } else if(item.supplierId){
+      payBtn=`<button onclick="requestPaymentForCostItem(${globalIdx})" title="طلب دفع المورد عبر الاعتماد" style="padding:5px 9px;border-radius:8px;border:1px solid rgba(16,196,222,.4);background:rgba(16,196,222,.1);color:#10c4de;cursor:pointer;font-size:11px;font-weight:900">💸 طلب دفع</button>`;
+    }
+    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span style="font-size:14px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</span>${payBtn}<button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid var(--line2);background:var(--bg4);color:var(--snow);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
   }
   if(!prods.length){
     el.innerHTML=ci.map((item,i)=>ciRow(item,i)).join('')+`<button class="cost-add-btn" onclick="openAddCost(-1)">＋ إضافة بند</button>`;
@@ -1633,6 +1643,59 @@ window.rmProduct=async function(prodIdx){
     });
     toast(`✅ حُذف ${removedProd?.name||'المنتج'} وبنوده`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.requestPaymentForCostItem=async function(idx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item=(o.costItems||[])[idx];if(!item)return;
+  if(item.paid){toast('⛔ هذا البند مدفوع بالفعل','err');return;}
+  if(item.paymentRequestId){toast('⛔ يوجد طلب دفع مُرسَل بالفعل لهذا البند','err');return;}
+  if(!item.supplierId){toast('⚠️ لا يمكن طلب دفع لبند بدون مورد محدد','err');return;}
+  const allowed=['admin','operation_manager','production_agent'];
+  if(!allowed.includes(currentRole)){toast('⛔ ليس لديك صلاحية إنشاء طلب دفع','err');return;}
+  const amount=parseFloat(item.total)||0;
+  if(!(amount>0)){toast('⚠️ قيمة البند غير صالحة','err');return;}
+  const ok=confirm(`💸 طلب دفع للمورد\n\nالبند: ${item.type||'—'}\nالمورد: ${item.supplierName||'—'}\nالمبلغ: ${fn(amount)} ج\nالأوردر: ${o.orderId||activeId.slice(-8)} — ${o.clientName||''}\n\nسيُرسَل الطلب لصفحة الاعتمادات للتنفيذ والتأكيد والاعتماد.\n\nمتابعة؟`);
+  if(!ok)return;
+  try{
+    const reqRef=doc(collection(db,'payment_requests'));
+    const reqData={
+      type:'supplier_payment',
+      status:'requested',
+      amount,
+      reason:`سداد بند تكلفة: ${item.type||'—'}${item.note?' — '+item.note:''} · ${o.clientName||''}`,
+      supplierId:item.supplierId,
+      supplierName:item.supplierName||'',
+      orderId:activeId,
+      orderRefId:o.orderId||'',
+      clientId:o.clientId||'',
+      clientName:o.clientName||'',
+      orderStage:o.stage||'',
+      orderProducts:(o.products||[]).map(p=>({name:p.name||'',qty:p.qty||1})),
+      orderCostItems:(o.costItems||[]).map(c=>({type:c.type||'',total:parseFloat(c.total)||0,supplierName:c.supplierName||''})),
+      orderTotalCost:(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0),
+      costItemIndex:idx,
+      requestedBy:currentUser?.uid||'',
+      requestedByName:userName,
+      requesterRole:currentRole,
+      requestedAt:serverTimestamp(),
+      source:'production_quick_request',
+    };
+    const batch=writeBatch(db);
+    batch.set(reqRef,reqData);
+    const ci=[...(o.costItems||[])];
+    ci[idx]={...ci[idx],pendingPaymentRequestId:reqRef.id,pendingRequestedAt:nowStr(),pendingRequestedBy:userName};
+    batch.update(doc(db,'orders',activeId),{
+      costItems:ci,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💸 طلب دفع: ${item.type||''} — ${fn(amount)} ج → ${item.supplierName||''}`,by:userName}],
+      updatedAt:serverTimestamp(),
+    });
+    await batch.commit();
+    toast('✅ تم إرسال الطلب — تابعه في صفحة الاعتمادات','ok');
+  }catch(e){
+    const handled=window.financialGuard?.(e,{operation:'طلب دفع بند تكلفة',amount});
+    if(!handled)toast('❌ '+e.message,'err');
+  }
 };
 
 window.rmCost=async function(idx){

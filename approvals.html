@@ -1391,6 +1391,9 @@ window.executeRequest = async function(){
           paidTransferRef: transferRef,
           paidByName: currentUserName,
           paymentRequestId: r._id,
+          pendingPaymentRequestId: null,
+          pendingRequestedAt: null,
+          pendingRequestedBy: null,
         };
         costItemsUpdate = items;
       }
@@ -1443,13 +1446,42 @@ window.rejectRequest = async function(reqId){
   const reason = prompt('سبب الرفض (إجباري):');
   if(!reason || !reason.trim()) return;
   try{
-    await updateDoc(doc(db,'payment_requests',reqId), {
+    const r = requests.find(x=>x._id===reqId);
+    const batch = writeBatch(db);
+    batch.update(doc(db,'payment_requests',reqId), {
       status: 'rejected',
       rejectedBy: currentUid,
       rejectedByName: currentUserName,
       rejectedAt: serverTimestamp(),
       rejectReason: reason.trim(),
     });
+    // لو كان الطلب مرتبط ببند تكلفة (طلب سريع من production): حرّر البند
+    if(r && r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId){
+      const oSnap = await getDoc(doc(db,'orders',r.orderId));
+      if(oSnap.exists()){
+        const oData = oSnap.data();
+        const items = [...(oData.costItems||[])];
+        const idx = r.costItemIndex;
+        if(items[idx] && items[idx].pendingPaymentRequestId === reqId){
+          items[idx] = {
+            ...items[idx],
+            pendingPaymentRequestId: null,
+            pendingRequestedAt: null,
+            pendingRequestedBy: null,
+          };
+          batch.update(doc(db,'orders',r.orderId), {
+            costItems: items,
+            timeline: [...(oData.timeline||[]), {
+              date: new Date().toLocaleString('ar-EG'),
+              action: `❌ رُفِض طلب دفع: ${items[idx].type||''} — ${reason.trim()}`,
+              by: currentUserName,
+            }],
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+    }
+    await batch.commit();
     showToast('❌ تم رفض الطلب','ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'رفض طلب'});
