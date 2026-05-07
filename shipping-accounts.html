@@ -52,6 +52,14 @@
 .sdr-btn.active{border-color:var(--y);background:rgba(255,170,0,.1)}
 .sdr-ico{font-size:18px;margin-bottom:3px}
 .sdr-lbl{font-size:10px;font-weight:700;line-height:1.3}
+.ship-tabs{display:flex;gap:6px;margin-bottom:14px;padding:6px;background:var(--bg2);border-radius:14px;border:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ship-tab{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 10px;border-radius:10px;font-size:12px;font-weight:800;color:var(--dim2);text-decoration:none;white-space:nowrap;transition:.15s;border:1px solid transparent}
+.ship-tab:hover{color:var(--snow);background:rgba(255,255,255,.04)}
+.ship-tab.active{background:linear-gradient(135deg,rgba(59,158,255,.18),rgba(34,211,238,.1));color:var(--b);border-color:rgba(59,158,255,.3);box-shadow:0 2px 8px rgba(59,158,255,.15)}
+.ship-tab-counter{font-size:10px;font-weight:900;padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.08);color:var(--snow);min-width:18px;text-align:center}
+.ship-tab.active .ship-tab-counter{background:rgba(59,158,255,.25);color:var(--b)}
+.ship-tab-counter.urgent{background:rgba(255,61,110,.2);color:var(--r)}
+@media(max-width:600px){.ship-tab{padding:8px 8px;font-size:11px;gap:4px}.ship-tab-counter{font-size:9px;padding:1px 5px}}
 </style>
 <script src="financial-guard.js"></script>
 </head>
@@ -72,6 +80,13 @@
   </div>
 
   <div class="content">
+
+    <!-- Cross-page tabs -->
+    <div class="ship-tabs">
+      <a class="ship-tab" href="shipping.html"><span>🚚</span><span>الشحن</span><span class="ship-tab-counter" id="cnt-tab-ship">—</span></a>
+      <a class="ship-tab" href="shipping-followup.html"><span>📋</span><span>المتابعة</span><span class="ship-tab-counter" id="cnt-tab-fl">—</span></a>
+      <a class="ship-tab active" href="shipping-accounts.html"><span>📦</span><span>حسابات الشحن</span><span class="ship-tab-counter" id="cnt-tab-acc">—</span></a>
+    </div>
 
     <!-- KPIs -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
@@ -408,6 +423,18 @@ const FC=window.FC||{
   getDueByCo:o=>Math.max(0,(parseFloat(o?.salePrice)||0)+(parseFloat(o?.customerShipFee)||0)-(parseFloat(o?.discount)||0)-(parseFloat(o?.totalPaid)||parseFloat(o?.paid)||parseFloat(o?.deposit)||0)),
 };
 
+// ══ Cross-page tab counters ══
+function updateShipTabCounters(allOrders){
+  const isOpen=o=>o.stage!=='archived'&&o.shipStage!=='returned';
+  const cShip=allOrders.filter(isOpen).length;
+  const cFl=allOrders.filter(o=>isOpen(o)&&((FC.getDueByCo(o)>0)||(o.shipMethod==='company'&&!o.shipSettled))).length;
+  const cAcc=allOrders.filter(o=>isOpen(o)&&o.shipMethod==='company'&&(o.shipStage==='collected')&&!o.shipSettled).length;
+  const set=(id,v,urgent)=>{const e=document.getElementById(id);if(e){e.textContent=v;e.classList.toggle('urgent',!!urgent);}};
+  set('cnt-tab-ship',cShip);
+  set('cnt-tab-fl',cFl,cFl>0);
+  set('cnt-tab-acc',cAcc,cAcc>0);
+}
+
 // ══ Auth ══
 let __started=false;
 onAuthStateChanged(auth,async u=>{
@@ -428,11 +455,14 @@ onAuthStateChanged(auth,async u=>{
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
 function startListeners(){
-  // URL params — للتنقل من صفحة الشحن
+  // URL params — للتنقل بين صفحات الشحن
+  let __pendingOrderId='';
   (function(){
     const up=new URLSearchParams(window.location.search);
     const urlCo=up.get('company')||'';
+    const urlOrd=up.get('orderId')||'';
     if(urlCo) window.__pendingCoFilter=urlCo;
+    if(urlOrd) __pendingOrderId=urlOrd;
   })();
 
   onSnapshot(collection(db,'orders'),snap=>{
@@ -444,6 +474,12 @@ function startListeners(){
       window.__pendingCoFilter=null;
     }
     render();
+    // Auto-open order panel from ?orderId=X (one-shot)
+    if(__pendingOrderId){
+      const ord=allOrders.find(o=>o._id===__pendingOrderId);
+      if(ord){ setTimeout(()=>window.openCostAcc(__pendingOrderId),250); }
+      __pendingOrderId='';
+    }
   });
   onSnapshot(collection(db,'shipping_settlements'),snap=>{
     settlements=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
@@ -474,6 +510,7 @@ function fillFilters(){
 
 // ══ Render ══
 window.render=function(){
+  updateShipTabCounters(allOrders);
   const fMonth=gv('f-month');
   const fCo=gv('f-company');
 
@@ -621,10 +658,11 @@ window.render=function(){
                 <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
                 ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
               </div>
-              <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
                 <button type="button" onclick="openShipFeeEdit('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.1);color:var(--p);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تعديل تكلفة شركة الشحن ورسوم العميل">✏️ شحن</button>
                 <button type="button" onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
-                <span style="font-size:10px;color:var(--g);font-weight:700;white-space:nowrap">✅ مسوّى</span>
+                ${o.stage!=='archived'&&!noCost?`<a href="shipping.html?orderId=${o._id}" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.1);color:var(--g);font-size:10px;font-weight:800;font-family:inherit;white-space:nowrap;text-decoration:none" title="افتح في صفحة الشحن للأرشفة النهائية">📁 أرشف</a>`:''}
+                <span style="font-size:10px;color:var(--g);font-weight:700;white-space:nowrap">${o.stage==='archived'?'📦 مؤرشف':'✅ مسوّى'}</span>
               </div>
             </div>`;
           }).join('')}
