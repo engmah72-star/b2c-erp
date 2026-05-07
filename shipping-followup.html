@@ -723,6 +723,9 @@ window.saveCollectFl=async function(){
   const curSS=o.shipStage||'ready';
   // Auto-advance to 'collected' لو المتبقي صفر والمرحلة wait_collection (مُسلَّم)
   const autoCollected=newRem<=0 && curSS==='wait_collection';
+  // ─ Bypass الشركة: شحنة شركة + التحصيل اكتمل من العميل مباشرة → الشركة بدون مديونية
+  const isCo=o.shipMethod==='company';
+  const bypassCo=isCo && newRem<=0 && !o.shipSettled;
   const btn=$('btn-save-cf');btn.disabled=true;btn.textContent='...';
   try{
     const batch=writeBatch(db);
@@ -740,7 +743,16 @@ window.saveCollectFl=async function(){
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       ...(autoCollected?{shipStage:'collected'}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل (متابعة) ${fn(amt)} ج عبر ${w.name||wName}${autoCollected?' — ✅ محصّل بالكامل':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
+      ...(bypassCo?{
+        shipSettled:true,
+        shipSettledAmount:0,  // الشركة جابتلنا 0 — العميل دفع لنا مباشرة
+        shipSettledManual:true,
+        shipSettledManualReason:'تحصيل مباشر من العميل — الشركة لم تحصّل',
+        shipSettledManualAt:nowStr(),
+        shipSettledManualBy:userName,
+        shipSettledManualByUid:currentUser?.uid||'',
+      }:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل (متابعة) ${fn(amt)} ج عبر ${w.name||wName}${autoCollected?' — ✅ محصّل بالكامل':''}${bypassCo?' — 🏁 الشركة بدون مديونية (تحصيل مباشر)':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
       updatedAt:serverTimestamp(),
     });
     addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
@@ -752,7 +764,7 @@ window.saveCollectFl=async function(){
     await batch.commit();
     localStorage.setItem('b2c_lastWalletId',wId);
     $('ov-collect-fl').classList.remove('open');
-    toast(`✅ تم تحصيل ${fn(amt)} ج${autoCollected?' · الأوردر جاهز للأرشفة 🟢':''}`,'ok');
+    toast(`✅ تم تحصيل ${fn(amt)} ج${autoCollected?' · الأوردر جاهز للأرشفة 🟢':''}${bypassCo?' · 🏁 الشركة بدون مديونية':''}`,'ok');
   }catch(e){
     toast('❌ '+(e.message||e),'err');
   }finally{

@@ -342,6 +342,37 @@ const CHECKS=[
       });
     },
   },
+  {
+    id:'company_paid_not_settled',
+    title:'🏁 شحنة شركة مدفوعة بالكامل لكن shipSettled=false',
+    desc:'العميل دفع المبلغ كامل (totalPaid=total) لكن shipSettled لسه false. ده بيخلي الأوردر يظهر في "حسابات الشحن" كأن الشركة عليها فلوس. الإصلاح الآمن: نخلي shipSettled=true بـ shipSettledAmount=0 وreason="تحصيل مباشر من العميل" — لأن الشركة فعلياً جابتلنا 0 (إحنا حصّلنا).',
+    severity:'warn',
+    autoFix:true,
+    check:o=>{
+      if(o.shipStage==='returned'||o.stage==='archived')return false;
+      if(o.shipMethod!=='company')return false;
+      if(o.shipSettled===true)return false;
+      const sale=parseFloat(o.salePrice)||0;
+      const cust=parseFloat(o.customerShipFee)||0;
+      const disc=parseFloat(o.discount)||0;
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const total=sale+cust-disc;
+      // مدفوع بالكامل = يحتاج bypass للشركة
+      return total>0 && paid>=total-0.01;
+    },
+    fix:(batch,o)=>{
+      batch.update(doc(db,'orders',o._id),{
+        shipSettled:true,
+        shipSettledAmount:0,
+        shipSettledManual:true,
+        shipSettledManualReason:'تحصيل مباشر من العميل — الشركة لم تحصّل (audit)',
+        shipSettledManualAt:nowStr(),
+        shipSettledManualBy:userName||'audit',
+        timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔧 audit: 🏁 الشركة بدون مديونية (تحصيل مباشر)`,by:userName||'audit'}],
+        updatedAt:serverTimestamp(),
+      });
+    },
+  },
 ];
 
 window.runAudit=async function(){
