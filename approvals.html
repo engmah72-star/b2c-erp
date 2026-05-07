@@ -764,6 +764,10 @@ function renderCard(t){
   const wName = t.walletName || walletsMap.get(t.walletId) || t.walletId || '—';
   const isIn = t.type === 'in';
   const entityName = t.clientName || t.supplierName || t.employeeName || '—';
+  // ══ تمييز tx الـrecovery (من أدوات الإصلاح) ══
+  const isRecovery = t.isRecovery === true;
+  // مبدأ الأربع عيون: من أنشأ recovery tx لا يستطيع تأكيدها/اعتمادها
+  const isOwnRecovery = isRecovery && t.createdBy === currentUid;
 
   let order = null;
   if(t.orderId){
@@ -775,15 +779,27 @@ function renderCard(t){
 
   let actions = '';
   if(t.approvalStatus === 'pending' && currentRole === 'operation_manager'){
-    actions = `<button class="btn-confirm" onclick="confirmTx('${t._id}')">✓ تأكيد</button>
-               <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    if(isOwnRecovery){
+      actions = `<div style="font-size:11px;color:#ff3d6e;padding:8px;background:rgba(255,61,110,.08);border-radius:6px">⛔ لا يمكنك مراجعة عمليتك الخاصة (مبدأ الأربع عيون) — شخص آخر يجب أن يراجع</div>`;
+    } else {
+      actions = `<button class="btn-confirm" onclick="confirmTx('${t._id}')">✓ تأكيد</button>
+                 <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    }
   } else if(t.approvalStatus === 'pending' && currentRole === 'admin'){
-    actions = `<button class="btn-confirm" onclick="confirmTx('${t._id}')">✓ تأكيد</button>
-               <button class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد مباشر</button>
-               <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    if(isOwnRecovery){
+      actions = `<div style="font-size:11px;color:#ff3d6e;padding:8px;background:rgba(255,61,110,.08);border-radius:6px">⛔ لا يمكنك مراجعة استردادك الخاص (مبدأ الأربع عيون) — يحتاج admin/ops آخر</div>`;
+    } else {
+      actions = `<button class="btn-confirm" onclick="confirmTx('${t._id}')">✓ تأكيد</button>
+                 <button class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد مباشر</button>
+                 <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    }
   } else if(t.approvalStatus === 'confirmed' && currentRole === 'admin'){
-    actions = `<button class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد + أرشفة</button>
-               <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    if(isOwnRecovery){
+      actions = `<div style="font-size:11px;color:#ff3d6e;padding:8px;background:rgba(255,61,110,.08);border-radius:6px">⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد</div>`;
+    } else {
+      actions = `<button class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد + أرشفة</button>
+                 <button class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
+    }
   }
 
   let trail = '';
@@ -794,11 +810,22 @@ function renderCard(t){
   const stCls = 'st-' + t.approvalStatus;
   const stLbl = {pending:'⏳ بانتظار التأكيد', confirmed:'🔵 مؤكَّدة', approved:'🔒 معتمدة', rejected:'❌ مرفوضة'}[t.approvalStatus] || t.approvalStatus;
 
+  // بانر تمييز recovery (يظهر أعلى البطاقة بصرياً)
+  const recoveryBanner = isRecovery ? `
+    <div style="background:linear-gradient(90deg,rgba(255,61,110,.15),rgba(255,170,0,.1));border:2px solid rgba(255,61,110,.5);border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+      <div style="font-size:18px">🔧</div>
+      <div style="flex:1">
+        <div style="font-weight:900;color:#ff3d6e;font-size:12px">استرداد آلي (Recovery) — يحتاج مراجعة دقيقة</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.recoveryDate ? `أُنشئ: ${fmtDate({seconds:new Date(t.recoveryDate).getTime()/1000})}` : 'تصحيح آلي عبر أداة الإصلاح'} · <b>مبدأ الأربع عيون نشط</b></div>
+      </div>
+    </div>` : '';
+
   return `
-    <div class="approval-card">
+    <div class="approval-card${isRecovery?' recovery-card':''}">
+      ${recoveryBanner}
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
-          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}</div>
+          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}${isRecovery?' <span style="background:rgba(255,61,110,.2);color:#ff3d6e;padding:2px 8px;border-radius:8px;font-size:9px;margin-right:6px">🔧 استرداد</span>':''}</div>
           <div class="ac-meta">${escapeHtml(t.description || '—')}</div>
           <div class="ac-status ${stCls}">${stLbl}</div>
         </div>
@@ -1330,6 +1357,12 @@ window.uploadReceipt = async function(){
 
 // ══════════════ Approval actions (existing tx flow) ══════════════
 window.confirmTx = async function(txId){
+  const tx = txs.find(x=>x._id===txId);
+  // مبدأ الأربع عيون لـ recovery: من أنشأها لا يقدر يأكدها
+  if(tx?.isRecovery && tx?.createdBy === currentUid){
+    showToast('⛔ لا يمكنك مراجعة عمليتك الخاصة (مبدأ الأربع عيون)','err');
+    return;
+  }
   if(!confirm('تأكيد هذه العملية؟')) return;
   try{
     await updateDoc(doc(db,'transactions_v2',txId),{
@@ -1337,8 +1370,6 @@ window.confirmTx = async function(txId){
       confirmedBy: currentUid, confirmedByName: currentUserName,
       confirmedAt: serverTimestamp(),
     });
-    // لو كانت tx مرتبطة بـ request، حدّث الطلب أيضاً
-    const tx = txs.find(x=>x._id===txId);
     if(tx?.paymentRequestId){
       try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'confirmed', confirmedBy:currentUid, confirmedByName:currentUserName, confirmedAt:serverTimestamp() }); }catch(_){}
     }
@@ -1350,6 +1381,13 @@ window.confirmTx = async function(txId){
 };
 
 window.approveTx = async function(txId){
+  const tx = txs.find(x=>x._id===txId);
+  // مبدأ الأربع عيون لـ recovery
+  if(tx?.isRecovery && tx?.createdBy === currentUid){
+    showToast('⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد','err');
+    return;
+  }
+  // لو الـ tx اللي بياعتمدها admin أكدها بنفسه قبل كده، نسمح. لو موجودة من شخص ثاني أكدها، نسمح.
   if(!confirm('اعتماد نهائي؟ سيتم قفل العملية.')) return;
   try{
     await updateDoc(doc(db,'transactions_v2',txId),{
@@ -1358,7 +1396,6 @@ window.approveTx = async function(txId){
       approvedAt: serverTimestamp(),
       isLocked: true,
     });
-    const tx = txs.find(x=>x._id===txId);
     if(tx?.paymentRequestId){
       try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'approved', approvedBy:currentUid, approvedByName:currentUserName, approvedAt:serverTimestamp() }); }catch(_){}
     }
