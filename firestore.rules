@@ -387,6 +387,38 @@ service cloud.firestore {
       allow delete: if isAuth() && isAdmin() && !isLocked();
     }
 
+    // ══ Payment Requests ══
+    // أي موظف يقدر ينشئ طلب (دفعة مورد / مرتب / سلفة)
+    // المحاسب ينفّذ → الطالب يستلم بإيصال → ops يؤكد → admin يعتمد
+    match /payment_requests/{reqId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.status == 'requested'
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if isAuth() && (
+        // المحاسب ينفّذ: requested → awaiting_receipt
+        (canFinancialWrite()
+         && resource.data.status == 'requested'
+         && request.resource.data.status in ['awaiting_receipt','rejected'])
+        // الطالب يستلم + يرفع إيصال: awaiting_receipt → pending
+        || (resource.data.requestedBy == request.auth.uid
+            && resource.data.status == 'awaiting_receipt'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.receiptImageUrl is string)
+        // ops_manager يأكد: pending → confirmed
+        || (isOpsManager()
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['confirmed','rejected'])
+        // admin يعتمد: confirmed → approved (locked)
+        || (isAdmin()
+            && resource.data.status in ['pending','confirmed']
+            && request.resource.data.status in ['approved','rejected'])
+      );
+      allow delete: if isAdmin();
+    }
+
     // ══ Chat ══
     match /chat_messages/{msgId} {
       allow read: if isAuth() && (isAdmin() || can('canUseChat') || hasPage('chat'));

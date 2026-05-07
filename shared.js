@@ -48,14 +48,15 @@ export const ROLES = {
 };
 
 // Which pages each role can access
+// ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
   admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','settings'],
   operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports'],
-  customer_service: ['index','clients','design'],
-  graphic_designer: ['design'],
-  design_operator:  ['index','design','suppliers'],
-  production_agent: ['index','production','print'],
-  shipping_officer: ['index','print','shipping'],
+  customer_service: ['index','clients','design','approvals'],
+  graphic_designer: ['design','approvals'],
+  design_operator:  ['index','design','approvals','suppliers'],
+  production_agent: ['index','production','print','approvals'],
+  shipping_officer: ['index','print','shipping','approvals'],
   wallet_manager:   ['index','accounts','approvals'],
 };
 
