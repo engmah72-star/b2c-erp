@@ -200,7 +200,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
+import { addLedgerToBatch, FE, approvalFields, calcOrderPayment } from "./financial-sync-engine.js";
 
 const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -880,6 +880,12 @@ window.saveRequest = async function(){
     }
   }
 
+  // لو اختار بند تكلفة، احفظ index لـعَلْم البند بـpaid عند التنفيذ
+  const costItemIdx = document.getElementById('rq-cost-item')?.value;
+  if(activeReqType === 'supplier_payment' && costItemIdx !== '' && costItemIdx != null){
+    reqData.costItemIndex = parseInt(costItemIdx);
+  }
+
   try{
     await addDoc(collection(db,'payment_requests'), reqData);
     showToast('✅ تم إرسال الطلب — بانتظار التنفيذ من المحاسب','ok');
@@ -924,18 +930,72 @@ window.executeRequest = async function(){
   if(!transferRef) return showToast('⚠️ أدخل رقم/مرجع التحويل','err');
 
   try{
+    // pre-fetch الأوردر لو الطلب بيمسه (refund أو cost item)
+    let orderDoc = null;
+    if(r.orderId && (r.type === 'client_refund' || r.costItemIndex !== undefined)){
+      const oSnap = await getDoc(doc(db,'orders',r.orderId));
+      if(oSnap.exists()) orderDoc = {...oSnap.data(), _id:oSnap.id};
+    }
+
     const batch = writeBatch(db);
-    // تحديث رصيد المحفظة
+
+    // 1. خصم رصيد المحفظة
     batch.update(doc(db,'wallets',wId),{balance:increment(-r.amount)});
-    // إنشاء tx
+
+    // 2. supplier_payments doc (للموردين) — يربط بصفحة الموردين
+    let spRef = null;
+    if(r.type === 'supplier_payment' && r.supplierId){
+      spRef = doc(collection(db,'supplier_payments'));
+      batch.set(spRef, {
+        supplierId: r.supplierId,
+        supplierName: r.supplierName,
+        supplierType: r.supplierType||'printer',
+        amount: r.amount,
+        walletId: wId, walletName: wName,
+        orderId: r.orderId||null,
+        orderRefId: r.orderRefId||null,
+        clientName: r.clientName||null,
+        note: r.reason||note||'',
+        transferRef,
+        paymentRequestId: r._id,
+        ...(r.costItemIndex !== undefined ? { costItemIndex: r.costItemIndex } : {}),
+        date: new Date().toLocaleDateString('ar-EG'),
+        createdAt: serverTimestamp(),
+        createdBy: currentUid,
+        createdByName: currentUserName,
+      });
+    }
+
+    // 3. employee_payments doc (للمرتبات) — يربط بصفحة الموظف
+    let epRef = null;
+    if(r.type === 'salary' && r.employeeId){
+      epRef = doc(collection(db,'employee_payments'));
+      batch.set(epRef, {
+        employeeId: r.employeeId,
+        employeeName: r.employeeName,
+        amount: r.amount,
+        salaryType: r.salaryType||'salary',
+        isDeduction: false,
+        month: r.salaryMonth||'',
+        walletId: wId, walletName: wName,
+        note: r.reason||note||'',
+        transferRef,
+        paymentRequestId: r._id,
+        date: new Date().toLocaleDateString('ar-EG'),
+        createdAt: serverTimestamp(),
+        createdBy: currentUid,
+      });
+    }
+
+    // 4. إنشاء tx
     const txRef = doc(collection(db,'transactions_v2'));
     const desc = (r.supplierName ? `دفعة مورد — ${r.supplierName}` :
                   r.employeeName ? `${r.salaryType||'مرتب'} — ${r.employeeName}` :
                   r.type === 'client_refund' && r.clientName ? `استرداد عميل — ${r.clientName}` :
                   'مصروف عام') + (note ? ` — ${note}` : '');
     const cat = r.type === 'supplier_payment' ? (r.supplierType==='shipper'?'shipper_payment':'printer_payment') :
-                r.type === 'salary'        ? 'salary' :
-                r.type === 'client_refund' ? 'refund' :
+                r.type === 'salary'         ? 'salary' :
+                r.type === 'client_refund'  ? 'refund' :
                 'expense';
     batch.set(txRef, {
       walletId: wId, walletName: wName,
@@ -945,13 +1005,16 @@ window.executeRequest = async function(){
       employeeId: r.employeeId||null, employeeName: r.employeeName||null,
       orderId: r.orderId||null, clientId: r.clientId||null, clientName: r.clientName||null,
       paymentRequestId: r._id,
+      ...(spRef ? { spId: spRef.id } : {}),
+      ...(epRef ? { epId: epRef.id } : {}),
       transferRef,
       date: new Date().toLocaleDateString('ar-EG'),
       createdBy: currentUid, createdByName: currentUserName,
       createdAt: serverTimestamp(),
       ...approvalFields()
     });
-    // قيد ledger
+
+    // 5. قيد ledger
     const evt = r.type === 'supplier_payment' ? FE.VENDOR_PAYMENT :
                 r.type === 'salary'         ? FE.SALARY_PAYMENT :
                 r.type === 'client_refund'  ? FE.CUSTOMER_REFUND :
@@ -964,7 +1027,46 @@ window.executeRequest = async function(){
       notes: desc, refId: r._id,
       userId: currentUid, userName: currentUserName,
     });
-    // تحديث الطلب
+
+    // 6. لو client_refund: تحديث orders.totalPaid (نقص) + remaining + paymentStatus
+    let orderPaymentUpdate = null;
+    if(r.type === 'client_refund' && r.orderId && orderDoc){
+      orderPaymentUpdate = calcOrderPayment(orderDoc, -r.amount);
+    }
+
+    // 7. لو فيه costItemIndex: علّم البند paid:true
+    let costItemsUpdate = null;
+    if(r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId && orderDoc){
+      const items = [...(orderDoc.costItems||[])];
+      const idx = r.costItemIndex;
+      if(items[idx]){
+        items[idx] = {
+          ...items[idx],
+          paid: true,
+          paidTxId: txRef.id,
+          paidSpId: spRef?.id || null,
+          paidAt: new Date().toISOString(),
+          paidVia: wName,
+          paidTransferRef: transferRef,
+          paidByName: currentUserName,
+          paymentRequestId: r._id,
+        };
+        costItemsUpdate = items;
+      }
+    }
+
+    // 8. دمج كل تحديثات الأوردر في update واحد (لو موجود)
+    if(orderPaymentUpdate || costItemsUpdate){
+      const updateData = {
+        ...(orderPaymentUpdate || {}),
+        ...(costItemsUpdate ? { costItems: costItemsUpdate } : {}),
+        ...(r.type === 'client_refund' ? { lastRefundDate: new Date().toLocaleDateString('ar-EG') } : {}),
+        updatedAt: serverTimestamp(),
+      };
+      batch.update(doc(db,'orders',r.orderId), updateData);
+    }
+
+    // 9. تحديث الطلب نفسه
     batch.update(doc(db,'payment_requests',r._id), {
       status: 'awaiting_receipt',
       executedBy: currentUid,
@@ -973,11 +1075,21 @@ window.executeRequest = async function(){
       sourceWalletId: wId,
       sourceWalletName: wName,
       txId: txRef.id,
+      ...(spRef ? { supplierPaymentId: spRef.id } : {}),
+      ...(epRef ? { employeePaymentId: epRef.id } : {}),
       transferRef,
       executeNote: note,
     });
+
     await batch.commit();
-    showToast('✅ نُفّذ التحويل — بانتظار رفع إيصال من الطالب','ok');
+    const summary = [
+      'tx + ledger',
+      spRef ? 'supplier_payments' : null,
+      epRef ? 'employee_payments' : null,
+      orderPaymentUpdate ? 'orders.totalPaid' : null,
+      costItemsUpdate ? 'costItem.paid' : null,
+    ].filter(Boolean).join(' + ');
+    showToast(`✅ نُفّذ — تم تسجيل: ${summary}`,'ok');
     cM('exec');
     executingReq = null;
   }catch(e){
