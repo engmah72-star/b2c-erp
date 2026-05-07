@@ -1983,6 +1983,11 @@ window.saveShip=async function(){
   // ─ مبلغ الشحن (داخلي + على العميل) قابل للتعديل لحد الأرشفة (طلب المستخدم)
   const shipCost2=parseFloat(gv('ss-cost'))||0;
   const customerShipFee2=parseFloat(gv('ss-cust-ship-fee'))||0;
+  // ─ Lock بعد التسوية: تغيير customerShipFee مرفوض
+  const _oldCustFee=parseFloat(o.customerShipFee)||0;
+  if(o.shipSettled && customerShipFee2!==_oldCustFee){
+    return toast('⛔ الأوردر مسوّى مع شركة الشحن — لا يمكن تعديل رسوم العميل. ألغي التسوية من حسابات الشحن أولاً.','err');
+  }
   // ─ Invariant: تخفيض رسوم الشحن لا يصح يخلّي الإجمالي < المحصّل المسجّل
   const _oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
   const _newDue=(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0);
@@ -2006,6 +2011,10 @@ window.saveShip=async function(){
     wId=gv('ss-wid');wName=gv('ss-wname');transferRef=gv('ss-ref');
     if(collectAmt>0&&!wId)return toast('⚠️ اختر طريقة الدفع','err');
     if(collectAmt>rem+0.01)return toast('⚠️ المبلغ المحصّل ('+fn(collectAmt)+' ج) أكبر من المتبقي ('+fn(rem)+' ج)','err');
+    // ─ Lock بعد التسوية: ممنوع إضافة تحصيل بعد ما الشركة سوّت
+    if(collectAmt>0 && o.shipSettled){
+      return toast('⛔ الأوردر مسوّى مع شركة الشحن — لا يمكن تسجيل تحصيل إضافي. ألغي التسوية أولاً.','err');
+    }
   }
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+collectAmt;
   const newRem=Math.max(0,(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0)-newPaid);
@@ -2139,6 +2148,7 @@ window.openCollect=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(o.paymentStatus==='returned'||o.shipStage==='returned')return toast('⛔ الأوردر مرتجع','err');
   if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف','err');
+  if(o.shipSettled)return toast('⛔ الأوردر مسوّى مع شركة الشحن — ألغي التسوية أولاً قبل أي تحصيل','err');
   const rem=calcRem(o);
   if(rem<=0)return toast('✅ المبلغ محصّل بالكامل — لا يوجد متبقي','ok');
   // ملخص الأوردر
@@ -2192,6 +2202,7 @@ window.saveCollect=async function(){
   if(!wId)return toast('⚠️ اختر طريقة الدفع','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
+  if(o.shipSettled)return toast('⛔ الأوردر مسوّى مع شركة الشحن — ألغي التسوية أولاً قبل أي تحصيل','err');
   const rem=calcRem(o);
   if(amt>rem+0.01)return toast(`⚠️ المبلغ (${fn(amt)} ج) أكبر من المتبقي (${fn(rem)} ج)`,'err');
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+amt;
@@ -2276,6 +2287,7 @@ window.updateEcPreview=function(){
 window.saveEmpEditCol=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
+  if(o.shipSettled)return toast('⛔ الأوردر مسوّى مع شركة الشحن — ألغي التسوية من حسابات الشحن قبل تعديل التحصيل','err');
   const newAmt=parseFloat(gv('ec-new-amt'));
   if(isNaN(newAmt)||newAmt<0)return toast('⚠️ أدخل مبلغاً صحيحاً','err');
   const reason=gv('ec-reason').trim();
@@ -2373,6 +2385,10 @@ window.saveEmpEditShip=async function(){
   track('shipGov','المحافظة',o.shipGov||'',newGov);
   track('shipAddress','العنوان',o.shipAddress||'',newAddress);
   if(!changes.length)return toast('لا توجد تغييرات','');
+  // ─ Lock بعد التسوية: customerShipFee ممنوع تعديلها بعد التسوية
+  if(o.shipSettled && (parseFloat(o.customerShipFee)||0)!==newCustFee){
+    return toast('⛔ الأوردر مسوّى مع شركة الشحن — لا يمكن تعديل رسوم العميل. ألغي التسوية من حسابات الشحن أولاً.','err');
+  }
   const oldShipCost=parseFloat(o.shipCost)||0;
   const oldPaid=calcPaid(o);
   const sale=parseFloat(o.salePrice)||0;
@@ -2526,8 +2542,12 @@ window.calcAORemaining=function(){
 window.saveAdminOverride=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const btn=document.getElementById('btn-save-ao');btn.disabled=true;btn.textContent='...';
   const newPaid=parseFloat(document.getElementById('ao-paid').value)||0;
+  // ─ تحذير صريح للأدمن: تعديل totalPaid على أوردر مسوّى بيخلق فجوة مع shipSettledAmount
+  if(o.shipSettled && Math.abs(newPaid-calcPaid(o))>0.01){
+    if(!confirm(`⚠️ الأوردر مسوّى مع شركة الشحن (shipSettledAmount=${fn(parseFloat(o.shipSettledAmount)||0)} ج).\n\nتعديل المحصّل (${fn(calcPaid(o))} → ${fn(newPaid)} ج) هيخلق فجوة مع التسوية المسجّلة.\n\nالأنسب: ألغي التسوية من حسابات الشحن أولاً، ثم عدّل، ثم سوّي تاني.\n\nهل تريد المتابعة على مسؤوليتك؟`))return;
+  }
+  const btn=document.getElementById('btn-save-ao');btn.disabled=true;btn.textContent='...';
   const newShipCost=parseFloat(document.getElementById('ao-ship-cost').value)||0;
   const newExecCostTotal=parseFloat(document.getElementById('ao-exec-cost').value)||0;
   const newShipCompany=document.getElementById('ao-ship-company').value.trim();
