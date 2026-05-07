@@ -38,6 +38,7 @@
 .fl-btn:hover{background:rgba(255,255,255,.05)}
 .fl-btn-collect{border-color:rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g)}
 .fl-btn-deliv{border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.12);color:var(--c)}
+.fl-btn-settle{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.14);color:var(--p);font-weight:900}
 .fl-btn-wb{border-color:rgba(59,158,255,.4);background:rgba(59,158,255,.08);color:var(--b)}
 .fl-btn-edit{border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.1);color:var(--p)}
 .fl-btn-ret{border-color:rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r)}
@@ -169,6 +170,36 @@
   </div>
 </div>
 
+<!-- ══ Settle From Company Modal ══ -->
+<div class="overlay" id="ov-settle-co">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <span class="modal-title">🏁 تسوية من شركة الشحن</span>
+      <button class="modal-x" onclick="document.getElementById('ov-settle-co').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="sco-summary" style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;line-height:1.9"></div>
+      <div class="fg" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:800">المبلغ الفعلي الوارد من الشركة (ج) *</label>
+        <input class="inp" id="sco-amt" type="number" min="0" placeholder="0" oninput="updateScoPreview()" style="font-size:22px;font-weight:900;text-align:center;padding:14px">
+      </div>
+      <div id="sco-diff-row" style="display:none;padding:10px 14px;border-radius:10px;font-size:12px;font-weight:800;text-align:center;margin-bottom:14px;border:1px solid"></div>
+      <div id="sco-diff-note-wrap" style="display:none;margin-bottom:12px">
+        <label style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:6px;display:block">سبب الفرق (إجباري ≥ 5 أحرف) *</label>
+        <input class="inp" id="sco-diff-note" placeholder="مثال: عمولة الشركة / خصم تأخير / نقص الكاش">
+      </div>
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">المحفظة المستلِمة *</div>
+      <div id="sco-wallets" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <input type="hidden" id="sco-wid"><input type="hidden" id="sco-wname">
+      <div class="fg"><label>رقم التحويل / الإيصال (اختياري)</label><input class="inp" id="sco-ref" placeholder="اختياري"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-settle-co').classList.remove('open')">إلغاء</button>
+      <button class="btn" id="btn-save-sco" onclick="saveSettleFromCo()" style="background:rgba(167,139,250,.18);color:var(--p);border:1px solid rgba(167,139,250,.4);font-weight:900">🏁 تأكيد التسوية</button>
+    </div>
+  </div>
+</div>
+
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div class="toasts" id="toasts"></div>
 
@@ -186,7 +217,7 @@ const db=getFirestore(app);
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
 let canViewCosts=false;
-let currentFilter='active', __cfOrderId='';
+let currentFilter='active', __cfOrderId='', __scoOrderId='';
 
 // ── Helpers ──
 const $ = id => document.getElementById(id);
@@ -440,9 +471,22 @@ function buildCard(o){
         <div style="font-size:9px;color:var(--dim2);font-weight:600">من ${fn(totalDue)} ج</div>
       </div>
       <div class="fl-act-btns">
-        ${!isReturned && rem>0?`<button class="fl-btn fl-btn-collect" onclick="openCollectFl('${o._id}')" title="تحصيل من العميل">💰 تحصيل</button>`:''}
+        ${(()=>{
+          if(isReturned)return '';
+          const isCo=o.shipMethod==='company';
+          const ss=o.shipStage||'ready';
+          const isShipped=!!o.shipMethod && ss!=='ready';
+          if(isCo){
+            // الشركة هي اللي تحصّل من العميل، فالزرار هنا = تسوية من الشركة (الشركة سلّمت فلوس العميل)
+            if(isShipped && !o.shipSettled && rem>0){
+              return `<button class="fl-btn fl-btn-settle" onclick="openSettleFromCo('${o._id}')" title="الشركة سلّمت فلوس العميل — سجّل التسوية وحرّك المبلغ من الشركة لمحفظتك">🏁 تسوية من الشركة</button>`;
+            }
+            return '';
+          }
+          // pickup / courier / لا توجد طريقة بعد: تحصيل مباشر من العميل
+          return rem>0?`<button class="fl-btn fl-btn-collect" onclick="openCollectFl('${o._id}')" title="تحصيل من العميل">💰 تحصيل</button>`:'';
+        })()}
         ${!isReturned && canMarkDelivered?`<button class="fl-btn fl-btn-deliv" onclick="markDelivered('${o._id}')" title="تأكيد التسليم — يقدّم الأوردر إلى انتظار التحصيل">✅ تم التسليم</button>`:''}
-        ${!isReturned && o.shipMethod==='company' && (o.shipStage||'ready')==='collected' && !o.shipSettled?`<a class="fl-btn" href="shipping-accounts.html?company=${encodeURIComponent(o.shipCompanyName||'')}&orderId=${o._id}" style="border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.12);color:var(--y);text-decoration:none" title="افتح في حسابات الشحن للتسوية">🔗 تسوية</a>`:''}
         ${!isReturned && ready?`<a class="fl-btn" href="shipping.html?orderId=${o._id}" style="border-color:rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);text-decoration:none" title="افتح في صفحة الشحن للأرشفة النهائية">📁 أرشف</a>`:''}
         <button class="fl-btn fl-btn-edit" onclick="openOrderDetails('${o._id}')" title="عرض كل التفاصيل">📋 تفاصيل</button>
       </div>
@@ -553,8 +597,14 @@ window.openOrderDetails=function(orderId){
   const isReturned=o.shipStage==='returned';
   const canMarkDelivered=(o.shipStage||'ready')==='wait_delivery';
   const editHref=o.shipMethod==='company'?'shipping-accounts.html?company='+encodeURIComponent(o.shipCompanyName||''):'shipping.html?orderId='+o._id;
+  const __isCo=o.shipMethod==='company';
+  const __ss=o.shipStage||'ready';
+  const __isShipped=!!o.shipMethod && __ss!=='ready';
+  const __showSettle=!isReturned && __isCo && __isShipped && !o.shipSettled && rem>0;
+  const __showCollect=!isReturned && !__isCo && rem>0;
   $('det-foot').innerHTML=`
-    ${!isReturned && rem>0?`<button class="det-act det-act-collect" onclick="openCollectFl('${o._id}');closeDetails()">💰 تحصيل</button>`:''}
+    ${__showCollect?`<button class="det-act det-act-collect" onclick="openCollectFl('${o._id}');closeDetails()">💰 تحصيل</button>`:''}
+    ${__showSettle?`<button class="det-act" onclick="openSettleFromCo('${o._id}');closeDetails()" style="border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.14);color:var(--p);font-weight:900" title="الشركة سلّمت فلوس العميل">🏁 تسوية من الشركة</button>`:''}
     ${!isReturned && canMarkDelivered?`<button class="det-act det-act-deliv" onclick="markDelivered('${o._id}');closeDetails()">✅ تم التسليم</button>`:''}
     <a class="det-act det-act-wb" href="waybill.html?id=${o._id}" target="_blank">🧾 بوليصة</a>
     <a class="det-act det-act-edit" href="${editHref}">✏️ فتح كامل</a>
@@ -704,6 +754,181 @@ window.saveCollectFl=async function(){
     toast('❌ '+(e.message||e),'err');
   }finally{
     btn.disabled=false;btn.textContent='✅ تأكيد التحصيل';
+  }
+};
+
+// ══ Settle From Company (single-order settle from follow-up) ══
+// الفلسفة: الأوردرات اللي راحت لشركة شحن، الشركة هي اللي تحصّل من العميل.
+// لما الشركة تسلّمنا الفلوس → نسجّل التسوية من هنا (مرآة لـ saveSettle في حسابات الشحن لكن لأوردر واحد)
+window.openSettleFromCo=function(orderId){
+  const o=orders.find(x=>x._id===orderId);
+  if(!o)return toast('⚠️ الأوردر غير موجود','err');
+  if(o.stage==='archived')return toast('⛔ مؤرشف','err');
+  if(o.shipStage==='returned')return toast('⛔ مرتجع','err');
+  if(o.shipMethod!=='company')return toast('⛔ هذا الزر مخصّص لشحن الشركات فقط','err');
+  if(o.shipSettled)return toast('✅ مسوّى بالفعل','ok');
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const disc=parseFloat(o.discount)||0;
+  const oldPaid=calcPaid(o);
+  const due=Math.max(0,sale+cust-disc-oldPaid);
+  if(due<=0)return toast('💡 لا يوجد متبقي للتسوية — استخدم "🏁 مسوّى يدوياً" من حسابات الشحن لو لازم','');
+  __scoOrderId=orderId;
+  $('sco-summary').innerHTML=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-weight:800">${escHtml(o.clientName||'—')}</span><span style="font-size:10px;color:var(--dim2)">${escHtml(o.orderId||(o._id||'').slice(-6))}</span></div>
+    <div>📦 شركة الشحن: <b style="color:var(--p)">${escHtml(o.shipCompanyName||'—')}</b></div>
+    <div>💵 المتوقع من الشركة: <b style="color:var(--g)">${fn(due)} ج</b></div>
+    ${oldPaid>0?`<div>💰 مدفوع مقدماً: <b style="color:var(--c)">${fn(oldPaid)} ج</b></div>`:''}
+    <div style="font-size:11px;color:var(--dim2);margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)">📊 الإجمالي على العميل: ${fn(sale+cust-disc)} ج</div>
+  `;
+  $('sco-amt').value=due;
+  // Render wallet buttons (use same pattern as cf-wallets)
+  $('sco-wallets').innerHTML=wallets.map(w=>`
+    <button type="button" class="w-btn-sco" data-wid="${w._id}" data-wname="${escHtml(w.name||'')}" onclick="pickScoWallet(this)" style="background:var(--bg3);border:1px solid var(--line);color:var(--snow);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">${escHtml(w.name||'محفظة')} <span style="font-size:10px;color:var(--dim2)">(${fn(w.balance||0)} ج)</span></button>
+  `).join('');
+  // Auto-pick default wallet
+  const defW=wallets.find(w=>w.type==='cash')||wallets[0];
+  $('sco-wid').value=defW?defW._id:'';
+  $('sco-wname').value=defW?(defW.name||''):'';
+  if(defW){
+    setTimeout(()=>{
+      const btn=document.querySelector(`.w-btn-sco[data-wid="${defW._id}"]`);
+      if(btn){btn.style.background='rgba(167,139,250,.14)';btn.style.borderColor='rgba(167,139,250,.4)';}
+    },10);
+  }
+  $('sco-ref').value='';
+  $('sco-diff-note').value='';
+  updateScoPreview();
+  $('ov-settle-co').classList.add('open');
+};
+
+window.pickScoWallet=function(btn){
+  $('sco-wid').value=btn.dataset.wid;
+  $('sco-wname').value=btn.dataset.wname;
+  document.querySelectorAll('.w-btn-sco').forEach(b=>{b.style.background='var(--bg3)';b.style.borderColor='var(--line)';});
+  btn.style.background='rgba(167,139,250,.14)';
+  btn.style.borderColor='rgba(167,139,250,.4)';
+};
+
+window.updateScoPreview=function(){
+  const o=orders.find(x=>x._id===__scoOrderId);if(!o)return;
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const disc=parseFloat(o.discount)||0;
+  const oldPaid=calcPaid(o);
+  const expected=Math.max(0,sale+cust-disc-oldPaid);
+  const actual=parseFloat($('sco-amt').value)||0;
+  const diff=actual-expected;
+  const row=$('sco-diff-row');const noteWrap=$('sco-diff-note-wrap');
+  if(Math.abs(diff)<0.01){
+    row.style.display='none';noteWrap.style.display='none';
+  } else {
+    row.style.display='block';
+    noteWrap.style.display='block';
+    const isPos=diff>0;
+    row.style.background=isPos?'rgba(255,170,0,.1)':'rgba(255,61,110,.1)';
+    row.style.color=isPos?'var(--y)':'var(--r)';
+    row.style.borderColor=isPos?'rgba(255,170,0,.4)':'rgba(255,61,110,.4)';
+    row.textContent=`${isPos?'⬆️ زيادة':'⬇️ عجز'}: ${fn(Math.abs(diff))} ج — مطلوب سبب`;
+  }
+};
+
+window.saveSettleFromCo=async function(){
+  const o=orders.find(x=>x._id===__scoOrderId);
+  if(!o)return toast('⚠️ الأوردر غير موجود','err');
+  if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق','err');
+  if(o.shipSettled)return toast('✅ مسوّى بالفعل','ok');
+  const amount=parseFloat(gv('sco-amt'))||0;
+  if(amount<=0)return toast('⚠️ أدخل المبلغ الفعلي','err');
+  const wId=gv('sco-wid');
+  if(!wId)return toast('⚠️ اختر المحفظة','err');
+  const w=wallets.find(x=>x._id===wId);
+  if(!w)return toast('❌ المحفظة غير موجودة','err');
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const disc=parseFloat(o.discount)||0;
+  const oldPaid=calcPaid(o);
+  const expected=Math.max(0,sale+cust-disc-oldPaid);
+  const diff=amount-expected;
+  const diffNote=gv('sco-diff-note').trim();
+  if(Math.abs(diff)>0.01 && diffNote.length<5){
+    return toast('⚠️ يوجد فرق بين المتوقع والفعلي — اكتب سبب الفرق (≥ 5 أحرف)','err');
+  }
+  const transferRef=gv('sco-ref').trim();
+  const btn=$('btn-save-sco');
+  if(btn){btn.disabled=true;btn.textContent='...';}
+  try{
+    const now=nowStr();
+    const bb=parseFloat(w.balance)||0;
+    const newPaid=oldPaid+expected;
+    const newRem=Math.max(0,sale+cust-disc-newPaid);
+    const batch=writeBatch(db);
+
+    // 1. wallet
+    batch.update(doc(db,'wallets',wId),{balance:increment(amount)});
+
+    // 2. transactions_v2
+    const txRef=doc(collection(db,'transactions_v2'));
+    batch.set(txRef,{
+      walletId:wId,walletName:w.name||'',type:'in',amount,fees:0,
+      description:`تسوية شحن — ${o.shipCompanyName||''} — ${o.clientName||''}`,
+      category:'shipping_settlement',
+      companyName:o.shipCompanyName||'',
+      orderIds:[__scoOrderId],
+      expectedAmount:expected,difference:diff,diffNote,
+      balanceBefore:bb,balanceAfter:bb+amount,
+      note:transferRef,
+      date:now,
+      source:'followup',
+      createdBy:currentUser?.uid||'',createdByName:userName,
+      createdAt:serverTimestamp(),
+      ...approvalFields()
+    });
+
+    // 3. shipping_settlements
+    const settleRef=doc(collection(db,'shipping_settlements'));
+    batch.set(settleRef,{
+      companyName:o.shipCompanyName||'',amount,
+      orderIds:[__scoOrderId],expectedAmount:expected,
+      difference:diff,diffNote,
+      walletId:wId,walletName:w.name||'',
+      note:transferRef,date:now,txId:txRef.id,
+      source:'followup',
+      createdBy:currentUser?.uid||'',createdByName:userName,
+      createdAt:serverTimestamp()
+    });
+
+    // 4. order
+    const tlEntry={date:now,action:`🏁 تسوية من ${o.shipCompanyName||'شركة الشحن'} — ${fn(expected)} ج${Math.abs(diff)>0.01?` (فرق: ${diff>0?'+':''}${fn(diff)} ج — ${diffNote})`:''}`,by:userName};
+    batch.update(doc(db,'orders',__scoOrderId),{
+      shipSettled:true,
+      shipSettledAmount:expected,
+      shipSettledWalletId:wId,
+      shipStage:'collected',
+      totalPaid:newPaid,
+      remaining:newRem,
+      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
+      timeline:[...(o.timeline||[]),tlEntry],
+      updatedAt:serverTimestamp(),
+    });
+
+    // 5. ledger
+    addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
+      amount,walletId:wId,walletName:w.name||'',
+      orderId:__scoOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`تسوية شحن — ${o.shipCompanyName||''}${Math.abs(diff)>0.01?` — فرق ${fn(Math.abs(diff))} ج (${diffNote})`:''}`,
+      userId:currentUser?.uid||'',userName,
+    });
+
+    await batch.commit();
+    document.getElementById('ov-settle-co').classList.remove('open');
+    const diffMsg=Math.abs(diff)>0.01?` (فرق: ${fn(Math.abs(diff))} ج)`:'';
+    toast(`✅ تسوية ${fn(amount)} ج من ${o.shipCompanyName||''}${diffMsg}`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='🏁 تأكيد التسوية';}
   }
 };
 </script>
