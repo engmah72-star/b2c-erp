@@ -119,16 +119,8 @@
     <div class="modal-head"><span class="modal-title">➕ طلب جديد</span><button class="modal-x" onclick="cM('new-req')">✕</button></div>
     <div class="modal-body">
       <div style="font-size:11px;color:var(--dim2);margin-bottom:10px">اختر نوع الطلب:</div>
-      <div class="req-type-grid">
-        <button class="req-type-btn on" data-type="supplier_payment" onclick="setReqType('supplier_payment')">
-          <div class="req-type-ico">🏭</div><div class="req-type-lbl">دفعة مورد</div>
-        </button>
-        <button class="req-type-btn" data-type="salary" onclick="setReqType('salary')">
-          <div class="req-type-ico">👤</div><div class="req-type-lbl">مرتب / سلفة</div>
-        </button>
-        <button class="req-type-btn" data-type="general" onclick="setReqType('general')">
-          <div class="req-type-ico">💸</div><div class="req-type-lbl">مصروف عام</div>
-        </button>
+      <div class="req-type-grid" id="rq-type-grid">
+        <!-- يُملأ ديناميكياً حسب الدور — راجع openNewRequest -->
       </div>
 
       <!-- حقول مشتركة -->
@@ -141,6 +133,9 @@
       <div id="fg-employee" class="fg" style="display:none"><label>الموظف *</label><select class="inp" id="rq-employee"><option value="">— اختر —</option></select></div>
       <div id="fg-salary-type" class="fg" style="display:none"><label>النوع *</label><select class="inp" id="rq-salary-type"><option value="salary">مرتب شهري</option><option value="advance">سلفة</option><option value="bonus">مكافأة</option></select></div>
       <div id="fg-month" class="fg" style="display:none"><label>الشهر</label><input class="inp" id="rq-month" type="month"></div>
+
+      <!-- حقول العميل (استرداد عميل) -->
+      <div id="fg-client" class="fg" style="display:none"><label>العميل *</label><select class="inp" id="rq-client"><option value="">— اختر —</option></select></div>
 
       <!-- ربط الأوردر (اختياري للمورد) -->
       <div id="fg-order" class="fg"><label>الأوردر المرتبط <span style="font-size:10px;color:var(--dim2)">(اختياري — يربط الطلب بأوردر معين)</span></label>
@@ -221,7 +216,7 @@ let receivingReq = null;
 const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const ICONS = { client_payment:'💰', refund:'↩️', salary:'👤', bonus:'🎁', deduction:'✂️', printer_payment:'🏭', shipper_payment:'🚚', shipping_cost:'🚚', shipping_settlement:'📦', transfer:'🔄', opening_balance:'🏦', adjustment:'⚖️', expense:'💸' };
 const CAT_AR = { client_payment:'دفعة عميل', refund:'استرداد عميل', salary:'راتب', bonus:'مكافأة', deduction:'خصم', printer_payment:'دفعة مطبعة', shipper_payment:'دفعة شركة شحن', shipping_cost:'تكلفة شحن', shipping_settlement:'تسوية شحن', transfer:'تحويل بين محافظ', opening_balance:'رصيد افتتاحي', adjustment:'تسوية رصيد', expense:'مصروف', admin_edit:'تعديل أدمن', transfer_fee:'رسوم تحويل', withdrawal:'سحب', withdrawal_fee:'رسوم سحب' };
-const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب', advance:'💵 سلفة', bonus:'🎁 مكافأة', general:'💸 مصروف عام' };
+const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب', advance:'💵 سلفة', bonus:'🎁 مكافأة', general:'💸 مصروف عام', client_refund:'↩️ استرداد عميل' };
 
 const ROLE_LABELS = { admin:'مدير عام', operation_manager:'مدير تشغيل', wallet_manager:'محاسب', customer_service:'خدمة عملاء', graphic_designer:'مصمم', design_operator:'مشغل تصميم', production_agent:'مندوب تنفيذ', shipping_officer:'مسؤول شحن' };
 
@@ -303,18 +298,42 @@ function updateRoleBanner(){
   if(!b) return;
   const isAdm = currentRole === 'admin';
   const isOps = currentRole === 'operation_manager';
-  const isAcc = canExecute();
-  let txt = '<strong>دورك:</strong> ';
-  if(isAdm) txt += '✅ أدمن — تستطيع تأكيد + اعتماد + تنفيذ + رفض';
-  else if(isOps) txt += '🔵 مدير تشغيل — تأكيد العمليات';
-  else if(isAcc) txt += '💸 محاسب — تنفيذ الطلبات';
-  else txt += `${ROLE_LABELS[currentRole] || currentRole} — يمكنك إنشاء طلبات + رفع إيصالات الاستلام لطلباتك`;
+  const types = allowedRequestTypes();
+  const typesLbl = types.map(t => REQ_TYPE_LBL[t] || t).join(' · ');
+  let txt = `<strong>دورك:</strong> ${ROLE_LABELS[currentRole]||currentRole}`;
+  if(isAdm) txt += ' — تستطيع تنفيذ + تأكيد + اعتماد + كل أنواع الطلبات';
+  else if(isOps) txt += ' — تستطيع تنفيذ + تأكيد + كل أنواع الطلبات';
+  else txt += ` — أنواع طلباتك: ${typesLbl}`;
   b.innerHTML = txt;
 }
 
+// التنفيذ: admin أو operation_manager فقط (لا محاسب منفصل)
 function canExecute(){
-  return currentRole === 'admin' || currentRole === 'wallet_manager' ||
-         currentPerms?.pages?.includes('accounts') || currentPerms?.canFinancialWrite;
+  return ['admin','operation_manager'].includes(currentRole);
+}
+
+// أنواع الطلبات المسموحة لكل دور (كل واحد حسب شغله):
+//   • admin/ops: كل الأنواع
+//   • production/print/design/shipping: دفعة مورد + مرتب
+//   • customer_service: استرداد عميل + مرتب
+//   • أي دور آخر: مرتب فقط
+function allowedRequestTypes(){
+  const role = currentRole;
+  if(['admin','operation_manager'].includes(role)){
+    return ['supplier_payment','client_refund','salary','general'];
+  }
+  if(['production_agent','print','design_operator','graphic_designer','shipping_officer'].includes(role)){
+    return ['supplier_payment','salary'];
+  }
+  if(role === 'customer_service'){
+    return ['client_refund','salary'];
+  }
+  return ['salary']; // الباقي: مرتب فقط
+}
+
+// هل يقدر يطلب مرتب لشخص آخر؟ admin/ops فقط
+function canRequestForOthers(){
+  return ['admin','operation_manager'].includes(currentRole);
 }
 
 function startListeners(){
@@ -654,33 +673,82 @@ function showToast(msg, type){
 }
 
 // ══════════════ Modal: طلب جديد ══════════════
+const REQ_TYPE_CARDS = {
+  supplier_payment: { ico:'🏭', lbl:'دفعة مورد' },
+  client_refund:    { ico:'↩️', lbl:'استرداد عميل' },
+  salary:           { ico:'👤', lbl:'مرتب / سلفة' },
+  general:          { ico:'💸', lbl:'مصروف عام' },
+};
+
 window.openNewRequest = function(){
+  const allowed = allowedRequestTypes();
+  if(!allowed.length){
+    showToast('⚠️ ليس لديك صلاحية إنشاء طلبات','err');
+    return;
+  }
+  // ملء أزرار الأنواع المسموحة فقط
+  const grid = document.getElementById('rq-type-grid');
+  grid.innerHTML = allowed.map((t,i) => {
+    const c = REQ_TYPE_CARDS[t] || {ico:'📝',lbl:t};
+    return `<button class="req-type-btn${i===0?' on':''}" data-type="${t}" onclick="setReqType('${t}')">
+      <div class="req-type-ico">${c.ico}</div><div class="req-type-lbl">${c.lbl}</div>
+    </button>`;
+  }).join('');
+
   // امتلاء dropdowns
   const supSel = document.getElementById('rq-supplier');
   supSel.innerHTML = '<option value="">— اختر المورد —</option>' + suppliers.map(s=>`<option value="${s._id}" data-name="${escapeHtml(s.name||'')}" data-type="${s.supType||'printer'}">${escapeHtml(s.name||'')}</option>`).join('');
+
   const empSel = document.getElementById('rq-employee');
-  empSel.innerHTML = '<option value="">— اختر الموظف —</option>' + employees.map(e=>`<option value="${e._id}" data-name="${escapeHtml(e.name||e.displayName||'')}">${escapeHtml(e.name||e.displayName||'—')}</option>`).join('');
+  // غير الـadmin/ops: الموظف يطلب لنفسه فقط — نقفل الاختيار على هويته
+  if(canRequestForOthers()){
+    empSel.innerHTML = '<option value="">— اختر الموظف —</option>' + employees.map(e=>`<option value="${e._id}" data-name="${escapeHtml(e.name||e.displayName||'')}">${escapeHtml(e.name||e.displayName||'—')}</option>`).join('');
+    empSel.disabled = false;
+  } else {
+    // ابحث الموظف الذي يطابق uid الحالي
+    const selfEmp = employees.find(e => e.authUid === currentUid || e._id === currentUid);
+    if(selfEmp){
+      empSel.innerHTML = `<option value="${selfEmp._id}" data-name="${escapeHtml(selfEmp.name||selfEmp.displayName||'')}" selected>${escapeHtml(selfEmp.name||selfEmp.displayName||currentUserName)} (أنت)</option>`;
+    } else {
+      empSel.innerHTML = `<option value="${currentUid}" data-name="${escapeHtml(currentUserName)}" selected>${escapeHtml(currentUserName)} (أنت)</option>`;
+    }
+    empSel.disabled = true;
+  }
+
+  // العملاء (للاسترداد)
+  const cliSel = document.getElementById('rq-client');
+  if(cliSel){
+    // نحمل العملاء من ordersMap (لأن العملاء مرتبطون بأوردرات)
+    const cliMap = new Map();
+    ordersMap.forEach(o => { if(o.clientId && !cliMap.has(o.clientId)) cliMap.set(o.clientId, o.clientName||''); });
+    cliSel.innerHTML = '<option value="">— اختر العميل —</option>' + [...cliMap.entries()].map(([id,name])=>`<option value="${id}" data-name="${escapeHtml(name)}">${escapeHtml(name||'—')}</option>`).join('');
+  }
+
   const ordSel = document.getElementById('rq-order');
   const activeOrders = [...ordersMap.values()].filter(o=>!['archived','cancelled'].includes(o.stage));
   ordSel.innerHTML = '<option value="">— بدون ربط —</option>' + activeOrders.slice(0,200).map(o=>`<option value="${o._id}">${escapeHtml(o.orderId||o._id.slice(-6))} — ${escapeHtml(o.clientName||'—')} — ${escapeHtml(STAGE_AR[o.stage]||o.stage)}</option>`).join('');
+
   document.getElementById('rq-amount').value = '';
   document.getElementById('rq-reason').value = '';
   document.getElementById('rq-month').value = new Date().toISOString().slice(0,7);
-  setReqType('supplier_payment');
+  setReqType(allowed[0]);
   oM('new-req');
 };
 
 window.setReqType = function(type){
   activeReqType = type;
   document.querySelectorAll('.req-type-btn').forEach(b=>b.classList.toggle('on', b.dataset.type === type));
-  const showSup = type === 'supplier_payment';
-  const showEmp = type === 'salary';
-  const showOrder = type === 'supplier_payment' || type === 'general';
-  document.getElementById('fg-supplier').style.display = showSup ? '' : 'none';
-  document.getElementById('fg-employee').style.display = showEmp ? '' : 'none';
-  document.getElementById('fg-salary-type').style.display = showEmp ? '' : 'none';
-  document.getElementById('fg-month').style.display = showEmp ? '' : 'none';
-  document.getElementById('fg-order').style.display = showOrder ? '' : 'none';
+  const showSup    = type === 'supplier_payment';
+  const showEmp    = type === 'salary';
+  const showClient = type === 'client_refund';
+  const showOrder  = ['supplier_payment','general','client_refund'].includes(type);
+  document.getElementById('fg-supplier').style.display    = showSup    ? '' : 'none';
+  document.getElementById('fg-employee').style.display    = showEmp    ? '' : 'none';
+  document.getElementById('fg-salary-type').style.display = showEmp    ? '' : 'none';
+  document.getElementById('fg-month').style.display       = showEmp    ? '' : 'none';
+  const fgClient = document.getElementById('fg-client');
+  if(fgClient) fgClient.style.display = showClient ? '' : 'none';
+  document.getElementById('fg-order').style.display       = showOrder  ? '' : 'none';
 };
 
 document.getElementById('rq-order')?.addEventListener('change', e=>{
@@ -710,6 +778,11 @@ window.saveRequest = async function(){
     requestedAt: serverTimestamp(),
   };
 
+  // تحقق صلاحية النوع للدور الحالي (دفاع في العمق)
+  if(!allowedRequestTypes().includes(activeReqType)){
+    return showToast('⛔ ليس لديك صلاحية إنشاء هذا النوع من الطلبات','err');
+  }
+
   if(activeReqType === 'supplier_payment'){
     const supId = document.getElementById('rq-supplier').value;
     const supOpt = document.getElementById('rq-supplier').selectedOptions[0];
@@ -721,10 +794,24 @@ window.saveRequest = async function(){
     const empId = document.getElementById('rq-employee').value;
     const empOpt = document.getElementById('rq-employee').selectedOptions[0];
     if(!empId) return showToast('⚠️ اختر الموظف','err');
+    // حماية: غير admin/ops لا يقدر يطلب لشخص غيره
+    if(!canRequestForOthers()){
+      const selfEmp = employees.find(e => e.authUid === currentUid || e._id === currentUid);
+      const allowedEmpId = selfEmp?._id || currentUid;
+      if(empId !== allowedEmpId){
+        return showToast('⛔ يمكنك طلب مرتب/سلفة لنفسك فقط','err');
+      }
+    }
     reqData.employeeId = empId;
     reqData.employeeName = empOpt?.dataset?.name || '';
     reqData.salaryType = document.getElementById('rq-salary-type').value;
     reqData.salaryMonth = document.getElementById('rq-month').value || '';
+  } else if(activeReqType === 'client_refund'){
+    const cliId = document.getElementById('rq-client').value;
+    const cliOpt = document.getElementById('rq-client').selectedOptions[0];
+    if(!cliId) return showToast('⚠️ اختر العميل','err');
+    reqData.clientId = cliId;
+    reqData.clientName = cliOpt?.dataset?.name || '';
   }
 
   const orderId = document.getElementById('rq-order').value;
@@ -790,9 +877,12 @@ window.executeRequest = async function(){
     const txRef = doc(collection(db,'transactions_v2'));
     const desc = (r.supplierName ? `دفعة مورد — ${r.supplierName}` :
                   r.employeeName ? `${r.salaryType||'مرتب'} — ${r.employeeName}` :
+                  r.type === 'client_refund' && r.clientName ? `استرداد عميل — ${r.clientName}` :
                   'مصروف عام') + (note ? ` — ${note}` : '');
     const cat = r.type === 'supplier_payment' ? (r.supplierType==='shipper'?'shipper_payment':'printer_payment') :
-                r.type === 'salary' ? 'salary' : 'expense';
+                r.type === 'salary'        ? 'salary' :
+                r.type === 'client_refund' ? 'refund' :
+                'expense';
     batch.set(txRef, {
       walletId: wId, walletName: wName,
       type: 'out', amount: r.amount, fees: 0,
@@ -808,7 +898,8 @@ window.executeRequest = async function(){
     });
     // قيد ledger
     const evt = r.type === 'supplier_payment' ? FE.VENDOR_PAYMENT :
-                r.type === 'salary' ? FE.SALARY_PAYMENT :
+                r.type === 'salary'         ? FE.SALARY_PAYMENT :
+                r.type === 'client_refund'  ? FE.CUSTOMER_REFUND :
                 FE.GENERAL_EXPENSE;
     addLedgerToBatch(batch, db, evt, {
       amount: r.amount, walletId: wId, walletName: wName,
