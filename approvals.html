@@ -178,6 +178,25 @@
   </div>
 </div>
 
+<!-- Modal: ضبط رصيد المحفظة -->
+<div class="overlay" id="ov-adjust">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head"><span class="modal-title">⚖️ ضبط رصيد المحفظة</span><button class="modal-x" onclick="cM('adjust')">✕</button></div>
+    <div class="modal-body">
+      <div id="adjust-summary" style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.7"></div>
+      <div class="fg"><label>الرصيد الفعلي الصحيح *</label><input class="inp" id="adjust-target" type="number" placeholder="0"></div>
+      <div class="fg"><label>سبب الضبط *</label><textarea class="inp" id="adjust-reason" style="min-height:60px" placeholder="مثال: تصحيح drift من recovery قديم / فارق رصيد بنكي / إلخ"></textarea></div>
+      <div style="font-size:10px;color:var(--y);background:rgba(255,170,0,.08);padding:8px 10px;border-radius:6px">
+        ℹ️ سيتم إنشاء tx من نوع WALLET_ADJUSTMENT بقيمة الفارق + reconciliation entry. تمر بمسار الاعتماد (مبدأ الأربع عيون).
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cM('adjust')">إلغاء</button>
+      <button class="btn btn-g" onclick="saveAdjustment()">⚖️ ضبط</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: استلام (رفع إيصال) -->
 <div class="overlay" id="ov-receipt">
   <div class="modal" style="max-width:440px">
@@ -398,22 +417,48 @@ function startListeners(){
   );
 }
 
+// حساب رصيد المحفظة قبل/بعد عملية معينة:
+// نستخدم الرصيد الحالي للمحفظة (المحفوظ في wallets.balance) كمرجع،
+// ثم نعمل reverse للعمليات التي تمت بعد هذه الـ tx لنصل إلى الرصيد لحظة هذه العملية.
+// هذه الطريقة تتعامل بشكل صحيح مع:
+//   • المحافظ التي بدأت برصيد افتتاحي بدون tx مسجلة
+//   • أي drift بين الرصيد المحفوظ ومجموع الـ tx (يظهر في النتيجة)
 function computeWalletState(t){
   if(t.balanceBefore != null && t.balanceAfter != null){
-    return { before: parseFloat(t.balanceBefore)||0, after: parseFloat(t.balanceAfter)||0 };
+    return { before: parseFloat(t.balanceBefore)||0, after: parseFloat(t.balanceAfter)||0, walletCurrent: null };
   }
   if(!t.walletId) return null;
-  let after = 0;
-  for(const x of allTxs){
+  // الرصيد الحالي للمحفظة (المرجع)
+  const wallet = walletsArr.find(w => w._id === t.walletId);
+  const walletCurrent = wallet ? (parseFloat(wallet.balance)||0) : 0;
+  // ابدأ من الرصيد الحالي، اعكس كل tx بعد الحالية للوصول لرصيد لحظة الحالية
+  let afterCurrent = walletCurrent;
+  let foundCurrent = false;
+  for(let i = allTxs.length - 1; i >= 0; i--){
+    const x = allTxs[i];
     if(x.walletId !== t.walletId) continue;
+    if(x._id === t._id){ foundCurrent = true; break; }
     const amt = (parseFloat(x.amount)||0);
-    const sign = (x.type === 'in' ? 1 : -1);
-    after += sign * amt;
-    if(x._id === t._id) break;
+    const reverseSign = (x.type === 'in' ? -1 : 1);
+    afterCurrent += reverseSign * amt;
   }
+  if(!foundCurrent){
+    // الـ tx غير موجودة في allTxs — نستخدم fallback (السلوك القديم)
+    let after = 0;
+    for(const x of allTxs){
+      if(x.walletId !== t.walletId) continue;
+      const amt = (parseFloat(x.amount)||0);
+      const sign = (x.type === 'in' ? 1 : -1);
+      after += sign * amt;
+      if(x._id === t._id) break;
+    }
+    const sign = (t.type === 'in' ? 1 : -1);
+    return { before: after - sign * (parseFloat(t.amount)||0), after, walletCurrent };
+  }
+  const after = afterCurrent;
   const sign = (t.type === 'in' ? 1 : -1);
   const before = after - sign * (parseFloat(t.amount)||0);
-  return { before, after };
+  return { before, after, walletCurrent };
 }
 
 function updateCounts(){
@@ -508,13 +553,30 @@ function renderWalletState(t, wName, isIn){
   if(!t.walletId) return '';
   const state = computeWalletState(t);
   if(!state) return '';
-  const { before, after } = state;
+  const { before, after, walletCurrent } = state;
   const delta = after - before;
   const deltaSign = delta >= 0 ? '+' : '−';
   const deltaColor = delta >= 0 ? '#00d97e' : '#ff3d6e';
+  // Drift: الفرق بين الرصيد المحسوب الآن (after للأحدث = walletCurrent يجب يطابق) والرصيد المحفوظ
+  // نفحص drift فقط لو هذه الـ tx هي آخر tx على المحفظة (بهذا تكون after يجب تطابق walletCurrent)
+  const isLastOnWallet = (() => {
+    if(!walletCurrent && walletCurrent !== 0) return false;
+    for(let i = allTxs.length - 1; i >= 0; i--){
+      const x = allTxs[i];
+      if(x.walletId === t.walletId) return x._id === t._id;
+    }
+    return false;
+  })();
+  const drift = (walletCurrent != null && isLastOnWallet) ? (walletCurrent - after) : 0;
+  const hasDrift = Math.abs(drift) > 0.01;
+  const canAdjust = ['admin','operation_manager'].includes(currentRole);
+
   return `
     <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.25);border-radius:10px;padding:10px 12px;margin-top:10px">
-      <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:8px">💼 حركة المحفظة — ${escapeHtml(wName)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:11px;color:var(--dim2);font-weight:700">💼 حركة المحفظة — ${escapeHtml(wName)}</div>
+        ${walletCurrent != null ? `<div style="font-size:10px;color:var(--dim2)">الرصيد الحالي للمحفظة الآن: <b style="color:${walletCurrent<0?'#ff3d6e':'var(--snow)'};font-family:monospace">${fn(walletCurrent)} ج</b></div>` : ''}
+      </div>
       <div style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:center;font-size:12px">
         <div style="text-align:center"><div style="color:var(--dim2);font-size:10px;margin-bottom:2px">الرصيد قبل</div><div style="font-weight:900;color:var(--snow);font-size:14px">${fn(before)} ج</div></div>
         <div style="color:var(--dim2);font-size:14px">→</div>
@@ -522,6 +584,16 @@ function renderWalletState(t, wName, isIn){
         <div style="color:var(--dim2);font-size:14px">→</div>
         <div style="text-align:center"><div style="color:var(--dim2);font-size:10px;margin-bottom:2px">الرصيد بعد</div><div style="font-weight:900;color:${after<0?'#ff3d6e':'var(--snow)'};font-size:14px">${fn(after)} ج</div></div>
       </div>
+      ${hasDrift ? `
+        <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:11px">
+          <div style="color:#ff3d6e;font-weight:800;margin-bottom:4px">⚠️ انحراف بين الرصيد المتوقع والمحفوظ</div>
+          <div style="color:var(--dim);line-height:1.6">
+            الرصيد المحسوب من الـtx: <b style="color:var(--snow);font-family:monospace">${fn(after)} ج</b><br>
+            الرصيد المحفوظ في المحفظة: <b style="color:var(--snow);font-family:monospace">${fn(walletCurrent)} ج</b><br>
+            الفرق: <b style="color:${drift>=0?'#00d97e':'#ff3d6e'};font-family:monospace">${drift>=0?'+':''}${fn(drift)} ج</b>
+          </div>
+          ${canAdjust ? `<button onclick="openAdjustWallet('${t.walletId}', ${after}, ${walletCurrent})" style="margin-top:8px;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,61,110,.5);background:rgba(255,61,110,.15);color:#ff3d6e;cursor:pointer;font-weight:700;font-size:11px;font-family:inherit">⚖️ ضبط رصيد المحفظة</button>` : ''}
+        </div>` : ''}
     </div>`;
 }
 
@@ -1356,6 +1428,90 @@ window.uploadReceipt = async function(){
 };
 
 // ══════════════ Approval actions (existing tx flow) ══════════════
+// ══════════════ ضبط رصيد المحفظة (drift fix) ══════════════
+let adjustingWalletId = null;
+window.openAdjustWallet = function(walletId, expected, current){
+  if(!['admin','operation_manager'].includes(currentRole)){
+    showToast('⛔ ضبط الرصيد للأدمن/مدير التشغيل فقط','err');
+    return;
+  }
+  adjustingWalletId = walletId;
+  const w = walletsArr.find(x=>x._id===walletId);
+  const wName = w?.name || walletId;
+  const drift = current - expected;
+  document.getElementById('adjust-summary').innerHTML = `
+    <div><b>المحفظة:</b> ${escapeHtml(wName)}</div>
+    <div style="margin-top:6px;color:var(--dim)">
+      الرصيد المحسوب من الـtx: <b style="font-family:monospace">${fn(expected)} ج</b><br>
+      الرصيد المحفوظ الآن: <b style="font-family:monospace">${fn(current)} ج</b><br>
+      الفرق: <b style="color:${drift>=0?'#00d97e':'#ff3d6e'};font-family:monospace">${drift>=0?'+':''}${fn(drift)} ج</b>
+    </div>
+  `;
+  document.getElementById('adjust-target').value = current; // المعتاد: نضبط الكشف يطابق المحفظة
+  document.getElementById('adjust-reason').value = '';
+  oM('adjust');
+};
+
+window.saveAdjustment = async function(){
+  if(!adjustingWalletId) return;
+  const target = parseFloat(document.getElementById('adjust-target').value);
+  const reason = document.getElementById('adjust-reason').value.trim();
+  if(isNaN(target)) return showToast('⚠️ أدخل الرصيد الفعلي','err');
+  if(!reason) return showToast('⚠️ أدخل السبب','err');
+  const w = walletsArr.find(x=>x._id===adjustingWalletId);
+  if(!w) return showToast('⚠️ المحفظة غير موجودة','err');
+  const current = parseFloat(w.balance)||0;
+  const diff = target - current;
+  if(Math.abs(diff) < 0.01) return showToast('ℹ️ لا فرق — لا حاجة للضبط','ok');
+
+  try{
+    const batch = writeBatch(db);
+    // 1. تحديث رصيد المحفظة للقيمة المستهدفة
+    batch.update(doc(db,'wallets',adjustingWalletId), { balance: target });
+    // 2. tx لتسجيل الفارق (تدخل approval flow)
+    const txRef = doc(collection(db,'transactions_v2'));
+    const isIn = diff > 0;
+    batch.set(txRef, {
+      walletId: adjustingWalletId, walletName: w.name||'',
+      type: isIn ? 'in' : 'out', amount: Math.abs(diff), fees: 0,
+      description: `⚖️ ضبط رصيد — ${reason}`,
+      category: 'adjustment',
+      isAdjustment: true, isRecovery: true, // recovery flag → مبدأ الأربع عيون نشط
+      adjustReason: reason,
+      adjustFrom: current, adjustTo: target,
+      date: new Date().toLocaleDateString('ar-EG'),
+      createdBy: currentUid, createdByName: currentUserName,
+      createdAt: serverTimestamp(),
+      ...approvalFields()
+    });
+    // 3. قيد ledger
+    addLedgerToBatch(batch, db, FE.WALLET_ADJUSTMENT, {
+      amount: Math.abs(diff), walletId: adjustingWalletId, walletName: w.name||'',
+      direction: isIn ? 'in' : 'out',
+      notes: `ضبط رصيد: ${current} → ${target} (${diff>=0?'+':''}${diff.toFixed(2)}) — ${reason}`,
+      userId: currentUid, userName: currentUserName,
+    });
+    // 4. reconciliation entry
+    const recRef = doc(collection(db,'reconciliations'));
+    batch.set(recRef, {
+      walletId: adjustingWalletId, walletName: w.name||'',
+      type: 'adjustment_from_approvals',
+      sysBal: current, actualBal: target, diff,
+      note: reason,
+      date: new Date().toLocaleDateString('ar-EG'),
+      createdBy: currentUid, createdByName: currentUserName,
+      createdAt: serverTimestamp(),
+    });
+    await batch.commit();
+    showToast(`⚖️ ضُبط الرصيد لـ ${fn(target)} ج (فرق ${diff>=0?'+':''}${fn(diff)}) — في انتظار الاعتماد`,'ok');
+    cM('adjust');
+    adjustingWalletId = null;
+  }catch(e){
+    const handled = window.financialGuard?.(e,{operation:'ضبط رصيد', walletName:w.name});
+    if(!handled) showToast('❌ '+e.message,'err');
+  }
+};
+
 window.confirmTx = async function(txId){
   const tx = txs.find(x=>x._id===txId);
   // مبدأ الأربع عيون لـ recovery: من أنشأها لا يقدر يأكدها
