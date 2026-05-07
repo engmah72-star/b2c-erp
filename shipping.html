@@ -1825,15 +1825,16 @@ window.openShipSetup=function(){
   const _wb=o.waybill||{};
   sv('ss-gov',_wb.recipientGov||o.shipGov||'');
   sv('ss-address',_wb.recipientAddress||o.shipAddress||'');
+  // ─ shipCost و customerShipFee قابلين للتعديل لحد ما يتأرشف الأوردر (طلب المستخدم)
   const costInp=document.getElementById('ss-cost');
-  if(costInp){costInp.value=o.shipCost||'';costInp.disabled=!isFirstShip;}
+  if(costInp){costInp.value=o.shipCost||'';costInp.disabled=false;}
   const govInp=document.getElementById('ss-gov');
   const addrInp=document.getElementById('ss-address');
   if(govInp)govInp.disabled=!isFirstShip;
   if(addrInp)addrInp.disabled=!isFirstShip;
   sv('ss-tracking',o.shipTracking||'');
   const custFeeInp=document.getElementById('ss-cust-ship-fee');
-  if(custFeeInp){custFeeInp.value=parseFloat(o.customerShipFee)||'';custFeeInp.disabled=!isFirstShip;}
+  if(custFeeInp){custFeeInp.value=parseFloat(o.customerShipFee)||'';custFeeInp.disabled=false;}
   // حالة — تُعرض الانتقالات المسموحة فقط
   ssStage=curSS==='ready'?'wait_delivery':curSS;
   const allowedNext=ALLOWED_NEXT[curSS]||[];
@@ -1939,28 +1940,26 @@ window.saveShip=async function(){
   const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
 
   const curSS=o.shipStage||'ready';
-  // ─ حماية: لا يمكن إعادة تسجيل شحن لأوردر محصّل أو مرتجع
-  if(curSS==='collected') return toast('⛔ الأوردر محصّل بالفعل — للتعديل استخدم "تعديل إداري"','err');
+  // ─ حماية: المرتجع نهائي (الأرشفة محمية بـ checkOrderEditable). الـ collected الآن قابل للتعديل المالي.
   if(curSS==='returned')  return toast('⛔ الأوردر مرتجع — لا يمكن تعديله','err');
 
   const isFirstShip=curSS==='ready'||!o.shipMethod;
-  // ─ بيانات الشحن تُقفل بعد أول تسجيل
-  let shipMethod2,coVal2,shipCompanyName2,shipCost2;
+  // ─ طريقة الاستلام والشركة تُقفل بعد أول تسجيل (لأن تغييرها يقلب workflow)
+  let shipMethod2,coVal2,shipCompanyName2;
   if(isFirstShip){
     const coSel=document.getElementById('ss-company-sel');
     coVal2=coSel?.value||'';
     const coOpt=coSel?.options[coSel.selectedIndex];
     shipMethod2=method;
     shipCompanyName2=coVal2==='other'?gv('ss-co-name'):(coOpt?.dataset?.name||coOpt?.text||coVal2);
-    shipCost2=parseFloat(gv('ss-cost'))||0;
   } else {
     shipMethod2=o.shipMethod;
     coVal2=o.shipCompany||'';
     shipCompanyName2=o.shipCompanyName||'';
-    shipCost2=parseFloat(o.shipCost)||0;
   }
-  // ─ رسوم الشحن على العميل (مرة واحدة — أول تسجيل)
-  const customerShipFee2=isFirstShip?(parseFloat(gv('ss-cust-ship-fee'))||0):(parseFloat(o.customerShipFee)||0);
+  // ─ مبلغ الشحن (داخلي + على العميل) قابل للتعديل لحد الأرشفة (طلب المستخدم)
+  const shipCost2=parseFloat(gv('ss-cost'))||0;
+  const customerShipFee2=parseFloat(gv('ss-cust-ship-fee'))||0;
 
   const stage=gv('ss-stage')||curSS;
   // ─ حماية: منع التراجع في الحالات (state machine)
@@ -2019,12 +2018,27 @@ window.saveShip=async function(){
       const defRef=doc(collection(db,'transactions_v2'));
       batch.set(defRef,{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName:shipCompanyName2,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
     }
-    // 3. تكلفة شحن (مرة واحدة فقط — عند أول تسجيل)
-    if(isFirstShip&&shipCost2>0&&!(parseFloat(o.shipCost)>0)){
+    // 3. تكلفة شحن — قيد كامل عند أول تسجيل، أو دلتا عند التعديل
+    const oldShipCost=parseFloat(o.shipCost)||0;
+    const shipCostDelta=shipCost2-oldShipCost;
+    if(isFirstShip&&shipCost2>0&&!(oldShipCost>0)){
       const scRef=doc(collection(db,'transactions_v2'));
       batch.set(scRef,{type:'out',amount:shipCost2,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName2||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
+    } else if(!isFirstShip && shipCostDelta!==0){
+      // تعديل لاحق: نسجل الفرق فقط (zero-sum مع الأصلي) عشان التقارير تظل صح
+      const adjRef=doc(collection(db,'transactions_v2'));
+      batch.set(adjRef,{
+        type:shipCostDelta>0?'out':'in',
+        amount:Math.abs(shipCostDelta),
+        description:`تعديل تكلفة الشحن (${shipCostDelta>0?'+':'-'}${fn(Math.abs(shipCostDelta))} ج) — ${o.clientName||''} — ${shipCompanyName2||''}`,
+        category:shipCostDelta>0?'shipping_cost':'shipping_cost_reversal',
+        orderId:activeId,clientName:o.clientName||'',walletId:'',
+        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
+        createdAt:serverTimestamp(),...approvalFields()
+      });
     }
-    // 4. تحديث الأوردر
+    // 4. تحديث الأوردر — الـ amounts كلها تتحدث دايماً (طلب المستخدم: قابل للتعديل لحد الأرشفة)
+    const custFeeChanged=(parseFloat(o.customerShipFee)||0)!==customerShipFee2;
     batch.update(doc(db,'orders',activeId),{
       shipStage: shouldArchive ? 'collected' : stage,
       stage: shouldArchive ? 'archived' : o.stage,
@@ -2033,13 +2047,14 @@ window.saveShip=async function(){
       shipGov:isFirstShip?gv('ss-gov'):(o.shipGov||''),
       shipAddress:isFirstShip?gv('ss-address'):(o.shipAddress||''),
       shipCost:shipCost2,
+      customerShipFee:customerShipFee2,
       shipTracking:gv('ss-tracking'),
-      ...(isFirstShip?{shipSettled:shipMethod2!=='company',customerShipFee:customerShipFee2}:{}),
+      ...(isFirstShip?{shipSettled:shipMethod2!=='company'}:{}),
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       financialSnapshot,
       ...(shouldArchive?{deliveredAt:nowStr()}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':''),by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':'')+(!isFirstShip&&shipCostDelta!==0?` · تكلفة شحن: ${fn(oldShipCost)}→${fn(shipCost2)} ج`:'')+(!isFirstShip&&custFeeChanged?` · رسوم العميل: ${fn(parseFloat(o.customerShipFee)||0)}→${fn(customerShipFee2)} ج`:''),by:userName}],
       updatedAt:serverTimestamp()
     });
     if(collectAmt>0) addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
@@ -2054,12 +2069,22 @@ window.saveShip=async function(){
       notes:`دين مؤجل — ${o.clientName||''} — ${o.orderId||''}`,
       userId:currentUser?.uid||'',userName,
     });
-    if(isFirstShip&&shipCost2>0&&!(parseFloat(o.shipCost)>0)) addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
-      amount:shipCost2,walletId:'',walletName:'',
-      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName2||''}`,
-      userId:currentUser?.uid||'',userName,
-    });
+    if(isFirstShip&&shipCost2>0&&!(oldShipCost>0)){
+      addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
+        amount:shipCost2,walletId:'',walletName:'',
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName2||''}`,
+        userId:currentUser?.uid||'',userName,
+      });
+    } else if(!isFirstShip && shipCostDelta!==0){
+      addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
+        amount:Math.abs(shipCostDelta),walletId:'',walletName:'',
+        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`تعديل تكلفة شحن (${shipCostDelta>0?'+':'-'}${fn(Math.abs(shipCostDelta))} ج) — ${o.clientName||''} — ${shipCompanyName2||''}`,
+        userId:currentUser?.uid||'',userName,
+        direction:shipCostDelta>0?'out':'in',
+      });
+    }
     await batch.commit();
     closeModal('ov-ship');
     if(shouldArchive){
