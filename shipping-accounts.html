@@ -376,7 +376,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,getDocs,deleteDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipPendingSettle, isShipTerminal, isShipReadyToClose } from "./orders.js";
+import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch } from "./orders.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
@@ -390,6 +390,7 @@ const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+const escHtml=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const toast=(msg,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
 
@@ -566,7 +567,12 @@ window.render=function(){
     const coSettles=settlements.filter(s=>s.companyName===co.name).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     const coReturns=returns.filter(r=>r.companyName===co.name&&r.status!=='cancelled').sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     const totalReturnCost=coReturns.reduce((s,r)=>s+(parseFloat(r.cost)||0),0);
-    return`<div class="co-card">
+    // ── Self-healer: عدّ المشاكل في كل أوردرات الشركة (pending + settled)
+    const coAllOrds=co.allOrders||[];
+    const ordsWithIssues=coAllOrds.map(o=>detectOrderIssues(o)).filter(arr=>arr.length);
+    const issueCount=ordsWithIssues.reduce((s,arr)=>s+arr.length,0);
+    const hasCritIssue=ordsWithIssues.some(arr=>arr.some(i=>i.severity==='crit'));
+    return`<div class="co-card"${hasCritIssue?' style="border-color:rgba(255,61,110,.35)"':issueCount>0?' style="border-color:rgba(255,170,0,.35)"':''}>
       <div class="co-head">
         <div>
           <div class="co-name">📦 ${co.name}</div>
@@ -574,10 +580,12 @@ window.render=function(){
             ${co.readyOrds.length?`<span style="color:var(--g);font-weight:800">✅ ${co.readyOrds.length} جاهزة للتسوية</span>`:''}
             ${co.transitOrds.length?`<span style="color:var(--c)">🚚 ${co.transitOrds.length} في الطريق</span>`:''}
             ${coReturns.length?`<span style="color:var(--y)">↩️ ${coReturns.length} مرتجع</span>`:''}
-            ${!co.pendingOrds.length&&!coReturns.length?`<span style="color:var(--g)">✅ لا يوجد معلق</span>`:''}
+            ${issueCount>0?`<span style="color:${hasCritIssue?'var(--r)':'var(--y)'};font-weight:900">⚠️ ${issueCount} مشكلة</span>`:''}
+            ${!co.pendingOrds.length&&!coReturns.length&&issueCount===0?`<span style="color:var(--g)">✅ لا يوجد معلق</span>`:''}
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${issueCount>0?`<button class="btn btn-sm" style="background:var(--g);color:#0d0f1c;font-weight:900" onclick="healCompany('${co.name.replace(/'/g,"\\'")}')" title="إصلاح كل مشاكل أوردرات هذه الشركة في batch ذرّي">🔧 إصلاح ${issueCount}</button>`:''}
           <a href="shipping.html?company=${encodeURIComponent(co.name)}" style="padding:5px 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);font-size:11px;font-weight:800;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:3px">🚚 الشحن</a>
           ${co.pendingOrds.length?`<button class="btn btn-r btn-sm" onclick="openReturn('${co.name}')">↩️ مرتجع</button>`:''}
           ${co.readyOrds.length?`<button class="btn btn-g btn-sm" onclick="openSettle('${co.name}')">💰 تسوية (${co.readyOrds.length})</button>`:co.totalRemaining<=0?'<span style="font-size:11px;color:var(--g);font-weight:700;padding:4px 8px">✅ مسوّى</span>':''}
@@ -609,13 +617,19 @@ window.render=function(){
           const paid=FC.getPaid(o);const due=FC.getDueByCo(o);
           const costTotal=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
           const noCost=!(o.costItems||[]).length;
-          return`<div class="settle-row">
+          // ── Self-healer: كشف الـ inconsistencies في الأوردر
+          const issues=detectOrderIssues(o);
+          const hasCrit=issues.some(i=>i.severity==='crit');
+          const hasIssues=issues.length>0;
+          return`<div class="settle-row" style="${hasCrit?'border-left:3px solid var(--r);padding-left:8px':hasIssues?'border-left:3px solid var(--y);padding-left:8px':''}">
             <div style="flex:1;min-width:0">
-              <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span></div>
+              <div style="font-size:12px;font-weight:800">${o.clientName||'—'} <span style="color:var(--dim2);font-size:10px">${o.orderId||o._id?.slice(-6)||''}</span>${hasIssues?` <span style="font-size:10px;padding:1px 6px;border-radius:99px;background:${hasCrit?'rgba(255,61,110,.15)':'rgba(255,170,0,.18)'};color:${hasCrit?'var(--r)':'var(--y)'};font-weight:900" title="${escHtml(issues.map(i=>i.label).join(' · '))}">⚠️ ${issues.length} مشكلة</span>`:''}</div>
               <div style="font-size:10px;color:var(--dim2)">${paid>0?'دفع مسبقاً: <span style="color:var(--g)">'+fn(paid)+' ج</span>':''}${o.shipCost>0||o.customerShipFee>0?` · 🏭 ${fn(parseFloat(o.shipCost)||0)} / 🚛 ${fn(parseFloat(o.customerShipFee)||0)}`:''}</div>
               ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
+              ${hasIssues?`<div style="font-size:10px;margin-top:4px;padding:5px 8px;background:${hasCrit?'rgba(255,61,110,.06)':'rgba(255,170,0,.08)'};border-radius:6px;border:1px solid ${hasCrit?'rgba(255,61,110,.2)':'rgba(255,170,0,.25)'};line-height:1.6"><b style="color:${hasCrit?'var(--r)':'var(--y)'}">🔍 كشف:</b> ${issues.map(i=>'<div>• '+escHtml(i.label)+' → <span style="color:var(--g);font-weight:700">'+escHtml(i.fixDesc)+'</span></div>').join('')}</div>`:''}
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+              ${hasIssues?`<button type="button" onclick="healOrder('${o._id}')" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g);background:var(--g);color:#0d0f1c;font-size:11px;font-weight:900;cursor:pointer;font-family:inherit;white-space:nowrap" title="إصلاح كل الـ inconsistencies في batch ذرّي واحد">🔧 إصلاح فوري</button>`:''}
               ${due>0?`<a href="shipping-followup.html?orderId=${o._id}" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;text-decoration:none" title="التحصيل من العميل من صفحة المتابعة">💰 تحصيل ↗</a>`:''}
               <button type="button" onclick="markManualSettled('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(34,211,238,.4);background:rgba(34,211,238,.1);color:var(--c);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="مسوّى من بره (نقد/تحويل خارج النظام) — يصلح الفلاج بدون أي حركة مالية">🏁 مسوّى يدوياً</button>
               <button type="button" onclick="openShipFeeEdit('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.1);color:var(--p);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تعديل تكلفة شركة الشحن ورسوم العميل">✏️ شحن</button>
@@ -1342,6 +1356,52 @@ function __buildAccPanel(o){
 
 // ══ Manual Settle: تسوية يدوية للأوردرات اللي اتسوّت من بره النظام ══
 // (مثلاً نقد من العميل عبر شركة الشحن قبل ما النظام يسجلها كـ shipSettled)
+// ══ Self-Healer: إصلاح فوري للأوردر/الشركة بضغطة واحدة ══
+window.healOrder=async function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
+  const issues=detectOrderIssues(o);
+  if(!issues.length){toast('✅ لا توجد مشاكل','ok');return;}
+  const summary=issues.map(i=>'• '+i.label+' → '+i.fixDesc).join('\n');
+  if(!confirm(`🔧 إصلاح فوري لـ ${o.clientName||'الأوردر'}:\n\n${summary}\n\nيتم تطبيق كل الإصلاحات في batch ذرّي واحد. هل تريد المتابعة؟`))return;
+  try{
+    const batch=writeBatch(db);
+    applyOrderHealPatch(batch,doc(db,'orders',orderId),o,issues,userName);
+    await batch.commit();
+    toast(`✅ تم إصلاح ${issues.length} مشكلة`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }
+};
+
+// ══ Self-Healer: إصلاح كل أوردرات شركة في batch واحد ══
+window.healCompany=async function(coName){
+  const coOrds=allOrders.filter(o=>o.shipCompanyName===coName);
+  const ordsWithIssues=coOrds.map(o=>({o,issues:detectOrderIssues(o)})).filter(x=>x.issues.length);
+  if(!ordsWithIssues.length){toast('✅ لا توجد مشاكل في هذه الشركة','ok');return;}
+  const totalIssues=ordsWithIssues.reduce((s,x)=>s+x.issues.length,0);
+  if(!confirm(`🔧 إصلاح فوري لكل مشاكل شركة "${coName}":\n\n${ordsWithIssues.length} أوردر · ${totalIssues} مشكلة\n\nيتم تطبيق كل الإصلاحات في batch ذرّي واحد. هل تريد المتابعة؟`))return;
+  try{
+    // Firestore batch limit = 500 → split if needed (each order is one update)
+    const CHUNK=400;
+    let done=0;
+    for(let i=0;i<ordsWithIssues.length;i+=CHUNK){
+      const slice=ordsWithIssues.slice(i,i+CHUNK);
+      const batch=writeBatch(db);
+      slice.forEach(({o,issues})=>{
+        applyOrderHealPatch(batch,doc(db,'orders',o._id),o,issues,userName);
+      });
+      await batch.commit();
+      done+=slice.length;
+    }
+    toast(`✅ تم إصلاح ${totalIssues} مشكلة في ${done} أوردر`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }
+};
+
 window.markManualSettled=async function(orderId){
   const o=allOrders.find(x=>x._id===orderId);
   if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
