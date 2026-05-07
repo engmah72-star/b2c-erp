@@ -1048,13 +1048,14 @@ window.saveReturn=async function(){
     batch.update(doc(db,'orders',ordId),{
       shippingStatus:'returned',shipStage:'returned',
       totalPaid:0,deposit:0,remaining:0,paymentStatus:'returned',
-      ...(o.shipSettled&&settledAmt>0?{shipSettled:false,shipSettledAmount:0}:{}),
+      ...(o.shipSettled?{shipSettled:false,shipSettledAmount:0,shipSettledManual:false}:{}),
       timeline:[...(o.timeline||[]),{date:now,action:`↩️ مرتجع من ${returnCompanyName} — ${reasonLabel} — يتحمل: ${lossLabel}${note?' — '+note:''}`,by:byName}],
       updatedAt:serverTimestamp()
     });
 
     // 3. عكس التسوية لو كانت مسوّاة (wallet + transaction + ledger)
-    if(o.shipSettled&&settledAmt>0){
+    // ─ التسوية اليدوية (shipSettledManual): لا حركة مالية حصلت أصلاً، فنرجّع الفلاج فقط
+    if(o.shipSettled&&settledAmt>0&&!o.shipSettledManual){
       const settledWId=o.shipSettledWalletId||'';
       if(settledWId){
         batch.update(doc(db,'wallets',settledWId),{balance:increment(-settledAmt)});
@@ -1510,7 +1511,12 @@ window.saveShipFeeEdit=async function(){
   if(newCost===oldCost && newCust===oldCust){toast('لا توجد تغييرات','');return;}
   const sale=parseFloat(o.salePrice)||0;
   const paid=FC.getPaid(o);
-  const newRem=Math.max(0,sale+newCust-(parseFloat(o.discount)||0)-paid);
+  const newDue=sale+newCust-(parseFloat(o.discount)||0);
+  // ─ Invariant: تخفيض رسوم الشحن لا يصح يخلّي الإجمالي < المحصّل المسجّل
+  if(paid>newDue+0.01){
+    return toast(`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${fn(newDue)} ج) أقل من المحصّل (${fn(paid)} ج). عدّل التحصيل أولاً.`,'err');
+  }
+  const newRem=Math.max(0,newDue-paid);
   const costDelta=newCost-oldCost;
   const btn=document.getElementById('btn-save-sf');btn.disabled=true;btn.textContent='...';
   try{

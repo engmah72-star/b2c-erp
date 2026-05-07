@@ -947,7 +947,7 @@ function settleBadge(o){
   if(o.shipMethod!=='company'||!o.shipCompanyName)return'';
   const ss=o.shipStage||'ready';
   if(['returned','archived'].includes(ss)||ss==='ready')return'';
-  if(o.shipSettled)return`<span class="settle-need settle-ok">✅ مسوّى</span>`;
+  if(o.shipSettled)return o.shipSettledManual?`<span class="settle-need settle-ok" title="مسوّى يدوياً (خارج النظام) — لا حركة مالية مسجّلة" style="background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.4);color:var(--y)">🏁 مسوّى يدوياً</span>`:`<span class="settle-need settle-ok">✅ مسوّى</span>`;
   const _enc=encodeURIComponent(o.shipCompanyName||'');
   return`<button class="settle-need" onclick="event.stopPropagation();window.location.href='shipping-accounts.html?company=${_enc}'">⏳ تسوية مطلوبة</button>`;
 }
@@ -1983,6 +1983,12 @@ window.saveShip=async function(){
   // ─ مبلغ الشحن (داخلي + على العميل) قابل للتعديل لحد الأرشفة (طلب المستخدم)
   const shipCost2=parseFloat(gv('ss-cost'))||0;
   const customerShipFee2=parseFloat(gv('ss-cust-ship-fee'))||0;
+  // ─ Invariant: تخفيض رسوم الشحن لا يصح يخلّي الإجمالي < المحصّل المسجّل
+  const _oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const _newDue=(parseFloat(o.salePrice)||0)+customerShipFee2-(parseFloat(o.discount)||0);
+  if(_oldPaid>_newDue+0.01){
+    return toast(`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${fn(_newDue)} ج) أقل من المحصّل (${fn(_oldPaid)} ج). عدّل التحصيل أولاً أو ارفع الرسوم.`,'err');
+  }
 
   const stage=gv('ss-stage')||curSS;
   // ─ حماية: منع التراجع في الحالات (state machine)
@@ -2012,8 +2018,12 @@ window.saveShip=async function(){
   if(colMode==='later'&&rem>0)parts.push(debtType==='company'?`مستحق من ${shipCompanyName2}`:`دين على العميل ${fn(rem)} ج`);
   if(shipCost2>0&&isFirstShip)parts.push(`تكلفة شحن ${fn(shipCost2)} ج`);
   parts.push(STAGE_LABELS[stage]);
-  const shouldArchive = shipMethod2==='pickup' && newRem<=0;
+  const shouldArchive = shipMethod2==='pickup' && newRem<=0 && o.stage!=='archived';
   if(shouldArchive){
+    // ─ Parity مع المسار اليدوي (saveDeliver/buildStageAdvance): لا أرشفة بدون تكلفة
+    if(!(o.costItems||[]).length){
+      return toast('⚠️ لا يمكن الأرشفة التلقائية — سجّل تكلفة الأوردر أولاً','err');
+    }
     if(!confirm(`📁 سيتم أرشفة هذا الأوردر تلقائياً لأن الرصيد صفر.\nهل تريد المتابعة؟`))return;
   }
   try{
@@ -2366,7 +2376,12 @@ window.saveEmpEditShip=async function(){
   const oldShipCost=parseFloat(o.shipCost)||0;
   const oldPaid=calcPaid(o);
   const sale=parseFloat(o.salePrice)||0;
-  const newRem=Math.max(0,sale+newCustFee-(parseFloat(o.discount)||0)-oldPaid);
+  const newDue=sale+newCustFee-(parseFloat(o.discount)||0);
+  // ─ Invariant: المحصّل ≤ الإجمالي. لو المستخدم بيقلّل رسوم الشحن لدرجة تخلّي newDue < oldPaid → بلوك
+  if(oldPaid>newDue+0.01){
+    return toast(`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${fn(newDue)} ج) أقل من المحصّل بالفعل (${fn(oldPaid)} ج). عدّل التحصيل أولاً أو ارفع الرسوم.`,'err');
+  }
+  const newRem=Math.max(0,newDue-oldPaid);
   const btn=document.getElementById('btn-save-es');if(btn){btn.disabled=true;btn.textContent='...';}
   try{
     const batch=writeBatch(db);
