@@ -1372,6 +1372,11 @@ window.markManualSettled=async function(orderId){
       changes:[{field:'shipSettled',label:'تسوية شركة الشحن',before:'false',after:'true (يدوي)'}],
       requiresReview:true,
     };
+    // قرار التحديث: لو totalPaid أقل من الإجمالي، نرفعه للإجمالي عشان الأوردر يبقى consistent
+    // (الفلوس فعلياً وصلتنا — يا من الشركة، يا من العميل مباشرة، يا من بره النظام)
+    const needsTotalPaidUpdate = paid+0.01 < totalDue;
+    const newTotalPaid = needsTotalPaidUpdate ? totalDue : paid;
+    const newRemaining = Math.max(0, totalDue - newTotalPaid);
     await updateDoc(doc(db,'orders',orderId),{
       shipSettled:true,
       shipSettledAmount:Math.max(totalDue,paid),  // best-effort: نسجل الـ due أو الـ paid أيهما أكبر
@@ -1380,13 +1385,18 @@ window.markManualSettled=async function(orderId){
       shipSettledManualByUid:currentUser?.uid||'',
       shipSettledManualAt:now,
       shipSettledManualReason:r,
-      // لا نلمس totalPaid/remaining/wallet — لأن الفلوس مش حركتها النظام
+      // نحدّث totalPaid عشان الأوردر يطلع consistent (الفلوس فعلياً وصلت سواء عبر الشركة أو خارج النظام)
+      ...(needsTotalPaidUpdate?{
+        totalPaid:newTotalPaid,
+        remaining:newRemaining,
+        paymentStatus:'paid',
+      }:{}),
       auditLog:[...(o.auditLog||[]),auditEntry],
       hasUnreviewedAudit:true,
-      timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}`,by:userName}],
+      timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate?` · ضبط المحصّل ${fn(paid)} → ${fn(newTotalPaid)} ج`:''}`,by:userName}],
       updatedAt:serverTimestamp(),
     });
-    toast(`✅ تم تسجيل التسوية اليدوية · تنبيه أُرسل للأدمن`,'ok');
+    toast(`✅ تم تسجيل التسوية اليدوية${needsTotalPaidUpdate?` · المحصّل اتضبط على ${fn(newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
   }catch(e){
     toast('❌ '+(e.message||e),'err');
   }

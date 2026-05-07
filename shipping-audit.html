@@ -373,6 +373,50 @@ const CHECKS=[
       });
     },
   },
+  {
+    id:'company_collected_stuck',
+    title:'⚠️ شحنة شركة في "محصّل" لكن لا shipSettled ولا totalPaid',
+    desc:'الأوردر مرّ بالـ shipStage=collected (الشركة استلمت من العميل) لكن لا shipSettled=true ولا totalPaid اتضبط. بيانات قديمة عالقة. الإصلاح الآمن: نضبط totalPaid=total + shipSettled=true + reason="audit: ضبط أوردر عالق". الفلوس مفترض موجودة في المحفظة (حسب توضيح المستخدم).',
+    severity:'crit',
+    autoFix:true,
+    check:o=>{
+      if(o.shipStage==='returned'||o.stage==='archived')return false;
+      if(o.shipMethod!=='company')return false;
+      if(o.shipSettled===true)return false;
+      // الأوردر في حالة "محصّل" أو "انتظار تحصيل" (الشركة معاها فلوسنا)
+      const ss=o.shipStage||'ready';
+      if(!['collected','wait_collection'].includes(ss))return false;
+      const sale=parseFloat(o.salePrice)||0;
+      const cust=parseFloat(o.customerShipFee)||0;
+      const disc=parseFloat(o.discount)||0;
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const total=sale+cust-disc;
+      // totalPaid أقل من الإجمالي = عالق
+      return total>0 && paid+0.01<total;
+    },
+    fix:(batch,o)=>{
+      const sale=parseFloat(o.salePrice)||0;
+      const cust=parseFloat(o.customerShipFee)||0;
+      const disc=parseFloat(o.discount)||0;
+      const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const total=sale+cust-disc;
+      const expected=Math.max(0,total-paid);
+      batch.update(doc(db,'orders',o._id),{
+        totalPaid:total,
+        remaining:0,
+        paymentStatus:'paid',
+        shipStage:'collected',
+        shipSettled:true,
+        shipSettledAmount:expected,  // الجزء اللي نظرياً جاء من الشركة (الباقي بعد الـ deposit المسجّل)
+        shipSettledManual:true,
+        shipSettledManualReason:'audit: ضبط أوردر عالق — الفلوس وصلت لكن مش معكوسة على الأوردر',
+        shipSettledManualAt:nowStr(),
+        shipSettledManualBy:userName||'audit',
+        timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔧 audit: ضبط totalPaid ${fn(paid)}→${fn(total)} ج + إغلاق التسوية مع الشركة`,by:userName||'audit'}],
+        updatedAt:serverTimestamp(),
+      });
+    },
+  },
 ];
 
 window.runAudit=async function(){
