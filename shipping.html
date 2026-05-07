@@ -845,7 +845,9 @@ function buildSidebar(userData,currentPage){
   html+=`<a class="nav-link${cur===dashHome?' active':''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${DASH_LABELS_MAP[role]||'داشبوردي'}</a>`;
   for(const cfg of SIDEBAR_PAGES){
     if(cfg.file==='index.html')continue;
-    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(pages.includes('*')||pages.includes(cfg.perm||'')));
+    const hasPagePerm=pages.includes('*')||pages.includes(cfg.perm||'');
+    const hasViewClients=cfg.perm==='clients'&&perms.canViewClients===true;
+    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(hasPagePerm||hasViewClients));
     if(!ok)continue;
     if(cfg.group!==lastGrp){html+=`<div class="nav-group">${GROUP_LABELS_SB[cfg.group]||cfg.group}</div>`;lastGrp=cfg.group;}
     html+=`<a class="nav-link${cur===cfg.file?' active':''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
@@ -865,7 +867,9 @@ function guardPage(userData,currentPage){
   if(!cfg)return true;
   if(cfg.adminOnly){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   const perm=cfg.perm||cur.replace('.html','');
-  if(!pages.includes('*')&&!pages.includes(perm)){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
+  const hasPagePerm=pages.includes('*')||pages.includes(perm);
+  const hasViewClients=perm==='clients'&&perms.canViewClients===true;
+  if(!hasPagePerm&&!hasViewClients){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   return true;
 }
 
@@ -908,6 +912,7 @@ let currentUser=null, userName='', activeId=null, currentRole='admin', mineOnly=
 let currentFilter='active', ssMethod='', ssStage='wait_delivery';
 let urlCompanyFilter='', __urlOrderIdParam='', __urlOrderOpened=false;
 let isAdminUser=false;
+let canViewCosts=false;
 let wizStep=1, wizOrderId=null;
 
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -1217,6 +1222,8 @@ onAuthStateChanged(auth,async u=>{
   const _pages = _perms.pages || [];
   const _isAdm = ['admin','operation_manager'].includes(role);
   isAdminUser = _isAdm;
+  canViewCosts = _isAdm || _perms.canViewCosts === true;
+  if(!canViewCosts){const pb=document.getElementById('sk-profit-box');if(pb)pb.style.display='none';}
   const _pagePerm = 'shipping';
   const _roleOk = role === 'shipping_officer'; // shipping_officer دايمًا ليه حق الدخول
   if(!_isAdm && !_roleOk && !_pages.includes('*') && !_pages.includes(_pagePerm)){
@@ -1640,7 +1647,7 @@ window.openOrder=function(id){
         <div style="display:flex;justify-content:space-between"><span style="color:var(--dim2)">− ✅ المُحصَّل</span><span style="font-weight:800;color:var(--g)">${fn(paid)} ج</span></div>
         <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:${rem>0?'var(--r)':'var(--g)'};font-weight:900">⏳ المتبقي</span><span style="color:${rem>0?'var(--r)':'var(--g)'};font-weight:900;font-size:14px">${rem>0?fn(rem)+' ج':'✅ مُسدَّد كاملاً'}</span></div>
       </div>
-      <div class="fin-grid" style="margin-top:8px">
+      ${canViewCosts?`<div class="fin-grid" style="margin-top:8px">
         <div class="fin-cell"><div class="fin-cell-lbl">💼 تكلفة التنفيذ</div><div class="fin-cell-val" style="color:var(--r)">${fn(execCostO)}</div></div>
         <div class="fin-cell"><div class="fin-cell-lbl">🏭 تكلفة شركة الشحن</div><div class="fin-cell-val" style="color:var(--r)">${fn(shipCostO)}</div></div>
         <div class="fin-cell" style="${estProfit<0?'background:rgba(255,61,110,.1)':'background:rgba(0,217,126,.06)'}">
@@ -1649,7 +1656,7 @@ window.openOrder=function(id){
             ${fn(Math.abs(estProfit))}${estProfit<0?' ↓':''}
           </div>
         </div>
-      </div>
+      </div>`:''}
       ${sale>0?`<div style="height:6px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin-top:10px"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--y),var(--g));border-radius:99px"></div></div>`:''}
     </div>
 
@@ -1668,13 +1675,13 @@ window.openOrder=function(id){
         ${o.shipCompanyName?pRow('شركة الشحن',o.shipCompanyName):''}
         ${o.shipGov?pRow('العنوان',o.shipGov+(o.shipAddress?' · '+o.shipAddress:'')):''}
         ${o.customerShipFee>0?pRow('🚛 رسوم الشحن على العميل',fn(parseFloat(o.customerShipFee))+' ج'):''}
-        ${o.shipCost>0?pRow('🏭 تكلفة شركة الشحن (علينا)',fn(o.shipCost)+' ج'):''}
+        ${canViewCosts&&o.shipCost>0?pRow('🏭 تكلفة شركة الشحن (علينا)',fn(o.shipCost)+' ج'):''}
         ${o.shipTracking?pRow('رقم التتبع',o.shipTracking):''}
       </div>
     </div>
 
     <!-- بنود التكلفة -->
-    <div class="section" style="${!(o.costItems||[]).length?'background:rgba(255,61,110,.04);border:1px solid rgba(255,61,110,.15)':'background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.1)'}">
+    ${canViewCosts?`<div class="section" style="${!(o.costItems||[]).length?'background:rgba(255,61,110,.04);border:1px solid rgba(255,61,110,.15)':'background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.1)'}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div class="section-title" style="margin-bottom:0;color:${!(o.costItems||[]).length?'var(--r)':'var(--g)'}">🏭 التكاليف ${!(o.costItems||[]).length?'⚠️ لا توجد تكلفة':''}</div>
         <button onclick="openAddCostShip(-1)" style="font-size:11px;font-weight:800;padding:5px 12px;border-radius:20px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);cursor:pointer">＋ بند</button>
@@ -1695,7 +1702,7 @@ window.openOrder=function(id){
           +'<div style="text-align:left;font-size:12px;font-weight:900;padding:6px 0 0;color:var(--g)">الإجمالي: '+fn((o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0))+' ج</div>';
         })():`<div style="font-size:12px;color:var(--r);padding:8px 0">لم يتم تسجيل أي تكاليف لهذا الأوردر</div>`}
       </div>
-    </div>
+    </div>`:''}
 
     <!-- تقييم العميل -->
     ${o.clientRating?`<div class="section" style="background:rgba(167,139,250,.04);border:1px solid rgba(167,139,250,.15)">

@@ -169,6 +169,7 @@ const db=getFirestore(app);
 
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
+let canViewCosts=false;
 let currentFilter='active', __cfOrderId='';
 
 // ── Helpers ──
@@ -238,14 +239,17 @@ const SBPAGES=[
 ];
 function buildSidebar(ud){
   const role=ud?.role||'';
-  const pages=(ud?.permissions?.pages)||[];
+  const perms=ud?.permissions||{};
+  const pages=perms.pages||[];
   const isAdm=['admin','operation_manager'].includes(role);
   const nav=$('nav-scroll-dynamic');
   if(!nav)return;
   const cur='shipping-followup.html';
   let h='';
   for(const p of SBPAGES){
-    const ok=isAdm||(p.admin?false:pages.includes('*')||pages.includes(p.p||''));
+    const hasPagePerm=pages.includes('*')||pages.includes(p.p||'');
+    const hasViewClients=p.p==='clients'&&perms.canViewClients===true;
+    const ok=isAdm||(p.admin?false:(hasPagePerm||hasViewClients));
     if(!ok)continue;
     h+=`<a class="nav-link${p.f===cur?' active':''}" href="${p.f}"><span class="nav-ico">${p.i}</span> ${p.l}</a>`;
   }
@@ -273,6 +277,7 @@ onAuthStateChanged(auth,async u=>{
     const pages=perms.pages||[];
     const isAdm=['admin','operation_manager'].includes(userRole);
     const isShipping=userRole==='shipping_officer';
+    canViewCosts = isAdm || perms.canViewCosts === true;
     if(!isAdm && !isShipping && !pages.includes('*') && !pages.includes('shipping')){
       $('orders-list').innerHTML='<div class="fl-empty">⛔ ليس لديك صلاحية على متابعة الشحن</div>';
       return;
@@ -472,7 +477,7 @@ window.openOrderDetails=function(orderId){
       <div class="det-sec-ttl">🚚 الشحن</div>
       <div class="det-row"><span class="det-row-lbl">الطريقة</span><span class="det-row-val">${methodLabel}</span></div>
       ${o.shipTracking?`<div class="det-row"><span class="det-row-lbl">رقم التتبع</span><span class="det-row-val" style="font-family:monospace">${escHtml(o.shipTracking)}</span></div>`:''}
-      ${shipCost>0?`<div class="det-row"><span class="det-row-lbl">🏭 تكلفة شركة الشحن</span><span class="det-row-val" style="color:var(--r)">${fn(shipCost)} ج</span></div>`:''}
+      ${canViewCosts&&shipCost>0?`<div class="det-row"><span class="det-row-lbl">🏭 تكلفة شركة الشحن</span><span class="det-row-val" style="color:var(--r)">${fn(shipCost)} ج</span></div>`:''}
       ${o.shipSettled?'<div class="det-row"><span class="det-row-lbl">تسوية الشركة</span><span class="det-row-val" style="color:var(--g)">🏁 مسوّى</span></div>':''}
     </div>
 
@@ -493,7 +498,7 @@ window.openOrderDetails=function(orderId){
         <div class="det-row"><span class="det-row-lbl">− ✅ المُحصَّل</span><span class="det-row-val" style="color:var(--g)">${fn(paid)} ج</span></div>
         <div class="det-row" style="border-top:1px solid var(--line);padding-top:6px;margin-top:3px"><span style="color:${rem>0?'var(--r)':'var(--g)'};font-weight:900">⏳ المتبقي</span><span style="color:${rem>0?'var(--r)':'var(--g)'};font-weight:900;font-size:14px">${rem>0?fn(rem)+' ج':'✅ مُسدَّد كاملاً'}</span></div>
       </div>
-      ${(execCost>0||shipCost>0)?`<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);line-height:1.8;font-size:12px">
+      ${canViewCosts&&(execCost>0||shipCost>0)?`<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);line-height:1.8;font-size:12px">
         <div class="det-row"><span class="det-row-lbl">💼 تكلفة التنفيذ</span><span class="det-row-val" style="color:var(--r)">${fn(execCost)} ج</span></div>
         ${shipCost>0?`<div class="det-row"><span class="det-row-lbl">🏭 تكلفة شركة الشحن</span><span class="det-row-val" style="color:var(--r)">${fn(shipCost)} ج</span></div>`:''}
         <div class="det-row" style="border-top:1px dashed var(--line);padding-top:5px;margin-top:3px"><span style="color:var(--snow);font-weight:800">📈 الربح المتوقع</span><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:900">${fn(profit)} ج</span></div>
@@ -501,7 +506,7 @@ window.openOrderDetails=function(orderId){
     </div>
 
     <!-- Cost items (if any) -->
-    ${(o.costItems||[]).length?`<div class="det-sec">
+    ${canViewCosts&&(o.costItems||[]).length?`<div class="det-sec">
       <div class="det-sec-ttl">💼 بنود التنفيذ (${(o.costItems||[]).length})</div>
       ${(o.costItems||[]).map(c=>`<div class="det-row"><span class="det-row-lbl">${escHtml(c.type||'—')}${c.note?' · '+escHtml(c.note):''}</span><span class="det-row-val" style="color:var(--r)">${fn(parseFloat(c.total)||0)} ج</span></div>`).join('')}
     </div>`:''}
