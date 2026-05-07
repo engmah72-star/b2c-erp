@@ -236,6 +236,12 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
       <button onclick="clearCompanyFilter()" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(34,211,238,.3);background:transparent;color:var(--c);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>
     </div>
 
+    <!-- Company-shipped redirect notice -->
+    <a id="co-ship-notice" href="shipping-accounts.html" style="display:none;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:10px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;text-decoration:none;color:inherit;gap:10px">
+      <div style="font-size:12px;font-weight:700;color:var(--p);line-height:1.5">📦 <span id="co-ship-cnt">0</span> أوردر مع شركات شحن<br><span style="font-size:10px;color:var(--dim2);font-weight:600">التعديل والتحصيل والتسوية من حسابات الشحن</span></div>
+      <span style="padding:5px 12px;border-radius:8px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.15);color:var(--p);font-size:11px;font-weight:800;white-space:nowrap">افتح ←</span>
+    </a>
+
     <!-- LIST -->
     <div id="list"></div>
   </div>
@@ -1310,8 +1316,12 @@ window.setFilter=function(f,btn){
 
 function matchFilter(o){
   const ss=o.shipStage||'ready';
-  // شركة محددة من URL
+  // شركة محددة من URL — يتجاوز فلتر "الشركة في الحسابات" أدناه
   if(urlCompanyFilter&&(o.shipCompanyName||'')!==urlCompanyFilter)return false;
+  // ─ أوردرات شركات الشحن المُسلَّمة → لها صفحة "حسابات الشحن" — لا تظهر في فلاتر العمل اليومي
+  // (تظهر فقط في 'all' أو في فلاتر التسوية المتعلقة بالشركة)
+  const isCompanyShipped=o.shipMethod==='company'&&['wait_delivery','wait_collection','collected'].includes(ss);
+  if(isCompanyShipped && !['all','settle_pending','archive_ready'].includes(currentFilter)) return false;
   if(currentFilter==='all') return true;
   // نشطة = الأوردرات التي لا تزال بحاجة لعمل من فريق الشحن
   if(currentFilter==='active') return !['collected','returned','archived'].includes(ss);
@@ -1419,6 +1429,17 @@ window.renderList=function(){
     if(mineOnly&&uid&&!(o.shippingOfficerId===uid||(!o.shippingOfficerId&&!isAdm)))return false;
     return matchFilter(o);
   });
+  // ─ notice: count company-shipped orders moved to shipping-accounts
+  const coShippedCnt=orders.filter(o=>o.shipMethod==='company'&&['wait_delivery','wait_collection','collected'].includes(o.shipStage||'ready')).length;
+  const coNotice=document.getElementById('co-ship-notice');
+  if(coNotice){
+    if(coShippedCnt>0 && currentFilter!=='all' && !urlCompanyFilter){
+      coNotice.style.display='flex';
+      const cntEl=document.getElementById('co-ship-cnt');if(cntEl)cntEl.textContent=coShippedCnt;
+    } else {
+      coNotice.style.display='none';
+    }
+  }
   // expose filtered IDs for bulk operations (e.g., bulk waybill print)
   window.__visibleOrderIds=data.map(o=>o._id);
   const bulkBtn=document.getElementById('btn-bulk-waybill');
