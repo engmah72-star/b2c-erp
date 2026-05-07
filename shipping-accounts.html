@@ -500,23 +500,32 @@ window.render=function(){
   });
 
   // ══ بناء بيانات الشركات ══
+  // FIX: totalDue كان بيحسب "اللي لسه مستحق دلوقتي" بس → بعد التسوية يظهر 0،
+  // فالمستخدم يحس إن في bug ("الرصيد لسه مطلوب من الشركة").
+  // الصح: totalDue = "إجمالي ما تحمّلته الشركة" (settled + unsettled)،
+  // وtotalRemaining = الفجوة (= ما لم يُسوَّ بعد).
   const SETTLE_READY_STG=new Set(['wait_collection','collected','archived']);
   const coMap={};
   shipped.forEach(o=>{
     const co=o.shipCompanyName;
     if(!coMap[co])coMap[co]={name:co,allOrders:[],pendingOrds:[],readyOrds:[],transitOrds:[],settledOrds:[],returnsCount:0,totalDue:0,readyDue:0};
-    const due=FC.getDueByCo(o);
     const isReturn=returns.some(r=>r.orderId===o._id&&r.status!=='cancelled');
     const isSettled=o.shipSettled===true;
     const isReady=SETTLE_READY_STG.has(o.shipStage||'ready');
-    coMap[co].allOrders.push({...o,due,isReturn,isSettled});
+    // المسؤولية التاريخية للشركة:
+    //  ـ مسوّى → shipSettledAmount (المبلغ اللي كانت بتدين به الشركة وقت التسوية)
+    //  ـ غير مسوّى → الباقي حالياً (FC.getDueByCo)
+    const dueHist=isSettled?(parseFloat(o.shipSettledAmount)||0):FC.getDueByCo(o);
+    // الـ "باقي حالياً" لعرض الأوردر الفردي
+    const dueRem=isSettled?0:FC.getDueByCo(o);
+    coMap[co].allOrders.push({...o,due:dueRem,isReturn,isSettled});
     if(isReturn){coMap[co].returnsCount++;}
     else{
-      coMap[co].totalDue+=due;
+      coMap[co].totalDue+=dueHist;  // إجمالي ما كان مستحقاً (settled + unsettled)
       if(isSettled)coMap[co].settledOrds.push(o);
       else{
         coMap[co].pendingOrds.push(o);
-        if(isReady){coMap[co].readyOrds.push(o);coMap[co].readyDue+=due;}
+        if(isReady){coMap[co].readyOrds.push(o);coMap[co].readyDue+=dueRem;}
         else coMap[co].transitOrds.push(o);
       }
     }
