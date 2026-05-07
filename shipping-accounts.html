@@ -183,9 +183,13 @@
       <!-- ③ المطابقة المالية -->
       <div class="settle-sec">
         <div class="settle-sec-title">③ المطابقة المالية</div>
-        <div class="fg" style="margin-bottom:10px">
-          <label>المبلغ الوارد من الشركة (ج)</label>
-          <input class="inp" id="settle-amount" type="number" placeholder="0" style="font-size:20px;font-weight:900;text-align:left" oninput="calcSettleDiff()">
+        <div class="fg" style="margin-bottom:6px">
+          <label style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px">
+            <span>المبلغ الوارد من الشركة (ج)</span>
+            <button type="button" id="settle-apply-expected" onclick="applySettleExpected()" style="display:none;padding:3px 10px;border-radius:6px;border:1px solid rgba(34,211,238,.4);background:rgba(34,211,238,.1);color:var(--c);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="ضبط المبلغ على إجمالي المحدد">↻ تطبيق المتوقع</button>
+          </label>
+          <input class="inp" id="settle-amount" type="number" placeholder="0" style="font-size:20px;font-weight:900;text-align:left" oninput="onSettleAmountInput()">
+          <div id="settle-expected-hint" style="display:none;font-size:11px;color:var(--c);margin-top:6px;font-weight:700">💡 المتوقع من <span id="settle-expected-cnt">0</span> أوردر محدد: <span id="settle-expected-val">0</span> ج</div>
         </div>
         <div id="settle-reconciliation" style="display:none">
           <div class="rec-row">
@@ -799,6 +803,8 @@ window.openSettle=function(coName){
   }
   sv('settle-amount',readyDue.toFixed(2));
   sv('settle-ref','');
+  _settleLastExpected=readyDue;
+  _settleUserTouched=false;
   calcSettleDiff();
 
   document.getElementById('ov-settle').classList.add('open');
@@ -830,11 +836,46 @@ window.setSettleDiffReason=function(key,label){
   document.getElementById('sdr-'+key)?.classList.add('active');
 };
 
+// ══ Settle amount sync ══
+// _settleLastExpected: آخر "المتوقع" المعروض في الـ input. لو المستخدم ما عدّلش الـ input بنفسه،
+// التغيير في الـ checkboxes بيحدّث الـ input تلقائياً. لو عدّل، بنحترم اختياره.
+let _settleLastExpected=null;
+let _settleUserTouched=false;
+
+window.onSettleAmountInput=function(){
+  _settleUserTouched=true;
+  calcSettleDiff();
+};
+
+window.applySettleExpected=function(){
+  const selectedCbs=Array.from(document.querySelectorAll('.settle-order-cb:checked'));
+  const expected=selectedCbs.reduce((s,cb)=>s+(parseFloat(cb.dataset.amount)||0),0);
+  sv('settle-amount',expected.toFixed(2));
+  _settleLastExpected=expected;
+  _settleUserTouched=false;
+  calcSettleDiff();
+};
+
 // ══ calcSettleDiff ══
 window.calcSettleDiff=function(){
-  const incoming=parseFloat(gv('settle-amount'))||0;
   const selectedCbs=Array.from(document.querySelectorAll('.settle-order-cb:checked'));
   const selected=selectedCbs.reduce((s,cb)=>s+(parseFloat(cb.dataset.amount)||0),0);
+  // Auto-sync: لو المستخدم ما عدّلش الـ input بنفسه، حدّث الـ amount مع تغير الـ checkboxes
+  if(!_settleUserTouched){
+    sv('settle-amount',selected.toFixed(2));
+    _settleLastExpected=selected;
+  }
+  const incoming=parseFloat(gv('settle-amount'))||0;
+  // Hint
+  const hintEl=document.getElementById('settle-expected-hint');
+  const applyBtn=document.getElementById('settle-apply-expected');
+  if(hintEl){
+    setText('settle-expected-cnt',selectedCbs.length);
+    setText('settle-expected-val',fn(selected));
+    hintEl.style.display=selectedCbs.length>0?'block':'none';
+    // Show apply button only when input differs from expected
+    if(applyBtn) applyBtn.style.display=(selectedCbs.length>0 && Math.abs(incoming-selected)>0.01)?'inline-block':'none';
+  }
   const diff=incoming-selected;
 
   const recEl=document.getElementById('settle-reconciliation');
