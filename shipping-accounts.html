@@ -312,6 +312,35 @@
   </div>
 </div>
 
+<!-- ══ Modal: تحصيل من العميل مباشرة (للأوردر الواحد) ══ -->
+<div class="overlay" id="ov-collect-acc">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head">
+      <span class="modal-title">💰 تحصيل من العميل</span>
+      <button class="modal-x" onclick="document.getElementById('ov-collect-acc').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ca-summary" style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px"></div>
+      <div class="fg" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:800">المبلغ المحصّل (ج) *</label>
+        <input class="inp" id="ca-amt" type="number" min="0" placeholder="0" oninput="updateCaPreview()" style="font-size:22px;font-weight:900;text-align:center;padding:14px">
+      </div>
+      <div id="ca-preview" style="display:none;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:800;text-align:center;margin-bottom:14px"></div>
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">طريقة الدفع *</div>
+      <div id="ca-wallets" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <input type="hidden" id="ca-wid"><input type="hidden" id="ca-wname">
+      <div class="fg"><label>رقم التحويل / الإيصال (اختياري)</label><input class="inp" id="ca-ref" placeholder="اختياري"></div>
+      <div style="background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.2);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--c);line-height:1.5">
+        💡 <b>متى تستخدم ده؟</b> لما العميل يدفع لنا مباشرة (مش عن طريق شركة الشحن). للتسوية مع شركة الشحن استخدم زر "💰 تسوية" أعلى الكارت.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-collect-acc').classList.remove('open')">إلغاء</button>
+      <button class="btn btn-g" id="btn-save-ca" onclick="saveCollectAcc()">✅ تأكيد التحصيل</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ Modal: تعديل سريع لتكلفة الشحن ورسوم العميل ══ -->
 <div class="overlay" id="ov-ship-fee">
   <div class="modal" style="max-width:420px">
@@ -564,6 +593,7 @@ window.render=function(){
               ${noCost?'<div style="font-size:10px;color:var(--r);font-weight:700;margin-top:2px">⚠️ بدون تكلفة</div>':'<div style="font-size:10px;color:var(--dim2);margin-top:2px">تكلفة: <span style="color:var(--y);font-weight:800">'+fn(costTotal)+' ج</span></div>'}
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              ${due>0?`<button type="button" onclick="openCollectAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تحصيل من العميل مباشرة (مش عن طريق الشركة)">💰 تحصيل</button>`:''}
               <button type="button" onclick="openShipFeeEdit('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.1);color:var(--p);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="تعديل تكلفة الشحن ورسوم العميل">✏️ شحن</button>
               <button type="button" onclick="openCostAcc('${o._id}')" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,170,0,.35);background:rgba(255,170,0,.1);color:var(--y);font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap">💰 تكلفة</button>
               <div style="text-align:left">
@@ -1246,6 +1276,121 @@ function __buildAccPanel(o){
         <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}${t.by?' · <span style="color:var(--b)">${t.by}</span>':''}</div>`).join('')||'<div style="font-size:12px;color:var(--dim2)">لا يوجد سجل</div>'}
     </div>`;
 }
+
+// ══ Quick Collect: تحصيل من العميل مباشرة (للأوردر الواحد في حسابات الشحن) ══
+let __caOrderId='';
+window.openCollectAcc=function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
+  if(o.stage==='archived'){toast('⛔ الأوردر مؤرشف','err');return;}
+  if(o.shipStage==='returned'){toast('⛔ الأوردر مرتجع','err');return;}
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const paid=FC.getPaid(o);
+  const totalDue=sale+cust-(parseFloat(o.discount)||0);
+  const rem=Math.max(0,totalDue-paid);
+  if(rem<=0){toast('✅ المبلغ محصّل بالكامل','ok');return;}
+  __caOrderId=orderId;
+  document.getElementById('ca-summary').innerHTML=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">${o.clientName||'—'}</span><span style="font-weight:700;font-size:11px">${o.orderId||(o._id||'').slice(-6)}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:var(--dim2)">إجمالي الأوردر</span><span>${fn(totalDue)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:var(--dim2)">محصّل سابقاً</span><span style="color:var(--g)">${fn(paid)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:5px;margin-top:4px"><span style="color:var(--r);font-weight:800">المتبقي</span><span style="font-weight:900;color:var(--r);font-size:15px">${fn(rem)} ج</span></div>`;
+  sv('ca-amt',rem);sv('ca-ref','');sv('ca-wid','');sv('ca-wname','');
+  document.getElementById('ca-preview').style.display='none';
+  // wallets
+  const lastWid=localStorage.getItem('b2c_lastWalletId')||'';
+  document.getElementById('ca-wallets').innerHTML=wallets.map(w=>`
+    <div class="w-btn" id="caw-${w._id}" onclick="selCaW('${w._id}','${(w.name||'').replace(/'/g,"\\'")}')" style="padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg3);cursor:pointer;text-align:center;min-width:90px">
+      <div style="font-size:18px">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'}</div>
+      <div style="font-size:11px;font-weight:700">${w.name||'محفظة'}</div>
+      <div style="font-size:9px;color:var(--dim2)">${fn(w.balance||0)} ج</div>
+    </div>`).join('');
+  const defW=wallets.find(w=>w._id===lastWid)||wallets.find(w=>w.type==='cash')||wallets[0];
+  if(defW)selCaW(defW._id,defW.name||'');
+  updateCaPreview();
+  document.getElementById('ov-collect-acc').classList.add('open');
+};
+
+window.selCaW=function(id,name){
+  sv('ca-wid',id);sv('ca-wname',name);
+  document.querySelectorAll('#ca-wallets .w-btn').forEach(b=>{b.style.background='var(--bg3)';b.style.borderColor='var(--line)';});
+  const sel=document.getElementById('caw-'+id);
+  if(sel){sel.style.background='rgba(0,217,126,.12)';sel.style.borderColor='var(--g)';}
+};
+
+window.updateCaPreview=function(){
+  const o=allOrders.find(x=>x._id===__caOrderId);if(!o)return;
+  const amt=parseFloat(gv('ca-amt'))||0;
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const paid=FC.getPaid(o);
+  const totalDue=sale+cust-(parseFloat(o.discount)||0);
+  const rem=Math.max(0,totalDue-paid);
+  const after=Math.max(0,rem-amt);
+  const prev=document.getElementById('ca-preview');if(!prev)return;
+  if(!amt){prev.style.display='none';return;}
+  prev.style.display='block';
+  if(amt>rem+0.01){prev.style.background='rgba(255,61,110,.12)';prev.style.color='var(--r)';prev.textContent=`⚠️ المبلغ أكبر من المتبقي (${fn(rem)} ج)`;}
+  else if(after<=0){prev.style.background='rgba(0,217,126,.12)';prev.style.color='var(--g)';prev.textContent='✅ سيتم التحصيل كاملاً';}
+  else{prev.style.background='rgba(255,170,0,.12)';prev.style.color='var(--y)';prev.textContent=`بعد التحصيل يبقى: ${fn(after)} ج`;}
+};
+
+window.saveCollectAcc=async function(){
+  const o=allOrders.find(x=>x._id===__caOrderId);
+  if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
+  if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق للتعديل','err');
+  const amt=parseFloat(gv('ca-amt'))||0;
+  if(!amt||amt<=0)return toast('⚠️ أدخل المبلغ','err');
+  const wId=gv('ca-wid');const wName=gv('ca-wname');
+  if(!wId)return toast('⚠️ اختر طريقة الدفع','err');
+  const sale=parseFloat(o.salePrice)||0;
+  const cust=parseFloat(o.customerShipFee)||0;
+  const oldPaid=FC.getPaid(o);
+  const totalDue=sale+cust-(parseFloat(o.discount)||0);
+  const rem=Math.max(0,totalDue-oldPaid);
+  if(amt>rem+0.01)return toast(`⚠️ المبلغ (${fn(amt)} ج) أكبر من المتبقي (${fn(rem)} ج)`,'err');
+  const w=wallets.find(x=>x._id===wId);
+  if(!w)return toast('❌ المحفظة غير موجودة','err');
+  const bb=parseFloat(w.balance)||0;
+  const newPaid=oldPaid+amt;
+  const newRem=Math.max(0,totalDue-newPaid);
+  const transferRef=gv('ca-ref');
+  const btn=document.getElementById('btn-save-ca');btn.disabled=true;btn.textContent='...';
+  try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'wallets',wId),{balance:increment(amt)});
+    const colRef=doc(collection(db,'transactions_v2'));
+    batch.set(colRef,{
+      walletId:wId,walletName:w.name||wName,type:'in',amount:amt,
+      description:`تحصيل مباشر — ${o.clientName||''} — ${o.orderId||''}`,
+      category:'collection',orderId:__caOrderId,clientName:o.clientName||'',
+      transferRef,balanceBefore:bb,balanceAfter:bb+amt,
+      date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
+      createdAt:serverTimestamp(),...approvalFields()
+    });
+    batch.update(doc(db,'orders',__caOrderId),{
+      totalPaid:newPaid,remaining:newRem,
+      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل مباشر ${fn(amt)} ج عبر ${w.name||wName}${transferRef?' ('+transferRef+')':''}`,by:userName}],
+      updatedAt:serverTimestamp(),
+    });
+    addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+      amount:amt,walletId:wId,walletName:w.name||wName,
+      orderId:__caOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`تحصيل مباشر — ${o.clientName||''} — ${o.orderId||''}`,
+      userId:currentUser?.uid||'',userName,
+    });
+    await batch.commit();
+    localStorage.setItem('b2c_lastWalletId',wId);
+    document.getElementById('ov-collect-acc').classList.remove('open');
+    toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');
+  }catch(e){
+    toast('❌ '+(e.message||e),'err');
+  }finally{
+    btn.disabled=false;btn.textContent='✅ تأكيد التحصيل';
+  }
+};
 
 // ══ Quick Edit: تعديل تكلفة الشحن + رسوم العميل (للأوردر الواحد) ══
 let __sfOrderId='';
