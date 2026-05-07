@@ -89,6 +89,19 @@
       <a class="ship-tab" href="shipping-guide.html" title="دليل تشغيل الشحن"><span>📖</span><span>الدليل</span></a>
     </div>
 
+    <!-- Global self-heal banner (shown only if issues detected) -->
+    <div id="global-heal-banner" style="display:none;background:linear-gradient(135deg,rgba(255,61,110,.18),rgba(255,170,0,.12));border:2px solid var(--r);border-radius:14px;padding:14px 18px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:14px;font-weight:900;color:var(--r);margin-bottom:4px">⚠️ <span id="gh-issue-cnt">0</span> مشكلة مكتشفة في <span id="gh-order-cnt">0</span> أوردر</div>
+          <div style="font-size:11px;color:var(--dim2);line-height:1.6">
+            بيانات قديمة فيها drift بين الـ flags. اضغط الزر يمين عشان السيستم يصلح كل شيء في batch ذرّي واحد — كل إصلاح بيتسجّل في timeline الأوردر.
+          </div>
+        </div>
+        <button onclick="healAll()" style="padding:12px 24px;border-radius:10px;background:linear-gradient(135deg,var(--g),#0acc6f);color:#0d0f1c;border:none;font-weight:900;font-size:14px;cursor:pointer;font-family:inherit;white-space:nowrap;box-shadow:0 4px 14px rgba(0,217,126,.3)">🔧 إصلاح كل المشاكل</button>
+      </div>
+    </div>
+
     <!-- KPIs -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
       <div style="background:linear-gradient(135deg,rgba(255,61,110,.15),rgba(255,61,110,.05));border:1.5px solid rgba(255,61,110,.3);border-radius:14px;padding:14px;text-align:center">
@@ -558,6 +571,20 @@ window.render=function(){
   setText('s-remaining',fn(totRemaining)+' ج');
   setText('s-returns',totReturns+(totReturnCost>0?' / '+fn(totReturnCost)+' ج':''));
   setText('sub',cos.length+' شركة شحن');
+
+  // ── Global self-heal banner: عدّ المشاكل عبر كل الأوردرات
+  const allIssued=allOrders.map(o=>({o,issues:detectOrderIssues(o)})).filter(x=>x.issues.length);
+  const totalIssues=allIssued.reduce((s,x)=>s+x.issues.length,0);
+  const banner=document.getElementById('global-heal-banner');
+  if(banner){
+    if(totalIssues>0){
+      banner.style.display='block';
+      setText('gh-issue-cnt',totalIssues);
+      setText('gh-order-cnt',allIssued.length);
+    } else {
+      banner.style.display='none';
+    }
+  }
 
   // ══ عرض الشركات ══
   const el=document.getElementById('companies-list');if(!el)return;
@@ -1376,6 +1403,31 @@ window.healOrder=async function(orderId){
 };
 
 // ══ Self-Healer: إصلاح كل أوردرات شركة في batch واحد ══
+// ══ Self-Healer GLOBAL: إصلاح كل أوردرات كل الشركات ══
+window.healAll=async function(){
+  const candidates=allOrders.map(o=>({o,issues:detectOrderIssues(o)})).filter(x=>x.issues.length);
+  if(!candidates.length){toast('✅ لا توجد مشاكل في كل النظام','ok');return;}
+  const totalIssues=candidates.reduce((s,x)=>s+x.issues.length,0);
+  if(!confirm(`🔧 إصلاح كل المشاكل في النظام:\n\n${candidates.length} أوردر · ${totalIssues} مشكلة\n\nيتم تطبيق الإصلاحات في batch ذرّي (مقسّمة على chunks of 400 لو لزم).\n\nهل تريد المتابعة؟`))return;
+  try{
+    const CHUNK=400;
+    let done=0;
+    for(let i=0;i<candidates.length;i+=CHUNK){
+      const slice=candidates.slice(i,i+CHUNK);
+      const batch=writeBatch(db);
+      slice.forEach(({o,issues})=>{
+        applyOrderHealPatch(batch,doc(db,'orders',o._id),o,issues,userName);
+      });
+      await batch.commit();
+      done+=slice.length;
+    }
+    toast(`✅ تم إصلاح ${totalIssues} مشكلة في ${done} أوردر · النظام نظيف الآن 🎉`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }
+};
+
 window.healCompany=async function(coName){
   const coOrds=allOrders.filter(o=>o.shipCompanyName===coName);
   const ordsWithIssues=coOrds.map(o=>({o,issues:detectOrderIssues(o)})).filter(x=>x.issues.length);
