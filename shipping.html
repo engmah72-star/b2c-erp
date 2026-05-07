@@ -887,7 +887,7 @@ import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, serverTimestamp, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState } from "./orders.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
@@ -1040,7 +1040,8 @@ window.deleteOrderFull=async function(){
           isReversal:true,reversesTxId:tx.id,
           date:new Date().toLocaleDateString('ar-EG'),
           createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-          createdAt:serverTimestamp()
+          createdAt:serverTimestamp(),
+          ...approvalFields()
         });
         const evt=isReversingIn?FE.CUSTOMER_REFUND:FE.GENERAL_EXPENSE_REVERSAL;
         addLedgerToBatch(batch,db,evt,{
@@ -2011,17 +2012,20 @@ window.saveShip=async function(){
     if(collectAmt>0&&wId){
       if(w) batch.update(doc(db,'wallets',wId),{balance:increment(collectAmt)});
       const colTxRef=doc(collection(db,'transactions_v2'));
-      batch.set(colTxRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const colTxRef=doc(collection(db,'transactions_v2'));
+      batch.set(colTxRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:collectAmt,description:`تحصيل شحن — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName,transferRef,balanceBefore:bb,balanceAfter:bb+collectAmt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
     }
     // 2. دين مؤجل
     if(colMode==='later'&&rem>0&&debtType!=='company'){
       const defRef=doc(collection(db,'transactions_v2'));
-      batch.set(defRef,{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName:shipCompanyName2,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const defRef=doc(collection(db,'transactions_v2'));
+      batch.set(defRef,{type:'deferred',amount:rem,description:`دين — ${o.clientName||''} — ${o.orderId||''}`,category:'deferred_collection',debtType,orderId:activeId,clientName:o.clientName,clientPhone:o.clientPhone,shipCompanyName:shipCompanyName2,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
     }
     // 3. تكلفة شحن (مرة واحدة فقط — عند أول تسجيل)
     if(isFirstShip&&shipCost2>0&&!(parseFloat(o.shipCost)>0)){
       const scRef=doc(collection(db,'transactions_v2'));
-      batch.set(scRef,{type:'out',amount:shipCost2,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName2||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const scRef=doc(collection(db,'transactions_v2'));
+      batch.set(scRef,{type:'out',amount:shipCost2,description:`تكلفة شحن — ${o.clientName||''} — ${shipCompanyName2||''}`,category:'shipping_cost',orderId:activeId,walletId:'',date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
     }
     // 4. تحديث الأوردر
     batch.update(doc(db,'orders',activeId),{
@@ -2149,7 +2153,8 @@ window.saveCollect=async function(){
     const batch=writeBatch(db);
     if(w)batch.update(doc(db,'wallets',wId),{balance:increment(amt)});
     const colRef=doc(collection(db,'transactions_v2'));
-    batch.set(colRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:amt,description:`تحصيل — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName||'',transferRef,balanceBefore:bb,balanceAfter:bb+amt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+    const colRef=doc(collection(db,'transactions_v2'));
+    batch.set(colRef,{walletId:wId,walletName:w?.name||wName,type:'in',amount:amt,description:`تحصيل — ${o.clientName||''} — ${o.orderId||''}`,category:'collection',orderId:activeId,clientName:o.clientName||'',transferRef,balanceBefore:bb,balanceAfter:bb+amt,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
     batch.update(doc(db,'orders',activeId),{
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
@@ -2246,6 +2251,7 @@ window.saveEmpEditCol=async function(){
       date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
       createdAt:serverTimestamp(),
       requiresReview:true,
+      ...approvalFields()
     });
     const newRem=Math.max(0,totalDue-newAmt);
     const auditEntry={
@@ -2716,13 +2722,15 @@ window.saveReturnWizard=async function(){
       if(settledAmt>0){
         if(settledWId) batch.update(doc(db,'wallets',settledWId),{balance:increment(-settledAmt)});
         const sRef=doc(collection(db,'transactions_v2'));
-        batch.set(sRef,{type:'out',amount:settledAmt,description:`↩️ عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,walletId:settledWId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+        const sRef=doc(collection(db,'transactions_v2'));
+        batch.set(sRef,{type:'out',amount:settledAmt,description:`↩️ عكس تسوية مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'settlement_reversal',orderId,clientName:o.clientName,shipCompanyName:coName,walletId:settledWId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
         addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{amount:settledAmt,walletId:settledWId,walletName:wallets.find(w=>w._id===settledWId)?.name||'',notes:`عكس تسوية مرتجع — ${o.clientName||''} — ${coName}`,orderId,clientId:o.clientId||'',clientName:o.clientName||'',userId:currentUser?.uid||'',userName});
       }
     }
     if(!isPartial&&depAmt>0){
       const dRef=doc(collection(db,'transactions_v2'));
-      batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const dRef=doc(collection(db,'transactions_v2'));
+      batch.set(dRef,{type:'out',amount:depAmt,description:`عكس عربون مرتجع — ${o.clientName||''} — ${o.orderId||''}`,category:'deposit_reversal',orderId,clientName:o.clientName,walletId:depWalletId,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
       if(depWalletId)batch.update(doc(db,'wallets',depWalletId),{balance:increment(-depAmt)});
     }
     // ─ عكس التحصيلات + التعديلات (type-aware عشان downward adjustments تتعكس صح)
@@ -2741,13 +2749,15 @@ window.saveReturnWizard=async function(){
           walletId:wid,walletName:d.walletName||'',
           isReversal:true,reversesTxId:tx.id,
           date:now,createdBy:currentUser?.uid||'',createdByName:userName,
-          createdAt:serverTimestamp()
+          createdAt:serverTimestamp(),
+          ...approvalFields()
         });
       }
     });
     if(cost>0){
       const cRef=doc(collection(db,'transactions_v2'));
-      batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp()});
+      const cRef=doc(collection(db,'transactions_v2'));
+      batch.set(cRef,{type:'out',amount:cost,description:`تكلفة مرتجع — ${o.clientName||''} — ${coName}`,category:'return_cost',orderId,clientName:o.clientName,date:now,createdBy:currentUser?.uid||'',createdByName:userName,createdAt:serverTimestamp(),...approvalFields()});
       addLedgerToBatch(batch,db,FE.RETURN_LOSS,{amount:cost,walletId:'',walletName:'',orderId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`تكلفة مرتجع — ${reasonLabel||''} — ${o.clientName||''}`,userId:currentUser?.uid||'',userName});
     }
     if(isPartial&&priceDeduction>0)addLedgerToBatch(batch,db,FE.RETURN_LOSS,{amount:priceDeduction,orderId,clientId:o.clientId||'',clientName:o.clientName||'',notes:`مرتجع جزئي — ${fullNote}`,userId:currentUser?.uid||'',userName});
