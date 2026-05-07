@@ -1218,6 +1218,15 @@ window.saveReturn=async function(){
           createdAt:serverTimestamp(),
           ...approvalFields()
         });
+        // FIX (RULE 5): كل reversal لازم ينعكس في financial_ledger كمان
+        // isIn=true يعني التحصيل الأصلي كان "in" (دخّل فلوس) → الـ reversal بيخرج فلوس → CUSTOMER_REFUND
+        // isIn=false يعني التحصيل الأصلي كان "out" (collection_adjustment سالب) → الـ reversal بيدخّل فلوس → CUSTOMER_PAYMENT
+        addLedgerToBatch(batch,db,isIn?FE.CUSTOMER_REFUND:FE.CUSTOMER_PAYMENT,{
+          amount:amt,walletId:wid,walletName:d.walletName||'',
+          orderId:ordId,clientName:o.clientName||'',
+          notes:`عكس ${d.category||'collection'} (مرتجع) — ${o.clientName||''} — ${returnCompanyName}`,
+          userId:currentUser.uid,userName:byName,
+        });
       }
     });
 
@@ -1248,6 +1257,15 @@ window.saveReturn=async function(){
 window.deleteSettle=async function(settleId,amount,walletId,coName){
   if(!confirm(`حذف تسوية ${fn(amount)} ج من ${coName}؟ سيتم عكس كل العمليات.`))return;
   try{
+    // FIX (RULE 1): اقرأ بيانات التسوية أولاً للـ guard ضد orderIds الفاسدة قبل أي كتابة
+    const settleSnap=await getDoc(doc(db,'shipping_settlements',settleId));
+    if(!settleSnap.exists()){toast('⛔ التسوية غير موجودة (محذوفة سابقاً؟)','err');return;}
+    const settleData=settleSnap.data();
+    const orderIds=Array.isArray(settleData.orderIds)?settleData.orderIds:[];
+    if(!orderIds.length){
+      // تسوية بدون orderIds = data corruption — منع الـ delete اللي هيخرج فلوس بدون عكس على أي أوردر
+      if(!confirm(`⚠️ تنبيه: التسوية ده ملهاش orderIds مرتبطة (data corruption?). الحذف هيرجّع ${fn(amount)} ج من المحفظة بدون أي عكس على أي أوردر. هل أنت متأكد؟`))return;
+    }
     // 1. خصم من المحفظة + تسجيل عملية عكسية
     const w=wallets.find(x=>x._id===walletId);
     const bb=parseFloat(w?.balance)||0;
@@ -1259,14 +1277,11 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
       description:`↩️ إلغاء تسوية شحن — ${coName}`,
       category:'shipping_settlement_reversal',
       companyName:coName,settleId,
+      orderIds,  // نسجّل الأوردرات المتأثرة في الـ tx الرئيسي
       balanceBefore:bb,balanceAfter:bb-amount,
       date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
       createdAt:serverTimestamp()
     });
-    // 2. جيب بيانات التسوية وارجع الأوردرات — كلها في نفس الـ batch
-    const settleSnap=await getDoc(doc(db,'shipping_settlements',settleId));
-    const settleData=settleSnap.exists()?settleSnap.data():{};
-    const orderIds=settleData.orderIds||[];
     const now=nowStr();
     for(const oid of orderIds){
       const o=allOrders.find(x=>x._id===oid);if(!o)continue;
@@ -1275,19 +1290,37 @@ window.deleteSettle=async function(settleId,amount,walletId,coName){
       const newPaid=Math.max(0,oldPaid-settled);
       const newRem=Math.max(0,FC.getNet(o)-newPaid);
       revBatch.update(doc(db,'orders',oid),{
-        shipSettled:false,shipSettledAmount:0,
+        shipSettled:false,shipSettledAmount:0,shipSettledManual:false,
         totalPaid:newPaid,remaining:newRem,
         paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
-        timeline:[...(o.timeline||[]),{date:now,action:`↩️ إلغاء تسوية شحن — ${coName}`,by:userName}],
+        timeline:[...(o.timeline||[]),{date:now,action:`↩️ إلغاء تسوية شحن — ${coName} (-${fn(settled)} ج)`,by:userName}],
         updatedAt:serverTimestamp()
       });
+      // FIX (RULE 5): ledger entry لكل أوردر — مش بس الـ aggregate
+      if(settled>0){
+        addLedgerToBatch(revBatch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
+          amount:settled,walletId,walletName:w?.name||'',
+          orderId:oid,clientName:o.clientName||'',
+          notes:`إلغاء تسوية لأوردر — ${o.clientName||''} — ${coName}`,
+          userId:currentUser?.uid||'',userName,
+        });
+      }
     }
     revBatch.delete(doc(db,'shipping_settlements',settleId));
-    addLedgerToBatch(revBatch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
-      amount,walletId,
-      notes:`إلغاء تسوية شحن — ${coName}`,
-      userId:currentUser?.uid||'',userName,
-    });
+    // الـ aggregate ledger (الإجمالي على المحفظة) — لو الفرق بين الإجمالي ومجموع الأوردرات
+    const orderSettledSum=orderIds.reduce((s,oid)=>{
+      const o=allOrders.find(x=>x._id===oid);
+      return s+(o?(parseFloat(o.shipSettledAmount)||0):0);
+    },0);
+    const diff=amount-orderSettledSum;
+    if(Math.abs(diff)>0.01){
+      // الفرق (مثلاً عمولة الشركة) — يتسجّل كـ ledger مستقل
+      addLedgerToBatch(revBatch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
+        amount:Math.abs(diff),walletId,walletName:w?.name||'',
+        notes:`إلغاء تسوية — فرق ${diff>0?'+':''}${fn(diff)} ج (عمولة/خصم) — ${coName}`,
+        userId:currentUser?.uid||'',userName,
+      });
+    }
     await revBatch.commit();
 
     toast('✅ تم إلغاء التسوية','ok');
@@ -1489,7 +1522,9 @@ window.markManualSettled=async function(orderId){
     const needsTotalPaidUpdate = paid+0.01 < totalDue;
     const newTotalPaid = needsTotalPaidUpdate ? totalDue : paid;
     const newRemaining = Math.max(0, totalDue - newTotalPaid);
-    await updateDoc(doc(db,'orders',orderId),{
+    // FIX (RULE 3): writeBatch بدل updateDoc — لمنع race conditions مع saveSettle المتزامنة
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',orderId),{
       shipSettled:true,
       shipSettledAmount:Math.max(totalDue,paid),  // best-effort: نسجل الـ due أو الـ paid أيهما أكبر
       shipSettledManual:true,
@@ -1508,6 +1543,7 @@ window.markManualSettled=async function(orderId){
       timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate?` · ضبط المحصّل ${fn(paid)} → ${fn(newTotalPaid)} ج`:''}`,by:userName}],
       updatedAt:serverTimestamp(),
     });
+    await batch.commit();
     toast(`✅ تم تسجيل التسوية اليدوية${needsTotalPaidUpdate?` · المحصّل اتضبط على ${fn(newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
   }catch(e){
     toast('❌ '+(e.message||e),'err');
