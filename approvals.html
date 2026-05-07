@@ -566,13 +566,167 @@ function renderOrderDetails(o, costOnly=false){
     </div>`;
 }
 
+// ══ تاريخ الكيان: كم دفعت له قبل كده + متى ══
+function entityHistory(r){
+  const hist = { count:0, total:0, recent:[] };
+  if(!allTxs?.length) return hist;
+  const matches = allTxs.filter(t => {
+    if(t._id === r.txId) return false; // استبعد الـtx الحالية
+    if(t.isReversal) return false;
+    if(r.type === 'supplier_payment' && r.supplierId)
+      return t.supplierId === r.supplierId && (t.type === 'out');
+    if(r.type === 'salary' && r.employeeId)
+      return t.employeeId === r.employeeId && t.category === 'salary';
+    if(r.type === 'client_refund' && r.clientId)
+      return t.clientId === r.clientId && t.category === 'refund';
+    return false;
+  });
+  hist.count = matches.length;
+  hist.total = matches.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  hist.recent = matches.slice(-5).reverse(); // آخر 5
+  return hist;
+}
+
+// ══ رصد المخاطر — تنبيهات للأدمن قبل الاعتماد ══
+function detectRisks(r){
+  const risks = [];
+  // مبلغ كبير
+  if(r.amount > 10000) risks.push({lvl:'high', txt:`💰 مبلغ كبير: ${fn(r.amount)} ج (> 10,000)`});
+  else if(r.amount > 5000) risks.push({lvl:'med', txt:`⚠️ مبلغ متوسط: ${fn(r.amount)} ج (> 5,000)`});
+  // طلبات مكررة بنفس المبلغ + المورد + اليوم
+  const today = new Date().toDateString();
+  const dupes = requests.filter(x => x._id !== r._id
+    && x.amount === r.amount
+    && x.supplierId === r.supplierId
+    && x.employeeId === r.employeeId
+    && x.requestedAt?.seconds && new Date(x.requestedAt.seconds*1000).toDateString() === today
+    && !['rejected'].includes(x.status));
+  if(dupes.length) risks.push({lvl:'high', txt:`🔁 طلب مماثل في نفس اليوم (×${dupes.length}) — تحقق من التكرار`});
+  // المورد رُفض له طلب مؤخراً
+  if(r.supplierId){
+    const recentRej = requests.filter(x => x.supplierId === r.supplierId && x.status === 'rejected'
+      && x.rejectedAt?.seconds && (Date.now() - x.rejectedAt.seconds*1000) < 7*24*60*60*1000);
+    if(recentRej.length) risks.push({lvl:'med', txt:`⚠️ هذا المورد رُفض له طلب آخر خلال 7 أيام`});
+  }
+  // الأوردر مؤرشف
+  if(r.orderId){
+    const o = ordersMap.get(r.orderId);
+    if(o && ['archived','cancelled'].includes(o.stage)) risks.push({lvl:'high', txt:`🚫 الأوردر ${o.stage==='archived'?'مؤرشَف':'ملغي'} — تحقق من السبب`});
+  }
+  // بند التكلفة مدفوع مسبقاً
+  if(r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId){
+    const o = ordersMap.get(r.orderId);
+    if(o?.costItems?.[r.costItemIndex]?.paid){
+      risks.push({lvl:'high', txt:`🔴 بند التكلفة المرتبط مدفوع بالفعل (paidTxId: ${o.costItems[r.costItemIndex].paidTxId?.slice(-8)||'—'})`});
+    }
+  }
+  return risks;
+}
+
 function renderRequestCard(r){
   const typeLbl = REQ_TYPE_LBL[r.type] || r.type;
-  const beneficiary = r.supplierName || r.employeeName || r.reason || '—';
+  const beneficiary = r.supplierName || r.employeeName || r.clientName || r.reason || '—';
   const order = r.orderId ? ordersMap.get(r.orderId) : null;
   const stCls = 'st-' + r.status;
   const stLbl = {requested:'💸 بانتظار التنفيذ', awaiting_receipt:'📥 بانتظار استلام إيصال', pending:'⏳ بانتظار التأكيد', confirmed:'🔵 بانتظار الاعتماد', approved:'🔒 معتمدة ومؤرشَفة', rejected:'❌ مرفوضة'}[r.status] || r.status;
 
+  // الأقسام
+  // 1. القسم: من طلب
+  const requesterRoleLbl = ROLE_LABELS[r.requesterRole] || r.requesterRole || '';
+  const sectionRequester = `
+    <div style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.18);border-radius:8px;padding:10px 12px;margin-top:10px">
+      <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">👤 الطالب</div>
+      <div style="font-size:12px"><b>${escapeHtml(r.requestedByName||'—')}</b>${requesterRoleLbl?` <span style="color:var(--dim2);font-size:10px">(${escapeHtml(requesterRoleLbl)})</span>`:''}</div>
+      <div style="font-size:11px;color:var(--dim2);margin-top:2px">⏱ ${fmtDate(r.requestedAt)}</div>
+      <div style="font-size:11px;color:var(--snow);margin-top:4px;padding-top:4px;border-top:1px dashed var(--line)">السبب: ${escapeHtml(r.reason||'—')}</div>
+    </div>`;
+
+  // 2. القسم: التنفيذ
+  let sectionExec = '';
+  if(r.executedByName){
+    const wState = r.txId ? (allTxs.find(t=>t._id===r.txId)) : null;
+    const ws = wState ? computeWalletState(wState) : null;
+    sectionExec = `
+      <div style="background:rgba(59,158,255,.05);border:1px solid rgba(59,158,255,.2);border-radius:8px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">💸 التنفيذ</div>
+        <div style="font-size:12px"><b>${escapeHtml(r.executedByName)}</b> — <span style="color:var(--dim2)">${fmtDate(r.executedAt)}</span></div>
+        <div style="font-size:11px;color:var(--dim);margin-top:4px">📤 المحفظة: <b>${escapeHtml(r.sourceWalletName||'—')}</b>${ws?` <span style="color:var(--dim2)">(${fn(ws.before)} → ${fn(ws.after)} ج)</span>`:''}</div>
+        ${r.transferRef?`<div style="font-size:11px;margin-top:2px">📋 رقم التحويل: <b style="font-family:monospace;color:#a78bfa">${escapeHtml(r.transferRef)}</b></div>`:''}
+        ${r.executeNote?`<div style="font-size:10px;color:var(--dim2);margin-top:2px">ملاحظة: ${escapeHtml(r.executeNote)}</div>`:''}
+      </div>`;
+  }
+
+  // 3. القسم: الاستلام + الإيصال
+  let sectionReceipt = '';
+  if(r.receivedByName){
+    sectionReceipt = `
+      <div style="background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.2);border-radius:8px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">📥 الاستلام بالإيصال</div>
+        <div style="font-size:12px"><b>${escapeHtml(r.receivedByName)}</b> — <span style="color:var(--dim2)">${fmtDate(r.receivedAt)}</span></div>
+        ${r.receiptImageUrl?`<div style="margin-top:8px"><a href="${escapeHtml(r.receiptImageUrl)}" target="_blank" title="اضغط للتكبير"><img src="${escapeHtml(r.receiptImageUrl)}" class="receipt-img"></a></div>`:'<div style="font-size:11px;color:#ffaa00;margin-top:4px">⚠️ بدون صورة إيصال</div>'}
+      </div>`;
+  }
+
+  // 4. القسم: المورد/الموظف/العميل + التاريخ
+  let sectionEntity = '';
+  const hist = entityHistory(r);
+  if(r.supplierId || r.employeeId || r.clientId){
+    const entityType = r.supplierId ? '🏭 المورد' : r.employeeId ? '👤 الموظف' : '👥 العميل';
+    const entityName = beneficiary;
+    sectionEntity = `
+      <div style="background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:8px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">${entityType}</div>
+        <div style="font-size:12px"><b>${escapeHtml(entityName)}</b>${r.supplierType?` <span style="color:var(--dim2);font-size:10px">(${r.supplierType==='shipper'?'شركة شحن':'مطبعة/مورد'})</span>`:''}</div>
+        ${r.salaryType?`<div style="font-size:11px;color:var(--dim);margin-top:2px">نوع: <b>${escapeHtml(r.salaryType)}</b>${r.salaryMonth?` · شهر: <b>${escapeHtml(r.salaryMonth)}</b>`:''}</div>`:''}
+        <div style="font-size:11px;color:var(--dim);margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)">
+          📊 سجل الدفعات السابقة:
+          <b style="color:${hist.count>5?'#ffaa00':'var(--snow)'}">${hist.count} دفعة</b> · <b style="color:#ffaa00">${fn(hist.total)} ج</b>
+        </div>
+        ${hist.recent.length?`<div style="font-size:10px;color:var(--dim2);margin-top:4px">آخرها: ${hist.recent.slice(0,3).map(t=>`${fn(t.amount)} ج (${t.date||'—'})`).join(' · ')}</div>`:''}
+      </div>`;
+  }
+
+  // 5. القسم: الأوردر مع بنود التكلفة
+  let sectionOrder = '';
+  if(order){
+    const totalCost = (order.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const paidCost = (order.costItems||[]).filter(c=>c.paid).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const items = (order.costItems||[]).map((c,idx)=>{
+      const isHighlight = r.costItemIndex === idx;
+      return `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;${isHighlight?'background:rgba(167,139,250,.15);padding:4px 6px;border-radius:4px;margin:2px 0':''}">
+        <span>${isHighlight?'<b style="color:#a78bfa">⬅ هذا الطلب يخص:</b> ':''}${escapeHtml(c.type||'بند')}${c.supplierName?' — '+escapeHtml(c.supplierName):''}</span>
+        <span>${fn(c.total||0)} ج ${c.paid?'<span style="color:#00d97e;font-weight:800">✓ مدفوع</span>':'<span style="color:#ffaa00">⏳ غير مدفوع</span>'}</span>
+      </div>`;
+    }).join('');
+    sectionOrder = `
+      <div style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.18);border-radius:8px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">📦 الأوردر المرتبط</div>
+        <div style="font-size:12px"><b style="font-family:monospace">${escapeHtml(order.orderId||order._id.slice(-8))}</b> — ${escapeHtml(order.clientName||'')}${order.clientPhone?` · <span style="color:var(--dim2);font-family:monospace">${escapeHtml(order.clientPhone)}</span>`:''}</div>
+        <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:10px">
+          <span style="background:${STAGE_COL[order.stage]||'#888'}22;color:${STAGE_COL[order.stage]||'#888'};padding:2px 8px;border-radius:8px;font-weight:800">${STAGE_AR[order.stage]||order.stage}</span>
+          <span style="color:var(--dim2)">السعر: <b style="color:var(--snow)">${fn(order.salePrice||0)}</b></span>
+          <span style="color:var(--dim2)">المدفوع: <b style="color:#00d97e">${fn(order.totalPaid||order.paid||order.deposit||0)}</b></span>
+        </div>
+        ${(order.costItems||[]).length?`
+          <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">
+            <div style="font-size:10px;color:var(--dim2);margin-bottom:4px">بنود التكلفة (${(order.costItems||[]).length} بند · مدفوع ${fn(paidCost)}/${fn(totalCost)} ج):</div>
+            ${items}
+          </div>`:'<div style="font-size:10px;color:var(--dim2);margin-top:4px">لا توجد بنود تكلفة</div>'}
+      </div>`;
+  }
+
+  // 6. القسم: تنبيهات المخاطر
+  const risks = detectRisks(r);
+  let sectionRisks = '';
+  if(risks.length){
+    sectionRisks = `
+      <div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.3);border-radius:8px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:10px;color:#ff3d6e;font-weight:800;margin-bottom:6px">⚠️ تنبيهات (${risks.length})</div>
+        ${risks.map(rsk=>`<div style="font-size:11px;color:${rsk.lvl==='high'?'#ff3d6e':'#ffaa00'};margin-top:2px">${rsk.txt}</div>`).join('')}
+      </div>`;
+  }
+
+  // الأزرار حسب الدور والمرحلة
   let actions = '';
   if(r.status === 'requested' && canExecute()){
     actions = `<button class="btn-execute" onclick="openExecuteModal('${r._id}')">💸 تنفيذ</button>
@@ -583,35 +737,22 @@ function renderRequestCard(r){
     actions = `<div style="font-size:11px;color:var(--dim2);padding:8px">⏳ بانتظار رفع الإيصال من ${escapeHtml(r.requestedByName||'الطالب')}</div>`;
   }
 
-  let trail = '';
-  trail += `<span>📝 طلب: <b>${escapeHtml(r.requestedByName||'—')}</b> · ${fmtDate(r.requestedAt)}</span>`;
-  if(r.executedByName)  trail += `<span>💸 نفّذ: <b>${escapeHtml(r.executedByName)}</b> · ${fmtDate(r.executedAt)}</span>`;
-  if(r.receivedByName)  trail += `<span>📥 استلم: <b>${escapeHtml(r.receivedByName)}</b> · ${fmtDate(r.receivedAt)}</span>`;
-  if(r.rejectedByName)  trail += `<span style="color:#ff3d6e">❌ رفض: <b>${escapeHtml(r.rejectedByName)}</b>${r.rejectReason?' · '+escapeHtml(r.rejectReason):''}</span>`;
-
-  const receiptImg = r.receiptImageUrl ? `<div style="margin-top:8px"><div style="font-size:10px;color:var(--dim2);margin-bottom:4px">📎 إيصال:</div><a href="${escapeHtml(r.receiptImageUrl)}" target="_blank"><img src="${escapeHtml(r.receiptImageUrl)}" class="receipt-img"></a></div>` : '';
-
   return `
     <div class="approval-card">
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
           <div class="ac-title">${typeLbl} — ${escapeHtml(beneficiary)}</div>
-          <div class="ac-meta">${escapeHtml(r.reason || '—')}</div>
           <div class="ac-status ${stCls}">${stLbl}</div>
         </div>
         <div class="ac-amount out">− ${fn(r.amount)} ج</div>
       </div>
-      <div class="ac-body">
-        ${r.supplierName?`<div class="ac-field">المورد <b>${escapeHtml(r.supplierName)}</b></div>`:''}
-        ${r.employeeName?`<div class="ac-field">الموظف <b>${escapeHtml(r.employeeName)}</b></div>`:''}
-        ${r.salaryType?`<div class="ac-field">نوع المرتب <b>${escapeHtml(r.salaryType)}</b></div>`:''}
-        ${r.salaryMonth?`<div class="ac-field">الشهر <b>${escapeHtml(r.salaryMonth)}</b></div>`:''}
-        ${r.sourceWalletName?`<div class="ac-field">المحفظة المصدر <b>${escapeHtml(r.sourceWalletName)}</b></div>`:''}
-        ${r.transferRef?`<div class="ac-field">رقم التحويل <b style="font-family:monospace;color:#a78bfa">${escapeHtml(r.transferRef)}</b></div>`:''}
-      </div>
-      ${order ? renderOrderDetails(order, true) : ''}
-      ${receiptImg}
-      <div class="ac-trail">${trail}</div>
+      ${sectionRisks}
+      ${sectionRequester}
+      ${sectionExec}
+      ${sectionReceipt}
+      ${sectionEntity}
+      ${sectionOrder}
+      ${r.rejectedByName?`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.3);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:11px;color:#ff3d6e">❌ <b>رفض من ${escapeHtml(r.rejectedByName)}</b> · ${fmtDate(r.rejectedAt)}${r.rejectReason?' · '+escapeHtml(r.rejectReason):''}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
   `;
