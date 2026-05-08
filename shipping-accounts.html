@@ -296,8 +296,35 @@
       <!-- اختيار الأوردر -->
       <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">① اختر الأوردر المُرجَّع</div>
       <div id="return-orders" style="max-height:180px;overflow-y:auto;margin-bottom:14px"></div>
+
+      <!-- نوع المرتجع -->
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">② نوع المرتجع *</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px">
+        <div class="sa-btn active" id="rt-full" onclick="setReturnType('full')">
+          <div class="sa-btn-ico">📦</div><div class="sa-btn-lbl">كامل (كل الأوردر)</div>
+        </div>
+        <div class="sa-btn" id="rt-partial" onclick="setReturnType('partial')">
+          <div class="sa-btn-ico">📋</div><div class="sa-btn-lbl">جزئي (بعض المنتجات)</div>
+        </div>
+      </div>
+      <input type="hidden" id="ret-type" value="full">
+
+      <!-- عناصر المرتجع الجزئي (مخفي افتراضياً) -->
+      <div id="partial-items-wrap" style="display:none;background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">حدد المنتجات المُرجَعة + الكمية</div>
+        <div id="partial-items" style="display:flex;flex-direction:column;gap:6px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">
+          <span style="font-size:11px;color:var(--dim2);font-weight:700">إجمالي المرتجع:</span>
+          <span id="partial-total" style="font-size:16px;font-weight:900;color:var(--r)">0 ج</span>
+        </div>
+        <div class="fg" style="margin-top:10px;margin-bottom:0">
+          <label style="font-size:10px;color:var(--dim2)">📌 المحفظة لاسترداد المبلغ للعميل (اختياري)</label>
+          <select class="inp" id="partial-wallet" style="font-size:12px"></select>
+        </div>
+      </div>
+
       <!-- سبب المرتجع -->
-      <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--snow)">② سبب المرتجع *</div>
+      <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--snow)">③ سبب المرتجع *</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:14px">
         <div class="sa-btn" id="sacc-r-rejected" onclick="setAccReason('rejected','رفض الاستلام')">
           <div class="sa-btn-ico">🚫</div><div class="sa-btn-lbl">رفض الاستلام</div>
@@ -321,7 +348,7 @@
       <input type="hidden" id="ret-reason-key">
       <input type="hidden" id="ret-reason-label">
       <!-- مَن يتحمل -->
-      <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--snow)">③ من يتحمل الخسارة *</div>
+      <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--snow)">④ من يتحمل الخسارة *</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:14px">
         <div class="sa-btn" id="sacc-l-client" onclick="setAccLoss('client')">
           <div class="sa-btn-ico">👤</div><div class="sa-btn-lbl">العميل</div>
@@ -1081,9 +1108,76 @@ window.openReturn=function(coName){
   // reset
   sv('return-cost','');sv('return-note','');
   sv('ret-reason-key','');sv('ret-reason-label','');sv('ret-loss-party','');
+  sv('ret-type','full');
   document.querySelectorAll('[id^="sacc-r-"]').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('[id^="sacc-l-"]').forEach(b=>b.classList.remove('active'));
+  document.getElementById('rt-full')?.classList.add('active');
+  document.getElementById('rt-partial')?.classList.remove('active');
+  document.getElementById('partial-items-wrap').style.display='none';
+  document.getElementById('partial-items').innerHTML='';
+  // populate wallet selector for partial-refund
+  const pwSel=document.getElementById('partial-wallet');
+  if(pwSel){
+    pwSel.innerHTML='<option value="">— لا يوجد استرداد فلوس —</option>'+
+      wallets.map(w=>`<option value="${w._id}">${w.name||'محفظة'} (${fn(w.balance||0)} ج)</option>`).join('');
+  }
+  // إعادة بناء قائمة الأوردرات لاستجابة click
+  setTimeout(()=>{
+    document.querySelectorAll('input[name="return-order"]').forEach(r=>{
+      r.addEventListener('change',()=>{
+        if(gv('ret-type')==='partial')renderPartialItems(r.value);
+      });
+    });
+  },50);
   document.getElementById('ov-return').classList.add('open');
+};
+
+window.setReturnType=function(type){
+  sv('ret-type',type);
+  document.getElementById('rt-full')?.classList.toggle('active',type==='full');
+  document.getElementById('rt-partial')?.classList.toggle('active',type==='partial');
+  document.getElementById('partial-items-wrap').style.display=type==='partial'?'block':'none';
+  if(type==='partial'){
+    const oid=document.querySelector('input[name="return-order"]:checked')?.value;
+    if(oid)renderPartialItems(oid);
+    else document.getElementById('partial-items').innerHTML='<div style="font-size:11px;color:var(--dim2);text-align:center;padding:8px">اختر الأوردر أولاً</div>';
+  }
+};
+
+window.renderPartialItems=function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);
+  const wrap=document.getElementById('partial-items');
+  if(!o||!wrap)return;
+  const prods=Array.isArray(o.products)?o.products:[];
+  if(!prods.length){
+    wrap.innerHTML='<div style="font-size:11px;color:var(--y);text-align:center;padding:10px;background:rgba(255,170,0,.08);border-radius:6px">⚠️ هذا الأوردر مش عنده تفاصيل منتجات. استخدم "كامل" بدل "جزئي".</div>';
+    return;
+  }
+  wrap.innerHTML=prods.map((p,i)=>{
+    const maxQty=parseInt(p.qty)||1;
+    const unitPrice=parseFloat(p.unitPrice)||0;
+    return `<div class="partial-item-row" data-idx="${i}" data-unit="${unitPrice}" data-maxqty="${maxQty}" style="display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+      <input type="checkbox" class="part-cb" onchange="updatePartialTotal()" style="width:16px;height:16px;flex-shrink:0">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:800">${escHtml(p.name||'منتج')}</div>
+        <div style="font-size:10px;color:var(--dim2)">${fn(unitPrice)} ج × ${maxQty} = ${fn(unitPrice*maxQty)} ج</div>
+      </div>
+      <input type="number" class="part-qty" min="1" max="${maxQty}" value="${maxQty}" oninput="updatePartialTotal()" style="width:55px;padding:5px 6px;border-radius:6px;border:1px solid var(--line);background:var(--bg3);color:var(--snow);font-size:13px;text-align:center;font-family:inherit;font-weight:800">
+    </div>`;
+  }).join('');
+  updatePartialTotal();
+};
+
+window.updatePartialTotal=function(){
+  let total=0;
+  document.querySelectorAll('.partial-item-row').forEach(row=>{
+    const cb=row.querySelector('.part-cb');
+    if(!cb?.checked)return;
+    const qty=Math.min(parseInt(row.querySelector('.part-qty')?.value)||0, parseInt(row.dataset.maxqty)||1);
+    const unit=parseFloat(row.dataset.unit)||0;
+    total+=unit*qty;
+  });
+  setText('partial-total',fn(total)+' ج');
 };
 
 window.setAccReason=function(key,label){
@@ -1108,7 +1202,12 @@ window.saveReturn=async function(){
   if(!lossParty)return toast('⚠️ حدد من يتحمل الخسارة','err');
   const cost=parseFloat(gv('return-cost'))||0;
   const note=gv('return-note');
+  const returnType=gv('ret-type')||'full';
   const o=allOrders.find(x=>x._id===ordId);if(!o)return;
+  // ── PARTIAL RETURN BRANCH ──
+  if(returnType==='partial'){
+    return await savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note);
+  }
   try{
     const now=nowStr();
     const byName=document.getElementById('nav-name')?.textContent||userName||'';
@@ -1259,6 +1358,147 @@ window.saveReturn=async function(){
     toast('✅ تم تسجيل المرتجع','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
+
+// ══ savePartialReturn ══
+// مرتجع جزئي بمستوى المنتج: العميل بيرجّع بعض الكمية، باقي الأوردر شغال
+async function savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note){
+  const rows=Array.from(document.querySelectorAll('.partial-item-row'));
+  const selected=rows.filter(r=>r.querySelector('.part-cb')?.checked);
+  if(!selected.length)return toast('⚠️ اختر منتج واحد على الأقل للمرتجع الجزئي','err');
+  const prods=Array.isArray(o.products)?[...o.products.map(p=>({...p}))]:[];
+  if(!prods.length)return toast('⚠️ هذا الأوردر مش عنده تفاصيل منتجات — استخدم "كامل"','err');
+
+  // اقرأ المنتجات المُختارة + احسب refundAmount
+  const returnedItems=[];
+  let refundAmount=0;
+  for(const row of selected){
+    const idx=parseInt(row.dataset.idx);
+    const maxQty=parseInt(row.dataset.maxqty)||1;
+    const qty=Math.min(parseInt(row.querySelector('.part-qty')?.value)||0, maxQty);
+    if(qty<=0||idx<0||idx>=prods.length)continue;
+    const p=prods[idx];
+    const unit=parseFloat(row.dataset.unit)||0;
+    const lineTotal=unit*qty;
+    refundAmount+=lineTotal;
+    returnedItems.push({
+      prodIdx:idx, name:p.name||'منتج',
+      productId:p.productId||'', unitPrice:unit, returnedQty:qty,
+      lineTotal,
+    });
+    // اخفض الكمية في products
+    p.qty=Math.max(0, (parseInt(p.qty)||0) - qty);
+  }
+  if(refundAmount<=0)return toast('⚠️ مبلغ المرتجع = 0','err');
+
+  // remove items with qty=0
+  const newProducts=prods.filter(p=>(parseInt(p.qty)||0)>0);
+
+  // حسابات الأوردر بعد المرتجع
+  const oldSale=parseFloat(o.salePrice)||0;
+  const newSale=Math.max(0, oldSale - refundAmount);
+  const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+  const refundFromWallet=Math.min(refundAmount, oldPaid);  // مش هنرجّع أكتر من اللي حصلناه
+  const newPaid=Math.max(0, oldPaid - refundFromWallet);
+  const newCustFee=parseFloat(o.customerShipFee)||0;
+  const newDisc=parseFloat(o.discount)||0;
+  const newTotal=newSale+newCustFee-newDisc;
+  const newRem=Math.max(0, newTotal - newPaid);
+
+  // wallet للاسترداد (لو في refundFromWallet > 0)
+  const refWalletId=gv('partial-wallet');
+  if(refundFromWallet>0 && !refWalletId){
+    return toast(`⚠️ يجب اختيار محفظة لاسترداد ${fn(refundFromWallet)} ج للعميل`,'err');
+  }
+  const refW=refWalletId?wallets.find(x=>x._id===refWalletId):null;
+  const refBb=parseFloat(refW?.balance)||0;
+
+  if(!confirm(`↩️ مرتجع جزئي:\n\n• ${returnedItems.length} منتج (${returnedItems.reduce((s,i)=>s+i.returnedQty,0)} قطعة)\n• إجمالي المرتجع: ${fn(refundAmount)} ج\n• استرداد من المحفظة: ${fn(refundFromWallet)} ج${refW?` (${refW.name})`:''}\n• الأوردر يفضل نشط بـ ${newProducts.length} منتج · إجمالي ${fn(newSale)} ج\n\nمتابعة؟`))return;
+
+  try{
+    const now=nowStr();
+    const byName=document.getElementById('nav-name')?.textContent||userName||'';
+    const batch=writeBatch(db);
+
+    // 1. shipping_returns
+    const retRef=doc(collection(db,'shipping_returns'));
+    const fullNote=[reasonLabel,note].filter(Boolean).join(' — ');
+    batch.set(retRef,{
+      orderId:ordId,companyName:o.shipCompanyName||returnCompanyName||'',
+      clientName:o.clientName||'',cost,note:fullNote,
+      reason,reasonLabel,lossParty,
+      returnType:'partial',
+      returnedItems,
+      refundAmount,refundFromWallet,
+      walletId:refWalletId||'',
+      status:'returned',date:now,
+      createdBy:currentUser.uid,createdByName:byName,
+      createdAt:serverTimestamp()
+    });
+
+    // 2. تحديث الأوردر — يفضل نشط (مش shipStage='returned')
+    const lossLabel=lossParty==='client'?'العميل':lossParty==='company'?'الشركة':'شركة الشحن';
+    batch.update(doc(db,'orders',ordId),{
+      products:newProducts,
+      salePrice:newSale,
+      totalPaid:newPaid,
+      remaining:newRem,
+      paymentStatus:newRem<=0?(newPaid>0?'paid':'pending'):newPaid>0?'partial':'pending',
+      timeline:[...(o.timeline||[]),{
+        date:now,
+        action:`↩️ مرتجع جزئي (${returnedItems.length} منتج · ${fn(refundAmount)} ج) — ${reasonLabel} — ${lossLabel}${note?' — '+note:''}`,
+        by:byName,
+      }],
+      updatedAt:serverTimestamp(),
+    });
+
+    // 3. wallet refund (لو في فلوس استرداد)
+    if(refundFromWallet>0 && refW){
+      batch.update(doc(db,'wallets',refWalletId),{balance:increment(-refundFromWallet)});
+      batch.set(doc(collection(db,'transactions_v2')),{
+        walletId:refWalletId,walletName:refW.name||'',
+        type:'out',amount:refundFromWallet,
+        description:`↩️ استرداد مرتجع جزئي — ${o.clientName||''} — ${o.orderId||''}`,
+        category:'partial_return_refund',
+        orderId:ordId,clientName:o.clientName||'',
+        balanceBefore:refBb,balanceAfter:refBb-refundFromWallet,
+        date:now,createdBy:currentUser.uid,createdByName:byName,
+        createdAt:serverTimestamp(),
+        ...approvalFields()
+      });
+      addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
+        amount:refundFromWallet,
+        walletId:refWalletId,walletName:refW.name||'',
+        orderId:ordId,clientId:o.clientId||'',clientName:o.clientName||'',
+        notes:`استرداد مرتجع جزئي — ${returnedItems.length} منتج (${fn(refundAmount)} ج)`,
+        userId:currentUser.uid,userName:byName,
+      });
+    }
+
+    // 4. لو في تكلفة شحن مرتجع (مش متعلقة بالـ refund للعميل)
+    if(cost>0){
+      batch.set(doc(collection(db,'transactions_v2')),{
+        type:'out',amount:cost,
+        description:`تكلفة مرتجع جزئي — ${o.clientName||''}`,
+        category:'partial_return_cost',orderId:ordId,clientName:o.clientName||'',
+        date:now,createdBy:currentUser.uid,createdByName:byName,
+        createdAt:serverTimestamp()
+      });
+      addLedgerToBatch(batch,db,FE.RETURN_LOSS,{
+        amount:cost,walletId:'',walletName:'',
+        orderId:ordId,clientName:o.clientName||'',
+        notes:`تكلفة مرتجع جزئي — ${returnedItems.length} منتج`,
+        userId:currentUser.uid,userName:byName,
+      });
+    }
+
+    await batch.commit();
+    document.getElementById('ov-return').classList.remove('open');
+    toast(`✅ مرتجع جزئي تم: ${returnedItems.length} منتج · ${fn(refundAmount)} ج${refundFromWallet>0?' (استرداد '+fn(refundFromWallet)+' ج)':''}`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }
+}
 
 // ══ deleteSettle ══
 window.deleteSettle=async function(settleId,amount,walletId,coName){
