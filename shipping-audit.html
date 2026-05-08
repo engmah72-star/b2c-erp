@@ -181,6 +181,7 @@ const escHtml=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,getDoc,getDocs,writeBatch,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -512,6 +513,18 @@ window.rebuildShipping=async function(){
           }],
           updatedAt:serverTimestamp(),
         });
+        // FIX (RULE 5): كل أوردر بياخد ledger entry — audit trail كامل للـ rebuild action
+        // amount = total لأن الأوردر بقى محصّل بالكامل، walletId='' لأن المال لم يمر بالـ wallet
+        if(total>0){
+          addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
+            amount:total,
+            walletId:'',walletName:'',
+            orderId:o._id,clientId:o.clientId||'',clientName:o.clientName||'',
+            vendorId:'',vendorName:o.shipCompanyName||'',
+            notes:`📁 إعادة بناء: ${o.clientName||''} — ${isCo?'شركة '+(o.shipCompanyName||''):'مباشر'} (admin: ${userName||'admin'})`,
+            userId:currentUser?.uid||'',userName:userName||'admin',
+          });
+        }
       });
       await batch.commit();
       done+=slice.length;
