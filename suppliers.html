@@ -113,6 +113,8 @@
       <div id="pn-balance"></div>
       <button class="btn btn-g btn-sm" style="margin-top:10px;width:100%" onclick="openPay()">💳 تسجيل دفعة</button>
     </div>
+    <!-- طلبات التوريد الرسمية -->
+    <div class="psec" id="pn-so-sec"><div class="psec-title">🗒️ طلبات التوريد</div><div id="pn-so-list"><div style="font-size:12px;color:var(--dim2)">جاري التحميل...</div></div></div>
     <!-- الأوردرات المرتبطة -->
     <div class="psec"><div class="psec-title">📦 الأوردرات المرتبطة</div><div id="pn-orders"></div></div>
     <!-- سجل المدفوعات -->
@@ -853,7 +855,47 @@ function renderPanelContent(sup){
         <button onclick="delPay('${p._id}',${p.amount},'${p.walletId||''}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:12px">✕</button>
       </div>
     </div>`).join('')||'<div style="color:var(--dim2);font-size:12px">لا توجد مدفوعات</div>';
+  loadSupplierOrders(sup._id);
 }
+
+async function loadSupplierOrders(supId){
+  const el=document.getElementById('pn-so-list');if(!el)return;
+  const SO_STATUS={pending:'⏳ بانتظار التنفيذ',confirmed:'✅ مؤكد',delivered:'📦 تم الاستلام',invoiced:'🧾 فاتورة'};
+  const DEL_STATUS={awaiting:'⏳ لم يُستلَم',partial:'📦 جزئي',received:'✅ مُستلَم'};
+  try{
+    const q=query(collection(db,'supplier_orders'),where('supplierId','==',supId),where('isDeleted','==',false));
+    const snap=await getDocs(q);
+    const items=[];snap.forEach(d=>items.push({_id:d.id,...d.data()}));
+    items.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    if(!items.length){el.innerHTML='<div style="font-size:12px;color:var(--dim2)">لا توجد طلبات توريد — أضف بنوداً خارجية من صفحة التنفيذ</div>';return;}
+    el.innerHTML=items.map(so=>`
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:800">${so.type||'—'} <span style="font-size:10px;padding:2px 6px;border-radius:10px;background:rgba(255,193,7,.12);color:var(--y);font-weight:700">${SO_STATUS[so.status]||so.status}</span></div>
+            <div style="font-size:11px;color:var(--dim2);margin-top:2px">أوردر ${so.orderRef||so.orderId?.slice(-6)||'—'} · ${so.clientName||'—'}</div>
+            ${so.note?`<div style="font-size:11px;color:var(--dim2);margin-top:3px">${so.note}</div>`:''}
+          </div>
+          <div style="font-size:16px;font-weight:900;color:var(--snow);margin-right:8px">${fn(so.total)} ج</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+          <span style="font-size:10px;padding:3px 8px;border-radius:8px;font-weight:700;background:${so.deliveryStatus==='received'?'rgba(0,217,126,.12)':so.deliveryStatus==='partial'?'rgba(255,193,7,.12)':'var(--bg3)'};color:${so.deliveryStatus==='received'?'var(--g)':so.deliveryStatus==='partial'?'var(--y)':'var(--dim2)'}">
+            ${DEL_STATUS[so.deliveryStatus]||so.deliveryStatus}
+          </span>
+          ${so.deliveryStatus!=='received'?`<button onclick="confirmDelivery('${so._id}')" style="padding:5px 10px;border-radius:8px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.08);color:var(--g);font-size:11px;font-weight:800;cursor:pointer">✓ استلمنا</button>`:''}
+        </div>
+      </div>`).join('');
+  }catch(e){el.innerHTML=`<div style="font-size:12px;color:var(--r)">❌ ${e.message}</div>`;}
+}
+
+window.confirmDelivery=async function(soId){
+  if(!confirm('تأكيد استلام هذا البند من المورد؟'))return;
+  try{
+    await updateDoc(doc(db,'supplier_orders',soId),{deliveryStatus:'received',receivedAt:serverTimestamp(),receivedBy:auth.currentUser?.uid||''});
+    toast('✅ تم تسجيل الاستلام','ok');
+    if(activeSup)loadSupplierOrders(activeSup._id);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ إضافة/تعديل ══
 // ── Contact Picker ──
