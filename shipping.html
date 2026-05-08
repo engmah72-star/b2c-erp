@@ -2162,6 +2162,8 @@ window.openCollect=function(){
   if(o.paymentStatus==='returned'||o.shipStage==='returned')return toast('⛔ الأوردر مرتجع','err');
   if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف','err');
   if(o.shipSettled)return toast('⛔ الأوردر مسوّى مع شركة الشحن — ألغي التسوية أولاً قبل أي تحصيل','err');
+  // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط — العميل لا يدفع لنا مباشرة
+  if(o.shipMethod==='company')return toast('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط — العميل يدفع للشركة، والشركة تسلّمنا','err');
   const rem=calcRem(o);
   if(rem<=0)return toast('✅ المبلغ محصّل بالكامل — لا يوجد متبقي','ok');
   // ملخص الأوردر
@@ -2216,6 +2218,8 @@ window.saveCollect=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const editErr=checkOrderEditable(o);if(editErr)return toast(editErr,'err');
   if(o.shipSettled)return toast('⛔ الأوردر مسوّى مع شركة الشحن — ألغي التسوية أولاً قبل أي تحصيل','err');
+  // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط — العميل لا يدفع لنا مباشرة
+  if(o.shipMethod==='company')return toast('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط','err');
   const rem=calcRem(o);
   if(amt>rem+0.01)return toast(`⚠️ المبلغ (${fn(amt)} ج) أكبر من المتبقي (${fn(rem)} ج)`,'err');
   const newPaid=(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)+amt;
@@ -2225,12 +2229,8 @@ window.saveCollect=async function(){
   const bb=parseFloat(w?.balance)||0;
   const transferRef=gv('col-ref');
   const curSS=o.shipStage||'ready';
-  // ─ انتقال تلقائي لـ collected إذا اكتمل التحصيل وكانت الحالة تسمح
+  // ─ انتقال تلقائي لـ collected إذا اكتمل التحصيل وكانت الحالة تسمح (لأوردرات pickup/courier فقط)
   const autoCollected=newRem<=0&&(ALLOWED_NEXT[curSS]||[]).includes('collected');
-  // ─ Bypass الشركة: لو شحنة شركة + التحصيل اكتمل من العميل مباشرة → الشركة بقت بدون مديونية
-  // (السيستم لازم يفهم ده تلقائياً عشان متظهرش في "حسابات الشحن" كأن الشركة لسه عليها فلوس)
-  const isCo=o.shipMethod==='company';
-  const bypassCo=isCo && newRem<=0 && !o.shipSettled;
   const btn=document.getElementById('btn-save-collect');if(btn){btn.disabled=true;btn.textContent='...';}
   try{
     const batch=writeBatch(db);
@@ -2241,16 +2241,7 @@ window.saveCollect=async function(){
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       ...(autoCollected?{shipStage:'collected'}:{}),
-      ...(bypassCo?{
-        shipSettled:true,
-        shipSettledAmount:0,  // الشركة جابتلنا 0 — العميل دفع لنا مباشرة
-        shipSettledManual:true,
-        shipSettledManualReason:'تحصيل مباشر من العميل — الشركة لم تحصّل',
-        shipSettledManualAt:nowStr(),
-        shipSettledManualBy:userName,
-        shipSettledManualByUid:currentUser?.uid||'',
-      }:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج${autoCollected?' — ✅ محصّل بالكامل':''}${bypassCo?' — 🏁 الشركة بدون مديونية (تحصيل مباشر)':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج${autoCollected?' — ✅ محصّل بالكامل':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
       updatedAt:serverTimestamp()
     });
     addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
@@ -2259,16 +2250,6 @@ window.saveCollect=async function(){
       notes:`تحصيل — ${o.clientName||''} — ${o.orderId||''}`,
       userId:currentUser?.uid||'',userName,
     });
-    // FIX (RULE 2): bypassCo بيغيّر shipSettled=true → لازم ledger event موازي للـ visibility في حسابات الشحن
-    // amount=0 لأن الفلوس وصلت من العميل (CUSTOMER_PAYMENT اتسجّل فوق)، الشركة جابتلنا 0
-    if(bypassCo){
-      addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
-        amount:0,walletId:wId,walletName:w?.name||wName,
-        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تسوية تلقائية — تحصيل مباشر من العميل (${o.shipCompanyName||'شركة الشحن'} لم تحصّل)`,
-        userId:currentUser?.uid||'',userName,
-      });
-    }
     await batch.commit();
     localStorage.setItem('b2c_lastWalletId',wId);
     closeModal('ov-collect');
