@@ -650,6 +650,8 @@ window.openCollectFl=function(orderId){
   if(o.stage==='archived')return toast('⛔ مؤرشف','err');
   if(o.shipStage==='returned')return toast('⛔ مرتجع','err');
   if(o.shipSettled)return toast('⛔ مسوّى مع شركة الشحن — ألغي التسوية أولاً','err');
+  // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط
+  if(o.shipMethod==='company')return toast('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط — العميل يدفع للشركة','err');
   const rem=calcRem(o);
   if(rem<=0)return toast('✅ المبلغ محصّل بالكامل','ok');
   __cfOrderId=orderId;
@@ -707,6 +709,8 @@ window.saveCollectFl=async function(){
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
   if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق','err');
   if(o.shipSettled)return toast('⛔ مسوّى مع شركة الشحن — ألغي التسوية أولاً','err');
+  // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط
+  if(o.shipMethod==='company')return toast('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط','err');
   const amt=parseFloat(gv('cf-amt'))||0;
   if(!amt||amt<=0)return toast('⚠️ أدخل المبلغ','err');
   const wId=gv('cf-wid');const wName=gv('cf-wname');
@@ -721,11 +725,8 @@ window.saveCollectFl=async function(){
   const newRem=Math.max(0,calcTotalDue(o)-newPaid);
   const transferRef=gv('cf-ref');
   const curSS=o.shipStage||'ready';
-  // Auto-advance to 'collected' لو المتبقي صفر والمرحلة wait_collection (مُسلَّم)
+  // Auto-advance to 'collected' لو المتبقي صفر والمرحلة wait_collection (لـ pickup/courier فقط)
   const autoCollected=newRem<=0 && curSS==='wait_collection';
-  // ─ Bypass الشركة: شحنة شركة + التحصيل اكتمل من العميل مباشرة → الشركة بدون مديونية
-  const isCo=o.shipMethod==='company';
-  const bypassCo=isCo && newRem<=0 && !o.shipSettled;
   const btn=$('btn-save-cf');btn.disabled=true;btn.textContent='...';
   try{
     const batch=writeBatch(db);
@@ -743,16 +744,7 @@ window.saveCollectFl=async function(){
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       ...(autoCollected?{shipStage:'collected'}:{}),
-      ...(bypassCo?{
-        shipSettled:true,
-        shipSettledAmount:0,  // الشركة جابتلنا 0 — العميل دفع لنا مباشرة
-        shipSettledManual:true,
-        shipSettledManualReason:'تحصيل مباشر من العميل — الشركة لم تحصّل',
-        shipSettledManualAt:nowStr(),
-        shipSettledManualBy:userName,
-        shipSettledManualByUid:currentUser?.uid||'',
-      }:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل (متابعة) ${fn(amt)} ج عبر ${w.name||wName}${autoCollected?' — ✅ محصّل بالكامل':''}${bypassCo?' — 🏁 الشركة بدون مديونية (تحصيل مباشر)':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل (متابعة) ${fn(amt)} ج عبر ${w.name||wName}${autoCollected?' — ✅ محصّل بالكامل':''}${transferRef?' ('+transferRef+')':''}`,by:userName}],
       updatedAt:serverTimestamp(),
     });
     addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
@@ -761,19 +753,10 @@ window.saveCollectFl=async function(){
       notes:`تحصيل (متابعة) — ${o.clientName||''} — ${o.orderId||''}`,
       userId:currentUser?.uid||'',userName,
     });
-    // FIX (RULE 2): bypassCo بيغيّر shipSettled=true → لازم ledger event موازي
-    if(bypassCo){
-      addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
-        amount:0,walletId:wId,walletName:w.name||wName,
-        orderId:__cfOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تسوية تلقائية — تحصيل مباشر من العميل (${o.shipCompanyName||'شركة الشحن'} لم تحصّل)`,
-        userId:currentUser?.uid||'',userName,
-      });
-    }
     await batch.commit();
     localStorage.setItem('b2c_lastWalletId',wId);
     $('ov-collect-fl').classList.remove('open');
-    toast(`✅ تم تحصيل ${fn(amt)} ج${autoCollected?' · الأوردر جاهز للأرشفة 🟢':''}${bypassCo?' · 🏁 الشركة بدون مديونية':''}`,'ok');
+    toast(`✅ تم تحصيل ${fn(amt)} ج${autoCollected?' · الأوردر جاهز للأرشفة 🟢':''}`,'ok');
   }catch(e){
     toast('❌ '+(e.message||e),'err');
   }finally{

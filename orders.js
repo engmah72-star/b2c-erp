@@ -862,41 +862,19 @@ export function detectOrderIssues(order) {
     });
   }
 
-  // 2. شركة + collected/wait_collection + غير مسوّى + أقل من الإجمالي (الكلاسيكي العالق)
+  // 2. شركة + collected + غير مسوّى — يحتاج تسوية من حسابات الشحن (المنطق الصحيح)
+  // ليس bypass: شحنات الشركات تُسوَّى عبر التسوية الرسمية فقط
   if (t.isCompany && !order.shipSettled && !t.isTerminal) {
     const ss = order.shipStage || 'ready';
-    if (['collected', 'wait_collection'].includes(ss) && !t.isFullyPaid) {
+    if (ss === 'collected') {
       issues.push({
-        key: 'company_stuck',
-        severity: 'crit',
-        label: 'الشركة محصّلة من العميل لكن الأوردر عالق (totalPaid أقل + غير مسوّى)',
-        fixDesc: `ضبط totalPaid = ${t.total} ج + إغلاق التسوية`,
-        fixPatch: {
-          totalPaid: t.total, remaining: 0, paymentStatus: 'paid',
-          shipStage: 'collected',
-          shipSettled: true,
-          shipSettledAmount: Math.max(0, t.total - t.paid),
-          shipSettledManual: true,
-          shipSettledManualReason: 'self-heal: ضبط أوردر شركة عالق',
-        },
+        key: 'company_pending_settle',
+        severity: 'warn',
+        label: 'شحنة شركة محصّلة لكن لم تُسوَّ بعد',
+        fixDesc: 'استخدم "تسوية" من صفحة حسابات الشحن (لا auto-fix)',
+        // لا fixPatch — الإصلاح يدوي عبر صفحة حسابات الشحن
       });
     }
-  }
-
-  // 3. شركة + مدفوع بالكامل + غير مسوّى (العميل دفع لنا مباشرة)
-  if (t.isCompany && !order.shipSettled && !t.isTerminal && t.isFullyPaid) {
-    issues.push({
-      key: 'company_bypass',
-      severity: 'warn',
-      label: 'مدفوع بالكامل لكن الشركة لم تُسوَّ — العميل دفع لنا مباشرة',
-      fixDesc: 'تعليم الأوردر كـ "الشركة بدون مديونية"',
-      fixPatch: {
-        shipSettled: true,
-        shipSettledAmount: 0,
-        shipSettledManual: true,
-        shipSettledManualReason: 'self-heal: تحصيل مباشر من العميل',
-      },
-    });
   }
 
   // 4. paymentStatus drift
@@ -927,15 +905,17 @@ export function detectOrderIssues(order) {
   return issues;
 }
 
-/** يطبّق الإصلاحات المقترحة على الـ batch (atomic) */
+/** يطبّق الإصلاحات المقترحة على الـ batch (atomic) — يتجاوز المشاكل بدون fixPatch */
 export function applyOrderHealPatch(batch, dbDocRef, order, issues, userName) {
   if (!issues || !issues.length) return;
+  const auto = issues.filter(i => i.fixPatch);
+  if (!auto.length) return;
   const merged = {};
-  for (const iss of issues) {
+  for (const iss of auto) {
     Object.assign(merged, iss.fixPatch);
   }
   const ts = new Date().toLocaleDateString('ar-EG') + ' ' + new Date().toLocaleTimeString('ar-EG', {hour:'2-digit',minute:'2-digit'});
-  const fixLabels = issues.map(i => i.fixDesc).join(' · ');
+  const fixLabels = auto.map(i => i.fixDesc).join(' · ');
   merged.timeline = [...(order.timeline || []), {
     date: ts,
     action: `🔧 إصلاح ذاتي: ${fixLabels}`,
