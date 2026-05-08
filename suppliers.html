@@ -243,11 +243,18 @@
           <span class="form-sec-step" style="color:var(--dim2)">2 / 4</span>
         </div>
         <div class="fg">
-          <label>التصنيف الرئيسي *</label>
-          <select class="inp" id="f-printtype"><option value="">— اختر التصنيف الرئيسي —</option></select>
-          <input class="inp" id="f-printtype-custom" placeholder="أو اكتب تصنيف مخصص..." style="margin-top:6px;display:none">
-          <button type="button" onclick="document.getElementById('f-printtype-custom').style.display=document.getElementById('f-printtype-custom').style.display==='none'?'block':'none'"
-            style="font-size:11px;color:var(--b);background:none;border:none;cursor:pointer;font-family:inherit;margin-top:4px">＋ تصنيف جديد</button>
+          <label>التخصص *</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select class="inp" id="f-printtype" style="flex:1"><option value="">— اختر التخصص —</option></select>
+            <button type="button" onclick="toggleAddCat()" class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap">＋ جديد</button>
+          </div>
+          <div id="add-cat-wrap" style="display:none;flex-direction:column;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border-radius:10px;border:1px solid var(--line)">
+            <input class="inp" id="new-cat-inp" placeholder="اسم التخصص الجديد..." onkeydown="if(event.key==='Enter')saveNewCat()">
+            <div style="display:flex;gap:6px">
+              <button type="button" onclick="saveNewCat()" class="btn btn-g btn-sm" style="flex:1">✓ إضافة وتحديد</button>
+              <button type="button" onclick="toggleAddCat()" class="btn btn-ghost btn-sm">✕</button>
+            </div>
+          </div>
         </div>
 
         <div class="fg" style="margin-top:4px">
@@ -1002,9 +1009,34 @@ function renderServiceChips(){
     </div>`).join('');
 }
 
+window.toggleAddCat=function(){
+  const w=document.getElementById('add-cat-wrap');if(!w)return;
+  const open=w.style.display==='flex';
+  w.style.display=open?'none':'flex';
+  if(!open)setTimeout(()=>document.getElementById('new-cat-inp')?.focus(),50);
+};
+
+window.saveNewCat=async function(){
+  const label=(document.getElementById('new-cat-inp')?.value||'').trim();
+  if(!label)return toast('⚠️ أدخل اسم التخصص','err');
+  if(masterCategories.some(c=>_norm(c.label)===_norm(label)))return toast('⚠️ هذا التخصص موجود بالفعل','err');
+  const newItem={label,group:'🔧 أخرى',isActive:true,order:masterCategories.length};
+  masterCategories.push(newItem);
+  try{
+    await setDoc(doc(db,'master_lists','supplier_categories'),{items:masterCategories,updatedAt:serverTimestamp()},{merge:true});
+  }catch(e){console.warn('saveNewCat Firestore err:',e.message);}
+  renderCategorySelect();
+  sv('f-printtype',label);
+  toggleAddCat();
+  document.getElementById('new-cat-inp').value='';
+  toast('✅ تم إضافة التخصص','ok');
+};
+
 const ALL_SVC_IDS=['wd-sun','wd-mon','wd-tue','wd-wed','wd-thu','wd-fri','wd-sat'];
 function clearForm(){
-  ['name','phone','whatsapp','email','address','printtype','printtype-custom','creditlimit','shipfee','areas','note','bankname','bankaccount','taxnumber','minqty','leadtime'].forEach(f=>{sv('f-'+f,'');});
+  ['name','phone','whatsapp','email','address','printtype','creditlimit','shipfee','areas','note','bankname','bankaccount','taxnumber','minqty','leadtime'].forEach(f=>{sv('f-'+f,'');});
+  const acw=document.getElementById('add-cat-wrap');if(acw)acw.style.display='none';
+  const nci=document.getElementById('new-cat-inp');if(nci)nci.value='';
   sv('f-payterms','cash');sv('f-status','active');sv('f-rating','');sv('f-area','');
   document.querySelectorAll('#dyn-services-wrap input[type=checkbox]').forEach(c=>{c.checked=false;});
   ALL_SVC_IDS.forEach(id=>{const el=document.getElementById(id);if(el)el.checked=false;});
@@ -1042,13 +1074,16 @@ window.openEdit=function(){
   // services checkboxes — from master_lists dynamic chips
   const svcs=activeSup.services||[];
   document.querySelectorAll('#dyn-services-wrap input[type=checkbox]').forEach(c=>{c.checked=svcs.includes(c.value);});
-  // handle printType not in master_lists (custom/legacy value)
-  const catSel=document.getElementById('f-printtype');
+  // handle printType not in master_lists — add it inline then select it
   const ptVal=activeSup.printType||'';
-  if(catSel&&ptVal&&![...catSel.options].some(o=>o.value===ptVal)){
-    sv('f-printtype-custom',ptVal);
-    const ci=document.getElementById('f-printtype-custom');
-    if(ci)ci.style.display='block';
+  if(ptVal){
+    const catSel=document.getElementById('f-printtype');
+    if(catSel&&![...catSel.options].some(o=>o.value===ptVal)){
+      // add legacy value to masterCategories in-memory + re-render
+      masterCategories.push({label:ptVal,group:'🔧 أخرى',isActive:true,order:masterCategories.length});
+      renderCategorySelect();
+    }
+    sv('f-printtype',ptVal);
   }
   // work days
   const wdays=activeSup.workDays||[];
@@ -1064,7 +1099,6 @@ window.saveSup=async function(){
   // services & work days
   const services=[...document.querySelectorAll('#dyn-services-wrap input[type=checkbox]:checked')].map(c=>c.value);
   const workDays=ALL_SVC_IDS.map(id=>document.getElementById(id)).filter(el=>el?.checked).map(el=>el.value);
-  const customType=gv('f-printtype-custom').trim();
   const data={
     name,
     phone:gv('f-phone'),whatsapp:gv('f-whatsapp'),email:gv('f-email'),
@@ -1073,7 +1107,7 @@ window.saveSup=async function(){
     ...(gv('f-rating')?{rating:parseInt(gv('f-rating'))}:{}),
     ...(type==='printer'?{
       supType:'printer',
-      printType:customType||gv('f-printtype'),
+      printType:gv('f-printtype'),
       services,workDays,
       minQty:parseInt(gv('f-minqty'))||0,
       leadTimeDays:parseInt(gv('f-leadtime'))||0,
