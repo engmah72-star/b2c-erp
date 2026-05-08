@@ -1156,8 +1156,8 @@ window.saveReturn=async function(){
     });
 
     // 3. عكس التسوية لو كانت مسوّاة (wallet + transaction + ledger)
-    // ─ التسوية اليدوية (shipSettledManual): لا حركة مالية حصلت أصلاً، فنرجّع الفلاج فقط
     if(o.shipSettled&&settledAmt>0&&!o.shipSettledManual){
+      // ─ تسوية رسمية (شركة سلّمتنا فعلاً) → عكس wallet + tx + ledger
       const settledWId=o.shipSettledWalletId||'';
       if(settledWId){
         batch.update(doc(db,'wallets',settledWId),{balance:increment(-settledAmt)});
@@ -1176,6 +1176,16 @@ window.saveReturn=async function(){
         walletName:wallets.find(w=>w._id===settledWId)?.name||'',
         notes:`عكس تسوية مرتجع — ${o.clientName||''} — ${returnCompanyName}`,
         orderId:ordId,clientName:o.clientName||'',
+        userId:currentUser.uid,userName:byName
+      });
+    } else if(o.shipSettled&&o.shipSettledManual&&settledAmt>0){
+      // ─ تسوية يدوية (manual: لم تمر بـ wallet) → ledger entry للـ flag-only reversal
+      // FIX (RULE 5): حتى لو لا توجد حركة على الـ wallet، الـ flag له audit trail
+      addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
+        amount:settledAmt,walletId:'',walletName:'',
+        notes:`عكس تسوية يدوية (manual) لمرتجع — ${o.clientName||''} — ${returnCompanyName}`,
+        orderId:ordId,clientName:o.clientName||'',
+        vendorId:'',vendorName:returnCompanyName||'',
         userId:currentUser.uid,userName:byName
       });
     }
@@ -1542,6 +1552,16 @@ window.markManualSettled=async function(orderId){
       hasUnreviewedAudit:true,
       timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate?` · ضبط المحصّل ${fn(paid)} → ${fn(newTotalPaid)} ج`:''}`,by:userName}],
       updatedAt:serverTimestamp(),
+    });
+    // FIX (RULE 5): manual settle = financial event من خارج النظام — لازم ledger entry للـ audit trail
+    // amount = شكلي (totalDue) لأن المال لم يمر بالـ wallet — الـ ledger هنا audit-only
+    addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
+      amount:Math.max(totalDue,paid),
+      walletId:'',walletName:'',
+      orderId,clientId:o.clientId||'',clientName:o.clientName||'',
+      vendorId:'',vendorName:o.shipCompanyName||'',
+      notes:`🏁 تسوية يدوية (manual): ${r}${needsTotalPaidUpdate?` · totalPaid ${fn(paid)}→${fn(newTotalPaid)}`:''}`,
+      userId:currentUser?.uid||'',userName,
     });
     await batch.commit();
     toast(`✅ تم تسجيل التسوية اليدوية${needsTotalPaidUpdate?` · المحصّل اتضبط على ${fn(newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
