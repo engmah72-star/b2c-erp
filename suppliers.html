@@ -997,19 +997,27 @@ window.savePay=async function(){
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const walletId=gv('pay-wallet');
   const note=gv('pay-note');
-  const {due}=getSupBalance(activeId);
+  const {purchases,due}=getSupBalance(activeId);
+  // RULE: لا دفعة بدون بنود تكلفة مرتبطة بهذا المورد
+  if(purchases===0)return toast('⚠️ لا توجد بنود تكلفة مرتبطة بهذا المورد — أضف بنوداً أولاً من صفحة التنفيذ','err');
   if(amount>due&&!confirm(`⚠️ المبلغ (${fn(amount)} ج) أكبر من المستحق (${fn(due)} ج).\nهل تريد المتابعة؟`))return;
+  // اجمع مراجع بنود التكلفة لربط الدفعة بها (traceability)
+  const costItemRefs=[];
+  orders.forEach(o=>{
+    (o.costItems||[]).forEach(c=>{
+      if(c.supplierId===activeId&&c.costItemId)
+        costItemRefs.push({costItemId:c.costItemId,orderId:c.orderId||o._id,type:c.type||'',total:parseFloat(c.total)||0});
+    });
+  });
   try{
     const w=wallets.find(x=>x._id===walletId);
     if(walletId&&w&&(parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');
-    console.log('[SUPPLIER] 🖱️ BUTTON CLICKED: savePay', { amount, walletId, supplierId: activeId });
-    console.log('[SUPPLIER] 📤 EVENT DISPATCHED: VENDOR_PAYMENT');
     await dispatchFinancialEvent(db,FE.VENDOR_PAYMENT,{
       supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
       amount,walletId,walletName:w?.name||'',note,
       userId:auth.currentUser?.uid||'',userName,date:nowStr(),
+      ...(costItemRefs.length?{costItemRefs}:{}),
     });
-    console.log('[SUPPLIER] ✅ SYNC COMPLETED: VENDOR_PAYMENT');
     cM('pay');toast('✅ تم تسجيل الدفعة','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };

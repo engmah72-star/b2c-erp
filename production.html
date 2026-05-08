@@ -844,9 +844,16 @@ function renderCostPanel(o,prodIdx){
         </select>
       </div>
       <div style="margin-bottom:10px">
+        <div class="cp-form-lbl">📋 نوع التنفيذ</div>
+        <div style="display:flex;gap:6px">
+          <button type="button" id="cp-int-${sfx}" onclick="_setCpExternal('${sfx}',false)" style="flex:1;padding:9px 6px;border-radius:9px;border:2px solid var(--g);background:rgba(0,217,126,.1);color:var(--g);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">🏠 داخلي</button>
+          <button type="button" id="cp-ext-${sfx}" onclick="_setCpExternal('${sfx}',true)" style="flex:1;padding:9px 6px;border-radius:9px;border:2px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">🏭 خارجي</button>
+        </div>
+      </div>
+      <div id="cp-sup-wrap-${sfx}" style="display:none;margin-bottom:10px">
         <div class="cp-form-lbl">🏭 المورد</div>
         <select id="cp-sup-${sfx}" class="cp-form-inp">
-          <option value="">— بدون مورد —</option>${supOpts}
+          <option value="">— اختر المورد —</option>${supOpts}
         </select>
       </div>
       <div class="paper-calc" id="cp-paper-calc-${sfx}">
@@ -886,10 +893,18 @@ function renderCostPanel(o,prodIdx){
     </div>`;
 }
 
+window._setCpExternal=function(sfx,isExt){
+  const iBtn=document.getElementById('cp-int-'+sfx),eBtn=document.getElementById('cp-ext-'+sfx),wrap=document.getElementById('cp-sup-wrap-'+sfx);
+  if(iBtn){iBtn.style.border=isExt?'2px solid var(--line)':'2px solid var(--g)';iBtn.style.background=isExt?'var(--bg3)':'rgba(0,217,126,.1)';iBtn.style.color=isExt?'var(--dim2)':'var(--g)';}
+  if(eBtn){eBtn.style.border=isExt?'2px solid var(--b)':'2px solid var(--line)';eBtn.style.background=isExt?'rgba(66,133,244,.12)':'var(--bg3)';eBtn.style.color=isExt?'var(--b)':'var(--dim2)';}
+  if(wrap)wrap.style.display=isExt?'block':'none';
+  if(!isExt){const s=document.getElementById('cp-sup-'+sfx);if(s)s.value='';}
+};
 function _clearCpForm(sfx){
   ['cp-type-','cp-sup-','cp-total-','cp-note-','cp-wallet-','cp-ptype-','cp-pw-','cp-pcut-','cp-psheets-','cp-pprice-'].forEach(p=>{const e=document.getElementById(p+sfx);if(e)e.value='';});
   const calcEl=document.getElementById('cp-paper-calc-'+sfx);if(calcEl)calcEl.style.display='none';
   const btn=document.getElementById('cp-save-btn-'+sfx);if(btn)btn.textContent='＋ إضافة البند';
+  window._setCpExternal?.(sfx,false);
   __editCostIdx=-1;
 }
 
@@ -901,7 +916,8 @@ window.startCostEdit=function(gi){
   // اختر النوع ثم حدّث الموردين
   const typeEl=document.getElementById('cp-type-'+sfx);
   if(typeEl){typeEl.value=item.type||'';filterSupsByType(item.type||'','cp-sup-'+sfx);}
-  // اختر المورد
+  // اختر المورد — استعادة حالة الـ toggle
+  window._setCpExternal?.(sfx,!!item.supplierId);
   const supEl=document.getElementById('cp-sup-'+sfx);
   if(supEl&&item.supplierId){supEl.value=item.supplierId;}
   sv('cp-total-'+sfx,item.total||'');
@@ -952,7 +968,9 @@ window.addCostFromPanel=async function(prodIdx){
   const supplierName=supOpt?.dataset?.name||'';
   const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
   const spRef=walletId&&!isEdit&&supplierId?doc(collection(db,'supplier_payments')):null;
-  const newItem={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),date:new Date().toISOString().slice(0,10),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
+  const existingId=isEdit?(o.costItems||[])[__editCostIdx]?.costItemId:null;
+  const costItemId=existingId||Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+  const newItem={costItemId,orderId:activeId,isExternal:!!supplierId,type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),date:new Date().toISOString().slice(0,10),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
   const ci=[...(o.costItems||[])];
   if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
   try{
@@ -1509,6 +1527,7 @@ function renderCosts(o){
   function ciRow(item,globalIdx){
     const isPaid=item.paid===true;
     const hasPendingReq=!!item.pendingPaymentRequestId && !isPaid;
+    const extBadge=item.isExternal===true?`<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(66,133,244,.12);color:var(--b);margin-left:4px">خارجي</span>`:item.isExternal===false?`<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(0,217,126,.1);color:var(--g);margin-left:4px">داخلي</span>`:'';
     let payBtn='';
     if(isPaid){
       payBtn=`<span title="مدفوع${item.paidAt?' · '+item.paidAt:''}" style="padding:4px 8px;border-radius:7px;background:rgba(0,217,126,.12);color:var(--g);font-size:10px;font-weight:900;border:1px solid rgba(0,217,126,.3)">✓ مدفوع</span>`;
@@ -1517,7 +1536,7 @@ function renderCosts(o){
     } else if(item.supplierId){
       payBtn=`<button onclick="requestPaymentForCostItem(${globalIdx})" title="طلب دفع المورد عبر الاعتماد" style="padding:5px 9px;border-radius:8px;border:1px solid rgba(16,196,222,.4);background:rgba(16,196,222,.1);color:#10c4de;cursor:pointer;font-size:11px;font-weight:900">💸 طلب دفع</button>`;
     }
-    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}</div><div class="cost-item-sup">${item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span style="font-size:14px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</span>${payBtn}<button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid var(--line2);background:var(--bg4);color:var(--snow);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
+    return`<div class="cost-item-row"><div style="flex:1;min-width:0"><div class="cost-item-name">${item.type||'—'}${extBadge}</div><div class="cost-item-sup">${item.isExternal===false?'داخلي':item.supplierName||'—'}${item.note?' · '+item.note:''}</div></div><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span style="font-size:14px;font-weight:900;color:var(--snow)">${fn(item.total)} ج</span>${payBtn}<button onclick="openEditCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid var(--line2);background:var(--bg4);color:var(--snow);cursor:pointer;font-size:13px">✏️</button><button onclick="rmCost(${globalIdx})" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:14px">✕</button></div></div>`;
   }
   if(!prods.length){
     el.innerHTML=ci.map((item,i)=>ciRow(item,i)).join('')+`<button class="cost-add-btn" onclick="openAddCost(-1)">＋ إضافة بند</button>`;
@@ -1577,9 +1596,11 @@ window.saveCost=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const supplierId=supOpt?.value||'';
   const supplierName=supOpt?.dataset?.name||'';
-  const item={type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};
   const ci=[...(o.costItems||[])];
   const isEdit=editCostIdx>=0&&editCostIdx<ci.length;
+  const existingId=isEdit?ci[editCostIdx]?.costItemId:null;
+  const costItemId=existingId||Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+  const item={costItemId,orderId:activeId,isExternal:!!supplierId,type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note:gv('ac-note'),addedAt:nowStr()};
   let action;
   if(isEdit){
     ci[editCostIdx]={...ci[editCostIdx],...item,editedAt:nowStr()};
