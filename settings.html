@@ -160,6 +160,24 @@
           </div>
         </div>
 
+        <!-- تخصصات الموردين -->
+        <div class="setting-section">
+          <div class="ss-head">
+            <div class="ss-title"><div class="ss-ico" style="background:rgba(255,170,0,.15);color:var(--y)">🏭</div>تخصصات الموردين</div>
+            <span style="font-size:11px;color:var(--dim2)" id="sc-count">0</span>
+          </div>
+          <div class="ss-body">
+            <div style="font-size:11px;color:var(--dim2);margin-bottom:10px;line-height:1.7">
+              📌 هذه القائمة هي المصدر الوحيد للتخصصات في فورم الموردين.
+            </div>
+            <div class="tag-list" id="sc-list"></div>
+            <div class="tag-add" style="margin-top:12px">
+              <input class="inp" id="sc-inp" placeholder="مثال: مطبعة أوفست / هدايا دعائية..." onkeydown="if(event.key==='Enter')addSpecialty()">
+              <button class="btn btn-sm" style="background:rgba(255,170,0,.12);color:var(--y);border:1px solid rgba(255,170,0,.2)" onclick="addSpecialty()">＋ إضافة</button>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- COL 2 -->
@@ -638,6 +656,7 @@ let settings = {
 let users = [];
 let wallets = [];
 let currentUser = null;
+let specialties = [];
 
 // AUTH CHECK
 onAuthStateChanged(auth, async u => {
@@ -657,6 +676,7 @@ onAuthStateChanged(auth, async u => {
     document.getElementById('nav-name').textContent = d.name||u.email;
     document.getElementById('nav-av').textContent   = (d.name||'A')[0].toUpperCase();
     document.getElementById('role-badge').textContent = r.label;
+    loadSpecialties();
   }
   document.getElementById('last-sync').textContent = new Date().toLocaleTimeString('ar-EG');
 });
@@ -706,6 +726,54 @@ function renderSettings() {
 
   const ccEl=document.getElementById('cc-count');if(ccEl)ccEl.textContent=settings.clientCategories?.length||0;
   const csEl=document.getElementById('cs-count');if(csEl)csEl.textContent=settings.clientSources?.length||0;
+}
+
+// ══ تخصصات الموردين — Master Lists ══
+async function loadSpecialties(){
+  try{
+    const snap=await getDoc(doc(db,'master_lists','supplier_categories'));
+    specialties=snap.exists()?(snap.data()?.items||[]).filter(c=>c.isActive!==false):[];
+  }catch(e){console.warn('loadSpecialties:',e.message);specialties=[];}
+  renderSpecialties();
+}
+
+function renderSpecialties(){
+  const el=document.getElementById('sc-list');
+  const cnt=document.getElementById('sc-count');
+  if(cnt)cnt.textContent=specialties.length;
+  if(!el)return;
+  if(!specialties.length){el.innerHTML='<div style="font-size:12px;color:var(--dim2)">لا توجد تخصصات — أضف من الأسفل</div>';return;}
+  el.innerHTML=specialties.map((s,i)=>`
+    <div class="tag-item">
+      <span style="font-size:10px;color:var(--dim2);margin-left:4px">${s.group||''}</span>
+      ${s.label}
+      <button class="tag-del" onclick="removeSpecialty(${i})" title="حذف">✕</button>
+    </div>`).join('');
+}
+
+window.addSpecialty=async function(){
+  const inp=document.getElementById('sc-inp');
+  const label=(inp?.value||'').trim();
+  if(!label)return;
+  const norm=s=>s.trim().toLowerCase().replace(/\s+/g,' ');
+  if(specialties.some(s=>norm(s.label)===norm(label)))return toast('⚠️ هذا التخصص موجود بالفعل','warn');
+  specialties.push({label,group:'🔧 أخرى',isActive:true,order:specialties.length});
+  await _saveSpecialties();
+  if(inp)inp.value='';
+};
+
+window.removeSpecialty=async function(idx){
+  if(!confirm(`حذف "${specialties[idx]?.label}"؟`))return;
+  specialties.splice(idx,1);
+  await _saveSpecialties();
+};
+
+async function _saveSpecialties(){
+  try{
+    await setDoc(doc(db,'master_lists','supplier_categories'),{items:specialties,updatedAt:serverTimestamp()},{merge:true});
+    renderSpecialties();
+    toast('✅ تم الحفظ','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 }
 
 function renderTagList(elId, items, type) {
