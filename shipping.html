@@ -260,6 +260,7 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap" id="panel-head-btns">
         <button class="btn btn-c btn-sm" onclick="openShipSetup()" id="btn-panel-ship">🚚 تسجيل شحن</button>
+        <button class="btn btn-sm" onclick="openPartialShip()" id="btn-panel-partial-ship" style="display:none;background:rgba(167,139,250,.15);color:var(--p);border:1px solid rgba(167,139,250,.4);font-weight:800">✂️ شحن جزئي</button>
         <button class="btn btn-g btn-sm" onclick="openDeliver()" id="btn-panel-archive">✅ أرشفة</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
@@ -414,6 +415,36 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('ov-ship')">إلغاء</button>
       <button class="btn btn-c" onclick="saveShip()">✅ تأكيد الشحن</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: شحن جزئي (split order) ══ -->
+<div class="overlay" id="ov-partial-ship">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <span class="modal-title">✂️ شحن جزئي — تقسيم الأوردر</span>
+      <button class="modal-x" onclick="document.getElementById('ov-partial-ship').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;line-height:1.7">
+        💡 اختار المنتجات اللي هتُشحن دلوقتي. السيستم هيقسّم الأوردر إلى:
+        <ul style="margin-top:6px;padding-right:18px;font-size:11px">
+          <li><b>أوردر فرعي جديد</b> بالمنتجات المختارة (يبدأ في "جاهز للشحن")</li>
+          <li><b>الأوردر الأصلي</b> بالمنتجات الباقية (يفضل في الشحن)</li>
+        </ul>
+      </div>
+      <div id="ps-summary" style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px"></div>
+      <div style="font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:8px">المنتجات</div>
+      <div id="ps-items" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:10px;border-top:1px dashed var(--line)">
+        <span style="font-size:12px;font-weight:700;color:var(--dim2)">إجمالي الفرعي:</span>
+        <span id="ps-total" style="font-size:18px;font-weight:900;color:var(--p)">0 ج</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('ov-partial-ship').classList.remove('open')">إلغاء</button>
+      <button class="btn" id="btn-save-ps" onclick="savePartialShip()" style="background:rgba(167,139,250,.18);color:var(--p);border:1px solid rgba(167,139,250,.4);font-weight:900">✂️ تأكيد التقسيم</button>
     </div>
   </div>
 </div>
@@ -907,7 +938,7 @@ import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, g
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, isShipReadyToClose, isShipPendingSettle, isShipFinanciallyLocked, isShipTerminal, isShipCompanyInTransit } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, isShipReadyToClose, isShipPendingSettle, isShipFinanciallyLocked, isShipTerminal, isShipCompanyInTransit, buildOrderSplit } from "./orders.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -1762,13 +1793,133 @@ window.openOrder=function(id){
   // ─ أزرار رأس البانال حسب الحالة
   const _shipBtn=document.getElementById('btn-panel-ship');
   const _archBtn=document.getElementById('btn-panel-archive');
+  const _splitBtn=document.getElementById('btn-panel-partial-ship');
   if(_shipBtn) _shipBtn.style.display=TERMINAL_STATES.has(ss)||ss==='collected'?'none':'';
   if(_archBtn) _archBtn.style.display=ss==='collected'?'':'none';
+  // الشحن الجزئي: متاح فقط قبل تسجيل الشحن (shipStage='ready')، ولو في 2+ منتجات، ولو مش مرتجع/مؤرشف
+  const _prods=Array.isArray(o.products)?o.products:[];
+  if(_splitBtn) _splitBtn.style.display=(ss==='ready' && !o.shipMethod && _prods.length>1 && !TERMINAL_STATES.has(ss))?'':'none';
 
   document.getElementById('panel-ov').classList.add('open');
 };
 
 function pRow(l,v){return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:8px"><span style="font-size:11px;color:var(--dim2)">${l}</span><span style="font-size:12px;font-weight:700">${v}</span></div>`;}
+
+// ══ PARTIAL SHIPPING (split order) ══
+window.openPartialShip=function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(o.shipMethod)return toast('⛔ التقسيم متاح فقط قبل تسجيل الشحن — استخدم "إلغاء التسجيل" أولاً','err');
+  if((o.shipStage||'ready')!=='ready')return toast('⛔ التقسيم متاح فقط في حالة "جاهز للشحن"','err');
+  const prods=Array.isArray(o.products)?o.products:[];
+  if(prods.length<2)return toast('⚠️ تحتاج 2 منتجات على الأقل للتقسيم','err');
+  const sum=document.getElementById('ps-summary');
+  if(sum){
+    sum.innerHTML=`
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--dim2)">${o.clientName||'—'}</span><span style="font-weight:700">${o.orderId||(o._id||'').slice(-6)}</span></div>
+      <div style="font-size:11px;color:var(--dim2)">إجمالي الأوردر: <b style="color:var(--snow)">${fn(parseFloat(o.salePrice)||0)} ج</b> · المنتجات: <b>${prods.length}</b></div>
+    `;
+  }
+  const items=document.getElementById('ps-items');
+  if(items){
+    items.innerHTML=prods.map((p,i)=>{
+      const unitPrice=parseFloat(p.unitPrice)||0;
+      const qty=parseInt(p.qty)||1;
+      return `<label class="ps-row" style="display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer" data-idx="${i}" data-line="${unitPrice*qty}">
+        <input type="checkbox" class="ps-cb" onchange="updatePartialShipTotal()" style="width:18px;height:18px;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:800">${(p.name||'منتج').replace(/[<>&]/g,'')}</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:2px">${fn(unitPrice)} ج × ${qty} = <b style="color:var(--snow)">${fn(unitPrice*qty)} ج</b></div>
+        </div>
+      </label>`;
+    }).join('');
+  }
+  // reset
+  document.getElementById('ov-partial-ship').classList.add('open');
+  setTimeout(()=>updatePartialShipTotal(),50);
+};
+
+window.updatePartialShipTotal=function(){
+  let total=0,count=0;
+  document.querySelectorAll('.ps-row').forEach(row=>{
+    if(row.querySelector('.ps-cb')?.checked){
+      total+=parseFloat(row.dataset.line)||0;
+      count++;
+    }
+  });
+  setText('ps-total',count?`${fn(total)} ج (${count} منتج)`:'0 ج');
+};
+
+window.savePartialShip=async function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const rows=Array.from(document.querySelectorAll('.ps-row'));
+  const selectedIdx=rows.filter(r=>r.querySelector('.ps-cb')?.checked).map(r=>parseInt(r.dataset.idx));
+  if(!selectedIdx.length)return toast('⚠️ اختر منتج واحد على الأقل','err');
+  const prods=Array.isArray(o.products)?o.products:[];
+  if(selectedIdx.length>=prods.length)return toast('⚠️ ما تقدرش تختار كل المنتجات (مفيش جزئي) — استخدم تسجيل الشحن العادي','err');
+  // compute prices
+  const selectedSum=selectedIdx.reduce((s,i)=>{
+    const p=prods[i];
+    return s+((parseFloat(p.unitPrice)||0)*(parseInt(p.qty)||1));
+  },0);
+  const oldSale=parseFloat(o.salePrice)||0;
+  const remainingSum=Math.max(0,oldSale-selectedSum);
+  if(!confirm(`✂️ تقسيم الأوردر:\n\n📦 الفرعي الجديد: ${selectedIdx.length} منتج · ${fn(selectedSum)} ج\n📋 الأصلي يفضل: ${prods.length-selectedIdx.length} منتج · ${fn(remainingSum)} ج\n\nالتقسيم آمن (مفيش حركة على الـ wallet). كل أوردر هيكون له تسجيل شحن منفصل.\n\nمتابعة؟`))return;
+  const split=buildOrderSplit({
+    order:o,productIndices:selectedIdx,
+    role:currentRole,userId:currentUser?.uid||'',userName,
+    targetStage:'shipping',
+  });
+  if(!split.ok)return toast('⛔ '+(split.errors||[]).join(' · '),'err');
+  const btn=document.getElementById('btn-save-ps');if(btn){btn.disabled=true;btn.textContent='...';}
+  try{
+    const now=nowStr();
+    const batch=writeBatch(db);
+    // child order: split off + financial reset (parent holds money)
+    const childRef=doc(collection(db,'orders'));
+    const childData={
+      ...split.childOrderData,
+      // shipping subset of price
+      salePrice:selectedSum,
+      customerShipFee:0,  // العميل دفع رسوم الشحن مع الأصلي — مش هنزود عليه
+      discount:0,
+      totalPaid:0,deposit:0,remaining:selectedSum,paymentStatus:'parent_holds',
+      shipStage:'ready',  // يبدأ من جاهز للشحن
+      createdAt:serverTimestamp(),
+      updatedAt:serverTimestamp(),
+    };
+    batch.set(childRef,childData);
+    // parent: keep remaining items + reduce salePrice + log split
+    const remainingProds=prods.filter((_,i)=>!selectedIdx.includes(i));
+    const childIds=[...(o.childOrderIds||[]),childRef.id];
+    const newCustFee=parseFloat(o.customerShipFee)||0;
+    const newDisc=parseFloat(o.discount)||0;
+    const newTotalDue=remainingSum+newCustFee-newDisc;
+    const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const newRem=Math.max(0,newTotalDue-oldPaid);
+    batch.update(doc(db,'orders',activeId),{
+      products:remainingProds,
+      salePrice:remainingSum,
+      remaining:newRem,
+      paymentStatus:newRem<=0?(oldPaid>0?'paid':'pending'):oldPaid>0?'partial':'pending',
+      childOrderIds:childIds,
+      timeline:[...(o.timeline||[]),{
+        date:now,stage:o.stage,
+        action:`✂️ شحن جزئي: ${selectedIdx.length}/${prods.length} بند → ${split.childOrderId} (${fn(selectedSum)} ج)`,
+        by:userName,byId:currentUser?.uid||''
+      }],
+      updatedAt:serverTimestamp(),
+    });
+    await batch.commit();
+    document.getElementById('ov-partial-ship').classList.remove('open');
+    closePanel();
+    toast(`✅ تم التقسيم — أوردر فرعي: ${split.childOrderId} (${fn(selectedSum)} ج)`,'ok');
+  }catch(e){
+    console.error(e);
+    toast('❌ '+(e.message||e),'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='✂️ تأكيد التقسيم';}
+  }
+};
 
 // ══ CHANGE STAGE ══
 window.changeStage=async function(stage){
