@@ -330,8 +330,7 @@ button{min-height:36px}
     <div class="modal-head"><span class="modal-title" id="cost-modal-title">＋ إضافة بند تكلفة</span><button class="modal-x" onclick="cM('cost')">✕</button></div>
     <div class="modal-body">
       <div class="fg"><label>📦 المنتج</label><select class="inp" id="cost-prod-idx"><option value="-1">— عام للأوردر —</option></select></div>
-      <div class="fg"><label>🏭 المطبعة / المورد</label><select class="inp" id="ac-sup" onchange="autoFillTypeFromSup(this.value)"><option value="">— اختياري —</option></select></div>
-      <div class="fg"><label>📋 نوع البند</label><select class="inp" id="ac-type" onchange="filterSupsByType(this.value,'ac-sup')"><option value="">— اختر —</option><option value="طباعة">🖨️ طباعة</option><option value="ورق">📄 ورق</option><option value="قص">✂️ قص</option><option value="سلفنة">✨ سلفنة</option><option value="زنكات">🔵 زنكات</option><option value="تجميع">📦 تجميع</option><option value="شحن">🚚 شحن</option><option value="تصميم">✏️ تصميم</option><option value="أخرى">📌 أخرى</option></select></div>
+      <div class="fg"><label>🏭 المطبعة / المورد</label><select class="inp" id="ac-sup"><option value="">— اختياري —</option></select></div>
       <div class="fg"><label>💰 التكلفة (ج)</label><input class="inp" id="ac-total" type="number" placeholder="0"></div>
       <div class="fg"><label>📝 ملاحظة</label><input class="inp" id="ac-note" type="text" placeholder="اختياري..."></div>
     </div>
@@ -549,9 +548,8 @@ onAuthStateChanged(auth,async u=>{
     // المطابع فقط للـ panel
     printers=suppliers.filter(s=>s.type==='مطبعة'||s.category==='مطبعة');
     buildSupFilter();
-    // أعد تعبئة ac-sup مع احترام الفلتر الحالي
-    const curType=document.getElementById('ac-type')?.value||'';
-    if(typeof filterSupsByType==='function')filterSupsByType(curType,'ac-sup');
+    // تعبئة ac-sup بكل الموردين (النوع يُحدَّد من المورد عند الحفظ)
+    filterSupsByType('','ac-sup');
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   // موظفي الشحن (shipping_officer) لـ pick-ship modal
@@ -1108,12 +1106,8 @@ window.filterSupsByType=function(typeVal,supId){
   if(calcEl)calcEl.style.display=typeVal==='ورق'?'block':'none';
 };
 
-// نوع البند من تخصص المورد
-window.autoFillTypeFromSup=function(supId){
-  if(!supId)return;
-  const sup=suppliers.find(s=>s._id===supId);
-  if(!sup?.printType)return;
-  const pt=sup.printType.toLowerCase();
+function _typeFromPrintType(pt){
+  pt=(pt||'').toLowerCase();
   const map=[
     ['طباعة',['طباع','فلكس','حريرية','uv','ريزو','لارج']],
     ['ورق',  ['ورق','كرتون','مواد خام']],
@@ -1123,14 +1117,9 @@ window.autoFillTypeFromSup=function(supId){
     ['تجميع',['تجميع']],
     ['تصميم',['تصميم','تصوير','موشن']],
   ];
-  for(const [type,keys] of map){
-    if(keys.some(k=>pt.includes(k))){
-      const el=document.getElementById('ac-type');
-      if(el)el.value=type;
-      return;
-    }
-  }
-};
+  for(const [type,keys] of map){if(keys.some(k=>pt.includes(k)))return type;}
+  return 'أخرى';
+}
 
 window.calcPaperCost=function(sfx,fromTotal){
   const sheetsEl=document.getElementById('cp-psheets-'+sfx);
@@ -1603,7 +1592,7 @@ window.openAddCost=function(pi){
   sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
   sel.value=pi;
   if(o?.supplierId){const ac=document.getElementById('ac-sup');if(ac)ac.value=o.supplierId;}
-  sv('ac-type','');sv('ac-total','');sv('ac-note','');
+  sv('ac-total','');sv('ac-note','');
   document.getElementById('cost-modal-title').textContent='＋ إضافة بند تكلفة';
   document.getElementById('cost-save-btn').textContent='＋ إضافة';
   oM('cost');
@@ -1616,8 +1605,6 @@ window.openEditCost=function(globalIdx){
   const sel=document.getElementById('cost-prod-idx');
   sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name} × ${p.qty}</option>`).join('');
   sel.value=item.prodIdx??-1;
-  sv('ac-type',item.type||'');
-  filterSupsByType(item.type||'','ac-sup');
   sv('ac-total',item.total||'');
   sv('ac-note',item.note||'');
   const ac=document.getElementById('ac-sup');if(ac&&item.supplierId)ac.value=item.supplierId;
@@ -1627,15 +1614,17 @@ window.openEditCost=function(globalIdx){
 };
 
 window.saveCost=async function(){
-  const type=gv('ac-type');const total=parseFloat(gv('ac-total'))||0;
-  if(!type)return toast('⚠️ اختر نوع البند','err');
+  const total=parseFloat(gv('ac-total'))||0;
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const supSel=document.getElementById('ac-sup');
   const supOpt=supSel?.options[supSel.selectedIndex];
-  const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
   const supplierId=supOpt?.value||'';
   const supplierName=supOpt?.dataset?.name||'';
+  // النوع من printType المورد
+  const sup=suppliers.find(s=>s._id===supplierId);
+  const type=_typeFromPrintType(sup?.printType||'');
+  const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
   const ci=[...(o.costItems||[])];
   const isEdit=editCostIdx>=0&&editCostIdx<ci.length;
   const existingId=isEdit?ci[editCostIdx]?.costItemId:null;
