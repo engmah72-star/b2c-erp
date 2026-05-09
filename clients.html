@@ -1379,9 +1379,11 @@ function toLocalDT(s){
 }
 window.closeFollowupModal=function(){document.getElementById('ov-followup').classList.remove('open');};
 
-window.saveFollowup=async function(ev){
+window.saveFollowup=async function(){
+  console.log('[followup] saveFollowup called');
+  const btn=document.getElementById('save-followup-btn');
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
-  const btn=(ev&&ev.target)||(typeof event!=='undefined'?event.target:null);
+  if(!db||!firebase?.firestore){toast('❌ Firebase غير محمَّل','err');return;}
   if(btn&&btnLoad)btnLoad(btn);
   try{
     const clientId=gv('fu-client-id');
@@ -1391,10 +1393,11 @@ window.saveFollowup=async function(ev){
     const outcome=gv('fu-outcome');
     const note=gv('fu-note').trim();
     const nextRaw=gv('fu-next-date');
-    const nextDone=document.getElementById('fu-done').checked;
+    const nextDone=document.getElementById('fu-done')?.checked||false;
     const orderId=gv('fu-order');
     const productRating=parseInt(gv('fu-rating'))||0;
     const productReview=gv('fu-review').trim();
+    console.log('[followup] form values:',{clientId,fId,type,outcome,note,nextRaw,orderId,productRating});
     if(!clientId){toast('❌ العميل غير محدد','err');if(btn&&btnReset)btnReset(btn);return;}
     if(!type){toast('❌ اختر نوع المتابعة','err');if(btn&&btnReset)btnReset(btn);return;}
     // Snapshot order/product info for display
@@ -1426,13 +1429,16 @@ window.saveFollowup=async function(ev){
       updatedByName:userName||'',
     };
     if(fId){
+      console.log('[followup] updating doc:',fId);
       await db.collection('client_followups').doc(fId).update(data);
       toast('✅ تم تحديث المتابعة','ok');
     }else{
       data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
       data.createdBy=currentUser.uid;
       data.createdByName=userName||'';
-      await db.collection('client_followups').add(data);
+      console.log('[followup] creating new doc with payload:',data);
+      const ref=await db.collection('client_followups').add(data);
+      console.log('[followup] created with id:',ref.id);
       toast('✅ تم تسجيل المتابعة','ok');
     }
     closeFollowupModal();
@@ -3049,7 +3055,7 @@ window.setStatusTab=function(tab,btn){
         <label for="fu-done" style="font-size:12px;color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-b" onclick="saveFollowup(event)" style="flex:1">💾 حفظ</button>
+        <button class="btn btn-b" id="save-followup-btn" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
         <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
       </div>
     </div>
