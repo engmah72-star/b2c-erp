@@ -357,7 +357,7 @@ import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gst
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 
-let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
+let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
@@ -500,7 +500,11 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
-  if(__listenersStarted)return; // لو الـ listeners اتسجلوا قبل كده، مش هنسجلهم تاني
+  // حمّل تخصصات الموردين
+  getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
+    if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false);
+  });
+  if(__listenersStarted)return;
   __listenersStarted=true;
   let __lastOrderHash='';
   onSnapshot(query(collection(db,'orders'),where('stage','in',['production','shipping'])),snap=>{
@@ -589,6 +593,31 @@ window.deleteTlEntry=async function(idx){
 };
 
 const COST_ICO={طباعة:'🖨️',ورق:'📄',قص:'✂️',سلفنة:'✨',زنكات:'🔵',تجميع:'📦',شحن:'🚚',تصميم:'✏️',أخرى:'📌'};
+function getCostIco(t){
+  if(COST_ICO[t])return COST_ICO[t];
+  const l=(t||'').toLowerCase();
+  if(['طباع','فلكس','حريرية','uv','ريزو','لارج'].some(k=>l.includes(k)))return'🖨️';
+  if(['ورق','كرتون'].some(k=>l.includes(k)))return'📄';
+  if(['زنكات','ألواح'].some(k=>l.includes(k)))return'🔵';
+  if(['سلفنة','تشطيب','تذهيب','نقر','كريز','تجليد'].some(k=>l.includes(k)))return'✨';
+  if(l.includes('قص'))return'✂️';
+  if(l.includes('تجميع'))return'📦';
+  if(['تصميم','تصوير','موشن'].some(k=>l.includes(k)))return'✏️';
+  if(l.includes('شحن'))return'🚚';
+  return'📌';
+}
+function _buildTypeOpts(){
+  const groups={};
+  masterCategories.forEach(c=>{const g=c.group||'أخرى';if(!groups[g])groups[g]=[];groups[g].push(c.label);});
+  if(!Object.keys(groups).length)return'<option value="">— اختر النوع —</option>';
+  let h='<option value="">— اختر النوع —</option>';
+  for(const [g,labels] of Object.entries(groups)){
+    h+=`<optgroup label="${g}">`;
+    labels.forEach(l=>{h+=`<option value="${l}">${l}</option>`;});
+    h+='</optgroup>';
+  }
+  return h;
+}
 
 // ══ EXEC_STATUS — حالة التنفيذ المستقلة لكل بند ══
 const EXEC_STATUS={
@@ -720,7 +749,7 @@ function renderCostPanel(o,prodIdx){
         ?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(74,142,245,.12)">
             <div style="font-size:9px;font-weight:800;color:rgba(74,142,245,.55);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">تفاصيل آخر تكلفة</div>
             ${refEntry.items.map(it=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(74,142,245,.08)">
-              <div><span style="font-size:12px;font-weight:700">${COST_ICO[it.type]||'📌'} ${it.type}</span>${it.supplierName?` <span style="font-size:10px;color:rgba(74,142,245,.5)">· ${it.supplierName}</span>`:''}</div>
+              <div><span style="font-size:12px;font-weight:700">${getCostIco(it.type)} ${it.type}</span>${it.supplierName?` <span style="font-size:10px;color:rgba(74,142,245,.5)">· ${it.supplierName}</span>`:''}</div>
               <span style="font-size:13px;font-weight:800;color:var(--snow)">${fn(it.total)} ج</span>
             </div>`).join('')}
           </div>`
@@ -781,7 +810,7 @@ function renderCostPanel(o,prodIdx){
       const dayTotal=dayItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
       const cards=dayItems.map(item=>{
         const gi=item._gi;
-        const ico=COST_ICO[item.type]||'📌';
+        const ico=getCostIco(item.type);
         const paperInfo=item.paperMeta?[item.paperMeta.paperType,item.paperMeta.paperWeight?item.paperMeta.paperWeight+'جم':'',item.paperMeta.sheets?item.paperMeta.sheets+' فرخة':''].filter(Boolean).join(' · '):'';
         return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
           <div style="flex:1;min-width:0">
@@ -836,10 +865,7 @@ function renderCostPanel(o,prodIdx){
       <div class="cp-form-section-title">➕ إضافة بند جديد</div>
       <div style="margin-bottom:10px">
         <div class="cp-form-lbl">🏷️ نوع البند</div>
-        <select id="cp-type-${sfx}" class="cp-form-inp" onchange="filterSupsByType(this.value,'cp-sup-${sfx}')">
-          <option value="">— اختر النوع —</option>
-          <option value="طباعة">🖨️ طباعة</option><option value="ورق">📄 ورق</option><option value="قص">✂️ قص</option><option value="سلفنة">✨ سلفنة</option><option value="زنكات">🔵 زنكات</option><option value="تجميع">📦 تجميع</option><option value="شحن">🚚 شحن</option><option value="تصميم">✏️ تصميم</option><option value="أخرى">📌 أخرى</option>
-        </select>
+        <select id="cp-type-${sfx}" class="cp-form-inp" onchange="filterSupsByType(this.value,'cp-sup-${sfx}')">${_buildTypeOpts()}</select>
       </div>
       <div style="margin-bottom:10px">
         <div class="cp-form-lbl">📋 نوع التنفيذ</div>
@@ -1074,36 +1100,21 @@ window.finalizeCosts=async function(prodIdx){
 
 window.filterSupsByType=function(typeVal,supId){
   const el=document.getElementById(supId);if(!el)return;
-  // كلمات مفتاحية تتطابق مع printType من master_lists/supplier_categories
-  const map={
-    'طباعة':['طباع','فلكس','حريرية','UV','ريزو','لارج'],
-    'ورق':  ['ورق','كرتون','مواد خام'],
-    'قص':   ['قص'],
-    'سلفنة':['سلفنة','تشطيب','تذهيب','نقر','كريز','تجليد','تقطيع'],
-    'زنكات':['زنكات','ألواح'],
-    'تجميع':['قص','تجميع','تجليد'],
-    'تصميم':['تصميم','تصوير','موشن'],
-    'شحن':  [],
-    'أخرى': [],
-  };
-  const keywords=map[typeVal]||[];
   const optHtml=x=>`<option value="${x._id}" data-name="${x.name}" data-phone="${x.phone||x.whatsapp||''}">${x.name}${x.phone||x.whatsapp?' · '+(x.phone||x.whatsapp):''}</option>`;
-  const pt=s=>(s.printType||'').toLowerCase();
-  const matched=keywords.length
-    ?suppliers.filter(s=>keywords.some(k=>pt(s).includes(k.toLowerCase())))
-    :[];
+  // فلترة بـ exact match على printType
+  const matched=typeVal?suppliers.filter(s=>s.printType===typeVal):[];
   if(matched.length&&matched.length<suppliers.length){
     const rest=suppliers.filter(s=>!matched.find(f=>f._id===s._id));
-    el.innerHTML=`<option value="">— بدون مورد —</option><optgroup label="✅ مناسب لـ ${typeVal}">${matched.map(optHtml).join('')}</optgroup><optgroup label="— باقي الموردين">${rest.map(optHtml).join('')}</optgroup>`;
+    el.innerHTML=`<option value="">— اختر المورد —</option><optgroup label="✅ ${typeVal}">${matched.map(optHtml).join('')}</optgroup><optgroup label="— باقي الموردين">${rest.map(optHtml).join('')}</optgroup>`;
   } else {
-    el.innerHTML='<option value="">— بدون مورد —</option>'+suppliers.map(optHtml).join('');
+    el.innerHTML='<option value="">— اختر المورد —</option>'+suppliers.map(optHtml).join('');
   }
   const sfx=supId.replace('cp-sup-','');
-  // أعِد تحديد المورد المبدئي للأوردر لو كان محدداً قبل التصفية
   const o2=orders.find(x=>x._id===activeId);
   if(o2?.supplierId&&el.value===''){el.value=o2.supplierId;}
   const calcEl=document.getElementById('cp-paper-calc-'+sfx);
-  if(calcEl)calcEl.style.display=typeVal==='ورق'?'block':'none';
+  const tv=(typeVal||'').toLowerCase();
+  if(calcEl)calcEl.style.display=(tv.includes('ورق')||tv.includes('كرتون'))?'block':'none';
 };
 
 function _typeFromPrintType(pt){
