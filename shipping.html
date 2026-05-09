@@ -232,7 +232,11 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button id="qf-mine" class="ftab active" onclick="setMineFilter(true,this)" style="flex:1;min-width:120px;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">👤 موكلة لي <span id="qf-mine-cnt" style="opacity:.6">(—)</span></button>
       <button id="qf-all" class="ftab" onclick="setMineFilter(false,this)" style="flex:1;min-width:120px;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📋 الكل <span id="qf-all-cnt" style="opacity:.6">(—)</span></button>
+      <button id="btn-select-mode" onclick="toggleSelectMode()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="فعّل وضع التحديد المتعدد لاختيار الأوردرات">✓ تحديد متعدد</button>
       <button id="btn-bulk-waybill" onclick="printBulkWaybills()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap" title="طباعة بوليصة لكل أوردر ظاهر">🧾 طباعة الكل <span class="cnt" style="background:var(--b);color:#fff;padding:1px 8px;border-radius:20px;font-size:10px">0</span></button>
+      <button id="btn-bulk-selected" onclick="printSelectedWaybills()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid var(--g);background:var(--g);color:#0d0f1c;font-size:12px;font-weight:900;cursor:pointer;font-family:inherit;white-space:nowrap" title="طباعة المحدد فقط">🧾 طباعة المحدد <span id="sel-cnt" style="background:#0d0f1c;color:#fff;padding:1px 8px;border-radius:20px;font-size:10px">0</span></button>
+      <button id="btn-select-all" onclick="selectAllVisible()" style="display:none;align-items:center;gap:5px;padding:7px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--bg2);color:var(--snow);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">✓ الكل</button>
+      <button id="btn-select-clear" onclick="clearSelection()" style="display:none;align-items:center;gap:5px;padding:7px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">✗ مسح</button>
     </div>
 
     <!-- Company filter banner (shown when navigated from shipping-accounts) -->
@@ -1462,6 +1466,55 @@ window.printBulkWaybills=function(){
   window.open('waybill.html?ids='+ids.join(','),'_blank');
 };
 
+// ══ MULTI-SELECT MODE — اختيار أوردرات معينة لطباعة بوالصها ══
+window.__selectMode=false;
+window.__selectedIds=new Set();
+window.toggleSelectMode=function(){
+  window.__selectMode=!window.__selectMode;
+  if(!window.__selectMode)window.__selectedIds.clear();
+  refreshSelectUI();
+  renderList();
+};
+window.selectAllVisible=function(){
+  (window.__visibleOrderIds||[]).forEach(id=>window.__selectedIds.add(id));
+  refreshSelectUI();
+  renderList();
+};
+window.clearSelection=function(){
+  window.__selectedIds.clear();
+  refreshSelectUI();
+  renderList();
+};
+window.toggleOrderSelected=function(orderId,e){
+  if(e)e.stopPropagation();
+  if(window.__selectedIds.has(orderId))window.__selectedIds.delete(orderId);
+  else window.__selectedIds.add(orderId);
+  refreshSelectUI();
+};
+function refreshSelectUI(){
+  const on=window.__selectMode;
+  const cnt=window.__selectedIds.size;
+  const modeBtn=document.getElementById('btn-select-mode');
+  const bulkBtn=document.getElementById('btn-bulk-waybill');
+  const selBtn=document.getElementById('btn-bulk-selected');
+  const allBtn=document.getElementById('btn-select-all');
+  const clearBtn=document.getElementById('btn-select-clear');
+  if(modeBtn){
+    modeBtn.style.background=on?'rgba(167,139,250,.25)':'rgba(167,139,250,.08)';
+    modeBtn.textContent=on?'✕ إنهاء التحديد':'✓ تحديد متعدد';
+  }
+  if(bulkBtn) bulkBtn.style.display=on?'none':((window.__visibleOrderIds||[]).length>1?'inline-flex':'none');
+  if(selBtn){selBtn.style.display=on?'inline-flex':'none';const sc=document.getElementById('sel-cnt');if(sc)sc.textContent=cnt;}
+  if(allBtn) allBtn.style.display=on?'inline-flex':'none';
+  if(clearBtn) clearBtn.style.display=(on&&cnt>0)?'inline-flex':'none';
+}
+window.printSelectedWaybills=function(){
+  const ids=Array.from(window.__selectedIds);
+  if(!ids.length)return toast('⚠️ اختر أوردر واحد على الأقل','err');
+  if(ids.length>40&&!confirm(`عدد كبير (${ids.length}) — تأكيد الطباعة؟`))return;
+  window.open('waybill.html?ids='+ids.join(','),'_blank');
+};
+
 window.setMineFilter=function(val,btn){
   mineOnly=val;
   document.querySelectorAll('#qf-mine,#qf-all').forEach(b=>{b.classList.remove('active');b.style.color='var(--dim2)';});
@@ -1495,11 +1548,14 @@ window.renderList=function(){
   }
   // expose filtered IDs for bulk operations (e.g., bulk waybill print)
   window.__visibleOrderIds=data.map(o=>o._id);
+  const modeBtn=document.getElementById('btn-select-mode');
+  if(modeBtn) modeBtn.style.display=data.length>1?'inline-flex':'none';
   const bulkBtn=document.getElementById('btn-bulk-waybill');
   if(bulkBtn){
-    if(data.length>1){bulkBtn.style.display='inline-flex';bulkBtn.querySelector('span.cnt').textContent=data.length;}
+    if(!window.__selectMode && data.length>1){bulkBtn.style.display='inline-flex';bulkBtn.querySelector('span.cnt').textContent=data.length;}
     else bulkBtn.style.display='none';
   }
+  refreshSelectUI();
   const el=document.getElementById('list');if(!el)return;
   if(!data.length){
     el.innerHTML=mineOnly
@@ -1535,9 +1591,12 @@ window.renderList=function(){
       }
     }
     const noOwner=!o.shippingOfficerId&&!isTerminal;
-    return`<div class="ocard" style="--oc:${sc}" onclick="openOrder('${o._id}')">
+    const _isSel=window.__selectedIds&&window.__selectedIds.has(o._id);
+    const _selBorder=window.__selectMode&&_isSel?';outline:2px solid var(--p);outline-offset:2px':'';
+    return`<div class="ocard" style="--oc:${sc}${_selBorder}" onclick="${window.__selectMode?`toggleOrderSelected('${o._id}',event);this.style.outline=window.__selectedIds.has('${o._id}')?'2px solid var(--p)':'';this.style.outlineOffset='2px'`:`openOrder('${o._id}')`}">
+      ${window.__selectMode?`<div style="position:absolute;top:8px;right:8px;z-index:10"><input type="checkbox" ${_isSel?'checked':''} onclick="event.stopPropagation();toggleOrderSelected('${o._id}');this.closest('.ocard').style.outline=this.checked?'2px solid var(--p)':'';this.closest('.ocard').style.outlineOffset='2px'" style="width:20px;height:20px;cursor:pointer;accent-color:var(--p)"></div>`:''}
       <!-- رأس البطاقة -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px${window.__selectMode?';margin-right:30px':''}">
         <div style="min-width:0;flex:1">
           <div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} ${stageSlaBadge(o)}${o.shippingOfficerName?` · 🚚 ${o.shippingOfficerName}`:''}</div>
           <div class="ocard-client">${o.clientName||'—'}</div>
