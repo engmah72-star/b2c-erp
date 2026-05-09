@@ -876,7 +876,14 @@ auth.onAuthStateChanged(async u=>{
       if(list)list.innerHTML=renderClientFollowups(activeId);
       updateFollowupsBadge(activeId);
     }
-  },err=>{ console.warn('followups listener:',err.message); });
+  },err=>{
+    console.warn('followups listener:',err?.message||err);
+    window.__followupsListenerError=err?.message||String(err);
+    if(activeId){
+      const list=document.getElementById('panel-followups-list');
+      if(list)list.innerHTML=renderClientFollowups(activeId);
+    }
+  });
 
   db.collection('transactions_v2').onSnapshot(snap=>{
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -1271,8 +1278,10 @@ function countOpenReminders(clientId){
 }
 function renderClientFollowups(clientId){
   const list=getClientFollowups(clientId);
-  if(!list.length)return`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:20px;background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad)">📭 لا يوجد متابعات بعد — اضغط <b>＋ متابعة جديدة</b> لتسجيل أول تواصل.</div>`;
-  return list.map(f=>{
+  const err=window.__followupsListenerError;
+  const errBanner=err?`<div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--r)">⚠️ تعذّر تحميل سجل المتابعات: ${escapeHtml(err)}<div style="font-size:10px;color:var(--dim2);margin-top:4px">قد يكون نظام الأذونات يحتاج تحديث — راجع الأدمن لتفعيل صلاحية المتابعات.</div></div>`:'';
+  if(!list.length)return errBanner+`<div style="color:var(--dim2);font-size:12px;text-align:center;padding:20px;background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad)">📭 لا يوجد متابعات بعد — اضغط <b>＋ متابعة جديدة</b> لتسجيل أول تواصل.</div>`;
+  const rendered=list.map(f=>{
     const col=FU_TYPE_COL[f.type]||'var(--dim2)';
     const typeLbl=FU_TYPES[f.type]||f.type;
     const outLbl=f.outcome?(FU_OUTCOMES[f.outcome]||f.outcome):'';
@@ -1307,6 +1316,7 @@ function renderClientFollowups(clientId){
       </div>
     </div>`;
   }).join('');
+  return errBanner+rendered;
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);}
 
@@ -1369,9 +1379,10 @@ function toLocalDT(s){
 }
 window.closeFollowupModal=function(){document.getElementById('ov-followup').classList.remove('open');};
 
-window.saveFollowup=async function(){
+window.saveFollowup=async function(ev){
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
-  const btn=event?.target;btnLoad&&btnLoad(btn);
+  const btn=(ev&&ev.target)||(typeof event!=='undefined'?event.target:null);
+  if(btn&&btnLoad)btnLoad(btn);
   try{
     const clientId=gv('fu-client-id');
     const fId=gv('fu-id');
@@ -1384,8 +1395,8 @@ window.saveFollowup=async function(){
     const orderId=gv('fu-order');
     const productRating=parseInt(gv('fu-rating'))||0;
     const productReview=gv('fu-review').trim();
-    if(!type){toast('❌ اختر نوع المتابعة','err');btnReset&&btnReset(btn);return;}
-    if(!note&&!nextRaw&&!productReview&&!productRating){toast('❌ اكتب ملاحظة أو حدّد ميعاد أو سجّل تقييم منتج','err');btnReset&&btnReset(btn);return;}
+    if(!clientId){toast('❌ العميل غير محدد','err');if(btn&&btnReset)btnReset(btn);return;}
+    if(!type){toast('❌ اختر نوع المتابعة','err');if(btn&&btnReset)btnReset(btn);return;}
     // Snapshot order/product info for display
     let orderCode='', productName='';
     if(orderId){
@@ -1426,9 +1437,14 @@ window.saveFollowup=async function(){
     }
     closeFollowupModal();
   }catch(e){
-    console.error(e);
-    toast('❌ '+(e.message||'فشل الحفظ'),'err');
-  }finally{btnReset&&btnReset(btn);}
+    console.error('saveFollowup failed:',e);
+    const msg=e?.message||String(e)||'فشل الحفظ';
+    if(msg.includes('permission')||msg.includes('insufficient')){
+      toast('🔒 لا تملك صلاحية كتابة المتابعات — راجع الأدمن','err');
+    }else{
+      toast('❌ '+msg,'err');
+    }
+  }finally{if(btn&&btnReset)btnReset(btn);}
 };
 
 window.editFollowup=function(fId){
@@ -3033,7 +3049,7 @@ window.setStatusTab=function(tab,btn){
         <label for="fu-done" style="font-size:12px;color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-b" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
+        <button class="btn btn-b" onclick="saveFollowup(event)" style="flex:1">💾 حفظ</button>
         <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
       </div>
     </div>
