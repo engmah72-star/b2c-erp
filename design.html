@@ -8,7 +8,9 @@
 <link rel="stylesheet" href="shared.css">
 <script src="sync-monitor.js"></script>
 <style>
-.kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:start}
+.kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
+@media (max-width:1100px){.kanban{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px){.kanban{grid-template-columns:1fr}}
 .kb-col{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);overflow:hidden}
 .kb-head{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
 .kb-body{padding:8px;min-height:160px}
@@ -100,6 +102,7 @@
     <div class="stats" style="margin-bottom:18px">
       <div class="stat" style="--sc:var(--y)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-pending">0</div><div class="stat-lbl">انتظار</div></div>
       <div class="stat" style="--sc:var(--b)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-wip">0</div><div class="stat-lbl">جاري</div></div>
+      <div class="stat" style="--sc:#ff9933"><div class="stat-icon">📤</div><div class="stat-val" id="s-awaiting">0</div><div class="stat-lbl">انتظار التحويل</div></div>
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⚠️</div><div class="stat-val" id="s-late">0</div><div class="stat-lbl">متأخر</div></div>
       <div class="stat" style="--sc:var(--r)"><div class="stat-icon">✕</div><div class="stat-val" id="s-rejected">0</div><div class="stat-lbl">مرفوض</div></div>
     </div>
@@ -111,6 +114,10 @@
       <div class="kb-col">
         <div class="kb-head"><span style="font-size:12px;font-weight:800;color:var(--b)">🎨 جاري التصميم</span><span class="badge bg-b" id="cnt-wip">0</span></div>
         <div class="kb-body" id="col-wip"></div>
+      </div>
+      <div class="kb-col">
+        <div class="kb-head"><span style="font-size:12px;font-weight:800;color:#ff9933">📤 انتظار التحويل</span><span class="badge" id="cnt-awaiting" style="background:rgba(255,153,51,.2);color:#ff9933;border:1px solid rgba(255,153,51,.4)">0</span></div>
+        <div class="kb-body" id="col-awaiting_payment"></div>
       </div>
       <div class="kb-col">
         <div class="kb-head"><span style="font-size:12px;font-weight:800;color:var(--r)">✕ مرفوض</span><span class="badge bg-r" id="cnt-rejected">0</span></div>
@@ -295,6 +302,20 @@
   </div>
 </div>
 
+<!-- MODAL: تسجيل تحويل العميل (CS فقط) -->
+<div class="overlay" id="ov-pay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head"><span class="modal-title">💸 تسجيل تحويل العميل</span><button class="modal-x" onclick="closePay()">✕</button></div>
+    <div class="modal-body">
+      <div id="pay-info" style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:12px;font-size:12px;line-height:1.8"></div>
+      <div class="fg"><label>المبلغ المُحوَّل (ج) *</label><input type="number" class="inp" id="pay-amount" min="0" step="0.01" placeholder="0"></div>
+      <div class="fg"><label>المحفظة المستلمة *</label><select class="inp" id="pay-wallet"><option value="">— اختر المحفظة —</option></select></div>
+      <div class="fg" style="margin:0"><label>ملاحظة <span style="font-size:10px;color:var(--dim2);font-weight:500">— اختياري</span></label><input type="text" class="inp" id="pay-note" placeholder="رقم العملية، فودافون كاش...الخ"></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closePay()">إلغاء</button><button class="btn btn-g" onclick="confirmRecordPayment()" style="font-weight:800">✓ تسجيل التحويل</button></div>
+  </div>
+</div>
+
 <!-- MODAL: رفع ملف/صورة التصميم -->
 <div class="overlay" id="ov-upload">
   <div class="modal" style="max-width:480px">
@@ -402,6 +423,8 @@ async function buildDynamicSidebar(uid, currentPage) {
       {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦', p:'shipping-accounts'},
       {f:'archive.html',         l:'الأرشيف',       i:'📁', p:'archive'},
       {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
+      {f:'approvals.html',       l:'الاعتمادات',    i:'🔐', p:'approvals'},
+      {f:'my-requests.html',     l:'طلباتي',        i:'📋', public:true},
       {f:'suppliers.html',       l:'الموردين',      i:'▣',  p:'suppliers'},
       {f:'products.html',        l:'المنتجات',      i:'◈',  p:'products'},
       {f:'employees.html',       l:'الموظفين',      i:'👥', p:'employees', adminOnly:true},
@@ -478,7 +501,9 @@ function buildSidebar(userData,currentPage){
   html+=`<a class="nav-link${cur===dashHome?' active':''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${DASH_LABELS_MAP[role]||'داشبوردي'}</a>`;
   for(const cfg of SIDEBAR_PAGES){
     if(cfg.file==='index.html')continue;
-    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(pages.includes('*')||pages.includes(cfg.perm||'')));
+    const hasPagePerm=pages.includes('*')||pages.includes(cfg.perm||'');
+    const hasViewClients=cfg.perm==='clients'&&perms.canViewClients===true;
+    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(hasPagePerm||hasViewClients));
     if(!ok)continue;
     if(cfg.group!==lastGrp){html+=`<div class="nav-group">${GROUP_LABELS_SB[cfg.group]||cfg.group}</div>`;lastGrp=cfg.group;}
     html+=`<a class="nav-link${cur===cfg.file?' active':''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
@@ -498,7 +523,9 @@ function guardPage(userData,currentPage){
   if(!cfg)return true;
   if(cfg.adminOnly){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   const perm=cfg.perm||cur.replace('.html','');
-  if(!pages.includes('*')&&!pages.includes(perm)){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
+  const hasPagePerm=pages.includes('*')||pages.includes(perm);
+  const hasViewClients=perm==='clients'&&perms.canViewClients===true;
+  if(!hasPagePerm&&!hasViewClients){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   return true;
 }
 
@@ -526,7 +553,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit } from "./orders.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
@@ -587,6 +614,7 @@ window.moveStage=async function(stage){
   try{
     await updateDoc(doc(db,'orders',activeId),{
       stage,
+      [`stageEnteredAt.${stage}`]:nowStr(),
       timeline:[...(o.timeline||[]),{date:nowStr(),stage,action:`🔄 [أدمن] نُقل ${labels[o.stage]||o.stage} → ${labels[stage]}`,by:userName,byId:currentUser?.uid||''}],
       updatedAt:serverTimestamp()
     });
@@ -634,7 +662,8 @@ window.deleteOrderFull=async function(){
         description:`استرداد عربون — حذف أوردر — ${o.clientName||''}`,
         category:'refund',orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
         isReversal:true,
-        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName||'admin',createdAt:serverTimestamp()
+        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName||'admin',createdAt:serverTimestamp(),
+        ...approvalFields()
       });
       addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
         orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',amount:dep,walletId:wId,
@@ -822,6 +851,7 @@ function startListeners(){
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
       renderDesignDashboard();
@@ -839,6 +869,7 @@ function startListeners(){
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
       renderDesignDashboard();
@@ -857,6 +888,7 @@ function startListeners(){
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
       setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
       setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
       renderDesignDashboard();
@@ -918,9 +950,9 @@ window.filterKanban=function(q){
 };
 
 function renderKanban(){
-  const cols={pending:[],wip:[],rejected:[]};
+  const cols={pending:[],wip:[],awaiting_payment:[],rejected:[]};
   orders.forEach(o=>{const k=o.designStage||'pending';if(cols[k])cols[k].push(o);});
-  const cfg={pending:'var(--y)',wip:'var(--b)',rejected:'var(--r)'};
+  const cfg={pending:'var(--y)',wip:'var(--b)',awaiting_payment:'#ff9933',rejected:'var(--r)'};
   const today=new Date().toISOString().slice(0,10);
   // حمل العمل لكل مصمم (للأدمن)
   const isAdmView=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
@@ -929,7 +961,7 @@ function renderKanban(){
   Object.keys(cols).forEach(key=>{
     const el=document.getElementById('col-'+key);if(!el)return;
     setText('cnt-'+key,cols[key].length);
-    if(!cols[key].length){el.innerHTML=`<div style="text-align:center;padding:28px 16px;color:var(--dim2);font-size:12px"><div style="font-size:28px;opacity:.3;margin-bottom:8px">${key==='pending'?'⏳':key==='wip'?'🎨':'✕'}</div><div style="font-weight:700">لا توجد طلبات</div></div>`;return;}
+    if(!cols[key].length){el.innerHTML=`<div style="text-align:center;padding:28px 16px;color:var(--dim2);font-size:12px"><div style="font-size:28px;opacity:.3;margin-bottom:8px">${key==='pending'?'⏳':key==='wip'?'🎨':key==='awaiting_payment'?'📤':'✕'}</div><div style="font-weight:700">لا توجد طلبات</div></div>`;return;}
     el.innerHTML=cols[key].map(o=>{
       const d=delay(o.deadline);
       const prods=(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||o.product||'—';
@@ -946,14 +978,40 @@ function renderKanban(){
         else timeBadge=`<span class="time-badge ok">✓ ${rem} يوم</span>`;
       }
       const revBadge=(o.revisions||0)>0?`<span class="rev-badge">🔄 ${o.revisions}</span>`:'';
+      const isAssignedToMe=isDesigner&&o.designerId===(auth.currentUser?.uid||'');
+      const awaitingAccept=!!o.designerId&&!o.designerAcceptedAt;
+      const ackBadge=awaitingAccept?`<span class="time-badge warn" style="background:rgba(240,160,32,.2);color:var(--y);border:1px dashed var(--y)">⏳ بانتظار تأكيد المصمم</span>`:'';
+      // === انتظار التحويل: حساب المتبقي ===
+      const sale=parseFloat(o.salePrice)||0;
+      const paid=parseFloat(o.totalPaid)||0;
+      const remaining=Math.max(0,sale-paid);
+      const isAwaitPay=key==='awaiting_payment';
+      const fullyPaid=isAwaitPay&&sale>0&&remaining<=0;
+      const payBadge=isAwaitPay?(fullyPaid
+        ?`<span class="time-badge ok" style="background:rgba(0,217,126,.2);color:var(--g);border:1px solid var(--g);font-weight:800">✓ تم التحويل — جاهز للاعتماد</span>`
+        :sale<=0
+          ?`<span class="time-badge warn" style="background:rgba(255,61,110,.15);color:var(--r);border:1px dashed var(--r)">⚠️ حدد السعر أولاً</span>`
+          :`<span class="time-badge warn" style="background:rgba(255,153,51,.18);color:#ff9933;border:1px dashed #ff9933;font-weight:800">💰 منتظر تحويل ${fn(remaining)} ج</span>`):'';
+      const isCS=['customer_service','admin','operation_manager'].includes(currentRole);
+      const isAdminOrOps=['admin','operation_manager'].includes(currentRole);
       let actionBtns='';
       if(isDesigner){
         const btns=[];
-        if(key==='pending')btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.15);color:var(--g)" onclick="startWork('${o._id}')">▶ بدء العمل</button>`);
-        if(key==='wip'){
-          btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.15);color:var(--y)" onclick="pauseWork('${o._id}')">⏸ إيقاف</button>`);
-          btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.15);color:var(--b)" onclick="finishWork('${o._id}')">✓ إنهاء</button>`);
+        if(isAssignedToMe&&awaitingAccept){
+          btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.25);color:var(--y);font-weight:800;border:1px solid var(--y)" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر</button>`);
+        } else {
+          if(key==='pending')btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.15);color:var(--g)" onclick="startWork('${o._id}')">▶ بدء العمل</button>`);
+          if(key==='wip'){
+            btns.push(`<button class="card-act-btn" style="background:rgba(240,160,32,.15);color:var(--y)" onclick="pauseWork('${o._id}')">⏸ إيقاف</button>`);
+            btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.15);color:var(--b)" onclick="finishWork('${o._id}')">✓ إنهاء</button>`);
+          }
         }
+        if(btns.length)actionBtns=`<div class="card-actions" onclick="event.stopPropagation()">${btns.join('')}</div>`;
+      } else if(isAwaitPay&&isCS){
+        const btns=[];
+        if(!fullyPaid)btns.push(`<button class="card-act-btn" style="background:rgba(255,153,51,.18);color:#ff9933;font-weight:800;border:1px solid #ff9933" onclick="recordClientPayment('${o._id}')">💸 تسجيل تحويل</button>`);
+        if(fullyPaid)btns.push(`<button class="card-act-btn" style="background:rgba(0,217,126,.2);color:var(--g);font-weight:800;border:1px solid var(--g)" onclick="approveFromCard('${o._id}')">✓ اعتماد للطباعة</button>`);
+        if(isAdminOrOps)btns.push(`<button class="card-act-btn" style="background:rgba(59,158,255,.12);color:var(--b)" onclick="sendBackToWip('${o._id}')">↩ تعديل التصميم</button>`);
         if(btns.length)actionBtns=`<div class="card-actions" onclick="event.stopPropagation()">${btns.join('')}</div>`;
       }
       return`<div class="ocard ko" data-name="${(o.clientName||'').replace(/"/g,'')}" data-id="${o.orderId||''}" style="--oc:${cfg[key]}" onclick="openOrder('${o._id}')">
@@ -963,7 +1021,7 @@ function renderKanban(){
         ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}${isAdmView&&o.designerId?` <span style="opacity:.7">(${dsLoad[o.designerId]||1})</span>`:''}` +
           `</span></div>`:''}
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center">
-          ${stageSlaBadge(o)}${timeBadge}${revBadge}
+          ${stageSlaBadge(o)}${timeBadge}${revBadge}${ackBadge}${payBadge}
           ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
           ${dep>0?`<span style="font-size:10px;background:rgba(0,217,126,.15);color:var(--g);border-radius:20px;padding:1px 8px">💰 عربون ${fn(dep)} ج</span>`:''}
           ${hasFile?`<span style="font-size:10px;background:rgba(59,158,255,.15);color:var(--b);border-radius:20px;padding:1px 8px">📎 ملف</span>`:''}
@@ -1029,6 +1087,11 @@ function renderDesignDashboard(){
       <div class="dd-card-ico">🔴</div>
       <div class="dd-card-val" style="color:var(--r)">${late}</div>
       <div class="dd-card-lbl">الطلبات المتأخرة</div>
+    </div>
+    <div class="dd-card" style="border-right:3px solid var(--y)">
+      <div class="dd-card-ico">⏳</div>
+      <div class="dd-card-val" style="color:var(--y)">${orders.filter(o=>o.designerId&&!o.designerAcceptedAt).length}</div>
+      <div class="dd-card-lbl">بانتظار تأكيد الاستلام</div>
     </div>
     ${sorted.length?`
     <div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:14px 16px">
@@ -1192,12 +1255,26 @@ function renderPanel(o){
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:8px;color:var(--p);font-size:12px;font-weight:700;text-decoration:none">${o.refFileType?.includes('pdf')?'📄':'🖼️'} عرض الملف المرجعي</a>`:''}
     </div>`:''}
 
+    <!-- تأكيد الاستلام — للمصمم المعيَّن -->
+    ${(['graphic_designer','design_operator'].includes(currentRole)&&o.designerId===(auth.currentUser?.uid||'')&&!o.designerAcceptedAt)?`
+    <div class="section" style="background:rgba(240,160,32,.08);border:1px dashed var(--y)">
+      <div class="section-title" style="color:var(--y);margin-bottom:8px">⏳ بانتظار تأكيد استلام الأوردر</div>
+      <div style="font-size:12px;color:var(--dim2);margin-bottom:10px">تم تعيين هذا الأوردر لك. أكّد استلامه قبل بدء العمل.</div>
+      <button class="btn btn-y btn-sm" style="font-weight:800" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر — ابدأ العمل</button>
+    </div>`:''}
+
+    ${(o.designerAcceptedAt&&['admin','operation_manager','customer_service','design_operator'].includes(currentRole))?`
+    <div class="section" style="background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.15)">
+      <div style="font-size:12px;color:var(--g);font-weight:700">✓ تم تأكيد استلام المصمم للأوردر</div>
+    </div>`:''}
+
     <!-- حالة التصميم -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">🔄 حالة التصميم</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-sm ${o.designStage==='pending'?'btn-y':'btn-ghost'}" onclick="setDS('pending')">⏳ انتظار</button>
         <button class="btn btn-sm ${o.designStage==='wip'?'btn-b':'btn-ghost'}" onclick="setDS('wip')">🎨 جاري التصميم</button>
+        <button class="btn btn-sm ${o.designStage==='awaiting_payment'?'btn-ghost':'btn-ghost'}" style="${o.designStage==='awaiting_payment'?'background:rgba(255,153,51,.18);color:#ff9933;border-color:#ff9933':''}" onclick="setDS('awaiting_payment')">📤 انتظار التحويل</button>
       </div>
     </div>
 
@@ -1282,12 +1359,22 @@ window.saveDesignFile=async function(){
   }
   if(!finalUrl)return toast('⚠️ ارفع صورة أو أدخل رابط','err');
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const isDesigner=['graphic_designer','design_operator'].includes(currentRole);
+    const wasInWip=o.designStage==='wip';
+    const updates={
       designFileUrl:finalUrl,designFileNote:gv('design-note'),
       timeline:[...(o.timeline||[]),{date:nowStr(),action:'🖼️ رُفعت صورة التصميم النهائي',by:userName}],
       updatedAt:serverTimestamp()
-    });
-    closeUpload();toast('✅ تم رفع التصميم','ok');
+    };
+    // المصمم لما يخلّص ويرفع الملف وهو في wip → ينتقل تلقائياً لـ "انتظار التحويل"
+    if(isDesigner&&wasInWip){
+      updates.designStage='awaiting_payment';
+      updates.designFinishedAt=nowStr();
+      updates.timeline.push({date:nowStr(),action:'📤 المصمم خلّص — في انتظار تحويل العميل',by:userName});
+    }
+    await updateDoc(doc(db,'orders',activeId),updates);
+    closeUpload();
+    toast(isDesigner&&wasInWip?'✅ تم رفع التصميم — انتقل للانتظار التحويل':'✅ تم رفع التصميم','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -1441,6 +1528,9 @@ window.saveOrder=async function(){
       deposit:dep,depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
       totalPaid:dep,remaining:0,salePrice:0,
       designerId:desOpt?.value||'',designerName:desOpt?.value?desOpt.text:'',
+      designerAssignedAt:desOpt?.value?serverTimestamp():null,
+      designerAssignedBy:desOpt?.value?(currentUser.uid||''):'',
+      designerAcceptedAt:null,designerAcceptedBy:'',
       deadline:gv('np-dl'),notes:gv('np-notes'),
       designFileUrl:'',designFileNote:'',
       costItems:[],printAddons:[],
@@ -1457,7 +1547,8 @@ window.saveOrder=async function(){
         description:`عربون تصميم — ${selClient.name} — ${orderId}`,
         category:'client_payment',
         orderId:orderRef.id,clientId:selClient._id||'',clientName:selClient.name,
-        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp()
+        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp(),
+        ...approvalFields()
       });
       addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
         amount:dep,walletId:wId,walletName:wName,
@@ -1588,19 +1679,34 @@ window.saveAssignDesigner=async function(){
   const desName=sel?.options[sel.selectedIndex]?.dataset?.name||sel?.options[sel.selectedIndex]?.text||'';
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   try{
-    await updateDoc(doc(db,'orders',activeId),{
+    const updates={
       designerId:desId,
       designerName:desId?desName:'',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName}`:'👤 إلغاء تعيين المصمم',by:userName}],
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName} — بانتظار تأكيد الاستلام`:'👤 إلغاء تعيين المصمم',by:userName}],
       updatedAt:serverTimestamp()
-    });
+    };
+    if(desId){
+      updates.designerAssignedAt=serverTimestamp();
+      updates.designerAssignedBy=auth.currentUser?.uid||'';
+      updates.designerAcceptedAt=null;
+      updates.designerAcceptedBy='';
+    }else{
+      updates.designerAssignedAt=null;
+      updates.designerAssignedBy='';
+      updates.designerAcceptedAt=null;
+      updates.designerAcceptedBy='';
+    }
+    await updateDoc(doc(db,'orders',activeId),updates);
     cM('assign-des');
-    toast(desId?`✅ تم تعيين ${desName}`:'✅ تم إلغاء التعيين','ok');
+    toast(desId?`✅ تم تعيين ${desName} — بانتظار تأكيده`:'✅ تم إلغاء التعيين','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.startWork=async function(id){
   const o=orders.find(x=>x._id===id);if(!o)return;
+  if(o.designerId&&!o.designerAcceptedAt){
+    return toast('⚠️ أكّد استلام الأوردر أولاً','err');
+  }
   try{
     await updateDoc(doc(db,'orders',id),{
       designStage:'wip',designStartedAt:nowStr(),
@@ -1610,6 +1716,24 @@ window.startWork=async function(id){
     toast('✅ بدأ العمل','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
+
+window.acceptOrder=async function(id){
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const uid=auth.currentUser?.uid||'';
+  if(!o.designerId){return toast('⚠️ الأوردر غير مكلّف','err');}
+  if(o.designerId!==uid){return toast('⚠️ الأوردر غير مُعيَّن لك','err');}
+  if(o.designerAcceptedAt){return toast('ℹ️ تم تأكيد الاستلام مسبقاً','');}
+  try{
+    await updateDoc(doc(db,'orders',id),{
+      designerAcceptedAt:serverTimestamp(),
+      designerAcceptedBy:uid,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✓ المصمم أكّد استلام الأوردر`,by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم تأكيد الاستلام — يمكنك بدء العمل','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
 
 // فتح modal فصل الأوردر
 window.openSplitOrder=function(){
@@ -1709,7 +1833,8 @@ window.finishWork=function(id){
 
 window.setDS=async function(stage){
   if(!activeId)return;const o=orders.find(x=>x._id===activeId);
-  try{await updateDoc(doc(db,'orders',activeId),{designStage:stage,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 ${stage==='pending'?'في الانتظار':'جاري التصميم'}`,by:userName}],updatedAt:serverTimestamp()});toast('✅ تم','ok');}catch(e){toast('❌ '+e.message,'err');}
+  const lbl={pending:'في الانتظار',wip:'جاري التصميم',awaiting_payment:'انتظار التحويل',rejected:'مرفوض'}[stage]||stage;
+  try{await updateDoc(doc(db,'orders',activeId),{designStage:stage,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 ${lbl}`,by:userName}],updatedAt:serverTimestamp()});toast('✅ تم','ok');}catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.approveOrder=function(){
@@ -1723,6 +1848,13 @@ window.approveOrder=function(){
 window.confirmApproveWithPrinter=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
+  // 🔒 منع الاعتماد لو الأوردر في "انتظار التحويل" والباقي > 0
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||0;
+  const remaining=Math.max(0,sale-paid);
+  if(o.designStage==='awaiting_payment'&&remaining>0){
+    return toast(`⛔ يجب تحويل الباقي أولاً (${fn(remaining)} ج)`,'err');
+  }
   const sel=document.getElementById('pick-printer-sel');
   const printerId=sel?.value||'';
   const printerName=printerId?(sel.options[sel.selectedIndex]?.text||''):'';
@@ -1764,6 +1896,100 @@ window.confirmReject=async function(){
   const reason=gv('reject-reason');if(!reason.trim())return toast('⚠️ أدخل السبب','err');
   const o=orders.find(x=>x._id===activeId);
   try{await updateDoc(doc(db,'orders',activeId),{designStage:'rejected',rejectReason:reason,timeline:[...(o.timeline||[]),{date:nowStr(),action:'✕ رُفض: '+reason,by:userName}],updatedAt:serverTimestamp()});closeReject();closePanel();toast('تم تسجيل الرفض','ok');}catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ تسجيل تحويل العميل من كرت "انتظار التحويل" — CS فقط ══
+window.recordClientPayment=function(id){
+  if(!['customer_service','admin','operation_manager'].includes(currentRole))return toast('⛔ صلاحية CS فقط','err');
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||0;
+  const remaining=Math.max(0,sale-paid);
+  if(sale<=0)return toast('⚠️ يجب تحديد سعر البيع أولاً','err');
+  if(remaining<=0)return toast('ℹ️ تم سداد الأوردر بالكامل','');
+  window.__payOrderId=id;
+  document.getElementById('pay-info').innerHTML=
+    `<div><strong>${o.clientName||'—'}</strong> · ${o.orderId||id.slice(-6)}</div>`+
+    `<div style="display:flex;justify-content:space-between;margin-top:6px"><span style="color:var(--dim2)">السعر:</span><strong>${fn(sale)} ج</strong></div>`+
+    `<div style="display:flex;justify-content:space-between"><span style="color:var(--dim2)">المدفوع:</span><strong style="color:var(--g)">${fn(paid)} ج</strong></div>`+
+    `<div style="display:flex;justify-content:space-between"><span style="color:var(--dim2)">المتبقي:</span><strong style="color:#ff9933">${fn(remaining)} ج</strong></div>`;
+  sv('pay-amount',String(remaining));sv('pay-note','');
+  const sel=document.getElementById('pay-wallet');
+  sel.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');
+  document.getElementById('ov-pay').classList.add('open');
+};
+window.closePay=()=>{document.getElementById('ov-pay').classList.remove('open');window.__payOrderId='';};
+
+window.confirmRecordPayment=async function(){
+  const id=window.__payOrderId;if(!id)return;
+  if(!['customer_service','admin','operation_manager'].includes(currentRole))return toast('⛔ صلاحية CS فقط','err');
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const amt=parseFloat(gv('pay-amount'))||0;
+  const wId=gv('pay-wallet');
+  const wEl=document.getElementById('pay-wallet');
+  const wName=wId?(wEl.options[wEl.selectedIndex]?.text||''):'';
+  const note=gv('pay-note').trim();
+  if(amt<=0)return toast('⚠️ أدخل مبلغ صحيح','err');
+  if(!wId)return toast('⚠️ اختر المحفظة','err');
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||0;
+  const newPaid=paid+amt;
+  const newRem=Math.max(0,sale-newPaid);
+  const newPayStatus=newRem<=0?'paid':'partial';
+  try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'orders',id),{
+      totalPaid:newPaid,remaining:newRem,paymentStatus:newPayStatus,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💸 [CS] تحويل عميل ${fn(amt)} ج عبر ${wName}${note?` — ${note}`:''}`,by:userName}],
+      updatedAt:serverTimestamp(),
+      ...(newPayStatus==='paid'?{paidAt:serverTimestamp()}:{})
+    });
+    batch.update(doc(db,'wallets',wId),{balance:increment(amt)});
+    const txRef=doc(collection(db,'transactions_v2'));
+    batch.set(txRef,{
+      walletId:wId,walletName:wName,type:'in',amount:amt,fees:0,
+      description:`تحويل عميل — ${o.clientName||'—'} — ${o.orderId||id.slice(-6)}${note?` — ${note}`:''}`,
+      category:'client_payment',
+      orderId:id,clientId:o.clientId||'',clientName:o.clientName||'',
+      date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp(),
+      ...approvalFields()
+    });
+    addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
+      amount:amt,walletId:wId,walletName:wName,
+      orderId:id,clientId:o.clientId||'',clientName:o.clientName||'',
+      notes:`تحويل عميل (انتظار التحويل) — ${o.orderId||id.slice(-6)}${note?` — ${note}`:''}`,
+      userId:currentUser.uid,userName,
+    });
+    await batch.commit();
+    closePay();
+    toast(newRem<=0?'✅ تم السداد بالكامل — جاهز للاعتماد':`✅ تم تسجيل ${fn(amt)} ج — متبقي ${fn(newRem)} ج`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// ══ اعتماد سريع من الكرت (لما الباقي = 0) — يفتح modal اختيار الطابع ══
+window.approveFromCard=function(id){
+  activeId=id;
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||0;
+  if(sale-paid>0)return toast(`⛔ يجب تحويل الباقي أولاً (${fn(sale-paid)} ج)`,'err');
+  const sel=document.getElementById('pick-printer-sel');if(sel)sel.value='';
+  document.getElementById('ov-pick-printer').classList.add('open');
+};
+
+// ══ إعادة للمصمم (من awaiting_payment إلى wip) — للأدمن/Ops ══
+window.sendBackToWip=async function(id){
+  if(!['admin','operation_manager'].includes(currentRole))return toast('⛔ صلاحية أدمن فقط','err');
+  const o=orders.find(x=>x._id===id);if(!o)return;
+  if(!confirm('إعادة الأوردر للمصمم لتعديل التصميم؟'))return;
+  try{
+    await updateDoc(doc(db,'orders',id),{
+      designStage:'wip',
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:'↩ أُعيد للمصمم لتعديل التصميم',by:userName}],
+      updatedAt:serverTimestamp()
+    });
+    toast('✅ تم الإرجاع للمصمم','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 </script>
 

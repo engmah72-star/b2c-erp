@@ -84,6 +84,39 @@ service cloud.firestore {
           && hasEntity
           && d.get('isDeleted', false) == false;
     }
+    // ══ Approval workflow helpers ══
+    // الـ tx/ledger الجديدة تبدأ approvalStatus='pending'
+    // ops_manager يقدر pending → confirmed أو pending → rejected
+    // admin يقدر confirmed → approved (نهائي + isLocked=true)، أو أي → rejected
+    function isOpsManager() {
+      return role() == 'operation_manager';
+    }
+    function isApprovalUpdate() {
+      // تحديث يقتصر على حقول الاعتماد فقط — لا يلمس amount/walletId/category/...
+      let allowed = ['approvalStatus','confirmedBy','confirmedByName','confirmedAt',
+                     'approvedBy','approvedByName','approvedAt',
+                     'rejectedBy','rejectedByName','rejectedAt','rejectReason',
+                     'isLocked'];
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return changedKeys.hasOnly(allowed);
+    }
+    function canConfirm() {
+      // ops_manager أو admin يقدر يأكد
+      return (isAdmin() || isOpsManager())
+          && resource.data.get('approvalStatus','pending') == 'pending'
+          && request.resource.data.approvalStatus in ['confirmed','rejected'];
+    }
+    function canApprove() {
+      // admin فقط يعتمد (والاعتماد يتطلب confirmed سابقاً)
+      // إلا لو admin اختار "اعتماد مباشر" — مسموح من pending مباشرة
+      return isAdmin()
+          && resource.data.get('approvalStatus','pending') in ['pending','confirmed']
+          && request.resource.data.approvalStatus in ['approved','rejected']
+          && request.resource.data.get('isLocked', false) == true;
+    }
+    function isLocked() {
+      return resource.data.get('isLocked', false) == true;
+    }
 
     // ══ Users ══
     match /users/{userId} {
@@ -208,12 +241,21 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() ||
         hasPage('clients') ||
+        can('canViewClients') ||
+        can('canAddClients') ||
+        can('canFollowUpClients') ||
+        can('canArchiveClients') ||
         resource.data.get('createdBy','__') == request.auth.uid
       );
       allow create: if isAuth() && (isAdmin() || can('canAddClients'));
+      // Update covers add-style edits + follow-up notes + archive flag.
+      // Each is a separate permission so a CS rep can be allowed to follow up
+      // without being able to add new clients, etc.
       allow update: if isAuth() && (
         isAdmin() ||
         can('canAddClients') ||
+        can('canFollowUpClients') ||
+        can('canArchiveClients') ||
         resource.data.get('createdBy','__') == request.auth.uid
       );
       allow delete: if isAdmin();
@@ -231,7 +273,16 @@ service cloud.firestore {
     match /transactions_v2/{txId} {
       allow read:   if isAuth() && canFinancialRead();
       allow create: if isAuth() && canFinancialWrite() && validTx();
-      allow update, delete: if isAdmin();
+      // التحديث: admin يقدر يعمل أي تعديل (لكن المغلق محمي حتى من admin إلا للاعتماد)
+      // ops_manager يقدر يأكد فقط (تحديث حقول approval)
+      // أي مستخدم آخر: ممنوع
+      allow update: if isAuth() && (
+        // قفل: لا تعديل بعد الاعتماد إلا لو admin يحدّث حقول approval فقط
+        (isLocked() ? (isAdmin() && isApprovalUpdate())
+                    : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())
+                                 || (isAdmin() && isApprovalUpdate())))
+      );
+      allow delete: if isAdmin() && !isLocked();
     }
 
     // ══ Products ══
@@ -300,6 +351,22 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ══ Notifications ══
+    // إشعارات النظام (مثلاً: حذف بند تكلفة مدفوع)
+    // المستلِم يقرأ إشعاراته فقط، الكتابة مفتوحة لكل المصادقين
+    match /notifications/{notId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        resource.data.get('toUid','__') == request.auth.uid
+      );
+      allow create: if isAuth();
+      allow update: if isAuth() && (
+        isAdmin() ||
+        resource.data.get('toUid','__') == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
     // ══ Shipping ══
     match /shipping_settlements/{settId} {
       allow read: if isAuth() && (
@@ -336,8 +403,49 @@ service cloud.firestore {
     match /financial_ledger/{entryId} {
       allow read:   if isAuth() && canFinancialRead();
       allow create: if isAuth() && canFinancialWrite() && validLedger();
-      allow update: if isAuth() && isAdmin();
-      allow delete: if isAuth() && isAdmin();
+      // المغلق محمي: حتى admin لا يقدر يعدّل بعد الاعتماد إلا حقول الاعتماد فقط
+      // ops_manager يقدر يأكد فقط (تحديث حقول الاعتماد)
+      allow update: if isAuth() && (
+        (isLocked() ? (isAdmin() && isApprovalUpdate())
+                    : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())))
+      );
+      allow delete: if isAuth() && isAdmin() && !isLocked();
+    }
+
+    // ══ Payment Requests ══
+    // أي موظف يقدر ينشئ طلب (دفعة مورد / مرتب / سلفة)
+    // المحاسب ينفّذ → الطالب يستلم بإيصال → ops يؤكد → admin يعتمد
+    match /payment_requests/{reqId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.status == 'requested'
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if isAuth() && (
+        // المحاسب ينفّذ: requested → awaiting_receipt
+        (canFinancialWrite()
+         && resource.data.status == 'requested'
+         && request.resource.data.status in ['awaiting_receipt','rejected'])
+        // الطالب يلغي طلبه الخاص: requested → rejected (لم يبدأ التنفيذ بعد)
+        || (resource.data.requestedBy == request.auth.uid
+            && resource.data.status == 'requested'
+            && request.resource.data.status == 'rejected')
+        // الطالب يستلم + يرفع إيصال: awaiting_receipt → pending
+        || (resource.data.requestedBy == request.auth.uid
+            && resource.data.status == 'awaiting_receipt'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.receiptImageUrl is string)
+        // ops_manager يأكد: pending → confirmed
+        || (isOpsManager()
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['confirmed','rejected'])
+        // admin يعتمد: confirmed → approved (locked)
+        || (isAdmin()
+            && resource.data.status in ['pending','confirmed']
+            && request.resource.data.status in ['approved','rejected'])
+      );
+      allow delete: if isAdmin();
     }
 
     // ══ Chat ══
@@ -382,6 +490,41 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ══ Client Follow-ups — متابعات العملاء (CRM, non-financial) ══
+    // كل من له وصول إلى clients يقدر يضيف/يقرأ متابعات. الحذف soft فقط (isDeleted).
+    match /client_followups/{fId} {
+      allow read: if isAuth() && (
+        isAdmin() || hasPage('clients') ||
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('assignedTo','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() || hasPage('clients') || can('canAddClients')
+      ) && request.resource.data.keys().hasAll(['clientId','type','createdBy','createdAt'])
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuth() && (
+        isAdmin() || hasPage('clients') ||
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('assignedTo','__') == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ══ WhatsApp Logs — مكتوبة فقط من Cloud Functions (admin SDK يتجاوز الـ rules) ══
+    // الأدمن يقرأ السجلات للمراجعة. ممنوع الكتابة من العميل.
+    match /whatsapp_logs/{logId} {
+      allow read: if isAuth() && isAdmin();
+      allow write: if false;
+    }
+
+    // ══ Supplier Orders — طلبات توريد رسمية (document per external cost item) ══
+    match /supplier_orders/{soId} {
+      allow read: if isAuth() && (isAdmin() || hasPage('production') || hasPage('suppliers') || hasPage('accounts'));
+      allow create: if isAuth() && (isAdmin() || hasPage('production'));
+      allow update: if isAuth() && (isAdmin() || hasPage('production') || hasPage('suppliers'));
+      allow delete: if isAdmin();
+    }
+
     // ══ Client Decisions — client portal creates (token-based, no Firebase auth) ══
     // العملاء يستخدمون بوابة بدون Firebase auth — نسمح create بشرط الحقول الأساسية فقط
     match /client_decisions/{decId} {
@@ -391,6 +534,13 @@ service cloud.firestore {
                     && request.resource.data.itemId is string
                     && request.resource.data.decision in ['approved','revision'];
       allow update, delete: if isAdmin();
+    }
+
+    // ══ Master Lists — قوائم مركزية (تصنيفات، خدمات) ══
+    // كل المصادقين يقرأون، الأدمن فقط يكتب
+    match /master_lists/{listId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
     }
   }
 }

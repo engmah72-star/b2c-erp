@@ -162,6 +162,7 @@
     <a class="nav-link" href="shipping-accounts.html"><span class="nav-ico">📦</span> حسابات الشحن</a>
     <a class="nav-link" href="archive.html"><span class="nav-ico">📁</span> الأرشيف</a>
     <a class="nav-link" href="accounts.html"><span class="nav-ico">💰</span> الحسابات</a>
+    <a class="nav-link" href="approvals.html"><span class="nav-ico">🔐</span> الاعتمادات</a>
     <a class="nav-link" href="suppliers.html"><span class="nav-ico">▣</span> الموردين</a>
     <a class="nav-link" href="products.html"><span class="nav-ico">◈</span> المنتجات</a>
     <a class="nav-link" href="employees.html" class="nav-link active"><span class="nav-ico">👥</span> الموظفين</a>
@@ -385,7 +386,8 @@ async function buildDynamicSidebar(uid, currentPage) {
       {f:'production.html',      l:'التنفيذ',       i:'🏭', p:'production'},
       {f:'shipping.html',        l:'الشحن',         i:'🚚', p:'shipping'},
       {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦', p:'shipping-accounts'},
-      {f:'archive.html',         l:'الأرشيف',       i:'📁', p:'archive'},
+      {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
+      {f:'approvals.html',       l:'الاعتمادات',    i:'🔐', p:'approvals'},
       {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
       {f:'suppliers.html',       l:'الموردين',      i:'▣',  p:'suppliers'},
       {f:'products.html',        l:'المنتجات',      i:'◈',  p:'products'},
@@ -429,7 +431,7 @@ async function buildDynamicSidebar(uid, currentPage) {
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch }
+import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch, runTransaction }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
@@ -1724,19 +1726,23 @@ const ALL_PERMS=[
   {key:'canSeePrices',label:'💰 يشوف الأسعار'},
   {key:'canSeeAllOrders',label:'📋 يشوف أوردرات الكل'},
   {key:'canAddOrders',label:'➕ يضيف أوردرات'},
+  {key:'canViewClients',label:'👁️ يفتح/يشوف العملاء'},
   {key:'canAddClients',label:'👤 يضيف عملاء'},
+  {key:'canFollowUpClients',label:'📞 يتابع العملاء'},
+  {key:'canArchiveClients',label:'📁 يأرشف العملاء'},
   {key:'canAddSuppliers',label:'▣ يضيف/يعدّل موردين'},
   {key:'canAssignDesigner',label:'🎨 يعين المصمم'},
   {key:'canAssignTasks',label:'✅ يضيف مهام للموظفين'},
+  {key:'canViewCosts',label:'🏭 يشوف التكاليف والأرباح'},
 ];
 const ROLE_DEFAULTS_PROFILE={
-  customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false},
-  graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
-  design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true,canAssignTasks:false},
-  production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
-  shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
-  wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false},
-  operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true},
+  customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
+  graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
+  design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canViewClients:false,canAddClients:false,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
+  production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
+  shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts','shipping-followup'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
+  wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
+  operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canViewCosts:true},
 };
 
 async function renderPermissions(){
@@ -1745,7 +1751,7 @@ async function renderPermissions(){
     el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة</div>';
     return;
   }
-  const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false};
+  const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false};
   let current={...defaults};
   try{
     // ابحث عن الـ user document
@@ -2479,18 +2485,25 @@ window.recordAttendanceToday=async function(){
   try{
     const nowD=new Date();
     const lateMinutes=computeLateMinutes(nowD);
-    await addDoc(collection(db,'attendance'),{
-      employeeUid:emp.authUid||empId,
-      employeeId:empId,
-      employeeName:emp.name||'',
-      date:dateStr,
-      monthKey:mKey,
-      checkIn:true,
-      checkInStr:nowD.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
-      lateMinutes,
-      recordedBy:currentUser.uid,
-      recordedByName:adminName,
-      createdAt:serverTimestamp()
+    // doc id قطعي يمنع التكرار حتى لو تنافس tabs/users
+    const attId=`${empId}_${dateStr}`;
+    const attRef=doc(db,'attendance',attId);
+    await runTransaction(db,async tx=>{
+      const snap=await tx.get(attRef);
+      if(snap.exists())throw new Error('سُجِّل حضور مسبقاً');
+      tx.set(attRef,{
+        employeeUid:emp.authUid||empId,
+        employeeId:empId,
+        employeeName:emp.name||'',
+        date:dateStr,
+        monthKey:mKey,
+        checkIn:true,
+        checkInStr:nowD.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
+        lateMinutes,
+        recordedBy:currentUser.uid,
+        recordedByName:adminName,
+        createdAt:serverTimestamp()
+      });
     });
     if(lateMinutes>0)toast(`⚠️ حضور متأخر ${lateMinutes}د — ${emp.name}`,'err');
     else toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');

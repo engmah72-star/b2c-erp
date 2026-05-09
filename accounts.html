@@ -88,6 +88,7 @@
       <div><h1>💰 الحسابات والمحافظ</h1><p id="acc-sub">جاري التحميل...</p></div>
     </div>
     <div class="topbar-right">
+      <a href="ledger.html" class="btn btn-ghost btn-sm" style="text-decoration:none">📊 السجل المفصّل</a>
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ تصدير</button>
       <button class="btn btn-b btn-sm" onclick="oM('transfer');fillTransferInfo()">🔄 تحويل</button>
       <button class="btn btn-g" onclick="oM('new-tx');setTimeout(updateTxCats,100)">＋ حركة مالية</button>
@@ -261,7 +262,23 @@
     <div class="modal-head"><span class="modal-title">＋ حساب جديد</span><button class="modal-x" onclick="document.getElementById('ov-new-wallet').classList.remove('open')">✕</button></div>
     <div class="modal-body">
       <div class="fg"><label>اسم الحساب *</label><input class="inp" id="nw-name" placeholder="محفظة 018 / كاش المطبعة..."></div>
-      <div class="fg"><label>النوع *</label><select class="inp" id="nw-type"><option value="wallet">💳 محفظة إلكترونية</option><option value="cash">💵 كاش</option><option value="bank">🏦 بنك</option></select></div>
+      <div class="g2">
+        <div class="fg"><label>النوع *</label><select class="inp" id="nw-type"><option value="wallet">💳 محفظة إلكترونية</option><option value="cash">💵 كاش</option><option value="bank">🏦 بنك</option></select></div>
+        <div class="fg"><label>المزود (للرسوم)</label><select class="inp" id="nw-provider">
+          <option value="">— لا يوجد —</option>
+          <option value="e_money">e& money (له قواعد رسوم)</option>
+          <option value="other_wallet">محفظة أخرى (010 فودافون / 012 أورنج / 015 WE)</option>
+          <option value="bank">بنك</option>
+          <option value="cash">كاش</option>
+        </select></div>
+      </div>
+      <div style="font-size:10px;color:var(--dim2);background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.18);border-radius:6px;padding:6px 9px;margin-bottom:10px;line-height:1.6">
+        💡 <b>قواعد رسوم e& money فقط (مزودنا الوحيد المعروف):</b><br>
+        • e& money → e& money: <b>1 ج</b><br>
+        • e& money → محفظة أخرى: <b>0.5% (حد أقصى 15 ج)</b><br>
+        • e& money → كاش (سحب ≤ 5000): <b>5 ج</b><br>
+        • أي مزود آخر → أي وجهة: <b>0 ج</b> (لا نعرف قواعدهم)
+      </div>
       <div class="g2">
         <div class="fg"><label>الرصيد الافتتاحي</label><input class="inp" id="nw-bal" type="number" placeholder="0"></div>
         <div class="fg"><label>المسؤول</label><select class="inp" id="nw-manager"></select></div>
@@ -355,6 +372,8 @@ async function buildDynamicSidebar(uid, currentPage) {
       {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦', p:'shipping-accounts'},
       {f:'archive.html',         l:'الأرشيف',       i:'📁', p:'archive'},
       {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
+      {f:'approvals.html',       l:'الاعتمادات',    i:'🔐', p:'approvals'},
+      {f:'my-requests.html',     l:'طلباتي',        i:'📋', public:true},
       {f:'suppliers.html',       l:'الموردين',      i:'▣',  p:'suppliers'},
       {f:'products.html',        l:'المنتجات',      i:'◈',  p:'products'},
       {f:'employees.html',       l:'الموظفين',      i:'👥', p:'employees', adminOnly:true},
@@ -429,7 +448,9 @@ function buildSidebar(userData,currentPage){
   html+=`<a class="nav-link${cur===dashHome?' active':''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${DASH_LABELS_MAP[role]||'داشبوردي'}</a>`;
   for(const cfg of SIDEBAR_PAGES){
     if(cfg.file==='index.html')continue;
-    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(pages.includes('*')||pages.includes(cfg.perm||'')));
+    const hasPagePerm=pages.includes('*')||pages.includes(cfg.perm||'');
+    const hasViewClients=cfg.perm==='clients'&&perms.canViewClients===true;
+    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(hasPagePerm||hasViewClients));
     if(!ok)continue;
     if(cfg.group!==lastGrp){html+=`<div class="nav-group">${GROUP_LABELS_SB[cfg.group]||cfg.group}</div>`;lastGrp=cfg.group;}
     html+=`<a class="nav-link${cur===cfg.file?' active':''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
@@ -449,7 +470,9 @@ function guardPage(userData,currentPage){
   if(!cfg)return true;
   if(cfg.adminOnly){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   const perm=cfg.perm||cur.replace('.html','');
-  if(!pages.includes('*')&&!pages.includes(perm)){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
+  const hasPagePerm=pages.includes('*')||pages.includes(perm);
+  const hasViewClients=perm==='clients'&&perms.canViewClients===true;
+  if(!hasPagePerm&&!hasViewClients){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   return true;
 }
 
@@ -477,7 +500,7 @@ import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/fireb
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, query, orderBy, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, inferEventType, getReversal, calcOrderPayment, FE } from "./financial-sync-engine.js";
+import { addLedgerToBatch, inferEventType, getReversal, calcOrderPayment, FE, approvalFields } from "./financial-sync-engine.js";
 
 const app  = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -494,7 +517,7 @@ const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops 
 const WICO={wallet:'💳',cash:'💵',bank:'🏦'};
 const WNAME={wallet:'محفظة إلكترونية',cash:'كاش',bank:'بنك'};
 const WCOLS=['var(--g)','var(--b)','var(--p)','var(--c)','var(--y)','var(--r)','var(--o)'];
-const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',other:'📦 أخرى',adjustment:'🔄 تسوية',opening_balance:'📅 رصيد افتتاحي',transfer:'🔄 تحويل'};
+const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',print_advance:'💵 مقدم طباعة',client_payment:'💰 دفعة عميل',printer_payment:'🏭 مورد طباعة',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',refund:'↩️ استرداد',admin_edit:'✏️ تعديل أدمن',expense_reversal:'🔁 عكس مصروف',other:'📦 أخرى',adjustment:'🔄 تسوية',opening_balance:'📅 رصيد افتتاحي',transfer:'🔄 تحويل'};
 const SPCOL={ورق:'var(--b)',زنكات:'var(--p)',طباعة:'var(--y)',قص:'var(--r)',سلفنة:'var(--g)',شحن:'var(--c)'};
 
 // ── Utils ──
@@ -1353,10 +1376,15 @@ function renderTransactions(){
       ${filtered.slice(0,100).map(t=>{
         const w=wallets.find(x=>x._id===t.walletId);
         const isIn=t.type==='in';
+        const apSt = t.approvalStatus;
+        const apBadge = apSt === 'approved' ? '<span style="background:rgba(0,217,126,.15);color:#00d97e;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:800">🔒 معتمدة</span>' :
+                       apSt === 'confirmed' ? '<span style="background:rgba(59,158,255,.15);color:#3b9eff;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:800">🔵 مؤكَّدة</span>' :
+                       apSt === 'pending'   ? '<span style="background:rgba(255,170,0,.15);color:#ffaa00;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:800">⏳ بانتظار التأكيد</span>' :
+                       apSt === 'rejected'  ? '<span style="background:rgba(255,61,110,.15);color:#ff3d6e;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:800">❌ مرفوضة</span>' : '';
         return`<div class="tx-row">
           <div class="tx-dot" style="background:${isIn?'var(--g)':'var(--r)'}"></div>
           <div class="tx-body">
-            <div class="tx-desc">${t.description||CAT[t.category]||'—'}</div>
+            <div class="tx-desc">${t.description||CAT[t.category]||'—'} ${apBadge}</div>
             <div class="tx-meta">
               <span>📅 ${t.date||'—'}</span>
               ${w?`<span>💼 ${w.name}</span>`:''}
@@ -1608,9 +1636,10 @@ window.saveReconciliation=async function(walletId,sysBal){
         createdByName:byNameRec,
         createdAt:serverTimestamp()
       });
-      addLedgerToBatch(batch,db,diff>0?'CUSTOMER_PAYMENT':'GENERAL_EXPENSE',{
+      addLedgerToBatch(batch,db,FE.WALLET_ADJUSTMENT,{
         amount,walletId,walletName:w.name,
         notes:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
+        direction:diff>0?'in':'out',
         userId:currentUser?.uid||'',userName:byNameRec,
       });
     }
@@ -1665,8 +1694,7 @@ window.saveSetOpening=async function(){
       date:displayDate,
       createdBy:currentUser?.uid||'',
       createdByName:document.getElementById('nav-name')?.textContent||'',
-      createdAt:serverTimestamp()
-    });
+      createdAt:serverTimestamp(), ...approvalFields()});
     const recRef=doc(collection(db,'reconciliations'));
     batch.set(recRef,{
       walletId,walletName:w.name,
@@ -1696,10 +1724,15 @@ window.openWallet=function(id){
   activeWalletId=id;
   const w=wallets.find(x=>x._id===id);if(!w)return;
   const col=WCOLS[wallets.indexOf(w)%WCOLS.length];
+  const PROV_LBL = { e_money:'e& money', other_wallet:'محفظة أخرى', vodafone:'فودافون', orange:'أورنج', we:'WE', cash:'كاش', bank:'بنك' };
+  const provLbl = w.provider ? (PROV_LBL[w.provider] || w.provider) : '';
   document.getElementById('pn-hdr').innerHTML=`
     <div>
-      <div style="font-size:10px;color:${col};font-weight:700">${WICO[w.type]||'💼'} ${WNAME[w.type]||'حساب'}</div>
-      <div style="font-size:16px;font-weight:800">${w.name}</div>
+      <div style="font-size:10px;color:${col};font-weight:700">${WICO[w.type]||'💼'} ${WNAME[w.type]||'حساب'}${provLbl?' · '+provLbl:''}</div>
+      <div style="font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px">
+        ${w.name}
+        <button onclick="event.stopPropagation();editWalletProvider('${w._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:10px;cursor:pointer;font-family:inherit" title="تعديل المزود">✏️ مزود</button>
+      </div>
       <div style="font-size:22px;font-weight:900;color:${col};margin-top:4px">${fn(w.balance||0)} ج</div>
     </div>`;
   document.getElementById('panel-ov').classList.add('open');
@@ -1720,6 +1753,27 @@ window.openWallet=function(id){
     </div>`;}).join('')}</div>`;
 };
 window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeWalletId=null;};
+
+window.editWalletProvider=async function(walletId){
+  const w=wallets.find(x=>x._id===walletId);if(!w)return;
+  const PROVIDERS = [
+    {v:'',             l:'— لا يوجد —'},
+    {v:'e_money',      l:'e& money (له قواعد رسوم)'},
+    {v:'other_wallet', l:'محفظة أخرى (010 فودافون / 012 أورنج / 015 WE)'},
+    {v:'bank',         l:'بنك'},
+    {v:'cash',         l:'كاش'},
+  ];
+  const list = PROVIDERS.map((p,i)=>`${i+1}. ${p.l}${w.provider===p.v?' ✓':''}`).join('\n');
+  const idx = prompt(`اختر المزود لـ "${w.name}":\n\n${list}\n\nأدخل الرقم:`, PROVIDERS.findIndex(p=>p.v===(w.provider||''))+1 || 1);
+  if(!idx) return;
+  const sel = PROVIDERS[parseInt(idx)-1];
+  if(!sel) return toast('⚠️ رقم غير صحيح','err');
+  try{
+    await updateDoc(doc(db,'wallets',walletId),{provider:sel.v});
+    toast(`✅ المزود: ${sel.l}`,'ok');
+    setTimeout(()=>openWallet(walletId), 200);
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ══ ACTIONS ══
 // ── تحديث modal الحركة حسب التصنيف ──
@@ -2060,7 +2114,7 @@ window.savePaySup=async function(){
     const spRef=doc(collection(db,'supplier_payments'));
     batch.set(spRef,{supplierId:supId,supplierName:sup?.name||'',supplierType:'printer',amount,walletId,note,date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
     const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:sup?.supType==='shipper'?'shipper_payment':'printer_payment',supplierId:supId,supplierName:sup?.name||'',spId:spRef.id,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()});
+    batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:sup?.supType==='shipper'?'shipper_payment':'printer_payment',supplierId:supId,supplierName:sup?.name||'',spId:spRef.id,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp(), ...approvalFields()});
     addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT,{
       amount,walletId,walletName:w?.name||'',
       vendorId:supId,vendorName:sup?.name||'',
@@ -2073,15 +2127,57 @@ window.savePaySup=async function(){
 };
 
 // ══ تحويل بين المحافظ ══
+// رسوم e& money فقط (المزود الذي نعرف رسومه):
+//   e_money → e_money            : 1 ج (ثابت)
+//   e_money → vodafone/orange/we : 0.5% بحد أقصى 15 ج
+//   e_money → cash (سحب)         : 5 ج للمبالغ ≤ 5000
+//   باقي الحالات                 : 0 (لا قواعد رسوم لباقي المزودين)
+// ملاحظة: قاعدة "أول تحويل شهري مجاني < 2000" مؤجلة
+function computeTransferFee(fromW, toW, amount){
+  if(!fromW || !toW || !(amount > 0)) return { fee: 0, label: '', kind: '' };
+  const fp = (fromW.provider || '').toLowerCase();
+  const tp = (toW.provider || '').toLowerCase();
+  const tt = (toW.type || '').toLowerCase();
+  // الرسوم محسوبة فقط لو المصدر e& money
+  if(fp !== 'e_money') return { fee: 0, label: '', kind: '' };
+  // داخل e& money
+  if(tp === 'e_money') return { fee: 1, label: '1 ج (تحويلة داخلية e& money)', kind: 'transfer' };
+  // سحب (e& money → كاش / محفظة كاش)
+  if(tp === 'cash' || tt === 'cash'){
+    if(amount <= 5000) return { fee: 5, label: 'رسوم سحب 5 ج (المبلغ ≤ 5000)', kind: 'withdrawal' };
+    return { fee: 5, label: '⚠️ رسوم سحب 5 ج (الشريحة ≤ 5000 — تحقق من الشرائح الأكبر)', kind: 'withdrawal' };
+  }
+  // تحويل لمحفظة أخرى (010 فودافون / 012 أورنج / 015 WE — أو مزودين قدامى)
+  if(['other_wallet','vodafone','orange','we'].includes(tp)){
+    const f = Math.min(15, +(amount * 0.005).toFixed(2));
+    return { fee: f, label: `${fn(f)} ج (0.5% × ${fn(amount)}، حد أقصى 15)`, kind: 'transfer' };
+  }
+  return { fee: 0, label: '', kind: '' };
+}
+
 window.fillTransferInfo=function(){
   const fromId=gv('tr-from'),toId=gv('tr-to'),amount=parseFloat(gv('tr-amount'))||0;
   const info=document.getElementById('tr-info');if(!info)return;
   const from=wallets.find(x=>x._id===fromId),to=wallets.find(x=>x._id===toId);
   if(from&&to&&amount&&fromId!==toId){
-    const fromAfter=(parseFloat(from.balance)||0)-amount;
+    const { fee, label, kind } = computeTransferFee(from, to, amount);
+    const isWith = kind === 'withdrawal';
+    const totalDeducted = amount + fee;
+    const fromAfter=(parseFloat(from.balance)||0)-totalDeducted;
     const toAfter=(parseFloat(to.balance)||0)+amount;
+    const opLabel = isWith ? '💵 عملية سحب' : '🔄 عملية تحويل';
     info.style.display='block';
-    info.innerHTML=`<strong>${from.name}</strong>: ${fn(parseFloat(from.balance)||0)} ج &rarr; <span style="color:${fromAfter<0?'var(--r)':'var(--snow)'};font-weight:800">${fn(fromAfter)} ج</span><br><strong>${to.name}</strong>: ${fn(parseFloat(to.balance)||0)} ج &rarr; <span style="color:var(--g);font-weight:800">${fn(toAfter)} ج</span>`;
+    info.innerHTML=`
+      <div style="font-size:11px;color:var(--y);font-weight:700;margin-bottom:6px">${opLabel}</div>
+      <strong>${from.name}</strong>: ${fn(parseFloat(from.balance)||0)} ج &rarr;
+        <span style="color:${fromAfter<0?'var(--r)':'var(--snow)'};font-weight:800">${fn(fromAfter)} ج</span><br>
+      <strong>${to.name}</strong>: ${fn(parseFloat(to.balance)||0)} ج &rarr;
+        <span style="color:var(--g);font-weight:800">${fn(toAfter)} ج</span>
+      ${fee > 0 ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:11px">
+        <div style="color:var(--y);font-weight:700">💰 ${isWith?'رسوم السحب':'رسوم التحويل'}: <span style="color:#ff3d6e">${fn(fee)} ج</span></div>
+        <div style="color:var(--dim2);margin-top:2px">${label}</div>
+        <div style="color:var(--dim);margin-top:2px">إجمالي الخصم من ${from.name}: <b>${fn(totalDeducted)} ج</b> · يستلم ${to.name}: <b>${fn(amount)} ج</b></div>
+      </div>` : ''}`;
   }else{info.style.display='none';}
 };
 
@@ -2092,19 +2188,46 @@ window.saveTransfer=async function(){
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const fromW=wallets.find(x=>x._id===fromId),toW=wallets.find(x=>x._id===toId);
   if(!fromW||!toW)return;
-  if((parseFloat(fromW.balance)||0)<amount)return toast('⚠️ الرصيد غير كافٍ في الحساب المصدر','err');
+  const { fee, label: feeLabel, kind } = computeTransferFee(fromW, toW, amount);
+  const isWithdrawal = kind === 'withdrawal';
+  const totalDeducted = amount + fee;
+  if((parseFloat(fromW.balance)||0)<totalDeducted)return toast(`⚠️ الرصيد غير كافٍ — تحتاج ${fn(totalDeducted)} ج (شامل الرسوم ${fn(fee)} ج)`,'err');
   const dateStr=nowStr();
   const byName=document.getElementById('nav-name')?.textContent||'';
   const fromBal=parseFloat(fromW.balance)||0, toBal=parseFloat(toW.balance)||0;
   try{
     const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',fromId),{balance:increment(-amount)});
+    batch.update(doc(db,'wallets',fromId),{balance:increment(-totalDeducted)});
     batch.update(doc(db,'wallets',toId),{balance:increment(amount)});
     const transferGroupId=doc(collection(db,'transactions_v2')).id;
+    const txCategory = isWithdrawal ? 'withdrawal' : 'transfer';
+    const outDescPrefix = isWithdrawal ? '💵 سحب إلى: ' : '🔄 تحويل إلى: ';
+    const inDescPrefix  = isWithdrawal ? '💵 سحب من: '  : '🔄 تحويل من: ';
     const outRef=doc(collection(db,'transactions_v2'));
-    batch.set(outRef,{walletId:fromId,type:'out',amount,fees:0,description:'🔄 تحويل إلى: '+toW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
+    batch.set(outRef,{walletId:fromId,type:'out',amount,fees:fee,description:outDescPrefix+toW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
     const inRef=doc(collection(db,'transactions_v2'));
-    batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:'🔄 تحويل من: '+fromW.name+(note?' — '+note:''),category:'transfer',transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
+    batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:inDescPrefix+fromW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
+    // tx منفصلة للرسوم لو > 0 — تظهر في حركات المحفظة وتحتاج اعتماد كباقي العمليات
+    if(fee > 0){
+      const feeRef=doc(collection(db,'transactions_v2'));
+      const feeCat = isWithdrawal ? 'withdrawal_fee' : 'transfer_fee';
+      const feeDesc = isWithdrawal
+        ? `💰 رسوم سحب — ${fromW.name} → ${toW.name}${note?' — '+note:''}`
+        : `💰 رسوم تحويل — ${fromW.name} → ${toW.name}${note?' — '+note:''}`;
+      batch.set(feeRef,{
+        walletId:fromId,walletName:fromW.name||'',type:'out',amount:fee,fees:0,
+        description:feeDesc, category:feeCat, transferGroupId,
+        balanceBefore:fromBal-amount,balanceAfter:fromBal-totalDeducted,
+        date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(),
+        ...approvalFields()
+      });
+      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
+        amount:fee,walletId:fromId,walletName:fromW.name||'',
+        notes:`${isWithdrawal?'رسوم سحب':'رسوم تحويل'} ${fromW.name} → ${toW.name}: ${feeLabel}`,
+        userId:currentUser?.uid||'',userName:byName,
+        categoryOverride:feeCat,
+      });
+    }
     addLedgerToBatch(batch,db,FE.WALLET_TRANSFER,{
       amount,walletId:fromId,walletName:fromW.name||'',
       notes:`تحويل من ${fromW.name} إلى ${toW.name}${note?' — '+note:''}`,
@@ -2114,7 +2237,7 @@ window.saveTransfer=async function(){
     cM('transfer');
     sv('tr-amount','');sv('tr-note','');
     document.getElementById('tr-info').style.display='none';
-    toast(`✅ تحويل ${fn(amount)} ج: ${fromW.name} ← → ${toW.name}`,'ok');
+    toast(`✅ ${isWithdrawal?'سحب':'تحويل'} ${fn(amount)} ج: ${fromW.name} ${isWithdrawal?'→':'← →'} ${toW.name}${fee>0?` (رسوم ${fn(fee)} ج)`:''}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -2164,16 +2287,16 @@ function renderDriftBanner(){
 }
 
 window.saveWallet=async function(){
-  const name=gv('nw-name'),type=gv('nw-type'),bal=parseFloat(gv('nw-bal'))||0,mgr=gv('nw-manager');
+  const name=gv('nw-name'),type=gv('nw-type'),provider=gv('nw-provider')||'',bal=parseFloat(gv('nw-bal'))||0,mgr=gv('nw-manager');
   if(!name)return toast('⚠️ أدخل اسم الحساب','err');
   const byName=document.getElementById('nav-name')?.textContent||'';
   try{
     const batch=writeBatch(db);
     const walletRef=doc(collection(db,'wallets'));
-    batch.set(walletRef,{name,type,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
+    batch.set(walletRef,{name,type,provider,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
     if(bal>0){
       const txRef=doc(collection(db,'transactions_v2'));
-      batch.set(txRef,{walletId:walletRef.id,type:'in',amount:bal,fees:0,description:'رصيد افتتاحي — '+name,category:'opening_balance',balanceBefore:0,balanceAfter:bal,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp()});
+      batch.set(txRef,{walletId:walletRef.id,type:'in',amount:bal,fees:0,description:'رصيد افتتاحي — '+name,category:'opening_balance',balanceBefore:0,balanceAfter:bal,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
       addLedgerToBatch(batch,db,FE.OPENING_BALANCE,{amount:bal,walletId:walletRef.id,walletName:name,notes:'رصيد افتتاحي — '+name,userId:currentUser?.uid||'',userName:byName});
     }
     await batch.commit();

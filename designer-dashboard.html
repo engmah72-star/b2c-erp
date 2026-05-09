@@ -188,6 +188,7 @@ async function buildDynamicSidebar(uid, currentPage) {
       {f:'shipping-accounts.html',l:'حسابات الشحن',i:'📦', p:'shipping-accounts'},
       {f:'archive.html',         l:'الأرشيف',       i:'📁', p:'archive'},
       {f:'accounts.html',        l:'الحسابات',      i:'💰', p:'accounts'},
+      {f:'approvals.html',       l:'الاعتمادات',    i:'🔐', p:'approvals'},
       {f:'suppliers.html',       l:'الموردين',      i:'▣',  p:'suppliers'},
       {f:'products.html',        l:'المنتجات',      i:'◈',  p:'products'},
       {f:'employees.html',       l:'الموظفين',      i:'👥', p:'employees', adminOnly:true},
@@ -249,7 +250,8 @@ const SIDEBAR_PAGES=[
   {file:'shipping.html',label:'الشحن',ico:'🚚',group:'orders',perm:'shipping'},
   {file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',group:'orders',perm:'shipping-accounts'},
   {file:'archive.html',label:'الأرشيف',ico:'📁',group:'orders',perm:'archive'},
-  {file:'accounts.html',label:'الحسابات',ico:'💰',group:'admin',perm:'accounts'},
+  {file:'accounts.html',label:'الحسابات',ico:'💰',group:'admin',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',group:'admin',perm:'approvals'},
+  {file:'my-requests.html',label:'طلباتي',ico:'📋',group:'main',public:true},
   {file:'suppliers.html',label:'الموردين',ico:'▣',group:'admin',perm:'suppliers'},
   {file:'products.html',label:'المنتجات',ico:'◈',group:'admin',perm:'products'},
   {file:'reports.html',label:'التقارير',ico:'📊',group:'admin',perm:'reports'},
@@ -275,7 +277,9 @@ function buildSidebar(userData,currentPage){
   html+=`<a class="nav-link${cur===dashHome?' active':''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${DASH_LABELS_MAP[role]||'داشبوردي'}</a>`;
   for(const cfg of SIDEBAR_PAGES){
     if(cfg.file==='index.html')continue;
-    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(pages.includes('*')||pages.includes(cfg.perm||'')));
+    const hasPagePerm=pages.includes('*')||pages.includes(cfg.perm||'');
+    const hasViewClients=cfg.perm==='clients'&&perms.canViewClients===true;
+    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(hasPagePerm||hasViewClients));
     if(!ok)continue;
     if(cfg.group!==lastGrp){html+=`<div class="nav-group">${GROUP_LABELS_SB[cfg.group]||cfg.group}</div>`;lastGrp=cfg.group;}
     html+=`<a class="nav-link${cur===cfg.file?' active':''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
@@ -295,7 +299,9 @@ function guardPage(userData,currentPage){
   if(!cfg)return true;
   if(cfg.adminOnly){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   const perm=cfg.perm||cur.replace('.html','');
-  if(!pages.includes('*')&&!pages.includes(perm)){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
+  const hasPagePerm=pages.includes('*')||pages.includes(perm);
+  const hasViewClients=perm==='clients'&&perms.canViewClients===true;
+  if(!hasPagePerm&&!hasViewClients){window.location.href=ROLE_HOME_MAP[role]||'login.html';return false;}
   return true;
 }
 
@@ -393,9 +399,10 @@ onAuthStateChanged(auth,async u=>{
   });
 
   // الأوردرات — query محددة للمصمم
-  // 1. أوردرات مكلّف بيها (designerId = uid)
-  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid)),snap=>{
+  // 1. أوردرات مكلّف بيها (designerId = uid) في مرحلة التصميم فقط — لا يجب أن يرى المؤرشف/الملغي
+  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid),where('stage','==','design')),snap=>{
     const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    window.__myUid=uid;
     // 2. أوردرات stage=design بدون مصمم (متاحة للكل)
     const unassigned=(window.__allDesignOrders||[]).filter(o=>!o.designerId);
     myOrders=[...assigned,...unassigned];
@@ -500,6 +507,17 @@ function render(){
           </button>
         </div>
       </div>
+
+      <!-- AWAITING ACCEPTANCE BANNER -->
+      ${(()=>{const myUid=window.__myUid||'';const pending=activeDesigns.filter(o=>o.designerId===myUid&&!o.designerAcceptedAt);if(!pending.length)return '';return `
+      <div onclick="location.href='design.html'" style="background:linear-gradient(135deg,rgba(240,160,32,.15),rgba(240,160,32,.05));border:1px dashed var(--y);border-radius:14px;padding:14px 16px;margin-bottom:14px;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all .2s">
+        <div style="font-size:28px">🔔</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:800;color:var(--y)">عندك ${pending.length} ${pending.length===1?'أوردر':'أوردرات'} بانتظار تأكيد استلامك</div>
+          <div style="font-size:11px;color:var(--dim2);margin-top:2px">افتح صفحة التصميم وأكّد الاستلام لتبدأ العمل</div>
+        </div>
+        <div style="font-size:12px;color:var(--y);font-weight:800">←</div>
+      </div>`;})()}
 
       <!-- PRIORITY CARD -->
       ${urgentOrder?`

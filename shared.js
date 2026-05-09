@@ -48,15 +48,16 @@ export const ROLES = {
 };
 
 // Which pages each role can access
+// ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','products','suppliers','reports','settings'],
-  operation_manager:['index','clients','design','production','print','shipping','suppliers','reports'],
-  customer_service: ['index','clients','design'],
-  graphic_designer: ['design'],
-  design_operator:  ['index','design','suppliers'],
-  production_agent: ['index','production','print'],
-  shipping_officer: ['index','print','shipping'],
-  wallet_manager:   ['index','accounts'],
+  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','settings'],
+  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports'],
+  customer_service: ['index','clients','design','approvals'],
+  graphic_designer: ['design','approvals'],
+  design_operator:  ['index','design','approvals','suppliers'],
+  production_agent: ['index','production','print','approvals'],
+  shipping_officer: ['index','print','shipping','approvals'],
+  wallet_manager:   ['index','accounts','approvals'],
 };
 
 // ═══════════════════════════════════════
@@ -274,6 +275,7 @@ export function renderSidebar(activePage) {
     { key:'print',      ico:'🖨️',label:'الطباعة' },
     { key:'shipping',   ico:'🚚', label:'الشحن' },
     { key:'accounts',   ico:'💰', label:'الحسابات' },
+    { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'reports',    ico:'📊', label:'التقارير' },
@@ -426,53 +428,10 @@ export function isToday(ts) {
 }
 
 // ═══════════════════════════════════════
-// WALLET OPERATIONS (shared between print/accounts)
+// WALLET OPERATIONS — REMOVED
+// كانت هنا recordCollection/recordPayment كـ helpers مباشرة على wallets+transactions_v2،
+// تم حذفها لمخالفتها RULE 2/3/5. للعمليات المالية استخدم financial-sync-engine.js.
 // ═══════════════════════════════════════
-export async function recordCollection(walletId, amount, description, refOrderId) {
-  const w = AppState.wallets.find(x => x._id === walletId);
-  if (!w) throw new Error('المحفظة غير موجودة');
-  const balBefore = parseFloat(w.balance) || 0;
-  const balAfter  = balBefore + amount;
-  const now = nowStr();
-
-  await Promise.all([
-    updateDoc(doc(db, 'wallets', walletId), { balance: balAfter }),
-    addDoc(collection(db, 'transactions_v2'), {
-      walletId, type: 'in', amount, fees: 0,
-      description, category: 'collection',
-      ref: refOrderId || '',
-      balanceBefore: balBefore, balanceAfter: balAfter,
-      date: now,
-      createdBy:     AppState.currentUser?.uid || '',
-      createdByName: AppState.userName,
-      createdAt:     serverTimestamp(),
-    }),
-  ]);
-  return balAfter;
-}
-
-export async function recordPayment(walletId, amount, description, category='other') {
-  const w = AppState.wallets.find(x => x._id === walletId);
-  if (!w) throw new Error('المحفظة غير موجودة');
-  const balBefore = parseFloat(w.balance) || 0;
-  const balAfter  = balBefore - amount;
-  if (balAfter < 0) throw new Error('الرصيد غير كافٍ');
-  const now = nowStr();
-
-  await Promise.all([
-    updateDoc(doc(db, 'wallets', walletId), { balance: balAfter }),
-    addDoc(collection(db, 'transactions_v2'), {
-      walletId, type: 'out', amount, fees: 0,
-      description, category,
-      balanceBefore: balBefore, balanceAfter: balAfter,
-      date: now,
-      createdBy:     AppState.currentUser?.uid || '',
-      createdByName: AppState.userName,
-      createdAt:     serverTimestamp(),
-    }),
-  ]);
-  return balAfter;
-}
 
 // ═══════════════════════════════════════
 // STAGE BADGE HTML

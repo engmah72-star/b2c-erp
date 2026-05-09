@@ -754,3 +754,172 @@ export function renderSidebar(activePage, role, userName) {
       <span class="nav-ico">${p.ico}</span> ${p.label}
     </a>`).join('');
 }
+
+// ══════════════════════════════════════════
+// SHIPPING HELPERS — مصدر واحد للحقيقة عبر shipping.html / shipping-followup.html / shipping-accounts.html
+// ══════════════════════════════════════════
+
+/** هل الأوردر مغلق نهائياً (مؤرشف أو مرتجع)؟ */
+export function isShipTerminal(order) {
+  if (!order) return false;
+  return order.stage === 'archived' || order.shipStage === 'returned';
+}
+
+/** هل الأوردر مقفول للتعديل المالي (مؤرشف أو مرتجع أو مسوّى مع شركة الشحن)؟
+ *  الإستخدام: قبل أي تعديل على totalPaid / customerShipFee — لو true، اطلب من المستخدم
+ *  يلغي التسوية أولاً (deleteSettle) ثم يعدّل ثم يعيد التسوية.
+ */
+export function isShipFinanciallyLocked(order) {
+  if (!order) return true;
+  if (isShipTerminal(order)) return true;
+  if (order.shipSettled === true) return true;
+  return false;
+}
+
+/** هل الأوردر "جاهز للأرشفة" — تم التحصيل + (تم تسوية الشركة لو ضروري)؟
+ *  مصدر واحد للحقيقة بدلاً من تكرار المنطق في 3 صفحات.
+ */
+export function isShipReadyToClose(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  const ss = order.shipStage || 'ready';
+  if (ss !== 'collected') return false;
+  // pickup/courier: محصّل = جاهز
+  if (order.shipMethod !== 'company') return true;
+  // company: محتاج تسوية مع الشركة
+  return order.shipSettled === true;
+}
+
+/** هل الأوردر "في الطريق" مع شركة شحن (لسه ما اتسوّاش)؟
+ *  بنستخدمه للتمييز إن المسؤولية حالياً على صفحة "حسابات الشحن" أو "متابعة الشحن"
+ *  بدلاً من صفحة "الشحن" الرئيسية.
+ */
+export function isShipCompanyInTransit(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  if (order.shipMethod !== 'company') return false;
+  const ss = order.shipStage || 'ready';
+  return ['wait_delivery', 'wait_collection', 'collected'].includes(ss);
+}
+
+/** هل الأوردر بحاجة لتسوية مع شركة الشحن (محصّل + شركة + لم يتم تسويته بعد)؟ */
+export function isShipPendingSettle(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  if (order.shipMethod !== 'company') return false;
+  if (order.shipSettled === true) return false;
+  return (order.shipStage || 'ready') === 'collected';
+}
+
+/** هل الأوردر "نشط" يحتاج عمل من فريق الشحن؟
+ *  (ليس مؤرشف، ليس مرتجع، ليس جاهز للأرشفة)
+ */
+export function isShipActive(order) {
+  if (!order) return false;
+  if (isShipTerminal(order)) return false;
+  return !isShipReadyToClose(order);
+}
+
+// ══════════════════════════════════════════
+// ORDER SELF-HEALER — كشف وإصلاح الـ inconsistencies تلقائياً
+// المبدأ: نحسب الحالة الحقيقية من salePrice/customerShipFee/discount/totalPaid وplags
+// لو فيه drift بين الـ flags المخزّنة والـ truth الحسابي → نرجّع consistency
+// ══════════════════════════════════════════
+
+/** يحسب الحالة المالية الحقيقية للأوردر بدون اعتماد على flags ممكن تكون drifted */
+export function getOrderFinancialTruth(order) {
+  if (!order) return null;
+  const sale = parseFloat(order.salePrice) || 0;
+  const cust = parseFloat(order.customerShipFee) || 0;
+  const disc = parseFloat(order.discount) || 0;
+  const paid = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+  const total = sale + cust - disc;
+  const remaining = Math.max(0, total - paid);
+  const isFullyPaid = total > 0 && paid >= total - 0.01;
+  const isCompany = order.shipMethod === 'company';
+  const isReturned = order.shipStage === 'returned';
+  const isArchived = order.stage === 'archived';
+  const isTerminal = isReturned || isArchived;
+  return { sale, cust, disc, paid, total, remaining, isFullyPaid, isCompany, isReturned, isArchived, isTerminal };
+}
+
+/** يكشف أي inconsistencies في الأوردر — يرجع array من المشاكل مع الإصلاحات المقترحة */
+export function detectOrderIssues(order) {
+  if (!order) return [];
+  const t = getOrderFinancialTruth(order);
+  if (!t) return [];
+  if (t.isReturned) return []; // المرتجع حالة نهائية، مينفعش نصلح
+  const issues = [];
+
+  // 1. shipSettled=true لكن totalPaid أقل من الإجمالي (legacy markManualSettled قبل PR #144)
+  if (order.shipSettled === true && !t.isFullyPaid && t.total > 0) {
+    issues.push({
+      key: 'settled_unpaid',
+      severity: 'warn',
+      label: 'مسوّى لكن totalPaid أقل من الإجمالي',
+      fixDesc: `ضبط totalPaid = ${t.total} ج`,
+      fixPatch: { totalPaid: t.total, remaining: 0, paymentStatus: 'paid' },
+    });
+  }
+
+  // 2. شركة + collected + غير مسوّى — يحتاج تسوية من حسابات الشحن (المنطق الصحيح)
+  // ليس bypass: شحنات الشركات تُسوَّى عبر التسوية الرسمية فقط
+  if (t.isCompany && !order.shipSettled && !t.isTerminal) {
+    const ss = order.shipStage || 'ready';
+    if (ss === 'collected') {
+      issues.push({
+        key: 'company_pending_settle',
+        severity: 'warn',
+        label: 'شحنة شركة محصّلة لكن لم تُسوَّ بعد',
+        fixDesc: 'استخدم "تسوية" من صفحة حسابات الشحن (لا auto-fix)',
+        // لا fixPatch — الإصلاح يدوي عبر صفحة حسابات الشحن
+      });
+    }
+  }
+
+  // 4. paymentStatus drift
+  if (!t.isTerminal && order.paymentStatus && t.total > 0) {
+    const expected = t.isFullyPaid ? 'paid' : t.paid > 0 ? 'partial' : 'pending';
+    if (['paid', 'partial', 'pending'].includes(order.paymentStatus) && order.paymentStatus !== expected) {
+      issues.push({
+        key: 'payment_status_drift',
+        severity: 'warn',
+        label: `paymentStatus="${order.paymentStatus}" لا يطابق الحساب (المتوقع="${expected}")`,
+        fixDesc: `ضبط paymentStatus = ${expected}`,
+        fixPatch: { paymentStatus: expected, remaining: t.remaining },
+      });
+    }
+  }
+
+  // 5. مرتجع لكن shipSettled لسه true (الـ return logic لم تنفّذ بشكل كامل)
+  if (t.isReturned === false && order.shipStage === 'returned' && order.shipSettled === true) {
+    issues.push({
+      key: 'returned_settled',
+      severity: 'crit',
+      label: 'مرتجع لكن shipSettled=true',
+      fixDesc: 'فض كل أعلام التسوية',
+      fixPatch: { shipSettled: false, shipSettledAmount: 0, shipSettledManual: false },
+    });
+  }
+
+  return issues;
+}
+
+/** يطبّق الإصلاحات المقترحة على الـ batch (atomic) — يتجاوز المشاكل بدون fixPatch */
+export function applyOrderHealPatch(batch, dbDocRef, order, issues, userName) {
+  if (!issues || !issues.length) return;
+  const auto = issues.filter(i => i.fixPatch);
+  if (!auto.length) return;
+  const merged = {};
+  for (const iss of auto) {
+    Object.assign(merged, iss.fixPatch);
+  }
+  const ts = new Date().toLocaleDateString('ar-EG') + ' ' + new Date().toLocaleTimeString('ar-EG', {hour:'2-digit',minute:'2-digit'});
+  const fixLabels = auto.map(i => i.fixDesc).join(' · ');
+  merged.timeline = [...(order.timeline || []), {
+    date: ts,
+    action: `🔧 إصلاح ذاتي: ${fixLabels}`,
+    by: userName || 'system',
+  }];
+  batch.update(dbDocRef, merged);
+}

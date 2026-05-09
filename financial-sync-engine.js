@@ -95,6 +95,20 @@ export function calcOrderPayment(order, delta) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// HELPER: حقول الاعتماد الثنائي — تُضاف لكل tx + ledger جديدة
+// كل عملية تبدأ pending، تحتاج تأكيد ops manager ثم اعتماد admin
+// ══════════════════════════════════════════════════════════════════
+export function approvalFields() {
+  return {
+    approvalStatus: 'pending',  // 'pending' | 'confirmed' | 'approved' | 'rejected'
+    confirmedBy: '', confirmedByName: '', confirmedAt: null,
+    approvedBy:  '', approvedByName:  '', approvedAt:  null,
+    rejectedBy:  '', rejectedByName:  '', rejectedAt:  null, rejectReason: '',
+    isLocked:    false,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // LOW-LEVEL: أضف إدخال ledger لـ batch موجود
 // استخدمه في الوحدات التي لديها batch منطقها الخاص
 // ══════════════════════════════════════════════════════════════════
@@ -134,6 +148,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     createdAt:    serverTimestamp(),
     isDeleted:    false,
     editHistory:  [],
+    ...approvalFields(),
   });
   console.log('[FSE] 📝 ledger added to batch:', eventType, data.amount);
   return ref;
@@ -203,15 +218,20 @@ async function handleVendorPayment(db, p) {
   });
 
   const txRef = doc(collection(db, 'transactions_v2'));
+  // description ذكي: اسم المورد دائماً + ملاحظة لو وُجدت
+  const supLbl = p.supplierType === 'shipper' ? 'دفعة شركة شحن' : 'دفعة مورد';
+  const supDescription = `${supLbl}${p.supplierName ? ' — ' + p.supplierName : ''}${p.note ? ' — ' + p.note : ''}`;
   batch.set(txRef, {
     walletId: p.walletId || '', walletName: p.walletName || '',
     type: 'out', amount: p.amount, fees: 0,
-    description: p.note || `دفعة مورد — ${p.supplierName}`, category: supCategory,
+    description: supDescription, category: supCategory,
     supplierId: p.supplierId, supplierName: p.supplierName,
     spId: payRef.id,
+    note: p.note || '',
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: supplier_payments + transactions_v2');
 
@@ -247,6 +267,7 @@ async function handleVendorPaymentReversal(db, p) {
     date: new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: supplier_payment deleted + reversal transactions_v2');
 
@@ -300,10 +321,16 @@ async function handleSalaryPayment(db, p) {
 
   const epRef = doc(collection(db, 'employee_payments'));
   const txRef = doc(collection(db, 'transactions_v2'));
+  // description ذكي: نوع الحركة + اسم الموظف + الشهر + الملاحظة
+  const sLabel = isDeduction ? 'خصم' : (p.salaryType === 'bonus' ? 'مكافأة' : p.salaryType === 'advance' ? 'سلفة' : 'راتب');
+  const empPart = p.employeeName ? ` — ${p.employeeName}` : '';
+  const monthPart = p.month ? ` (${p.month})` : '';
+  const notePart = p.note ? ` — ${p.note}` : '';
+  const txDescription = `${sLabel}${empPart}${monthPart}${notePart}`;
   batch.set(txRef, {
     walletId: p.walletId, walletName: p.walletName || '',
     type: isDeduction ? 'in' : 'out', amount: p.amount,
-    description: p.note || '', category: 'salary',
+    description: txDescription, category: 'salary',
     salaryType: p.salaryType, employeeId: p.employeeId, employeeName: p.employeeName,
     baseSalary: p.baseSalary || 0, commission: p.commission || 0,
     absenceDeduction: p.absenceDeduction || 0, attendanceBonus: p.attendanceBonus || 0,
@@ -312,6 +339,7 @@ async function handleSalaryPayment(db, p) {
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   batch.set(epRef, {
@@ -363,6 +391,7 @@ async function handlePayroll(db, p) {
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(), source: 'payroll',
+      ...approvalFields(),
     });
 
     addLedgerToBatch(batch, db, 'SALARY_PAYMENT', {
@@ -392,16 +421,24 @@ async function handleCustomerPayment(db, p) {
     console.log('[FSE] 💳 balance updated:', p.walletId, sign > 0 ? '+' : '-', p.amount);
   }
 
+  // description ذكي: يضم اسم العميل دائماً + الملاحظة لو وُجدت
+  const baseLbl = isRefund ? 'استرداد' : 'دفعة عميل';
+  const clientPart = p.clientName ? ` — ${p.clientName}` : '';
+  const notePart = p.note ? ` — ${p.note}` : '';
+  const txDescription = `${baseLbl}${clientPart}${notePart}`;
+
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
     walletId: p.walletId || '', walletName: p.walletName || '',
     type: isRefund ? 'out' : 'in', amount: p.amount,
+    description: txDescription,
     category: p.txCategory || (isRefund ? 'refund' : 'client_payment'),
     orderId: p.orderId || null, clientId: p.clientId || null, clientName: p.clientName || '',
     note: p.note || '',
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
   console.log('[FSE] 🏭 module updated: transactions_v2');
 
@@ -414,7 +451,7 @@ async function handleCustomerPayment(db, p) {
     console.log('[FSE] 📦 module updated: order payment fields', payment);
   }
 
-  addLedgerToBatch(batch, db, evtType, { ...p, notes: p.note });
+  addLedgerToBatch(batch, db, evtType, { ...p, notes: p.note || txDescription });
 
   await batch.commit();
   console.log('[FSE] 📊 dashboard updated via financial_ledger');
@@ -447,6 +484,7 @@ async function handleShippingSettlement(db, p) {
     note: p.note || '', date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   const settleRef = doc(collection(db, 'shipping_settlements'));
@@ -508,6 +546,7 @@ async function handleShippingSettlementReversal(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   batch.delete(doc(db, 'shipping_settlements', p.settlementId));
@@ -556,6 +595,7 @@ async function handleWalletTransfer(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   const inRef = doc(collection(db, 'transactions_v2'));
@@ -567,6 +607,7 @@ async function handleWalletTransfer(db, p) {
     date: dateStr,
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
+    ...approvalFields(),
   });
 
   addLedgerToBatch(batch, db, 'WALLET_TRANSFER', {
@@ -592,15 +633,31 @@ async function handleGeneralExpense(db, p) {
 
   if (p.walletId && p.createTx !== false) {
     const txRef = doc(collection(db, 'transactions_v2'));
+    // description ذكي: لو الـcaller مرّر description نستخدمه، وإلا نبني من eventType + entity name
+    const evtLabels = {
+      GENERAL_EXPENSE: 'مصروف عام',
+      GENERAL_EXPENSE_REVERSAL: 'إلغاء مصروف',
+      SHIPPING_EXPENSE: 'تكلفة شحن',
+      SHIPPING_RETURN: 'مرتجع شحن',
+      RETURN_LOSS: 'خسارة مرتجع',
+    };
+    const baseLbl = evtLabels[p.eventType] || (isReverse ? 'إلغاء مصروف' : 'مصروف');
+    const entityPart = p.vendorName ? ` — ${p.vendorName}` : (p.clientName ? ` — ${p.clientName}` : (p.employeeName ? ` — ${p.employeeName}` : ''));
+    const notePart = p.note ? ` — ${p.note}` : '';
+    const txDescription = p.description || `${baseLbl}${entityPart}${notePart}`;
     batch.set(txRef, {
       walletId: p.walletId || '', walletName: p.walletName || '',
       type: isReverse ? 'in' : 'out', amount: p.amount,
-      description: p.note || '', category: p.txCategory || 'expense',
+      description: txDescription, category: p.txCategory || 'expense',
       orderId: p.orderId || null,
+      vendorId: p.vendorId || null, vendorName: p.vendorName || '',
+      employeeId: p.employeeId || null, employeeName: p.employeeName || '',
+      clientId: p.clientId || null, clientName: p.clientName || '',
       isReversal: isReverse || undefined,
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(),
+      ...approvalFields(),
     });
     console.log('[FSE] 🏭 module updated: transactions_v2');
   }
