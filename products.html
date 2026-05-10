@@ -205,12 +205,6 @@
         <div class="fg"><label>السعر الافتراضي (ج.م)</label><input class="inp" id="p-price" type="number" placeholder="450"></div>
       </div>
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="p-notes" placeholder="مواصفات إضافية..."></textarea></div>
-      <div class="fg">
-        <label>▣ الموردين المعتادين</label>
-        <div id="p-suppliers-wrap" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:10px;padding:10px;max-height:190px;overflow-y:auto;font-size:13px">
-          <div style="color:var(--dim2);font-size:12px">جاري التحميل...</div>
-        </div>
-      </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="cM('add-prod');resetForm()">إلغاء</button><button class="btn btn-b" id="p-save-btn" onclick="saveProd()">✓ حفظ</button></div>
   </div>
@@ -470,10 +464,12 @@ window.render=function(){
         ${p.size?`${p.paper&&p.paper!=='—'?' · ':''}📐 ${p.size}`:''}
       </div>`:''}
       ${p.notes?`<div style="font-size:11px;color:var(--dim2);margin-bottom:10px;padding:6px 8px;background:var(--bg3);border-radius:8px">📝 ${p.notes}</div>`:''}
-      ${(p.defaultSuppliers||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${(p.defaultSuppliers||[]).map(s=>`<span style="font-size:11px;padding:2px 8px;background:rgba(74,142,245,.08);border:1px solid rgba(74,142,245,.2);border-radius:20px;color:var(--b)">▣ ${s.name||s}</span>`).join('')}</div>`:''}
-      ${lastCost?`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:rgba(240,54,96,.07);border:1px solid rgba(240,54,96,.12);border-radius:8px;margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim2)">آخر تكلفة · ${costCount} سجل</span>
-        <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(lastCost.total)} ج</span>
+      ${lastCost?`<div style="padding:6px 8px;background:rgba(240,54,96,.07);border:1px solid rgba(240,54,96,.12);border-radius:8px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;color:var(--dim2)">آخر تكلفة · ${costCount} سجل</span>
+          <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(lastCost.total)} ج</span>
+        </div>
+        ${(lastCost.items||[]).filter(it=>it.supplierName).length?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(lastCost.items||[]).filter(it=>it.supplierName).map(it=>`<span style="font-size:10px;padding:1px 6px;background:rgba(74,142,245,.1);border:1px solid rgba(74,142,245,.2);border-radius:12px;color:var(--b)">▣ ${it.supplierName}</span>`).join('')}</div>`:''}
       </div>`:''}
       <div class="pc-actions">
         <button class="btn btn-ghost btn-xs" style="flex:1" onclick="showCostHistory('${p._id}')">📋 التكاليف${costCount?` (${costCount})`:''}</button>
@@ -484,28 +480,9 @@ window.render=function(){
   }).join('');
 };
 
-function renderProdSupWrap(selected=[]){
-  const wrap=document.getElementById('p-suppliers-wrap');if(!wrap)return;
-  if(!suppliers.length){wrap.innerHTML='<div style="color:var(--dim2);font-size:12px">لا يوجد موردون</div>';return;}
-  // جمّع بالتخصص الأول
-  const groups={};
-  suppliers.forEach(s=>{
-    const g=(s.specialties?.[0]||s.printType)||'أخرى';
-    if(!groups[g])groups[g]=[];
-    groups[g].push(s);
-  });
-  wrap.innerHTML=Object.entries(groups).map(([g,sups])=>`
-    <div style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px;border-top:1px solid var(--line);padding-top:6px;first-of-type:margin-top:0">${g}</div>
-    ${sups.map(s=>`<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer">
-      <input type="checkbox" value="${s._id}" data-name="${s.name}" style="width:15px;height:15px;accent-color:var(--b)"${selected.includes(s._id)?' checked':''}>
-      <span>${s.name}</span>
-    </label>`).join('')}`).join('');
-}
-
 window.saveProd=async function(){
   const name=gv('p-name');if(!name)return toast('⚠️ أدخل اسم المنتج','err');
-  const defSups=[...document.querySelectorAll('#p-suppliers-wrap input[type=checkbox]:checked')].map(cb=>({id:cb.value,name:cb.dataset.name||''}));
-  const data={name,printType:gv('p-type'),paper:gv('p-paper'),weight:parseFloat(gv('p-weight'))||0,size:gv('p-size'),defaultPrice:parseFloat(gv('p-price'))||0,notes:gv('p-notes'),defaultSuppliers:defSups};
+  const data={name,printType:gv('p-type'),paper:gv('p-paper'),weight:parseFloat(gv('p-weight'))||0,size:gv('p-size'),defaultPrice:parseFloat(gv('p-price'))||0,notes:gv('p-notes')};
   try{
     if(editId) await updateDoc(doc(db,'products_v2',editId),data);
     else await addDoc(collection(db,'products_v2'),{...data,createdAt:serverTimestamp()});
@@ -519,7 +496,6 @@ window.editProd=function(id){
   document.getElementById('p-save-btn').textContent='✓ حفظ التعديلات';
   sv('p-name',p.name||'');sv('p-type',p.printType||'digital');sv('p-paper',p.paper||'');
   sv('p-weight',p.weight||'');sv('p-size',p.size||'');sv('p-price',p.defaultPrice||'');sv('p-notes',p.notes||'');
-  renderProdSupWrap((p.defaultSuppliers||[]).map(s=>s.id||s));
   oM('add-prod');
 };
 
@@ -534,7 +510,6 @@ window.resetForm=function(){
   document.getElementById('prod-modal-title').textContent='＋ منتج جديد';
   document.getElementById('p-save-btn').textContent='✓ حفظ';
   clearF(['p-name','p-paper','p-weight','p-size','p-price','p-notes']);sv('p-type','digital');
-  renderProdSupWrap([]);
 };
 
 window.exportCSV=function(){
@@ -820,22 +795,19 @@ window.openAddCost=function(prodId){
   document.getElementById('ac-qty').value='';
   document.getElementById('ac-paper').value=p?.paper||'';
   document.getElementById('ac-notes').value='';
-  // Auto-suggest cost items from product specs
-  const suggested=[];
-  if(p?.printType==='offset'){
-    suggested.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
-    suggested.push({type:'زنكات',supplierId:'',supplierName:'',total:0});
-  } else if(p?.printType==='digital'){
-    suggested.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
+  // اقترح البنود من آخر costHistory (نفس النوع + المورد، بدون مبلغ)
+  const lastHist=(p?.costHistory||[]).slice(-1)[0];
+  if(lastHist?.items?.length){
+    window.costItems=lastHist.items.map(it=>({type:it.type||'',supplierId:it.supplierId||'',supplierName:it.supplierName||'',total:0}));
+  } else {
+    // fallback: اقتراح أولي من نوع الطباعة
+    const s=[];
+    if(p?.printType==='offset'){s.push({type:'طباعة',supplierId:'',supplierName:'',total:0});s.push({type:'زنكات',supplierId:'',supplierName:'',total:0});}
+    else s.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
+    if(p?.paper)s.push({type:'ورق',supplierId:'',supplierName:'',total:0});
+    s.push({type:'قص',supplierId:'',supplierName:'',total:0});
+    const seen=new Set();window.costItems=s.filter(x=>!seen.has(x.type)&&seen.add(x.type));
   }
-  if(p?.paper) suggested.push({type:'ورق',supplierId:'',supplierName:'',total:0});
-  (p?.extras||[]).forEach(e=>{
-    if(e.includes('سلفنة')) suggested.push({type:'سلفنة',supplierId:'',supplierName:'',total:0});
-    if(e.includes('تجميع')) suggested.push({type:'تجميع',supplierId:'',supplierName:'',total:0});
-  });
-  suggested.push({type:'قص',supplierId:'',supplierName:'',total:0});
-  const seen=new Set();
-  window.costItems=suggested.filter(x=>!seen.has(x.type)&&seen.add(x.type));
   if(!window.costItems.length) window.costItems=[{type:'',supplierId:'',supplierName:'',total:0}];
   renderCostItems();calcCostTotal();
   oM('add-cost');
