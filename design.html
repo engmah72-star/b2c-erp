@@ -912,8 +912,16 @@ function startListeners(){
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
   });
   // جيب المصممين من employees مباشرة (مش designers_v2)
+  // safety net: لو في DB سجلين بنفس الاسم/الـ authUid، نعرض واحد بس
   onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator'])),snap=>{
-    designers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const byKey=new Map();
+    raw.forEach(d=>{
+      // المفتاح: authUid لو موجود، وإلا الاسم + رقم الموبايل
+      const key=d.authUid||((d.name||'').trim().toLowerCase()+'|'+(d.phone||'').trim());
+      if(!byKey.has(key))byKey.set(key,d);
+    });
+    designers=[...byKey.values()].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('np-des');if(!s)return;
     s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
   });
@@ -1605,10 +1613,17 @@ window.openAssignDesigner=async function(){
   try{
     // المصدر الوحيد للمصممين: employees collection
     // (لا نلجأ إلى users — قد ينتج عنه تكرار باسم مختلف الـ id)
+    // safety net: dedup بـ authUid أو الاسم+الموبايل
     const empSnap=await getDocs(collection(db,'employees'));
-    const designers=empSnap.docs
+    const raw=empSnap.docs
       .map(d=>({...d.data(),_id:d.id}))
       .filter(e=>e.role==='graphic_designer'||e.role==='design_operator');
+    const __byKey=new Map();
+    raw.forEach(d=>{
+      const key=d.authUid||((d.name||'').trim().toLowerCase()+'|'+(d.phone||'').trim());
+      if(!__byKey.has(key))__byKey.set(key,d);
+    });
+    const designers=[...__byKey.values()].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
 
     // احسب حمل العمل لكل مصمم
     const workload={};
