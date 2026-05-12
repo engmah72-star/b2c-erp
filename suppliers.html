@@ -171,6 +171,11 @@
       <div class="psec-title" onclick="togglePSec(this)">📦 الأوردرات المرتبطة</div>
       <div class="psec-body"><div id="pn-orders"></div></div>
     </div>
+    <!-- أداء المورد -->
+    <div class="psec collapsed">
+      <div class="psec-title" onclick="togglePSec(this)">📊 مؤشرات الأداء</div>
+      <div class="psec-body"><div id="pn-perf"></div></div>
+    </div>
     <!-- سجل المدفوعات -->
     <div class="psec collapsed" style="border-bottom:none">
       <div class="psec-title" onclick="togglePSec(this)">📋 سجل المدفوعات</div>
@@ -773,6 +778,55 @@ function renderPanelContent(sup){
       </div>
     </div>`).join('')||'<div style="color:var(--dim2);font-size:12px">لا توجد مدفوعات</div>';
   loadSupplierOrders(sup._id);
+  renderSupPerformance(sup._id);
+}
+
+function renderSupPerformance(supId){
+  const el=document.getElementById('pn-perf');if(!el)return;
+  const supOrds=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===supId));
+  const supPays=payments.filter(p=>p.supplierId===supId);
+  const totalJobs=supOrds.length;
+  // حساب الأداء من بيانات الأوردرات
+  const delivered=supOrds.filter(o=>['done','shipped','delivered','archive'].includes(o.stage||o.prodStatus)).length;
+  const delayed=supOrds.filter(o=>{if(!o.dueDate)return false;const due=new Date(o.dueDate);const end=o.deliveredAt?.seconds?new Date(o.deliveredAt.seconds*1000):null;return end?end>due:new Date()>due&&o.prodStatus!=='done';}).length;
+  const onTimeRate=totalJobs>0?Math.round(((totalJobs-delayed)/totalJobs)*100):0;
+  const {purchases,paid,due}=getSupBalance(supId);
+  const avgPayDays=supPays.length>1?(()=>{const sorted=supPays.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));let total=0;for(let i=1;i<sorted.length;i++){const diff=((sorted[i].createdAt?.seconds||0)-(sorted[i-1].createdAt?.seconds||0))/86400;total+=diff;}return Math.round(total/(sorted.length-1));})():null;
+  const score=Math.min(5,((onTimeRate/100)*2.5+(totalJobs>0?1.5:0)+(supPays.length>0?1:0))).toFixed(1);
+  const scoreColor=parseFloat(score)>=4?'var(--g)':parseFloat(score)>=2.5?'var(--y)':'var(--r)';
+  const bar=(val,max,color)=>`<div style="height:6px;border-radius:3px;background:var(--bg3);overflow:hidden;margin-top:4px"><div style="height:100%;width:${Math.min(100,Math.round(val/max*100))}%;background:${color};border-radius:3px;transition:width .4s"></div></div>`;
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:900;color:${scoreColor}">${score}</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">تقييم الأداء / 5</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:900;color:${onTimeRate>=80?'var(--g)':onTimeRate>=60?'var(--y)':'var(--r)'}">${onTimeRate}%</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">الالتزام بالمواعيد</div>
+      </div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;color:var(--dim2)">إجمالي الأوردرات</span>
+        <span style="font-size:12px;font-weight:800">${totalJobs}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:12px;color:var(--dim2)">المنجزة في الموعد</span>
+        <span style="font-size:12px;font-weight:800;color:var(--g)">${totalJobs-delayed}</span>
+      </div>
+      ${bar(totalJobs-delayed,totalJobs||1,'var(--g)')}
+      <div style="display:flex;justify-content:space-between;margin:8px 0 4px">
+        <span style="font-size:12px;color:var(--dim2)">المتأخرة</span>
+        <span style="font-size:12px;font-weight:800;color:var(--r)">${delayed}</span>
+      </div>
+      ${bar(delayed,totalJobs||1,'var(--r)')}
+      <div style="display:flex;justify-content:space-between;margin-top:8px">
+        <span style="font-size:12px;color:var(--dim2)">عدد المدفوعات</span>
+        <span style="font-size:12px;font-weight:800">${supPays.length}</span>
+      </div>
+      ${avgPayDays!==null?`<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="font-size:12px;color:var(--dim2)">متوسط دورة الدفع</span><span style="font-size:12px;font-weight:800">${avgPayDays} يوم</span></div>`:''}
+    </div>`;
 }
 
 async function loadSupplierOrders(supId){
