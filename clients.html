@@ -843,20 +843,33 @@ auth.onAuthStateChanged(async u=>{
   db.collection('wallets').onSnapshot(snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
+  // ── المصممون: نمنع التكرار بدمج users + employees في مصدر واحد ──
+  // كل snapshot كان بيكتب فوق `designers` ويفقد ما أضافه الآخر → تكرار/اختفاء
+  // الحل: نخزن الاثنين بشكل منفصل ونعيد البناء بـ `rebuildDesigners` يدمج
+  // بمفتاح name+phone (احتياطاً للموظفين بدون authUid).
+  let __designersFromUsers = [], __designersFromEmps = [];
+  function rebuildDesigners(){
+    const byKey = new Map(); // key = name|phone → record
+    const keyOf = r => ((r.name||'').trim()+'|'+(r.phone||'').trim()).toLowerCase();
+    // الأولوية لـ employees (مصدر الحقيقة — فيها role + commission + …)
+    __designersFromEmps.forEach(e => byKey.set(keyOf(e), e));
+    // أضف users اللي ما لهومش match
+    __designersFromUsers.forEach(u => {
+      const k = keyOf(u);
+      if (!byKey.has(k)) byKey.set(k, u);
+    });
+    designers = [...byKey.values()].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  }
   db.collection('users').onSnapshot(snap=>{
-    const fromUsers=snap.docs.map(d=>({...d.data(),_id:d.id}))
+    __designersFromUsers = snap.docs.map(d=>({...d.data(),_id:d.id}))
       .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
-    designers=fromUsers;
+    rebuildDesigners();
   });
-  // أضف المصممين من employees (اللي مش عندهم users account)
   db.collection('employees').onSnapshot(snap=>{
-    const empDesigners=snap.docs.map(d=>({...d.data(),_id:d.id}))
+    __designersFromEmps = snap.docs.map(d=>({...d.data(),_id:d.id}))
       .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
       .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
-    // دمج بدون تكرار
-    const existingIds=new Set(designers.map(d=>d._id));
-    const newDesigners=[...designers,...empDesigners.filter(e=>e._id&&!existingIds.has(e._id))];
-    designers=newDesigners;
+    rebuildDesigners();
   });
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();

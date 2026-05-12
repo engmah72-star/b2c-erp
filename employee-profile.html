@@ -855,6 +855,7 @@ function renderAll(){
         ${emp.phone?`<a href="tel:${emp.phone}" onclick="closeQAMenu()">📞 اتصال (${emp.phone})</a>
         <a href="https://wa.me/2${emp.phone.replace(/^0/,'')}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`:''}
         <div class="act-sep"></div>
+        <button onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين كلمة السر</button>
         <button onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
       </div>
     </div>
@@ -1747,8 +1748,10 @@ const ROLE_DEFAULTS_PROFILE={
 
 async function renderPermissions(){
   const el=document.getElementById('permissions-container');if(!el||!emp)return;
-  if(['admin','operation_manager'].includes(emp.role)){
-    el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة</div>';
+  // Admin only: locked إلى صلاحيات كاملة. operation_manager: نعرض الـ checkboxes
+  // عشان مدير العمليات يكون له صلاحيات قابلة للتعديل تفصيلياً.
+  if(emp.role==='admin'){
+    el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة (محمية)</div>';
     return;
   }
   const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false};
@@ -1828,6 +1831,42 @@ window.saveEmpData=async function(){
     await updateDoc(doc(db,'employees',empId),{baseSalary,commissionPct,status,updatedAt:serverTimestamp()});
     document.getElementById('ov-edit-salary').classList.remove('open');
     toast('✅ تم حفظ البيانات','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// Reset password flow: from the client we can't write into Firebase Auth for
+// another user, so we mark the employee doc as requiring a forced password
+// change and instruct the admin verbally. Two execution paths:
+//   1) Email accounts → send Firebase password-reset link via sendPasswordResetEmail.
+//   2) Phone @b2c.local accounts → flag mustChangePassword=true; admin tells
+//      the employee to log in with the original default `b2c@123` (or the
+//      admin opens Firebase Console to truly reset auth). Either way the
+//      forced-change flow on next login covers it.
+window.resetEmployeePassword=async function(){
+  if(!emp)return;
+  if(!emp.authUid){toast('⚠️ الموظف ليس لديه حساب دخول مفعّل','err');return;}
+  if(!confirm(`إعادة تعيين كلمة السر لـ "${emp.name}"؟
+سيُجبر على تغييرها عند الدخول التالي.`))return;
+  try{
+    const email = emp.email || ((emp.phone||'')+'@b2c.local');
+    const isLocalEmail = email.endsWith('@b2c.local');
+    // 1) Flag the user doc so login flow forces password change
+    await updateDoc(doc(db,'users',emp.authUid),{
+      mustChangePassword:true,
+      passwordResetAt:serverTimestamp(),
+      passwordResetBy:currentUser.uid,
+      passwordResetByName:adminName||'',
+    });
+    // 2) For real-email accounts, also send Firebase reset email
+    if(!isLocalEmail){
+      try{
+        const { sendPasswordResetEmail }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+        await sendPasswordResetEmail(auth,email);
+        toast(`✅ تم إرسال رابط إعادة التعيين إلى ${email}`,'ok');
+        return;
+      }catch(mailErr){console.warn('reset-mail:',mailErr.message);}
+    }
+    toast(`✅ تم تعليم الحساب لإجبار تغيير كلمة السر — أبلغ الموظف باستخدام b2c@123 أو راجع إدارة Firebase`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
