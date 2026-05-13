@@ -959,17 +959,16 @@ function renderKanban(){
   // حمل العمل لكل مصمم (للأدمن)
   const isAdmView=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const dsLoad={};
+  // المصدر الوحيد للمصممين = `employees`. أي أوردر بمصمم مش موجود في employees يُتجاهل.
   if(isAdmView) orders.forEach(o=>{
-    if(!o.designerId)return;
-    // canonicalize: لو الـ designerId قديم (سجل اندمج) نوحّده مع الموظف الحالي
+    if(!o.designerId && !o.designerName)return;
     const can=resolveDesigner(designers,o.designerId,o.designerName);
-    const key=(can&&(can.authUid||can._id))||o.designerId;
+    if(!can)return; // المصمم مش في employees → استبعد من الإحصاء
+    const key=can.authUid||can._id;
     dsLoad[key]=(dsLoad[key]||0)+1;
-    // اخزن الـ aliases عشان الكارت ييجي يقرأ بأي id
-    if(can){
-      const aliases=[can._id,can.authUid,...(can._mergedIds||[])].filter(Boolean);
-      aliases.forEach(a=>{ dsLoad[a]=dsLoad[key]; });
-    }
+    // aliases عشان الكارت يقدر يقرأ بأي id قديم
+    const aliases=[can._id,can.authUid,...(can._mergedIds||[])].filter(Boolean);
+    aliases.forEach(a=>{ dsLoad[a]=dsLoad[key]; });
   });
   Object.keys(cols).forEach(key=>{
     const el=document.getElementById('col-'+key);if(!el)return;
@@ -1031,8 +1030,7 @@ function renderKanban(){
         <div class="ocard-id">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
         <div class="ocard-client">${o.clientName||'—'} <span style="font-size:10px;color:var(--dim2)">${o.clientPhone||''}</span></div>
         <div class="ocard-product" style="margin-top:3px">${prods}</div>
-        ${o.designerName?`<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${o.designerName}${isAdmView&&o.designerId?` <span style="opacity:.7">(${dsLoad[o.designerId]||1})</span>`:''}` +
-          `</span></div>`:''}
+        ${(()=>{ const _can=resolveDesigner(designers,o.designerId,o.designerName); const _nm=_can?_can.name:''; if(!_nm)return ''; return `<div style="margin-top:5px"><span class="dsgn-chip">🎨 ${_nm}${isAdmView&&o.designerId?` <span style="opacity:.7">(${dsLoad[o.designerId]||1})</span>`:''}</span></div>`; })()}
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center">
           ${stageSlaBadge(o)}${timeBadge}${revBadge}${ackBadge}${payBadge}
           ${noCost?`<span style="font-size:10px;background:rgba(255,61,110,.2);color:var(--r);border:1px solid rgba(255,61,110,.4);border-radius:20px;padding:2px 8px;font-weight:800">⚠️ بدون تكلفة</span>`:''}
@@ -1058,12 +1056,14 @@ function renderDesignDashboard(){
     const r=Math.floor((new Date(o.deadline)-new Date(today))/(864e5));
     return r>=0&&r<=2;
   }).length;
-  // workload per designer — يوحّد السجلات المكرّرة (orderId قديم → الموظف الحالي)
+  // workload per designer — المصدر الوحيد للأسماء = `employees` (orders.js)
+  // أي أوردر مصممه مش موجود في employees يُتجاهل من الإحصائيات
   const dsLoad={};
   orders.forEach(o=>{
     if(!o.designerName && !o.designerId) return;
     const can=resolveDesigner(designers,o.designerId,o.designerName);
-    const name=(can&&can.name) || o.designerName || '—';
+    if(!can) return; // المصمم مش في employees → استبعد
+    const name=can.name||'—';
     dsLoad[name]=(dsLoad[name]||0)+1;
   });
   const sorted=Object.entries(dsLoad).sort((a,b)=>b[1]-a[1]);
@@ -1155,17 +1155,20 @@ function renderPanel(o){
         ${iRow('تاريخ الطلب',o.createdDate||'—')}
         ${iRow('موعد التسليم',o.deadline||'لم يُحدد',d>0?'var(--r)':null)}
         ${(()=>{
+          // اسم المصمم = الاسم من employees فقط (مصدر الحقيقة الوحيد)
+          const _can=resolveDesigner(designers,o.designerId,o.designerName);
+          const _nm=_can?_can.name:'';
           const canAssign=['admin','operation_manager','customer_service'].includes(currentRole);
           if(canAssign){
             return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:4px">
               <span style="font-size:12px;color:var(--dim2);font-weight:700">المصمم</span>
               <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:13px;font-weight:700;color:${o.designerName?'var(--snow)':'var(--r)'}">${o.designerName||'⚠️ لم يُعيَّن'}</span>
+                <span style="font-size:13px;font-weight:700;color:${_nm?'var(--snow)':'var(--r)'}">${_nm||'⚠️ لم يُعيَّن'}</span>
                 <button onclick="openAssignDesigner()" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">تعيين ✏️</button>
               </div>
             </div>`;
           }
-          return iRow('المصمم',o.designerName||'—');
+          return iRow('المصمم',_nm||'—');
         })()}
       </div>
     </div>
