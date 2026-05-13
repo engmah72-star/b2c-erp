@@ -1985,50 +1985,45 @@ window.galSelectVer = function(el, imageUrl) {
 };
 
 window.confirmGalleryPublish = async function() {
-  const itemId = galleryTargetItemId;
-  if (!itemId) return;
-  const item = currentItems.find(i => i._id === itemId);
-  if (!item) return;
-  const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
-
-  // Get selected version
-  const selVerEl = document.querySelector('#gal-ver-list .gal-ver-item.selected');
-  const selVNum = selVerEl ? parseInt(selVerEl.dataset.vnum) : null;
-  const versions = item.versions || [];
-  const chosenVer = selVNum != null
-    ? versions.find(v => v.vNum === selVNum) || versions[versions.length - 1]
-    : versions[versions.length - 1];
-  if (!chosenVer) return toast('⚠️ لا توجد نسخة محددة', 'err');
-
-  const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
-  const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
-
-  const action = item.galleryId ? 'تحديث' : 'نشر';
+  console.log('[gallery] confirmGalleryPublish() called');
   const btn = document.getElementById('gal-confirm-btn');
-  const resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; } };
-
-  // Duplicate detection — best effort; never blocks the publish flow
-  if (btn) { btn.disabled = true; btn.textContent = '🔍 جاري الفحص...'; }
-  let dupDoc = null;
-  try {
-    const dupSnap = await getDocs(
-      query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl))
-    );
-    dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId && d.data().isVisible !== false);
-  } catch(e) {
-    console.warn('[gallery] duplicate check skipped:', e?.message || e);
-  }
-  resetBtn();
-
-  if (dupDoc) {
-    const dupTitle = dupDoc.data().title || 'تصميم';
-    if (!confirm(`⚠️ هذه الصورة موجودة بالفعل في المعرض:\n"${dupTitle}"\n\nهل تتابع ${action} على أي حال؟`)) return;
-  }
-
-  if (!confirm(`${action} "${title}" في المعرض العام؟\nالنسخة: #${chosenVer.vNum}`)) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
 
   try {
+    const itemId = galleryTargetItemId;
+    if (!itemId) { toast('⚠️ لم يتم تحديد عنصر للنشر', 'err'); return; }
+
+    const item = currentItems.find(i => i._id === itemId);
+    if (!item) { toast('⚠️ العنصر غير موجود', 'err'); return; }
+
+    const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
+
+    // Get selected version
+    const selVerEl = document.querySelector('#gal-ver-list .gal-ver-item.selected');
+    const selVNum = selVerEl ? parseInt(selVerEl.dataset.vnum) : null;
+    const versions = item.versions || [];
+    const chosenVer = selVNum != null
+      ? versions.find(v => v.vNum === selVNum) || versions[versions.length - 1]
+      : versions[versions.length - 1];
+    if (!chosenVer) { toast('⚠️ لا توجد نسخة محددة', 'err'); return; }
+
+    const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
+    const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
+
+    // Duplicate detection — best effort; never blocks the publish flow
+    let dupTitle = null;
+    try {
+      const dupSnap = await getDocs(
+        query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl))
+      );
+      const dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId && d.data().isVisible !== false);
+      if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
+    } catch(e) {
+      console.warn('[gallery] duplicate check skipped:', e?.message || e);
+    }
+
+    console.log('[gallery] writing batch for item', itemId, 'vNum', chosenVer.vNum);
     const galleryRef = item.galleryId
       ? doc(db, 'gallery', item.galleryId)
       : doc(collection(db, 'gallery'));
@@ -2063,12 +2058,20 @@ window.confirmGalleryPublish = async function() {
       }),
     });
     await batch.commit();
+    console.log('[gallery] batch committed successfully');
+
     document.getElementById('ov-gallery').classList.remove('open');
-    toast(item.galleryId ? '🔄 تم تحديث المعرض' : '🌐 تم النشر في المعرض العام', 'ok');
+    const baseMsg = item.galleryId ? '🔄 تم تحديث المعرض' : '🌐 تم النشر في المعرض العام';
+    toast(dupTitle ? `${baseMsg} (⚠️ صورة مكررة لـ "${dupTitle}")` : baseMsg, 'ok');
   } catch(e) {
-    toast('❌ ' + e.message, 'err');
+    console.error('[gallery] publish failed:', e);
+    toast('❌ فشل النشر: ' + (e?.message || 'خطأ غير معروف'), 'err');
   } finally {
-    resetBtn();
+    if (btn) {
+      btn.disabled = false;
+      const it = currentItems.find(i => i._id === galleryTargetItemId);
+      btn.textContent = it?.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن';
+    }
   }
 };
 
