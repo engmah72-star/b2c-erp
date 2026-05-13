@@ -22,6 +22,7 @@ const { defineSecret } = require('firebase-functions/params');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -317,3 +318,72 @@ exports.sendWhatsAppTest = onCall(
     return result;
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   Admin Reset Employee Password
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Resets a target employee's Firebase Auth password to a freshly generated
+// 6-digit numeric code and flags the user doc with `mustChangePassword=true`
+// so the standard change-password flow kicks in on next login.
+//
+// Callable from admin/operation_manager roles only. Used by the
+// `🔑 إعادة تعيين فوري` button in employee-profile.html. Each call returns
+// a new code — the admin shares it with the employee out of band (WhatsApp /
+// phone) and the code is single-use because login forces an immediate change.
+
+function genTempPassword() {
+  // 6 digit zero-padded code, e.g. "048372". Math.random is non-CSPRNG but
+  // adequate here: the code is single-use, lives ~one login, and Firebase Auth
+  // rate-limits sign-in attempts (5/min/user).
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+exports.adminResetEmployeePassword = onCall(async (req) => {
+  const callerUid = req.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+  }
+
+  // 1) Verify caller is admin or operation_manager
+  const callerSnap = await getFirestore().doc(`users/${callerUid}`).get();
+  if (!callerSnap.exists) {
+    throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
+  }
+  const callerRole = callerSnap.data()?.role;
+  if (!['admin', 'operation_manager'].includes(callerRole)) {
+    throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط');
+  }
+
+  // 2) Validate target uid
+  const targetUid = req.data?.uid;
+  if (!targetUid || typeof targetUid !== 'string') {
+    throw new HttpsError('invalid-argument', 'uid مفقود أو غير صالح');
+  }
+
+  // 3) Generate temp password
+  const tempPw = genTempPassword();
+
+  // 4) Apply via Admin SDK — fails if target doesn't exist in Auth
+  try {
+    await getAuth().updateUser(targetUid, { password: tempPw });
+  } catch (e) {
+    throw new HttpsError('not-found', 'حساب الموظف غير موجود في Firebase Auth: ' + (e.message || ''));
+  }
+
+  // 5) Flag user doc so login routes through change-password.html
+  try {
+    await getFirestore().doc(`users/${targetUid}`).update({
+      mustChangePassword: true,
+      passwordResetAt: FieldValue.serverTimestamp(),
+      passwordResetBy: callerUid,
+      passwordResetByName: callerSnap.data()?.name || '',
+    });
+  } catch (e) {
+    // Auth password is already changed at this point — log but don't fail the
+    // call; the temp password is still valid and the admin can re-flag later.
+    console.warn('mustChangePassword flag update failed for', targetUid, e.message);
+  }
+
+  return { success: true, tempPassword: tempPw };
+});
