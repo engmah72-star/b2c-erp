@@ -1846,7 +1846,6 @@ window.resetEmployeePassword=async function(){
   if(!emp)return;
   if(!emp.authUid){toast('⚠️ الموظف ليس لديه حساب دخول مفعّل','err');return;}
   if(!confirm(`إنشاء كلمة سر مؤقتة لـ "${emp.name}"؟\nستظهر مرة واحدة فقط — احفظها فوراً.`))return;
-  // Loading toast — Cloud Function cold start can take a few seconds
   toast('جاري إعادة التعيين...','');
   try{
     const { getFunctions, httpsCallable }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
@@ -1855,7 +1854,61 @@ window.resetEmployeePassword=async function(){
     const { data }=await call({uid:emp.authUid});
     if(!data?.tempPassword)throw new Error('لم يتم استلام كلمة السر من الخادم');
     showTempPasswordModal(emp.name||'الموظف', data.tempPassword);
-  }catch(e){toast('❌ '+(e.message||'تعذرت إعادة التعيين'),'err');}
+  }catch(e){
+    // "internal" / "not-found" / "unavailable" → Cloud Function not deployed
+    // (the GitHub Actions deploy step is wrapped in continue-on-error so a
+    // failed Functions deploy doesn't surface). Fall back to a manual flow
+    // that opens Firebase Console for the admin to reset directly.
+    const code=e?.code||'';
+    const looksUndeployed=code.includes('internal')||code.includes('not-found')||code.includes('unavailable')||(e?.message||'').toLowerCase().includes('internal');
+    if(looksUndeployed){
+      showManualResetModal(emp);
+    } else {
+      toast('❌ '+(e.message||'تعذرت إعادة التعيين'),'err');
+    }
+  }
+};
+
+// Fallback when the Cloud Function isn't reachable: open Firebase Console on
+// the target user and walk the admin through resetting from there.
+function showManualResetModal(emp){
+  const email=emp.email||((emp.phone||'')+'@b2c.local');
+  const searchUrl=`https://console.firebase.google.com/project/business2card-c041b/authentication/users?search=${encodeURIComponent(email)}`;
+  const ov=document.createElement('div');
+  ov.className='overlay open';
+  ov.style.cssText='display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML=`
+    <div class="modal" style="max-width:480px;width:100%">
+      <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:14px;font-weight:800">🛠️ إعادة تعيين يدوي</span>
+        <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--y);line-height:1.7;margin-bottom:14px">
+          ⚠️ خدمة إعادة التعيين التلقائي غير متاحة حالياً (الـ Cloud Function لم يتم تنشيطها).<br>
+          استخدم Firebase Console يدوياً — يستغرق دقيقة:
+        </div>
+        <ol style="font-size:13px;line-height:1.9;padding-right:18px;color:var(--snow);margin-bottom:14px">
+          <li>اضغط الزر أسفل لفتح Firebase Console</li>
+          <li>سجّل دخول بحساب Google المالك للمشروع</li>
+          <li>سيظهر بريد الموظف في القائمة <strong style="color:var(--b);user-select:all">${email}</strong></li>
+          <li>اضغط على الزر <strong>⋮</strong> بجانب البريد ← <strong>Reset password</strong></li>
+          <li>اكتب كلمة سر جديدة (6 أحرف على الأقل)</li>
+          <li>أبلغ الموظف بها — سيدخل بها مرة واحدة ثم يغيّرها</li>
+        </ol>
+        <a href="${searchUrl}" target="_blank" rel="noopener" class="btn btn-b" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;margin-bottom:8px">
+          🔗 افتح Firebase Console للموظف
+        </a>
+        <button class="btn btn-ghost" style="width:100%" onclick="copyToClipboard('${email}',this)">📋 نسخ البريد</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+window.copyToClipboard=async function(text,btn){
+  try{
+    await navigator.clipboard.writeText(text);
+    if(btn){const o=btn.textContent;btn.textContent='✅ تم النسخ';setTimeout(()=>btn.textContent=o,1500);}
+  }catch(_){toast('انسخ يدوياً: '+text,'');}
 };
 
 // Separate flow for real-email accounts — sends Firebase reset link to inbox.
