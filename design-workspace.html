@@ -581,8 +581,10 @@
       <div class="fg"><label>اختر النسخة للنشر</label>
         <div id="gal-ver-list"></div>
       </div>
-      <div class="fg"><label>الوصف (اختياري)</label>
-        <input class="inp-sm" id="gal-desc" placeholder="وصف مختصر للتصميم...">
+      <div class="fg"><label>الوصف</label>
+        <textarea class="inp-sm" id="gal-desc" rows="3"
+          placeholder="صف التصميم: نوع المنتج، الألوان، الأسلوب، أي تفصيل يميّزه..."
+          style="resize:vertical;line-height:1.55;min-height:72px"></textarea>
       </div>
     </div>
     <div class="modal-foot">
@@ -1969,6 +1971,9 @@ window.openGalleryModal = function(itemId) {
   const previewImg = document.getElementById('gal-preview-img');
   if (previewImg) previewImg.src = latestVer?.imageUrl || '';
 
+  const pubBtn = document.getElementById('gal-confirm-btn');
+  if (pubBtn) pubBtn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن';
+
   document.getElementById('ov-gallery').classList.add('open');
 };
 
@@ -1999,9 +2004,22 @@ window.confirmGalleryPublish = async function() {
   const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
 
   const action = item.galleryId ? 'تحديث' : 'نشر';
-  if (!confirm(`${action} "${title}" في المعرض العام؟\nالنسخة: #${chosenVer.vNum}`)) return;
-
   const btn = document.getElementById('gal-confirm-btn');
+
+  // Duplicate detection — check if same imageUrl already live in gallery under a different doc
+  if (btn) { btn.disabled = true; btn.textContent = '🔍 جاري الفحص...'; }
+  const dupSnap = await getDocs(
+    query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl), where('isVisible', '==', true))
+  );
+  if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; }
+
+  const dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId);
+  if (dupDoc) {
+    const dupTitle = dupDoc.data().title || 'تصميم';
+    if (!confirm(`⚠️ هذه الصورة موجودة بالفعل في المعرض:\n"${dupTitle}"\n\nهل تتابع ${action} على أي حال؟`)) return;
+  }
+
+  if (!confirm(`${action} "${title}" في المعرض العام؟\nالنسخة: #${chosenVer.vNum}`)) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
 
   try {
@@ -2044,7 +2062,7 @@ window.confirmGalleryPublish = async function() {
   } catch(e) {
     toast('❌ ' + e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🌐 نشر الآن'; }
+    if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; }
   }
 };
 
