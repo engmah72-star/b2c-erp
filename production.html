@@ -362,7 +362,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,getDocs,query,where,serverTimestamp,writeBatch,increment,deleteDoc,addDoc} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -586,17 +586,19 @@ onAuthStateChanged(auth,async u=>{
     filterSupsByType('','ac-sup');
   });
   onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
-  // موظفي الشحن (shipping_officer) لـ pick-ship modal
+  // موظفي الشحن (shipping_officer) لـ pick-ship modal — مع dedup
   onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer')),snap=>{
-    window.__shipOfficers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    window.__shipOfficers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-ship-sel');if(!s)return;
     const cur=s.value;
     s.innerHTML='<option value="">— أول موظف متاح —</option>'+(window.__shipOfficers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
     if(cur)s.value=cur;
   });
-  // موظفو التنفيذ (production_agent) لتعيين المندوب
+  // موظفو التنفيذ (production_agent) لتعيين المندوب — مع dedup
   onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
-    window.__productionAgents=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    window.__productionAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });
 });
 

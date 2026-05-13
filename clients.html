@@ -854,13 +854,26 @@ auth.onAuthStateChanged(async u=>{
       .map(d=>({...d.data(),_id:d.id}))
       .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
       .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
-    // safety net dedup: لو في employees مكرّرة بـ DB، نعرض واحد فقط
-    const byKey=new Map();
-    raw.forEach(d=>{
-      const key=d._id||((d.name||'').trim().toLowerCase()+'|'+(d.phone||'').trim());
-      if(!byKey.has(key))byKey.set(key,d);
+    // dedup متعدد المستويات: authUid → phone → name+phone (نفس منطق orders.js#dedupEmployees)
+    const normPhone=p=>(p||'').toString().replace(/\D/g,'');
+    const normName =n=>(n||'').toString().trim().toLowerCase();
+    const out=[];const byAuth=new Map(),byPhone=new Map(),byName=new Map();
+    raw.forEach(e=>{
+      const auth=e.authUid||'',phone=normPhone(e.phone),nameKey=normName(e.name)+'|'+phone;
+      let i=-1;
+      if(auth && byAuth.has(auth)) i=byAuth.get(auth);
+      if(i<0 && phone && byPhone.has(phone)) i=byPhone.get(phone);
+      if(i<0 && phone && byName.has(nameKey)) i=byName.get(nameKey);
+      if(i>=0){
+        const cur=out[i];
+        if(!cur.authUid && auth){ out[i]={...cur,...e}; byAuth.set(auth,i); }
+        return;
+      }
+      out.push(e); const idx=out.length-1;
+      if(auth) byAuth.set(auth,idx);
+      if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
     });
-    designers=[...byKey.values()].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();

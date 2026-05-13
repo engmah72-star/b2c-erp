@@ -359,6 +359,7 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,getDoc,getDocs,deleteDoc,updateDoc,addDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
+import { dedupEmployees, resolveDesigner } from "./orders.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
@@ -596,7 +597,7 @@ onAuthStateChanged(auth,async u=>{
   }
   onSnapshot(collection(db,'orders'),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.orders=true;scheduleRender();});
   onSnapshot(collection(db,'clients'),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
-  onSnapshot(collection(db,'employees'),s=>{employees=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.employees=true;scheduleRender();});
+  onSnapshot(collection(db,'employees'),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
   onSnapshot(collection(db,'suppliers_v2'),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
   onSnapshot(collection(db,'shippers_v2'),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
   onSnapshot(collection(db,'supplier_payments'),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
@@ -974,16 +975,20 @@ function renderOverview(f,prev){
 // ══ Tab 2: Designers ══
 function renderDesigners(f){
   const dOrds=f.filter(o=>o.designStage||o.stage==='design'||o.designerId);
-  const designers=[...new Set(dOrds.map(o=>o.designerName||o.designerId).filter(Boolean))];
-  if(!designers.length)return`<div class="empty-pretty"><div class="ico">🎨</div><div class="ttl">لا توجد بيانات مصممين</div><div class="sub">جرّب توسيع الفترة الزمنية أو تأكد إن المصممين معيّنين على الأوردرات</div></div>`;
+  // canonicalize: كل أوردر يُربط بموظف موحّد (يحل تكرار السجلات)
+  const buckets=new Map(); // key → { name, orders: [...] }
+  dOrds.forEach(o=>{
+    const can=resolveDesigner(employees,o.designerId,o.designerName);
+    const key=(can&&(can.authUid||can._id))||o.designerName||o.designerId||'';
+    if(!key)return;
+    if(!buckets.has(key)) buckets.set(key,{name:(can&&can.name)||o.designerName||'—',orders:[],emp:can||{}});
+    buckets.get(key).orders.push(o);
+  });
+  if(!buckets.size)return`<div class="empty-pretty"><div class="ico">🎨</div><div class="ttl">لا توجد بيانات مصممين</div><div class="sub">جرّب توسيع الفترة الزمنية أو تأكد إن المصممين معيّنين على الأوردرات</div></div>`;
 
-  const empMap={};employees.forEach(e=>{if(e.authUid)empMap[e.authUid]=e;empMap[e.name]=e;});
-
-  return designers.map(dName=>{
-    const dOrd=dOrds.filter(o=>(o.designerName||o.designerId)===dName);
+  return [...buckets.values()].map(({name:dName,orders:dOrd,emp})=>{
     const done=dOrd.filter(o=>o.stage!=='design').length;
     const pending=dOrd.filter(o=>o.stage==='design').length;
-    const emp=empMap[dName]||{};
     const avgDays=dOrd.filter(o=>o.designDays).reduce((s,o)=>s+(parseFloat(o.designDays)||0),0)/Math.max(dOrd.filter(o=>o.designDays).length,1);
     const pct=dOrd.length?Math.round(done/dOrd.length*100):0;
     return`<div class="rep-card">

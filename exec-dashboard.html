@@ -192,6 +192,7 @@
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,getDoc,getDocs} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dedupEmployees, resolveDesigner } from "./orders.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -255,7 +256,7 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.logout=async()=>{await signOut(auth);location.href='login.html';};
 
 // ── Data ──
-let orders=[],clients=[],wallets=[],transactions=[],users=[],supPayments=[];
+let orders=[],clients=[],wallets=[],transactions=[],users=[],supPayments=[],employees=[];
 let _ordersReady=false,_txReady=false;
 
 // ── Auth ──
@@ -300,6 +301,11 @@ function startListeners(){
   });
   getDocs(collection(db,'users')).then(snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));renderAll();
+  });
+  // employees مع dedup — يُستخدم في توحيد إحصائيات المصممين/الموظفين
+  getDocs(collection(db,'employees')).then(snap=>{
+    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    employees=dedupEmployees(raw);renderAll();
   });
 }
 
@@ -585,14 +591,18 @@ function renderHealth(){
 //  4 — EMPLOYEE PERFORMANCE
 // ═══════════════════════════════════════
 function renderEmployees(){
-  // Count orders per designer
+  // Count orders per designer — مع توحيد سجلات المصمم المكرّرة
   const designerMap={};
   orders.forEach(o=>{
     if(!o.designerId)return;
-    if(!designerMap[o.designerId])designerMap[o.designerId]={id:o.designerId,name:'',total:0,rejected:0,done:0};
-    designerMap[o.designerId].total++;
-    if(o.designStatus==='rejected')designerMap[o.designerId].rejected++;
-    if(['delivered','archived'].includes(o.stage))designerMap[o.designerId].done++;
+    // canonicalize: لو الـ designerId قديم نوحّده مع الموظف الحالي
+    const can=resolveDesigner(employees,o.designerId,o.designerName);
+    const key=(can&&(can.authUid||can._id))||o.designerId;
+    const name=(can&&can.name) || o.designerName || '';
+    if(!designerMap[key])designerMap[key]={id:key,name,total:0,rejected:0,done:0};
+    designerMap[key].total++;
+    if(o.designStatus==='rejected')designerMap[key].rejected++;
+    if(['delivered','archived'].includes(o.stage))designerMap[key].done++;
   });
 
   // Count timeline actions per user name
@@ -605,8 +615,9 @@ function renderEmployees(){
     });
   });
 
-  // Match designer IDs to names from users
+  // Match designer IDs to names from users (fallback لو الاسم مش متوفر من employees)
   for(const uid in designerMap){
+    if(designerMap[uid].name)continue;
     const u=users.find(x=>x._id===uid);
     if(u)designerMap[uid].name=u.name||u.email||uid;
     else designerMap[uid].name=uid.slice(0,8)+'...';
