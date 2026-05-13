@@ -340,50 +340,71 @@ function genTempPassword() {
 }
 
 exports.adminResetEmployeePassword = onCall(async (req) => {
-  const callerUid = req.auth?.uid;
-  if (!callerUid) {
-    throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
-  }
-
-  // 1) Verify caller is admin or operation_manager
-  const callerSnap = await getFirestore().doc(`users/${callerUid}`).get();
-  if (!callerSnap.exists) {
-    throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
-  }
-  const callerRole = callerSnap.data()?.role;
-  if (!['admin', 'operation_manager'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط');
-  }
-
-  // 2) Validate target uid
-  const targetUid = req.data?.uid;
-  if (!targetUid || typeof targetUid !== 'string') {
-    throw new HttpsError('invalid-argument', 'uid مفقود أو غير صالح');
-  }
-
-  // 3) Generate temp password
-  const tempPw = genTempPassword();
-
-  // 4) Apply via Admin SDK — fails if target doesn't exist in Auth
+  // Top-level try/catch: any unexpected throw becomes an "internal" error on
+  // the client side, hiding the cause. Convert to a typed HttpsError so the
+  // admin sees the actual reason. Server-side logs keep the full stack via
+  // console.error and Cloud Logging.
   try {
-    await getAuth().updateUser(targetUid, { password: tempPw });
-  } catch (e) {
-    throw new HttpsError('not-found', 'حساب الموظف غير موجود في Firebase Auth: ' + (e.message || ''));
-  }
+    const callerUid = req.auth?.uid;
+    console.log('[adminResetEmployeePassword] called by', callerUid, 'for', req.data?.uid);
+    if (!callerUid) {
+      throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    }
 
-  // 5) Flag user doc so login routes through change-password.html
-  try {
-    await getFirestore().doc(`users/${targetUid}`).update({
-      mustChangePassword: true,
-      passwordResetAt: FieldValue.serverTimestamp(),
-      passwordResetBy: callerUid,
-      passwordResetByName: callerSnap.data()?.name || '',
-    });
-  } catch (e) {
-    // Auth password is already changed at this point — log but don't fail the
-    // call; the temp password is still valid and the admin can re-flag later.
-    console.warn('mustChangePassword flag update failed for', targetUid, e.message);
-  }
+    // 1) Verify caller is admin or operation_manager
+    let callerSnap;
+    try {
+      callerSnap = await getFirestore().doc(`users/${callerUid}`).get();
+    } catch (e) {
+      console.error('caller users/get failed', e);
+      throw new HttpsError('internal', 'تعذّر قراءة بيانات المستخدم: ' + (e.message || ''));
+    }
+    if (!callerSnap.exists) {
+      throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود في users');
+    }
+    const callerData = callerSnap.data() || {};
+    const callerRole = callerData.role;
+    if (!['admin', 'operation_manager'].includes(callerRole)) {
+      throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط — دورك: ' + (callerRole || '—'));
+    }
 
-  return { success: true, tempPassword: tempPw };
+    // 2) Validate target uid
+    const targetUid = req.data?.uid;
+    if (!targetUid || typeof targetUid !== 'string') {
+      throw new HttpsError('invalid-argument', 'uid مفقود أو غير صالح');
+    }
+
+    // 3) Generate temp password
+    const tempPw = genTempPassword();
+
+    // 4) Apply via Admin SDK — fails if target doesn't exist in Auth
+    try {
+      await getAuth().updateUser(targetUid, { password: tempPw });
+    } catch (e) {
+      console.error('updateUser failed for', targetUid, e);
+      throw new HttpsError('not-found', 'حساب الموظف غير موجود في Firebase Auth: ' + (e.message || ''));
+    }
+
+    // 5) Flag user doc so login routes through change-password.html
+    try {
+      await getFirestore().doc(`users/${targetUid}`).update({
+        mustChangePassword: true,
+        passwordResetAt: FieldValue.serverTimestamp(),
+        passwordResetBy: callerUid,
+        passwordResetByName: callerData.name || '',
+      });
+    } catch (e) {
+      // Auth password is already changed at this point — log but don't fail
+      console.warn('mustChangePassword flag update failed for', targetUid, e.message);
+    }
+
+    console.log('[adminResetEmployeePassword] success for', targetUid);
+    return { success: true, tempPassword: tempPw };
+
+  } catch (e) {
+    // Re-throw HttpsError as-is; wrap anything else
+    if (e instanceof HttpsError) throw e;
+    console.error('[adminResetEmployeePassword] unexpected error', e);
+    throw new HttpsError('internal', 'خطأ غير متوقع: ' + (e.message || String(e)));
+  }
 });
