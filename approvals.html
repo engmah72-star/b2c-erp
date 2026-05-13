@@ -93,8 +93,8 @@
     <div class="tabs-bar">
       <button class="tab on requested" id="tab-requested" onclick="setTab('requested')">💸 طلبات للتنفيذ <span class="badge" id="cnt-requested">0</span></button>
       <button class="tab awaiting_receipt" id="tab-awaiting_receipt" onclick="setTab('awaiting_receipt')">📥 بانتظار الاستلام <span class="badge" id="cnt-awaiting_receipt">0</span></button>
-      <button class="tab pending" id="tab-pending" onclick="setTab('pending')">⏳ بانتظار التأكيد <span class="badge" id="cnt-pending">0</span></button>
-      <button class="tab confirmed" id="tab-confirmed" onclick="setTab('confirmed')">🔵 بانتظار الاعتماد <span class="badge" id="cnt-confirmed">0</span></button>
+      <button class="tab pending" id="tab-pending" onclick="setTab('pending')">⏳ بانتظار الاعتماد <span class="badge" id="cnt-pending">0</span></button>
+      <button class="tab confirmed" id="tab-confirmed" onclick="setTab('confirmed')" style="display:none">🔵 (قديمة) مؤكَّدة <span class="badge" id="cnt-confirmed">0</span></button>
       <button class="tab approved" id="tab-approved" onclick="setTab('approved')">✅ مؤرشَفة <span class="badge" id="cnt-approved">0</span></button>
       <button class="tab rejected" id="tab-rejected" onclick="setTab('rejected')">❌ مرفوضة <span class="badge" id="cnt-rejected">0</span></button>
       <button class="tab" id="tab-suppliers_due" onclick="setTab('suppliers_due')" style="margin-right:auto">🏭 أرصدة الموردين <span class="badge" id="cnt-suppliers_due" style="background:#ffaa00">0</span></button>
@@ -173,20 +173,26 @@
   </div>
 </div>
 
-<!-- Modal: تنفيذ الطلب (المحاسب) -->
+<!-- Modal: تنفيذ الطلب (مدير التشغيل/المحاسب) -->
 <div class="overlay" id="ov-exec">
   <div class="modal" style="max-width:480px">
-    <div class="modal-head"><span class="modal-title">💸 تنفيذ الطلب</span><button class="modal-x" onclick="cM('exec')">✕</button></div>
+    <div class="modal-head"><span class="modal-title">💸 تنفيذ + رفع إيصال</span><button class="modal-x" onclick="cM('exec')">✕</button></div>
     <div class="modal-body">
       <div id="exec-summary" style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.7"></div>
       <div class="fg"><label>المحفظة المصدر *</label><select class="inp" id="exec-wallet"><option value="">— اختر —</option></select></div>
       <div class="fg"><label>📋 رقم/مرجع التحويل *</label><input class="inp" id="exec-transfer-ref" placeholder="مثال: 7821345 أو TXN-XXXX"></div>
       <div class="fg"><label>ملاحظة التنفيذ (اختياري)</label><input class="inp" id="exec-note" placeholder="مثال: حُوّل عبر فودافون كاش"></div>
+      <div class="fg">
+        <label>📥 صورة الإيصال <span style="font-size:10px;color:var(--dim2);font-weight:500">— اختياري (تقدر ترفعها لاحقاً)</span></label>
+        <input type="file" id="exec-receipt-file" accept="image/*" style="width:100%;padding:10px;background:var(--bg3);border:2px dashed var(--line);border-radius:8px;color:var(--snow);font-family:inherit;font-size:12px">
+        <div id="exec-receipt-preview" style="margin-top:8px;text-align:center"></div>
+      </div>
       <div id="exec-fee-warn" style="display:none;font-size:11px;color:#ffaa00;background:rgba(255,170,0,.08);padding:8px 10px;border-radius:6px;margin-top:6px"></div>
+      <div id="exec-progress" style="display:none;margin-top:10px;font-size:11px;color:var(--dim2);text-align:center"></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="cM('exec')">إلغاء</button>
-      <button class="btn btn-g" onclick="executeRequest()">✓ تنفيذ التحويل</button>
+      <button class="btn btn-g" onclick="executeRequest()" id="exec-save-btn">✓ تنفيذ + رفع إيصال</button>
     </div>
   </div>
 </div>
@@ -922,15 +928,27 @@ function renderRequestCard(r){
       </div>`;
   }
 
-  // الأزرار حسب الدور والمرحلة
+  // الأزرار حسب الدور والمرحلة — تدفّق مبسّط: مدير التشغيل ينفّذ ويرفع الإيصال، الأدمن يعتمد
+  const isAdm = currentRole === 'admin';
+  const isOps = currentRole === 'operation_manager';
   let actions = '';
   if(r.status === 'requested' && canExecute()){
-    actions = `<button class="btn-execute" onclick="openExecuteModal('${r._id}')">💸 تنفيذ</button>
+    actions = `<button class="btn-execute" onclick="openExecuteModal('${r._id}')">💸 تنفيذ + رفع إيصال</button>
                <button class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
-  } else if(r.status === 'awaiting_receipt' && r.requestedBy === currentUid){
-    actions = `<button class="btn-receive" onclick="openReceiptModal('${r._id}')">📤 رفع الإيصال + استلام</button>`;
+  } else if(r.status === 'awaiting_receipt' && (isOps || isAdm || r.requestedBy === currentUid)){
+    actions = `<button class="btn-receive" onclick="openReceiptModal('${r._id}')">📤 رفع الإيصال</button>
+               <button class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
   } else if(r.status === 'awaiting_receipt'){
-    actions = `<div style="font-size:11px;color:var(--dim2);padding:8px">⏳ بانتظار رفع الإيصال من ${escapeHtml(r.requestedByName||'الطالب')}</div>`;
+    actions = `<div style="font-size:11px;color:var(--dim2);padding:8px">⏳ بانتظار رفع الإيصال من المنفّذ</div>`;
+  } else if(r.status === 'pending' && isAdm){
+    actions = `<button class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد نهائي</button>
+               <button class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
+  } else if(r.status === 'pending'){
+    actions = `<div style="font-size:11px;color:var(--dim2);padding:8px">⏳ بانتظار اعتماد الأدمن</div>`;
+  } else if(r.status === 'confirmed' && isAdm){
+    // backward compat: سجلات قديمة في حالة confirmed
+    actions = `<button class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد نهائي</button>
+               <button class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
   }
 
   return `
@@ -1591,8 +1609,20 @@ window.openExecuteModal = function(reqId){
   wSel.innerHTML = '<option value="">— اختر المحفظة —</option>' + walletsArr.map(w=>`<option value="${w._id}" data-name="${escapeHtml(w.name||'')}" data-bal="${w.balance||0}">${escapeHtml(w.name||'')} (رصيد: ${fn(w.balance||0)} ج)</option>`).join('');
   document.getElementById('exec-note').value = '';
   document.getElementById('exec-transfer-ref').value = '';
+  const rf = document.getElementById('exec-receipt-file'); if(rf) rf.value = '';
+  const rp = document.getElementById('exec-receipt-preview'); if(rp) rp.innerHTML = '';
+  const pg = document.getElementById('exec-progress'); if(pg){ pg.style.display = 'none'; pg.textContent = ''; }
   oM('exec');
 };
+
+document.getElementById('exec-receipt-file')?.addEventListener('change', e=>{
+  const f = e.target.files[0];
+  const prev = document.getElementById('exec-receipt-preview');
+  if(!prev) return;
+  if(!f){ prev.innerHTML = ''; return; }
+  const url = URL.createObjectURL(f);
+  prev.innerHTML = `<img src="${url}" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--line)">`;
+});
 
 window.executeRequest = async function(){
   if(!executingReq) return;
@@ -1608,7 +1638,36 @@ window.executeRequest = async function(){
   const transferRef = document.getElementById('exec-transfer-ref').value.trim();
   if(!transferRef) return showToast('⚠️ أدخل رقم/مرجع التحويل','err');
 
+  // إيصال اختياري — لو مرفوع ينتقل مباشرة لـ pending
+  const receiptFile = document.getElementById('exec-receipt-file')?.files?.[0] || null;
+  const saveBtn = document.getElementById('exec-save-btn');
+  const progEl = document.getElementById('exec-progress');
+
   try{
+    // ارفع الإيصال أولاً (لو موجود) — قبل الـbatch علشان نضمن URL
+    let receiptImageUrl = '';
+    let receiptImagePath = '';
+    if(receiptFile){
+      if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'جاري الرفع...'; }
+      if(progEl){ progEl.style.display = 'block'; progEl.textContent = 'رفع الإيصال... 0%'; }
+      const path = `receipts/${r._id}_${Date.now()}_${receiptFile.name}`;
+      const stRef = sRef(storage, path);
+      const task = uploadBytesResumable(stRef, receiptFile);
+      await new Promise((res, rej)=>{
+        task.on('state_changed',
+          s=>{ const p = Math.round(s.bytesTransferred/s.totalBytes*100); if(progEl) progEl.textContent = `رفع الإيصال... ${p}%`; },
+          rej,
+          async ()=>{
+            receiptImageUrl = await getDownloadURL(task.snapshot.ref);
+            receiptImagePath = path;
+            res();
+          }
+        );
+      });
+      if(progEl) progEl.textContent = '✅ تم رفع الإيصال — جاري حفظ الحركة...';
+      if(saveBtn) saveBtn.textContent = 'حفظ الحركة...';
+    }
+
     // pre-fetch الأوردر لو الطلب بيمسه (refund أو cost item)
     let orderDoc = null;
     if(r.orderId && (r.type === 'client_refund' || r.costItemIndex !== undefined)){
@@ -1772,9 +1831,10 @@ window.executeRequest = async function(){
       batch.update(doc(db,'orders',oid), updateData);
     }
 
-    // 9. تحديث الطلب نفسه
+    // 9. تحديث الطلب نفسه — لو رُفِع الإيصال ينتقل مباشرة لـ pending، وإلا awaiting_receipt
+    const nextStatus = receiptImageUrl ? 'pending' : 'awaiting_receipt';
     batch.update(doc(db,'payment_requests',r._id), {
-      status: 'awaiting_receipt',
+      status: nextStatus,
       executedBy: currentUid,
       executedByName: currentUserName,
       executedAt: serverTimestamp(),
@@ -1785,6 +1845,13 @@ window.executeRequest = async function(){
       ...(epRef ? { employeePaymentId: epRef.id } : {}),
       transferRef,
       executeNote: note,
+      ...(receiptImageUrl ? {
+        receiptImageUrl,
+        receiptImagePath,
+        receivedBy: currentUid,
+        receivedByName: currentUserName,
+        receivedAt: serverTimestamp(),
+      } : {}),
     });
 
     await batch.commit();
@@ -1795,13 +1862,17 @@ window.executeRequest = async function(){
       epRef ? 'employee_payments' : null,
       orderPaymentUpdate ? 'orders.totalPaid' : null,
       itemsCount ? `${itemsCount} costItem.paid` : null,
+      receiptImageUrl ? 'receipt' : null,
     ].filter(Boolean).join(' + ');
-    showToast(`✅ نُفّذ — تم تسجيل: ${summary}`,'ok');
+    showToast(`✅ ${receiptImageUrl?'نُفّذ + إيصال — بانتظار الاعتماد':'نُفّذ — لا تنسَ رفع الإيصال'} (${summary})`,'ok');
     cM('exec');
     executingReq = null;
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'تنفيذ طلب', amount:r.amount});
     if(!handled) showToast('❌ '+e.message,'err');
+  }finally{
+    if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = '✓ تنفيذ + رفع إيصال'; }
+    if(progEl) progEl.style.display = 'none';
   }
 };
 
@@ -1883,6 +1954,27 @@ document.getElementById('receipt-file')?.addEventListener('change', e=>{
   const url = URL.createObjectURL(f);
   document.getElementById('receipt-preview').innerHTML = `<img src="${url}" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--line)">`;
 });
+
+// ══════════════ اعتماد نهائي للأدمن — pending → approved (مقفل) ══════════════
+window.approveRequest = async function(reqId){
+  if(currentRole !== 'admin') return showToast('⛔ الاعتماد للأدمن فقط','err');
+  const r = requests.find(x=>x._id===reqId);
+  if(!r) return;
+  if(!['pending','confirmed'].includes(r.status)) return showToast('⛔ هذا الطلب لا يمكن اعتماده الآن','err');
+  if(!confirm(`اعتماد نهائي للطلب — ${fn(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}?`)) return;
+  try{
+    await updateDoc(doc(db,'payment_requests',reqId), {
+      status: 'approved',
+      approvedBy: currentUid,
+      approvedByName: currentUserName,
+      approvedAt: serverTimestamp(),
+      isLocked: true,
+    });
+    showToast('✅ تم الاعتماد النهائي + قُفل السجل','ok');
+  }catch(e){
+    showToast('❌ '+e.message,'err');
+  }
+};
 
 window.uploadReceipt = async function(){
   if(!receivingReq) return;

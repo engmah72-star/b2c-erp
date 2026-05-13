@@ -425,24 +425,24 @@ service cloud.firestore {
         && request.resource.data.amount is number
         && request.resource.data.amount > 0;
       allow update: if isAuth() && (
-        // المحاسب ينفّذ: requested → awaiting_receipt
+        // المحاسب/مدير التشغيل ينفّذ: requested → awaiting_receipt أو مباشرة → pending (لو رفع الإيصال في نفس الخطوة)
         (canFinancialWrite()
          && resource.data.status == 'requested'
-         && request.resource.data.status in ['awaiting_receipt','rejected'])
+         && request.resource.data.status in ['awaiting_receipt','pending','rejected'])
         // الطالب يلغي طلبه الخاص: requested → rejected (لم يبدأ التنفيذ بعد)
         || (resource.data.requestedBy == request.auth.uid
             && resource.data.status == 'requested'
             && request.resource.data.status == 'rejected')
-        // الطالب يستلم + يرفع إيصال: awaiting_receipt → pending
-        || (resource.data.requestedBy == request.auth.uid
+        // رفع إيصال awaiting_receipt → pending: مدير التشغيل/الأدمن أو الطالب (backward compat)
+        || ((isOpsManager() || isAdmin() || canFinancialWrite() || resource.data.requestedBy == request.auth.uid)
             && resource.data.status == 'awaiting_receipt'
             && request.resource.data.status == 'pending'
             && request.resource.data.receiptImageUrl is string)
-        // ops_manager يأكد: pending → confirmed
+        // ops_manager يأكد (backward compat للسجلات القديمة): pending → confirmed
         || (isOpsManager()
             && resource.data.status == 'pending'
             && request.resource.data.status in ['confirmed','rejected'])
-        // admin يعتمد: confirmed → approved (locked)
+        // admin يعتمد: pending/confirmed → approved (locked) — يعتمد مباشرة بدون مرحلة confirmed منفصلة
         || (isAdmin()
             && resource.data.status in ['pending','confirmed']
             && request.resource.data.status in ['approved','rejected'])
