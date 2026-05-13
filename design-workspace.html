@@ -2005,15 +2005,21 @@ window.confirmGalleryPublish = async function() {
 
   const action = item.galleryId ? 'تحديث' : 'نشر';
   const btn = document.getElementById('gal-confirm-btn');
+  const resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; } };
 
-  // Duplicate detection — check if same imageUrl already live in gallery under a different doc
+  // Duplicate detection — best effort; never blocks the publish flow
   if (btn) { btn.disabled = true; btn.textContent = '🔍 جاري الفحص...'; }
-  const dupSnap = await getDocs(
-    query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl), where('isVisible', '==', true))
-  );
-  if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; }
+  let dupDoc = null;
+  try {
+    const dupSnap = await getDocs(
+      query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl))
+    );
+    dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId && d.data().isVisible !== false);
+  } catch(e) {
+    console.warn('[gallery] duplicate check skipped:', e?.message || e);
+  }
+  resetBtn();
 
-  const dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId);
   if (dupDoc) {
     const dupTitle = dupDoc.data().title || 'تصميم';
     if (!confirm(`⚠️ هذه الصورة موجودة بالفعل في المعرض:\n"${dupTitle}"\n\nهل تتابع ${action} على أي حال؟`)) return;
@@ -2062,7 +2068,7 @@ window.confirmGalleryPublish = async function() {
   } catch(e) {
     toast('❌ ' + e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن'; }
+    resetBtn();
   }
 };
 
