@@ -418,7 +418,17 @@ function loadAll(){
     updateKPIs();
     updateCounts();
     renderJobs();
-  },err=>{console.error(err);toast('خطأ في تحميل الأوامر','err');});
+  },err=>{
+    console.error(err);
+    // Composite index missing — fallback without orderBy
+    if(err.code==='failed-precondition'||err.message?.includes('index')){
+      const q2=query(collection(db,'job_orders'),where('isDeleted','==',false));
+      onSnapshot(q2,snap=>{
+        jobs=snap.docs.map(d=>({_id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+        updateKPIs();updateCounts();renderJobs();
+      });
+    }else{toast('خطأ في تحميل الأوامر: '+err.message,'err');}
+  });
 
   // Suppliers realtime
   onSnapshot(query(collection(db,'suppliers_v2'),where('isActive','!=',false)),snap=>{
