@@ -855,7 +855,10 @@ function renderAll(){
         ${emp.phone?`<a href="tel:${emp.phone}" onclick="closeQAMenu()">📞 اتصال (${emp.phone})</a>
         <a href="https://wa.me/2${emp.phone.replace(/^0/,'')}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`:''}
         <div class="act-sep"></div>
-        <button onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين كلمة السر</button>
+        <button onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين فوري</button>
+        ${emp.email && !emp.email.endsWith('@b2c.local')
+          ? `<button onclick="closeQAMenu();sendEmpResetEmail()" style="color:var(--b)">✉️ إرسال رابط بالبريد</button>`
+          : ''}
         <button onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
       </div>
     </div>
@@ -1834,41 +1837,81 @@ window.saveEmpData=async function(){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-// Reset password flow: from the client we can't write into Firebase Auth for
-// another user, so we mark the employee doc as requiring a forced password
-// change and instruct the admin verbally. Two execution paths:
-//   1) Email accounts → send Firebase password-reset link via sendPasswordResetEmail.
-//   2) Phone @b2c.local accounts → flag mustChangePassword=true; admin tells
-//      the employee to log in with the original default `b2c@123` (or the
-//      admin opens Firebase Console to truly reset auth). Either way the
-//      forced-change flow on next login covers it.
+// Reset password — direct via Cloud Function (adminResetEmployeePassword).
+// Generates a fresh 6-digit code in Firebase Auth on the server side, flags
+// mustChangePassword=true so the standard change-password flow takes over on
+// next login. The temp code is displayed once in a modal — admin shares it
+// with the employee out of band.
 window.resetEmployeePassword=async function(){
   if(!emp)return;
   if(!emp.authUid){toast('⚠️ الموظف ليس لديه حساب دخول مفعّل','err');return;}
-  if(!confirm(`إعادة تعيين كلمة السر لـ "${emp.name}"؟
-سيُجبر على تغييرها عند الدخول التالي.`))return;
+  if(!confirm(`إنشاء كلمة سر مؤقتة لـ "${emp.name}"؟\nستظهر مرة واحدة فقط — احفظها فوراً.`))return;
+  // Loading toast — Cloud Function cold start can take a few seconds
+  toast('جاري إعادة التعيين...','');
   try{
-    const email = emp.email || ((emp.phone||'')+'@b2c.local');
-    const isLocalEmail = email.endsWith('@b2c.local');
-    // 1) Flag the user doc so login flow forces password change
-    await updateDoc(doc(db,'users',emp.authUid),{
-      mustChangePassword:true,
-      passwordResetAt:serverTimestamp(),
-      passwordResetBy:currentUser.uid,
-      passwordResetByName:adminName||'',
-    });
-    // 2) For real-email accounts, also send Firebase reset email
-    if(!isLocalEmail){
+    const { getFunctions, httpsCallable }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
+    const fns=getFunctions(app,'us-central1');
+    const call=httpsCallable(fns,'adminResetEmployeePassword');
+    const { data }=await call({uid:emp.authUid});
+    if(!data?.tempPassword)throw new Error('لم يتم استلام كلمة السر من الخادم');
+    showTempPasswordModal(emp.name||'الموظف', data.tempPassword);
+  }catch(e){toast('❌ '+(e.message||'تعذرت إعادة التعيين'),'err');}
+};
+
+// Separate flow for real-email accounts — sends Firebase reset link to inbox.
+window.sendEmpResetEmail=async function(){
+  if(!emp?.email||emp.email.endsWith('@b2c.local')){
+    toast('⚠️ هذا الحساب موبايل — استخدم "إعادة تعيين فوري"','err');return;
+  }
+  if(!confirm(`إرسال رابط إعادة تعيين إلى ${emp.email}؟`))return;
+  try{
+    const { sendPasswordResetEmail }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    await sendPasswordResetEmail(auth,emp.email);
+    // audit trail
+    if(emp.authUid){
       try{
-        const { sendPasswordResetEmail }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-        await sendPasswordResetEmail(auth,email);
-        toast(`✅ تم إرسال رابط إعادة التعيين إلى ${email}`,'ok');
-        return;
-      }catch(mailErr){console.warn('reset-mail:',mailErr.message);}
+        await updateDoc(doc(db,'users',emp.authUid),{
+          passwordResetEmailSentAt:serverTimestamp(),
+          passwordResetEmailSentBy:currentUser.uid,
+        });
+      }catch(_){/* non-fatal */}
     }
-    toast(`✅ تم تعليم الحساب لإجبار تغيير كلمة السر — أبلغ الموظف باستخدام b2c@123 أو راجع إدارة Firebase`,'ok');
+    toast(`✅ تم إرسال رابط إلى ${emp.email}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
+
+// Persistent modal showing the temp password once — toast would auto-dismiss
+// before the admin can copy a 6-digit number to WhatsApp.
+function showTempPasswordModal(empName, tempPw){
+  const safe=String(tempPw).replace(/[^0-9]/g,'');
+  const ov=document.createElement('div');
+  ov.className='overlay open';
+  ov.style.cssText='display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML=`
+    <div class="modal" style="max-width:380px;width:100%">
+      <div style="padding:24px;text-align:center">
+        <div style="font-size:36px;margin-bottom:8px">🔑</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:6px">كلمة سر مؤقتة لـ ${empName}</div>
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:18px">احفظها فوراً — لن تظهر مرة أخرى</div>
+        <div id="temp-pw-display" style="font-size:34px;font-weight:900;letter-spacing:6px;background:var(--bg3);padding:18px;border-radius:12px;font-family:ui-monospace,monospace;margin-bottom:10px;user-select:all;cursor:pointer">${safe}</div>
+        <div id="temp-pw-hint" style="font-size:11px;color:var(--dim2);margin-bottom:14px">اضغط على الرقم للنسخ · أبلغها للموظف بأمان</div>
+        <button class="btn btn-b" id="temp-pw-close" style="width:100%">حسناً</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const disp=ov.querySelector('#temp-pw-display');
+  const hint=ov.querySelector('#temp-pw-hint');
+  disp.addEventListener('click',async()=>{
+    try{
+      await navigator.clipboard.writeText(safe);
+      disp.style.background='rgba(0,217,126,.15)';
+      hint.textContent='✅ تم النسخ';
+    }catch(_){
+      hint.textContent='⚠️ تعذر النسخ — انسخ يدوياً';
+    }
+  });
+  ov.querySelector('#temp-pw-close').addEventListener('click',()=>ov.remove());
+}
 
 window.confirmDelete=async function(){
   if(!emp)return;
