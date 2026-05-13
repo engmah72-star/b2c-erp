@@ -440,7 +440,7 @@ const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDo
 const auth=getAuth(app), db=getFirestore(app);
 
 // ══ STATE ══
-let emp=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
+let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 // remember tab via URL hash so refreshes / deep-links work
@@ -510,7 +510,7 @@ window.setTab=function(t){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
   // re-run section renderers — DOM containers were destroyed/recreated
-  if(t==='overview'){renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
+  if(t==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
   else if(t==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
@@ -615,6 +615,13 @@ onAuthStateChanged(auth,async u=>{
     <button class="btn btn-g btn-sm" onclick="openSalary()" title="صرف مرتب (s)">💰 صرف</button>`;
 
   // Listeners
+  // Watch the matching users doc so we can surface displayPassword in the UI.
+  if(emp.authUid){
+    onSnapshot(doc(db,'users',emp.authUid),snap=>{
+      empUserDoc=snap.exists()?snap.data():null;
+      renderPasswordCard();
+    });
+  }
   onSnapshot(collection(db,'orders'),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderAll();
@@ -882,6 +889,9 @@ function renderAll(){
 
     <!-- TAB: Overview -->
     <div class="tab-pane" id="tab-overview" style="${activeTab==='overview'?'':'display:none'}">
+      <!-- Password card -->
+      <div id="password-card" style="margin-bottom:14px"></div>
+
       <!-- Period filter -->
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
         <button class="prof-pp${profilePeriod==='today'?' active':''}" data-p="today" onclick="setProfilePeriod('today')">اليوم</button>
@@ -1033,7 +1043,7 @@ function renderAll(){
     </div>`;
 
   // render فقط أقسام التاب الفعّال (الباقي يتعمل عند setTab)
-  if(activeTab==='overview'){renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
+  if(activeTab==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
   else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
   else if(activeTab==='salaries'){renderSalaries();}
   else if(activeTab==='tasks'){renderTasks();}
@@ -1842,6 +1852,108 @@ window.saveEmpData=async function(){
 // mustChangePassword=true so the standard change-password flow takes over on
 // next login. The temp code is displayed once in a modal — admin shares it
 // with the employee out of band.
+// ══════════════ PASSWORD CARD ══════════════
+// نعرض بطاقة كلمة السر في tab "نظرة عامة" لكل الموظفين عندهم حساب دخول.
+// - إذا users doc يحتوي على `displayPassword` (لم يغيّرها الموظف بعد) → نعرضها
+//   مع زر نسخ + زر تعديل.
+// - إذا لا يحتوي (الموظف غيّر كلمته بنفسه) → نعرض شارة "سر شخصي" + زر تعيين
+//   كلمة سر جديدة.
+// عند الضغط على "تعيين":
+//   1) نحفظ الكلمة في users.displayPassword (للأدمن يقرأها)
+//   2) نحاول تطبيقها على Firebase Auth عبر Cloud Function
+//   3) إذا فشل، يفتح modal Firebase Console (الموجود)
+function renderPasswordCard(){
+  const el=document.getElementById('password-card');if(!el)return;
+  if(!emp?.authUid){el.innerHTML='';return;}
+  const dp=empUserDoc?.displayPassword;
+  const setBy=empUserDoc?.displayPasswordSetByName||'';
+  const setAt=empUserDoc?.displayPasswordSetAt?.toDate?.();
+  const setAtStr=setAt?setAt.toLocaleDateString('ar-EG',{day:'numeric',month:'short',year:'numeric'}):'';
+  el.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex-shrink:0;width:42px;height:42px;border-radius:50%;background:rgba(255,170,0,.12);display:flex;align-items:center;justify-content:center;font-size:20px">🔑</div>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:3px">كلمة سر الدخول</div>
+        ${dp
+          ? `<div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:900;letter-spacing:1px;user-select:all;cursor:pointer;color:var(--snow)" onclick="copyToClipboard('${dp.replace(/'/g,'')}',this)" title="اضغط للنسخ">${dp}</div>
+             ${setAtStr?`<div style="font-size:10px;color:var(--dim);margin-top:3px">عُيّنت بواسطة ${setBy||'النظام'} · ${setAtStr}</div>`:''}`
+          : `<div style="font-size:12px;color:var(--y);font-weight:700">🔒 سر شخصي — غيّرها الموظف بنفسه</div>
+             <div style="font-size:10px;color:var(--dim2);margin-top:2px">اضغط "تعيين" لكلمة جديدة يعرفها الأدمن</div>`}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${dp?`<button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${dp.replace(/'/g,'')}',this)" style="font-size:11px">📋 نسخ</button>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="openSetPasswordModal()" style="font-size:11px;color:var(--b)">✏️ تعيين كلمة جديدة</button>
+      </div>
+    </div>`;
+}
+
+// Modal بسيط لإدخال كلمة سر جديدة من الأدمن
+window.openSetPasswordModal=function(){
+  if(!emp?.authUid){toast('⚠️ الموظف ليس لديه حساب دخول مفعّل','err');return;}
+  const ov=document.createElement('div');
+  ov.className='overlay open';
+  ov.style.cssText='display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML=`
+    <div class="modal" style="max-width:380px;width:100%">
+      <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:14px;font-weight:800">🔑 تعيين كلمة سر لـ ${emp.name||'الموظف'}</span>
+        <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div class="fg" style="margin-bottom:12px">
+          <label>كلمة السر الجديدة *</label>
+          <input class="inp" id="new-emp-pw" type="text" placeholder="6 أحرف على الأقل" value="b2c@123" autofocus>
+          <div style="font-size:10px;color:var(--dim2);margin-top:4px">ستظهر هنا للأدمن — أبلغ الموظف بها ليدخل ويغيّرها</div>
+        </div>
+        <button class="btn btn-g" id="sp-save" style="width:100%" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
+        <div id="sp-msg" style="font-size:11px;margin-top:8px;color:var(--dim2);line-height:1.6"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  setTimeout(()=>document.getElementById('new-emp-pw')?.focus(),100);
+};
+
+window.saveEmployeePassword=async function(btn){
+  const pw=document.getElementById('new-emp-pw')?.value?.trim();
+  const msg=document.getElementById('sp-msg');
+  if(!pw||pw.length<6){if(msg)msg.innerHTML='<span style="color:var(--r)">⚠️ 6 أحرف على الأقل</span>';return;}
+  if(!emp?.authUid){if(msg)msg.innerHTML='<span style="color:var(--r)">⚠️ لا يوجد حساب</span>';return;}
+  btn.disabled=true;const orig=btn.textContent;btn.textContent='جاري…';
+  // 1) Save to Firestore so admin sees it
+  try{
+    await updateDoc(doc(db,'users',emp.authUid),{
+      displayPassword:pw,
+      displayPasswordSetAt:serverTimestamp(),
+      displayPasswordSetBy:currentUser.uid,
+      displayPasswordSetByName:adminName||'',
+      mustChangePassword:true,
+    });
+    if(msg)msg.innerHTML='<span style="color:var(--g)">✅ حُفظت في الملف</span>';
+  }catch(e){
+    btn.disabled=false;btn.textContent=orig;
+    if(msg)msg.innerHTML='<span style="color:var(--r)">❌ '+(e.message||'فشل الحفظ')+'</span>';
+    return;
+  }
+  // 2) Try to apply to Firebase Auth via Cloud Function
+  let applied=false, applyErr='';
+  try{
+    const { getFunctions, httpsCallable }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
+    const fns=getFunctions(app,'us-central1');
+    const call=httpsCallable(fns,'adminSetEmployeePassword');
+    await call({uid:emp.authUid,password:pw});
+    applied=true;
+  }catch(e){
+    applyErr=e?.code||e?.message||'';
+  }
+  btn.disabled=false;btn.textContent=orig;
+  if(applied){
+    if(msg)msg.innerHTML='<span style="color:var(--g)">✅ تم الحفظ والتطبيق — أبلغ الموظف بالكلمة الجديدة</span>';
+    setTimeout(()=>btn.closest('.overlay')?.remove(),1500);
+  } else {
+    if(msg)msg.innerHTML=`<span style="color:var(--y)">⚠️ حُفظت في الملف لكن لم تُطبَّق على Firebase Auth تلقائياً.</span><br><span style="color:var(--dim2);font-size:10px">السبب: ${applyErr||'unknown'}. طبّقها يدوياً من Firebase Console أو تأكد من نشر الـ Cloud Function.</span>`;
+  }
+};
+
 window.resetEmployeePassword=async function(){
   if(!emp)return;
   if(!emp.authUid){toast('⚠️ الموظف ليس لديه حساب دخول مفعّل','err');return;}
