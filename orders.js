@@ -671,6 +671,53 @@ export function calcOrderFinancials(order) {
 // ══════════════════════════════════════════
 export const fn = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
 
+/**
+ * dedupEmployees — يوحّد سجلات الموظفين المكرّرة (مصمم/طابع/إلخ).
+ * يستخدم استراتيجية متعددة المستويات:
+ *   1. لو متطابقين في `authUid` (وكلاهما له authUid) → سجل واحد
+ *   2. لو متطابقين في `phone` (مع تطبيع: أرقام فقط) → سجل واحد، يفضّل الذي له authUid
+ *   3. لو متطابقين في `name + phone` → سجل واحد
+ *
+ * يحل مشكلة التكرار عند وجود سجل employee قديم بدون authUid + سجل جديد مرتبط بـ Firebase Auth.
+ */
+export function dedupEmployees(raw) {
+  if (!Array.isArray(raw)) return [];
+  const normPhone = p => (p || '').toString().replace(/\D/g, '');
+  const normName  = n => (n || '').toString().trim().toLowerCase();
+  const out = [];
+  const byAuth  = new Map();   // authUid → index in out
+  const byPhone = new Map();   // phone   → index in out
+  const byName  = new Map();   // name|phone → index in out
+  for (const e of raw) {
+    if (!e) continue;
+    const auth  = e.authUid || '';
+    const phone = normPhone(e.phone);
+    const nameKey = normName(e.name) + '|' + phone;
+    // ابحث في كل المؤشرات (سجل سابق لنفس الشخص؟)
+    let existingIdx = -1;
+    if (auth  && byAuth.has(auth))  existingIdx = byAuth.get(auth);
+    if (existingIdx < 0 && phone && byPhone.has(phone)) existingIdx = byPhone.get(phone);
+    if (existingIdx < 0 && phone && byName.has(nameKey)) existingIdx = byName.get(nameKey);
+    if (existingIdx >= 0) {
+      // اندمج: فضّل السجل الذي له authUid
+      const cur = out[existingIdx];
+      if (!cur.authUid && auth) {
+        out[existingIdx] = { ...cur, ...e };
+        // حدّث الفهارس
+        byAuth.set(auth, existingIdx);
+      }
+      continue;
+    }
+    // سجل جديد
+    out.push(e);
+    const idx = out.length - 1;
+    if (auth)  byAuth.set(auth, idx);
+    if (phone) byPhone.set(phone, idx);
+    if (phone) byName.set(nameKey, idx);
+  }
+  return out;
+}
+
 export const nowStr = () =>
   new Date().toLocaleDateString('ar-EG') + ' ' +
   new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
