@@ -467,9 +467,19 @@ service cloud.firestore {
       );
       // create: any auth user can create a DM, but must include themselves
       allow create: if isAuth() && request.auth.uid in request.resource.data.get('participants', []);
-      // update: must be participant. Allow toggling unreadCount / archivedBy /
-      // last* / pinnedMessages without changing core fields like participants.
-      allow update: if isAuth() && request.auth.uid in resource.data.get('participants', []);
+      // update:
+      //   1) Participant: standard update — toggle unread, archive, last…
+      //   2) NON-participant joining a CHANNEL: allowed to add only themselves
+      //      to participants (so new employees / role changes can self-join).
+      allow update: if isAuth() && (
+        request.auth.uid in resource.data.get('participants', [])
+        || (
+          resource.data.get('type','') == 'channel'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
+          && request.auth.uid in request.resource.data.get('participants', [])
+          && !(request.auth.uid in resource.data.get('participants', []))
+        )
+      );
       allow delete: if isAdmin();
 
       match /messages/{msgId} {
