@@ -491,12 +491,18 @@ export function validateStageRequirements(order, fromStage) {
     if (!hasFiles) warnings.push('لم يُرفع ملف التصميم — يفضّل رفعه قبل الانتقال للطباعة');
   }
   else if (stage === 'printing') {
-    const hasImg = !!(order.designImageUrl
-                   || (order.products || []).some(p => p.designImageUrl)
-                   || order.printFinalUrl
-                   || order.designFileUrl
-                   || (order.designFiles && order.designFiles.length));
-    if (!hasImg) warnings.push('لم تُرفع صورة التصميم النهائي — يفضّل رفعها قبل التحويل للتنفيذ');
+    // إلزامي: صورة واحدة على الأقل على الأوردر أو على أحد المنتجات (يُقبل designImages[] أو designImageUrl)
+    const productHasImg = (order.products || []).some(p =>
+      (Array.isArray(p.designImages) && p.designImages.filter(Boolean).length > 0) ||
+      !!p.designImageUrl
+    );
+    const orderHasImg = !!(order.designImageUrl
+                        || order.printFinalUrl
+                        || order.designFileUrl
+                        || (order.designFiles && order.designFiles.length));
+    if (!productHasImg && !orderHasImg) {
+      errors.push('يجب رفع صورة واحدة على الأقل قبل التحويل للتنفيذ');
+    }
   }
   else if (stage === 'production') {
     if (!(order.costItems || []).length) warnings.push('لم تُسجَّل تكاليف الأوردر — يفضّل تسجيلها قبل التحويل للشحن');

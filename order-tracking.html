@@ -109,10 +109,19 @@ if (!orderDocId) {
 
 let order = null;
 let ledger = [];
+let isAdmin = false;
 
 onAuthStateChanged(auth, async u => {
   if (!u) { location.href = 'login.html'; return; }
   if (!orderDocId) return;
+  // اقرأ دور المستخدم لتحديد رؤية السجل (السجل للأدمن/مدير العمليات فقط)
+  try {
+    const uSnap = await getDoc(doc(db, 'users', u.uid));
+    if (uSnap.exists()) {
+      const role = uSnap.data().role || '';
+      isAdmin = ['admin','operation_manager'].includes(role);
+    }
+  } catch(_) {}
   // اشترك في الأوردر
   onSnapshot(doc(db, 'orders', orderDocId), snap => {
     if (!snap.exists()) {
@@ -235,29 +244,31 @@ function render() {
     html += `</div>`;
   }
 
-  // ── Timeline
-  const tl = [...(o.timeline || [])].reverse();
-  html += `<div class="card"><div class="card-h">🗒 السجل الزمني (${tl.length})</div>`;
-  if (!tl.length) {
-    html += `<div class="empty">لا يوجد سجل</div>`;
-  } else {
-    tl.forEach(t => {
-      const sc = STAGES[t.stage] || {};
-      html += `
-        <div class="tl-item">
-          <div class="tl-dot" style="${sc.col?`background:${sc.col}`:''}"></div>
-          <div class="tl-body">
-            <div class="tl-action">${t.action || ''}</div>
-            <div class="tl-meta">
-              <span>📅 ${t.date || ''}</span>
-              ${t.by?`<span>👤 ${t.by}</span>`:''}
-              ${t.assigneeName?`<span>↪ ${t.assigneeName}</span>`:''}
+  // ── Timeline — للأدمن/مدير العمليات فقط
+  if (isAdmin) {
+    const tl = [...(o.timeline || [])].reverse();
+    html += `<div class="card"><div class="card-h">🗒 السجل الزمني (${tl.length})</div>`;
+    if (!tl.length) {
+      html += `<div class="empty">لا يوجد سجل</div>`;
+    } else {
+      tl.forEach(t => {
+        const sc = STAGES[t.stage] || {};
+        html += `
+          <div class="tl-item">
+            <div class="tl-dot" style="${sc.col?`background:${sc.col}`:''}"></div>
+            <div class="tl-body">
+              <div class="tl-action">${t.action || ''}</div>
+              <div class="tl-meta">
+                <span>📅 ${t.date || ''}</span>
+                ${t.by?`<span>👤 ${t.by}</span>`:''}
+                ${t.assigneeName?`<span>↪ ${t.assigneeName}</span>`:''}
+              </div>
             </div>
-          </div>
-        </div>`;
-    });
+          </div>`;
+      });
+    }
+    html += `</div>`;
   }
-  html += `</div>`;
 
   // ── Financial events
   html += `<div class="card"><div class="card-h">💰 الحركات المالية (${ledger.length})</div>`;
