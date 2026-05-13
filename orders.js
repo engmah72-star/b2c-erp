@@ -679,6 +679,8 @@ export const fn = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
  *   3. لو متطابقين في `name + phone` → سجل واحد
  *
  * يحل مشكلة التكرار عند وجود سجل employee قديم بدون authUid + سجل جديد مرتبط بـ Firebase Auth.
+ * كل سجل canonical يحمل `_mergedIds: [...]` بكل الـ ids الأصلية اللي اندمجت فيه — تُستخدم في
+ * تجميعات الإحصائيات لتوحيد سجلات قديمة على الأوردرات (designerId قديم → الموظف الحالي).
  */
 export function dedupEmployees(raw) {
   if (!Array.isArray(raw)) return [];
@@ -693,29 +695,52 @@ export function dedupEmployees(raw) {
     const auth  = e.authUid || '';
     const phone = normPhone(e.phone);
     const nameKey = normName(e.name) + '|' + phone;
-    // ابحث في كل المؤشرات (سجل سابق لنفس الشخص؟)
     let existingIdx = -1;
     if (auth  && byAuth.has(auth))  existingIdx = byAuth.get(auth);
     if (existingIdx < 0 && phone && byPhone.has(phone)) existingIdx = byPhone.get(phone);
     if (existingIdx < 0 && phone && byName.has(nameKey)) existingIdx = byName.get(nameKey);
     if (existingIdx >= 0) {
-      // اندمج: فضّل السجل الذي له authUid
       const cur = out[existingIdx];
+      const mergedIds = [...(cur._mergedIds || [cur._id, cur.authUid].filter(Boolean)),
+                         ...[e._id, e.authUid].filter(Boolean)];
       if (!cur.authUid && auth) {
-        out[existingIdx] = { ...cur, ...e };
-        // حدّث الفهارس
+        out[existingIdx] = { ...cur, ...e, _mergedIds: [...new Set(mergedIds)] };
         byAuth.set(auth, existingIdx);
+      } else {
+        out[existingIdx] = { ...cur, _mergedIds: [...new Set(mergedIds)] };
       }
       continue;
     }
-    // سجل جديد
-    out.push(e);
+    const seed = [e._id, e.authUid].filter(Boolean);
+    out.push({ ...e, _mergedIds: seed });
     const idx = out.length - 1;
     if (auth)  byAuth.set(auth, idx);
     if (phone) byPhone.set(phone, idx);
     if (phone) byName.set(nameKey, idx);
   }
   return out;
+}
+
+/**
+ * resolveDesigner — يأخذ canonical employees list ومعرّف على الأوردر
+ * ويرجّع الموظف المطابق (يطابق أي id من `_mergedIds`).
+ * يستخدم في تجميع إحصائيات لتوحيد سجلات قديمة على الأوردرات.
+ */
+export function resolveDesigner(canonicalList, designerId, designerName) {
+  if (!Array.isArray(canonicalList)) return null;
+  if (designerId) {
+    for (const d of canonicalList) {
+      if (d._id === designerId || d.authUid === designerId) return d;
+      if (Array.isArray(d._mergedIds) && d._mergedIds.includes(designerId)) return d;
+    }
+  }
+  if (designerName) {
+    const target = (designerName || '').trim().toLowerCase();
+    for (const d of canonicalList) {
+      if ((d.name || '').trim().toLowerCase() === target) return d;
+    }
+  }
+  return null;
 }
 
 export const nowStr = () =>

@@ -554,7 +554,7 @@ import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/fi
 import { initNotifications } from "./notifications.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
@@ -959,7 +959,18 @@ function renderKanban(){
   // حمل العمل لكل مصمم (للأدمن)
   const isAdmView=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const dsLoad={};
-  if(isAdmView) orders.forEach(o=>{if(o.designerId)dsLoad[o.designerId]=(dsLoad[o.designerId]||0)+1;});
+  if(isAdmView) orders.forEach(o=>{
+    if(!o.designerId)return;
+    // canonicalize: لو الـ designerId قديم (سجل اندمج) نوحّده مع الموظف الحالي
+    const can=resolveDesigner(designers,o.designerId,o.designerName);
+    const key=(can&&(can.authUid||can._id))||o.designerId;
+    dsLoad[key]=(dsLoad[key]||0)+1;
+    // اخزن الـ aliases عشان الكارت ييجي يقرأ بأي id
+    if(can){
+      const aliases=[can._id,can.authUid,...(can._mergedIds||[])].filter(Boolean);
+      aliases.forEach(a=>{ dsLoad[a]=dsLoad[key]; });
+    }
+  });
   Object.keys(cols).forEach(key=>{
     const el=document.getElementById('col-'+key);if(!el)return;
     setText('cnt-'+key,cols[key].length);
@@ -1047,9 +1058,14 @@ function renderDesignDashboard(){
     const r=Math.floor((new Date(o.deadline)-new Date(today))/(864e5));
     return r>=0&&r<=2;
   }).length;
-  // workload per designer (name → count)
+  // workload per designer — يوحّد السجلات المكرّرة (orderId قديم → الموظف الحالي)
   const dsLoad={};
-  orders.filter(o=>o.designerName).forEach(o=>{dsLoad[o.designerName]=(dsLoad[o.designerName]||0)+1;});
+  orders.forEach(o=>{
+    if(!o.designerName && !o.designerId) return;
+    const can=resolveDesigner(designers,o.designerId,o.designerName);
+    const name=(can&&can.name) || o.designerName || '—';
+    dsLoad[name]=(dsLoad[name]||0)+1;
+  });
   const sorted=Object.entries(dsLoad).sort((a,b)=>b[1]-a[1]);
   const top=sorted[0];
   const topName=top?top[0]:'—';const topCnt=top?top[1]:0;
