@@ -430,7 +430,7 @@ async function buildDynamicSidebar(uid, currentPage) {
 
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch, runTransaction }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
@@ -1884,6 +1884,7 @@ function renderPasswordCard(){
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${dp?`<button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${dp.replace(/'/g,'')}',this)" style="font-size:11px">📋 نسخ</button>`:''}
         <button class="btn btn-ghost btn-sm" onclick="openSetPasswordModal()" style="font-size:11px;color:var(--b)">✏️ تعيين كلمة جديدة</button>
+        <button class="btn btn-ghost btn-sm" onclick="openRebuildAuthModal()" style="font-size:11px;color:var(--y)" title="إذا تعذّر تطبيق كلمة سر جديدة بأي طريقة، استخدم هذا الزر لإنشاء حساب دخول من الصفر">🔄 إعادة إنشاء حساب الدخول</button>
       </div>
     </div>`;
 }
@@ -2006,6 +2007,140 @@ window.saveEmployeePassword=async function(btn){
   btn.disabled=false;btn.textContent=orig;
   if(msg)msg.innerHTML=`<span style="color:var(--g)">✅ تم — كلمة السر طُبّقت على النظام (${method==='direct'?'مباشر':'Cloud Function'}).</span><br><span style="color:var(--dim2);font-size:10px">أبلغ الموظف بـ <strong style="color:var(--snow);font-family:ui-monospace,monospace">${pw}</strong> ليدخل بها.</span>`;
   setTimeout(()=>btn.closest('.overlay')?.remove(),2500);
+};
+
+// ════════════════════════════════════════════════════════════
+//   REBUILD AUTH ACCOUNT — "إعادة إنشاء حساب الدخول"
+// ════════════════════════════════════════════════════════════
+// آخر خيار للموظف المنحبس (لا displayPassword شغّالة، لا Cloud Function،
+// و Firebase Console reset-by-email لا يفيد مع @b2c.local). الزر بيعمل:
+//   1) ينشئ حساب Firebase Auth جديد للموظف بنفس الإيميل وكلمة سر يختارها الأدمن
+//   2) لو الإيميل مستخدم بالفعل، يفتح Firebase Console مع تعليمات حذف الحساب
+//      القديم يدوياً (خطوة واحدة)، ثم نعاود المحاولة
+//   3) بعد النجاح: نحدّث employees.authUid + ننشئ users/{newAuthUid} +
+//      نؤرشف users/{oldAuthUid} كـ replaced
+window.openRebuildAuthModal=function(){
+  if(!emp){toast('⚠️ بيانات الموظف لم تُحمَّل','err');return;}
+  if(!emp.phone){toast('⚠️ الموظف بدون رقم موبايل','err');return;}
+  const ov=document.createElement('div');
+  ov.className='overlay open';
+  ov.style.cssText='display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML=`
+    <div class="modal" style="max-width:440px;width:100%">
+      <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:14px;font-weight:800">🔄 إعادة إنشاء حساب دخول لـ ${emp.name||'الموظف'}</span>
+        <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--y);line-height:1.7;margin-bottom:14px">
+          ⚠️ هذا الإجراء آخر حل لما تكون كلمة السر القديمة غير معروفة أو تعذّر تطبيقها.
+          سيتم إنشاء حساب دخول جديد بنفس رقم الموبايل وكلمة سر تختارها.
+          الموظف يدخل فوراً بـ <strong>${emp.phone}</strong> + كلمة السر الجديدة.
+        </div>
+        <div class="fg" style="margin-bottom:12px">
+          <label>كلمة السر الجديدة</label>
+          <input class="inp" id="rb-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
+        </div>
+        <button class="btn btn-g" id="rb-save" style="width:100%" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
+        <div id="rb-msg" style="font-size:11px;margin-top:10px;color:var(--dim2);line-height:1.7"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  setTimeout(()=>document.getElementById('rb-pw')?.focus(),100);
+};
+
+window.doRebuildEmployeeAuth=async function(btn){
+  const pw=document.getElementById('rb-pw')?.value?.trim();
+  const msg=document.getElementById('rb-msg');
+  const setMsg=(html)=>{ if(msg) msg.innerHTML=html; };
+  if(!pw||pw.length<6){setMsg('<span style="color:var(--r)">⚠️ 6 أحرف على الأقل</span>');return;}
+  if(!emp?.phone){setMsg('<span style="color:var(--r)">⚠️ الموظف بدون رقم موبايل</span>');return;}
+
+  const email=emp.email||(emp.phone+'@b2c.local');
+  const oldAuthUid=emp.authUid||null;
+
+  btn.disabled=true;const orig=btn.textContent;btn.textContent='جاري الإنشاء…';
+  setMsg('<span style="color:var(--dim2)">⏳ جاري إنشاء حساب Firebase Auth جديد…</span>');
+
+  let newAuthUid='';
+  let secApp=null,secAuth=null;
+  try{
+    secApp=initializeApp(FB_CONFIG,'rebuild_'+Date.now());
+    secAuth=getAuth(secApp);
+    const cred=await createUserWithEmailAndPassword(secAuth,email,pw);
+    newAuthUid=cred.user.uid;
+    try{ await signOut(secAuth); }catch(_){}
+    try{ await deleteApp(secApp); }catch(_){}
+  }catch(e){
+    try{ if(secAuth) await signOut(secAuth); }catch(_){}
+    try{ if(secApp)  await deleteApp(secApp); }catch(_){}
+    if(e?.code==='auth/email-already-in-use'){
+      // الحساب القديم لسه موجود في Firebase Auth. لازم الأدمن يحذفه يدوياً.
+      const searchUrl=`https://console.firebase.google.com/project/business2card-c041b/authentication/users?search=${encodeURIComponent(email)}`;
+      btn.disabled=false;btn.textContent=orig;
+      setMsg(`
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;color:var(--y);line-height:1.8">
+          ⚠️ الحساب القديم لـ <strong style="font-family:ui-monospace,monospace">${email}</strong> موجود في Firebase Auth.<br>
+          <strong>خطوة وحيدة:</strong> احذفه من Firebase Console ثم اضغط "إعادة الإنشاء" مرة أخرى:
+          <ol style="margin:6px 0 0 18px;padding:0;font-size:11px;color:var(--snow)">
+            <li>افتح <a href="${searchUrl}" target="_blank" rel="noopener" style="color:var(--b);text-decoration:underline">Firebase Console</a></li>
+            <li>اضغط على ⋮ بجانب البريد ثم "Delete account"</li>
+            <li>ارجع هنا واضغط "إعادة الإنشاء"</li>
+          </ol>
+        </div>`);
+      window.open(searchUrl,'_blank');
+      return;
+    }
+    btn.disabled=false;btn.textContent=orig;
+    setMsg('<span style="color:var(--r)">❌ '+(e?.code||e?.message||'فشل الإنشاء')+'</span>');
+    return;
+  }
+
+  // الحساب الجديد اتعمل. دلوقتي نحدّث Firestore:
+  //   - employees.authUid = newAuthUid (+ email للتأكيد)
+  //   - users/{newAuthUid} جديد بنفس الصلاحيات
+  //   - users/{oldAuthUid} يتأرشف (بدل ما نحذفه — بنحافظ على audit trail)
+  setMsg('<span style="color:var(--dim2)">⏳ ربط الحساب الجديد بالبيانات الموجودة…</span>');
+  try{
+    const batch=writeBatch(db);
+    batch.update(doc(db,'employees',emp._id),{ authUid:newAuthUid, email });
+    batch.set(doc(db,'users',newAuthUid),{
+      name: emp.name||'',
+      role: emp.role||'customer_service',
+      email,
+      phone: emp.phone,
+      isActive: true,
+      mustChangePassword: false,
+      displayPassword: pw,
+      displayPasswordSetAt: serverTimestamp(),
+      displayPasswordSetBy: currentUser?.uid||'',
+      displayPasswordSetByName: adminName||'',
+      permissions: empUserDoc?.permissions || {},
+      rebuiltFrom: oldAuthUid,
+      rebuiltAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    });
+    if(oldAuthUid && oldAuthUid!==newAuthUid){
+      batch.update(doc(db,'users',oldAuthUid),{
+        isActive:false,
+        archivedAt: serverTimestamp(),
+        replacedBy: newAuthUid,
+      });
+    }
+    await batch.commit();
+  }catch(e){
+    btn.disabled=false;btn.textContent=orig;
+    setMsg(`<span style="color:var(--y)">⚠️ تم إنشاء الحساب لكن فشل ربطه: ${e?.code||e?.message||''}</span><br><span style="color:var(--dim2);font-size:10px">الحساب الجديد شغّال لكن قد يحتاج لمس يدوي.</span>`);
+    return;
+  }
+
+  setMsg(`<div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);border-radius:10px;padding:10px 14px;color:var(--g);line-height:1.7">
+    ✅ تم بنجاح! الموظف يقدر يدخل الآن بـ:<br>
+    📱 <strong style="font-family:ui-monospace,monospace;color:var(--snow)">${emp.phone}</strong><br>
+    🔑 <strong style="font-family:ui-monospace,monospace;color:var(--snow);font-size:14px">${pw}</strong>
+  </div>`);
+  btn.disabled=false;btn.textContent=orig;
+  setTimeout(()=>btn.closest('.overlay')?.remove(),3500);
 };
 
 window.resetEmployeePassword=async function(){
