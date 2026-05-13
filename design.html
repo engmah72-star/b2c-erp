@@ -814,6 +814,7 @@ window.previewGalImg=function(inp){
   r.readAsDataURL(file);
 };
 window.saveToGallery=async function(){
+  console.log('[gallery] saveToGallery() called');
   const inp=document.getElementById('gal-img-inp');
   const cat=(document.getElementById('gal-cat')?.value||'').trim();
   const title=(document.getElementById('gal-title')?.value||'').trim()||cat;
@@ -824,17 +825,41 @@ window.saveToGallery=async function(){
     const storageRef=ref(storage,`gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     await uploadBytes(storageRef,inp.files[0]);
     const imageUrl=await getDownloadURL(storageRef);
-    await addDoc(collection(db,'design_gallery'),{
-      imageUrl,title,category:cat,
-      colors:galSelColors,
-      designerId:auth.currentUser?.uid||'',
-      designerName:userName,
-      isPublic:true,
-      createdAt:serverTimestamp()
+    console.log('[gallery] image uploaded:', imageUrl);
+
+    // Duplicate detection — best effort
+    let dupTitle = null;
+    try {
+      const dupSnap = await getDocs(
+        query(collection(db,'gallery'), where('imageUrl','==',imageUrl))
+      );
+      const dupDoc = dupSnap.docs.find(d => d.data().isVisible !== false);
+      if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
+    } catch(e) {
+      console.warn('[gallery] duplicate check skipped:', e?.message || e);
+    }
+
+    // Write to `gallery` collection — same schema read by gallery.html
+    await addDoc(collection(db,'gallery'),{
+      imageUrl,
+      title,
+      description: '',
+      productType: cat,
+      tags: galSelColors || [],
+      designerName: userName,
+      publishedBy: auth.currentUser?.uid || '',
+      publishedByName: userName,
+      isVisible: true,
+      publishedAt: serverTimestamp(),
     });
+    console.log('[gallery] gallery doc written');
+
     closeGallery();
-    toast('✅ تم النشر في المعرض','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+    toast(dupTitle ? `✅ تم النشر (⚠️ صورة مكررة لـ "${dupTitle}")` : '✅ تم النشر في المعرض','ok');
+  }catch(e){
+    console.error('[gallery] publish failed:', e);
+    toast('❌ ' + (e?.message || 'فشل النشر'),'err');
+  }
 };
 
 
