@@ -408,3 +408,60 @@ exports.adminResetEmployeePassword = onCall(async (req) => {
     throw new HttpsError('internal', 'خطأ غير متوقع: ' + (e.message || String(e)));
   }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+//   Admin Set Employee Password (explicit password chosen by admin)
+// ════════════════════════════════════════════════════════════════════════════
+// Same shape as adminResetEmployeePassword but accepts an explicit `password`
+// from the admin instead of generating one. Used by the "تعيين كلمة سر" modal
+// in employee-profile.html. Also flips mustChangePassword=true so the
+// employee is still forced to set their own on next login.
+
+exports.adminSetEmployeePassword = onCall(async (req) => {
+  try {
+    const callerUid = req.auth?.uid;
+    if (!callerUid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+
+    let callerSnap;
+    try { callerSnap = await getFirestore().doc(`users/${callerUid}`).get(); }
+    catch (e) { throw new HttpsError('internal', 'تعذّر قراءة بيانات المستخدم'); }
+    if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
+
+    const callerData = callerSnap.data() || {};
+    if (!['admin', 'operation_manager'].includes(callerData.role)) {
+      throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط');
+    }
+
+    const targetUid = req.data?.uid;
+    const password = req.data?.password;
+    if (!targetUid || typeof targetUid !== 'string') {
+      throw new HttpsError('invalid-argument', 'uid مفقود');
+    }
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      throw new HttpsError('invalid-argument', 'كلمة سر غير صالحة (6 أحرف على الأقل)');
+    }
+
+    try {
+      await getAuth().updateUser(targetUid, { password });
+    } catch (e) {
+      throw new HttpsError('not-found', 'حساب الموظف غير موجود في Firebase Auth: ' + (e.message || ''));
+    }
+
+    try {
+      await getFirestore().doc(`users/${targetUid}`).update({
+        mustChangePassword: true,
+        passwordResetAt: FieldValue.serverTimestamp(),
+        passwordResetBy: callerUid,
+        passwordResetByName: callerData.name || '',
+      });
+    } catch (e) {
+      console.warn('mustChangePassword flag update failed for', targetUid, e.message);
+    }
+
+    return { success: true };
+  } catch (e) {
+    if (e instanceof HttpsError) throw e;
+    console.error('[adminSetEmployeePassword] unexpected error', e);
+    throw new HttpsError('internal', 'خطأ غير متوقع: ' + (e.message || String(e)));
+  }
+});
