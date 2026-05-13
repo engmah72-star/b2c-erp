@@ -482,7 +482,7 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
 <div class="overlay" id="ov-deliver">
   <div class="modal" style="max-width:440px">
     <div class="modal-head">
-      <span class="modal-title">✅ أرشفة الطلب</span>
+      <span class="modal-title">✅ تأكيد التسليم</span>
       <button class="modal-x" onclick="closeModal('ov-deliver')">✕</button>
     </div>
     <div class="modal-body">
@@ -509,7 +509,7 @@ a.ocard-phone-link:hover{color:var(--c);text-decoration:underline}
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('ov-deliver')">إلغاء</button>
-      <button class="btn btn-g" onclick="saveDeliver()">✅ تأكيد الأرشفة</button>
+      <button class="btn btn-g" onclick="saveDeliver()">✅ تأكيد التسليم</button>
     </div>
   </div>
 </div>
@@ -1816,11 +1816,11 @@ window.openOrder=function(id){
     <!-- ملاحظات -->
     ${o.notes?`<div class="section"><div class="section-title">📝 ملاحظات</div><div style="font-size:13px;line-height:1.7;margin-top:8px">${o.notes}</div></div>`:''}
 
-    <!-- سجل -->
-    <div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>
+    <!-- سجل — للأدمن/مدير العمليات فقط -->
+    ${isAdminUser?`<div class="section"><div class="section-title" style="margin-bottom:8px">📋 السجل</div>
       ${(o.timeline||[]).slice().reverse().map(t=>`
         <div style="font-size:11px;color:var(--dim2);padding:5px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}</div>`).join('')||'—'}
-    </div>
+    </div>`:''}
 
     <!-- أزرار سريعة -->
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap">
@@ -2250,13 +2250,10 @@ window.saveShip=async function(){
   if(colMode==='later'&&rem>0)parts.push(debtType==='company'?`مستحق من ${shipCompanyName2}`:`دين على العميل ${fn(rem)} ج`);
   if(shipCost2>0&&isFirstShip)parts.push(`تكلفة شحن ${fn(shipCost2)} ج`);
   parts.push(STAGE_LABELS[stage]);
-  const shouldArchive = shipMethod2==='pickup' && newRem<=0 && o.stage!=='archived';
-  if(shouldArchive){
-    // ─ Parity مع المسار اليدوي (saveDeliver/buildStageAdvance): لا أرشفة بدون تكلفة
-    if(!(o.costItems||[]).length){
-      return toast('⚠️ لا يمكن الأرشفة التلقائية — سجّل تكلفة الأوردر أولاً','err');
-    }
-    if(!confirm(`📁 سيتم أرشفة هذا الأوردر تلقائياً لأن الرصيد صفر.\nهل تريد المتابعة؟`))return;
+  // ـ المسار الجديد: بعد التسليم بالمكتب + الرصيد صفر → الأوردر يرجع للتنفيذ لمراجعة بنود التكلفة (مش أرشفة مباشرة)
+  const shouldReturnToProd = shipMethod2==='pickup' && newRem<=0 && o.stage!=='archived' && o.stage!=='production';
+  if(shouldReturnToProd){
+    if(!confirm(`📋 سيتم إرجاع الأوردر إلى التنفيذ لمراجعة بنود التكلفة قبل الأرشفة.\nهل تريد المتابعة؟`))return;
   }
   try{
     // ═══ Batch Atomic: كل العمليات في transaction واحدة ═══
@@ -2305,8 +2302,9 @@ window.saveShip=async function(){
     // 4. تحديث الأوردر — الـ amounts كلها تتحدث دايماً (طلب المستخدم: قابل للتعديل لحد الأرشفة)
     const custFeeChanged=(parseFloat(o.customerShipFee)||0)!==customerShipFee2;
     batch.update(doc(db,'orders',activeId),{
-      shipStage: shouldArchive ? 'collected' : stage,
-      stage: shouldArchive ? 'archived' : o.stage,
+      shipStage: shouldReturnToProd ? 'collected' : stage,
+      stage: shouldReturnToProd ? 'production' : o.stage,
+      ...(shouldReturnToProd?{awaitingFinalArchive:true,'stageEnteredAt.production':nowStr()}:{}),
       shippingOfficerId:currentUser?.uid||'',shippingOfficerName:userName,
       shipMethod:shipMethod2,shipCompany:coVal2,shipCompanyName:shipCompanyName2,
       shipGov:isFirstShip?gv('ss-gov'):(o.shipGov||''),
@@ -2318,8 +2316,8 @@ window.saveShip=async function(){
       totalPaid:newPaid,remaining:newRem,
       paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       financialSnapshot,
-      ...(shouldArchive?{deliveredAt:nowStr()}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldArchive?' — ✅ أُرشف تلقائياً':'')+(!isFirstShip&&shipCostDelta!==0?` · تكلفة شحن: ${fn(oldShipCost)}→${fn(shipCost2)} ج`:'')+(!isFirstShip&&custFeeChanged?` · رسوم العميل: ${fn(parseFloat(o.customerShipFee)||0)}→${fn(customerShipFee2)} ج`:''),by:userName}],
+      ...(shouldReturnToProd?{deliveredAt:nowStr()}:{}),
+      timeline:[...(o.timeline||[]),{date:nowStr(),action:parts.join(' — ')+(shouldReturnToProd?' — 📋 رجع للتنفيذ لمراجعة بنود التكلفة':'')+(!isFirstShip&&shipCostDelta!==0?` · تكلفة شحن: ${fn(oldShipCost)}→${fn(shipCost2)} ج`:'')+(!isFirstShip&&custFeeChanged?` · رسوم العميل: ${fn(parseFloat(o.customerShipFee)||0)}→${fn(customerShipFee2)} ج`:''),by:userName}],
       updatedAt:serverTimestamp()
     });
     if(collectAmt>0) addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
@@ -2352,9 +2350,9 @@ window.saveShip=async function(){
     }
     await batch.commit();
     closeModal('ov-ship');
-    if(shouldArchive){
+    if(shouldReturnToProd){
       closePanel();
-      toast('✅ تم التسليم بالمكتب وأرشفة الأوردر','ok');
+      toast('✅ تم التسليم بالمكتب — رجع للتنفيذ لمراجعة بنود التكلفة','ok');
     } else {
       // أعد فتح الـ Panel بالبيانات الجديدة
       setTimeout(()=>{
@@ -2706,39 +2704,38 @@ window.saveDeliver=async function(){
   if(!rating)return toast('⚠️ سجّل رأي العميل أولاً','err');
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(o.stage==='archived')return toast('⛔ الأوردر مؤرشف بالفعل','err');
-  // المرور عبر بوابة المراحل الموحّدة (orders.js) — تتحقق من costItems + remaining + ship settlement + returns
+  // ─ مرتجع غير معالَج → بلوك صلب (نفس قاعدة buildStageAdvance)
+  if(o.shipStage==='returned')return toast('⛔ يوجد مرتجع لم تتم معالجته — اذهب لمعالجة المرتجع أولاً','err');
   const finalPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||0;
   const finalRem=calcRem(o);
-  const baseArgs={
-    order:o, role:currentRole, userId:currentUser?.uid||'', userName,
-    extraFields:{
-      totalPaid:finalPaid,
-      remaining:finalRem,
-      paymentStatus:finalRem<=0?'paid':finalPaid>0?'partial':'pending',
-      clientRating:rating, clientComment:gv('del-comment'),
-      deliveredAt:nowStr(),
-    }
-  };
-  let adv=buildStageAdvance(baseArgs);
-  // errors صلبة (مرتجع غير معالَج) → بلوك
-  if(adv.errors&&adv.errors.length)return toast('⛔ '+adv.errors.join(' · '),'err');
-  // warnings → تأكيد ثم تجاوز (مرونة لكل الأدوار)
-  if(adv.warnings&&adv.warnings.length){
-    if(!confirm('⚠️ ملاحظات قبل الأرشفة:\n• '+adv.warnings.join('\n• ')+'\n\nهل تريد المتابعة على مسؤوليتك؟'))return;
-    adv=buildStageAdvance({...baseArgs,bypassWarnings:true});
+  // ─ تحذيرات ناعمة (متبقي/تسوية شركة الشحن) — قابلة للتجاوز
+  const softWarns=[];
+  if(finalRem>0) softWarns.push(`المتبقي ${fn(finalRem)} ج لم يُسوَّى`);
+  if(o.shipMethod==='company' && !o.shipSettled) softWarns.push('شركة الشحن لم تتم تسويتها');
+  if(softWarns.length){
+    if(!confirm('⚠️ ملاحظات قبل تأكيد التسليم:\n• '+softWarns.join('\n• ')+'\n\nهل تريد المتابعة على مسؤوليتك؟'))return;
   }
   const hasSuppInCost=(o.costItems||[]).some(c=>c.supplierId);
   if(hasSuppInCost&&!confirm('⚠️ هل تأكدت من تسوية الموردين المرتبطين بهذا الأوردر؟'))return;
+  const tlAction=`✅ تم التسليم — تقييم ${rating}/5 ${RATING_LABELS[rating]||''} — يعود للتنفيذ لمراجعة بنود التكلفة`;
   try{
     const batch=writeBatch(db);
     batch.update(doc(db,'orders',activeId),{
-      ...adv.fields,
-      timeline:[...(o.timeline||[]),{...adv.timelineEntry,action:`${adv.timelineEntry.action} — تقييم ${rating}/5 ${RATING_LABELS[rating]||''}`}],
+      stage:'production',
+      'stageEnteredAt.production':nowStr(),
+      awaitingFinalArchive:true,
+      totalPaid:finalPaid,
+      remaining:finalRem,
+      paymentStatus:finalRem<=0?'paid':finalPaid>0?'partial':'pending',
+      clientRating:rating,
+      clientComment:gv('del-comment'),
+      deliveredAt:nowStr(),
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:'production',action:tlAction,by:userName,byId:currentUser?.uid||''}],
       updatedAt:serverTimestamp()
     });
     await batch.commit();
     closeModal('ov-deliver');closePanel();
-    toast(`✅ تم الأرشفة — ${RATING_LABELS[rating]}`,'ok');
+    toast(`✅ تم التسليم — رجع للتنفيذ لمراجعة التكلفة`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 

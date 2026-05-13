@@ -182,6 +182,17 @@ button{min-height:36px}
     </div>
     <!-- 0. شريط تقدم الأوردر -->
     <div id="panel-progress" style="padding:8px 12px 0"></div>
+    <!-- بانر: الأوردر مُسلَّم وفي انتظار إغلاق التكلفة -->
+    <div id="awaiting-archive-banner" style="display:none;margin:8px 12px 0;background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.3);border-radius:12px;padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:18px">📋</span>
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:12px;font-weight:800;color:var(--g);margin-bottom:2px">الأوردر تم تسليمه</div>
+          <div style="font-size:11px;color:var(--dim2)">سجّل/راجع بنود التكلفة لإغلاق الأوردر تلقائياً</div>
+        </div>
+        <button id="archive-now-btn" onclick="archiveAwaitingNow()" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.12);color:var(--g);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;display:none">📁 أرشف الآن</button>
+      </div>
+    </div>
     <!-- 1. التصميم -->
     <div class="psec"><div class="psec-title">🖼️ صورة التصميم</div><div id="design-imgs"></div></div>
     <!-- 2. ملخص الموردين (تجميعي) -->
@@ -395,6 +406,25 @@ window.calcAdmRemaining=function(){
   const rem=Math.max(0,net-paid);
   const el=document.getElementById('adm-remaining-preview');
   if(el)el.textContent=`الصافي: ${fn(net)} ج | الباقي: ${fn(rem)} ج`;
+};
+
+window.archiveAwaitingNow=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(!o.awaitingFinalArchive)return toast('⚠️ هذا الأوردر ليس في انتظار الأرشفة','err');
+  if(!(o.costItems||[]).length)return toast('⚠️ سجّل بنود التكلفة أولاً','err');
+  if(!confirm('📁 أرشفة الأوردر الآن بعد مراجعة بنود التكلفة؟'))return;
+  try{
+    await updateDoc(doc(db,'orders',activeId),{
+      stage:'archived',
+      'stageEnteredAt.archived':nowStr(),
+      awaitingFinalArchive:false,
+      timeline:[...(o.timeline||[]),{date:nowStr(),stage:'archived',action:`📁 أُرشف يدوياً بعد مراجعة بنود التكلفة`,by:userName,byId:currentUser?.uid||''}],
+      updatedAt:serverTimestamp()
+    });
+    closePanel();
+    toast('✅ تم الأرشفة','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
 };
 
 window.moveStage=async function(stage){
@@ -1362,6 +1392,13 @@ function renderPanel(o){
   if(trackLink)trackLink.href='order-tracking.html?id='+o._id;
   const progEl=document.getElementById('panel-progress');
   if(progEl)progEl.innerHTML=stageProgressBar(o);
+  // بانر "الأوردر مُسلَّم"
+  const awBanner=document.getElementById('awaiting-archive-banner');
+  const awBtn=document.getElementById('archive-now-btn');
+  if(awBanner){
+    awBanner.style.display=o.awaitingFinalArchive?'block':'none';
+    if(awBtn) awBtn.style.display=(o.awaitingFinalArchive && (o.costItems||[]).length)?'block':'none';
+  }
   const prods=o.products||[];const ci=o.costItems||[];const ps=o.prodStatus||'pending';
   // 1. التصاميم + بنود التكلفة تحت كل منتج
   const dEl=document.getElementById('design-imgs');
@@ -1528,40 +1565,50 @@ function renderPanel(o){
   // 7. زر الشحن — حالة ذكية
   const shipBtn=document.getElementById('ship-btn');
   if(shipBtn){
-    const s=execSummary(o);
-    if(!s.total){
-      shipBtn.disabled=false;
-      shipBtn.textContent='🚚 تحويل للشحن';
-    } else if(s.done===s.total){
-      shipBtn.disabled=false;
-      shipBtn.textContent=`🚚 تحويل كل الأوردر للشحن (${s.total} بند)`;
-    } else if(s.done>0){
-      shipBtn.disabled=false;
-      shipBtn.textContent=`🚚 شحن ${s.done} بند منفّذ (${s.total-s.done} يبقى في التنفيذ)`;
-    } else {
+    if(o.awaitingFinalArchive){
+      // الأوردر رجع من الشحن لمراجعة التكلفة — مش هيرجع شحن
       shipBtn.disabled=true;
-      shipBtn.textContent=`🚚 لا يوجد بند منفّذ بعد`;
+      shipBtn.textContent=`✅ تم التسليم — سجّل التكلفة لإغلاق الأوردر`;
+    } else {
+      const s=execSummary(o);
+      if(!s.total){
+        shipBtn.disabled=false;
+        shipBtn.textContent='🚚 تحويل للشحن';
+      } else if(s.done===s.total){
+        shipBtn.disabled=false;
+        shipBtn.textContent=`🚚 تحويل كل الأوردر للشحن (${s.total} بند)`;
+      } else if(s.done>0){
+        shipBtn.disabled=false;
+        shipBtn.textContent=`🚚 شحن ${s.done} بند منفّذ (${s.total-s.done} يبقى في التنفيذ)`;
+      } else {
+        shipBtn.disabled=true;
+        shipBtn.textContent=`🚚 لا يوجد بند منفّذ بعد`;
+      }
     }
   }
-  // السجل
-  // Admin section
-  showAdminSection(o,['admin','operation_manager'].includes(currentRole||''));
-  const tlAll=(o.timeline||[]).slice().reverse();
-  const tlLen=(o.timeline||[]).length;
-  document.getElementById('pn-timeline').innerHTML=tlAll.map((t,ri)=>{
-    const gi=tlLen-1-ri;
-    const isCost=t.action&&(t.action.includes('💰')||t.action.includes('استيراد')||t.action.includes('🤖')||t.action.includes('📋'));
-    return`<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:700;color:var(--snow)">${t.action||'—'}</div>
-        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.date||''}${t.by?' · '+t.by:''}</div>
-      </div>
-      <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
-        ${isCost?`<button onclick="openCostPanel(activeProdIdx)" title="عرض البنود" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,193,7,.3);background:rgba(255,193,7,.08);color:var(--y);cursor:pointer;font-size:12px">💰</button>`:''}
-        <button onclick="deleteTlEntry(${gi})" title="حذف" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,61,110,.2);background:rgba(255,61,110,.06);color:var(--r);cursor:pointer;font-size:11px">✕</button>
-      </div>
-    </div>`;
-  }).join('')||'<div style="color:var(--dim2);font-size:12px;padding:10px 0">لا يوجد سجل</div>';
+  // السجل — للأدمن/مدير العمليات فقط
+  const _isAdmTl=['admin','operation_manager'].includes(currentRole||'');
+  showAdminSection(o,_isAdmTl);
+  const tlSecEl=document.getElementById('pn-timeline')?.parentElement;
+  if(tlSecEl) tlSecEl.style.display=_isAdmTl?'':'none';
+  if(_isAdmTl){
+    const tlAll=(o.timeline||[]).slice().reverse();
+    const tlLen=(o.timeline||[]).length;
+    document.getElementById('pn-timeline').innerHTML=tlAll.map((t,ri)=>{
+      const gi=tlLen-1-ri;
+      const isCost=t.action&&(t.action.includes('💰')||t.action.includes('استيراد')||t.action.includes('🤖')||t.action.includes('📋'));
+      return`<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:700;color:var(--snow)">${t.action||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.date||''}${t.by?' · '+t.by:''}</div>
+        </div>
+        <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
+          ${isCost?`<button onclick="openCostPanel(activeProdIdx)" title="عرض البنود" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,193,7,.3);background:rgba(255,193,7,.08);color:var(--y);cursor:pointer;font-size:12px">💰</button>`:''}
+          <button onclick="deleteTlEntry(${gi})" title="حذف" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,61,110,.2);background:rgba(255,61,110,.06);color:var(--r);cursor:pointer;font-size:11px">✕</button>
+        </div>
+      </div>`;
+    }).join('')||'<div style="color:var(--dim2);font-size:12px;padding:10px 0">لا يوجد سجل</div>';
+  }
 }
 
 function renderCosts(o){
@@ -1664,7 +1711,17 @@ window.saveCost=async function(){
   try{
     // RULE 3 — atomic batch: order + ledger entry + supplier_orders معاً
     const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{costItems:ci,timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
+    // ـ لو الأوردر مُسلَّم وفي انتظار مراجعة بنود التكلفة → اكتب البند + أرشف في نفس الـ batch
+    const autoArchive=!!o.awaitingFinalArchive && !isEdit;
+    const updFields={costItems:ci,updatedAt:serverTimestamp()};
+    const tlEntry={date:nowStr(),action,by:userName};
+    if(autoArchive){
+      updFields.stage='archived';
+      updFields['stageEnteredAt.archived']=nowStr();
+      updFields.awaitingFinalArchive=false;
+      tlEntry.action=`${action} — 📁 أُرشف تلقائياً بعد تسجيل بنود التكلفة`;
+    }
+    batch.update(doc(db,'orders',activeId),{...updFields,timeline:[...(o.timeline||[]),tlEntry]});
     if(!isEdit){
       // RULE 5 — قيد محاسبي ربط بالمورد لو موجود (VENDOR_PAYMENT) أو مصروف عام
       const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
@@ -1679,7 +1736,7 @@ window.saveCost=async function(){
     if(scSoRef)batch.set(scSoRef,{costItemId,orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'',supplierId,supplierName,type,total,note:scNote||'',status:'pending',deliveryStatus:'awaiting',paidAmount:0,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:currentUser?.uid||'',createdByName:userName,isDeleted:false});
     else if(!scSupplierChanged&&isEdit&&scExistingSoId&&supplierId)batch.update(doc(db,'supplier_orders',scExistingSoId),{type,total,note:scNote||'',updatedAt:serverTimestamp()});
     await batch.commit();
-    cM('cost');toast('✅ تم','ok');editCostIdx=-1;
+    cM('cost');toast(autoArchive?'✅ تم + أُرشف الأوردر تلقائياً':'✅ تم','ok');editCostIdx=-1;
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
