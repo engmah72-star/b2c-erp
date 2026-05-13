@@ -843,20 +843,24 @@ auth.onAuthStateChanged(async u=>{
   db.collection('wallets').onSnapshot(snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
-  db.collection('users').onSnapshot(snap=>{
-    const fromUsers=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(u=>['graphic_designer','design_operator','admin','operation_manager'].includes(u.role));
-    designers=fromUsers;
-  });
-  // أضف المصممين من employees (اللي مش عندهم users account)
+  // ── المصممون: المصدر الوحيد هو `employees` ──
+  // قبل ده كنا نقرأ من users + employees مع dedup بـ name+phone، لكن لسه
+  // كان يحصل تكرار لما حد يكون عنده users doc بـ role designer بدون employee
+  // record (أو بمعلومات مختلفة). دلوقتي employees هي مصدر الحقيقة الوحيد
+  // (مطابق لـ design.html و designer-dashboard.html). أي مصمم لازم يكون عنده
+  // employee record عشان يظهر هنا.
   db.collection('employees').onSnapshot(snap=>{
-    const empDesigners=snap.docs.map(d=>({...d.data(),_id:d.id}))
+    const raw = snap.docs
+      .map(d=>({...d.data(),_id:d.id}))
       .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
       .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
-    // دمج بدون تكرار
-    const existingIds=new Set(designers.map(d=>d._id));
-    const newDesigners=[...designers,...empDesigners.filter(e=>e._id&&!existingIds.has(e._id))];
-    designers=newDesigners;
+    // safety net dedup: لو في employees مكرّرة بـ DB، نعرض واحد فقط
+    const byKey=new Map();
+    raw.forEach(d=>{
+      const key=d._id||((d.name||'').trim().toLowerCase()+'|'+(d.phone||'').trim());
+      if(!byKey.has(key))byKey.set(key,d);
+    });
+    designers=[...byKey.values()].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();

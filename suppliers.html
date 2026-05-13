@@ -171,6 +171,11 @@
       <div class="psec-title" onclick="togglePSec(this)">📦 الأوردرات المرتبطة</div>
       <div class="psec-body"><div id="pn-orders"></div></div>
     </div>
+    <!-- أداء المورد -->
+    <div class="psec collapsed">
+      <div class="psec-title" onclick="togglePSec(this)">📊 مؤشرات الأداء</div>
+      <div class="psec-body"><div id="pn-perf"></div></div>
+    </div>
     <!-- سجل المدفوعات -->
     <div class="psec collapsed" style="border-bottom:none">
       <div class="psec-title" onclick="togglePSec(this)">📋 سجل المدفوعات</div>
@@ -245,7 +250,7 @@
         <div class="fg">
           <label>التخصص *</label>
           <div style="display:flex;gap:8px;align-items:center">
-            <select class="inp" id="f-printtype" style="flex:1"><option value="">— اختر التصنيف الرئيسي —</option></select>
+            <div id="f-specialties-wrap" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:10px;padding:12px;max-height:220px;overflow-y:auto"></div>
             <button type="button" onclick="toggleAddCat()" class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap">＋ جديد</button>
           </div>
           <div id="add-cat-wrap" style="display:none;flex-direction:column;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border-radius:10px;border:1px solid var(--line)">
@@ -463,7 +468,7 @@ function updateKPIs(){
   setText('k-paid',fn(totalPaid)+' ج');
   const linkedOrders=new Set(orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId)).map(o=>o._id));
   setText('k-orders',linkedOrders.size);
-  const typeCounts={};suppliers.forEach(s=>{const t=s.printType||'غير محدد';typeCounts[t]=(typeCounts[t]||0)+1;});
+  const typeCounts={};suppliers.forEach(s=>{const t=(s.specialties?.[0]||s.printType)||'غير محدد';typeCounts[t]=(typeCounts[t]||0)+1;});
   const typeSummary=Object.entries(typeCounts).map(([t,n])=>`${n} ${t}`).join(' · ');
   setText('sub',`${suppliers.length} مورد${typeSummary?' ('+typeSummary+')':''} · ${shippers.length} شحن`);
 }
@@ -496,7 +501,7 @@ function buildCatFilter(){
   }
   filterEl.style.display='flex';
   // جيب كل التصنيفات الموجودة
-  const cats=[...new Set(suppliers.map(s=>s.printType).filter(Boolean))].sort();
+  const cats=[...new Set(suppliers.map(s=>s.specialties?.[0]||s.printType).filter(Boolean))].sort();
   const dynEl=document.getElementById('cat-dynamic-btns');
   if(!dynEl)return;
   dynEl.innerHTML=cats.map((cat,i)=>`<button class="ftab" id="cat-${i}" onclick="setCatFilter('${cat}',this)">${cat}</button>`).join('');
@@ -536,8 +541,8 @@ function renderPrinters(el){
   const q=(document.getElementById('search-inp')?.value||'').trim().toLowerCase();
   if(!suppliers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا يوجد موردين</div></div>';return;}
   let data=suppliers;
-  if(currentCatFilter) data=suppliers.filter(s=>s.printType===currentCatFilter);
-  if(q) data=data.filter(s=>(s.name||'').toLowerCase().includes(q)||(s.phone||'').includes(q)||(s.whatsapp||'').includes(q)||(s.printType||'').toLowerCase().includes(q));
+  if(currentCatFilter) data=suppliers.filter(s=>(s.specialties||[s.printType].filter(Boolean)).includes(currentCatFilter));
+  if(q) data=data.filter(s=>(s.name||'').toLowerCase().includes(q)||(s.phone||'').includes(q)||(s.whatsapp||'').includes(q)||(s.specialties||[s.printType||'']).join(' ').toLowerCase().includes(q));
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">لا نتائج${q?' لـ "'+q+'"':currentCatFilter?' في "'+currentCatFilter+'"':''}</div></div>`;return;}
   el.innerHTML=sortSuppliers(data).map(s=>{
     const {purchases,paid,due}=getSupBalance(s._id);
@@ -552,7 +557,7 @@ function renderPrinters(el){
           <div style="flex:1;min-width:0">
             <div class="sup-name">${s.name}</div>
             <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap;align-items:center">
-              ${s.printType?`<span class="type-badge">🏷️ ${s.printType}</span>`:''}
+              ${(s.specialties?.length?s.specialties:[s.printType].filter(Boolean)).map(t=>`<span class="type-badge">🏷️ ${t}</span>`).join('')}
               ${s.payTerms?`<span class="type-badge" style="background:rgba(0,217,126,.1);color:var(--g)">${PAYTERMS[s.payTerms]||s.payTerms}</span>`:''}
               ${overCredit?`<span class="badge" style="background:rgba(255,61,110,.15);color:var(--r)">⚠️ تجاوز الحد</span>`:''}
             </div>
@@ -619,7 +624,7 @@ window.openSup=function(id,type){
       if(!snap.exists()){toast('⚠️ لم يُوجد المورد','err');return;}
       activeSup={...snap.data(),_id:id,supType:type};
       setText('pn-name',activeSup.name);
-      setText('pn-sub',type==='printer'?(activeSup.printType?`🏷️ ${activeSup.printType}`:'🏭 مورد'):'🚚 شحن');
+      setText('pn-sub',type==='printer'?((activeSup.specialties?.[0]||activeSup.printType)?`🏷️ ${activeSup.specialties?.[0]||activeSup.printType}`:'🏭 مورد'):'🚚 شحن');
       document.getElementById('panel-ov').classList.add('open');
       document.getElementById('pn-edit-btn').style.display='';
       document.getElementById('pn-del-btn').style.display='';
@@ -630,7 +635,7 @@ window.openSup=function(id,type){
   
   activeSup={...sup,supType:type};
   setText('pn-name',sup.name);
-  setText('pn-sub',type==='printer'?(sup.printType?`🏷️ ${sup.printType}`:'🏭 مورد'):'🚚 شحن');
+  setText('pn-sub',type==='printer'?((sup.specialties?.[0]||sup.printType)?`🏷️ ${sup.specialties?.[0]||sup.printType}`:'🏭 مورد'):'🚚 شحن');
   document.getElementById('panel-ov').classList.add('open');
   document.getElementById('pn-edit-btn').style.display='';
   document.getElementById('pn-del-btn').style.display='';
@@ -678,7 +683,7 @@ function renderPanelContent(sup){
     sup.whatsapp?`<div class="tx-row"><span style="color:var(--dim2)">📱 واتساب</span><a href="https://wa.me/2${sup.whatsapp.replace(/^0/,'')}" target="_blank" style="color:var(--g);font-weight:700">${sup.whatsapp}</a></div>`:'',
     sup.email?`<div class="tx-row"><span style="color:var(--dim2)">✉️ البريد</span><span style="color:var(--b)">${sup.email}</span></div>`:'',
     sup.address?`<div class="tx-row"><span style="color:var(--dim2)">📍 العنوان</span><span>${sup.address}${sup.area?' · '+sup.area:''}</span></div>`:'',
-    sup.printType?`<div class="tx-row"><span style="color:var(--dim2)">🏷️ التصنيف</span><span style="font-weight:700;color:var(--snow)">${sup.printType}</span></div>`:'',
+    (sup.specialties?.length?sup.specialties:[sup.printType].filter(Boolean)).length?`<div class="tx-row"><span style="color:var(--dim2)">🏷️ التصنيف</span><span style="font-weight:700;color:var(--snow)">${(sup.specialties?.length?sup.specialties:[sup.printType].filter(Boolean)).join(', ')}</span></div>`:'',
     svcs?`<div class="tx-row" style="align-items:flex-start"><span style="color:var(--dim2);flex-shrink:0">🛠️ الخدمات</span><div style="display:flex;flex-wrap:wrap;gap:3px">${svcs}</div></div>`:'',
     sup.minQty?`<div class="tx-row"><span style="color:var(--dim2)">📦 أقل طلب</span><span>${fn(sup.minQty)} قطعة</span></div>`:'',
     sup.leadTimeDays?`<div class="tx-row"><span style="color:var(--dim2)">⏱️ وقت التسليم</span><span>${sup.leadTimeDays} يوم</span></div>`:'',
@@ -773,6 +778,55 @@ function renderPanelContent(sup){
       </div>
     </div>`).join('')||'<div style="color:var(--dim2);font-size:12px">لا توجد مدفوعات</div>';
   loadSupplierOrders(sup._id);
+  renderSupPerformance(sup._id);
+}
+
+function renderSupPerformance(supId){
+  const el=document.getElementById('pn-perf');if(!el)return;
+  const supOrds=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===supId));
+  const supPays=payments.filter(p=>p.supplierId===supId);
+  const totalJobs=supOrds.length;
+  // حساب الأداء من بيانات الأوردرات
+  const delivered=supOrds.filter(o=>['done','shipped','delivered','archive'].includes(o.stage||o.prodStatus)).length;
+  const delayed=supOrds.filter(o=>{if(!o.dueDate)return false;const due=new Date(o.dueDate);const end=o.deliveredAt?.seconds?new Date(o.deliveredAt.seconds*1000):null;return end?end>due:new Date()>due&&o.prodStatus!=='done';}).length;
+  const onTimeRate=totalJobs>0?Math.round(((totalJobs-delayed)/totalJobs)*100):0;
+  const {purchases,paid,due}=getSupBalance(supId);
+  const avgPayDays=supPays.length>1?(()=>{const sorted=supPays.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));let total=0;for(let i=1;i<sorted.length;i++){const diff=((sorted[i].createdAt?.seconds||0)-(sorted[i-1].createdAt?.seconds||0))/86400;total+=diff;}return Math.round(total/(sorted.length-1));})():null;
+  const score=Math.min(5,((onTimeRate/100)*2.5+(totalJobs>0?1.5:0)+(supPays.length>0?1:0))).toFixed(1);
+  const scoreColor=parseFloat(score)>=4?'var(--g)':parseFloat(score)>=2.5?'var(--y)':'var(--r)';
+  const bar=(val,max,color)=>`<div style="height:6px;border-radius:3px;background:var(--bg3);overflow:hidden;margin-top:4px"><div style="height:100%;width:${Math.min(100,Math.round(val/max*100))}%;background:${color};border-radius:3px;transition:width .4s"></div></div>`;
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:900;color:${scoreColor}">${score}</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">تقييم الأداء / 5</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:900;color:${onTimeRate>=80?'var(--g)':onTimeRate>=60?'var(--y)':'var(--r)'}">${onTimeRate}%</div>
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">الالتزام بالمواعيد</div>
+      </div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;color:var(--dim2)">إجمالي الأوردرات</span>
+        <span style="font-size:12px;font-weight:800">${totalJobs}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:12px;color:var(--dim2)">المنجزة في الموعد</span>
+        <span style="font-size:12px;font-weight:800;color:var(--g)">${totalJobs-delayed}</span>
+      </div>
+      ${bar(totalJobs-delayed,totalJobs||1,'var(--g)')}
+      <div style="display:flex;justify-content:space-between;margin:8px 0 4px">
+        <span style="font-size:12px;color:var(--dim2)">المتأخرة</span>
+        <span style="font-size:12px;font-weight:800;color:var(--r)">${delayed}</span>
+      </div>
+      ${bar(delayed,totalJobs||1,'var(--r)')}
+      <div style="display:flex;justify-content:space-between;margin-top:8px">
+        <span style="font-size:12px;color:var(--dim2)">عدد المدفوعات</span>
+        <span style="font-size:12px;font-weight:800">${supPays.length}</span>
+      </div>
+      ${avgPayDays!==null?`<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="font-size:12px;color:var(--dim2)">متوسط دورة الدفع</span><span style="font-size:12px;font-weight:800">${avgPayDays} يوم</span></div>`:''}
+    </div>`;
 }
 
 async function loadSupplierOrders(supId){
@@ -891,17 +945,13 @@ async function loadMasterLists(){
 }
 
 function renderCategorySelect(){
-  const sel=document.getElementById('f-printtype');
-  if(!sel)return;
-  const byGroup={};
-  masterCategories.forEach(c=>{
-    if(!byGroup[c.group])byGroup[c.group]=[];
-    byGroup[c.group].push(c.label);
-  });
-  sel.innerHTML='<option value="">— اختر التصنيف الرئيسي —</option>'+
-    Object.entries(byGroup).map(([grp,items])=>
-      `<optgroup label="${grp}">${items.map(l=>`<option>${l}</option>`).join('')}</optgroup>`
-    ).join('');
+  const wrap=document.getElementById('f-specialties-wrap');if(!wrap)return;
+  let lastGroup='';
+  wrap.innerHTML=masterCategories.filter(c=>c.isActive!==false).map((c,i)=>{
+    let g='';
+    if(c.group!==lastGroup){lastGroup=c.group;g=`<div style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-top:${i>0?'10px':'0'};margin-bottom:4px">${c.group}</div>`;}
+    return`${g}<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer"><input type="checkbox" id="f-spec-${i}" value="${c.label}" style="width:16px;height:16px;accent-color:var(--b)"> ${c.label}</label>`;
+  }).join('');
 }
 
 
@@ -922,7 +972,8 @@ window.saveNewCat=async function(){
     await setDoc(doc(db,'master_lists','supplier_categories'),{items:masterCategories,updatedAt:serverTimestamp()},{merge:true});
   }catch(e){console.warn('saveNewCat Firestore err:',e.message);}
   renderCategorySelect();
-  sv('f-printtype',label);
+  // auto-check the newly added category
+  document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{if(cb.value===label)cb.checked=true;});
   toggleAddCat();
   document.getElementById('new-cat-inp').value='';
   toast('✅ تم إضافة التخصص','ok');
@@ -930,11 +981,12 @@ window.saveNewCat=async function(){
 
 const ALL_SVC_IDS=['wd-sun','wd-mon','wd-tue','wd-wed','wd-thu','wd-fri','wd-sat'];
 function clearForm(){
-  ['name','phone','whatsapp','email','address','printtype','creditlimit','shipfee','areas','note','bankname','bankaccount','taxnumber','minqty','leadtime'].forEach(f=>{sv('f-'+f,'');});
+  ['name','phone','whatsapp','email','address','creditlimit','shipfee','areas','note','bankname','bankaccount','taxnumber','minqty','leadtime'].forEach(f=>{sv('f-'+f,'');});
   const acw=document.getElementById('add-cat-wrap');if(acw)acw.style.display='none';
   const nci=document.getElementById('new-cat-inp');if(nci)nci.value='';
   sv('f-payterms','cash');sv('f-status','active');sv('f-rating','');sv('f-area','');
   ALL_SVC_IDS.forEach(id=>{const el=document.getElementById(id);if(el)el.checked=false;});
+  document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{cb.checked=false;});
 }
 window.openAdd=function(){
   document.getElementById('edit-id').value='';
@@ -961,21 +1013,23 @@ window.openEdit=function(){
   setAddType(activeSup.supType||'printer');
   sv('f-name',activeSup.name||'');sv('f-phone',activeSup.phone||'');sv('f-whatsapp',activeSup.whatsapp||'');
   sv('f-email',activeSup.email||'');sv('f-address',activeSup.address||'');sv('f-area',activeSup.area||'');sv('f-note',activeSup.note||'');
-  sv('f-printtype',activeSup.printType||'');sv('f-payterms',activeSup.payTerms||'cash');sv('f-creditlimit',activeSup.creditLimit||'');
+  sv('f-payterms',activeSup.payTerms||'cash');sv('f-creditlimit',activeSup.creditLimit||'');
   sv('f-shipfee',activeSup.shipFee||'');sv('f-areas',activeSup.areas||'');
   sv('f-bankname',activeSup.bankName||'');sv('f-bankaccount',activeSup.bankAccount||'');sv('f-taxnumber',activeSup.taxNumber||'');
   sv('f-minqty',activeSup.minQty||'');sv('f-leadtime',activeSup.leadTimeDays||'');
   sv('f-status',activeSup.status||'active');sv('f-rating',activeSup.rating||'');
-  // handle printType not in master_lists — add it inline then select it
-  const ptVal=activeSup.printType||'';
-  if(ptVal){
-    const catSel=document.getElementById('f-printtype');
-    if(catSel&&![...catSel.options].some(o=>o.value===ptVal)){
+  // set checkboxes from specialties array (backward compat: fall back to printType)
+  const specs=activeSup.specialties?.length?activeSup.specialties:[activeSup.printType].filter(Boolean);
+  // ensure any legacy printType value exists in masterCategories so its checkbox is rendered
+  specs.forEach(ptVal=>{
+    if(ptVal&&!masterCategories.some(c=>c.label===ptVal)){
       masterCategories.push({label:ptVal,group:'🔧 أخرى',isActive:true,order:masterCategories.length});
       renderCategorySelect();
     }
-    sv('f-printtype',ptVal);
-  }
+  });
+  document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{
+    cb.checked=specs.includes(cb.value);
+  });
   // work days
   const wdays=activeSup.workDays||[];
   ALL_SVC_IDS.forEach(id=>{const el=document.getElementById(id);if(el)el.checked=wdays.includes(el.value);});
@@ -997,7 +1051,8 @@ window.saveSup=async function(){
     ...(gv('f-rating')?{rating:parseInt(gv('f-rating'))}:{}),
     ...(type==='printer'?{
       supType:'printer',
-      printType:gv('f-printtype'),
+      specialties:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value),
+      printType:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value)[0]||'',
       workDays,
       minQty:parseInt(gv('f-minqty'))||0,
       leadTimeDays:parseInt(gv('f-leadtime'))||0,

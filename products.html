@@ -107,7 +107,7 @@
     <div class="topbar-left"><button class="mob-menu-btn" onclick="document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show')">☰</button><h1>◈ المنتجات</h1><p id="prod-sub">جاري التحميل...</p></div>
     <div class="topbar-right" id="topbar-actions">
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ تصدير</button>
-      <button class="btn btn-b" onclick="oM('add-prod')">＋ منتج جديد</button>
+      <button class="btn btn-b" onclick="resetForm();oM('add-prod')">＋ منتج جديد</button>
     </div>
   </div>
 
@@ -371,7 +371,7 @@ const auth=getAuth(app); const db=getFirestore(app);
 const ROLES_CFG={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Manager',col:'var(--b)'},customer_service:{label:'Cust. Service',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op.',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet Mgr',col:'var(--g)'}};
 
 let products=[],editId=null,currentUser=null,currentRole='admin';
-let suppliers=[],activeProductId=null;
+let suppliers=[],masterCategories=[],activeProductId=null;
 
 const ROLE_HOME_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 
@@ -404,6 +404,9 @@ onSnapshot(query(collection(db,'products_v2'),orderBy('name','asc')),snap=>{
   if(!products.length) seedProducts();
   render(); updateStats();
   if(activeProductId&&document.getElementById('ov-cost-history')?.classList.contains('open')){const p=products.find(x=>x._id===activeProductId);if(p)renderCostHistory(p);}
+});
+getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
+  if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false);
 });
 onSnapshot(collection(db,'suppliers_v2'),snap=>{
   suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -461,9 +464,12 @@ window.render=function(){
         ${p.size?`${p.paper&&p.paper!=='—'?' · ':''}📐 ${p.size}`:''}
       </div>`:''}
       ${p.notes?`<div style="font-size:11px;color:var(--dim2);margin-bottom:10px;padding:6px 8px;background:var(--bg3);border-radius:8px">📝 ${p.notes}</div>`:''}
-      ${lastCost?`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:rgba(240,54,96,.07);border:1px solid rgba(240,54,96,.12);border-radius:8px;margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim2)">آخر تكلفة · ${costCount} سجل</span>
-        <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(lastCost.total)} ج</span>
+      ${lastCost?`<div style="padding:6px 8px;background:rgba(240,54,96,.07);border:1px solid rgba(240,54,96,.12);border-radius:8px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;color:var(--dim2)">آخر تكلفة · ${costCount} سجل</span>
+          <span style="font-size:13px;font-weight:900;color:var(--r)">${fn(lastCost.total)} ج</span>
+        </div>
+        ${(lastCost.items||[]).filter(it=>it.supplierName).length?`<div style="display:flex;flex-wrap:wrap;gap:3px">${(lastCost.items||[]).filter(it=>it.supplierName).map(it=>`<span style="font-size:10px;padding:1px 6px;background:rgba(74,142,245,.1);border:1px solid rgba(74,142,245,.2);border-radius:12px;color:var(--b)">▣ ${it.supplierName}</span>`).join('')}</div>`:''}
       </div>`:''}
       <div class="pc-actions">
         <button class="btn btn-ghost btn-xs" style="flex:1" onclick="showCostHistory('${p._id}')">📋 التكاليف${costCount?` (${costCount})`:''}</button>
@@ -789,22 +795,19 @@ window.openAddCost=function(prodId){
   document.getElementById('ac-qty').value='';
   document.getElementById('ac-paper').value=p?.paper||'';
   document.getElementById('ac-notes').value='';
-  // Auto-suggest cost items from product specs
-  const suggested=[];
-  if(p?.printType==='offset'){
-    suggested.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
-    suggested.push({type:'زنكات',supplierId:'',supplierName:'',total:0});
-  } else if(p?.printType==='digital'){
-    suggested.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
+  // اقترح البنود من آخر costHistory (نفس النوع + المورد، بدون مبلغ)
+  const lastHist=(p?.costHistory||[]).slice(-1)[0];
+  if(lastHist?.items?.length){
+    window.costItems=lastHist.items.map(it=>({type:it.type||'',supplierId:it.supplierId||'',supplierName:it.supplierName||'',total:0}));
+  } else {
+    // fallback: اقتراح أولي من نوع الطباعة
+    const s=[];
+    if(p?.printType==='offset'){s.push({type:'طباعة',supplierId:'',supplierName:'',total:0});s.push({type:'زنكات',supplierId:'',supplierName:'',total:0});}
+    else s.push({type:'طباعة',supplierId:'',supplierName:'',total:0});
+    if(p?.paper)s.push({type:'ورق',supplierId:'',supplierName:'',total:0});
+    s.push({type:'قص',supplierId:'',supplierName:'',total:0});
+    const seen=new Set();window.costItems=s.filter(x=>!seen.has(x.type)&&seen.add(x.type));
   }
-  if(p?.paper) suggested.push({type:'ورق',supplierId:'',supplierName:'',total:0});
-  (p?.extras||[]).forEach(e=>{
-    if(e.includes('سلفنة')) suggested.push({type:'سلفنة',supplierId:'',supplierName:'',total:0});
-    if(e.includes('تجميع')) suggested.push({type:'تجميع',supplierId:'',supplierName:'',total:0});
-  });
-  suggested.push({type:'قص',supplierId:'',supplierName:'',total:0});
-  const seen=new Set();
-  window.costItems=suggested.filter(x=>!seen.has(x.type)&&seen.add(x.type));
   if(!window.costItems.length) window.costItems=[{type:'',supplierId:'',supplierName:'',total:0}];
   renderCostItems();calcCostTotal();
   oM('add-cost');
@@ -826,33 +829,53 @@ window.openEditCost=function(prodId,idx){
   oM('add-cost');
 };
 
-const COST_TYPES=[
-  {v:'طباعة',l:'🖨️ طباعة'},{v:'ورق',l:'📄 ورق'},{v:'قص',l:'✂️ قص'},
-  {v:'سلفنة',l:'✨ سلفنة'},{v:'زنكات',l:'🔵 زنكات'},{v:'تجميع',l:'📦 تجميع'},
-  {v:'شحن',l:'🚚 شحن'},{v:'تصميم',l:'✏️ تصميم'},{v:'أخرى',l:'📌 أخرى'}
-];
+function _buildCostTypeOpts(selectedVal){
+  if(!masterCategories.length){
+    const fallback=[
+      {v:'طباعة',l:'🖨️ طباعة'},{v:'ورق',l:'📄 ورق'},{v:'قص',l:'✂️ قص'},
+      {v:'سلفنة',l:'✨ سلفنة'},{v:'زنكات',l:'🔵 زنكات'},{v:'تجميع',l:'📦 تجميع'},
+      {v:'شحن',l:'🚚 شحن'},{v:'تصميم',l:'✏️ تصميم'},{v:'أخرى',l:'📌 أخرى'}
+    ];
+    return fallback.map(t=>`<option value="${t.v}"${selectedVal===t.v?' selected':''}>${t.l}</option>`).join('');
+  }
+  const groups={};
+  masterCategories.forEach(c=>{const g=c.group||'أخرى';if(!groups[g])groups[g]=[];groups[g].push(c.label);});
+  let h='';
+  for(const [g,labels] of Object.entries(groups)){
+    h+=`<optgroup label="${g}">`;
+    labels.forEach(l=>{h+=`<option value="${l}"${selectedVal===l?' selected':''}>${l}</option>`;});
+    h+='</optgroup>';
+  }
+  return h;
+}
 function renderCostItems(){
   const el=document.getElementById('ac-items-list');if(!el)return;
   if(!window.costItems.length){
     el.innerHTML=`<div style="text-align:center;padding:12px;color:var(--dim2);font-size:12px;border:1px dashed var(--line);border-radius:8px;margin-bottom:8px">اضغط "＋ إضافة عنصر" لإضافة بند تكلفة</div>`;
     return;
   }
-  const typeOpts=COST_TYPES.map(t=>`<option value="${t.v}">${t.l}</option>`).join('');
   el.innerHTML=window.costItems.map((it,i)=>`
     <div class="ci-card">
       <button class="ci-card-del" onclick="removeCostItem(${i})">✕</button>
       <div class="fg" style="margin:0;padding-top:4px">
         <label style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px">النوع</label>
-        <select class="inp" onchange="window.costItems[${i}].type=this.value" style="margin-top:3px">
+        <select class="inp" onchange="window.costItems[${i}].type=this.value;renderCostItems()" style="margin-top:3px">
           <option value="">— اختر —</option>
-          ${COST_TYPES.map(t=>`<option value="${t.v}"${it.type===t.v?' selected':''}>${t.l}</option>`).join('')}
+          ${_buildCostTypeOpts(it.type)}
         </select>
       </div>
       <div class="fg" style="margin:0;padding-top:4px">
         <label style="font-size:9px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px">المورد</label>
         <select class="inp" onchange="const s=suppliers.find(x=>x._id===this.value);window.costItems[${i}].supplierId=this.value;window.costItems[${i}].supplierName=s?.name||''" style="margin-top:3px">
           <option value="">— بدون مورد —</option>
-          ${suppliers.map(s=>`<option value="${s._id}"${it.supplierId===s._id?' selected':''}>${s.name}</option>`).join('')}
+          ${(()=>{
+            const typeVal=it.type;
+            const matched=typeVal?suppliers.filter(s=>(s.specialties?.length?s.specialties:[s.printType].filter(Boolean)).includes(typeVal)):[];
+            const rest=matched.length?suppliers.filter(s=>!matched.find(f=>f._id===s._id)):suppliers;
+            const optHtml=s=>`<option value="${s._id}"${it.supplierId===s._id?' selected':''}>${s.name}</option>`;
+            if(matched.length&&rest.length)return`<optgroup label="✅ ${typeVal}">${matched.map(optHtml).join('')}</optgroup><optgroup label="— باقي الموردين">${rest.map(optHtml).join('')}</optgroup>`;
+            return suppliers.map(optHtml).join('');
+          })()}
         </select>
       </div>
       <div class="fg" style="margin:0;grid-column:1/-1">
