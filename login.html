@@ -55,6 +55,11 @@ body{font-family:'IBM Plex Sans Arabic',sans-serif;background:var(--bg);color:va
 .error-msg{background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.25);border-radius:var(--rad);padding:10px 14px;font-size:12px;color:var(--r);margin-bottom:16px;display:none;}
 .error-msg.show{display:flex;align-items:center;gap:8px;}
 
+.caps-warn{background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:8px 12px;font-size:11px;color:var(--y);margin-top:6px;display:none;align-items:center;gap:6px;}
+.caps-warn.show{display:flex;}
+
+.field-hint{font-size:10px;color:var(--dim);margin-top:5px;line-height:1.5;}
+
 .login-footer{text-align:center;margin-top:20px;font-size:11px;color:var(--dim2);}
 .login-footer strong{color:var(--snow);}
 
@@ -106,19 +111,21 @@ body{font-family:'IBM Plex Sans Arabic',sans-serif;background:var(--bg);color:va
 
     <div class="fg">
       <label>رقم الهاتف أو البريد الإلكتروني</label>
-      <input class="inp" id="email" type="email" placeholder="رقم الهاتف أو البريد الإلكتروني" autocomplete="email">
+      <input class="inp" id="email" type="text" inputmode="email" placeholder="01XXXXXXXXX أو name@example.com" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <div class="field-hint">يمكنك إدخال رقم الموبايل المصري بأي شكل (مع أو بدون +20 / مسافات)</div>
     </div>
 
     <div class="fg">
       <label>كلمة المرور</label>
       <div class="inp-wrap">
         <input class="inp" id="password" type="password" placeholder="••••••••" autocomplete="current-password" style="padding-left:40px">
-        <span class="inp-ico" id="toggle-pw" onclick="togglePw()">👁</span>
+        <span class="inp-ico" id="toggle-pw" onclick="togglePw()" title="إظهار / إخفاء">👁</span>
       </div>
+      <div class="caps-warn" id="caps-warn"><span>⚠️</span><span>Caps Lock مفعّل — تحقّق من حالة الأحرف</span></div>
     </div>
 
     <label class="remember">
-      <input type="checkbox" id="remember">
+      <input type="checkbox" id="remember" checked>
       <span>تذكرني على هذا الجهاز</span>
     </label>
 
@@ -186,17 +193,50 @@ const ROLE_PAGES = {
   wallet_manager:    'accounts.html',
 };
 
-/* CHECK IF ALREADY LOGGED IN */
+/* Normalize Egyptian phone numbers: strip spaces/dashes, +20 / 0020 / 20 prefix
+   and Arabic-Indic digits, returning a canonical 11-digit "01XXXXXXXXX" if it
+   matches a mobile pattern — otherwise returns the original trimmed input. */
+function normalizePhoneOrEmail(raw){
+  if(!raw) return '';
+  let s = raw.trim();
+  // إذا فيها @ → بريد إلكتروني، خليه زي ما هو (lowercase)
+  if(s.includes('@')) return s.toLowerCase();
+  // حوّل الأرقام العربية إلى لاتينية
+  s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+       .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  // شيل المسافات والشرطات والأقواس
+  s = s.replace(/[\s\-()._]/g, '');
+  // عالج بادئات +20 / 0020 / 20
+  if(s.startsWith('+20'))  s = s.slice(3);
+  else if(s.startsWith('0020')) s = s.slice(4);
+  else if(s.startsWith('20') && s.length===12) s = s.slice(2);
+  // ضيف الصفر لو ناقص
+  if(/^1[0125][0-9]{8}$/.test(s)) s = '0' + s;
+  return s;
+}
+
+function toLoginEmail(input){
+  const norm = normalizePhoneOrEmail(input);
+  if(/^01[0125][0-9]{8}$/.test(norm)) return norm + '@b2c.local';
+  return norm;
+}
+
+/* CHECK IF ALREADY LOGGED IN — single fetch, no redirect race */
+let authChecked = false;
 onAuthStateChanged(auth, async user => {
-  if(user) {
-    try {
-      const data = await getUserData(user.uid);
-      redirect(data.role || 'customer_service', user.uid);
-    } catch(e) {
-      document.getElementById('loading').classList.add('hide');
-    }
-  } else {
+  if(authChecked) return;        // أول استدعاء فقط — تجنّب التكرار بعد signIn
+  authChecked = true;
+  if(!user) {
     document.getElementById('loading').classList.add('hide');
+    setTimeout(()=>document.getElementById('email')?.focus(), 250);
+    return;
+  }
+  try {
+    const data = await getUserData(user.uid);
+    routeUser(data, user.uid);
+  } catch(e) {
+    document.getElementById('loading').classList.add('hide');
+    setTimeout(()=>document.getElementById('email')?.focus(), 250);
   }
 });
 
@@ -206,35 +246,29 @@ async function getUserData(uid) {
   return snap.data();
 }
 
-async function redirect(role, uid) {
-  try {
-    const data = await getUserData(uid);
-    if(data.mustChangePassword){
-      window.location.href = 'change-password.html';
-      return;
-    }
-  } catch(e) {
-    showErr('خطأ في التحقق من الحساب: ' + e.message);
-    await signOut(auth);
+function routeUser(data, uid){
+  if(data.isActive === false){
+    showErr('حسابك موقوف — تواصل مع المدير');
+    document.getElementById('loading').classList.add('hide');
     return;
   }
-  const page = ROLE_PAGES[role] || 'login.html';
+  if(data.mustChangePassword){
+    window.location.href = 'change-password.html';
+    return;
+  }
+  const page = ROLE_PAGES[data.role] || 'index.html';
   window.location.href = page;
 }
 
 /* LOGIN */
 window.doLogin = async function() {
-  const email = document.getElementById('email').value.trim();
-  const pw    = document.getElementById('password').value;
-  const rem   = document.getElementById('remember').checked;
+  const rawEmail = document.getElementById('email').value;
+  const pw       = document.getElementById('password').value;
+  const rem      = document.getElementById('remember').checked;
 
-  if(!email || !pw) return showErr('أدخل اسم المستخدم وكلمة المرور');
-  
-  // إذا كان رقم هاتف مصري، حوّله إلى email
-  let loginEmail = email;
-  if(/^01[0125][0-9]{8}$/.test(email)){
-    loginEmail = email + '@b2c.local';
-  }
+  if(!rawEmail.trim() || !pw) return showErr('أدخل اسم المستخدم وكلمة المرور');
+
+  const loginEmail = toLoginEmail(rawEmail);
 
   const btn = document.getElementById('login-btn');
   btn.disabled = true;
@@ -242,27 +276,33 @@ window.doLogin = async function() {
   hideErr();
 
   try {
-    // set persistence
     const persist = rem ? browserLocalPersistence : browserSessionPersistence;
     await setPersistence(auth, persist);
 
-    // sign in
     const cred = await signInWithEmailAndPassword(auth, loginEmail, pw);
     const data = await getUserData(cred.user.uid);
-    redirect(data.role || 'customer_service', cred.user.uid);
+
+    // مرّر كلمة السر الحالية لصفحة التغيير عبر sessionStorage
+    // (تُمسح فور نجاح التغيير) — كي لا يضطر الموظف لإعادة كتابتها.
+    if(data.mustChangePassword){
+      try { sessionStorage.setItem('b2c_pending_pw', pw); } catch(_) {}
+    }
+    routeUser(data, cred.user.uid);
 
   } catch(e) {
     btn.disabled = false;
     btn.textContent = 'تسجيل الدخول';
+    document.getElementById('password').select();
 
     const msg = {
-      'auth/user-not-found':    'البريد الإلكتروني غير موجود',
+      'auth/user-not-found':    'الحساب غير موجود — تأكد من رقم الموبايل أو البريد',
       'auth/wrong-password':    'كلمة المرور غلط',
-      'auth/invalid-email':     'بريد إلكتروني غير صحيح',
-      'auth/too-many-requests': 'محاولات كتير — انتظر شوية',
-      'auth/invalid-credential':'بيانات غلط — تحقق من البريد وكلمة المرور',
+      'auth/invalid-email':     'صيغة الإيميل أو رقم الموبايل غير صحيحة',
+      'auth/too-many-requests': 'محاولات كثيرة — انتظر شوية ثم حاول مرة أخرى',
+      'auth/invalid-credential':'بيانات الدخول غلط — تحقّق من الرقم وكلمة المرور',
+      'auth/network-request-failed':'مشكلة في الإنترنت — تحقّق من الاتصال',
     };
-    showErr(msg[e.code] || 'خطأ في تسجيل الدخول: ' + e.message);
+    showErr(msg[e.code] || 'خطأ في تسجيل الدخول: ' + (e.message || e.code || ''));
   }
 };
 
@@ -271,18 +311,19 @@ window.doForgot = async function() {
   const input = document.getElementById('email').value.trim();
   if(!input){
     showErr('اكتب رقم الموبايل أو البريد أولاً ثم اضغط "نسيت كلمة السر"');
+    document.getElementById('email').focus();
     return;
   }
-  let email = input;
-  const isPhone = /^01[0125][0-9]{8}$/.test(input);
-  if(isPhone) email = input + '@b2c.local';
+  const norm = normalizePhoneOrEmail(input);
+  const isPhone = /^01[0125][0-9]{8}$/.test(norm);
+  let email = isPhone ? (norm + '@b2c.local') : norm;
   hideErr();
   // Firebase password-reset emails don't deliver to fake @b2c.local addresses.
   // For phone-based accounts we ask the user to contact admin to reset from
   // the employee profile UI. For real emails we send the standard reset link.
   if(email.endsWith('@b2c.local')){
     if(confirm('حساب الموبايل لا يستقبل رسائل بريد. تواصل مع المدير ليعيد تعيين كلمة السر من بروفايل الموظف.\n\nهل تريد فتح واتساب لتنبيه المدير؟')){
-      const msg = encodeURIComponent(`السلام عليكم 👋\nأنا (${input}) نسيت كلمة السر، ممكن تعيد تعيينها من بروفايل الموظف؟`);
+      const msg = encodeURIComponent(`السلام عليكم 👋\nأنا (${norm||input}) نسيت كلمة السر، ممكن تعيد تعيينها من بروفايل الموظف؟`);
       window.open(`https://wa.me/?text=${msg}`, '_blank');
     }
     return;
@@ -295,10 +336,25 @@ window.doForgot = async function() {
   }
 };
 
-/* ENTER KEY */
-document.addEventListener('keydown', e => {
-  if(e.key === 'Enter') window.doLogin();
+/* ENTER KEY — لو في حقل الإيميل ينقل التركيز للباسورد، غير كده يسجّل الدخول */
+const emailEl = document.getElementById('email');
+const pwEl    = document.getElementById('password');
+emailEl.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); pwEl.focus(); }
 });
+pwEl.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); window.doLogin(); }
+});
+
+/* CAPS LOCK indicator على حقل الباسورد */
+const capsWarn = document.getElementById('caps-warn');
+function handleCaps(e){
+  if(typeof e.getModifierState !== 'function') return;
+  capsWarn.classList.toggle('show', e.getModifierState('CapsLock'));
+}
+pwEl.addEventListener('keydown', handleCaps);
+pwEl.addEventListener('keyup',   handleCaps);
+pwEl.addEventListener('blur', ()=>capsWarn.classList.remove('show'));
 
 function showErr(msg) {
   const el = document.getElementById('err-msg');
@@ -311,7 +367,9 @@ function hideErr() {
 
 window.togglePw = function() {
   const inp = document.getElementById('password');
-  inp.type = inp.type === 'password' ? 'text' : 'password';
+  const ico = document.getElementById('toggle-pw');
+  if(inp.type === 'password'){ inp.type = 'text'; ico.textContent = '🙈'; }
+  else { inp.type = 'password'; ico.textContent = '👁'; }
 };
 </script>
 </body>
