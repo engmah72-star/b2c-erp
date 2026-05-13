@@ -3,12 +3,13 @@
 // ══════════════════════════════════════════════════════
 
 const SIDEBAR_PAGES = [
-  // { file, label, ico, group, perm, adminOnly }
+  // { file, label, ico, group, perm, adminOnly, roles }
   { file:'index.html',             label:'لوحة التحكم',   ico:'⬡',  group:'main',   adminOnly:true },
   { file:'clients.html',           label:'العملاء',       ico:'👤', group:'orders', perm:'clients' },
   { file:'design.html',            label:'التصميم',       ico:'✏️', group:'orders', perm:'design' },
   { file:'print.html',             label:'الطباعة',       ico:'🖨️', group:'orders', perm:'print' },
   { file:'production.html',        label:'التنفيذ',       ico:'🏭', group:'orders', perm:'production' },
+  { file:'exec-cost-entry.html',   label:'تسجيل التكاليف', ico:'💰', group:'orders', roles:['production_agent'] },
   { file:'shipping.html',          label:'الشحن',         ico:'🚚', group:'orders', perm:'shipping' },
   { file:'shipping-accounts.html', label:'حسابات الشحن', ico:'📦', group:'orders', perm:'shipping-accounts' },
   { file:'archive.html',           label:'الأرشيف',       ico:'📁', group:'orders', perm:'archive' },
@@ -52,8 +53,12 @@ export function initSidebar(userData, currentPage) {
     const cfg = SIDEBAR_PAGES.find(p => p.file === current);
     if (cfg) {
       if (cfg.adminOnly) { _redirect(role); return false; }
-      const perm = cfg.perm || current.replace('.html','');
-      if (!pages.includes('*') && !pages.includes(perm)) { _redirect(role); return false; }
+      // صفحة مقصورة على أدوار محددة
+      if (cfg.roles && !cfg.roles.includes(role)) { _redirect(role); return false; }
+      if (!cfg.roles) {
+        const perm = cfg.perm || current.replace('.html','');
+        if (!pages.includes('*') && !pages.includes(perm)) { _redirect(role); return false; }
+      }
     }
   }
 
@@ -74,8 +79,9 @@ export function initSidebar(userData, currentPage) {
     if (cfg.file === 'index.html') continue; // اتضاف فوق للأدمن بس
     
     const allowed = isAdmin
+      || (cfg.roles && cfg.roles.includes(role))
       || (cfg.adminOnly ? false : pages.includes('*') || pages.includes(cfg.perm||''));
-    
+
     if (!allowed) continue;
 
     if (cfg.group !== lastGroup) {
