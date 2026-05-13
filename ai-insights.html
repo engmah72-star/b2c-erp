@@ -92,32 +92,43 @@ a{color:inherit;text-decoration:none}
 <div class="topbar">
   <a href="index.html" class="topbar-back">←</a>
   <span class="topbar-title">🧠 AI Insights</span>
-  <span class="topbar-badge">Gemini</span>
+  <span class="topbar-badge" id="provider-badge">Firebase AI</span>
 </div>
 
 <div class="wrap">
 
-  <!-- API Key Setup -->
-  <div class="key-card" id="key-card">
-    <div class="key-label">🔑 Gemini API Key</div>
-    <div id="key-setup">
-      <div class="key-row">
-        <input id="key-inp" class="key-input" type="password" placeholder="AIza..." autocomplete="off">
-        <button class="key-btn" onclick="saveKey()">حفظ</button>
-      </div>
-      <div class="key-hint">احصل على مفتاح مجاني من <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio ←</a></div>
+  <!-- Provider / Mode Card -->
+  <div class="key-card ok" id="key-card">
+    <div id="fb-status" class="key-ok" style="display:flex">
+      <span id="fb-status-ico">🔥</span>
+      <span id="fb-status-txt">جاري الاتصال بـ Firebase AI…</span>
     </div>
-    <div id="key-ok" style="display:none" class="key-ok">
-      ✅ API Key محفوظ &nbsp;·&nbsp; <span style="cursor:pointer;color:var(--dim);font-size:11px" onclick="clearKey()">تغيير</span>
-    </div>
+
     <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
       <div class="key-label" style="margin-bottom:6px">🤖 الموديل</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap" id="model-btns">
-        <button onclick="setModel('gemini-1.5-flash')" class="mdbtn" data-m="gemini-1.5-flash">1.5 Flash <span style="font-size:9px;color:var(--g)">مجاني</span></button>
+        <button onclick="setModel('gemini-2.5-flash')" class="mdbtn" data-m="gemini-2.5-flash">2.5 Flash <span style="font-size:9px;color:var(--g)">سريع</span></button>
         <button onclick="setModel('gemini-2.0-flash')" class="mdbtn" data-m="gemini-2.0-flash">2.0 Flash</button>
-        <button onclick="setModel('gemini-1.5-pro')"  class="mdbtn" data-m="gemini-1.5-pro">1.5 Pro</button>
+        <button onclick="setModel('gemini-2.5-pro')"   class="mdbtn" data-m="gemini-2.5-pro">2.5 Pro <span style="font-size:9px;color:var(--y)">تحليل عميق</span></button>
       </div>
     </div>
+
+    <!-- Advanced: Manual API Key (fallback) -->
+    <details style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+      <summary style="font-size:11px;color:var(--dim2);cursor:pointer;outline:none">⚙️ إعدادات متقدمة — مفتاح API يدوي (اختياري)</summary>
+      <div style="margin-top:10px">
+        <div id="key-setup">
+          <div class="key-row">
+            <input id="key-inp" class="key-input" type="password" placeholder="AIza..." autocomplete="off">
+            <button class="key-btn" onclick="saveKey()">حفظ</button>
+          </div>
+          <div class="key-hint">استخدم هذا فقط إذا كان Firebase AI غير مفعّل. احصل على مفتاح من <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio ←</a></div>
+        </div>
+        <div id="key-ok" style="display:none;margin-top:8px" class="key-ok">
+          ✅ API Key محفوظ &nbsp;·&nbsp; <span style="cursor:pointer;color:var(--dim);font-size:11px" onclick="clearKey()">إزالة</span>
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- Quick Stats -->
@@ -151,14 +162,25 @@ a{color:inherit;text-decoration:none}
 </div>
 
 <script type="module">
-import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {getAuth,onAuthStateChanged} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,getDocs,query,where,orderBy,limit} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {initializeApp} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {getAuth,onAuthStateChanged} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import {getFirestore,collection,getDocs,query,where,orderBy,limit} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {getAI,getGenerativeModel,GoogleAIBackend} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-ai.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
 const auth=getAuth(app);
 const db=getFirestore(app);
+
+// ── Firebase AI Logic (Gemini عبر Firebase — بدون API Key يدوي) ──
+let firebaseAI=null;
+let firebaseAIError=null;
+try{
+  firebaseAI=getAI(app,{backend:new GoogleAIBackend()});
+}catch(e){
+  firebaseAIError=e;
+  console.warn('[Firebase AI] init failed:',e);
+}
 
 const fn=n=>Math.round(n).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -171,6 +193,7 @@ onAuthStateChanged(auth,async user=>{
   if(!user){window.location.href='login.html';return;}
   await loadData();
   checkKey();
+  initProviderStatus();
 });
 
 // ── Load Data ──
@@ -224,12 +247,28 @@ function checkKey(){
   const k=localStorage.getItem('gemini_key');
   document.getElementById('key-setup').style.display=k?'none':'block';
   document.getElementById('key-ok').style.display=k?'flex':'none';
-  const card=document.getElementById('key-card');
-  if(k)card.classList.add('ok'); else card.classList.remove('ok');
-  const saved=localStorage.getItem('gemini_model')||'gemini-1.5-flash';
+  const saved=localStorage.getItem('gemini_model')||'gemini-2.5-flash';
   document.querySelectorAll('.mdbtn').forEach(b=>{
     b.classList.toggle('active',b.dataset.m===saved);
   });
+}
+
+// ── Provider status ──
+function initProviderStatus(){
+  const ico=document.getElementById('fb-status-ico');
+  const txt=document.getElementById('fb-status-txt');
+  const badge=document.getElementById('provider-badge');
+  if(firebaseAI){
+    ico.textContent='🔥';
+    txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; جاهز — لا حاجة لمفتاح API';
+    badge.textContent='Firebase AI';
+    badge.style.background='linear-gradient(135deg,#f59e0b,#d97706)';
+  }else{
+    ico.textContent='⚠️';
+    txt.innerHTML='<span style="color:var(--y)">Firebase AI غير مفعّل</span> — استخدم مفتاح API يدوي (إعدادات متقدمة)';
+    badge.textContent='Manual Key';
+    badge.style.background='linear-gradient(135deg,#4f8ef7,#2563eb)';
+  }
 }
 
 // ── Build Context ──
@@ -306,7 +345,7 @@ ${topClients.map(([c,n],i)=>`${i+1}. ${c}: ${n} أوردر`).join('\n')}
 // ── Run Analysis ──
 window.runAnalysis=async function(){
   const key=localStorage.getItem('gemini_key');
-  if(!key){alert('أدخل Gemini API Key أولاً');return;}
+  if(!firebaseAI&&!key){alert('Firebase AI غير مفعّل. أدخل Gemini API Key من الإعدادات المتقدمة.');return;}
 
   const btn=document.getElementById('analyse-btn');
   document.getElementById('analyse-ico').textContent='⏳';
@@ -346,7 +385,7 @@ window.runAnalysis=async function(){
     </div>`).join('');
 
   try{
-    const res=await callGemini(key,prompt);
+    const res=await runPrompt(prompt);
     const parts=parseAnalysis(res);
     cards.forEach((c,i)=>{
       const el=document.getElementById(c.id);
@@ -384,23 +423,74 @@ function formatText(t){
     .replace(/\n/g,'<br>');
 }
 
-// ── Gemini Call — with auto-fallback ──
-const FALLBACK_MODEL='gemini-1.5-flash';
+// ── Unified prompt runner — Firebase AI Logic أولاً، ثم Manual Key كـ fallback ──
+const FALLBACK_MODEL='gemini-2.0-flash';
 
-async function callGemini(key,prompt){
-  const model=localStorage.getItem('gemini_model')||FALLBACK_MODEL;
+async function runPrompt(prompt){
+  const model=localStorage.getItem('gemini_model')||'gemini-2.5-flash';
+
+  // 1) جرّب Firebase AI Logic أولاً
+  if(firebaseAI){
+    try{
+      return await callFirebaseAI(model,prompt);
+    }catch(e){
+      console.warn('[Firebase AI] failed, trying fallback:',e);
+      // لو فيه manual key، استخدمه
+      const key=localStorage.getItem('gemini_key');
+      if(key){
+        showModelNote(`⚠️ Firebase AI أعطى خطأ — التبديل إلى المفتاح اليدوي`);
+        return await callGeminiRest(key,model,prompt);
+      }
+      throw new Error(friendlyFirebaseError(e,model));
+    }
+  }
+
+  // 2) Manual API Key fallback
+  const key=localStorage.getItem('gemini_key');
+  if(!key)throw new Error('Firebase AI غير متاح ولا يوجد مفتاح API يدوي');
+  return await callGeminiRest(key,model,prompt);
+}
+
+// ── Firebase AI Logic call ──
+async function callFirebaseAI(modelName,prompt){
+  const genModel=getGenerativeModel(firebaseAI,{
+    model:modelName,
+    generationConfig:{temperature:.7,maxOutputTokens:2048}
+  });
+  const result=await genModel.generateContent(prompt);
+  const text=result?.response?.text?.();
+  if(!text)throw new Error('لم يرد Firebase AI بنتيجة');
+  return text;
+}
+
+function friendlyFirebaseError(e,model){
+  const msg=(e?.message||String(e));
+  const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[Firebase AI] ${msg}</span>`;
+  if(/not-?enabled|api[- ]not[- ]enabled|disabled|firebaseai|aiplatform|generativelanguage/i.test(msg))
+    return`🔌 Firebase AI Logic غير مفعّل لهذا المشروع. فعّله من Firebase Console → Build → Firebase AI Logic، ثم أعد المحاولة.${raw}`;
+  if(/unauthenticated|permission|denied/i.test(msg))
+    return`🚫 صلاحيات Firebase AI غير كافية — تأكد من تسجيل الدخول وتفعيل App Check أو السماح بـ unauthenticated calls.${raw}`;
+  if(/quota|rate|429/i.test(msg))
+    return`⏱️ تجاوزت حد الاستخدام لـ ${model} — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
+  if(/not[- ]found|model/i.test(msg))
+    return`🤖 الموديل ${model} غير متاح — جرّب موديل آخر.${raw}`;
+  return`خطأ في Firebase AI${raw}`;
+}
+
+// ── REST API fallback (Manual key) ──
+async function callGeminiRest(key,model,prompt){
   try{
-    return await callModel(key,model,prompt);
+    return await callRestModel(key,model,prompt);
   }catch(e){
-    if(model!==FALLBACK_MODEL&&(e.httpStatus===429||e.httpStatus===403||e.httpStatus===503)){
+    if(model!==FALLBACK_MODEL&&(e.httpStatus===429||e.httpStatus===403||e.httpStatus===503||e.httpStatus===404)){
       showModelNote(`⚠️ ${model} غير متاح — تم التبديل تلقائياً إلى ${FALLBACK_MODEL}`);
-      return await callModel(key,FALLBACK_MODEL,prompt);
+      return await callRestModel(key,FALLBACK_MODEL,prompt);
     }
     throw e;
   }
 }
 
-async function callModel(key,model,prompt){
+async function callRestModel(key,model,prompt){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const r=await fetch(url,{
     method:'POST',
@@ -413,7 +503,7 @@ async function callModel(key,model,prompt){
   if(!r.ok){
     const errData=await r.json().catch(()=>({}));
     const apiMsg=errData?.error?.message||r.statusText;
-    const err=new Error(friendlyError(r.status,apiMsg,model));
+    const err=new Error(friendlyRestError(r.status,apiMsg,model));
     err.httpStatus=r.status;
     err.apiMsg=apiMsg;
     throw err;
@@ -422,7 +512,7 @@ async function callModel(key,model,prompt){
   return data.candidates?.[0]?.content?.parts?.[0]?.text||'لا توجد نتيجة';
 }
 
-function friendlyError(status,apiMsg,model){
+function friendlyRestError(status,apiMsg,model){
   const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
   if(status===400&&(apiMsg.includes('API_KEY')||apiMsg.includes('invalid')))
     return`🔑 API Key غير صحيح — تأكد من نسخه كاملاً من AI Studio${raw}`;
@@ -432,6 +522,8 @@ function friendlyError(status,apiMsg,model){
     return`⏱️ تجاوزت الحد المسموح للموديل (${model}) — انتظر دقيقة أو اختر موديل مختلف${raw}`;
   if(status===503||status===500)
     return`🔧 خطأ مؤقت في خادم Google — حاول مرة أخرى بعد 30 ثانية${raw}`;
+  if(status===404)
+    return`🤖 الموديل ${model} غير موجود — جرّب موديل آخر${raw}`;
   return`خطأ غير متوقع${raw}`;
 }
 
@@ -448,7 +540,7 @@ window.chatKeydown=function(e){
 
 window.sendChat=async function(){
   const key=localStorage.getItem('gemini_key');
-  if(!key){alert('أدخل Gemini API Key أولاً');return;}
+  if(!firebaseAI&&!key){alert('Firebase AI غير مفعّل. أدخل مفتاح API من الإعدادات المتقدمة.');return;}
   const inp=document.getElementById('chat-inp');
   const q=inp.value.trim();
   if(!q)return;
@@ -471,7 +563,7 @@ window.sendChat=async function(){
 أجب بالعربية بشكل مباشر ومختصر (جملة إلى فقرة واحدة). استند إلى الأرقام الحقيقية من البيانات أعلاه.`;
 
   try{
-    const ans=await callGemini(key,prompt);
+    const ans=await runPrompt(prompt);
     document.getElementById('typing')?.remove();
     msgs.innerHTML+=`<div class="msg ai">${formatText(ans)}</div>`;
   }catch(e){
