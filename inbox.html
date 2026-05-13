@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css">
 <script src="sync-monitor.js"></script>
+<script type="module" src="inbox-badge.js"></script>
 <style>
 /* ── WhatsApp-inspired palette overrides for this page ── */
 :root{
@@ -225,6 +226,29 @@ body{background:var(--ws-bg);color:var(--ws-text)}
 .ib-ordercard-meta{display:flex;gap:6px;margin-top:6px;font-size:10px;flex-wrap:wrap}
 .ib-ordercard-chip{background:rgba(255,255,255,.07);padding:2px 7px;border-radius:10px;color:var(--ws-text-dim);white-space:nowrap}
 
+/* ── Chat menu (⋮) ── */
+.ib-chat-menu{position:absolute;top:46px;left:0;background:var(--ws-panel);border:1px solid var(--ws-border);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.4);padding:4px;min-width:200px;display:none;z-index:50}
+.ib-chat-menu.show{display:block}
+.ib-cm-item{display:block;width:100%;background:none;border:none;padding:9px 12px;color:var(--ws-text);font-family:inherit;font-size:13px;font-weight:600;text-align:right;cursor:pointer;border-radius:6px;transition:.1s}
+.ib-cm-item:hover{background:rgba(255,255,255,.05)}
+
+/* ── Mention autocomplete dropdown ── */
+.ib-mention-pop{position:absolute;bottom:60px;right:60px;background:var(--ws-panel);border:1px solid var(--ws-border);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.4);width:240px;max-height:220px;overflow-y:auto;display:none;z-index:30}
+.ib-mention-pop.show{display:block}
+.ib-mention-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--ws-divider)}
+.ib-mention-item:hover,.ib-mention-item.active{background:rgba(0,168,132,.15)}
+.ib-mention-item:last-child{border-bottom:none}
+.ib-mention-av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.ib-mention-nm{font-size:13px;font-weight:600;color:var(--ws-text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib-mention-role{font-size:10px;color:var(--ws-text-dim)}
+
+/* Mention highlight in rendered text */
+.ib-mention{color:var(--ws-green);font-weight:700;cursor:default}
+.ib-mention.you{background:rgba(0,168,132,.25);padding:1px 4px;border-radius:4px}
+
+/* Muted conv pill */
+.ib-muted-ico{display:inline-block;font-size:11px;color:var(--ws-text-dim);margin-right:4px}
+
 /* Mobile layout */
 @media(max-width:768px){
   .ib-list{width:100%;display:flex}
@@ -391,7 +415,9 @@ let voiceChunks=[];
 let voiceStart=0;
 let voiceTimerInt=null;
 let sharePending=null;         // {orderId, ...} pending share payload
+let mentionState=null;         // {start, query, items}
 const REACTION_EMOJIS=['👍','❤️','😂','😮','😢','🙏'];
+const WALLPAPERS=['','#0b141a','#1a3a2e','#1e1a3d','#3d1a2e','#2e1a3d','#3d2e1a'];
 
 const $=id=>document.getElementById(id);
 const fmtTime=ts=>{
@@ -617,11 +643,25 @@ window.openConv=async function(id){
     try{await updateDoc(doc(db,'conversations',id),{archivedBy:arrayRemove(currentUid)});}catch(_){}
   }
   renderChat();
+  updateMuteBtn();
+  // apply wallpaper preference for this user
+  const wpIdx=activeConv.wallpaperBy?.[currentUid]||0;
+  applyWallpaper(wpIdx);
   // subscribe to messages
   if(unsubMessages)unsubMessages();
   const q=query(collection(db,'conversations',id,'messages'),orderBy('createdAt','asc'),limit(200));
   unsubMessages=onSnapshot(q,snap=>{
-    messages=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    let all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    // "Clear for me" filter — hide messages older than my clearedAt
+    const ca=activeConv.clearedAt?.[currentUid];
+    const caMs=ca?.seconds?ca.seconds*1000:0;
+    if(caMs){
+      all=all.filter(m=>{
+        const t=m.createdAt?.seconds?m.createdAt.seconds*1000:0;
+        return t>caMs;
+      });
+    }
+    messages=all;
     renderMessages();
     maybeMarkRead();
   });
@@ -648,8 +688,14 @@ function renderChat(){
           <div class="ib-chat-hdr-sub" id="chat-hdr-sub"></div>
         </div>
       </div>
-      <div class="ib-chat-hdr-actions">
+      <div class="ib-chat-hdr-actions" style="position:relative">
+        <button class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
         <button class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
+        <button class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
+        <div class="ib-chat-menu" id="chat-menu">
+          <button class="ib-cm-item" onclick="clearChatForMe()">🧹 مسح المحادثة (لي فقط)</button>
+          <button class="ib-cm-item" onclick="openWallpaperPicker()">🎨 خلفية المحادثة</button>
+        </div>
       </div>
     </div>
     <div class="ib-msgs" id="ib-msgs"></div>
@@ -669,6 +715,7 @@ function renderChat(){
       <button class="ib-iconbtn" id="ib-mic" onmousedown="startVoice()" ontouchstart="startVoice()" onmouseup="stopVoice()" ontouchend="stopVoice()" title="رسالة صوتية">🎤</button>
       <button class="ib-send" id="ib-send" onclick="sendText()" style="display:none">▶</button>
       <div class="ib-emoji-panel" id="emoji-panel">${EMOJIS.map(e=>`<button class="ib-emoji-btn" onclick="insertEmoji('${e}')">${e}</button>`).join('')}</div>
+      <div class="ib-mention-pop" id="mention-pop"></div>
     </div>`;
   renderMessages();
   renderChatHeader();
@@ -758,7 +805,7 @@ function renderMessages(){
         </div>
       </a>`;
     }
-    const text=m.text?`<div class="ib-msg-text">${esc(m.text)}${m.editedAt?'<span class="ib-msg-edited"> (مُعدّلة)</span>':''}</div>`:'';
+    const text=m.text?`<div class="ib-msg-text">${renderTextWithMentions(m.text)}${m.editedAt?'<span class="ib-msg-edited"> (مُعدّلة)</span>':''}</div>`:'';
     const senderName=!isOut&&!consec&&activeConv?.type==='channel'?`<div class="sender">${esc(m.senderName||'')}</div>`:'';
     // reactions chips
     const rxs=Object.entries(m.reactions||{}).filter(([_,arr])=>(arr||[]).length>0);
@@ -834,6 +881,8 @@ window.onTyping=async function(el){
     send.style.display=has?'flex':'none';
     mic.style.display=has?'none':'flex';
   }
+  // mention detection
+  detectMention(el);
   // typing indicator
   if(typingTimer)clearTimeout(typingTimer);
   if(activeConvId){
@@ -843,22 +892,125 @@ window.onTyping=async function(el){
     },3000);
   }
 };
+// ════════════════════════════════════════════════════════════════════
+//  @mentions in the composer
+// ════════════════════════════════════════════════════════════════════
+// Listens to the input. When the user types `@`, we open a dropdown of
+// participants matching the query after the `@`. Selecting one inserts
+// the canonical "@الاسم " into the text and records the uid in
+// `pendingMentions` so we can persist `mentions: [uid…]` on send.
+let pendingMentions=[];
+
+function getMentionableUsers(){
+  if(!activeConv)return[];
+  const list=[];
+  (activeConv.participants||[]).filter(u=>u!==currentUid).forEach(uid=>{
+    const u=allUsers.find(x=>x._id===uid)||{_id:uid,name:'موظف',role:''};
+    list.push({uid,name:u.name||'موظف',role:u.role||''});
+  });
+  return list;
+}
+
+function detectMention(inp){
+  // find an unfinished @… token before caret
+  const pos=inp.selectionStart||0;
+  const before=inp.value.slice(0,pos);
+  const m=before.match(/@([^\s@]*)$/);
+  if(!m){mentionState=null;hideMentionPop();return;}
+  const query=(m[1]||'').toLowerCase();
+  const items=getMentionableUsers().filter(u=>!query||(u.name||'').toLowerCase().includes(query));
+  if(!items.length){hideMentionPop();return;}
+  mentionState={start:pos-m[0].length,end:pos,query,items:items.slice(0,8),active:0};
+  renderMentionPop();
+}
+function renderMentionPop(){
+  const pop=$('mention-pop');if(!pop||!mentionState)return;
+  pop.innerHTML=mentionState.items.map((u,i)=>`
+    <div class="ib-mention-item ${i===mentionState.active?'active':''}" data-uid="${u.uid}" data-name="${esc((u.name||'').replace(/"/g,''))}" onclick="pickMention(this)">
+      <div class="ib-mention-av" style="background:${colorOf(u.role)}">${initAvatar(u.name)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="ib-mention-nm">${esc(u.name)}</div>
+        <div class="ib-mention-role">${ROLE_LABEL[u.role]||''}</div>
+      </div>
+    </div>`).join('');
+  pop.classList.add('show');
+}
+function hideMentionPop(){$('mention-pop')?.classList.remove('show');mentionState=null;}
+
+window.pickMention=function(el){
+  if(!mentionState)return;
+  const inp=$('ib-input');if(!inp)return;
+  const uid=el.dataset.uid;
+  const name=el.dataset.name;
+  const before=inp.value.slice(0,mentionState.start);
+  const after=inp.value.slice(mentionState.end);
+  const insert='@'+name+' ';
+  inp.value=before+insert+after;
+  const newPos=before.length+insert.length;
+  inp.setSelectionRange(newPos,newPos);
+  inp.focus();
+  if(!pendingMentions.includes(uid))pendingMentions.push(uid);
+  hideMentionPop();
+  // trigger send/mic toggle
+  onTyping(inp);
+};
+
+// Parse final text for @mentions and resolve UIDs from participant names
+function extractMentions(text){
+  if(!text)return[];
+  const mentioned=new Set();
+  const candidates=getMentionableUsers();
+  // first include any uids picked from the dropdown
+  pendingMentions.forEach(u=>mentioned.add(u));
+  // also scan text for "@Name" patterns matching participants by exact name match
+  candidates.forEach(u=>{
+    const re=new RegExp('@'+(u.name||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?=\\s|$)');
+    if(re.test(text))mentioned.add(u.uid);
+  });
+  return [...mentioned];
+}
+
+// Render text with @mentions highlighted (you-highlighted if it's me)
+function renderTextWithMentions(text){
+  if(!text)return'';
+  let html=esc(text);
+  // highlight any "@Name" sequence that matches a known participant
+  const cands=getMentionableUsers();
+  cands.push({uid:currentUid,name:currentUserName,role:currentRole});
+  cands.forEach(u=>{
+    if(!u.name)return;
+    const escName=u.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    const re=new RegExp('@'+escName+'(?=\\s|$|[،,.!?])','g');
+    html=html.replace(re,m=>{
+      const isMe=u.uid===currentUid;
+      return `<span class="ib-mention ${isMe?'you':''}">${esc(m)}</span>`;
+    });
+  });
+  return html;
+}
+
 window.sendText=async function(){
   const inp=$('ib-input');if(!inp||!activeConvId)return;
   const text=inp.value.trim();if(!text)return;
   inp.value='';inp.style.height='auto';
+  hideMentionPop();
+  const mentions=extractMentions(text);
+  pendingMentions=[];  // reset after extract
   // Edit path: if editingMsgId is set, update instead of sending new
   if(editingMsgId){
     try{
-      await updateDoc(doc(db,'conversations',activeConvId,'messages',editingMsgId),{text,editedAt:serverTimestamp()});
+      await updateDoc(doc(db,'conversations',activeConvId,'messages',editingMsgId),{text,mentions,editedAt:serverTimestamp()});
       editingMsgId=null;
       cancelReply();
     }catch(e){toast('❌ '+e.message,'err');}
     return;
   }
   const payload={type:'text',text};
+  if(mentions.length)payload.mentions=mentions;
   if(replyTo){payload.replyTo=replyTo;cancelReply();}
   await sendMessage(payload);
+  // toggle send/mic back since input is empty
+  const send=$('ib-send'),mic=$('ib-mic');if(send&&mic){send.style.display='none';mic.style.display='flex';}
 };
 async function sendMessage(payload){
   if(!activeConvId)return;
@@ -933,6 +1085,79 @@ document.addEventListener('click',e=>{
 });
 
 // ── Archive ──
+// ════════════════════════════════════════════════════════════════════
+//  Chat menu, mute, clear, wallpaper
+// ════════════════════════════════════════════════════════════════════
+window.toggleChatMenu=()=>$('chat-menu')?.classList.toggle('show');
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#chat-menu')&&!e.target.closest('[onclick*=toggleChatMenu]')){
+    $('chat-menu')?.classList.remove('show');
+  }
+});
+
+window.toggleMute=async function(){
+  if(!activeConvId||!activeConv)return;
+  const muted=(activeConv.mutedBy||[]).includes(currentUid);
+  try{
+    await updateDoc(doc(db,'conversations',activeConvId),{
+      mutedBy:muted?arrayRemove(currentUid):arrayUnion(currentUid),
+    });
+    toast(muted?'🔔 أُلغي الكتم':'🔕 تم الكتم','ok');
+    updateMuteBtn();
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+function updateMuteBtn(){
+  const b=$('mute-btn');if(!b||!activeConv)return;
+  const muted=(activeConv.mutedBy||[]).includes(currentUid);
+  b.textContent=muted?'🔕':'🔔';
+  b.title=muted?'إلغاء الكتم':'كتم';
+}
+
+// "Clear for me" — set conversations/{id}.clearedAt[uid] = serverTimestamp.
+// The renderer filters messages older than this. We don't actually delete
+// because other participants still need to see the history.
+window.clearChatForMe=async function(){
+  if(!activeConvId)return;
+  if(!confirm('مسح المحادثة من جهتك فقط؟ (الأطراف الأخرى لن تتأثر)'))return;
+  try{
+    await updateDoc(doc(db,'conversations',activeConvId),{
+      [`clearedAt.${currentUid}`]:serverTimestamp(),
+    });
+    toast('🧹 تم المسح','ok');
+    $('chat-menu')?.classList.remove('show');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.openWallpaperPicker=function(){
+  $('chat-menu')?.classList.remove('show');
+  const ov=document.createElement('div');
+  ov.className='ib-modal-ov show';
+  ov.innerHTML=`
+    <div class="ib-modal" style="max-width:400px">
+      <div class="ib-modal-hdr"><h3>🎨 خلفية المحادثة</h3><button class="ib-iconbtn" onclick="this.closest('.ib-modal-ov').remove()">✕</button></div>
+      <div style="padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        ${WALLPAPERS.map((w,i)=>`<button onclick="setWallpaper(${i})" style="aspect-ratio:1;border-radius:10px;border:2px solid var(--ws-border);background:${w||'var(--ws-bg)'};cursor:pointer;font-family:inherit;color:var(--ws-text);font-size:11px">${i===0?'افتراضي':''}</button>`).join('')}
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+};
+window.setWallpaper=async function(idx){
+  if(!activeConvId)return;
+  try{
+    await updateDoc(doc(db,'conversations',activeConvId),{
+      [`wallpaperBy.${currentUid}`]:idx,
+    });
+    applyWallpaper(idx);
+    document.querySelector('.ib-modal-ov.show')?.remove();
+    toast('✅ تم تغيير الخلفية','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+function applyWallpaper(idx){
+  const msgs=$('ib-msgs');if(!msgs)return;
+  const w=WALLPAPERS[idx||0]||'';
+  msgs.style.background=w||'var(--ws-bg)';
+}
+
 window.archiveConv=async function(){
   if(!activeConvId)return;
   try{
