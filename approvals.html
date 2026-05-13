@@ -97,6 +97,7 @@
       <button class="tab confirmed" id="tab-confirmed" onclick="setTab('confirmed')">🔵 بانتظار الاعتماد <span class="badge" id="cnt-confirmed">0</span></button>
       <button class="tab approved" id="tab-approved" onclick="setTab('approved')">✅ مؤرشَفة <span class="badge" id="cnt-approved">0</span></button>
       <button class="tab rejected" id="tab-rejected" onclick="setTab('rejected')">❌ مرفوضة <span class="badge" id="cnt-rejected">0</span></button>
+      <button class="tab" id="tab-suppliers_due" onclick="setTab('suppliers_due')" style="margin-right:auto">🏭 أرصدة الموردين <span class="badge" id="cnt-suppliers_due" style="background:#ffaa00">0</span></button>
     </div>
 
     <div id="dir-filter-wrap" style="display:none">
@@ -149,6 +150,18 @@
         <select class="inp" id="rq-cost-item">
           <option value="">— اختر أو املأ يدوياً —</option>
         </select>
+      </div>
+
+      <!-- بنود مستحقة للمورد عبر كل الأوردرات — يظهر عند اختيار المورد بدون اختيار أوردر -->
+      <div id="fg-supplier-items" class="fg" style="display:none">
+        <label>📋 بنود مستحقة لـ<span id="rq-si-supname" style="color:var(--g)">المورد</span>
+          <span style="font-size:10px;color:var(--dim2);font-weight:500">— اختر بند أو أكثر لربطها بالطلب</span>
+        </label>
+        <div id="rq-supplier-items-list" style="max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:var(--bg3)"></div>
+        <div id="rq-supplier-items-foot" style="display:none;margin-top:8px;padding:8px 10px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);border-radius:8px;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+          <span><span id="rq-si-count">0</span> بند محدد</span>
+          <span style="font-weight:900;color:var(--g)">المجموع: <span id="rq-si-total">0</span> ج</span>
+        </div>
       </div>
 
       <div class="fg"><label>السبب / الملاحظة *</label><textarea class="inp" id="rq-reason" style="min-height:60px" placeholder="مثال: دفعة مقدم لطباعة 200 كارت — أحمد محمد"></textarea></div>
@@ -518,6 +531,11 @@ window.setDir = function(d){
 function render(){
   const el = document.getElementById('list-content');
   if(!el) return;
+
+  if(activeTab === 'suppliers_due'){
+    el.innerHTML = renderSuppliersDue();
+    return;
+  }
 
   if(activeTab === 'requested' || activeTab === 'awaiting_receipt'){
     let filtered = requests.filter(r=>r.status === activeTab);
@@ -923,12 +941,235 @@ function renderRequestCard(r){
       ${sectionExec}
       ${sectionReceipt}
       ${sectionEntity}
+      ${r.costItemRefs && r.costItemRefs.length > 1 ? `
+        <div style="background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.2);border-radius:8px;padding:10px 12px;margin-top:8px">
+          <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">📋 طلب مُجمَّع — ${r.costItemRefs.length} بند من ${new Set(r.costItemRefs.map(x=>x.orderId)).size} أوردر</div>
+          <div style="font-size:11px;line-height:1.8">${r.costItemRefs.map(x=>`• ${escapeHtml(x.type||'بند')} — <b style="font-family:monospace">${escapeHtml(x.orderRefId||'')}</b> — ${escapeHtml(x.clientName||'')} — <b style="color:#ffaa00">${fn(x.amount)} ج</b>`).join('<br>')}</div>
+        </div>
+      ` : ''}
       ${sectionOrder}
       ${r.clientId ? renderClientHistory(r) : ''}
       ${r.rejectedByName?`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.3);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:11px;color:#ff3d6e">❌ <b>رفض من ${escapeHtml(r.rejectedByName)}</b> · ${fmtDate(r.rejectedAt)}${r.rejectReason?' · '+escapeHtml(r.rejectReason):''}</div>`:''}
       ${actions?`<div class="ac-actions">${actions}</div>`:''}
     </div>
   `;
+}
+
+// ═══════════════════ Suppliers Due (أرصدة الموردين) ═══════════════════
+// يحسب لكل مورد إجمالي البنود غير المدفوعة عبر كل الأوردرات النشطة
+// + يستثني البنود اللي عليها طلب قائم (pendingPaymentRequestId)
+function computeSupplierDues(){
+  const map = new Map(); // supplierId → { name, type, totalUnpaid, totalPending, items:[] }
+  for(const o of ordersMap.values()){
+    if(['archived','cancelled'].includes(o.stage)) continue;
+    const items = o.costItems || [];
+    items.forEach((c, idx)=>{
+      if(c.paid) return;
+      if(!c.supplierId) return;
+      const amt = parseFloat(c.total)||0;
+      if(amt <= 0) return;
+      if(!map.has(c.supplierId)){
+        map.set(c.supplierId, {
+          id: c.supplierId,
+          name: c.supplierName || '—',
+          type: c.supplierType || '',
+          totalUnpaid: 0,
+          totalPending: 0,
+          items: [],
+        });
+      }
+      const row = map.get(c.supplierId);
+      if(c.pendingPaymentRequestId){
+        row.totalPending += amt;
+      } else {
+        row.totalUnpaid += amt;
+      }
+      row.items.push({
+        orderId: o._id,
+        orderRefId: o.orderId || o._id.slice(-6),
+        clientName: o.clientName || '—',
+        costItemIndex: idx,
+        type: c.type || '',
+        amount: amt,
+        note: c.note || '',
+        pendingReqId: c.pendingPaymentRequestId || null,
+        pendingRequestedBy: c.pendingRequestedBy || '',
+        orderStage: o.stage || '',
+      });
+    });
+  }
+  // ترتيب: الأعلى مديونية أولاً
+  return [...map.values()].sort((a,b)=>(b.totalUnpaid+b.totalPending) - (a.totalUnpaid+a.totalPending));
+}
+
+function renderSuppliersDue(){
+  const rows = computeSupplierDues();
+  document.getElementById('cnt-suppliers_due').textContent = rows.filter(r=>r.totalUnpaid>0).length;
+  if(!rows.length){
+    return `<div class="empty-pl">✨ لا توجد مديونيات للموردين — كل البنود مدفوعة أو ليس بها مورد</div>`;
+  }
+  // header summary
+  const grandUnpaid = rows.reduce((s,r)=>s+r.totalUnpaid, 0);
+  const grandPending = rows.reduce((s,r)=>s+r.totalPending, 0);
+  const head = `
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:140px;background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:10px;padding:10px 14px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">💰 إجمالي المستحق (غير مطلوب)</div>
+        <div style="font-size:20px;font-weight:900;color:#ffaa00">${fn(grandUnpaid)} ج</div>
+      </div>
+      <div style="flex:1;min-width:140px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.3);border-radius:10px;padding:10px 14px">
+        <div style="font-size:10px;color:var(--dim2);font-weight:700">⏳ تحت طلب قائم</div>
+        <div style="font-size:20px;font-weight:900;color:#a78bfa">${fn(grandPending)} ج</div>
+      </div>
+    </div>
+  `;
+  const body = rows.map(r=>{
+    const unpaidItems = r.items.filter(i=>!i.pendingReqId);
+    const pendingItems = r.items.filter(i=>i.pendingReqId);
+    const canRequest = unpaidItems.length > 0;
+    return `
+      <div class="approval-card" style="padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <div style="font-weight:900;font-size:14px;color:var(--snow)">🏭 ${escapeHtml(r.name)}</div>
+            <div style="font-size:10px;color:var(--dim2);margin-top:2px">${r.items.length} بند — ${unpaidItems.length} غير مطلوب · ${pendingItems.length} تحت طلب</div>
+          </div>
+          <div style="text-align:left">
+            <div style="font-size:11px;color:var(--dim2)">المستحق</div>
+            <div style="font-size:18px;font-weight:900;color:#ffaa00">${fn(r.totalUnpaid)} ج</div>
+            ${r.totalPending > 0 ? `<div style="font-size:10px;color:#a78bfa">+ ${fn(r.totalPending)} ج تحت طلب</div>` : ''}
+          </div>
+          ${canRequest ? `<button onclick="requestForSupplier('${r.id}','${escapeHtml(r.name).replace(/'/g,"\\'")}','${r.type||''}')" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);cursor:pointer;font-family:inherit;font-size:12px;font-weight:800">💸 طلب دفع</button>` : ''}
+        </div>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:11px;color:var(--dim2);font-weight:700">تفاصيل البنود (${r.items.length})</summary>
+          <div style="margin-top:8px;font-size:11px;line-height:1.7">
+            ${r.items.map(i=>`
+              <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 8px;border-bottom:1px dashed var(--line)">
+                <div style="flex:1;min-width:0">
+                  <b style="color:var(--snow)">${escapeHtml(i.type||'بند')}</b>
+                  <span style="color:var(--dim2);font-size:10px">— ${escapeHtml(i.orderRefId)} — ${escapeHtml(i.clientName)}</span>
+                  ${i.note ? `<div style="color:var(--dim2);font-size:10px">${escapeHtml(i.note)}</div>` : ''}
+                </div>
+                <div style="text-align:left">
+                  <span style="font-weight:800;color:${i.pendingReqId?'#a78bfa':'#ffaa00'}">${fn(i.amount)} ج</span>
+                  ${i.pendingReqId ? `<div style="font-size:9px;color:#a78bfa">⏳ تحت طلب</div>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </details>
+      </div>
+    `;
+  }).join('');
+  return head + body;
+}
+
+window.requestForSupplier = function(supId, supName, supType){
+  openNewRequest();
+  setReqType('supplier_payment');
+  const supSel = document.getElementById('rq-supplier');
+  if(supSel) supSel.value = supId;
+  // إفراغ الأوردر لإظهار قائمة بنود المورد عبر كل الأوردرات
+  const ordSel = document.getElementById('rq-order');
+  if(ordSel) ordSel.value = '';
+  document.getElementById('rq-order-info').style.display = 'none';
+  document.getElementById('fg-cost-item').style.display = 'none';
+  refreshSupplierItemsList();
+};
+
+// ═══════════════════ Supplier Items List (داخل modal الطلب) ═══════════════════
+let __supItemsSelected = []; // [{orderId, orderRefId, costItemIndex, amount, type, supplierName, clientName, clientId, stage}]
+
+window.refreshSupplierItemsList = function(){
+  const supId = document.getElementById('rq-supplier').value;
+  const ordId = document.getElementById('rq-order').value;
+  const fg = document.getElementById('fg-supplier-items');
+  const listEl = document.getElementById('rq-supplier-items-list');
+  const foot = document.getElementById('rq-supplier-items-foot');
+  __supItemsSelected = [];
+  updateSupItemsSum();
+  // نعرض اللائحة فقط في supplier_payment + مورد مختار + بدون أوردر محدد
+  if(activeReqType !== 'supplier_payment' || !supId || ordId){
+    if(fg) fg.style.display = 'none';
+    return;
+  }
+  const supName = document.getElementById('rq-supplier').selectedOptions[0]?.dataset?.name || '';
+  document.getElementById('rq-si-supname').textContent = supName || 'المورد';
+
+  // تجميع كل البنود غير المدفوعة + غير المطلوبة لهذا المورد
+  const items = [];
+  for(const o of ordersMap.values()){
+    if(['archived','cancelled'].includes(o.stage)) continue;
+    (o.costItems||[]).forEach((c, idx)=>{
+      if(c.paid || c.pendingPaymentRequestId) return;
+      if(c.supplierId !== supId) return;
+      const amt = parseFloat(c.total)||0;
+      if(amt <= 0) return;
+      items.push({
+        orderId: o._id,
+        orderRefId: o.orderId || o._id.slice(-6),
+        clientId: o.clientId || '',
+        clientName: o.clientName || '—',
+        costItemIndex: idx,
+        type: c.type || '',
+        amount: amt,
+        note: c.note || '',
+        supplierName: c.supplierName || supName,
+        stage: o.stage || '',
+      });
+    });
+  }
+  if(!items.length){
+    fg.style.display = '';
+    listEl.innerHTML = `<div style="padding:14px;text-align:center;color:var(--dim2);font-size:12px">✨ لا توجد بنود مستحقة لهذا المورد</div>`;
+    foot.style.display = 'none';
+    return;
+  }
+  fg.style.display = '';
+  listEl.innerHTML = items.map((i, k)=>`
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer">
+      <input type="checkbox" data-k="${k}" onchange="toggleSupItem(${k})" style="width:16px;height:16px;cursor:pointer">
+      <div style="flex:1;min-width:0;font-size:11px">
+        <div><b style="color:var(--snow)">${escapeHtml(i.type||'بند')}</b> <span style="color:var(--dim2)">— ${escapeHtml(i.orderRefId)} — ${escapeHtml(i.clientName)}</span></div>
+        ${i.note ? `<div style="color:var(--dim2);font-size:10px;margin-top:2px">${escapeHtml(i.note)}</div>` : ''}
+      </div>
+      <span style="font-weight:800;color:#ffaa00;font-size:12px">${fn(i.amount)} ج</span>
+    </label>
+  `).join('');
+  // خزّن العناصر للاستخدام لاحقاً
+  listEl.__items = items;
+  foot.style.display = 'none';
+};
+
+window.toggleSupItem = function(k){
+  const listEl = document.getElementById('rq-supplier-items-list');
+  const items = listEl.__items || [];
+  const cb = listEl.querySelector(`input[data-k="${k}"]`);
+  if(!cb) return;
+  const item = items[k];
+  if(cb.checked){
+    if(!__supItemsSelected.find(x=>x.orderId===item.orderId && x.costItemIndex===item.costItemIndex)){
+      __supItemsSelected.push(item);
+    }
+  } else {
+    __supItemsSelected = __supItemsSelected.filter(x=>!(x.orderId===item.orderId && x.costItemIndex===item.costItemIndex));
+  }
+  updateSupItemsSum();
+};
+
+function updateSupItemsSum(){
+  const sum = __supItemsSelected.reduce((s,x)=>s+x.amount, 0);
+  const foot = document.getElementById('rq-supplier-items-foot');
+  if(foot){
+    foot.style.display = __supItemsSelected.length ? 'flex' : 'none';
+    document.getElementById('rq-si-count').textContent = __supItemsSelected.length;
+    document.getElementById('rq-si-total').textContent = fn(sum);
+  }
+  // ملء المبلغ تلقائياً
+  if(__supItemsSelected.length){
+    document.getElementById('rq-amount').value = sum;
+  }
 }
 
 function renderCard(t){
@@ -1103,13 +1344,20 @@ window.setReqType = function(type){
   const fgClient = document.getElementById('fg-client');
   if(fgClient) fgClient.style.display = showClient ? '' : 'none';
   document.getElementById('fg-order').style.display       = showOrder  ? '' : 'none';
+  refreshSupplierItemsList();
 };
+
+document.getElementById('rq-supplier')?.addEventListener('change', ()=>{
+  refreshSupplierItemsList();
+});
 
 document.getElementById('rq-order')?.addEventListener('change', e=>{
   const oid = e.target.value;
   const info = document.getElementById('rq-order-info');
   const fgCost = document.getElementById('fg-cost-item');
   const ciSel = document.getElementById('rq-cost-item');
+  // لو تم اختيار/إلغاء أوردر — حدّث قائمة بنود المورد (تختفي عند اختيار أوردر)
+  refreshSupplierItemsList();
   if(!oid){
     info.style.display='none';
     if(fgCost) fgCost.style.display='none';
@@ -1222,15 +1470,98 @@ window.saveRequest = async function(){
     }
   }
 
-  // لو اختار بند تكلفة، احفظ index لـعَلْم البند بـpaid عند التنفيذ
+  // مسار 1: بند تكلفة واحد من dropdown داخل أوردر محدد
   const costItemIdx = document.getElementById('rq-cost-item')?.value;
-  if(activeReqType === 'supplier_payment' && costItemIdx !== '' && costItemIdx != null){
+  if(activeReqType === 'supplier_payment' && costItemIdx !== '' && costItemIdx != null && reqData.orderId){
     reqData.costItemIndex = parseInt(costItemIdx);
   }
 
+  // مسار 2: عدّة بنود من قائمة "بنود مستحقة للمورد" (multi-select بدون أوردر مفرد)
+  if(activeReqType === 'supplier_payment' && __supItemsSelected.length > 0 && !reqData.orderId){
+    const refs = __supItemsSelected.map(x=>({
+      orderId: x.orderId,
+      orderRefId: x.orderRefId,
+      costItemIndex: x.costItemIndex,
+      amount: x.amount,
+      type: x.type,
+      supplierName: x.supplierName,
+      clientId: x.clientId,
+      clientName: x.clientName,
+      stage: x.stage,
+    }));
+    reqData.costItemRefs = refs;
+    const sumRefs = refs.reduce((s,r)=>s+r.amount, 0);
+    if(Math.abs(sumRefs - amount) > 0.01){
+      return showToast(`⚠️ المبلغ (${fn(amount)}) لا يطابق مجموع البنود (${fn(sumRefs)})`,'err');
+    }
+    // backward-compat: ضع البند الأول في الحقول المفردة
+    const first = refs[0];
+    reqData.orderId = first.orderId;
+    reqData.orderRefId = first.orderRefId;
+    reqData.costItemIndex = first.costItemIndex;
+    if(!reqData.clientId) reqData.clientId = first.clientId || '';
+    if(!reqData.clientName) reqData.clientName = first.clientName || '';
+    reqData.orderStage = first.stage || '';
+  }
+
   try{
-    await addDoc(collection(db,'payment_requests'), reqData);
+    // عند وجود costItemRefs: ضع pendingPaymentRequestId على كل البنود في نفس الـbatch
+    if(reqData.costItemRefs && reqData.costItemRefs.length){
+      const reqRef = doc(collection(db,'payment_requests'));
+      const batch = writeBatch(db);
+      batch.set(reqRef, reqData);
+      const byOrder = new Map();
+      for(const r of reqData.costItemRefs){
+        if(!byOrder.has(r.orderId)) byOrder.set(r.orderId, []);
+        byOrder.get(r.orderId).push(r);
+      }
+      for(const [oid, refs] of byOrder.entries()){
+        const oSnap = await getDoc(doc(db,'orders',oid));
+        if(!oSnap.exists()) continue;
+        const oData = oSnap.data();
+        const items = [...(oData.costItems||[])];
+        let mutated = false;
+        for(const r of refs){
+          const i = r.costItemIndex;
+          if(items[i] && !items[i].paid && !items[i].pendingPaymentRequestId){
+            items[i] = { ...items[i], pendingPaymentRequestId: reqRef.id, pendingRequestedAt: new Date().toLocaleString('ar-EG'), pendingRequestedBy: currentUserName };
+            mutated = true;
+          }
+        }
+        if(mutated){
+          batch.update(doc(db,'orders',oid), {
+            costItems: items,
+            timeline: [...(oData.timeline||[]), { date: new Date().toLocaleString('ar-EG'), action: `💸 طلب دفع مُجمَّع (${refs.length} بند) → ${reqData.supplierName||''} — ${fn(refs.reduce((s,x)=>s+x.amount,0))} ج`, by: currentUserName }],
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+      await batch.commit();
+    } else {
+      // مسار البند المفرد: نفس السلوك السابق + علّم البند بـpendingPaymentRequestId
+      const reqRef = doc(collection(db,'payment_requests'));
+      const batch = writeBatch(db);
+      batch.set(reqRef, reqData);
+      if(reqData.type === 'supplier_payment' && reqData.costItemIndex !== undefined && reqData.orderId){
+        const oSnap = await getDoc(doc(db,'orders',reqData.orderId));
+        if(oSnap.exists()){
+          const oData = oSnap.data();
+          const items = [...(oData.costItems||[])];
+          const i = reqData.costItemIndex;
+          if(items[i] && !items[i].paid && !items[i].pendingPaymentRequestId){
+            items[i] = { ...items[i], pendingPaymentRequestId: reqRef.id, pendingRequestedAt: new Date().toLocaleString('ar-EG'), pendingRequestedBy: currentUserName };
+            batch.update(doc(db,'orders',reqData.orderId), {
+              costItems: items,
+              timeline: [...(oData.timeline||[]), { date: new Date().toLocaleString('ar-EG'), action: `💸 طلب دفع: ${items[i].type||''} — ${fn(amount)} ج → ${items[i].supplierName||''}`, by: currentUserName }],
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+      }
+      await batch.commit();
+    }
     showToast('✅ تم إرسال الطلب — بانتظار التنفيذ من المحاسب','ok');
+    __supItemsSelected = [];
     cM('new-req');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'إنشاء طلب', amount});
@@ -1376,39 +1707,63 @@ window.executeRequest = async function(){
       orderPaymentUpdate = calcOrderPayment(orderDoc, -r.amount);
     }
 
-    // 7. لو فيه costItemIndex: علّم البند paid:true
-    let costItemsUpdate = null;
-    if(r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId && orderDoc){
-      const items = [...(orderDoc.costItems||[])];
-      const idx = r.costItemIndex;
-      if(items[idx]){
-        items[idx] = {
-          ...items[idx],
-          paid: true,
-          paidTxId: txRef.id,
-          paidSpId: spRef?.id || null,
-          paidAt: new Date().toISOString(),
-          paidVia: wName,
-          paidTransferRef: transferRef,
-          paidByName: currentUserName,
-          paymentRequestId: r._id,
-          pendingPaymentRequestId: null,
-          pendingRequestedAt: null,
-          pendingRequestedBy: null,
-        };
-        costItemsUpdate = items;
+    // 7. علّم البنود paid:true — يدعم البند المفرد + multi-item (costItemRefs)
+    // نبني map: orderId → updated costItems array
+    const itemsByOrder = new Map();
+    if(r.type === 'supplier_payment'){
+      const refs = (r.costItemRefs && r.costItemRefs.length)
+        ? r.costItemRefs
+        : (r.costItemIndex !== undefined && r.orderId
+            ? [{ orderId: r.orderId, costItemIndex: r.costItemIndex, amount: r.amount, type: '' }]
+            : []);
+      // pre-fetch أي أوردر ناقص (orderDoc غطّى r.orderId فقط)
+      const ordersCache = new Map();
+      if(orderDoc) ordersCache.set(orderDoc._id, orderDoc);
+      for(const ref of refs){
+        if(ordersCache.has(ref.orderId)) continue;
+        const oS = await getDoc(doc(db,'orders',ref.orderId));
+        if(oS.exists()) ordersCache.set(ref.orderId, {...oS.data(), _id: oS.id});
+      }
+      // طبّق التعديل على نسخة كل أوردر
+      for(const ref of refs){
+        const oData = ordersCache.get(ref.orderId);
+        if(!oData) continue;
+        const arr = itemsByOrder.has(ref.orderId) ? itemsByOrder.get(ref.orderId) : [...(oData.costItems||[])];
+        const idx = ref.costItemIndex;
+        if(arr[idx]){
+          arr[idx] = {
+            ...arr[idx],
+            paid: true,
+            paidTxId: txRef.id,
+            paidSpId: spRef?.id || null,
+            paidAt: new Date().toISOString(),
+            paidVia: wName,
+            paidTransferRef: transferRef,
+            paidByName: currentUserName,
+            paymentRequestId: r._id,
+            pendingPaymentRequestId: null,
+            pendingRequestedAt: null,
+            pendingRequestedBy: null,
+          };
+        }
+        itemsByOrder.set(ref.orderId, arr);
       }
     }
 
-    // 8. دمج كل تحديثات الأوردر في update واحد (لو موجود)
-    if(orderPaymentUpdate || costItemsUpdate){
+    // 8. دمج كل تحديثات الأوردر في update لكل أوردر
+    // - الأوردر الأساسي (r.orderId): يدمج orderPaymentUpdate + costItems + lastRefundDate
+    // - باقي الأوردرات من multi-item: تحديث costItems فقط
+    const primaryOrderId = r.orderId;
+    const updatedOrderIds = new Set(itemsByOrder.keys());
+    if(orderPaymentUpdate && primaryOrderId) updatedOrderIds.add(primaryOrderId);
+    for(const oid of updatedOrderIds){
       const updateData = {
-        ...(orderPaymentUpdate || {}),
-        ...(costItemsUpdate ? { costItems: costItemsUpdate } : {}),
-        ...(r.type === 'client_refund' ? { lastRefundDate: new Date().toLocaleDateString('ar-EG') } : {}),
+        ...(oid === primaryOrderId && orderPaymentUpdate ? orderPaymentUpdate : {}),
+        ...(itemsByOrder.has(oid) ? { costItems: itemsByOrder.get(oid) } : {}),
+        ...(oid === primaryOrderId && r.type === 'client_refund' ? { lastRefundDate: new Date().toLocaleDateString('ar-EG') } : {}),
         updatedAt: serverTimestamp(),
       };
-      batch.update(doc(db,'orders',r.orderId), updateData);
+      batch.update(doc(db,'orders',oid), updateData);
     }
 
     // 9. تحديث الطلب نفسه
@@ -1427,12 +1782,13 @@ window.executeRequest = async function(){
     });
 
     await batch.commit();
+    const itemsCount = [...itemsByOrder.values()].reduce((s,arr)=>s+arr.filter(c=>c.paid && c.paymentRequestId===r._id).length, 0);
     const summary = [
       'tx + ledger',
       spRef ? 'supplier_payments' : null,
       epRef ? 'employee_payments' : null,
       orderPaymentUpdate ? 'orders.totalPaid' : null,
-      costItemsUpdate ? 'costItem.paid' : null,
+      itemsCount ? `${itemsCount} costItem.paid` : null,
     ].filter(Boolean).join(' + ');
     showToast(`✅ نُفّذ — تم تسجيل: ${summary}`,'ok');
     cM('exec');
@@ -1456,25 +1812,37 @@ window.rejectRequest = async function(reqId){
       rejectedAt: serverTimestamp(),
       rejectReason: reason.trim(),
     });
-    // لو كان الطلب مرتبط ببند تكلفة (طلب سريع من production): حرّر البند
-    if(r && r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId){
-      const oSnap = await getDoc(doc(db,'orders',r.orderId));
-      if(oSnap.exists()){
+    // لو كان الطلب مرتبط ببند/بنود تكلفة (multi-item أو مفرد): حرّر كل البنود
+    if(r && r.type === 'supplier_payment'){
+      const refs = (r.costItemRefs && r.costItemRefs.length)
+        ? r.costItemRefs
+        : (r.costItemIndex !== undefined && r.orderId
+            ? [{ orderId: r.orderId, costItemIndex: r.costItemIndex }]
+            : []);
+      const byOrder = new Map();
+      for(const ref of refs){
+        if(!byOrder.has(ref.orderId)) byOrder.set(ref.orderId, []);
+        byOrder.get(ref.orderId).push(ref);
+      }
+      for(const [oid, list] of byOrder.entries()){
+        const oSnap = await getDoc(doc(db,'orders',oid));
+        if(!oSnap.exists()) continue;
         const oData = oSnap.data();
         const items = [...(oData.costItems||[])];
-        const idx = r.costItemIndex;
-        if(items[idx] && items[idx].pendingPaymentRequestId === reqId){
-          items[idx] = {
-            ...items[idx],
-            pendingPaymentRequestId: null,
-            pendingRequestedAt: null,
-            pendingRequestedBy: null,
-          };
-          batch.update(doc(db,'orders',r.orderId), {
+        let mutated = false;
+        for(const ref of list){
+          const idx = ref.costItemIndex;
+          if(items[idx] && items[idx].pendingPaymentRequestId === reqId){
+            items[idx] = { ...items[idx], pendingPaymentRequestId: null, pendingRequestedAt: null, pendingRequestedBy: null };
+            mutated = true;
+          }
+        }
+        if(mutated){
+          batch.update(doc(db,'orders',oid), {
             costItems: items,
             timeline: [...(oData.timeline||[]), {
               date: new Date().toLocaleString('ar-EG'),
-              action: `❌ رُفِض طلب دفع: ${items[idx].type||''} — ${reason.trim()}`,
+              action: `❌ رُفِض طلب دفع (${list.length} بند) — ${reason.trim()}`,
               by: currentUserName,
             }],
             updatedAt: serverTimestamp(),
