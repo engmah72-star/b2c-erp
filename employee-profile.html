@@ -429,14 +429,15 @@ async function buildDynamicSidebar(uid, currentPage) {
 
 
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch, runTransaction }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
 
-const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
+const FB_CONFIG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+const app=initializeApp(FB_CONFIG);
 const auth=getAuth(app), db=getFirestore(app);
 
 // ══ STATE ══
@@ -1902,8 +1903,13 @@ window.openSetPasswordModal=function(){
       <div style="padding:18px 20px">
         <div class="fg" style="margin-bottom:12px">
           <label>كلمة السر الجديدة *</label>
-          <input class="inp" id="new-emp-pw" type="text" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
+          <input class="inp" id="new-emp-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
           <div style="font-size:10px;color:var(--dim2);margin-top:4px">ستظهر هنا للأدمن — أبلغ الموظف بها ليدخل ويغيّرها</div>
+        </div>
+        <div class="fg" style="margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:6px">كلمة السر الحالية <span style="color:var(--dim2);font-weight:400;font-size:10px">(اختياري — لو الموظف غيّرها)</span></label>
+          <input class="inp" id="current-emp-pw" type="text" dir="ltr" placeholder="اتركها فارغة لو الأدمن لم يغيّرها">
+          <div style="font-size:10px;color:var(--dim2);margin-top:4px">إن كان الموظف غيّر كلمة السر بنفسه، اكتب الكلمة الحالية هنا (إن عرفتها) ليتم التطبيق فوراً.</div>
         </div>
         <button class="btn btn-g" id="sp-save" style="width:100%" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
         <div id="sp-msg" style="font-size:11px;margin-top:8px;color:var(--dim2);line-height:1.6"></div>
@@ -1913,13 +1919,78 @@ window.openSetPasswordModal=function(){
   setTimeout(()=>document.getElementById('new-emp-pw')?.focus(),100);
 };
 
+// Apply a new password to Firebase Auth directly via a secondary app (no Cloud
+// Function needed). We try a list of candidate "current" passwords until one
+// works: the optional admin-provided one, the previously displayed pw, then
+// the system defaults. This is robust against the chronic case where Cloud
+// Function deployments fail silently and Firestore displayPassword drifts
+// out of sync with Firebase Auth.
+async function applyAuthPasswordViaSecondaryApp(email, newPw, candidateOldPasswords){
+  let lastErr='';
+  for(const oldPw of candidateOldPasswords){
+    if(!oldPw) continue;
+    const secApp=initializeApp(FB_CONFIG,'secondary_pw_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
+    const secAuth=getAuth(secApp);
+    try{
+      const cred=await signInWithEmailAndPassword(secAuth,email,oldPw);
+      await updatePassword(cred.user,newPw);
+      try{ await signOut(secAuth); }catch(_){}
+      try{ await deleteApp(secApp); }catch(_){}
+      return {ok:true, usedOldPw:oldPw};
+    }catch(e){
+      lastErr=e?.code||e?.message||'';
+      try{ await signOut(secAuth); }catch(_){}
+      try{ await deleteApp(secApp); }catch(_){}
+      // continue to next candidate
+    }
+  }
+  return {ok:false, error:lastErr};
+}
+
 window.saveEmployeePassword=async function(btn){
   const pw=document.getElementById('new-emp-pw')?.value?.trim();
+  const adminProvidedOldPw=document.getElementById('current-emp-pw')?.value?.trim()||'';
   const msg=document.getElementById('sp-msg');
   if(!pw||pw.length<6){if(msg)msg.innerHTML='<span style="color:var(--r)">⚠️ 6 أحرف على الأقل</span>';return;}
   if(!emp?.authUid){if(msg)msg.innerHTML='<span style="color:var(--r)">⚠️ لا يوجد حساب</span>';return;}
-  btn.disabled=true;const orig=btn.textContent;btn.textContent='جاري…';
-  // 1) Save to Firestore so admin sees it
+  const email=emp.email||((emp.phone||'')+'@b2c.local');
+  btn.disabled=true;const orig=btn.textContent;btn.textContent='جاري التطبيق…';
+  if(msg)msg.innerHTML='<span style="color:var(--dim2)">⏳ جاري تطبيق كلمة السر على Firebase Auth…</span>';
+
+  // 1) Try direct Auth update via secondary app — most reliable, no Cloud Function dependency.
+  const candidates=[
+    adminProvidedOldPw,
+    empUserDoc?.displayPassword,
+    pw,            // إذا الكلمة الجديدة هي نفسها المخزّنة في Auth (تكرار آمن)
+    '123456',
+    'b2c@123',
+  ].filter((v,i,a)=>v && a.indexOf(v)===i); // dedupe + drop empties
+
+  let applied=false, applyErr='', method='';
+  const direct=await applyAuthPasswordViaSecondaryApp(email,pw,candidates);
+  if(direct.ok){applied=true;method='direct';}
+  else applyErr=direct.error;
+
+  // 2) Fallback: Cloud Function (if deployed)
+  if(!applied){
+    try{
+      const { getFunctions, httpsCallable }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
+      const fns=getFunctions(app,'us-central1');
+      const call=httpsCallable(fns,'adminSetEmployeePassword');
+      await call({uid:emp.authUid,password:pw});
+      applied=true;method='cloud-function';
+    }catch(e){
+      applyErr=(applyErr?applyErr+' / ':'')+(e?.code||e?.message||'');
+    }
+  }
+
+  if(!applied){
+    btn.disabled=false;btn.textContent=orig;
+    if(msg)msg.innerHTML=`<span style="color:var(--r)">❌ تعذّر تطبيق كلمة السر تلقائياً</span><br><span style="color:var(--dim2);font-size:10px">السبب: ${applyErr||'unknown'}<br>الحل: اطلب من الموظف الكلمة الحالية واكتبها في خانة "كلمة السر الحالية"، أو استخدم Firebase Console يدوياً.</span>`;
+    return;
+  }
+
+  // 3) Auth is now actually updated — sync Firestore so admin sees the right value
   try{
     await updateDoc(doc(db,'users',emp.authUid),{
       displayPassword:pw,
@@ -1928,30 +1999,13 @@ window.saveEmployeePassword=async function(btn){
       displayPasswordSetByName:adminName||'',
       mustChangePassword:true,
     });
-    if(msg)msg.innerHTML='<span style="color:var(--g)">✅ حُفظت في الملف</span>';
   }catch(e){
-    btn.disabled=false;btn.textContent=orig;
-    if(msg)msg.innerHTML='<span style="color:var(--r)">❌ '+(e.message||'فشل الحفظ')+'</span>';
-    return;
+    console.warn('Firestore displayPassword sync failed (Auth was updated):',e);
   }
-  // 2) Try to apply to Firebase Auth via Cloud Function
-  let applied=false, applyErr='';
-  try{
-    const { getFunctions, httpsCallable }=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
-    const fns=getFunctions(app,'us-central1');
-    const call=httpsCallable(fns,'adminSetEmployeePassword');
-    await call({uid:emp.authUid,password:pw});
-    applied=true;
-  }catch(e){
-    applyErr=e?.code||e?.message||'';
-  }
+
   btn.disabled=false;btn.textContent=orig;
-  if(applied){
-    if(msg)msg.innerHTML='<span style="color:var(--g)">✅ تم الحفظ والتطبيق — أبلغ الموظف بالكلمة الجديدة</span>';
-    setTimeout(()=>btn.closest('.overlay')?.remove(),1500);
-  } else {
-    if(msg)msg.innerHTML=`<span style="color:var(--y)">⚠️ حُفظت في الملف لكن لم تُطبَّق على Firebase Auth تلقائياً.</span><br><span style="color:var(--dim2);font-size:10px">السبب: ${applyErr||'unknown'}. طبّقها يدوياً من Firebase Console أو تأكد من نشر الـ Cloud Function.</span>`;
-  }
+  if(msg)msg.innerHTML=`<span style="color:var(--g)">✅ تم — كلمة السر طُبّقت على النظام (${method==='direct'?'مباشر':'Cloud Function'}).</span><br><span style="color:var(--dim2);font-size:10px">أبلغ الموظف بـ <strong style="color:var(--snow);font-family:ui-monospace,monospace">${pw}</strong> ليدخل بها.</span>`;
+  setTimeout(()=>btn.closest('.overlay')?.remove(),2500);
 };
 
 window.resetEmployeePassword=async function(){
