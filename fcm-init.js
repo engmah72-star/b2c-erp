@@ -24,8 +24,8 @@ import { getFunctions, httpsCallable }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 // PUBLIC VAPID key — safe to expose in client code.
-// Replace with the value from Firebase Console (see header comment).
-const VAPID_KEY = 'REPLACE_WITH_VAPID_PUBLIC_KEY';
+// Generated from Firebase Console → Cloud Messaging → Web Push certificates.
+const VAPID_KEY = 'BJYZdooBUT5dK7hu-r2eHVW6zgnu3Ly5uVmcEJNZ-Ujp6rsPkd6_KtbpgJOItGLFyhzJTofClsa06dDiwucqoj0';
 
 const PERM_ASKED_KEY = 'b2c_fcm_perm_asked';
 const TOKEN_CACHE_KEY = 'b2c_fcm_token';
