@@ -214,6 +214,68 @@ jobs:
 
       # ─────────── Cloud Functions ───────────
       # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
+      - name: Enable required Google Cloud APIs (idempotent)
+        # v2 functions require many APIs to be enabled. firebase deploy
+        # auto-enables most of them, but cloudbilling.googleapis.com is a
+        # prerequisite for the deploy to even verify billing eligibility —
+        # without it the deploy aborts before enabling anything else.
+        # We enable the full set up-front in one batch (idempotent: already-on
+        # APIs are no-op).
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          APIS = [
+              "cloudbilling.googleapis.com",       # billing check before deploy
+              "cloudfunctions.googleapis.com",     # functions itself
+              "cloudbuild.googleapis.com",         # build the function bundle
+              "artifactregistry.googleapis.com",   # store function container
+              "run.googleapis.com",                # v2 = Cloud Run
+              "eventarc.googleapis.com",           # v2 event triggers
+              "pubsub.googleapis.com",             # v2 scheduler under the hood
+              "cloudscheduler.googleapis.com",     # scheduled functions
+              "secretmanager.googleapis.com",      # defineSecret('WHATSAPP_TOKEN')
+              "iamcredentials.googleapis.com",     # SA impersonation
+              "logging.googleapis.com",            # function logs
+          ]
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+          # batchEnable can enable up to 20 APIs in one call
+          r = requests.post(
+              f"https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services:batchEnable",
+              headers=hdrs,
+              json={"serviceIds": APIS},
+          )
+          if r.status_code in (200, 201):
+              print(f"✓ batchEnable accepted — {len(APIS)} APIs enabled or already on")
+              try:
+                  print(f"  Operation: {r.json().get('name','(no name)')}")
+              except Exception:
+                  pass
+          else:
+              print(f"WARN: batchEnable returned {r.status_code}")
+              print(r.text[:600])
+              # Fall back to enabling one-by-one so a single bad API doesn't kill the batch
+              for api in APIS:
+                  rr = requests.post(
+                      f"https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services/{api}:enable",
+                      headers=hdrs, json={},
+                  )
+                  print(f"  {api}: {rr.status_code}")
+          PYEOF
+
       - name: Ensure WhatsApp secret exists (placeholder if missing)
         # WhatsApp functions use defineSecret('WHATSAPP_TOKEN'). The deploy
         # refuses to proceed in --non-interactive mode if the secret has no
