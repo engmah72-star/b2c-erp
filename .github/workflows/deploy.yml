@@ -71,6 +71,82 @@ jobs:
           echo "==> sw.js cache bumped to b2c-${SHA_SHORT}"
           head -2 sw.js
 
+      # ─────────── One-time bootstrap (idempotent) ───────────
+      # Creates the backup GCS bucket and grants the IAM roles needed by:
+      #   - scheduledFirestoreBackup → datastore.importExportAdmin + storage.objectAdmin
+      # All operations are idempotent: existing bucket/roles are accepted as-is.
+      - name: Bootstrap backup bucket + IAM (idempotent)
+        continue-on-error: true
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          BUCKET  = f"{PROJECT}-firestore-backups"
+          # App Engine default SA — owns Cloud Functions invocations
+          FUNCTIONS_SA = f"{PROJECT}@appspot.gserviceaccount.com"
+          ROLES = ["roles/datastore.importExportAdmin", "roles/storage.objectAdmin"]
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+          # 1) Create bucket (409 == already exists, treat as success)
+          print(f"==> Ensuring gs://{BUCKET} exists...")
+          r = requests.post(
+              "https://storage.googleapis.com/storage/v1/b",
+              params={"project": PROJECT},
+              headers=hdrs,
+              json={"name": BUCKET, "location": "us-central1", "storageClass": "STANDARD"},
+          )
+          if r.status_code in (200, 409):
+              print(f"   bucket OK ({r.status_code})")
+          else:
+              print(f"   bucket WARN: {r.status_code} — {r.text[:300]}")
+
+          # 2) Grant project-level IAM roles to Functions SA
+          print(f"==> Ensuring IAM roles for {FUNCTIONS_SA}...")
+          iam_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:getIamPolicy"
+          r = requests.post(iam_url, headers=hdrs, json={})
+          if r.status_code != 200:
+              print(f"   getIamPolicy failed: {r.status_code} — {r.text[:300]}")
+          else:
+              policy = r.json()
+              member = f"serviceAccount:{FUNCTIONS_SA}"
+              bindings = policy.get("bindings", [])
+              changed = False
+              for role in ROLES:
+                  existing = next((b for b in bindings if b["role"] == role), None)
+                  if existing is None:
+                      bindings.append({"role": role, "members": [member]})
+                      changed = True
+                      print(f"   + {role}")
+                  elif member not in existing.get("members", []):
+                      existing.setdefault("members", []).append(member)
+                      changed = True
+                      print(f"   + {role} (member added)")
+                  else:
+                      print(f"   = {role} (already set)")
+              if changed:
+                  policy["bindings"] = bindings
+                  set_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:setIamPolicy"
+                  r2 = requests.post(set_url, headers=hdrs, json={"policy": policy})
+                  if r2.status_code == 200:
+                      print("   setIamPolicy OK")
+                  else:
+                      print(f"   setIamPolicy WARN: {r2.status_code} — {r2.text[:300]}")
+              else:
+                  print("   no IAM changes needed")
+          PYEOF
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -79,14 +155,28 @@ jobs:
           channelId: live
           projectId: business2card-c041b
 
-      # ─────────── WhatsApp Cloud Functions ───────────
-      # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
-      # لو الباقة لسه مش متفعّلة، الخطوة هتفشل بدون ما توقف باقي الـ deploy.
-      - name: Setup Node for functions
+      # ─────────── Firestore Indexes ───────────
+      # ينشر firestore.indexes.json تلقائياً. CLI يتعرّف على المختلف
+      # عن الموجود فعلاً ويضيف الناقص فقط (idempotent بطبيعته).
+      - name: Setup Node for indexes/functions
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      - name: Deploy Firestore Indexes
+        continue-on-error: true
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SA" > /tmp/sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
+          npm install -g firebase-tools
+          firebase deploy --only firestore:indexes --project business2card-c041b --non-interactive
+          rm -f /tmp/sa.json
+
+      # ─────────── WhatsApp Cloud Functions ───────────
+      # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
+      # لو الباقة لسه مش متفعّلة، الخطوة هتفشل بدون ما توقف باقي الـ deploy.
       - name: Install functions dependencies
         working-directory: functions
         run: npm install --no-audit --no-fund
