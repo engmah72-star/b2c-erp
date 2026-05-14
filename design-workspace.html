@@ -952,17 +952,46 @@ window.reqPublish=async function(itemId){
 window.approvePublish=async function(itemId,direct){
   if(!isAdmRole()){toast('❌ الموافقة للأدمن فقط','err');return;}
   try{
-    await updateDoc(doc(db,'design_items',itemId),{
+    const item=currentItems.find(i=>i._id===itemId);
+    if(!item){toast('⚠️ العنصر غير موجود','err');return;}
+    const versions=item.versions||[];
+    const latestVer=versions[versions.length-1];
+    if(!latestVer||!latestVer.imageUrl){toast('⚠️ لا توجد نسخة قابلة للنشر','err');return;}
+    const order=orders.find(o=>o._id===(item.orderDocId||currentOrderId));
+
+    // كتابة ذرّية: design_items.visibility + gallery doc — التصميم يظهر فوراً في gallery.html
+    const batch=writeBatch(db);
+    const galleryRef=item.galleryId
+      ? doc(db,'gallery',item.galleryId)
+      : doc(collection(db,'gallery'));
+    batch.set(galleryRef,{
+      title: item.galleryTitle || item.itemName || 'تصميم',
+      description: item.galleryDesc || '',
+      imageUrl: latestVer.imageUrl,
+      vNum: latestVer.vNum,
+      clientName: item.clientName || order?.clientName || '',
+      designerName: item.designerName || currentUserName,
+      productType: order?.products?.[item.itemIndex]?.name || item.itemName || '',
+      orderId: item.orderDocId || '',
+      publishedAt: serverTimestamp(),
+      publishedBy: currentUid,
+      publishedByName: currentUserName,
+      isVisible: true,
+      tags: [],
+    },{merge:true});
+    batch.update(doc(db,'design_items',itemId),{
       visibility:'public',
+      galleryId: galleryRef.id,
       publishApprovedBy:currentUid,
       publishApprovedByName:currentUserName,
       publishApprovedAt:serverTimestamp(),
       visibilitySetBy:currentUid,
       visibilitySetByName:currentUserName,
       visibilitySetAt:serverTimestamp(),
-      editHistory:arrayUnion({action:direct?'published_directly':'publish_approved',by:currentUid,byName:currentUserName,at:new Date().toISOString()})
+      editHistory:arrayUnion({action:direct?'published_directly':'publish_approved',galleryId:galleryRef.id,by:currentUid,byName:currentUserName,at:new Date().toISOString()})
     });
-    toast(direct?'🌐 تم النشر مباشرة':'✓ تم اعتماد النشر','ok');
+    await batch.commit();
+    toast(direct?'🌐 تم النشر مباشرة في المعرض العام':'✓ تم اعتماد التصميم ونشره في المعرض','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -999,13 +1028,25 @@ window.withdrawPublic=async function(itemId){
   if(!isAdmRole()){toast('❌ السحب للأدمن فقط','err');return;}
   if(!confirm('سحب التصميم من النشر؟'))return;
   try{
-    await updateDoc(doc(db,'design_items',itemId),{
+    const item=currentItems.find(i=>i._id===itemId);
+    // كتابة ذرّية: design_items.visibility + gallery.isVisible=false (soft-hide، التاريخ يبقى)
+    const batch=writeBatch(db);
+    batch.update(doc(db,'design_items',itemId),{
       visibility:'private',
       visibilitySetBy:currentUid,
       visibilitySetByName:currentUserName,
       visibilitySetAt:serverTimestamp(),
       editHistory:arrayUnion({action:'public_withdrawn',by:currentUid,byName:currentUserName,at:new Date().toISOString()})
     });
+    if(item?.galleryId){
+      batch.update(doc(db,'gallery',item.galleryId),{
+        isVisible:false,
+        withdrawnAt:serverTimestamp(),
+        withdrawnBy:currentUid,
+        withdrawnByName:currentUserName,
+      });
+    }
+    await batch.commit();
     toast('🔒 تم السحب من النشر','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
