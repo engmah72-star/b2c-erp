@@ -1554,3 +1554,56 @@ exports.weeklyProductRecommendations = onSchedule(
     console.log(`[weeklyProductRecommendations] clients=${writtenClients}, products=${writtenProducts}, pairs=${nextCount.size}`);
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   GENKIT: AI-powered client analysis
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Callable wrapping the Genkit client analysis flow. The caller passes their
+// own Gemini API key (same one stored in localStorage by ai-engine.js) — we
+// never persist it. This keeps secret management on the user's device while
+// still letting us run heavy Firestore queries server-side.
+//
+// Output is a Zod-validated structured object (see genkit-flows.js for schema).
+
+const { analyzeClient } = require('./genkit-flows');
+
+exports.analyzeClientWithAI = onCall(
+  { memory: '512MiB', timeoutSeconds: 90 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    const { clientId, apiKey } = req.data || {};
+    if (!clientId || typeof clientId !== 'string') {
+      throw new HttpsError('invalid-argument', 'clientId مطلوب');
+    }
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('AIza')) {
+      throw new HttpsError('invalid-argument', 'مفتاح Gemini API مطلوب — اضبطه أولاً في صفحة AI Insights');
+    }
+
+    // Permission: same as reading clients
+    const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
+    if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
+    const callerRole = callerSnap.data().role || '';
+    const callerPerms = callerSnap.data().permissions || {};
+    const pages = callerPerms.pages || [];
+    const isAdmin = ['admin', 'operation_manager'].includes(callerRole);
+    const canView = isAdmin || pages.includes('clients') || pages.includes('*');
+    if (!canView) throw new HttpsError('permission-denied', 'صلاحية قراءة العملاء مطلوبة');
+
+    try {
+      const result = await analyzeClient(apiKey, clientId);
+      if (result && result.error === 'client_not_found') {
+        throw new HttpsError('not-found', result.message);
+      }
+      return result;
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error('[analyzeClientWithAI] error', e);
+      const msg = e.message || String(e);
+      if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
+        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');
+      }
+      throw new HttpsError('internal', `AI: ${msg.slice(0, 200)}`);
+    }
+  }
+);
