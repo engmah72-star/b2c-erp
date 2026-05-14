@@ -1253,3 +1253,304 @@ exports.dailyFinancialAnomalyScan = onSchedule(
     console.log(`[dailyFinancialAnomalyScan] groups=${groupsScanned}/${groups.size}, alerts=${alertsCreated}`);
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   ML: Weekly revenue forecast (statistical Holt-Winters-style smoothing)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Method: simple exponential smoothing on daily revenue series, with a
+// 7-day seasonal additive component (day-of-week effect captured from the
+// trailing 8 weeks). No external libs — all closed-form math.
+//
+// Output: `forecasts/{YYYY-MM-DD}` keyed by run date with arrays for the next
+// 14 days. Pages render directly from there (RULE 1 — no recompute on read).
+//
+// Why not BigQuery ARIMA? Free-tier-friendly: this runs in Node in <2s on
+// ~1 year of daily aggregates with zero infrastructure. We can swap in BQML
+// later if the time-series gets noisy enough to need it.
+
+const FORECAST_HISTORY_DAYS  = 365;
+const FORECAST_HORIZON_DAYS  = 14;
+const FORECAST_ALPHA         = 0.30; // level smoothing (0..1, higher = more reactive)
+const FORECAST_SEASON_LENGTH = 7;
+const FORECAST_SEASON_WEEKS  = 8;    // weeks of history used to compute seasonal indices
+
+exports.weeklyRevenueForecast = onSchedule(
+  { schedule: '0 5 * * 1', timeZone: 'Africa/Cairo', timeoutSeconds: 300, memory: '512MiB' },
+  async () => {
+    const cutoff = new Date(Date.now() - FORECAST_HISTORY_DAYS * 86400000);
+
+    const snap = await db.collection('orders')
+      .where('createdAt', '>=', cutoff)
+      .get();
+
+    if (snap.empty) {
+      console.log('[weeklyRevenueForecast] no orders in history window');
+      return;
+    }
+
+    // Bucket revenue by ISO date (UTC). Cancelled orders excluded — they are
+    // non-revenue. We use sale + ship - discount as the booking value (matches
+    // calcRem in index.html so dashboards stay consistent).
+    const byDay = new Map();
+    snap.forEach(d => {
+      const o = d.data();
+      if (o.stage === 'cancelled') return;
+      const created = o.createdAt?.toDate?.();
+      if (!created) return;
+      const dayKey = created.toISOString().slice(0, 10);
+      const ship  = Number(o.customerShipFee) || 0;
+      const sale  = Number(o.salePrice)       || 0;
+      const disc  = Number(o.discount)        || 0;
+      const rev   = Math.max(0, sale + ship - disc);
+      byDay.set(dayKey, (byDay.get(dayKey) || 0) + rev);
+    });
+
+    if (byDay.size < FORECAST_SEASON_LENGTH * 2) {
+      console.log(`[weeklyRevenueForecast] insufficient history (${byDay.size} days) — skipping`);
+      return;
+    }
+
+    // Build a continuous daily series from earliest day to yesterday (fill
+    // missing days with 0 — important so smoothing doesn't drift on gaps).
+    const days = [...byDay.keys()].sort();
+    const startDate = new Date(days[0] + 'T00:00:00Z');
+    const endDate   = new Date();   // up to today (today excluded since incomplete)
+    endDate.setUTCHours(0, 0, 0, 0);
+
+    const series = [];
+    for (let t = startDate.getTime(); t < endDate.getTime(); t += 86400000) {
+      const k = new Date(t).toISOString().slice(0, 10);
+      series.push({ date: k, revenue: byDay.get(k) || 0 });
+    }
+    if (series.length < FORECAST_SEASON_LENGTH * 2) return;
+
+    // ── Seasonal indices: average revenue per day-of-week over the last
+    // SEASON_WEEKS weeks, normalized so the indices sum to SEASON_LENGTH.
+    const tail = series.slice(-FORECAST_SEASON_LENGTH * FORECAST_SEASON_WEEKS);
+    const dowSums   = new Array(FORECAST_SEASON_LENGTH).fill(0);
+    const dowCounts = new Array(FORECAST_SEASON_LENGTH).fill(0);
+    tail.forEach(p => {
+      const dow = new Date(p.date + 'T00:00:00Z').getUTCDay();
+      dowSums[dow]   += p.revenue;
+      dowCounts[dow] += 1;
+    });
+    const dowAvg = dowSums.map((s, i) => dowCounts[i] ? s / dowCounts[i] : 0);
+    const meanOfAvg = dowAvg.reduce((a, b) => a + b, 0) / FORECAST_SEASON_LENGTH || 1;
+    const seasonalIdx = dowAvg.map(v => v / meanOfAvg); // 1.0 == typical day
+
+    // ── De-seasonalize then smooth (simple exponential smoothing, level only).
+    // For each point: deSeas = revenue / seasonalIdx[dow]. Level updated with
+    // FORECAST_ALPHA. Final level becomes the baseline for the horizon.
+    let level = series[0].revenue;
+    for (const p of series) {
+      const dow = new Date(p.date + 'T00:00:00Z').getUTCDay();
+      const sIdx = seasonalIdx[dow] || 1;
+      const deSeas = sIdx ? p.revenue / sIdx : p.revenue;
+      level = FORECAST_ALPHA * deSeas + (1 - FORECAST_ALPHA) * level;
+    }
+
+    // ── Project the horizon: re-apply the seasonal index for each future day
+    const horizon = [];
+    for (let i = 1; i <= FORECAST_HORIZON_DAYS; i++) {
+      const t = endDate.getTime() + (i - 1) * 86400000;
+      const date = new Date(t);
+      const dow  = date.getUTCDay();
+      const sIdx = seasonalIdx[dow] || 1;
+      horizon.push({
+        date: date.toISOString().slice(0, 10),
+        forecast: Math.max(0, Math.round(level * sIdx)),
+        seasonalIndex: Number(sIdx.toFixed(2)),
+      });
+    }
+
+    // Aggregate next-7 / next-14 totals for headline cards
+    const next7  = horizon.slice(0, 7).reduce((s, p) => s + p.forecast, 0);
+    const next14 = horizon.reduce((s, p) => s + p.forecast, 0);
+
+    // Compare with trailing 7d actual to give a delta signal
+    const trailing7 = series.slice(-7).reduce((s, p) => s + p.revenue, 0);
+    const deltaPct = trailing7 ? Math.round(((next7 - trailing7) / trailing7) * 100) : 0;
+
+    const runId = endDate.toISOString().slice(0, 10);
+    await db.doc(`forecasts/${runId}`).set({
+      runId,
+      kind: 'revenue_daily',
+      methodology: 'exp_smoothing_with_dow_seasonality',
+      params: {
+        alpha: FORECAST_ALPHA,
+        seasonLength: FORECAST_SEASON_LENGTH,
+        seasonWeeks: FORECAST_SEASON_WEEKS,
+        historyDays: FORECAST_HISTORY_DAYS,
+      },
+      level: Math.round(level),
+      seasonalIdx: seasonalIdx.map(v => Number(v.toFixed(2))),
+      horizon,
+      next7DayTotal:  next7,
+      next14DayTotal: next14,
+      trailing7DayActual: Math.round(trailing7),
+      deltaPctVsTrailing7: deltaPct,
+      historyPoints: series.length,
+      runAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[weeklyRevenueForecast] runId=${runId} next7=${next7} next14=${next14} Δ=${deltaPct}% (vs trailing 7)`);
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   ML: Weekly product recommendations (sequential collaborative filtering)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Each order in this ERP has a single `productName`, so we model a client's
+// history as an ordered SEQUENCE of products (P1 → P2 → P3 …). We learn the
+// global affinity matrix `nextCount[A][B]` = "how often did B appear as the
+// NEXT order after A across all clients", then for each client we recommend
+// the top-K products that historically follow their most recent order.
+//
+// Outputs:
+//   product_recommendations/{clientId}  → top 5 next products per client
+//   product_affinities/{productName}    → top 5 next products globally per product
+//
+// This is intentionally small-data friendly — no embeddings, no LLM calls,
+// pure counts. Quality scales with order volume; recommendations get sharper
+// as more orders pile up.
+
+const REC_HISTORY_DAYS = 365;
+const REC_TOP_K        = 5;
+const REC_MIN_SUPPORT  = 2;     // require 2+ co-occurrences before we trust a pair
+const REC_MAX_ORDERS   = 50000;
+
+exports.weeklyProductRecommendations = onSchedule(
+  { schedule: '30 4 * * 1', timeZone: 'Africa/Cairo', timeoutSeconds: 540, memory: '1GiB' },
+  async () => {
+    const cutoff = new Date(Date.now() - REC_HISTORY_DAYS * 86400000);
+
+    const snap = await db.collection('orders')
+      .where('createdAt', '>=', cutoff)
+      .limit(REC_MAX_ORDERS)
+      .get();
+
+    if (snap.empty) {
+      console.log('[weeklyProductRecommendations] no orders in window');
+      return;
+    }
+
+    // Bucket by client; keep only orders with a productName + non-cancelled
+    const byClient = new Map();
+    snap.forEach(d => {
+      const o = d.data();
+      if (!o.clientId) return;
+      if (o.stage === 'cancelled') return;
+      const product = (o.productName || o.product || '').trim();
+      if (!product) return;
+      const ts = o.createdAt?.toDate?.()?.getTime() || 0;
+      if (!ts) return;
+      let arr = byClient.get(o.clientId);
+      if (!arr) { arr = []; byClient.set(o.clientId, arr); }
+      arr.push({ product, ts, clientName: o.clientName || '' });
+    });
+
+    if (byClient.size === 0) {
+      console.log('[weeklyProductRecommendations] no eligible orders after filtering');
+      return;
+    }
+
+    // Sort each client's orders chronologically + harvest sequential pairs.
+    // nextCount[A][B] = number of times product A was followed by product B
+    // (across all clients).
+    const nextCount = new Map();
+    const productCount = new Map(); // total occurrences (used for popularity tie-break)
+    for (const orders of byClient.values()) {
+      orders.sort((a, b) => a.ts - b.ts);
+      for (let i = 0; i < orders.length; i++) {
+        const p = orders[i].product;
+        productCount.set(p, (productCount.get(p) || 0) + 1);
+        if (i === orders.length - 1) continue;
+        const next = orders[i + 1].product;
+        if (next === p) continue; // skip self-loops (re-orders of the same product)
+        let row = nextCount.get(p);
+        if (!row) { row = new Map(); nextCount.set(p, row); }
+        row.set(next, (row.get(next) || 0) + 1);
+      }
+    }
+
+    // Build per-product top-K recommendations (the global affinity table).
+    const productAffinities = new Map();
+    for (const [p, row] of nextCount.entries()) {
+      const ranked = [...row.entries()]
+        .filter(([_, c]) => c >= REC_MIN_SUPPORT)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, REC_TOP_K)
+        .map(([nextP, count]) => ({
+          product: nextP,
+          count,
+          confidence: Number((count / (productCount.get(p) || 1)).toFixed(3)),
+        }));
+      if (ranked.length) productAffinities.set(p, ranked);
+    }
+
+    // Per-client recommendations: take their most recent product, look up the
+    // affinity row, exclude products they've already bought.
+    const clientRecs = [];
+    for (const [clientId, orders] of byClient.entries()) {
+      orders.sort((a, b) => b.ts - a.ts); // newest first
+      const seen = new Set(orders.map(o => o.product));
+      const last = orders[0];
+      const aff = productAffinities.get(last.product);
+      if (!aff || aff.length === 0) continue;
+      const recs = aff.filter(r => !seen.has(r.product)).slice(0, REC_TOP_K);
+      if (!recs.length) continue;
+      clientRecs.push({
+        clientId,
+        clientName: last.clientName,
+        basedOn: last.product,
+        recommendations: recs,
+      });
+    }
+
+    // Persist client recs in batched writes
+    let writtenClients = 0;
+    for (let i = 0; i < clientRecs.length; i += 400) {
+      const chunk = clientRecs.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(rec => {
+        batch.set(db.doc(`product_recommendations/${rec.clientId}`), {
+          clientId:   rec.clientId,
+          clientName: rec.clientName,
+          basedOnProduct: rec.basedOn,
+          recommendations: rec.recommendations,
+          windowDays: REC_HISTORY_DAYS,
+          computedAt: FieldValue.serverTimestamp(),
+        });
+        writtenClients++;
+      });
+      await batch.commit();
+    }
+
+    // Persist global affinities (per product). Sanitize doc ids — productName
+    // can contain '/' which Firestore rejects in document paths.
+    const safeId = s => String(s).replace(/\//g, '_').replace(/^\.+/, '_').slice(0, 120);
+    let writtenProducts = 0;
+    const productEntries = [...productAffinities.entries()];
+    for (let i = 0; i < productEntries.length; i += 400) {
+      const chunk = productEntries.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(([product, affinities]) => {
+        const id = safeId(product);
+        if (!id) return;
+        batch.set(db.doc(`product_affinities/${id}`), {
+          product,
+          affinities,
+          totalOccurrences: productCount.get(product) || 0,
+          windowDays: REC_HISTORY_DAYS,
+          computedAt: FieldValue.serverTimestamp(),
+        });
+        writtenProducts++;
+      });
+      await batch.commit();
+    }
+
+    console.log(`[weeklyProductRecommendations] clients=${writtenClients}, products=${writtenProducts}, pairs=${nextCount.size}`);
+  }
+);
