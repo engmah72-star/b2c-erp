@@ -92,16 +92,23 @@ a{color:inherit;text-decoration:none}
 <div class="topbar">
   <a href="index.html" class="topbar-back">←</a>
   <span class="topbar-title">🧠 AI Insights</span>
-  <span class="topbar-badge" id="provider-badge">Firebase AI</span>
+  <span class="topbar-badge" id="provider-badge">Gemini API</span>
 </div>
 
 <div class="wrap">
 
   <!-- Provider / Mode Card -->
-  <div class="key-card ok" id="key-card">
-    <div id="fb-status" class="key-ok" style="display:flex">
-      <span id="fb-status-ico">🔥</span>
-      <span id="fb-status-txt">جاري الاتصال بـ Firebase AI…</span>
+  <div class="key-card" id="key-card">
+    <div id="key-setup">
+      <div class="key-label">🔑 مفتاح Gemini API</div>
+      <div class="key-row">
+        <input id="key-inp" class="key-input" type="password" placeholder="AIza..." autocomplete="off">
+        <button class="key-btn" onclick="saveKey()">حفظ</button>
+      </div>
+      <div class="key-hint">احصل على مفتاح مجاني من <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio ←</a></div>
+    </div>
+    <div id="key-ok" style="display:none" class="key-ok">
+      ✅ API Key محفوظ &nbsp;·&nbsp; <span style="cursor:pointer;color:var(--dim);font-size:11px" onclick="clearKey()">إزالة</span>
     </div>
 
     <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
@@ -112,23 +119,6 @@ a{color:inherit;text-decoration:none}
         <button onclick="setModel('gemini-2.5-pro')"   class="mdbtn" data-m="gemini-2.5-pro">2.5 Pro <span style="font-size:9px;color:var(--y)">تحليل عميق</span></button>
       </div>
     </div>
-
-    <!-- Advanced: Manual API Key (fallback) -->
-    <details style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-      <summary style="font-size:11px;color:var(--dim2);cursor:pointer;outline:none">⚙️ إعدادات متقدمة — مفتاح API يدوي (اختياري)</summary>
-      <div style="margin-top:10px">
-        <div id="key-setup">
-          <div class="key-row">
-            <input id="key-inp" class="key-input" type="password" placeholder="AIza..." autocomplete="off">
-            <button class="key-btn" onclick="saveKey()">حفظ</button>
-          </div>
-          <div class="key-hint">استخدم هذا فقط إذا كان Firebase AI غير مفعّل. احصل على مفتاح من <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio ←</a></div>
-        </div>
-        <div id="key-ok" style="display:none;margin-top:8px" class="key-ok">
-          ✅ API Key محفوظ &nbsp;·&nbsp; <span style="cursor:pointer;color:var(--dim);font-size:11px" onclick="clearKey()">إزالة</span>
-        </div>
-      </div>
-    </details>
   </div>
 
   <!-- Quick Stats -->
@@ -165,22 +155,11 @@ a{color:inherit;text-decoration:none}
 import {initializeApp} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {getAuth,onAuthStateChanged} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {getFirestore,collection,getDocs,query,where,orderBy,limit} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import {getAI,getGenerativeModel,GoogleAIBackend} from"https://www.gstatic.com/firebasejs/11.10.0/firebase-ai.js";
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
 const auth=getAuth(app);
 const db=getFirestore(app);
-
-// ── Firebase AI Logic (Gemini عبر Firebase — بدون API Key يدوي) ──
-let firebaseAI=null;
-let firebaseAIError=null;
-try{
-  firebaseAI=getAI(app,{backend:new GoogleAIBackend()});
-}catch(e){
-  firebaseAIError=e;
-  console.warn('[Firebase AI] init failed:',e);
-}
 
 const fn=n=>Math.round(n).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -193,7 +172,6 @@ onAuthStateChanged(auth,async user=>{
   if(!user){window.location.href='login.html';return;}
   await loadData();
   checkKey();
-  initProviderStatus();
 });
 
 // ── Load Data ──
@@ -252,59 +230,6 @@ function checkKey(){
     b.classList.toggle('active',b.dataset.m===saved);
   });
 }
-
-// ── Provider status ──
-async function initProviderStatus(){
-  const ico=document.getElementById('fb-status-ico');
-  const txt=document.getElementById('fb-status-txt');
-  const badge=document.getElementById('provider-badge');
-  if(firebaseAI){
-    ico.textContent='🔥';
-    txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; جاري التحقق من تفعيل APIs…';
-    badge.textContent='Firebase AI';
-    badge.style.background='linear-gradient(135deg,#f59e0b,#d97706)';
-    // فحص استباقي مرة واحدة لكل جلسة
-    const cached=sessionStorage.getItem('fbai_preflight');
-    if(cached==='ok'){
-      txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; ✅ جاهز — لا حاجة لمفتاح API';
-      return;
-    }
-    try{
-      const test=getGenerativeModel(firebaseAI,{model:'gemini-2.0-flash',generationConfig:{maxOutputTokens:5}});
-      await test.generateContent('ok');
-      sessionStorage.setItem('fbai_preflight','ok');
-      txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; ✅ جاهز — لا حاجة لمفتاح API';
-    }catch(e){
-      sessionStorage.removeItem('fbai_preflight');
-      console.warn('[Firebase AI] preflight failed:',e);
-      const key=localStorage.getItem('gemini_key');
-      if(key){
-        ico.textContent='⚠️';
-        txt.innerHTML='<span style="color:var(--y)">Firebase AI غير جاهز</span> — سيستخدم المفتاح اليدوي. <a href="#" onclick="window.showSetupBanner();return false" style="color:var(--ai)">إصلاح ↑</a>';
-      }else{
-        ico.textContent='🔧';
-        txt.innerHTML='<span style="color:var(--y)">يحتاج تفعيل APIs مرة واحدة</span>';
-        showSetupBanner(friendlyFirebaseError(e,'gemini-2.0-flash'));
-      }
-    }
-  }else{
-    ico.textContent='⚠️';
-    txt.innerHTML='<span style="color:var(--y)">Firebase AI غير مُهيّأ</span> — استخدم مفتاح API يدوي (إعدادات متقدمة)';
-    badge.textContent='Manual Key';
-    badge.style.background='linear-gradient(135deg,#4f8ef7,#2563eb)';
-  }
-}
-
-window.showSetupBanner=function(html){
-  let b=document.getElementById('setup-banner');
-  if(!b){
-    b=document.createElement('div');
-    b.id='setup-banner';
-    b.style.cssText='background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(245,158,11,.08));border:1px solid rgba(251,191,36,.3);border-radius:14px;padding:14px 16px;margin-bottom:14px;font-size:13px;line-height:1.7';
-    document.querySelector('.wrap').insertBefore(b,document.getElementById('key-card'));
-  }
-  b.innerHTML=html||`🔧 لتشغيل Firebase AI Logic، فعّله بنقرة واحدة:<br>${setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic','🔥')}`;
-};
 
 // ── Build Context ──
 function buildContext(){
@@ -380,7 +305,7 @@ ${topClients.map(([c,n],i)=>`${i+1}. ${c}: ${n} أوردر`).join('\n')}
 // ── Run Analysis ──
 window.runAnalysis=async function(){
   const key=localStorage.getItem('gemini_key');
-  if(!firebaseAI&&!key){alert('Firebase AI غير مفعّل. أدخل Gemini API Key من الإعدادات المتقدمة.');return;}
+  if(!key){alert('أدخل مفتاح Gemini API من البطاقة بالأعلى.');return;}
 
   const btn=document.getElementById('analyse-btn');
   document.getElementById('analyse-ico').textContent='⏳';
@@ -458,84 +383,21 @@ function formatText(t){
     .replace(/\n/g,'<br>');
 }
 
-// ── Unified prompt runner — Firebase AI Logic أولاً، ثم Manual Key كـ fallback ──
+// ── Prompt runner — Manual Gemini API Key only ──
 const FALLBACK_MODEL='gemini-2.0-flash';
 
 async function runPrompt(prompt){
   const model=localStorage.getItem('gemini_model')||'gemini-2.5-flash';
-
-  // 1) جرّب Firebase AI Logic أولاً
-  if(firebaseAI){
-    try{
-      return await callFirebaseAI(model,prompt);
-    }catch(e){
-      console.warn('[Firebase AI] failed, trying fallback:',e);
-      // لو فيه manual key، استخدمه
-      const key=localStorage.getItem('gemini_key');
-      if(key){
-        showModelNote(`⚠️ Firebase AI أعطى خطأ — التبديل إلى المفتاح اليدوي`);
-        return await callGeminiRest(key,model,prompt);
-      }
-      throw new Error(friendlyFirebaseError(e,model));
-    }
-  }
-
-  // 2) Manual API Key fallback
   const key=localStorage.getItem('gemini_key');
-  if(!key)throw new Error('Firebase AI غير متاح ولا يوجد مفتاح API يدوي');
+  if(!key)throw new Error('لا يوجد مفتاح Gemini API — أضف مفتاحاً من البطاقة بالأعلى.');
   return await callGeminiRest(key,model,prompt);
 }
 
-// ── Firebase AI Logic call ──
-async function callFirebaseAI(modelName,prompt){
-  const genModel=getGenerativeModel(firebaseAI,{
-    model:modelName,
-    generationConfig:{temperature:.7,maxOutputTokens:2048}
-  });
-  const result=await genModel.generateContent(prompt);
-  const text=result?.response?.text?.();
-  if(!text)throw new Error('لم يرد Firebase AI بنتيجة');
-  return text;
-}
-
-// روابط التفعيل بنقرة واحدة
-const PROJECT_ID='business2card-c041b';
 const SETUP_LINKS={
-  firebaseAIConsole:`https://console.firebase.google.com/project/${PROJECT_ID}/genai`,
-  vertexAI:`https://console.cloud.google.com/apis/library/aiplatform.googleapis.com?project=${PROJECT_ID}`,
-  genLang:`https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com?project=${PROJECT_ID}`,
-  credentials:`https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}`,
   aiStudioKey:`https://aistudio.google.com/apikey`,
 };
 function setupButton(href,label,icon='🚀'){
   return `<a href="${href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:8px 14px;border-radius:10px;text-decoration:none;font-weight:700;font-size:12px;margin:6px 4px 0 0">${icon} ${label}</a>`;
-}
-
-function friendlyFirebaseError(e,model){
-  const msg=(e?.message||String(e));
-  const code=(e?.code||e?.status||'').toString();
-  const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[Firebase AI] ${msg}</span>`;
-  const host=(location.hostname||'النطاق الحالي');
-  const oneClickFirebase=setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic بنقرة واحدة','🔥');
-  const enableVertex=setupButton(SETUP_LINKS.vertexAI,'تفعيل Vertex AI API','⚡');
-  const enableGenLang=setupButton(SETUP_LINKS.genLang,'تفعيل Generative Language API','✨');
-
-  if(/API_KEY_HTTP_REFERRER_BLOCKED|referer .* blocked|referrer .* blocked/i.test(msg))
-    return`🌐 مفتاح Firebase API محظور لهذا النطاق (<code>${host}</code>).<br>الحل: افتح Google Cloud Console → Credentials → مفتاح الويب → ضمن <strong>Website restrictions</strong> أضف:<br><code>${host}/*</code> و <code>*.${host}/*</code><br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
-  if(/API_KEY_INVALID|api key expired|key expired|renew the api key/i.test(msg))
-    return`🔑 مفتاح Firebase Web API منتهي الصلاحية أو محذوف.<br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
-  if(/API_KEY_(SERVICE|API)_BLOCKED|api key .* (not authorized|restricted)/i.test(msg))
-    return`🔐 المفتاح غير مسموح له باستدعاء Firebase AI / Vertex AI.<br>الحل: Credentials → المفتاح → <strong>API restrictions</strong> اسمح بـ <code>Vertex AI API</code> و <code>Firebase AI Logic API</code>.<br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
-  // ⭐ الحالة الشائعة: APIs غير مفعّلة على المشروع
-  if(/SERVICE_DISABLED|has not been used|has not been enabled|firebaseml|firebasevertexai|vertex.*not.*enabled|aiplatform.*disabled|service.*disabled|generativelanguage.*disabled/i.test(msg)||code==='403')
-    return`🔌 <strong>APIs المطلوبة غير مفعّلة على المشروع</strong>.<br>أسهل حل: افتح Firebase Console واضغط <strong>Get started</strong> — سيُفعّل كل شيء تلقائياً بنقرة واحدة:<br>${oneClickFirebase}<br><span style="font-size:11px;color:var(--dim2)">أو فعّلها يدوياً واحدة واحدة:</span><br>${enableVertex} ${enableGenLang}${raw}`;
-  if(/unauthenticated|permission|denied|PERMISSION_DENIED/i.test(msg))
-    return`🚫 صلاحيات غير كافية — قد تكون APIs غير مفعّلة. جرّب التفعيل بنقرة:<br>${oneClickFirebase}${raw}`;
-  if(/quota|rate|429/i.test(msg))
-    return`⏱️ تجاوزت حد الاستخدام لـ ${model} — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
-  if(/not[- ]found|model/i.test(msg))
-    return`🤖 الموديل ${model} غير متاح — جرّب موديل آخر.${raw}`;
-  return`خطأ في Firebase AI — جرّب تفعيل APIs:<br>${oneClickFirebase}${raw}`;
 }
 
 // ── REST API fallback (Manual key) ──
@@ -576,13 +438,12 @@ async function callRestModel(key,model,prompt){
 function friendlyRestError(status,apiMsg,model){
   const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
   const newKey=setupButton(SETUP_LINKS.aiStudioKey,'إنشاء مفتاح جديد من AI Studio','🔑');
-  const switchFB=setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic (بديل أفضل)','🔥');
   if(status===400&&(apiMsg.includes('API_KEY')||apiMsg.includes('invalid')))
     return`🔑 API Key غير صحيح — تأكد من نسخه كاملاً.<br>${newKey}${raw}`;
   if(status===403)
-    return`🚫 المفتاح اليدوي مرفوض — تفعيل Firebase AI Logic أفضل وأسهل:<br>${switchFB}<br>${newKey}${raw}`;
+    return`🚫 المفتاح مرفوض — تأكد أن Generative Language API مفعّل في المشروع، أو أنشئ مفتاحاً جديداً:<br>${newKey}${raw}`;
   if(status===429&&/prepay|credit|billing|depleted|exhausted/i.test(apiMsg))
-    return`💳 <strong>رصيد المفتاح اليدوي نفد</strong>.<br>أفضل حل: تخلَّ عن المفتاح اليدوي وفعّل Firebase AI Logic (مجاني عبر Blaze plan):<br>${switchFB}<br>أو احذف هذا المفتاح وأنشئ آخر من مشروع جديد:<br>${newKey}${raw}`;
+    return`💳 <strong>رصيد المفتاح نفد</strong>. أنشئ مفتاحاً جديداً من مشروع آخر:<br>${newKey}${raw}`;
   if(status===429)
     return`⏱️ تجاوزت الحد المسموح للموديل (${model}) — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
   if(status===503||status===500)
@@ -605,7 +466,7 @@ window.chatKeydown=function(e){
 
 window.sendChat=async function(){
   const key=localStorage.getItem('gemini_key');
-  if(!firebaseAI&&!key){alert('Firebase AI غير مفعّل. أدخل مفتاح API من الإعدادات المتقدمة.');return;}
+  if(!key){alert('أدخل مفتاح Gemini API من البطاقة بالأعلى.');return;}
   const inp=document.getElementById('chat-inp');
   const q=inp.value.trim();
   if(!q)return;
