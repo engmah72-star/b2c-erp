@@ -359,7 +359,11 @@ async function handleSalaryPayment(db, p) {
 }
 
 async function handlePayroll(db, p) {
-  // p.employees: [{employeeId, employeeName, amount}]
+  // p.employees: [{employeeId, employeeName, amount,
+  //                baseSalary?, commission?, daysPresent?, daysAbsent?,
+  //                absenceDeduction?, attendanceBonus?}]
+  // ملاحظة: snapshot fields اختيارية لكنها مهمة — تثبّت حالة الراتب وقت
+  //         تشغيل المسير حتى لو عُدِّل سجل الحضور لاحقاً.
   const batch = writeBatch(db);
 
   if (p.walletId) {
@@ -370,12 +374,22 @@ async function handlePayroll(db, p) {
   for (const e of p.employees) {
     const epRef = doc(collection(db, 'employee_payments'));
     const txRef = doc(collection(db, 'transactions_v2'));
+    // snapshot fields — نخزّنها مع الـ tx والـ ep حتى تظل صورة الراتب ثابتة
+    const snap = {
+      baseSalary:        e.baseSalary        ?? 0,
+      commission:        e.commission        ?? 0,
+      absenceDeduction:  e.absenceDeduction  ?? 0,
+      attendanceBonus:   e.attendanceBonus   ?? 0,
+      daysPresent:       e.daysPresent       ?? null,
+      daysAbsent:        e.daysAbsent        ?? null,
+    };
     batch.set(epRef, {
       employeeId: e.employeeId, employeeName: e.employeeName,
       amount: e.amount, month: p.month,
       walletId: p.walletId, walletName: p.walletName || '',
       note: p.note, date: p.date || new Date().toLocaleDateString('ar-EG'),
       txId: txRef.id,
+      ...snap,
       createdAt: serverTimestamp(), createdBy: p.userId || '',
     });
 
@@ -385,6 +399,7 @@ async function handlePayroll(db, p) {
       description: `${p.note} — ${e.employeeName}`, category: 'salary',
       employeeId: e.employeeId, employeeName: e.employeeName,
       month: p.month, isDeduction: false, epId: epRef.id,
+      ...snap,
       date: p.date || new Date().toLocaleDateString('ar-EG'),
       createdBy: p.userId || '', createdByName: p.userName || '',
       createdAt: serverTimestamp(), source: 'payroll',
