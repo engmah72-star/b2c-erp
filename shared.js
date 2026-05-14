@@ -188,6 +188,14 @@ export function initAuth(onReady, onUnauth) {
       AppState.userName    = d.name || user.email;
     }
 
+    // Native shell (Capacitor) — register for APNs/FCM and wire status bar.
+    // No-op on the web; module is fetched lazily so it doesn't ship to web users.
+    if (globalThis.Capacitor?.isNativePlatform?.()) {
+      import('./mobile-bridge.js')
+        .then(m => m.initNativeBridge(app, user))
+        .catch(e => console.warn('[native-bridge] load failed:', e?.message || e));
+    }
+
     onReady?.(AppState);
   });
 }
