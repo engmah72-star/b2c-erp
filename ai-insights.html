@@ -241,15 +241,17 @@ async function loadMlInsights() {
 
   const safe = async (fn, fallback=null) => { try { return await fn(); } catch(e){ console.warn('[ml]', e.message); return fallback; } };
 
-  const [forecast, atRisk, anomalies, affinities] = await Promise.all([
+  const [forecast, atRisk, anomalies, affinities, cashFlow] = await Promise.all([
     safe(loadLatestForecast,    null),
     safe(loadTopAtRiskClients,  []),
     safe(loadRecentAnomalies,   []),
     safe(loadTopAffinities,     []),
+    safe(loadCashFlowData,      null),
   ]);
 
   const cards = [];
   if (forecast)            cards.push(renderForecastCard(forecast));
+  if (forecast && cashFlow) cards.push(renderCashFlowCard(cashFlow, forecast));
   if (atRisk.length)       cards.push(renderAtRiskCard(atRisk));
   if (anomalies.length)    cards.push(renderAnomaliesCard(anomalies));
   if (affinities.length)   cards.push(renderAffinitiesCard(affinities));
@@ -299,6 +301,19 @@ async function loadTopAffinities() {
   return snap.docs.slice(0, 3).map(d => d.data());
 }
 
+// ── Cash Flow: pending outflows from payment_requests (any non-terminal state) ──
+// "متوقع" = إجمالي المبالغ التي وافق عليها/طلبها موظف ولم تُسدَّد بعد.
+// terminal statuses (approved/paid/rejected) مستثناة.
+async function loadCashFlowData() {
+  const snap = await getDocs(query(
+    collection(db, 'payment_requests'),
+    where('status', 'in', ['requested', 'awaiting_receipt', 'pending', 'confirmed'])
+  ));
+  const items = snap.docs.map(d => d.data());
+  const scheduled = items.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  return { scheduled, count: items.length };
+}
+
 // ── Renderers ──
 function renderForecastCard(f) {
   const delta = Number(f.deltaPctVsTrailing7) || 0;
@@ -314,6 +329,34 @@ function renderForecastCard(f) {
         مقابل ${fn(f.trailing7DayActual)} ج (آخر 7 أيام)
       </div>
       <div class="ml-card-sub" style="margin-top:2px">14 يوم: <strong style="color:var(--snow)">${fn(f.next14DayTotal)} ج</strong></div>
+    </div>
+  `;
+}
+
+function renderCashFlowCard(cf, forecast) {
+  const inflow  = Number(forecast?.next7DayTotal) || 0;
+  const outflow = Number(cf?.scheduled) || 0;
+  const net     = inflow - outflow;
+  const netCls  = net >= 0 ? 'up' : 'down';
+  const netCol  = net >= 0 ? 'var(--g)' : 'var(--r)';
+  const netArrow= net >= 0 ? '+' : '−';
+  return `
+    <div class="ml-card">
+      <div class="ml-card-head">💰 التدفق النقدي — 7 أيام</div>
+      <div class="ml-list" style="gap:4px;margin-top:6px">
+        <div class="ml-list-row" style="background:rgba(52,211,153,.05)">
+          <span>📈</span><strong>دخل متوقع</strong>
+          <span class="pill ml-pill-g">${fn(inflow)} ج</span>
+        </div>
+        <div class="ml-list-row" style="background:rgba(248,113,113,.05)">
+          <span>📉</span><strong>مصاريف معلَّقة</strong>
+          <span class="pill ml-pill-r">${fn(outflow)} ج${cf?.count?` · ${cf.count}`:''}</span>
+        </div>
+      </div>
+      <div class="ml-card-sub" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--line);display:flex;align-items:center;gap:6px">
+        <span style="color:${netCol};font-weight:900;font-size:13px">صافي: ${netArrow}${fn(Math.abs(net))} ج</span>
+        <span style="margin-right:auto;font-size:10px">من payment_requests + forecast</span>
+      </div>
     </div>
   `;
 }
