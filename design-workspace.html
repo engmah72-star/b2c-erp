@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Design Workspace — Business2Card</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css">
@@ -400,6 +400,9 @@
   .ms-kpis{grid-template-columns:repeat(4,1fr)}
 }
 </style>
+<script src="wa-launcher.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -581,8 +584,10 @@
       <div class="fg"><label>اختر النسخة للنشر</label>
         <div id="gal-ver-list"></div>
       </div>
-      <div class="fg"><label>الوصف (اختياري)</label>
-        <input class="inp-sm" id="gal-desc" placeholder="وصف مختصر للتصميم...">
+      <div class="fg"><label>الوصف</label>
+        <textarea class="inp-sm" id="gal-desc" rows="3"
+          placeholder="صف التصميم: نوع المنتج، الألوان، الأسلوب، أي تفصيل يميّزه..."
+          style="resize:vertical;line-height:1.55;min-height:72px"></textarea>
       </div>
     </div>
     <div class="modal-foot">
@@ -950,17 +955,46 @@ window.reqPublish=async function(itemId){
 window.approvePublish=async function(itemId,direct){
   if(!isAdmRole()){toast('❌ الموافقة للأدمن فقط','err');return;}
   try{
-    await updateDoc(doc(db,'design_items',itemId),{
+    const item=currentItems.find(i=>i._id===itemId);
+    if(!item){toast('⚠️ العنصر غير موجود','err');return;}
+    const versions=item.versions||[];
+    const latestVer=versions[versions.length-1];
+    if(!latestVer||!latestVer.imageUrl){toast('⚠️ لا توجد نسخة قابلة للنشر','err');return;}
+    const order=orders.find(o=>o._id===(item.orderDocId||currentOrderId));
+
+    // كتابة ذرّية: design_items.visibility + gallery doc — التصميم يظهر فوراً في gallery.html
+    const batch=writeBatch(db);
+    const galleryRef=item.galleryId
+      ? doc(db,'gallery',item.galleryId)
+      : doc(collection(db,'gallery'));
+    batch.set(galleryRef,{
+      title: item.galleryTitle || item.itemName || 'تصميم',
+      description: item.galleryDesc || '',
+      imageUrl: latestVer.imageUrl,
+      vNum: latestVer.vNum,
+      clientName: item.clientName || order?.clientName || '',
+      designerName: item.designerName || currentUserName,
+      productType: order?.products?.[item.itemIndex]?.name || item.itemName || '',
+      orderId: item.orderDocId || '',
+      publishedAt: serverTimestamp(),
+      publishedBy: currentUid,
+      publishedByName: currentUserName,
+      isVisible: true,
+      tags: [],
+    },{merge:true});
+    batch.update(doc(db,'design_items',itemId),{
       visibility:'public',
+      galleryId: galleryRef.id,
       publishApprovedBy:currentUid,
       publishApprovedByName:currentUserName,
       publishApprovedAt:serverTimestamp(),
       visibilitySetBy:currentUid,
       visibilitySetByName:currentUserName,
       visibilitySetAt:serverTimestamp(),
-      editHistory:arrayUnion({action:direct?'published_directly':'publish_approved',by:currentUid,byName:currentUserName,at:new Date().toISOString()})
+      editHistory:arrayUnion({action:direct?'published_directly':'publish_approved',galleryId:galleryRef.id,by:currentUid,byName:currentUserName,at:new Date().toISOString()})
     });
-    toast(direct?'🌐 تم النشر مباشرة':'✓ تم اعتماد النشر','ok');
+    await batch.commit();
+    toast(direct?'🌐 تم النشر مباشرة في المعرض العام':'✓ تم اعتماد التصميم ونشره في المعرض','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -997,13 +1031,25 @@ window.withdrawPublic=async function(itemId){
   if(!isAdmRole()){toast('❌ السحب للأدمن فقط','err');return;}
   if(!confirm('سحب التصميم من النشر؟'))return;
   try{
-    await updateDoc(doc(db,'design_items',itemId),{
+    const item=currentItems.find(i=>i._id===itemId);
+    // كتابة ذرّية: design_items.visibility + gallery.isVisible=false (soft-hide، التاريخ يبقى)
+    const batch=writeBatch(db);
+    batch.update(doc(db,'design_items',itemId),{
       visibility:'private',
       visibilitySetBy:currentUid,
       visibilitySetByName:currentUserName,
       visibilitySetAt:serverTimestamp(),
       editHistory:arrayUnion({action:'public_withdrawn',by:currentUid,byName:currentUserName,at:new Date().toISOString()})
     });
+    if(item?.galleryId){
+      batch.update(doc(db,'gallery',item.galleryId),{
+        isVisible:false,
+        withdrawnAt:serverTimestamp(),
+        withdrawnBy:currentUid,
+        withdrawnByName:currentUserName,
+      });
+    }
+    await batch.commit();
     toast('🔒 تم السحب من النشر','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -1969,6 +2015,9 @@ window.openGalleryModal = function(itemId) {
   const previewImg = document.getElementById('gal-preview-img');
   if (previewImg) previewImg.src = latestVer?.imageUrl || '';
 
+  const pubBtn = document.getElementById('gal-confirm-btn');
+  if (pubBtn) pubBtn.textContent = item.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن';
+
   document.getElementById('ov-gallery').classList.add('open');
 };
 
@@ -1980,31 +2029,45 @@ window.galSelectVer = function(el, imageUrl) {
 };
 
 window.confirmGalleryPublish = async function() {
-  const itemId = galleryTargetItemId;
-  if (!itemId) return;
-  const item = currentItems.find(i => i._id === itemId);
-  if (!item) return;
-  const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
-
-  // Get selected version
-  const selVerEl = document.querySelector('#gal-ver-list .gal-ver-item.selected');
-  const selVNum = selVerEl ? parseInt(selVerEl.dataset.vnum) : null;
-  const versions = item.versions || [];
-  const chosenVer = selVNum != null
-    ? versions.find(v => v.vNum === selVNum) || versions[versions.length - 1]
-    : versions[versions.length - 1];
-  if (!chosenVer) return toast('⚠️ لا توجد نسخة محددة', 'err');
-
-  const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
-  const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
-
-  const action = item.galleryId ? 'تحديث' : 'نشر';
-  if (!confirm(`${action} "${title}" في المعرض العام؟\nالنسخة: #${chosenVer.vNum}`)) return;
-
+  console.log('[gallery] confirmGalleryPublish() called');
   const btn = document.getElementById('gal-confirm-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
 
   try {
+    const itemId = galleryTargetItemId;
+    if (!itemId) { toast('⚠️ لم يتم تحديد عنصر للنشر', 'err'); return; }
+
+    const item = currentItems.find(i => i._id === itemId);
+    if (!item) { toast('⚠️ العنصر غير موجود', 'err'); return; }
+
+    const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
+
+    // Get selected version
+    const selVerEl = document.querySelector('#gal-ver-list .gal-ver-item.selected');
+    const selVNum = selVerEl ? parseInt(selVerEl.dataset.vnum) : null;
+    const versions = item.versions || [];
+    const chosenVer = selVNum != null
+      ? versions.find(v => v.vNum === selVNum) || versions[versions.length - 1]
+      : versions[versions.length - 1];
+    if (!chosenVer) { toast('⚠️ لا توجد نسخة محددة', 'err'); return; }
+
+    const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
+    const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري النشر...'; }
+
+    // Duplicate detection — best effort; never blocks the publish flow
+    let dupTitle = null;
+    try {
+      const dupSnap = await getDocs(
+        query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl))
+      );
+      const dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId && d.data().isVisible !== false);
+      if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
+    } catch(e) {
+      console.warn('[gallery] duplicate check skipped:', e?.message || e);
+    }
+
+    console.log('[gallery] writing batch for item', itemId, 'vNum', chosenVer.vNum);
     const galleryRef = item.galleryId
       ? doc(db, 'gallery', item.galleryId)
       : doc(collection(db, 'gallery'));
@@ -2039,12 +2102,20 @@ window.confirmGalleryPublish = async function() {
       }),
     });
     await batch.commit();
+    console.log('[gallery] batch committed successfully');
+
     document.getElementById('ov-gallery').classList.remove('open');
-    toast(item.galleryId ? '🔄 تم تحديث المعرض' : '🌐 تم النشر في المعرض العام', 'ok');
+    const baseMsg = item.galleryId ? '🔄 تم تحديث المعرض' : '🌐 تم النشر في المعرض العام';
+    toast(dupTitle ? `${baseMsg} (⚠️ صورة مكررة لـ "${dupTitle}")` : baseMsg, 'ok');
   } catch(e) {
-    toast('❌ ' + e.message, 'err');
+    console.error('[gallery] publish failed:', e);
+    toast('❌ فشل النشر: ' + (e?.message || 'خطأ غير معروف'), 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🌐 نشر الآن'; }
+    if (btn) {
+      btn.disabled = false;
+      const it = currentItems.find(i => i._id === galleryTargetItemId);
+      btn.textContent = it?.galleryId ? '🔄 تحديث في المعرض' : '🌐 نشر الآن';
+    }
   }
 };
 

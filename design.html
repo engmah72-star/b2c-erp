@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<link rel="icon" href="icon-192.png" type="image/png"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="icon-192.png" type="image/png"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Business2Card — التصميم</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css">
@@ -48,6 +48,9 @@
 .card-act-btn:hover{opacity:.8}
 </style>
 <script src="financial-guard.js"></script>
+<script src="wa-launcher.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -619,6 +622,15 @@ window.moveStage=async function(stage){
       timeline:[...(o.timeline||[]),{date:nowStr(),stage,action:`🔄 [أدمن] نُقل ${labels[o.stage]||o.stage} → ${labels[stage]}`,by:userName,byId:currentUser?.uid||''}],
       updatedAt:serverTimestamp()
     });
+    // audit trail لـ admin stage override (يكسر الـ stage gate الطبيعي)
+    addDoc(collection(db,'audit_logs'),{
+      action:'order.admin_stage_override',
+      details:{orderId:activeId,clientName:o.clientName||'',fromStage:o.stage||'',toStage:stage},
+      userId:currentUser?.uid||'',userName:userName||'',
+      userRole:currentRole||'',
+      timestamp:serverTimestamp(),
+      url:location.pathname,
+    }).catch(e=>console.warn('[audit] failed:',e?.code||e?.message));
     closePanel();
     toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -814,6 +826,7 @@ window.previewGalImg=function(inp){
   r.readAsDataURL(file);
 };
 window.saveToGallery=async function(){
+  console.log('[gallery] saveToGallery() called');
   const inp=document.getElementById('gal-img-inp');
   const cat=(document.getElementById('gal-cat')?.value||'').trim();
   const title=(document.getElementById('gal-title')?.value||'').trim()||cat;
@@ -824,17 +837,41 @@ window.saveToGallery=async function(){
     const storageRef=ref(storage,`gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     await uploadBytes(storageRef,inp.files[0]);
     const imageUrl=await getDownloadURL(storageRef);
-    await addDoc(collection(db,'design_gallery'),{
-      imageUrl,title,category:cat,
-      colors:galSelColors,
-      designerId:auth.currentUser?.uid||'',
-      designerName:userName,
-      isPublic:true,
-      createdAt:serverTimestamp()
+    console.log('[gallery] image uploaded:', imageUrl);
+
+    // Duplicate detection — best effort
+    let dupTitle = null;
+    try {
+      const dupSnap = await getDocs(
+        query(collection(db,'gallery'), where('imageUrl','==',imageUrl))
+      );
+      const dupDoc = dupSnap.docs.find(d => d.data().isVisible !== false);
+      if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
+    } catch(e) {
+      console.warn('[gallery] duplicate check skipped:', e?.message || e);
+    }
+
+    // Write to `gallery` collection — same schema read by gallery.html
+    await addDoc(collection(db,'gallery'),{
+      imageUrl,
+      title,
+      description: '',
+      productType: cat,
+      tags: galSelColors || [],
+      designerName: userName,
+      publishedBy: auth.currentUser?.uid || '',
+      publishedByName: userName,
+      isVisible: true,
+      publishedAt: serverTimestamp(),
     });
+    console.log('[gallery] gallery doc written');
+
     closeGallery();
-    toast('✅ تم النشر في المعرض','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+    toast(dupTitle ? `✅ تم النشر (⚠️ صورة مكررة لـ "${dupTitle}")` : '✅ تم النشر في المعرض','ok');
+  }catch(e){
+    console.error('[gallery] publish failed:', e);
+    toast('❌ ' + (e?.message || 'فشل النشر'),'err');
+  }
 };
 
 

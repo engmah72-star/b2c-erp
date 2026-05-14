@@ -142,6 +142,9 @@
 .pn-tab:hover:not(.on){color:var(--snow)}
 </style>
 <script src="financial-guard.js"></script>
+<script src="wa-launcher.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -268,6 +271,17 @@
         <option value="vip">⭐ VIP</option>
       </select>
       <select class="inp" id="f-tag" onchange="renderGrid()" style="max-width:130px"><option value="">كل التصنيفات</option><option value="vip">⭐ VIP</option><option value="regular">🔄 دوري</option><option value="new">🆕 جديد</option><option value="wholesale">📦 جملة</option><option value="delayed">⏳ آجل</option></select>
+      <select class="inp" id="f-segment" onchange="renderGrid()" title="فلتر حسب شريحة RFM" style="max-width:140px">
+        <option value="">كل الشرائح (RFM)</option>
+        <option value="champion">🏆 أبطال</option>
+        <option value="loyal">💎 عملاء أوفياء</option>
+        <option value="new">🌱 جدد/واعدين</option>
+        <option value="needs_attention">👀 يحتاج اهتمام</option>
+        <option value="at_risk">⚠️ مهدّدون بالفقد</option>
+        <option value="cant_lose">🚨 لا يجب فقدهم</option>
+        <option value="about_to_sleep">😴 على وشك الفقد</option>
+        <option value="lost">💤 فُقدوا</option>
+      </select>
       <select class="inp" id="f-gov" onchange="renderGrid()" style="max-width:130px"><option value="">كل المحافظات</option></select>
       <select class="inp" id="f-src" onchange="renderGrid()" style="display:none"><option value="">كل المصادر</option></select>
       <button class="btn btn-ghost btn-sm" id="add-legacy-btn" onclick="openAddLegacy()" style="display:none">＋ عميل قديم</button>
@@ -390,6 +404,7 @@
     <div class="panel-head">
       <div id="pn-hdr"></div>
       <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" id="ai-analyze-btn" onclick="openAiAnalysis()" title="تحليل ذكي بـ AI" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:800">🤖 تحليل AI</button>
         <button class="btn btn-g btn-sm" onclick="openNewOrder()">＋ أوردر</button>
         <button class="modal-x" onclick="closePanel()">✕</button>
       </div>
@@ -634,6 +649,21 @@
   </div>
 </div>
 
+<!-- AI Analysis Modal -->
+<div class="modal-ov" id="ov-ai" onclick="closeAiAnalysis()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:14px">
+  <div onclick="event.stopPropagation()" style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;max-width:680px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">🤖</span>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:800">تحليل ذكي بـ AI</div>
+        <div id="ai-subtitle" style="font-size:11px;color:var(--dim2);font-weight:600">—</div>
+      </div>
+      <button class="modal-x" onclick="closeAiAnalysis()">✕</button>
+    </div>
+    <div id="ai-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-size:13px;line-height:1.7"></div>
+  </div>
+</div>
+
 <nav class="mob-nav"><div class="mob-nav-items">
   <a class="mob-nav-item active" href="clients.html" data-page="clients"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">العملاء</div></a>
   <a class="mob-nav-item" href="design.html" data-page="design"><div class="mob-nav-ico">✏️</div><div class="mob-nav-lbl">تصميم</div></a>
@@ -742,6 +772,20 @@ const EGYPT={
 
 // ══ STATE ══
 let clients=[], allOrders=[], products=[], settings={}, wallets=[], designers=[];
+// RFM segments — keyed by clientId, written by Cloud Function weeklyChurnRfmAnalysis
+const clientSegments = new Map();
+// Visual mapping for the segment chip rendered on each client card
+const SEG_STYLE = {
+  champion:         { bg:'rgba(255,170,0,.18)',  fg:'var(--y)' },
+  cant_lose:        { bg:'rgba(255,61,110,.20)', fg:'var(--r)' },
+  at_risk:          { bg:'rgba(255,61,110,.12)', fg:'var(--r)' },
+  loyal:            { bg:'rgba(34,211,238,.14)', fg:'var(--c)' },
+  new:              { bg:'rgba(0,217,126,.14)',  fg:'var(--g)' },
+  needs_attention:  { bg:'rgba(255,170,0,.10)',  fg:'var(--y)' },
+  about_to_sleep:   { bg:'rgba(100,100,100,.12)', fg:'var(--dim2)' },
+  lost:             { bg:'rgba(100,100,100,.10)', fg:'var(--dim2)' },
+  normal:           { bg:'rgba(255,255,255,.05)', fg:'var(--dim)' },
+};
 let allTx=[], txByOrder=new Map();
 let allFollowups=[], followupsByClient=new Map();
 window.__clientFilter='all';
@@ -812,7 +856,7 @@ auth.onAuthStateChanged(async u=>{
 
   // Listeners
   db.collection('clients').orderBy('createdAt','desc').onSnapshot(snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     renderGrid(); updateStats();
     if(activeId) renderPanel(activeId);
@@ -903,6 +947,14 @@ auth.onAuthStateChanged(async u=>{
     }
   });
 
+  // RFM segments — written weekly by Cloud Function. Permission errors are
+  // silenced because non-CRM roles don't get read access.
+  db.collection('client_segments').onSnapshot(snap=>{
+    clientSegments.clear();
+    snap.forEach(d=>clientSegments.set(d.id,d.data()));
+    renderGrid();
+  },err=>console.warn('client_segments listener:',err?.message||err));
+
   db.collection('transactions_v2').onSnapshot(snap=>{
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
     txByOrder.clear();
@@ -940,6 +992,7 @@ function renderGrid(){
   updateFilterBadge();
   const q=gv('q').toLowerCase();
   const ft=gv('f-tag');
+  const fseg=gv('f-segment');
   const fg=gv('f-gov');
   const fs=gv('f-src');
   const isLegacyTab=window.__statusTab==='legacy';
@@ -949,6 +1002,10 @@ function renderGrid(){
     else{if(c.status==='legacy')return false;}
     if(q&&!(c.name||'').toLowerCase().includes(q)&&!(c.phone1||'').includes(q)&&!(c.phone2||'').includes(q)&&!(c.intlPhone||'').includes(q))return false;
     if(ft&&!(c.tags||[]).includes(ft))return false;
+    if(fseg){
+      const seg=clientSegments.get(c._id);
+      if(!seg||seg.segment!==fseg)return false;
+    }
     if(fg&&c.gov!==fg&&c.governorate!==fg)return false;
     if(fs&&c.source!==fs)return false;
     // فلتر مالي
@@ -996,6 +1053,16 @@ function renderGrid(){
     else if(rem>0) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);font-weight:800">💰 ${fn(rem)} ج</span>`;
     else if(isVip) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,170,0,.15);color:var(--y);font-weight:800">⭐ VIP</span>`;
     else if(isInactive) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(100,100,100,.1);color:var(--dim2);font-weight:800">😴 غير نشط</span>`;
+    // RFM segment chip — shown alongside the primary badge as a secondary
+    // signal. We hide 'normal' (the default majority) and show churn risk %
+    // when ≥60 to draw attention to retention opportunities.
+    const seg=clientSegments.get(c._id);
+    let segBadge='';
+    if(seg && seg.segment && seg.segment!=='normal'){
+      const st=SEG_STYLE[seg.segment]||SEG_STYLE.normal;
+      const riskTxt=(seg.churnRisk>=60)?` · ${seg.churnRisk}%`:'';
+      segBadge=`<span title="RFM: ${seg.rfmCode||''} · ${seg.recencyDays}d منذ آخر طلب · ${seg.orderCount||0} طلب" style="font-size:10px;padding:2px 8px;border-radius:20px;background:${st.bg};color:${st.fg};font-weight:800">${seg.segmentIco||'•'} ${seg.segmentLabel||seg.segment}${riskTxt}</span>`;
+    }
     else if(tags.length) badge=`<span class="tag" style="background:${TAG_COL[tags[0]]||'rgba(255,255,255,.06)'}">${TAG_LABELS[tags[0]]||tags[0]}</span>`;
     return`<div class="cc" style="--cc:${col}" onclick="openClient('${c._id}')">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:${badge?'8':'10'}px">
@@ -1006,7 +1073,7 @@ function renderGrid(){
         </div>
         ${canSee('client_phone')?`<a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn" style="flex-shrink:0">💬</a>`:''}
       </div>
-      ${badge?`<div style="margin-bottom:8px">${badge}</div>`:''}
+      ${(badge||segBadge)?`<div style="margin-bottom:8px;display:flex;gap:4px;flex-wrap:wrap">${badge}${segBadge}</div>`:''}
       <div style="display:grid;grid-template-columns:${canSee('price_remaining')?'1fr 1fr':'1fr'};gap:6px">
         <div class="cc-stat">
           <div class="cc-stat-val" style="color:var(--b)">${active||'—'}</div>
@@ -1037,6 +1104,100 @@ function closePanel(){
   const pnTabs=document.getElementById('pn-tabs');
   if(pnTabs)pnTabs.style.display='none';
 }
+
+// ── AI Client Analysis (Genkit) ──
+// Calls analyzeClientWithAI cloud function with the user's Gemini API key
+// from localStorage (same one used by ai-engine.js). Renders structured
+// output: summary, churn assessment, opportunities, actions.
+window.openAiAnalysis = async function(){
+  if(!activeId){ alert('اختر عميل أولاً'); return; }
+  const apiKey = localStorage.getItem('gemini_key') || '';
+  if(!apiKey || !apiKey.startsWith('AIza')){
+    alert('⚙️ يلزم ضبط مفتاح Gemini أولاً من صفحة AI Insights');
+    return;
+  }
+  const ov = document.getElementById('ov-ai');
+  const body = document.getElementById('ai-body');
+  const sub = document.getElementById('ai-subtitle');
+  const c = clients.find(x=>x._id===activeId);
+  sub.textContent = c?.name || activeId;
+  ov.style.display = 'flex';
+  body.innerHTML = `<div style="text-align:center;padding:30px;color:var(--dim2)">
+    <div style="font-size:24px;margin-bottom:8px">⏳</div>
+    Genkit بيحلل البيانات... قد ياخد 10-30 ثانية
+  </div>`;
+
+  try{
+    // clients.html uses the Firebase compat SDK (firebase.initializeApp(FB))
+    // so we go through firebase.app() rather than the module SDK's getFunctions.
+    // Load the functions compat module on-demand so we don't pay for it on
+    // every page view.
+    if (!firebase.functions) {
+      await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js');
+    }
+    const fns = firebase.app().functions('us-central1');
+    const call = fns.httpsCallable('analyzeClientWithAI');
+    const res = await call({ clientId: activeId, apiKey });
+    renderAiAnalysis(res.data);
+  }catch(e){
+    body.innerHTML = `<div style="padding:18px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);border-radius:10px;color:var(--r)">
+      <div style="font-weight:800;margin-bottom:6px">⚠️ فشل التحليل</div>
+      <div style="font-size:12px;color:var(--snow);line-height:1.6">${escapeHtml(e?.message||String(e))}</div>
+    </div>`;
+  }
+};
+
+window.closeAiAnalysis = function(){
+  document.getElementById('ov-ai').style.display = 'none';
+};
+
+function renderAiAnalysis(d){
+  if(!d){ document.getElementById('ai-body').innerHTML = '<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد بيانات</div>'; return; }
+  const priorityCol = { high:'var(--r)', medium:'var(--y)', low:'var(--g)' };
+  const priorityIco = { high:'🔥', medium:'⚡', low:'🌱' };
+  const actions = (d.recommendedActions||[]).map(a=>`
+    <div style="background:var(--bg3);border-right:3px solid ${priorityCol[a.priority]||'var(--dim)'};border-radius:8px;padding:10px 12px;margin-bottom:6px">
+      <div style="font-weight:700;color:var(--snow);font-size:13px;margin-bottom:4px">${priorityIco[a.priority]||'•'} ${escapeHtml(a.action||'')}</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.6">${escapeHtml(a.reason||'')}</div>
+    </div>`).join('');
+  const opps = (d.opportunities||[]).map(o=>`<li style="margin-bottom:4px">${escapeHtml(o)}</li>`).join('');
+
+  document.getElementById('ai-body').innerHTML = `
+    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--ai,#10b981);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
+      <div style="color:var(--snow);font-size:13px;line-height:1.7">${escapeHtml(d.summary||'')}</div>
+    </div>
+
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
+      <div style="color:var(--snow);font-size:13px;line-height:1.7">${escapeHtml(d.churnRiskAssessment||'')}</div>
+    </div>
+
+    ${d.predictedNextProduct ? `
+    <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--pu,#a78bfa);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🔮 المنتج المتوقع للطلب القادم</div>
+      <div style="color:var(--snow);font-size:14px;font-weight:700">${escapeHtml(d.predictedNextProduct)}</div>
+    </div>` : ''}
+
+    ${opps ? `
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💡 فرص</div>
+      <ul style="margin:0;padding-right:18px;color:var(--snow);font-size:13px">${opps}</ul>
+    </div>` : ''}
+
+    ${actions ? `
+    <div>
+      <div style="font-size:10px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📋 الإجراءات المقترحة</div>
+      ${actions}
+    </div>` : ''}
+
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line);font-size:10px;color:var(--dim2);text-align:center">
+      🤖 توليد بـ Genkit + Gemini · هذا تحليل آلي، راجع قبل التنفيذ
+    </div>
+  `;
+}
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function renderPanel(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
   const pnOrdBtn=document.querySelector('#panel-ov .btn-g');
@@ -1909,16 +2070,29 @@ async function saveClient(){
   if(!/^01[0125][0-9]{8}$/.test(phone1)){toast('⚠️ رقم الهاتف غير صحيح','err');return;}
   // تحقق من تكرار رقم التليفون
   const phone2=gv('c-phone2').trim();
-  // أولاً: تحقق من الـ array المحلي
-  let dup=clients.find(cl=>
-    (cl.phone1===phone1||cl.phone2===phone1||(phone2&&(cl.phone1===phone2||cl.phone2===phone2)))
-    &&cl._id!==editId
-  );
-  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة
+  const email=gv('c-email').trim().toLowerCase();
+  // أولاً: تحقق من الـ array المحلي (يفحص phone1/phone2/email)
+  let dup=clients.find(cl=>{
+    if(cl._id===editId||cl.isDeleted) return false;
+    if(cl.phone1===phone1||cl.phone2===phone1) return true;
+    if(phone2&&(cl.phone1===phone2||cl.phone2===phone2)) return true;
+    if(email&&(cl.email||'').toLowerCase()===email) return true;
+    return false;
+  });
+  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة (phone1 + phone2 + email)
   if(!dup){
+    const qf=firebase.firestore().collection('clients');
+    const queries=[qf.where('phone1','==',phone1).limit(1).get()];
+    if(phone2) queries.push(qf.where('phone1','==',phone2).limit(1).get(),qf.where('phone2','==',phone2).limit(1).get());
+    if(email)  queries.push(qf.where('email','==',email).limit(1).get());
     try{
-      const q=await firebase.firestore().collection('clients').where('phone1','==',phone1).limit(1).get();
-      if(!q.empty&&q.docs[0].id!==editId) dup={...q.docs[0].data(),_id:q.docs[0].id};
+      const results=await Promise.all(queries);
+      for(const q of results){
+        if(q.empty) continue;
+        const d=q.docs[0]; if(d.id===editId) continue;
+        const data=d.data(); if(data.isDeleted) continue;
+        dup={...data,_id:d.id}; break;
+      }
     }catch(e){console.warn('[clients] dedup query failed — proceeding with local check only:',e.code||e.message);}
   }
   if(dup){
@@ -1979,9 +2153,35 @@ async function saveClient(){
 
 function deleteClient(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
-  if(!confirm(`حذف ${c.name}؟ لا يمكن التراجع.`))return;
-  db.collection('clients').doc(id).delete().then(()=>{toast('✅ تم الحذف','ok');closePanel();}).catch(e=>toast('❌ '+e.message,'err'));
+  if(!confirm(`حذف ${c.name}؟ سيتم إخفاؤه من القوائم مع حفظ التاريخ.`))return;
+  // Soft-delete: نحتفظ بسجل العميل لحفظ تاريخ الأوردرات والمدفوعات المرتبطة.
+  db.collection('clients').doc(id).update({
+    isDeleted:true,
+    deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
+    deletedBy:currentUser?.uid||'',
+    deletedByName:userName||'',
+  }).then(()=>{
+    logAudit('client.soft_delete',{clientId:id,clientName:c.name||''});
+    toast('✅ تم حذف العميل','ok');
+    closePanel();
+  }).catch(e=>toast('❌ '+e.message,'err'));
 }
+
+// ── Audit helper (inline) ──
+// يكتب في audit_logs collection لأي admin override. silent on failure.
+window.logAudit=function(action,details){
+  try{
+    return db.collection('audit_logs').add({
+      action,
+      details:details||{},
+      userId:currentUser?.uid||'',
+      userName:userName||'',
+      userRole:(window.__currentRole||''),
+      timestamp:firebase.firestore.FieldValue.serverTimestamp(),
+      url:location.pathname,
+    });
+  }catch(e){console.warn('[audit] failed:',action,e?.code||e?.message);}
+};
 
 // ══ VIEW ══
 let viewMode='grid';
@@ -2106,9 +2306,11 @@ function updateFilterBadge(){
   let count=0;
   if(window.__clientFilter&&window.__clientFilter!=='all') count++;
   const tag=document.getElementById('f-tag');
+  const seg=document.getElementById('f-segment');
   const gov=document.getElementById('f-gov');
   const q=document.getElementById('q');
   if(tag&&tag.value) count++;
+  if(seg&&seg.value) count++;
   if(gov&&gov.value) count++;
   if(q&&q.value.trim()) count++;
   const pill=document.getElementById('filter-active-pill');
@@ -2120,6 +2322,7 @@ function updateFilterBadge(){
   const sel=document.getElementById('flt-select');
   if(sel) sel.classList.toggle('flt-active', sel.value!=='all');
   if(tag) tag.classList.toggle('flt-active', !!tag.value);
+  if(seg) seg.classList.toggle('flt-active', !!seg.value);
   if(gov) gov.classList.toggle('flt-active', !!gov.value);
 }
 
@@ -2127,6 +2330,7 @@ window.clearAllFilters=function(){
   window.__clientFilter='all';
   const sel=document.getElementById('flt-select');if(sel)sel.value='all';
   const tag=document.getElementById('f-tag');if(tag)tag.value='';
+  const seg=document.getElementById('f-segment');if(seg)seg.value='';
   const gov=document.getElementById('f-gov');if(gov)gov.value='';
   const q=document.getElementById('q');if(q)q.value='';
   updateFilterBadge();
@@ -2785,6 +2989,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived','stageEnteredAt.archived':now2,timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
+    logAudit('orders.bulk_archive',{count:ids.length,orderIds:ids.slice(0,50)});
     toast(`✅ تم أرشفة ${ids.length} أوردر`,'ok');cgridSelNone();return;
   }
 
@@ -2796,6 +3001,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>{const ts=o.stage==='archived'?'design':o.stage;batch.update(db.collection('orders').doc(o._id),{stage:ts,[`stageEnteredAt.${ts}`]:now2,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] إعادة فتح → ${ts}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});});
       await batch.commit();
     }
+    logAudit('orders.bulk_reopen',{count:ids.length,orderIds:ids.slice(0,50)});
     toast(`✅ إعادة فتح ${ids.length} أوردر`,'ok');cgridSelNone();return;
   }
 
@@ -2811,6 +3017,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{...mapping,...(mapping.stage&&mapping.stage!==o.stage?{[`stageEnteredAt.${mapping.stage}`]:now2}:{}),timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] نقل جماعي → ${choice}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
+    logAudit('orders.bulk_stage_change',{count:ids.length,target:choice,orderIds:ids.slice(0,50)});
     toast(`✅ نُقل ${ids.length} أوردر إلى ${choice}`,'ok');cgridSelNone();return;
   }
 

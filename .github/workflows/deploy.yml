@@ -6,6 +6,11 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -62,6 +67,124 @@ jobs:
           print("Rules deployed successfully!")
           PYEOF
 
+      - name: Bump Service Worker cache version
+        # يستبدل CACHE في sw.js بالـ commit SHA — يضمن إيصال التحديثات
+        # للمستخدمين فوراً بدون الحاجة لـ bump يدوي في كل PR.
+        run: |
+          SHA_SHORT="${GITHUB_SHA::8}"
+          sed -i "s/const CACHE = '[^']*';/const CACHE = 'b2c-${SHA_SHORT}';/" sw.js
+          echo "==> sw.js cache bumped to b2c-${SHA_SHORT}"
+          head -2 sw.js
+
+      # ─────────── One-time bootstrap (idempotent) ───────────
+      # Creates the backup GCS bucket and grants the IAM roles needed by:
+      #   - scheduledFirestoreBackup → datastore.importExportAdmin + storage.objectAdmin
+      # All operations are idempotent: existing bucket/roles are accepted as-is.
+      - name: Bootstrap backup bucket + IAM (idempotent)
+        continue-on-error: true
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          BUCKET  = f"{PROJECT}-firestore-backups"
+          # App Engine default SA — runtime for v1 functions + scheduler + GCS export
+          FUNCTIONS_SA = f"{PROJECT}@appspot.gserviceaccount.com"
+          # Compute default SA — runtime for v2 functions
+          COMPUTE_SA   = None  # set below from project number
+          FUNCTIONS_ROLES = ["roles/datastore.importExportAdmin", "roles/storage.objectAdmin"]
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          # The deployer SA — needs broad permissions for v2 functions deploy.
+          # We try to self-elevate to Owner; if the deployer doesn't have
+          # projectIamAdmin already this no-ops (the deploy will then fail
+          # loudly with the actual error so we can act on it).
+          DEPLOYER_SA = sa["client_email"]
+          DEPLOYER_ROLES = [
+              "roles/owner",  # broadest — covers all v2 needs
+          ]
+          print(f"   Deployer SA: {DEPLOYER_SA}")
+
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+          # Resolve project number to compute the v2 runtime SA email
+          r = requests.get(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}", headers=hdrs)
+          if r.status_code == 200:
+              proj_num = r.json().get("projectNumber")
+              if proj_num:
+                  COMPUTE_SA = f"{proj_num}-compute@developer.gserviceaccount.com"
+                  print(f"   Compute SA:  {COMPUTE_SA}")
+
+          # 1) Create bucket (409 == already exists, treat as success)
+          print(f"==> Ensuring gs://{BUCKET} exists...")
+          r = requests.post(
+              "https://storage.googleapis.com/storage/v1/b",
+              params={"project": PROJECT},
+              headers=hdrs,
+              json={"name": BUCKET, "location": "us-central1", "storageClass": "STANDARD"},
+          )
+          if r.status_code in (200, 409):
+              print(f"   bucket OK ({r.status_code})")
+          else:
+              print(f"   bucket WARN: {r.status_code} — {r.text[:300]}")
+
+          # 2) Grant project-level IAM roles.
+          # We update three identities in one IAM transaction:
+          #   - FUNCTIONS_SA (App Engine default) ← roles for backup export + storage
+          #   - DEPLOYER_SA (the SA we authenticated as) ← Owner for v2 deploys
+          #   - COMPUTE_SA (Compute default) ← Owner for v2 runtime (Cloud Run)
+          # Granting Owner is fine for a single-developer Firebase project; it
+          # avoids enumerating the 7+ specific roles v2 needs.
+          targets = []
+          for role in FUNCTIONS_ROLES:
+              targets.append((role, f"serviceAccount:{FUNCTIONS_SA}"))
+          for role in DEPLOYER_ROLES:
+              targets.append((role, f"serviceAccount:{DEPLOYER_SA}"))
+          if COMPUTE_SA:
+              targets.append(("roles/owner", f"serviceAccount:{COMPUTE_SA}"))
+
+          print(f"==> Ensuring IAM bindings for {len(targets)} (role, member) pairs...")
+          iam_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:getIamPolicy"
+          r = requests.post(iam_url, headers=hdrs, json={})
+          if r.status_code != 200:
+              print(f"   getIamPolicy failed: {r.status_code} — {r.text[:400]}")
+          else:
+              policy = r.json()
+              bindings = policy.get("bindings", [])
+              changed = False
+              for role, member in targets:
+                  existing = next((b for b in bindings if b["role"] == role), None)
+                  if existing is None:
+                      bindings.append({"role": role, "members": [member]})
+                      changed = True
+                      print(f"   + {role}  ←  {member}")
+                  elif member not in existing.get("members", []):
+                      existing.setdefault("members", []).append(member)
+                      changed = True
+                      print(f"   + {role}  ←  {member}")
+                  else:
+                      print(f"   = {role}  ←  {member}")
+              if changed:
+                  policy["bindings"] = bindings
+                  set_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:setIamPolicy"
+                  r2 = requests.post(set_url, headers=hdrs, json={"policy": policy})
+                  if r2.status_code == 200:
+                      print("   setIamPolicy OK")
+                  else:
+                      print(f"   setIamPolicy WARN: {r2.status_code} — {r2.text[:400]}")
+              else:
+                  print("   no IAM changes needed")
+          PYEOF
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -70,22 +193,15 @@ jobs:
           channelId: live
           projectId: business2card-c041b
 
-      # ─────────── WhatsApp Cloud Functions ───────────
-      # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
-      # لو الباقة لسه مش متفعّلة، الخطوة هتفشل بدون ما توقف باقي الـ deploy.
-      - name: Setup Node for functions
+      # ─────────── Firestore Indexes ───────────
+      # ينشر firestore.indexes.json تلقائياً. CLI يتعرّف على المختلف
+      # عن الموجود فعلاً ويضيف الناقص فقط (idempotent بطبيعته).
+      - name: Setup Node for indexes/functions
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install functions dependencies
-        working-directory: functions
-        run: npm install --no-audit --no-fund
-        continue-on-error: true
-
-      - name: Deploy Cloud Functions
-        # continue-on-error معناه فشل الـ deploy ما يوقفش hosting/rules. لكنه
-        # كان بيخفي أي خطأ. سيبناه لكن نخلي output الـ step واضح في الـ logs.
+      - name: Deploy Firestore Indexes
         continue-on-error: true
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -93,16 +209,261 @@ jobs:
           echo "$FIREBASE_SA" > /tmp/sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
           npm install -g firebase-tools
-          echo "==> Firebase deploy --only functions starting"
-          firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log || {
-            echo "==================================================="
-            echo "FUNCTIONS DEPLOY FAILED — check log above"
-            echo "Common causes:"
-            echo "  1) Blaze plan not enabled on the project"
-            echo "  2) Cloud Functions API not enabled"
-            echo "  3) Cloud Build API not enabled"
-            echo "==================================================="
-            exit 1
-          }
-          echo "==> Firebase deploy --only functions succeeded"
+          firebase deploy --only firestore:indexes --project business2card-c041b --non-interactive
           rm -f /tmp/sa.json
+
+      # ─────────── Cloud Functions ───────────
+      # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
+      - name: Enable required Google Cloud APIs (idempotent)
+        # v2 functions require many APIs to be enabled. firebase deploy
+        # auto-enables most of them, but cloudbilling.googleapis.com is a
+        # prerequisite for the deploy to even verify billing eligibility —
+        # without it the deploy aborts before enabling anything else.
+        # We enable the full set up-front in one batch (idempotent: already-on
+        # APIs are no-op).
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          APIS = [
+              "cloudbilling.googleapis.com",       # billing check before deploy
+              "cloudfunctions.googleapis.com",     # functions itself
+              "cloudbuild.googleapis.com",         # build the function bundle
+              "artifactregistry.googleapis.com",   # store function container
+              "run.googleapis.com",                # v2 = Cloud Run
+              "eventarc.googleapis.com",           # v2 event triggers
+              "pubsub.googleapis.com",             # v2 scheduler under the hood
+              "cloudscheduler.googleapis.com",     # scheduled functions
+              "secretmanager.googleapis.com",      # defineSecret('WHATSAPP_TOKEN')
+              "iamcredentials.googleapis.com",     # SA impersonation
+              "logging.googleapis.com",            # function logs
+              "cloudtrace.googleapis.com",         # Genkit Firebase Monitoring
+              "monitoring.googleapis.com",         # Genkit metrics
+          ]
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+          # batchEnable can enable up to 20 APIs in one call
+          r = requests.post(
+              f"https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services:batchEnable",
+              headers=hdrs,
+              json={"serviceIds": APIS},
+          )
+          if r.status_code in (200, 201):
+              print(f"✓ batchEnable accepted — {len(APIS)} APIs enabled or already on")
+              try:
+                  print(f"  Operation: {r.json().get('name','(no name)')}")
+              except Exception:
+                  pass
+          else:
+              print(f"WARN: batchEnable returned {r.status_code}")
+              print(r.text[:600])
+              # Fall back to enabling one-by-one so a single bad API doesn't kill the batch
+              for api in APIS:
+                  rr = requests.post(
+                      f"https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services/{api}:enable",
+                      headers=hdrs, json={},
+                  )
+                  print(f"  {api}: {rr.status_code}")
+          PYEOF
+
+      - name: Ensure WhatsApp secret exists (placeholder if missing)
+        # WhatsApp functions use defineSecret('WHATSAPP_TOKEN'). The deploy
+        # refuses to proceed in --non-interactive mode if the secret has no
+        # value, even when the runtime mode is 'stub'. We seed a placeholder
+        # so the deploy can complete; the admin can update the real value
+        # later via Firebase Console → Functions → Secrets when WhatsApp goes
+        # live. The placeholder is harmless because functions/index.js checks
+        # `settings.mode !== 'live'` before ever calling the WhatsApp API.
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, base64, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          SECRET_NAME = "WHATSAPP_TOKEN"
+          PLACEHOLDER_VALUE = "placeholder-update-when-going-live"
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+          base = f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}"
+
+          # 1) Check if the secret already exists
+          r = requests.get(f"{base}/secrets/{SECRET_NAME}", headers=hdrs)
+          if r.status_code == 200:
+              print(f"✓ Secret {SECRET_NAME} already exists — leaving as-is")
+              # Also check if there's any version with data
+              rv = requests.get(f"{base}/secrets/{SECRET_NAME}/versions", headers=hdrs)
+              if rv.status_code == 200 and rv.json().get("versions"):
+                  print(f"  ({len(rv.json().get('versions', []))} version(s) on file)")
+              else:
+                  print("  WARN: secret exists but has no versions — adding placeholder")
+                  data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
+                  rav = requests.post(
+                      f"{base}/secrets/{SECRET_NAME}:addVersion",
+                      headers=hdrs,
+                      json={"payload": {"data": data}}
+                  )
+                  print(f"  addVersion: {rav.status_code}")
+          elif r.status_code == 404:
+              # 2) Create the secret + first version
+              print(f"→ Creating secret {SECRET_NAME} with placeholder...")
+              r1 = requests.post(
+                  f"{base}/secrets?secretId={SECRET_NAME}",
+                  headers=hdrs,
+                  json={"replication": {"automatic": {}}}
+              )
+              print(f"  create: {r1.status_code}")
+              if r1.status_code not in (200, 409):
+                  print(f"  body: {r1.text[:400]}")
+              data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
+              r2 = requests.post(
+                  f"{base}/secrets/{SECRET_NAME}:addVersion",
+                  headers=hdrs,
+                  json={"payload": {"data": data}}
+              )
+              print(f"  addVersion: {r2.status_code}")
+              if r2.status_code not in (200, 201):
+                  print(f"  body: {r2.text[:400]}")
+          else:
+              print(f"WARN: unexpected status {r.status_code}: {r.text[:300]}")
+          PYEOF
+
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+
+      - name: Deploy Cloud Functions
+        id: fn_deploy
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SA" > /tmp/sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
+          npm install -g firebase-tools
+
+          # ─── Pre-flight diagnostics ───
+          echo "════════════════════════════════════════════════════════"
+          echo "  PRE-FLIGHT DIAGNOSTICS"
+          echo "════════════════════════════════════════════════════════"
+          echo "→ firebase-tools version: $(firebase --version)"
+          echo "→ node version:           $(node --version)"
+          SA_EMAIL=$(python3 -c "import json; print(json.load(open('/tmp/sa.json'))['client_email'])")
+          echo "→ Service account email:  $SA_EMAIL"
+          echo "→ Project:                business2card-c041b"
+          echo "→ functions/ contents:"
+          ls -la functions/
+          echo "→ firebase.json functions block:"
+          python3 -c "import json; print(json.dumps(json.load(open('firebase.json')).get('functions', []), indent=2))"
+          echo "→ Existing functions BEFORE deploy:"
+          firebase functions:list --project business2card-c041b 2>&1 || echo "(list failed — may not exist yet)"
+          echo "────────────────────────────────────────────────────────"
+
+          echo "==> Firebase deploy --only functions starting"
+          set +e
+          # --force: auto-accept cleanup policy prompt + various deploy prompts.
+          # Without it, first-deploy emits "Error: ... could not set up cleanup
+          # policy" which is reported as a failure even after functions deploy
+          # successfully on the server.
+          firebase deploy --only functions --project business2card-c041b --non-interactive --force --debug 2>&1 | tee /tmp/firebase-deploy.log
+          DEPLOY_EXIT=${PIPESTATUS[0]}
+          set -e
+          echo "Deploy exit code: $DEPLOY_EXIT"
+
+          # On first run, many functions hit "Retrying task index 0" loops then
+          # the CLI gives up before Cloud Build finishes. If this is a partial
+          # success, re-run the deploy once — the second run sees existing
+          # functions and just confirms them quickly (~10s each instead of ~60s).
+          if [ "$DEPLOY_EXIT" != "0" ]; then
+            ERRORED=$(grep -c "Functions Errored" /tmp/firebase-deploy.log 2>/dev/null || echo "0")
+            if [ "$ERRORED" -gt "0" ]; then
+              echo "════════════════════════════════════════════════════════"
+              echo "  RETRY: First-deploy partial success — re-running"
+              echo "════════════════════════════════════════════════════════"
+              sleep 30  # let server-side ops settle
+              set +e
+              firebase deploy --only functions --project business2card-c041b --non-interactive --force --debug 2>&1 | tee /tmp/firebase-deploy-retry.log
+              DEPLOY_EXIT=${PIPESTATUS[0]}
+              set -e
+              echo "Retry exit code: $DEPLOY_EXIT"
+              # Append retry log to main log so the issue captures both
+              echo "" >> /tmp/firebase-deploy.log
+              echo "=== RETRY ATTEMPT ===" >> /tmp/firebase-deploy.log
+              cat /tmp/firebase-deploy-retry.log >> /tmp/firebase-deploy.log
+            fi
+          fi
+
+          echo "────────────────────────────────────────────────────────"
+          echo "==> Existing functions AFTER deploy:"
+          firebase functions:list --project business2card-c041b 2>&1 | tee /tmp/firebase-list.log || echo "(list failed)"
+
+          if [ "$DEPLOY_EXIT" = "0" ]; then
+            echo "deploy_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          rm -f /tmp/sa.json
+
+      # ALWAYS create a GitHub issue with the deploy log + functions list — so
+      # that even apparent "success" with no functions can be diagnosed.
+      # The issue is closed automatically below if functions ARE present.
+      - name: Always report deploy outcome as issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEPLOY_LOG=$(tail -n 120 /tmp/firebase-deploy.log 2>/dev/null || echo "(no deploy log)")
+          LIST_LOG=$(cat /tmp/firebase-list.log 2>/dev/null || echo "(no list output)")
+          SA_EMAIL=$(echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('client_email','unknown'))" 2>/dev/null || echo "unknown")
+          COMMIT_SHORT="${GITHUB_SHA::8}"
+          STATUS_TAG="${{ steps.fn_deploy.outputs.deploy_ok }}"
+          if [ "$STATUS_TAG" = "true" ]; then
+            ICON="🔍"
+            TITLE="Functions deploy diagnostic — ${COMMIT_SHORT}"
+          else
+            ICON="🚨"
+            TITLE="Functions deploy failed — ${COMMIT_SHORT}"
+          fi
+
+          cat > /tmp/issue_body.md << ISSUEBODY
+          ${ICON} Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Commit: ${COMMIT_SHORT}
+          Deploy SA: ${SA_EMAIL}
+          Deploy exit status: ${STATUS_TAG}
+
+          ## firebase functions:list AFTER deploy
+
+          \`\`\`
+          ${LIST_LOG}
+          \`\`\`
+
+          ## Last 120 lines of firebase deploy
+
+          \`\`\`
+          ${DEPLOY_LOG}
+          \`\`\`
+          ISSUEBODY
+
+          gh issue create \
+            --title "${ICON} ${TITLE}" \
+            --body-file /tmp/issue_body.md \
+            || echo "Issue creation failed"

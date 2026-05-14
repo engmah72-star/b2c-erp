@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07080f">
+<title>🤖 لوحة تحليلات ML</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+<style>
+.wrap{max-width:1100px;margin:0 auto;padding:14px;padding-bottom:60px}
+
+/* ── Topbar ── */
+.topbar-mini{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.topbar-mini h1{font-size:18px;font-weight:900;flex:1}
+.topbar-mini .updated{font-size:11px;color:var(--dim2);font-weight:600}
+.topbar-mini .back{padding:6px 12px;background:var(--bg3);border:1px solid var(--line);border-radius:10px;color:var(--dim);font-size:12px;cursor:pointer;text-decoration:none}
+
+/* ── KPI Row ── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.kpi-label{font-size:10px;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.kpi-value{font-size:24px;font-weight:900;color:var(--snow);line-height:1}
+.kpi-sub{font-size:11px;color:var(--dim2);font-weight:600;margin-top:2px}
+.kpi.up{border-color:rgba(0,217,126,.30)}
+.kpi.down{border-color:rgba(255,61,110,.30)}
+.kpi-delta{font-size:11px;font-weight:800;display:inline-flex;align-items:center;gap:3px}
+.kpi-delta.up{color:var(--g)}
+.kpi-delta.down{color:var(--r)}
+
+/* ── Section ── */
+.section{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.section-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.section-title{font-size:14px;font-weight:800;color:var(--snow);flex:1}
+.section-sub{font-size:10px;color:var(--dim2);font-weight:600}
+
+/* ── Forecast chart ── */
+.fc-chart{height:160px;position:relative;margin:8px 0}
+.fc-svg{width:100%;height:100%}
+.fc-legend{display:flex;gap:14px;font-size:11px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+.fc-legend-item{display:flex;align-items:center;gap:5px}
+.fc-legend-dot{width:8px;height:8px;border-radius:50%}
+
+/* ── Tables ── */
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:right;color:var(--dim2);font-weight:700;font-size:10px;padding:8px 10px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+.tbl td{padding:10px;border-bottom:1px solid var(--bg3);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--bg3)}
+.tbl .name{font-weight:700;color:var(--snow)}
+.tbl .pill{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:800;white-space:nowrap}
+.pill-r{background:rgba(248,113,113,.15);color:var(--r)}
+.pill-y{background:rgba(251,191,36,.15);color:var(--y)}
+.pill-g{background:rgba(52,211,153,.15);color:var(--g)}
+.pill-b{background:rgba(59,158,255,.15);color:var(--accent)}
+.pill-pu{background:rgba(167,139,250,.15);color:var(--pu)}
+.tbl .num{font-feature-settings:'tnum';color:var(--dim);text-align:left;direction:ltr}
+.tbl-actions a{color:var(--accent);text-decoration:none;font-size:11px;font-weight:700}
+.tbl-empty{padding:24px;text-align:center;color:var(--dim2);font-size:13px}
+
+@media(max-width:640px){
+  .tbl th.hide-mob, .tbl td.hide-mob{display:none}
+}
+
+.loading{padding:18px;text-align:center;color:var(--dim2);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar-mini">
+    <a href="index.html" class="back">‹ رجوع</a>
+    <h1>🤖 لوحة تحليلات ML</h1>
+    <span class="updated" id="updated">—</span>
+  </div>
+
+  <!-- KPI Row -->
+  <div class="kpis" id="kpis">
+    <div class="loading" style="grid-column:1/-1">⏳ تحميل البيانات...</div>
+  </div>
+
+  <!-- Revenue Forecast -->
+  <div class="section">
+    <div class="section-head">
+      <span style="font-size:16px">📈</span>
+      <span class="section-title">توقع الإيراد — 14 يوم قادم</span>
+      <span class="section-sub" id="fc-meta">—</span>
+    </div>
+    <div class="fc-chart" id="fc-chart"><div class="loading">⏳ تحميل التوقعات...</div></div>
+    <div class="fc-legend">
+      <div class="fc-legend-item"><span class="fc-legend-dot" style="background:var(--dim)"></span>الفعلي (آخر 7 أيام)</div>
+      <div class="fc-legend-item"><span class="fc-legend-dot" style="background:var(--ai,#10b981)"></span>التوقع (14 يوم)</div>
+    </div>
+  </div>
+
+  <!-- Top at-risk clients -->
+  <div class="section">
+    <div class="section-head">
+      <span style="font-size:16px">⚠️</span>
+      <span class="section-title">أعلى 20 عميل مهدّد بالفقد</span>
+      <span class="section-sub" id="risk-meta">—</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="tbl" id="tbl-risk">
+        <thead>
+          <tr>
+            <th>العميل</th>
+            <th>الشريحة</th>
+            <th class="num">خطر %</th>
+            <th class="num hide-mob">آخر طلب</th>
+            <th class="num hide-mob">عدد الطلبات</th>
+            <th class="num hide-mob">إجمالي ج</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="7" class="tbl-empty">⏳ تحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent anomalies -->
+  <div class="section">
+    <div class="section-head">
+      <span style="font-size:16px">🚨</span>
+      <span class="section-title">شذوذ مالي حديث</span>
+      <span class="section-sub" id="anomaly-meta">—</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="tbl" id="tbl-anom">
+        <thead>
+          <tr>
+            <th>النوع</th>
+            <th class="num">المبلغ</th>
+            <th class="num">z-score</th>
+            <th class="hide-mob">من سجّل</th>
+            <th class="hide-mob">السبب</th>
+            <th class="hide-mob">التاريخ</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="6" class="tbl-empty">⏳ تحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Product affinities -->
+  <div class="section">
+    <div class="section-head">
+      <span style="font-size:16px">🔁</span>
+      <span class="section-title">المنتجات المتلازمة (للـ cross-sell)</span>
+      <span class="section-sub" id="aff-meta">—</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="tbl" id="tbl-aff">
+        <thead>
+          <tr>
+            <th>المنتج</th>
+            <th>يأتي بعده غالبًا</th>
+            <th class="num">احتمال</th>
+            <th class="num hide-mob">مرات الظهور</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="tbl-empty">⏳ تحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { auth, db, AppState, ROLES, initAuth,
+         collection, getDocs, query, where, orderBy } from './shared.js';
+
+const fn = n => Math.round(parseFloat(n)||0).toLocaleString('en-EG');
+const escapeHtml = s => String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+initAuth(async (state) => {
+  // Admin-only page
+  if (!['admin','operation_manager'].includes(state.currentRole)) {
+    document.body.innerHTML = `<div style="padding:40px;text-align:center;color:var(--r)">⛔ صلاحية محدودة — الأدمن فقط</div>`;
+    return;
+  }
+  await Promise.all([
+    loadForecast(),
+    loadAtRisk(),
+    loadAnomalies(),
+    loadAffinities(),
+    loadKpis(),
+  ]);
+}, () => { window.location.href = 'login.html'; });
+
+// ════════════════════════════════════════════════════════
+//   Forecast
+// ════════════════════════════════════════════════════════
+async function loadForecast() {
+  const target = document.getElementById('fc-chart');
+  const meta = document.getElementById('fc-meta');
+  try {
+    const snap = await getDocs(query(collection(db, 'forecasts'), orderBy('runAt', 'desc')));
+    if (snap.empty) {
+      target.innerHTML = `<div class="loading">لم يُحسب بعد — يجري التشغيل الإثنين 5ص</div>`;
+      return;
+    }
+    const f = snap.docs[0].data();
+    meta.textContent = `محدّث ${tsAgo(f.runAt)}`;
+    renderForecastChart(target, f);
+  } catch (e) {
+    target.innerHTML = `<div class="loading" style="color:var(--r)">⚠️ ${e.message}</div>`;
+  }
+}
+
+function renderForecastChart(container, f) {
+  const horizon = f.horizon || [];
+  const trailingAvg = (f.trailing7DayActual || 0) / 7;
+  if (horizon.length === 0) {
+    container.innerHTML = '<div class="loading">لا توجد بيانات</div>';
+    return;
+  }
+  const W = 800, H = 160, P = 30;
+  const max = Math.max(...horizon.map(p => p.forecast), trailingAvg) * 1.15;
+  const xStep = (W - 2*P) / (horizon.length - 1 || 1);
+  const yScale = v => H - P - (v / (max||1)) * (H - 2*P);
+
+  // Trailing actual line (single value, drawn as horizontal reference)
+  const trailY = yScale(trailingAvg);
+
+  // Forecast path
+  const path = horizon.map((p, i) => `${i===0?'M':'L'} ${P+i*xStep} ${yScale(p.forecast)}`).join(' ');
+  const fill = `${path} L ${P+(horizon.length-1)*xStep} ${H-P} L ${P} ${H-P} Z`;
+
+  // X labels: every 3 days
+  const xLabels = horizon.map((p, i) => i % 3 === 0
+    ? `<text x="${P+i*xStep}" y="${H-8}" fill="var(--dim2)" font-size="9" text-anchor="middle">${p.date.slice(5)}</text>`
+    : '').join('');
+
+  // Y labels: 0 and max
+  const yLabels = `
+    <text x="${P-6}" y="${yScale(0)+3}" fill="var(--dim2)" font-size="9" text-anchor="end">0</text>
+    <text x="${P-6}" y="${yScale(max)+3}" fill="var(--dim2)" font-size="9" text-anchor="end">${fn(max)}</text>
+  `;
+
+  container.innerHTML = `
+    <svg class="fc-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <line x1="${P}" y1="${trailY}" x2="${W-P}" y2="${trailY}" stroke="var(--dim)" stroke-dasharray="3 4" stroke-width="1"/>
+      <text x="${W-P}" y="${trailY-4}" fill="var(--dim)" font-size="9" text-anchor="end">آخر 7 أيام ≈ ${fn(trailingAvg)} ج/يوم</text>
+      <path d="${fill}" fill="url(#fcGrad)" opacity="0.18"/>
+      <path d="${path}" fill="none" stroke="var(--ai,#10b981)" stroke-width="2"/>
+      ${horizon.map((p,i) => `<circle cx="${P+i*xStep}" cy="${yScale(p.forecast)}" r="2" fill="var(--ai,#10b981)"><title>${p.date}: ${fn(p.forecast)} ج (factor ${p.seasonalIndex})</title></circle>`).join('')}
+      ${xLabels}
+      ${yLabels}
+      <defs>
+        <linearGradient id="fcGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#10b981" stop-opacity="0.6"/>
+          <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  `;
+}
+
+// ════════════════════════════════════════════════════════
+//   At-risk clients
+// ════════════════════════════════════════════════════════
+async function loadAtRisk() {
+  const tbody = document.querySelector('#tbl-risk tbody');
+  const meta = document.getElementById('risk-meta');
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'client_segments'),
+      where('segment', 'in', ['at_risk', 'cant_lose', 'about_to_sleep'])
+    ));
+    if (snap.empty) {
+      tbody.innerHTML = `<tr><td colspan="7" class="tbl-empty">لم يُحسب بعد — يشتغل الإثنين 4ص</td></tr>`;
+      return;
+    }
+    const rows = snap.docs.map(d => d.data())
+      .sort((a,b) => (b.churnRisk||0) - (a.churnRisk||0))
+      .slice(0, 20);
+    meta.textContent = `${rows.length} عميل`;
+    tbody.innerHTML = rows.map(c => {
+      const risk = c.churnRisk || 0;
+      const riskCls = risk >= 80 ? 'pill-r' : risk >= 60 ? 'pill-y' : 'pill-pu';
+      return `<tr>
+        <td class="name">${escapeHtml(c.clientName||c.clientId)}</td>
+        <td><span class="pill pill-y">${c.segmentIco||'•'} ${escapeHtml(c.segmentLabel||'')}</span></td>
+        <td class="num"><span class="pill ${riskCls}">${risk}%</span></td>
+        <td class="num hide-mob">${c.recencyDays||'-'} يوم</td>
+        <td class="num hide-mob">${c.orderCount||0}</td>
+        <td class="num hide-mob">${fn(c.totalRevenue||0)}</td>
+        <td class="tbl-actions"><a href="clients.html?openClient=${encodeURIComponent(c.clientId)}">فتح ←</a></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="tbl-empty" style="color:var(--r)">⚠️ ${e.message}</td></tr>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//   Anomalies
+// ════════════════════════════════════════════════════════
+async function loadAnomalies() {
+  const tbody = document.querySelector('#tbl-anom tbody');
+  const meta = document.getElementById('anomaly-meta');
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'admin_alerts'),
+      orderBy('createdAt', 'desc')
+    ));
+    const rows = snap.docs.slice(0, 20).map(d => ({ _id: d.id, ...d.data() }));
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="tbl-empty">لا توجد تنبيهات</td></tr>`;
+      return;
+    }
+    meta.textContent = `${rows.length} تنبيه`;
+    tbody.innerHTML = rows.map(a => {
+      const z = a.stats?.zScore ?? 0;
+      const zCls = Math.abs(z) >= 5 ? 'pill-r' : 'pill-y';
+      const reason = (a.reasons || []).join(' · ').slice(0, 80);
+      return `<tr>
+        <td class="name">${escapeHtml(a.eventType||'')}</td>
+        <td class="num">${fn(a.amount||0)}</td>
+        <td class="num">${z ? `<span class="pill ${zCls}">${z.toFixed(1)}</span>` : `<span class="pill pill-b">${a.source==='statistical_zscore'?'إحصائي':'حد ثابت'}</span>`}</td>
+        <td class="hide-mob">${escapeHtml(a.createdByName||'-')}</td>
+        <td class="hide-mob" style="color:var(--dim);font-size:11px">${escapeHtml(reason)}</td>
+        <td class="hide-mob num" style="color:var(--dim2);font-size:11px">${tsAgo(a.createdAt)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="tbl-empty" style="color:var(--r)">⚠️ ${e.message}</td></tr>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//   Product affinities
+// ════════════════════════════════════════════════════════
+async function loadAffinities() {
+  const tbody = document.querySelector('#tbl-aff tbody');
+  const meta = document.getElementById('aff-meta');
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'product_affinities'),
+      orderBy('totalOccurrences', 'desc')
+    ));
+    const rows = snap.docs.slice(0, 15).map(d => d.data());
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" class="tbl-empty">لم يُحسب بعد — يشتغل الإثنين 4:30ص</td></tr>`;
+      return;
+    }
+    meta.textContent = `${rows.length} منتج`;
+    tbody.innerHTML = rows.flatMap(p => {
+      const top = (p.affinities && p.affinities[0]) || null;
+      if (!top) return [];
+      const conf = Math.round((top.confidence || 0) * 100);
+      const confCls = conf >= 50 ? 'pill-g' : conf >= 25 ? 'pill-y' : 'pill-b';
+      return [`<tr>
+        <td class="name">${escapeHtml(p.product||'')}</td>
+        <td>${escapeHtml(top.product||'')}</td>
+        <td class="num"><span class="pill ${confCls}">${conf}%</span></td>
+        <td class="num hide-mob">${p.totalOccurrences||0}</td>
+      </tr>`];
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="tbl-empty" style="color:var(--r)">⚠️ ${e.message}</td></tr>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//   KPI Header (computed from the loaded data above —
+//   we run them in parallel but compute KPIs by re-fetching
+//   lightweight aggregates).
+// ════════════════════════════════════════════════════════
+async function loadKpis() {
+  const target = document.getElementById('kpis');
+  const updated = document.getElementById('updated');
+  try {
+    // Pull what we need in parallel
+    const [segSnap, forecastSnap, anomSnap, rfmRunSnap] = await Promise.all([
+      getDocs(collection(db, 'client_segments')),
+      getDocs(query(collection(db, 'forecasts'), orderBy('runAt', 'desc'))),
+      getDocs(collection(db, 'admin_alerts')),
+      getDocs(query(collection(db, 'rfm_runs'), orderBy('runAt', 'desc'))),
+    ]);
+    const totalClients = segSnap.size;
+    let atRisk = 0;
+    segSnap.forEach(d => {
+      const s = d.data().segment;
+      if (['at_risk','cant_lose','about_to_sleep'].includes(s)) atRisk++;
+    });
+    const forecast = forecastSnap.empty ? null : forecastSnap.docs[0].data();
+    const anomalies = anomSnap.docs.map(d => d.data());
+    const unack = anomalies.filter(a => !a.acknowledged).length;
+    const lastRfm = rfmRunSnap.empty ? null : rfmRunSnap.docs[0].data();
+
+    updated.textContent = `آخر تحليل: ${lastRfm ? tsAgo(lastRfm.runAt) : '—'}`;
+
+    const delta = forecast ? (forecast.deltaPctVsTrailing7 || 0) : null;
+    const deltaCls = delta === null ? '' : delta > 0 ? 'up' : delta < 0 ? 'down' : '';
+    const deltaArrow = delta === null ? '' : delta > 0 ? '▲' : delta < 0 ? '▼' : '•';
+
+    target.innerHTML = `
+      <div class="kpi">
+        <div class="kpi-label">عملاء محلَّلون</div>
+        <div class="kpi-value">${totalClients}</div>
+        <div class="kpi-sub">تحديث أسبوعي (الإثنين)</div>
+      </div>
+      <div class="kpi ${atRisk>0?'down':''}">
+        <div class="kpi-label">مهدّدون بالفقد</div>
+        <div class="kpi-value">${atRisk}</div>
+        <div class="kpi-sub">${totalClients?Math.round(atRisk/totalClients*100):0}% من المحلَّلين</div>
+      </div>
+      <div class="kpi ${delta>0?'up':delta<0?'down':''}">
+        <div class="kpi-label">توقع 7 أيام</div>
+        <div class="kpi-value">${forecast?fn(forecast.next7DayTotal):'—'} ${forecast?'<span style="font-size:11px;color:var(--dim);font-weight:600">ج</span>':''}</div>
+        <div class="kpi-sub">${delta!==null?`<span class="kpi-delta ${deltaCls}">${deltaArrow} ${Math.abs(delta)}%</span> مقابل الأسبوع الماضي`:'لم يُحسب بعد'}</div>
+      </div>
+      <div class="kpi ${unack>0?'down':''}">
+        <div class="kpi-label">تنبيهات نشطة</div>
+        <div class="kpi-value">${unack}</div>
+        <div class="kpi-sub">${anomalies.length} كلي · ${unack} لم يُؤكَّد</div>
+      </div>
+    `;
+  } catch (e) {
+    target.innerHTML = `<div class="loading" style="color:var(--r)">⚠️ ${e.message}</div>`;
+  }
+}
+
+function tsAgo(ts) {
+  const t = ts?.toDate?.() || (ts?.seconds ? new Date(ts.seconds*1000) : null);
+  if (!t) return '—';
+  const diff = Math.floor((Date.now() - t.getTime()) / 1000);
+  if (diff < 60) return 'الآن';
+  if (diff < 3600) return `منذ ${Math.floor(diff/60)} د`;
+  if (diff < 86400) return `منذ ${Math.floor(diff/3600)} س`;
+  return `منذ ${Math.floor(diff/86400)} يوم`;
+}
+</script>
+</body>
+</html>

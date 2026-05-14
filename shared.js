@@ -41,7 +41,7 @@ export const ROLES = {
   operation_manager:{ label:'Ops Manager',     ico:'📋', col:'#3b9eff' },
   customer_service: { label:'Cust. Service',   ico:'💬', col:'#22d3ee' },
   graphic_designer: { label:'Designer',        ico:'✏️', col:'#a78bfa' },
-  design_operator:  { label:'Design Op.',      ico:'⚙️', col:'#ffaa00' },
+  design_operator:  { label:'Design Supervisor', ico:'⚙️', col:'#ffaa00' },
   production_agent: { label:'Production',      ico:'🏭', col:'#ff3d6e' },
   shipping_officer: { label:'Shipping',        ico:'🚚', col:'#22d3ee' },
   wallet_manager:   { label:'Wallet Mgr',      ico:'💰', col:'#00d97e' },
@@ -186,6 +186,14 @@ export function initAuth(onReady, onUnauth) {
       AppState.currentRole = d.role || 'customer_service';
       AppState.userPerms   = d.permissions || {};
       AppState.userName    = d.name || user.email;
+    }
+
+    // Native shell (Capacitor) — register for APNs/FCM and wire status bar.
+    // No-op on the web; module is fetched lazily so it doesn't ship to web users.
+    if (globalThis.Capacitor?.isNativePlatform?.()) {
+      import('./mobile-bridge.js')
+        .then(m => m.initNativeBridge(app, user))
+        .catch(e => console.warn('[native-bridge] load failed:', e?.message || e));
     }
 
     onReady?.(AppState);

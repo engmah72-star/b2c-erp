@@ -3,6 +3,7 @@
 
 import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, updateDoc, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initFcm } from "./fcm-init.js";
 
 const STORAGE_KEY = 'b2c_notif_seen';
 
@@ -10,6 +11,11 @@ export function initNotifications(app, currentUser) {
   if (!currentUser) return;
   const db = getFirestore(app);
   const uid = currentUser.uid;
+
+  // Kick off FCM in the background — never blocks the bell wiring below.
+  // Failures are logged inside initFcm; the in-app feed stays functional even
+  // if push permission is denied or the browser doesn't support FCM.
+  initFcm(app, currentUser);
 
   // إنشاء زر الجرس في الـ topbar
   const topbarRight = document.querySelector('.topbar-right');
@@ -26,6 +32,25 @@ export function initNotifications(app, currentUser) {
   let allNotifs = [];
   let panelOpen = false;
   let seenIds = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+
+  // Foreground push: bump the bell so the badge ticks even while the tab is
+  // focused (the SW only renders system notifications when hidden). Wired
+  // here so allNotifs / updateBadge are already in scope.
+  window.addEventListener('b2c:fcm:foreground', (ev) => {
+    const d = ev.detail || {};
+    const fakeId = 'fcm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    allNotifs = [{
+      id: fakeId,
+      type: d.data?.type || 'push',
+      ico: '🔔',
+      title: d.title || 'إشعار',
+      desc:  d.body || '',
+      time:  new Date(),
+      link:  d.data?.link || null,
+    }, ...allNotifs];
+    updateBadge();
+    if (panelOpen) renderPanel();
+  });
 
   // ── مراقبة المهام المعيّنة للموظف ──
   const tasksQ = query(collection(db, 'tasks'), where('assignedTo', '==', uid));
@@ -150,6 +175,25 @@ export function initNotifications(app, currentUser) {
         link: `clients.html?openClient=${f.clientId}&tab=followups`,
       }));
     mergeNotifs('followup', fuNotifs);
+  }, () => { /* permission errors silently */ });
+
+  // ── إشعارات النظام (notifications collection) ──
+  // كتابات Cloud Functions: followup_due, approval_pending, order_assigned,...
+  const notifQ = query(collection(db, 'notifications'), where('toUid', '==', uid));
+  onSnapshot(notifQ, snap => {
+    const sysNotifs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(n => !n.archived)
+      .map(n => ({
+        id:    'sys_' + n.id,
+        type:  n.type || 'system',
+        ico:   n.ico  || '🔔',
+        title: n.title || 'إشعار',
+        desc:  n.desc  || '',
+        time:  n.createdAt?.toDate?.() || new Date(),
+        link:  n.link || null,
+      }));
+    mergeNotifs('sys', sysNotifs);
   }, () => { /* permission errors silently */ });
 
   // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
