@@ -485,7 +485,12 @@ function startHeartbeat(){
 
 // ── Auto-create channel conversations (idempotent) ──
 async function ensureChannels(){
-  const myChannels=CHANNELS.filter(c=>c.roles==='*'||c.roles.includes(currentRole));
+  // إذا role غير محدد في users doc، اعتبره customer_service كافتراضي
+  // (يضمن أن الموظف على الأقل ينضم إلى #عام + #خدمة-العملاء)
+  const role=currentRole||'customer_service';
+  const myChannels=CHANNELS.filter(c=>c.roles==='*'||c.roles.includes(role));
+  console.log('[inbox] ensureChannels start — uid:',currentUid,'role:',role||'(empty)','channels:',myChannels.map(c=>c.key));
+  let okCount=0,failCount=0;
   // For each channel, ensure a conversation doc with stable id `channel_${key}` exists
   for(const ch of myChannels){
     const convId='channel_'+ch.key;
@@ -495,11 +500,13 @@ async function ensureChannels(){
       if(!snap.exists()){
         // create with all matching role users
         const all=await getDocs(collection(db,'users'));
-        const members=all.docs.filter(d=>{
+        let members=all.docs.filter(d=>{
           const ud=d.data();if(!ud.isActive&&ud.isActive!==undefined)return false;
           if(ch.roles==='*')return true;
           return ch.roles.includes(ud.role);
         }).map(d=>d.id);
+        // ضمان أن currentUid في الـ members (rule يتطلب creator يكون participant)
+        if(!members.includes(currentUid))members.push(currentUid);
         await setDoc(ref,{
           type:'channel',channelKey:ch.key,name:ch.name,ico:ch.ico,
           participants:members,
@@ -508,15 +515,26 @@ async function ensureChannels(){
           lastMessageAt:serverTimestamp(),
           lastMessagePreview:'بدأت المحادثة',lastSenderName:'النظام',
         });
+        okCount++;
+        console.log('[inbox]   ✓ created channel:',ch.key,'with',members.length,'members');
       } else {
         // make sure current user is a participant
         const cur=snap.data();
         if(!(cur.participants||[]).includes(currentUid)){
           await updateDoc(ref,{participants:arrayUnion(currentUid)});
+          okCount++;
+          console.log('[inbox]   ✓ joined existing channel:',ch.key);
+        } else {
+          okCount++;
         }
       }
-    }catch(e){console.warn('channel ensure',ch.key,e.message);}
+    }catch(e){
+      failCount++;
+      console.error('[inbox]   ❌ channel ensure failed:',ch.key,{code:e.code,msg:e.message,uid:currentUid,role});
+      if(typeof toast==='function')toast(`⚠️ تعذّر الانضمام إلى ${ch.name}: ${e.code||e.message}`,'err');
+    }
   }
+  console.log('[inbox] ensureChannels done — ok:',okCount,'fail:',failCount);
 }
 
 // ── Conversations listener ──
@@ -524,8 +542,24 @@ function subscribeConversations(){
   const q=query(collection(db,'conversations'),where('participants','array-contains',currentUid));
   onSnapshot(q,snap=>{
     conversations=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    console.log('[inbox] conversations updated:',conversations.length);
     renderConvList();
-  },err=>console.warn('convs sub:',err.message));
+  },err=>{
+    console.error('[inbox] conversations subscription FAILED:',{code:err.code,msg:err.message,uid:currentUid,role:currentRole});
+    if(typeof toast==='function'){
+      toast(err.code==='permission-denied'
+        ?'⛔ خطأ صلاحيات في قراءة المحادثات — تواصل مع الأدمن'
+        :`⚠️ تعذّر تحميل المحادثات: ${err.code||err.message}`,'err');
+    }
+    // عرض في قائمة المحادثات
+    const list=$('ib-convs');
+    if(list)list.innerHTML=`<div style="padding:30px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px;line-height:1.8">
+      <div style="font-size:36px;margin-bottom:10px">⚠️</div>
+      <strong style="color:#f0a020">تعذّر تحميل المحادثات</strong><br>
+      <span style="font-size:11px">${err.code||err.message}</span><br>
+      <button onclick="location.reload()" style="margin-top:14px;padding:8px 18px;border-radius:10px;border:1px solid var(--ws-border);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:12px;font-weight:700">🔄 إعادة التحميل</button>
+    </div>`;
+  });
 }
 
 // ── Presence listener (for everyone we might chat with) ──
@@ -564,7 +598,23 @@ function renderConvList(){
   $('cnt-all').textContent=conversations.filter(c=>!(c.archivedBy||[]).includes(currentUid)).length;
   $('cnt-arc').textContent=conversations.filter(c=>(c.archivedBy||[]).includes(currentUid)).length;
   if(!items.length){
-    list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px">${searchQuery?'لا نتائج':listTab==='archived'?'لا توجد محادثات مؤرشفة':'ابدأ محادثة بالضغط على ✏️'}</div>`;
+    if(searchQuery){
+      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px">لا نتائج</div>`;
+    } else if(listTab==='archived'){
+      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px">لا توجد محادثات مؤرشفة</div>`;
+    } else if(conversations.length===0){
+      // empty قبل أي تحميل أو بعد فشل ensureChannels — نعرض diagnostic
+      list.innerHTML=`<div style="padding:28px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px;line-height:1.9">
+        <div style="font-size:42px;margin-bottom:10px;opacity:.5">💬</div>
+        <strong style="color:var(--ws-text)">لا توجد محادثات بعد</strong><br>
+        <span style="font-size:11px;color:var(--ws-text-dim)">role: ${currentRole||'غير محدد'} · uid: ${(currentUid||'').slice(0,6)}…</span><br>
+        <button onclick="retryEnsureChannels()" style="margin-top:12px;padding:8px 16px;border-radius:10px;border:1px solid var(--ws-border);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:12px;font-weight:700">🔄 إعادة الإعداد</button>
+        <button onclick="newDM()" style="margin-top:12px;margin-right:6px;padding:8px 16px;border-radius:10px;border:none;background:#00a884;color:#fff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700">✏️ محادثة جديدة</button>
+        <div style="font-size:10px;margin-top:10px;color:var(--ws-text-dim);opacity:.7">افتح Console (F12) لتفاصيل التشخيص</div>
+      </div>`;
+    } else {
+      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:13px">ابدأ محادثة بالضغط على ✏️</div>`;
+    }
     return;
   }
   list.innerHTML=items.map(c=>{
@@ -1561,6 +1611,17 @@ window.closeLb=()=>$('lb').classList.remove('show');
 $('lb').addEventListener('click',e=>{if(e.target.id==='lb')closeLb();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLb();});
 
+// ── Retry helper (called from empty state) ──
+window.retryEnsureChannels=async function(){
+  if(typeof toast==='function')toast('⏳ جاري إعادة الإعداد…','');
+  try{
+    await ensureChannels();
+    if(typeof toast==='function')toast('✓ تم — انتظر تحديث القائمة','ok');
+  }catch(e){
+    if(typeof toast==='function')toast('❌ '+e.message,'err');
+  }
+};
+
 // ── Auth ──
 onAuthStateChanged(auth,async u=>{
   if(!u){location.href='login.html';return;}
@@ -1574,8 +1635,15 @@ onAuthStateChanged(auth,async u=>{
       $('nav-name').textContent=currentUserName;
       $('nav-av').textContent=initAvatar(currentUserName);
       $('role-badge').textContent=ROLE_LABEL[currentRole]||currentRole;
+      console.log('[inbox] auth ready — uid:',u.uid,'role:',currentRole||'(empty)','name:',currentUserName);
+    } else {
+      console.warn('[inbox] users/{uid} doc غير موجود — اتصل بالأدمن لإنشاء حسابك في users');
+      if(typeof toast==='function')toast('⚠️ حسابك غير مكتمل (users doc مفقود) — تواصل مع الأدمن','err');
     }
-  }catch(_){}
+  }catch(e){
+    console.error('[inbox] فشل قراءة users/{uid}:',{code:e.code,msg:e.message,uid:u.uid});
+    if(typeof toast==='function')toast(`⚠️ تعذّر قراءة حسابك: ${e.code||e.message}`,'err');
+  }
   buildSidebar();
   startHeartbeat();
   await ensureChannels();
