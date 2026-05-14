@@ -940,7 +940,7 @@ auth.onAuthStateChanged(async u=>{
   db.collection('clients').orderBy('createdAt','desc').onSnapshot(snap=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
-    renderGrid(); updateStats();
+    scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
     // Deep-link: ?openClient={id}[&tab=followups]
     if(!window.__deepLinked){
@@ -960,8 +960,7 @@ auth.onAuthStateChanged(async u=>{
   });
   db.collection('orders').onSnapshot(snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateStats();
-    renderGrid();
+    scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
   });
   db.collection('products_v2').onSnapshot(snap=>{
@@ -1107,23 +1106,28 @@ function updateStats(){
     } else compEl.textContent='';
   }
 
-  // Quick filter counts
-  const getOrdsFor=c=>allOrders.filter(o=>o.clientId===c._id||(c.phone1&&o.clientPhone===c.phone1)||(c.name&&o.clientName===c.name));
+  // Quick filter counts (uses pre-built index — O(N) instead of O(N*M))
+  const idx=buildClientOrdersIndex();
+  const nowSec=Date.now()/1000;
   let nVip=0,nActive=0,nRem=0,nRisk=0,nNew=0,nSleep=0;
-  clients.forEach(c=>{
-    if(c.status==='legacy')return;
-    const ords=getOrdsFor(c);
-    const cRem=ords.reduce((s,o)=>s+calcRem(o),0);
-    const hasAct=ords.some(o=>o.stage!=='archived');
-    const lastOrd=ords.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
-    const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):999;
+  for(const c of clients){
+    if(c.status==='legacy')continue;
+    const ords=idx.get(c._id)||[];
+    let cRem=0, hasAct=false, lastTs=0;
+    for(const o of ords){
+      cRem+=calcRem(o);
+      if(o.stage!=='archived') hasAct=true;
+      const t=o.createdAt?.seconds||0;
+      if(t>lastTs) lastTs=t;
+    }
+    const daysSince=lastTs?Math.floor((nowSec-lastTs)/86400):999;
     if(ords.length>=3)nVip++;
     if(hasAct)nActive++;
     if(cRem>0)nRem++;
     if(daysSince>=30&&daysSince<90)nRisk++;
     if(inRange(c,weekStart))nNew++;
     if(daysSince>=90&&daysSince<999)nSleep++;
-  });
+  }
   const setBadge=(id,n)=>{const e=document.getElementById(id);if(e)e.textContent=n>0?`(${n})`:'';};
   setBadge('qf-all-n',clients.filter(c=>c.status!=='legacy').length);
   setBadge('qf-vip-n',nVip);
@@ -1237,15 +1241,24 @@ function renderGrid(){
     el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">${isLegacyTab?'📁':'👤'}</div><div class="empty-text">${isLegacyTab?'لا يوجد عملاء قدامى مسجلين':'لا نتائج للبحث'}</div><button class="btn btn-ghost btn-sm" onclick="${isLegacyTab?'openAddLegacy()':'openAddClient()'}" style="margin-top:12px">${isLegacyTab?'＋ سجّل عميل قديم':'＋ أضف عميل'}</button></div>`;
     return;
   }
+  const _nowMs=Date.now();
+  const _nowSec=_nowMs/1000;
   el.innerHTML=data.map((c,i)=>{
     const col=COLORS[i%COLORS.length];
     const cOrds=getClientOrders(c);
-    const rem=cOrds.reduce((s,o)=>s+(calcRem(o)),0);
-    const active=cOrds.filter(o=>o.stage!=='archived').length;
+    // Single pass over orders for this client
+    let rem=0, active=0, hasLate=false, lastTs=0;
+    for(const o of cOrds){
+      rem+=calcRem(o);
+      if(o.stage!=='archived'){
+        active++;
+        if(o.deadline && new Date(o.deadline).getTime()<_nowMs) hasLate=true;
+      }
+      const t=o.createdAt?.seconds||0;
+      if(t>lastTs) lastTs=t;
+    }
     const tags=c.tags||[];
-    const hasLate=cOrds.some(o=>o.stage!=='archived'&&o.deadline&&new Date(o.deadline)<new Date());
-    const lastOrd=cOrds.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
-    const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):null;
+    const daysSince=lastTs?Math.floor((_nowSec-lastTs)/86400):null;
     const isVip=cOrds.length>=3;
     const isInactive=daysSince!==null&&daysSince>=90;
     const atRisk=daysSince!==null&&daysSince>=30&&daysSince<90;
@@ -1314,8 +1327,47 @@ function renderGrid(){
   }).join('');
 }
 
+// ── Client→Orders Index (perf: avoid O(N*M) on each render) ──
+let _clientOrdersIndex=null; // Map<clientId, orders[]>
+let _indexBuiltKey='';       // cache invalidation key
+function buildClientOrdersIndex(){
+  const key=clients.length+'-'+allOrders.length;
+  if(key===_indexBuiltKey && _clientOrdersIndex) return _clientOrdersIndex;
+  const byId=new Map(), byPhone=new Map(), byName=new Map();
+  for(const c of clients){
+    byId.set(c._id,c);
+    if(c.phone1) byPhone.set(c.phone1,c);
+    if(c.name) byName.set(c.name,c);
+  }
+  const idx=new Map();
+  for(const c of clients) idx.set(c._id,[]);
+  for(const o of allOrders){
+    let target=null;
+    if(o.clientId && byId.has(o.clientId)) target=byId.get(o.clientId);
+    else if(o.clientPhone && byPhone.has(o.clientPhone)) target=byPhone.get(o.clientPhone);
+    else if(o.clientName && byName.has(o.clientName)) target=byName.get(o.clientName);
+    if(target) idx.get(target._id).push(o);
+  }
+  _clientOrdersIndex=idx;
+  _indexBuiltKey=key;
+  return idx;
+}
+function invalidateOrdersIndex(){_clientOrdersIndex=null;_indexBuiltKey='';}
 function getClientOrders(c){
-  return allOrders.filter(o=>o.clientId===c._id||(c.phone1&&o.clientPhone===c.phone1)||(c.name&&o.clientName===c.name));
+  if(!c) return [];
+  const idx=buildClientOrdersIndex();
+  return idx.get(c._id)||[];
+}
+
+// ── Debounce updateStats + renderGrid to avoid triple-execution on snapshots ──
+let _statsTimer=null, _gridTimer=null;
+const _origUpdateStats=null;
+function scheduleStatsAndGrid(){
+  invalidateOrdersIndex();
+  clearTimeout(_statsTimer);
+  clearTimeout(_gridTimer);
+  _statsTimer=setTimeout(()=>{ try{ updateStats(); }catch(e){console.warn('updateStats:',e);} },80);
+  _gridTimer=setTimeout(()=>{ try{ renderGrid(); }catch(e){console.warn('renderGrid:',e);} },120);
 }
 
 // ══ PANEL ══
