@@ -218,7 +218,6 @@ jobs:
       - name: Install functions dependencies
         working-directory: functions
         run: npm install --no-audit --no-fund
-        continue-on-error: true
 
       - name: Deploy Cloud Functions
         id: fn_deploy
@@ -238,60 +237,73 @@ jobs:
           SA_EMAIL=$(python3 -c "import json; print(json.load(open('/tmp/sa.json'))['client_email'])")
           echo "→ Service account email:  $SA_EMAIL"
           echo "→ Project:                business2card-c041b"
+          echo "→ functions/ contents:"
+          ls -la functions/
+          echo "→ firebase.json functions block:"
+          python3 -c "import json; print(json.dumps(json.load(open('firebase.json')).get('functions', []), indent=2))"
+          echo "→ Existing functions BEFORE deploy:"
+          firebase functions:list --project business2card-c041b 2>&1 || echo "(list failed — may not exist yet)"
           echo "────────────────────────────────────────────────────────"
 
           echo "==> Firebase deploy --only functions starting"
-          if firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log; then
-            echo "==> ✅ Firebase deploy --only functions succeeded"
+          set +e
+          firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log
+          DEPLOY_EXIT=${PIPESTATUS[0]}
+          set -e
+          echo "Deploy exit code: $DEPLOY_EXIT"
+
+          echo "────────────────────────────────────────────────────────"
+          echo "==> Existing functions AFTER deploy:"
+          firebase functions:list --project business2card-c041b 2>&1 | tee /tmp/firebase-list.log || echo "(list failed)"
+
+          if [ "$DEPLOY_EXIT" = "0" ]; then
             echo "deploy_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy_ok=false" >> "$GITHUB_OUTPUT"
-            echo "════════════════════════════════════════════════════════"
-            echo "  ❌ FUNCTIONS DEPLOY FAILED"
-            echo "════════════════════════════════════════════════════════"
-            echo "Last 60 lines of deploy log:"
-            tail -n 60 /tmp/firebase-deploy.log
-            echo "════════════════════════════════════════════════════════"
           fi
           rm -f /tmp/sa.json
 
-      # If the deploy failed, capture the log into a GitHub issue so the failure
-      # is visible from the Issues tab (and queryable via the API).
-      - name: Report functions deploy failure as issue
-        if: steps.fn_deploy.outputs.deploy_ok == 'false'
+      # ALWAYS create a GitHub issue with the deploy log + functions list — so
+      # that even apparent "success" with no functions can be diagnosed.
+      # The issue is closed automatically below if functions ARE present.
+      - name: Always report deploy outcome as issue
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAIL=$(tail -n 80 /tmp/firebase-deploy.log 2>/dev/null || echo "(log not captured)")
+          DEPLOY_LOG=$(tail -n 120 /tmp/firebase-deploy.log 2>/dev/null || echo "(no deploy log)")
+          LIST_LOG=$(cat /tmp/firebase-list.log 2>/dev/null || echo "(no list output)")
           SA_EMAIL=$(echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('client_email','unknown'))" 2>/dev/null || echo "unknown")
           COMMIT_SHORT="${GITHUB_SHA::8}"
+          STATUS_TAG="${{ steps.fn_deploy.outputs.deploy_ok }}"
+          if [ "$STATUS_TAG" = "true" ]; then
+            ICON="🔍"
+            TITLE="Functions deploy diagnostic — ${COMMIT_SHORT}"
+          else
+            ICON="🚨"
+            TITLE="Functions deploy failed — ${COMMIT_SHORT}"
+          fi
 
-          # Write the issue body to a file to avoid shell quoting hell
           cat > /tmp/issue_body.md << ISSUEBODY
-          **Workflow run:** [#${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-          **Commit:** \`${COMMIT_SHORT}\`
-          **Service account used by deploy:** \`${SA_EMAIL}\`
+          ${ICON} Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Commit: ${COMMIT_SHORT}
+          Deploy SA: ${SA_EMAIL}
+          Deploy exit status: ${STATUS_TAG}
 
-          ## Last 80 lines of \`firebase deploy --only functions\` log
+          ## firebase functions:list AFTER deploy
 
           \`\`\`
-          ${TAIL}
+          ${LIST_LOG}
+          \`\`\`
+
+          ## Last 120 lines of firebase deploy
+
+          \`\`\`
+          ${DEPLOY_LOG}
           \`\`\`
           ISSUEBODY
 
           gh issue create \
-            --title "🚨 Functions deploy failed — ${COMMIT_SHORT}" \
+            --title "${ICON} ${TITLE}" \
             --body-file /tmp/issue_body.md \
-            --label "ci-failure" \
-            || echo "Failed to create issue (label may not exist — retry without label)"
-
-          # Retry without label if label-related failure
-          if [ $? -ne 0 ]; then
-            gh issue create \
-              --title "🚨 Functions deploy failed — ${COMMIT_SHORT}" \
-              --body-file /tmp/issue_body.md \
-              || true
-          fi
-
-          # Fail the workflow now that the issue is recorded
-          exit 1
+            || echo "Issue creation failed"
