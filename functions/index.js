@@ -972,3 +972,284 @@ exports.scheduledFirestoreBackup = onSchedule(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   ML: Weekly RFM segmentation + churn risk per client
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Recency / Frequency / Monetary scoring, computed weekly from `orders`.
+// Output: `client_segments/{clientId}` — read-only for pages, written here.
+//
+// RFM is the industry-standard CRM technique used before reaching for ML
+// proper: each client gets a 1-5 score on each axis (quintile of the cohort)
+// and a segment label drawn from the standard 11-segment RFM model.
+// Computational cost: O(N orders + N clients log N) — fine to ~100K orders.
+//
+// We deliberately do NOT mutate `clients/*` from here (RULE 6: backward-
+// compat). Pages that want the segment look it up in `client_segments` by id.
+
+const RFM_LOOKBACK_DAYS = 365;
+const RFM_MAX_ORDERS = 50000; // hard cap so a runaway scan can't blow the timer
+
+exports.weeklyChurnRfmAnalysis = onSchedule(
+  { schedule: '0 4 * * 1', timeZone: 'Africa/Cairo', timeoutSeconds: 540, memory: '1GiB' },
+  async () => {
+    const cutoff = new Date(Date.now() - RFM_LOOKBACK_DAYS * 86400000);
+
+    const ordersSnap = await db.collection('orders')
+      .where('createdAt', '>=', cutoff)
+      .limit(RFM_MAX_ORDERS)
+      .get();
+
+    if (ordersSnap.empty) {
+      console.log('[weeklyChurnRfmAnalysis] no orders in window — nothing to compute');
+      return;
+    }
+
+    // Aggregate per client (skip cancelled — they are non-revenue)
+    const now = Date.now();
+    const byClient = new Map();
+    ordersSnap.forEach(d => {
+      const o = d.data();
+      if (!o.clientId) return;
+      if (o.stage === 'cancelled') return;
+
+      const created = o.createdAt?.toDate?.()?.getTime() || 0;
+      if (!created) return;
+
+      const ship  = Number(o.customerShipFee) || 0;
+      const sale  = Number(o.salePrice)       || 0;
+      const disc  = Number(o.discount)        || 0;
+      const revenue = Math.max(0, sale + ship - disc);
+
+      let r = byClient.get(o.clientId);
+      if (!r) {
+        r = {
+          clientId:   o.clientId,
+          clientName: o.clientName || '',
+          lastOrderTs: 0,
+          orderCount:  0,
+          totalRevenue: 0,
+        };
+        byClient.set(o.clientId, r);
+      }
+      r.lastOrderTs   = Math.max(r.lastOrderTs, created);
+      r.orderCount   += 1;
+      r.totalRevenue += revenue;
+      if (!r.clientName && o.clientName) r.clientName = o.clientName;
+    });
+
+    if (byClient.size === 0) {
+      console.log('[weeklyChurnRfmAnalysis] no eligible orders after filtering');
+      return;
+    }
+
+    const clients = [...byClient.values()];
+    clients.forEach(c => { c.recencyDays = Math.floor((now - c.lastOrderTs) / 86400000); });
+
+    // Quintile scorer — returns a fn that maps value → 1..5.
+    // `higherIsBetter` controls direction: revenue/frequency are higher-better,
+    // recencyDays is lower-better (we invert).
+    function quintileScorer(values, higherIsBetter) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const n = sorted.length;
+      // 5 buckets ⇒ 4 cut points at the 20/40/60/80 percentiles
+      const cuts = [0.2, 0.4, 0.6, 0.8].map(q => sorted[Math.min(n - 1, Math.floor(n * q))]);
+      return v => {
+        let s = 1;
+        for (const cut of cuts) if (v >= cut) s++;
+        return higherIsBetter ? s : (6 - s);
+      };
+    }
+
+    const rScore = quintileScorer(clients.map(c => c.recencyDays), false);
+    const fScore = quintileScorer(clients.map(c => c.orderCount), true);
+    const mScore = quintileScorer(clients.map(c => c.totalRevenue), true);
+
+    // Segment classifier — maps the (R,F,M) tuple to one of the 8 standard
+    // CRM segments. Order matters: the first matching rule wins.
+    function classify(R, F, M) {
+      if (R >= 4 && F >= 4 && M >= 4) return { segment: 'champion',          label: 'بطل',           ico: '🏆' };
+      if (R <= 2 && F >= 4 && M >= 4) return { segment: 'cant_lose',         label: 'لا يجب فقده',  ico: '🚨' };
+      if (R <= 2 && F >= 3 && M >= 3) return { segment: 'at_risk',           label: 'مهدّد بالفقد',  ico: '⚠️' };
+      if (R >= 4 && F >= 3)           return { segment: 'loyal',             label: 'وفي',           ico: '💎' };
+      if (R >= 4 && F <= 2)           return { segment: 'new',               label: 'جديد/واعد',    ico: '🌱' };
+      if (R == 3 && F >= 3)           return { segment: 'needs_attention',   label: 'يحتاج اهتمام',  ico: '👀' };
+      if (R <= 2 && F <= 2 && M <= 2) return { segment: 'lost',              label: 'فُقِد',         ico: '💤' };
+      if (R == 3 && F <= 2)           return { segment: 'about_to_sleep',    label: 'على وشك الفقد', ico: '😴' };
+      return { segment: 'normal', label: 'عادي', ico: '👤' };
+    }
+
+    // Churn risk score 0-100. Heuristic: recency dominates (60%), low frequency
+    // adds risk (20%), low monetary adds risk (20%). Recent + frequent ⇒ ~0.
+    function churnRisk(R, F, M, c) {
+      const recencyComp   = Math.min(60, c.recencyDays / 180 * 60);
+      const frequencyComp = (5 - F) * 4;  // 0..20
+      const monetaryComp  = (5 - M) * 4;  // 0..20
+      return Math.max(0, Math.min(100, Math.round(recencyComp + frequencyComp + monetaryComp)));
+    }
+
+    // Write in chunks (writeBatch caps at 500 ops)
+    let written = 0;
+    const segCounts = {};
+    for (let i = 0; i < clients.length; i += 400) {
+      const chunk = clients.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(c => {
+        const R = rScore(c.recencyDays);
+        const F = fScore(c.orderCount);
+        const M = mScore(c.totalRevenue);
+        const seg = classify(R, F, M);
+        const risk = churnRisk(R, F, M, c);
+        segCounts[seg.segment] = (segCounts[seg.segment] || 0) + 1;
+        batch.set(db.doc(`client_segments/${c.clientId}`), {
+          clientId: c.clientId,
+          clientName: c.clientName,
+          recencyScore:   R,
+          frequencyScore: F,
+          monetaryScore:  M,
+          recencyDays:   c.recencyDays,
+          orderCount:    c.orderCount,
+          totalRevenue:  Math.round(c.totalRevenue),
+          lastOrderAt:   new Date(c.lastOrderTs),
+          segment:       seg.segment,
+          segmentLabel:  seg.label,
+          segmentIco:    seg.ico,
+          churnRisk:     risk,
+          rfmCode:       `${R}${F}${M}`,
+          windowDays:    RFM_LOOKBACK_DAYS,
+          computedAt:    FieldValue.serverTimestamp(),
+        }, { merge: true });
+        written++;
+      });
+      await batch.commit();
+    }
+
+    // Snapshot the run for the dashboard / history
+    await db.collection('rfm_runs').add({
+      windowDays:   RFM_LOOKBACK_DAYS,
+      clientCount:  written,
+      segmentCounts: segCounts,
+      runAt:        FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[weeklyChurnRfmAnalysis] wrote ${written} segments — distribution:`, segCounts);
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   ML: Daily statistical anomaly scan on financial_ledger
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Complements the realtime `onCriticalFinancialEntry` (which alerts on a hard
+// 50,000 threshold). This batch run catches the OPPOSITE class of issue:
+// amounts that are statistically odd for their event type, even if they're
+// below the absolute threshold. Example: a SHIPPING_EXPENSE of 800 ج.م when
+// the 90-day mean for SHIPPING_EXPENSE is 120 ± 40 ⇒ z ≈ 17, almost certainly
+// a data-entry mistake.
+//
+// Algorithm: per eventType, compute mean + stdev over the last 90 days
+// (excluding deleted entries). Then for entries created in the last ~25 hours
+// (small overlap with the daily run to avoid edge misses), flag any with
+// |z| ≥ 3 — provided we have at least 20 historical samples in that bucket
+// (without enough data, std-dev is meaningless and we'd cry wolf).
+//
+// Dedup: an existing admin_alerts row with the same ledgerEntryId means the
+// realtime trigger already fired — skip.
+
+const ANOMALY_LOOKBACK_DAYS = 90;
+const ANOMALY_RECENT_HOURS  = 25;
+const ANOMALY_Z_THRESHOLD   = 3;
+const ANOMALY_MIN_SAMPLES   = 20;
+
+exports.dailyFinancialAnomalyScan = onSchedule(
+  { schedule: '15 6 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540, memory: '512MiB' },
+  async () => {
+    const lookbackCutoff = new Date(Date.now() - ANOMALY_LOOKBACK_DAYS * 86400000);
+    const recentCutoff   = new Date(Date.now() - ANOMALY_RECENT_HOURS  * 3600000);
+
+    const snap = await db.collection('financial_ledger')
+      .where('createdAt', '>=', lookbackCutoff)
+      .get();
+
+    // Bucket by eventType: keep amount samples for stats + recent rows for scoring
+    const groups = new Map();
+    snap.forEach(d => {
+      const e = d.data();
+      if (e.isDeleted) return;
+      const t = e.eventType || 'unknown';
+      const amount = Number(e.amount) || 0;
+      if (!Number.isFinite(amount) || amount <= 0) return;
+
+      let g = groups.get(t);
+      if (!g) { g = { values: [], recent: [] }; groups.set(t, g); }
+      g.values.push(amount);
+
+      const created = e.createdAt?.toDate?.();
+      if (created && created >= recentCutoff) {
+        g.recent.push({ id: d.id, amount, ...e });
+      }
+    });
+
+    let alertsCreated = 0;
+    let groupsScanned  = 0;
+    for (const [eventType, g] of groups.entries()) {
+      if (g.values.length < ANOMALY_MIN_SAMPLES) continue;
+      if (g.recent.length === 0) continue;
+      groupsScanned++;
+
+      const mean = g.values.reduce((a, b) => a + b, 0) / g.values.length;
+      const variance = g.values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / g.values.length;
+      const stdev = Math.sqrt(variance);
+      if (stdev === 0) continue;
+
+      for (const e of g.recent) {
+        const z = (e.amount - mean) / stdev;
+        if (Math.abs(z) < ANOMALY_Z_THRESHOLD) continue;
+
+        // Skip if the realtime critical trigger already alerted on this entry
+        const exists = await db.collection('admin_alerts')
+          .where('ledgerEntryId', '==', e.id)
+          .limit(1).get();
+        if (!exists.empty) continue;
+
+        const severity = Math.abs(z) >= 5 ? 'high' : 'medium';
+        const direction = e.amount > mean ? 'أعلى' : 'أقل';
+        await db.collection('admin_alerts').add({
+          severity,
+          source: 'statistical_zscore',
+          reasons: [
+            `حركة ${direction} بكثير من المعتاد لـ ${eventType}` +
+            ` (z=${z.toFixed(2)}, متوسط=${Math.round(mean).toLocaleString('en-EG')}, σ=${Math.round(stdev).toLocaleString('en-EG')})`
+          ],
+          eventType,
+          type:      e.type || '',
+          direction: e.direction || '',
+          amount:    e.amount,
+          walletId:   e.walletId   || null,
+          walletName: e.walletName || '',
+          orderId:    e.orderId    || null,
+          clientId:   e.clientId   || null,
+          clientName: e.clientName || '',
+          employeeId: e.employeeId || null,
+          vendorId:   e.vendorId   || null,
+          createdBy:     e.createdBy     || null,
+          createdByName: e.createdByName || '',
+          ledgerEntryId: e.id,
+          stats: {
+            mean:   Math.round(mean),
+            stdev:  Math.round(stdev),
+            zScore: Number(z.toFixed(2)),
+            sampleSize: g.values.length,
+          },
+          acknowledged:   false,
+          acknowledgedBy: null,
+          acknowledgedAt: null,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        alertsCreated++;
+      }
+    }
+    console.log(`[dailyFinancialAnomalyScan] groups=${groupsScanned}/${groups.size}, alerts=${alertsCreated}`);
+  }
+);
