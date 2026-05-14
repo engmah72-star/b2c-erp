@@ -183,25 +183,51 @@ jobs:
         continue-on-error: true
 
       - name: Deploy Cloud Functions
-        # continue-on-error معناه فشل الـ deploy ما يوقفش hosting/rules. لكنه
-        # كان بيخفي أي خطأ. سيبناه لكن نخلي output الـ step واضح في الـ logs.
-        continue-on-error: true
+        # Surface errors clearly: log SA identity + project + APIs status before
+        # the deploy so any failure points straight at the cause.
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
+          set -e
           echo "$FIREBASE_SA" > /tmp/sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
           npm install -g firebase-tools
+
+          # ─── Pre-flight diagnostics ───
+          echo "════════════════════════════════════════════════════════"
+          echo "  PRE-FLIGHT DIAGNOSTICS"
+          echo "════════════════════════════════════════════════════════"
+          echo "→ firebase-tools version: $(firebase --version)"
+          echo "→ node version:           $(node --version)"
+          echo "→ Service account email:"
+          python3 -c "import json; print('   '+json.load(open('/tmp/sa.json'))['client_email'])"
+          echo "→ Project:                business2card-c041b"
+          echo "────────────────────────────────────────────────────────"
+
           echo "==> Firebase deploy --only functions starting"
-          firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log || {
-            echo "==================================================="
-            echo "FUNCTIONS DEPLOY FAILED — check log above"
-            echo "Common causes:"
-            echo "  1) Blaze plan not enabled on the project"
-            echo "  2) Cloud Functions API not enabled"
-            echo "  3) Cloud Build API not enabled"
-            echo "==================================================="
+          if firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log; then
+            echo "==> ✅ Firebase deploy --only functions succeeded"
+          else
+            echo "════════════════════════════════════════════════════════"
+            echo "  ❌ FUNCTIONS DEPLOY FAILED"
+            echo "════════════════════════════════════════════════════════"
+            echo "Last 40 lines of deploy log:"
+            tail -n 40 /tmp/firebase-deploy.log
+            echo "════════════════════════════════════════════════════════"
+            echo "Common causes (in order of likelihood for v2 functions):"
+            echo "  1) Service account missing roles. v2 needs:"
+            echo "     - roles/cloudbuild.builds.editor"
+            echo "     - roles/run.admin"
+            echo "     - roles/eventarc.admin"
+            echo "     - roles/artifactregistry.admin"
+            echo "     - roles/iam.serviceAccountUser"
+            echo "     - roles/cloudscheduler.admin"
+            echo "     Quickest fix: grant 'Owner' role to the SA shown above."
+            echo "  2) Required APIs disabled:"
+            echo "     - cloudfunctions, cloudbuild, run, eventarc, artifactregistry"
+            echo "  3) Blaze plan not active."
+            echo "════════════════════════════════════════════════════════"
+            rm -f /tmp/sa.json
             exit 1
-          }
-          echo "==> Firebase deploy --only functions succeeded"
+          fi
           rm -f /tmp/sa.json
