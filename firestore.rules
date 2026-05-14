@@ -608,5 +608,52 @@ service cloud.firestore {
       allow create: if isAuth() && request.resource.data.keys().hasAll(['action','userId','timestamp']);
       allow update, delete: if false;
     }
+
+    // ══ FCM Tokens ══
+    // المستخدم يقدر يكتب/يحذف tokens الخاصة بـ uid بتاعه فقط.
+    // الكتابة الفعلية تتم عبر callable functions (registerFcmToken / unregisterFcmToken)
+    // عشان الـ Functions تتأكد من شكل الـ token قبل التسجيل، لكن نسمح بالكتابة المباشرة
+    // كـ fallback للعميل لو الـ callable فشل (مثلاً offline).
+    match /fcm_tokens/{tokenId} {
+      allow read:   if isAuth() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuth() && resource.data.uid == request.auth.uid
+                                && request.resource.data.uid == request.auth.uid;
+      allow delete: if isAuth() && (isAdmin() || resource.data.uid == request.auth.uid);
+    }
+
+    // ══ Admin Alerts — تنبيهات الحركات المالية الحرجة ══
+    // الكتابة من Cloud Functions فقط (Admin SDK يتجاوز الـ rules).
+    // الأدمن/operation_manager يقرأ + يقدر يضع acknowledged=true فقط.
+    match /admin_alerts/{alertId} {
+      allow read: if isAuth() && isAdmin();
+      allow create: if false;
+      allow update: if isAuth() && isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['acknowledged','acknowledgedBy','acknowledgedByName','acknowledgedAt']);
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Archived Orders — أوردرات نُقلت تلقائيًا (>6 شهور + مدفوعة) ══
+    // الكتابة من Cloud Functions فقط. القراءة: نفس صلاحيات orders.
+    match /archived_orders/{orderId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        can('canSeeAllOrders') ||
+        hasPage('archive') ||
+        hasPage('clients') ||
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('clientId','__')  == request.auth.uid
+      );
+      allow create, update: if false;
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Backup Logs — سجل التشغيل لمهمة النسخ الاحتياطي اليومية ══
+    // الكتابة من Cloud Functions فقط. القراءة: admin للمراجعة.
+    match /backup_logs/{logId} {
+      allow read: if isAuth() && isAdminOnly();
+      allow write: if false;
+    }
   }
 }
