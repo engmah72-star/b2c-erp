@@ -42,6 +42,9 @@
 .prod-block-notes{font-size:11px;color:var(--dim2);margin-top:5px;line-height:1.4}
 .design-img{width:100%;max-height:180px;object-fit:contain;border-radius:9px;border:1px solid var(--line);margin-top:8px;background:var(--bg1);cursor:zoom-in;display:block}
 .order-img{width:100%;max-height:140px;object-fit:contain;border-radius:9px;border:1px solid var(--line);margin-top:8px;background:var(--bg1);cursor:zoom-in;display:block}
+.prod-block.sel{border-color:var(--r);box-shadow:0 0 0 2px rgba(255,61,110,.15)}
+.prod-summary-hdr{font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.qty-big{font-size:13px;font-weight:900;padding:3px 10px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);border:1px solid rgba(255,61,110,.3)}
 .day-chip{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:800}
 .day-ok{background:rgba(0,217,126,.08);color:var(--g)}
 .day-warn{background:rgba(255,193,7,.08);color:var(--y)}
@@ -117,12 +120,21 @@
       <button class="modal-x" onclick="closeCostModal()">✕</button>
     </div>
     <div class="modal-body">
-      <div id="cost-order-ref" style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px">
-        <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:3px">📦 الأوردر</div>
-        <div id="cost-order-name" style="font-size:14px;font-weight:800">—</div>
-        <div id="cost-order-id" style="font-size:11px;color:var(--dim2);margin-top:2px">—</div>
+      <div id="cost-order-ref" style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:3px">📦 الأوردر</div>
+            <div id="cost-order-name" style="font-size:14px;font-weight:800">—</div>
+            <div id="cost-order-id" style="font-size:11px;color:var(--dim2);margin-top:2px">—</div>
+          </div>
+          <span id="cost-order-stage" class="stage-chip" style="flex-shrink:0"></span>
+        </div>
+        <div id="cost-order-notes" style="display:none;font-size:11px;color:var(--dim2);margin-top:8px;padding:6px 10px;background:var(--bg3);border-radius:8px"></div>
       </div>
-      <div class="fg"><label>📦 المنتج</label>
+
+      <div id="cost-products-summary" style="margin-bottom:14px"></div>
+
+      <div class="fg"><label>📦 ربط البند بمنتج (اختياري)</label>
         <select class="inp" id="cost-prod-idx"><option value="-1">— عام للأوردر —</option></select>
       </div>
       <div class="fg"><label>🏭 المطبعة / المورد (اختياري)</label>
@@ -333,6 +345,46 @@ function refreshSupplierSelect(){
   el.innerHTML='<option value="">— داخلي / بدون مورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name||''}" data-printtype="${s.printType||''}">${s.name||'—'}${s.printType?' · '+s.printType:''}</option>`).join('');
 }
 
+function renderProductsSummary(o,selectedIdx){
+  const prods=o.products||[];
+  const el=document.getElementById('cost-products-summary');
+  if(!el)return;
+  if(!prods.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--dim2);padding:8px 0">لا توجد منتجات على الأوردر</div>';
+    return;
+  }
+  const blocks=prods.map((p,i)=>{
+    const imgUrl=p.designImageUrl||'';
+    const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
+    const isSel=(selectedIdx!=null && selectedIdx>=0 && selectedIdx===i);
+    return `<div class="prod-block${isSel?' sel':''}" onclick="pickProductFromSummary(${i})" style="cursor:pointer">
+      <div class="prod-block-hdr">
+        <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
+        <span class="qty-big">× ${p.qty||0}</span>
+        ${p.size?`<span class="prod-tag prod-tag-size">📐 ${p.size}</span>`:''}
+        ${p.paper?`<span class="prod-tag prod-tag-paper">📄 ${p.paper}${p.weight?' · '+p.weight+'جم':''}</span>`:''}
+        ${printLbl?`<span class="prod-tag prod-tag-print">🖨️ ${printLbl}</span>`:''}
+        ${(p.extras||[]).map(e=>`<span class="prod-tag prod-tag-extra">${e}</span>`).join('')}
+        ${p.supplierName?`<span class="prod-tag prod-tag-sup">🏭 ${p.supplierName}</span>`:'<span class="prod-tag" style="color:var(--r);border-color:rgba(255,61,110,.25)">⚠️ بدون مورد</span>'}
+      </div>
+      ${p.notes?`<div class="prod-block-notes">📝 ${p.notes}</div>`:''}
+      ${imgUrl?`<img src="${imgUrl}" class="design-img" loading="lazy" onclick="event.stopPropagation();window.open('${imgUrl}','_blank')">`:''}
+    </div>`;
+  }).join('');
+  // صورة الأوردر العامة (لو مفيش صور على المنتجات)
+  const hasProdImg=prods.some(p=>p.designImageUrl);
+  const orderImg=!hasProdImg?(o.designImageUrl||o.printFinalUrl||o.finalImageUrl||''):'';
+  const orderImgHtml=orderImg?`<img src="${orderImg}" class="order-img" loading="lazy" onclick="window.open('${orderImg}','_blank')">`:'';
+  el.innerHTML=`<div class="prod-summary-hdr">📋 المواصفات والكميات المطلوبة</div>${blocks}${orderImgHtml}`;
+}
+
+window.pickProductFromSummary=function(idx){
+  const sel=document.getElementById('cost-prod-idx');
+  if(sel){sel.value=String(idx);}
+  const o=orders.find(x=>x._id===activeId);
+  if(o)renderProductsSummary(o,idx);
+};
+
 window.openCostModal=function(orderId){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
   activeId=orderId;
@@ -340,8 +392,25 @@ window.openCostModal=function(orderId){
   const sel=document.getElementById('cost-prod-idx');
   sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name||'منتج'} × ${p.qty||1}</option>`).join('');
   sel.value='-1';
+  sel.onchange=()=>{
+    const v=parseInt(sel.value);
+    renderProductsSummary(o,isNaN(v)?-1:v);
+  };
   setText('cost-order-name',o.clientName||'—');
-  setText('cost-order-id',`${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'} · ${o.stage||'—'}`);
+  setText('cost-order-id',`${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}`);
+  // Stage chip
+  const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'}};
+  const stg=SM[o.stage]||{cls:'st-design',lbl:o.stage||'—'};
+  const stEl=document.getElementById('cost-order-stage');
+  if(stEl){stEl.className=`stage-chip ${stg.cls}`;stEl.textContent=stg.lbl;}
+  // Order notes
+  const notesEl=document.getElementById('cost-order-notes');
+  if(notesEl){
+    if(o.notes){notesEl.style.display='block';notesEl.textContent='📝 '+o.notes;}
+    else{notesEl.style.display='none';notesEl.textContent='';}
+  }
+  // Products summary with full specs
+  renderProductsSummary(o,-1);
   sv('ac-total','');sv('ac-note','');
   const ac=document.getElementById('ac-sup');
   if(ac && o.supplierId)ac.value=o.supplierId;else if(ac)ac.value='';
