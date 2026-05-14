@@ -175,7 +175,7 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
           <textarea id="ai-input" rows="1" placeholder="اسأل أي سؤال عن الشركة..."></textarea>
           <button id="ai-send">↑</button>
         </div>
-        <div id="ai-foot">للتحليل الكامل: <a href="ai-insights.html">افتح AI Insights ←</a></div>
+        <div id="ai-foot">📋 <a href="ai-digest.html">الموجز اليومي</a> · 📊 <a href="ai-insights.html">AI Insights</a></div>
       </div>`;
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     document.body.appendChild(modal);
