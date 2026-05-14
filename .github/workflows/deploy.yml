@@ -212,9 +212,78 @@ jobs:
           firebase deploy --only firestore:indexes --project business2card-c041b --non-interactive
           rm -f /tmp/sa.json
 
-      # ─────────── WhatsApp Cloud Functions ───────────
+      # ─────────── Cloud Functions ───────────
       # ينشر functions/ تلقائياً. يحتاج Firebase Blaze plan مفعّل.
-      # لو الباقة لسه مش متفعّلة، الخطوة هتفشل بدون ما توقف باقي الـ deploy.
+      - name: Ensure WhatsApp secret exists (placeholder if missing)
+        # WhatsApp functions use defineSecret('WHATSAPP_TOKEN'). The deploy
+        # refuses to proceed in --non-interactive mode if the secret has no
+        # value, even when the runtime mode is 'stub'. We seed a placeholder
+        # so the deploy can complete; the admin can update the real value
+        # later via Firebase Console → Functions → Secrets when WhatsApp goes
+        # live. The placeholder is harmless because functions/index.js checks
+        # `settings.mode !== 'live'` before ever calling the WhatsApp API.
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install google-auth requests -q
+          python3 << 'PYEOF'
+          import os, json, base64, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          PROJECT = "business2card-c041b"
+          SECRET_NAME = "WHATSAPP_TOKEN"
+          PLACEHOLDER_VALUE = "placeholder-update-when-going-live"
+
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+          )
+          creds.refresh(Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+          base = f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}"
+
+          # 1) Check if the secret already exists
+          r = requests.get(f"{base}/secrets/{SECRET_NAME}", headers=hdrs)
+          if r.status_code == 200:
+              print(f"✓ Secret {SECRET_NAME} already exists — leaving as-is")
+              # Also check if there's any version with data
+              rv = requests.get(f"{base}/secrets/{SECRET_NAME}/versions", headers=hdrs)
+              if rv.status_code == 200 and rv.json().get("versions"):
+                  print(f"  ({len(rv.json().get('versions', []))} version(s) on file)")
+              else:
+                  print("  WARN: secret exists but has no versions — adding placeholder")
+                  data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
+                  rav = requests.post(
+                      f"{base}/secrets/{SECRET_NAME}:addVersion",
+                      headers=hdrs,
+                      json={"payload": {"data": data}}
+                  )
+                  print(f"  addVersion: {rav.status_code}")
+          elif r.status_code == 404:
+              # 2) Create the secret + first version
+              print(f"→ Creating secret {SECRET_NAME} with placeholder...")
+              r1 = requests.post(
+                  f"{base}/secrets?secretId={SECRET_NAME}",
+                  headers=hdrs,
+                  json={"replication": {"automatic": {}}}
+              )
+              print(f"  create: {r1.status_code}")
+              if r1.status_code not in (200, 409):
+                  print(f"  body: {r1.text[:400]}")
+              data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
+              r2 = requests.post(
+                  f"{base}/secrets/{SECRET_NAME}:addVersion",
+                  headers=hdrs,
+                  json={"payload": {"data": data}}
+              )
+              print(f"  addVersion: {r2.status_code}")
+              if r2.status_code not in (200, 201):
+                  print(f"  body: {r2.text[:400]}")
+          else:
+              print(f"WARN: unexpected status {r.status_code}: {r.text[:300]}")
+          PYEOF
+
       - name: Install functions dependencies
         working-directory: functions
         run: npm install --no-audit --no-fund
