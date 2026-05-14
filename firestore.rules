@@ -16,7 +16,15 @@ service cloud.firestore {
       return userExists() ? getUserDoc().data.role : '';
     }
     function isAdmin() {
+      // وصول واسع — admin + operation_manager (للتشغيل اليومي: orders/clients/...).
+      // لا تستخدم لإعادة لمس الكيانات الحساسة — استخدم isAdminOnly().
       return role() in ['admin', 'operation_manager'];
+    }
+    function isAdminOnly() {
+      // الإدارة الفعلية فقط — حذف users/orders/clients، إنشاء/حذف wallets/products،
+      // settings، الموافقة النهائية في approval workflow.
+      // ops_manager محجوب عن هذه القواعد.
+      return role() == 'admin';
     }
     function perms() {
       return userExists() ? getUserDoc().data.get('permissions', {}) : {};
@@ -109,7 +117,7 @@ service cloud.firestore {
     function canApprove() {
       // admin فقط يعتمد (والاعتماد يتطلب confirmed سابقاً)
       // إلا لو admin اختار "اعتماد مباشر" — مسموح من pending مباشرة
-      return isAdmin()
+      return isAdminOnly()
           && resource.data.get('approvalStatus','pending') in ['pending','confirmed']
           && request.resource.data.approvalStatus in ['approved','rejected']
           && request.resource.data.get('isLocked', false) == true;
@@ -121,15 +129,15 @@ service cloud.firestore {
     // ══ Users ══
     match /users/{userId} {
       allow read: if isAuth();
-      allow create: if isAdmin();
-      allow update: if isAuth() && (request.auth.uid == userId || isAdmin());
-      allow delete: if isAdmin();
+      allow create: if isAdminOnly();
+      allow update: if isAuth() && (request.auth.uid == userId || isAdminOnly());
+      allow delete: if isAdminOnly();
     }
 
     // ══ Employees ══
     match /employees/{empId} {
       allow read: if isAuth();
-      allow write: if isAdmin();
+      allow write: if isAdminOnly();
     }
 
     // ══ Employee Payments ══
@@ -140,8 +148,8 @@ service cloud.firestore {
         isAdmin() ||
         get(/databases/$(database)/documents/employees/$(resource.data.employeeId)).data.authUid == request.auth.uid
       );
-      allow create: if isAuth() && isAdmin();
-      allow update, delete: if isAdmin();
+      allow create: if isAuth() && isAdminOnly();
+      allow update, delete: if isAdminOnly();
     }
 
     // ══ Employee Leaves ══
@@ -234,7 +242,7 @@ service cloud.firestore {
         resource.data.get('productionAgent','__') == request.auth.uid ||
         resource.data.get('shippingOfficerId','__') == request.auth.uid
       ) && isValidStageUpdate();
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
 
     // ══ Clients ══
@@ -260,15 +268,15 @@ service cloud.firestore {
         hasPage('print') ||
         resource.data.get('createdBy','__') == request.auth.uid
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
 
     // ══ Wallets ══
     match /wallets/{walletId} {
       allow read:   if isAuth() && canFinancialRead();
-      allow create: if isAdmin();
+      allow create: if isAdminOnly();
       allow update: if isAuth() && canFinancialWrite();
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
 
     // ══ Transactions ══
@@ -284,13 +292,13 @@ service cloud.firestore {
                     : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())
                                  || (isAdmin() && isApprovalUpdate())))
       );
-      allow delete: if isAdmin() && !isLocked();
+      allow delete: if isAdminOnly() && !isLocked();
     }
 
     // ══ Products ══
     match /products_v2/{prodId} {
       allow read: if isAuth();
-      allow create, delete: if isAdmin();
+      allow create, delete: if isAdminOnly();
       allow update: if isAuth() && (isAdmin() || hasPage('production') || hasPage('products'));
     }
 
@@ -299,12 +307,12 @@ service cloud.firestore {
       allow read: if isAuth() && (isAdmin() || hasPage('suppliers'));
       // Admin + holders of `canAddSuppliers` can create/update; deletion stays admin-only.
       allow create, update: if isAuth() && (isAdmin() || can('canAddSuppliers'));
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
     match /supplier_payments/{payId} {
       allow read: if isAuth() && (isAdmin() || hasPage('suppliers') || hasPage('accounts'));
       allow create: if isAuth() && (isAdmin() || hasPage('suppliers') || hasPage('accounts'));
-      allow update, delete: if isAdmin();
+      allow update, delete: if isAdminOnly();
     }
 
     // ══ Shippers ══
@@ -312,7 +320,7 @@ service cloud.firestore {
       allow read: if isAuth() && (isAdmin() || hasPage('shipping') || hasPage('suppliers') || hasPage('shipping-accounts'));
       // shippers_v2 يستخدم نفس صلاحية canAddSuppliers (suppliers.html تدير الاثنين).
       allow create, update: if isAuth() && (isAdmin() || can('canAddSuppliers'));
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
 
     // ══ Designers (legacy) ══
@@ -392,13 +400,13 @@ service cloud.firestore {
     match /reconciliations/{recId} {
       allow read: if isAuth() && (isAdmin() || hasPage('accounts'));
       allow create: if isAuth() && (isAdmin() || hasPage('accounts'));
-      allow update, delete: if isAdmin();
+      allow update, delete: if isAdminOnly();
     }
 
     // ══ Settings ══
     match /settings/{settingId} {
       allow read: if isAuth();
-      allow write: if isAdmin();
+      allow write: if isAdminOnly();
     }
 
     // ══ Financial Ledger ══
@@ -411,7 +419,7 @@ service cloud.firestore {
         (isLocked() ? (isAdmin() && isApprovalUpdate())
                     : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())))
       );
-      allow delete: if isAuth() && isAdmin() && !isLocked();
+      allow delete: if isAuth() && isAdminOnly() && !isLocked();
     }
 
     // ══ Payment Requests ══
@@ -447,7 +455,7 @@ service cloud.firestore {
             && resource.data.status in ['pending','confirmed']
             && request.resource.data.status in ['approved','rejected'])
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
     }
 
     // ══ Chat (legacy chat_messages — kept for read access to history) ══
@@ -480,7 +488,7 @@ service cloud.firestore {
           && !(request.auth.uid in resource.data.get('participants', []))
         )
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdminOnly();
 
       match /messages/{msgId} {
         allow read: if isAuth() && (
@@ -561,7 +569,7 @@ service cloud.firestore {
     // ══ WhatsApp Logs — مكتوبة فقط من Cloud Functions (admin SDK يتجاوز الـ rules) ══
     // الأدمن يقرأ السجلات للمراجعة. ممنوع الكتابة من العميل.
     match /whatsapp_logs/{logId} {
-      allow read: if isAuth() && isAdmin();
+      allow read: if isAuth() && isAdminOnly();
       allow write: if false;
     }
 
@@ -588,7 +596,7 @@ service cloud.firestore {
     // كل المصادقين يقرأون، الأدمن فقط يكتب
     match /master_lists/{listId} {
       allow read: if isAuth();
-      allow write: if isAdmin();
+      allow write: if isAdminOnly();
     }
   }
 }
