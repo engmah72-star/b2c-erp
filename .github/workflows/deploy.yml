@@ -378,10 +378,37 @@ jobs:
 
           echo "==> Firebase deploy --only functions starting"
           set +e
-          firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log
+          # --force: auto-accept cleanup policy prompt + various deploy prompts.
+          # Without it, first-deploy emits "Error: ... could not set up cleanup
+          # policy" which is reported as a failure even after functions deploy
+          # successfully on the server.
+          firebase deploy --only functions --project business2card-c041b --non-interactive --force --debug 2>&1 | tee /tmp/firebase-deploy.log
           DEPLOY_EXIT=${PIPESTATUS[0]}
           set -e
           echo "Deploy exit code: $DEPLOY_EXIT"
+
+          # On first run, many functions hit "Retrying task index 0" loops then
+          # the CLI gives up before Cloud Build finishes. If this is a partial
+          # success, re-run the deploy once — the second run sees existing
+          # functions and just confirms them quickly (~10s each instead of ~60s).
+          if [ "$DEPLOY_EXIT" != "0" ]; then
+            ERRORED=$(grep -c "Functions Errored" /tmp/firebase-deploy.log 2>/dev/null || echo "0")
+            if [ "$ERRORED" -gt "0" ]; then
+              echo "════════════════════════════════════════════════════════"
+              echo "  RETRY: First-deploy partial success — re-running"
+              echo "════════════════════════════════════════════════════════"
+              sleep 30  # let server-side ops settle
+              set +e
+              firebase deploy --only functions --project business2card-c041b --non-interactive --force --debug 2>&1 | tee /tmp/firebase-deploy-retry.log
+              DEPLOY_EXIT=${PIPESTATUS[0]}
+              set -e
+              echo "Retry exit code: $DEPLOY_EXIT"
+              # Append retry log to main log so the issue captures both
+              echo "" >> /tmp/firebase-deploy.log
+              echo "=== RETRY ATTEMPT ===" >> /tmp/firebase-deploy.log
+              cat /tmp/firebase-deploy-retry.log >> /tmp/firebase-deploy.log
+            fi
+          fi
 
           echo "────────────────────────────────────────────────────────"
           echo "==> Existing functions AFTER deploy:"
