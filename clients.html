@@ -270,6 +270,17 @@
         <option value="vip">⭐ VIP</option>
       </select>
       <select class="inp" id="f-tag" onchange="renderGrid()" style="max-width:130px"><option value="">كل التصنيفات</option><option value="vip">⭐ VIP</option><option value="regular">🔄 دوري</option><option value="new">🆕 جديد</option><option value="wholesale">📦 جملة</option><option value="delayed">⏳ آجل</option></select>
+      <select class="inp" id="f-segment" onchange="renderGrid()" title="فلتر حسب شريحة RFM" style="max-width:140px">
+        <option value="">كل الشرائح (RFM)</option>
+        <option value="champion">🏆 أبطال</option>
+        <option value="loyal">💎 عملاء أوفياء</option>
+        <option value="new">🌱 جدد/واعدين</option>
+        <option value="needs_attention">👀 يحتاج اهتمام</option>
+        <option value="at_risk">⚠️ مهدّدون بالفقد</option>
+        <option value="cant_lose">🚨 لا يجب فقدهم</option>
+        <option value="about_to_sleep">😴 على وشك الفقد</option>
+        <option value="lost">💤 فُقدوا</option>
+      </select>
       <select class="inp" id="f-gov" onchange="renderGrid()" style="max-width:130px"><option value="">كل المحافظات</option></select>
       <select class="inp" id="f-src" onchange="renderGrid()" style="display:none"><option value="">كل المصادر</option></select>
       <button class="btn btn-ghost btn-sm" id="add-legacy-btn" onclick="openAddLegacy()" style="display:none">＋ عميل قديم</button>
@@ -744,6 +755,20 @@ const EGYPT={
 
 // ══ STATE ══
 let clients=[], allOrders=[], products=[], settings={}, wallets=[], designers=[];
+// RFM segments — keyed by clientId, written by Cloud Function weeklyChurnRfmAnalysis
+const clientSegments = new Map();
+// Visual mapping for the segment chip rendered on each client card
+const SEG_STYLE = {
+  champion:         { bg:'rgba(255,170,0,.18)',  fg:'var(--y)' },
+  cant_lose:        { bg:'rgba(255,61,110,.20)', fg:'var(--r)' },
+  at_risk:          { bg:'rgba(255,61,110,.12)', fg:'var(--r)' },
+  loyal:            { bg:'rgba(34,211,238,.14)', fg:'var(--c)' },
+  new:              { bg:'rgba(0,217,126,.14)',  fg:'var(--g)' },
+  needs_attention:  { bg:'rgba(255,170,0,.10)',  fg:'var(--y)' },
+  about_to_sleep:   { bg:'rgba(100,100,100,.12)', fg:'var(--dim2)' },
+  lost:             { bg:'rgba(100,100,100,.10)', fg:'var(--dim2)' },
+  normal:           { bg:'rgba(255,255,255,.05)', fg:'var(--dim)' },
+};
 let allTx=[], txByOrder=new Map();
 let allFollowups=[], followupsByClient=new Map();
 window.__clientFilter='all';
@@ -905,6 +930,14 @@ auth.onAuthStateChanged(async u=>{
     }
   });
 
+  // RFM segments — written weekly by Cloud Function. Permission errors are
+  // silenced because non-CRM roles don't get read access.
+  db.collection('client_segments').onSnapshot(snap=>{
+    clientSegments.clear();
+    snap.forEach(d=>clientSegments.set(d.id,d.data()));
+    renderGrid();
+  },err=>console.warn('client_segments listener:',err?.message||err));
+
   db.collection('transactions_v2').onSnapshot(snap=>{
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
     txByOrder.clear();
@@ -942,6 +975,7 @@ function renderGrid(){
   updateFilterBadge();
   const q=gv('q').toLowerCase();
   const ft=gv('f-tag');
+  const fseg=gv('f-segment');
   const fg=gv('f-gov');
   const fs=gv('f-src');
   const isLegacyTab=window.__statusTab==='legacy';
@@ -951,6 +985,10 @@ function renderGrid(){
     else{if(c.status==='legacy')return false;}
     if(q&&!(c.name||'').toLowerCase().includes(q)&&!(c.phone1||'').includes(q)&&!(c.phone2||'').includes(q)&&!(c.intlPhone||'').includes(q))return false;
     if(ft&&!(c.tags||[]).includes(ft))return false;
+    if(fseg){
+      const seg=clientSegments.get(c._id);
+      if(!seg||seg.segment!==fseg)return false;
+    }
     if(fg&&c.gov!==fg&&c.governorate!==fg)return false;
     if(fs&&c.source!==fs)return false;
     // فلتر مالي
@@ -998,6 +1036,16 @@ function renderGrid(){
     else if(rem>0) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.12);color:var(--r);font-weight:800">💰 ${fn(rem)} ج</span>`;
     else if(isVip) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(255,170,0,.15);color:var(--y);font-weight:800">⭐ VIP</span>`;
     else if(isInactive) badge=`<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(100,100,100,.1);color:var(--dim2);font-weight:800">😴 غير نشط</span>`;
+    // RFM segment chip — shown alongside the primary badge as a secondary
+    // signal. We hide 'normal' (the default majority) and show churn risk %
+    // when ≥60 to draw attention to retention opportunities.
+    const seg=clientSegments.get(c._id);
+    let segBadge='';
+    if(seg && seg.segment && seg.segment!=='normal'){
+      const st=SEG_STYLE[seg.segment]||SEG_STYLE.normal;
+      const riskTxt=(seg.churnRisk>=60)?` · ${seg.churnRisk}%`:'';
+      segBadge=`<span title="RFM: ${seg.rfmCode||''} · ${seg.recencyDays}d منذ آخر طلب · ${seg.orderCount||0} طلب" style="font-size:10px;padding:2px 8px;border-radius:20px;background:${st.bg};color:${st.fg};font-weight:800">${seg.segmentIco||'•'} ${seg.segmentLabel||seg.segment}${riskTxt}</span>`;
+    }
     else if(tags.length) badge=`<span class="tag" style="background:${TAG_COL[tags[0]]||'rgba(255,255,255,.06)'}">${TAG_LABELS[tags[0]]||tags[0]}</span>`;
     return`<div class="cc" style="--cc:${col}" onclick="openClient('${c._id}')">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:${badge?'8':'10'}px">
@@ -1008,7 +1056,7 @@ function renderGrid(){
         </div>
         ${canSee('client_phone')?`<a href="https://wa.me/20${(c.phone1||'').replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn" style="flex-shrink:0">💬</a>`:''}
       </div>
-      ${badge?`<div style="margin-bottom:8px">${badge}</div>`:''}
+      ${(badge||segBadge)?`<div style="margin-bottom:8px;display:flex;gap:4px;flex-wrap:wrap">${badge}${segBadge}</div>`:''}
       <div style="display:grid;grid-template-columns:${canSee('price_remaining')?'1fr 1fr':'1fr'};gap:6px">
         <div class="cc-stat">
           <div class="cc-stat-val" style="color:var(--b)">${active||'—'}</div>
@@ -2147,9 +2195,11 @@ function updateFilterBadge(){
   let count=0;
   if(window.__clientFilter&&window.__clientFilter!=='all') count++;
   const tag=document.getElementById('f-tag');
+  const seg=document.getElementById('f-segment');
   const gov=document.getElementById('f-gov');
   const q=document.getElementById('q');
   if(tag&&tag.value) count++;
+  if(seg&&seg.value) count++;
   if(gov&&gov.value) count++;
   if(q&&q.value.trim()) count++;
   const pill=document.getElementById('filter-active-pill');
@@ -2161,6 +2211,7 @@ function updateFilterBadge(){
   const sel=document.getElementById('flt-select');
   if(sel) sel.classList.toggle('flt-active', sel.value!=='all');
   if(tag) tag.classList.toggle('flt-active', !!tag.value);
+  if(seg) seg.classList.toggle('flt-active', !!seg.value);
   if(gov) gov.classList.toggle('flt-active', !!gov.value);
 }
 
@@ -2168,6 +2219,7 @@ window.clearAllFilters=function(){
   window.__clientFilter='all';
   const sel=document.getElementById('flt-select');if(sel)sel.value='all';
   const tag=document.getElementById('f-tag');if(tag)tag.value='';
+  const seg=document.getElementById('f-segment');if(seg)seg.value='';
   const gov=document.getElementById('f-gov');if(gov)gov.value='';
   const q=document.getElementById('q');if(q)q.value='';
   updateFilterBadge();
