@@ -371,6 +371,18 @@ body{background:var(--ws-bg);color:var(--ws-text)}
   </div>
 </div>
 
+<!-- Order picker — pick an active order to share into current chat -->
+<div class="ib-modal-ov" id="ord-pick-ov">
+  <div class="ib-modal">
+    <div class="ib-modal-hdr">
+      <h3>📦 اختر أوردر للإرسال</h3>
+      <button class="ib-iconbtn" onclick="closeOrderPicker()">✕</button>
+    </div>
+    <div style="padding:8px 14px"><input class="ib-search" id="ord-pick-search" placeholder="🔍 ابحث (عميل/كود/منتج)"></div>
+    <div class="ib-modal-body" id="ord-pick-list"></div>
+  </div>
+</div>
+
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div class="toasts" id="toasts"></div>
 
@@ -399,6 +411,7 @@ const EMOJIS=['😀','😂','🤣','😊','😍','🤩','😘','😗','🙂','�
 // ── State ──
 let currentUser=null, currentUid='', currentUserName='', currentRole='', currentUserData=null;
 let allUsers=[];
+let allOrders=[];   // active orders for the order picker
 let conversations=[];  // all my convs
 let activeConvId=null;
 let activeConv=null;
@@ -578,6 +591,16 @@ function subscribeUsers(){
   onSnapshot(collection(db,'users'),snap=>{
     allUsers=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(u=>u.isActive!==false&&!u.deleted&&u._id!==currentUid);
   });
+}
+
+// Active orders for the 📦 order picker. Loaded only for users who need it
+// (everyone with access — picker filters by stage anyway).
+function subscribeOrders(){
+  onSnapshot(collection(db,'orders'),snap=>{
+    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+      .filter(o=>!['archived','cancelled'].includes(o.stage))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  },err=>console.warn('orders sub:',err.message));
 }
 
 // ── Render conv list ──
@@ -762,6 +785,7 @@ function renderChat(){
     <div class="ib-composer" id="composer">
       <button class="ib-iconbtn" onclick="toggleEmoji()" title="إيموجي">😀</button>
       <button class="ib-iconbtn" onclick="pickFile()" title="مرفق">📎</button>
+      <button class="ib-iconbtn" onclick="openOrderPicker()" title="إرسال أوردر">📦</button>
       <div class="ib-input-wrap">
         <textarea class="ib-input" id="ib-input" rows="1" placeholder="اكتب رسالة…" oninput="onTyping(this)" onkeydown="onComposerKey(event)"></textarea>
       </div>
@@ -1550,6 +1574,63 @@ window.openOrderComments=async function(order){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
+// ════════════════════════════════════════════════════════════════════
+//  Order picker — share an active order into current conversation
+// ════════════════════════════════════════════════════════════════════
+const STAGE_AR={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف',cancelled:'ملغي'};
+window.openOrderPicker=function(){
+  if(!activeConvId){toast('⚠️ افتح محادثة أولاً','err');return;}
+  $('ord-pick-ov').classList.add('show');
+  renderOrderPickerList();
+  $('ord-pick-search').oninput=renderOrderPickerList;
+  setTimeout(()=>$('ord-pick-search')?.focus(),100);
+};
+window.closeOrderPicker=()=>$('ord-pick-ov').classList.remove('show');
+function renderOrderPickerList(){
+  const body=$('ord-pick-list');if(!body)return;
+  const q=($('ord-pick-search')?.value||'').toLowerCase().trim();
+  let list=allOrders;
+  if(q){
+    list=list.filter(o=>{
+      const code=(o.orderId||o._id||'').toLowerCase();
+      const name=(o.clientName||'').toLowerCase();
+      const prod=(o.product||(o.products||[]).map(p=>p.name).join(' ')||'').toLowerCase();
+      return code.includes(q)||name.includes(q)||prod.includes(q);
+    });
+  }
+  list=list.slice(0,50);
+  if(!list.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--ws-text-dim);font-size:13px">لا أوردرات نشطة</div>';return;}
+  body.innerHTML=list.map(o=>{
+    const prods=o.product||(o.products||[]).map(p=>p.name).join('، ')||'—';
+    const code=esc(o.orderId||o._id.slice(-6));
+    return `<div class="ib-user-row" onclick="pickOrderForChat('${o._id}')">
+      <div class="ib-user-avatar" style="background:#00a884">📦</div>
+      <div class="ib-user-info">
+        <div class="ib-user-name">${esc(o.clientName||'—')}</div>
+        <div class="ib-user-role">#${code} · ${esc(prods)} · ${STAGE_AR[o.stage]||o.stage||''}${o.deadline?' · '+esc(o.deadline):''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+window.pickOrderForChat=async function(orderDocId){
+  const o=allOrders.find(x=>x._id===orderDocId);if(!o||!activeConvId)return;
+  closeOrderPicker();
+  const payload={
+    type:'order_share',
+    text:'📦 أوردر مشارَك',
+    orderRef:{
+      orderId:o._id,
+      orderCode:o.orderId||o._id.slice(-6),
+      clientName:o.clientName||'',
+      salePrice:o.salePrice||0,
+      stage:STAGE_AR[o.stage]||o.stage||'',
+      deadline:o.deadline||'',
+    },
+  };
+  await sendMessage(payload);
+  toast('✅ تم إرسال الأوردر','ok');
+};
+
 // ── Search ──
 $('ib-search').addEventListener('input',e=>{searchQuery=e.target.value;renderConvList();});
 
@@ -1651,6 +1732,7 @@ onAuthStateChanged(auth,async u=>{
   subscribeConversations();
   subscribePresence();
   subscribeUsers();
+  subscribeOrders();
   // If another page asked us to share an order, pop the picker now
   try{
     const pending=sessionStorage.getItem('inbox_share_order');
