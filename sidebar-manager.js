@@ -19,6 +19,8 @@ const SIDEBAR_PAGES = [
   { file:'reports.html',           label:'التقارير',      ico:'📊', group:'admin',  perm:'reports' },
   { file:'employees.html',         label:'الموظفين',      ico:'👥', group:'admin',  adminOnly:true },
   { file:'settings.html',          label:'الإعدادات',     ico:'⚙️', group:'admin',  adminOnly:true },
+  // عام لكل المستخدمين — launcher لـ WhatsApp Web popup (بدون API)
+  { file:'whatsapp.html',          label:'واتساب الشغل', ico:'💚', group:'main',   alwaysShow:true },
 ];
 
 const GROUP_LABELS = { main:'الرئيسية', orders:'الأوردرات', admin:'الإدارة' };
@@ -51,7 +53,7 @@ export function initSidebar(userData, currentPage) {
   // ── Guard ──
   if (!isAdmin && current) {
     const cfg = SIDEBAR_PAGES.find(p => p.file === current);
-    if (cfg) {
+    if (cfg && !cfg.alwaysShow) {
       if (cfg.adminOnly) { _redirect(role); return false; }
       // صفحة مقصورة على أدوار محددة
       if (cfg.roles && !cfg.roles.includes(role)) { _redirect(role); return false; }
@@ -79,6 +81,7 @@ export function initSidebar(userData, currentPage) {
     if (cfg.file === 'index.html') continue; // اتضاف فوق للأدمن بس
     
     const allowed = isAdmin
+      || cfg.alwaysShow
       || (cfg.roles && cfg.roles.includes(role))
       || (cfg.adminOnly ? false : pages.includes('*') || pages.includes(cfg.perm||''));
 
