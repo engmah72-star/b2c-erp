@@ -6,6 +6,11 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -88,16 +93,36 @@ jobs:
 
           PROJECT = "business2card-c041b"
           BUCKET  = f"{PROJECT}-firestore-backups"
-          # App Engine default SA — owns Cloud Functions invocations
+          # App Engine default SA — runtime for v1 functions + scheduler + GCS export
           FUNCTIONS_SA = f"{PROJECT}@appspot.gserviceaccount.com"
-          ROLES = ["roles/datastore.importExportAdmin", "roles/storage.objectAdmin"]
+          # Compute default SA — runtime for v2 functions
+          COMPUTE_SA   = None  # set below from project number
+          FUNCTIONS_ROLES = ["roles/datastore.importExportAdmin", "roles/storage.objectAdmin"]
 
           sa = json.loads(os.environ["FIREBASE_SA"])
+          # The deployer SA — needs broad permissions for v2 functions deploy.
+          # We try to self-elevate to Owner; if the deployer doesn't have
+          # projectIamAdmin already this no-ops (the deploy will then fail
+          # loudly with the actual error so we can act on it).
+          DEPLOYER_SA = sa["client_email"]
+          DEPLOYER_ROLES = [
+              "roles/owner",  # broadest — covers all v2 needs
+          ]
+          print(f"   Deployer SA: {DEPLOYER_SA}")
+
           creds = service_account.Credentials.from_service_account_info(
               sa, scopes=["https://www.googleapis.com/auth/cloud-platform"]
           )
           creds.refresh(Request())
           hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+          # Resolve project number to compute the v2 runtime SA email
+          r = requests.get(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}", headers=hdrs)
+          if r.status_code == 200:
+              proj_num = r.json().get("projectNumber")
+              if proj_num:
+                  COMPUTE_SA = f"{proj_num}-compute@developer.gserviceaccount.com"
+                  print(f"   Compute SA:  {COMPUTE_SA}")
 
           # 1) Create bucket (409 == already exists, treat as success)
           print(f"==> Ensuring gs://{BUCKET} exists...")
@@ -112,29 +137,42 @@ jobs:
           else:
               print(f"   bucket WARN: {r.status_code} — {r.text[:300]}")
 
-          # 2) Grant project-level IAM roles to Functions SA
-          print(f"==> Ensuring IAM roles for {FUNCTIONS_SA}...")
+          # 2) Grant project-level IAM roles.
+          # We update three identities in one IAM transaction:
+          #   - FUNCTIONS_SA (App Engine default) ← roles for backup export + storage
+          #   - DEPLOYER_SA (the SA we authenticated as) ← Owner for v2 deploys
+          #   - COMPUTE_SA (Compute default) ← Owner for v2 runtime (Cloud Run)
+          # Granting Owner is fine for a single-developer Firebase project; it
+          # avoids enumerating the 7+ specific roles v2 needs.
+          targets = []
+          for role in FUNCTIONS_ROLES:
+              targets.append((role, f"serviceAccount:{FUNCTIONS_SA}"))
+          for role in DEPLOYER_ROLES:
+              targets.append((role, f"serviceAccount:{DEPLOYER_SA}"))
+          if COMPUTE_SA:
+              targets.append(("roles/owner", f"serviceAccount:{COMPUTE_SA}"))
+
+          print(f"==> Ensuring IAM bindings for {len(targets)} (role, member) pairs...")
           iam_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:getIamPolicy"
           r = requests.post(iam_url, headers=hdrs, json={})
           if r.status_code != 200:
-              print(f"   getIamPolicy failed: {r.status_code} — {r.text[:300]}")
+              print(f"   getIamPolicy failed: {r.status_code} — {r.text[:400]}")
           else:
               policy = r.json()
-              member = f"serviceAccount:{FUNCTIONS_SA}"
               bindings = policy.get("bindings", [])
               changed = False
-              for role in ROLES:
+              for role, member in targets:
                   existing = next((b for b in bindings if b["role"] == role), None)
                   if existing is None:
                       bindings.append({"role": role, "members": [member]})
                       changed = True
-                      print(f"   + {role}")
+                      print(f"   + {role}  ←  {member}")
                   elif member not in existing.get("members", []):
                       existing.setdefault("members", []).append(member)
                       changed = True
-                      print(f"   + {role} (member added)")
+                      print(f"   + {role}  ←  {member}")
                   else:
-                      print(f"   = {role} (already set)")
+                      print(f"   = {role}  ←  {member}")
               if changed:
                   policy["bindings"] = bindings
                   set_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:setIamPolicy"
@@ -142,7 +180,7 @@ jobs:
                   if r2.status_code == 200:
                       print("   setIamPolicy OK")
                   else:
-                      print(f"   setIamPolicy WARN: {r2.status_code} — {r2.text[:300]}")
+                      print(f"   setIamPolicy WARN: {r2.status_code} — {r2.text[:400]}")
               else:
                   print("   no IAM changes needed")
           PYEOF
@@ -183,12 +221,10 @@ jobs:
         continue-on-error: true
 
       - name: Deploy Cloud Functions
-        # Surface errors clearly: log SA identity + project + APIs status before
-        # the deploy so any failure points straight at the cause.
+        id: fn_deploy
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          set -e
           echo "$FIREBASE_SA" > /tmp/sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
           npm install -g firebase-tools
@@ -199,35 +235,63 @@ jobs:
           echo "════════════════════════════════════════════════════════"
           echo "→ firebase-tools version: $(firebase --version)"
           echo "→ node version:           $(node --version)"
-          echo "→ Service account email:"
-          python3 -c "import json; print('   '+json.load(open('/tmp/sa.json'))['client_email'])"
+          SA_EMAIL=$(python3 -c "import json; print(json.load(open('/tmp/sa.json'))['client_email'])")
+          echo "→ Service account email:  $SA_EMAIL"
           echo "→ Project:                business2card-c041b"
           echo "────────────────────────────────────────────────────────"
 
           echo "==> Firebase deploy --only functions starting"
           if firebase deploy --only functions --project business2card-c041b --non-interactive --debug 2>&1 | tee /tmp/firebase-deploy.log; then
             echo "==> ✅ Firebase deploy --only functions succeeded"
+            echo "deploy_ok=true" >> "$GITHUB_OUTPUT"
           else
+            echo "deploy_ok=false" >> "$GITHUB_OUTPUT"
             echo "════════════════════════════════════════════════════════"
             echo "  ❌ FUNCTIONS DEPLOY FAILED"
             echo "════════════════════════════════════════════════════════"
-            echo "Last 40 lines of deploy log:"
-            tail -n 40 /tmp/firebase-deploy.log
+            echo "Last 60 lines of deploy log:"
+            tail -n 60 /tmp/firebase-deploy.log
             echo "════════════════════════════════════════════════════════"
-            echo "Common causes (in order of likelihood for v2 functions):"
-            echo "  1) Service account missing roles. v2 needs:"
-            echo "     - roles/cloudbuild.builds.editor"
-            echo "     - roles/run.admin"
-            echo "     - roles/eventarc.admin"
-            echo "     - roles/artifactregistry.admin"
-            echo "     - roles/iam.serviceAccountUser"
-            echo "     - roles/cloudscheduler.admin"
-            echo "     Quickest fix: grant 'Owner' role to the SA shown above."
-            echo "  2) Required APIs disabled:"
-            echo "     - cloudfunctions, cloudbuild, run, eventarc, artifactregistry"
-            echo "  3) Blaze plan not active."
-            echo "════════════════════════════════════════════════════════"
-            rm -f /tmp/sa.json
-            exit 1
           fi
           rm -f /tmp/sa.json
+
+      # If the deploy failed, capture the log into a GitHub issue so the failure
+      # is visible from the Issues tab (and queryable via the API).
+      - name: Report functions deploy failure as issue
+        if: steps.fn_deploy.outputs.deploy_ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAIL=$(tail -n 80 /tmp/firebase-deploy.log 2>/dev/null || echo "(log not captured)")
+          SA_EMAIL=$(echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('client_email','unknown'))" 2>/dev/null || echo "unknown")
+          COMMIT_SHORT="${GITHUB_SHA::8}"
+
+          # Write the issue body to a file to avoid shell quoting hell
+          cat > /tmp/issue_body.md << ISSUEBODY
+          **Workflow run:** [#${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+          **Commit:** \`${COMMIT_SHORT}\`
+          **Service account used by deploy:** \`${SA_EMAIL}\`
+
+          ## Last 80 lines of \`firebase deploy --only functions\` log
+
+          \`\`\`
+          ${TAIL}
+          \`\`\`
+          ISSUEBODY
+
+          gh issue create \
+            --title "🚨 Functions deploy failed — ${COMMIT_SHORT}" \
+            --body-file /tmp/issue_body.md \
+            --label "ci-failure" \
+            || echo "Failed to create issue (label may not exist — retry without label)"
+
+          # Retry without label if label-related failure
+          if [ $? -ne 0 ]; then
+            gh issue create \
+              --title "🚨 Functions deploy failed — ${COMMIT_SHORT}" \
+              --body-file /tmp/issue_body.md \
+              || true
+          fi
+
+          # Fail the workflow now that the issue is recorded
+          exit 1
