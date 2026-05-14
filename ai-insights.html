@@ -38,6 +38,34 @@ a{color:inherit;text-decoration:none}
 .mdbtn:hover{border-color:var(--accent);color:var(--snow)}
 .mdbtn.active{border-color:var(--ai);color:var(--ai);background:rgba(16,185,129,.08);font-weight:700}
 
+/* ── ML Insights (pre-computed by Cloud Functions) ── */
+.ml-section{margin-bottom:14px}
+.ml-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:0 4px}
+.ml-head-title{font-size:13px;font-weight:800;color:var(--snow)}
+.ml-head-sub{font-size:10px;color:var(--dim2);margin-right:auto;font-weight:600}
+.ml-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.ml-card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.ml-card-head{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+.ml-card-val{font-size:22px;font-weight:900;color:var(--snow);line-height:1}
+.ml-card-sub{font-size:11px;color:var(--dim2);font-weight:600}
+.ml-card.delta-up{border-color:rgba(52,211,153,.35)}
+.ml-card.delta-down{border-color:rgba(248,113,113,.35)}
+.ml-delta{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:800}
+.ml-delta.up{color:var(--g)}
+.ml-delta.down{color:var(--r)}
+.ml-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.ml-list-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 8px;background:var(--bg3);border-radius:8px}
+.ml-list-row strong{color:var(--snow);font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ml-list-row .pill{font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;flex-shrink:0}
+.ml-pill-r{background:rgba(248,113,113,.15);color:var(--r)}
+.ml-pill-y{background:rgba(251,191,36,.15);color:var(--y)}
+.ml-pill-g{background:rgba(52,211,153,.15);color:var(--g)}
+.ml-pill-pu{background:rgba(167,139,250,.15);color:var(--pu)}
+.ml-empty{color:var(--dim2);font-size:11px;text-align:center;padding:8px}
+.ml-stale{color:var(--y);font-size:10px;font-weight:700;margin-right:auto}
+.ml-bar{height:4px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-top:4px}
+.ml-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ai2),var(--ai))}
+
 /* ── Tabs ── */
 .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:14px;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
@@ -122,6 +150,18 @@ a{color:inherit;text-decoration:none}
     </div>
   </div>
 
+  <!-- ML Insights — pre-computed by Cloud Functions (forecast, RFM, anomalies, recommendations) -->
+  <div class="ml-section">
+    <div class="ml-head">
+      <span style="font-size:14px">🤖</span>
+      <span class="ml-head-title">تحليلات تلقائية</span>
+      <span class="ml-head-sub" id="ml-updated"></span>
+    </div>
+    <div class="ml-grid" id="ml-grid">
+      <div class="ml-empty" style="grid-column:1/-1">⏳ تحميل البيانات المحسوبة...</div>
+    </div>
+  </div>
+
   <!-- Domain Tabs -->
   <div class="tabs" id="tabs"></div>
 
@@ -153,7 +193,7 @@ a{color:inherit;text-decoration:none}
 
 <script type="module">
 import { auth, db, AppState, ROLES, initAuth, startListeners,
-         collection, getDocs } from './shared.js';
+         collection, getDocs, query, where, orderBy, doc, getDoc } from './shared.js';
 import { askAI, getKey, setKey, clearKey, hasKey, getModel, setModel,
          MODELS, KEY_NEEDED } from './ai-engine.js';
 import { buildContext, getAccessibleDomains, DOMAIN_LABELS } from './ai-context.js';
@@ -177,7 +217,177 @@ initAuth(state => {
   renderTabs();
   renderModelButtons();
   refreshKeyUI();
+  loadMlInsights();
 }, () => { window.location.href = 'login.html'; });
+
+// ════════════════════════════════════════════════════════════════════════════
+//   ML Insights — pre-computed snapshots from Firestore (no LLM)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Reads four collections written by Cloud Functions:
+//   forecasts/{date}            → weekly revenue forecast (next 7/14 totals)
+//   client_segments/{clientId}  → RFM segment + churn risk (we surface top at-risk)
+//   admin_alerts                → statistical anomaly entries
+//   product_affinities/{prod}   → top "after X comes Y" pairs
+//
+// Failures are silenced per-card so a missing collection (no run yet, or
+// permission denied) doesn't break the rest of the panel.
+
+async function loadMlInsights() {
+  const grid = document.getElementById('ml-grid');
+  const updated = document.getElementById('ml-updated');
+  if (!grid) return;
+
+  const safe = async (fn, fallback=null) => { try { return await fn(); } catch(e){ console.warn('[ml]', e.message); return fallback; } };
+
+  const [forecast, atRisk, anomalies, affinities] = await Promise.all([
+    safe(loadLatestForecast,    null),
+    safe(loadTopAtRiskClients,  []),
+    safe(loadRecentAnomalies,   []),
+    safe(loadTopAffinities,     []),
+  ]);
+
+  const cards = [];
+  if (forecast)            cards.push(renderForecastCard(forecast));
+  if (atRisk.length)       cards.push(renderAtRiskCard(atRisk));
+  if (anomalies.length)    cards.push(renderAnomaliesCard(anomalies));
+  if (affinities.length)   cards.push(renderAffinitiesCard(affinities));
+
+  if (cards.length === 0) {
+    grid.innerHTML = `<div class="ml-empty" style="grid-column:1/-1">
+      لم تُحسب البيانات بعد. الـ Cloud Functions تشتغل أسبوعيًا (الإثنين 4-5ص توقيت القاهرة).
+      <br><span style="font-size:10px">أو راجع firebase.rules — قد تكون الصلاحية مرفوضة لدورك.</span>
+    </div>`;
+  } else {
+    grid.innerHTML = cards.join('');
+  }
+  updated.textContent = forecast?.runAt ? `آخر تحديث: ${tsToAgo(forecast.runAt)}` : '';
+}
+
+// ── Loaders ──
+async function loadLatestForecast() {
+  const snap = await getDocs(query(collection(db, 'forecasts'), orderBy('runAt', 'desc')));
+  return snap.empty ? null : { _id: snap.docs[0].id, ...snap.docs[0].data() };
+}
+
+async function loadTopAtRiskClients() {
+  // Pull at_risk + cant_lose; sort client-side by churnRisk desc, take top 5
+  const snap = await getDocs(query(
+    collection(db, 'client_segments'),
+    where('segment', 'in', ['at_risk', 'cant_lose'])
+  ));
+  return snap.docs.map(d => d.data())
+    .sort((a, b) => (b.churnRisk||0) - (a.churnRisk||0))
+    .slice(0, 5);
+}
+
+async function loadRecentAnomalies() {
+  const snap = await getDocs(query(
+    collection(db, 'admin_alerts'),
+    where('source', '==', 'statistical_zscore'),
+    orderBy('createdAt', 'desc')
+  ));
+  return snap.docs.slice(0, 3).map(d => ({ _id: d.id, ...d.data() }));
+}
+
+async function loadTopAffinities() {
+  const snap = await getDocs(query(
+    collection(db, 'product_affinities'),
+    orderBy('totalOccurrences', 'desc')
+  ));
+  return snap.docs.slice(0, 3).map(d => d.data());
+}
+
+// ── Renderers ──
+function renderForecastCard(f) {
+  const delta = Number(f.deltaPctVsTrailing7) || 0;
+  const cls   = delta > 0 ? 'delta-up' : (delta < 0 ? 'delta-down' : '');
+  const arrow = delta > 0 ? '▲' : (delta < 0 ? '▼' : '•');
+  const dCls  = delta > 0 ? 'up' : (delta < 0 ? 'down' : '');
+  return `
+    <div class="ml-card ${cls}">
+      <div class="ml-card-head">📈 توقع إيراد 7 أيام</div>
+      <div class="ml-card-val">${fn(f.next7DayTotal)} <span style="font-size:11px;color:var(--dim);font-weight:600">ج</span></div>
+      <div class="ml-card-sub">
+        <span class="ml-delta ${dCls}">${arrow} ${Math.abs(delta)}%</span>
+        مقابل ${fn(f.trailing7DayActual)} ج (آخر 7 أيام)
+      </div>
+      <div class="ml-card-sub" style="margin-top:2px">14 يوم: <strong style="color:var(--snow)">${fn(f.next14DayTotal)} ج</strong></div>
+    </div>
+  `;
+}
+
+function renderAtRiskCard(clients) {
+  const rows = clients.map(c => {
+    const risk = c.churnRisk || 0;
+    const pillCls = risk >= 80 ? 'ml-pill-r' : (risk >= 60 ? 'ml-pill-y' : 'ml-pill-pu');
+    return `<div class="ml-list-row" title="آخر طلب: ${c.recencyDays||'?'} يوم · ${c.orderCount||0} طلب · ${fn(c.totalRevenue||0)} ج">
+      <span style="font-size:13px">${c.segmentIco||'⚠️'}</span>
+      <strong>${escapeHtml(c.clientName||c.clientId||'—')}</strong>
+      <span class="pill ${pillCls}">${risk}%</span>
+    </div>`;
+  }).join('');
+  return `
+    <div class="ml-card">
+      <div class="ml-card-head">⚠️ أعلى ${clients.length} عميل مهدّد</div>
+      <div class="ml-list">${rows}</div>
+      <div class="ml-card-sub" style="margin-top:4px">من تحليل RFM الأسبوعي</div>
+    </div>
+  `;
+}
+
+function renderAnomaliesCard(alerts) {
+  const rows = alerts.map(a => {
+    const z = a.stats?.zScore || 0;
+    const pillCls = Math.abs(z) >= 5 ? 'ml-pill-r' : 'ml-pill-y';
+    return `<div class="ml-list-row" title="${escapeHtml((a.reasons||[]).join(' · '))}">
+      <span style="font-size:13px">⚡</span>
+      <strong>${escapeHtml(a.eventType||'')} · ${fn(a.amount||0)} ج</strong>
+      <span class="pill ${pillCls}">z=${z.toFixed(1)}</span>
+    </div>`;
+  }).join('');
+  return `
+    <div class="ml-card">
+      <div class="ml-card-head">🚨 شذوذ مالي حديث</div>
+      <div class="ml-list">${rows}</div>
+      <div class="ml-card-sub" style="margin-top:4px">z-score على آخر 24 ساعة</div>
+    </div>
+  `;
+}
+
+function renderAffinitiesCard(prods) {
+  const rows = prods.map(p => {
+    const top = (p.affinities && p.affinities[0]) || null;
+    if (!top) return '';
+    const conf = Math.round((top.confidence||0) * 100);
+    return `<div class="ml-list-row" title="${escapeHtml(p.product||'')} → ${escapeHtml(top.product||'')}">
+      <span style="font-size:13px">🔁</span>
+      <strong>${escapeHtml(p.product||'')} → ${escapeHtml(top.product||'')}</strong>
+      <span class="pill ml-pill-g">${conf}%</span>
+    </div>`;
+  }).join('');
+  return `
+    <div class="ml-card">
+      <div class="ml-card-head">🔁 منتجات متلازمة</div>
+      <div class="ml-list">${rows}</div>
+      <div class="ml-card-sub" style="margin-top:4px">"بعد X غالبًا Y" — للـ cross-sell</div>
+    </div>
+  `;
+}
+
+// Helpers
+function escapeHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function tsToAgo(ts) {
+  const t = ts?.toDate?.() || ts?.seconds ? new Date(ts.seconds*1000) : (ts instanceof Date ? ts : null);
+  if (!t) return '';
+  const diff = Math.floor((Date.now() - t.getTime()) / 1000);
+  if (diff < 60) return 'الآن';
+  if (diff < 3600) return `منذ ${Math.floor(diff/60)} د`;
+  if (diff < 86400) return `منذ ${Math.floor(diff/3600)} س`;
+  return `منذ ${Math.floor(diff/86400)} يوم`;
+}
 
 // ── Tabs ──
 function renderTabs() {
