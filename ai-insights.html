@@ -254,22 +254,57 @@ function checkKey(){
 }
 
 // ── Provider status ──
-function initProviderStatus(){
+async function initProviderStatus(){
   const ico=document.getElementById('fb-status-ico');
   const txt=document.getElementById('fb-status-txt');
   const badge=document.getElementById('provider-badge');
   if(firebaseAI){
     ico.textContent='🔥';
-    txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; جاهز — لا حاجة لمفتاح API';
+    txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; جاري التحقق من تفعيل APIs…';
     badge.textContent='Firebase AI';
     badge.style.background='linear-gradient(135deg,#f59e0b,#d97706)';
+    // فحص استباقي مرة واحدة لكل جلسة
+    const cached=sessionStorage.getItem('fbai_preflight');
+    if(cached==='ok'){
+      txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; ✅ جاهز — لا حاجة لمفتاح API';
+      return;
+    }
+    try{
+      const test=getGenerativeModel(firebaseAI,{model:'gemini-2.0-flash',generationConfig:{maxOutputTokens:5}});
+      await test.generateContent('ok');
+      sessionStorage.setItem('fbai_preflight','ok');
+      txt.innerHTML='<strong style="color:var(--ai)">Firebase AI Logic</strong> &nbsp;·&nbsp; ✅ جاهز — لا حاجة لمفتاح API';
+    }catch(e){
+      sessionStorage.removeItem('fbai_preflight');
+      console.warn('[Firebase AI] preflight failed:',e);
+      const key=localStorage.getItem('gemini_key');
+      if(key){
+        ico.textContent='⚠️';
+        txt.innerHTML='<span style="color:var(--y)">Firebase AI غير جاهز</span> — سيستخدم المفتاح اليدوي. <a href="#" onclick="window.showSetupBanner();return false" style="color:var(--ai)">إصلاح ↑</a>';
+      }else{
+        ico.textContent='🔧';
+        txt.innerHTML='<span style="color:var(--y)">يحتاج تفعيل APIs مرة واحدة</span>';
+        showSetupBanner(friendlyFirebaseError(e,'gemini-2.0-flash'));
+      }
+    }
   }else{
     ico.textContent='⚠️';
-    txt.innerHTML='<span style="color:var(--y)">Firebase AI غير مفعّل</span> — استخدم مفتاح API يدوي (إعدادات متقدمة)';
+    txt.innerHTML='<span style="color:var(--y)">Firebase AI غير مُهيّأ</span> — استخدم مفتاح API يدوي (إعدادات متقدمة)';
     badge.textContent='Manual Key';
     badge.style.background='linear-gradient(135deg,#4f8ef7,#2563eb)';
   }
 }
+
+window.showSetupBanner=function(html){
+  let b=document.getElementById('setup-banner');
+  if(!b){
+    b=document.createElement('div');
+    b.id='setup-banner';
+    b.style.cssText='background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(245,158,11,.08));border:1px solid rgba(251,191,36,.3);border-radius:14px;padding:14px 16px;margin-bottom:14px;font-size:13px;line-height:1.7';
+    document.querySelector('.wrap').insertBefore(b,document.getElementById('key-card'));
+  }
+  b.innerHTML=html||`🔧 لتشغيل Firebase AI Logic، فعّله بنقرة واحدة:<br>${setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic','🔥')}`;
+};
 
 // ── Build Context ──
 function buildContext(){
@@ -463,25 +498,44 @@ async function callFirebaseAI(modelName,prompt){
   return text;
 }
 
+// روابط التفعيل بنقرة واحدة
+const PROJECT_ID='business2card-c041b';
+const SETUP_LINKS={
+  firebaseAIConsole:`https://console.firebase.google.com/project/${PROJECT_ID}/genai`,
+  vertexAI:`https://console.cloud.google.com/apis/library/aiplatform.googleapis.com?project=${PROJECT_ID}`,
+  genLang:`https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com?project=${PROJECT_ID}`,
+  credentials:`https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}`,
+  aiStudioKey:`https://aistudio.google.com/apikey`,
+};
+function setupButton(href,label,icon='🚀'){
+  return `<a href="${href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:8px 14px;border-radius:10px;text-decoration:none;font-weight:700;font-size:12px;margin:6px 4px 0 0">${icon} ${label}</a>`;
+}
+
 function friendlyFirebaseError(e,model){
   const msg=(e?.message||String(e));
+  const code=(e?.code||e?.status||'').toString();
   const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[Firebase AI] ${msg}</span>`;
   const host=(location.hostname||'النطاق الحالي');
+  const oneClickFirebase=setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic بنقرة واحدة','🔥');
+  const enableVertex=setupButton(SETUP_LINKS.vertexAI,'تفعيل Vertex AI API','⚡');
+  const enableGenLang=setupButton(SETUP_LINKS.genLang,'تفعيل Generative Language API','✨');
+
   if(/API_KEY_HTTP_REFERRER_BLOCKED|referer .* blocked|referrer .* blocked/i.test(msg))
-    return`🌐 مفتاح Firebase API محظور لهذا النطاق (<code>${host}</code>).<br>الحل: افتح Google Cloud Console → APIs &amp; Services → Credentials → اختر مفتاح الويب (Browser key) → ضمن <strong>Website restrictions</strong> أضف:<br><code>${host}/*</code> و <code>*.${host}/*</code><br>ثم انتظر دقيقتين وأعد المحاولة.${raw}`;
+    return`🌐 مفتاح Firebase API محظور لهذا النطاق (<code>${host}</code>).<br>الحل: افتح Google Cloud Console → Credentials → مفتاح الويب → ضمن <strong>Website restrictions</strong> أضف:<br><code>${host}/*</code> و <code>*.${host}/*</code><br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
   if(/API_KEY_INVALID|api key expired|key expired|renew the api key/i.test(msg))
-    return`🔑 مفتاح Firebase Web API منتهي الصلاحية أو محذوف.<br>الحل: افتح <a href="https://console.cloud.google.com/apis/credentials?project=business2card-c041b" target="_blank" style="color:var(--ai)">Google Cloud Console → Credentials</a>، تحقق من وجود المفتاح، أو أنشئ مفتاحاً جديداً وحدّث قيمته في كائن <code>FB</code> داخل <code>ai-insights.html</code>.${raw}`;
+    return`🔑 مفتاح Firebase Web API منتهي الصلاحية أو محذوف.<br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
   if(/API_KEY_(SERVICE|API)_BLOCKED|api key .* (not authorized|restricted)/i.test(msg))
-    return`🔐 مفتاح Firebase API غير مسموح له باستدعاء خدمة Firebase AI / Vertex AI.<br>الحل: في Google Cloud Console → Credentials → المفتاح → <strong>API restrictions</strong> اسمح بـ <code>Vertex AI API</code> و <code>Firebase AI Logic API</code>.${raw}`;
-  if(/firebaseml|firebasevertexai|vertex.*not.*enabled|aiplatform.*disabled|service.*disabled/i.test(msg))
-    return`🔌 Firebase AI Logic غير مفعّل لهذا المشروع. فعّله من Firebase Console → Build → Firebase AI Logic، ثم أعد المحاولة.${raw}`;
-  if(/unauthenticated|permission|denied/i.test(msg))
-    return`🚫 صلاحيات Firebase AI غير كافية — تأكد من تسجيل الدخول وتفعيل App Check أو السماح بـ unauthenticated calls.${raw}`;
+    return`🔐 المفتاح غير مسموح له باستدعاء Firebase AI / Vertex AI.<br>الحل: Credentials → المفتاح → <strong>API restrictions</strong> اسمح بـ <code>Vertex AI API</code> و <code>Firebase AI Logic API</code>.<br>${setupButton(SETUP_LINKS.credentials,'فتح Credentials','🔐')}${raw}`;
+  // ⭐ الحالة الشائعة: APIs غير مفعّلة على المشروع
+  if(/SERVICE_DISABLED|has not been used|has not been enabled|firebaseml|firebasevertexai|vertex.*not.*enabled|aiplatform.*disabled|service.*disabled|generativelanguage.*disabled/i.test(msg)||code==='403')
+    return`🔌 <strong>APIs المطلوبة غير مفعّلة على المشروع</strong>.<br>أسهل حل: افتح Firebase Console واضغط <strong>Get started</strong> — سيُفعّل كل شيء تلقائياً بنقرة واحدة:<br>${oneClickFirebase}<br><span style="font-size:11px;color:var(--dim2)">أو فعّلها يدوياً واحدة واحدة:</span><br>${enableVertex} ${enableGenLang}${raw}`;
+  if(/unauthenticated|permission|denied|PERMISSION_DENIED/i.test(msg))
+    return`🚫 صلاحيات غير كافية — قد تكون APIs غير مفعّلة. جرّب التفعيل بنقرة:<br>${oneClickFirebase}${raw}`;
   if(/quota|rate|429/i.test(msg))
     return`⏱️ تجاوزت حد الاستخدام لـ ${model} — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
   if(/not[- ]found|model/i.test(msg))
     return`🤖 الموديل ${model} غير متاح — جرّب موديل آخر.${raw}`;
-  return`خطأ في Firebase AI${raw}`;
+  return`خطأ في Firebase AI — جرّب تفعيل APIs:<br>${oneClickFirebase}${raw}`;
 }
 
 // ── REST API fallback (Manual key) ──
@@ -521,18 +575,20 @@ async function callRestModel(key,model,prompt){
 
 function friendlyRestError(status,apiMsg,model){
   const raw=`\n\n<span style="font-size:11px;color:var(--dim2);direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
+  const newKey=setupButton(SETUP_LINKS.aiStudioKey,'إنشاء مفتاح جديد من AI Studio','🔑');
+  const switchFB=setupButton(SETUP_LINKS.firebaseAIConsole,'تفعيل Firebase AI Logic (بديل أفضل)','🔥');
   if(status===400&&(apiMsg.includes('API_KEY')||apiMsg.includes('invalid')))
-    return`🔑 API Key غير صحيح — تأكد من نسخه كاملاً من AI Studio${raw}`;
+    return`🔑 API Key غير صحيح — تأكد من نسخه كاملاً.<br>${newKey}${raw}`;
   if(status===403)
-    return`🚫 الوصول مرفوض — تأكد من تفعيل "Generative Language API" في Google Cloud Console لمشروعك${raw}`;
+    return`🚫 المفتاح اليدوي مرفوض — تفعيل Firebase AI Logic أفضل وأسهل:<br>${switchFB}<br>${newKey}${raw}`;
   if(status===429&&/prepay|credit|billing|depleted|exhausted/i.test(apiMsg))
-    return`💳 رصيد المشروع المدفوع مقدماً نفد. اذهب إلى <a href="https://ai.studio/projects" target="_blank" style="color:var(--ai)">AI Studio Projects</a> واشحن الرصيد أو بدّل إلى مشروع Free Tier.${raw}`;
+    return`💳 <strong>رصيد المفتاح اليدوي نفد</strong>.<br>أفضل حل: تخلَّ عن المفتاح اليدوي وفعّل Firebase AI Logic (مجاني عبر Blaze plan):<br>${switchFB}<br>أو احذف هذا المفتاح وأنشئ آخر من مشروع جديد:<br>${newKey}${raw}`;
   if(status===429)
-    return`⏱️ تجاوزت الحد المسموح للموديل (${model}) — انتظر دقيقة أو اختر موديل مختلف${raw}`;
+    return`⏱️ تجاوزت الحد المسموح للموديل (${model}) — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
   if(status===503||status===500)
-    return`🔧 خطأ مؤقت في خادم Google — حاول مرة أخرى بعد 30 ثانية${raw}`;
+    return`🔧 خطأ مؤقت في خادم Google — حاول مرة أخرى بعد 30 ثانية.${raw}`;
   if(status===404)
-    return`🤖 الموديل ${model} غير موجود — جرّب موديل آخر${raw}`;
+    return`🤖 الموديل ${model} غير موجود — جرّب موديل آخر.${raw}`;
   return`خطأ غير متوقع${raw}`;
 }
 
