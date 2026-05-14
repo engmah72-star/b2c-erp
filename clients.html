@@ -812,7 +812,7 @@ auth.onAuthStateChanged(async u=>{
 
   // Listeners
   db.collection('clients').orderBy('createdAt','desc').onSnapshot(snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     renderGrid(); updateStats();
     if(activeId) renderPanel(activeId);
@@ -1909,16 +1909,29 @@ async function saveClient(){
   if(!/^01[0125][0-9]{8}$/.test(phone1)){toast('⚠️ رقم الهاتف غير صحيح','err');return;}
   // تحقق من تكرار رقم التليفون
   const phone2=gv('c-phone2').trim();
-  // أولاً: تحقق من الـ array المحلي
-  let dup=clients.find(cl=>
-    (cl.phone1===phone1||cl.phone2===phone1||(phone2&&(cl.phone1===phone2||cl.phone2===phone2)))
-    &&cl._id!==editId
-  );
-  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة
+  const email=gv('c-email').trim().toLowerCase();
+  // أولاً: تحقق من الـ array المحلي (يفحص phone1/phone2/email)
+  let dup=clients.find(cl=>{
+    if(cl._id===editId||cl.isDeleted) return false;
+    if(cl.phone1===phone1||cl.phone2===phone1) return true;
+    if(phone2&&(cl.phone1===phone2||cl.phone2===phone2)) return true;
+    if(email&&(cl.email||'').toLowerCase()===email) return true;
+    return false;
+  });
+  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة (phone1 + phone2 + email)
   if(!dup){
+    const qf=firebase.firestore().collection('clients');
+    const queries=[qf.where('phone1','==',phone1).limit(1).get()];
+    if(phone2) queries.push(qf.where('phone1','==',phone2).limit(1).get(),qf.where('phone2','==',phone2).limit(1).get());
+    if(email)  queries.push(qf.where('email','==',email).limit(1).get());
     try{
-      const q=await firebase.firestore().collection('clients').where('phone1','==',phone1).limit(1).get();
-      if(!q.empty&&q.docs[0].id!==editId) dup={...q.docs[0].data(),_id:q.docs[0].id};
+      const results=await Promise.all(queries);
+      for(const q of results){
+        if(q.empty) continue;
+        const d=q.docs[0]; if(d.id===editId) continue;
+        const data=d.data(); if(data.isDeleted) continue;
+        dup={...data,_id:d.id}; break;
+      }
     }catch(e){console.warn('[clients] dedup query failed — proceeding with local check only:',e.code||e.message);}
   }
   if(dup){
@@ -1979,9 +1992,35 @@ async function saveClient(){
 
 function deleteClient(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
-  if(!confirm(`حذف ${c.name}؟ لا يمكن التراجع.`))return;
-  db.collection('clients').doc(id).delete().then(()=>{toast('✅ تم الحذف','ok');closePanel();}).catch(e=>toast('❌ '+e.message,'err'));
+  if(!confirm(`حذف ${c.name}؟ سيتم إخفاؤه من القوائم مع حفظ التاريخ.`))return;
+  // Soft-delete: نحتفظ بسجل العميل لحفظ تاريخ الأوردرات والمدفوعات المرتبطة.
+  db.collection('clients').doc(id).update({
+    isDeleted:true,
+    deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
+    deletedBy:currentUser?.uid||'',
+    deletedByName:userName||'',
+  }).then(()=>{
+    logAudit('client.soft_delete',{clientId:id,clientName:c.name||''});
+    toast('✅ تم حذف العميل','ok');
+    closePanel();
+  }).catch(e=>toast('❌ '+e.message,'err'));
 }
+
+// ── Audit helper (inline) ──
+// يكتب في audit_logs collection لأي admin override. silent on failure.
+window.logAudit=function(action,details){
+  try{
+    return db.collection('audit_logs').add({
+      action,
+      details:details||{},
+      userId:currentUser?.uid||'',
+      userName:userName||'',
+      userRole:(window.__currentRole||''),
+      timestamp:firebase.firestore.FieldValue.serverTimestamp(),
+      url:location.pathname,
+    });
+  }catch(e){console.warn('[audit] failed:',action,e?.code||e?.message);}
+};
 
 // ══ VIEW ══
 let viewMode='grid';
@@ -2785,6 +2824,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived','stageEnteredAt.archived':now2,timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
+    logAudit('orders.bulk_archive',{count:ids.length,orderIds:ids.slice(0,50)});
     toast(`✅ تم أرشفة ${ids.length} أوردر`,'ok');cgridSelNone();return;
   }
 
@@ -2796,6 +2836,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>{const ts=o.stage==='archived'?'design':o.stage;batch.update(db.collection('orders').doc(o._id),{stage:ts,[`stageEnteredAt.${ts}`]:now2,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] إعادة فتح → ${ts}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});});
       await batch.commit();
     }
+    logAudit('orders.bulk_reopen',{count:ids.length,orderIds:ids.slice(0,50)});
     toast(`✅ إعادة فتح ${ids.length} أوردر`,'ok');cgridSelNone();return;
   }
 
@@ -2811,6 +2852,7 @@ window.cgridBulkAction=async function(action){
       chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{...mapping,...(mapping.stage&&mapping.stage!==o.stage?{[`stageEnteredAt.${mapping.stage}`]:now2}:{}),timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] نقل جماعي → ${choice}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
+    logAudit('orders.bulk_stage_change',{count:ids.length,target:choice,orderIds:ids.slice(0,50)});
     toast(`✅ نُقل ${ids.length} أوردر إلى ${choice}`,'ok');cgridSelNone();return;
   }
 
