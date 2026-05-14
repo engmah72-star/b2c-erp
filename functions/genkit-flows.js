@@ -139,7 +139,9 @@ async function analyzeClient(apiKey, clientId) {
   }
 
   const result = await ai.generate({
-    model: 'googleai/gemini-2.0-flash',
+    // gemini-2.0-flash was decommissioned by Google. We match what
+    // ai-engine.js uses — the latest stable Flash family (gemini-2.5-flash).
+    model: 'googleai/gemini-2.5-flash',
     output: { schema: ClientAnalysisSchema },
     prompt: [
       'أنت محلل مبيعات لشركة طباعة. لديك بيانات عميل من ERP عربي.',
