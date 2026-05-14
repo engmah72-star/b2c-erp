@@ -20,7 +20,18 @@
 
 const { genkit, z } = require('genkit');
 const { googleAI } = require('@genkit-ai/google-genai');
+const { enableFirebaseTelemetry } = require('@genkit-ai/firebase');
 const { getFirestore } = require('firebase-admin/firestore');
+
+// Enable Firebase Genkit Monitoring once per process. Telemetry is shipped
+// to Cloud Trace + Cloud Logging, then surfaced in the Firebase Console
+// under Genkit → Monitoring with full prompt/output/latency/cost per call.
+// Idempotent: calling more than once is a no-op.
+try {
+  enableFirebaseTelemetry();
+} catch (e) {
+  console.warn('[genkit] telemetry init failed (continuing without):', e.message);
+}
 
 // Schemas for the structured client analysis output
 const PriorityEnum = z.enum(['high', 'medium', 'low']);
