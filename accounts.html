@@ -855,7 +855,7 @@ window.openKpiDrill=function(drillType, walletFilter){
   const periodTx=transactions.filter(t=>isInPeriod(t.createdAt));
   let title='',html='';
 
-  // ── شريط فلتر المحافظ ──
+  // ── شريط فلتر المحافظ (scroll أفقي نظيف بدل wrap) ──
   function walletBar(txType){
     const col=txType==='in'?'var(--g)':'var(--r)';
     const colBg=txType==='in'?'rgba(0,217,126,':'rgba(255,61,110,';
@@ -866,38 +866,59 @@ window.openKpiDrill=function(drillType, walletFilter){
     if(!wData.length)return'';
     return`<div style="margin-bottom:12px">
       <div style="font-size:10px;font-weight:800;color:var(--dim2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">📲 طريقة الدفع</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button onclick="openKpiDrill('${drillType}','')" style="padding:6px 12px;border-radius:20px;border:1px solid ${walletFilter===''?col:'var(--line)'};background:${walletFilter===''?colBg+'.15)':'transparent'};color:${walletFilter===''?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">الكل</button>
-        ${wData.map(w=>`<button onclick="openKpiDrill('${drillType}','${w._id}')" style="padding:6px 12px;border-radius:20px;border:1px solid ${walletFilter===w._id?col:'var(--line)'};background:${walletFilter===w._id?colBg+'.15)':'transparent'};color:${walletFilter===w._id?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:1px">
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;-ms-overflow-style:none;scrollbar-width:none">
+        <button onclick="openKpiDrill('${drillType}','')" style="flex-shrink:0;padding:7px 14px;border-radius:20px;border:1px solid ${walletFilter===''?col:'var(--line)'};background:${walletFilter===''?colBg+'.18)':'transparent'};color:${walletFilter===''?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">الكل</button>
+        ${wData.map(w=>`<button onclick="openKpiDrill('${drillType}','${w._id}')" style="flex-shrink:0;padding:7px 12px;border-radius:20px;border:1px solid ${walletFilter===w._id?col:'var(--line)'};background:${walletFilter===w._id?colBg+'.18)':'transparent'};color:${walletFilter===w._id?col:'var(--dim2)'};font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;white-space:nowrap">
           <span>${WICO[w.type]||'💼'} ${w.name}</span>
-          <span style="font-size:10px;font-weight:900;color:${col}">${fn(w.tot)} ج</span>
+          <span style="font-size:10px;font-weight:900;color:${col};background:${colBg}.12);padding:1px 6px;border-radius:10px">${fn(w.tot)}</span>
         </button>`).join('')}
       </div>
     </div>`;
   }
 
-  function catBlock(cat,txs,isIn){
+  // ── Category block — collapsible + percent of total + expand-all ──
+  function catBlock(cat,txs,isIn,parentTotal){
     if(!txs.length)return'';
     const total=txs.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
     const col=isIn?'var(--g)':'var(--r)';
-    return`<div style="background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:800">${CAT[cat]||cat}</span>
-        <span style="font-size:14px;font-weight:900;color:${col}">${fn(total)} ج</span>
+    const bgCol=isIn?'rgba(0,217,126,':'rgba(255,61,110,';
+    const pct=parentTotal>0?Math.round(total/parentTotal*100):0;
+    const catId='c_'+cat.replace(/[^a-z0-9]/gi,'_');
+    return`<div data-cat="${catId}" style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden">
+      <!-- Header — clickable to collapse/expand -->
+      <div onclick="(function(el){const b=el.nextElementSibling;const a=el.querySelector('.cat-arrow');const open=b.style.display!=='none';b.style.display=open?'none':'block';a.style.transform=open?'rotate(-90deg)':'rotate(0)';})(this)"
+        style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;background:${bgCol}.04);transition:background .15s" onmouseover="this.style.background='${bgCol}.08)'" onmouseout="this.style.background='${bgCol}.04)'">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          <span class="cat-arrow" style="font-size:10px;color:var(--dim2);transition:transform .2s;display:inline-block">▼</span>
+          <span style="font-size:13px;font-weight:800;color:var(--snow)">${CAT[cat]||cat}</span>
+          <span style="font-size:10px;color:var(--dim2);background:var(--bg3);padding:2px 7px;border-radius:10px;font-weight:700">${txs.length}</span>
+          ${pct>0?`<span style="font-size:9px;color:${col};background:${bgCol}.12);padding:2px 6px;border-radius:10px;font-weight:800">${pct}%</span>`:''}
+        </div>
+        <span style="font-size:14px;font-weight:900;color:${col};white-space:nowrap">${fn(total)} ج</span>
       </div>
-      ${txs.slice(0,7).map(t=>{
-        const w=wallets.find(x=>x._id===t.walletId);
-        return`<div style="display:flex;justify-content:space-between;align-items:flex-start;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-          <div style="flex:1;min-width:0">
-            <div style="color:var(--snow);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description||'—'}</div>
-            <div style="color:var(--dim2)">${t.date||''}${t.clientName?' · '+t.clientName:''}${t.supplierName?' · '+t.supplierName:''}${t.employeeName?' · '+t.employeeName:''}${w?' · '+w.name:''}</div>
-          </div>
-          <span style="font-weight:800;color:${col};white-space:nowrap;margin-right:8px">${fn(t.amount)} ج</span>
-        </div>`;
-      }).join('')}
-      ${txs.length>7?`<div style="font-size:10px;color:var(--dim2);margin-top:4px;text-align:center">+ ${txs.length-7} حركة أخرى</div>`:''}
+      <!-- Body — transactions list -->
+      <div style="display:block;padding:4px 12px 10px">
+        <div data-cat-rows="${catId}">${renderRows(txs.slice(0,7))}</div>
+        ${txs.length>7?`<button onclick="(function(b){const c=document.querySelector('[data-cat-rows=&quot;${catId}&quot;]');c.innerHTML='${escForJs(renderRows(txs))}';b.style.display='none';})(this)" style="width:100%;margin-top:6px;padding:7px;border:1px dashed ${col};background:transparent;color:${col};border-radius:8px;font-family:inherit;font-size:11px;font-weight:800;cursor:pointer">+ عرض ${txs.length-7} حركة أخرى ↓</button>`:''}
+      </div>
     </div>`;
+
+    function renderRows(rows){
+      return rows.map(t=>{
+        const w=wallets.find(x=>x._id===t.walletId);
+        const meta=[t.date||'', t.clientName||t.supplierName||t.employeeName||'', w?w.name:''].filter(Boolean).join(' · ');
+        return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:11px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--snow);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">${t.description||'—'}</div>
+            <div style="color:var(--dim2);margin-top:1px">${meta}</div>
+          </div>
+          <span style="font-weight:800;color:${col};white-space:nowrap">${fn(t.amount)} ج</span>
+        </div>`;
+      }).join('');
+    }
   }
+  // Escape helper for inline onclick (HTML string passed via JS)
+  function escForJs(s){return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/"/g,'&quot;');}
 
   if(drillType==='in'){
     title=`📥 الإيرادات — ${label}`;
@@ -910,7 +931,7 @@ window.openKpiDrill=function(drillType, walletFilter){
     html=walletBar('in')+`<div style="background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-weight:800;font-size:13px;color:var(--dim2)">${inTx.length} حركة${wName?' · '+wName:''}</span>
       <span style="font-size:22px;font-weight:900;color:var(--g)">${fn(total)} ج</span>
-    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,true)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد إيرادات للفترة المحددة</div>`}`;
+    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,true,total)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد إيرادات للفترة المحددة</div>`}`;
 
   } else if(drillType==='out'){
     title=`📤 المصروفات — ${label}`;
@@ -923,7 +944,7 @@ window.openKpiDrill=function(drillType, walletFilter){
     html=walletBar('out')+`<div style="background:rgba(255,61,110,.07);border:1px solid rgba(255,61,110,.15);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-weight:800;font-size:13px;color:var(--dim2)">${outTx.length} حركة${wName?' · '+wName:''}</span>
       <span style="font-size:22px;font-weight:900;color:var(--r)">${fn(total)} ج</span>
-    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,false)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد مصروفات للفترة المحددة</div>`}`;
+    </div>${sorted.map(([cat,txs])=>catBlock(cat,txs,false,total)).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد مصروفات للفترة المحددة</div>`}`;
 
   } else if(drillType==='profit'){
     title=`💹 الصافي — ${label}`;
