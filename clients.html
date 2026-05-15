@@ -509,6 +509,7 @@ body{
       <button class="pn-tab on" id="ptab-summary" onclick="window.switchPanelTab('summary',this)">ملخص</button>
       <button class="pn-tab" id="ptab-followups" onclick="window.switchPanelTab('followups',this)">📞 متابعات <span id="ptab-fu-badge" style="display:none;background:var(--r);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;margin-right:4px;font-weight:900"></span></button>
       <button class="pn-tab" id="ptab-orders" onclick="window.switchPanelTab('orders',this)">أوردرات</button>
+      <button class="pn-tab" id="ptab-bizcard" onclick="window.switchPanelTab('bizcard',this)">📇 بطاقة الأعمال</button>
       <button class="pn-tab" id="ptab-data" onclick="window.switchPanelTab('data',this)">بيانات</button>
     </div>
     <div class="panel-body" id="panel-body"></div>
@@ -750,7 +751,13 @@ body{
           </div>
         </div>
         <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">أو رابط مباشر</label><input class="inp" id="no-design-url" type="url" placeholder="https://..."></div>
-        <div class="fg" style="margin:0"><label style="font-size:11px">ملاحظة على التصميم</label><input class="inp" id="no-design-note" type="text" placeholder="وصف التصميم..."></div>
+        <div class="fg" style="margin:0">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+            <label style="font-size:11px">📋 بيانات التصميم / ملاحظة</label>
+            <button type="button" id="bc-fill-btn" onclick="window.fillFromBizCard()" style="display:none;padding:4px 10px;border-radius:8px;border:1px solid rgba(168,85,247,.3);background:rgba(168,85,247,.1);color:#a855f7;font-size:10px;font-weight:800;cursor:pointer;font-family:inherit">📇 تعبئة من بطاقة العميل</button>
+          </div>
+          <textarea class="inp" id="no-design-note" placeholder="وصف التصميم أو بيانات الكارت..." style="min-height:60px;resize:vertical;font-family:inherit"></textarea>
+        </div>
       </div>
 
     </div>
@@ -1810,6 +1817,11 @@ function renderPanel(id){
       </div>
     </div>
 
+    <!-- ── 📇 بطاقة الأعمال ── -->
+    <div id="ptab-pane-bizcard" style="display:none">
+      ${renderBizCardTab(c)}
+    </div>
+
     <!-- ── بيانات ── -->
     <div id="ptab-pane-data" style="display:none">
       <div style="margin-bottom:14px">
@@ -1856,13 +1868,389 @@ function renderPanel(id){
   window.__panelOrds=cOrds;
 }
 
+// ═══════════════════════════════════════════════════════════
+// 📇 BUSINESS CARD — بطاقة الأعمال الذكية للعميل
+// ═══════════════════════════════════════════════════════════
+window._bizCardClientId = null;
+
+function bcInput(id, label, ph, val, type){
+  type = type || 'text';
+  return `<div style="margin-bottom:8px"><label style="display:block;font-size:10px;font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><input type="${type}" id="bc-${id}" placeholder="${ph||''}" value="${(val||'').toString().replace(/"/g,'&quot;')}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:12px;outline:none"></div>`;
+}
+function bcTextarea(id, label, ph, val){
+  return `<div style="margin-bottom:8px"><label style="display:block;font-size:10px;font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><textarea id="bc-${id}" placeholder="${ph||''}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:12px;outline:none;min-height:60px;resize:vertical">${(val||'').toString().replace(/</g,'&lt;')}</textarea></div>`;
+}
+function bcSection(title, body){
+  return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
+    <div style="font-size:12px;font-weight:800;color:var(--snow);margin-bottom:10px;display:flex;align-items:center;gap:6px">${title}</div>
+    ${body}
+  </div>`;
+}
+
+function renderBizCardTab(c){
+  const bc = c.businessCard || {};
+  window._bizCardClientId = c._id;
+  const updatedTxt = bc.updatedAt ? new Date(bc.updatedAt.seconds*1000).toLocaleDateString('ar-EG') : '';
+  return `
+    <!-- Smart Paste -->
+    <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(6,182,212,.05));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:900;color:#a855f7;margin-bottom:6px">🧠 لزق ذكي — Smart Paste</div>
+      <div style="font-size:10px;color:var(--dim2);margin-bottom:8px;line-height:1.5">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
+      <textarea id="bc-paste-area" placeholder="مثال: ايمن شوق المشد&#10;المستشار&#10;للمحاماة والاستشارات القانونية&#10;Ayman Shawky Al-Mashad&#10;Law Firm and Legal Consultations&#10;01022662220&#10;Aymanshawkylawfirm@gmail.com&#10;كمبوند فاليو 2 - القاهرة الجديدة" style="width:100%;background:var(--bg3);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px;color:var(--snow);font-family:inherit;font-size:12px;outline:none;min-height:90px;resize:vertical"></textarea>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-p btn-sm" onclick="window.bizCardSmartPaste()" style="flex:1">🧠 استخرج البيانات</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bc-paste-area').value=''" title="مسح">✕</button>
+      </div>
+      <div id="bc-paste-result" style="font-size:10px;color:var(--g);margin-top:6px;min-height:14px"></div>
+    </div>
+
+    ${bcSection('📝 الهوية',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('prefix','اللقب','د. / م. / أ. / المستشار',bc.prefix)}
+        ${bcInput('nickname','اسم مختصر','أبو محمد',bc.nickname)}
+      </div>
+      ${bcInput('name-ar','الاسم الكامل (عربي)','الاسم بالعربي',bc.nameAr)}
+      ${bcInput('name-en','Full Name (English)','Name in English',bc.nameEn)}`
+    )}
+
+    ${bcSection('💼 المهنة والشركة',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('job-ar','المسمى الوظيفي (AR)','المستشار / محامي',bc.jobTitleAr)}
+        ${bcInput('job-en','Job Title (EN)','Legal Consultant',bc.jobTitleEn)}
+      </div>
+      ${bcInput('company-ar','اسم الشركة (AR)','للمحاماة والاستشارات القانونية',bc.companyAr)}
+      ${bcInput('company-en','Company Name (EN)','Law Firm and Legal Consultations',bc.companyEn)}
+      ${bcInput('biz-type','نوع النشاط','محاماة / طب / مطعم / مهندس',bc.businessType)}`
+    )}
+
+    ${bcSection('📞 وسائل التواصل',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('office-phone','تليفون مكتب','011xxxxxxxx',bc.officePhone,'tel')}
+        ${bcInput('mobile-phone','موبايل','01xxxxxxxxx',bc.mobilePhone,'tel')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('whatsapp','واتساب (لو مختلف)','01xxxxxxxxx',bc.whatsapp,'tel')}
+        ${bcInput('fax','فاكس (اختياري)','',bc.fax,'tel')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('email','إيميل','example@gmail.com',bc.email,'email')}
+        ${bcInput('email-2','إيميل بديل','',bc.email2,'email')}
+      </div>
+      ${bcInput('website','الموقع الإلكتروني','https://example.com',bc.website,'url')}`
+    )}
+
+    ${bcSection('📍 العنوان',
+      `${bcTextarea('address-ar','العنوان (AR)','العنوان الكامل بالعربي',bc.addressAr)}
+      ${bcTextarea('address-en','Address (EN)','Address in English',bc.addressEn)}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+        ${bcInput('city','المدينة/الحي','القاهرة الجديدة',bc.city)}
+        ${bcInput('gov','المحافظة','القاهرة',bc.gov)}
+        ${bcInput('country','الدولة','مصر',bc.country)}
+      </div>
+      ${bcInput('maps-link','رابط Google Maps','https://maps.app.goo.gl/...',bc.mapsLink,'url')}`
+    )}
+
+    ${bcSection('🌐 السوشيال ميديا',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('fb','Facebook','facebook.com/...',bc.facebook,'url')}
+        ${bcInput('ig','Instagram','instagram.com/...',bc.instagram,'url')}
+        ${bcInput('tw','Twitter / X','x.com/...',bc.twitter,'url')}
+        ${bcInput('linkedin','LinkedIn','linkedin.com/in/...',bc.linkedin,'url')}
+        ${bcInput('tiktok','TikTok','tiktok.com/@...',bc.tiktok,'url')}
+        ${bcInput('yt','YouTube','youtube.com/@...',bc.youtube,'url')}
+        ${bcInput('snap','Snapchat','snapchat.com/add/...',bc.snapchat,'url')}
+        ${bcInput('telegram','Telegram','t.me/...',bc.telegram,'url')}
+      </div>`
+    )}
+
+    ${bcSection('⏰ ساعات العمل',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('hours-week','أيام الأسبوع','9 ص - 5 م',bc.hoursWeek)}
+        ${bcInput('hours-weekend','الإجازات','مغلق / 10 ص - 2 م',bc.hoursWeekend)}
+      </div>
+      ${bcInput('closed-days','أيام الإغلاق','الجمعة',bc.closedDays)}`
+    )}
+
+    ${bcSection('🎨 الهوية البصرية',
+      `${bcInput('logo-url','رابط اللوجو','https://...',bc.logoUrl,'url')}
+      ${bc.logoUrl?`<div style="margin-bottom:8px"><img src="${bc.logoUrl}" style="max-width:120px;max-height:80px;border-radius:8px;border:1px solid var(--line);background:#fff;padding:4px"></div>`:''}
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+        ${bcInput('color-1','اللون الأساسي','#000000',bc.color1)}
+        ${bcInput('color-2','اللون الثاني','#ffffff',bc.color2)}
+        ${bcInput('color-3','اللون الثالث','',bc.color3)}
+      </div>
+      ${bcInput('fonts','الخطوط المفضلة','Cairo / Tajawal',bc.fonts)}`
+    )}
+
+    ${bcSection('📅 تواريخ مهمة',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('founded','تاريخ التأسيس','',bc.founded,'date')}
+        ${bcInput('birthday','يوم الميلاد','',bc.birthday,'date')}
+      </div>
+      ${bcInput('anniversary','مناسبة سنوية','',bc.anniversary,'date')}`
+    )}
+
+    ${bcSection('🎯 تفضيلات التصميم',
+      `<div style="margin-bottom:8px">
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--dim2);margin-bottom:3px">الأسلوب المفضل</label>
+        <select id="bc-style" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:12px;outline:none">
+          <option value="">— اختر —</option>
+          <option value="classic" ${bc.style==='classic'?'selected':''}>كلاسيكي</option>
+          <option value="modern" ${bc.style==='modern'?'selected':''}>مودرن</option>
+          <option value="minimal" ${bc.style==='minimal'?'selected':''}>بسيط/ميني-ميل</option>
+          <option value="bold" ${bc.style==='bold'?'selected':''}>جريء/Bold</option>
+          <option value="elegant" ${bc.style==='elegant'?'selected':''}>أنيق/Elegant</option>
+          <option value="playful" ${bc.style==='playful'?'selected':''}>مرح/Playful</option>
+        </select>
+      </div>
+      ${bcInput('avoid-colors','ألوان لا يفضلها','',bc.avoidColors)}
+      ${bcTextarea('design-notes','ملاحظات إضافية للمصمم','أي تفاصيل خاصة، تفضيلات، أو متطلبات...',bc.designNotes)}`
+    )}
+
+    <!-- Actions -->
+    <div style="display:flex;gap:6px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);position:sticky;bottom:0;background:var(--bg);padding-bottom:10px">
+      <button class="btn btn-g" onclick="window.saveBizCard()" style="flex:1">💾 حفظ</button>
+      <button class="btn btn-b" onclick="window.applyBizCardToNewOrder()">🚀 طبّق على أوردر جديد</button>
+      <button class="btn btn-ghost" onclick="window.exportBizCardText()" title="تصدير نص">📋</button>
+    </div>
+    ${updatedTxt?`<div style="font-size:10px;color:var(--dim2);text-align:center;margin-top:6px">آخر تحديث: ${updatedTxt}</div>`:''}
+  `;
+}
+
+// Smart Paste — استخراج البيانات من نص حر
+window.bizCardSmartPaste = function(){
+  const text = (document.getElementById('bc-paste-area')?.value || '').trim();
+  const result = document.getElementById('bc-paste-result');
+  if(!text){ if(result)result.textContent='⚠️ الصق نص أولاً'; return; }
+  const extracted = parseBizCardText(text);
+  let count = 0;
+  Object.entries(extracted).forEach(([key,val]) => {
+    const el = document.getElementById('bc-'+key);
+    if(el && val){ el.value = val; count++; }
+  });
+  if(result){
+    result.textContent = count > 0
+      ? `✓ تم استخراج ${count} حقل — راجع الحقول وعدّل لو محتاج`
+      : '⚠️ لم يتم استخراج بيانات واضحة. حاول صياغة مختلفة';
+    result.style.color = count>0 ? 'var(--g)' : 'var(--y)';
+  }
+};
+
+// Parser — regex + heuristics
+function parseBizCardText(text){
+  const r = {};
+  if(!text) return r;
+  // Phones (Egyptian)
+  const phones = text.match(/(?:\+?20)?0?1[0125]\d{8}/g) || [];
+  const landlines = text.match(/0\d{2,3}[-\s]?\d{6,8}/g) || [];
+  if(phones[0]) r['mobile-phone'] = phones[0];
+  if(phones[1]) r['whatsapp'] = phones[1];
+  if(landlines[0] && !phones.includes(landlines[0])) r['office-phone'] = landlines[0];
+  if(!r['office-phone'] && phones[0] && /تليفون.{0,15}مكتب|مكتب.{0,15}تليفون|office/i.test(text)){
+    r['office-phone'] = phones[0]; delete r['mobile-phone'];
+  }
+  // Emails
+  const emails = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [];
+  if(emails[0]) r['email'] = emails[0];
+  if(emails[1]) r['email-2'] = emails[1];
+  // URLs
+  const urls = text.match(/https?:\/\/[^\s,،]+|(?:facebook|instagram|twitter|x|linkedin|tiktok|youtube|snapchat)\.com\/[\w@.-]+|wa\.me\/\d+|t\.me\/\w+/gi) || [];
+  urls.forEach(u => {
+    const url = u.startsWith('http') ? u : 'https://'+u;
+    if(/facebook\.com|fb\.com/i.test(u)) r['fb'] = url;
+    else if(/instagram\.com/i.test(u)) r['ig'] = url;
+    else if(/(twitter\.com|^x\.com|\/x\.com)/i.test(u)) r['tw'] = url;
+    else if(/linkedin\.com/i.test(u)) r['linkedin'] = url;
+    else if(/tiktok\.com/i.test(u)) r['tiktok'] = url;
+    else if(/youtube\.com/i.test(u)) r['yt'] = url;
+    else if(/snapchat\.com/i.test(u)) r['snap'] = url;
+    else if(/t\.me/i.test(u)) r['telegram'] = url;
+    else if(/wa\.me/i.test(u)) r['whatsapp'] = url;
+    else if(/maps\.|goo\.gl\/maps|maps\.google/i.test(u)) r['maps-link'] = url;
+    else if(!r['website']) r['website'] = url;
+  });
+  // Lines analysis
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const isAr = s => /[؀-ۿ]/.test(s);
+  const isEn = s => /^[A-Za-z][A-Za-z\s.&,'-]+$/.test(s);
+  const isPhoneOrEmail = s => /^[\d\s\-+()]+$/.test(s) || /@/.test(s) || /^https?:/.test(s);
+  // Job title keywords
+  const jobKwAr = /^(د\.|دكتور|م\.|مهندس|أ\.|أستاذ|المستشار|محامي|طبيب|محامى|كابتن|الشيف|chef|دكتورة|محاسب|مدير|مالك|رئيس|نائب)/;
+  const companyKwAr = /شركة|مكتب|مطعم|كافيه|عيادة|مركز|مؤسسة|مصنع|محل|استوديو|أكاديمية|مدرسة|للـ?(محاماة|استشارات|طباعة|تجارة|توريدات|خدمات)/;
+  const companyKwEn = /\b(company|firm|llc|inc|ltd|consulting|consultations?|services|group|studio|agency|center|clinic|restaurant|cafe|cafe|hotel|store|shop)\b/i;
+  let bestNameAr='', bestNameEn='', bestJobAr='', bestJobEn='', bestCompAr='', bestCompEn='', addrLines=[];
+  for(const line of lines){
+    if(isPhoneOrEmail(line)) continue;
+    if(line.length < 2) continue;
+    if(/^(تليفون|هاتف|واتساب|whatsapp|email|mail|بريد|عنوان|address|website|موقع|الموقع)\s*[:،.-]?\s*$/i.test(line)) continue;
+    if(isAr(line)){
+      if(jobKwAr.test(line)) { if(!bestJobAr) bestJobAr = line; continue; }
+      if(companyKwAr.test(line)){ if(!bestCompAr) bestCompAr = line; continue; }
+      if(/(شارع|كمبوند|عمارة|الدور|المبنى|بجوار|أمام|حي|منطقة|المنطقة|طريق|كورنيش|ميدان)/i.test(line) || addrLines.length){ addrLines.push(line); continue; }
+      if(!bestNameAr && line.split(/\s+/).length <= 5) { bestNameAr = line; continue; }
+    } else if(isEn(line)){
+      if(companyKwEn.test(line)){ if(!bestCompEn) bestCompEn = line; continue; }
+      if(/^(Mr|Mrs|Ms|Dr|Eng|Prof)\.?\s/i.test(line) || (!bestNameEn && line.split(/\s+/).length <= 5)){ bestNameEn = line; continue; }
+      if(!bestJobEn && /(consultant|engineer|doctor|lawyer|manager|director|owner|founder|ceo|cto|cfo|attorney|chef)/i.test(line)){ bestJobEn = line; continue; }
+    }
+  }
+  if(bestNameAr) r['name-ar'] = bestNameAr;
+  if(bestNameEn) r['name-en'] = bestNameEn;
+  if(bestJobAr) r['job-ar'] = bestJobAr;
+  if(bestJobEn) r['job-en'] = bestJobEn;
+  if(bestCompAr) r['company-ar'] = bestCompAr;
+  if(bestCompEn) r['company-en'] = bestCompEn;
+  if(addrLines.length) r['address-ar'] = addrLines.join(' - ');
+  // Detect business type from company keywords
+  if(bestCompAr || bestJobAr){
+    const allTxt = (bestCompAr||'') + ' ' + (bestJobAr||'');
+    if(/محام|قانون|استشارات قانون/i.test(allTxt)) r['biz-type'] = 'محاماة وقانون';
+    else if(/طب|عياد|دكتور|طبيب/i.test(allTxt)) r['biz-type'] = 'طب وصحة';
+    else if(/مطعم|كافيه|chef/i.test(allTxt)) r['biz-type'] = 'مطاعم وكافيهات';
+    else if(/مهندس|engineer/i.test(allTxt)) r['biz-type'] = 'هندسة';
+    else if(/محاسب|تجارة|توريد/i.test(allTxt)) r['biz-type'] = 'تجارة ومحاسبة';
+  }
+  return r;
+}
+
+// Save to Firestore
+window.saveBizCard = async function(){
+  const cid = window._bizCardClientId;
+  if(!cid){ alert('لم يُحدَّد عميل'); return; }
+  const fields = ['name-ar','name-en','prefix','nickname','job-ar','job-en','company-ar','company-en','biz-type','office-phone','mobile-phone','whatsapp','fax','email','email-2','website','address-ar','address-en','city','gov','country','maps-link','fb','ig','tw','linkedin','tiktok','yt','snap','telegram','hours-week','hours-weekend','closed-days','logo-url','color-1','color-2','color-3','fonts','founded','birthday','anniversary','style','avoid-colors','design-notes'];
+  const bc = {};
+  const camel = s => s.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
+  fields.forEach(f => {
+    const el = document.getElementById('bc-'+f);
+    if(el){
+      const v = el.value.trim();
+      const key = ({'name-ar':'nameAr','name-en':'nameEn','job-ar':'jobTitleAr','job-en':'jobTitleEn','company-ar':'companyAr','company-en':'companyEn','biz-type':'businessType','office-phone':'officePhone','mobile-phone':'mobilePhone','email-2':'email2','address-ar':'addressAr','address-en':'addressEn','maps-link':'mapsLink','fb':'facebook','ig':'instagram','tw':'twitter','yt':'youtube','snap':'snapchat','hours-week':'hoursWeek','hours-weekend':'hoursWeekend','closed-days':'closedDays','logo-url':'logoUrl','color-1':'color1','color-2':'color2','color-3':'color3','avoid-colors':'avoidColors','design-notes':'designNotes'})[f] || camel(f);
+      if(v) bc[key] = v;
+    }
+  });
+  bc.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+  bc.updatedBy = currentUser?.uid || '';
+  try{
+    await db.collection('clients').doc(cid).update({
+      businessCard: bc,
+      lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
+      editHistory: firebase.firestore.FieldValue.arrayUnion({
+        action: '📇 تحديث بطاقة الأعمال',
+        date: new Date().toISOString(),
+        by: currentUser?.uid || '',
+        fields: Object.keys(bc).filter(k=>k!=='updatedAt'&&k!=='updatedBy').length+' حقل'
+      })
+    });
+    toast('✓ تم حفظ بطاقة الأعمال','ok');
+  }catch(e){
+    console.error('saveBizCard:',e);
+    alert('فشل الحفظ: '+(e.message||e));
+  }
+};
+
+// Export as text (for manual copy)
+window.exportBizCardText = function(){
+  const cid = window._bizCardClientId;
+  if(!cid) return;
+  const c = clients.find(x=>x._id===cid);
+  const bc = c?.businessCard || {};
+  const lines = [];
+  if(bc.prefix||bc.nameAr) lines.push((bc.prefix||'')+' '+(bc.nameAr||''));
+  if(bc.nameEn) lines.push(bc.nameEn);
+  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
+  if(bc.jobTitleEn) lines.push(bc.jobTitleEn);
+  if(bc.companyAr) lines.push(bc.companyAr);
+  if(bc.companyEn) lines.push(bc.companyEn);
+  lines.push('');
+  if(bc.officePhone) lines.push('تليفون مكتب: '+bc.officePhone);
+  if(bc.mobilePhone) lines.push('موبايل/واتساب: '+bc.mobilePhone);
+  if(bc.email) lines.push('Email: '+bc.email);
+  if(bc.website) lines.push('Website: '+bc.website);
+  if(bc.addressAr) lines.push('العنوان: '+bc.addressAr);
+  if(bc.addressEn) lines.push('Address: '+bc.addressEn);
+  const social = [];
+  if(bc.facebook) social.push('FB: '+bc.facebook);
+  if(bc.instagram) social.push('IG: '+bc.instagram);
+  if(bc.linkedin) social.push('LinkedIn: '+bc.linkedin);
+  if(social.length) lines.push(social.join(' · '));
+  if(bc.designNotes) lines.push('\nملاحظات: '+bc.designNotes);
+  const text = lines.join('\n');
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('✓ تم النسخ','ok'));
+  else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('✓ تم النسخ','ok'); }
+};
+
+// Apply to new order — fills no-design-note from business card
+window.applyBizCardToNewOrder = function(){
+  const cid = window._bizCardClientId;
+  if(!cid) return;
+  const c = clients.find(x=>x._id===cid);
+  const bc = c?.businessCard || {};
+  if(!Object.keys(bc).length){ alert('لم يتم حفظ بطاقة أعمال لهذا العميل بعد'); return; }
+  // Build formatted text
+  const lines = [];
+  if(bc.prefix||bc.nameAr) lines.push((bc.prefix||'')+' '+(bc.nameAr||''));
+  if(bc.nameEn) lines.push(bc.nameEn);
+  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
+  if(bc.companyAr) lines.push(bc.companyAr);
+  if(bc.companyEn) lines.push(bc.companyEn);
+  if(bc.officePhone) lines.push('تليفون: '+bc.officePhone);
+  if(bc.mobilePhone) lines.push('موبايل: '+bc.mobilePhone);
+  if(bc.email) lines.push(bc.email);
+  if(bc.addressAr) lines.push(bc.addressAr);
+  const text = lines.join('\n');
+  // Close client panel and open new order
+  closePanel();
+  setTimeout(()=>{
+    if(window.openAddOrderForClient) window.openAddOrderForClient(cid);
+    else if(window.openNewOrder) window.openNewOrder();
+    setTimeout(()=>{
+      const noteEl = document.getElementById('no-design-note');
+      if(noteEl){ noteEl.value = text; noteEl.style.height='auto'; }
+    }, 200);
+  }, 150);
+  toast('✓ تم نقلك لإنشاء أوردر مع بيانات بطاقة الأعمال','ok');
+};
+
+// Used inside the new-order modal — fills design note from active client's business card
+window.fillFromBizCard = function(){
+  const cid = pendingClientId || activeId;
+  if(!cid){ toast('⚠️ اختر عميل أولاً','err'); return; }
+  const c = clients.find(x=>x._id===cid);
+  const bc = c?.businessCard || {};
+  if(!Object.keys(bc).length){ toast('لا توجد بطاقة أعمال محفوظة','err'); return; }
+  const lines = [];
+  if(bc.prefix||bc.nameAr) lines.push(((bc.prefix||'')+' '+(bc.nameAr||'')).trim());
+  if(bc.nameEn) lines.push(bc.nameEn);
+  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
+  if(bc.jobTitleEn) lines.push(bc.jobTitleEn);
+  if(bc.companyAr) lines.push(bc.companyAr);
+  if(bc.companyEn) lines.push(bc.companyEn);
+  lines.push('');
+  if(bc.officePhone) lines.push('تليفون مكتب: '+bc.officePhone);
+  if(bc.mobilePhone) lines.push('موبايل/واتساب: '+bc.mobilePhone);
+  if(bc.email) lines.push('Email: '+bc.email);
+  if(bc.website) lines.push('Website: '+bc.website);
+  if(bc.addressAr) lines.push(bc.addressAr);
+  if(bc.addressEn) lines.push(bc.addressEn);
+  const social = [];
+  if(bc.facebook) social.push('FB: '+bc.facebook);
+  if(bc.instagram) social.push('IG: '+bc.instagram);
+  if(bc.linkedin) social.push('LinkedIn: '+bc.linkedin);
+  if(social.length) lines.push(social.join(' · '));
+  if(bc.designNotes) lines.push('','ملاحظات: '+bc.designNotes);
+  const noteEl = document.getElementById('no-design-note');
+  if(noteEl){ noteEl.value = lines.filter((_,i,a)=>!(a[i]===''&&a[i-1]==='')).join('\n').trim(); }
+  toast('✓ تم تعبئة البيانات من بطاقة الأعمال','ok');
+};
+
 window.switchPanelTab=function(tab,btn){
   document.querySelectorAll('.pn-tab').forEach(b=>b.classList.remove('on'));
   if(btn)btn.classList.add('on');
-  ['summary','followups','orders','data'].forEach(t=>{
+  ['summary','followups','orders','bizcard','data'].forEach(t=>{
     const pane=document.getElementById('ptab-pane-'+t);
     if(pane)pane.style.display=t===tab?'block':'none';
   });
+  if(tab==='bizcard' && window._bizCardLoadFromState) window._bizCardLoadFromState();
 };
 
 function renderPanelOrders(ords, filter){
@@ -2251,6 +2639,12 @@ function openNewOrder(){
   addNoProdRow();
   sv('no-deadline','');sv('no-notes','');sv('no-deposit','0');sv('no-sale-price','0');const noPreview=document.getElementById('no-remaining-preview');if(noPreview)noPreview.style.display='none';
   sv('no-design-url','');sv('no-design-note','');
+  // Show "Fill from Business Card" button if client has one
+  const bcFillBtn = document.getElementById('bc-fill-btn');
+  if(bcFillBtn){
+    const hasBC = cl.businessCard && Object.keys(cl.businessCard).length > 0;
+    bcFillBtn.style.display = hasBC ? 'inline-block' : 'none';
+  }
   window.__noDesignFiles=[];
   const noImgInp=document.getElementById('no-design-img-inp');if(noImgInp)noImgInp.value='';
   const noFilesList=document.getElementById('no-design-files-list');if(noFilesList)noFilesList.innerHTML='';
