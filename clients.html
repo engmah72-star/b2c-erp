@@ -3514,14 +3514,61 @@ window.showStatsDrawer = function(type) {
     el.innerHTML = header + cards + (ords.length>25?`<div style="text-align:center;color:#647298;padding:14px;font-size:11px">عرض 25 من إجمالي ${ords.length} أوردر</div>`:'');
   }
   else if(type === 'rem') {
-    const remOrds = allOrders.filter(o=>calcRem(o)>0).sort((a,b)=>calcRem(b)-calcRem(a));
+    const allRem = allOrders.filter(o=>calcRem(o)>0);
+    const activeStage = window.__remStageFilter || 'all';
+
+    // ── counts/totals per stage ──
+    const stageCfg = [
+      {key:'design',     label:'تصميم',  ico:'✏️', col:'#7c5cff'},
+      {key:'printing',   label:'طباعة',  ico:'🖨️', col:'#fbbf24'},
+      {key:'production', label:'تنفيذ',  ico:'🏭', col:'#ff4d8d'},
+      {key:'shipping',   label:'شحن',    ico:'🚚', col:'#06b6d4'},
+    ];
+    const perStage = {};
+    stageCfg.forEach(s => {
+      const ords = allRem.filter(o => o.stage === s.key);
+      perStage[s.key] = { count: ords.length, total: ords.reduce((a,o)=>a+calcRem(o),0) };
+    });
+    const allCount = allRem.length;
+    const allTotal = allRem.reduce((a,o)=>a+calcRem(o),0);
+
+    // ── filter ──
+    const remOrds = (activeStage==='all' ? allRem : allRem.filter(o=>o.stage===activeStage))
+                      .sort((a,b)=>calcRem(b)-calcRem(a));
     const totRem = remOrds.reduce((s,o)=>s+calcRem(o),0);
     const lateRem = remOrds.filter(o=>isLate(o)).reduce((s,o)=>s+calcRem(o),0);
     const lateCount = remOrds.filter(o=>isLate(o)).length;
 
+    // ── tabs ──
+    const allActive = activeStage === 'all';
+    const tabs = `
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;-ms-overflow-style:none;scrollbar-width:none">
+        <button onclick="window.__remStageFilter='all';window.showStatsDrawer('rem')"
+          style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${allActive?'#a78bfa':'rgba(255,255,255,.12)'};
+                 background:${allActive?'rgba(167,139,250,.2)':'rgba(255,255,255,.03)'};
+                 color:${allActive?'#a78bfa':'#a8b1cc'};
+                 font-family:inherit;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">
+          🌐 الكل · ${allCount}
+        </button>
+        ${stageCfg.map(s => {
+          const d = perStage[s.key];
+          const isOn = activeStage === s.key;
+          return `<button onclick="window.__remStageFilter='${s.key}';window.showStatsDrawer('rem')"
+            style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${isOn?s.col:'rgba(255,255,255,.12)'};
+                   background:${isOn?s.col+'30':'rgba(255,255,255,.03)'};
+                   color:${isOn?s.col:'#a8b1cc'};
+                   font-family:inherit;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;
+                   opacity:${d.count===0?'.4':'1'}">
+            ${s.ico} ${s.label} · ${d.count}
+          </button>`;
+        }).join('')}
+      </div>`;
+
+    const headerLabel = allActive ? 'إجمالي باقي التحصيل' : `باقي التحصيل — مرحلة ${stageCfg.find(s=>s.key===activeStage)?.label||activeStage}`;
     const header = `
+      ${tabs}
       <div style="background:linear-gradient(135deg,rgba(255,61,110,.1),rgba(251,191,36,.05));border:1px solid rgba(255,61,110,.25);border-radius:14px;padding:14px;margin-bottom:14px;text-align:center">
-        <div style="font-size:11px;color:#647298;font-weight:800;margin-bottom:4px">إجمالي باقي التحصيل</div>
+        <div style="font-size:11px;color:#647298;font-weight:800;margin-bottom:4px">${headerLabel}</div>
         <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,#ff3d6e,#fbbf24);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(totRem)} ج</div>
         <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:11px;font-weight:800">
           <span style="color:#a8b1cc">${remOrds.length} أوردر</span>
