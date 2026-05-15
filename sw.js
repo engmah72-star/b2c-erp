@@ -1,45 +1,82 @@
 // Business2Card ERP — Service Worker
-const CACHE = 'b2c-v131';
-const OFFLINE_PAGES = [
-  '/b2c-erp/login.html',
-  '/b2c-erp/index.html',
-  '/b2c-erp/shared.css',
+// Strategy: Stale-While-Revalidate for app shell + cacheable CDNs.
+//           Firebase API endpoints are never intercepted (data must stay live).
+// Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release,
+// so old caches are deleted on activate and users get fresh code on next load.
+const CACHE = 'b2c-v140';
+
+// App shell — fetched on install. Relative paths so the SW works at any scope.
+const PRECACHE = [
+  './',
+  './login.html',
+  './index.html',
+  './shared.css',
+  './shared.js',
 ];
 
-// Install — cache الملفات الأساسية
+// Third-party hosts that serve immutable / near-immutable assets.
+const CACHEABLE_HOSTS = [
+  'www.gstatic.com',       // Firebase SDK (versioned URLs)
+  'fonts.googleapis.com',  // Google Fonts stylesheet
+  'fonts.gstatic.com',     // Google Fonts woff2 files
+];
+
+// Firebase API endpoints — dynamic data, must not be cached.
+const NEVER_CACHE_HOSTS = [
+  'firestore.googleapis.com',
+  'firebaseinstallations.googleapis.com',
+  'identitytoolkit.googleapis.com',
+  'securetoken.googleapis.com',
+  'firebasestorage.googleapis.com',
+  'fcm.googleapis.com',
+  'firebase.googleapis.com',
+  'firebaseio.com',
+];
+
+// ─── Install ─────────────────────────────────────────────
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(OFFLINE_PAGES))
+    caches.open(CACHE).then(c =>
+      // Per-URL add() with catch — a single missing file won't abort install.
+      Promise.all(PRECACHE.map(u => c.add(u).catch(() => {})))
+    )
   );
   self.skipWaiting();
 });
 
-// Activate — امسح الـ cache القديم
+// ─── Activate ───────────────────────────────────────────
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch — Network First (Firebase محتاج internet)
+// ─── Fetch — Stale-While-Revalidate ─────────────────────
 self.addEventListener('fetch', e => {
-  // Firebase requests — مش نعمل cache
-  if (e.request.url.includes('firebase') ||
-      e.request.url.includes('googleapis') ||
-      e.request.url.includes('gstatic')) {
-    return;
-  }
+  const req = e.request;
+  if (req.method !== 'GET') return;
+
+  let url;
+  try { url = new URL(req.url); } catch { return; }
+
+  if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
+
+  const sameOrigin = url.origin === self.location.origin;
+  const cacheableCdn = CACHEABLE_HOSTS.some(h => url.hostname === h);
+  if (!sameOrigin && !cacheableCdn) return;
+
   e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        // خزّن في cache
-        const clone = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, clone));
+    caches.open(CACHE).then(async cache => {
+      const cached = await cache.match(req);
+      const network = fetch(req).then(res => {
+        if (res && res.status === 200 && res.type !== 'opaqueredirect') {
+          cache.put(req, res.clone()).catch(() => {});
+        }
         return res;
-      })
-      .catch(() => caches.match(e.request))
+      }).catch(() => cached);
+      return cached || network;
+    })
   );
 });
