@@ -1169,15 +1169,29 @@ function renderGrid(){
   const fs=gv('f-src');
   const isLegacyTab=window.__statusTab==='legacy';
 
-  // Time period boundaries
+  // Time period boundaries (hoisted out of filter — built once per render).
   const now=new Date();
+  const nowSec=Date.now()/1000;
   const todayStart=new Date();todayStart.setHours(0,0,0,0);
+  const todayStartSec=todayStart.getTime()/1000;
   const yesterdayStart=new Date(todayStart);yesterdayStart.setDate(yesterdayStart.getDate()-1);
   const weekStart=new Date(todayStart);weekStart.setDate(weekStart.getDate()-todayStart.getDay());
+  const weekStartSec=weekStart.getTime()/1000;
   const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
   const lastMonthStart=new Date(now.getFullYear(),now.getMonth()-1,1);
   const lastMonthEnd=new Date(now.getFullYear(),now.getMonth(),1);
   const periodOf={today:[todayStart,null],yesterday:[yesterdayStart,todayStart],week:[weekStart,null],month:[monthStart,null],lastmonth:[lastMonthStart,lastMonthEnd]};
+
+  // Compare on raw seconds — avoids `new Date()` allocation per client.
+  // Returns latest order in O(N) single pass without mutating the index array.
+  const latestOrder=arr=>{
+    let best=null,bestSec=-1;
+    for(const o of arr){
+      const s=o.createdAt?.seconds||0;
+      if(s>bestSec){bestSec=s;best=o;}
+    }
+    return best;
+  };
 
   let data=clients.filter(c=>{
     if(isLegacyTab){if(c.status!=='legacy')return false;}
@@ -1191,11 +1205,12 @@ function renderGrid(){
     if(fg&&c.gov!==fg&&c.governorate!==fg)return false;
     if(fs&&c.source!==fs)return false;
 
+    const cSec=c.createdAt?.seconds||0;
+
     // ── Period filter (new) ──
     if(window.__periodFilter && periodOf[window.__periodFilter]){
       const [from,to]=periodOf[window.__periodFilter];
-      const ts=c.createdAt?.seconds?new Date(c.createdAt.seconds*1000):null;
-      if(!ts||ts<from||(to&&ts>=to))return false;
+      if(!cSec||cSec*1000<from.getTime()||(to&&cSec*1000>=to.getTime()))return false;
     }
 
     // ── Quick filter (new) ──
@@ -1203,15 +1218,14 @@ function renderGrid(){
       const cOrds=getClientOrders(c);
       const cRem=cOrds.reduce((s,o)=>s+calcRem(o),0);
       const hasAct=cOrds.some(o=>o.stage!=='archived');
-      const lastOrd=cOrds.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
-      const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):999;
+      const lastOrd=latestOrder(cOrds);
+      const daysSince=lastOrd?.createdAt?.seconds?Math.floor((nowSec-lastOrd.createdAt.seconds)/86400):999;
       if(window.__quickFilter==='vip' && cOrds.length<3)return false;
       if(window.__quickFilter==='active' && !hasAct)return false;
       if(window.__quickFilter==='rem' && cRem<=0)return false;
       if(window.__quickFilter==='atrisk' && !(daysSince>=30 && daysSince<90))return false;
       if(window.__quickFilter==='new'){
-        const ts=c.createdAt?.seconds?new Date(c.createdAt.seconds*1000):null;
-        if(!ts||ts<weekStart)return false;
+        if(!cSec||cSec<weekStartSec)return false;
       }
       if(window.__quickFilter==='sleeping' && !(daysSince>=90 && daysSince<999))return false;
     }
@@ -1221,11 +1235,10 @@ function renderGrid(){
       const cOrds2=getClientOrders(c);
       const rem2=cOrds2.reduce((s,o)=>s+(calcRem(o)),0);
       const hasActive=cOrds2.some(o=>o.stage!=='archived');
-      const lastOrd=cOrds2.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
-      const daysSinceLast=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):999;
+      const lastOrd=latestOrder(cOrds2);
+      const daysSinceLast=lastOrd?.createdAt?.seconds?Math.floor((nowSec-lastOrd.createdAt.seconds)/86400):999;
       if(window.__clientFilter==='today'){
-        const cDate=c.createdAt?.seconds?new Date(c.createdAt.seconds*1000):null;
-        if(!cDate||cDate<todayStart)return false;
+        if(!cSec||cSec<todayStartSec)return false;
       }
       if(window.__clientFilter==='rem'&&rem2<=0)return false;
       if(window.__clientFilter==='active'&&!hasActive)return false;
