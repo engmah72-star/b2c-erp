@@ -4204,16 +4204,23 @@ window.cgridBulkAction=async function(action){
   if(action==='export'){cgridExportSelected(ords);return;}
 
   if(action==='archive'){
-    if(!confirm(`أرشفة ${ids.length} أوردر؟`))return;
+    // قاعدة: الأوردرات غير مكتملة الدفع لا تدخل الأرشيف
+    const _canArc=o=>{const r=parseFloat(o.remaining)||0;const ps=(o.paymentStatus||'').toLowerCase();return r<=0||['paid','returned','refunded'].includes(ps);};
+    const archivable=ords.filter(_canArc);
+    const blocked=ords.length-archivable.length;
+    if(!archivable.length){
+      toast(`⛔ لا يمكن أرشفة أي أوردر — ${ords.length} غير مكتملة الدفع`,'err');return;
+    }
+    if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked?`\n⚠️ ${blocked} أوردر مستثنى (غير مكتمل الدفع)`:''}`))return;
     // split into batches of 400 for Firestore limit
-    for(let i=0;i<ords.length;i+=400){
-      const chunk=ords.slice(i,i+400);
+    for(let i=0;i<archivable.length;i+=400){
+      const chunk=archivable.slice(i,i+400);
       const batch=db.batch();
       chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived','stageEnteredAt.archived':now2,timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
       await batch.commit();
     }
-    logAudit('orders.bulk_archive',{count:ids.length,orderIds:ids.slice(0,50)});
-    toast(`✅ تم أرشفة ${ids.length} أوردر`,'ok');cgridSelNone();return;
+    logAudit('orders.bulk_archive',{count:archivable.length,blockedUnpaid:blocked,orderIds:archivable.slice(0,50).map(o=>o._id)});
+    toast(`✅ تم أرشفة ${archivable.length}${blocked?` (تخطّينا ${blocked} غير مدفوعة)`:''}`,'ok');cgridSelNone();return;
   }
 
   if(action==='reopen'){
@@ -4232,8 +4239,16 @@ window.cgridBulkAction=async function(action){
     const stagesAll=Object.keys(CGRID_STATUS_MAP).join(' | ');
     const choice=prompt(`نقل ${ids.length} أوردر إلى:\n${stagesAll}`);
     if(!choice||!CGRID_STATUS_MAP[choice]){toast('الحالة غير صحيحة','err');return;}
-    if(!confirm(`نقل ${ids.length} أوردر إلى "${choice}"؟`))return;
     const mapping=CGRID_STATUS_MAP[choice];
+    // قاعدة: الأرشيف يحتاج دفع كامل
+    if(mapping.stage==='archived'){
+      const _canArc=o=>{const r=parseFloat(o.remaining)||0;const ps=(o.paymentStatus||'').toLowerCase();return r<=0||['paid','returned','refunded'].includes(ps);};
+      const unpaid=ords.filter(o=>!_canArc(o));
+      if(unpaid.length){
+        toast(`⛔ ${unpaid.length} أوردر غير مكتمل الدفع — لا يمكن أرشفته`,'err');return;
+      }
+    }
+    if(!confirm(`نقل ${ids.length} أوردر إلى "${choice}"؟`))return;
     for(let i=0;i<ords.length;i+=400){
       const chunk=ords.slice(i,i+400);
       const batch=db.batch();
