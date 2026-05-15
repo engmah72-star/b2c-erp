@@ -517,6 +517,24 @@ service cloud.firestore {
       allow write: if isAuth() && request.auth.uid == uid;
     }
 
+    // ══ اللحظات (Stories) — 24h disappearing ══
+    // كل auth user يقرأ كل اللحظات (zي ما الـ presence collection)
+    // الإنشاء: لازم userId يطابق uid
+    // التحديث: المالك ولا أي مشاهد بيضيف نفسه في viewers فقط
+    // الحذف: المالك فقط أو admin
+    match /stories/{storyId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuth() && (
+        // المالك يقدر يحدث أي حاجة
+        resource.data.userId == request.auth.uid
+        // أي مشاهد يضيف نفسه فقط في viewers (لا يلمس باقي الحقول)
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers'])
+            && request.auth.uid in request.resource.data.viewers)
+      );
+      allow delete: if isAuth() && (isAdmin() || resource.data.userId == request.auth.uid);
+    }
+
     // ══ Print Jobs ══
     match /print_jobs/{jobId} {
       allow read: if isAuth() && (
