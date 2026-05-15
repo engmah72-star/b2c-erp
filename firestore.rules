@@ -718,5 +718,71 @@ service cloud.firestore {
       );
       allow write: if false;
     }
+
+    // ════════════════════════════════════════════════════════════
+    // MARKETPLACE PLATFORM — Phase 1 Foundation
+    // ════════════════════════════════════════════════════════════
+    // BUSINESS DNA: Own The Network, Not The Assets.
+    // كل الكتابات هنا admin-only في Phase 1. مع marketplace-engine.js
+    // (PR لاحق) ستتحول لـ engine-only writes عبر batches.
+    // RULE 2 + 3: لا كتابة مباشرة من صفحات بعد إطلاق الـ engine.
+    //
+    // ملاحظة: ربط user → tenant سيُضاف في Phase 2 (حقل tenantId على user doc).
+    // حتى ذلك الحين، صلاحيات Phase 1 = admin + canFinancialRead للقراءة،
+    // والعميل يقدر يشوف طلباته/نزاعاته الخاصة عبر customerId == auth.uid.
+
+    // ══ Tenants — سجل المرشنتس وشركاء المنصة ══
+    match /tenants/{tenantId} {
+      // كل auth user يقرأ قائمة المرشنتس (لـ catalog ولـ profile lookups).
+      allow read: if isAuth();
+      // KYC والإدارة admin-only في Phase 1.
+      allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Marketplace Orders — طلبات بين العميل والمرشنت ══
+    // مختلفة عن orders الحالية: تحمل tenantId + commission + escrow refs.
+    match /marketplace_orders/{orderId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        resource.data.get('customerId','__') == request.auth.uid
+      );
+      // Phase 1: admin يكتب يدوياً. Phase 2: engine فقط.
+      allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Commissions — العمولات المستحقة/المحصلة للمنصة ══
+    match /commissions/{commId} {
+      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Escrow Holds — الأموال المحتجزة لحين التسليم ══
+    match /escrow_holds/{holdId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        resource.data.get('customerId','__') == request.auth.uid
+      );
+      allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Payouts — دفعات للمرشنتس/الشحن/الوكلاء ══
+    match /payouts/{payoutId} {
+      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Disputes — النزاعات بين الأطراف ══
+    match /disputes/{disputeId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        resource.data.get('customerId','__') == request.auth.uid
+      );
+      // فتح نزاع: أي auth user (سيُضيّق في Phase 2 لأطراف الطلب فقط).
+      // إدارة وحل النزاع admin-only في Phase 1.
+      allow create: if isAuth();
+      allow update, delete: if isAdminOnly();
+    }
   }
 }
