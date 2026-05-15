@@ -434,6 +434,12 @@ window.archiveAwaitingNow=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(!o.awaitingFinalArchive)return toast('⚠️ هذا الأوردر ليس في انتظار الأرشفة','err');
   if(!(o.costItems||[]).length)return toast('⚠️ سجّل بنود التكلفة أولاً','err');
+  // قاعدة: الأرشفة تتطلب دفع كامل (remaining<=0) أو حالة مرتجع/استرداد
+  const rem=parseFloat(o.remaining)||0;
+  const ps=(o.paymentStatus||'').toLowerCase();
+  if(rem>0 && !['paid','returned','refunded'].includes(ps)){
+    return toast(`⛔ لا يمكن الأرشفة — متبقّي ${rem.toLocaleString('ar-EG')} ج. حصّل أو ارجع المبلغ أولاً.`,'err');
+  }
   if(!confirm('📁 أرشفة الأوردر الآن بعد مراجعة بنود التكلفة؟'))return;
   try{
     await updateDoc(doc(db,'orders',activeId),{
@@ -1757,7 +1763,12 @@ window.saveCost=async function(){
     // RULE 3 — atomic batch: order + ledger entry + supplier_orders معاً
     const batch=writeBatch(db);
     // ـ لو الأوردر مُسلَّم وفي انتظار مراجعة بنود التكلفة → اكتب البند + أرشف في نفس الـ batch
-    const autoArchive=!!o.awaitingFinalArchive && !isEdit;
+    // قاعدة: الأوردر يدخل الأرشيف فقط لو مكتمل الدفع (remaining<=0)
+    // أو حالة مرتجع/استرداد. لو غير مكتمل، نسجّل البند بدون أرشفة.
+    const _remNow=parseFloat(o.remaining)||0;
+    const _psNow=(o.paymentStatus||'').toLowerCase();
+    const _canArchive=_remNow<=0 || ['paid','returned','refunded'].includes(_psNow);
+    const autoArchive=!!o.awaitingFinalArchive && !isEdit && _canArchive;
     const updFields={costItems:ci,updatedAt:serverTimestamp()};
     const tlEntry={date:nowStr(),action,by:userName};
     if(autoArchive){
@@ -1765,6 +1776,8 @@ window.saveCost=async function(){
       updFields['stageEnteredAt.archived']=nowStr();
       updFields.awaitingFinalArchive=false;
       tlEntry.action=`${action} — 📁 أُرشف تلقائياً بعد تسجيل بنود التكلفة`;
+    } else if(!!o.awaitingFinalArchive && !isEdit && !_canArchive){
+      tlEntry.action=`${action} — ⏳ بانتظار التحصيل قبل الأرشفة (متبقّي ${_remNow.toLocaleString('ar-EG')} ج)`;
     }
     batch.update(doc(db,'orders',activeId),{...updFields,timeline:[...(o.timeline||[]),tlEntry]});
     if(!isEdit){

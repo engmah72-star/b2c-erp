@@ -212,7 +212,13 @@ service cloud.firestore {
       let prev = resource.data.get('stage', '');
       let next = request.resource.data.get('stage', '');
       // لا يتغير stage → السماح (تحديث حقول أخرى)
-      return prev == next || isAdmin() || canAdvanceFromStage(prev, next);
+      // الأرشفة (next='archived') ممنوعة لو الأوردر له remaining > 0:
+      //   - مكتمل الدفع: remaining<=0 أو paymentStatus='paid' → مسموح
+      //   - أو الأوردر مرتجع/ملغي: paymentStatus in ['returned','refunded'] → مسموح
+      let archivePayOk = next != 'archived'
+                       || request.resource.data.get('remaining', 0) <= 0
+                       || request.resource.data.get('paymentStatus', '') in ['paid','returned','refunded'];
+      return prev == next || (archivePayOk && (isAdmin() || canAdvanceFromStage(prev, next)));
     }
 
     match /orders/{orderId} {
