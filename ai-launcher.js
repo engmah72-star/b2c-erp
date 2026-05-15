@@ -6,8 +6,9 @@
 // يُحقن في كل الصفحات الإدارية. ai-insights.html له واجهته الكاملة.
 // ══════════════════════════════════════════════════════════
 import { askAI, hasKey, setKey, getKey, clearKey, KEY_NEEDED } from './ai-engine.js';
+import { buildToday, PAGE_FOCUS, detectOpenEntity, buildEntitySection } from './ai-today.js';
 import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, getDocs, getDoc, doc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 (function() {
   const PATH = (location.pathname.split('/').pop() || '').toLowerCase();
@@ -46,6 +47,7 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
 
   // ── Cached compact context (loaded once per session) ──
   let contextCache = '';
+  let dataCache = { orders: [], clients: [] };
   let loadingContext = false;
   async function loadContext() {
     if (contextCache || loadingContext) return contextCache;
@@ -55,9 +57,9 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
         getDocs(collection(db,'orders')).catch(() => ({ docs: [] })),
         getDocs(collection(db,'clients')).catch(() => ({ docs: [] })),
       ]);
-      const orders = oSnap.docs.map(d => d.data());
-      const clients = cSnap.docs.map(d => d.data());
-      contextCache = buildCompactContext(orders, clients);
+      dataCache.orders = oSnap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      dataCache.clients = cSnap.docs.map(d => d.data());
+      contextCache = buildCompactContext(dataCache.orders, dataCache.clients);
     } catch (e) {
       console.warn('[ai-launcher] loadContext failed:', e);
       contextCache = '— لا توجد بيانات متاحة حالياً —';
@@ -65,6 +67,71 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
       loadingContext = false;
     }
     return contextCache;
+  }
+
+  // ── Today section — lazy-load today's financial_ledger then summarise ──
+  let todayCache = null;
+  async function loadToday() {
+    if (todayCache !== null) return todayCache;
+    try {
+      // financial_ledger may have many docs; fetch all and filter client-side.
+      // Cheap-enough: with a daily index it's ~hundreds, not thousands.
+      const lSnap = await getDocs(collection(db,'financial_ledger')).catch(() => ({ docs: [] }));
+      const startOfDay = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+      const tsMs = ts => ts?.toDate?.()?.getTime() || ((ts?.seconds || 0) * 1000) || 0;
+      const ledger = lSnap.docs.map(d => d.data()).filter(e => tsMs(e.createdAt) >= startOfDay);
+      todayCache = buildToday({
+        orders: dataCache.orders,
+        clients: dataCache.clients,
+        ledger,
+        role: (window.AppState?.currentRole || ''),
+      });
+    } catch (e) {
+      console.warn('[ai-launcher] loadToday failed:', e);
+      todayCache = '';
+    }
+    return todayCache;
+  }
+
+  // ── Open-entity resolver — prefers in-memory AppState, falls back to URL ──
+  // We DON'T cache here: pages mutate AppState.openEntity as the user
+  // navigates between modals, so we re-resolve every time the user asks.
+  async function loadOpenEntity() {
+    const role = window.AppState?.currentRole || '';
+
+    // Fast path: page explicitly set the open entity (no Firestore needed).
+    const mem = window.AppState?.openEntity;
+    if (mem && mem.type && mem.doc) {
+      const related = mem.type === 'client'
+        ? dataCache.orders.filter(o => o.clientId === mem.id || o.clientName === mem.doc.name)
+        : [];
+      return buildEntitySection({ type: mem.type, doc: mem.doc, relatedOrders: related, role });
+    }
+
+    // Fallback: detect from URL and fetch.
+    const ent = detectOpenEntity(location.pathname, location.search);
+    if (!ent) return '';
+    try {
+      let docData = null;
+      if (ent.byField) {
+        const snap = await getDocs(query(collection(db, ent.collection), where(ent.byField, '==', ent.id), limit(1)))
+          .catch(() => ({ docs: [] }));
+        if (snap.docs.length) docData = { ...snap.docs[0].data(), _id: snap.docs[0].id };
+      } else {
+        const ref = doc(db, ent.collection, ent.id);
+        const snap = await getDoc(ref).catch(() => null);
+        if (snap?.exists()) docData = { ...snap.data(), _id: snap.id };
+      }
+      if (!docData) return '';
+
+      const related = ent.type === 'client'
+        ? dataCache.orders.filter(o => o.clientId === ent.id || o.clientName === docData.name)
+        : [];
+      return buildEntitySection({ type: ent.type, doc: docData, relatedOrders: related, role });
+    } catch (e) {
+      console.warn('[ai-launcher] loadOpenEntity failed:', e);
+      return '';
+    }
   }
 
   function buildCompactContext(orders, clients) {
@@ -206,7 +273,9 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
       });
     }
     refreshKeyRow();
-    loadContext(); // start loading in background
+    // Start loading in background — today depends on orders, so chain it.
+    loadContext().then(() => loadToday());
+    loadOpenEntity();
   }
 
   function close() {
@@ -252,8 +321,21 @@ import { getFirestore, collection, getDocs } from "https://www.gstatic.com/fireb
     document.getElementById('ai-msgs').appendChild(typing);
     scrollDown();
 
-    const ctx = await loadContext();
-    const prompt = `${ctx}\n\nالصفحة الحالية: ${PATH}\nسؤال المستخدم: ${q}\n\nأجب بالعربية بشكل مباشر ومختصر (جملة إلى فقرة)، استند إلى الأرقام أعلاه.`;
+    const [ctx, today, entity] = await Promise.all([
+      loadContext(),
+      loadToday(),
+      loadOpenEntity(),
+    ]);
+    const focus = PAGE_FOCUS[PATH] || '';
+    const parts = [
+      ctx,
+      today && today.trim() ? today : '',
+      entity && entity.trim() ? entity : '',
+      `الصفحة الحالية: ${PATH}${focus ? ` — ${focus}` : ''}`,
+      `سؤال المستخدم: ${q}`,
+      'أجب بالعربية بشكل مباشر ومختصر (جملة إلى فقرة)، استند إلى الأرقام أعلاه. إذا كان الكيان المفتوح مذكوراً فوق، اربط الإجابة به مباشرة.',
+    ].filter(Boolean);
+    const prompt = parts.join('\n\n');
 
     try {
       const ans = await askAI(prompt, { maxTokens: 700 });

@@ -18,10 +18,16 @@
 <script type="module" src="inbox-badge.js"></script>
 <style>
 /* ════════ Modern v3 Style — Vodafone-inspired ════════ */
-body{background:#04050a}
-body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 700px 500px at 90% -10%,rgba(124,92,255,.10),transparent 60%),radial-gradient(ellipse 600px 400px at 0 110%,rgba(6,182,212,.07),transparent 60%)}
-.app-shell{position:relative;z-index:1}
+body{
+  background:
+    radial-gradient(ellipse 700px 500px at 90% -10%,rgba(124,92,255,.10),transparent 60%),
+    radial-gradient(ellipse 600px 400px at 0 110%,rgba(6,182,212,.07),transparent 60%),
+    #04050a;
+  background-attachment:fixed;
+}
 .topbar{background:rgba(13,15,27,.55);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
+
+@keyframes journeyPulse{0%,100%{transform:scale(1);box-shadow:0 0 0 3px var(--journey-pulse,rgba(124,92,255,.3))}50%{transform:scale(1.08);box-shadow:0 0 0 6px var(--journey-pulse,rgba(124,92,255,.15))}}
 
 /* ── Time Period Strip ── */
 .tp-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
@@ -206,8 +212,10 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
 </style>
 <script src="financial-guard.js"></script>
 <script src="wa-launcher.js?v=1" defer></script>
+<script src="smart-sidebar.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
+<script type="module" src="ai-search.js?v=1" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -369,6 +377,12 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
       <button class="btn btn-ghost btn-sm" id="add-legacy-btn" onclick="openAddLegacy()" style="display:none">＋ عميل قديم</button>
       <button id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
     </div>
+
+    <!-- OCCASIONS BANNER (🎂/🏢 — auto-shown when there are today's/upcoming occasions) -->
+    <div id="occasions-banner" style="display:none;margin-bottom:14px"></div>
+
+    <!-- SEGMENT STRIP (RFM distribution — clickable filters) -->
+    <div id="segment-strip" style="display:none;margin-bottom:14px"></div>
 
     <!-- GRID -->
     <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
@@ -564,6 +578,12 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
         <div class="fg"><label>إيميل (اختياري)</label><input class="inp" id="c-email" type="email" placeholder="example@gmail.com"></div>
       </div>
 
+      <!-- ══ مناسبات (اختياري — تولّد متابعات تلقائية) ══ -->
+      <div class="g2">
+        <div class="fg"><label>🎂 تاريخ الميلاد (اختياري)</label><input class="inp" id="c-birthday" type="date"></div>
+        <div class="fg"><label>🏢 تاريخ تأسيس النشاط (اختياري)</label><input class="inp" id="c-anniversary" type="date"></div>
+      </div>
+
       <div class="divider"><div class="div-line"></div><div class="div-text">📍 العنوان</div><div class="div-line"></div></div>
       <div class="g2">
         <div class="fg"><label>المحافظة</label><select class="inp" id="c-gov" onchange="fillCities()"><option value="">— اختر —</option></select></div>
@@ -608,6 +628,16 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
         </div>
       </div>
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="c-notes" placeholder="أي تفاصيل إضافية..." style="min-height:70px"></textarea></div>
+
+      <!-- ══ ملاحظات داخلية خاصة بالموظفين فقط ══ -->
+      <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:12px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
+          <div style="font-size:11px;font-weight:800;color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
+          <span id="c-internal-meta" style="font-size:9px;color:var(--dim2);font-weight:700"></span>
+        </div>
+        <textarea class="inp" id="c-internal-notes" placeholder="ملاحظات خاصة بالموظفين فقط&#10;مثال: العميل صعب الإرضاء — يحتاج صبر / يدفع متأخر / صديق المدير / يفضّل الاتصال صباحاً..." style="min-height:70px;background:rgba(255,61,110,.03)"></textarea>
+        <div style="font-size:10px;color:var(--dim2);margin-top:6px;line-height:1.6">💡 المعرفة هنا تنتقل بين الموظفين — لا تُعرض في بوابة العميل أو الرسائل التلقائية</div>
+      </div>
 
       <!-- حقول خاصة بالعميل القديم — تظهر فقط في وضع قديم -->
       <div id="legacy-fields-section" style="display:none">
@@ -899,6 +929,118 @@ const STAGE_HREF={design:'design',printing:'print',production:'production',shipp
 // ══ UTILS ══
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
+
+// ── Occasions helpers (birthday/anniversary) ──
+function fmtOccasion(dateStr){
+  if(!dateStr)return '';
+  const d=new Date(dateStr);if(isNaN(d))return dateStr;
+  const now=new Date();
+  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
+  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
+  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
+  const md=d.toLocaleDateString('ar-EG',{month:'long',day:'numeric'});
+  const years=now.getFullYear()-d.getFullYear()-(next.getFullYear()>now.getFullYear()?0:0);
+  let label=md;
+  if(daysAway===0)label+=' 🎉 اليوم!';
+  else if(daysAway===1)label+=' (غداً)';
+  else if(daysAway<=7)label+=` (بعد ${daysAway} أيام)`;
+  return label;
+}
+function isOccasionToday(dateStr){
+  if(!dateStr)return false;
+  const d=new Date(dateStr);if(isNaN(d))return false;
+  const now=new Date();
+  return d.getMonth()===now.getMonth()&&d.getDate()===now.getDate();
+}
+function isOccasionSoon(dateStr,withinDays=7){
+  if(!dateStr)return false;
+  const d=new Date(dateStr);if(isNaN(d))return false;
+  const now=new Date();
+  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
+  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
+  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
+  return daysAway>0&&daysAway<=withinDays;
+}
+
+// Render the RFM segment strip: counts per segment with click-to-filter.
+window.renderSegmentStrip=function(){
+  const strip=document.getElementById('segment-strip');
+  if(!strip)return;
+  if(clientSegments.size===0){strip.style.display='none';return;}
+  // Count active (non-legacy) clients per segment using clients list
+  const counts={};
+  let totalClv=0;
+  clients.forEach(c=>{
+    if(c.status==='legacy')return;
+    const seg=clientSegments.get(c._id);
+    if(!seg)return;
+    counts[seg.segment]=(counts[seg.segment]||0)+1;
+    totalClv+=(seg.totalRevenue||0);
+  });
+  const order=['champion','cant_lose','loyal','new','needs_attention','at_risk','about_to_sleep','lost'];
+  const labels={champion:'🏆 أبطال',cant_lose:'🚨 لا يجب فقدهم',loyal:'💎 أوفياء',new:'🌱 جدد',needs_attention:'👀 يحتاجون اهتمام',at_risk:'⚠️ مهدّدون',about_to_sleep:'😴 على وشك الفقد',lost:'💤 فُقدوا'};
+  const visible=order.filter(s=>(counts[s]||0)>0);
+  if(visible.length===0){strip.style.display='none';return;}
+  const currentSeg=gv('f-segment');
+  strip.style.display='block';
+  strip.innerHTML=`
+    <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad2);padding:10px 12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px">
+        <div style="font-size:11px;font-weight:800;color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
+        <div style="font-size:11px;color:var(--dim2)">إجمالي CLV: <b style="color:var(--g)">${fn(totalClv)} ج</b></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">
+        ${visible.map(s=>{
+          const st=SEG_STYLE[s]||SEG_STYLE.normal;
+          const active=currentSeg===s;
+          return `<button onclick="filterBySegment('${active?'':s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active?st.fg:st.fg+'40'};background:${active?st.fg+'25':st.bg};color:${st.fg};font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s]||s} <span style="background:${active?'var(--bg1)':st.fg+'18'};padding:1px 6px;border-radius:10px;margin-right:3px">${counts[s]}</span></button>`;
+        }).join('')}
+        ${currentSeg?`<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>`:''}
+      </div>
+    </div>`;
+};
+
+window.filterBySegment=function(seg){
+  const sel=document.getElementById('f-segment');
+  if(sel){sel.value=seg||'';renderGrid();renderSegmentStrip();}
+};
+
+// Render the occasions banner: today's + upcoming (within 7 days).
+window.renderOccasionsBanner=function(){
+  const banner=document.getElementById('occasions-banner');
+  if(!banner)return;
+  const today=[], soon=[];
+  clients.forEach(c=>{
+    if(c.status==='legacy')return;
+    if(isOccasionToday(c.birthday))today.push({c,type:'birthday'});
+    else if(isOccasionSoon(c.birthday,7))soon.push({c,type:'birthday'});
+    if(isOccasionToday(c.anniversary))today.push({c,type:'anniversary'});
+    else if(isOccasionSoon(c.anniversary,7))soon.push({c,type:'anniversary'});
+  });
+  if(!today.length&&!soon.length){banner.style.display='none';banner.innerHTML='';return;}
+  const ico=t=>t==='birthday'?'🎂':'🏢';
+  const lbl=t=>t==='birthday'?'عيد ميلاد':'تأسيس النشاط';
+  const waMsg=(c,t)=>{
+    const baseB=`أهلاً ${c.name} 👋، كل سنة وحضرتك طيب 🎂 من فريق العمل — عرض خاص بمناسبة عيد ميلادك!`;
+    const baseA=`مبروك سنة جديدة على تأسيس "${c.name}" 🏢🎉 — عرض خاص بمناسبة الذكرى!`;
+    return encodeURIComponent(t==='birthday'?baseB:baseA);
+  };
+  const waNum=c=>(c.phone1||'').replace(/^0/,'');
+  const chip=(item,isToday)=>`<a href="https://wa.me/20${waNum(item.c)}?text=${waMsg(item.c,item.type)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:${isToday?'rgba(255,170,0,.15)':'rgba(59,158,255,.1)'};border:1px solid ${isToday?'rgba(255,170,0,.35)':'rgba(59,158,255,.25)'};color:${isToday?'var(--y)':'var(--b)'};font-size:11px;font-weight:800;text-decoration:none;margin:2px 0;cursor:pointer" title="فتح واتساب لإرسال تهنئة">
+    ${ico(item.type)} ${item.c.name} ${isToday?'':'· '+fmtOccasion(item.type==='birthday'?item.c.birthday:item.c.anniversary).replace(/[^()]*\(/,'(')}
+  </a>`;
+  banner.style.display='block';
+  banner.innerHTML=`
+    <div style="background:linear-gradient(90deg,rgba(255,170,0,.08),rgba(167,139,250,.06));border:1px solid rgba(255,170,0,.25);border-radius:var(--rad2);padding:12px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:${today.length||soon.length?'8':'0'}px">
+        <div style="font-size:12px;font-weight:800;color:var(--y)">${today.length?`🎉 اليوم: ${today.length} مناسبة`:'📅 مناسبات قريبة'}${soon.length&&today.length?` · ${soon.length} خلال 7 أيام`:soon.length?`${soon.length} خلال 7 أيام`:''}</div>
+        <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:14px;cursor:pointer">✕</button>
+      </div>
+      ${today.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:${soon.length?'8':'0'}px">${today.map(it=>chip(it,true)).join('')}</div>`:''}
+      ${soon.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${soon.map(it=>chip(it,false)).join('')}</div>`:''}
+      <div style="font-size:10px;color:var(--dim2);margin-top:6px">💡 اضغط على أي عميل لفتح واتساب برسالة تهنئة جاهزة</div>
+    </div>`;
+};
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -941,6 +1083,8 @@ auth.onAuthStateChanged(async u=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
+    renderOccasionsBanner();
+    renderSegmentStrip();
     if(activeId) renderPanel(activeId);
     // Deep-link: ?openClient={id}[&tab=followups]
     if(!window.__deepLinked){
@@ -1034,6 +1178,8 @@ auth.onAuthStateChanged(async u=>{
     clientSegments.clear();
     snap.forEach(d=>clientSegments.set(d.id,d.data()));
     renderGrid();
+    renderSegmentStrip();
+    if(activeId) renderPanel(activeId);
   },err=>console.warn('client_segments listener:',err?.message||err));
 
   db.collection('transactions_v2').onSnapshot(snap=>{
@@ -1386,11 +1532,14 @@ function scheduleStatsAndGrid(){
 // ══ PANEL ══
 function openClient(id){
   activeId=id;
+  const c = (typeof clients !== 'undefined' ? clients : []).find(x => x._id === id || x.id === id) || null;
+  window.AppState?.setOpenEntity?.('client', id, c);
   document.getElementById('panel-ov').classList.add('open');
   renderPanel(id);
 }
 function closePanel(){
   activeId=null;
+  window.AppState?.clearOpenEntity?.();
   document.getElementById('panel-ov').classList.remove('open');
   const pnTabs=document.getElementById('pn-tabs');
   if(pnTabs)pnTabs.style.display='none';
@@ -1555,8 +1704,48 @@ function renderPanel(id){
         ${canSee('client_phone')&&c.intlPhone?`<a href="tel:${c.intlPhone}" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 اتصال دولي</a>`:''}
         ${canSee('client_phone')&&c.intlPhone?`<a href="https://wa.me/${c.intlPhone.replace(/[^\d]/g,'')}" target="_blank" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 واتساب دولي</a>`:''}
         <a href="javascript:void(0)" class="qact" onclick="openFollowupModal('${id}')" style="background:rgba(167,139,250,.12);color:var(--p);border-color:rgba(167,139,250,.3)">📞 سجّل متابعة</a>
+        ${cOrds.length>0?`<a href="javascript:void(0)" class="qact" onclick="reorderLastOrder('${id}')" style="background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.3)" title="نسخ المنتجات والكميات من آخر أوردر — التصميم يبدأ جديد">🔁 كرّر آخر أوردر</a>`:''}
       </div>
       ${lastFuLine}
+      ${(()=>{
+        const seg=clientSegments.get(c._id);
+        if(!seg)return '';
+        const st=SEG_STYLE[seg.segment]||SEG_STYLE.normal;
+        const allClvs=Array.from(clientSegments.values()).map(s=>s.totalRevenue||0).filter(v=>v>0).sort((a,b)=>b-a);
+        const myClv=seg.totalRevenue||0;
+        let pct=null;
+        if(myClv>0&&allClvs.length>0){
+          const rank=allClvs.findIndex(v=>v<=myClv);
+          pct=rank>=0?Math.round((rank/allClvs.length)*100):100;
+        }
+        const risk=seg.churnRisk||0;
+        const rColor=risk>=70?'var(--r)':risk>=40?'var(--y)':'var(--g)';
+        const rText=risk>=70?'مرتفع 🚨':risk>=40?'متوسط ⚠️':'منخفض ✓';
+        return `<div style="background:linear-gradient(135deg,${st.bg},rgba(255,255,255,.02));border:1px solid ${st.fg}40;border-right:3px solid ${st.fg};border-radius:var(--rad);padding:12px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:13px;font-weight:900;color:${st.fg}">${seg.segmentIco||'•'} ${seg.segmentLabel||seg.segment}</span>
+            <span style="font-size:10px;color:var(--dim2);font-family:monospace;background:var(--bg3);padding:3px 8px;border-radius:6px" title="RFM Code (Recency · Frequency · Monetary)">RFM: ${seg.rfmCode||'—'}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">آخر شراء</div>
+              <div style="font-size:13px;font-weight:800;color:var(--snow)">${seg.recencyDays??'—'} <span style="font-size:9px;color:var(--dim2);font-weight:600">يوم</span></div>
+            </div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">عدد الأوردرات</div>
+              <div style="font-size:13px;font-weight:800;color:var(--snow)">${seg.orderCount??'—'}</div>
+            </div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">CLV</div>
+              <div style="font-size:13px;font-weight:800;color:var(--g)">${fn(myClv)} <span style="font-size:9px;color:var(--dim2);font-weight:600">ج</span></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">
+            ${pct!==null?`<span style="color:var(--dim2)">🏆 ضمن أعلى <b style="color:${pct<=10?'var(--y)':pct<=25?'var(--b)':'var(--snow)'}">${pct||1}%</b> من العملاء</span>`:'<span></span>'}
+            <span style="color:var(--dim2)">احتمال الفقد: <b style="color:${rColor}">${rText}${risk?' '+risk+'%':''}</b></span>
+          </div>
+        </div>`;
+      })()}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
         <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
           <div style="font-size:20px;font-weight:900;color:var(--b)">${cOrds.length}</div>
@@ -1633,10 +1822,19 @@ function renderPanel(id){
           ${c.source?pRow('📣 المصدر',c.source):''}
           ${c.job?pRow('💼 المهنة',c.job):''}
           ${c.email?pRow('📧 إيميل',c.email):''}
+          ${c.birthday?pRow('🎂 الميلاد',fmtOccasion(c.birthday)):''}
+          ${c.anniversary?pRow('🏢 تأسيس النشاط',fmtOccasion(c.anniversary)):''}
           ${daysSince!==null?pRow('🕐 آخر نشاط','منذ '+daysSince+' يوم'):''}
         </div>
         ${tags.length?`<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${tags.map(t=>`<span class="tag" style="background:${TAG_COL[t]||'rgba(255,255,255,.06)'}">${TAG_LABELS[t]||t}</span>`).join('')}</div>`:''}
         ${c.notes?`<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:12px;color:var(--dim2)">📝 ${c.notes}</div>`:''}
+        ${c.internalNotes?`<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:12px;color:var(--snow);line-height:1.7">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+            <span style="font-size:10px;font-weight:800;color:var(--r)">🔒 ملاحظات داخلية</span>
+            ${c.internalNotesLastEdit?`<span style="font-size:9px;color:var(--dim2);font-weight:700">${c.internalNotesLastEdit.byName||''}${c.internalNotesLastEdit.at?.toDate?' · '+c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG'):''}</span>`:''}
+          </div>
+          <div style="white-space:pre-wrap">${c.internalNotes.replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[ch])}</div>
+        </div>`:''}
       </div>
       ${c.status==='legacy'?`
       <div style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:12px">
@@ -1986,6 +2184,55 @@ function prodOptsHtml(){
   return '<option value="">— اختر المنتج —</option>'+
     products.map(p=>`<option value="${p._id}" data-name="${(p.name||'').replace(/"/g,'')}" data-price="${p.defaultPrice||0}">${p.name}</option>`).join('');
 }
+
+// ── Re-order from last: copies products + quantities only. Design starts fresh.
+window.reorderLastOrder=function(clientId){
+  const cl=clients.find(x=>x._id===clientId);
+  if(!cl){toast('⚠️ العميل غير موجود','err');return;}
+  // Find last non-cancelled order for this client (use existing getClientOrders helper if available)
+  const cOrds=allOrders.filter(o=>o.clientId===clientId||(cl.phone1&&o.clientPhone===cl.phone1)||(cl.name&&o.clientName===cl.name));
+  const candidates=cOrds.filter(o=>o.stage!=='cancelled'&&!o.isDeleted).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  const last=candidates[0];
+  if(!last){toast('⚠️ لا يوجد أوردر سابق لهذا العميل','err');return;}
+  // Get the products list — handle both new schema (products array) and old (single product)
+  const items=Array.isArray(last.products)&&last.products.length
+    ? last.products.map(p=>({productId:p.productId||'',name:p.name||'',qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0}))
+    : (last.product?[{productId:'',name:last.product,qty:parseInt(last.qty)||1,unitPrice:parseFloat(last.salePrice)||0}]:[]);
+  if(!items.length){toast('⚠️ الأوردر السابق بدون منتجات قابلة للنسخ','err');return;}
+  // Ensure activeId is set so openNewOrder works
+  activeId=clientId;
+  pendingClientId=clientId;
+  // Open the modal normally
+  openNewOrder();
+  // Pre-select stage to 'design' (Option B — fresh design)
+  selectOrderType('design');
+  // Wait one tick so DOM is ready, then replace product rows
+  setTimeout(()=>{
+    const container=document.getElementById('no-prod-rows');
+    if(!container)return;
+    container.innerHTML='';
+    items.forEach(item=>{
+      addNoProdRow();
+      const row=container.lastElementChild;
+      if(!row)return;
+      const sel=row.querySelector('select');
+      const qtyInput=row.querySelector('input[type="number"]');
+      if(sel&&item.productId){
+        // Try to select by productId
+        const opt=sel.querySelector(`option[value="${item.productId}"]`);
+        if(opt){sel.value=item.productId;}
+        else{
+          // Product not in catalog anymore — try by name
+          const byName=Array.from(sel.options).find(o=>(o.dataset.name||'').trim()===(item.name||'').trim());
+          if(byName)sel.value=byName.value;
+        }
+      }
+      if(qtyInput)qtyInput.value=item.qty||1;
+    });
+    const code=last.orderId||last._id?.slice(-6)||'—';
+    toast(`🔁 تم نسخ ${items.length} منتج من ${code} — راجع وعدّل ثم احفظ`,'ok');
+  },50);
+};
 function addNoProdRow(){
   const div=document.createElement('div');div.className='no-prod-row';
   div.innerHTML=`<select onchange="this.closest('.no-prod-row').querySelector('input[type=number]').value=this.options[this.selectedIndex].dataset.price||0">${prodOptsHtml()}</select><input type="number" value="1" min="1" placeholder="كمية"><button type="button" onclick="this.closest('.no-prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:6px 10px;cursor:pointer">✕</button>`;
@@ -2229,7 +2476,8 @@ function openAddClient(){
   if(lfs)lfs.style.display='none';
   setText('client-title','＋ عميل جديد');
   setText('save-client-btn','✓ إضافة العميل');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-birthday','c-anniversary'].forEach(id=>sv(id,''));
+  const im=document.getElementById('c-internal-meta');if(im)im.textContent='';
   sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
@@ -2245,7 +2493,8 @@ function openAddLegacy(){
   window.__isLegacyMode=true;
   setText('client-title','＋ تسجيل عميل قديم');
   setText('save-client-btn','✓ حفظ العميل القديم');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-birthday','c-anniversary','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  const im2=document.getElementById('c-internal-meta');if(im2)im2.textContent='';
   sv('c-legacy-last-order',''); sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
@@ -2278,6 +2527,16 @@ function editClient(id){
   }
   if(typeof checkIntlPhone==='function')checkIntlPhone();
   sv('c-email',c.email||''); sv('c-job',c.job||''); sv('c-notes',c.notes||'');
+  sv('c-birthday',c.birthday||''); sv('c-anniversary',c.anniversary||'');
+  sv('c-internal-notes',c.internalNotes||'');
+  const imEl=document.getElementById('c-internal-meta');
+  if(imEl){
+    if(c.internalNotesLastEdit){
+      const e=c.internalNotesLastEdit;
+      const when=e.at?.toDate?e.at.toDate().toLocaleDateString('ar-EG'):'';
+      imEl.textContent=`آخر تعديل: ${e.byName||'—'}${when?' · '+when:''}`;
+    }else imEl.textContent='';
+  }
   sv('c-source',c.source||''); sv('c-sector',c.sector||'');
   fillGovSelect(); sv('c-gov',c.governorate||c.gov||'');
   fillCities(); sv('c-city',c.city||'');
@@ -2404,11 +2663,25 @@ async function saveClient(){
   const tags=[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag);
   btn.disabled=true; btn.textContent='جاري...';
   const isLegacy=window.__isLegacyMode||false;
+  // Internal notes — track who last edited
+  const internalNotes=(gv('c-internal-notes')||'').trim();
+  const prevClient=editId?clients.find(c=>c._id===editId):null;
+  const internalChanged=(prevClient?.internalNotes||'')!==internalNotes;
   const data={
     name, phone1, phone2:gv('c-phone2')||'',
     intlCountryCode:intlCC, intlPhone,
     email:gv('c-email')||'',
     job:gv('c-job')||'', notes:gv('c-notes')||'',
+    birthday:gv('c-birthday')||'',
+    anniversary:gv('c-anniversary')||'',
+    internalNotes,
+    ...(internalChanged?{
+      internalNotesLastEdit:{
+        by:currentUser?.uid||'',
+        byName:userName||'',
+        at:firebase.firestore.FieldValue.serverTimestamp(),
+      }
+    }:{}),
     source:gv('c-source')||'', sector:gv('c-sector')||'',
     governorate:gv('c-gov')||'', city:gv('c-city')||'', tags,
     status: isLegacy ? 'legacy' : 'active',
@@ -2633,7 +2906,7 @@ window.showStatsDrawer = function(type) {
   const titles = {
     total: '👥 كل العملاء',
     month: '🆕 عملاء هذا الشهر',
-    sales: '💰 تفاصيل المبيعات',
+    sales: '🚀 رحلة العملاء — تفاصيل المبيعات',
     rem:   '💳 باقي التحصيل',
     orders:'📦 الأوردرات النشطة'
   };
@@ -2644,6 +2917,76 @@ window.showStatsDrawer = function(type) {
 
   const now = new Date(); const y = now.getFullYear(), m = now.getMonth();
   const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
+
+  // ── Customer Journey helper ──
+  // يرسم خط زمني بصري لكل أوردر يوضح المرحلة الحالية وعدد الأيام فيها
+  const JOURNEY = [
+    {key:'design',     label:'تصميم',  ico:'✏️', page:'design.html',     col:'#7c5cff'},
+    {key:'printing',   label:'طباعة',  ico:'🖨️', page:'print.html',      col:'#fbbf24'},
+    {key:'production', label:'تنفيذ',  ico:'🏭', page:'production.html', col:'#ff4d8d'},
+    {key:'shipping',   label:'شحن',    ico:'🚚', page:'shipping.html',   col:'#06b6d4'},
+    {key:'done',       label:'تسليم',  ico:'✅', page:'archive.html',    col:'#10d27e'},
+  ];
+  function stageIdx(o){
+    if(['archived','delivered'].includes(o.stage)) return 4;
+    if(o.stage==='shipping') return 3;
+    if(o.stage==='production') return 2;
+    if(o.stage==='printing') return 1;
+    return 0; // design or new
+  }
+  function lastStageChange(o){
+    // أحدث وقت تغيير المرحلة (لو متوفر) وإلا createdAt
+    const ts = o.stageChangedAt?.seconds || o.lastUpdate?.seconds || o.updatedAt?.seconds || o.createdAt?.seconds || 0;
+    return ts ? Math.floor((Date.now()/1000 - ts)/86400) : null;
+  }
+  function isLate(o){ return o.deadline && new Date(o.deadline).getTime() < Date.now() && !['archived','delivered'].includes(o.stage); }
+  function lateDays(o){ return o.deadline ? Math.max(0, Math.floor((Date.now() - new Date(o.deadline).getTime())/86400000)) : 0; }
+
+  function journeyHTML(o){
+    const idx = stageIdx(o);
+    const days = lastStageChange(o);
+    const late = isLate(o);
+    const cur = JOURNEY[idx];
+
+    // شريط المراحل
+    const stages = JOURNEY.map((s,i) => {
+      const done = i < idx;
+      const active = i === idx;
+      const future = i > idx;
+      const bg = done ? '#10d27e' : active ? s.col : 'rgba(255,255,255,.08)';
+      const txt = done ? '#fff' : active ? '#fff' : 'rgba(255,255,255,.3)';
+      const ring = active ? `box-shadow:0 0 0 3px ${s.col}30;` : '';
+      const pulse = active ? 'animation:journeyPulse 2s infinite;' : '';
+      return `<div title="${s.label}" style="width:28px;height:28px;border-radius:50%;background:${bg};color:${txt};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;flex-shrink:0;${ring}${pulse}">${done?'✓':s.ico}</div>`;
+    });
+
+    // الخطوط بين المراحل
+    const lines = JOURNEY.slice(0,-1).map((_,i) => {
+      const done = i < idx;
+      return `<div style="flex:1;height:3px;background:${done?'#10d27e':'rgba(255,255,255,.08)'};margin:0 -2px;align-self:center;border-radius:99px"></div>`;
+    });
+
+    // دمج المراحل والخطوط
+    const merged = [];
+    for(let i=0; i<stages.length; i++){
+      merged.push(stages[i]);
+      if(i < lines.length) merged.push(lines[i]);
+    }
+
+    const lateBadge = late ? `<span style="font-size:10px;font-weight:900;color:#ff3d6e;background:rgba(255,61,110,.12);padding:3px 9px;border-radius:99px;border:1px solid rgba(255,61,110,.3)">⚠️ متأخر ${lateDays(o)}ي</span>` : '';
+    const daysBadge = days !== null ? `<span style="font-size:10px;font-weight:700;color:#647298">في ${cur.label} منذ ${days===0?'اليوم':days+' يوم'}</span>` : '';
+
+    return `<div style="margin:10px 0 6px">
+      <div style="display:flex;align-items:center;gap:0;padding:0 4px">${merged.join('')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:${cur.col}">
+          ${cur.ico} ${cur.label}
+        </div>
+        ${daysBadge}
+        ${lateBadge}
+      </div>
+    </div>`;
+  }
 
   if(type === 'total') {
     el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--dim2);font-size:16px;font-weight:800">${clients.length} عميل</div>` +
@@ -2674,49 +3017,150 @@ window.showStatsDrawer = function(type) {
   else if(type === 'sales') {
     const ords = allOrders.filter(o => parseFloat(o.salePrice)>0).sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     const tot = ords.reduce((s,o) => s+(parseFloat(o.salePrice)||0), 0);
-    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--y);font-size:18px;font-weight:900">${fn(tot)} ج</div>` +
-      ords.slice(0,20).map(o => {
-        const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-        const rem = calcRem(o);
-        const pct = parseFloat(o.salePrice)>0 ? Math.min(100,paid/parseFloat(o.salePrice)*100) : 0;
-        return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
-              <div style="font-size:11px;color:var(--dim2)">${o.product||(o.products||[]).map(p=>p.name).join('+')||'—'}</div>
-              <div style="font-size:10px;color:var(--dim2)">${o.clientPhone||'—'} · ${o.createdDate||'—'}</div>
-            </div>
-            <div style="text-align:left;flex-shrink:0;margin-right:8px">
-              <div style="font-size:14px;font-weight:900;color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>
-              ${rem>0?`<div style="font-size:11px;color:var(--r);font-weight:700">باقي: ${fn(rem)} ج</div>`:'<div style="font-size:11px;color:var(--g)">✅ مكتمل</div>'}
-            </div>
+    const totPaid = ords.reduce((s,o) => s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0), 0);
+    const totRem = ords.reduce((s,o) => s+calcRem(o), 0);
+    const byStage = {0:0,1:0,2:0,3:0,4:0};
+    ords.forEach(o => { byStage[stageIdx(o)] = (byStage[stageIdx(o)]||0) + 1; });
+    const lateCount = ords.filter(o => isLate(o)).length;
+
+    // ── Header: summary + journey distribution ──
+    const header = `
+      <div style="background:linear-gradient(135deg,rgba(124,92,255,.1),rgba(6,182,212,.05));border:1px solid rgba(124,92,255,.2);border-radius:14px;padding:14px;margin-bottom:14px">
+        <div style="text-align:center;margin-bottom:12px">
+          <div style="font-size:11px;color:#647298;font-weight:800;margin-bottom:4px">إجمالي المبيعات</div>
+          <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,#10d27e,#06b6d4);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(tot)} ج</div>
+          <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:11px">
+            <span style="color:#10d27e;font-weight:800">✓ تم: ${fn(totPaid)} ج</span>
+            ${totRem>0?`<span style="color:#ff3d6e;font-weight:800">⏳ باقي: ${fn(totRem)} ج</span>`:''}
+            ${lateCount>0?`<span style="color:#fbbf24;font-weight:800">⚠️ ${lateCount} متأخر</span>`:''}
           </div>
-          <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:5px;overflow:hidden">
-            <div style="height:100%;width:${pct}%;background:${rem<=0?'var(--g)':'var(--b)'}"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
+          ${JOURNEY.map((s,i)=>`
+            <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer" onclick="window.location.href='${s.page}'">
+              <div style="font-size:14px;margin-bottom:2px">${s.ico}</div>
+              <div style="font-size:16px;font-weight:900;color:${s.col};line-height:1">${byStage[i]||0}</div>
+              <div style="font-size:9px;color:#647298;font-weight:700;margin-top:2px">${s.label}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+
+    // ── Per-order journey cards ──
+    const cards = ords.slice(0,25).map(o => {
+      const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const rem = calcRem(o);
+      const sale = parseFloat(o.salePrice)||0;
+      const pct = sale>0 ? Math.min(100,paid/sale*100) : 0;
+      const idx = stageIdx(o);
+      const cur = JOURNEY[idx];
+      const late = isLate(o);
+      const phone = (o.clientPhone||'').replace(/^0/,'');
+      const product = o.product||(o.products||[]).map(p=>p.name).join(' + ')||'—';
+
+      return `<div style="background:#0d0f1b;border:1px solid ${late?'rgba(255,61,110,.25)':'rgba(255,255,255,.06)'};border-radius:14px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden">
+        ${late?'<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,#ff3d6e,transparent)"></div>':''}
+        <!-- Client + Product -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:900;color:#dce5f5;letter-spacing:-.2px">${o.clientName||'—'}</div>
+            <div style="font-size:11px;color:#a8b1cc;margin-top:2px">${product}</div>
+            <div style="font-size:10px;color:#647298;margin-top:1px">${o.clientPhone||'—'} · ${o.createdDate||'—'}</div>
           </div>
-        </div>`;
-      }).join('');
+          <div style="text-align:left;flex-shrink:0">
+            <div style="font-size:15px;font-weight:900;color:${cur.col}">${fn(sale)} ج</div>
+            ${rem>0?`<div style="font-size:11px;color:#ff3d6e;font-weight:800;margin-top:2px">باقي ${fn(rem)} ج</div>`:'<div style="font-size:11px;color:#10d27e;font-weight:800;margin-top:2px">✓ مسدد</div>'}
+          </div>
+        </div>
+
+        <!-- Journey timeline -->
+        ${journeyHTML(o)}
+
+        <!-- Payment progress -->
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#647298;font-weight:700;margin-bottom:4px">
+            <span>التحصيل</span>
+            <span>${Math.round(pct)}%</span>
+          </div>
+          <div style="height:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,${rem<=0?'#10d27e':'#3b82f6'},${rem<=0?'#06b6d4':cur.col});border-radius:99px;transition:width .4s"></div>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          <a href="${cur.page}" style="flex:1;min-width:80px;text-align:center;padding:7px 10px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:11px;font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico} اذهب لـ ${cur.label}</a>
+          ${phone?`<a href="https://wa.me/20${phone}" target="_blank" style="padding:7px 12px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:11px;font-weight:800;text-decoration:none">💬</a>`:''}
+          ${phone?`<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:rgba(255,255,255,.04);color:#a8b1cc;font-size:11px;font-weight:800;text-decoration:none;border:1px solid rgba(255,255,255,.08)">📞</a>`:''}
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = header + cards + (ords.length>25?`<div style="text-align:center;color:#647298;padding:14px;font-size:11px">عرض 25 من إجمالي ${ords.length} أوردر</div>`:'');
   }
   else if(type === 'rem') {
-    const remOrds = allOrders.filter(o=>calcRem(o)>0)
-      .sort((a,b)=>calcRem(b)-calcRem(a));
+    const remOrds = allOrders.filter(o=>calcRem(o)>0).sort((a,b)=>calcRem(b)-calcRem(a));
     const totRem = remOrds.reduce((s,o)=>s+calcRem(o),0);
-    el.innerHTML = `<div style="text-align:center;padding:12px;color:var(--r);font-size:18px;font-weight:900">${fn(totRem)} ج إجمالي باقي</div>` +
-      (remOrds.length ? remOrds.map(o => {
-        const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-        const rem=calcRem(o);
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+    const lateRem = remOrds.filter(o=>isLate(o)).reduce((s,o)=>s+calcRem(o),0);
+    const lateCount = remOrds.filter(o=>isLate(o)).length;
+
+    const header = `
+      <div style="background:linear-gradient(135deg,rgba(255,61,110,.1),rgba(251,191,36,.05));border:1px solid rgba(255,61,110,.25);border-radius:14px;padding:14px;margin-bottom:14px;text-align:center">
+        <div style="font-size:11px;color:#647298;font-weight:800;margin-bottom:4px">إجمالي باقي التحصيل</div>
+        <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,#ff3d6e,#fbbf24);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(totRem)} ج</div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:11px;font-weight:800">
+          <span style="color:#a8b1cc">${remOrds.length} أوردر</span>
+          ${lateCount>0?`<span style="color:#ff3d6e">⚠️ ${lateCount} متأخر · ${fn(lateRem)} ج</span>`:''}
+        </div>
+      </div>`;
+
+    if(!remOrds.length){
+      el.innerHTML = header + '<div style="color:#10d27e;text-align:center;padding:30px;font-weight:800;font-size:16px">✅ كل الفواتير محصّلة</div>';
+      return;
+    }
+
+    const cards = remOrds.slice(0,25).map(o => {
+      const rem = calcRem(o);
+      const sale = parseFloat(o.salePrice)||0;
+      const paid = parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+      const pct = sale>0 ? Math.min(100,paid/sale*100) : 0;
+      const idx = stageIdx(o);
+      const cur = JOURNEY[idx];
+      const late = isLate(o);
+      const phone = (o.clientPhone||'').replace(/^0/,'');
+      const product = o.product||(o.products||[]).map(p=>p.name).join(' + ')||'—';
+
+      return `<div style="background:#0d0f1b;border:1px solid ${late?'rgba(255,61,110,.35)':'rgba(255,255,255,.06)'};border-radius:14px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden">
+        ${late?'<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,#ff3d6e,#fbbf24)"></div>':''}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:800">${o.clientName||'—'}</div>
-            <div style="font-size:11px;color:var(--dim2)">${o.clientPhone||'—'} · ${o.orderId||o._id.slice(-6)}</div>
-            <div style="font-size:10px;color:var(--dim2)">${o.product||(o.products||[]).map(p=>p.name).join('+')||'—'}</div>
+            <div style="font-size:14px;font-weight:900;color:#dce5f5">${o.clientName||'—'}</div>
+            <div style="font-size:11px;color:#a8b1cc;margin-top:2px">${product}</div>
+            <div style="font-size:10px;color:#647298;margin-top:1px">${o.clientPhone||'—'} · ${o.orderId||o._id.slice(-6)}</div>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-            <span style="font-size:15px;font-weight:900;color:var(--r)">${fn(rem)} ج</span>
-            <a href="https://wa.me/20${(o.clientPhone||'').replace(/^0/,'')}" target="_blank" style="font-size:11px;color:var(--g);text-decoration:none;background:rgba(37,211,102,.1);padding:2px 8px;border-radius:20px">💬 تذكير</a>
+          <div style="text-align:left;flex-shrink:0">
+            <div style="font-size:18px;font-weight:900;color:#ff3d6e">${fn(rem)} ج</div>
+            <div style="font-size:10px;color:#647298;font-weight:700;margin-top:2px">من ${fn(sale)} ج</div>
           </div>
-        </div>`;
-      }).join('') : '<div style="color:var(--g);text-align:center;padding:20px;font-weight:800">✅ لا يوجد متبقي</div>');
+        </div>
+        ${journeyHTML(o)}
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#647298;font-weight:700;margin-bottom:4px">
+            <span>تم تحصيل ${fn(paid)} ج</span>
+            <span>${Math.round(pct)}%</span>
+          </div>
+          <div style="height:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#3b82f6,${cur.col});border-radius:99px"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          ${phone?`<a href="https://wa.me/20${phone}?text=${encodeURIComponent(`السلام عليكم أ. ${o.clientName||''}، تذكير ودي — رصيد متبقي ${fn(rem)} ج على طلب ${o.orderId||''}. شكراً 🌹`)}" target="_blank" style="flex:1;text-align:center;padding:7px 10px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:11px;font-weight:800;text-decoration:none">💬 ذكّره بالباقي</a>`:''}
+          ${phone?`<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:rgba(255,255,255,.04);color:#a8b1cc;font-size:11px;font-weight:800;text-decoration:none;border:1px solid rgba(255,255,255,.08)">📞</a>`:''}
+          <a href="${cur.page}" style="padding:7px 12px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:11px;font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico}</a>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = header + cards + (remOrds.length>25?`<div style="text-align:center;color:#647298;padding:14px;font-size:11px">عرض 25 من إجمالي ${remOrds.length}</div>`:'');
   }
   else if(type === 'orders') {
     const activeOrds = allOrders.filter(o => o.stage!=='archived').sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
@@ -3646,6 +4090,48 @@ window.setStatusTab=function(tab,btn){
     <div id="drawer-content" style="overflow-y:auto;padding:16px 20px;flex:1;-webkit-overflow-scrolling:touch"></div>
   </div>
 </div>
+
+<!-- ── AI Smart Search — install once both the page filters and the ai-search module are ready ── -->
+<script>
+(function waitForSearch(){
+  const filterBar = document.getElementById('filter-bar');
+  if (!window.aiSearch || !filterBar) { setTimeout(waitForSearch, 200); return; }
+  window.aiSearch.install({
+    host: filterBar,
+    label: '🪄 بحث ذكي',
+    placeholder: 'مثال: العملاء VIP عليهم فلوس',
+    schema: {
+      q:       { type:'text', desc:'بحث نصي بالاسم أو الهاتف' },
+      flt:     { type:'enum', desc:'فلتر الحالة العامة',
+                 values:['all','today','rem','active','inactive','vip'] },
+      tag:     { type:'enum', desc:'تصنيف العميل',
+                 values:['','vip','regular','new','wholesale','delayed'] },
+      segment: { type:'enum', desc:'شريحة RFM',
+                 values:['','champion','loyal','new','needs_attention','at_risk','cant_lose','about_to_sleep','lost'] },
+    },
+    examples: [
+      { q:'عملاء VIP',                    a:{ tag:'vip' } },
+      { q:'العملاء اللي عليهم فلوس',      a:{ flt:'rem' } },
+      { q:'المهدّدون بالفقد',             a:{ segment:'at_risk' } },
+      { q:'العملاء الخاملين',             a:{ flt:'inactive' } },
+      { q:'عملاء الجملة',                 a:{ tag:'wholesale' } },
+    ],
+    apply: (spec) => {
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+      if ('q'   in spec) setVal('q', spec.q || '');
+      if ('tag' in spec) setVal('f-tag', spec.tag || '');
+      if ('segment' in spec) setVal('f-segment', spec.segment || '');
+      if ('flt' in spec && spec.flt) {
+        setVal('flt-select', spec.flt);
+        window.setClientFilter?.(spec.flt);
+      } else {
+        window.renderGrid?.();
+        window.scheduleStatsAndGrid?.();
+      }
+    },
+  });
+})();
+</script>
 
 </body>
 </html>

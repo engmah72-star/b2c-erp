@@ -172,6 +172,20 @@ export const AppState = {
   _unsubs:      [],
 };
 
+// Expose AppState to non-module siblings (e.g. ai-launcher) that can't
+// import shared.js without re-running its side effects.
+if (typeof window !== 'undefined') window.AppState = AppState;
+
+// Pages call setOpenEntity when the user focuses a row/panel/modal so the
+// floating AI knows which entity to talk about. Cleared on panel close.
+// type ∈ {'order','client','supplier','employee'}; doc is the in-memory
+// document so the launcher avoids an extra Firestore round-trip.
+AppState.openEntity = null;
+AppState.setOpenEntity = function(type, id, doc) {
+  AppState.openEntity = (type && id) ? { type, id, doc: doc || null } : null;
+};
+AppState.clearOpenEntity = function() { AppState.openEntity = null; };
+
 // ═══════════════════════════════════════
 // AUTH MANAGER
 // ═══════════════════════════════════════

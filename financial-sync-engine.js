@@ -41,6 +41,17 @@ export const FE = {
   RETURN_LOSS:                   'RETURN_LOSS',
   GENERAL_EXPENSE:               'GENERAL_EXPENSE',
   WALLET_TRANSFER:               'WALLET_TRANSFER',
+  // ─── Marketplace Events (Phase 1) — handlers في marketplace-engine.js ───
+  MARKETPLACE_ORDER_CAPTURED:    'MARKETPLACE_ORDER_CAPTURED',
+  MARKETPLACE_ORDER_CANCELLED:   'MARKETPLACE_ORDER_CANCELLED',
+  ESCROW_HOLD:                   'ESCROW_HOLD',
+  ESCROW_RELEASE:                'ESCROW_RELEASE',
+  ESCROW_REFUND:                 'ESCROW_REFUND',
+  COMMISSION_SETTLED:            'COMMISSION_SETTLED',
+  PLATFORM_FEE_COLLECTED:        'PLATFORM_FEE_COLLECTED',
+  MERCHANT_PAYOUT:               'MERCHANT_PAYOUT',
+  MERCHANT_PAYOUT_REVERSAL:      'MERCHANT_PAYOUT_REVERSAL',
+  CHARGEBACK:                    'CHARGEBACK',
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -65,6 +76,17 @@ const LC = {
   WALLET_TRANSFER:              { type:'transfer', category:'transfer',            direction:'in',  icon:'🔄', label:'تحويل داخلي' },
   OPENING_BALANCE:              { type:'other',    category:'opening_balance',     direction:'in',  icon:'🏦', label:'رصيد افتتاحي' },
   WALLET_ADJUSTMENT:            { type:'other',    category:'adjustment',          direction:'in',  icon:'⚖️', label:'تسوية رصيد' },
+  // ─── Marketplace Events (Phase 1) ───
+  MARKETPLACE_ORDER_CAPTURED:   { type:'income',   category:'marketplace_order',   direction:'in',  icon:'🛒', label:'تحصيل طلب marketplace' },
+  MARKETPLACE_ORDER_CANCELLED:  { type:'reversal', category:'marketplace_order',   direction:'out', icon:'🚫', label:'إلغاء طلب marketplace' },
+  ESCROW_HOLD:                  { type:'other',    category:'escrow',              direction:'in',  icon:'🔒', label:'حجز Escrow' },
+  ESCROW_RELEASE:               { type:'transfer', category:'escrow',              direction:'out', icon:'🔓', label:'إفراج Escrow' },
+  ESCROW_REFUND:                { type:'reversal', category:'escrow',              direction:'out', icon:'↩️', label:'استرداد Escrow' },
+  COMMISSION_SETTLED:           { type:'income',   category:'platform_commission', direction:'in',  icon:'💼', label:'عمولة منصة محصّلة' },
+  PLATFORM_FEE_COLLECTED:       { type:'income',   category:'platform_fee',        direction:'in',  icon:'🏛️', label:'رسوم منصة' },
+  MERCHANT_PAYOUT:              { type:'expense',  category:'merchant_payout',     direction:'out', icon:'💸', label:'دفعة مرشنت' },
+  MERCHANT_PAYOUT_REVERSAL:     { type:'reversal', category:'merchant_payout',     direction:'in',  icon:'🔄', label:'إلغاء دفعة مرشنت' },
+  CHARGEBACK:                   { type:'reversal', category:'chargeback',          direction:'out', icon:'⚠️', label:'استرداد إجباري (chargeback)' },
 };
 
 // ══════════════════════════════════════════════════════════════════

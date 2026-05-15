@@ -112,6 +112,7 @@
 </style>
 <script src="financial-guard.js"></script>
 <script src="wa-launcher.js?v=1" defer></script>
+<script src="smart-sidebar.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
@@ -414,7 +415,7 @@
 <script type="module">
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,setDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -584,6 +585,7 @@ function renderList(){
 window.openOrder=function(id){
   activeId=id;activeOrder=orders.find(x=>x._id===id);if(!activeOrder)return;
   const o=activeOrder;
+  window.AppState?.setOpenEntity?.('order', id, o);
   set('pn-id',o.orderId||id.slice(-6));set('pn-name',o.clientName||'—');set('pn-phone',o.clientPhone||'—');
   const wa=document.getElementById('pn-wa');
   const callBtn=document.getElementById('pn-call');
@@ -613,7 +615,7 @@ window.openOrder=function(id){
   renderPanel(o);
 };
 
-window.closePanel=function(){document.getElementById('panel-ov').classList.remove('open');activeId=null;activeOrder=null;};
+window.closePanel=function(){document.getElementById('panel-ov').classList.remove('open');activeId=null;activeOrder=null;window.AppState?.clearOpenEntity?.();};
 
 // Render Panel
 function renderPanel(o){
@@ -628,6 +630,7 @@ function renderPanel(o){
       ${stageProgressBar(o)}
       <a href="order-tracking.html?id=${o._id}" class="chip-track" style="margin-bottom:10px">📋 تتبع كامل للأوردر</a>
     </div>
+    ${renderOrderReadinessCard(o)}
     <!-- Products: each with image + specs -->
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:11px;font-weight:700;color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
@@ -670,6 +673,9 @@ function renderPanel(o){
               ${(p.extras||[]).map(ex=>`<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);color:var(--g)">✓ ${ex}</span>`).join('')}
             </div>
             ${p.notes?`<div style="font-size:11px;color:var(--dim2);margin-top:6px;padding:6px 8px;background:var(--bg2);border-radius:7px;line-height:1.5">📝 ${p.notes}</div>`:''}
+
+            <!-- ══ Smart Production Brief (per product) ══ -->
+            ${renderProductBrief(o,p,idx)}
           </div>
         </div>`;
       }).join('')}
@@ -794,6 +800,16 @@ window.moveTo=function(_stage){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;
   if(!o)return;
+  // Soft guard: warn if any offset product is not ready (RULE: full control to user)
+  const agg = computeOrderReadiness(o);
+  if(agg && !agg.allReady){
+    const missing = agg.items.filter(i=>!i.r.ready);
+    const lines = missing.map(i => `• ${i.name||'منتج'} — ${i.r.critical.filter(c=>!c.ok).map(c=>c.label).join('، ')}`).join('\n');
+    const sendCount = (o.products||[]).filter(p=>p.briefSentAt).length;
+    const totalOffset = agg.count;
+    const briefMsg = sendCount<totalOffset?`\n\n📨 لم يُرسل ${totalOffset-sendCount} منتج للمطبعة بعد.`:'';
+    if(!confirm(`⚠️ بيانات الإنتاج غير مكتملة:\n\n${lines}${briefMsg}\n\nتحويل للتنفيذ رغم ذلك؟`)) return;
+  }
   // افتح modal اختيار المنفّذ — التنفيذ الفعلي في confirmMoveToProduction
   const sel=document.getElementById('pick-prod-sel');
   if(sel)sel.value='';
@@ -908,6 +924,398 @@ window.confirmSplitOrder=async function(){
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+// ══ Templates: apply / save ══
+const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','lamination','innerType','briefNotes'];
+
+window.applyBriefTemplate = async function(orderId, idx, tplId){
+  if(!tplId) return;
+  const tpl = printBriefTemplates.find(t => t.id === tplId);
+  if(!tpl){ toast('⚠️ القالب غير موجود','err'); return; }
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const prods = [...(o.products||[])];
+  if(idx<0 || idx>=prods.length) return;
+  const patch = {};
+  TPL_FIELDS.forEach(f => {
+    if(tpl.fields && tpl.fields[f] !== undefined && tpl.fields[f] !== '') patch[f] = tpl.fields[f];
+  });
+  // Optional default press
+  if(tpl.defaultPressId){
+    const press = suppliers.find(s => s._id === tpl.defaultPressId);
+    if(press){ patch.pressId = press._id; patch.pressName = press.name||''; }
+  }
+  prods[idx] = {...prods[idx], ...patch};
+  try{
+    await updateDoc(doc(db,'orders',orderId), {products: prods, updatedAt: serverTimestamp()});
+    toast(`✅ طُبق قالب "${tpl.name}"`,'ok');
+  }catch(e){ toast('❌ '+e.message,'err'); }
+};
+
+window.openSaveTemplate = function(orderId, idx){
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  // Has any data to save?
+  const hasAny = TPL_FIELDS.some(f => p[f] !== undefined && p[f] !== '' && p[f] !== 0);
+  if(!hasAny){ toast('⚠️ لا توجد بيانات لحفظها كقالب','err'); return; }
+  const defaultName = (p.name||'منتج') + (p.qty?' '+p.qty:'') + (p.lamination?' '+p.lamination:'');
+  const name = prompt('اسم القالب:', defaultName);
+  if(!name || !name.trim()) return;
+  saveBriefTemplate(orderId, idx, name.trim());
+};
+
+async function saveBriefTemplate(orderId, idx, name){
+  const o = orders.find(x => x._id === orderId);
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  const fields = {};
+  TPL_FIELDS.forEach(f => {
+    if(p[f] !== undefined && p[f] !== '' && p[f] !== 0) fields[f] = p[f];
+  });
+  const tpl = {
+    id: 'tpl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    name,
+    productNameHint: p.name || '',
+    defaultPressId: p.pressId || '',
+    fields,
+    createdAt: nowStr(),
+    createdBy: auth?.currentUser?.uid || '',
+    createdByName: userName || '',
+  };
+  try{
+    const ref = doc(db,'master_lists','print_brief_templates');
+    const snap = await getDoc(ref);
+    const items = snap.exists() ? (snap.data().items || []) : [];
+    items.push(tpl);
+    if(snap.exists()){
+      await updateDoc(ref, {items, updatedAt: serverTimestamp()});
+    }else{
+      await setDoc(ref, {items, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
+    }
+    toast(`💾 حُفظ القالب "${name}"`,'ok');
+  }catch(e){
+    if((e?.message||'').toLowerCase().includes('permission')){
+      toast('🔒 لا تملك صلاحية حفظ القوالب','err');
+    }else{
+      toast('❌ '+e.message,'err');
+    }
+  }
+}
+
+// ══ Build the WhatsApp brief message (matches existing message format) ══
+function buildProductBriefMessage(o, p){
+  const lines = [];
+  const fullProductName = p.name + (p.lamination && p.lamination!=='بلا' ? ' '+p.lamination : '');
+  lines.push(`الكمية: ${p.qty||'—'} ${fullProductName}`);
+
+  // Paper line — combine sheets, type, weight, cuts
+  if(p.paperSheets || p.paper){
+    const paperParts = [];
+    if(p.paperSheets) paperParts.push(String(p.paperSheets));
+    if(p.paper) paperParts.push(p.paper);
+    if(p.weight) paperParts.push(p.weight + 'جم');
+    let paperLine = `الورق: ${paperParts.join(' ')}`;
+    if(p.paperCuts) paperLine += ` * ${p.paperCuts}`;
+    lines.push(paperLine);
+  }
+
+  if(p.printSize || p.size) lines.push(`مقاس الطباعة: ${p.printSize || p.size}`);
+  if(p.zinkType)            lines.push(`الزنكات: ${p.zinkType}`);
+  if(p.lamination)          lines.push(`السلوفان: ${p.lamination}`);
+  if(p.innerType)           lines.push(`الداخلي: ${p.innerType}`);
+
+  // Press deadline (formatted as date/time)
+  if(p.pressDeadline){
+    const d = new Date(p.pressDeadline);
+    if(!isNaN(d)){
+      const date = d.toLocaleDateString('ar-EG');
+      const time = d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+      lines.push(`الميعاد المطلوب: ${date} ${time}`);
+    }
+  }
+
+  if(p.briefNotes) lines.push('', p.briefNotes);
+
+  return lines.join('\n');
+}
+
+// Send product brief to press via WhatsApp + record timestamp
+window.sendProductBrief = async function(orderId, idx){
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  if(!p.pressId){ toast('⚠️ اختر المطبعة أولاً','err'); return; }
+  const press = suppliers.find(s => s._id === p.pressId);
+  const phone = (press?.phone || press?.whatsapp || '').replace(/\D/g,'');
+  if(!phone){ toast('⚠️ المطبعة بدون رقم واتساب — حدّث بيانات المورد','err'); return; }
+  // Format phone for wa.me — prepend country code if missing
+  const waPhone = phone.startsWith('0') ? '20'+phone.slice(1) : phone.startsWith('20') ? phone : '20'+phone;
+  const message = buildProductBriefMessage(o, p);
+  const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
+  // Save timestamp (best-effort)
+  try{
+    const prods = [...(o.products||[])];
+    prods[idx] = {...prods[idx], briefSentAt: nowStr(), briefSentBy: auth?.currentUser?.uid||'', briefSentByName: userName||''};
+    await updateDoc(doc(db,'orders',orderId), {
+      products: prods,
+      timeline: [...(o.timeline||[]), {date: nowStr(), action:`📤 إرسال بيانات الإنتاج للمطبعة (${p.name||''} → ${press?.name||''})`, by: userName, byId: auth?.currentUser?.uid||''}],
+      updatedAt: serverTimestamp(),
+    });
+  }catch(e){
+    console.warn('briefSentAt save:', e?.message||e);
+  }
+  // Open WhatsApp in new tab
+  window.open(waUrl, '_blank');
+  toast('💬 فُتح واتساب · أرفق صورة التصميم يدوياً','ok');
+};
+
+// ══ Order-level Readiness (aggregates across offset products) ══
+function computeOrderReadiness(o){
+  const prods = (o.products||[]).filter(p => (p.printType||'').includes('offset') || p.paperSheets || p.pressId);
+  if(!prods.length) return null;
+  const items = prods.map((p, idx) => ({
+    idx, name: p.name||'', r: computeProductReadiness(o, p)
+  }));
+  const allReady = items.every(i => i.r.ready);
+  const anyStarted = items.some(i => i.r.cDone > 0);
+  return { items, allReady, anyStarted, count: items.length };
+}
+
+function renderOrderReadinessCard(o){
+  const agg = computeOrderReadiness(o);
+  if(!agg) return '';
+  const readyCount = agg.items.filter(i => i.r.ready).length;
+  const allReady = agg.allReady;
+  return `<div style="padding:10px 16px;border-bottom:1px solid var(--line);background:${allReady?'rgba(0,217,126,.04)':'rgba(255,170,0,.04)'}">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="font-size:11px;font-weight:800;color:${allReady?'var(--g)':'var(--y)'}">
+        ${allReady?'✅ كل المنتجات جاهزة للإرسال للمطبعة':'🤖 جاهزية الأوردر للتنفيذ'}
+      </div>
+      <span style="font-size:10px;font-weight:800;color:${allReady?'var(--g)':'var(--dim2)'}">
+        ${readyCount}/${agg.count} منتج جاهز
+      </span>
+    </div>
+    ${!allReady?`<div style="font-size:10px;color:var(--dim2);margin-top:4px">
+      ${agg.items.filter(i=>!i.r.ready).map(i=>`• ${i.name||'منتج'} — ${i.r.cTotal-i.r.cDone} بند ناقص`).join(' · ')}
+    </div>`:''}
+  </div>`;
+}
+
+// ══ Smart Guard — Per-Product Readiness ══
+// Returns { critical:[{ok,label}], warnings:[{ok,label}], score:'X/Y', ready:boolean }
+function computeProductReadiness(o, p){
+  const isOffset = (p.printType||'').includes('offset');
+  const hasImg = (Array.isArray(p.designImages) && p.designImages.length) || !!p.designImageUrl;
+
+  // Critical (must complete before press send / production handoff)
+  const critical = [
+    { ok: (parseFloat(p.qty)||0) > 0,                    label: 'الكمية محددة' },
+    { ok: !!(p.printSize || p.size),                     label: 'مقاس الطباعة محدد' },
+    { ok: !!p.paper,                                      label: 'نوع الورق محدد' },
+    { ok: (parseFloat(p.paperSheets)||0) > 0,             label: 'عدد الفروخ محدد' },
+    { ok: !!p.pressId,                                    label: 'المطبعة مختارة' },
+    { ok: hasImg,                                         label: 'صورة التصميم مرفوعة' },
+  ];
+
+  // Offset-specific critical: zink type
+  if(isOffset) critical.push({ ok: !!p.zinkType, label: 'نوع الزنكات محدد' });
+
+  // Warnings (recommended but not blocking)
+  const warnings = [
+    { ok: !!p.pressDeadline,                              label: 'ميعاد المطبعة محدد' },
+    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
+    { ok: (parseFloat(p.paperCuts)||0) > 0,               label: 'التقطيع محدد' },
+  ];
+
+  const cTotal = critical.length;
+  const cDone  = critical.filter(c => c.ok).length;
+  const wTotal = warnings.length;
+  const wDone  = warnings.filter(w => w.ok).length;
+
+  return {
+    critical, warnings,
+    cTotal, cDone, wTotal, wDone,
+    pct: Math.round((cDone / cTotal) * 100),
+    ready: cDone === cTotal,
+  };
+}
+
+// ══ Smart Production Brief (per product) ══
+// Renders the 9 spec fields per product card. Read-only money — only specs.
+function renderProductBrief(o, p, idx){
+  // Only show for offset products (digital workflow stays simpler)
+  const isOffset = (p.printType||'').includes('offset');
+  if(!isOffset && !p.paperSheets && !p.pressId) return '';
+
+  const r = computeProductReadiness(o, p);
+  const barColor = r.ready ? 'var(--g)' : r.pct >= 60 ? 'var(--y)' : 'var(--r)';
+  const missingCritical = r.critical.filter(c => !c.ok);
+  const missingWarn = r.warnings.filter(w => !w.ok);
+
+  const pid = `pb-${o._id}-${idx}`;
+  const presses = getPressOptions();
+  const pressOpts = '<option value="">— اختر المطبعة —</option>' +
+    presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+
+  const lamOpts = ['لامع','مات','بلا'].map(v =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--dim2);cursor:pointer">
+      <input type="radio" name="${pid}-lam" value="${v}" ${p.lamination===v?'checked':''} onchange="updateProductBriefField('${o._id}',${idx},'lamination','${v}')" style="cursor:pointer">${v}
+    </label>`
+  ).join('');
+
+  // Default print size: fall back to product size
+  const printSize = p.printSize || p.size || '';
+
+  // Templates row
+  const tplOpts = '<option value="">— طبّق قالب —</option>' +
+    printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
+
+  return `
+    <div style="margin-top:10px;padding:10px;background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:10px">
+      <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>🤖 بيانات الإنتاج (أوفست)</span>
+        <span style="font-size:9px;color:var(--dim2);font-weight:600">يُسجَّل تلقائياً</span>
+      </div>
+
+      <!-- Templates row -->
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <select onchange="applyBriefTemplate('${o._id}',${idx},this.value);this.value=''" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:11px;font-family:inherit;direction:rtl;cursor:pointer">${tplOpts}</select>
+        <button onclick="openSaveTemplate('${o._id}',${idx})" title="احفظ المواصفات الحالية كقالب" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">💾 احفظ كقالب</button>
+      </div>
+
+      <!-- Readiness Card -->
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <span style="font-size:10px;font-weight:800;color:${r.ready?'var(--g)':'var(--dim2)'}">
+            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
+          </span>
+          <span style="font-size:10px;color:${barColor};font-weight:800">${r.pct}%</span>
+        </div>
+        <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:${(missingCritical.length||missingWarn.length)?'8':'0'}px">
+          <div style="height:100%;width:${r.pct}%;background:${barColor};transition:width .3s"></div>
+        </div>
+        ${missingCritical.length?`<div style="font-size:10px;color:var(--r);line-height:1.7">
+          ${missingCritical.map(c=>`<div>❌ ${c.label}</div>`).join('')}
+        </div>`:''}
+        ${missingWarn.length?`<div style="font-size:10px;color:var(--y);line-height:1.7;${missingCritical.length?'margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.05)':''}">
+          ${missingWarn.map(w=>`<div>⚠️ ${w.label}</div>`).join('')}
+        </div>`:''}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <!-- مقاس الطباعة -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📐 مقاس الطباعة</div>
+          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+        </div>
+
+        <!-- نوع الزنكات -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
+          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+        </div>
+
+        <!-- عدد الفروخ -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
+          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+        </div>
+
+        <!-- التقطيع -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
+          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+        </div>
+      </div>
+
+      <!-- السلوفان -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px">✨ السلوفان</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">${lamOpts}</div>
+      </div>
+
+      <!-- الداخلي -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
+        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+      </div>
+
+      <!-- المطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
+        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">${pressOpts}</select>
+      </div>
+
+      <!-- ميعاد المطبعة -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
+        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;box-sizing:border-box">
+      </div>
+
+      <!-- ملاحظات -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📝 ملاحظات للمطبعة</div>
+        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;resize:vertical;box-sizing:border-box">${escAttr(p.briefNotes||'')}</textarea>
+      </div>
+
+      <!-- زر إرسال للمطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
+        <button onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:12px;font-weight:800;cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
+        </button>
+        ${p.briefSentAt?`<div style="font-size:9px;color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
+        ${!r.ready?`<div style="font-size:9px;color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
+      </div>
+    </div>`;
+}
+
+function escAttr(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);}
+function toLocalDTPB(iso){
+  if(!iso) return '';
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,16);
+}
+
+// Debounced save per product field
+const __pbSaveTimers = new Map();
+window.updateProductBriefField = function(orderId, idx, field, value){
+  // Special case: press = <select> element
+  if(field === 'press'){
+    const opt = value?.options?.[value.selectedIndex];
+    const pressId = opt?.value || '';
+    const pressName = opt?.dataset?.name || '';
+    queueBriefSave(orderId, idx, {pressId, pressName});
+    return;
+  }
+  queueBriefSave(orderId, idx, {[field]: value});
+};
+
+function queueBriefSave(orderId, idx, patch){
+  const key = `${orderId}_${idx}`;
+  if(__pbSaveTimers.has(key)) clearTimeout(__pbSaveTimers.get(key));
+  __pbSaveTimers.set(key, setTimeout(() => commitBriefSave(orderId, idx, patch), 600));
+}
+
+async function commitBriefSave(orderId, idx, patch){
+  const o = orders.find(x => x._id===orderId);
+  if(!o) return;
+  const prods = [...(o.products||[])];
+  if(idx<0 || idx>=prods.length) return;
+  prods[idx] = {...prods[idx], ...patch};
+  try{
+    await updateDoc(doc(db,'orders',orderId), {
+      products: prods,
+      updatedAt: serverTimestamp(),
+    });
+  }catch(e){
+    console.warn('brief save failed:', e?.message||e);
+    toast('⚠️ تعذّر الحفظ — '+(e?.message||''),'err');
+  }
+}
+
 window.setPrintProductStatus=async function(idx,status){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
@@ -1194,6 +1602,7 @@ window.savePrintAdvance=async function(){
 // EDIT PRODUCTS MODAL
 // ════════════════════════════════════════
 let productsCatalog = [];  // من products_v2
+let suppliers = [];         // من suppliers_v2 — للمطابع dropdown
 let editProdsData = [];    // نسخة للتعديل
 let piProdIdx = null;      // الـ index اللي بنرفعله صورة
 // helpers على window عشان inline handlers توصلهم من خارج module scope
@@ -1205,6 +1614,26 @@ onSnapshot(collection(db,'products_v2'), snap => {
   productsCatalog = snap.docs.map(d=>({...d.data(),_id:d.id}))
     .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
 });
+
+// تحميل الموردين (للمطابع — فلتر حسب الفئة وقت العرض في النموذج)
+onSnapshot(collection(db,'suppliers_v2'), snap => {
+  suppliers = snap.docs.map(d=>({...d.data(),_id:d.id}))
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  if(activeOrder) renderPanel(activeOrder);
+}, err => console.warn('suppliers listener:', err?.message||err));
+
+// قوالب الإنتاج (print_brief_templates) من master_lists
+let printBriefTemplates = [];
+onSnapshot(doc(db,'master_lists','print_brief_templates'), snap => {
+  printBriefTemplates = snap.exists() ? (snap.data().items || []) : [];
+  if(activeOrder) renderPanel(activeOrder);
+}, err => console.warn('templates listener:', err?.message||err));
+
+// المطابع المؤهلة لـ dropdown (Option B — offset/digital/both)
+function getPressOptions(){
+  const allowed = ['مطبعة أوفست','مطبعة ديجيتال','أوفست + ديجيتال'];
+  return suppliers.filter(s => allowed.includes(s.category) || allowed.includes(s.type));
+}
 
 // ── فتح Modal التعديل ──
 window.openEditProds = function() {

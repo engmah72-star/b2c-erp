@@ -27,6 +27,7 @@
 .ord-card.stg-printing{--accent:var(--b)}
 .ord-card.stg-production{--accent:var(--y)}
 .ord-card.stg-shipping{--accent:var(--c)}
+.ord-card.stg-archived{--accent:var(--dim)}
 .ord-head{padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ord-head-main{flex:1;min-width:0}
 .ord-client{font-size:16px;font-weight:900;color:var(--snow);line-height:1.3;margin-bottom:6px}
@@ -37,6 +38,14 @@
 .st-printing{background:rgba(59,158,255,.14);color:var(--b);border:1px solid rgba(59,158,255,.3)}
 .st-production{background:rgba(255,170,0,.14);color:var(--y);border:1px solid rgba(255,170,0,.3)}
 .st-shipping{background:rgba(34,211,238,.14);color:var(--c);border:1px solid rgba(34,211,238,.3)}
+.st-archived{background:rgba(120,120,120,.16);color:var(--dim);border:1px solid rgba(120,120,120,.3)}
+/* Production status badge (prodStatus) — يوضّح حالة التنفيذ على الكارت */
+.ps-chip{font-size:10px;padding:3px 9px;border-radius:20px;font-weight:800;white-space:nowrap;border:1px solid;display:inline-flex;align-items:center;gap:3px}
+.ps-pending{background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)}
+.ps-received{background:rgba(59,158,255,.12);color:var(--b);border-color:rgba(59,158,255,.3)}
+.ps-wip{background:rgba(34,211,238,.12);color:var(--c);border-color:rgba(34,211,238,.3)}
+.ps-done{background:rgba(0,217,126,.14);color:var(--g);border-color:rgba(0,217,126,.35)}
+.ps-problem{background:rgba(167,139,250,.14);color:var(--p);border-color:rgba(167,139,250,.3)}
 .ord-stats{padding:0 16px 10px;display:flex;gap:6px;flex-wrap:wrap}
 .ord-stat{background:var(--bg3);border:1px solid var(--line);padding:5px 10px;border-radius:9px;font-size:11px;font-weight:700;color:var(--dim2);display:inline-flex;align-items:center;gap:5px}
 .ord-stat strong{color:var(--snow);font-size:13px;font-weight:900}
@@ -365,6 +374,7 @@
 </style>
 <script src="financial-guard.js"></script>
 <script src="wa-launcher.js?v=1" defer></script>
+<script src="smart-sidebar.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
@@ -412,6 +422,7 @@
       <button class="ftab" onclick="setFilter('shipping',this)">🚚 الشحن (<span id="cnt-shipping">0</span>)</button>
       <button class="ftab" onclick="setFilter('printing',this)">🖨️ الطباعة (<span id="cnt-printing">0</span>)</button>
       <button class="ftab" onclick="setFilter('design',this)">✏️ التصميم (<span id="cnt-design">0</span>)</button>
+      <button class="ftab" onclick="setFilter('archived',this)">📁 الأرشيف (<span id="cnt-archived">0</span>)</button>
     </div>
 
     <div class="sort-bar">
@@ -667,34 +678,37 @@ onAuthStateChanged(auth,async u=>{
 });
 
 function getMissingCostOrders(){
-  const isAdm=['admin','operation_manager'].includes(currentRole);
+  // أدمن + مدير العمليات + مندوب التنفيذ يشوفوا كل الأوردرات (مندوب واحد بيشتغل على كل التنفيذ)
+  const seeAll=['admin','operation_manager','production_agent'].includes(currentRole);
   const uid=currentUser?.uid||'';
   return orders.filter(o=>{
-    if(o.stage==='archived')return false;
+    if(o.stage==='cancelled')return false;
     const hasItems=(o.costItems||[]).length>0;
     const isAwaiting=!!o.awaitingFinalArchive;
     // أظهر: (بدون بنود) أو (في انتظار مراجعة نهائية — حتى لو فيه بنود)
+    // ملاحظة: أي أوردر بدون بنود يظهر حتى لو وصل لأرشيف/شحن — لازم المندوب يسجّل تكاليفه
     if(hasItems && !isAwaiting)return false;
-    if(isAdm)return true;
+    if(seeAll)return true;
     if(o.productionAgent===uid)return true;
-    if(!o.productionAgent && ['production','shipping'].includes(o.stage))return true;
+    if(!o.productionAgent && ['production','shipping','archived'].includes(o.stage))return true;
     return false;
   });
 }
 
 function renderList(){
   const data=getMissingCostOrders();
-  const byStage={design:0,printing:0,production:0,shipping:0,other:0};
+  const byStage={design:0,printing:0,production:0,shipping:0,archived:0,other:0};
   data.forEach(o=>{const s=o.stage||'other';if(byStage[s]!=null)byStage[s]++;else byStage.other++;});
   setText('k-total',data.length);
   setText('k-production',byStage.production||0);
   setText('k-shipping',byStage.shipping||0);
-  setText('k-other',(byStage.design||0)+(byStage.printing||0));
+  setText('k-other',(byStage.design||0)+(byStage.printing||0)+(byStage.archived||0));
   setText('cnt-all',data.length);
   setText('cnt-production',byStage.production||0);
   setText('cnt-shipping',byStage.shipping||0);
   setText('cnt-printing',byStage.printing||0);
   setText('cnt-design',byStage.design||0);
+  setText('cnt-archived',byStage.archived||0);
   renderSmartKpis();
 
   let filtered=data;
@@ -707,10 +721,12 @@ function renderList(){
     return;
   }
 
-  const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'}};
+  const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'},archived:{cls:'st-archived',lbl:'📁 أرشيف'}};
+  const PSM={pending:{cls:'ps-pending',lbl:'⏳ انتظار'},received:{cls:'ps-received',lbl:'📥 استلمت'},wip:{cls:'ps-wip',lbl:'🔄 جاري'},done:{cls:'ps-done',lbl:'✅ خلصت'},problem:{cls:'ps-problem',lbl:'⚠️ مشكلة'}};
   const hasLast=!!getLastCost();
   el.innerHTML=filtered.map(o=>{
     const stg=SM[o.stage]||{cls:'st-design',lbl:o.stage||'—'};
+    const ps=PSM[o.prodStatus]||null;
     const prods=o.products||[];
     const totalQty=prods.reduce((s,p)=>s+(parseInt(p.qty)||0),0);
     const noSupCount=prods.filter(p=>!p.supplierName).length;
@@ -753,7 +769,10 @@ function renderList(){
             ${dayChip}
           </div>
         </div>
-        <span class="stage-chip ${stg.cls}">${stg.lbl}</span>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+          <span class="stage-chip ${stg.cls}">${stg.lbl}</span>
+          ${ps?`<span class="ps-chip ${ps.cls}">${ps.lbl}</span>`:''}
+        </div>
       </div>
       ${profitRow}
       <div class="ord-stats">

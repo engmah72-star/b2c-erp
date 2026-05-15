@@ -119,6 +119,7 @@ a{color:inherit;text-decoration:none}
 </style>
 <script type="module" src="inbox-badge.js"></script>
 <script src="wa-launcher.js?v=1" defer></script>
+<script src="smart-sidebar.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 </head>
 <body>
@@ -480,6 +481,15 @@ async function ensureExtraData(domain) {
       const settles = await getDocs(collection(db, 'shipping_settlements')).catch(() => ({ docs: [] }));
       extraData.settlements = settles.docs.map(d => ({...d.data(), _id:d.id}));
     }
+    if (domain === 'materials' && !extraData.materials) {
+      const mats = await getDocs(collection(db, 'materials')).catch(() => ({ docs: [] }));
+      extraData.materials = mats.docs.map(d => ({...d.data(), _id:d.id}));
+    }
+    if (domain === 'workflow' && !extraData.jobOrders) {
+      const jobs = await getDocs(query(collection(db, 'job_orders'), where('isDeleted','==',false)))
+        .catch(() => ({ docs: [] }));
+      extraData.jobOrders = jobs.docs.map(d => ({...d.data(), _id:d.id}));
+    }
   } catch (e) {
     console.warn('[ai-insights] ensureExtraData failed:', e);
   }
@@ -570,6 +580,27 @@ function computeStats(domain) {
       { val: recent.length, lbl: '90 يوم' },
     ];
   }
+  if (domain === 'materials') {
+    const mats = (extraData.materials || []).filter(m => !m.isDeleted);
+    const active = mats.filter(m => m.active !== false).length;
+    const single = mats.filter(m => m.active !== false && (!m.suppliers || m.suppliers.length <= 1)).length;
+    return [
+      { val: mats.length, lbl: 'خامات' },
+      { val: active, lbl: 'نشطة' },
+      { val: single, lbl: 'مخاطرة مورد' },
+    ];
+  }
+  if (domain === 'workflow') {
+    const jobs = (extraData.jobOrders || []).filter(j => !j.isDeleted);
+    const active = jobs.filter(j => !['completed','cancelled'].includes(j.status)).length;
+    const today = new Date().toISOString().slice(0,10);
+    const late = jobs.filter(j => !['completed','cancelled'].includes(j.status) && j.dueDate && j.dueDate < today).length;
+    return [
+      { val: jobs.length, lbl: 'أوامر تشغيل' },
+      { val: active, lbl: 'نشطة' },
+      { val: late, lbl: 'متأخرة' },
+    ];
+  }
   return [];
 }
 
@@ -617,6 +648,8 @@ function currentContext() {
       employeePayments: extraData.employeePayments,
       supplierPayments: extraData.supplierPayments,
       settlements: extraData.settlements,
+      materials: extraData.materials,
+      jobOrders: extraData.jobOrders,
     },
   });
   lastContext = ctx;

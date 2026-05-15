@@ -51,6 +51,7 @@
 </style>
 <script src="financial-guard.js"></script>
 <script src="wa-launcher.js?v=1" defer></script>
+<script src="smart-sidebar.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
@@ -658,6 +659,63 @@ window.saveAdminFinance=async function(){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
+// ── تعديل بيانات التصميم (notes) — يسمح لـ CS/Admin/Ops/Designer ──
+window.escapeNotes=function(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);};
+
+window.toggleEditNotes=function(orderId,cancel){
+  const view=document.getElementById('design-notes-view');
+  const edit=document.getElementById('design-notes-edit');
+  const btn=document.getElementById('btn-edit-notes');
+  if(!view||!edit)return;
+  const isEditing=edit.style.display!=='none';
+  if(isEditing||cancel){
+    edit.style.display='none';
+    view.style.display='';
+    if(btn){const o=orders.find(x=>x._id===orderId);btn.textContent='✏️ '+(o?.notes?'تعديل':'إضافة');}
+    if(cancel){
+      const o=orders.find(x=>x._id===orderId);
+      const ta=document.getElementById('design-notes-input');
+      if(ta&&o)ta.value=o.notes||'';
+    }
+  }else{
+    view.style.display='none';
+    edit.style.display='';
+    if(btn)btn.textContent='✕ إلغاء';
+    const ta=document.getElementById('design-notes-input');
+    if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);}
+  }
+};
+
+window.saveDesignNotes=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const ta=document.getElementById('design-notes-input');
+  const saveBtn=document.getElementById('btn-save-notes');
+  if(!ta)return;
+  const newNotes=ta.value.trim();
+  if(newNotes===(o.notes||'').trim()){toggleEditNotes(orderId,true);return;}
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='⏳ جاري...';}
+  try{
+    const oldLen=(o.notes||'').length, newLen=newNotes.length;
+    const action=o.notes?`✏️ تعديل بيانات التصميم (${oldLen}→${newLen} حرف)`:`📝 إضافة بيانات التصميم (${newLen} حرف)`;
+    await updateDoc(doc(db,'orders',orderId),{
+      notes:newNotes,
+      timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName,byId:currentUser?.uid||''}],
+      updatedAt:serverTimestamp(),
+    });
+    toast('✅ تم حفظ بيانات التصميم','ok');
+    // الـ onSnapshot هيعيد رسم البانل، لكن للأمان نقفل وضع التعديل
+    toggleEditNotes(orderId,true);
+  }catch(e){
+    console.error('saveDesignNotes:',e);
+    const msg=e?.message||String(e);
+    if(msg.includes('permission')||msg.includes('insufficient')){
+      toast('🔒 لا تملك صلاحية تعديل الأوردر — راجع الأدمن','err');
+    }else{
+      toast('❌ '+msg,'err');
+    }
+  }finally{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='💾 حفظ';}}
+};
+
 window.deleteOrderFull=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
@@ -1163,6 +1221,7 @@ function renderDesignDashboard(){
 window.openOrder=function(id){
   activeId=id;
   const o=orders.find(x=>x._id===id);if(!o)return;
+  window.AppState?.setOpenEntity?.('order', id, o);
   const notRej=o.designStage!=='rejected';
   document.getElementById('pn-hdr').innerHTML=`
     <div>
@@ -1343,11 +1402,28 @@ function renderPanel(o){
       </div>
     </div>`:''}
 
-    ${(o.notes||o.refFileUrl)?`<div class="section" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
-      <div class="section-title" style="color:var(--y);margin-bottom:8px">📋 بيانات التصميم</div>
-      ${o.notes?`<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-bottom:${o.refFileUrl?'10px':'0'}">${o.notes}</div>`:''}
-      ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:8px;color:var(--p);font-size:12px;font-weight:700;text-decoration:none">${o.refFileType?.includes('pdf')?'📄':'🖼️'} عرض الملف المرجعي</a>`:''}
-    </div>`:''}
+    ${(()=>{
+      const canEditNotes=['admin','operation_manager','customer_service','design_operator','graphic_designer'].includes(currentRole);
+      const hasContent=o.notes||o.refFileUrl;
+      if(!hasContent&&!canEditNotes)return '';
+      return `<div class="section" id="sec-design-notes" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+          <div class="section-title" style="color:var(--y);margin:0">📋 بيانات التصميم</div>
+          ${canEditNotes?`<button id="btn-edit-notes" onclick="toggleEditNotes('${o._id}')" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">✏️ ${o.notes?'تعديل':'إضافة'}</button>`:''}
+        </div>
+        <div id="design-notes-view">
+          ${o.notes?`<div style="font-size:13px;line-height:1.9;white-space:pre-wrap;margin-bottom:${o.refFileUrl?'10px':'0'}">${escapeNotes(o.notes)}</div>`:(canEditNotes?`<div style="font-size:12px;color:var(--dim2);font-style:italic;margin-bottom:${o.refFileUrl?'10px':'0'}">لم تُضَف بيانات بعد — اضغط ✏️ لإضافتها</div>`:'')}
+          ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);border-radius:8px;color:var(--p);font-size:12px;font-weight:700;text-decoration:none">${o.refFileType?.includes('pdf')?'📄':'🖼️'} عرض الملف المرجعي</a>`:''}
+        </div>
+        <div id="design-notes-edit" style="display:none">
+          <textarea id="design-notes-input" class="inp" style="min-height:120px;font-family:inherit;line-height:1.8" placeholder="اكتب بيانات التصميم...">${o.notes||''}</textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="btn-save-notes" class="btn btn-g btn-sm" onclick="saveDesignNotes('${o._id}')">💾 حفظ</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleEditNotes('${o._id}',true)">إلغاء</button>
+          </div>
+        </div>
+      </div>`;
+    })()}
 
     <!-- تأكيد الاستلام — للمصمم المعيَّن -->
     ${(['graphic_designer','design_operator'].includes(currentRole)&&o.designerId===(auth.currentUser?.uid||'')&&!o.designerAcceptedAt)?`
@@ -1420,7 +1496,7 @@ function renderPanel(o){
   showAdminSection(o, ['admin','operation_manager'].includes(currentRole));
 }
 
-window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeId=null;};
+window.closePanel=()=>{document.getElementById('panel-ov').classList.remove('open');activeId=null;window.AppState?.clearOpenEntity?.();};
 function iRow(lbl,val,col=null){return`<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:10px;color:var(--dim2);margin-bottom:2px">${lbl}</div><div style="font-size:12px;font-weight:700${col?';color:'+col:''}">${val}</div></div>`;}
 function tlHtml(tl){return(tl||[]).slice().reverse().map(t=>`<div style="font-size:11px;color:var(--dim2);padding:4px 0;border-bottom:1px solid var(--line)">${t.date} — ${t.action}</div>`).join('')||'—';}
 
