@@ -373,6 +373,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
     <!-- OCCASIONS BANNER (🎂/🏢 — auto-shown when there are today's/upcoming occasions) -->
     <div id="occasions-banner" style="display:none;margin-bottom:14px"></div>
 
+    <!-- SEGMENT STRIP (RFM distribution — clickable filters) -->
+    <div id="segment-strip" style="display:none;margin-bottom:14px"></div>
+
     <!-- GRID -->
     <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
       <div class="loader"><div class="spinner"></div></div>
@@ -951,6 +954,49 @@ function isOccasionSoon(dateStr,withinDays=7){
   return daysAway>0&&daysAway<=withinDays;
 }
 
+// Render the RFM segment strip: counts per segment with click-to-filter.
+window.renderSegmentStrip=function(){
+  const strip=document.getElementById('segment-strip');
+  if(!strip)return;
+  if(clientSegments.size===0){strip.style.display='none';return;}
+  // Count active (non-legacy) clients per segment using clients list
+  const counts={};
+  let totalClv=0;
+  clients.forEach(c=>{
+    if(c.status==='legacy')return;
+    const seg=clientSegments.get(c._id);
+    if(!seg)return;
+    counts[seg.segment]=(counts[seg.segment]||0)+1;
+    totalClv+=(seg.totalRevenue||0);
+  });
+  const order=['champion','cant_lose','loyal','new','needs_attention','at_risk','about_to_sleep','lost'];
+  const labels={champion:'🏆 أبطال',cant_lose:'🚨 لا يجب فقدهم',loyal:'💎 أوفياء',new:'🌱 جدد',needs_attention:'👀 يحتاجون اهتمام',at_risk:'⚠️ مهدّدون',about_to_sleep:'😴 على وشك الفقد',lost:'💤 فُقدوا'};
+  const visible=order.filter(s=>(counts[s]||0)>0);
+  if(visible.length===0){strip.style.display='none';return;}
+  const currentSeg=gv('f-segment');
+  strip.style.display='block';
+  strip.innerHTML=`
+    <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad2);padding:10px 12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px">
+        <div style="font-size:11px;font-weight:800;color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
+        <div style="font-size:11px;color:var(--dim2)">إجمالي CLV: <b style="color:var(--g)">${fn(totalClv)} ج</b></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">
+        ${visible.map(s=>{
+          const st=SEG_STYLE[s]||SEG_STYLE.normal;
+          const active=currentSeg===s;
+          return `<button onclick="filterBySegment('${active?'':s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active?st.fg:st.fg+'40'};background:${active?st.fg+'25':st.bg};color:${st.fg};font-size:10px;font-weight:800;cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s]||s} <span style="background:${active?'var(--bg1)':st.fg+'18'};padding:1px 6px;border-radius:10px;margin-right:3px">${counts[s]}</span></button>`;
+        }).join('')}
+        ${currentSeg?`<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>`:''}
+      </div>
+    </div>`;
+};
+
+window.filterBySegment=function(seg){
+  const sel=document.getElementById('f-segment');
+  if(sel){sel.value=seg||'';renderGrid();renderSegmentStrip();}
+};
+
 // Render the occasions banner: today's + upcoming (within 7 days).
 window.renderOccasionsBanner=function(){
   const banner=document.getElementById('occasions-banner');
@@ -1030,6 +1076,7 @@ auth.onAuthStateChanged(async u=>{
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
     renderOccasionsBanner();
+    renderSegmentStrip();
     if(activeId) renderPanel(activeId);
     // Deep-link: ?openClient={id}[&tab=followups]
     if(!window.__deepLinked){
@@ -1123,6 +1170,8 @@ auth.onAuthStateChanged(async u=>{
     clientSegments.clear();
     snap.forEach(d=>clientSegments.set(d.id,d.data()));
     renderGrid();
+    renderSegmentStrip();
+    if(activeId) renderPanel(activeId);
   },err=>console.warn('client_segments listener:',err?.message||err));
 
   db.collection('transactions_v2').onSnapshot(snap=>{
@@ -1646,6 +1695,45 @@ function renderPanel(id){
         <a href="javascript:void(0)" class="qact" onclick="openFollowupModal('${id}')" style="background:rgba(167,139,250,.12);color:var(--p);border-color:rgba(167,139,250,.3)">📞 سجّل متابعة</a>
       </div>
       ${lastFuLine}
+      ${(()=>{
+        const seg=clientSegments.get(c._id);
+        if(!seg)return '';
+        const st=SEG_STYLE[seg.segment]||SEG_STYLE.normal;
+        const allClvs=Array.from(clientSegments.values()).map(s=>s.totalRevenue||0).filter(v=>v>0).sort((a,b)=>b-a);
+        const myClv=seg.totalRevenue||0;
+        let pct=null;
+        if(myClv>0&&allClvs.length>0){
+          const rank=allClvs.findIndex(v=>v<=myClv);
+          pct=rank>=0?Math.round((rank/allClvs.length)*100):100;
+        }
+        const risk=seg.churnRisk||0;
+        const rColor=risk>=70?'var(--r)':risk>=40?'var(--y)':'var(--g)';
+        const rText=risk>=70?'مرتفع 🚨':risk>=40?'متوسط ⚠️':'منخفض ✓';
+        return `<div style="background:linear-gradient(135deg,${st.bg},rgba(255,255,255,.02));border:1px solid ${st.fg}40;border-right:3px solid ${st.fg};border-radius:var(--rad);padding:12px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:13px;font-weight:900;color:${st.fg}">${seg.segmentIco||'•'} ${seg.segmentLabel||seg.segment}</span>
+            <span style="font-size:10px;color:var(--dim2);font-family:monospace;background:var(--bg3);padding:3px 8px;border-radius:6px" title="RFM Code (Recency · Frequency · Monetary)">RFM: ${seg.rfmCode||'—'}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">آخر شراء</div>
+              <div style="font-size:13px;font-weight:800;color:var(--snow)">${seg.recencyDays??'—'} <span style="font-size:9px;color:var(--dim2);font-weight:600">يوم</span></div>
+            </div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">عدد الأوردرات</div>
+              <div style="font-size:13px;font-weight:800;color:var(--snow)">${seg.orderCount??'—'}</div>
+            </div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+              <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">CLV</div>
+              <div style="font-size:13px;font-weight:800;color:var(--g)">${fn(myClv)} <span style="font-size:9px;color:var(--dim2);font-weight:600">ج</span></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">
+            ${pct!==null?`<span style="color:var(--dim2)">🏆 ضمن أعلى <b style="color:${pct<=10?'var(--y)':pct<=25?'var(--b)':'var(--snow)'}">${pct||1}%</b> من العملاء</span>`:'<span></span>'}
+            <span style="color:var(--dim2)">احتمال الفقد: <b style="color:${rColor}">${rText}${risk?' '+risk+'%':''}</b></span>
+          </div>
+        </div>`;
+      })()}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
         <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
           <div style="font-size:20px;font-weight:900;color:var(--b)">${cOrds.length}</div>
