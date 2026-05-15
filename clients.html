@@ -1693,6 +1693,7 @@ function renderPanel(id){
         ${canSee('client_phone')&&c.intlPhone?`<a href="tel:${c.intlPhone}" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 اتصال دولي</a>`:''}
         ${canSee('client_phone')&&c.intlPhone?`<a href="https://wa.me/${c.intlPhone.replace(/[^\d]/g,'')}" target="_blank" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 واتساب دولي</a>`:''}
         <a href="javascript:void(0)" class="qact" onclick="openFollowupModal('${id}')" style="background:rgba(167,139,250,.12);color:var(--p);border-color:rgba(167,139,250,.3)">📞 سجّل متابعة</a>
+        ${cOrds.length>0?`<a href="javascript:void(0)" class="qact" onclick="reorderLastOrder('${id}')" style="background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.3)" title="نسخ المنتجات والكميات من آخر أوردر — التصميم يبدأ جديد">🔁 كرّر آخر أوردر</a>`:''}
       </div>
       ${lastFuLine}
       ${(()=>{
@@ -2172,6 +2173,55 @@ function prodOptsHtml(){
   return '<option value="">— اختر المنتج —</option>'+
     products.map(p=>`<option value="${p._id}" data-name="${(p.name||'').replace(/"/g,'')}" data-price="${p.defaultPrice||0}">${p.name}</option>`).join('');
 }
+
+// ── Re-order from last: copies products + quantities only. Design starts fresh.
+window.reorderLastOrder=function(clientId){
+  const cl=clients.find(x=>x._id===clientId);
+  if(!cl){toast('⚠️ العميل غير موجود','err');return;}
+  // Find last non-cancelled order for this client (use existing getClientOrders helper if available)
+  const cOrds=allOrders.filter(o=>o.clientId===clientId||(cl.phone1&&o.clientPhone===cl.phone1)||(cl.name&&o.clientName===cl.name));
+  const candidates=cOrds.filter(o=>o.stage!=='cancelled'&&!o.isDeleted).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  const last=candidates[0];
+  if(!last){toast('⚠️ لا يوجد أوردر سابق لهذا العميل','err');return;}
+  // Get the products list — handle both new schema (products array) and old (single product)
+  const items=Array.isArray(last.products)&&last.products.length
+    ? last.products.map(p=>({productId:p.productId||'',name:p.name||'',qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0}))
+    : (last.product?[{productId:'',name:last.product,qty:parseInt(last.qty)||1,unitPrice:parseFloat(last.salePrice)||0}]:[]);
+  if(!items.length){toast('⚠️ الأوردر السابق بدون منتجات قابلة للنسخ','err');return;}
+  // Ensure activeId is set so openNewOrder works
+  activeId=clientId;
+  pendingClientId=clientId;
+  // Open the modal normally
+  openNewOrder();
+  // Pre-select stage to 'design' (Option B — fresh design)
+  selectOrderType('design');
+  // Wait one tick so DOM is ready, then replace product rows
+  setTimeout(()=>{
+    const container=document.getElementById('no-prod-rows');
+    if(!container)return;
+    container.innerHTML='';
+    items.forEach(item=>{
+      addNoProdRow();
+      const row=container.lastElementChild;
+      if(!row)return;
+      const sel=row.querySelector('select');
+      const qtyInput=row.querySelector('input[type="number"]');
+      if(sel&&item.productId){
+        // Try to select by productId
+        const opt=sel.querySelector(`option[value="${item.productId}"]`);
+        if(opt){sel.value=item.productId;}
+        else{
+          // Product not in catalog anymore — try by name
+          const byName=Array.from(sel.options).find(o=>(o.dataset.name||'').trim()===(item.name||'').trim());
+          if(byName)sel.value=byName.value;
+        }
+      }
+      if(qtyInput)qtyInput.value=item.qty||1;
+    });
+    const code=last.orderId||last._id?.slice(-6)||'—';
+    toast(`🔁 تم نسخ ${items.length} منتج من ${code} — راجع وعدّل ثم احفظ`,'ok');
+  },50);
+};
 function addNoProdRow(){
   const div=document.createElement('div');div.className='no-prod-row';
   div.innerHTML=`<select onchange="this.closest('.no-prod-row').querySelector('input[type=number]').value=this.options[this.selectedIndex].dataset.price||0">${prodOptsHtml()}</select><input type="number" value="1" min="1" placeholder="كمية"><button type="button" onclick="this.closest('.no-prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:6px 10px;cursor:pointer">✕</button>`;
