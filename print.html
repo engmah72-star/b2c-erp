@@ -628,6 +628,7 @@ function renderPanel(o){
       ${stageProgressBar(o)}
       <a href="order-tracking.html?id=${o._id}" class="chip-track" style="margin-bottom:10px">📋 تتبع كامل للأوردر</a>
     </div>
+    ${renderOrderReadinessCard(o)}
     <!-- Products: each with image + specs -->
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:11px;font-weight:700;color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
@@ -911,12 +912,88 @@ window.confirmSplitOrder=async function(){
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+// ══ Order-level Readiness (aggregates across offset products) ══
+function computeOrderReadiness(o){
+  const prods = (o.products||[]).filter(p => (p.printType||'').includes('offset') || p.paperSheets || p.pressId);
+  if(!prods.length) return null;
+  const items = prods.map((p, idx) => ({
+    idx, name: p.name||'', r: computeProductReadiness(o, p)
+  }));
+  const allReady = items.every(i => i.r.ready);
+  const anyStarted = items.some(i => i.r.cDone > 0);
+  return { items, allReady, anyStarted, count: items.length };
+}
+
+function renderOrderReadinessCard(o){
+  const agg = computeOrderReadiness(o);
+  if(!agg) return '';
+  const readyCount = agg.items.filter(i => i.r.ready).length;
+  const allReady = agg.allReady;
+  return `<div style="padding:10px 16px;border-bottom:1px solid var(--line);background:${allReady?'rgba(0,217,126,.04)':'rgba(255,170,0,.04)'}">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="font-size:11px;font-weight:800;color:${allReady?'var(--g)':'var(--y)'}">
+        ${allReady?'✅ كل المنتجات جاهزة للإرسال للمطبعة':'🤖 جاهزية الأوردر للتنفيذ'}
+      </div>
+      <span style="font-size:10px;font-weight:800;color:${allReady?'var(--g)':'var(--dim2)'}">
+        ${readyCount}/${agg.count} منتج جاهز
+      </span>
+    </div>
+    ${!allReady?`<div style="font-size:10px;color:var(--dim2);margin-top:4px">
+      ${agg.items.filter(i=>!i.r.ready).map(i=>`• ${i.name||'منتج'} — ${i.r.cTotal-i.r.cDone} بند ناقص`).join(' · ')}
+    </div>`:''}
+  </div>`;
+}
+
+// ══ Smart Guard — Per-Product Readiness ══
+// Returns { critical:[{ok,label}], warnings:[{ok,label}], score:'X/Y', ready:boolean }
+function computeProductReadiness(o, p){
+  const isOffset = (p.printType||'').includes('offset');
+  const hasImg = (Array.isArray(p.designImages) && p.designImages.length) || !!p.designImageUrl;
+
+  // Critical (must complete before press send / production handoff)
+  const critical = [
+    { ok: (parseFloat(p.qty)||0) > 0,                    label: 'الكمية محددة' },
+    { ok: !!(p.printSize || p.size),                     label: 'مقاس الطباعة محدد' },
+    { ok: !!p.paper,                                      label: 'نوع الورق محدد' },
+    { ok: (parseFloat(p.paperSheets)||0) > 0,             label: 'عدد الفروخ محدد' },
+    { ok: !!p.pressId,                                    label: 'المطبعة مختارة' },
+    { ok: hasImg,                                         label: 'صورة التصميم مرفوعة' },
+  ];
+
+  // Offset-specific critical: zink type
+  if(isOffset) critical.push({ ok: !!p.zinkType, label: 'نوع الزنكات محدد' });
+
+  // Warnings (recommended but not blocking)
+  const warnings = [
+    { ok: !!p.pressDeadline,                              label: 'ميعاد المطبعة محدد' },
+    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
+    { ok: (parseFloat(p.paperCuts)||0) > 0,               label: 'التقطيع محدد' },
+  ];
+
+  const cTotal = critical.length;
+  const cDone  = critical.filter(c => c.ok).length;
+  const wTotal = warnings.length;
+  const wDone  = warnings.filter(w => w.ok).length;
+
+  return {
+    critical, warnings,
+    cTotal, cDone, wTotal, wDone,
+    pct: Math.round((cDone / cTotal) * 100),
+    ready: cDone === cTotal,
+  };
+}
+
 // ══ Smart Production Brief (per product) ══
 // Renders the 9 spec fields per product card. Read-only money — only specs.
 function renderProductBrief(o, p, idx){
   // Only show for offset products (digital workflow stays simpler)
   const isOffset = (p.printType||'').includes('offset');
   if(!isOffset && !p.paperSheets && !p.pressId) return '';
+
+  const r = computeProductReadiness(o, p);
+  const barColor = r.ready ? 'var(--g)' : r.pct >= 60 ? 'var(--y)' : 'var(--r)';
+  const missingCritical = r.critical.filter(c => !c.ok);
+  const missingWarn = r.warnings.filter(w => !w.ok);
 
   const pid = `pb-${o._id}-${idx}`;
   const presses = getPressOptions();
@@ -937,6 +1014,25 @@ function renderProductBrief(o, p, idx){
       <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
         <span>🤖 بيانات الإنتاج (أوفست)</span>
         <span style="font-size:9px;color:var(--dim2);font-weight:600">يُسجَّل تلقائياً</span>
+      </div>
+
+      <!-- Readiness Card -->
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <span style="font-size:10px;font-weight:800;color:${r.ready?'var(--g)':'var(--dim2)'}">
+            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
+          </span>
+          <span style="font-size:10px;color:${barColor};font-weight:800">${r.pct}%</span>
+        </div>
+        <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:${(missingCritical.length||missingWarn.length)?'8':'0'}px">
+          <div style="height:100%;width:${r.pct}%;background:${barColor};transition:width .3s"></div>
+        </div>
+        ${missingCritical.length?`<div style="font-size:10px;color:var(--r);line-height:1.7">
+          ${missingCritical.map(c=>`<div>❌ ${c.label}</div>`).join('')}
+        </div>`:''}
+        ${missingWarn.length?`<div style="font-size:10px;color:var(--y);line-height:1.7;${missingCritical.length?'margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.05)':''}">
+          ${missingWarn.map(w=>`<div>⚠️ ${w.label}</div>`).join('')}
+        </div>`:''}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
