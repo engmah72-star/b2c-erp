@@ -217,14 +217,22 @@
         </div>
       </div>
 
-      <!-- Tabs -->
-      <div class="rep-tabs" style="margin-bottom:0">
+      <!-- Tabs (hidden by default — only shown in advanced mode) -->
+      <div class="rep-tabs" id="rep-tabs-wrap" style="margin-bottom:0;display:none">
         <button class="rep-tab active" data-tab="overview" onclick="switchTab('overview',this)">📊 نظرة عامة <span class="tab-badge dim" data-badge="overview" style="display:none"></span></button>
         <button class="rep-tab" data-tab="designers" onclick="switchTab('designers',this)">🎨 المصممين <span class="tab-badge dim" data-badge="designers" style="display:none"></span></button>
         <button class="rep-tab" data-tab="shipping" onclick="switchTab('shipping',this)">🚚 الشحن <span class="tab-badge warn" data-badge="shipping" style="display:none"></span></button>
         <button class="rep-tab" data-tab="clients" onclick="switchTab('clients',this)">👥 العملاء <span class="tab-badge dim" data-badge="clients" style="display:none"></span></button>
         <button class="rep-tab" data-tab="sales" onclick="switchTab('sales',this)">💰 المبيعات <span class="tab-badge dim" data-badge="sales" style="display:none"></span></button>
         <button class="rep-tab" data-tab="collection" onclick="switchTab('collection',this)">📋 جرد التحصيل <span class="tab-badge" data-badge="collection" style="display:none"></span></button>
+      </div>
+      <!-- Mode toggle: executive summary (default) vs advanced tabs -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="mode-title" style="font-size:14px;font-weight:800;color:var(--snow)">📊 الملخص التنفيذي</span>
+          <span id="mode-sub" style="font-size:11px;color:var(--dim2)">لوحة واحدة لكل الأرقام المهمة</span>
+        </div>
+        <button id="mode-toggle-btn" onclick="toggleExecMode()" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">🔧 عرض متقدم</button>
       </div>
     </div>
 
@@ -372,6 +380,29 @@ const auth=getAuth(app),db=getFirestore(app);
 
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
+// Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
+// المستخدم يقدر يتحوّل لـ Advanced mode (التابات القديمة) من زر "🔧 عرض متقدم".
+let __execMode = localStorage.getItem('reports_exec_mode') !== '0'; // true by default
+
+window.toggleExecMode = function(){
+  __execMode = !__execMode;
+  localStorage.setItem('reports_exec_mode', __execMode ? '1' : '0');
+  document.getElementById('rep-tabs-wrap').style.display = __execMode ? 'none' : '';
+  const btn = document.getElementById('mode-toggle-btn');
+  if (btn) btn.textContent = __execMode ? '🔧 عرض متقدم' : '📊 الملخص التنفيذي';
+  const title = document.getElementById('mode-title');
+  if (title) title.textContent = __execMode ? '📊 الملخص التنفيذي' : '🔧 عرض متقدم';
+  const sub = document.getElementById('mode-sub');
+  if (sub) sub.textContent = __execMode ? 'لوحة واحدة لكل الأرقام المهمة' : 'تابات مفصّلة لكل تقرير';
+  render();
+};
+// Apply initial state على load
+document.addEventListener('DOMContentLoaded', () => {
+  const wrap = document.getElementById('rep-tabs-wrap');
+  if (wrap) wrap.style.display = __execMode ? 'none' : '';
+  const btn = document.getElementById('mode-toggle-btn');
+  if (btn) btn.textContent = __execMode ? '🔧 عرض متقدم' : '📊 الملخص التنفيذي';
+});
 let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false};
@@ -680,6 +711,13 @@ function render(){
   const filtered=orders.filter(o=>inRange(o,range));
   const prevFiltered=orders.filter(o=>inRange(o,prev));
   setText('rep-sub',`${filtered.length} أوردر في الفترة المحددة`);
+  // Executive Summary mode (الافتراضي) — لوحة واحدة بكل الأرقام
+  if(__execMode){
+    el.innerHTML=renderExec(filtered,prevFiltered,range);
+    requestAnimationFrame(()=>applyCounters(el));
+    return;
+  }
+  // Advanced mode — التابات القديمة
   if(currentTab==='overview') el.innerHTML=renderOverview(filtered,prevFiltered,range);
   else if(currentTab==='designers') el.innerHTML=renderDesigners(filtered);
   else if(currentTab==='shipping') el.innerHTML=renderShipping(filtered,prevFiltered);
@@ -693,6 +731,195 @@ function render(){
   updateTabBadges();
   // animate counters في كل KPI فيه data-counter
   requestAnimationFrame(()=>applyCounters(el));
+}
+
+// ══════════════════════════════════════════════════════════
+// 📊 Executive Summary — لوحة واحدة بكل الأرقام المهمة
+// ══════════════════════════════════════════════════════════
+function renderExec(f, prev, range){
+  const PER = filterMode === 'today' ? 'اليوم' : filterMode === 'week' ? 'الأسبوع' : filterMode === 'lastmonth' ? 'الشهر الماضي' : filterMode === 'year' ? 'السنة' : 'الشهر';
+
+  // ── 1) KPIs المالية للفترة ──
+  const inRange2 = (t, r) => t.createdAt?.seconds && new Date(t.createdAt.seconds * 1000) >= r.from && new Date(t.createdAt.seconds * 1000) <= r.to;
+  const periodIn  = transactions.filter(t => t.type === 'in'  && inRange2(t, range)).reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+  const periodOut = transactions.filter(t => t.type === 'out' && inRange2(t, range)).reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+  const profit = periodIn - periodOut;
+  const prevRange = getPrevRange(filterMode);
+  const prevIn  = transactions.filter(t => t.type === 'in'  && inRange2(t, prevRange)).reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+  const prevOut = transactions.filter(t => t.type === 'out' && inRange2(t, prevRange)).reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+  const prevProfit = prevIn - prevOut;
+
+  // ── 2) أوردرات ──
+  const totalOrders = f.length;
+  const activeOrders = orders.filter(o => !['archived','cancelled'].includes(o.stage));
+  const totalRem = orders.filter(o => !['archived','cancelled'].includes(o.stage)).reduce((s,o) => s + calcRem(o), 0);
+  const lateOrders = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !['archived','shipping'].includes(o.stage));
+
+  // ── 3) عملاء جدد ──
+  const newClients = clients.filter(c => c.createdAt?.seconds && new Date(c.createdAt.seconds * 1000) >= range.from && new Date(c.createdAt.seconds * 1000) <= range.to);
+
+  // ── 4) مستحق الموردين ──
+  const supDue = suppliers.reduce((s, sup) => {
+    const paid = payments.filter(p => p.supplierId === sup._id).reduce((ps, p) => ps + (parseFloat(p.amount)||0), 0);
+    const cost = orders.reduce((cs, o) => cs + (o.costItems||[]).filter(ci => ci.supplierId === sup._id).reduce((is, ci) => is + (parseFloat(ci.total)||0), 0), 0);
+    return s + Math.max(0, cost - paid);
+  }, 0);
+
+  // KPI card builder
+  const kpiBox = (ico, val, lbl, col, prev, hint) => {
+    const trend = prev !== undefined ? diff(val, prev) : '';
+    return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${col}"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="font-size:24px;line-height:1">${ico}</div>
+        ${trend ? `<span style="font-size:10px;font-weight:800;color:${col};opacity:.85">${trend}</span>` : ''}
+      </div>
+      <div style="font-size:22px;font-weight:900;color:${col};margin-top:8px;line-height:1">${fn(val)}<span style="font-size:11px;margin-right:4px;color:var(--dim2)">ج</span></div>
+      <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-top:4px">${lbl}</div>
+      ${hint ? `<div style="font-size:10px;color:var(--dim2);margin-top:2px;opacity:.8">${hint}</div>` : ''}
+    </div>`;
+  };
+
+  const kpiGrid = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
+      ${kpiBox('💰', periodIn,  `إيرادات ${PER}`,  'var(--g)', prevIn)}
+      ${kpiBox('📤', periodOut, `مصروفات ${PER}`,  'var(--r)', prevOut)}
+      ${kpiBox('💹', profit,    `صافي ${PER}`,     profit>=0?'var(--g)':'var(--r)', prevProfit)}
+      ${kpiBox('📦', totalOrders,`أوردرات ${PER}`, 'var(--b)', undefined, `${activeOrders.length} نشط حالياً`)}
+      ${kpiBox('⏳', totalRem,  'باقي التحصيل',    'var(--y)', undefined, `${activeOrders.filter(o=>calcRem(o)>0).length} أوردر`)}
+      ${kpiBox('🏭', supDue,    'مستحق الموردين', 'var(--p)')}
+    </div>`;
+
+  // ── 5) Pipeline توزيع الأوردرات ──
+  const stages = [
+    { key:'design',     label:'تصميم',  ico:'✏️', col:'#a78bfa' },
+    { key:'printing',   label:'طباعة',  ico:'🖨️', col:'#fbbf24' },
+    { key:'production', label:'تنفيذ',  ico:'🏭', col:'#ff4d8d' },
+    { key:'shipping',   label:'شحن',    ico:'🚚', col:'#22d3ee' },
+    { key:'archived',   label:'مكتمل',  ico:'✅', col:'#00d97e' },
+  ];
+  const totActive = activeOrders.length + orders.filter(o => o.stage === 'archived').length || 1;
+  const pipeline = `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--dim2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        <span>🧭 توزيع المراحل</span>
+        <span style="font-size:11px;color:var(--snow);font-weight:700">${orders.length} أوردر إجمالاً</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
+        ${stages.map(s => {
+          const c = orders.filter(o => o.stage === s.key).length;
+          const pct = totActive ? Math.round(c/orders.length*100) : 0;
+          return `<div style="background:${s.col}14;border:1px solid ${s.col}44;border-radius:10px;padding:10px 6px;text-align:center">
+            <div style="font-size:16px;margin-bottom:2px">${s.ico}</div>
+            <div style="font-size:18px;font-weight:900;color:${s.col};line-height:1">${c}</div>
+            <div style="font-size:9px;color:var(--dim2);margin-top:2px;font-weight:700">${s.label} · ${pct}%</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  // ── 6) Top performers (3 columns) ──
+  // Top 5 clients by revenue (sale price of their orders)
+  const clientRev = {};
+  f.forEach(o => {
+    const id = o.clientId || o.clientName || '—';
+    if (!clientRev[id]) clientRev[id] = { name: o.clientName || '—', revenue: 0, count: 0 };
+    clientRev[id].revenue += parseFloat(o.salePrice) || 0;
+    clientRev[id].count++;
+  });
+  const top5Clients = Object.values(clientRev).sort((a,b) => b.revenue - a.revenue).slice(0, 5);
+
+  // Top 5 products by qty
+  const productSales = {};
+  f.forEach(o => (o.products || []).forEach(p => {
+    const name = p.name || '—';
+    if (!productSales[name]) productSales[name] = { qty: 0, revenue: 0 };
+    productSales[name].qty += parseInt(p.qty) || 1;
+    productSales[name].revenue += (parseFloat(p.price) || 0) * (parseInt(p.qty) || 1);
+  }));
+  const top5Products = Object.entries(productSales).sort(([,a],[,b]) => b.revenue - a.revenue).slice(0, 5);
+
+  // Top 5 designers by orders completed
+  const designerOrders = {};
+  orders.filter(o => o.stage === 'archived' && o.designerId).forEach(o => {
+    const id = o.designerId;
+    if (!designerOrders[id]) designerOrders[id] = { name: o.designerName || '—', count: 0 };
+    designerOrders[id].count++;
+  });
+  const top5Designers = Object.values(designerOrders).sort((a,b) => b.count - a.count).slice(0, 5);
+
+  const topCard = (title, ico, rows) => `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;flex:1;min-width:0">
+      <div style="font-size:12px;font-weight:800;color:var(--snow);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+        <span>${ico}</span><span>${title}</span>
+      </div>
+      ${rows.length ? rows.map((r,i) => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px">
+          <span style="width:18px;height:18px;border-radius:50%;background:${i===0?'var(--y)':'var(--bg3)'};color:${i===0?'#000':'var(--dim2)'};font-weight:900;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${i+1}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--snow);font-weight:600">${r.label}</span>
+          <span style="color:var(--g);font-weight:800;font-size:11px;white-space:nowrap">${r.value}</span>
+        </div>`).join('') : '<div style="text-align:center;color:var(--dim2);padding:14px;font-size:11px">لا توجد بيانات</div>'}
+    </div>`;
+
+  const topPerformers = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      ${topCard('🏆 أعلى عملاء', '👥', top5Clients.map(c => ({ label: c.name, value: `${fn(c.revenue)} ج · ${c.count}` })))}
+      ${topCard('📦 أعلى منتجات', '🔥', top5Products.map(([name, d]) => ({ label: name, value: `${fn(d.revenue)} ج · ${d.qty}` })))}
+      ${topCard('🎨 أفضل مصممين', '✏️', top5Designers.map(d => ({ label: d.name, value: `${d.count} أوردر` })))}
+    </div>`;
+
+  // ── 7) Alerts ──
+  const stale = f.filter(o => parseFloat(o.salePrice) > 0 && calcRem(o) > 0 && isStaleOrder(o));
+  const noCost = f.filter(isMissingCost);
+  const alerts = [
+    { ico:'⏰', col:'var(--r)', count: lateOrders.length, label: 'أوردر متأخر',     hint: 'بعد deadline' },
+    { ico:'💸', col:'var(--y)', count: stale.length,      label: 'باقي تحصيل قديم', hint: 'بدون حركة' },
+    { ico:'❓', col:'var(--o)', count: noCost.length,     label: 'بدون تكلفة',      hint: 'يحتاج تسجيل' },
+    { ico:'🏭', col:'var(--p)', count: Math.round(supDue),label: 'ج مستحق للموردين', hint: '' },
+  ].filter(a => a.count > 0);
+
+  const alertsHtml = alerts.length ? `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--snow);margin-bottom:10px">🚨 تحتاج اهتمام</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+        ${alerts.map(a => `
+          <div style="background:${a.col}14;border:1px solid ${a.col}44;border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:18px;margin-bottom:2px">${a.ico}</div>
+            <div style="font-size:18px;font-weight:900;color:${a.col};line-height:1">${fn(a.count)}</div>
+            <div style="font-size:10px;color:var(--dim2);margin-top:3px;font-weight:700">${a.label}</div>
+            ${a.hint ? `<div style="font-size:9px;color:var(--dim2);margin-top:1px;opacity:.7">${a.hint}</div>` : ''}
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  // ── 8) آخر 7 أيام (Daily revenue trend) ──
+  const days7 = dailySeries(7, t => (t.type === 'in' || ['collection','advance','deposit'].includes(t.category)), t => parseFloat(t.amount) || 0);
+  const maxD = Math.max(1, ...days7);
+  const dayLabels = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    dayLabels.push(d.toLocaleDateString('ar-EG', { weekday: 'short' }));
+  }
+  const trend = `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <span style="font-size:12px;font-weight:800;color:var(--snow)">📈 إيرادات آخر 7 أيام</span>
+        <span style="font-size:11px;color:var(--g);font-weight:800">${fn(days7.reduce((s,v) => s+v, 0))} ج</span>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:6px;height:100px">
+        ${days7.map((v,i) => {
+          const h = Math.max(4, (v/maxD)*90);
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div style="font-size:9px;color:var(--g);font-weight:700;opacity:${v>0?1:.3}">${v>0?fn(Math.round(v)):''}</div>
+            <div style="width:100%;height:${h}px;background:linear-gradient(180deg,var(--g),rgba(0,217,126,.3));border-radius:4px 4px 0 0;transition:height .4s"></div>
+            <div style="font-size:9px;color:var(--dim2)">${dayLabels[i]}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  // ── النتيجة ──
+  return kpiGrid + pipeline + topPerformers + alertsHtml + trend;
 }
 
 // ══ Helpers ══
