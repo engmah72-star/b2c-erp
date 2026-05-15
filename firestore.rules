@@ -784,5 +784,36 @@ service cloud.firestore {
       allow create: if isAuth();
       allow update, delete: if isAdminOnly();
     }
+
+    // ══ Marketplace Idempotency — يمنع double-processing لنفس الـ event ══
+    // يُكتب فقط من marketplace-engine.js في نفس الـ batch مع باقي العمليات.
+    match /marketplace_idempotency/{key} {
+      allow read:  if isAuth() && isAdmin();
+      allow write: if isAuth() && canFinancialWrite();
+    }
+
+    // ══ Marketplace Audit Log — للأحداث غير المالية (KYC، dispute open، …) ══
+    // financial_ledger مخصص للحركات المالية فقط (RULE 5).
+    match /marketplace_audit_log/{entryId} {
+      allow read:   if isAuth() && isAdmin();
+      allow create: if isAuth() && canFinancialWrite();
+      allow update, delete: if false;
+    }
+
+    // ══ Marketplace Events Queue — للإشعارات (delivery لاحقاً عبر notifier) ══
+    match /marketplace_events/{eventId} {
+      allow read:   if isAuth() && isAdmin();
+      allow create: if isAuth() && canFinancialWrite();
+      // notifier service يحدّث delivered=true بعد الإرسال
+      allow update: if isAuth() && isAdmin();
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Customer Wallets — رصيد العميل على المنصة (refund destination) ══
+    match /customer_wallets/{customerId} {
+      allow read: if isAuth() && (isAdmin() || customerId == request.auth.uid);
+      // Engine فقط يكتب (RULE 1: مصدر واحد).
+      allow write: if isAuth() && canFinancialWrite();
+    }
   }
 }
