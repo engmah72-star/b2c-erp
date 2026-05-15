@@ -180,23 +180,30 @@ onAuthStateChanged(auth,async u=>{
   }catch(e){console.error(e);window.location.href='login.html';}
 });
 
+// Coalesce burst updates from 7 listeners into one frame.
+let _renderTimer=null;
+function scheduleRender(){
+  if(_renderTimer)return;
+  _renderTimer=requestAnimationFrame(()=>{_renderTimer=null;render();});
+}
+
 function startListeners(){
   setText('sub','جاري التحميل...');
   onSnapshot(collection(db,'orders'),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    render();
+    scheduleRender();
     setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
   });
   onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid)),snap=>{
     myTasks=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(t=>t.status==='pending')
       .sort((a,b)=>({urgent:0,normal:1,low:2}[a.priority]||1)-({urgent:0,normal:1,low:2}[b.priority]||1));
-    render();
+    scheduleRender();
   });
   onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid)),snap=>{
     const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
     todayAtt=atts.find(a=>a.date===todayStr());
     myAttendance=atts;
-    render();
+    scheduleRender();
   });
   let __empSubAdded=false;
   onSnapshot(collection(db,'employees'),snap=>{
@@ -207,21 +214,21 @@ function startListeners(){
       if(me?._id){
         __empSubAdded=true;myEmpIdOps=me._id;
         onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpIdOps),where('month','==',monthKey())),gs=>{
-          myGoalOps=gs.docs.length?gs.docs[0].data():null;render();
+          myGoalOps=gs.docs.length?gs.docs[0].data():null;scheduleRender();
         });
         onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpIdOps)),es=>{
           const sv=es.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-          myLastEvalOps=sv[0]||null;render();
+          myLastEvalOps=sv[0]||null;scheduleRender();
         });
       }
     }
-    render();
+    scheduleRender();
   });
   onSnapshot(query(collection(db,'attendance'),where('date','==',todayStr())),snap=>{
-    todaysAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
+    todaysAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();
   });
   onSnapshot(collection(db,'employee_payments'),snap=>{
-    empPaymentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
+    empPaymentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();
   });
 }
 
