@@ -670,6 +670,9 @@ function renderPanel(o){
               ${(p.extras||[]).map(ex=>`<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);color:var(--g)">✓ ${ex}</span>`).join('')}
             </div>
             ${p.notes?`<div style="font-size:11px;color:var(--dim2);margin-top:6px;padding:6px 8px;background:var(--bg2);border-radius:7px;line-height:1.5">📝 ${p.notes}</div>`:''}
+
+            <!-- ══ Smart Production Brief (per product) ══ -->
+            ${renderProductBrief(o,p,idx)}
           </div>
         </div>`;
       }).join('')}
@@ -908,6 +911,137 @@ window.confirmSplitOrder=async function(){
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+// ══ Smart Production Brief (per product) ══
+// Renders the 9 spec fields per product card. Read-only money — only specs.
+function renderProductBrief(o, p, idx){
+  // Only show for offset products (digital workflow stays simpler)
+  const isOffset = (p.printType||'').includes('offset');
+  if(!isOffset && !p.paperSheets && !p.pressId) return '';
+
+  const pid = `pb-${o._id}-${idx}`;
+  const presses = getPressOptions();
+  const pressOpts = '<option value="">— اختر المطبعة —</option>' +
+    presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+
+  const lamOpts = ['لامع','مات','بلا'].map(v =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--dim2);cursor:pointer">
+      <input type="radio" name="${pid}-lam" value="${v}" ${p.lamination===v?'checked':''} onchange="updateProductBriefField('${o._id}',${idx},'lamination','${v}')" style="cursor:pointer">${v}
+    </label>`
+  ).join('');
+
+  // Default print size: fall back to product size
+  const printSize = p.printSize || p.size || '';
+
+  return `
+    <div style="margin-top:10px;padding:10px;background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:10px">
+      <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>🤖 بيانات الإنتاج (أوفست)</span>
+        <span style="font-size:9px;color:var(--dim2);font-weight:600">يُسجَّل تلقائياً</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <!-- مقاس الطباعة -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📐 مقاس الطباعة</div>
+          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+        </div>
+
+        <!-- نوع الزنكات -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
+          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+        </div>
+
+        <!-- عدد الفروخ -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
+          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+        </div>
+
+        <!-- التقطيع -->
+        <div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
+          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+        </div>
+      </div>
+
+      <!-- السلوفان -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:4px">✨ السلوفان</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">${lamOpts}</div>
+      </div>
+
+      <!-- الداخلي -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
+        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">
+      </div>
+
+      <!-- المطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
+        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;box-sizing:border-box">${pressOpts}</select>
+      </div>
+
+      <!-- ميعاد المطبعة -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
+        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;box-sizing:border-box">
+      </div>
+
+      <!-- ملاحظات -->
+      <div style="margin-top:8px">
+        <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📝 ملاحظات للمطبعة</div>
+        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;resize:vertical;box-sizing:border-box">${escAttr(p.briefNotes||'')}</textarea>
+      </div>
+    </div>`;
+}
+
+function escAttr(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);}
+function toLocalDTPB(iso){
+  if(!iso) return '';
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,16);
+}
+
+// Debounced save per product field
+const __pbSaveTimers = new Map();
+window.updateProductBriefField = function(orderId, idx, field, value){
+  // Special case: press = <select> element
+  if(field === 'press'){
+    const opt = value?.options?.[value.selectedIndex];
+    const pressId = opt?.value || '';
+    const pressName = opt?.dataset?.name || '';
+    queueBriefSave(orderId, idx, {pressId, pressName});
+    return;
+  }
+  queueBriefSave(orderId, idx, {[field]: value});
+};
+
+function queueBriefSave(orderId, idx, patch){
+  const key = `${orderId}_${idx}`;
+  if(__pbSaveTimers.has(key)) clearTimeout(__pbSaveTimers.get(key));
+  __pbSaveTimers.set(key, setTimeout(() => commitBriefSave(orderId, idx, patch), 600));
+}
+
+async function commitBriefSave(orderId, idx, patch){
+  const o = orders.find(x => x._id===orderId);
+  if(!o) return;
+  const prods = [...(o.products||[])];
+  if(idx<0 || idx>=prods.length) return;
+  prods[idx] = {...prods[idx], ...patch};
+  try{
+    await updateDoc(doc(db,'orders',orderId), {
+      products: prods,
+      updatedAt: serverTimestamp(),
+    });
+  }catch(e){
+    console.warn('brief save failed:', e?.message||e);
+    toast('⚠️ تعذّر الحفظ — '+(e?.message||''),'err');
+  }
+}
+
 window.setPrintProductStatus=async function(idx,status){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
@@ -1194,6 +1328,7 @@ window.savePrintAdvance=async function(){
 // EDIT PRODUCTS MODAL
 // ════════════════════════════════════════
 let productsCatalog = [];  // من products_v2
+let suppliers = [];         // من suppliers_v2 — للمطابع dropdown
 let editProdsData = [];    // نسخة للتعديل
 let piProdIdx = null;      // الـ index اللي بنرفعله صورة
 // helpers على window عشان inline handlers توصلهم من خارج module scope
@@ -1205,6 +1340,19 @@ onSnapshot(collection(db,'products_v2'), snap => {
   productsCatalog = snap.docs.map(d=>({...d.data(),_id:d.id}))
     .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
 });
+
+// تحميل الموردين (للمطابع — فلتر حسب الفئة وقت العرض في النموذج)
+onSnapshot(collection(db,'suppliers_v2'), snap => {
+  suppliers = snap.docs.map(d=>({...d.data(),_id:d.id}))
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  if(activeOrder) renderPanel(activeOrder);
+}, err => console.warn('suppliers listener:', err?.message||err));
+
+// المطابع المؤهلة لـ dropdown (Option B — offset/digital/both)
+function getPressOptions(){
+  const allowed = ['مطبعة أوفست','مطبعة ديجيتال','أوفست + ديجيتال'];
+  return suppliers.filter(s => allowed.includes(s.category) || allowed.includes(s.type));
+}
 
 // ── فتح Modal التعديل ──
 window.openEditProds = function() {
