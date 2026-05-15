@@ -302,10 +302,21 @@ service cloud.firestore {
     }
 
     // ══ Products ══
+    // قراءة: أي auth user (للأوردرات، التسعير، إلخ)
+    // إنشاء/حذف: admin فقط
+    // تحديث: admin أو من معه permission المنتجات يقدر يحدّث أي شيء.
+    //        من معه permission الإنتاج فقط (بدون products perm) يقدر يضيف
+    //        تكاليف بس (costHistory + lastCostTotal + updatedAt) — مش يقدر
+    //        يغيّر اسم المنتج أو السعر الافتراضي.
     match /products_v2/{prodId} {
       allow read: if isAuth();
       allow create, delete: if isAdminOnly();
-      allow update: if isAuth() && (isAdmin() || hasPage('production') || hasPage('products'));
+      allow update: if isAuth() && (
+        isAdmin() || hasPage('products') ||
+        (hasPage('production')
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['costHistory','lastCostTotal','updatedAt']))
+      );
     }
 
     // ══ Suppliers ══

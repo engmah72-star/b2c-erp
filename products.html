@@ -131,13 +131,24 @@
         <div class="stat hover-lift" style="--sc:var(--y)"><div class="stat-icon">🖨️</div><div class="stat-val" id="st-offset">—</div><div class="stat-lbl">أوفست</div></div>
         <div class="stat hover-lift" style="--sc:var(--g)"><div class="stat-icon">💰</div><div class="stat-val" id="st-avg">—</div><div class="stat-lbl">متوسط السعر</div></div>
       </div>
-      <div class="filters">
-        <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث باسم المنتج..." oninput="render()" style="min-width:220px"></div>
-        <select class="inp" id="f-type" onchange="render()" style="width:160px">
-          <option value="">ديجيتال وأوفست</option>
+      <!-- Category chips row -->
+      <div id="cat-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <div class="filters" style="flex-wrap:wrap">
+        <div class="sw"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث في الاسم/الورق/الملاحظات..." oninput="render()" style="min-width:220px"></div>
+        <select class="inp" id="f-type" onchange="render()" style="width:140px">
+          <option value="">كل الأنواع</option>
           <option value="digital">💻 ديجيتال</option>
           <option value="offset">🖨️ أوفست</option>
         </select>
+        <select class="inp" id="f-paper" onchange="render()" style="width:140px">
+          <option value="">كل الأوراق</option>
+        </select>
+        <select class="inp" id="f-size" onchange="render()" style="width:120px">
+          <option value="">كل المقاسات</option>
+        </select>
+        <input class="inp" id="f-pmin" type="number" placeholder="سعر من" oninput="render()" style="width:90px">
+        <input class="inp" id="f-pmax" type="number" placeholder="سعر إلى" oninput="render()" style="width:90px">
+        <button class="btn btn-ghost btn-sm" onclick="resetFilters()" title="مسح كل الفلاتر">↺ مسح</button>
       </div>
       <div id="products-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
         <div class="loader"><div class="spinner"></div></div>
@@ -195,11 +206,16 @@
     <div class="modal-head"><span class="modal-title" id="prod-modal-title">＋ منتج جديد</span><button class="modal-x" onclick="cM('add-prod');resetForm()">✕</button></div>
     <div class="modal-body">
       <div class="fg"><label>اسم المنتج *</label><input class="inp" id="p-name" placeholder="كارت ديجيتال / ملف محامي..."></div>
-      <div class="fg"><label>نوع الطباعة *</label>
-        <select class="inp" id="p-type">
-          <option value="digital">💻 ديجيتال</option>
-          <option value="offset">🖨️ أوفست</option>
-        </select>
+      <div class="g2">
+        <div class="fg"><label>نوع الطباعة *</label>
+          <select class="inp" id="p-type">
+            <option value="digital">💻 ديجيتال</option>
+            <option value="offset">🖨️ أوفست</option>
+          </select>
+        </div>
+        <div class="fg"><label>الفئة *</label>
+          <select class="inp" id="p-category"></select>
+        </div>
       </div>
       <div class="g2">
         <div class="fg"><label>نوع الورق</label><input class="inp" id="p-paper" placeholder="كوشيه / بريستول..."></div>
@@ -375,7 +391,21 @@ const auth=getAuth(app); const db=getFirestore(app);
 
 const ROLES_CFG={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Manager',col:'var(--b)'},customer_service:{label:'Cust. Service',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op.',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet Mgr',col:'var(--g)'}};
 
-let products=[],editId=null,currentUser=null,currentRole='admin';
+let products=[],editId=null,currentUser=null,currentRole='admin',currentUserName='';
+
+// ── الفئات المعتمدة (موسّعة من digital/offset لتغطية المرحلة 2) ──
+const CATEGORIES = [
+  { key: 'print',     label: 'مطبوعات',      ico: '🖨️' },
+  { key: 'gifts',     label: 'هدايا دعائية', ico: '🎁' },
+  { key: 'signs',     label: 'لافتات ولوحات', ico: '🪧' },
+  { key: 'design',    label: 'تصميم',        ico: '✏️' },
+  { key: 'services',  label: 'خدمات أخرى',   ico: '🔧' },
+];
+const CAT_DEFAULT = 'print';
+const getCatMeta = k => CATEGORIES.find(c => c.key === k) || { key: 'unclassified', label: 'غير مصنّف', ico: '◈' };
+
+let activeCategory = ''; // '' = all
+
 let suppliers=[],masterCategories=[],activeProductId=null;
 
 const ROLE_HOME_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -388,6 +418,7 @@ onAuthStateChanged(auth,async u=>{
     if(snap.exists()){
       const d=snap.data();
       currentRole=d.role||'admin';
+      currentUserName=d.name||u.email||'';
       const isAdm=['admin','operation_manager'].includes(currentRole);
       const pages=(d.permissions?.pages)||[];
       if(!isAdm&&!pages.includes('*')&&!pages.includes('products')){
@@ -439,23 +470,90 @@ function updateStats(){
   setText('prod-sub',`${products.length} منتج`);
 }
 
+// Populate dropdowns (paper, size) from existing product data
+function refreshFilterDropdowns(){
+  const papers = [...new Set(products.map(p => p.paper).filter(x => x && x !== '—'))].sort();
+  const sizes  = [...new Set(products.map(p => p.size).filter(Boolean))].sort();
+  const pSel = document.getElementById('f-paper');
+  if (pSel) {
+    const cur = pSel.value;
+    pSel.innerHTML = '<option value="">كل الأوراق</option>' + papers.map(p => `<option value="${p}">${p}</option>`).join('');
+    pSel.value = cur;
+  }
+  const sSel = document.getElementById('f-size');
+  if (sSel) {
+    const cur = sSel.value;
+    sSel.innerHTML = '<option value="">كل المقاسات</option>' + sizes.map(s => `<option value="${s}">${s}</option>`).join('');
+    sSel.value = cur;
+  }
+}
+
+// Render category chips row
+function renderCategoryChips(){
+  const el = document.getElementById('cat-chips'); if (!el) return;
+  const allCount = products.length;
+  const counts = {};
+  products.forEach(p => {
+    const k = p.category || CAT_DEFAULT;
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  let html = `<button class="tab-btn ${!activeCategory?'active':''}" onclick="setActiveCategory('')" style="font-size:12px;padding:5px 12px">الكل <span style="opacity:.6">${allCount}</span></button>`;
+  CATEGORIES.forEach(c => {
+    const n = counts[c.key] || 0;
+    if (!n && c.key !== CAT_DEFAULT) return; // hide empty unless it's default
+    html += `<button class="tab-btn ${activeCategory===c.key?'active':''}" onclick="setActiveCategory('${c.key}')" style="font-size:12px;padding:5px 12px">${c.ico} ${c.label} <span style="opacity:.6">${n}</span></button>`;
+  });
+  el.innerHTML = html;
+}
+
+window.setActiveCategory = function(k){
+  activeCategory = k;
+  renderCategoryChips();
+  render();
+};
+
+window.resetFilters = function(){
+  ['q','f-type','f-paper','f-size','f-pmin','f-pmax'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  activeCategory = '';
+  renderCategoryChips();
+  render();
+};
+
 window.render=function(){
-  const q=gv('q').toLowerCase();const ft=gv('f-type');
-  const data=products.filter(p=>(!q||p.name?.toLowerCase().includes(q))&&(!ft||p.printType===ft));
+  const q=gv('q').toLowerCase();
+  const ft=gv('f-type');
+  const fp=gv('f-paper');
+  const fs=gv('f-size');
+  const pmin = parseFloat(gv('f-pmin')) || 0;
+  const pmax = parseFloat(gv('f-pmax')) || Infinity;
+  refreshFilterDropdowns();
+  renderCategoryChips();
+  const data=products.filter(p => {
+    if (q && !((p.name||'').toLowerCase().includes(q) || (p.paper||'').toLowerCase().includes(q) || (p.notes||'').toLowerCase().includes(q))) return false;
+    if (ft && p.printType !== ft) return false;
+    if (fp && p.paper !== fp) return false;
+    if (fs && p.size !== fs) return false;
+    const price = parseFloat(p.defaultPrice) || 0;
+    if (price < pmin || price > pmax) return false;
+    if (activeCategory && (p.category || CAT_DEFAULT) !== activeCategory) return false;
+    return true;
+  });
   const el=document.getElementById('products-grid');
-  if(!data.length){el.innerHTML=`<div style="grid-column:1/-1"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">${products.length?'لا توجد نتائج':'لا يوجد منتجات'}</div><button class="btn btn-b" onclick="oM('add-prod')">＋ أضف منتج</button></div></div>`;return;}
+  if(!data.length){el.innerHTML=`<div style="grid-column:1/-1"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">${products.length?'لا توجد نتائج بالفلاتر الحالية':'لا يوجد منتجات'}</div><button class="btn btn-b" onclick="resetForm();oM('add-prod')">＋ أضف منتج</button></div></div>`;return;}
   el.innerHTML=data.map(p=>{
     const isDig=p.printType==='digital';
     const col=isDig?'var(--b)':'var(--y)';
     const glow=isDig?'rgba(74,142,245,.06)':'rgba(240,160,32,.06)';
     const costCount=(p.costHistory||[]).length;
     const lastCost=(p.costHistory||[]).slice(-1)[0];
+    const cat=getCatMeta(p.category||CAT_DEFAULT);
     return`<div class="prod-card" style="--pc:${col};--pc-glow:${glow}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
         <div>
-          <div class="pc-type" style="color:${col}">
+          <div class="pc-type" style="color:${col};display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="width:6px;height:6px;border-radius:50%;background:${col};display:inline-block"></span>
             ${isDig?'ديجيتال':'أوفست'}
+            <span style="font-size:9px;background:var(--bg3);color:var(--dim2);padding:1px 6px;border-radius:8px;font-weight:700">${cat.ico} ${cat.label}</span>
           </div>
           <div class="pc-name">${p.name}</div>
         </div>
@@ -485,12 +583,42 @@ window.render=function(){
   }).join('');
 };
 
+// Populate category dropdown in modal
+function fillCategoryDropdown(){
+  const sel = document.getElementById('p-category'); if (!sel) return;
+  sel.innerHTML = CATEGORIES.map(c => `<option value="${c.key}">${c.ico} ${c.label}</option>`).join('');
+}
+
 window.saveProd=async function(){
   const name=gv('p-name');if(!name)return toast('⚠️ أدخل اسم المنتج','err');
-  const data={name,printType:gv('p-type'),paper:gv('p-paper'),weight:parseFloat(gv('p-weight'))||0,size:gv('p-size'),defaultPrice:parseFloat(gv('p-price'))||0,notes:gv('p-notes')};
+  const newPrice = parseFloat(gv('p-price'))||0;
+  const data={
+    name,
+    printType:gv('p-type'),
+    category: gv('p-category') || CAT_DEFAULT,
+    paper:gv('p-paper'),
+    weight:parseFloat(gv('p-weight'))||0,
+    size:gv('p-size'),
+    defaultPrice:newPrice,
+    notes:gv('p-notes'),
+  };
   try{
-    if(editId) await updateDoc(doc(db,'products_v2',editId),data);
-    else await addDoc(collection(db,'products_v2'),{...data,createdAt:serverTimestamp()});
+    if(editId){
+      const cur = products.find(x => x._id === editId);
+      const oldPrice = parseFloat(cur?.defaultPrice) || 0;
+      if (cur && oldPrice !== newPrice) {
+        data.priceHistory = [...(cur.priceHistory || []), {
+          oldPrice, newPrice,
+          changedBy: currentUser?.uid || '',
+          changedByName: currentUserName || currentUser?.email || '',
+          changedAt: new Date().toISOString(),
+        }];
+      }
+      data.updatedAt = serverTimestamp();
+      await updateDoc(doc(db,'products_v2',editId),data);
+    } else {
+      await addDoc(collection(db,'products_v2'),{...data,createdAt:serverTimestamp()});
+    }
     cM('add-prod');resetForm();toast(editId?'✅ تم التحديث':'✅ تم الإضافة','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -499,8 +627,16 @@ window.editProd=function(id){
   editId=id;const p=products.find(x=>x._id===id);if(!p)return;
   document.getElementById('prod-modal-title').textContent='✏️ تعديل المنتج';
   document.getElementById('p-save-btn').textContent='✓ حفظ التعديلات';
-  sv('p-name',p.name||'');sv('p-type',p.printType||'digital');sv('p-paper',p.paper||'');
-  sv('p-weight',p.weight||'');sv('p-size',p.size||'');sv('p-price',p.defaultPrice||'');sv('p-notes',p.notes||'');
+  fillCategoryDropdown();
+  sv('p-name',p.name||'');sv('p-type',p.printType||'digital');sv('p-category',p.category||CAT_DEFAULT);
+  sv('p-paper',p.paper||'');sv('p-weight',p.weight||'');sv('p-size',p.size||'');
+  sv('p-price',p.defaultPrice||'');sv('p-notes',p.notes||'');
+  const histLen = (p.priceHistory || []).length;
+  if (histLen) {
+    const last = p.priceHistory[histLen-1];
+    const when = last.changedAt ? new Date(last.changedAt).toLocaleString('ar-EG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+    toast(`📜 آخر تغيير سعر: ${fn(last.oldPrice)} → ${fn(last.newPrice)} ج بواسطة ${last.changedByName||'—'} (${when}) · ${histLen} تغيير`, 'ok');
+  }
   oM('add-prod');
 };
 
@@ -514,13 +650,48 @@ window.resetForm=function(){
   editId=null;
   document.getElementById('prod-modal-title').textContent='＋ منتج جديد';
   document.getElementById('p-save-btn').textContent='✓ حفظ';
-  clearF(['p-name','p-paper','p-weight','p-size','p-price','p-notes']);sv('p-type','digital');
+  fillCategoryDropdown();
+  clearF(['p-name','p-paper','p-weight','p-size','p-price','p-notes']);
+  sv('p-type','digital');
+  sv('p-category',CAT_DEFAULT);
 };
 
 window.exportCSV=function(){
-  const rows=[['الاسم','النوع','الورق','الوزن','المقاس','السعر الافتراضي','ملاحظات']];
-  products.forEach(p=>rows.push([p.name||'',p.printType==='digital'?'ديجيتال':'أوفست',p.paper||'',p.weight||0,p.size||'',p.defaultPrice||0,p.notes||'']));
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n')],{type:'text/csv;charset=utf-8;'}));a.download='products.csv';a.click();toast('📥 تم التصدير','ok');
+  const rows=[[
+    'الاسم','النوع','الفئة','الورق','الوزن','المقاس','السعر الافتراضي',
+    'عدد سجلات التكلفة','آخر تكلفة','متوسط تكلفة الوحدة',
+    'تاريخ أول تكلفة','تاريخ آخر تكلفة','عدد تغييرات السعر','ملاحظات'
+  ]];
+  products.forEach(p => {
+    const h = p.costHistory || [];
+    const lastCost = h.slice(-1)[0]?.total || 0;
+    const totalQty = h.reduce((s,e)=>s+(parseFloat(e.qty)||0),0);
+    const totalCost = h.reduce((s,e)=>s+(parseFloat(e.total)||0),0);
+    const avgUnit = totalQty ? (totalCost/totalQty) : 0;
+    const dates = h.map(e => e.date).filter(Boolean).sort();
+    rows.push([
+      p.name||'',
+      p.printType==='digital'?'ديجيتال':'أوفست',
+      getCatMeta(p.category||CAT_DEFAULT).label,
+      p.paper||'',
+      p.weight||0,
+      p.size||'',
+      p.defaultPrice||0,
+      h.length,
+      lastCost,
+      avgUnit.toFixed(2),
+      dates[0]||'',
+      dates[dates.length-1]||'',
+      (p.priceHistory||[]).length,
+      (p.notes||'').replace(/\n/g,' '),
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
+  a.download='products_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  toast('📥 تم التصدير ('+products.length+' منتج)','ok');
 };
 
 // ══ COST HISTORY ══
@@ -562,8 +733,11 @@ function renderCostHistory(p){
       return`<div style="background:var(--bg2);border:1px solid ${Math.abs(pct)>15?'rgba(255,61,110,.3)':'var(--line)'};border-radius:12px;margin-bottom:10px;overflow:hidden">
         <div style="padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
           <div>
-            <div style="font-size:13px;font-weight:800">${h.date}</div>
-            <div style="font-size:11px;color:var(--dim2)">${h.clientName||'—'} · ${fn(h.qty)} قطعة${h.paper?' · '+h.paper:''}</div>
+            <div style="font-size:13px;font-weight:800;display:flex;align-items:center;gap:6px">
+              ${h.date}
+              ${h.source==='manual'?'<span style="font-size:9px;background:rgba(74,142,245,.15);color:var(--b);padding:2px 7px;border-radius:8px;font-weight:700">يدوي</span>':h.orderId?'<span style="font-size:9px;background:rgba(0,217,126,.15);color:var(--g);padding:2px 7px;border-radius:8px;font-weight:700">تلقائي · أوردر</span>':''}
+            </div>
+            <div style="font-size:11px;color:var(--dim2)">${h.clientName||'—'} · ${fn(h.qty)} قطعة${h.paper?' · '+h.paper:''}${h.createdByName?' · ✍️ '+h.createdByName:''}</div>
           </div>
           <div style="text-align:left">
             ${pct?`<div style="font-size:11px;font-weight:800;color:${pct>0?'var(--r)':'var(--g)'}">${pct>0?'↑':'↓'}${Math.abs(pct)}%</div>`:''}
@@ -922,7 +1096,7 @@ window.saveCostEntry=async function(){
   const total=items.reduce((s,it)=>s+it.total,0);
   const p=products.find(x=>x._id===costTargetProdId);
   const history=[...(p?.costHistory||[])];
-  const entry={date,qty,paper,notes,items,total,clientName:'يدوي',orderId:null};
+  const entry={date,qty,paper,notes,items,total,clientName:'يدوي',orderId:null,source:'manual',createdBy:currentUser?.uid||'',createdByName:currentUserName||currentUser?.email||''};
   if(costEditIdx!==null){history[costEditIdx]=entry;}
   else{history.push(entry);}
   try{
