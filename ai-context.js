@@ -11,14 +11,14 @@
 // ── Domain → Role access map ──
 // Which AI domains each role can access (subset of what they can read in UI).
 export const DOMAIN_ACCESS = {
-  admin:             ['orders','clients','finance','employees','suppliers','shipping','production'],
-  operation_manager: ['orders','clients','suppliers','shipping','production'],
+  admin:             ['orders','clients','finance','employees','suppliers','shipping','production','materials','workflow'],
+  operation_manager: ['orders','clients','suppliers','shipping','production','materials','workflow'],
   customer_service:  ['orders','clients'],
   graphic_designer:  ['orders'],
-  design_operator:   ['orders','suppliers','production'],
-  production_agent:  ['orders','production','suppliers'],
+  design_operator:   ['orders','suppliers','production','materials','workflow'],
+  production_agent:  ['orders','production','suppliers','materials','workflow'],
   shipping_officer:  ['orders','shipping'],
-  wallet_manager:    ['finance','clients','suppliers'],
+  wallet_manager:    ['finance','clients','suppliers','materials'],
 };
 
 export const DOMAIN_LABELS = {
@@ -29,6 +29,8 @@ export const DOMAIN_LABELS = {
   suppliers:  { ico:'▣',  label:'الموردين' },
   shipping:   { ico:'🚚', label:'الشحن' },
   production: { ico:'🏭', label:'الإنتاج' },
+  materials:  { ico:'🧱', label:'الخامات' },
+  workflow:   { ico:'⚙️', label:'أوامر التشغيل' },
 };
 
 export function getAccessibleDomains(role) {
@@ -42,8 +44,24 @@ const within = (orders, days) => {
   const cutoff = Date.now() - days * 864e5;
   return orders.filter(o => tsMs(o.createdAt) >= cutoff);
 };
+const between = (orders, fromDays, toDays) => {
+  const now = Date.now();
+  const from = now - fromDays * 864e5;
+  const to   = now - toDays * 864e5;
+  return orders.filter(o => { const t = tsMs(o.createdAt); return t >= from && t < to; });
+};
 const paidOf = o => parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
 const totalOf = o => parseFloat(o.totalPrice) || parseFloat(o.price) || 0;
+
+// Compare two numbers as a signed pct delta + arrow word.
+// Returns 'متعادل' if baseline is too small for a stable comparison.
+function deltaLabel(curr, prior) {
+  if (!prior || prior < 1) return 'متعادل (لا توجد بيانات سابقة كافية)';
+  const pct = Math.round(((curr - prior) / prior) * 100);
+  if (pct === 0) return 'ثابت';
+  const dir = pct > 0 ? '▲ ارتفاع' : '▼ هبوط';
+  return `${dir} ${Math.abs(pct)}% (سابق: ${typeof prior === 'number' ? fn(prior) : prior})`;
+}
 
 // ── Builders ──
 
@@ -74,13 +92,25 @@ function buildOrders({ orders, role, userId }) {
     return dd && dd < now;
   });
 
+  // Trend: last 30 days vs prior 30 days (count + revenue)
+  const cur30 = within(scope, 30);
+  const prv30 = between(scope, 60, 30);
+  const cntDelta = deltaLabel(cur30.length, prv30.length);
+  const curRev = cur30.reduce((s,o) => s + paidOf(o), 0);
+  const prvRev = prv30.reduce((s,o) => s + paidOf(o), 0);
+  const revDelta = deltaLabel(curRev, prvRev);
+
   return `
 📦 الأوردرات (${role === 'graphic_designer' ? 'أوردراتك فقط' : 'حسب صلاحيتك'}):
 - إجمالي آخر 90 يوم: ${recent.length}
 - إجمالي كل الأوردرات: ${scope.length}
 - المتأخرة عن موعد التسليم: ${late.length}
 
-توزيع المراحل:
+اتجاه آخر 30 يوم مقابل الـ 30 يوم السابقة:
+- عدد الأوردرات: ${cur30.length} — ${cntDelta}
+- إيراد محصّل: ${fn(curRev)} ج — ${revDelta}
+
+توزيع المراحل (آخر 90 يوم):
 ${Object.entries(stageCnt).map(([s,n]) => `- ${s}: ${n}`).join('\n')}
 
 أكثر المنتجات طلباً:
@@ -103,18 +133,36 @@ function buildClients({ clients, orders, role }) {
     .sort((a,b) => b[1].count - a[1].count)
     .slice(0, 10);
 
-  // Inactive clients (no orders in 60 days)
-  const cutoff60 = Date.now() - 60 * 864e5;
-  const activeClientNames = new Set(
-    orders.filter(o => tsMs(o.createdAt) >= cutoff60).map(o => o.clientName || o.client)
-  );
-  const inactive = clients.filter(c => !activeClientNames.has(c.name)).length;
+  // Activity tiers — last order recency per client
+  const lastOrderOf = {};
+  orders.forEach(o => {
+    const n = o.clientName || o.client; if (!n) return;
+    const t = tsMs(o.createdAt);
+    if (t > (lastOrderOf[n] || 0)) lastOrderOf[n] = t;
+  });
+  const now = Date.now();
+  const d30 = now - 30*864e5, d60 = now - 60*864e5, d180 = now - 180*864e5;
+  let active30 = 0, active60 = 0, dormant = 0, lost = 0;
+  clients.forEach(c => {
+    const t = lastOrderOf[c.name] || 0;
+    if (t >= d30) active30++;
+    else if (t >= d60) active60++;
+    else if (t >= d180) dormant++;
+    else lost++;
+  });
+
+  // New clients (last 30 days)
+  const newCutoff = now - 30*864e5;
+  const newClients = clients.filter(c => tsMs(c.createdAt) >= newCutoff).length;
 
   return `
 👤 العملاء:
 - إجمالي العملاء: ${clients.length}
-- نشطون (طلبوا آخر 60 يوم): ${clients.length - inactive}
-- خاملون (لم يطلبوا منذ 60 يوم): ${inactive}
+- نشطون آخر 30 يوم: ${active30}
+- نشطون 30-60 يوم: ${active60}
+- خاملون 60-180 يوم: ${dormant}
+- مفقودون (أكثر من 180 يوم): ${lost}
+- جدد آخر 30 يوم: ${newClients}
 
 أكثر العملاء طلباً (آخر 90 يوم):
 ${top.map(([n,d],i) => `${i+1}. ${n}: ${d.count} طلب${showFinancial ? ` — إيراد ${fn(d.revenue)} ج` : ''}`).join('\n')}
@@ -129,11 +177,18 @@ function buildFinance({ orders, wallets }) {
     s + (o.costItems || []).reduce((cs,c) => cs + (parseFloat(c.total) || 0), 0), 0);
   const margin = rev > 0 ? Math.round(((rev - costTotal) / rev) * 100) : 0;
 
+  // Trend: this 30 days vs prior 30 days revenue
+  const cur30 = within(orders, 30).reduce((s,o) => s + paidOf(o), 0);
+  const prv30 = between(orders, 60, 30).reduce((s,o) => s + paidOf(o), 0);
+  const revDelta = deltaLabel(cur30, prv30);
+
   const walletLines = (wallets || [])
     .filter(w => !w.isDeleted)
     .sort((a,b) => (parseFloat(b.balance)||0) - (parseFloat(a.balance)||0))
     .slice(0, 8)
     .map(w => `- ${w.name}: ${fn(w.balance)} ج`);
+  const totalWallet = (wallets || []).filter(w => !w.isDeleted)
+    .reduce((s,w) => s + (parseFloat(w.balance)||0), 0);
 
   return `
 💰 الماليات (آخر 90 يوم):
@@ -142,8 +197,12 @@ function buildFinance({ orders, wallets }) {
 - تكاليف الإنتاج: ${fn(costTotal)} ج
 - هامش الربح التقديري: ${margin}%
 - متوسط قيمة الأوردر: ${recent.length ? fn(rev/recent.length) : 0} ج
+- إجمالي أرصدة المحافظ: ${fn(totalWallet)} ج
 
-أرصدة المحافظ:
+اتجاه الإيراد (آخر 30 يوم مقابل سابق 30):
+- ${fn(cur30)} ج — ${revDelta}
+
+أرصدة المحافظ التفصيلية:
 ${walletLines.join('\n') || '- لا توجد محافظ'}
 `.trim();
 }
@@ -241,6 +300,107 @@ function buildProduction({ orders }) {
 `.trim();
 }
 
+function buildMaterials({ materials, role }) {
+  const list = (materials || []).filter(m => !m.isDeleted);
+  if (!list.length) return '🧱 الخامات:\n- لا توجد بيانات.';
+  const showCost = role !== 'graphic_designer';
+
+  const active = list.filter(m => m.active !== false);
+  const inactive = list.length - active.length;
+
+  // By type
+  const byType = {};
+  active.forEach(m => {
+    const t = m.type || 'غير محدد';
+    if (!byType[t]) byType[t] = { count: 0, cost: 0, n: 0 };
+    byType[t].count++;
+    const c = parseFloat(m.cost) || 0;
+    if (c > 0) { byType[t].cost += c; byType[t].n++; }
+  });
+  const typeLines = Object.entries(byType)
+    .sort((a,b) => b[1].count - a[1].count)
+    .map(([t,d]) => {
+      const avg = d.n ? Math.round(d.cost / d.n) : 0;
+      return showCost
+        ? `- ${t}: ${d.count} خامة · متوسط السعر ${fn(avg)} ج`
+        : `- ${t}: ${d.count} خامة`;
+    });
+
+  // Single-source risk: materials with 0 or 1 suppliers
+  const singleSource = active.filter(m => !m.suppliers || m.suppliers.length <= 1).length;
+
+  // Top expensive (admin/wallet only)
+  let topExpensive = '';
+  if (showCost) {
+    const top = active
+      .filter(m => parseFloat(m.cost) > 0)
+      .sort((a,b) => (parseFloat(b.cost)||0) - (parseFloat(a.cost)||0))
+      .slice(0, 5);
+    if (top.length) {
+      topExpensive = `\n\nأغلى 5 خامات نشطة:\n${top.map((m,i) =>
+        `${i+1}. ${m.name}: ${fn(m.cost)} ج / ${m.unit || 'وحدة'}`).join('\n')}`;
+    }
+  }
+
+  return `
+🧱 الخامات:
+- إجمالي الخامات: ${list.length} (نشطة: ${active.length} · معطلة: ${inactive})
+- خامات بمورد واحد أو بدون مورد (مخاطرة): ${singleSource}
+
+التوزيع حسب النوع:
+${typeLines.join('\n')}${topExpensive}
+`.trim();
+}
+
+function buildWorkflow({ jobOrders, orders }) {
+  const list = (jobOrders || []).filter(j => !j.isDeleted);
+  if (!list.length) return '⚙️ أوامر التشغيل:\n- لا توجد بيانات.';
+
+  const byStatus = {};
+  list.forEach(j => {
+    const s = j.status || 'new';
+    byStatus[s] = (byStatus[s] || 0) + 1;
+  });
+
+  // Most-used routes
+  const byRoute = {};
+  list.forEach(j => {
+    const r = j.routeName || j.routeId || 'غير محدد';
+    if (!byRoute[r]) byRoute[r] = 0;
+    byRoute[r]++;
+  });
+  const topRoutes = Object.entries(byRoute).sort((a,b) => b[1]-a[1]).slice(0, 5);
+
+  // Late job orders (past dueDate, not completed)
+  const today = new Date().toISOString().slice(0,10);
+  const late = list.filter(j =>
+    j.status !== 'completed' && j.status !== 'cancelled' &&
+    j.dueDate && j.dueDate < today
+  ).length;
+
+  // Pending stages across all active jobs
+  const activeJobs = list.filter(j => !['completed','cancelled'].includes(j.status));
+  let pendingStages = 0;
+  activeJobs.forEach(j => {
+    (j.stages || []).forEach(s => {
+      if (s.status === 'pending' || s.status === 'in_progress') pendingStages++;
+    });
+  });
+
+  return `
+⚙️ أوامر التشغيل (Job Orders):
+- إجمالي: ${list.length} · نشطة: ${activeJobs.length}
+- متأخرة عن موعدها: ${late}
+- مراحل قيد الانتظار/التنفيذ: ${pendingStages}
+
+التوزيع حسب الحالة:
+${Object.entries(byStatus).map(([s,n]) => `- ${s}: ${n}`).join('\n')}
+
+أكثر المسارات استخداماً:
+${topRoutes.map(([r,n],i) => `${i+1}. ${r}: ${n}`).join('\n')}
+`.trim();
+}
+
 const BUILDERS = {
   orders:     buildOrders,
   clients:    buildClients,
@@ -249,6 +409,8 @@ const BUILDERS = {
   suppliers:  buildSuppliers,
   shipping:   buildShipping,
   production: buildProduction,
+  materials:  buildMaterials,
+  workflow:   buildWorkflow,
 };
 
 /**
@@ -274,6 +436,8 @@ export function buildContext({ domains, role, userId, data = {} }) {
       wallets:   data.wallets || [],
       employees: data.employees || [],
       suppliers: data.suppliers || [],
+      materials: data.materials || [],
+      jobOrders: data.jobOrders || [],
       payments:  data.payments || [],          // generic — used for suppliers/employees
       settlements: data.settlements || [],
       role, userId,
