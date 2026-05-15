@@ -172,6 +172,10 @@ export const AppState = {
   _unsubs:      [],
 };
 
+// Expose AppState to non-module siblings (e.g. ai-launcher) that can't
+// import shared.js without re-running its side effects.
+if (typeof window !== 'undefined') window.AppState = AppState;
+
 // ═══════════════════════════════════════
 // AUTH MANAGER
 // ═══════════════════════════════════════
