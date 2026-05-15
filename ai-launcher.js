@@ -93,17 +93,27 @@ import { getFirestore, collection, getDocs, getDoc, doc, query, where, limit } f
     return todayCache;
   }
 
-  // ── Open-entity (URL-based) — fetched on demand for the current page ──
-  let entityCache = null;
+  // ── Open-entity resolver — prefers in-memory AppState, falls back to URL ──
+  // We DON'T cache here: pages mutate AppState.openEntity as the user
+  // navigates between modals, so we re-resolve every time the user asks.
   async function loadOpenEntity() {
-    if (entityCache !== null) return entityCache;
-    entityCache = '';
+    const role = window.AppState?.currentRole || '';
+
+    // Fast path: page explicitly set the open entity (no Firestore needed).
+    const mem = window.AppState?.openEntity;
+    if (mem && mem.type && mem.doc) {
+      const related = mem.type === 'client'
+        ? dataCache.orders.filter(o => o.clientId === mem.id || o.clientName === mem.doc.name)
+        : [];
+      return buildEntitySection({ type: mem.type, doc: mem.doc, relatedOrders: related, role });
+    }
+
+    // Fallback: detect from URL and fetch.
     const ent = detectOpenEntity(location.pathname, location.search);
-    if (!ent) return entityCache;
+    if (!ent) return '';
     try {
       let docData = null;
       if (ent.byField) {
-        // Fetch by field (e.g. order tracking ref → orderId field)
         const snap = await getDocs(query(collection(db, ent.collection), where(ent.byField, '==', ent.id), limit(1)))
           .catch(() => ({ docs: [] }));
         if (snap.docs.length) docData = { ...snap.docs[0].data(), _id: snap.docs[0].id };
@@ -112,25 +122,16 @@ import { getFirestore, collection, getDocs, getDoc, doc, query, where, limit } f
         const snap = await getDoc(ref).catch(() => null);
         if (snap?.exists()) docData = { ...snap.data(), _id: snap.id };
       }
-      if (!docData) return entityCache;
+      if (!docData) return '';
 
-      // For clients/employees: related orders from already-loaded orders
-      let related = [];
-      if (ent.type === 'client') {
-        related = dataCache.orders.filter(o =>
-          o.clientId === ent.id || o.clientName === docData.name
-        );
-      }
-      entityCache = buildEntitySection({
-        type: ent.type,
-        doc: docData,
-        relatedOrders: related,
-        role: (window.AppState?.currentRole || ''),
-      });
+      const related = ent.type === 'client'
+        ? dataCache.orders.filter(o => o.clientId === ent.id || o.clientName === docData.name)
+        : [];
+      return buildEntitySection({ type: ent.type, doc: docData, relatedOrders: related, role });
     } catch (e) {
       console.warn('[ai-launcher] loadOpenEntity failed:', e);
+      return '';
     }
-    return entityCache;
   }
 
   function buildCompactContext(orders, clients) {
