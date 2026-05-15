@@ -330,9 +330,27 @@
     bindCollapsibleGroups(navScroll);
 
     // 3) Watch for re-renders of .nav-scroll content (clients/index/dashboards)
-    const obs = new MutationObserver(() => {
-      enhanceLinks(navScroll);
-      bindCollapsibleGroups(navScroll);
+    //    استخدام disconnect/reconnect + debounce لمنع حلقة الـ observer
+    //    (التعديلات اللي أعملها داخل enhanceLinks كانت تطلق الـ observer
+    //     مرة تانية → loop → بطء في كل الصفحات).
+    let scheduled = false;
+    let obs;
+    function runEnhance() {
+      if (!obs) return;
+      obs.disconnect();
+      try {
+        enhanceLinks(navScroll);
+        bindCollapsibleGroups(navScroll);
+      } finally {
+        obs.observe(navScroll, { childList: true });
+      }
+      scheduled = false;
+    }
+    obs = new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      // debounce — لو page بتعمل innerHTML متكرر، نشتغل مرة واحدة بعد ما تستقر
+      setTimeout(runEnhance, 80);
     });
     obs.observe(navScroll, { childList: true });
   }
