@@ -114,7 +114,7 @@
 
     <!-- KPIs الأرصدة -->
     <div class="stats" style="margin-bottom:12px">
-      <div class="stat" style="--sc:var(--g)"><div class="stat-icon">💼</div><div class="stat-val" id="kpi-bal">—</div><div class="stat-lbl">إجمالي الأرصدة</div></div>
+      <div class="stat" style="--sc:var(--g);cursor:pointer" onclick="openKpiDrill('bal')"><div class="stat-icon">💼</div><div class="stat-val" id="kpi-bal">—</div><div class="stat-lbl">إجمالي الأرصدة</div></div>
       <div class="stat" style="--sc:var(--b);cursor:pointer" onclick="openKpiDrill('in')"><div class="stat-icon">📥</div><div class="stat-val" id="kpi-in">—</div><div class="stat-lbl" id="kpi-in-lbl">إيرادات الفترة</div></div>
       <div class="stat" style="--sc:var(--r);cursor:pointer" onclick="openKpiDrill('out')"><div class="stat-icon">📤</div><div class="stat-val" id="kpi-out">—</div><div class="stat-lbl" id="kpi-out-lbl">مصروفات الفترة</div></div>
       <div class="stat" style="--sc:var(--y);cursor:pointer" onclick="openKpiDrill('profit')"><div class="stat-icon">💹</div><div class="stat-val" id="kpi-profit">—</div><div class="stat-lbl" id="kpi-profit-lbl">صافي الفترة</div></div>
@@ -133,10 +133,11 @@
         <div style="font-size:10px;color:var(--dim2);margin-top:2px" id="kpi-ship-collected">—</div>
         <div class="rev-pill" style="background:rgba(59,158,255,.12);color:var(--b)">تفاصيل ↓</div>
       </div>
-      <div class="rev-card" style="--rc:var(--y)">
+      <div class="rev-card" style="--rc:var(--y);cursor:pointer" onclick="openKpiDrill('earned')">
         <div class="rev-title">✅ إيرادات مكتسبة</div>
         <div class="rev-val" id="kpi-earned">—</div>
         <div style="font-size:10px;color:var(--dim2);margin-top:4px" id="kpi-earned-count">— طلب مكتمل</div>
+        <div class="rev-pill" style="background:rgba(255,170,0,.12);color:var(--y);margin-top:4px">تفاصيل ↓</div>
       </div>
     </div>
     <!-- عناصر مخفية لـ KPIs القديمة (لازم تبقى عشان الكود) -->
@@ -993,6 +994,74 @@ window.openKpiDrill=function(drillType, walletFilter){
       </div>
       ${s.due>0?`<button onclick="quickPaySup('${s._id}','${(s.name||'').replace(/'/g,"\\'")}',${s.due});closePanel();" style="width:100%;padding:7px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:12px;font-weight:800;cursor:pointer">💸 دفع ${fn(s.due)} ج</button>`:''}
     </div>`).join('')||`<div style="text-align:center;padding:20px;color:var(--dim2)">لا توجد تكاليف مسجّلة</div>`}`;
+
+  } else if(drillType==='bal'){
+    // تفصيل إجمالي الأرصدة عبر كل المحافظ — من أين يأتي الرقم
+    title='💼 إجمالي الأرصدة — تفصيل المحافظ';
+    const ws=wallets.slice().sort((a,b)=>(parseFloat(b.balance)||0)-(parseFloat(a.balance)||0));
+    const total=ws.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+    html=`<div style="background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.2);border-radius:10px;padding:14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${ws.length} محفظة</span>
+      <span style="font-size:22px;font-weight:900;color:var(--g)">${fn(total)} ج</span>
+    </div>
+    ${ws.map(w=>{
+      const bal=parseFloat(w.balance)||0;
+      const pct=total>0?Math.round(bal/total*100):0;
+      const col=bal>=0?'var(--g)':'var(--r)';
+      return `<div style="background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer" onclick="closePanel();openWallet('${w._id}')">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:18px">${WICO[w.type]||'💼'}</span>
+            <div>
+              <div style="font-size:13px;font-weight:800">${w.name}</div>
+              <div style="font-size:10px;color:var(--dim2)">${WNAME[w.type]||w.type||'حساب'}</div>
+            </div>
+          </div>
+          <span style="font-size:15px;font-weight:900;color:${col}">${fn(bal)} ج</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(0,pct)}%;background:linear-gradient(90deg,var(--g),var(--c));border-radius:99px"></div>
+          </div>
+          <span style="font-size:10px;color:var(--dim2);font-weight:700;min-width:32px;text-align:left">${pct}%</span>
+        </div>
+      </div>`;
+    }).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد محافظ</div>`}
+    <div style="font-size:10px;color:var(--dim2);text-align:center;margin-top:10px">اضغط على محفظة لعرض حركاتها</div>`;
+
+  } else if(drillType==='earned'){
+    // إيرادات مكتسبة = مجموع salePrice للأوردرات في الأرشيف (مكتملة)
+    title=`✅ الإيرادات المكتسبة — ${label}`;
+    const archived=allOrders.filter(o=>o.stage==='archived' && isInPeriod(o.updatedAt||o.createdAt));
+    const total=archived.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+    // تجميع حسب نوع المنتج
+    const byProduct={};
+    archived.forEach(o=>{
+      const prod=o.product||(o.products||[]).map(p=>p.name).filter(Boolean).join(' + ')||'—';
+      if(!byProduct[prod]) byProduct[prod]={count:0,total:0,orders:[]};
+      byProduct[prod].count++;
+      byProduct[prod].total+=parseFloat(o.salePrice)||0;
+      byProduct[prod].orders.push(o);
+    });
+    const sorted=Object.entries(byProduct).sort(([,a],[,b])=>b.total-a.total);
+    html=`<div style="background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.2);border-radius:10px;padding:14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:800;font-size:13px;color:var(--dim2)">${archived.length} طلب مكتمل</span>
+      <span style="font-size:22px;font-weight:900;color:var(--y)">${fn(total)} ج</span>
+    </div>
+    ${sorted.map(([prod,d])=>`<div style="background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:800">${prod}</span>
+        <div style="text-align:left">
+          <div style="font-size:14px;font-weight:900;color:var(--y)">${fn(d.total)} ج</div>
+          <div style="font-size:10px;color:var(--dim2)">${d.count} طلب · متوسط ${fn(Math.round(d.total/d.count))} ج</div>
+        </div>
+      </div>
+      ${d.orders.slice(0,5).map(o=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+        <span style="color:var(--snow);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%">${o.clientName||'—'}</span>
+        <span style="color:var(--y);font-weight:700">${fn(parseFloat(o.salePrice)||0)} ج</span>
+      </div>`).join('')}
+      ${d.orders.length>5?`<div style="font-size:10px;color:var(--dim2);margin-top:4px;text-align:center">+ ${d.orders.length-5} طلب آخر</div>`:''}
+    </div>`).join('')||`<div style="text-align:center;padding:16px;color:var(--dim2)">لا توجد أوردرات مكتملة في الفترة</div>`}`;
   }
 
   document.getElementById('pn-hdr').innerHTML=`<div style="font-size:15px;font-weight:900">${title}</div>`;
