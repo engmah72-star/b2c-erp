@@ -2312,14 +2312,33 @@ window.addDesignFiles=function(inp){
 function renderDesignFilesList(){
   const el=document.getElementById('no-design-files-list');
   if(!el)return;
+  // Cleanup previous object URLs to avoid memory leak
+  if(window.__noDesignFileUrls){window.__noDesignFileUrls.forEach(u=>{try{URL.revokeObjectURL(u);}catch(e){}});}
+  window.__noDesignFileUrls=[];
   if(!window.__noDesignFiles.length){el.innerHTML='';return;}
+  const imgUrls=[];
   el.innerHTML=window.__noDesignFiles.map((f,i)=>{
     const isPdf=f.type==='application/pdf';
-    return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px">
-      <span style="font-size:18px;flex-shrink:0">${isPdf?'📄':'🖼️'}</span>
-      <span style="flex:1;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span>
-      <span style="font-size:10px;color:var(--dim2);flex-shrink:0">${(f.size/1024).toFixed(0)} KB</span>
-      <button onclick="window.removeDesignFile(${i})" style="flex-shrink:0;width:22px;height:22px;border-radius:50%;border:none;background:rgba(255,61,110,.15);color:var(--r);cursor:pointer;font-size:13px;line-height:1">✕</button>
+    const isImg=f.type?.startsWith('image/');
+    let thumb='';
+    if(isImg){
+      try{
+        const url=URL.createObjectURL(f);
+        window.__noDesignFileUrls.push(url);
+        imgUrls.push(url);
+        const imgIdx=imgUrls.length-1;
+        thumb=`<div onclick="event.stopPropagation();window.openImageViewer&&window.openImageViewer(${imgIdx},${JSON.stringify(imgUrls).replace(/"/g,'&quot;')})" style="width:48px;height:48px;border-radius:8px;flex-shrink:0;background:#0d0f1b url('${url}') center/cover no-repeat;cursor:zoom-in;border:1px solid var(--line)"></div>`;
+      }catch(e){thumb=`<span style="font-size:22px;flex-shrink:0">🖼️</span>`;}
+    } else {
+      thumb=`<div style="width:48px;height:48px;border-radius:8px;flex-shrink:0;background:rgba(59,158,255,.08);display:flex;align-items:center;justify-content:center;font-size:22px;border:1px solid var(--line)">${isPdf?'📄':'📎'}</div>`;
+    }
+    return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border-radius:10px;margin-bottom:6px">
+      ${thumb}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:right">${f.name}</div>
+        <div style="font-size:10px;color:var(--dim2);margin-top:2px">${(f.size/1024).toFixed(0)} KB</div>
+      </div>
+      <button onclick="window.removeDesignFile(${i})" style="flex-shrink:0;width:24px;height:24px;border-radius:50%;border:none;background:rgba(255,61,110,.15);color:var(--r);cursor:pointer;font-size:13px;line-height:1">✕</button>
     </div>`;
   }).join('');
 }
@@ -4131,6 +4150,59 @@ window.setStatusTab=function(tab,btn){
     },
   });
 })();
+</script>
+
+<!-- ═══ Image Viewer (Lightbox) ═══ -->
+<div id="img-viewer" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)" onclick="if(event.target===this)window.closeImageViewer()">
+  <div style="position:absolute;top:16px;right:16px;left:16px;display:flex;justify-content:space-between;align-items:center;z-index:2">
+    <span id="iv-counter" style="color:#fff;font-size:13px;font-weight:800;background:rgba(0,0,0,.4);padding:8px 14px;border-radius:99px">1 / 1</span>
+    <div style="display:flex;gap:8px">
+      <a id="iv-download" href="#" target="_blank" title="فتح في تبويب جديد" style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;text-decoration:none;backdrop-filter:blur(10px)">↗</a>
+      <button onclick="window.closeImageViewer()" title="إغلاق" style="width:42px;height:42px;border-radius:50%;background:rgba(255,61,110,.2);border:1px solid rgba(255,61,110,.4);color:#fff;font-size:18px;cursor:pointer;backdrop-filter:blur(10px)">✕</button>
+    </div>
+  </div>
+  <img id="iv-img" src="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:92vw;max-height:82vh;border-radius:12px;box-shadow:0 20px 80px rgba(0,0,0,.6);user-select:none;-webkit-user-drag:none">
+  <button id="iv-prev" onclick="window.imgViewerNav(-1)" style="position:absolute;top:50%;right:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">›</button>
+  <button id="iv-next" onclick="window.imgViewerNav(1)" style="position:absolute;top:50%;left:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">‹</button>
+</div>
+
+<script>
+window.__ivState = {urls:[], idx:0};
+window.openImageViewer = function(idx, urls){
+  if(!urls || !urls.length) return;
+  window.__ivState = {urls, idx: idx||0};
+  _ivRender();
+  document.getElementById('img-viewer').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+};
+window.closeImageViewer = function(){
+  document.getElementById('img-viewer').style.display = 'none';
+  document.body.style.overflow = '';
+};
+window.imgViewerNav = function(dir){
+  const s = window.__ivState;
+  s.idx = (s.idx + dir + s.urls.length) % s.urls.length;
+  _ivRender();
+};
+function _ivRender(){
+  const s = window.__ivState;
+  const img = document.getElementById('iv-img');
+  const counter = document.getElementById('iv-counter');
+  const dl = document.getElementById('iv-download');
+  const prev = document.getElementById('iv-prev');
+  const next = document.getElementById('iv-next');
+  if(img) img.src = s.urls[s.idx] || '';
+  if(counter) counter.textContent = (s.idx+1) + ' / ' + s.urls.length;
+  if(dl) dl.href = s.urls[s.idx] || '#';
+  if(prev) prev.style.display = s.urls.length>1 ? '' : 'none';
+  if(next) next.style.display = s.urls.length>1 ? '' : 'none';
+}
+document.addEventListener('keydown', e => {
+  if(document.getElementById('img-viewer')?.style.display !== 'block') return;
+  if(e.key === 'Escape') window.closeImageViewer();
+  else if(e.key === 'ArrowLeft') window.imgViewerNav(1);
+  else if(e.key === 'ArrowRight') window.imgViewerNav(-1);
+});
 </script>
 
 </body>
