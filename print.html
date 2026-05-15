@@ -798,6 +798,16 @@ window.moveTo=function(_stage){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;
   if(!o)return;
+  // Soft guard: warn if any offset product is not ready (RULE: full control to user)
+  const agg = computeOrderReadiness(o);
+  if(agg && !agg.allReady){
+    const missing = agg.items.filter(i=>!i.r.ready);
+    const lines = missing.map(i => `• ${i.name||'منتج'} — ${i.r.critical.filter(c=>!c.ok).map(c=>c.label).join('، ')}`).join('\n');
+    const sendCount = (o.products||[]).filter(p=>p.briefSentAt).length;
+    const totalOffset = agg.count;
+    const briefMsg = sendCount<totalOffset?`\n\n📨 لم يُرسل ${totalOffset-sendCount} منتج للمطبعة بعد.`:'';
+    if(!confirm(`⚠️ بيانات الإنتاج غير مكتملة:\n\n${lines}${briefMsg}\n\nتحويل للتنفيذ رغم ذلك؟`)) return;
+  }
   // افتح modal اختيار المنفّذ — التنفيذ الفعلي في confirmMoveToProduction
   const sel=document.getElementById('pick-prod-sel');
   if(sel)sel.value='';
@@ -912,6 +922,74 @@ window.confirmSplitOrder=async function(){
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+// ══ Build the WhatsApp brief message (matches existing message format) ══
+function buildProductBriefMessage(o, p){
+  const lines = [];
+  const fullProductName = p.name + (p.lamination && p.lamination!=='بلا' ? ' '+p.lamination : '');
+  lines.push(`الكمية: ${p.qty||'—'} ${fullProductName}`);
+
+  // Paper line — combine sheets, type, weight, cuts
+  if(p.paperSheets || p.paper){
+    const paperParts = [];
+    if(p.paperSheets) paperParts.push(String(p.paperSheets));
+    if(p.paper) paperParts.push(p.paper);
+    if(p.weight) paperParts.push(p.weight + 'جم');
+    let paperLine = `الورق: ${paperParts.join(' ')}`;
+    if(p.paperCuts) paperLine += ` * ${p.paperCuts}`;
+    lines.push(paperLine);
+  }
+
+  if(p.printSize || p.size) lines.push(`مقاس الطباعة: ${p.printSize || p.size}`);
+  if(p.zinkType)            lines.push(`الزنكات: ${p.zinkType}`);
+  if(p.lamination)          lines.push(`السلوفان: ${p.lamination}`);
+  if(p.innerType)           lines.push(`الداخلي: ${p.innerType}`);
+
+  // Press deadline (formatted as date/time)
+  if(p.pressDeadline){
+    const d = new Date(p.pressDeadline);
+    if(!isNaN(d)){
+      const date = d.toLocaleDateString('ar-EG');
+      const time = d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+      lines.push(`الميعاد المطلوب: ${date} ${time}`);
+    }
+  }
+
+  if(p.briefNotes) lines.push('', p.briefNotes);
+
+  return lines.join('\n');
+}
+
+// Send product brief to press via WhatsApp + record timestamp
+window.sendProductBrief = async function(orderId, idx){
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  if(!p.pressId){ toast('⚠️ اختر المطبعة أولاً','err'); return; }
+  const press = suppliers.find(s => s._id === p.pressId);
+  const phone = (press?.phone || press?.whatsapp || '').replace(/\D/g,'');
+  if(!phone){ toast('⚠️ المطبعة بدون رقم واتساب — حدّث بيانات المورد','err'); return; }
+  // Format phone for wa.me — prepend country code if missing
+  const waPhone = phone.startsWith('0') ? '20'+phone.slice(1) : phone.startsWith('20') ? phone : '20'+phone;
+  const message = buildProductBriefMessage(o, p);
+  const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
+  // Save timestamp (best-effort)
+  try{
+    const prods = [...(o.products||[])];
+    prods[idx] = {...prods[idx], briefSentAt: nowStr(), briefSentBy: auth?.currentUser?.uid||'', briefSentByName: userName||''};
+    await updateDoc(doc(db,'orders',orderId), {
+      products: prods,
+      timeline: [...(o.timeline||[]), {date: nowStr(), action:`📤 إرسال بيانات الإنتاج للمطبعة (${p.name||''} → ${press?.name||''})`, by: userName, byId: auth?.currentUser?.uid||''}],
+      updatedAt: serverTimestamp(),
+    });
+  }catch(e){
+    console.warn('briefSentAt save:', e?.message||e);
+  }
+  // Open WhatsApp in new tab
+  window.open(waUrl, '_blank');
+  toast('💬 فُتح واتساب · أرفق صورة التصميم يدوياً','ok');
+};
+
 // ══ Order-level Readiness (aggregates across offset products) ══
 function computeOrderReadiness(o){
   const prods = (o.products||[]).filter(p => (p.printType||'').includes('offset') || p.paperSheets || p.pressId);
@@ -1089,6 +1167,15 @@ function renderProductBrief(o, p, idx){
       <div style="margin-top:8px">
         <div style="font-size:10px;color:var(--dim2);margin-bottom:3px">📝 ملاحظات للمطبعة</div>
         <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:12px;font-family:inherit;direction:rtl;resize:vertical;box-sizing:border-box">${escAttr(p.briefNotes||'')}</textarea>
+      </div>
+
+      <!-- زر إرسال للمطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
+        <button onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:12px;font-weight:800;cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
+        </button>
+        ${p.briefSentAt?`<div style="font-size:9px;color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
+        ${!r.ready?`<div style="font-size:9px;color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
       </div>
     </div>`;
 }
