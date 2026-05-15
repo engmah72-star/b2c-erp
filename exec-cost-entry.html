@@ -27,6 +27,7 @@
 .ord-card.stg-printing{--accent:var(--b)}
 .ord-card.stg-production{--accent:var(--y)}
 .ord-card.stg-shipping{--accent:var(--c)}
+.ord-card.stg-archived{--accent:var(--dim)}
 .ord-head{padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ord-head-main{flex:1;min-width:0}
 .ord-client{font-size:16px;font-weight:900;color:var(--snow);line-height:1.3;margin-bottom:6px}
@@ -37,6 +38,7 @@
 .st-printing{background:rgba(59,158,255,.14);color:var(--b);border:1px solid rgba(59,158,255,.3)}
 .st-production{background:rgba(255,170,0,.14);color:var(--y);border:1px solid rgba(255,170,0,.3)}
 .st-shipping{background:rgba(34,211,238,.14);color:var(--c);border:1px solid rgba(34,211,238,.3)}
+.st-archived{background:rgba(120,120,120,.16);color:var(--dim);border:1px solid rgba(120,120,120,.3)}
 .ord-stats{padding:0 16px 10px;display:flex;gap:6px;flex-wrap:wrap}
 .ord-stat{background:var(--bg3);border:1px solid var(--line);padding:5px 10px;border-radius:9px;font-size:11px;font-weight:700;color:var(--dim2);display:inline-flex;align-items:center;gap:5px}
 .ord-stat strong{color:var(--snow);font-size:13px;font-weight:900}
@@ -412,6 +414,7 @@
       <button class="ftab" onclick="setFilter('shipping',this)">🚚 الشحن (<span id="cnt-shipping">0</span>)</button>
       <button class="ftab" onclick="setFilter('printing',this)">🖨️ الطباعة (<span id="cnt-printing">0</span>)</button>
       <button class="ftab" onclick="setFilter('design',this)">✏️ التصميم (<span id="cnt-design">0</span>)</button>
+      <button class="ftab" onclick="setFilter('archived',this)">📁 الأرشيف (<span id="cnt-archived">0</span>)</button>
     </div>
 
     <div class="sort-bar">
@@ -671,31 +674,33 @@ function getMissingCostOrders(){
   const seeAll=['admin','operation_manager','production_agent'].includes(currentRole);
   const uid=currentUser?.uid||'';
   return orders.filter(o=>{
-    if(o.stage==='archived')return false;
+    if(o.stage==='cancelled')return false;
     const hasItems=(o.costItems||[]).length>0;
     const isAwaiting=!!o.awaitingFinalArchive;
     // أظهر: (بدون بنود) أو (في انتظار مراجعة نهائية — حتى لو فيه بنود)
+    // ملاحظة: أي أوردر بدون بنود يظهر حتى لو وصل لأرشيف/شحن — لازم المندوب يسجّل تكاليفه
     if(hasItems && !isAwaiting)return false;
     if(seeAll)return true;
     if(o.productionAgent===uid)return true;
-    if(!o.productionAgent && ['production','shipping'].includes(o.stage))return true;
+    if(!o.productionAgent && ['production','shipping','archived'].includes(o.stage))return true;
     return false;
   });
 }
 
 function renderList(){
   const data=getMissingCostOrders();
-  const byStage={design:0,printing:0,production:0,shipping:0,other:0};
+  const byStage={design:0,printing:0,production:0,shipping:0,archived:0,other:0};
   data.forEach(o=>{const s=o.stage||'other';if(byStage[s]!=null)byStage[s]++;else byStage.other++;});
   setText('k-total',data.length);
   setText('k-production',byStage.production||0);
   setText('k-shipping',byStage.shipping||0);
-  setText('k-other',(byStage.design||0)+(byStage.printing||0));
+  setText('k-other',(byStage.design||0)+(byStage.printing||0)+(byStage.archived||0));
   setText('cnt-all',data.length);
   setText('cnt-production',byStage.production||0);
   setText('cnt-shipping',byStage.shipping||0);
   setText('cnt-printing',byStage.printing||0);
   setText('cnt-design',byStage.design||0);
+  setText('cnt-archived',byStage.archived||0);
   renderSmartKpis();
 
   let filtered=data;
@@ -708,7 +713,7 @@ function renderList(){
     return;
   }
 
-  const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'}};
+  const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'},archived:{cls:'st-archived',lbl:'📁 أرشيف'}};
   const hasLast=!!getLastCost();
   el.innerHTML=filtered.map(o=>{
     const stg=SM[o.stage]||{cls:'st-design',lbl:o.stage||'—'};
