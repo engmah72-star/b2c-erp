@@ -95,7 +95,14 @@
       + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:2px;}'
       // Active link polish — no !important (let page styles take precedence if needed)
       + '.nav-link.active{background:linear-gradient(135deg,rgba(167,139,250,.16),rgba(74,142,245,.08));}'
-      + '@media (max-width:768px){.sidenav.sb-compact{width:auto!important;min-width:0!important;}}';
+      // Mobile compact toolbar (يوفر مساحة عمودية للعناصر)
+      + '@media (max-width:768px){'
+      +   '.sb-tools{padding:6px 8px;gap:4px;}'
+      +   '.sb-search-row{padding:4px 7px;}'
+      +   '.sb-search-row input{font-size:13px;}'
+      +   '.sb-tool-btn{padding:5px 6px;font-size:10px;}'
+      +   '.sidenav.sb-compact{width:auto!important;min-width:0!important;}'
+      + '}';
     document.head.appendChild(s);
   }
 
@@ -266,7 +273,10 @@
         if (!original) return;
         const clone = original.cloneNode(true);
         clone.classList.add('sb-fav-clone');
-        // remove star/flame from clone (it's a clean duplicate at top)
+        // الـ clone هو اختصار — الـ active state تبقى فقط على الأصلي
+        // (لتفادي ظهور highlight مكرّر للصفحة الحالية)
+        clone.classList.remove('active');
+        // تنظيف بصري: star/flame تظهر فقط على الأصلي
         clone.querySelectorAll('.sb-star, .sb-flame').forEach(el => el.remove());
         section.appendChild(clone);
       });
