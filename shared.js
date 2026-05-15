@@ -8,7 +8,8 @@ import {
   getAuth, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc,
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
   query, orderBy, serverTimestamp, getDocs, where
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -28,9 +29,27 @@ const FB_CONFIG = {
   appId:             "1:235622448899:web:d8652ff71082f7d003f336",
 };
 
-export const app     = initializeApp(FB_CONFIG);
-export const auth    = getAuth(app);
-export const db      = getFirestore(app);
+export const app  = initializeApp(FB_CONFIG);
+export const auth = getAuth(app);
+
+// ═══════════════════════════════════════
+// FIRESTORE مع Local Cache (IndexedDB)
+// ═══════════════════════════════════════
+// initializeFirestore يجب أن يُستدعى مرة واحدة وقبل أي getFirestore.
+// لو فشل (مثلاً صفحة استدعت getFirestore قبلاً)، نستخدم fallback.
+// النتيجة: الزيارة الثانية لأي صفحة تُحمَّل من الـ cache فوراً بدون
+// انتظار round-trip للشبكة.
+let _db;
+try {
+  _db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+  console.log('[shared] ✅ Firestore persistent cache enabled');
+} catch (e) {
+  console.warn('[shared] persistent cache unavailable, fallback to default:', e?.message);
+  _db = getFirestore(app);
+}
+export const db = _db;
 export const storage = getStorage(app);
 
 // ═══════════════════════════════════════
