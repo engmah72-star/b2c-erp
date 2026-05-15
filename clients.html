@@ -609,6 +609,16 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
       </div>
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="c-notes" placeholder="أي تفاصيل إضافية..." style="min-height:70px"></textarea></div>
 
+      <!-- ══ ملاحظات داخلية خاصة بالموظفين فقط ══ -->
+      <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:12px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
+          <div style="font-size:11px;font-weight:800;color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
+          <span id="c-internal-meta" style="font-size:9px;color:var(--dim2);font-weight:700"></span>
+        </div>
+        <textarea class="inp" id="c-internal-notes" placeholder="ملاحظات خاصة بالموظفين فقط&#10;مثال: العميل صعب الإرضاء — يحتاج صبر / يدفع متأخر / صديق المدير / يفضّل الاتصال صباحاً..." style="min-height:70px;background:rgba(255,61,110,.03)"></textarea>
+        <div style="font-size:10px;color:var(--dim2);margin-top:6px;line-height:1.6">💡 المعرفة هنا تنتقل بين الموظفين — لا تُعرض في بوابة العميل أو الرسائل التلقائية</div>
+      </div>
+
       <!-- حقول خاصة بالعميل القديم — تظهر فقط في وضع قديم -->
       <div id="legacy-fields-section" style="display:none">
         <div class="divider" style="margin-top:8px"><div class="div-line"></div><div class="div-text">📁 بيانات العميل القديم</div><div class="div-line"></div></div>
@@ -1637,6 +1647,13 @@ function renderPanel(id){
         </div>
         ${tags.length?`<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${tags.map(t=>`<span class="tag" style="background:${TAG_COL[t]||'rgba(255,255,255,.06)'}">${TAG_LABELS[t]||t}</span>`).join('')}</div>`:''}
         ${c.notes?`<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:12px;color:var(--dim2)">📝 ${c.notes}</div>`:''}
+        ${c.internalNotes?`<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:12px;color:var(--snow);line-height:1.7">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+            <span style="font-size:10px;font-weight:800;color:var(--r)">🔒 ملاحظات داخلية</span>
+            ${c.internalNotesLastEdit?`<span style="font-size:9px;color:var(--dim2);font-weight:700">${c.internalNotesLastEdit.byName||''}${c.internalNotesLastEdit.at?.toDate?' · '+c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG'):''}</span>`:''}
+          </div>
+          <div style="white-space:pre-wrap">${c.internalNotes.replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[ch])}</div>
+        </div>`:''}
       </div>
       ${c.status==='legacy'?`
       <div style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:12px">
@@ -2229,7 +2246,8 @@ function openAddClient(){
   if(lfs)lfs.style.display='none';
   setText('client-title','＋ عميل جديد');
   setText('save-client-btn','✓ إضافة العميل');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes'].forEach(id=>sv(id,''));
+  const im=document.getElementById('c-internal-meta');if(im)im.textContent='';
   sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
@@ -2245,7 +2263,8 @@ function openAddLegacy(){
   window.__isLegacyMode=true;
   setText('client-title','＋ تسجيل عميل قديم');
   setText('save-client-btn','✓ حفظ العميل القديم');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  const im2=document.getElementById('c-internal-meta');if(im2)im2.textContent='';
   sv('c-legacy-last-order',''); sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
@@ -2278,6 +2297,15 @@ function editClient(id){
   }
   if(typeof checkIntlPhone==='function')checkIntlPhone();
   sv('c-email',c.email||''); sv('c-job',c.job||''); sv('c-notes',c.notes||'');
+  sv('c-internal-notes',c.internalNotes||'');
+  const imEl=document.getElementById('c-internal-meta');
+  if(imEl){
+    if(c.internalNotesLastEdit){
+      const e=c.internalNotesLastEdit;
+      const when=e.at?.toDate?e.at.toDate().toLocaleDateString('ar-EG'):'';
+      imEl.textContent=`آخر تعديل: ${e.byName||'—'}${when?' · '+when:''}`;
+    }else imEl.textContent='';
+  }
   sv('c-source',c.source||''); sv('c-sector',c.sector||'');
   fillGovSelect(); sv('c-gov',c.governorate||c.gov||'');
   fillCities(); sv('c-city',c.city||'');
@@ -2404,11 +2432,23 @@ async function saveClient(){
   const tags=[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag);
   btn.disabled=true; btn.textContent='جاري...';
   const isLegacy=window.__isLegacyMode||false;
+  // Internal notes — track who last edited
+  const internalNotes=(gv('c-internal-notes')||'').trim();
+  const prevClient=editId?clients.find(c=>c._id===editId):null;
+  const internalChanged=(prevClient?.internalNotes||'')!==internalNotes;
   const data={
     name, phone1, phone2:gv('c-phone2')||'',
     intlCountryCode:intlCC, intlPhone,
     email:gv('c-email')||'',
     job:gv('c-job')||'', notes:gv('c-notes')||'',
+    internalNotes,
+    ...(internalChanged?{
+      internalNotesLastEdit:{
+        by:currentUser?.uid||'',
+        byName:userName||'',
+        at:firebase.firestore.FieldValue.serverTimestamp(),
+      }
+    }:{}),
     source:gv('c-source')||'', sector:gv('c-sector')||'',
     governorate:gv('c-gov')||'', city:gv('c-city')||'', tags,
     status: isLegacy ? 'legacy' : 'active',
