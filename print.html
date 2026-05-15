@@ -414,7 +414,7 @@
 <script type="module">
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,updateDoc,getDoc,setDoc,query,where,serverTimestamp,addDoc,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -922,6 +922,85 @@ window.confirmSplitOrder=async function(){
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
+// ══ Templates: apply / save ══
+const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','lamination','innerType','briefNotes'];
+
+window.applyBriefTemplate = async function(orderId, idx, tplId){
+  if(!tplId) return;
+  const tpl = printBriefTemplates.find(t => t.id === tplId);
+  if(!tpl){ toast('⚠️ القالب غير موجود','err'); return; }
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const prods = [...(o.products||[])];
+  if(idx<0 || idx>=prods.length) return;
+  const patch = {};
+  TPL_FIELDS.forEach(f => {
+    if(tpl.fields && tpl.fields[f] !== undefined && tpl.fields[f] !== '') patch[f] = tpl.fields[f];
+  });
+  // Optional default press
+  if(tpl.defaultPressId){
+    const press = suppliers.find(s => s._id === tpl.defaultPressId);
+    if(press){ patch.pressId = press._id; patch.pressName = press.name||''; }
+  }
+  prods[idx] = {...prods[idx], ...patch};
+  try{
+    await updateDoc(doc(db,'orders',orderId), {products: prods, updatedAt: serverTimestamp()});
+    toast(`✅ طُبق قالب "${tpl.name}"`,'ok');
+  }catch(e){ toast('❌ '+e.message,'err'); }
+};
+
+window.openSaveTemplate = function(orderId, idx){
+  const o = orders.find(x => x._id === orderId);
+  if(!o) return;
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  // Has any data to save?
+  const hasAny = TPL_FIELDS.some(f => p[f] !== undefined && p[f] !== '' && p[f] !== 0);
+  if(!hasAny){ toast('⚠️ لا توجد بيانات لحفظها كقالب','err'); return; }
+  const defaultName = (p.name||'منتج') + (p.qty?' '+p.qty:'') + (p.lamination?' '+p.lamination:'');
+  const name = prompt('اسم القالب:', defaultName);
+  if(!name || !name.trim()) return;
+  saveBriefTemplate(orderId, idx, name.trim());
+};
+
+async function saveBriefTemplate(orderId, idx, name){
+  const o = orders.find(x => x._id === orderId);
+  const p = (o.products||[])[idx];
+  if(!p) return;
+  const fields = {};
+  TPL_FIELDS.forEach(f => {
+    if(p[f] !== undefined && p[f] !== '' && p[f] !== 0) fields[f] = p[f];
+  });
+  const tpl = {
+    id: 'tpl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    name,
+    productNameHint: p.name || '',
+    defaultPressId: p.pressId || '',
+    fields,
+    createdAt: nowStr(),
+    createdBy: auth?.currentUser?.uid || '',
+    createdByName: userName || '',
+  };
+  try{
+    const ref = doc(db,'master_lists','print_brief_templates');
+    const snap = await getDoc(ref);
+    const items = snap.exists() ? (snap.data().items || []) : [];
+    items.push(tpl);
+    if(snap.exists()){
+      await updateDoc(ref, {items, updatedAt: serverTimestamp()});
+    }else{
+      await setDoc(ref, {items, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
+    }
+    toast(`💾 حُفظ القالب "${name}"`,'ok');
+  }catch(e){
+    if((e?.message||'').toLowerCase().includes('permission')){
+      toast('🔒 لا تملك صلاحية حفظ القوالب','err');
+    }else{
+      toast('❌ '+e.message,'err');
+    }
+  }
+}
+
 // ══ Build the WhatsApp brief message (matches existing message format) ══
 function buildProductBriefMessage(o, p){
   const lines = [];
@@ -1087,11 +1166,21 @@ function renderProductBrief(o, p, idx){
   // Default print size: fall back to product size
   const printSize = p.printSize || p.size || '';
 
+  // Templates row
+  const tplOpts = '<option value="">— طبّق قالب —</option>' +
+    printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
+
   return `
     <div style="margin-top:10px;padding:10px;background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:10px">
       <div style="font-size:11px;font-weight:800;color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
         <span>🤖 بيانات الإنتاج (أوفست)</span>
         <span style="font-size:9px;color:var(--dim2);font-weight:600">يُسجَّل تلقائياً</span>
+      </div>
+
+      <!-- Templates row -->
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <select onchange="applyBriefTemplate('${o._id}',${idx},this.value);this.value=''" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:11px;font-family:inherit;direction:rtl;cursor:pointer">${tplOpts}</select>
+        <button onclick="openSaveTemplate('${o._id}',${idx})" title="احفظ المواصفات الحالية كقالب" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">💾 احفظ كقالب</button>
       </div>
 
       <!-- Readiness Card -->
@@ -1530,6 +1619,13 @@ onSnapshot(collection(db,'suppliers_v2'), snap => {
     .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   if(activeOrder) renderPanel(activeOrder);
 }, err => console.warn('suppliers listener:', err?.message||err));
+
+// قوالب الإنتاج (print_brief_templates) من master_lists
+let printBriefTemplates = [];
+onSnapshot(doc(db,'master_lists','print_brief_templates'), snap => {
+  printBriefTemplates = snap.exists() ? (snap.data().items || []) : [];
+  if(activeOrder) renderPanel(activeOrder);
+}, err => console.warn('templates listener:', err?.message||err));
 
 // المطابع المؤهلة لـ dropdown (Option B — offset/digital/both)
 function getPressOptions(){
