@@ -370,6 +370,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
       <button id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
     </div>
 
+    <!-- OCCASIONS BANNER (🎂/🏢 — auto-shown when there are today's/upcoming occasions) -->
+    <div id="occasions-banner" style="display:none;margin-bottom:14px"></div>
+
     <!-- GRID -->
     <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
       <div class="loader"><div class="spinner"></div></div>
@@ -562,6 +565,12 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
       <div class="g2">
         <div class="fg"><label>الوظيفة / النشاط</label><input class="inp" id="c-job" placeholder="محامي / طبيب / مطعم..."></div>
         <div class="fg"><label>إيميل (اختياري)</label><input class="inp" id="c-email" type="email" placeholder="example@gmail.com"></div>
+      </div>
+
+      <!-- ══ مناسبات (اختياري — تولّد متابعات تلقائية) ══ -->
+      <div class="g2">
+        <div class="fg"><label>🎂 تاريخ الميلاد (اختياري)</label><input class="inp" id="c-birthday" type="date"></div>
+        <div class="fg"><label>🏢 تاريخ تأسيس النشاط (اختياري)</label><input class="inp" id="c-anniversary" type="date"></div>
       </div>
 
       <div class="divider"><div class="div-line"></div><div class="div-text">📍 العنوان</div><div class="div-line"></div></div>
@@ -909,6 +918,75 @@ const STAGE_HREF={design:'design',printing:'print',production:'production',shipp
 // ══ UTILS ══
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
+
+// ── Occasions helpers (birthday/anniversary) ──
+function fmtOccasion(dateStr){
+  if(!dateStr)return '';
+  const d=new Date(dateStr);if(isNaN(d))return dateStr;
+  const now=new Date();
+  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
+  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
+  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
+  const md=d.toLocaleDateString('ar-EG',{month:'long',day:'numeric'});
+  const years=now.getFullYear()-d.getFullYear()-(next.getFullYear()>now.getFullYear()?0:0);
+  let label=md;
+  if(daysAway===0)label+=' 🎉 اليوم!';
+  else if(daysAway===1)label+=' (غداً)';
+  else if(daysAway<=7)label+=` (بعد ${daysAway} أيام)`;
+  return label;
+}
+function isOccasionToday(dateStr){
+  if(!dateStr)return false;
+  const d=new Date(dateStr);if(isNaN(d))return false;
+  const now=new Date();
+  return d.getMonth()===now.getMonth()&&d.getDate()===now.getDate();
+}
+function isOccasionSoon(dateStr,withinDays=7){
+  if(!dateStr)return false;
+  const d=new Date(dateStr);if(isNaN(d))return false;
+  const now=new Date();
+  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
+  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
+  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
+  return daysAway>0&&daysAway<=withinDays;
+}
+
+// Render the occasions banner: today's + upcoming (within 7 days).
+window.renderOccasionsBanner=function(){
+  const banner=document.getElementById('occasions-banner');
+  if(!banner)return;
+  const today=[], soon=[];
+  clients.forEach(c=>{
+    if(c.status==='legacy')return;
+    if(isOccasionToday(c.birthday))today.push({c,type:'birthday'});
+    else if(isOccasionSoon(c.birthday,7))soon.push({c,type:'birthday'});
+    if(isOccasionToday(c.anniversary))today.push({c,type:'anniversary'});
+    else if(isOccasionSoon(c.anniversary,7))soon.push({c,type:'anniversary'});
+  });
+  if(!today.length&&!soon.length){banner.style.display='none';banner.innerHTML='';return;}
+  const ico=t=>t==='birthday'?'🎂':'🏢';
+  const lbl=t=>t==='birthday'?'عيد ميلاد':'تأسيس النشاط';
+  const waMsg=(c,t)=>{
+    const baseB=`أهلاً ${c.name} 👋، كل سنة وحضرتك طيب 🎂 من فريق العمل — عرض خاص بمناسبة عيد ميلادك!`;
+    const baseA=`مبروك سنة جديدة على تأسيس "${c.name}" 🏢🎉 — عرض خاص بمناسبة الذكرى!`;
+    return encodeURIComponent(t==='birthday'?baseB:baseA);
+  };
+  const waNum=c=>(c.phone1||'').replace(/^0/,'');
+  const chip=(item,isToday)=>`<a href="https://wa.me/20${waNum(item.c)}?text=${waMsg(item.c,item.type)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:${isToday?'rgba(255,170,0,.15)':'rgba(59,158,255,.1)'};border:1px solid ${isToday?'rgba(255,170,0,.35)':'rgba(59,158,255,.25)'};color:${isToday?'var(--y)':'var(--b)'};font-size:11px;font-weight:800;text-decoration:none;margin:2px 0;cursor:pointer" title="فتح واتساب لإرسال تهنئة">
+    ${ico(item.type)} ${item.c.name} ${isToday?'':'· '+fmtOccasion(item.type==='birthday'?item.c.birthday:item.c.anniversary).replace(/[^()]*\(/,'(')}
+  </a>`;
+  banner.style.display='block';
+  banner.innerHTML=`
+    <div style="background:linear-gradient(90deg,rgba(255,170,0,.08),rgba(167,139,250,.06));border:1px solid rgba(255,170,0,.25);border-radius:var(--rad2);padding:12px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:${today.length||soon.length?'8':'0'}px">
+        <div style="font-size:12px;font-weight:800;color:var(--y)">${today.length?`🎉 اليوم: ${today.length} مناسبة`:'📅 مناسبات قريبة'}${soon.length&&today.length?` · ${soon.length} خلال 7 أيام`:soon.length?`${soon.length} خلال 7 أيام`:''}</div>
+        <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:14px;cursor:pointer">✕</button>
+      </div>
+      ${today.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:${soon.length?'8':'0'}px">${today.map(it=>chip(it,true)).join('')}</div>`:''}
+      ${soon.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${soon.map(it=>chip(it,false)).join('')}</div>`:''}
+      <div style="font-size:10px;color:var(--dim2);margin-top:6px">💡 اضغط على أي عميل لفتح واتساب برسالة تهنئة جاهزة</div>
+    </div>`;
+};
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -951,6 +1029,7 @@ auth.onAuthStateChanged(async u=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
+    renderOccasionsBanner();
     if(activeId) renderPanel(activeId);
     // Deep-link: ?openClient={id}[&tab=followups]
     if(!window.__deepLinked){
@@ -1643,6 +1722,8 @@ function renderPanel(id){
           ${c.source?pRow('📣 المصدر',c.source):''}
           ${c.job?pRow('💼 المهنة',c.job):''}
           ${c.email?pRow('📧 إيميل',c.email):''}
+          ${c.birthday?pRow('🎂 الميلاد',fmtOccasion(c.birthday)):''}
+          ${c.anniversary?pRow('🏢 تأسيس النشاط',fmtOccasion(c.anniversary)):''}
           ${daysSince!==null?pRow('🕐 آخر نشاط','منذ '+daysSince+' يوم'):''}
         </div>
         ${tags.length?`<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${tags.map(t=>`<span class="tag" style="background:${TAG_COL[t]||'rgba(255,255,255,.06)'}">${TAG_LABELS[t]||t}</span>`).join('')}</div>`:''}
@@ -2246,7 +2327,7 @@ function openAddClient(){
   if(lfs)lfs.style.display='none';
   setText('client-title','＋ عميل جديد');
   setText('save-client-btn','✓ إضافة العميل');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-birthday','c-anniversary'].forEach(id=>sv(id,''));
   const im=document.getElementById('c-internal-meta');if(im)im.textContent='';
   sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
@@ -2263,7 +2344,7 @@ function openAddLegacy(){
   window.__isLegacyMode=true;
   setText('client-title','＋ تسجيل عميل قديم');
   setText('save-client-btn','✓ حفظ العميل القديم');
-  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
+  ['c-name','c-phone1','c-phone2','c-email','c-job','c-notes','c-internal-notes','c-birthday','c-anniversary','c-legacy-spent','c-legacy-projects','c-legacy-notes'].forEach(id=>sv(id,''));
   const im2=document.getElementById('c-internal-meta');if(im2)im2.textContent='';
   sv('c-legacy-last-order',''); sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
@@ -2297,6 +2378,7 @@ function editClient(id){
   }
   if(typeof checkIntlPhone==='function')checkIntlPhone();
   sv('c-email',c.email||''); sv('c-job',c.job||''); sv('c-notes',c.notes||'');
+  sv('c-birthday',c.birthday||''); sv('c-anniversary',c.anniversary||'');
   sv('c-internal-notes',c.internalNotes||'');
   const imEl=document.getElementById('c-internal-meta');
   if(imEl){
@@ -2441,6 +2523,8 @@ async function saveClient(){
     intlCountryCode:intlCC, intlPhone,
     email:gv('c-email')||'',
     job:gv('c-job')||'', notes:gv('c-notes')||'',
+    birthday:gv('c-birthday')||'',
+    anniversary:gv('c-anniversary')||'',
     internalNotes,
     ...(internalChanged?{
       internalNotesLastEdit:{
