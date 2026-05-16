@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#07080f">
 <title>Business2Card — لوحة التنفيذية</title>
 <link rel="stylesheet" href="shared.css">
+<!-- Auth gate: hide the page until role check confirms access -->
+<style>body.auth-gate{visibility:hidden}</style>
 <script type="module" src="inbox-badge.js"></script>
 <style>
 /* ── Health Banner ── */
@@ -105,7 +107,7 @@
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 </head>
-<body>
+<body class="auth-gate">
 <div class="app-shell">
 
 <!-- ═══ SIDEBAR ═══ -->
@@ -283,9 +285,24 @@ onAuthStateChanged(auth,async u=>{
     const av=document.getElementById('nav-av');
     if(av)av.textContent=(ud.name||'A')[0].toUpperCase();
     buildSidebar(ud);
-    startListeners();
+    // Role confirmed → reveal page.
+    document.body.classList.remove('auth-gate');
+    try { startListeners(); }
+    catch(err){ console.error('startListeners:',err); showDashError(err.message); }
   }catch(e){console.error(e);location.href='login.html';}
 });
+
+function showDashError(msg){
+  let box=document.getElementById('dash-error');
+  if(!box){
+    box=document.createElement('div');
+    box.id='dash-error';
+    box.style.cssText='background:rgba(240,54,96,.08);border:1px solid rgba(240,54,96,.3);border-radius:12px;padding:12px 14px;color:#ff6b8a;font-size:12px;font-weight:600;margin:12px 16px';
+    document.querySelector('.main .content')?.prepend(box);
+  }
+  box.innerHTML=`⚠️ ${msg||'تعذّر تحميل البيانات'} <button onclick="location.reload()" style="margin-inline-start:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#ff6b8a;padding:4px 10px;border-radius:8px;font-weight:700;cursor:pointer">إعادة المحاولة</button>`;
+  box.style.display='block';
+}
 
 // Coalesce burst updates from 7 listeners into one frame.
 let _renderTimer=null;
@@ -297,23 +314,24 @@ function scheduleRenderAll(){
 function startListeners(){
   // Limit recent N records — exec dashboard shows live activity, not full history.
   // For full history use reports.html (unbounded).
+  const onErr=(name)=>(err)=>{console.error(`[${name}]`,err);showDashError(`فشل تحميل ${name}`);};
   onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     _ordersReady=true;scheduleRenderAll();
-  });
+  }, onErr('orders'));
   onSnapshot(collection(db,'clients'),snap=>{
     clients=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
-  });
+  }, onErr('clients'));
   onSnapshot(collection(db,'wallets'),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
-  });
+  }, onErr('wallets'));
   onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(2000)),snap=>{
     transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
     _txReady=true;scheduleRenderAll();
-  });
+  }, onErr('transactions'));
   onSnapshot(collection(db,'supplier_payments'),snap=>{
     supPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
-  });
+  }, onErr('supplier_payments'));
   getDocs(collection(db,'users')).then(snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
   });
