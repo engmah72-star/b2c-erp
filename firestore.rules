@@ -38,6 +38,22 @@ service cloud.firestore {
     function can(perm) {
       return isAdmin() || perms().get(perm, false) == true;
     }
+    // ══ Tenancy helpers (Phase 2 foundation — Stage 4) ══
+    // كل user له tenantId (افتراضياً merchant_001 لو غير معيّن).
+    // الكود القديم يكمل شغّال — الـ users القدامى يُعاملوا كأنهم من merchant_001.
+    // Phase 2: عند إضافة tenant جديد، حدّث users.tenantId لمستخدمي ذلك الـ tenant.
+    function getUserTenant() {
+      return userExists() ? getUserDoc().data.get('tenantId', 'merchant_001') : 'merchant_001';
+    }
+    function inSameTenant(resourceData) {
+      // resource ينتمي للـ tenant لو نفس الـ tenantId أو غير محدد (backward compat).
+      let rt = resourceData.get('tenantId', 'merchant_001');
+      return rt == getUserTenant();
+    }
+    function isDesignerTenant() {
+      // user مرتبط بـ designer_tenant — جاهز لـ Phase 2 (مصممين خارجيين).
+      return userExists() && getUserDoc().data.get('designerTenantId', '') != '';
+    }
     function validTx() {
       let d = request.resource.data;
       return d.amount is number && d.amount > 0
@@ -861,6 +877,26 @@ service cloud.firestore {
       allow read: if isAuth() && (isAdmin() || customerId == request.auth.uid);
       // Engine فقط يكتب (RULE 1: مصدر واحد).
       allow write: if isAuth() && canFinancialWrite();
+    }
+
+    // ══ Designer Tenants — هوية المصممين كـ "service provider tenants" (Phase 2 ready) ══
+    // كل مصمم له designer_tenant doc يحمل:
+    //   - displayName, bio, portfolio reference (galleryItemIds)
+    //   - status (active|suspended|kyc_pending)
+    //   - tenantId الخاص به (للتمييز عن merchant_001)
+    //   - ratings/feedback (سيُضاف لاحقاً)
+    // ربط: users.designerTenantId يشير لهذا doc.
+    // Phase 1: المصممون الداخليون يبقوا employees + اختيارياً designer_tenant.
+    // Phase 2: مصممون خارجيون يُسجّلون كـ designer_tenant فقط (بدون users.role).
+    match /designer_tenants/{designerId} {
+      // قراءة عامة: gallery يعرض المصممين على الزوار (دعاية).
+      allow read: if true;
+      // إنشاء/تحديث: المصمم لنفسه أو الأدمن.
+      allow create: if isAdminOnly() ||
+        (isAuth() && (hasPage('design') || can('canManageOwnDesignerProfile')));
+      allow update: if isAdminOnly() ||
+        (isAuth() && resource.data.get('ownerUid','') == request.auth.uid);
+      allow delete: if isAdminOnly();
     }
   }
 }
