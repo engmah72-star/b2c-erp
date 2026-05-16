@@ -140,6 +140,24 @@
 .uz-title{font-size:13px;font-weight:800;}
 .uz-sub{font-size:10px;color:var(--dim2);}
 .ver-upload-inp{display:none;}
+/* ── 3-file slots per version ── */
+.vc-slots{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:6px 8px;border-top:1px solid var(--line);background:rgba(0,0,0,.12);}
+.vc-slot{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:6px 5px;text-align:center;cursor:pointer;transition:all .15s;position:relative;min-height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.vc-slot:hover{border-color:rgba(167,139,250,.5);background:rgba(167,139,250,.08)}
+.vc-slot.filled{background:rgba(0,217,126,.08);border-color:rgba(0,217,126,.35)}
+.vc-slot.filled .vc-slot-ico{filter:none;opacity:1}
+.vc-slot.uploading{background:rgba(74,142,245,.1);border-color:rgba(74,142,245,.4);cursor:wait;pointer-events:none}
+.vc-slot-ico{font-size:16px;line-height:1;opacity:.5;transition:all .15s}
+.vc-slot-name{font-size:9px;font-weight:700;color:var(--dim2);line-height:1.2}
+.vc-slot.filled .vc-slot-name{color:var(--g)}
+.vc-slot-file{font-size:8px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr}
+.vc-slot-check{position:absolute;top:2px;left:2px;font-size:9px;color:var(--g)}
+.vc-slot-replace{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.35);border-radius:4px;padding:1px 4px;font-size:8px;color:#fff;opacity:0;transition:opacity .12s}
+.vc-slot.filled:hover .vc-slot-replace{opacity:1}
+.vc-completeness{font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;display:inline-block;margin-left:4px}
+.vc-completeness.full{background:rgba(0,217,126,.15);color:var(--g)}
+.vc-completeness.partial{background:rgba(240,160,32,.15);color:var(--y)}
+.vc-completeness.empty{background:rgba(255,61,110,.15);color:var(--r)}
 
 /* Version grid */
 .ver-grid-head{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;font-size:11px;color:var(--dim2);font-weight:700;}
@@ -1576,42 +1594,66 @@ function renderItemsSection(order, isAdm) {
     else if (printReady && !hasGallery) { naClass='na-done'; naIcon='🌐'; naText='جاهز للطباعة — يمكنك نشر التصميم في المعرض العام'; }
     else if (hasGallery) { naClass='na-done'; naIcon='✅'; naText='مكتمل — التصميم معتمد ومنشور في المعرض'; }
 
-    // Version cards
+    // Version cards (with 3 file slots: mockup, pdf, source)
     const verCardsHtml = versions.map((v, vi) => {
       const isClientVer = lastPub && v.vNum === lastPub.vNum;
       const isLatest = vi === versions.length - 1;
       const revAfter = revisions.find(r => r.createdAt > (v.uploadedAt||''));
+      // Backward compat: old versions only have imageUrl (treat as mockup)
+      const files = v.files || (v.imageUrl ? { mockup: { url: v.imageUrl, fileName: v.fileName || '' } } : {});
+      const filled = ['mockup','pdf','source'].filter(k => files[k]?.url).length;
+      const completeClass = filled === 3 ? 'full' : filled === 0 ? 'empty' : 'partial';
+      const completeLabel = filled === 3 ? 'مكتمل' : `${filled}/3`;
+      const thumbUrl = files.mockup?.url || v.imageUrl || '';
+      const slot = (k, ico, lbl, accept) => {
+        const f = files[k];
+        const ok = !!f?.url;
+        const fname = f?.fileName ? `<div class="vc-slot-file">${esc(f.fileName)}</div>` : '';
+        return `<label class="vc-slot ${ok?'filled':''}" title="${ok?'إعادة رفع: '+esc(f.fileName||''):'رفع '+lbl}">
+          <span class="vc-slot-ico">${ico}</span>
+          <span class="vc-slot-name">${lbl}</span>
+          ${fname}
+          ${ok?'<span class="vc-slot-check">✓</span><span class="vc-slot-replace">↻</span>':''}
+          <input type="file" accept="${accept}" style="display:none" onchange="uploadSlotFile('${item._id}',${v.vNum},'${k}',this)" ${ok?`onclick="if(!confirm('استبدال الملف الحالي؟')){this.value='';event.preventDefault();return false}"`:''}>
+        </label>`;
+      };
       return `<div class="ver-card ${isClientVer?'vc-pub':''}">
         <div class="vc-img" onclick="openLightboxItem('${item._id}',${vi})">
-          <img src="${v.imageUrl}" alt="v${v.vNum}" loading="lazy">
+          ${thumbUrl?`<img src="${thumbUrl}" alt="v${v.vNum}" loading="lazy">`:`<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim2);font-size:30px">📄</div>`}
           <div class="vc-overlay"><span class="vc-zoom-lbl">🔍 عرض كامل</span></div>
           ${isClientVer?`<div class="vc-pub-badge">👁 نُشر</div>`:isLatest?`<div class="vc-new-badge">جديد</div>`:''}
           ${revAfter?`<div class="vc-rev-badge">🔄 ${revAfter.reason?.slice(0,18)||'تعديل'}</div>`:''}
         </div>
         <div class="vc-info">
-          <div class="vc-vnum">النسخة ${v.vNum}</div>
+          <div class="vc-vnum">النسخة ${v.vNum}<span class="vc-completeness ${completeClass}">${completeLabel}</span></div>
           <div class="vc-date">${(v.uploadedAt||'').slice(0,10)||'—'} · ${v.uploadedByName||''}</div>
           ${isClientVer?`<div class="vc-pub-info">📤 نُشر ${(lastPub.publishedAt||'').slice(0,10)}</div>`:''}
           ${revAfter?`<div class="vc-rev-info">🔄 ${revAfter.reason||''}</div>`:''}
         </div>
+        <div class="vc-slots">
+          ${slot('mockup','📸','موك أب','image/*')}
+          ${slot('pdf','📄','PDF','.pdf,application/pdf')}
+          ${slot('source','📁','المصدر','.ai,.psd,.cdr,.eps,.zip,.svg,.indd,application/postscript')}
+        </div>
       </div>`;
     }).join('');
 
-    // Upload zone
+    // Upload zone — يبدأ نسخة جديدة (v+1) ويفتح سلوت الموك أب
+    const nextVNum = (versions[versions.length-1]?.vNum || 0) + 1;
     const uploadZone = `<div class="upload-zone ${hasVersions?'':'no-versions'}" data-itemid="${item._id}"
       onclick="document.getElementById('ver-inp-${item._id}').click()">
-      <input type="file" id="ver-inp-${item._id}" class="ver-upload-inp" accept="image/*,application/pdf,.ai,.psd,.eps"
-        onchange="uploadVersion('${item._id}',this)">
+      <input type="file" id="ver-inp-${item._id}" class="ver-upload-inp" accept="image/*,application/pdf,.ai,.psd,.eps,.cdr,.zip,.svg"
+        onchange="uploadSlotFile('${item._id}',${nextVNum},'auto',this)">
       ${hasVersions ? `<div class="uz-content compact">
         <span class="uz-sm-icon">☁️</span>
         <div>
-          <div class="uz-title" style="font-size:12px">رفع نسخة جديدة</div>
-          <div class="uz-sub">اسحب وأفلت · أو اضغط للاختيار</div>
+          <div class="uz-title" style="font-size:12px">＋ ابدأ نسخة v${nextVNum} جديدة</div>
+          <div class="uz-sub">اسحب الملف هنا · سيُحفظ في السلوت المناسب تلقائياً</div>
         </div>
       </div>` : `<div class="uz-content full">
         <div class="uz-big-icon">☁️</div>
-        <div class="uz-title">اسحب وأفلت ملف الموك أب هنا</div>
-        <div class="uz-sub">PNG · JPG · PDF · AI · PSD</div>
+        <div class="uz-title">ابدأ النسخة v1 — اسحب أول ملف هنا</div>
+        <div class="uz-sub">📸 موك أب (jpg/png) · 📄 PDF · 📁 المصدر (ai/psd/cdr/zip)</div>
       </div>`}
     </div>`;
 
@@ -1739,38 +1781,99 @@ function renderPerformance() {
 }
 
 // ── Item Actions ──
-window.uploadVersion = async function(itemId, inp) {
+// ── Infer slot kind from file ──
+function inferSlotKind(file) {
+  const name = (file.name || '').toLowerCase();
+  const mime = (file.type || '').toLowerCase();
+  if (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp)$/.test(name)) return 'mockup';
+  if (mime === 'application/pdf' || /\.pdf$/.test(name)) return 'pdf';
+  if (/\.(ai|psd|cdr|eps|zip|svg|indd|sketch|xd|fig)$/.test(name)) return 'source';
+  return 'source'; // default for unknown types
+}
+
+const SLOT_LABELS = { mockup: '📸 موك أب', pdf: '📄 PDF', source: '📁 المصدر' };
+
+// ── Upload one file to one slot of a specific version (creates version if missing) ──
+window.uploadSlotFile = async function(itemId, vNum, kind, inp) {
   const file = inp.files[0]; if (!file) return;
-  toast('جاري رفع الموك أب...', '');
-  let imageUrl = null;
-  const doFirestoreWrite = async (url) => {
-    const item = currentItems.find(i=>i._id===itemId);
-    const vNum = (item?.versions?.length||0) + 1;
-    const updates = {
-      versions: arrayUnion({ vNum, imageUrl: url, fileName: file.name, uploadedAt: new Date().toISOString(), uploadedBy: currentUid, uploadedByName: currentUserName }),
-      updatedAt: serverTimestamp(),
-      editHistory: arrayUnion({ action: 'version_uploaded', vNum, by: currentUid, byName: currentUserName, at: new Date().toISOString() })
-    };
-    // Default visibility on first upload: 'private' until explicitly requested for publish.
-    if(!item?.visibility){updates.visibility='private';updates.visibilitySetAt=serverTimestamp();}
-    await updateDoc(doc(db,'design_items',itemId), updates);
-    inp.value = '';
-    toast('✅ تم رفع v' + vNum + (item?.visibility?'':' · 🔒 خاص حتى تطلب النشر'), 'ok');
-  };
+  if (kind === 'auto') kind = inferSlotKind(file);
+  const slotLabel = SLOT_LABELS[kind] || kind;
+  const item = currentItems.find(i => i._id === itemId);
+  toast(`جاري رفع ${slotLabel}...`, '');
+  let fileUrl = null;
   try {
-    const sRef = ref(storage, `design-items/${itemId}_v${Date.now()}`);
+    const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+    // Organized path: design-files/{clientId}/{orderId}/{itemId}/v{vNum}/{kind}_{timestamp}.{ext}
+    const clientId = item?.clientId || 'unknown';
+    const orderId = item?.orderDocId || 'unknown';
+    const path = `design-files/${clientId}/${orderId}/${itemId}/v${vNum}/${kind}_${Date.now()}.${ext}`;
+    const sRef = ref(storage, path);
     await uploadBytes(sRef, file);
-    imageUrl = await getDownloadURL(sRef);
-    await doFirestoreWrite(imageUrl);
+    fileUrl = await getDownloadURL(sRef);
+
+    // Read latest item state, then merge files into target version (or create it)
+    const itemSnap = await getDoc(doc(db, 'design_items', itemId));
+    const itemData = itemSnap.exists() ? itemSnap.data() : { versions: [] };
+    const versions = [...(itemData.versions || [])];
+    let vIdx = versions.findIndex(v => v.vNum === vNum);
+    const fileEntry = {
+      url: fileUrl,
+      fileName: file.name,
+      size: file.size,
+      mime: file.type || '',
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: currentUid,
+      uploadedByName: currentUserName,
+    };
+    if (vIdx === -1) {
+      // Create new version
+      const newVer = {
+        vNum,
+        files: { [kind]: fileEntry },
+        // imageUrl alias for backward compat (so old readers + lightbox still work)
+        imageUrl: kind === 'mockup' ? fileUrl : '',
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: currentUid,
+        uploadedByName: currentUserName,
+      };
+      versions.push(newVer);
+    } else {
+      // Update existing version's slot
+      const v = versions[vIdx];
+      v.files = { ...(v.files || {}), [kind]: fileEntry };
+      if (kind === 'mockup') v.imageUrl = fileUrl; // refresh alias
+      // If this is the first time we add a mockup but imageUrl was empty, backfill
+      if (!v.imageUrl && v.files.mockup?.url) v.imageUrl = v.files.mockup.url;
+      versions[vIdx] = v;
+    }
+    const updates = {
+      versions,
+      updatedAt: serverTimestamp(),
+      editHistory: arrayUnion({
+        action: 'slot_uploaded',
+        vNum, kind, fileName: file.name,
+        by: currentUid, byName: currentUserName,
+        at: new Date().toISOString(),
+      }),
+    };
+    if (!itemData.visibility) {
+      updates.visibility = 'private';
+      updates.visibilitySetAt = serverTimestamp();
+    }
+    await updateDoc(doc(db, 'design_items', itemId), updates);
+    inp.value = '';
+    toast(`✅ ${slotLabel} v${vNum} مرفوع` + (itemData.visibility ? '' : ' · 🔒 خاص'), 'ok');
   } catch(e) {
-    if (imageUrl) {
-      try { await doFirestoreWrite(imageUrl); }
-      catch(e2) {
-        console.error('uploadVersion Firestore retry failed', { imageUrl, e2 });
-        toast('❌ تعذّر التسجيل — الرابط محفوظ في Console للاسترداد', 'err');
-      }
-    } else { toast('❌ ' + e.message, 'err'); }
+    console.error('uploadSlotFile failed', { itemId, vNum, kind, fileUrl, e });
+    toast(`❌ ${e.message}${fileUrl ? ' — الرابط: ' + fileUrl : ''}`, 'err');
   }
+};
+
+// Backward-compat shim — keep window.uploadVersion working for any old callers
+window.uploadVersion = function(itemId, inp) {
+  const item = currentItems.find(i => i._id === itemId);
+  const nextV = (item?.versions?.length || 0) + 1;
+  return uploadSlotFile(itemId, nextV, 'auto', inp);
 };
 
 window.markApproved = async function(itemId, current) {
@@ -1956,8 +2059,17 @@ function setupDragDrop() {
     zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over'); });
     zone.addEventListener('drop', e => {
       e.preventDefault(); zone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0]; if (!file) return;
-      uploadVersion(itemId, { files: [file] });
+      const files = Array.from(e.dataTransfer.files || []);
+      if (!files.length) return;
+      // إذا أُسقطت ملفات متعددة دفعة واحدة، وزّعها على السلوتات حسب النوع في نسخة جديدة
+      const item = currentItems.find(i => i._id === itemId);
+      const nextV = (item?.versions?.length || 0) + 1;
+      files.forEach(f => {
+        const kind = inferSlotKind(f);
+        const dt = new DataTransfer(); dt.items.add(f);
+        const fakeInp = { files: dt.files, value: '' };
+        uploadSlotFile(itemId, nextV, kind, fakeInp);
+      });
     });
   });
 }
