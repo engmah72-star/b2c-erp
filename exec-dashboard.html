@@ -45,6 +45,16 @@
 .fkpi-val{font-size:18px;font-weight:900;line-height:1.2;}
 .fkpi-lbl{font-size:9px;color:var(--dim2);font-weight:700;margin-top:3px;}
 
+/* ── Network Health KPIs (Marketplace DNA) ── */
+.nkpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px;}
+.nkpi{background:linear-gradient(135deg,rgba(74,142,245,.04),rgba(124,92,255,.04));border:1px solid var(--line);border-radius:14px;padding:14px 12px;position:relative;cursor:pointer;transition:transform .12s;}
+.nkpi:active{transform:scale(.97);}
+.nkpi-top{height:3px;border-radius:2px;position:absolute;top:0;left:0;right:0;}
+.nkpi-ico{font-size:14px;margin-bottom:4px;}
+.nkpi-val{font-size:20px;font-weight:900;line-height:1.2;}
+.nkpi-lbl{font-size:9px;color:var(--dim2);font-weight:700;margin-top:3px;}
+.nkpi-sub{font-size:8px;font-weight:700;margin-top:2px;color:var(--dim2);}
+
 /* ── Section header ── */
 .ex-sec{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;margin-top:4px;}
 .ex-sec-ttl{font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.6px;}
@@ -89,17 +99,20 @@
 @media(max-width:900px){
   .ekpi-grid{grid-template-columns:repeat(3,1fr);}
   .fkpi-grid{grid-template-columns:1fr 1fr;}
+  .nkpi-grid{grid-template-columns:repeat(3,1fr);}
 }
 @media(max-width:600px){
   .two-col{grid-template-columns:1fr;}
   .ekpi-grid{grid-template-columns:repeat(3,1fr);}
   .ekpi-val{font-size:17px;}
   .fkpi-grid{grid-template-columns:1fr 1fr;}
+  .nkpi-grid{grid-template-columns:1fr 1fr;}
   .health-bars{grid-template-columns:1fr;}
 }
 @media(max-width:400px){
   .ekpi-grid{grid-template-columns:repeat(2,1fr);}
   .fkpi-grid{grid-template-columns:1fr;}
+  .nkpi-grid{grid-template-columns:1fr;}
 }
 </style>
 <script src="wa-launcher.js?v=1" defer></script>
@@ -149,11 +162,23 @@
 
   <div class="content">
 
+    <!-- ── Date Range Picker ── -->
+    <div id="range-host"></div>
+
     <!-- ── صحة الشركة ── -->
     <div id="health-section">
       <div class="health-card" style="background:var(--bg2);">
         <div style="padding:24px;text-align:center;color:var(--dim2);font-size:13px;width:100%">⏳ جاري تحليل البيانات...</div>
       </div>
+    </div>
+
+    <!-- ── صحة الشبكة (Marketplace DNA) ── -->
+    <div class="ex-sec">
+      <span class="ex-sec-ttl">🌐 صحة الشبكة — مشاركون نشطون في المنصة</span>
+      <a href="reports.html" class="ex-sec-link">تقارير الشبكة ←</a>
+    </div>
+    <div class="nkpi-grid" id="net-grid">
+      <div class="nkpi" style="grid-column:1/-1"><div style="padding:14px;text-align:center;color:var(--dim2);font-size:12px">جاري التحميل...</div></div>
     </div>
 
     <!-- ── مؤشرات التشغيل ── -->
@@ -201,6 +226,12 @@ import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {getFirestore,collection,doc,onSnapshot,getDoc,getDocs,query,orderBy,limit} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dedupEmployees, resolveDesigner } from "./orders.js";
+import { mountDateRangePicker } from "./date-range-picker.js";
+
+const RANGE_STORAGE_KEY = 'exec-dash:range';
+// Current resolved range — updated by the picker's onChange.
+// Defaults to "this month" until the picker mounts.
+let CURRENT_RANGE = (()=>{ const d=new Date(); const s=new Date(d.getFullYear(),d.getMonth(),1,0,0,0,0); return { startMs:s.getTime(), endMs:Date.now(), label:'هذا الشهر', key:'this_month' }; })();
 
 const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
 const app=initializeApp(FB);
@@ -264,7 +295,7 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.logout=async()=>{await signOut(auth);location.href='login.html';};
 
 // ── Data ──
-let orders=[],clients=[],wallets=[],transactions=[],users=[],supPayments=[],employees=[];
+let orders=[],clients=[],wallets=[],transactions=[],users=[],supPayments=[],employees=[],suppliers=[];
 let _ordersReady=false,_txReady=false;
 
 // ── Auth ──
@@ -287,6 +318,7 @@ onAuthStateChanged(auth,async u=>{
     buildSidebar(ud);
     // Role confirmed → reveal page.
     document.body.classList.remove('auth-gate');
+    initRangePicker();
     try { startListeners(); }
     catch(err){ console.error('startListeners:',err); showDashError(err.message); }
   }catch(e){console.error(e);location.href='login.html';}
@@ -340,6 +372,22 @@ function startListeners(){
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     employees=dedupEmployees(raw);scheduleRenderAll();
   });
+  // suppliers (suppliers_v2) — لقياس "موردون جدد" في صحة الشبكة
+  onSnapshot(collection(db,'suppliers_v2'),snap=>{
+    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
+  }, onErr('suppliers'));
+}
+
+// ── Mount the date-range picker (after auth has revealed the page) ──
+function initRangePicker(){
+  const host = document.getElementById('range-host');
+  if(!host) return;
+  const picker = mountDateRangePicker({
+    container: host,
+    storageKey: RANGE_STORAGE_KEY,
+    onChange: (r) => { CURRENT_RANGE = r; scheduleRenderAll(); }
+  });
+  if(picker){ CURRENT_RANGE = picker.getRange(); }
 }
 
 window.manualRefresh=()=>{toast('🔄 البيانات محدّثة في الوقت الحقيقي','');};
@@ -351,6 +399,7 @@ function renderAll(){
   if(!_ordersReady)return;
   renderOps();
   renderFin();
+  renderNetwork();
   renderAlerts();
   renderHealth();
   renderEmployees();
@@ -394,53 +443,122 @@ function renderOps(){
 }
 
 // ═══════════════════════════════════════
-//  2 — FINANCIAL KPIs (Today + Month)
+//  2 — FINANCIAL KPIs (driven by selected date range)
 // ═══════════════════════════════════════
 function renderFin(){
-  const tMs=todayMs();const mMs=monthMs();
+  const {startMs,endMs,label}=CURRENT_RANGE;
+  const inRange=(ts)=>ts>=startMs && ts<=endMs;
 
-  // Today's orders (new sales)
-  const todayOrders=orders.filter(o=>{
-    const ts=(o.createdAt?.seconds||0)*1000;return ts>=tMs;
+  // Sales in range (new orders by createdAt)
+  const rangeOrders=orders.filter(o=>{
+    const ts=(o.createdAt?.seconds||0)*1000;return inRange(ts);
   });
-  const todaySales=todayOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const rangeSales=rangeOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
 
-  // Today's transactions
-  const todayTx=transactions.filter(t=>{
-    const ts=(t.createdAt?.seconds||0)*1000;return ts>=tMs;
+  // Cash movements in range
+  const rangeTx=transactions.filter(t=>{
+    const ts=(t.createdAt?.seconds||0)*1000;return inRange(ts);
   });
-  const todayIn=todayTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const todayOut=todayTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const todayNet=todayIn-todayOut;
+  const rangeIn=rangeTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const rangeOut=rangeTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const rangeNet=rangeIn-rangeOut;
 
-  // Total remaining across all active orders
+  // Total remaining is global (not period-bound)
   const totalRem=orders.filter(o=>!['archived'].includes(o.stage)).reduce((s,o)=>s+calcRem(o),0);
 
-  // Wallet balances
-  const totalBal=wallets.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
-
-  const fCard=(ico,lbl,val,col)=>`
+  const fCard=(ico,lbl,val,col,sub)=>`
     <div class="fkpi" onclick="location.href='accounts.html'">
       <div class="fkpi-top" style="background:${col}"></div>
       <div class="fkpi-ico">${ico}</div>
       <div class="fkpi-val" style="color:${col}">${fn(val)} <span style="font-size:10px;font-weight:700">ج</span></div>
       <div class="fkpi-lbl">${lbl}</div>
+      ${sub?`<div style="font-size:8px;color:var(--dim2);font-weight:700;margin-top:2px">${sub}</div>`:''}
     </div>`;
 
   const netCard=`
     <div class="fkpi" onclick="location.href='accounts.html'">
-      <div class="fkpi-top" style="background:${todayNet>=0?'var(--g)':'var(--r)'}"></div>
+      <div class="fkpi-top" style="background:${rangeNet>=0?'var(--g)':'var(--r)'}"></div>
       <div class="fkpi-ico">📈</div>
-      <div class="fkpi-val" style="color:${todayNet>=0?'var(--g)':'var(--r)'}">${todayNet<0?'−':''}${fn(Math.abs(todayNet))} <span style="font-size:10px;font-weight:700">ج</span></div>
-      <div class="fkpi-lbl">صافي الربح اليوم</div>
+      <div class="fkpi-val" style="color:${rangeNet>=0?'var(--g)':'var(--r)'}">${rangeNet<0?'−':''}${fn(Math.abs(rangeNet))} <span style="font-size:10px;font-weight:700">ج</span></div>
+      <div class="fkpi-lbl">صافي الفترة</div>
+      <div style="font-size:8px;color:var(--dim2);font-weight:700;margin-top:2px">${label}</div>
     </div>`;
 
   document.getElementById('fin-grid').innerHTML=
-    fCard('🛒','مبيعات اليوم',todaySales,'var(--b)')+
-    fCard('📥','تحصيل اليوم',todayIn,'var(--g)')+
-    fCard('⏳','المتبقي للتحصيل',totalRem,'var(--r)')+
-    fCard('📤','مصروفات اليوم',todayOut,'var(--y)')+
+    fCard('🛒','مبيعات الفترة',rangeSales,'var(--b)',label)+
+    fCard('📥','تحصيل الفترة',rangeIn,'var(--g)',label)+
+    fCard('⏳','المتبقي للتحصيل',totalRem,'var(--r)','إجمالي')+
+    fCard('📤','مصروفات الفترة',rangeOut,'var(--y)',label)+
     netCard;
+}
+
+// ═══════════════════════════════════════
+//  2.5 — NETWORK HEALTH KPIs (Marketplace DNA)
+//  Surfaces the platform's true asset: participation breadth.
+//  These numbers tell us whether the network is growing or shrinking
+//  during the selected period.
+// ═══════════════════════════════════════
+function renderNetwork(){
+  const {startMs,endMs,label}=CURRENT_RANGE;
+  const inRange=(ts)=>ts>=startMs && ts<=endMs;
+
+  // Orders inside the period — the lens for "active" participation
+  const periodOrders=orders.filter(o=>{
+    const ts=(o.createdAt?.seconds||0)*1000;return inRange(ts);
+  });
+
+  // 🎨 Active designers — distinct designerId on orders touched in the period
+  const designerSet=new Set();
+  periodOrders.forEach(o=>{ if(o.designerId) designerSet.add(String(o.designerId)); });
+  const activeDesigners=designerSet.size;
+
+  // 👥 Active clients — distinct clientId/clientName on orders in the period
+  const clientSet=new Set();
+  periodOrders.forEach(o=>{ const k=o.clientId||o.clientName; if(k) clientSet.add(String(k)); });
+  const activeClients=clientSet.size;
+
+  // 🏭 Active suppliers — distinct vendorId across supplier_payments OR order costItems in period
+  const supSet=new Set();
+  supPayments.forEach(p=>{
+    const ts=(p.createdAt?.seconds||0)*1000;
+    if(!inRange(ts))return;
+    if(p.supplierId) supSet.add(String(p.supplierId));
+  });
+  periodOrders.forEach(o=>{
+    (o.costItems||[]).forEach(c=>{ if(c.supplierId) supSet.add(String(c.supplierId)); });
+  });
+  const activeSuppliers=supSet.size;
+
+  // ➕ New suppliers onboarded in the period
+  const newSuppliers=suppliers.filter(s=>{
+    const ts=(s.createdAt?.seconds||0)*1000;return inRange(ts);
+  }).length;
+
+  // 💎 GMV — gross value flowing through the platform in the period
+  const gmv=periodOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
+  const orderCount=periodOrders.length;
+
+  const nCard=(ico,val,lbl,col,href,sub)=>`
+    <div class="nkpi" onclick="location.href='${href}'">
+      <div class="nkpi-top" style="background:${col}"></div>
+      <div class="nkpi-ico">${ico}</div>
+      <div class="nkpi-val" style="color:${col}">${val}</div>
+      <div class="nkpi-lbl">${lbl}</div>
+      <div class="nkpi-sub">${sub}</div>
+    </div>`;
+
+  document.getElementById('net-grid').innerHTML=
+    nCard('🎨',activeDesigners,'مصمّمون نشطون','var(--p)','employees.html',label)+
+    nCard('🏭',activeSuppliers,'موردون نشطون','var(--o)','suppliers.html',label)+
+    nCard('👥',activeClients,'عملاء نشطون','var(--b)','clients.html',label)+
+    nCard('➕',newSuppliers,'موردون جدد','var(--g)','suppliers.html',label)+
+    `<div class="nkpi" onclick="location.href='reports.html'">
+       <div class="nkpi-top" style="background:var(--y)"></div>
+       <div class="nkpi-ico">💎</div>
+       <div class="nkpi-val" style="color:var(--y)">${fn(gmv)} <span style="font-size:10px;font-weight:700">ج</span></div>
+       <div class="nkpi-lbl">GMV — قيمة التداول</div>
+       <div class="nkpi-sub">${orderCount} أوردر · ${label}</div>
+     </div>`;
 }
 
 // ═══════════════════════════════════════
@@ -539,15 +657,18 @@ function renderAlerts(){
 // ═══════════════════════════════════════
 function renderHealth(){
   if(!_ordersReady||!_txReady)return;
-  const tMs=todayMs();const mMs=monthMs();
+  // Range-aware: collection/profit ratios reflect the selected period
+  // so the health score moves consistently with the rest of the dashboard.
+  const {startMs,endMs,label:rangeLabel}=CURRENT_RANGE;
+  const inRange=(ts)=>ts>=startMs && ts<=endMs;
 
   const active=orders.filter(o=>!['archived','delivered'].includes(o.stage));
   const late=active.filter(o=>o.deadline&&delayDays(o.deadline)>0);
 
-  // Monthly
-  const mOrders=orders.filter(o=>(o.createdAt?.seconds||0)*1000>=mMs);
+  // Period-bound order value and cash movement
+  const mOrders=orders.filter(o=>inRange((o.createdAt?.seconds||0)*1000));
   const mTotal=mOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-  const mTx=transactions.filter(t=>(t.createdAt?.seconds||0)*1000>=mMs);
+  const mTx=transactions.filter(t=>inRange((t.createdAt?.seconds||0)*1000));
   const mIn=mTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const mOut=mTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
 
@@ -610,11 +731,11 @@ function renderHealth(){
       <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;text-align:center">
         <div style="background:rgba(255,255,255,.05);border-radius:10px;padding:8px 14px">
           <div style="font-size:18px;font-weight:900;color:var(--snow)">${fn(mIn)} ج</div>
-          <div style="font-size:9px;color:var(--dim2);font-weight:700">تحصيل الشهر</div>
+          <div style="font-size:9px;color:var(--dim2);font-weight:700">تحصيل ${rangeLabel}</div>
         </div>
         <div style="background:rgba(255,255,255,.05);border-radius:10px;padding:8px 14px">
           <div style="font-size:18px;font-weight:900;color:${mIn-mOut>=0?'var(--g)':'var(--r)'}">${fn(Math.abs(mIn-mOut))} ج</div>
-          <div style="font-size:9px;color:var(--dim2);font-weight:700">صافي الشهر</div>
+          <div style="font-size:9px;color:var(--dim2);font-weight:700">صافي ${rangeLabel}</div>
         </div>
       </div>
     </div>`;
