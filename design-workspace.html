@@ -670,9 +670,11 @@ const auth = getAuth(app), db = getFirestore(app), storage = getStorage(app);
 let currentRole = '', currentUid = '', currentUserName = '';
 let orders = [], allDesignItems = [], clientDecisions = [];
 let currentOrderId = null, currentItems = [], revTargetItemId = null, editItemId = null;
-let itemsUnsub = null, decisionsUnsub = null, ordersUnsub = null;
+let itemsUnsub = null, decisionsUnsub = null, ordersUnsub = null, galleryUnsub = null;
 let designerFilterUid = '', allDesigners = [];
 let galleryTargetItemId = null;
+// Public gallery map: galleryId → published doc data (mirror of what gallery.html shows)
+let galleryItems = new Map();
 // Portfolio state
 let activePfTab = 'portfolio', detailItemId = null, detailVerIdx = 0;
 const isAdmRole = () => ['admin','operation_manager'].includes(currentRole);
@@ -800,8 +802,21 @@ function pfMyItems(){
 }
 
 function bestVersionImage(it){
-  const v=(it.versions||[]).slice(-1)[0];
-  return v?.imageUrl||v?.thumbUrl||null;
+  // 1) If item is published to gallery → use the actual published image
+  //    (guaranteed correct + matches what gallery.html shows)
+  if (it?.galleryId && galleryItems.has(it.galleryId)) {
+    const g = galleryItems.get(it.galleryId);
+    if (g?.imageUrl) return g.imageUrl;
+  }
+  // 2) Walk versions from latest to oldest, looking for any mockup/image URL
+  //    (handles both old shape v.imageUrl and new shape v.files.mockup.url)
+  const versions = it?.versions || [];
+  for (let i = versions.length - 1; i >= 0; i--) {
+    const v = versions[i];
+    const url = v?.files?.mockup?.url || v?.imageUrl || v?.thumbUrl;
+    if (url) return url;
+  }
+  return null;
 }
 
 function renderPortfolio(){
@@ -913,24 +928,35 @@ function renderReviewQueue(){
 
 function renderPublicGrid(){
   const grid=document.getElementById('pf-public-grid');if(!grid)return;
-  const items=allDesignItems.filter(i=>visOf(i)==='public')
-    .sort((a,b)=>(b.publishApprovedAt?.seconds||b.updatedAt?.seconds||0)-(a.publishApprovedAt?.seconds||a.updatedAt?.seconds||0));
+  // Source of truth = gallery collection (same as gallery.html).
+  // Show ONLY items that are actually visible in the public gallery.
+  const items=allDesignItems
+    .filter(i=>visOf(i)==='public' && i.galleryId && galleryItems.has(i.galleryId))
+    .sort((a,b)=>{
+      const ga=galleryItems.get(a.galleryId), gb=galleryItems.get(b.galleryId);
+      return (gb?.publishedAt?.seconds||0)-(ga?.publishedAt?.seconds||0);
+    });
   if(!items.length){
     grid.innerHTML=`<div class="pf-empty"><div class="pf-empty-i">🌐</div><div class="pf-empty-t">المعرض العام فارغ</div><div class="pf-empty-h">عند اعتماد أول تصميم للنشر سيظهر هنا</div></div>`;
     return;
   }
   grid.innerHTML='<div class="pf-grid">'+items.map(i=>{
-    const img=bestVersionImage(i);
+    const g = galleryItems.get(i.galleryId) || {};
+    // Prefer the actual published image (what zwwar see), fall back to version image
+    const img = g.imageUrl || bestVersionImage(i);
+    const clientName = g.clientName || i.clientName || '—';
+    const productType = g.productType || i.itemName || '—';
+    const designerName = g.designerName || i.designerName || '';
     return `<div class="pf-card" onclick="openPfDetail('${i._id}')">
       <div class="pf-thumb">
         ${img?`<img src="${img}" alt="" loading="lazy">`:'🎨'}
         <span class="pf-status public">🌐 منشور</span>
       </div>
       <div class="pf-card-body">
-        <div class="pf-card-name">${i.clientName||'—'}</div>
+        <div class="pf-card-name">${clientName}</div>
         <div class="pf-card-meta">
-          <span>${i.itemName||'—'}</span>
-          <span>${i.designerName||''}</span>
+          <span>${productType}</span>
+          <span>${designerName}</span>
         </div>
       </div>
     </div>`;
@@ -959,7 +985,9 @@ function updatePortfolioCounts(){
   setText('pf-cnt-portfolio',mine.length);
   const reviewCount=allDesignItems.filter(i=>visOf(i)==='pending').length;
   setText('pf-cnt-review',reviewCount);
-  setText('pf-cnt-public',allDesignItems.filter(i=>visOf(i)==='public').length);
+  // Public count = items actually visible in gallery (matches gallery.html exactly)
+  const publicCount=allDesignItems.filter(i=>visOf(i)==='public' && i.galleryId && galleryItems.has(i.galleryId)).length;
+  setText('pf-cnt-public',publicCount);
   // Show review tab only for admins
   const tab=document.getElementById('pf-tab-review');
   if(tab)tab.style.display=isAdmRole()?'flex':'none';
@@ -1174,6 +1202,18 @@ function startListeners() {
   // Unsubscribe previous
   if (ordersUnsub) ordersUnsub();
   if (decisionsUnsub) decisionsUnsub();
+  if (galleryUnsub) galleryUnsub();
+
+  // Public gallery mirror — same query as gallery.html so counts/images match exactly
+  galleryUnsub = onSnapshot(
+    query(collection(db,'gallery'), where('isVisible','==',true)),
+    snap => {
+      galleryItems = new Map(snap.docs.map(d => [d.id, d.data()]));
+      updatePortfolioCounts();
+      if (activePfTab === 'public') renderPublicGrid();
+    },
+    err => console.warn('[design-workspace] gallery snapshot failed:', err)
+  );
 
   if (isAdm) {
     document.getElementById('admin-filter').style.display = 'flex';
