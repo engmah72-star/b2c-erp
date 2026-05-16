@@ -1089,7 +1089,13 @@ auth.onAuthStateChanged(async u=>{
   if(isAdmin){const t=document.getElementById('stab-cgrid');if(t)t.style.display='inline-flex';}
 
   // Listeners
-  db.collection('clients').orderBy('createdAt','desc').onSnapshot(snap=>{
+  // Bounded snapshots — the daily workflow only needs recent activity.
+  // Older docs are still readable on-demand (e.g. opening an old client
+  // by deep-link triggers a direct doc fetch below).
+  const CLIENTS_LIMIT = 2000;
+  const ORDERS_LIMIT  = 3000;
+  const TX_LIMIT      = 3000;
+  db.collection('clients').orderBy('createdAt','desc').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
@@ -1100,19 +1106,33 @@ auth.onAuthStateChanged(async u=>{
     if(!window.__deepLinked){
       const qs=new URLSearchParams(window.location.search);
       const oc=qs.get('openClient');
-      if(oc&&clients.some(c=>c._id===oc)){
-        window.__deepLinked=true;
-        openClient(oc);
-        if(qs.get('tab')==='followups'){
-          setTimeout(()=>{
-            const btn=document.getElementById('ptab-followups');
-            if(btn)window.switchPanelTab('followups',btn);
-          },50);
+      if(oc){
+        const found = clients.some(c=>c._id===oc);
+        if(found){
+          window.__deepLinked=true;
+          openClient(oc);
+          if(qs.get('tab')==='followups'){
+            setTimeout(()=>{
+              const btn=document.getElementById('ptab-followups');
+              if(btn)window.switchPanelTab('followups',btn);
+            },50);
+          }
+        } else {
+          // Client not in the recent window — fetch directly and prepend to the in-memory list.
+          db.collection('clients').doc(oc).get().then(docSnap=>{
+            if(!docSnap.exists)return;
+            const c={...docSnap.data(),_id:docSnap.id};
+            if(!c.isDeleted && (isAdmin || c.createdBy===u.uid)){
+              clients = [c, ...clients.filter(x=>x._id!==oc)];
+              window.__deepLinked=true;
+              openClient(oc);
+            }
+          }).catch(()=>{});
         }
       }
     }
   });
-  db.collection('orders').onSnapshot(snap=>{
+  db.collection('orders').orderBy('createdAt','desc').limit(ORDERS_LIMIT).onSnapshot(snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
@@ -1159,7 +1179,7 @@ auth.onAuthStateChanged(async u=>{
     if(snap.exists) settings=snap.data();
     fillGovSelect();
   });
-  db.collection('client_followups').onSnapshot(snap=>{
+  db.collection('client_followups').orderBy('createdAt','desc').limit(1500).onSnapshot(snap=>{
     allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
     followupsByClient.clear();
     allFollowups.forEach(f=>{
@@ -1192,7 +1212,7 @@ auth.onAuthStateChanged(async u=>{
     if(activeId) renderPanel(activeId);
   },err=>console.warn('client_segments listener:',err?.message||err));
 
-  db.collection('transactions_v2').onSnapshot(snap=>{
+  db.collection('transactions_v2').orderBy('createdAt','desc').limit(TX_LIMIT).onSnapshot(snap=>{
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
     txByOrder.clear();
     allTx.forEach(tx=>{
