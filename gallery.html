@@ -450,7 +450,7 @@ body{
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app = initializeApp({
   apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
@@ -481,22 +481,34 @@ let lbIndex = 0;
     </div>`).join('');
 })();
 
-async function loadGallery() {
+function loadGallery() {
   try {
-    const snap = await getDocs(query(
-      collection(db, 'gallery'),
-      where('isVisible', '==', true)
-    ));
-    allItems = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    document.getElementById('gal-skeleton').style.display = 'none';
-    if (!allItems.length) {
-      document.getElementById('gal-empty').style.display = 'block';
-      document.getElementById('gal-count').textContent = '0 تصميم';
-      return;
-    }
-    updateStats();
-    buildCategoryFilters();
-    renderGallery();
+    // Live subscription: التصاميم الجديدة تظهر تلقائياً بدون refresh
+    onSnapshot(
+      query(collection(db, 'gallery'), where('isVisible', '==', true)),
+      (snap) => {
+        allItems = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+        document.getElementById('gal-skeleton').style.display = 'none';
+        document.getElementById('gal-error').style.display = 'none';
+        if (!allItems.length) {
+          document.getElementById('gal-empty').style.display = 'block';
+          document.getElementById('gal-count').textContent = '0 تصميم';
+          // hide stats when empty
+          document.getElementById('gal-stats').style.display = 'none';
+          return;
+        }
+        document.getElementById('gal-empty').style.display = 'none';
+        updateStats();
+        buildCategoryFilters();
+        renderGallery();
+      },
+      (err) => {
+        console.error('[gallery] subscription failed:', err);
+        document.getElementById('gal-skeleton').style.display = 'none';
+        document.getElementById('gal-error').style.display = 'block';
+        document.getElementById('gal-error-msg').textContent = err.message || '';
+      }
+    );
   } catch(e) {
     document.getElementById('gal-skeleton').style.display = 'none';
     document.getElementById('gal-error').style.display = 'block';
