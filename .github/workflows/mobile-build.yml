@@ -2,6 +2,15 @@ name: Build Mobile App
 
 on:
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'نوع البناء'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release   # AAB موقّع لـ Play Store + APK release للاختبار
+          - debug     # APK debug فقط (للاختبار المحلي)
   push:
     branches: [main]
     paths:
@@ -13,12 +22,18 @@ permissions:
   contents: read
 
 jobs:
-  android-debug:
-    name: Android (debug APK)
+  android:
+    name: Android (${{ github.event.inputs.build_type || 'release' }})
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: mobile
+
+    # Build type: release بشكل افتراضي عند push على main (المحاولة الأولى تطبع AAB).
+    # debug عند الطلب اليدوي بـ workflow_dispatch.
+    env:
+      BUILD_TYPE: ${{ github.event.inputs.build_type || 'release' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -43,16 +58,137 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Build debug APK
+      # ────────────────────────────────────────────────────────────────────
+      # versionCode/versionName: نأخذ versionCode من GITHUB_RUN_NUMBER عشان
+      # كل بناء يكون عنده رقم متزايد (Play Store يرفض رفع نفس الـ versionCode).
+      # versionName: 1.0.<run>  — يظهر للمستخدم.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Stamp app version
+        run: |
+          set -e
+          GRADLE=android/app/build.gradle
+          # versionCode: integer متزايد (run_number كافٍ لأي معدّل نشر منطقي)
+          NEW_CODE=${GITHUB_RUN_NUMBER:-1}
+          NEW_NAME="1.0.${NEW_CODE}"
+          echo "→ versionCode=$NEW_CODE  versionName=$NEW_NAME"
+          # ابدل القيم الافتراضية التي يولّدها Capacitor
+          sed -i "s/versionCode [0-9]\+/versionCode $NEW_CODE/" "$GRADLE"
+          sed -i "s/versionName \".*\"/versionName \"$NEW_NAME\"/" "$GRADLE"
+          # طبع المقطع للتأكيد
+          grep -E "versionCode|versionName" "$GRADLE" | head -4
+
+      # ────────────────────────────────────────────────────────────────────
+      # توقيع release: نستخدم الـ "Injected Signing" من Android Gradle Plugin
+      # عبر -Pandroid.injected.signing.*  بدلاً من تعديل build.gradle.
+      # المفاتيح في GitHub Secrets:
+      #   ANDROID_KEYSTORE_BASE64       — keystore.jks مرمّز base64
+      #   ANDROID_KEYSTORE_PASSWORD     — password ملف الـ keystore
+      #   ANDROID_KEY_ALIAS             — alias المفتاح (مثال: business2card)
+      #   ANDROID_KEY_PASSWORD          — password المفتاح
+      # لو ANDROID_KEYSTORE_BASE64 غير موجود، نتخطى الـ release ونبني debug.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Decode keystore (release only)
+        if: env.BUILD_TYPE == 'release'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret غير مُعرَّف — يجب تجهيزه قبل بناء AAB للنشر"
+            echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          mkdir -p android/keystore
+          echo "$KS_B64" | base64 -d > android/keystore/release.jks
+          # تحقق سريع من سلامة الملف (يجب أن يكون > 1KB)
+          if [ ! -s android/keystore/release.jks ]; then
+            echo "::error::keystore الناتج فارغ — تأكد من ANDROID_KEYSTORE_BASE64 صحيح base64"
+            exit 1
+          fi
+          echo "HAS_KEYSTORE=true" >> "$GITHUB_ENV"
+          echo "→ keystore decoded ($(stat -c%s android/keystore/release.jks) bytes)"
+
+      # ────────────────────────────────────────────────────────────────────
+      # Build: AAB + APK release لو في keystore، APK debug لو لا.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Build AAB + APK (release, signed)
+        if: env.BUILD_TYPE == 'release' && env.HAS_KEYSTORE == 'true'
+        env:
+          KS_PASS:  ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          cd android
+          chmod +x ./gradlew
+          # AAB (للـ Play Store) + APK (للاختبار اليدوي بدون Play)
+          ./gradlew bundleRelease assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=$(pwd)/keystore/release.jks \
+            -Pandroid.injected.signing.store.password="$KS_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+
+      - name: Build APK (debug)
+        # debug build: للاختبار المحلي على جهاز بدون توقيع release.
+        # يعمل دائماً عند طلب debug، أو كـ fallback لو keystore غير متوفّر.
+        if: env.BUILD_TYPE == 'debug' || env.HAS_KEYSTORE == 'false'
         run: |
           cd android
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK artifact
+      # ────────────────────────────────────────────────────────────────────
+      # Artifacts: نرفع كل ما تم بناؤه
+      # ────────────────────────────────────────────────────────────────────
+      - name: Upload AAB (Play Store)
+        if: env.BUILD_TYPE == 'release' && env.HAS_KEYSTORE == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: b2c-erp-android-debug
+          name: b2c-erp-android-aab-release
+          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload APK (release, signed — للتثبيت المباشر)
+        if: env.BUILD_TYPE == 'release' && env.HAS_KEYSTORE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: b2c-erp-android-apk-release
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload APK (debug)
+        if: env.BUILD_TYPE == 'debug' || env.HAS_KEYSTORE == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: b2c-erp-android-apk-debug
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## 📱 Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build type | \`${BUILD_TYPE}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Has keystore | \`${HAS_KEYSTORE:-n/a}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| versionCode | \`${GITHUB_RUN_NUMBER}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| versionName | \`1.0.${GITHUB_RUN_NUMBER}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BUILD_TYPE" = "release" ] && [ "$HAS_KEYSTORE" = "true" ]; then
+            echo "✅ تم إنتاج **AAB موقّع** جاهز للرفع على Play Console." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**خطوات الرفع:**" >> "$GITHUB_STEP_SUMMARY"
+            echo "1. حمّل artifact \`b2c-erp-android-aab-release\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "2. ادخل [Play Console](https://play.google.com/console/) → التطبيق → Releases" >> "$GITHUB_STEP_SUMMARY"
+            echo "3. اختر track (Internal testing أولاً مُوصى به)" >> "$GITHUB_STEP_SUMMARY"
+            echo "4. Create new release → ارفع ملف \`app-release.aab\`" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$BUILD_TYPE" = "release" ]; then
+            echo "⚠️ بُنِيَ debug APK فقط لأن \`ANDROID_KEYSTORE_BASE64\` secret غير معرَّف." >> "$GITHUB_STEP_SUMMARY"
+            echo "أضف الـ secret في Settings → Secrets and variables → Actions لإنتاج AAB موقّع." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "🧪 debug APK جاهز للتثبيت اليدوي على الأجهزة." >> "$GITHUB_STEP_SUMMARY"
+          fi
