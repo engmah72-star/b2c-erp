@@ -1,11 +1,11 @@
 // Business2Card — Inbox unread badge helper
 // ─────────────────────────────────────────────
-// يقوم بإضافة 💬 link في الـ topbar الموجود في كل الصفحات مع badge
-// لعدد الرسائل غير المقروءة. يقرأ من collection conversations حيث
-// المستخدم الحالي participant ويجمع unreadCount[currentUid].
+// يُحقن floating action button دائري بأسفل-يسار الشاشة (نفس مكان زرار
+// الواتساب القديم) — يفتح inbox.html ويعرض badge للرسائل غير المقروءة
+// من collection conversations حيث المستخدم الحالي participant.
 //
 // الاستخدام: ضع <script type="module" src="inbox-badge.js"></script>
-// في أي صفحة تستخدم Firebase auth + topbar.
+// في أي صفحة تستخدم Firebase auth.
 
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -18,46 +18,59 @@ const app = getApps().length ? getApp() : initializeApp(FB);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const STYLE_ID = 'inbox-badge-style';
+const STYLE_ID = 'inbox-fab-style';
+const FAB_ID   = 'inbox-fab';
+const BADGE_ID = 'inbox-fab-badge';
+
+// Skip on pages that shouldn't show the FAB (public/redirect-only/login)
+function shouldSkipFab(){
+  const path = (location.pathname.split('/').pop()||'').toLowerCase();
+  if(path === 'inbox.html') return true; // don't link to self
+  const SKIP = ['login.html','client-login.html','client-portal.html','order-tracking.html','waybill.html','whatsapp.html','chat.html',''];
+  return SKIP.includes(path);
+}
+
 function ensureStyle(){
   if(document.getElementById(STYLE_ID))return;
   const s=document.createElement('style');s.id=STYLE_ID;
   s.textContent=`
-    .ib-tb-link{position:relative;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.04);color:var(--snow,#dce5f5);text-decoration:none;font-size:18px;transition:background .15s;border:1px solid var(--line,rgba(255,255,255,.07))}
-    .ib-tb-link:hover{background:rgba(255,255,255,.08)}
-    .ib-tb-badge{position:absolute;top:-3px;right:-3px;background:#ff3d6e;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 5px;min-width:18px;text-align:center;border:2px solid var(--bg2,#0d0f1b);box-shadow:0 0 0 1px rgba(255,61,110,.4)}
-    .ib-tb-badge.hidden{display:none}
-    @media(max-width:480px){.ib-tb-link{width:34px;height:34px;font-size:16px}}
+    #${FAB_ID}{position:fixed;bottom:22px;left:22px;z-index:9998;width:54px;height:54px;
+      border-radius:50%;background:linear-gradient(135deg,#4a8ef5,#7c5cff);color:#fff;
+      font-size:24px;text-align:center;border:none;cursor:pointer;padding:0;
+      box-shadow:0 4px 16px rgba(74,142,245,.42);
+      transition:transform .15s ease,box-shadow .15s ease;
+      font-family:inherit;display:flex;align-items:center;justify-content:center;
+      text-decoration:none;}
+    #${FAB_ID}:hover{transform:scale(1.08);box-shadow:0 6px 22px rgba(124,92,255,.55);}
+    #${FAB_ID}:active{transform:scale(.96);}
+    #${BADGE_ID}{position:absolute;top:-3px;right:-3px;background:#ff3d6e;color:#fff;
+      font-size:11px;font-weight:800;border-radius:11px;padding:2px 6px;min-width:20px;
+      text-align:center;border:2px solid #07080f;
+      box-shadow:0 0 0 1px rgba(255,61,110,.4);line-height:1;}
+    #${BADGE_ID}.hidden{display:none;}
+    @media (max-width:768px){
+      #${FAB_ID}{bottom:80px;left:14px;width:50px;height:50px;font-size:22px;}
+    }
   `;
   document.head.appendChild(s);
 }
 
-function injectIntoTopbar(){
-  // Look for existing topbar-right; create one if missing.
-  const tbr = document.querySelector('.topbar-right')||document.querySelector('.topbar');
-  if(!tbr)return null;
-  // Skip if we already injected (e.g. inbox.html itself)
-  if(document.getElementById('inbox-tb-link'))return null;
-  // Skip on inbox.html — don't show link to itself
-  if(location.pathname.endsWith('inbox.html'))return null;
+function injectFab(){
+  if(shouldSkipFab())return null;
+  if(document.getElementById(FAB_ID))return document.getElementById(FAB_ID);
+  ensureStyle();
   const a=document.createElement('a');
-  a.id='inbox-tb-link';
-  a.className='ib-tb-link';
+  a.id=FAB_ID;
   a.href='inbox.html';
-  a.title='المحادثات';
-  a.innerHTML=`💬<span class="ib-tb-badge hidden" id="inbox-tb-badge">0</span>`;
-  // Insert as the first child of topbar-right so it stays at the start
-  if(tbr.classList.contains('topbar-right')){
-    tbr.insertBefore(a,tbr.firstChild);
-  } else {
-    // Fallback: append to topbar
-    tbr.appendChild(a);
-  }
+  a.title='المحادثات الداخلية';
+  a.setAttribute('aria-label','المحادثات الداخلية');
+  a.innerHTML=`<span style="line-height:1">💬</span><span id="${BADGE_ID}" class="hidden">0</span>`;
+  document.body.appendChild(a);
   return a;
 }
 
 function updateBadge(n){
-  const b=document.getElementById('inbox-tb-badge');if(!b)return;
+  const b=document.getElementById(BADGE_ID);if(!b)return;
   if(n>0){
     b.textContent=n>99?'99+':String(n);
     b.classList.remove('hidden');
@@ -85,7 +98,6 @@ async function ensureNotifPermission(){
   try{const p=await Notification.requestPermission();return p==='granted';}
   catch(_){return false;}
 }
-const __lastNotifKeys=new Set();
 function spawnNotif(title,body,convId){
   if(!('Notification' in window)||Notification.permission!=='granted')return;
   if(document.visibilityState==='visible'&&location.pathname.endsWith('inbox.html'))return;
@@ -103,16 +115,10 @@ onAuthStateChanged(auth, user=>{
   if(!user)return;
   // Ask permission once per session (silent if already granted/denied)
   if('Notification' in window&&Notification.permission==='default'){
-    // delay a bit so we don't prompt right at login screen
     setTimeout(()=>ensureNotifPermission(),3000);
   }
-  // Defer until DOM is ready (the topbar might not be rendered yet)
   const setup=()=>{
-    ensureStyle();
-    if(!injectIntoTopbar()){
-      // try again on next animation frame in case topbar appears later
-      requestAnimationFrame(()=>{ensureStyle();injectIntoTopbar();});
-    }
+    injectFab();
     const q=query(collection(db,'conversations'),where('participants','array-contains',user.uid));
     unsubConv=onSnapshot(q,snap=>{
       let total=0;
@@ -145,3 +151,4 @@ onAuthStateChanged(auth, user=>{
     document.addEventListener('DOMContentLoaded',setup,{once:true});
   } else { setup(); }
 });
+
