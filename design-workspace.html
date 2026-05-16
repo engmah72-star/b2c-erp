@@ -1016,11 +1016,15 @@ window.reqPublish=async function(itemId){
 window.approvePublish=async function(itemId,direct){
   if(!isAdmRole()){toast('❌ الموافقة للأدمن فقط','err');return;}
   try{
-    const item=currentItems.find(i=>i._id===itemId);
+    // البحث في allDesignItems (مش currentItems) — لأن الزر يُستدعى من
+    // تبويبات لا يكون فيها أوردر مفتوح (المراجعة، المعرض، البورتفوليو).
+    const item=allDesignItems.find(i=>i._id===itemId) || currentItems.find(i=>i._id===itemId);
     if(!item){toast('⚠️ العنصر غير موجود','err');return;}
     const versions=item.versions||[];
     const latestVer=versions[versions.length-1];
-    if(!latestVer||!latestVer.imageUrl){toast('⚠️ لا توجد نسخة قابلة للنشر','err');return;}
+    // دعم الشكل الجديد (files.mockup.url) + القديم (imageUrl)
+    const mockupUrl = latestVer?.files?.mockup?.url || latestVer?.imageUrl;
+    if(!latestVer||!mockupUrl){toast('⚠️ لا توجد نسخة قابلة للنشر','err');return;}
     const order=orders.find(o=>o._id===(item.orderDocId||currentOrderId));
 
     // كتابة ذرّية: design_items.visibility + gallery doc — التصميم يظهر فوراً في gallery.html
@@ -1031,7 +1035,7 @@ window.approvePublish=async function(itemId,direct){
     batch.set(galleryRef,{
       title: item.galleryTitle || item.itemName || 'تصميم',
       description: item.galleryDesc || '',
-      imageUrl: latestVer.imageUrl,
+      imageUrl: mockupUrl,
       vNum: latestVer.vNum,
       clientName: item.clientName || order?.clientName || '',
       designerName: item.designerName || currentUserName,
@@ -1092,7 +1096,8 @@ window.withdrawPublic=async function(itemId){
   if(!isAdmRole()){toast('❌ السحب للأدمن فقط','err');return;}
   if(!confirm('سحب التصميم من النشر؟'))return;
   try{
-    const item=currentItems.find(i=>i._id===itemId);
+    // البحث في allDesignItems — قد يُستدعى من تبويب "المعرض العام" بلا أوردر مفتوح
+    const item=allDesignItems.find(i=>i._id===itemId) || currentItems.find(i=>i._id===itemId);
     // كتابة ذرّية: design_items.visibility + gallery.isVisible=false (soft-hide، التاريخ يبقى)
     const batch=writeBatch(db);
     batch.update(doc(db,'design_items',itemId),{
@@ -2091,7 +2096,7 @@ window.renderCurrentItems = function() {
 // ── Lightbox ──
 let lbVersions = [], lbIndex = 0;
 window.openLightboxItem = function(itemId, startIndex) {
-  const item = currentItems.find(i => i._id === itemId);
+  const item = allDesignItems.find(i => i._id === itemId) || currentItems.find(i => i._id === itemId);
   if (!item?.versions?.length) return;
   lbVersions = item.versions;
   lbIndex = Math.min(startIndex, lbVersions.length - 1);
@@ -2143,8 +2148,8 @@ function setupDragDrop() {
 
 // ── Publish to Client ──
 window.publishToClient = async function(itemId) {
-  const item = currentItems.find(i => i._id === itemId);
-  if (!item) return;
+  const item = allDesignItems.find(i => i._id === itemId) || currentItems.find(i => i._id === itemId);
+  if (!item) return toast('⚠️ التصميم غير موجود', 'err');
   const versions = item.versions || [];
   if (!versions.length) return toast('⚠️ ارفع موك أب أولاً', 'err');
   const latest = versions[versions.length - 1];
@@ -2165,8 +2170,9 @@ window.publishToClient = async function(itemId) {
 
 // ── Gallery Modal ──
 window.openGalleryModal = function(itemId) {
-  const item = currentItems.find(i => i._id === itemId);
-  if (!item) return;
+  // البحث في allDesignItems — الزر يظهر في تبويبات بدون أوردر مفتوح
+  const item = allDesignItems.find(i => i._id === itemId) || currentItems.find(i => i._id === itemId);
+  if (!item) return toast('⚠️ التصميم غير موجود', 'err');
   galleryTargetItemId = itemId;
   const versions = item.versions || [];
   if (!versions.length) return toast('⚠️ لا توجد نسخ للنشر', 'err');
@@ -2219,7 +2225,8 @@ window.confirmGalleryPublish = async function() {
     const itemId = galleryTargetItemId;
     if (!itemId) { toast('⚠️ لم يتم تحديد عنصر للنشر', 'err'); return; }
 
-    const item = currentItems.find(i => i._id === itemId);
+    // البحث في allDesignItems — الـ modal قد يفتح من تبويبات بلا أوردر مفتوح
+    const item = allDesignItems.find(i => i._id === itemId) || currentItems.find(i => i._id === itemId);
     if (!item) { toast('⚠️ العنصر غير موجود', 'err'); return; }
 
     const order = orders.find(o => o._id === (item.orderDocId||currentOrderId));
@@ -2233,6 +2240,10 @@ window.confirmGalleryPublish = async function() {
       : versions[versions.length - 1];
     if (!chosenVer) { toast('⚠️ لا توجد نسخة محددة', 'err'); return; }
 
+    // دعم الشكل الجديد (files.mockup.url) + القديم (imageUrl)
+    const chosenImageUrl = chosenVer?.files?.mockup?.url || chosenVer?.imageUrl;
+    if (!chosenImageUrl) { toast('⚠️ النسخة المختارة بلا صورة موك أب', 'err'); return; }
+
     const title = (document.getElementById('gal-title')?.value || '').trim() || item.itemName;
     const desc  = (document.getElementById('gal-desc')?.value  || '').trim();
 
@@ -2242,7 +2253,7 @@ window.confirmGalleryPublish = async function() {
     let dupTitle = null;
     try {
       const dupSnap = await getDocs(
-        query(collection(db, 'gallery'), where('imageUrl', '==', chosenVer.imageUrl))
+        query(collection(db, 'gallery'), where('imageUrl', '==', chosenImageUrl))
       );
       const dupDoc = dupSnap.docs.find(d => d.id !== item.galleryId && d.data().isVisible !== false);
       if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
@@ -2258,7 +2269,7 @@ window.confirmGalleryPublish = async function() {
     batch.set(galleryRef, {
       title,
       description: desc,
-      imageUrl: chosenVer.imageUrl,
+      imageUrl: chosenImageUrl,
       vNum: chosenVer.vNum,
       clientName: item.clientName || order?.clientName || '',
       designerName: item.designerName || currentUserName,
