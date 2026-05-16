@@ -89,6 +89,21 @@ textarea.inp::placeholder{color:var(--dim2);}
 .lb-x{position:fixed;top:16px;left:16px;width:38px;height:38px;border-radius:50%;
   background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;
   font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.portal-tabs{display:flex;gap:6px;padding:0 16px;margin-top:12px;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto}
+.portal-tab{padding:10px 16px;background:none;border:none;border-bottom:3px solid transparent;color:var(--dim2);font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .15s}
+.portal-tab:hover{color:var(--snow)}
+.portal-tab.active{color:var(--p);border-bottom-color:var(--p)}
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.lib-card{background:var(--bg2);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;cursor:pointer;transition:all .15s}
+.lib-card:hover{border-color:var(--p);transform:translateY(-2px)}
+.lib-img{aspect-ratio:4/3;background:var(--bg);overflow:hidden;position:relative}
+.lib-img img{width:100%;height:100%;object-fit:cover}
+.lib-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim2);font-size:30px;opacity:.4}
+.lib-body{padding:8px 10px}
+.lib-name{font-size:12px;font-weight:800;color:var(--snow);line-height:1.3;margin-bottom:3px}
+.lib-meta{font-size:10px;color:var(--dim2);font-weight:600}
+.lib-status{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;color:#fff;backdrop-filter:blur(4px)}
+.lib-vpill{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.6);padding:2px 7px;border-radius:8px;font-size:9px;color:#fff;font-weight:700;backdrop-filter:blur(4px)}
 </style>
 </head>
 <body>
@@ -103,6 +118,11 @@ textarea.inp::placeholder{color:var(--dim2);}
   </div>
   <button class="btn-logout" onclick="doLogout()">خروج ↩</button>
 </header>
+
+<div class="portal-tabs">
+  <button class="portal-tab active" id="tab-current" onclick="switchPortalTab('current')">📦 هذا الأوردر</button>
+  <button class="portal-tab" id="tab-library" onclick="switchPortalTab('library')">📚 كل تصاميمي</button>
+</div>
 
 <div class="portal-content" id="portal-content">
   <div class="loading" id="loading-state">⟳ جاري تحميل تصميمك...</div>
@@ -299,16 +319,118 @@ function renderPortal() {
   content.innerHTML = html;
 }
 
-// Load design_items for this order
+// ── Tab switching ──
+let currentTab = 'current';
+let allMyItems = [];  // all designs across all my orders
+let clientId = session.clientId || '';
+
+window.switchPortalTab = function(tab) {
+  currentTab = tab;
+  document.getElementById('tab-current').classList.toggle('active', tab === 'current');
+  document.getElementById('tab-library').classList.toggle('active', tab === 'library');
+  if (tab === 'library') renderLibrary();
+  else renderPortal();
+};
+
+// ── Library tab — all designs across all my orders ──
+function renderLibrary() {
+  const content = document.getElementById('portal-content');
+  if (!allMyItems.length) {
+    content.innerHTML = `<div style="text-align:center;padding:40px;color:var(--dim2)">⏳ جاري تحميل تصاميمك...<br><span style="font-size:11px">إذا لم تظهر، اطلب من فريقنا ربط حسابك</span></div>`;
+    return;
+  }
+  // Group by order
+  const byOrder = {};
+  allMyItems.forEach(i => {
+    const k = i.orderDocId || '_';
+    if (!byOrder[k]) byOrder[k] = { code: i.orderId || k.slice(0,8), items: [] };
+    byOrder[k].items.push(i);
+  });
+  const orders = Object.values(byOrder).sort((a,b) => {
+    const aLatest = Math.max(...a.items.map(i => new Date((i.versions||[]).slice(-1)[0]?.uploadedAt || 0).getTime()));
+    const bLatest = Math.max(...b.items.map(i => new Date((i.versions||[]).slice(-1)[0]?.uploadedAt || 0).getTime()));
+    return bLatest - aLatest;
+  });
+
+  const totalDesigns = allMyItems.length;
+  const totalApproved = allMyItems.filter(i => i.isApproved).length;
+
+  let html = `
+    <div class="order-banner">
+      <div class="ob-left">
+        <h2>📚 مكتبة تصاميمك</h2>
+        <p>كل التصاميم اللي عملناها معاك في كل الأوردرات السابقة والحالية</p>
+      </div>
+      <div style="text-align:left">
+        <div style="font-size:11px;color:var(--dim2);margin-bottom:2px">${totalDesigns} تصميم · ${totalApproved} معتمد</div>
+        <div style="font-size:22px;font-weight:900;color:var(--p)">${orders.length}</div>
+        <div style="font-size:10px;color:var(--dim2)">أوردر</div>
+      </div>
+    </div>
+  `;
+
+  orders.forEach(o => {
+    html += `<div class="section-title" style="margin-top:18px">📦 أوردر #${o.code} · ${o.items.length} بند</div>`;
+    html += `<div class="lib-grid">`;
+    o.items.forEach(item => {
+      const v = (item.versions || []).slice().sort((a,b)=>(b.vNum||0)-(a.vNum||0))[0];
+      const f = v?.files || {};
+      const thumb = f.mockup?.url || v?.imageUrl || '';
+      const verCount = (item.versions || []).length;
+      const status = item.isPrintReady ? '✅ مطبوع' : item.isApproved ? '✅ معتمد' : (verCount ? '⏳ قيد العمل' : '⏳ لم يبدأ');
+      html += `<div class="lib-card" onclick="${thumb?`openLb('${thumb.replace(/'/g,'%27')}')`:''}">
+        <div class="lib-img">
+          ${thumb ? `<img src="${thumb}" alt="" loading="lazy">` : `<div class="lib-empty">🎨</div>`}
+          <span class="lib-status">${status}</span>
+          ${verCount?`<span class="lib-vpill">v${v?.vNum||'?'} · ${verCount} نسخة</span>`:''}
+        </div>
+        <div class="lib-body">
+          <div class="lib-name">${item.itemName || '—'}</div>
+          <div class="lib-meta">الكمية ${item.itemQty || 1}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  content.innerHTML = html;
+}
+
+// Load design_items for THIS order
 onSnapshot(
   query(collection(db, 'design_items'), where('orderDocId', '==', orderDocId)),
   snap => {
     items = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
       .sort((a, b) => (a.itemIndex || 0) - (b.itemIndex || 0));
     document.getElementById('loading-state')?.remove();
-    renderPortal();
+    // Backfill clientId from any item if missing
+    if (!clientId && items[0]?.clientId) {
+      clientId = items[0].clientId;
+      session.clientId = clientId;
+      localStorage.setItem('clientSession', JSON.stringify(session));
+      subscribeAllMyDesigns();
+    }
+    if (currentTab === 'current') renderPortal();
   }
 );
+
+// Load ALL my designs across all my orders (for the library tab)
+function subscribeAllMyDesigns() {
+  if (!clientId) return;
+  onSnapshot(
+    query(collection(db, 'design_items'), where('clientId', '==', clientId)),
+    snap => {
+      allMyItems = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
+        .sort((a, b) => {
+          const av = (a.versions||[]).slice(-1)[0]?.uploadedAt || '';
+          const bv = (b.versions||[]).slice(-1)[0]?.uploadedAt || '';
+          return new Date(bv) - new Date(av);
+        });
+      if (currentTab === 'library') renderLibrary();
+    }
+  );
+}
+if (clientId) subscribeAllMyDesigns();
 </script>
 </body>
 </html>
