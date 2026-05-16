@@ -52,6 +52,26 @@
 .cdl-card-actions{display:flex;gap:4px;padding:6px 10px;border-top:1px solid var(--line)}
 .cdl-empty{text-align:center;padding:60px 20px;color:var(--dim2)}
 .cdl-empty-ico{font-size:48px;margin-bottom:12px;opacity:.4}
+/* Bulk download bar */
+.cdl-bulk{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;background:rgba(74,142,245,.05);border:1px solid rgba(74,142,245,.15);border-radius:10px;margin-bottom:12px}
+.cdl-bulk:empty{display:none}
+.cdl-bulk-label{font-size:11px;font-weight:700;color:var(--b);margin-left:4px}
+.cdl-bulk-btn{padding:6px 12px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);border-radius:18px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:700;transition:all .12s;white-space:nowrap}
+.cdl-bulk-btn:hover:not(:disabled){background:var(--b);border-color:var(--b);color:#fff}
+.cdl-bulk-btn.cdl-bulk-source{border-color:rgba(167,139,250,.4);color:#a78bfa}
+.cdl-bulk-btn.cdl-bulk-source:hover:not(:disabled){background:#a78bfa;color:#fff}
+.cdl-bulk-btn.cdl-bulk-all{border-color:var(--g);color:var(--g);font-weight:900}
+.cdl-bulk-btn.cdl-bulk-all:hover:not(:disabled){background:var(--g);color:#fff}
+.cdl-bulk-btn:disabled{opacity:.35;cursor:not-allowed}
+/* Analytics panel */
+.cdl-analytics{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.cdl-analytics:empty{display:none}
+.cdl-an-title{font-size:12px;font-weight:800;color:var(--snow);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.cdl-an-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.cdl-an-card{background:var(--bg3);border-radius:8px;padding:10px}
+.cdl-an-val{font-size:18px;font-weight:900;color:var(--snow);line-height:1}
+.cdl-an-lbl{font-size:10px;color:var(--dim2);font-weight:700;margin-top:4px}
+.cdl-an-sub{font-size:9px;color:var(--dim2);margin-top:2px;opacity:.8}
 </style>
 <script src="wa-launcher.js?v=1" defer></script>
 <script src="smart-sidebar.js?v=1" defer></script>
@@ -97,6 +117,10 @@
     </div>
 
     <div class="cdl-stats" id="cdl-stats"></div>
+
+    <div class="cdl-bulk" id="cdl-bulk"></div>
+
+    <div class="cdl-analytics" id="cdl-analytics"></div>
 
     <div class="cdl-chips" id="cdl-chips"></div>
 
@@ -277,8 +301,10 @@ function renderAllClientsMode(){
     <div class="cdl-stat" style="--sc:var(--r)"><div class="cdl-stat-val">${fn(withPdf)}/${fn(totalItems)}</div><div class="cdl-stat-lbl">📄 معاها PDF</div></div>
   `;
 
-  // No chips in client list mode
+  // No chips/bulk/analytics in client list mode
   $('cdl-chips').innerHTML = '';
+  $('cdl-bulk').innerHTML = '';
+  $('cdl-analytics').innerHTML = '';
 
   // Filter clients by search
   const q = ($('q').value||'').trim().toLowerCase();
@@ -334,6 +360,19 @@ function renderClientMode(){
     <div class="cdl-stat" style="--sc:var(--y)"><div class="cdl-stat-val">${fn(withSource)}</div><div class="cdl-stat-lbl">📁 معاها مصدر</div></div>
     <div class="cdl-stat" style="--sc:var(--r)"><div class="cdl-stat-val">${fn(withPdf)}</div><div class="cdl-stat-lbl">📄 معاها PDF</div></div>
   `;
+
+  // ── Bulk ZIP download bar ──
+  const safeClient = (clientName || 'client').replace(/[\\/:*?"<>|]/g, '_');
+  document.getElementById('cdl-bulk').innerHTML = `
+    <span class="cdl-bulk-label">📥 تحميل دفعة واحدة (ZIP):</span>
+    <button class="cdl-bulk-btn" onclick="downloadBulk('${esc(safeClient)}','mockup',${withSource+withPdf+items.filter(i=>thumbUrl(i)).length})" ${items.length?'':'disabled'}>📸 كل الموك أبس</button>
+    <button class="cdl-bulk-btn" onclick="downloadBulk('${esc(safeClient)}','pdf',${withPdf})" ${withPdf?'':'disabled'}>📄 كل PDFs (${withPdf})</button>
+    <button class="cdl-bulk-btn cdl-bulk-source" onclick="downloadBulk('${esc(safeClient)}','source',${withSource})" ${withSource?'':'disabled'}>📁 كل المصادر (${withSource})</button>
+    <button class="cdl-bulk-btn cdl-bulk-all" onclick="downloadBulk('${esc(safeClient)}','all',${withSource+withPdf+items.filter(i=>thumbUrl(i)).length})">📦 كل شيء</button>
+  `;
+
+  // ── Analytics panel ──
+  document.getElementById('cdl-analytics').innerHTML = renderAnalytics(items);
 
   // Filter chips
   const chips = [
@@ -413,6 +452,144 @@ window.addEventListener('popstate', () => {
 });
 
 function setText(id, txt){ const el = $(id); if (el) el.textContent = txt; }
+
+// ════════════════════════════════════════════════════════════════════
+//  📥 Bulk ZIP Download — JSZip via dynamic import
+// ════════════════════════════════════════════════════════════════════
+window.downloadBulk = async function(clientName, kind, count){
+  if (!count) { toast('لا توجد ملفات من هذا النوع','err'); return; }
+  if (!confirm(`تحميل ${count} ملف كـ ZIP؟ قد يستغرق وقتاً لو الملفات كبيرة.`)) return;
+
+  const items = allItems.filter(i => (i.clientId||'') === activeClientId);
+  const kinds = kind === 'all' ? ['mockup','pdf','source'] : [kind];
+
+  toast(`📦 جاري تحضير الـ ZIP — تحميل الملفات...`, '');
+  try {
+    const JSZipMod = await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm');
+    const JSZip = JSZipMod.default;
+    const zip = new JSZip();
+    const rootFolder = zip.folder(clientName);
+
+    let ok = 0, failed = 0;
+    for (const item of items) {
+      const order = allOrders.find(o => o._id === (item.orderDocId||''));
+      const orderCode = (order?.orderId || order?._id?.slice(0,8) || 'order').replace(/[\\/:*?"<>|]/g,'_');
+      const itemName = (item.itemName || 'item').replace(/[\\/:*?"<>|]/g,'_');
+      const itemFolder = rootFolder.folder(`${orderCode}_${itemName}`);
+      for (const v of (item.versions || [])) {
+        const files = v.files || (v.imageUrl ? { mockup: { url: v.imageUrl, fileName: v.fileName||`v${v.vNum}.jpg` } } : {});
+        for (const k of kinds) {
+          const f = files[k];
+          if (!f?.url) continue;
+          try {
+            const resp = await fetch(f.url);
+            if (!resp.ok) throw new Error('HTTP '+resp.status);
+            const blob = await resp.blob();
+            const ext = (f.fileName?.split('.').pop()) || (k === 'mockup' ? 'jpg' : k === 'pdf' ? 'pdf' : 'bin');
+            const fname = `v${v.vNum}_${k}.${ext}`;
+            itemFolder.file(fname, blob);
+            ok++;
+          } catch(e) {
+            console.warn('Failed to fetch', f.url, e);
+            failed++;
+          }
+        }
+      }
+    }
+
+    if (!ok) { toast('❌ فشل تحميل كل الملفات','err'); return; }
+    toast(`📦 جاري ضغط ${ok} ملف...`, '');
+    const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, (meta) => {
+      if (meta.percent > 0 && meta.percent % 25 < 1) {
+        // optional progress could go here
+      }
+    });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0,10);
+    a.download = `${clientName}_${kind}_${stamp}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`✅ تم — ${ok} ملف في الـ ZIP${failed?` (${failed} فشل)`:''}`, 'ok');
+  } catch(e) {
+    console.error('Bulk ZIP failed', e);
+    toast('❌ فشل تجهيز الـ ZIP: ' + e.message, 'err');
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════
+//  📊 Analytics — متوسط النسخ، معدل التعديل، أسرع مصمم
+// ════════════════════════════════════════════════════════════════════
+function renderAnalytics(items){
+  if (!items.length) return '';
+  const totalVersions = items.reduce((s,i)=>s+(i.versions||[]).length,0);
+  const avgVersions = (totalVersions / items.length).toFixed(1);
+
+  // Revisions: count items that ever had revision_requested (status now or in editHistory)
+  const revItems = items.filter(i => {
+    if (i.status === 'revision_requested') return true;
+    const h = i.editHistory || [];
+    return h.some(e => (e.action||'').includes('revision'));
+  }).length;
+  const revRate = items.length ? Math.round((revItems/items.length)*100) : 0;
+
+  // Approval cycle time (days from creation to first approval)
+  const cycleDays = [];
+  items.forEach(i => {
+    if (!i.isApproved) return;
+    const created = i.createdAt?.seconds ? i.createdAt.seconds * 1000 : (i.createdAt ? new Date(i.createdAt).getTime() : 0);
+    const approved = i.approvedAt?.seconds ? i.approvedAt.seconds * 1000 : (i.approvedAt ? new Date(i.approvedAt).getTime() : 0);
+    if (created && approved && approved > created) {
+      cycleDays.push((approved - created) / 86400000);
+    }
+  });
+  const avgCycle = cycleDays.length ? (cycleDays.reduce((s,d)=>s+d,0) / cycleDays.length).toFixed(1) : '—';
+
+  // Top designer for this client (most versions uploaded)
+  const designerCount = {};
+  items.forEach(i => (i.versions||[]).forEach(v => {
+    const name = v.uploadedByName || '—';
+    designerCount[name] = (designerCount[name] || 0) + 1;
+  }));
+  const topDesigner = Object.entries(designerCount).sort((a,b)=>b[1]-a[1])[0];
+
+  // Source coverage = % of designs with source file
+  const withSrc = items.filter(i => getFiles(getLatestVersion(i)).source).length;
+  const srcCoverage = items.length ? Math.round((withSrc/items.length)*100) : 0;
+
+  return `
+    <div class="cdl-an-title">📊 إحصائيات العميل</div>
+    <div class="cdl-an-grid">
+      <div class="cdl-an-card">
+        <div class="cdl-an-val">${avgVersions}</div>
+        <div class="cdl-an-lbl">متوسط النسخ لكل تصميم</div>
+        <div class="cdl-an-sub">${totalVersions} إجمالاً</div>
+      </div>
+      <div class="cdl-an-card">
+        <div class="cdl-an-val" style="color:${revRate>30?'var(--r)':revRate>15?'var(--y)':'var(--g)'}">${revRate}%</div>
+        <div class="cdl-an-lbl">معدل طلبات التعديل</div>
+        <div class="cdl-an-sub">${revItems} من ${items.length} تصميم</div>
+      </div>
+      <div class="cdl-an-card">
+        <div class="cdl-an-val">${avgCycle}${avgCycle!=='—'?' يوم':''}</div>
+        <div class="cdl-an-lbl">متوسط وقت الاعتماد</div>
+        <div class="cdl-an-sub">${cycleDays.length} تصميم محسوب</div>
+      </div>
+      <div class="cdl-an-card">
+        <div class="cdl-an-val" style="color:${srcCoverage>=80?'var(--g)':srcCoverage>=50?'var(--y)':'var(--r)'}">${srcCoverage}%</div>
+        <div class="cdl-an-lbl">تغطية ملفات المصدر</div>
+        <div class="cdl-an-sub">${withSrc} من ${items.length} ملف مصدر</div>
+      </div>
+      ${topDesigner ? `<div class="cdl-an-card">
+        <div class="cdl-an-val" style="font-size:14px">${esc(topDesigner[0])}</div>
+        <div class="cdl-an-lbl">أكثر مصمم نشاطاً</div>
+        <div class="cdl-an-sub">${topDesigner[1]} نسخة مرفوعة</div>
+      </div>`:''}
+    </div>`;
+}
 
 // ── Auth bootstrap ──
 onAuthStateChanged(auth, async u => {
