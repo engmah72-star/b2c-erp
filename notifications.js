@@ -7,8 +7,33 @@ import { initFcm } from "./fcm-init.js";
 
 const STORAGE_KEY = 'b2c_notif_seen';
 
+// Track all active listeners so we can unsubscribe on logout/navigation
+// Prevents memory leaks: each page navigation otherwise accumulates a new set.
+const __activeUnsubs = [];
+function __register(unsub) { if (typeof unsub === 'function') __activeUnsubs.push(unsub); }
+
+export function cleanupNotifications() {
+  while (__activeUnsubs.length) {
+    try { __activeUnsubs.pop()(); } catch (e) { console.warn('[notif] unsub failed:', e?.message || e); }
+  }
+}
+// Auto-cleanup on tab unload (defensive — SPA navigations should call cleanupNotifications explicitly)
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', cleanupNotifications, { once: true });
+}
+
+// Escape HTML chars in user-controlled strings before interpolating into innerHTML
+function __esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+
 export function initNotifications(app, currentUser) {
   if (!currentUser) return;
+  // Defensive: if init is called twice (e.g., re-auth), clean previous listeners first.
+  cleanupNotifications();
+
   const db = getFirestore(app);
   const uid = currentUser.uid;
 
@@ -54,7 +79,7 @@ export function initNotifications(app, currentUser) {
 
   // ── مراقبة المهام المعيّنة للموظف ──
   const tasksQ = query(collection(db, 'tasks'), where('assignedTo', '==', uid));
-  onSnapshot(tasksQ, snap => {
+  __register(onSnapshot(tasksQ, snap => {
     const taskNotifs = snap.docs.map(d => {
       const t = d.data();
       return {
@@ -68,11 +93,11 @@ export function initNotifications(app, currentUser) {
       };
     });
     mergeNotifs('task', taskNotifs);
-  });
+  }));
 
   // ── مراقبة الأوردرات المعيّنة للموظف ──
   const ordersQ = query(collection(db, 'orders'), where('designerId', '==', uid));
-  onSnapshot(ordersQ, snap => {
+  __register(onSnapshot(ordersQ, snap => {
     const orderNotifs = snap.docs
       .filter(d => ['design', 'printing'].includes(d.data().stage))
       .map(d => {
@@ -88,10 +113,10 @@ export function initNotifications(app, currentUser) {
         };
       });
     mergeNotifs('order_design', orderNotifs);
-  });
+  }));
 
   const ordersShipQ = query(collection(db, 'orders'), where('shippingOfficerId', '==', uid));
-  onSnapshot(ordersShipQ, snap => {
+  __register(onSnapshot(ordersShipQ, snap => {
     const shipNotifs = snap.docs
       .filter(d => d.data().stage === 'shipping')
       .map(d => {
@@ -107,11 +132,11 @@ export function initNotifications(app, currentUser) {
         };
       });
     mergeNotifs('order_ship', shipNotifs);
-  });
+  }));
 
   // ── الأوردرات المُسلَّمة للطابع (printerId) ──
   const ordersPrintQ = query(collection(db, 'orders'), where('printerId', '==', uid));
-  onSnapshot(ordersPrintQ, snap => {
+  __register(onSnapshot(ordersPrintQ, snap => {
     const printNotifs = snap.docs
       .filter(d => d.data().stage === 'printing')
       .map(d => {
@@ -127,7 +152,7 @@ export function initNotifications(app, currentUser) {
         };
       });
     mergeNotifs('order_print', printNotifs);
-  });
+  }));
 
   // ── الأوردرات اللي عليها تعديل من موظف لم يُراجَع (للأدمن فقط) ──
   getDoc(doc(db, 'users', uid)).then(userSnap => {
@@ -135,7 +160,7 @@ export function initNotifications(app, currentUser) {
     const role = userSnap.data().role || '';
     if (!['admin', 'operation_manager'].includes(role)) return;
     const auditQ = query(collection(db, 'orders'), where('hasUnreviewedAudit', '==', true));
-    onSnapshot(auditQ, snap => {
+    __register(onSnapshot(auditQ, snap => {
       const auditNotifs = snap.docs.map(d => {
         const o = d.data();
         const lastAudit = (o.auditLog || []).filter(a => a.requiresReview).pop() || {};
@@ -151,12 +176,12 @@ export function initNotifications(app, currentUser) {
         };
       });
       mergeNotifs('audit', auditNotifs);
-    }, () => { /* permission errors silently */ });
-  }).catch(() => { /* user fetch failed, skip admin audit listener */ });
+    }, err => console.warn('[notif] audit listener error:', err?.message || err)));
+  }).catch(err => console.warn('[notif] user fetch failed:', err?.message || err));
 
   // ── متابعات العملاء — تذكيرات مستحقّة (assignedTo == current user) ──
   const fuQ = query(collection(db, 'client_followups'), where('assignedTo', '==', uid));
-  onSnapshot(fuQ, snap => {
+  __register(onSnapshot(fuQ, snap => {
     const now = Date.now();
     const fuNotifs = snap.docs
       .map(d => ({ ...d.data(), _id: d.id }))
@@ -175,12 +200,12 @@ export function initNotifications(app, currentUser) {
         link: `clients.html?openClient=${f.clientId}&tab=followups`,
       }));
     mergeNotifs('followup', fuNotifs);
-  }, () => { /* permission errors silently */ });
+  }, err => console.warn('[notif] followup listener error:', err?.message || err)));
 
   // ── إشعارات النظام (notifications collection) ──
   // كتابات Cloud Functions: followup_due, approval_pending, order_assigned,...
   const notifQ = query(collection(db, 'notifications'), where('toUid', '==', uid));
-  onSnapshot(notifQ, snap => {
+  __register(onSnapshot(notifQ, snap => {
     const sysNotifs = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(n => !n.archived)
@@ -194,11 +219,11 @@ export function initNotifications(app, currentUser) {
         link:  n.link || null,
       }));
     mergeNotifs('sys', sysNotifs);
-  }, () => { /* permission errors silently */ });
+  }, err => console.warn('[notif] system notifs listener error:', err?.message || err)));
 
   // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
   const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid));
-  onSnapshot(ordersProdQ, snap => {
+  __register(onSnapshot(ordersProdQ, snap => {
     const prodNotifs = snap.docs
       .filter(d => d.data().stage === 'production')
       .map(d => {
@@ -214,7 +239,7 @@ export function initNotifications(app, currentUser) {
         };
       });
     mergeNotifs('order_prod', prodNotifs);
-  });
+  }));
 
   function mergeNotifs(group, items) {
     const prefixMap = {
@@ -278,6 +303,9 @@ export function initNotifications(app, currentUser) {
     panel.className = 'notif-panel';
 
     const isEmpty = allNotifs.length === 0;
+    // XSS-safe: escape all user-controlled strings (n.title, n.desc, n.link, n.ico)
+    // Click handler attached via delegation instead of inline onclick — prevents
+    // attribute injection via crafted n.link values from Firestore.
     panel.innerHTML = `
       <div class="notif-head">
         <span>🔔 الإشعارات ${allNotifs.length > 0 ? `(${allNotifs.length})` : ''}</span>
@@ -285,19 +313,27 @@ export function initNotifications(app, currentUser) {
       <div class="notif-list">
         ${isEmpty
           ? `<div class="empty" style="padding:32px 20px"><div class="empty-icon">🎉</div><div class="empty-text">لا توجد إشعارات</div></div>`
-          : allNotifs.map(n => `
-            <div class="notif-item" onclick="${n.link ? `window.location.href='${n.link}'` : 'void(0)'}">
-              <div class="notif-ico">${n.ico}</div>
+          : allNotifs.map((n, i) => `
+            <div class="notif-item" data-idx="${i}">
+              <div class="notif-ico">${__esc(n.ico)}</div>
               <div class="notif-body">
-                <div class="notif-title">${n.title}</div>
-                ${n.desc ? `<div class="notif-desc">${n.desc}</div>` : ''}
-                <div class="notif-time">${timeAgo(n.time)}</div>
+                <div class="notif-title">${__esc(n.title)}</div>
+                ${n.desc ? `<div class="notif-desc">${__esc(n.desc)}</div>` : ''}
+                <div class="notif-time">${__esc(timeAgo(n.time))}</div>
               </div>
             </div>
           `).join('')
         }
       </div>
     `;
+    // Event delegation: safer than inline onclick + supports any future link format
+    panel.addEventListener('click', (e) => {
+      const item = e.target.closest('.notif-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.idx, 10);
+      const n = allNotifs[idx];
+      if (n?.link) window.location.href = n.link;
+    });
     document.body.appendChild(panel);
   }
 
