@@ -558,14 +558,16 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // ══ Design Gallery — public read, designers write ══
+    // ══ Design Gallery — internal designer workspace (auth required) ══
+    // ملاحظة: الجاليري العام للزوار = /gallery (مختلف).
     match /design_gallery/{itemId} {
-      allow read: if true;
+      allow read: if isAuth() && (isAdmin() || hasPage('design'));
       allow create: if isAuth() && (isAdmin() || hasPage('design'));
       allow update, delete: if isAuth() && (isAdmin() || request.auth.uid == resource.data.designerId);
     }
 
     // ══ Gallery — public read, designers & admins write ══
+    // ملاحظة تجارية: القراءة عامة عن قصد — gallery.html يعرض التصاميم للزوار كدعاية.
     match /gallery/{itemId} {
       allow read: if true;
       allow create: if isAuth() && (isAdmin() || hasPage('design'));
@@ -574,6 +576,8 @@ service cloud.firestore {
     }
 
     // ══ Design Items — designer workspace tracking ══
+    // ملاحظة تجارية: القراءة عامة عن قصد — ملفات الموك أب تخدم كدعاية للشركة.
+    // الكتابة محصورة على المصممين/الأدمن فقط.
     match /design_items/{itemId} {
       allow read: if true;
       allow create: if isAuth() && (isAdmin() || hasPage('design'));
@@ -617,14 +621,22 @@ service cloud.firestore {
     }
 
     // ══ Client Decisions — client portal creates (token-based, no Firebase auth) ══
-    // العملاء يستخدمون بوابة بدون Firebase auth — نسمح create بشرط الحقول الأساسية فقط
+    // العملاء يستخدمون بوابة بدون Firebase auth.
+    // الحماية: لا يقدر مهاجم ينشئ قرار لطلب ليس له — لازم يعرف clientPhone للطلب.
     match /client_decisions/{decId} {
       allow read: if isAuth();
-      allow create: if request.resource.data.keys().hasAll(['orderId','itemId','decision'])
-                    && request.resource.data.orderId is string
-                    && request.resource.data.itemId is string
-                    && request.resource.data.decision in ['approved','revision'];
-      allow update, delete: if isAdmin();
+      allow create:
+        // ١) الحقول المطلوبة
+        if request.resource.data.keys().hasAll(['orderDocId','itemId','decision','clientPhone'])
+        && request.resource.data.orderDocId is string
+        && request.resource.data.itemId is string
+        && request.resource.data.clientPhone is string
+        && request.resource.data.decision in ['approved','revision']
+        && request.resource.data.get('processed', false) == false
+        // ٢) Ownership: clientPhone في القرار = clientPhone في الطلب (cross-validate)
+        && request.resource.data.clientPhone ==
+           get(/databases/$(database)/documents/orders/$(request.resource.data.orderDocId)).data.clientPhone;
+      allow update, delete: if isAdmin() || (isAuth() && hasPage('design'));
     }
 
     // ══ Master Lists — قوائم مركزية (تصنيفات، خدمات) ══
