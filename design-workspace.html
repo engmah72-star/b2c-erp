@@ -122,9 +122,14 @@
 .na-text{font-size:11px;font-weight:600;color:var(--dim2);line-height:1.5;}
 
 /* Revision banner */
-.rev-banner{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:rgba(240,160,32,.07);border-bottom:2px solid rgba(240,160,32,.22);}
-.rb-icon{font-size:22px;flex-shrink:0;}
-.rb-num{font-size:10px;font-weight:800;color:var(--y);margin-bottom:3px;}
+/* Stats toggle — مطوية افتراضياً عشان نخفّف الـ noise */
+.ms-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--snow);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:all .12s}
+.ms-toggle:hover{background:var(--bg3);border-color:rgba(167,139,250,.4)}
+.ms-toggle.open{border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.04)}
+/* Revision banner — تهدئة من الأصفر الصارخ إلى أزرق هادي */
+.rev-banner{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;background:rgba(74,142,245,.05);border-bottom:1px solid rgba(74,142,245,.18);}
+.rb-icon{font-size:18px;flex-shrink:0;opacity:.8}
+.rb-num{font-size:10px;font-weight:800;color:var(--b);margin-bottom:3px;}
 .rb-reason{font-size:13px;font-weight:700;margin-bottom:3px;}
 .rb-notes{font-size:11px;color:var(--dim2);margin-bottom:4px;}
 .rb-meta{font-size:10px;color:var(--dim2);}
@@ -526,7 +531,12 @@
           </div>
           <div id="ord-list-body"></div>
         </div>
-        <div class="my-stats" id="my-stats"></div>
+        <!-- Stats — مطوية افتراضياً، تفتح بطلب -->
+        <button class="ms-toggle" id="ms-toggle" onclick="toggleStats()" type="button">
+          <span>📊 أرقامي</span>
+          <span style="font-size:10px;color:var(--dim2);font-weight:600" id="ms-toggle-hint">اضغط للعرض</span>
+        </button>
+        <div class="my-stats" id="my-stats" style="display:none"></div>
       </div>
       <!-- Workspace panel -->
       <div class="ws-panel" id="ws-panel">
@@ -1339,6 +1349,33 @@ window.jumpToFirstRevision=function(){
 function todayStrLocal(){return new Date().toISOString().slice(0,10);}
 
 // ── Open Order ──
+// ── Toggle Stats Panel (مطوية افتراضياً لتهدئة الـ noise) ──
+window.toggleStats = function() {
+  const panel = document.getElementById('my-stats');
+  const btn = document.getElementById('ms-toggle');
+  const hint = document.getElementById('ms-toggle-hint');
+  if (!panel || !btn) return;
+  const isOpen = panel.style.display !== 'none';
+  if (isOpen) {
+    panel.style.display = 'none';
+    btn.classList.remove('open');
+    if (hint) hint.textContent = 'اضغط للعرض';
+    localStorage.setItem('ws_stats_open', '0');
+  } else {
+    panel.style.display = '';
+    btn.classList.add('open');
+    if (hint) hint.textContent = '▼ إخفاء';
+    localStorage.setItem('ws_stats_open', '1');
+    if (typeof renderPerformance === 'function') renderPerformance();
+  }
+};
+// Restore preference on load
+document.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('ws_stats_open') === '1') {
+    setTimeout(() => window.toggleStats?.(), 100);
+  }
+});
+
 window.openOrder = async function(orderId) {
   currentOrderId = orderId;
   // Update active state in list
@@ -1449,7 +1486,7 @@ function renderPanel(order) {
         <div>
           <div class="oh-client">${order.clientName||'—'}</div>
           <div class="oh-meta">
-            <span class="pri-badge ${pri.cls}">${pri.label}</span>
+            ${(pri.cls==='pri-overdue'||pri.cls==='pri-urgent')?`<span class="pri-badge ${pri.cls}">${pri.label}</span>`:''}
             ${order.deadline?`<span style="font-size:10px;color:var(--dim2)">📅 ${order.deadline}</span>`:''}
             ${order.designerName?`<span style="font-size:10px;color:var(--dim2)">🎨 ${order.designerName}</span>`:''}
           </div>
@@ -1570,21 +1607,7 @@ function renderItemsSection(order, isAdm) {
     const status = item.status || 'in_progress';
     const latestRev = revisions[revisions.length - 1];
 
-    // Item-level pipeline
-    const PIPE = [
-      { lbl:'🎨 تصميم', done: hasVersions, cur: !hasVersions },
-      { lbl:'📤 نشر', done: hasPublished && (approved || revisions.length > 0), cur: hasVersions && !hasPublished },
-      { lbl:'💬 مراجعة', done: revisions.length > 0 || approved, cur: hasPublished && !approved && !revisions.length },
-      { lbl:'✅ اعتماد', done: approved, cur: !approved && revisions.length > 0 },
-      { lbl:'🖨️ طباعة', done: printReady, cur: approved && !printReady },
-      { lbl:'🌐 معرض', done: hasGallery, cur: printReady && !hasGallery },
-    ];
-    const pipeHtml = `<div class="ic-pipeline"><div class="pipeline">${
-      PIPE.map((s,i)=>`<div class="pipe-step">
-        <div class="pipe-node ${s.done?'done':s.cur?'current':''}">${s.lbl}</div>
-        ${i<PIPE.length-1?'<span class="pipe-arrow">›</span>':''}
-      </div>`).join('')
-    }</div></div>`;
+    // (Item-level pipeline removed in Phase 1 — outer order-level pipeline is enough)
 
     // "What's next?" guidance
     let naClass = 'na-upload', naIcon = '📤', naText = 'ارفع أول موك أب — اسحب الملف وأفلته على منطقة الرفع';
@@ -1699,7 +1722,6 @@ function renderItemsSection(order, isAdm) {
           ${lastPub?`<span style="font-size:9px;color:var(--b);font-weight:800">👁 v${lastPub.vNum} نُشر</span>`:''}
         </div>
       </div>
-      ${pipeHtml}
       <div class="next-action ${naClass}">
         <span class="na-icon">${naIcon}</span>
         <span class="na-text">${naText}</span>
