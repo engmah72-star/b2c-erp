@@ -287,6 +287,8 @@
 .sk{background:linear-gradient(90deg,var(--bg2) 0%,var(--bg3) 50%,var(--bg2) 100%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:8px}
 .sk-line{height:12px;margin-bottom:6px}
 .sk-ord{padding:10px 14px;border-bottom:1px solid var(--line)}
+.sk-pf-card{cursor:default;pointer-events:none}
+.sk-pf-card .pf-thumb.sk{aspect-ratio:1;width:100%;border-radius:8px}
 
 /* Empty CTA */
 .empty-cta{padding:30px 16px;text-align:center}
@@ -650,7 +652,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, onSnapshot, getDocs, getDoc, setDoc, updateDoc,
-  addDoc, query, where, orderBy, serverTimestamp, writeBatch, arrayUnion
+  addDoc, query, where, orderBy, limit, serverTimestamp, writeBatch, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { dedupEmployees } from "./orders.js";
@@ -674,8 +676,22 @@ let designerFilterUid = '', allDesigners = [];
 let galleryTargetItemId = null;
 // Public gallery map: galleryId → published doc data (mirror of what gallery.html shows)
 let galleryItems = new Map();
+// Loading flags — control skeleton vs empty-state messaging
+let _itemsLoaded = false, _galleryLoaded = false;
 // Portfolio state
 let activePfTab = 'portfolio', detailItemId = null, detailVerIdx = 0;
+// Pagination — render in pages to keep the DOM small on first paint.
+// "Load more" buttons in each grid expand the visible window without
+// re-fetching from Firestore (data is already in memory).
+const PF_PAGE_SIZE = 50;
+let pfVisibleCount    = PF_PAGE_SIZE;
+let revVisibleCount   = PF_PAGE_SIZE;
+let publicVisibleCount= PF_PAGE_SIZE;
+// Server-side caps. Beyond these counts the snapshot will not fetch more
+// documents — sane upper bound to avoid runaway downloads on long-running
+// accounts. Workflows only need the most recent items in design workspace.
+const DESIGN_ITEMS_LIMIT = 500;
+const GALLERY_LIMIT      = 300;
 const isAdmRole = () => ['admin','operation_manager'].includes(currentRole);
 // Visibility helpers — items without `visibility` field default to 'private'
 const visOf = it => it?.visibility || 'private';
@@ -784,13 +800,28 @@ onAuthStateChanged(auth, async user => {
 window.switchPfTab = function(t){
   if(!['portfolio','review','public','orders'].includes(t))return;
   if(t==='review'&&!isAdmRole())return;
+  // Reset pagination when switching tabs so each tab starts from page 1.
+  if(t!==activePfTab){
+    pfVisibleCount = PF_PAGE_SIZE;
+    revVisibleCount = PF_PAGE_SIZE;
+    publicVisibleCount = PF_PAGE_SIZE;
+  }
   activePfTab=t;
   document.querySelectorAll('.pf-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.pf-pane').forEach(p=>p.style.display=p.id==='pane-'+t?'':'none');
   if(t==='portfolio')renderPortfolio();
   else if(t==='review')renderReviewQueue();
-  else if(t==='public')renderPublicGrid();
+  else if(t==='public'){
+    // First time opening "public" — kick off the gallery snapshot.
+    ensureGalleryListener();
+    renderPublicGrid();
+  }
 };
+
+// Expose pagination handlers — wired to the "اعرض المزيد" buttons.
+window.loadMorePf     = () => { pfVisibleCount     += PF_PAGE_SIZE; renderPortfolio(); };
+window.loadMoreReview = () => { revVisibleCount    += PF_PAGE_SIZE; renderReviewQueue(); };
+window.loadMorePublic = () => { publicVisibleCount += PF_PAGE_SIZE; renderPublicGrid(); };
 
 function pfMyItems(){
   // Designer sees own items; admin sees all (or filtered by designer)
@@ -820,6 +851,11 @@ function bestVersionImage(it){
 
 function renderPortfolio(){
   const grid=document.getElementById('pf-grid');if(!grid)return;
+  // Skeleton while first snapshot hasn't landed yet — empty grid is misleading.
+  if(!_itemsLoaded){
+    grid.innerHTML = renderGridSkeleton();
+    return;
+  }
   let items=pfMyItems();
   // Filters
   const q=(document.getElementById('pf-search')?.value||'').toLowerCase().trim();
@@ -846,7 +882,10 @@ function renderPortfolio(){
     return;
   }
 
-  grid.innerHTML='<div class="pf-grid">'+items.map(i=>{
+  const total = items.length;
+  const visible = items.slice(0, pfVisibleCount);
+
+  grid.innerHTML='<div class="pf-grid">'+visible.map(i=>{
     const v=visOf(i);
     const lbl=VIS_LBL[v];
     const img=bestVersionImage(i);
@@ -868,7 +907,30 @@ function renderPortfolio(){
         ${pfActionsHTML(i)}
       </div>
     </div>`;
-  }).join('')+'</div>';
+  }).join('')+'</div>' + loadMoreBar(visible.length, total, 'loadMorePf');
+}
+
+// Shared: skeleton cards while the first snapshot is in flight.
+function renderGridSkeleton(){
+  const card = `<div class="pf-card sk-pf-card">
+    <div class="pf-thumb sk"></div>
+    <div class="pf-card-body">
+      <div class="sk sk-line" style="width:70%;height:12px;margin-bottom:6px"></div>
+      <div class="sk sk-line" style="width:50%;height:10px"></div>
+    </div>
+  </div>`;
+  return '<div class="pf-grid">' + card.repeat(6) + '</div>';
+}
+
+// Shared: "Load more" button shown when more items exist than are rendered.
+function loadMoreBar(shown, total, fnName){
+  if(shown >= total) return '';
+  const remaining = total - shown;
+  return `<div style="text-align:center;padding:14px 0">
+    <button class="btn btn-ghost btn-sm" onclick="${fnName}()" style="font-size:12px">
+      ⬇ اعرض المزيد · ${remaining} متبقي
+    </button>
+  </div>`;
 }
 
 function pfActionsHTML(it){
@@ -895,13 +957,16 @@ function pfActionsHTML(it){
 
 function renderReviewQueue(){
   const grid=document.getElementById('pf-review-grid');if(!grid)return;
+  if(!_itemsLoaded){ grid.innerHTML = renderGridSkeleton(); return; }
   const items=allDesignItems.filter(i=>visOf(i)==='pending')
     .sort((a,b)=>(a.publishRequestedAt?.seconds||0)-(b.publishRequestedAt?.seconds||0));
   if(!items.length){
     grid.innerHTML=`<div class="pf-empty"><div class="pf-empty-i">✨</div><div class="pf-empty-t">قائمة المراجعة فارغة</div><div class="pf-empty-h">كل التصميمات إما خاصة أو منشورة</div></div>`;
     return;
   }
-  grid.innerHTML='<div class="pf-grid">'+items.map(i=>{
+  const total = items.length;
+  const visible = items.slice(0, revVisibleCount);
+  grid.innerHTML='<div class="pf-grid">'+visible.map(i=>{
     const img=bestVersionImage(i);
     const reqDt=i.publishRequestedAt?.toDate?.();
     const reqStr=reqDt?reqDt.toLocaleDateString('ar-EG',{day:'numeric',month:'short'}):'';
@@ -922,11 +987,13 @@ function renderReviewQueue(){
         <button class="pf-act danger" onclick="rejectPublish('${i._id}')">✕ ارفض</button>
       </div>
     </div>`;
-  }).join('')+'</div>';
+  }).join('')+'</div>' + loadMoreBar(visible.length, total, 'loadMoreReview');
 }
 
 function renderPublicGrid(){
   const grid=document.getElementById('pf-public-grid');if(!grid)return;
+  // Skeleton while either source (items or gallery) is still loading.
+  if(!_itemsLoaded || !_galleryLoaded){ grid.innerHTML = renderGridSkeleton(); return; }
   // Source of truth = gallery collection (same as gallery.html).
   // Show ONLY items that are actually visible in the public gallery.
   const items=allDesignItems
@@ -939,7 +1006,9 @@ function renderPublicGrid(){
     grid.innerHTML=`<div class="pf-empty"><div class="pf-empty-i">🌐</div><div class="pf-empty-t">المعرض العام فارغ</div><div class="pf-empty-h">عند اعتماد أول تصميم للنشر سيظهر هنا</div></div>`;
     return;
   }
-  grid.innerHTML='<div class="pf-grid">'+items.map(i=>{
+  const total = items.length;
+  const visible = items.slice(0, publicVisibleCount);
+  grid.innerHTML='<div class="pf-grid">'+visible.map(i=>{
     const g = galleryItems.get(i.galleryId) || {};
     // Prefer the actual published image (what zwwar see), fall back to version image
     const img = g.imageUrl || bestVersionImage(i);
@@ -959,7 +1028,7 @@ function renderPublicGrid(){
         </div>
       </div>
     </div>`;
-  }).join('')+'</div>';
+  }).join('')+'</div>' + loadMoreBar(visible.length, total, 'loadMorePublic');
 }
 
 function buildMonthFilter(){
@@ -1211,16 +1280,9 @@ function startListeners() {
   if (decisionsUnsub) decisionsUnsub();
   if (galleryUnsub) galleryUnsub();
 
-  // Public gallery mirror — same query as gallery.html so counts/images match exactly
-  galleryUnsub = onSnapshot(
-    query(collection(db,'gallery'), where('isVisible','==',true)),
-    snap => {
-      galleryItems = new Map(snap.docs.map(d => [d.id, d.data()]));
-      updatePortfolioCounts();
-      if (activePfTab === 'public') renderPublicGrid();
-    },
-    err => console.warn('[design-workspace] gallery snapshot failed:', err)
-  );
+  // Gallery snapshot starts LAZILY — only when the "public" tab is opened.
+  // On first paint the page doesn't need gallery data; deferring it cuts
+  // initial bandwidth substantially on slow connections.
 
   if (isAdm) {
     document.getElementById('admin-filter').style.display = 'flex';
@@ -1235,15 +1297,22 @@ function startListeners() {
     );
   }
 
-  // Listen to all design_items for performance metrics
+  // design_items snapshot — bounded by limit + ordered by updatedAt desc so
+  // the most recently touched items are always present. Older items beyond
+  // DESIGN_ITEMS_LIMIT live in reports/archive, not in the day-to-day
+  // workspace. Composite index: (designerId ASC, updatedAt DESC).
   const itemsQuery = isAdm
-    ? query(collection(db,'design_items'))
-    : query(collection(db,'design_items'), where('designerId','==',currentUid));
+    ? query(collection(db,'design_items'), orderBy('updatedAt','desc'), limit(DESIGN_ITEMS_LIMIT))
+    : query(collection(db,'design_items'), where('designerId','==',currentUid), orderBy('updatedAt','desc'), limit(DESIGN_ITEMS_LIMIT));
   onSnapshot(itemsQuery, snap => {
     allDesignItems = snap.docs.map(d=>({...d.data(),_id:d.id}));
+    _itemsLoaded = true;
     renderPerformance();
     if (currentOrderId) renderCurrentItems();
-  });
+    // Active portfolio/review tab needs to re-render once data lands.
+    if (activePfTab === 'portfolio') renderPortfolio();
+    else if (activePfTab === 'review' && isAdmRole()) renderReviewQueue();
+  }, err => console.warn('[design-workspace] design_items snapshot failed:', err));
 
   // Unprocessed client decisions
   decisionsUnsub = onSnapshot(
@@ -1253,6 +1322,23 @@ function startListeners() {
       renderOrderList();
       if (currentOrderId) renderPanel(orders.find(o=>o._id===currentOrderId));
     }
+  );
+}
+
+// Lazy gallery subscription — first call creates the listener, subsequent
+// calls are no-ops. We only pay for the read when the user actually opens
+// the "public" tab.
+function ensureGalleryListener() {
+  if (galleryUnsub) return;
+  galleryUnsub = onSnapshot(
+    query(collection(db,'gallery'), where('isVisible','==',true), orderBy('publishedAt','desc'), limit(GALLERY_LIMIT)),
+    snap => {
+      galleryItems = new Map(snap.docs.map(d => [d.id, d.data()]));
+      _galleryLoaded = true;
+      updatePortfolioCounts();
+      if (activePfTab === 'public') renderPublicGrid();
+    },
+    err => console.warn('[design-workspace] gallery snapshot failed:', err)
   );
 }
 
