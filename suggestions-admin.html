@@ -33,6 +33,42 @@
   .sa-pri-high{color:#ff3d6e;font-weight:800;}
   .sa-pri-medium{color:#ffaa00;font-weight:700;}
   .sa-pri-low{color:#22d3ee;}
+
+  /* AI analysis block */
+  .sa-ai{margin-top:12px;padding:12px;background:linear-gradient(135deg,rgba(167,139,250,.08),rgba(74,142,245,.04));border:1px solid rgba(167,139,250,.18);border-radius:10px;}
+  .sa-ai-head{font-size:12px;font-weight:800;color:#a78bfa;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+  .sa-ai-tldr{padding:8px 10px;background:rgba(167,139,250,.08);border-radius:6px;font-size:12px;line-height:1.6;margin-bottom:8px;}
+  .sa-ai-badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+  .sa-ai-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:7px;background:var(--bg3);color:var(--snow);border:1px solid var(--line);}
+  .sa-ai-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
+  @media (max-width:700px){.sa-ai-grid{grid-template-columns:1fr;}}
+  .sa-ai-col{padding:8px;background:var(--bg3);border-radius:6px;}
+  .sa-ai-col-t{font-size:11px;font-weight:800;margin-bottom:5px;}
+  .sa-ai-col.pros .sa-ai-col-t{color:#00d97e;}
+  .sa-ai-col.cons .sa-ai-col-t{color:#ff3d6e;}
+  .sa-ai-col ul{list-style:none;padding:0;margin:0;}
+  .sa-ai-col li{font-size:11px;line-height:1.5;padding:3px 0;color:var(--snow);}
+  .sa-ai-col li::before{content:"•";margin-left:5px;color:var(--dim);}
+  .sa-ai-plan{margin-top:6px;}
+  .sa-ai-plan-t{font-size:11px;font-weight:800;color:#ffaa00;margin-bottom:5px;}
+  .sa-ai-step{padding:6px 10px;background:var(--bg3);border-radius:6px;margin-bottom:4px;border-right:3px solid #ffaa00;}
+  .sa-ai-step-h{font-size:11px;font-weight:700;color:var(--snow);}
+  .sa-ai-step-d{font-size:10px;color:var(--dim2);line-height:1.4;}
+  .sa-ai-q{padding:8px 10px;background:rgba(255,170,0,.08);border-right:3px solid #ffaa00;border-radius:6px;font-size:11px;line-height:1.6;margin-bottom:8px;}
+
+  /* Comments thread */
+  .sa-cmts{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);}
+  .sa-cmts-t{font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:6px;}
+  .sa-cmt{padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:5px;}
+  .sa-cmt.ai{background:linear-gradient(135deg,rgba(167,139,250,.08),rgba(74,142,245,.04));border:1px solid rgba(167,139,250,.15);}
+  .sa-cmt.admin{background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.12);}
+  .sa-cmt-h{display:flex;justify-content:space-between;font-size:10px;color:var(--dim2);margin-bottom:3px;}
+  .sa-cmt-name{font-weight:700;color:var(--snow);}
+  .sa-cmt-text{font-size:11px;color:var(--snow);line-height:1.6;white-space:pre-wrap;}
+  .sa-cmt-text strong{color:#ffaa00;}
+  .sa-cmt-form{display:flex;gap:6px;margin-top:6px;}
+  .sa-cmt-form textarea{flex:1;padding:6px 8px;background:var(--bg3);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-family:inherit;font-size:11px;min-height:34px;resize:vertical;}
+  .sa-cmt-form button{padding:6px 12px;background:#a78bfa;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -77,10 +113,20 @@
 </div>
 
 <script type="module">
-import { initAuth, AppState, renderSidebar, renderTopbar, initMobileMenu, initModals, toast, db,
-         collection, doc, onSnapshot, updateDoc, query, orderBy, serverTimestamp } from './shared.js';
+import { initAuth, AppState, renderSidebar, renderTopbar, initMobileMenu, initModals, toast, db, app,
+         collection, doc, onSnapshot, updateDoc, addDoc, query, orderBy, serverTimestamp } from './shared.js';
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
 const REPO = 'engmah72-star/b2c-erp';
+const functions = getFunctions(app);
+
+const COMPLEXITY_LABELS = { low:'🟢 سهل', medium:'🟡 متوسط', high:'🔴 معقد' };
+const IMPACT_LABELS = { low:'تأثير محدود', medium:'تأثير متوسط', high:'تأثير عالي' };
+const REC_LABELS = {
+  proceed:             {l:'تنفيذ مباشر',  col:'#00d97e', ico:'✅'},
+  needs_clarification: {l:'يحتاج توضيح',  col:'#ffaa00', ico:'❓'},
+  reconsider:          {l:'يحتاج مراجعة', col:'#ff3d6e', ico:'⚠️'},
+};
 
 const STATUS_LABELS = {
   new:                   {l:'جديد',            col:'#3b9eff', ico:'🆕'},
@@ -104,6 +150,8 @@ let allSuggestions = [];
 let activeFilter = 'pending'; // pending = new + under_review
 let unsubList = null;
 let decisionCtx = null; // {id, target, label}
+const commentsCache = new Map(); // suggestionId -> [{...}]
+const commentsUnsubs = new Map();
 
 function isAdmin(){ return AppState.currentRole === 'admin' || AppState.currentRole === 'operation_manager'; }
 
@@ -180,9 +228,8 @@ function render(){
     const cat = CATEGORY_LABELS[s.category] || s.category || '';
     const pri = PRIORITY_LABELS[s.priority] || PRIORITY_LABELS.medium;
     const dateStr = s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '';
-    const reviewer = s.reviewedByName ? `بواسطة ${escapeHtml(s.reviewedByName)}` : '';
     return `
-      <div class="sa-item">
+      <div class="sa-item" data-sug-id="${s._id}">
         <div class="sa-item-head">
           <div class="sa-item-title">${escapeHtml(s.title || '—')}</div>
           <span class="sa-item-status" style="background:${st.col}22;color:${st.col}">${st.ico} ${st.l}</span>
@@ -195,8 +242,10 @@ function render(){
           ${dateStr ? `<span>🕒 ${dateStr}</span>` : ''}
         </div>
         <div class="sa-item-desc">${escapeHtml(s.description || '')}</div>
+        ${renderAi(s)}
         ${s.decisionNote ? `<div class="sa-item-note"><b>ملاحظة الإدارة (${escapeHtml(s.reviewedByName||'—')}):</b> ${escapeHtml(s.decisionNote)}</div>` : ''}
         ${s.implementationUrl ? `<div class="sa-item-note" style="border-right-color:#22d3ee"><b>PR:</b> <a href="${escapeAttr(s.implementationUrl)}" target="_blank" rel="noopener" style="color:#22d3ee;text-decoration:underline">${escapeHtml(s.implementationUrl)}</a></div>` : ''}
+        ${renderComments(s)}
         <div class="sa-item-actions">${actionsFor(s)}</div>
       </div>
     `;
@@ -205,6 +254,139 @@ function render(){
   list.querySelectorAll('[data-act]').forEach(b => {
     b.addEventListener('click', () => handleAction(b.getAttribute('data-act'), b.getAttribute('data-id')));
   });
+  list.querySelectorAll('[data-send-cmt]').forEach(b => {
+    b.addEventListener('click', () => sendComment(b.getAttribute('data-send-cmt')));
+  });
+
+  // Subscribe to comments for visible suggestions
+  filtered.forEach(s => subscribeComments(s._id));
+}
+
+function renderAi(s){
+  const a = s.aiAnalysis;
+  if(!a){
+    return `<div class="sa-ai">
+      <div class="sa-ai-head">🤖 تحليل AI <button class="btn btn-p" data-act="run-ai" data-id="${s._id}">شغّل التحليل</button></div>
+      <div style="font-size:11px;color:var(--dim2);">لسه ماتمش تحليل — دوس "شغّل التحليل" لو معاك مفتاح Gemini.</div>
+    </div>`;
+  }
+  const rec = REC_LABELS[a.recommendation] || REC_LABELS.proceed;
+  return `<div class="sa-ai">
+    <div class="sa-ai-head">
+      <span>🤖 تحليل AI</span>
+      <button class="btn btn-ghost" data-act="run-ai" data-id="${s._id}" style="font-size:10px;padding:4px 10px;">🔄 إعادة تحليل</button>
+    </div>
+    ${a.tldr ? `<div class="sa-ai-tldr"><b>الخلاصة:</b> ${escapeHtml(a.tldr)}</div>` : ''}
+    <div class="sa-ai-badges">
+      <span class="sa-ai-badge">التعقيد: ${COMPLEXITY_LABELS[a.estimatedComplexity] || a.estimatedComplexity}</span>
+      <span class="sa-ai-badge">الأثر: ${IMPACT_LABELS[a.estimatedImpact] || a.estimatedImpact}</span>
+      <span class="sa-ai-badge" style="background:${rec.col}22;color:${rec.col};border-color:${rec.col}40;">${rec.ico} ${rec.l}</span>
+    </div>
+    ${a.clarifyingQuestion ? `<div class="sa-ai-q"><b>❓ سؤال للموظف:</b> ${escapeHtml(a.clarifyingQuestion)}</div>` : ''}
+    <div class="sa-ai-grid">
+      ${a.pros?.length ? `<div class="sa-ai-col pros"><div class="sa-ai-col-t">✓ المميزات</div><ul>${a.pros.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul></div>` : ''}
+      ${a.cons?.length ? `<div class="sa-ai-col cons"><div class="sa-ai-col-t">⚠ العيوب / المخاطر</div><ul>${a.cons.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>` : ''}
+    </div>
+    ${a.actionPlan?.length ? `<div class="sa-ai-plan">
+      <div class="sa-ai-plan-t">📋 خطة التنفيذ</div>
+      ${a.actionPlan.map((step, i) => `
+        <div class="sa-ai-step">
+          <div class="sa-ai-step-h">${i+1}. ${escapeHtml(step.step || '')}</div>
+          <div class="sa-ai-step-d">${escapeHtml(step.detail || '')}</div>
+        </div>
+      `).join('')}
+    </div>` : ''}
+    ${a.affectedAreas?.length ? `<div style="font-size:10px;color:var(--dim2);margin-top:6px;">📂 ${a.affectedAreas.map(escapeHtml).join(' • ')}</div>` : ''}
+  </div>`;
+}
+
+function renderComments(s){
+  const cmts = commentsCache.get(s._id) || [];
+  if(!cmts.length){
+    return `<div class="sa-cmts">
+      <div class="sa-cmts-t">💬 المحادثة</div>
+      <div style="font-size:11px;color:var(--dim2);text-align:center;padding:8px;">مفيش محادثة لسه.</div>
+      <div class="sa-cmt-form">
+        <textarea id="sa-cmt-input-${s._id}" placeholder="رد على الموظف..." maxlength="2000"></textarea>
+        <button data-send-cmt="${s._id}" type="button">إرسال</button>
+      </div>
+    </div>`;
+  }
+  return `<div class="sa-cmts">
+    <div class="sa-cmts-t">💬 المحادثة (${cmts.length})</div>
+    ${cmts.map(c => {
+      const cdate = c.createdAt?.toDate ? c.createdAt.toDate().toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '';
+      const cls = c.senderType === 'ai' ? 'ai' : (c.senderType === 'admin' ? 'admin' : '');
+      return `<div class="sa-cmt ${cls}">
+        <div class="sa-cmt-h">
+          <span class="sa-cmt-name">${c.senderType==='ai'?'🤖 ':(c.senderType==='admin'?'👑 ':'👤 ')}${escapeHtml(c.senderName || '—')}</span>
+          <span>${cdate}</span>
+        </div>
+        <div class="sa-cmt-text">${formatCmt(c.text || '')}</div>
+      </div>`;
+    }).join('')}
+    <div class="sa-cmt-form">
+      <textarea id="sa-cmt-input-${s._id}" placeholder="رد على الموظف..." maxlength="2000"></textarea>
+      <button data-send-cmt="${s._id}" type="button">إرسال</button>
+    </div>
+  </div>`;
+}
+
+function formatCmt(text){
+  return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+function subscribeComments(suggestionId){
+  if(commentsUnsubs.has(suggestionId)) return; // already subscribed
+  const q = query(collection(db, 'employee_suggestions', suggestionId, 'comments'), orderBy('createdAt','asc'));
+  const unsub = onSnapshot(q, snap => {
+    commentsCache.set(suggestionId, snap.docs.map(d => ({...d.data(), _id: d.id})));
+    // Only re-render if still visible (in filtered list)
+    refreshSuggestionRender(suggestionId);
+  }, err => console.warn('cmts', suggestionId, err.message));
+  commentsUnsubs.set(suggestionId, unsub);
+}
+
+function refreshSuggestionRender(suggestionId){
+  // Trigger a full re-render — simpler than partial DOM patching
+  render();
+}
+
+async function sendComment(suggestionId){
+  const input = document.getElementById(`sa-cmt-input-${suggestionId}`);
+  const text = (input?.value || '').trim();
+  if(!text) return;
+  try{
+    await addDoc(collection(db, 'employee_suggestions', suggestionId, 'comments'), {
+      senderId: AppState.currentUser.uid,
+      senderName: AppState.userName,
+      senderType: 'admin',
+      text,
+      createdAt: serverTimestamp(),
+    });
+    if(input) input.value = '';
+    toast('تم الإرسال', 'success');
+  } catch(e){
+    console.error(e);
+    toast('فشل الإرسال: ' + e.message, 'error');
+  }
+}
+
+async function runAi(suggestionId){
+  const key = localStorage.getItem('gemini_key');
+  if(!key){
+    toast('محتاج تضبط مفتاح Gemini في ai-insights.html', 'error');
+    return;
+  }
+  toast('🤖 جاري التحليل...', 'info');
+  try{
+    const fn = httpsCallable(functions, 'analyzeSuggestionWithAI');
+    await fn({ suggestionId, apiKey: key });
+    toast('✅ تم التحليل', 'success');
+  } catch(e){
+    console.error(e);
+    toast('فشل التحليل: ' + (e.message || ''), 'error');
+  }
 }
 
 function actionsFor(s){
@@ -259,6 +441,10 @@ async function handleAction(act, id){
     sendToClaude(s);
     return;
   }
+  if(act === 'run-ai'){
+    runAi(id);
+    return;
+  }
 }
 
 function openDec(title, btnLabel){
@@ -303,6 +489,28 @@ function sendToClaude(s){
   // Open a pre-filled GitHub issue URL in a new tab.
   // Admin reviews and submits — that creates the issue.
   const title = `[Suggestion] ${s.title}`;
+  const a = s.aiAnalysis;
+  let aiBlock = '';
+  if(a){
+    aiBlock = `
+
+### 🤖 تحليل AI (Gemini)
+**الخلاصة:** ${a.tldr || '—'}
+**التعقيد:** ${a.estimatedComplexity}  •  **الأثر:** ${a.estimatedImpact}  •  **التوصية:** ${a.recommendation}
+
+#### ✓ المميزات
+${(a.pros||[]).map(p => `- ${p}`).join('\n') || '—'}
+
+#### ⚠ العيوب / المخاطر
+${(a.cons||[]).map(c => `- ${c}`).join('\n') || '—'}
+
+#### 📋 خطة التنفيذ المقترحة
+${(a.actionPlan||[]).map((step, i) => `${i+1}. **${step.step}** — ${step.detail}`).join('\n') || '—'}
+
+#### 📂 المناطق المتأثرة
+${(a.affectedAreas||[]).join(' • ') || '—'}
+`;
+  }
   const body = `## 💡 اقتراح موظف
 
 **من:** ${s.submittedByName || '—'}${s.submittedByRole ? ' ('+s.submittedByRole+')' : ''}
@@ -319,7 +527,7 @@ ${s.title}
 ### التفاصيل
 ${s.description}
 
-${s.decisionNote ? '### ملاحظة الإدارة\n' + s.decisionNote + '\n' : ''}
+${s.decisionNote ? '### ملاحظة الإدارة\n' + s.decisionNote + '\n' : ''}${aiBlock}
 ---
 
 > 🤖 **Claude:** نفّذ التعديل المطلوب على فرع جديد، افتح PR على \`main\`، وعلّق هنا برابط الـ PR.
