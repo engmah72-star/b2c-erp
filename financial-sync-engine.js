@@ -47,11 +47,26 @@ export const FE = {
   ESCROW_HOLD:                   'ESCROW_HOLD',
   ESCROW_RELEASE:                'ESCROW_RELEASE',
   ESCROW_REFUND:                 'ESCROW_REFUND',
+  COMMISSION_ACCRUED:            'COMMISSION_ACCRUED',
   COMMISSION_SETTLED:            'COMMISSION_SETTLED',
   PLATFORM_FEE_COLLECTED:        'PLATFORM_FEE_COLLECTED',
   MERCHANT_PAYOUT:               'MERCHANT_PAYOUT',
   MERCHANT_PAYOUT_REVERSAL:      'MERCHANT_PAYOUT_REVERSAL',
+  AGENT_COMMISSION:              'AGENT_COMMISSION',
+  AGENT_PAYOUT:                  'AGENT_PAYOUT',
   CHARGEBACK:                    'CHARGEBACK',
+  // ─── Returns / After-Sales Events (Phase 1) — handlers في returns-core.js ───
+  // التعريف الكامل في AUDIT_REPORT.md §C6 و module definition للموافقة.
+  RETURN_REQUESTED:              'RETURN_REQUESTED',
+  RETURN_INSPECTED:              'RETURN_INSPECTED',
+  RETURN_APPROVED:               'RETURN_APPROVED',
+  RETURN_REJECTED:               'RETURN_REJECTED',
+  RETURN_REFUNDED:               'RETURN_REFUNDED',
+  RETURN_REFUNDED_REVERSAL:      'RETURN_REFUNDED_REVERSAL',
+  RETURN_REPLACEMENT_ISSUED:     'RETURN_REPLACEMENT_ISSUED',
+  RETURN_CANCELLED:              'RETURN_CANCELLED',
+  RETURN_CLOSED:                 'RETURN_CLOSED',
+  WARRANTY_CLAIM_OPENED:         'WARRANTY_CLAIM_OPENED',
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -82,11 +97,17 @@ const LC = {
   ESCROW_HOLD:                  { type:'other',    category:'escrow',              direction:'in',  icon:'🔒', label:'حجز Escrow' },
   ESCROW_RELEASE:               { type:'transfer', category:'escrow',              direction:'out', icon:'🔓', label:'إفراج Escrow' },
   ESCROW_REFUND:                { type:'reversal', category:'escrow',              direction:'out', icon:'↩️', label:'استرداد Escrow' },
+  COMMISSION_ACCRUED:           { type:'other',    category:'platform_commission', direction:'in',  icon:'📊', label:'عمولة منصة مستحقة (accrual)' },
   COMMISSION_SETTLED:           { type:'income',   category:'platform_commission', direction:'in',  icon:'💼', label:'عمولة منصة محصّلة' },
   PLATFORM_FEE_COLLECTED:       { type:'income',   category:'platform_fee',        direction:'in',  icon:'🏛️', label:'رسوم منصة' },
   MERCHANT_PAYOUT:              { type:'expense',  category:'merchant_payout',     direction:'out', icon:'💸', label:'دفعة مرشنت' },
   MERCHANT_PAYOUT_REVERSAL:     { type:'reversal', category:'merchant_payout',     direction:'in',  icon:'🔄', label:'إلغاء دفعة مرشنت' },
+  AGENT_COMMISSION:             { type:'expense',  category:'agent_commission',    direction:'out', icon:'🤝', label:'عمولة مندوب' },
+  AGENT_PAYOUT:                 { type:'expense',  category:'agent_payout',        direction:'out', icon:'💵', label:'دفعة مندوب' },
   CHARGEBACK:                   { type:'reversal', category:'chargeback',          direction:'out', icon:'⚠️', label:'استرداد إجباري (chargeback)' },
+  // ─── Returns / After-Sales (Phase 1) — الأحداث المالية فقط في الـ ledger ───
+  RETURN_REFUNDED:              { type:'expense',  category:'return_refund',       direction:'out', icon:'↩️', label:'استرداد مرتجع' },
+  RETURN_REFUNDED_REVERSAL:     { type:'reversal', category:'return_refund',       direction:'in',  icon:'🔄', label:'إلغاء استرداد مرتجع' },
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -211,6 +232,8 @@ export function getReversal(eventType) {
     RETURN_LOSS:                  'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE:              'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE_REVERSAL:     'GENERAL_EXPENSE',
+    RETURN_REFUNDED:              'RETURN_REFUNDED_REVERSAL',
+    RETURN_REFUNDED_REVERSAL:     'RETURN_REFUNDED',
   };
   return REVERSAL[eventType] || eventType;
 }

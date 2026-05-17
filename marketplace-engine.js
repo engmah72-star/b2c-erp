@@ -602,6 +602,450 @@ async function handleChargeback(db, p) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// HANDLER 9 — ESCROW HOLD (standalone)
+// لسيناريوهات escrow خارج marketplace_order (B2B، escrow مخصص).
+// payload: { customerId?, amount, walletSourceId?, reason, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleEscrowHold(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!(p.amount > 0)) throw new Error('[MKE] amount مطلوب وموجب');
+
+  const batch = writeBatch(db);
+  const escrowRef = doc(collection(db, 'escrow_holds'));
+
+  batch.update(doc(db, 'wallets', PLATFORM_WALLETS.ESCROW), { balance: increment(p.amount) });
+  batch.set(escrowRef, {
+    orderId:    p.orderId    || null,
+    tenantId:   p.tenantId   || null,
+    customerId: p.customerId || null,
+    amount:     p.amount,
+    state:      ESCROW_STATE.HELD,
+    walletId:   PLATFORM_WALLETS.ESCROW,
+    sourceWalletId: p.walletSourceId || null,
+    reason:     p.reason     || '',
+    heldAt:     serverTimestamp(),
+    createdBy:  p.userId     || '',
+  });
+
+  addLedgerToBatch(batch, db, MFE.ESCROW_HOLD, {
+    amount:     p.amount,
+    walletId:   PLATFORM_WALLETS.ESCROW,
+    walletName: 'Platform Escrow',
+    orderId:    p.orderId    || null,
+    clientId:   p.customerId || null,
+    refId:      escrowRef.id,
+    notes:      `حجز Escrow — ${p.reason || p.notes || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.ESCROW_HOLD, { ...p, escrowId: escrowRef.id });
+  markIdempotency(batch, db, p.idempotencyKey, MFE.ESCROW_HOLD);
+
+  await batch.commit();
+  console.log('[MKE] ✅ ESCROW_HOLD:', escrowRef.id, '+', p.amount);
+  return { escrowId: escrowRef.id };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 10 — PLATFORM FEE COLLECTED
+// رسوم منصة لمرة واحدة من المرشنت (listing fee، subscription، promoted).
+// payload: { tenantId, amount, feeType, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handlePlatformFeeCollected(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.tenantId || !(p.amount > 0)) throw new Error('[MKE] tenantId و amount مطلوبان');
+
+  const tenantSnap = await getDoc(doc(db, 'tenants', p.tenantId));
+  const tenant = tenantSnap.exists() ? tenantSnap.data() : {};
+  if (!tenant.walletId) throw new Error('[MKE] merchant بدون wallet');
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'wallets', tenant.walletId),     { balance: increment(-p.amount) });
+  batch.update(doc(db, 'wallets', PLATFORM_WALLETS.REVENUE), { balance: increment(p.amount) });
+
+  addLedgerToBatch(batch, db, MFE.PLATFORM_FEE_COLLECTED, {
+    amount:     p.amount,
+    walletId:   PLATFORM_WALLETS.REVENUE,
+    walletName: 'Platform Revenue',
+    vendorId:   p.tenantId,
+    vendorName: tenant.displayName || tenant.legalName || '',
+    refId:      p.refId || null,
+    notes:      `${p.feeType || 'platform_fee'} — ${p.notes || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.PLATFORM_FEE_COLLECTED, p);
+  markIdempotency(batch, db, p.idempotencyKey, MFE.PLATFORM_FEE_COLLECTED);
+
+  await batch.commit();
+  console.log('[MKE] ✅ PLATFORM_FEE_COLLECTED:', p.tenantId, '-', p.amount);
+  return {};
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 11 — COMMISSION ACCRUED (standalone)
+// تسجيل عمولة مستحقة (قبل التحصيل) لمسار الفوترة الشهرية.
+// لا يحرك أرصدة — pure accrual.
+// payload: { tenantId, orderId, amount, rate, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleCommissionAccrued(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.tenantId || !(p.amount > 0)) throw new Error('[MKE] tenantId و amount مطلوبان');
+
+  const batch = writeBatch(db);
+  const commRef = doc(collection(db, 'commissions'));
+  batch.set(commRef, {
+    tenantId:    p.tenantId,
+    orderId:     p.orderId || null,
+    amount:      p.amount,
+    rate:        p.rate != null ? p.rate : PLATFORM_COMMISSION_RATE,
+    state:       'accrued',
+    accruedAt:   serverTimestamp(),
+    createdBy:   p.userId || '',
+  });
+
+  // قيد accrual في الـ ledger (نوع other — ليس حركة نقدية فعلية)
+  addLedgerToBatch(batch, db, MFE.COMMISSION_ACCRUED, {
+    amount:     p.amount,
+    walletId:   PLATFORM_WALLETS.REVENUE,
+    walletName: 'Platform Revenue',
+    orderId:    p.orderId || null,
+    vendorId:   p.tenantId,
+    refId:      commRef.id,
+    notes:      `عمولة مستحقة — ${p.notes || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.COMMISSION_ACCRUED, { ...p, commissionId: commRef.id });
+  markIdempotency(batch, db, p.idempotencyKey, MFE.COMMISSION_ACCRUED);
+
+  await batch.commit();
+  console.log('[MKE] ✅ COMMISSION_ACCRUED:', p.tenantId, '+', p.amount);
+  return { commissionId: commRef.id };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 12 — COMMISSION SETTLED (standalone)
+// تحصيل عمولة accrued سابقاً (دفع شهري من merchant wallet → platform revenue).
+// payload: { commissionId, tenantId, amount?, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleCommissionSettled(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.commissionId) throw new Error('[MKE] commissionId مطلوب');
+
+  const commSnap = await getDoc(doc(db, 'commissions', p.commissionId));
+  if (!commSnap.exists()) throw new Error('[MKE] commission غير موجود');
+  const comm = commSnap.data();
+  if (comm.state === 'settled') return { skipped: true, reason: 'already settled' };
+  if (comm.state === 'reversed') throw new Error('[MKE] commission مُعكَسة بالفعل');
+
+  const tenantSnap = await getDoc(doc(db, 'tenants', comm.tenantId));
+  const tenant = tenantSnap.exists() ? tenantSnap.data() : {};
+  if (!tenant.walletId) throw new Error('[MKE] merchant بدون wallet');
+
+  const amount = +(p.amount || comm.amount);
+  const batch  = writeBatch(db);
+  batch.update(doc(db, 'wallets', tenant.walletId),         { balance: increment(-amount) });
+  batch.update(doc(db, 'wallets', PLATFORM_WALLETS.REVENUE), { balance: increment(amount) });
+  batch.update(doc(db, 'commissions', p.commissionId), {
+    state:     'settled',
+    settledAt: serverTimestamp(),
+    settledBy: p.userId || '',
+  });
+
+  addLedgerToBatch(batch, db, MFE.COMMISSION_SETTLED, {
+    amount, walletId: PLATFORM_WALLETS.REVENUE, walletName: 'Platform Revenue',
+    orderId:   comm.orderId || null,
+    vendorId:  comm.tenantId,
+    vendorName: tenant.displayName || tenant.legalName || '',
+    refId:     p.commissionId,
+    notes:     `تحصيل عمولة — ${p.notes || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.COMMISSION_SETTLED, p);
+  markIdempotency(batch, db, p.idempotencyKey, MFE.COMMISSION_SETTLED);
+
+  await batch.commit();
+  console.log('[MKE] ✅ COMMISSION_SETTLED:', p.commissionId, '+', amount);
+  return { amount };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 13 — AGENT COMMISSION (accrual)
+// تسجيل عمولة لمندوب على طلب — معلّقة لحين الـ payout.
+// payload: { agentId, orderId, amount, rate?, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleAgentCommission(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.agentId || !(p.amount > 0)) throw new Error('[MKE] agentId و amount مطلوبان');
+
+  const agentSnap = await getDoc(doc(db, 'tenants', p.agentId));
+  const agent = agentSnap.exists() ? agentSnap.data() : {};
+
+  const batch = writeBatch(db);
+  const commRef = doc(collection(db, 'commissions'));
+  batch.set(commRef, {
+    tenantId:     p.agentId,
+    recipientType: ME.AGENT,
+    orderId:      p.orderId || null,
+    amount:       p.amount,
+    rate:         p.rate || null,
+    state:        'accrued',
+    accruedAt:    serverTimestamp(),
+    createdBy:    p.userId || '',
+  });
+
+  addLedgerToBatch(batch, db, MFE.AGENT_COMMISSION, {
+    amount:     p.amount,
+    walletId:   PLATFORM_WALLETS.REVENUE,
+    walletName: 'Platform Revenue',
+    orderId:    p.orderId || null,
+    vendorId:   p.agentId,
+    vendorName: agent.displayName || agent.legalName || '',
+    refId:      commRef.id,
+    notes:      `عمولة مندوب — ${p.notes || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.AGENT_COMMISSION, { ...p, commissionId: commRef.id });
+  markIdempotency(batch, db, p.idempotencyKey, MFE.AGENT_COMMISSION);
+
+  await batch.commit();
+  console.log('[MKE] ✅ AGENT_COMMISSION:', p.agentId, '+', p.amount);
+  return { commissionId: commRef.id };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 14 — AGENT PAYOUT (request + paid)
+// نفس نمط MERCHANT_PAYOUT. الـ agent له wallet مستقل (في tenants.walletId).
+// ══════════════════════════════════════════════════════════════════
+async function handleAgentPayout(db, action, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.agentId || !(p.amount > 0)) throw new Error('[MKE] agentId و amount مطلوبان');
+
+  // ملاحظة: الـ agent لا يملك wallet متراكم في النظام (commissions تُسجَّل كـ accrual فقط).
+  // الـ payout يخصم من Platform Revenue مباشرة → تحويل بنكي خارجي.
+  const agentSnap = await getDoc(doc(db, 'tenants', p.agentId));
+  const agent = agentSnap.exists() ? agentSnap.data() : {};
+
+  const batch = writeBatch(db);
+
+  if (action === 'request') {
+    const payoutRef = doc(collection(db, 'payouts'));
+    batch.set(payoutRef, {
+      tenantId:      p.agentId,
+      recipientType: ME.AGENT,
+      amount:        p.amount,
+      state:         PAYOUT_STATE.REQUESTED,
+      bankRef:       '',
+      orderIds:      p.orderIds || [],
+      commissionIds: p.commissionIds || [],
+      requestedAt:   serverTimestamp(),
+      requestedBy:   p.userId || '',
+    });
+    addAuditToBatch(batch, db, 'AGENT_PAYOUT_REQUESTED', { ...p, payload: { payoutId: payoutRef.id } });
+    addNotificationToBatch(batch, db, 'AGENT_PAYOUT_REQUESTED', p);
+    markIdempotency(batch, db, p.idempotencyKey, 'AGENT_PAYOUT_REQUESTED');
+    await batch.commit();
+    console.log('[MKE] ✅ AGENT_PAYOUT_REQUESTED:', payoutRef.id);
+    return { payoutId: payoutRef.id };
+  }
+
+  if (action === 'paid') {
+    if (!p.payoutId) throw new Error('[MKE] payoutId مطلوب');
+    // الـ agent payout يخصم من Platform Revenue (لأن العمولة كانت income سابقاً)
+    batch.update(doc(db, 'wallets', PLATFORM_WALLETS.REVENUE), { balance: increment(-p.amount) });
+    batch.update(doc(db, 'payouts', p.payoutId), {
+      state:   PAYOUT_STATE.PAID,
+      bankRef: p.bankRef || '',
+      paidAt:  serverTimestamp(),
+      paidBy:  p.userId || '',
+    });
+    addLedgerToBatch(batch, db, MFE.AGENT_PAYOUT, {
+      amount: p.amount,
+      walletId: PLATFORM_WALLETS.REVENUE, walletName: 'Platform Revenue',
+      vendorId: p.agentId, vendorName: agent.displayName || agent.legalName || '',
+      refId:  p.payoutId,
+      notes:  `agent payout ${p.bankRef || ''}`,
+      userId: p.userId, userName: p.userName,
+    });
+    addNotificationToBatch(batch, db, 'AGENT_PAYOUT_PAID', p);
+    markIdempotency(batch, db, p.idempotencyKey, MFE.AGENT_PAYOUT);
+    await batch.commit();
+    console.log('[MKE] ✅ AGENT_PAYOUT_PAID:', p.payoutId, '-', p.amount);
+    return {};
+  }
+
+  throw new Error('[MKE] action غير معروف لـ agent payout: ' + action);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 15 — MERCHANT PAYOUT REVERSAL
+// عكس payout تم سابقاً (مثلاً تحويل بنكي فشل بعد ما اتسجل PAID).
+// يعيد الأموال إلى Merchant Wallet ويحدّث الـ payout إلى REVERSED.
+// payload: { payoutId, tenantId, reason }
+// ══════════════════════════════════════════════════════════════════
+async function handleMerchantPayoutReversal(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.payoutId) throw new Error('[MKE] payoutId مطلوب');
+
+  const payoutSnap = await getDoc(doc(db, 'payouts', p.payoutId));
+  if (!payoutSnap.exists()) throw new Error('[MKE] payout غير موجود');
+  const payout = payoutSnap.data();
+  if (payout.state !== PAYOUT_STATE.PAID) {
+    throw new Error('[MKE] لا يمكن عكس payout state=' + payout.state);
+  }
+
+  const tenantSnap = await getDoc(doc(db, 'tenants', payout.tenantId));
+  const tenant = tenantSnap.exists() ? tenantSnap.data() : {};
+  if (!tenant.walletId) throw new Error('[MKE] merchant بدون wallet');
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'wallets', tenant.walletId), { balance: increment(payout.amount) });
+  batch.update(doc(db, 'payouts', p.payoutId), {
+    state:        PAYOUT_STATE.REVERSED,
+    reversedAt:   serverTimestamp(),
+    reversedBy:   p.userId || '',
+    reverseReason: p.reason || '',
+  });
+
+  addLedgerToBatch(batch, db, MFE.MERCHANT_PAYOUT_REVERSAL, {
+    amount:     payout.amount,
+    walletId:   tenant.walletId,
+    walletName: tenant.displayName || '',
+    vendorId:   payout.tenantId,
+    vendorName: tenant.displayName || tenant.legalName || '',
+    refId:      p.payoutId,
+    notes:      `عكس payout — ${p.reason || ''}`,
+    userId: p.userId, userName: p.userName,
+  });
+  addNotificationToBatch(batch, db, MFE.MERCHANT_PAYOUT_REVERSAL, p);
+  markIdempotency(batch, db, p.idempotencyKey, MFE.MERCHANT_PAYOUT_REVERSAL);
+
+  await batch.commit();
+  console.log('[MKE] ⚠️ MERCHANT_PAYOUT_REVERSAL:', p.payoutId, '+', payout.amount);
+  return { amount: payout.amount };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 16 — DISPUTE OPENED
+// فتح نزاع على طلب. لا يحرك أموال — يجمد Escrow لو كان HELD.
+// payload: { orderId, openedBy, reason, amount?, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleDisputeOpened(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.orderId) throw new Error('[MKE] orderId مطلوب');
+
+  const orderSnap = await getDoc(doc(db, 'marketplace_orders', p.orderId));
+  if (!orderSnap.exists()) throw new Error('[MKE] order غير موجود');
+  const order = orderSnap.data();
+
+  const batch = writeBatch(db);
+  const disputeRef = doc(collection(db, 'disputes'));
+  batch.set(disputeRef, {
+    orderId:    p.orderId,
+    tenantId:   order.tenantId,
+    customerId: order.customerId,
+    openedBy:   p.openedBy || 'customer',  // customer | merchant | operator
+    reason:     p.reason || '',
+    amount:     +(p.amount || order.grossAmount || 0),
+    status:     'opened',
+    openedAt:   serverTimestamp(),
+    notes:      p.notes || '',
+    createdBy:  p.userId || '',
+  });
+
+  // لو فيه escrow وما زال HELD → جمّده
+  if (order.escrowId) {
+    const escrowSnap = await getDoc(doc(db, 'escrow_holds', order.escrowId));
+    if (escrowSnap.exists() && escrowSnap.data().state === ESCROW_STATE.HELD) {
+      batch.update(doc(db, 'escrow_holds', order.escrowId), {
+        state:      ESCROW_STATE.DISPUTED,
+        disputedAt: serverTimestamp(),
+      });
+    }
+  }
+  batch.update(doc(db, 'marketplace_orders', p.orderId), {
+    status:        'disputed',
+    disputedAt:    serverTimestamp(),
+    activeDisputeId: disputeRef.id,
+  });
+
+  // dispute = حدث غير مالي → audit log فقط (RULE 5: ledger للحركات المالية)
+  addAuditToBatch(batch, db, MFE.DISPUTE_OPENED, {
+    ...p, payload: { disputeId: disputeRef.id, tenantId: order.tenantId },
+  });
+  addNotificationToBatch(batch, db, MFE.DISPUTE_OPENED, { ...p, tenantId: order.tenantId, disputeId: disputeRef.id });
+  markIdempotency(batch, db, p.idempotencyKey, MFE.DISPUTE_OPENED);
+
+  await batch.commit();
+  console.log('[MKE] 🚩 DISPUTE_OPENED:', disputeRef.id, 'order:', p.orderId);
+  return { disputeId: disputeRef.id };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HANDLER 17 — DISPUTE RESOLVED
+// إغلاق النزاع. الحركة المالية الفعلية تأتي عبر event منفصل يختاره القرار:
+//   - resolved_customer → استدعِ ESCROW_REFUND/CHARGEBACK بعد كده
+//   - resolved_merchant → استدعِ ESCROW_RELEASE بعد كده
+//   - split            → استدعِ ESCROW_REFUND جزئي + إفراج تكميلي
+// هذا الـ handler يحدّث سجل النزاع + يفك تجميد الـ escrow فقط.
+// payload: { disputeId, resolution, resolvedStatus, notes }
+// ══════════════════════════════════════════════════════════════════
+async function handleDisputeResolved(db, p) {
+  if (await isAlreadyProcessed(db, p.idempotencyKey)) return { skipped: true };
+  if (!p.disputeId) throw new Error('[MKE] disputeId مطلوب');
+
+  const dispSnap = await getDoc(doc(db, 'disputes', p.disputeId));
+  if (!dispSnap.exists()) throw new Error('[MKE] dispute غير موجود');
+  const disp = dispSnap.data();
+  if (disp.status !== 'opened' && disp.status !== 'investigating') {
+    throw new Error('[MKE] dispute مُغلَق بالفعل: ' + disp.status);
+  }
+
+  const validStatuses = ['resolved_customer', 'resolved_merchant', 'split'];
+  if (!validStatuses.includes(p.resolvedStatus)) {
+    throw new Error('[MKE] resolvedStatus يجب أن يكون: ' + validStatuses.join('|'));
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'disputes', p.disputeId), {
+    status:     p.resolvedStatus,
+    resolution: p.resolution || '',
+    resolvedAt: serverTimestamp(),
+    resolvedBy: p.userId || '',
+    notes:      p.notes || disp.notes || '',
+  });
+
+  // فك تجميد الـ escrow (الـ event المالي التالي سيحدّد المسار)
+  const orderSnap = await getDoc(doc(db, 'marketplace_orders', disp.orderId));
+  if (orderSnap.exists()) {
+    const order = orderSnap.data();
+    if (order.escrowId) {
+      const escrowSnap = await getDoc(doc(db, 'escrow_holds', order.escrowId));
+      if (escrowSnap.exists() && escrowSnap.data().state === ESCROW_STATE.DISPUTED) {
+        // ارجع للحالة HELD حتى الـ event التالي (REFUND/RELEASE) يعمل
+        batch.update(doc(db, 'escrow_holds', order.escrowId), {
+          state:        ESCROW_STATE.HELD,
+          undisputedAt: serverTimestamp(),
+        });
+      }
+    }
+    // الأوردر ييجي status من نتيجة الـ event المالي التالي — هنا نشير فقط أن الـ dispute أُغلق
+    batch.update(doc(db, 'marketplace_orders', disp.orderId), {
+      activeDisputeId: null,
+      lastDisputeOutcome: p.resolvedStatus,
+    });
+  }
+
+  addAuditToBatch(batch, db, MFE.DISPUTE_RESOLVED, {
+    ...p, payload: { disputeId: p.disputeId, outcome: p.resolvedStatus },
+  });
+  addNotificationToBatch(batch, db, MFE.DISPUTE_RESOLVED, { ...p, tenantId: disp.tenantId });
+  markIdempotency(batch, db, p.idempotencyKey, MFE.DISPUTE_RESOLVED);
+
+  await batch.commit();
+  console.log('[MKE] ✅ DISPUTE_RESOLVED:', p.disputeId, '→', p.resolvedStatus);
+  return { resolvedStatus: p.resolvedStatus, nextActionHint: p.resolvedStatus === 'resolved_customer' ? 'dispatch ESCROW_REFUND or CHARGEBACK' : p.resolvedStatus === 'resolved_merchant' ? 'dispatch ESCROW_RELEASE' : 'dispatch partial REFUND + RELEASE' };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // PUBLIC DISPATCHER — entry point لكل marketplace event
 // ══════════════════════════════════════════════════════════════════
 export async function dispatchMarketplaceEvent(db, eventType, payload) {
@@ -615,7 +1059,16 @@ export async function dispatchMarketplaceEvent(db, eventType, payload) {
     case MFE.MARKETPLACE_ORDER_CANCELLED:
     case MFE.ESCROW_REFUND:              return handleEscrowRefund(db, payload);
     case MFE.ESCROW_RELEASE:             return handleEscrowRelease(db, payload);
+    case MFE.ESCROW_HOLD:                return handleEscrowHold(db, payload);
     case MFE.MERCHANT_PAYOUT:            return handleMerchantPayout(db, payload.action || 'paid', payload);
+    case MFE.MERCHANT_PAYOUT_REVERSAL:   return handleMerchantPayoutReversal(db, payload);
+    case MFE.PLATFORM_FEE_COLLECTED:     return handlePlatformFeeCollected(db, payload);
+    case MFE.COMMISSION_ACCRUED:         return handleCommissionAccrued(db, payload);
+    case MFE.COMMISSION_SETTLED:         return handleCommissionSettled(db, payload);
+    case MFE.AGENT_COMMISSION:           return handleAgentCommission(db, payload);
+    case MFE.AGENT_PAYOUT:               return handleAgentPayout(db, payload.action || 'paid', payload);
+    case MFE.DISPUTE_OPENED:             return handleDisputeOpened(db, payload);
+    case MFE.DISPUTE_RESOLVED:           return handleDisputeResolved(db, payload);
     case MFE.CHARGEBACK:                 return handleChargeback(db, payload);
     default:
       throw new Error('[MKE] eventType غير مدعوم: ' + eventType);
@@ -630,6 +1083,15 @@ export {
   handleMarketplaceOrderCaptured,
   handleEscrowRelease,
   handleEscrowRefund,
+  handleEscrowHold,
   handleMerchantPayout,
+  handleMerchantPayoutReversal,
+  handlePlatformFeeCollected,
+  handleCommissionAccrued,
+  handleCommissionSettled,
+  handleAgentCommission,
+  handleAgentPayout,
+  handleDisputeOpened,
+  handleDisputeResolved,
   handleChargeback,
 };

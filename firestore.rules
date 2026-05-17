@@ -270,6 +270,8 @@ service cloud.firestore {
         hasPage('production') ||
         hasPage('design') ||
         hasPage('print') ||
+        hasPage('clients') ||
+        hasPage('returns') ||
         resource.data.get('createdBy','__') == request.auth.uid ||
         resource.data.get('designerId','__') == request.auth.uid ||
         resource.data.get('productionAgent','__') == request.auth.uid ||
@@ -385,6 +387,95 @@ service cloud.firestore {
     match /designers_v2/{desId} {
       allow read: if isAuth() && (isAdmin() || hasPage('design'));
       allow write: if isAdmin();
+    }
+
+    // ══ C3: Collections كانت مكشوفة بدون أي قاعدة — مغطّاة الآن ══
+
+    // ══ Materials (خامات: ورق/أحبار/مواد طباعة) ══
+    match /materials/{matId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (isAdmin() || hasPage('materials'));
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Product Templates (قوالب منتجات محفوظة لشاشة التسعير) ══
+    match /product_templates/{tplId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (
+        isAdmin() || hasPage('products') || hasPage('product-pricing')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Pricing Templates (presets للـ smart-pricing) ══
+    match /pricing_templates/{tplId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (
+        isAdmin() || hasPage('smart-pricing') || hasPage('products')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Job Orders (طابور إنتاج الـ stages) ══
+    // قراءة: الأدوار التي تلمس الإنتاج. كتابة: admin/ops/production.
+    match /job_orders/{jobId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('job-orders') ||
+        hasPage('production') ||
+        hasPage('print') ||
+        hasPage('design')
+      );
+      allow create, update: if isAuth() && (
+        isAdmin() ||
+        hasPage('job-orders') ||
+        hasPage('production')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Employees v2 (قائمة موظفين بنسخة جديدة من الـ schema) ══
+    // قراءة: أي مستخدم مسجَّل (الأسماء تُستخدم في dropdowns/approver lookups).
+    // كتابة: admin أو صفحة employees فقط.
+    match /employees_v2/{empId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (isAdmin() || hasPage('employees'));
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Returns / After-Sales Tickets (C6) ══
+    // الـ Module Definition الكامل في AUDIT_REPORT.md + RULE 7 doc.
+    // - قراءة: الأدوار اللي تدير العميل (admin/ops/cs/shipping) + الـ client صاحب الطلب.
+    //   designer/production يقرؤون metadata فقط (لتوضيح "هذا الطلب له مرتجع")، لكن
+    //   field-level filtering ليس مدعوماً في Firestore — يُطبّق client-side عبر canSee.
+    // - إنشاء: الأدوار اللي لديها client_phone (RULE 8) + client portal لاحقاً.
+    // - update: admin/ops/cs لتغيير status، wallet_manager لتنفيذ الـ refund.
+    // - delete: admin only (soft delete مفضّل عبر isDeleted=true).
+    match /returns_tickets/{ticketId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients') ||
+        hasPage('design') ||
+        hasPage('production') ||
+        resource.data.get('clientId','__') == request.auth.uid ||
+        resource.data.get('createdBy','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients')
+      );
+      // update — تغيير status / decision / refund execution.
+      // الـ refund نفسه يكتب أيضاً على wallets/transactions_v2/financial_ledger
+      // وتلك قواعد منفصلة تتأكد من canFinancialWrite.
+      allow update: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        canFinancialWrite()
+      );
+      // عمداً soft delete preferred — الـ tickets المغلقة جزء من الـ audit trail.
+      allow delete: if isAdminOnly();
     }
 
     // ══ Attendance ══
@@ -538,7 +629,13 @@ service cloud.firestore {
     // أي موظف يقدر ينشئ طلب (دفعة مورد / مرتب / سلفة)
     // المحاسب ينفّذ → الطالب يستلم بإيصال → ops يؤكد → admin يعتمد
     match /payment_requests/{reqId} {
-      allow read: if isAuth();
+      // C5: قراءة لـ admin + الأدوار المالية + الطالب نفسه فقط.
+      // كان: allow read: if isAuth(); — كشف رواتب/مصاريف موردين لأي موظف.
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        resource.data.get('requestedBy','') == request.auth.uid
+      );
       allow create: if isAuth()
         && request.resource.data.requestedBy == request.auth.uid
         && request.resource.data.status == 'requested'

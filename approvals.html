@@ -255,9 +255,10 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, query, orderBy, limit, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE, approvalFields, calcOrderPayment } from "./financial-sync-engine.js";
+import { maskPhone, canSee } from "./shared.js";
 
 const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -265,6 +266,11 @@ const db   = getFirestore(app);
 const storage = getStorage(app);
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
+
+// RULE 8 — حماية رقم العميل: إظهار للأدوار المصرّحة فقط (admin/cs/ops/shipping)،
+// والباقي يرى رقم مُقنَّع. canSee/maskPhone مستوردة من shared.js (مصدر واحد).
+const canSeeClientPhone = () => canSee('client_phone', currentPerms, currentRole);
+const displayPhone = (phone) => maskPhone(phone, canSeeClientPhone());
 let txs = [];
 let allTxs = [];
 let requests = [];      // payment_requests collection
@@ -439,7 +445,10 @@ function startListeners(){
     err=>console.error('[approvals] employees:', err)
   );
 
-  onSnapshot(collection(db,'transactions_v2'),
+  // C7: bounded — كان unbounded (listener realtime على transactions_v2 كاملاً).
+  // أحدث 3000 tx تكفي للعمل اليومي (approval queue + recent history).
+  // العمليات الأقدم تُقرأ من ledger.html / reports.html بـ pagination.
+  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(3000)),
     snap=>{
       allTxs = snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
@@ -744,7 +753,7 @@ function renderOrderDetails(o, costOnly=false){
   const stColor = STAGE_COL[stage] || '#888';
   const stLabel = STAGE_AR[stage] || stage;
   const products = (o.products || []).map(p => `${escapeHtml(p.name||'منتج')}${p.qty>1?' ×'+p.qty:''}`).join(' · ') || escapeHtml(o.product || '—');
-  const phone = o.clientPhone ? escapeHtml(o.clientPhone) : '';
+  const phone = o.clientPhone ? escapeHtml(displayPhone(o.clientPhone)) : '';
 
   // costOnly mode: للطلبات (يظهر تكلفة فقط بدون شحن/تحصيل)
   const costRows = costOnly ? `
@@ -912,7 +921,7 @@ function renderRequestCard(r){
     sectionOrder = `
       <div style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.18);border-radius:8px;padding:10px 12px;margin-top:8px">
         <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">📦 الأوردر المرتبط</div>
-        <div style="font-size:12px"><b style="font-family:monospace">${escapeHtml(order.orderId||order._id.slice(-8))}</b> — ${escapeHtml(order.clientName||'')}${order.clientPhone?` · <span style="color:var(--dim2);font-family:monospace">${escapeHtml(order.clientPhone)}</span>`:''}</div>
+        <div style="font-size:12px"><b style="font-family:monospace">${escapeHtml(order.orderId||order._id.slice(-8))}</b> — ${escapeHtml(order.clientName||'')}${order.clientPhone?` · <span style="color:var(--dim2);font-family:monospace">${escapeHtml(displayPhone(order.clientPhone))}</span>`:''}</div>
         <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:10px">
           <span style="background:${STAGE_COL[order.stage]||'#888'}22;color:${STAGE_COL[order.stage]||'#888'};padding:2px 8px;border-radius:8px;font-weight:800">${STAGE_AR[order.stage]||order.stage}</span>
           <span style="color:var(--dim2)">السعر: <b style="color:var(--snow)">${fn(order.salePrice||0)}</b></span>
@@ -2003,24 +2012,26 @@ window.uploadReceipt = async function(){
         s=>{ const p = Math.round(s.bytesTransferred/s.totalBytes*100); prog.textContent = `جاري الرفع... ${p}%`; },
         rej,
         async ()=>{
-          const url = await getDownloadURL(task.snapshot.ref);
-          await updateDoc(doc(db,'payment_requests',receivingReq._id), {
-            status: 'pending',
-            receiptImageUrl: url,
-            receiptImagePath: path,
-            receivedBy: currentUid,
-            receivedByName: currentUserName,
-            receivedAt: serverTimestamp(),
-          });
-          // تحديث الـ tx المرتبطة كذلك (لتظهر في تاب pending)
-          if(receivingReq.txId){
-            try{
-              await updateDoc(doc(db,'transactions_v2',receivingReq.txId), {
+          try{
+            const url = await getDownloadURL(task.snapshot.ref);
+            // RULE 3: batch واحد ذرّي — payment_request + tx المرتبطة معًا
+            const batch = writeBatch(db);
+            batch.update(doc(db,'payment_requests',receivingReq._id), {
+              status: 'pending',
+              receiptImageUrl: url,
+              receiptImagePath: path,
+              receivedBy: currentUid,
+              receivedByName: currentUserName,
+              receivedAt: serverTimestamp(),
+            });
+            if(receivingReq.txId){
+              batch.update(doc(db,'transactions_v2',receivingReq.txId), {
                 receiptImageUrl: url,
               });
-            }catch(_){}
-          }
-          res();
+            }
+            await batch.commit();
+            res();
+          }catch(err){ rej(err); }
         }
       );
     });
@@ -2128,7 +2139,7 @@ window.openOrderDetails = function(orderId){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
       <div><b style="color:var(--dim2);font-size:10px">رقم الأوردر</b><div style="font-family:monospace">${escapeHtml(o.orderId||orderId)}</div></div>
       <div><b style="color:var(--dim2);font-size:10px">العميل</b><div>${escapeHtml(o.clientName||'—')}</div></div>
-      ${o.clientPhone?`<div><b style="color:var(--dim2);font-size:10px">التليفون</b><div style="font-family:monospace">${escapeHtml(o.clientPhone)}</div></div>`:''}
+      ${o.clientPhone?`<div><b style="color:var(--dim2);font-size:10px">التليفون</b><div style="font-family:monospace">${escapeHtml(displayPhone(o.clientPhone))}</div></div>`:''}
       <div><b style="color:var(--dim2);font-size:10px">المرحلة</b><div><span style="background:${STAGE_COL[o.stage]||'#888'}22;color:${STAGE_COL[o.stage]||'#888'};padding:2px 8px;border-radius:8px;font-size:10px;font-weight:800">${STAGE_AR[o.stage]||o.stage}</span></div></div>
       ${o.designerName?`<div><b style="color:var(--dim2);font-size:10px">المصمم</b><div>${escapeHtml(o.designerName)}</div></div>`:''}
       ${o.deadline?`<div><b style="color:var(--dim2);font-size:10px">موعد التسليم</b><div>${escapeHtml(o.deadline)}</div></div>`:''}
@@ -2269,7 +2280,8 @@ window.saveAdjustment = async function(){
 };
 
 // helper: إضافة قيد لسجل اعتمادات العميل (يُحفظ في clients/{id}.approvedHistory)
-async function pushClientApproval(tx, stage){
+// يعمل batch-aware: لو مُرِّر batch → يضيف العملية له، وإلا يكتب مباشرة (backward compat)
+function pushClientApproval(tx, stage, batch){
   if(!tx?.clientId) return;
   const entry = {
     txId: tx._id,
@@ -2283,17 +2295,20 @@ async function pushClientApproval(tx, stage){
     by: currentUid, byName: currentUserName,
     at: new Date().toISOString(), // serverTimestamp غير مدعوم داخل arrayUnion
   };
-  try{
-    const cRef = doc(db,'clients',tx.clientId);
-    const { arrayUnion } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    await updateDoc(cRef, {
-      approvedHistory: arrayUnion(entry),
-      lastApprovedAt: serverTimestamp(),
-      lastApprovedTxId: tx._id,
-    });
-  }catch(e){
-    console.warn('[client-history] فشل حفظ السجل في كارت العميل:', e.message);
+  const cRef = doc(db,'clients',tx.clientId);
+  const payload = {
+    approvedHistory: arrayUnion(entry),
+    lastApprovedAt: serverTimestamp(),
+    lastApprovedTxId: tx._id,
+  };
+  if(batch){
+    batch.update(cRef, payload);
+    return;
   }
+  // standalone fallback — لا يُستخدم حاليًا في approve/confirm flows
+  return updateDoc(cRef, payload).catch(e=>{
+    console.warn('[client-history] فشل حفظ السجل في كارت العميل:', e.message);
+  });
 }
 
 window.confirmTx = async function(txId){
@@ -2305,16 +2320,22 @@ window.confirmTx = async function(txId){
   }
   if(!confirm('تأكيد هذه العملية؟')) return;
   try{
-    await updateDoc(doc(db,'transactions_v2',txId),{
+    // RULE 3: batch واحد ذرّي — tx + payment_request + سجل العميل معًا
+    const batch = writeBatch(db);
+    batch.update(doc(db,'transactions_v2',txId), {
       approvalStatus: 'confirmed',
       confirmedBy: currentUid, confirmedByName: currentUserName,
       confirmedAt: serverTimestamp(),
     });
     if(tx?.paymentRequestId){
-      try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'confirmed', confirmedBy:currentUid, confirmedByName:currentUserName, confirmedAt:serverTimestamp() }); }catch(_){}
+      batch.update(doc(db,'payment_requests',tx.paymentRequestId), {
+        status:'confirmed',
+        confirmedBy:currentUid, confirmedByName:currentUserName,
+        confirmedAt:serverTimestamp()
+      });
     }
-    // حفظ السجل في كارت العميل (لو tx مرتبطة بعميل)
-    await pushClientApproval(tx, 'confirmed');
+    pushClientApproval(tx, 'confirmed', batch);
+    await batch.commit();
     showToast('✅ تم التأكيد' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'تأكيد عملية', txId});
@@ -2331,16 +2352,23 @@ window.approveTx = async function(txId){
   }
   if(!confirm('اعتماد نهائي؟ سيتم قفل العملية.')) return;
   try{
-    await updateDoc(doc(db,'transactions_v2',txId),{
+    // RULE 3: batch واحد ذرّي — tx (locked) + payment_request + سجل العميل معًا
+    const batch = writeBatch(db);
+    batch.update(doc(db,'transactions_v2',txId), {
       approvalStatus: 'approved',
       approvedBy: currentUid, approvedByName: currentUserName,
       approvedAt: serverTimestamp(),
       isLocked: true,
     });
     if(tx?.paymentRequestId){
-      try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'approved', approvedBy:currentUid, approvedByName:currentUserName, approvedAt:serverTimestamp() }); }catch(_){}
+      batch.update(doc(db,'payment_requests',tx.paymentRequestId), {
+        status:'approved',
+        approvedBy:currentUid, approvedByName:currentUserName,
+        approvedAt:serverTimestamp()
+      });
     }
-    await pushClientApproval(tx, 'approved');
+    pushClientApproval(tx, 'approved', batch);
+    await batch.commit();
     showToast('🔒 تم الاعتماد والأرشفة' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'اعتماد', txId});
