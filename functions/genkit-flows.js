@@ -163,4 +163,86 @@ async function analyzeClient(apiKey, clientId) {
   return result.output;
 }
 
-module.exports = { analyzeClient };
+// ════════════════════════════════════════════════════════════
+// SUGGESTION ANALYSIS — employee_suggestions
+// ════════════════════════════════════════════════════════════
+// لما موظف يقدّم اقتراح على السيستم، AI بيحلله ويولّد:
+//   - pros: مميزات التنفيذ
+//   - cons: عيوب/مخاطر
+//   - actionPlan: خطوات مرتّبة للتنفيذ
+//   - estimatedComplexity: low | medium | high
+//   - estimatedImpact: low | medium | high
+//   - clarifyingQuestion: سؤال للموظف لتوضيح الاقتراح (اختياري)
+//   - tldr: ملخص في سطر واحد
+
+const SuggestionPlanStep = z.object({
+  step: z.string().describe('عنوان الخطوة'),
+  detail: z.string().describe('تفاصيل ما يحدث في هذه الخطوة'),
+});
+
+const SuggestionAnalysisSchema = z.object({
+  tldr: z.string().describe('ملخص الاقتراح في سطر واحد بالعربية'),
+  pros: z.array(z.string()).describe('3-5 مميزات لتنفيذ الاقتراح'),
+  cons: z.array(z.string()).describe('2-4 عيوب/مخاطر/تكاليف محتملة'),
+  actionPlan: z.array(SuggestionPlanStep).describe('3-6 خطوات مرتّبة للتنفيذ'),
+  estimatedComplexity: z.enum(['low','medium','high']).describe('تقدير صعوبة التنفيذ'),
+  estimatedImpact: z.enum(['low','medium','high']).describe('تقدير أثر الاقتراح على العمل'),
+  affectedAreas: z.array(z.string()).describe('قائمة الصفحات/الموديولات المتأثرة'),
+  clarifyingQuestion: z.string().nullable().describe('سؤال للموظف لتوضيح نقطة غامضة (اختياري — null لو الاقتراح واضح)'),
+  recommendation: z.enum(['proceed','needs_clarification','reconsider']).describe('توصية للإدارة'),
+});
+
+const CATEGORY_LABELS = {
+  dashboard: 'داشبورد / إحصائيات',
+  page: 'تحسين صفحة',
+  workflow: 'دورة عمل',
+  report: 'تقرير جديد / فلتر',
+  notification: 'تنبيه / إشعار',
+  bug: 'مشكلة / خطأ',
+  other: 'أخرى',
+};
+
+async function analyzeSuggestion(apiKey, suggestion) {
+  const ai = genkit({
+    plugins: [googleAI({ apiKey })],
+  });
+
+  const cat = CATEGORY_LABELS[suggestion.category] || suggestion.category || 'أخرى';
+
+  const result = await ai.generate({
+    model: 'googleai/gemini-2.5-flash',
+    output: { schema: SuggestionAnalysisSchema },
+    prompt: [
+      'أنت محلل منتج / Product Engineer لمنصة ERP عربية اسمها Business2Card تخدم شركة طباعة وتصميم في مصر.',
+      'وصلك اقتراح من موظف لتطوير السيستم. مهمتك تحلّل الاقتراح وتساعد الإدارة على اتخاذ قرار.',
+      '',
+      'الـ ERP فيه الصفحات دي تقريباً:',
+      'index (لوحة تحكم), clients (عملاء), design (تصميم), production (تنفيذ), print (طباعة),',
+      'shipping (شحن), accounts (حسابات), approvals (اعتمادات), products (منتجات), suppliers (موردين),',
+      'employees (موظفين), workforce-live (متابعة شغل), reports (تقارير), settings (إعدادات).',
+      '',
+      'بيانات الاقتراح:',
+      JSON.stringify({
+        title: suggestion.title || '',
+        description: suggestion.description || '',
+        category: cat,
+        priority: suggestion.priority || 'medium',
+        targetPage: suggestion.targetPage || 'غير محدد',
+        submittedByRole: suggestion.submittedByRole || '',
+      }, null, 2),
+      '',
+      'مهم:',
+      '- كن دقيقاً ومبنياً على فهم فعلي للمنصة، تجنّب العموميات.',
+      '- خطوات الـ actionPlan لازم تكون قابلة للتنفيذ تقنياً (مش وعود).',
+      '- لو الاقتراح غامض أو ناقص تفاصيل → ضع clarifyingQuestion واختر recommendation = needs_clarification.',
+      '- لو الاقتراح يتعارض مع منطق نظام محاسبي أو يكسر RULE أساسي (مثل تعديل أرصدة من خارج accounting core) → اختر reconsider.',
+      '- خلي اللغة عربية مصرية بسيطة.',
+      '',
+      'أعطِ التحليل بصيغة JSON الـ schema المرفقة فقط، بدون نص خارج الـ JSON.',
+    ].join('\n'),
+  });
+
+  return result.output;
+}
+
+module.exports = { analyzeClient, analyzeSuggestion };
