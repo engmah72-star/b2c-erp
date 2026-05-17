@@ -1566,7 +1566,7 @@ exports.weeklyProductRecommendations = onSchedule(
 //
 // Output is a Zod-validated structured object (see genkit-flows.js for schema).
 
-const { analyzeClient } = require('./genkit-flows');
+const { analyzeClient, analyzeSuggestion } = require('./genkit-flows');
 
 exports.analyzeClientWithAI = onCall(
   { memory: '512MiB', timeoutSeconds: 90 },
@@ -1599,6 +1599,80 @@ exports.analyzeClientWithAI = onCall(
     } catch (e) {
       if (e instanceof HttpsError) throw e;
       console.error('[analyzeClientWithAI] error', e);
+      const msg = e.message || String(e);
+      if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
+        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');
+      }
+      throw new HttpsError('internal', `AI: ${msg.slice(0, 200)}`);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════
+// Suggestion AI Analysis — Callable
+// ════════════════════════════════════════════════════════════
+// أي موظف مصادَق يقدر يحلّل اقتراحه الخاص. الأدمن يقدر يحلّل أي اقتراح.
+// التحليل يُكتب على /employee_suggestions/{id} في حقل aiAnalysis (admin SDK يتجاوز rules).
+// كمان يُضاف comment من نوع 'ai' في subcollection /comments للظهور في الـ thread.
+
+exports.analyzeSuggestionWithAI = onCall(
+  { memory: '512MiB', timeoutSeconds: 60 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    const { suggestionId, apiKey } = req.data || {};
+    if (!suggestionId || typeof suggestionId !== 'string') {
+      throw new HttpsError('invalid-argument', 'suggestionId مطلوب');
+    }
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('AIza')) {
+      throw new HttpsError('invalid-argument', 'مفتاح Gemini API مطلوب — اضبطه أولاً في ai-insights.html');
+    }
+
+    const sugRef = db.doc(`employee_suggestions/${suggestionId}`);
+    const sugSnap = await sugRef.get();
+    if (!sugSnap.exists) throw new HttpsError('not-found', 'الاقتراح غير موجود');
+    const suggestion = sugSnap.data();
+
+    // Permission: submitter or admin/ops can trigger
+    const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
+    if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
+    const callerRole = callerSnap.data().role || '';
+    const isAdmin = ['admin', 'operation_manager'].includes(callerRole);
+    const isOwner = suggestion.submittedBy === req.auth.uid;
+    if (!isAdmin && !isOwner) {
+      throw new HttpsError('permission-denied', 'صلاحية مراجعة الاقتراح غير متاحة');
+    }
+
+    try {
+      const analysis = await analyzeSuggestion(apiKey, suggestion);
+
+      // Write analysis back via Admin SDK
+      await sugRef.update({
+        aiAnalysis: analysis,
+        aiAnalyzedAt: new Date(),
+        aiAnalyzedBy: req.auth.uid,
+      });
+
+      // Add a 'ai' comment to the thread (so the conversation flow is visible)
+      const summary = [
+        `📊 **${analysis.tldr || 'تحليل الاقتراح'}**`,
+        '',
+        `**التعقيد:** ${analysis.estimatedComplexity}  •  **الأثر:** ${analysis.estimatedImpact}  •  **التوصية:** ${analysis.recommendation}`,
+        '',
+        analysis.clarifyingQuestion ? `❓ **سؤال للموظف:** ${analysis.clarifyingQuestion}` : '',
+      ].filter(Boolean).join('\n');
+
+      await sugRef.collection('comments').add({
+        senderId: 'ai',
+        senderName: 'Claude AI',
+        senderType: 'ai',
+        text: summary,
+        createdAt: new Date(),
+      });
+
+      return { ok: true, analysis };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error('[analyzeSuggestionWithAI] error', e);
       const msg = e.message || String(e);
       if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
         throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');

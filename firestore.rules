@@ -1056,13 +1056,19 @@ service cloud.firestore {
     }
 
     // ══ Employee Suggestions — اقتراحات الموظفين لتطوير السيستم ══
-    // أي موظف مصادَق يقدر يقدّم اقتراح. يقرأ اقتراحاته فقط.
+    // أي موظف مصادَق يقدر يقدّم اقتراح.
+    // RULE: الموظف يقرأ (أ) اقتراحاته (ب) اقتراحات الصفحات اللي عنده صلاحيتها.
+    // التحكم في "مين يشوف ايه" بيتم عبر visibleToRoles[] على الـ doc:
+    //   - الـ FAB client بيحسبه من ROLE_PAGES + targetPage عند الإرسال
+    //   - دايماً بيحتوي على ['admin','operation_manager'] كحد أدنى
     // Admin + operation_manager يقرأوا الكل ويغيّروا الحالة.
     // الموظف يقدر يحذف اقتراحه طول ما الحالة 'new' فقط.
     match /employee_suggestions/{sugId} {
       allow read: if isAuth() && (
         isAdmin() ||
-        resource.data.get('submittedBy','__') == request.auth.uid
+        resource.data.get('submittedBy','__') == request.auth.uid ||
+        // أي مستخدم دوره موجود في visibleToRoles يقدر يشوف الاقتراح
+        role() in resource.data.get('visibleToRoles', [])
       );
       allow create: if isAuth()
         && request.resource.data.submittedBy == request.auth.uid
@@ -1070,15 +1076,48 @@ service cloud.firestore {
         && request.resource.data.title is string
         && request.resource.data.description is string
         && request.resource.data.title.size() >= 3
-        && request.resource.data.description.size() >= 10;
+        && request.resource.data.description.size() >= 10
+        // visibleToRoles لازم يحتوي على admin + ops على الأقل
+        && request.resource.data.get('visibleToRoles', []) is list
+        && request.resource.data.visibleToRoles.hasAll(['admin','operation_manager']);
       // الموظف يقدر يحذف اقتراحه طول ما لسه 'new' (مالحدش راجعه).
       // التعديل (تغيير حالة، إضافة ملاحظة، ربط PR) admin/ops فقط.
+      // ملاحظة: تحديث aiAnalysis يحدث من Cloud Function عبر Admin SDK (يتجاوز rules).
       allow update: if isAuth() && isAdmin();
       allow delete: if isAuth() && (
         isAdminOnly() ||
         (resource.data.get('submittedBy','__') == request.auth.uid
          && resource.data.get('status','new') == 'new')
       );
+
+      // ── Comments thread (موظف + أدمن + AI) ──
+      // القراءة: نفس صلاحيات قراءة الاقتراح الأب.
+      // الإنشاء: لازم senderId == auth.uid (إلا لو 'ai' من Cloud Function عبر Admin SDK).
+      // التعديل/الحذف: الكاتب لنفسه، أو admin.
+      match /comments/{commentId} {
+        function parentSug() {
+          return get(/databases/$(database)/documents/employee_suggestions/$(sugId)).data;
+        }
+        function canSeeParent() {
+          let s = parentSug();
+          return isAdmin()
+              || s.get('submittedBy','__') == request.auth.uid
+              || role() in s.get('visibleToRoles', []);
+        }
+        allow read: if isAuth() && canSeeParent();
+        allow create: if isAuth()
+          && canSeeParent()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 4000;
+        allow update: if isAuth() && (
+          isAdmin() || resource.data.get('senderId','__') == request.auth.uid
+        );
+        allow delete: if isAuth() && (
+          isAdminOnly() || resource.data.get('senderId','__') == request.auth.uid
+        );
+      }
     }
 
     // ══ Designer Tenants — هوية المصممين كـ "service provider tenants" (Phase 2 ready) ══
