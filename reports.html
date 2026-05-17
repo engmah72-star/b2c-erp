@@ -237,6 +237,28 @@
 /* Table wrap */
 .col-table-wrap{background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 
+/* ══ Simple toolbar ══ */
+.col-toolbar-simple{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.col-toolbar-simple .vm-group{display:inline-flex;background:var(--bg2);border:1px solid var(--line);border-radius:99px;padding:3px}
+.col-toolbar-simple .vm-group .d-btn{border:none;border-radius:99px;padding:5px 12px;background:transparent;color:var(--dim2);font-size:11px}
+.col-toolbar-simple .vm-group .d-btn.active{background:var(--bg3);color:var(--snow)}
+.col-toolbar-simple .search-wrap{flex:1;min-width:200px}
+.filters-btn{position:relative;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:1.5px solid var(--line);background:var(--bg2);color:var(--snow);border-radius:99px;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;transition:var(--trans)}
+.filters-btn:hover{border-color:var(--line2)}
+.filters-btn.has-active{border-color:rgba(255,61,110,.4);color:var(--r);background:rgba(255,61,110,.05)}
+.filters-btn .badge-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--r);color:#fff;font-size:10px;font-weight:900;line-height:1}
+
+/* Filters panel (collapsible) */
+.filters-panel{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-bottom:14px;display:none}
+.filters-panel.open{display:block;animation:slideIn .2s ease}
+@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.filters-panel-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 4px}
+.filters-panel-row + .filters-panel-row{border-top:1px solid var(--line)}
+.filters-panel-row .label{font-size:10px;color:var(--dim2);font-weight:900;letter-spacing:.5px;min-width:48px;flex-shrink:0}
+.filters-panel-row .d-btn{padding:4px 10px;font-size:11px}
+.filters-reset{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);display:flex;justify-content:flex-end}
+.filters-reset button{padding:5px 12px;font-size:11px;color:var(--r);background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.25);border-radius:99px;font-family:inherit;font-weight:800;cursor:pointer}
+
 /* ══ Print ══ */
 @media print{
   body{background:white;color:black}
@@ -515,7 +537,7 @@ function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderT
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 
 // ══ Collection state (search/sort/filters) ══
-let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders';
+let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders',__filtersOpen=false;
 const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
@@ -1942,121 +1964,119 @@ function renderCollection(f){
   const noCostCount=withSale.filter(isMissingCost).length;
 
   const staleCount=withSale.filter(isStaleOrder).length;
+  // عدّاد الفلاتر المفعّلة
+  const activeFilters=(__payFilter!=='all'?1:0)+(__stageFilter!=='all'?1:0)+(__flagFilter!=='all'?1:0);
 
   return`
-    <!-- 📊 SECTION 1: Snapshot -->
-    <div class="col-section">
-      <div class="col-section-hdr">
-        <h3>📊 ملخص الفترة</h3>
-        <span class="sub">${withSale.length} أوردر · ${fn(totSale)} ج</span>
-      </div>
-      <div class="col-hero">
-        <div class="col-hero-cell"><div class="v" style="color:var(--b)">${fn(totSale)} ج</div><div class="l">إجمالي الأوردرات</div></div>
-        <div class="col-hero-cell"><div class="v" style="color:var(--g)">${fn(totPaid)} ج</div><div class="l">إجمالي المحصّل</div></div>
-        <div class="col-hero-cell"><div class="v" style="color:var(--r)">${fn(totRem)} ج</div><div class="l">إجمالي المتبقي</div></div>
-      </div>
-      ${postDesignWithRem.length?`
-      <div class="col-critical" onclick="filterByStage('post-design')" title="اضغط لعرضهم في الجدول">
-        <div class="col-critical-l">
-          <span class="ico">⚠️</span>
-          <div>
-            <div class="txt">باقي بعد التصميم — حرج (المنتج اتصرف عليه فلوس)</div>
-            <div class="v">${fn(postDesignAmount)} ج <span style="color:var(--dim2);font-size:11px;font-weight:800">على ${postDesignWithRem.length} أوردر</span></div>
-          </div>
-        </div>
-        <div class="col-critical-r"><span>اعرضهم</span><span style="font-size:14px">←</span></div>
-      </div>`:''}
-      <div class="col-tiles">
-        <div class="col-tile"><div class="v" style="color:var(--r)">${fn(totCost)} ج</div><div class="l">🏭 إجمالي التكاليف</div></div>
-        <div class="col-tile"><div class="v" style="color:${totProfit>=0?'var(--g)':'var(--r)'}">${totProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(totProfit))} ج</div><div class="l">💹 ${totProfit>=0?'صافي الربح':'صافي الخسارة'}</div></div>
-        <div class="col-tile"><div class="v" style="color:var(--g)">${fullPaid}</div><div class="l">✅ مدفوع بالكامل</div></div>
-        <div class="col-tile"><div class="v" style="color:var(--y)">${partial}</div><div class="l">⚡ دفع جزئي</div></div>
-      </div>
+    <!-- Hero: 3 أرقام بس -->
+    <div class="col-hero">
+      <div class="col-hero-cell"><div class="v" style="color:var(--b)">${fn(totSale)} ج</div><div class="l">إجمالي الأوردرات</div></div>
+      <div class="col-hero-cell"><div class="v" style="color:var(--g)">${fn(totPaid)} ج</div><div class="l">إجمالي المحصّل</div></div>
+      <div class="col-hero-cell"><div class="v" style="color:var(--r)">${fn(totRem)} ج</div><div class="l">إجمالي المتبقي</div></div>
     </div>
 
-    <!-- 📅 SECTION 2: Aging -->
-    <div class="col-section">
-      <div class="col-section-hdr">
-        <h3>📅 تقادم الباقي</h3>
-        <span class="sub">من تاريخ إنشاء الأوردر</span>
+    <!-- Critical banner (يظهر فقط لو في حرج) -->
+    ${postDesignWithRem.length?`
+    <div class="col-critical" onclick="filterByStage('post-design')" title="اضغط لعرضهم في الجدول" style="margin-top:10px;margin-bottom:14px">
+      <div class="col-critical-l">
+        <span class="ico">⚠️</span>
+        <div>
+          <div class="txt">باقي بعد التصميم — حرج</div>
+          <div class="v">${fn(postDesignAmount)} ج <span style="color:var(--dim2);font-size:11px;font-weight:800">على ${postDesignWithRem.length} أوردر</span></div>
+        </div>
       </div>
-      <div class="aging-grid">
-        ${[['0-30','var(--g)','حديث'],['31-60','var(--y)','متوسط'],['61-90','#ff8a4a','متأخر'],['90+','var(--r)','حرج جداً']].map(([k,c,lbl])=>`
-          <div class="aging-cell" style="--lvl:${c}">
-            <div class="lbl">${lbl}</div>
-            <div class="rng">${k} يوم</div>
-            <div class="amt">${fn(aging[k].a)} ج</div>
-            <div class="cnt">${aging[k].n} أوردر</div>
-          </div>`).join('')}
+      <div class="col-critical-r"><span>اعرضهم</span><span style="font-size:14px">←</span></div>
+    </div>`:'<div style="height:14px"></div>'}
+
+    <!-- Simple toolbar: view + search + filters button -->
+    <div class="col-toolbar-simple">
+      <div class="vm-group">
+        <button class="d-btn ${__viewMode==='orders'?'active':''}" onclick="setViewMode('orders',this)">📋 أوردر</button>
+        <button class="d-btn ${__viewMode==='clients'?'active':''}" onclick="setViewMode('clients',this)">👤 عميل</button>
       </div>
+      <div class="search-wrap">
+        <input id="col-search" class="search-input" type="search" placeholder="🔍 ابحث عن عميل / موبايل / كود" value="${(__search||'').replace(/"/g,'&quot;')}" oninput="colSearch(this.value)">
+        <button id="col-search-clear" class="search-clear ${__search?'show':''}" onclick="colSearchClear()" title="مسح">✕</button>
+      </div>
+      <button class="filters-btn ${activeFilters?'has-active':''} ${__filtersOpen?'active':''}" onclick="toggleFiltersPanel()" title="فلاتر">
+        <span>≡ فلاتر</span>
+        ${activeFilters?`<span class="badge-count">${activeFilters}</span>`:''}
+      </button>
     </div>
 
-    <!-- 🔍 SECTION 3: Toolbar consolidated -->
-    <div class="col-section">
-      <div class="col-section-hdr">
-        <h3>🔍 الفلاتر والبحث</h3>
-        <span class="sub">يمكن تركيب أكثر من فلتر مع بعض</span>
+    <!-- Filters panel (collapsible — مخفية افتراضياً) -->
+    <div class="filters-panel ${__filtersOpen?'open':''}" id="filters-panel">
+      <div class="filters-panel-row">
+        <span class="label">المرحلة</span>
+        <button class="d-btn st-btn ${__stageFilter==='all'?'active':''}" data-stage="all" onclick="filterByStage('all',this)">الكل</button>
+        <button class="d-btn st-btn ${__stageFilter==='post-design'?'active':''}" data-stage="post-design" onclick="filterByStage('post-design',this)" style="border-color:rgba(255,61,110,.4);color:var(--r)">⚠️ بعد التصميم (${postDesignWithRem.length})</button>
+        <button class="d-btn st-btn ${__stageFilter==='design'?'active':''}" data-stage="design" onclick="filterByStage('design',this)">✏️ تصميم (${stageCounts.design})</button>
+        <button class="d-btn st-btn ${__stageFilter==='printing'?'active':''}" data-stage="printing" onclick="filterByStage('printing',this)">🖨️ طباعة (${stageCounts.printing})</button>
+        <button class="d-btn st-btn ${__stageFilter==='production'?'active':''}" data-stage="production" onclick="filterByStage('production',this)">🏭 تنفيذ (${stageCounts.production})</button>
+        <button class="d-btn st-btn ${__stageFilter==='shipping'?'active':''}" data-stage="shipping" onclick="filterByStage('shipping',this)">🚚 شحن (${stageCounts.shipping})</button>
+        <button class="d-btn st-btn ${__stageFilter==='archived'?'active':''}" data-stage="archived" onclick="filterByStage('archived',this)">📁 أرشيف (${stageCounts.archived})</button>
       </div>
-      <div class="col-toolbar">
-        <div class="col-toolbar-row">
-          <span class="label">عرض</span>
-          <button class="d-btn vm-btn ${__viewMode==='orders'?'active':''}" onclick="setViewMode('orders',this)">📋 بأوردر</button>
-          <button class="d-btn vm-btn ${__viewMode==='clients'?'active':''}" onclick="setViewMode('clients',this)">👤 بالعميل</button>
-          <div class="search-wrap" style="flex:1;min-width:220px">
-            <input id="col-search" class="search-input" type="search" placeholder="🔍 بحث (اسم / موبايل / كود) — اضغط /" value="${(__search||'').replace(/"/g,'&quot;')}" oninput="colSearch(this.value)">
-            <button id="col-search-clear" class="search-clear ${__search?'show':''}" onclick="colSearchClear()" title="مسح">✕</button>
-          </div>
-        </div>
-        <div class="col-toolbar-row">
-          <span class="label">المرحلة</span>
-          <button class="d-btn st-btn ${__stageFilter==='all'?'active':''}" data-stage="all" onclick="filterByStage('all',this)">الكل (${withSale.length})</button>
-          <button class="d-btn st-btn ${__stageFilter==='post-design'?'active':''}" data-stage="post-design" onclick="filterByStage('post-design',this)" style="border-color:rgba(255,61,110,.4);color:var(--r);background:rgba(255,61,110,.06)">⚠️ بعد التصميم (${postDesignWithRem.length})</button>
-          <button class="d-btn st-btn ${__stageFilter==='design'?'active':''}" data-stage="design" onclick="filterByStage('design',this)">✏️ تصميم (${stageCounts.design})</button>
-          <button class="d-btn st-btn ${__stageFilter==='printing'?'active':''}" data-stage="printing" onclick="filterByStage('printing',this)">🖨️ طباعة (${stageCounts.printing})</button>
-          <button class="d-btn st-btn ${__stageFilter==='production'?'active':''}" data-stage="production" onclick="filterByStage('production',this)">🏭 تنفيذ (${stageCounts.production})</button>
-          <button class="d-btn st-btn ${__stageFilter==='shipping'?'active':''}" data-stage="shipping" onclick="filterByStage('shipping',this)">🚚 شحن (${stageCounts.shipping})</button>
-          <button class="d-btn st-btn ${__stageFilter==='archived'?'active':''}" data-stage="archived" onclick="filterByStage('archived',this)">📁 أرشيف (${stageCounts.archived})</button>
-        </div>
-        <div class="col-toolbar-row">
-          <span class="label">الدفع</span>
-          <button class="d-btn pf-btn ${__payFilter==='all'?'active':''}" data-pay="all" onclick="filterCollection('all',this)">الكل</button>
-          <button class="d-btn pf-btn ${__payFilter==='rem'?'active':''}" data-pay="rem" onclick="filterCollection('rem',this)">⏳ متبقي (${partial+noPay})</button>
-          <button class="d-btn pf-btn ${__payFilter==='paid'?'active':''}" data-pay="paid" onclick="filterCollection('paid',this)">✅ مكتمل (${fullPaid})</button>
-          <span class="sep"></span>
-          <span class="label">حالة</span>
-          <button class="d-btn fl-btn ${__flagFilter==='all'?'active':''}" data-flag="all" onclick="filterByFlag('all',this)">الكل</button>
-          <button class="d-btn fl-btn ${__flagFilter==='stale'?'active':''}" data-flag="stale" onclick="filterByFlag('stale',this)" style="border-color:rgba(255,170,0,.4);color:var(--y);background:rgba(255,170,0,.06)">⏰ متأخر (${staleCount})</button>
-          <button class="d-btn fl-btn ${__flagFilter==='no-cost'?'active':''}" data-flag="no-cost" onclick="filterByFlag('no-cost',this)" style="border-color:rgba(255,61,110,.4);color:var(--r);background:rgba(255,61,110,.06)">🚫 بدون تكلفة (${noCostCount})</button>
-        </div>
+      <div class="filters-panel-row">
+        <span class="label">الدفع</span>
+        <button class="d-btn pf-btn ${__payFilter==='all'?'active':''}" data-pay="all" onclick="filterCollection('all',this)">الكل</button>
+        <button class="d-btn pf-btn ${__payFilter==='rem'?'active':''}" data-pay="rem" onclick="filterCollection('rem',this)">⏳ متبقي (${partial+noPay})</button>
+        <button class="d-btn pf-btn ${__payFilter==='paid'?'active':''}" data-pay="paid" onclick="filterCollection('paid',this)">✅ مكتمل (${fullPaid})</button>
       </div>
+      <div class="filters-panel-row">
+        <span class="label">تنبيهات</span>
+        <button class="d-btn fl-btn ${__flagFilter==='all'?'active':''}" data-flag="all" onclick="filterByFlag('all',this)">الكل</button>
+        <button class="d-btn fl-btn ${__flagFilter==='stale'?'active':''}" data-flag="stale" onclick="filterByFlag('stale',this)" style="border-color:rgba(255,170,0,.4);color:var(--y)">⏰ متأخر (${staleCount})</button>
+        <button class="d-btn fl-btn ${__flagFilter==='no-cost'?'active':''}" data-flag="no-cost" onclick="filterByFlag('no-cost',this)" style="border-color:rgba(255,61,110,.4);color:var(--r)">🚫 بدون تكلفة (${noCostCount})</button>
+      </div>
+      ${activeFilters?`<div class="filters-reset"><button onclick="resetCollectionFilters()">✕ مسح كل الفلاتر</button></div>`:''}
     </div>
 
-    <!-- 📋 SECTION 4: Orders/Clients view -->
-    <div class="col-section">
-      <div class="col-section-hdr">
-        <h3>${__viewMode==='clients'?'👤 العملاء':'📋 الأوردرات'}</h3>
-        <span class="col-count"><b id="col-visible-count">${withSale.length}</b> ظاهر</span>
+    <!-- الجدول/العملاء — الأهم في الصفحة -->
+    ${__viewMode==='clients'?renderCollectionByClient(withSale):`
+    <div class="col-table-wrap">
+      <div class="col-grid-head" style="background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:800;color:var(--dim2)">
+        <div class="col-head-cell ${__sortKey==='client'?'active':''}" onclick="colSort('client')" style="justify-content:flex-start"><span>العميل / الأوردر</span><span class="sort-arrow">${__sortKey==='client'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
+        <div class="col-head-cell ${__sortKey==='sale'?'active':''}" onclick="colSort('sale')"><span>الإجمالي</span><span class="sort-arrow">${__sortKey==='sale'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
+        <div class="col-head-cell ${__sortKey==='paid'?'active':''}" onclick="colSort('paid')"><span>المحصّل</span><span class="sort-arrow">${__sortKey==='paid'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
+        <div class="col-head-cell ${__sortKey==='rem'?'active':''}" onclick="colSort('rem')"><span>المتبقي</span><span class="sort-arrow">${__sortKey==='rem'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
+        <div class="col-head-cell ${__sortKey==='date'?'active':''}" onclick="colSort('date')"><span>الحالة</span><span class="sort-arrow">${__sortKey==='date'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
+        <div></div>
       </div>
-      ${__viewMode==='clients'?renderCollectionByClient(withSale):`
-      <div class="col-table-wrap">
-        <div class="col-grid-head" style="background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:800;color:var(--dim2)">
-          <div class="col-head-cell ${__sortKey==='client'?'active':''}" onclick="colSort('client')" style="justify-content:flex-start"><span>العميل / الأوردر</span><span class="sort-arrow">${__sortKey==='client'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
-          <div class="col-head-cell ${__sortKey==='sale'?'active':''}" onclick="colSort('sale')"><span>الإجمالي</span><span class="sort-arrow">${__sortKey==='sale'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
-          <div class="col-head-cell ${__sortKey==='paid'?'active':''}" onclick="colSort('paid')"><span>المحصّل</span><span class="sort-arrow">${__sortKey==='paid'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
-          <div class="col-head-cell ${__sortKey==='rem'?'active':''}" onclick="colSort('rem')"><span>المتبقي</span><span class="sort-arrow">${__sortKey==='rem'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
-          <div class="col-head-cell ${__sortKey==='date'?'active':''}" onclick="colSort('date')"><span>الحالة</span><span class="sort-arrow">${__sortKey==='date'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
-          <div></div>
+      <div id="collection-rows">
+        ${renderCollectionRows(withSale)}
+      </div>
+      <div id="col-no-match" style="display:none">
+        <div class="big">🔍</div>
+        <div>لا توجد نتائج تطابق الفلاتر الحالية</div>
+        <div style="font-size:11px;margin-top:6px">جرّب تخفيف الفلاتر أو امسح البحث</div>
+      </div>
+    </div>`}
+
+    <!-- إحصائيات إضافية (مطوية افتراضياً) -->
+    <details class="more-details" style="margin-top:14px">
+      <summary>📊 إحصائيات إضافية وتقادم الديون</summary>
+      <div class="chart-wrap" style="border:none;background:transparent;margin:12px">
+        <div class="chart-title">💰 تفاصيل مالية</div>
+        <div class="col-tiles">
+          <div class="col-tile"><div class="v" style="color:var(--r)">${fn(totCost)} ج</div><div class="l">🏭 إجمالي التكاليف</div></div>
+          <div class="col-tile"><div class="v" style="color:${totProfit>=0?'var(--g)':'var(--r)'}">${totProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(totProfit))} ج</div><div class="l">💹 ${totProfit>=0?'صافي الربح':'صافي الخسارة'}</div></div>
+          <div class="col-tile"><div class="v" style="color:var(--g)">${fullPaid}</div><div class="l">✅ مدفوع بالكامل</div></div>
+          <div class="col-tile"><div class="v" style="color:var(--y)">${partial}</div><div class="l">⚡ دفع جزئي</div></div>
         </div>
-        <div id="collection-rows">
-          ${renderCollectionRows(withSale)}
+      </div>
+      <div class="chart-wrap" style="border:none;background:transparent;margin:12px">
+        <div class="chart-title">📅 تقادم الباقي على العملاء (من تاريخ الإنشاء)</div>
+        <div class="aging-grid">
+          ${[['0-30','var(--g)','حديث'],['31-60','var(--y)','متوسط'],['61-90','#ff8a4a','متأخر'],['90+','var(--r)','حرج جداً']].map(([k,c,lbl])=>`
+            <div class="aging-cell" style="--lvl:${c}">
+              <div class="lbl">${lbl}</div>
+              <div class="rng">${k} يوم</div>
+              <div class="amt">${fn(aging[k].a)} ج</div>
+              <div class="cnt">${aging[k].n} أوردر</div>
+            </div>`).join('')}
         </div>
-        <div id="col-no-match" style="display:none">
-          <div class="big">🔍</div>
-          <div>لا توجد نتائج تطابق الفلاتر الحالية</div>
-          <div style="font-size:11px;margin-top:6px">جرّب تخفيف الفلاتر أو امسح البحث</div>
-        </div>
-      </div>`}
-    </div>`;
+      </div>
+    </details>`;
 }
 
 // ══ Per-customer rollup view ══
@@ -2238,8 +2258,24 @@ window.filterByFlag=function(flag,btn){
 
 window.setViewMode=function(mode,btn){
   __viewMode=mode;
-  document.querySelectorAll('.vm-btn').forEach(b=>b.classList.remove('active'));
+  // الصف الجديد بيستخدم .vm-group .d-btn بدل .vm-btn
+  document.querySelectorAll('.vm-group .d-btn,.vm-btn').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
+  render();
+};
+
+// Toggle filters panel — يفضل state عبر __filtersOpen
+window.toggleFiltersPanel=function(){
+  __filtersOpen=!__filtersOpen;
+  const panel=document.getElementById('filters-panel');
+  if(panel)panel.classList.toggle('open',__filtersOpen);
+  // علّم زر الفلاتر بأنه مفتوح
+  document.querySelectorAll('.filters-btn').forEach(b=>b.classList.toggle('active',__filtersOpen));
+};
+
+// إعادة كل الفلاتر (الدفع/المرحلة/التنبيهات) لـ "الكل"
+window.resetCollectionFilters=function(){
+  __payFilter='all';__stageFilter='all';__flagFilter='all';
   render();
 };
 
