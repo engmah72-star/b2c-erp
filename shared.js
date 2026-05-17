@@ -69,14 +69,14 @@ export const ROLES = {
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings'],
-  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin'],
-  customer_service: ['index','clients','design','approvals'],
+  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns'],
+  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns'],
+  customer_service: ['index','clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
   design_operator:  ['index','design','approvals','suppliers'],
   production_agent: ['index','production','print','approvals'],
-  shipping_officer: ['index','print','shipping','approvals'],
-  wallet_manager:   ['index','accounts','approvals'],
+  shipping_officer: ['index','print','shipping','approvals','returns'],
+  wallet_manager:   ['index','accounts','approvals','returns'],
 };
 
 // ═══════════════════════════════════════
@@ -346,6 +346,7 @@ export function renderSidebar(activePage) {
     { key:'shipping',   ico:'🚚', label:'الشحن' },
     { key:'accounts',   ico:'💰', label:'الحسابات' },
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
+    { key:'returns',    ico:'↩️',  label:'المرتجعات' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'employees',  ico:'👥', label:'الموظفين' },
