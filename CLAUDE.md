@@ -254,6 +254,55 @@ await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, payload);
 
 ---
 
+## RULE 8 — DATA ACCESS BOUNDARIES (Privacy by Role)
+
+**البيانات الحساسة مرتبطة بدور وظيفي ثابت. ممنوع كسر هذا الفصل.**
+
+### 8.1 رقم تليفون العميل (`client_phone`)
+| الدور | يرى؟ |
+|------|------|
+| `admin` | ✅ |
+| `customer_service` | ✅ |
+| `operation_manager` | ✅ |
+| `shipping_officer` | ✅ (مطلوب للتوصيل) |
+| `graphic_designer` | ❌ |
+| `design_operator` | ❌ |
+| `production_agent` | ❌ |
+| `wallet_manager` | ❌ |
+
+**التطبيق:** للأدوار غير المصرّحة، الرقم يظهر مُقنَّعاً (`010****567`) أو يُحذف من الواجهة كلياً. لا يظهر في:
+- زر اتصال / WhatsApp
+- export / تقارير
+- console.log أو DevTools (مغطّى بـ Firestore rule)
+
+### 8.2 بيانات التصميم (`design_data`)
+يشمل: `designFiles[]`, `designFileUrl`, `designFileNote`, `designImageUrl`, `printFinalUrl`، ملاحظات المصمم، revision history.
+
+| الدور | يرى؟ |
+|------|------|
+| `admin` | ✅ |
+| `customer_service` | ✅ |
+| `graphic_designer` | ✅ |
+| `design_operator` | ✅ |
+| `production_agent` | ✅ (الملف النهائي فقط للطباعة) |
+| `operation_manager` | ❌ (يرى metadata فقط: الحالة، السعر، التاريخ) |
+| `shipping_officer` | ❌ |
+| `wallet_manager` | ❌ |
+
+### 8.3 آلية الحماية (Defense in Depth)
+1. **UI Layer** — `shared.js → canSee('client_phone')` / `canSee('design_data')` يخفي الحقول من DOM
+2. **Firestore Rules** — `firestore.rules` تمنع القراءة على collections الحساسة لمن ليس له الصلاحية
+3. **Audit Log** — أي وصول لرقم عميل من غير CS يُسجَّل في `access_audit` collection (اختياري — يُفعَّل لاحقاً)
+
+### 8.4 قواعد التطوير الجديد
+- **ممنوع** عرض `clientPhone` / `phone1` / `phone2` بدون تمرير القيمة عبر `maskPhone(phone, role)` أو حماية `canSee('client_phone')`.
+- **ممنوع** عرض `designFiles[]` أو `designFileNote` بدون `canSee('design_data')`.
+- **ممنوع** إضافة دور جديد بدون تحديث `DEFAULT_PERMISSIONS` في `shared.js`.
+- عند إضافة حقل حساس جديد → أضفه إلى `DEFAULT_PERMISSIONS` **قبل** استخدامه في أي صفحة.
+- ممنوع تكرار `DEFAULT_PERMISSIONS` داخل ملفات HTML — `shared.js` هو المصدر الوحيد.
+
+---
+
 ## الهيكل التقني الحالي
 
 ```

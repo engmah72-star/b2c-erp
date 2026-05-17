@@ -152,25 +152,54 @@ export function getOrdersForPage(orders, page, userRole, userId) {
 // ═══════════════════════════════════════
 
 // Default permissions per role (can be overridden per user)
+// RULE 8 — DATA ACCESS BOUNDARIES (انظر CLAUDE.md)
+// - client_phone:   CS + Admin + Ops + Shipping فقط
+// - design_data:    CS + Admin + Designer + Design Op + Production فقط
 export const DEFAULT_PERMISSIONS = {
-  admin:            { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
-  operation_manager:{ price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
-  customer_service: { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:true },
-  graphic_designer: { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
-  design_operator:  { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:true,  supplier_name:true,  supplier_cost:false, reports_sales:false, reports_perf:true,  kpi_revenue:false, ship_cost:false, ship_company:false },
-  production_agent: { price_sale:false, price_paid:false, price_remaining:false, price_cost:true,  price_margin:false, client_phone:false, supplier_name:true,  supplier_cost:true,  reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
-  shipping_officer: { price_sale:false, price_paid:false, price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:true,  ship_company:true  },
-  wallet_manager:   { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:false, kpi_revenue:true,  ship_cost:true,  ship_company:true  },
+  admin:            { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  design_data:true,  supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
+  operation_manager:{ price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  design_data:false, supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
+  customer_service: { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  design_data:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:true },
+  graphic_designer: { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, design_data:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
+  design_operator:  { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:false, reports_sales:false, reports_perf:true,  kpi_revenue:false, ship_cost:false, ship_company:false },
+  production_agent: { price_sale:false, price_paid:false, price_remaining:false, price_cost:true,  price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:true,  reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
+  shipping_officer: { price_sale:false, price_paid:false, price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  design_data:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:true,  ship_company:true  },
+  wallet_manager:   { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:false, design_data:false, supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:false, kpi_revenue:true,  ship_cost:true,  ship_company:true  },
 };
 
 /**
- * Check if current user can see a field
+ * Check if current user can see a field.
+ * For sensitive fields (client_phone, design_data) the default for unknown
+ * roles is FALSE — fail-closed. For non-sensitive fields, default is TRUE.
  */
+const SENSITIVE_FIELDS = new Set(['client_phone', 'design_data']);
 export function canSee(field, userPerms, userRole) {
   // User-level override first
   if (userPerms && userPerms[field] !== undefined) return userPerms[field];
   // Fall back to role default
-  return DEFAULT_PERMISSIONS[userRole]?.[field] ?? true;
+  const def = DEFAULT_PERMISSIONS[userRole]?.[field];
+  if (def !== undefined) return def;
+  // Unknown role: fail-closed on sensitive fields, open on the rest.
+  return !SENSITIVE_FIELDS.has(field);
+}
+
+/**
+ * Mask a phone number for display to roles without `client_phone` permission.
+ * Returns the original phone if `canShow` is true, else a masked form.
+ *   01234567890 → 012****7890
+ * Always safe to call — never throws on null/empty input.
+ */
+export function maskPhone(phone, canShow = false) {
+  if (!phone) return '';
+  if (canShow) return phone;
+  const s = String(phone).replace(/\D/g, '');
+  if (s.length < 6) return '****';
+  return s.slice(0, 3) + '****' + s.slice(-3);
+}
+
+// Expose masking helper to non-module pages (legacy HTML that loads shared.js as a regular script)
+if (typeof window !== 'undefined') {
+  window.maskPhone = maskPhone;
+  window.canSeeField = canSee;
 }
 
 // ═══════════════════════════════════════

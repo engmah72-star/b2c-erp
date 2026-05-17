@@ -38,6 +38,17 @@ service cloud.firestore {
     function can(perm) {
       return isAdmin() || perms().get(perm, false) == true;
     }
+    // ══ RULE 8 — Data Access Boundaries (راجع CLAUDE.md) ══
+    // أرقام تليفون العميل: CS + Admin + Ops + Shipping فقط.
+    // - الأدوار الأخرى لا تستطيع قراءة /clients مباشرة (الرقم في phone1/phone2/intlPhone).
+    // - تستطيع قراءة /orders (تحتاجها للشغل)، لكن لا تستطيع كتابة/تعديل clientPhone.
+    function canSeeCustomerPhone() {
+      return role() in ['admin', 'operation_manager', 'customer_service', 'shipping_officer'];
+    }
+    // بيانات التصميم: CS + Admin + Designer + Design Operator + Production فقط.
+    function canSeeDesignData() {
+      return role() in ['admin', 'customer_service', 'graphic_designer', 'design_operator', 'production_agent'];
+    }
     // ══ Tenancy helpers (Phase 2 foundation — Stage 4) ══
     // كل user له tenantId (افتراضياً merchant_001 لو غير معيّن).
     // الكود القديم يكمل شغّال — الـ users القدامى يُعاملوا كأنهم من merchant_001.
@@ -263,26 +274,40 @@ service cloud.firestore {
         resource.data.get('designerId','__') == request.auth.uid ||
         resource.data.get('productionAgent','__') == request.auth.uid ||
         resource.data.get('shippingOfficerId','__') == request.auth.uid
-      ) && isValidStageUpdate();
+      ) && isValidStageUpdate()
+      // RULE 8.1 — تعديل clientPhone محصور على من له صلاحية client_phone.
+      // الأدوار الأخرى (Designer, Production, Wallet) تستطيع تحديث حقول
+      // الشغل (designerId, stage, paid, ...) لكن ليس رقم العميل.
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['clientPhone'])
+          || canSeeCustomerPhone()
+        );
       allow delete: if isAdminOnly();
     }
 
     // ══ Clients ══
     match /clients/{clientId} {
+      // RULE 8.1 — /clients يحتوي على phone1/phone2/intlPhone.
+      // القراءة محصورة على الأدوار التي لها صلاحية client_phone
+      // (CS + Admin + Ops + Shipping)، أو من أنشأ العميل بنفسه.
+      // الأدوار الأخرى (Designer, Production, Wallet Manager...) لا تحتاج
+      // الوصول لـ /clients ولا يجب أن تراه.
       allow read: if isAuth() && (
-        isAdmin() ||
-        hasPage('clients') ||
-        can('canViewClients') ||
-        can('canAddClients') ||
-        can('canFollowUpClients') ||
-        can('canArchiveClients') ||
+        canSeeCustomerPhone() && (
+          hasPage('clients') ||
+          can('canViewClients') ||
+          can('canAddClients') ||
+          can('canFollowUpClients') ||
+          can('canArchiveClients')
+        ) ||
         resource.data.get('createdBy','__') == request.auth.uid
       );
-      allow create: if isAuth() && (isAdmin() || can('canAddClients'));
+      allow create: if isAuth() && canSeeCustomerPhone() && (isAdmin() || can('canAddClients'));
       // Update covers add-style edits + follow-up notes + archive flag.
       // Each is a separate permission so a CS rep can be allowed to follow up
       // without being able to add new clients, etc.
-      allow update: if isAuth() && (
+      // RULE 8.1: تعديل أرقام التليفون محصور على الأدوار المصرّحة.
+      allow update: if isAuth() && canSeeCustomerPhone() && (
         isAdmin() ||
         can('canAddClients') ||
         can('canFollowUpClients') ||
