@@ -255,7 +255,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, query, orderBy, limit, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE, approvalFields, calcOrderPayment } from "./financial-sync-engine.js";
 
@@ -2003,24 +2003,26 @@ window.uploadReceipt = async function(){
         s=>{ const p = Math.round(s.bytesTransferred/s.totalBytes*100); prog.textContent = `جاري الرفع... ${p}%`; },
         rej,
         async ()=>{
-          const url = await getDownloadURL(task.snapshot.ref);
-          await updateDoc(doc(db,'payment_requests',receivingReq._id), {
-            status: 'pending',
-            receiptImageUrl: url,
-            receiptImagePath: path,
-            receivedBy: currentUid,
-            receivedByName: currentUserName,
-            receivedAt: serverTimestamp(),
-          });
-          // تحديث الـ tx المرتبطة كذلك (لتظهر في تاب pending)
-          if(receivingReq.txId){
-            try{
-              await updateDoc(doc(db,'transactions_v2',receivingReq.txId), {
+          try{
+            const url = await getDownloadURL(task.snapshot.ref);
+            // RULE 3: batch واحد ذرّي — payment_request + tx المرتبطة معًا
+            const batch = writeBatch(db);
+            batch.update(doc(db,'payment_requests',receivingReq._id), {
+              status: 'pending',
+              receiptImageUrl: url,
+              receiptImagePath: path,
+              receivedBy: currentUid,
+              receivedByName: currentUserName,
+              receivedAt: serverTimestamp(),
+            });
+            if(receivingReq.txId){
+              batch.update(doc(db,'transactions_v2',receivingReq.txId), {
                 receiptImageUrl: url,
               });
-            }catch(_){}
-          }
-          res();
+            }
+            await batch.commit();
+            res();
+          }catch(err){ rej(err); }
         }
       );
     });
@@ -2269,7 +2271,8 @@ window.saveAdjustment = async function(){
 };
 
 // helper: إضافة قيد لسجل اعتمادات العميل (يُحفظ في clients/{id}.approvedHistory)
-async function pushClientApproval(tx, stage){
+// يعمل batch-aware: لو مُرِّر batch → يضيف العملية له، وإلا يكتب مباشرة (backward compat)
+function pushClientApproval(tx, stage, batch){
   if(!tx?.clientId) return;
   const entry = {
     txId: tx._id,
@@ -2283,17 +2286,20 @@ async function pushClientApproval(tx, stage){
     by: currentUid, byName: currentUserName,
     at: new Date().toISOString(), // serverTimestamp غير مدعوم داخل arrayUnion
   };
-  try{
-    const cRef = doc(db,'clients',tx.clientId);
-    const { arrayUnion } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-    await updateDoc(cRef, {
-      approvedHistory: arrayUnion(entry),
-      lastApprovedAt: serverTimestamp(),
-      lastApprovedTxId: tx._id,
-    });
-  }catch(e){
-    console.warn('[client-history] فشل حفظ السجل في كارت العميل:', e.message);
+  const cRef = doc(db,'clients',tx.clientId);
+  const payload = {
+    approvedHistory: arrayUnion(entry),
+    lastApprovedAt: serverTimestamp(),
+    lastApprovedTxId: tx._id,
+  };
+  if(batch){
+    batch.update(cRef, payload);
+    return;
   }
+  // standalone fallback — لا يُستخدم حاليًا في approve/confirm flows
+  return updateDoc(cRef, payload).catch(e=>{
+    console.warn('[client-history] فشل حفظ السجل في كارت العميل:', e.message);
+  });
 }
 
 window.confirmTx = async function(txId){
@@ -2305,16 +2311,22 @@ window.confirmTx = async function(txId){
   }
   if(!confirm('تأكيد هذه العملية؟')) return;
   try{
-    await updateDoc(doc(db,'transactions_v2',txId),{
+    // RULE 3: batch واحد ذرّي — tx + payment_request + سجل العميل معًا
+    const batch = writeBatch(db);
+    batch.update(doc(db,'transactions_v2',txId), {
       approvalStatus: 'confirmed',
       confirmedBy: currentUid, confirmedByName: currentUserName,
       confirmedAt: serverTimestamp(),
     });
     if(tx?.paymentRequestId){
-      try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'confirmed', confirmedBy:currentUid, confirmedByName:currentUserName, confirmedAt:serverTimestamp() }); }catch(_){}
+      batch.update(doc(db,'payment_requests',tx.paymentRequestId), {
+        status:'confirmed',
+        confirmedBy:currentUid, confirmedByName:currentUserName,
+        confirmedAt:serverTimestamp()
+      });
     }
-    // حفظ السجل في كارت العميل (لو tx مرتبطة بعميل)
-    await pushClientApproval(tx, 'confirmed');
+    pushClientApproval(tx, 'confirmed', batch);
+    await batch.commit();
     showToast('✅ تم التأكيد' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'تأكيد عملية', txId});
@@ -2331,16 +2343,23 @@ window.approveTx = async function(txId){
   }
   if(!confirm('اعتماد نهائي؟ سيتم قفل العملية.')) return;
   try{
-    await updateDoc(doc(db,'transactions_v2',txId),{
+    // RULE 3: batch واحد ذرّي — tx (locked) + payment_request + سجل العميل معًا
+    const batch = writeBatch(db);
+    batch.update(doc(db,'transactions_v2',txId), {
       approvalStatus: 'approved',
       approvedBy: currentUid, approvedByName: currentUserName,
       approvedAt: serverTimestamp(),
       isLocked: true,
     });
     if(tx?.paymentRequestId){
-      try{ await updateDoc(doc(db,'payment_requests',tx.paymentRequestId),{ status:'approved', approvedBy:currentUid, approvedByName:currentUserName, approvedAt:serverTimestamp() }); }catch(_){}
+      batch.update(doc(db,'payment_requests',tx.paymentRequestId), {
+        status:'approved',
+        approvedBy:currentUid, approvedByName:currentUserName,
+        approvedAt:serverTimestamp()
+      });
     }
-    await pushClientApproval(tx, 'approved');
+    pushClientApproval(tx, 'approved', batch);
+    await batch.commit();
     showToast('🔒 تم الاعتماد والأرشفة' + (tx?.clientId ? ' + سُجِّل في كارت العميل' : ''),'ok');
   }catch(e){
     const handled = window.financialGuard?.(e,{operation:'اعتماد', txId});
