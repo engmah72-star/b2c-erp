@@ -258,6 +258,7 @@ import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/fi
 import { getFirestore, collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, query, orderBy, limit, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { addLedgerToBatch, FE, approvalFields, calcOrderPayment } from "./financial-sync-engine.js";
+import { maskPhone, canSee } from "./shared.js";
 
 const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth = getAuth(app);
@@ -265,6 +266,11 @@ const db   = getFirestore(app);
 const storage = getStorage(app);
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
+
+// RULE 8 — حماية رقم العميل: إظهار للأدوار المصرّحة فقط (admin/cs/ops/shipping)،
+// والباقي يرى رقم مُقنَّع. canSee/maskPhone مستوردة من shared.js (مصدر واحد).
+const canSeeClientPhone = () => canSee('client_phone', currentPerms, currentRole);
+const displayPhone = (phone) => maskPhone(phone, canSeeClientPhone());
 let txs = [];
 let allTxs = [];
 let requests = [];      // payment_requests collection
@@ -744,7 +750,7 @@ function renderOrderDetails(o, costOnly=false){
   const stColor = STAGE_COL[stage] || '#888';
   const stLabel = STAGE_AR[stage] || stage;
   const products = (o.products || []).map(p => `${escapeHtml(p.name||'منتج')}${p.qty>1?' ×'+p.qty:''}`).join(' · ') || escapeHtml(o.product || '—');
-  const phone = o.clientPhone ? escapeHtml(o.clientPhone) : '';
+  const phone = o.clientPhone ? escapeHtml(displayPhone(o.clientPhone)) : '';
 
   // costOnly mode: للطلبات (يظهر تكلفة فقط بدون شحن/تحصيل)
   const costRows = costOnly ? `
@@ -912,7 +918,7 @@ function renderRequestCard(r){
     sectionOrder = `
       <div style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.18);border-radius:8px;padding:10px 12px;margin-top:8px">
         <div style="font-size:10px;color:var(--dim2);font-weight:800;margin-bottom:6px">📦 الأوردر المرتبط</div>
-        <div style="font-size:12px"><b style="font-family:monospace">${escapeHtml(order.orderId||order._id.slice(-8))}</b> — ${escapeHtml(order.clientName||'')}${order.clientPhone?` · <span style="color:var(--dim2);font-family:monospace">${escapeHtml(order.clientPhone)}</span>`:''}</div>
+        <div style="font-size:12px"><b style="font-family:monospace">${escapeHtml(order.orderId||order._id.slice(-8))}</b> — ${escapeHtml(order.clientName||'')}${order.clientPhone?` · <span style="color:var(--dim2);font-family:monospace">${escapeHtml(displayPhone(order.clientPhone))}</span>`:''}</div>
         <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:10px">
           <span style="background:${STAGE_COL[order.stage]||'#888'}22;color:${STAGE_COL[order.stage]||'#888'};padding:2px 8px;border-radius:8px;font-weight:800">${STAGE_AR[order.stage]||order.stage}</span>
           <span style="color:var(--dim2)">السعر: <b style="color:var(--snow)">${fn(order.salePrice||0)}</b></span>
@@ -2130,7 +2136,7 @@ window.openOrderDetails = function(orderId){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
       <div><b style="color:var(--dim2);font-size:10px">رقم الأوردر</b><div style="font-family:monospace">${escapeHtml(o.orderId||orderId)}</div></div>
       <div><b style="color:var(--dim2);font-size:10px">العميل</b><div>${escapeHtml(o.clientName||'—')}</div></div>
-      ${o.clientPhone?`<div><b style="color:var(--dim2);font-size:10px">التليفون</b><div style="font-family:monospace">${escapeHtml(o.clientPhone)}</div></div>`:''}
+      ${o.clientPhone?`<div><b style="color:var(--dim2);font-size:10px">التليفون</b><div style="font-family:monospace">${escapeHtml(displayPhone(o.clientPhone))}</div></div>`:''}
       <div><b style="color:var(--dim2);font-size:10px">المرحلة</b><div><span style="background:${STAGE_COL[o.stage]||'#888'}22;color:${STAGE_COL[o.stage]||'#888'};padding:2px 8px;border-radius:8px;font-size:10px;font-weight:800">${STAGE_AR[o.stage]||o.stage}</span></div></div>
       ${o.designerName?`<div><b style="color:var(--dim2);font-size:10px">المصمم</b><div>${escapeHtml(o.designerName)}</div></div>`:''}
       ${o.deadline?`<div><b style="color:var(--dim2);font-size:10px">موعد التسليم</b><div>${escapeHtml(o.deadline)}</div></div>`:''}
