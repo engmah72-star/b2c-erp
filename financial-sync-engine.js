@@ -55,6 +55,18 @@ export const FE = {
   AGENT_COMMISSION:              'AGENT_COMMISSION',
   AGENT_PAYOUT:                  'AGENT_PAYOUT',
   CHARGEBACK:                    'CHARGEBACK',
+  // ─── Returns / After-Sales Events (Phase 1) — handlers في returns-core.js ───
+  // التعريف الكامل في AUDIT_REPORT.md §C6 و module definition للموافقة.
+  RETURN_REQUESTED:              'RETURN_REQUESTED',
+  RETURN_INSPECTED:              'RETURN_INSPECTED',
+  RETURN_APPROVED:               'RETURN_APPROVED',
+  RETURN_REJECTED:               'RETURN_REJECTED',
+  RETURN_REFUNDED:               'RETURN_REFUNDED',
+  RETURN_REFUNDED_REVERSAL:      'RETURN_REFUNDED_REVERSAL',
+  RETURN_REPLACEMENT_ISSUED:     'RETURN_REPLACEMENT_ISSUED',
+  RETURN_CANCELLED:              'RETURN_CANCELLED',
+  RETURN_CLOSED:                 'RETURN_CLOSED',
+  WARRANTY_CLAIM_OPENED:         'WARRANTY_CLAIM_OPENED',
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -93,6 +105,9 @@ const LC = {
   AGENT_COMMISSION:             { type:'expense',  category:'agent_commission',    direction:'out', icon:'🤝', label:'عمولة مندوب' },
   AGENT_PAYOUT:                 { type:'expense',  category:'agent_payout',        direction:'out', icon:'💵', label:'دفعة مندوب' },
   CHARGEBACK:                   { type:'reversal', category:'chargeback',          direction:'out', icon:'⚠️', label:'استرداد إجباري (chargeback)' },
+  // ─── Returns / After-Sales (Phase 1) — الأحداث المالية فقط في الـ ledger ───
+  RETURN_REFUNDED:              { type:'expense',  category:'return_refund',       direction:'out', icon:'↩️', label:'استرداد مرتجع' },
+  RETURN_REFUNDED_REVERSAL:     { type:'reversal', category:'return_refund',       direction:'in',  icon:'🔄', label:'إلغاء استرداد مرتجع' },
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -217,6 +232,8 @@ export function getReversal(eventType) {
     RETURN_LOSS:                  'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE:              'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE_REVERSAL:     'GENERAL_EXPENSE',
+    RETURN_REFUNDED:              'RETURN_REFUNDED_REVERSAL',
+    RETURN_REFUNDED_REVERSAL:     'RETURN_REFUNDED',
   };
   return REVERSAL[eventType] || eventType;
 }

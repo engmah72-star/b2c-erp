@@ -441,6 +441,41 @@ service cloud.firestore {
       allow delete: if isAdminOnly();
     }
 
+    // ══ Returns / After-Sales Tickets (C6) ══
+    // الـ Module Definition الكامل في AUDIT_REPORT.md + RULE 7 doc.
+    // - قراءة: الأدوار اللي تدير العميل (admin/ops/cs/shipping) + الـ client صاحب الطلب.
+    //   designer/production يقرؤون metadata فقط (لتوضيح "هذا الطلب له مرتجع")، لكن
+    //   field-level filtering ليس مدعوماً في Firestore — يُطبّق client-side عبر canSee.
+    // - إنشاء: الأدوار اللي لديها client_phone (RULE 8) + client portal لاحقاً.
+    // - update: admin/ops/cs لتغيير status، wallet_manager لتنفيذ الـ refund.
+    // - delete: admin only (soft delete مفضّل عبر isDeleted=true).
+    match /returns_tickets/{ticketId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients') ||
+        hasPage('design') ||
+        hasPage('production') ||
+        resource.data.get('clientId','__') == request.auth.uid ||
+        resource.data.get('createdBy','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients')
+      );
+      // update — تغيير status / decision / refund execution.
+      // الـ refund نفسه يكتب أيضاً على wallets/transactions_v2/financial_ledger
+      // وتلك قواعد منفصلة تتأكد من canFinancialWrite.
+      allow update: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        canFinancialWrite()
+      );
+      // عمداً soft delete preferred — الـ tickets المغلقة جزء من الـ audit trail.
+      allow delete: if isAdminOnly();
+    }
+
     // ══ Attendance ══
     match /attendance/{attId} {
       allow read: if isAuth() && (
