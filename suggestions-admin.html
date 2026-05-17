@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+<title>اقتراحات الموظفين — Business2Card</title>
+<link rel="stylesheet" href="shared.css?v=2026051701" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<script type="module" src="inbox-badge.js"></script>
+<script type="module" src="suggestions-fab.js"></script>
+<style>
+  .sa-wrap{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;margin-bottom:18px;}
+  @media (max-width:900px){.sa-wrap{grid-template-columns:1fr 1fr;}}
+  .sa-tile{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;text-align:center;cursor:pointer;transition:.18s;}
+  .sa-tile:hover{border-color:var(--line2);transform:translateY(-2px);}
+  .sa-tile.on{border-color:var(--y);background:rgba(255,170,0,.08);}
+  .sa-tile-ico{font-size:22px;margin-bottom:4px;}
+  .sa-tile-n{font-size:20px;font-weight:900;}
+  .sa-tile-l{font-size:11px;color:var(--dim2);margin-top:3px;}
+  .sa-list{display:flex;flex-direction:column;gap:10px;}
+  .sa-item{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px;}
+  .sa-item-head{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap;}
+  .sa-item-title{font-size:14px;font-weight:800;flex:1;line-height:1.4;min-width:220px;}
+  .sa-item-status{font-size:10px;font-weight:800;padding:4px 10px;border-radius:9px;white-space:nowrap;}
+  .sa-item-meta{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dim2);margin-bottom:8px;}
+  .sa-item-meta span{display:inline-flex;align-items:center;gap:4px;}
+  .sa-item-desc{font-size:13px;color:var(--snow);line-height:1.6;margin-bottom:10px;padding:10px;background:var(--bg3);border-radius:8px;white-space:pre-wrap;}
+  .sa-item-actions{display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px;}
+  .sa-item-note{margin-top:8px;padding:8px 10px;background:var(--bg3);border-right:3px solid var(--y);border-radius:6px;font-size:11px;color:var(--snow);line-height:1.5;}
+  .sa-empty{text-align:center;padding:48px 16px;color:var(--dim2);}
+  .sa-empty-ico{font-size:42px;margin-bottom:10px;}
+  .sa-pri-high{color:#ff3d6e;font-weight:800;}
+  .sa-pri-medium{color:#ffaa00;font-weight:700;}
+  .sa-pri-low{color:#22d3ee;}
+</style>
+</head>
+<body>
+
+<aside class="sidenav"></aside>
+
+<main class="main">
+  <div class="topbar"></div>
+  <div class="content">
+
+    <div class="sa-wrap" id="filters"></div>
+
+    <div id="list" class="sa-list">
+      <div class="sa-empty"><div class="sa-empty-ico">⏳</div>جاري التحميل...</div>
+    </div>
+
+  </div>
+</main>
+
+<!-- Decision Modal -->
+<div class="overlay" id="ov-decision">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="dec-title">قرار الإدارة</div>
+      <button class="modal-x" onclick="closeDec()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;font-weight:700;color:var(--dim2);display:block;margin-bottom:5px;">ملاحظة للموظف (اختياري)</label>
+        <textarea id="dec-note" rows="3" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-family:inherit;font-size:13px;" placeholder="مثلاً: سبب الرفض، أو متى هيتنفذ، أو تفاصيل إضافية..."></textarea>
+      </div>
+      <div id="dec-extra" style="display:none;">
+        <label style="font-size:11px;font-weight:700;color:var(--dim2);display:block;margin-bottom:5px;">رابط الـ PR / Commit (اختياري)</label>
+        <input id="dec-url" type="url" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-family:inherit;font-size:13px;" placeholder="https://github.com/.../pull/123" />
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeDec()">إلغاء</button>
+      <button class="btn btn-g" id="dec-confirm" onclick="confirmDecision()">تأكيد</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initAuth, AppState, renderSidebar, renderTopbar, initMobileMenu, initModals, toast, db,
+         collection, doc, onSnapshot, updateDoc, query, orderBy, serverTimestamp } from './shared.js';
+
+const REPO = 'engmah72-star/b2c-erp';
+
+const STATUS_LABELS = {
+  new:                   {l:'جديد',            col:'#3b9eff', ico:'🆕'},
+  under_review:          {l:'تحت المراجعة',    col:'#ffaa00', ico:'🔍'},
+  approved:              {l:'مقبول',           col:'#00d97e', ico:'✅'},
+  pending_implementation:{l:'عند Claude',      col:'#a78bfa', ico:'🤖'},
+  implemented:           {l:'تم التنفيذ',      col:'#22d3ee', ico:'🎯'},
+  rejected:              {l:'مرفوض',           col:'#ff3d6e', ico:'❌'},
+};
+const CATEGORY_LABELS = {
+  dashboard:'⬡ داشبورد', page:'📄 صفحة', workflow:'🔄 دورة عمل',
+  report:'📊 تقرير', notification:'🔔 تنبيه', bug:'🐞 مشكلة', other:'💬 أخرى',
+};
+const PRIORITY_LABELS = {
+  low:{l:'تحسين', cls:'sa-pri-low'},
+  medium:{l:'مهم', cls:'sa-pri-medium'},
+  high:{l:'عاجل', cls:'sa-pri-high'},
+};
+
+let allSuggestions = [];
+let activeFilter = 'pending'; // pending = new + under_review
+let unsubList = null;
+let decisionCtx = null; // {id, target, label}
+
+function isAdmin(){ return AppState.currentRole === 'admin' || AppState.currentRole === 'operation_manager'; }
+
+initAuth((state) => {
+  if(!isAdmin()){
+    document.body.innerHTML = `<div style="text-align:center;padding:80px 20px;color:#647298;font-family:'IBM Plex Sans Arabic',sans-serif;">
+      <div style="font-size:48px;margin-bottom:12px;">🚫</div>
+      <div style="font-size:16px;font-weight:700;color:#dce5f5;">صفحة الأدمن فقط</div>
+      <div style="font-size:13px;margin-top:8px;">ماعندكش صلاحية لمراجعة الاقتراحات.</div>
+      <a href="index.html" style="display:inline-block;margin-top:18px;padding:10px 18px;background:#ffaa00;color:#0d0f1b;border-radius:8px;font-weight:700;text-decoration:none;">← العودة للرئيسية</a>
+    </div>`;
+    return;
+  }
+  renderSidebar('suggestions-admin');
+  renderTopbar('💡 اقتراحات الموظفين', 'مراجعة وإدارة اقتراحات تطوير السيستم');
+  initMobileMenu();
+  initModals();
+  startListening();
+}, () => { location.href = 'login.html'; });
+
+function startListening(){
+  if(unsubList) unsubList();
+  const q = query(collection(db, 'employee_suggestions'), orderBy('createdAt', 'desc'));
+  unsubList = onSnapshot(q, snap => {
+    allSuggestions = snap.docs.map(d => ({...d.data(), _id: d.id}));
+    render();
+  }, err => {
+    console.error(err);
+    document.getElementById('list').innerHTML = `<div class="sa-empty"><div class="sa-empty-ico">⚠️</div>${err.message}</div>`;
+  });
+}
+
+function render(){
+  const counts = {
+    pending: allSuggestions.filter(s => ['new','under_review'].includes(s.status)).length,
+    approved: allSuggestions.filter(s => s.status === 'approved').length,
+    pending_implementation: allSuggestions.filter(s => s.status === 'pending_implementation').length,
+    implemented: allSuggestions.filter(s => s.status === 'implemented').length,
+    rejected: allSuggestions.filter(s => s.status === 'rejected').length,
+  };
+
+  const filters = [
+    {k:'pending',                ico:'🆕', l:'بانتظار المراجعة', n:counts.pending},
+    {k:'approved',               ico:'✅', l:'مقبول',             n:counts.approved},
+    {k:'pending_implementation', ico:'🤖', l:'عند Claude',        n:counts.pending_implementation},
+    {k:'implemented',            ico:'🎯', l:'تم التنفيذ',        n:counts.implemented},
+    {k:'rejected',               ico:'❌', l:'مرفوض',             n:counts.rejected},
+  ];
+
+  document.getElementById('filters').innerHTML = filters.map(f => `
+    <div class="sa-tile ${activeFilter===f.k?'on':''}" data-filter="${f.k}">
+      <div class="sa-tile-ico">${f.ico}</div>
+      <div class="sa-tile-n">${f.n}</div>
+      <div class="sa-tile-l">${f.l}</div>
+    </div>
+  `).join('');
+  document.querySelectorAll('[data-filter]').forEach(el => {
+    el.addEventListener('click', () => { activeFilter = el.getAttribute('data-filter'); render(); });
+  });
+
+  const filtered = allSuggestions.filter(s => {
+    if(activeFilter === 'pending') return ['new','under_review'].includes(s.status);
+    return s.status === activeFilter;
+  });
+
+  const list = document.getElementById('list');
+  if(!filtered.length){
+    list.innerHTML = `<div class="sa-empty"><div class="sa-empty-ico">📭</div>مفيش اقتراحات في الفلتر ده.</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(s => {
+    const st = STATUS_LABELS[s.status] || STATUS_LABELS.new;
+    const cat = CATEGORY_LABELS[s.category] || s.category || '';
+    const pri = PRIORITY_LABELS[s.priority] || PRIORITY_LABELS.medium;
+    const dateStr = s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '';
+    const reviewer = s.reviewedByName ? `بواسطة ${escapeHtml(s.reviewedByName)}` : '';
+    return `
+      <div class="sa-item">
+        <div class="sa-item-head">
+          <div class="sa-item-title">${escapeHtml(s.title || '—')}</div>
+          <span class="sa-item-status" style="background:${st.col}22;color:${st.col}">${st.ico} ${st.l}</span>
+        </div>
+        <div class="sa-item-meta">
+          <span>👤 ${escapeHtml(s.submittedByName || '—')}${s.submittedByRole ? ' ('+escapeHtml(s.submittedByRole)+')' : ''}</span>
+          <span>${cat}</span>
+          <span class="${pri.cls}">● ${pri.l}</span>
+          ${s.targetPage ? `<span>📄 ${escapeHtml(s.targetPage)}</span>` : ''}
+          ${dateStr ? `<span>🕒 ${dateStr}</span>` : ''}
+        </div>
+        <div class="sa-item-desc">${escapeHtml(s.description || '')}</div>
+        ${s.decisionNote ? `<div class="sa-item-note"><b>ملاحظة الإدارة (${escapeHtml(s.reviewedByName||'—')}):</b> ${escapeHtml(s.decisionNote)}</div>` : ''}
+        ${s.implementationUrl ? `<div class="sa-item-note" style="border-right-color:#22d3ee"><b>PR:</b> <a href="${escapeAttr(s.implementationUrl)}" target="_blank" rel="noopener" style="color:#22d3ee;text-decoration:underline">${escapeHtml(s.implementationUrl)}</a></div>` : ''}
+        <div class="sa-item-actions">${actionsFor(s)}</div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-act]').forEach(b => {
+    b.addEventListener('click', () => handleAction(b.getAttribute('data-act'), b.getAttribute('data-id')));
+  });
+}
+
+function actionsFor(s){
+  const id = s._id;
+  const buttons = [];
+  if(s.status === 'new'){
+    buttons.push(`<button class="btn btn-y" data-act="review" data-id="${id}">🔍 تحت المراجعة</button>`);
+  }
+  if(['new','under_review'].includes(s.status)){
+    buttons.push(`<button class="btn btn-g" data-act="approve" data-id="${id}">✅ قبول</button>`);
+    buttons.push(`<button class="btn btn-r" data-act="reject" data-id="${id}">❌ رفض</button>`);
+  }
+  if(s.status === 'approved'){
+    buttons.push(`<button class="btn btn-p" data-act="send-claude" data-id="${id}">🤖 ابعت لـ Claude</button>`);
+    buttons.push(`<button class="btn btn-g" data-act="implemented" data-id="${id}">🎯 تم التنفيذ</button>`);
+    buttons.push(`<button class="btn btn-r" data-act="reject" data-id="${id}">❌ رفض</button>`);
+  }
+  if(s.status === 'pending_implementation'){
+    buttons.push(`<button class="btn btn-g" data-act="implemented" data-id="${id}">🎯 تم التنفيذ</button>`);
+    buttons.push(`<button class="btn btn-p" data-act="send-claude" data-id="${id}">🤖 افتح GitHub Issue</button>`);
+  }
+  if(s.status === 'rejected'){
+    buttons.push(`<button class="btn btn-y" data-act="review" data-id="${id}">↩️ إعادة فتح</button>`);
+  }
+  return buttons.join('');
+}
+
+async function handleAction(act, id){
+  const s = allSuggestions.find(x => x._id === id);
+  if(!s) return;
+
+  if(act === 'review'){
+    await updateStatus(id, 'under_review', '');
+    return;
+  }
+  if(act === 'approve'){
+    decisionCtx = {id, target:'approved', label:'قبول الاقتراح', extraUrl:false};
+    openDec('قبول الاقتراح', 'تأكيد القبول');
+    return;
+  }
+  if(act === 'reject'){
+    decisionCtx = {id, target:'rejected', label:'رفض الاقتراح', extraUrl:false};
+    openDec('رفض الاقتراح — اذكر السبب', 'تأكيد الرفض');
+    return;
+  }
+  if(act === 'implemented'){
+    decisionCtx = {id, target:'implemented', label:'تأكيد التنفيذ', extraUrl:true};
+    openDec('تأكيد تنفيذ الاقتراح', 'تأكيد التنفيذ');
+    return;
+  }
+  if(act === 'send-claude'){
+    sendToClaude(s);
+    return;
+  }
+}
+
+function openDec(title, btnLabel){
+  document.getElementById('dec-title').textContent = title;
+  document.getElementById('dec-confirm').textContent = btnLabel;
+  document.getElementById('dec-note').value = '';
+  document.getElementById('dec-url').value = '';
+  document.getElementById('dec-extra').style.display = decisionCtx?.extraUrl ? 'block' : 'none';
+  document.getElementById('ov-decision').classList.add('open');
+}
+window.closeDec = () => document.getElementById('ov-decision').classList.remove('open');
+
+window.confirmDecision = async () => {
+  if(!decisionCtx) return;
+  const note = document.getElementById('dec-note').value.trim();
+  const url  = decisionCtx.extraUrl ? document.getElementById('dec-url').value.trim() : '';
+  await updateStatus(decisionCtx.id, decisionCtx.target, note, url);
+  closeDec();
+  decisionCtx = null;
+};
+
+async function updateStatus(id, status, note='', implementationUrl=''){
+  const patch = {
+    status,
+    reviewedBy:     AppState.currentUser.uid,
+    reviewedByName: AppState.userName,
+    reviewedAt:     serverTimestamp(),
+  };
+  if(note) patch.decisionNote = note;
+  if(implementationUrl) patch.implementationUrl = implementationUrl;
+  if(status === 'implemented') patch.implementedAt = serverTimestamp();
+  try{
+    await updateDoc(doc(db, 'employee_suggestions', id), patch);
+    toast('تم تحديث الحالة', 'success');
+  } catch(e){
+    console.error(e);
+    toast('فشل التحديث: ' + e.message, 'error');
+  }
+}
+
+function sendToClaude(s){
+  // Open a pre-filled GitHub issue URL in a new tab.
+  // Admin reviews and submits — that creates the issue.
+  const title = `[Suggestion] ${s.title}`;
+  const body = `## 💡 اقتراح موظف
+
+**من:** ${s.submittedByName || '—'}${s.submittedByRole ? ' ('+s.submittedByRole+')' : ''}
+**النوع:** ${CATEGORY_LABELS[s.category] || s.category}
+**الأولوية:** ${PRIORITY_LABELS[s.priority]?.l || s.priority}
+**الصفحة:** ${s.targetPage || 'غير محدد'}
+**تاريخ الاقتراح:** ${s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('ar-EG') : '—'}
+
+---
+
+### العنوان
+${s.title}
+
+### التفاصيل
+${s.description}
+
+${s.decisionNote ? '### ملاحظة الإدارة\n' + s.decisionNote + '\n' : ''}
+---
+
+> 🤖 **Claude:** نفّذ التعديل المطلوب على فرع جديد، افتح PR على \`main\`، وعلّق هنا برابط الـ PR.
+> Suggestion ID: \`${s._id}\``;
+
+  const labels = ['claude-task', 'employee-suggestion', `priority-${s.priority||'medium'}`];
+  const url = `https://github.com/${REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}&labels=${encodeURIComponent(labels.join(','))}`;
+  window.open(url, '_blank', 'noopener');
+
+  // Move to pending_implementation
+  updateStatus(s._id, 'pending_implementation', 'تم فتح GitHub Issue للتنفيذ.');
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s){ return escapeHtml(s); }
+</script>
+</body>
+</html>
