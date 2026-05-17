@@ -420,7 +420,7 @@ window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gsta
 <script type="module">
 import {initializeApp} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signOut} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,getDocs,deleteDoc,query,where,serverTimestamp,increment,writeBatch} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {getFirestore,collection,doc,onSnapshot,addDoc,updateDoc,getDoc,getDocs,deleteDoc,query,where,serverTimestamp,increment,writeBatch,runTransaction} from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch } from "./orders.js";
 
@@ -999,9 +999,9 @@ window.saveSettle=async function(){
   const diffNote=gv('settle-diff-note');
   if(Math.abs(diff)>0.01&&!diffReason)return toast('⚠️ يوجد فرق بين المبلغ والأوردرات — حدد سبب الفرق في القسم ④','err');
 
-  // Guard: تحقق من عدم تسوية نفس الأوردر مرتين
-  const alreadySettled=selectedIds.filter(id=>allOrders.find(o=>o._id===id)?.shipSettled);
-  if(alreadySettled.length)return toast(`⛔ ${alreadySettled.length} أوردر مسوّى بالفعل — أعد فتح الشاشة لتحديث القائمة`,'err');
+  // Guard مبدئي (UX) — تحقق من cache. الـ runTransaction أدناه يفرض الفحص بشكل ذرّي.
+  const alreadySettledCache=selectedIds.filter(id=>allOrders.find(o=>o._id===id)?.shipSettled);
+  if(alreadySettledCache.length)return toast(`⛔ ${alreadySettledCache.length} أوردر مسوّى بالفعل — أعد فتح الشاشة لتحديث القائمة`,'err');
 
   const btn=document.getElementById('settle-save-btn');
   if(btn){btn.disabled=true;btn.textContent='...';}
@@ -1009,68 +1009,88 @@ window.saveSettle=async function(){
   try{
     const now=nowStr();
     const w=wallets.find(x=>x._id===wId);
-    const bb=parseFloat(w?.balance)||0;
 
-    // ══ Atomic Batch ══
-    const batch=writeBatch(db);
+    // ══ Atomic Transaction (مع قفل تفاؤلي على المحفظة والأوردرات) ══
+    // RULE 3 + إغلاق ثغرة double-payment: قراءة الأوردرات داخل transaction ورفض المسوّى مسبقًا
+    await runTransaction(db,async tx=>{
+      // ── 1) كل القراءات أولًا (متطلب Firestore: reads قبل writes) ──
+      const walletRef=doc(db,'wallets',wId);
+      const walletSnap=await tx.get(walletRef);
+      if(!walletSnap.exists())throw new Error('المحفظة غير موجودة');
+      const bb=parseFloat(walletSnap.data().balance)||0;
 
-    // 1. محفظة
-    batch.update(doc(db,'wallets',wId),{balance:increment(amount)});
+      const orderRefs=selectedIds.map(oid=>doc(db,'orders',oid));
+      const orderSnaps=await Promise.all(orderRefs.map(r=>tx.get(r)));
+      const orderItems=[];
+      for(let i=0;i<orderSnaps.length;i++){
+        const snap=orderSnaps[i];
+        if(!snap.exists())throw new Error(`أوردر ${selectedIds[i].slice(-6)} غير موجود`);
+        const data=snap.data();
+        if(data.shipSettled===true){
+          const label=data.orderId||selectedIds[i].slice(-6);
+          throw new Error(`⛔ أوردر ${label} مسوّى بالفعل — أعد فتح الشاشة`);
+        }
+        orderItems.push({ref:orderRefs[i],data:{...data,_id:selectedIds[i]}});
+      }
 
-    // 2. transaction_v2
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      walletId:wId,type:'in',amount,fees:0,
-      description:`تسوية شحن — ${settleCompanyName}`,
-      category:'shipping_settlement',
-      companyName:settleCompanyName,orderIds:selectedIds,
-      expectedAmount:selectedAmt,difference:diff,
-      diffReason,diffReasonLabel,diffNote,
-      balanceBefore:bb,balanceAfter:bb+amount,
-      note:gv('settle-ref'),date:now,
-      createdBy:currentUser.uid,createdByName:userName,
-      createdAt:serverTimestamp(),
-      ...approvalFields()
-    });
+      // ── 2) كل الكتابات بعد ذلك ──
+      // محفظة
+      tx.update(walletRef,{balance:increment(amount)});
 
-    // 3. shipping_settlements
-    const settleRef=doc(collection(db,'shipping_settlements'));
-    batch.set(settleRef,{
-      companyName:settleCompanyName,amount,
-      orderIds:selectedIds,expectedAmount:selectedAmt,
-      difference:diff,diffReason,diffReasonLabel,diffNote,
-      walletId:wId,walletName:w?.name||'',
-      note:gv('settle-ref'),date:now,txId:txRef.id,
-      createdBy:currentUser.uid,createdByName:userName,
-      createdAt:serverTimestamp()
-    });
-
-    // 4. تحديث كل أوردر محدد
-    for(const oid of selectedIds){
-      const o=allOrders.find(x=>x._id===oid);if(!o)continue;
-      const due=FC.getDueByCo(o);
-      const oldPaid=FC.getPaid(o);
-      const newPaid=oldPaid+due;
-      const newRem=Math.max(0,FC.getNet(o)-newPaid);
-      const tlEntry={date:now,action:`✅ تسوية شحن — ${settleCompanyName} — ${fn(due)} ج${diffReasonLabel?' — فرق: '+diffReasonLabel:''}`,by:userName};
-      batch.update(doc(db,'orders',oid),{
-        shipSettled:true,shipSettledAmount:due,
-        shipSettledWalletId:wId,
-        totalPaid:newPaid,remaining:newRem,
-        paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
-        timeline:[...(o.timeline||[]),tlEntry],
-        updatedAt:serverTimestamp()
+      // transaction_v2
+      const txRef=doc(collection(db,'transactions_v2'));
+      tx.set(txRef,{
+        walletId:wId,type:'in',amount,fees:0,
+        description:`تسوية شحن — ${settleCompanyName}`,
+        category:'shipping_settlement',
+        companyName:settleCompanyName,orderIds:selectedIds,
+        expectedAmount:selectedAmt,difference:diff,
+        diffReason,diffReasonLabel,diffNote,
+        balanceBefore:bb,balanceAfter:bb+amount,
+        note:gv('settle-ref'),date:now,
+        createdBy:currentUser.uid,createdByName:userName,
+        createdAt:serverTimestamp(),
+        ...approvalFields()
       });
-    }
 
-    // 5. Ledger
-    addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
-      amount,walletId:wId,walletName:w?.name||'',
-      notes:`تسوية شحن — ${settleCompanyName}${diffReasonLabel?' — فرق ('+diffReasonLabel+') '+fn(Math.abs(diff))+' ج':''}`,
-      userId:currentUser.uid,userName,
+      // shipping_settlements
+      const settleRef=doc(collection(db,'shipping_settlements'));
+      tx.set(settleRef,{
+        companyName:settleCompanyName,amount,
+        orderIds:selectedIds,expectedAmount:selectedAmt,
+        difference:diff,diffReason,diffReasonLabel,diffNote,
+        walletId:wId,walletName:w?.name||'',
+        note:gv('settle-ref'),date:now,txId:txRef.id,
+        createdBy:currentUser.uid,createdByName:userName,
+        createdAt:serverTimestamp()
+      });
+
+      // كل أوردر — استخدم البيانات الطازجة من القراءة داخل الـ transaction
+      for(const item of orderItems){
+        const o=item.data;
+        const due=FC.getDueByCo(o);
+        const oldPaid=FC.getPaid(o);
+        const newPaid=oldPaid+due;
+        const newRem=Math.max(0,FC.getNet(o)-newPaid);
+        const tlEntry={date:now,action:`✅ تسوية شحن — ${settleCompanyName} — ${fn(due)} ج${diffReasonLabel?' — فرق: '+diffReasonLabel:''}`,by:userName};
+        tx.update(item.ref,{
+          shipSettled:true,shipSettledAmount:due,
+          shipSettledWalletId:wId,
+          totalPaid:newPaid,remaining:newRem,
+          paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
+          timeline:[...(o.timeline||[]),tlEntry],
+          updatedAt:serverTimestamp()
+        });
+      }
+
+      // Ledger — Transaction object يستوفي واجهة batch (set/update)
+      addLedgerToBatch(tx,db,FE.SHIPPING_SETTLEMENT,{
+        amount,walletId:wId,walletName:w?.name||'',
+        notes:`تسوية شحن — ${settleCompanyName}${diffReasonLabel?' — فرق ('+diffReasonLabel+') '+fn(Math.abs(diff))+' ج':''}`,
+        userId:currentUser.uid,userName,
+      });
     });
 
-    await batch.commit();
     closeSettle();
     const diffMsg=Math.abs(diff)>0.01?` (فرق: ${fn(Math.abs(diff))} ج — ${diffReasonLabel})`:'';
     toast(`✅ تسوية ${fn(amount)} ج من ${settleCompanyName}${diffMsg}`,'ok');
