@@ -147,7 +147,10 @@
       <div class="imp-title">📥 استيراد عملاء وأوردرات من Excel</div>
       <div class="imp-sub">رفع ملف XLSX/CSV → معاينة → مراجعة التكرار يدوياً → تنفيذ</div>
     </div>
-    <button class="btn-ghost" onclick="showHistory()">📂 تاريخ الاستيراد</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-ghost" onclick="fixLegacyStatus()" title="إصلاح العملاء المستوردين سابقاً بحيث يظهروا في تاب 'قديم'">🔧 إصلاح القدامى</button>
+      <button class="btn-ghost" onclick="showHistory()">📂 تاريخ الاستيراد</button>
+    </div>
   </div>
 
   <!-- Steps progress -->
@@ -799,6 +802,45 @@ window.showHistory = async () => {
   }
 };
 window.closeHistory = () => { showStep(1); };
+
+// ─── Fix legacy status for previously imported clients ───
+// One-time migration: previously imported clients had status='active'.
+// This updates them all to status='legacy' so they appear in clients.html "📁 قديم" tab.
+window.fixLegacyStatus = async () => {
+  if(currentRole !== 'admin' && currentRole !== 'customer_service'){
+    alert('هذه العملية متاحة فقط للـ Admin / خدمة العملاء');
+    return;
+  }
+  if(!confirm('🔧 إصلاح حالة العملاء المستوردين سابقاً\n\nسيتم تحديث كل العملاء بـ source="legacy_import_2026" و status="active" → status="legacy"\n\nالنتيجة: يظهروا في تاب "📁 قديم" بصفحة العملاء.\n\nهل تريد المتابعة؟')) return;
+
+  try {
+    const snap = await getDocs(query(
+      collection(db,'clients'),
+      where('source','==','legacy_import_2026')
+    ));
+    if(snap.empty){ alert('لا يوجد عملاء مستوردون بـ source=legacy_import_2026'); return; }
+
+    const toFix = snap.docs.filter(d => d.data().status !== 'legacy');
+    if(toFix.length === 0){ alert(`✓ كل العملاء المستوردين (${snap.size}) بـ status=legacy بالفعل. لا حاجة للإصلاح.`); return; }
+
+    let fixed = 0;
+    for(let i=0; i<toFix.length; i+=400){
+      const chunk = toFix.slice(i, i+400);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.update(d.ref, {
+        status: 'legacy',
+        statusFixedAt: serverTimestamp(),
+        statusFixedBy: currentUser.uid,
+      }));
+      await batch.commit();
+      fixed += chunk.length;
+    }
+    alert(`✓ تم إصلاح ${fixed} عميل\n\nادخل صفحة العملاء → تاب "📁 قديم" لتراهم.`);
+  } catch(e){
+    console.error('[fixLegacy] error:', e);
+    alert('❌ خطأ: ' + e.message);
+  }
+};
 
 window.revertBatch = async (batchId, fileName) => {
   if(!confirm(`⚠️ تأكيد التراجع عن استيراد "${fileName}"؟\n\nسيتم حذف كل العملاء والأوردرات التي أنشأها هذا الـ batch.\n(لا يتأثر العملاء المدموجون — يبقون مع البيانات الجديدة.)`)) return;
