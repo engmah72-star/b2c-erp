@@ -146,6 +146,51 @@
 .more-details > .chart-wrap{margin:12px;border:none;background:transparent}
 .more-details > details + .chart-wrap{margin-top:0}
 
+/* ══ Insights panel ══ */
+.insights-card{background:linear-gradient(135deg,rgba(167,139,250,.08),rgba(59,158,255,.06));border:1px solid rgba(167,139,250,.25);border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.insights-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.insights-hdr h3{margin:0;font-size:14px;font-weight:900;color:var(--snow)}
+.insights-hdr .meta{font-size:10px;color:var(--dim2);font-weight:700}
+.insights-list{display:flex;flex-direction:column;gap:8px}
+.insight-row{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;background:var(--bg2);border-radius:10px;border-right:3px solid var(--dim2);font-size:12px;line-height:1.55}
+.insight-row.good{border-right-color:var(--g)}
+.insight-row.warn{border-right-color:var(--y)}
+.insight-row.bad{border-right-color:var(--r)}
+.insight-row .ico{font-size:16px;flex-shrink:0}
+.insight-row .txt{flex:1;color:var(--snow)}
+.insight-row .txt b{font-weight:900}
+.insight-row .act{font-size:10px;color:var(--b);font-weight:800;cursor:pointer;background:none;border:none;font-family:inherit;padding:2px 6px;border-radius:6px;background:rgba(59,158,255,.08)}
+.mini-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.mini-stat{background:var(--bg2);border-radius:10px;padding:8px 10px;text-align:center}
+.mini-stat .v{font-size:14px;font-weight:900}
+.mini-stat .l{font-size:10px;color:var(--dim2);font-weight:700;margin-top:2px}
+
+/* ══ Geo distribution ══ */
+.geo-list{display:flex;flex-direction:column;gap:4px}
+.geo-row{display:grid;grid-template-columns:90px 1fr 60px;gap:8px;align-items:center;font-size:12px}
+.geo-row .name{font-weight:700;color:var(--snow)}
+.geo-row .track{height:18px;background:var(--bg3);border-radius:4px;overflow:hidden;position:relative}
+.geo-row .fill{height:100%;background:linear-gradient(90deg,var(--b),var(--p));border-radius:4px;transition:width .4s}
+.geo-row .num{text-align:left;color:var(--dim2);font-weight:800;font-size:11px}
+
+/* ══ Top performer ══ */
+.tp-crown{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:99px;background:linear-gradient(135deg,rgba(255,215,0,.15),rgba(255,170,0,.15));border:1px solid rgba(255,215,0,.4);color:#ffd700;font-size:10px;font-weight:900;margin-right:6px;vertical-align:middle}
+
+/* ══ Print ══ */
+@media print{
+  body{background:white;color:black}
+  .sidenav,.mob-menu-btn,.nav-ov,.topbar-right,.sticky-filters,.rep-tabs,.date-bar,.search-wrap,.col-actions,#toasts,details:not([open]) > *:not(summary){display:none!important}
+  .more-details > summary{display:none}
+  .more-details[open]{border:none;background:transparent}
+  .main{padding:0!important}
+  .content{padding:0!important}
+  .kpi-box,.chart-wrap,.rep-card,.insights-card{break-inside:avoid;border:1px solid #ddd;background:white;color:black;box-shadow:none}
+  .kpi-val,.kpi-lbl,.chart-title{color:black!important}
+  .col-row{break-inside:avoid;border-bottom:1px solid #ddd}
+  .sparkline span{background:#777!important}
+  .hm-cell{border:.5px solid #eee}
+}
+
 /* ══ Collection: mobile cards ══ */
 .col-grid-head,.col-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 60px 44px;gap:6px;padding:10px 14px;align-items:center}
 .col-row{border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
@@ -1067,7 +1112,113 @@ function renderOverview(f,prev){
   // 4) Risk consolidated count
   const totalRisks=late.length+staleWithRem.length+noCostOrders.length+(supDue>0?1:0);
 
+  // 5) Avg order value + highest sales day
+  const ordersWithPrice=f.filter(o=>parseFloat(o.salePrice)>0);
+  const avgOrder=ordersWithPrice.length?ordersWithPrice.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0)/ordersWithPrice.length:0;
+  // اجمع التحصيل بكل يوم في الفترة → خد الأعلى
+  const dayMap={};
+  transactions.forEach(t=>{
+    if(t.type!=='in'&&!['collection','advance','deposit'].includes(t.category))return;
+    if(!inRange2(t,range))return;
+    const d=new Date(t.createdAt.seconds*1000);
+    const k=d.toLocaleDateString('ar-EG');
+    dayMap[k]=(dayMap[k]||0)+(parseFloat(t.amount)||0);
+  });
+  const peakDayEntry=Object.entries(dayMap).sort((a,b)=>b[1]-a[1])[0];
+  const peakDay=peakDayEntry?{date:peakDayEntry[0],amount:peakDayEntry[1]}:null;
+  // 6) Forecast — projection للفترة الحالية بناءً على معدّل الأيام اللي عدّت
+  const periodStart=range.from.getTime(),periodEnd=range.to.getTime(),nowMs=Math.min(Date.now(),periodEnd);
+  const periodDays=Math.max(1,Math.ceil((periodEnd-periodStart)/86400000));
+  const elapsedDays=Math.max(1,Math.min(periodDays,Math.ceil((nowMs-periodStart)/86400000)));
+  const remainingDays=Math.max(0,periodDays-elapsedDays);
+  const dailyRate=tot/elapsedDays;
+  const forecastEnd=tot+(dailyRate*remainingDays);
+  const forecastGrowth=pTot>0?Math.round((forecastEnd-pTot)/pTot*100):0;
+  // 7) Delivery success rate (across shipping orders ever)
+  const shipOrds=orders.filter(o=>['shipping','archived'].includes(o.stage)||o.shipCompanyName);
+  const delivered=shipOrds.filter(o=>o.shippingStatus==='delivered').length;
+  const deliveryRate=shipOrds.length?Math.round(delivered/shipOrds.length*100):0;
+  // 8) Geographic distribution — top 8 governorates
+  const geoMap={};
+  f.forEach(o=>{const g=(o.shipGov||'').trim();if(!g)return;geoMap[g]=(geoMap[g]||0)+1;});
+  const geoTop=Object.entries(geoMap).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const geoMax=geoTop.length?geoTop[0][1]:1;
+  // 9) Bottlenecks — avg dwell per stage (using updatedAt - createdAt for orders currently in that stage)
+  const stageDwell={design:[],printing:[],production:[],shipping:[]};
+  orders.forEach(o=>{
+    if(!stageDwell[o.stage])return;
+    const ts=o.updatedAt?.seconds||o.createdAt?.seconds||0;if(!ts)return;
+    const days=Math.floor((Date.now()-ts*1000)/86400000);
+    if(days>=0)stageDwell[o.stage].push(days);
+  });
+  const stageAvg={};Object.entries(stageDwell).forEach(([k,arr])=>{stageAvg[k]=arr.length?arr.reduce((s,v)=>s+v,0)/arr.length:0;});
+  const bottleneck=Object.entries(stageAvg).sort((a,b)=>b[1]-a[1])[0];
+
+  // 10) Smart insights — رولز بسيطة بترجم الأرقام لقرارات
+  const insights=[];
+  // مقارنة التحصيل
+  if(pTot>0){
+    const dPct=Math.round((tot-pTot)/pTot*100);
+    if(dPct<=-20)insights.push({lvl:'bad',ic:'📉',txt:`التحصيل في الفترة دي انخفض <b>${Math.abs(dPct)}%</b> عن السابقة (${fn(pTot)} ج → ${fn(tot)} ج). محتاج تتابع ليه`,act:{label:'افحص المتأخرين',fn:`goCollectionFlag('stale')`}});
+    else if(dPct>=20)insights.push({lvl:'good',ic:'📈',txt:`التحصيل ارتفع <b>${dPct}%</b> عن الفترة السابقة. استمر على نفس الإيقاع`});
+  }
+  // Forecast
+  if(remainingDays>0&&tot>0){
+    insights.push({lvl:forecastGrowth>=0?'good':'warn',ic:'🔮',txt:`بناءً على معدّل الأيام اللي عدت، <b>متوقع تخلّص الفترة بـ ${fn(Math.round(forecastEnd))} ج</b>${pTot>0?` (${forecastGrowth>=0?'+':''}${forecastGrowth}% vs السابقة)`:''}`});
+  }
+  // Critical post-design
+  if(remCritical>0){
+    insights.push({lvl:'bad',ic:'⚠️',txt:`<b>${fn(remCritical)} ج</b> فلوس عملاء وافقوا على التصميم ودخلوا تنفيذ بدون تحصيل — ده الأكثر إلحاحاً`,act:{label:'اعرضهم',fn:`goCollectionPostDesign()`}});
+  }
+  // Cash position
+  if(cashOnHand<costs&&costs>0){
+    insights.push({lvl:'bad',ic:'💰',txt:`الكاش في الخزينة (<b>${fn(cashOnHand)} ج</b>) أقل من إجمالي المصروفات في الفترة (${fn(costs)} ج). راجع التدفق النقدي`});
+  }
+  // Bottleneck
+  if(bottleneck&&bottleneck[1]>3&&pipeline[bottleneck[0]]>0){
+    insights.push({lvl:'warn',ic:'🚦',txt:`<b>${stageLabel[bottleneck[0]]||bottleneck[0]}</b> هي المرحلة الأبطأ — متوسط ${Math.round(bottleneck[1])} يوم لكل أوردر فيها (${pipeline[bottleneck[0]]} أوردر حالياً)`});
+  }
+  // Stale
+  if(staleWithRem.length>=3){
+    insights.push({lvl:'warn',ic:'⏰',txt:`<b>${staleWithRem.length} أوردر</b> ما اتحرّكش > 14 يوم وعليهم باقي. الجدول الزمني محتاج متابعة`,act:{label:'افتحهم',fn:`goCollectionFlag('stale')`}});
+  }
+  // No-cost
+  if(noCostOrders.length>=2){
+    insights.push({lvl:'bad',ic:'🚫',txt:`<b>${noCostOrders.length} أوردر</b> في تنفيذ/شحن/أرشيف بدون تكلفة مسجّلة — ربحك في الورق وهمي`,act:{label:'صحّحهم',fn:`goCollectionFlag('no-cost')`}});
+  }
+  // Top performer hint
+  if(peakDay&&peakDay.amount>avgOrder*5){
+    insights.push({lvl:'good',ic:'🔥',txt:`أعلى يوم تحصيل: <b>${peakDay.date}</b> بـ ${fn(Math.round(peakDay.amount))} ج`});
+  }
+  // Delivery rate
+  if(shipOrds.length>=10&&deliveryRate<80){
+    insights.push({lvl:'warn',ic:'🚚',txt:`نسبة تسليم الشحن <b>${deliveryRate}%</b> — أقل من المستهدف. راجع شركات الشحن`});
+  }
+  if(!insights.length){
+    insights.push({lvl:'good',ic:'✅',txt:'كل المؤشرات الأساسية ضمن المعدل الطبيعي للفترة دي'});
+  }
+
   return`
+    <!-- 🧠 Insights — برِيفينج تنفيذي مبني على heuristics -->
+    <div class="insights-card">
+      <div class="insights-hdr">
+        <h3>🧠 ملخّص ذكي للإدارة</h3>
+        <span class="meta">${elapsedDays} يوم مرّ · ${remainingDays} متبقي</span>
+      </div>
+      <div class="insights-list">
+        ${insights.map(i=>`<div class="insight-row ${i.lvl}">
+          <span class="ico">${i.ic}</span>
+          <div class="txt">${i.txt}</div>
+          ${i.act?`<button class="act" onclick="${i.act.fn}">${i.act.label} ←</button>`:''}
+        </div>`).join('')}
+      </div>
+      <div class="mini-stats">
+        <div class="mini-stat"><div class="v" style="color:var(--b)">${ordersWithPrice.length?fn(Math.round(avgOrder))+' ج':'—'}</div><div class="l">متوسط الأوردر</div></div>
+        <div class="mini-stat"><div class="v" style="color:var(--g)">${peakDay?fn(Math.round(peakDay.amount))+' ج':'—'}</div><div class="l">أعلى يوم تحصيل${peakDay?' · '+peakDay.date:''}</div></div>
+        <div class="mini-stat"><div class="v" style="color:${deliveryRate>=80?'var(--g)':deliveryRate>=60?'var(--y)':'var(--r)'}">${shipOrds.length?deliveryRate+'%':'—'}</div><div class="l">نسبة تسليم الشحن</div></div>
+      </div>
+    </div>
+
     <!-- Risk strip — سطر واحد لكل التنبيهات -->
     ${totalRisks?`<div class="risk-strip">
       ${late.length?`<button class="risk-chip" onclick="goCollectionPostDesign()" title="${late.length} أوردر متأخر عن موعد التسليم"><span class="ic">🚨</span><b>${late.length}</b><span>متأخر</span></button>`:''}
@@ -1141,6 +1292,32 @@ function renderOverview(f,prev){
     <!-- Details (مطوي افتراضياً) -->
     <details class="more-details">
       <summary>📊 المزيد من التفاصيل والمخططات</summary>
+
+      <!-- 📍 توزيع جغرافي -->
+      ${geoTop.length?`<div class="chart-wrap">
+        <div class="chart-title">📍 توزيع الأوردرات بالمحافظات (Top ${geoTop.length})</div>
+        <div class="geo-list">
+          ${geoTop.map(([g,n])=>`<div class="geo-row">
+            <div class="name">${g}</div>
+            <div class="track"><div class="fill" style="width:${n/geoMax*100}%"></div></div>
+            <div class="num">${n} أوردر</div>
+          </div>`).join('')}
+        </div>
+      </div>`:''}
+
+      <!-- 🚦 اختناقات الإنتاج — متوسط المكوث في كل مرحلة -->
+      <div class="chart-wrap">
+        <div class="chart-title">🚦 اختناقات الإنتاج — متوسط المكوث في كل مرحلة</div>
+        ${Object.entries(stageDwell).filter(([,arr])=>arr.length).map(([s,arr])=>{
+          const avg=stageAvg[s]||0;const cnt=arr.length;
+          const isWorst=bottleneck&&bottleneck[0]===s;
+          const cl=avg>=5?'var(--r)':avg>=3?'var(--y)':'var(--g)';
+          return`<div class="compare-row">
+            <span>${stageLabel[s]||s}${isWorst?' 🚦':''} <span style="color:var(--dim2);font-size:11px">(${cnt} أوردر)</span></span>
+            <span style="color:${cl};font-weight:900">${avg.toFixed(1)} يوم</span>
+          </div>`;
+        }).join('')||'<div style="text-align:center;padding:14px;color:var(--dim2);font-size:12px">مفيش بيانات كفاية</div>'}
+      </div>
 
       <!-- رسم بياني شهري -->
       ${monthlyChart()}
@@ -1218,23 +1395,32 @@ function renderDesigners(f){
   });
   if(!buckets.size)return`<div class="empty-pretty"><div class="ico">🎨</div><div class="ttl">لا توجد بيانات مصممين</div><div class="sub">جرّب توسيع الفترة الزمنية أو تأكد إن المصممين معيّنين على الأوردرات وموجودين في صفحة الموظفين</div></div>`;
 
-  return [...buckets.values()].map(({name:dName,orders:dOrd,emp})=>{
-    const done=dOrd.filter(o=>o.stage!=='design').length;
-    const pending=dOrd.filter(o=>o.stage==='design').length;
-    const avgDays=dOrd.filter(o=>o.designDays).reduce((s,o)=>s+(parseFloat(o.designDays)||0),0)/Math.max(dOrd.filter(o=>o.designDays).length,1);
-    const pct=dOrd.length?Math.round(done/dOrd.length*100):0;
-    return`<div class="rep-card">
+  // احسب metric لكل مصمم وحدّد الأفضل (done + completion rate)
+  const stats=[...buckets.values()].map(b=>{
+    const done=b.orders.filter(o=>o.stage!=='design').length;
+    const pending=b.orders.filter(o=>o.stage==='design').length;
+    const avgDays=b.orders.filter(o=>o.designDays).reduce((s,o)=>s+(parseFloat(o.designDays)||0),0)/Math.max(b.orders.filter(o=>o.designDays).length,1);
+    const pct=b.orders.length?Math.round(done/b.orders.length*100):0;
+    // معيار التميّز: عدد المنجز × نسبة الإنجاز
+    const score=done*(pct/100);
+    return{...b,done,pending,avgDays,pct,score};
+  }).sort((a,b)=>b.score-a.score);
+  const topId=stats[0]?.emp?._id||stats[0]?.emp?.authUid||null;
+
+  return stats.map(s=>{
+    const isTop=topId&&(s.emp._id===topId||s.emp.authUid===topId)&&s.done>0;
+    return`<div class="rep-card" ${isTop?'style="border-color:rgba(255,215,0,.35);background:linear-gradient(135deg,rgba(255,215,0,.04),var(--bg2))"':''}>
       <div class="rep-card-head">
-        <div><div class="rep-name">🎨 ${dName}</div><div class="rep-sub">${emp.role||'مصمم'}</div></div>
-        <div style="text-align:left"><div style="font-size:20px;font-weight:900;color:var(--b)">${dOrd.length}</div><div style="font-size:10px;color:var(--dim2)">أوردر</div></div>
+        <div><div class="rep-name">${isTop?'<span class="tp-crown">🏆 الأفضل</span>':''}🎨 ${s.name}</div><div class="rep-sub">${s.emp.role||'مصمم'}</div></div>
+        <div style="text-align:left"><div style="font-size:20px;font-weight:900;color:var(--b)">${s.orders.length}</div><div style="font-size:10px;color:var(--dim2)">أوردر</div></div>
       </div>
       <div class="rep-stats">
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${done}</div><div class="rep-stat-lbl">أنجز</div></div>
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--y)">${pending}</div><div class="rep-stat-lbl">جاري</div></div>
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--b)">${avgDays>0?avgDays.toFixed(1)+'يوم':'—'}</div><div class="rep-stat-lbl">متوسط</div></div>
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${s.done}</div><div class="rep-stat-lbl">أنجز</div></div>
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--y)">${s.pending}</div><div class="rep-stat-lbl">جاري</div></div>
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--b)">${s.avgDays>0?s.avgDays.toFixed(1)+'يوم':'—'}</div><div class="rep-stat-lbl">متوسط</div></div>
       </div>
-      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--b),var(--p))"></div></div>
-      <div style="font-size:11px;color:var(--dim2);margin-top:4px;text-align:left">${pct}% إنجاز</div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${s.pct}%;background:linear-gradient(90deg,var(--b),var(--p))"></div></div>
+      <div style="font-size:11px;color:var(--dim2);margin-top:4px;text-align:left">${s.pct}% إنجاز</div>
     </div>`;
   }).join('');
 }
