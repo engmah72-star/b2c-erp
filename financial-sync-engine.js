@@ -47,10 +47,13 @@ export const FE = {
   ESCROW_HOLD:                   'ESCROW_HOLD',
   ESCROW_RELEASE:                'ESCROW_RELEASE',
   ESCROW_REFUND:                 'ESCROW_REFUND',
+  COMMISSION_ACCRUED:            'COMMISSION_ACCRUED',
   COMMISSION_SETTLED:            'COMMISSION_SETTLED',
   PLATFORM_FEE_COLLECTED:        'PLATFORM_FEE_COLLECTED',
   MERCHANT_PAYOUT:               'MERCHANT_PAYOUT',
   MERCHANT_PAYOUT_REVERSAL:      'MERCHANT_PAYOUT_REVERSAL',
+  AGENT_COMMISSION:              'AGENT_COMMISSION',
+  AGENT_PAYOUT:                  'AGENT_PAYOUT',
   CHARGEBACK:                    'CHARGEBACK',
 };
 
@@ -82,10 +85,13 @@ const LC = {
   ESCROW_HOLD:                  { type:'other',    category:'escrow',              direction:'in',  icon:'🔒', label:'حجز Escrow' },
   ESCROW_RELEASE:               { type:'transfer', category:'escrow',              direction:'out', icon:'🔓', label:'إفراج Escrow' },
   ESCROW_REFUND:                { type:'reversal', category:'escrow',              direction:'out', icon:'↩️', label:'استرداد Escrow' },
+  COMMISSION_ACCRUED:           { type:'other',    category:'platform_commission', direction:'in',  icon:'📊', label:'عمولة منصة مستحقة (accrual)' },
   COMMISSION_SETTLED:           { type:'income',   category:'platform_commission', direction:'in',  icon:'💼', label:'عمولة منصة محصّلة' },
   PLATFORM_FEE_COLLECTED:       { type:'income',   category:'platform_fee',        direction:'in',  icon:'🏛️', label:'رسوم منصة' },
   MERCHANT_PAYOUT:              { type:'expense',  category:'merchant_payout',     direction:'out', icon:'💸', label:'دفعة مرشنت' },
   MERCHANT_PAYOUT_REVERSAL:     { type:'reversal', category:'merchant_payout',     direction:'in',  icon:'🔄', label:'إلغاء دفعة مرشنت' },
+  AGENT_COMMISSION:             { type:'expense',  category:'agent_commission',    direction:'out', icon:'🤝', label:'عمولة مندوب' },
+  AGENT_PAYOUT:                 { type:'expense',  category:'agent_payout',        direction:'out', icon:'💵', label:'دفعة مندوب' },
   CHARGEBACK:                   { type:'reversal', category:'chargeback',          direction:'out', icon:'⚠️', label:'استرداد إجباري (chargeback)' },
 };
 
