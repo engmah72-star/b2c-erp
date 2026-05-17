@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#7c5cff">
+<title>B2C — Workforce Live</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+<script src="sync-monitor.js"></script>
+<script type="module" src="inbox-badge.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+
+/* Stats row */
+.wf-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.wf-stat{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:12px 14px;border-top:3px solid var(--sc,var(--b));cursor:pointer;transition:.18s}
+.wf-stat:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.wf-stat.active{box-shadow:0 0 0 2px var(--sc) inset}
+.wf-stat-val{font-size:22px;font-weight:900;color:var(--sc,var(--b));line-height:1}
+.wf-stat-lbl{font-size:10px;color:var(--dim2);font-weight:700;margin-top:4px}
+.wf-stat-sub{font-size:10px;color:var(--dim2);margin-top:2px;font-weight:600}
+@media(max-width:700px){.wf-stats{grid-template-columns:repeat(2,1fr)}}
+
+/* Filters */
+.wf-filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.wf-pill{padding:6px 14px;border-radius:20px;background:var(--bg2);border:1.5px solid var(--line);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.wf-pill.active{background:rgba(124,92,255,.12);color:#a78bfa;border-color:rgba(167,139,250,.4)}
+
+/* Layout — column = bucket */
+.wf-board{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media(max-width:1100px){.wf-board{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.wf-board{grid-template-columns:1fr}}
+.wf-col{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:12px;min-height:200px;border-top:3px solid var(--col-c)}
+.wf-col-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.wf-col-title{font-size:13px;font-weight:800;color:var(--col-c)}
+.wf-col-count{font-size:11px;color:var(--dim2);font-weight:700;background:var(--bg3);padding:2px 9px;border-radius:20px}
+.wf-empty{text-align:center;padding:24px 12px;color:var(--dim2);font-size:11px}
+
+/* Employee group inside column */
+.wf-empgrp{margin-bottom:10px;background:var(--bg3);border-radius:10px;padding:8px;border-right:3px solid var(--col-c)}
+.wf-empgrp.unassigned{border-right-color:#ff3d6e;background:rgba(255,61,110,.04)}
+.wf-emp-head{display:flex;align-items:center;gap:7px;margin-bottom:6px;cursor:pointer}
+.wf-emp-name{font-size:12px;font-weight:800;flex:1;display:flex;align-items:center;gap:6px}
+.wf-emp-cnt{font-size:11px;font-weight:800;color:var(--col-c);background:var(--bg2);padding:1px 8px;border-radius:20px}
+.wf-emp-avatar{width:22px;height:22px;border-radius:50%;background:var(--col-c);color:#fff;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+
+/* Order chip */
+.wf-ord{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:5px;font-size:11px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:3px}
+.wf-ord:hover{border-color:var(--col-c);transform:translateX(-2px)}
+.wf-ord-name{font-weight:700;font-size:11px;color:var(--snow);display:flex;justify-content:space-between;gap:6px}
+.wf-ord-meta{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--dim2)}
+.wf-ord-age-fresh{color:var(--g)}
+.wf-ord-age-warn{color:var(--y)}
+.wf-ord-age-late{color:var(--r);font-weight:800}
+
+/* Pressure ring */
+.wf-press{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800}
+.wf-press-bar{width:46px;height:5px;border-radius:3px;background:var(--bg4);overflow:hidden;display:inline-block}
+.wf-press-fill{height:100%;border-radius:3px;transition:width .5s}
+
+/* Pickup CTA */
+.wf-cta{padding:7px 10px;background:rgba(124,92,255,.1);border:1px dashed rgba(167,139,250,.4);border-radius:8px;font-size:11px;color:#a78bfa;font-weight:700;text-align:center;cursor:pointer;margin-top:6px;font-family:inherit;width:100%}
+.wf-cta:hover{background:rgba(124,92,255,.18)}
+
+/* Drawer for reassign */
+.wf-drawer-ov{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:16px}
+.wf-drawer-ov.open{display:flex}
+.wf-drawer{background:var(--bg1);border:1px solid var(--line);border-radius:14px;max-width:520px;width:100%;max-height:88vh;overflow-y:auto;padding:18px}
+.wf-drawer-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.wf-drawer-title{font-size:16px;font-weight:800}
+.wf-cand-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.wf-cand{display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;cursor:pointer;transition:.15s}
+.wf-cand:hover{border-color:#a78bfa;background:var(--bg3)}
+.wf-cand-name{flex:1;font-size:13px;font-weight:700}
+.wf-cand-meta{font-size:10px;color:var(--dim2)}
+
+/* Role colors */
+.col-design     { --col-c:#a78bfa }
+.col-production { --col-c:#ff3d6e }
+.col-printing   { --col-c:#ffaa00 }
+.col-shipping   { --col-c:#22d3ee }
+
+/* Animation for snapshot updates */
+@keyframes pulse-in {from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.wf-ord.fresh-paint{animation:pulse-in .25s ease-out}
+
+/* Live indicator */
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--g);animation:livePulse 1.4s ease-in-out infinite;margin-left:4px}
+@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* Workforce search */
+.wf-search{flex:1;min-width:200px;max-width:300px}
+</style>
+<script src="smart-sidebar.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav">
+  <div class="nav-brand">
+    <div class="nav-logo">🎨</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="role-badge">ERP</div>
+    </div>
+  </div>
+  <div class="nav-scroll" id="nav-links"></div>
+  <div class="nav-foot">
+    <div class="nav-user" onclick="doLogout()">
+      <div class="nav-avatar" id="nav-av">A</div>
+      <div>
+        <div class="nav-user-name" id="nav-name">User</div>
+        <div class="nav-user-role">تسجيل خروج</div>
+      </div>
+    </div>
+  </div>
+</aside>
+<div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <button class="mob-menu-btn" onclick="toggleNav()">☰</button>
+      <div>
+        <h1>👷 Workforce Live <span class="live-dot" title="مباشر"></span></h1>
+        <p id="sub" style="font-size:12px;color:var(--dim2)">حمل الشغل اللحظي على فريقك</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <a href="employees.html" class="btn btn-ghost btn-sm" style="font-size:12px">👥 الموظفين</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Stats -->
+    <div class="wf-stats">
+      <div class="wf-stat" style="--sc:#7c5cff" onclick="setBucket('')">
+        <div class="wf-stat-val" id="st-active">—</div>
+        <div class="wf-stat-lbl">أوردرات نشطة</div>
+        <div class="wf-stat-sub" id="st-active-sub">على فريق العمل</div>
+      </div>
+      <div class="wf-stat" style="--sc:#ff3d6e" onclick="setBucket('unassigned')">
+        <div class="wf-stat-val" id="st-unassigned">—</div>
+        <div class="wf-stat-lbl">بدون منفذ</div>
+        <div class="wf-stat-sub">يحتاج تخصيص</div>
+      </div>
+      <div class="wf-stat" style="--sc:#ffaa00" onclick="setBucket('high-pressure')">
+        <div class="wf-stat-val" id="st-pressure">—</div>
+        <div class="wf-stat-lbl">موظفين تحت ضغط</div>
+        <div class="wf-stat-sub">+5 شغلات</div>
+      </div>
+      <div class="wf-stat" style="--sc:#00d97e" onclick="setBucket('idle')">
+        <div class="wf-stat-val" id="st-idle">—</div>
+        <div class="wf-stat-lbl">متفرغين</div>
+        <div class="wf-stat-sub">جاهزين لشغل جديد</div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="wf-filters">
+      <div class="sw wf-search"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالموظف أو الأوردر..." oninput="renderBoard()"></div>
+      <button class="wf-pill active" data-b="" onclick="setBucket('')">الكل</button>
+      <button class="wf-pill" data-b="design" onclick="setBucket('design')">✏️ تصميم</button>
+      <button class="wf-pill" data-b="production" onclick="setBucket('production')">🏭 تنفيذ</button>
+      <button class="wf-pill" data-b="printing" onclick="setBucket('printing')">🖨️ طباعة</button>
+      <button class="wf-pill" data-b="shipping" onclick="setBucket('shipping')">🚚 شحن</button>
+      <div style="flex:1"></div>
+      <div style="font-size:11px;color:var(--dim2);font-weight:700">آخر تحديث: <span id="last-upd">—</span></div>
+    </div>
+
+    <!-- Board -->
+    <div id="board"><div class="loader"><div class="spinner"></div></div></div>
+  </div>
+</div>
+</div>
+
+<!-- Reassign drawer -->
+<div class="wf-drawer-ov" id="ov-reassign" onclick="if(event.target===this)closeReassign()">
+  <div class="wf-drawer">
+    <div class="wf-drawer-hdr">
+      <div class="wf-drawer-title" id="rs-title">نقل الأوردر</div>
+      <button class="modal-x" onclick="closeReassign()" style="background:var(--bg3);border:none;color:var(--snow);width:30px;height:30px;border-radius:50%;cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--dim2);margin-bottom:6px" id="rs-current">—</div>
+    <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-top:14px">اختر الموظف الجديد:</div>
+    <div class="wf-cand-list" id="rs-cands"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, onSnapshot, getDocs, getDoc, updateDoc, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { watchLiveWorkload, computeLiveWorkload, assignOrderStage, reassignTo, stageLabel, stageIcon, stageColor, pressureColor, STAGE_FIELD } from "./workforce-core.js";
+
+const FB_CONFIG={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
+const app=initializeApp(FB_CONFIG);const auth=getAuth(app);const db=getFirestore(app);
+
+// ── State ──
+let workloadMap=new Map(),allOrders=[],allEmployees=[];
+let bucketFilter='', searchQ='';
+let currentUser=null, currentRole='', userName='';
+let reassignContext=null;
+let renderRaf=0;
+
+const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'toast-ok':t==='err'?'toast-err':'');el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+const initial=s=>(s||'؟')[0]?.toUpperCase()||'؟';
+const scheduleRender=()=>{if(renderRaf)return;renderRaf=requestAnimationFrame(()=>{renderRaf=0;renderBoard();updateStats();});};
+
+window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
+window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
+window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
+
+// ── Sidebar (matching employees.html pattern) ──
+const SIDEBAR_PAGES=[
+  {file:'index.html',label:'لوحة التحكم',ico:'⬡',group:'main',adminOnly:true},
+  {file:'clients.html',label:'العملاء',ico:'👤',group:'orders',perm:'clients'},
+  {file:'design.html',label:'التصميم',ico:'✏️',group:'orders',perm:'design'},
+  {file:'print.html',label:'الطباعة',ico:'🖨️',group:'orders',perm:'print'},
+  {file:'production.html',label:'التنفيذ',ico:'🏭',group:'orders',perm:'production'},
+  {file:'shipping.html',label:'الشحن',ico:'🚚',group:'orders',perm:'shipping'},
+  {file:'archive.html',label:'الأرشيف',ico:'📁',group:'orders',perm:'archive'},
+  {file:'accounts.html',label:'الحسابات',ico:'💰',group:'admin',perm:'accounts'},
+  {file:'employees.html',label:'الموظفين',ico:'👥',group:'admin',adminOnly:true},
+  {file:'workforce-live.html',label:'Workforce Live',ico:'👷',group:'admin',adminOnly:true},
+  {file:'reports.html',label:'التقارير',ico:'📊',group:'admin',perm:'reports'},
+  {file:'settings.html',label:'الإعدادات',ico:'⚙️',group:'admin',adminOnly:true},
+];
+const GRP_LABELS={main:'الرئيسية',orders:'الأوردرات',admin:'الإدارة'};
+const ROLE_HOME={admin:'index.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
+function buildSidebar(ud){
+  const role=ud.role||'customer_service';
+  const perms=ud.permissions||{};
+  const pages=perms.pages||[];
+  const isAdm=['admin','operation_manager'].includes(role);
+  const cur='workforce-live.html';
+  const navEl=document.getElementById('nav-links');if(!navEl)return;
+  const dashHome=ROLE_HOME[role]||'index.html';
+  let html='',lastGrp='';
+  html+=`<a class="nav-link" href="${dashHome}"><span class="nav-ico">⬡</span> داشبوردي</a>`;
+  for(const cfg of SIDEBAR_PAGES){
+    if(cfg.file==='index.html')continue;
+    const ok=cfg.public||isAdm||(cfg.adminOnly?false:(pages.includes('*')||pages.includes(cfg.perm||'')));
+    if(!ok)continue;
+    if(cfg.group!==lastGrp){html+=`<div class="nav-group">${GRP_LABELS[cfg.group]||cfg.group}</div>`;lastGrp=cfg.group;}
+    html+=`<a class="nav-link${cur===cfg.file?' active':''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
+  }
+  navEl.innerHTML=html;
+  setText('nav-name', userName || ud.name || ud.email || 'مستخدم');
+  setText('nav-av', initial(ud.name||ud.email||'م'));
+  setText('role-badge', role);
+}
+
+// ── Bucket logic ──
+const BUCKETS=['design','production','printing','shipping'];
+const STAGE_BUCKET={
+  'design_pending':'design','design_approved':'design',
+  'production':'production',
+  'printing':'printing',
+  'ready':'shipping','shipped':'shipping',
+};
+
+window.setBucket=function(b){
+  // special pseudo-buckets
+  if(b==='unassigned'||b==='high-pressure'||b==='idle'){
+    bucketFilter=b;
+  } else {
+    bucketFilter=b||'';
+  }
+  document.querySelectorAll('.wf-pill').forEach(p=>{
+    p.classList.toggle('active', p.dataset.b===(BUCKETS.includes(bucketFilter)?bucketFilter:''));
+  });
+  document.querySelectorAll('.wf-stat').forEach(s=>{
+    s.classList.remove('active');
+  });
+  scheduleRender();
+};
+
+// ── Stats ──
+function updateStats(){
+  let active=0, unassigned=0, pressure=0, idle=0;
+  // Count active orders (in any open bucket)
+  allOrders.forEach(o=>{
+    const bucket=STAGE_BUCKET[o.stage];
+    if(!bucket)return;
+    active++;
+    let assigneeUid='';
+    if(bucket==='design')        assigneeUid=o.designerId||'';
+    if(bucket==='production'||bucket==='printing') assigneeUid=o.productionAgent||'';
+    if(bucket==='shipping')      assigneeUid=o.shippingOfficerId||'';
+    if(!assigneeUid) unassigned++;
+  });
+  workloadMap.forEach(w=>{
+    if(w.assignments.length>=5) pressure++;
+    else if(w.assignments.length===0 && isOpsRole(w.role)) idle++;
+  });
+  setText('st-active', fn(active));
+  setText('st-unassigned', fn(unassigned));
+  setText('st-pressure', fn(pressure));
+  setText('st-idle', fn(idle));
+  setText('last-upd', new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}));
+}
+function isOpsRole(r){
+  return ['graphic_designer','design_operator','production_agent','shipping_officer'].includes(r);
+}
+
+// ── Render ──
+function ageClass(h){
+  if(h>=48)return 'wf-ord-age-late';
+  if(h>=24)return 'wf-ord-age-warn';
+  return 'wf-ord-age-fresh';
+}
+function ageLabel(h){
+  if(h<1)return 'الآن';
+  if(h<24)return h+' س';
+  return Math.round(h/24)+' يوم';
+}
+
+function renderBoard(){
+  const q=(document.getElementById('q')?.value||'').trim().toLowerCase();
+  searchQ=q;
+
+  // Pseudo-buckets quick views
+  if(bucketFilter==='unassigned'){
+    return renderUnassigned();
+  }
+  if(bucketFilter==='high-pressure'){
+    return renderPressureView();
+  }
+  if(bucketFilter==='idle'){
+    return renderIdleView();
+  }
+
+  // Default: 4 buckets columns (or single column if filtered)
+  const cols=BUCKETS.filter(b=>!bucketFilter || b===bucketFilter);
+
+  // Build per-bucket grouping: bucket → Map<uid, {emp, orders}>
+  const byBucket={};
+  cols.forEach(b=>byBucket[b]=new Map());
+  allOrders.forEach(o=>{
+    const bucket=STAGE_BUCKET[o.stage];
+    if(!bucket||!byBucket[bucket])return;
+    let uid='', name='';
+    if(bucket==='design')        {uid=o.designerId||''; name=o.designerName||'';}
+    if(bucket==='production'||bucket==='printing'){uid=o.productionAgent||''; name=o.productionAgentName||'';}
+    if(bucket==='shipping')      {uid=o.shippingOfficerId||''; name=o.shippingOfficerName||'';}
+    const key=uid||'__unassigned__';
+    // search filter
+    if(q){
+      const hay=(o.clientName||'')+' '+(o.id||'')+' '+(o._id||'')+' '+name;
+      if(!hay.toLowerCase().includes(q)) return;
+    }
+    if(!byBucket[bucket].has(key)){
+      const emp=allEmployees.find(e=>e.authUid===uid||e._id===uid);
+      byBucket[bucket].set(key,{uid, name:name||emp?.name||(uid?'موظف':'بدون منفذ'), orders:[]});
+    }
+    byBucket[bucket].get(key).orders.push(o);
+  });
+
+  const html=cols.map(b=>renderColumn(b, byBucket[b])).join('');
+  document.getElementById('board').innerHTML=`<div class="wf-board">${html}</div>`;
+}
+
+function renderColumn(bucket, group){
+  const allEntries=[...group.entries()].sort((a,b)=>{
+    // unassigned first
+    if(a[0]==='__unassigned__')return -1;
+    if(b[0]==='__unassigned__')return 1;
+    // then by order count desc
+    return b[1].orders.length - a[1].orders.length;
+  });
+
+  const colorCls={design:'col-design',production:'col-production',printing:'col-printing',shipping:'col-shipping'}[bucket];
+  const total=allEntries.reduce((s,[,v])=>s+v.orders.length,0);
+
+  return `<div class="wf-col ${colorCls}">
+    <div class="wf-col-head">
+      <div class="wf-col-title">${stageIcon(bucket)} ${stageLabel(bucket)}</div>
+      <div class="wf-col-count">${total}</div>
+    </div>
+    ${allEntries.length===0?'<div class="wf-empty">— لا يوجد —</div>':''}
+    ${allEntries.map(([key,grp])=>renderEmpGroup(bucket, key, grp)).join('')}
+  </div>`;
+}
+
+function renderEmpGroup(bucket, key, grp){
+  const unassigned=key==='__unassigned__';
+  const w=!unassigned ? workloadMap.get(grp.uid) : null;
+  const pressure=w?.pressure||0;
+  const pCol=pressureColor(pressure);
+
+  const ordersHtml=grp.orders.slice(0,12).map(o=>{
+    const cls=ageClass(ageHours(o));
+    return `<div class="wf-ord" onclick="openOrder('${o._id}')">
+      <div class="wf-ord-name">
+        <span>${esc(o.clientName||'—')}</span>
+        <span style="font-size:9px;color:var(--dim2)">${esc(o.id||'')}</span>
+      </div>
+      <div class="wf-ord-meta">
+        <span class="${cls}">⏱ ${ageLabel(ageHours(o))}</span>
+        <span>${o.prodStatus?'• '+esc(o.prodStatus):''}</span>
+        ${!unassigned?`<button class="link-btn" style="background:none;border:none;color:#a78bfa;font-size:10px;cursor:pointer;font-weight:700" onclick="event.stopPropagation();openReassign('${o._id}','${bucket}','${grp.uid}','${esc(grp.name)}')">⇄ نقل</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const moreCount=grp.orders.length-12;
+  const moreLink=moreCount>0?`<div style="font-size:10px;color:var(--dim2);text-align:center;padding:4px">+ ${moreCount} أخرى</div>`:'';
+
+  return `<div class="wf-empgrp ${unassigned?'unassigned':''}">
+    <div class="wf-emp-head">
+      <div class="wf-emp-avatar" style="background:${unassigned?'#ff3d6e':pCol}">${initial(grp.name)}</div>
+      <div class="wf-emp-name">${esc(grp.name)}</div>
+      <div class="wf-emp-cnt">${grp.orders.length}</div>
+    </div>
+    ${!unassigned?`<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim2);margin-bottom:6px">
+      <span class="wf-press-bar"><span class="wf-press-fill" style="width:${pressure}%;background:${pCol}"></span></span>
+      <span style="color:${pCol};font-weight:800">${pressure}%</span>
+    </div>`:''}
+    ${ordersHtml}
+    ${moreLink}
+    ${unassigned?`<button class="wf-cta" onclick="openAssignDrawer('${bucket}', ${JSON.stringify(grp.orders.map(o=>o._id)).replace(/"/g,'&quot;')})">+ تخصيص موظف</button>`:''}
+  </div>`;
+}
+
+function ageHours(o){
+  const upd=o.updatedAt?.toDate?.()||o.createdAt?.toDate?.();
+  if(!upd)return 0;
+  return Math.max(0, Math.floor((Date.now()-upd.getTime())/3600000));
+}
+
+// ── Pseudo views ──
+function renderUnassigned(){
+  const unassigned=allOrders.filter(o=>{
+    const b=STAGE_BUCKET[o.stage];
+    if(!b)return false;
+    if(b==='design')        return !o.designerId;
+    if(b==='production'||b==='printing') return !o.productionAgent;
+    if(b==='shipping')      return !o.shippingOfficerId;
+    return false;
+  });
+
+  if(!unassigned.length){
+    document.getElementById('board').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:40px;text-align:center"><div style="font-size:42px;margin-bottom:8px">✅</div><div style="font-size:14px;font-weight:800">كل الأوردرات النشطة لها منفذ</div><div style="font-size:11px;color:var(--dim2);margin-top:4px">شغل ممتاز — مفيش حاجة معلقة</div></div>`;
+    return;
+  }
+
+  const byBucket={};
+  unassigned.forEach(o=>{const b=STAGE_BUCKET[o.stage];(byBucket[b]=byBucket[b]||[]).push(o);});
+
+  const html=Object.entries(byBucket).map(([b,orders])=>{
+    const cls={design:'col-design',production:'col-production',printing:'col-printing',shipping:'col-shipping'}[b];
+    return `<div class="wf-col ${cls}">
+      <div class="wf-col-head">
+        <div class="wf-col-title">${stageIcon(b)} ${stageLabel(b)} — بدون منفذ</div>
+        <div class="wf-col-count" style="background:rgba(255,61,110,.15);color:#ff3d6e">${orders.length}</div>
+      </div>
+      ${orders.map(o=>`<div class="wf-ord" onclick="openOrder('${o._id}')">
+        <div class="wf-ord-name"><span>${esc(o.clientName||'—')}</span><span style="font-size:9px;color:var(--dim2)">${esc(o.id||'')}</span></div>
+        <div class="wf-ord-meta"><span class="${ageClass(ageHours(o))}">⏱ ${ageLabel(ageHours(o))}</span><button class="link-btn" style="background:none;border:none;color:#a78bfa;font-size:11px;cursor:pointer;font-weight:800" onclick="event.stopPropagation();openAssignDrawer('${b}', ['${o._id}'])">+ خصص</button></div>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+
+  document.getElementById('board').innerHTML=`<div class="wf-board">${html}</div>`;
+}
+
+function renderPressureView(){
+  const rows=[...workloadMap.values()].filter(w=>w.assignments.length>=5).sort((a,b)=>b.pressure-a.pressure);
+  if(!rows.length){
+    document.getElementById('board').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:40px;text-align:center"><div style="font-size:42px;margin-bottom:8px">😎</div><div style="font-size:14px;font-weight:800">مفيش موظف تحت ضغط</div></div>`;
+    return;
+  }
+  const html=rows.map(w=>{
+    const pCol=pressureColor(w.pressure);
+    return `<div class="wf-empgrp" style="--col-c:${pCol};border-right-color:${pCol}">
+      <div class="wf-emp-head">
+        <div class="wf-emp-avatar" style="background:${pCol}">${initial(w.name)}</div>
+        <div class="wf-emp-name">${esc(w.name)} <span style="font-size:10px;color:var(--dim2);font-weight:600">· ${w.role||''}</span></div>
+        <div class="wf-emp-cnt" style="background:${pCol}22;color:${pCol}">${w.assignments.length}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);margin-bottom:8px">
+        <span class="wf-press-bar"><span class="wf-press-fill" style="width:${w.pressure}%;background:${pCol}"></span></span>
+        <span style="color:${pCol};font-weight:800">${w.pressure}%</span>
+        <span style="margin-right:auto">أقدم شغلة: ${w.oldestHours}س</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:5px">
+        ${w.assignments.slice(0,12).map(a=>`<div class="wf-ord" style="margin:0" onclick="openOrder('${a.orderId}')">
+          <div class="wf-ord-name"><span>${esc(a.clientName||'—')}</span><span style="font-size:9px;color:var(--dim2)">${stageIcon(a.bucket)}</span></div>
+          <div class="wf-ord-meta"><span class="${ageClass(a.ageHours)}">⏱ ${ageLabel(a.ageHours)}</span><button class="link-btn" style="background:none;border:none;color:#a78bfa;font-size:10px;cursor:pointer;font-weight:700" onclick="event.stopPropagation();openReassign('${a.orderId}','${a.bucket}','${w.uid}','${esc(w.name)}')">⇄ نقل</button></div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('board').innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${html}</div>`;
+}
+
+function renderIdleView(){
+  const rows=[...workloadMap.values()].filter(w=>w.assignments.length===0 && isOpsRole(w.role));
+  if(!rows.length){
+    document.getElementById('board').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:40px;text-align:center"><div style="font-size:42px;margin-bottom:8px">🔥</div><div style="font-size:14px;font-weight:800">كل الفريق مشغول</div><div style="font-size:11px;color:var(--dim2);margin-top:4px">مفيش حد متفرغ حالياً</div></div>`;
+    return;
+  }
+  const html=rows.map(w=>{
+    return `<div class="wf-empgrp" style="--col-c:#00d97e;border-right-color:#00d97e">
+      <div class="wf-emp-head">
+        <div class="wf-emp-avatar" style="background:#00d97e">${initial(w.name)}</div>
+        <div class="wf-emp-name">${esc(w.name)} <span style="font-size:10px;color:var(--dim2);font-weight:600">· ${w.role||''}</span></div>
+        <div class="wf-emp-cnt" style="background:rgba(0,217,126,.15);color:#00d97e">متفرغ</div>
+      </div>
+      <div style="font-size:11px;color:var(--dim2)">جاهز لشغل جديد</div>
+    </div>`;
+  }).join('');
+  document.getElementById('board').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">${html}</div>`;
+}
+
+const esc=(s)=>String(s||'').replace(/[<>&"]/g, c=>({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;' })[c]);
+
+// ── Open order detail (jump to relevant page) ──
+window.openOrder=function(orderId){
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('الأوردر غير موجود','err');return;}
+  const b=STAGE_BUCKET[o.stage];
+  const pageMap={design:'design.html', production:'production.html', printing:'print.html', shipping:'shipping.html'};
+  const target=pageMap[b];
+  if(target){
+    window.location.href=`${target}?orderId=${encodeURIComponent(o._id)}`;
+  }
+};
+
+// ── Reassign ──
+window.openReassign=function(orderId, bucket, currentUid, currentName){
+  const o=allOrders.find(x=>x._id===orderId);
+  if(!o){toast('الأوردر غير موجود','err');return;}
+  reassignContext={orderId, bucket, order:o, currentUid};
+  setText('rs-title', `نقل ${stageLabel(bucket)} — ${o.clientName||o.id||orderId}`);
+  setText('rs-current', `حالياً مع: ${currentName||'—'}`);
+  renderCandidates(bucket, currentUid);
+  document.getElementById('ov-reassign').classList.add('open');
+};
+window.openAssignDrawer=function(bucket, orderIdsJsonOrArray){
+  let ids=[];
+  if(typeof orderIdsJsonOrArray==='string'){
+    try{ids=JSON.parse(orderIdsJsonOrArray.replace(/&quot;/g,'"'));}catch(e){ids=[];}
+  } else { ids=orderIdsJsonOrArray; }
+  // open for the first order; others can be assigned similarly
+  if(!ids.length){toast('لا أوردرات لتخصيص','err');return;}
+  openReassign(ids[0], bucket, '', '— بدون منفذ —');
+};
+
+window.closeReassign=()=>document.getElementById('ov-reassign').classList.remove('open');
+
+function renderCandidates(bucket, currentUid){
+  // role mapping
+  const roleMap={
+    design:['graphic_designer','design_operator'],
+    production:['production_agent'],
+    printing:['production_agent'],
+    shipping:['shipping_officer'],
+  };
+  const allowed=roleMap[bucket]||[];
+  const cands=allEmployees
+    .filter(e=>allowed.includes(e.role))
+    .map(e=>{
+      const uid=e.authUid||e._id;
+      const w=workloadMap.get(uid)||{assignments:[],pressure:0};
+      return {emp:e, uid, load:w.assignments.length, pressure:w.pressure};
+    })
+    .filter(c=>c.uid!==currentUid)
+    .sort((a,b)=>a.pressure-b.pressure); // least pressured first
+
+  const html=cands.length?cands.map(c=>`<div class="wf-cand" onclick="doReassign('${c.uid}','${esc(c.emp.name||'موظف')}','${c.emp.role||''}')">
+    <div class="wf-emp-avatar" style="background:${pressureColor(c.pressure)};width:32px;height:32px;font-size:13px">${initial(c.emp.name)}</div>
+    <div class="wf-cand-name">${esc(c.emp.name||'موظف')}</div>
+    <div class="wf-cand-meta">${c.load} شغل · ${c.pressure}%</div>
+  </div>`).join(''):`<div style="text-align:center;padding:18px;color:var(--dim2);font-size:12px">لا يوجد موظفين بدور مناسب لهذه المرحلة</div>`;
+  document.getElementById('rs-cands').innerHTML=html;
+}
+
+window.doReassign=async function(newUid, newName, newRole){
+  if(!reassignContext){toast('—','err');return;}
+  const {orderId, bucket, order}=reassignContext;
+  try{
+    await assignOrderStage(db, {
+      orderId,
+      orderDisplayId: order.id||'',
+      clientName:    order.clientName||'',
+      stage:         bucket,
+      assigneeUid:   newUid,
+      assigneeName:  newName,
+      assigneeRole:  newRole,
+      assignedBy:    currentUser?.uid||'',
+      assignedByName: userName,
+      notes:         '',
+    });
+    toast(`✅ تم النقل إلى ${newName}`, 'ok');
+    closeReassign();
+  } catch(e){
+    console.error(e);
+    toast('خطأ: '+(e.message||'لم يتم النقل'),'err');
+  }
+};
+
+// ── Auth + boot ──
+onAuthStateChanged(auth, async user=>{
+  if(!user){window.location.href='login.html';return;}
+  currentUser=user;
+  try{
+    const us=await getDoc(doc(db,'users',user.uid));
+    if(us.exists()){
+      const ud=us.data();
+      currentRole=ud.role||'';
+      userName=ud.name||ud.email||user.email||'مستخدم';
+      buildSidebar(ud);
+    } else {
+      buildSidebar({});
+    }
+  }catch(e){buildSidebar({});}
+
+  // Subscribe to workload (orders + employees combined)
+  watchLiveWorkload(db, (wmap, raw)=>{
+    workloadMap = wmap;
+    allOrders   = raw.orders;
+    allEmployees= raw.employees;
+    scheduleRender();
+  });
+});
+</script>
+</body>
+</html>

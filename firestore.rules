@@ -419,6 +419,48 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ══ Order Assignments — Workforce Network Layer ══
+    // كل تعيين موظف لمرحلة من أوردر يُسجَّل هنا (history-first).
+    // الـ "active assignment" يبقى على /orders (designerId, productionAgent, shippingOfficerId)
+    // للـ queries السريعة، لكن /order_assignments هو السجل الكامل للتاريخ + للـ marketplace في Phase 3.
+    // RULE 6: لا يكسر الكود القديم — production.html و shipping.html يكتبوا في /orders كالعادة،
+    // ويضيفوا entry هنا في نفس الـ batch (best-effort).
+    match /order_assignments/{assignId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('production') ||
+        hasPage('design') ||
+        hasPage('shipping') ||
+        hasPage('print') ||
+        hasPage('clients') ||
+        resource.data.get('assigneeUid','__') == request.auth.uid ||
+        resource.data.get('assignedBy','__') == request.auth.uid
+      );
+      // الإنشاء: admin، أو الصفحات اللي بتدير المراحل (production/design/shipping)،
+      // أو الموظف نفسه (pickup ذاتي).
+      allow create: if isAuth() && (
+        isAdmin() ||
+        hasPage('production') ||
+        hasPage('design') ||
+        hasPage('shipping') ||
+        hasPage('print') ||
+        hasPage('clients') ||
+        can('canAddOrders') ||
+        request.resource.data.get('assigneeUid','') == request.auth.uid
+      );
+      // التحديث: admin، أو الموظف يقدر يحدّث الحالة على assignment بتاعه فقط.
+      allow update: if isAuth() && (
+        isAdmin() ||
+        hasPage('production') ||
+        hasPage('design') ||
+        hasPage('shipping') ||
+        hasPage('print') ||
+        resource.data.get('assigneeUid','__') == request.auth.uid ||
+        resource.data.get('assignedBy','__') == request.auth.uid
+      );
+      allow delete: if isAdminOnly();
+    }
+
     // ══ Notifications ══
     // إشعارات النظام (مثلاً: حذف بند تكلفة مدفوع)
     // المستلِم يقرأ إشعاراته فقط، الكتابة مفتوحة لكل المصادقين

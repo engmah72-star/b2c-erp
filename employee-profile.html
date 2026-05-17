@@ -2330,7 +2330,47 @@ function renderTasks(){
   setText('tasks-count',open.length);
   const PRI={urgent:{lbl:'⚡ عاجل',cls:'pri-urgent'},normal:{lbl:'📌 عادي',cls:'pri-normal'},low:{lbl:'📎 منخفض',cls:'pri-low'}};
   const today=todayStr();
-  el.innerHTML=[...open,...done].map(t=>{
+
+  // ══ LIVE WORKLOAD — الأوردرات الحية اللي في إيد الموظف الآن ══
+  // مصدر البيانات: /orders مباشرة (الحقول النشطة) — RULE 1 (Single Source).
+  const empUid=emp?.authUid||empId;
+  const liveOrders=(allOrders||[]).filter(o=>{
+    if(['archived','cancelled','delivered'].includes(o.stage))return false;
+    return o.designerId===empUid || o.productionAgent===empUid || o.shippingOfficerId===empUid;
+  });
+  const stageMap={
+    'design_pending':{ico:'✏️',lbl:'تصميم',col:'#a78bfa'},
+    'design_approved':{ico:'✅',lbl:'اعتمد',col:'#a78bfa'},
+    'production':{ico:'🏭',lbl:'تنفيذ',col:'#ff3d6e'},
+    'printing':{ico:'🖨️',lbl:'طباعة',col:'#ffaa00'},
+    'ready':{ico:'📦',lbl:'جاهز',col:'#3b9eff'},
+    'shipped':{ico:'🚚',lbl:'شحن',col:'#22d3ee'},
+  };
+  const liveHtml=liveOrders.length?`<div style="background:rgba(124,92,255,.05);border:1px solid rgba(124,92,255,.2);border-radius:10px;padding:10px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:800;color:#a78bfa">🏃 الأوردرات الحية (${liveOrders.length})</div>
+      <a href="workforce-live.html" style="font-size:10px;color:#a78bfa;text-decoration:none;font-weight:700">عرض كل الفريق ←</a>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px">
+      ${liveOrders.slice(0,12).map(o=>{
+        const s=stageMap[o.stage]||{ico:'•',lbl:o.stage,col:'#888'};
+        const upd=o.updatedAt?.toDate?.()||o.createdAt?.toDate?.();
+        const ageH=upd?Math.max(0,Math.floor((Date.now()-upd.getTime())/3600000)):0;
+        const ageCol=ageH>=48?'var(--r)':ageH>=24?'var(--y)':'var(--g)';
+        const ageLbl=ageH<1?'الآن':ageH<24?ageH+'س':Math.round(ageH/24)+' يوم';
+        return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${s.col};border-radius:8px;padding:8px 10px;cursor:pointer" onclick="window.location.href='workforce-live.html'">
+          <div style="font-size:12px;font-weight:700">${o.clientName||'—'}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
+            <span style="font-size:10px;color:${s.col};font-weight:700">${s.ico} ${s.lbl}</span>
+            <span style="font-size:10px;color:${ageCol};font-weight:700">⏱ ${ageLbl}</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${liveOrders.length>12?`<div style="text-align:center;font-size:10px;color:var(--dim2);margin-top:6px">+ ${liveOrders.length-12} أوردر آخر</div>`:''}
+  </div>`:`<div style="background:var(--bg2);border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;margin-bottom:14px"><div style="font-size:11px;color:var(--dim2)">💤 لا توجد أوردرات نشطة في إيد الموظف حالياً</div></div>`;
+
+  el.innerHTML=liveHtml+[...open,...done].map(t=>{
     const p=PRI[t.priority]||PRI.normal;
     const isDone=t.status==='done';
     const isLate=t.dueDate&&t.dueDate<today&&!isDone;
