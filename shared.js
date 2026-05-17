@@ -69,8 +69,8 @@ export const ROLES = {
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','settings'],
-  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports'],
+  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','settings'],
+  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live'],
   customer_service: ['index','clients','design','approvals'],
   graphic_designer: ['design','approvals'],
   design_operator:  ['index','design','approvals','suppliers'],
@@ -348,6 +348,8 @@ export function renderSidebar(activePage) {
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
+    { key:'employees',  ico:'👥', label:'الموظفين' },
+    { key:'workforce-live', ico:'👷', label:'Workforce Live' },
     { key:'reports',    ico:'📊', label:'التقارير' },
     { key:'settings',   ico:'⚙️', label:'الإعدادات' },
   ];
