@@ -89,6 +89,19 @@ service cloud.firestore {
           || can('canAddOrders')
           || can('canFinancialWrite');
     }
+    // ══ Partner Portal — partner authenticated via custom token ══
+    // الـ Cloud Function partnerSignIn يعطي custom token مع claim partnerTenantId.
+    // الـ rules بتفحصه لتقييد الـ partner لقراءة بيانات tenant بتاعه فقط.
+    function isPartner() {
+      return isAuth() && request.auth.token.get('isPartner', false) == true;
+    }
+    function partnerTenant() {
+      return isAuth() ? request.auth.token.get('partnerTenantId', '') : '';
+    }
+    function isOwnPartnerData(resourceData) {
+      return isPartner() && resourceData.get('tenantId', '__') == partnerTenant();
+    }
+
     function canFinancialRead() {
       return isAdmin()
           || hasPage('accounts')
@@ -1008,9 +1021,16 @@ service cloud.firestore {
     // ══ Tenants — سجل المرشنتس وشركاء المنصة ══
     match /tenants/{tenantId} {
       // كل auth user يقرأ قائمة المرشنتس (لـ catalog ولـ profile lookups).
+      // Partner عبر custom token يستطيع قراءة tenant بتاعه فقط.
       allow read: if isAuth();
       // KYC والإدارة admin-only في Phase 1.
       allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Partner Logins — audit log من partnerSignIn function ══
+    match /partner_logins/{loginId} {
+      allow read:  if isAuth() && isAdmin();
+      allow write: if false;  // function-only via Admin SDK
     }
 
     // ══ Marketplace Orders — طلبات بين العميل والمرشنت ══
@@ -1019,7 +1039,8 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() ||
         canFinancialRead() ||
-        resource.data.get('customerId','__') == request.auth.uid
+        resource.data.get('customerId','__') == request.auth.uid ||
+        isOwnPartnerData(resource.data)
       );
       // Phase 1: admin يكتب يدوياً. Phase 2: engine فقط.
       allow create, update, delete: if isAdminOnly();
@@ -1027,7 +1048,11 @@ service cloud.firestore {
 
     // ══ Commissions — العمولات المستحقة/المحصلة للمنصة ══
     match /commissions/{commId} {
-      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        isOwnPartnerData(resource.data)
+      );
       allow create, update, delete: if isAdminOnly();
     }
 
@@ -1043,7 +1068,11 @@ service cloud.firestore {
 
     // ══ Payouts — دفعات للمرشنتس/الشحن/الوكلاء ══
     match /payouts/{payoutId} {
-      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        isOwnPartnerData(resource.data)
+      );
       allow create, update, delete: if isAdminOnly();
     }
 

@@ -2150,6 +2150,61 @@ const BACKFILL_COLLECTIONS = ['orders', 'clients', 'suppliers_v2', 'employees', 
 const BACKFILL_BATCH_SIZE = 400;
 const DEFAULT_TENANT = 'merchant_001';
 
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Partner Sign-in — يعطي custom token للـ partner portal
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Partner يدخل tenantId + portalSecret → الـ function تتحقق من tenant.portalSecret
+// → ترجع Firebase custom token مع claim `partnerTenantId`.
+// الـ portal يستخدم signInWithCustomToken → الـ user يكون له auth.token.partnerTenantId
+// → الـ Firestore rules تسمح بقراءة data حسب tenantId match.
+//
+// تنفّذ بدون Firebase Auth user حقيقي (custom token uid = 'partner_<tid>_<rnd>').
+
+exports.partnerSignIn = onCall(
+  { region: 'us-central1', timeoutSeconds: 30 },
+  async (request) => {
+    const tenantId = String(request.data?.tenantId || '').trim();
+    const secret   = String(request.data?.secret || '').trim();
+    if (!tenantId || !secret) {
+      throw new HttpsError('invalid-argument', 'tenantId و secret مطلوبان');
+    }
+
+    const snap = await db.collection('tenants').doc(tenantId).get();
+    if (!snap.exists()) throw new HttpsError('not-found', 'tenant غير موجود');
+    const t = snap.data();
+    if (!t.isActive) throw new HttpsError('permission-denied', 'الحساب موقوف');
+    if (!t.portalSecret) throw new HttpsError('failed-precondition', 'portal غير مفعَّل لهذا الحساب');
+    if (t.portalSecret !== secret) throw new HttpsError('permission-denied', 'كود الوصول غير صحيح');
+
+    // أنشئ custom token مع claim
+    const uid = `partner_${tenantId}_${Date.now().toString(36)}`;
+    let token;
+    try {
+      token = await getAuth().createCustomToken(uid, {
+        partnerTenantId: tenantId,
+        partnerType:    t.type || 'merchant',
+        isPartner:      true,
+      });
+    } catch (e) {
+      throw new HttpsError('internal', `token creation failed: ${e.message}`);
+    }
+
+    // سجل الـ login
+    try {
+      await db.collection('partner_logins').add({
+        tenantId,
+        uid,
+        at: FieldValue.serverTimestamp(),
+        userAgent: request.rawRequest?.headers?.['user-agent'] || '',
+        ip:        request.rawRequest?.ip || '',
+      });
+    } catch (_) {}
+
+    return { token, tenantId, displayName: t.displayName || t.legalName };
+  }
+);
+
 exports.backfillTenantId = onCall(
   { region: 'us-central1', timeoutSeconds: 540 },
   async (request) => {
