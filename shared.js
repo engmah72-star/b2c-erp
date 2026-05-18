@@ -69,8 +69,8 @@ export const ROLES = {
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns'],
-  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns'],
+  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns','marketplace'],
+  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns','marketplace'],
   customer_service: ['index','clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
   design_operator:  ['index','design','approvals','suppliers'],
@@ -347,6 +347,7 @@ export function renderSidebar(activePage) {
     { key:'accounts',   ico:'💰', label:'الحسابات' },
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'returns',    ico:'↩️',  label:'المرتجعات' },
+    { key:'marketplace',ico:'🏛️', label:'المنصة (Marketplace)' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'employees',  ico:'👥', label:'الموظفين' },
