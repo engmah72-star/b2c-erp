@@ -1683,6 +1683,55 @@ exports.analyzeSuggestionWithAI = onCall(
 );
 
 // ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: C2 — detect direct writes to financial_ledger bypassing the engine
+// ════════════════════════════════════════════════════════════════════════════
+//
+// كل ledger entry من الـ engines (FSE/MKE/RET) يحمل engineSignature.
+// لو entry تم إنشاؤه بدون الـ signature → يعني كُتب مباشرة بدون engine.
+// هذا انتهاك لـ RULE 2 — يُسجَّل في admin_alerts للمتابعة.
+//
+// Observability فقط — لا يمنع الكتابة (الـ Firestore rules تسمح بها).
+// بعد فترة مراقبة، يمكن تشديد الـ rules لرفض الكتابة بدون signature.
+
+exports.detectEngineBypass = onDocumentCreated(
+  { document: 'financial_ledger/{ledgerId}', region: 'us-central1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const d = snap.data() || {};
+
+    // الـ engines الجديدة دائماً تضيف engineSignature
+    if (d.engineWrite === true && d.engineSignature) return;
+
+    // entries قديمة قد لا يكون لها signature — تُتجاهَل بناءً على createdAt
+    // إذا اللديك entries قبل deploy هذا التغيير، فلترها بـ migration version
+    // لكن للأمان نُسجِّل كل ما لا يحمل signature
+    try {
+      await db.collection('admin_alerts').add({
+        type:        'rule2_bypass',
+        severity:    'high',
+        title:       '⛔ كتابة مالية بدون engine signature',
+        body:        `ledger entry ${event.params.ledgerId} كُتب بدون marker الـ engine. eventType=${d.eventType || 'unknown'}, amount=${d.amount || 0}`,
+        ledgerId:    event.params.ledgerId,
+        eventType:   d.eventType || null,
+        amount:      d.amount    || 0,
+        orderId:     d.orderId   || null,
+        clientId:    d.clientId  || null,
+        walletId:    d.walletId  || null,
+        createdBy:   d.createdBy || null,
+        createdByName: d.createdByName || null,
+        detectedAt:  FieldValue.serverTimestamp(),
+        resolved:    false,
+        suggestedFix: 'تحقق من المصدر — قد تكون صفحة تكتب مباشرة بدلاً من dispatchFinancialEvent / addLedgerToBatch',
+      });
+      console.warn(`[detectEngineBypass] 🚨 ledger entry بدون signature: ${event.params.ledgerId} eventType=${d.eventType}`);
+    } catch (e) {
+      console.error('[detectEngineBypass] failed to write alert:', e.message);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
 //   SCHEDULED: Returns SLA Monitor (every 2 hours)
 // ════════════════════════════════════════════════════════════════════════════
 //
