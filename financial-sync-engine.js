@@ -37,7 +37,9 @@ export const FE = {
   SALARY_PAYMENT_REVERSAL:       'SALARY_PAYMENT_REVERSAL',
   PAYROLL:                       'PAYROLL',
   BONUS_PAYMENT:                 'BONUS_PAYMENT',
+  BONUS_PAYMENT_REVERSAL:        'BONUS_PAYMENT_REVERSAL',
   PENALTY:                       'PENALTY',
+  PENALTY_REVERSAL:              'PENALTY_REVERSAL',
   RETURN_LOSS:                   'RETURN_LOSS',
   GENERAL_EXPENSE:               'GENERAL_EXPENSE',
   WALLET_TRANSFER:               'WALLET_TRANSFER',
@@ -84,7 +86,9 @@ const LC = {
   SALARY_PAYMENT_REVERSAL:      { type:'reversal', category:'salary',              direction:'in',  icon:'🔄', label:'إلغاء راتب' },
   PAYROLL:                      { type:'expense',  category:'salary',              direction:'out', icon:'👥', label:'مسير رواتب' },
   BONUS_PAYMENT:                { type:'expense',  category:'bonus',               direction:'out', icon:'🎁', label:'مكافأة' },
+  BONUS_PAYMENT_REVERSAL:       { type:'reversal', category:'bonus',               direction:'in',  icon:'🔄', label:'إلغاء مكافأة' },
   PENALTY:                      { type:'expense',  category:'deduction',           direction:'out', icon:'✂️', label:'خصم' },
+  PENALTY_REVERSAL:             { type:'reversal', category:'deduction',           direction:'in',  icon:'🔄', label:'إلغاء خصم' },
   RETURN_LOSS:                  { type:'expense',  category:'return_loss',         direction:'out', icon:'↩️', label:'خسارة مرتجع' },
   GENERAL_EXPENSE:              { type:'expense',  category:'general_expense',     direction:'out', icon:'💸', label:'مصروف عام' },
   GENERAL_EXPENSE_REVERSAL:     { type:'reversal', category:'general_expense',     direction:'in',  icon:'🔄', label:'إلغاء مصروف عام' },
@@ -247,8 +251,12 @@ export function getReversal(eventType) {
     VENDOR_PAYMENT_REVERSAL:      'VENDOR_PAYMENT',
     SALARY_PAYMENT:               'SALARY_PAYMENT_REVERSAL',
     SALARY_PAYMENT_REVERSAL:      'SALARY_PAYMENT',
-    BONUS_PAYMENT:                'SALARY_PAYMENT_REVERSAL',
-    PENALTY:                      'SALARY_PAYMENT_REVERSAL',
+    // M4: عكس متخصص لكل من Bonus/Penalty — كان يخلط مع SALARY_PAYMENT_REVERSAL.
+    // الـ ledger الآن يفرق بين عكس مكافأة وعكس خصم وعكس راتب.
+    BONUS_PAYMENT:                'BONUS_PAYMENT_REVERSAL',
+    BONUS_PAYMENT_REVERSAL:       'BONUS_PAYMENT',
+    PENALTY:                      'PENALTY_REVERSAL',
+    PENALTY_REVERSAL:             'PENALTY',
     SHIPPING_SETTLEMENT:          'SHIPPING_SETTLEMENT_REVERSAL',
     SHIPPING_SETTLEMENT_REVERSAL: 'SHIPPING_SETTLEMENT',
     SHIPPING_EXPENSE:             'GENERAL_EXPENSE_REVERSAL',
@@ -349,6 +357,9 @@ async function handleVendorPaymentReversal(db, p) {
 }
 
 async function handleSalaryPaymentReversal(db, p) {
+  // M4: eventType parameterized — يميّز بين عكس راتب / مكافأة / خصم في الـ ledger.
+  // الـ default 'SALARY_PAYMENT_REVERSAL' للحفاظ على backward compat.
+  const eventType = p.eventType || 'SALARY_PAYMENT_REVERSAL';
   const isDeduction = p.isDeduction;
   const batch = writeBatch(db);
 
@@ -365,13 +376,19 @@ async function handleSalaryPaymentReversal(db, p) {
     batch.delete(doc(db, 'employee_payments', p.epId));
   }
 
-  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', {
+  // notes حسب نوع العكس
+  const noteByEvent = {
+    SALARY_PAYMENT_REVERSAL: `إلغاء راتب — ${p.employeeName}`,
+    BONUS_PAYMENT_REVERSAL:  `إلغاء مكافأة — ${p.employeeName}`,
+    PENALTY_REVERSAL:        `إلغاء خصم — ${p.employeeName}`,
+  };
+  addLedgerToBatch(batch, db, eventType, {
     ...p, employeeId: p.employeeId, employeeName: p.employeeName,
-    notes: `إلغاء راتب — ${p.employeeName}`,
+    notes: noteByEvent[eventType] || `إلغاء — ${p.employeeName}`,
   });
 
   await batch.commit();
-  console.log('[FSE] ✅ completed: SALARY_PAYMENT_REVERSAL');
+  console.log('[FSE] ✅ completed:', eventType);
   return {};
 }
 
@@ -760,7 +777,11 @@ const HANDLERS = {
   SALARY_PAYMENT:          handleSalaryPayment,
   SALARY_PAYMENT_REVERSAL: handleSalaryPaymentReversal,
   BONUS_PAYMENT:           (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'bonus' }),
+  // M4: عكس مكافأة بحدث منفصل (BONUS_PAYMENT_REVERSAL) — يميّز في الـ ledger
+  BONUS_PAYMENT_REVERSAL:  (db, p) => handleSalaryPaymentReversal(db, { ...p, eventType: 'BONUS_PAYMENT_REVERSAL' }),
   PENALTY:                 (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'deduction' }),
+  // M4: عكس خصم بحدث منفصل (PENALTY_REVERSAL) — direction=out بدل +amount
+  PENALTY_REVERSAL:        (db, p) => handleSalaryPaymentReversal(db, { ...p, eventType: 'PENALTY_REVERSAL', isDeduction: true }),
   PAYROLL:                 handlePayroll,
   GENERAL_EXPENSE:          handleGeneralExpense,
   GENERAL_EXPENSE_REVERSAL: (db, p) => handleGeneralExpense(db, { ...p, eventType: 'GENERAL_EXPENSE_REVERSAL', txCategory: p.txCategory || 'expense_reversal', _reverse: true }),
