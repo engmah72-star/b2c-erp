@@ -184,6 +184,219 @@
     }
   }, true);
 
+  // ──────────────────────────────────────────────────────────────
+  // DOM MASKING — defense-in-depth field hiding by target role
+  // ──────────────────────────────────────────────────────────────
+  // الـ Firestore reads بترجع بيانات الـ admin (لأن الـ auth uid لسه admin).
+  // عشان نخلي المعاينة تشبه الواقع، بنطبق masking على الـ DOM:
+  //   - أرقام التليفون → 012****567 لو الدور المستهدف مش له client_phone
+  //   - روابط tel:/wa.me/whatsapp → معطّلة
+  //   - عناصر فيها data-perm="X" → مخفية لو الدور مش له صلاحية X
+  //   - أزرار/أيقونات اتصال + واتساب → مخفية
+  //
+  // مصدر صلاحيات الدور: نسخة محلية من DEFAULT_PERMISSIONS (matches shared.js)
+  // — لو تحدّث shared.js، حدّث هنا.
+
+  // RULE 8.1 — الأدوار اللي تشوف رقم العميل
+  const ROLE_CAN_SEE_PHONE = new Set([
+    'admin', 'operation_manager', 'customer_service', 'shipping_officer'
+  ]);
+  // RULE 8.2 — الأدوار اللي تشوف بيانات التصميم
+  const ROLE_CAN_SEE_DESIGN = new Set([
+    'admin', 'customer_service', 'graphic_designer', 'design_operator', 'production_agent'
+  ]);
+  // أدوار تشوف التكلفة الداخلية
+  const ROLE_CAN_SEE_COST = new Set([
+    'admin', 'operation_manager', 'production_agent', 'wallet_manager'
+  ]);
+  // أدوار تشوف الهامش/الإيرادات
+  const ROLE_CAN_SEE_MARGIN = new Set([
+    'admin', 'operation_manager', 'wallet_manager'
+  ]);
+  // أدوار تشوف الأسعار (بيع/مدفوع)
+  const ROLE_CAN_SEE_PRICES = new Set([
+    'admin', 'operation_manager', 'customer_service', 'wallet_manager'
+  ]);
+
+  const targetRole = va.role || '';
+  const masks = {
+    phone:    !ROLE_CAN_SEE_PHONE.has(targetRole),
+    design:   !ROLE_CAN_SEE_DESIGN.has(targetRole),
+    cost:     !ROLE_CAN_SEE_COST.has(targetRole),
+    margin:   !ROLE_CAN_SEE_MARGIN.has(targetRole),
+    prices:   !ROLE_CAN_SEE_PRICES.has(targetRole),
+  };
+
+  // ── Phone masking: 012****567 ──
+  // يطابق الأرقام المصرية: 010/011/012/015 + 8 أرقام (11 رقم إجمالاً)
+  // وكذلك +20 و 0020 و الأرقام بدون كود.
+  const PHONE_RE = /(\+?20|0020)?\s*0?1[0125]\d{8}\b/g;
+  function maskPhoneStr(s){
+    const digits = String(s||'').replace(/\D/g, '');
+    if (digits.length < 6) return '****';
+    return digits.slice(0, 3) + '****' + digits.slice(-3);
+  }
+  function maskPhonesInText(text){
+    return text.replace(PHONE_RE, m => maskPhoneStr(m));
+  }
+
+  // ── Hide elements based on data-perm attributes ──
+  // أي عنصر فيه data-perm="client_phone" أو ".client_phone" بيتخفي تلقائياً.
+  const PERM_HIDE_MAP = {
+    'client_phone':  masks.phone,
+    'design_data':   masks.design,
+    'price_cost':    masks.cost,
+    'price_margin':  masks.margin,
+    'price_sale':    masks.prices,
+    'price_paid':    masks.prices,
+    'supplier_cost': masks.cost,
+  };
+
+  function applyMaskingToNode(root){
+    if (!root || !root.nodeType) return;
+
+    // 1) Hide elements with data-perm attribute that's masked
+    if (root.querySelectorAll) {
+      root.querySelectorAll('[data-perm]').forEach(el => {
+        const perm = el.getAttribute('data-perm');
+        if (PERM_HIDE_MAP[perm]) {
+          el.style.visibility = 'hidden';
+          el.dataset.vaHidden = '1';
+        }
+      });
+
+      // 2) Disable tel: and wa.me/whatsapp links if phone is masked
+      if (masks.phone) {
+        root.querySelectorAll('a[href^="tel:"],a[href*="wa.me/"],a[href*="api.whatsapp.com"],a[href*="whatsapp://"]').forEach(a => {
+          if (a.dataset.vaDisabled) return;
+          a.dataset.vaDisabled = '1';
+          a.dataset.vaOrigHref = a.getAttribute('href') || '';
+          a.removeAttribute('href');
+          a.style.opacity = '.35';
+          a.style.cursor = 'not-allowed';
+          a.title = 'معطّل في وضع المعاينة (الدور لا يرى رقم العميل)';
+          a.addEventListener('click', e => {
+            e.preventDefault(); e.stopPropagation();
+            blockClickToast('⛔ روابط الاتصال معطّلة في وضع المعاينة');
+          }, true);
+        });
+
+        // 3) Mask phone numbers in text nodes
+        maskPhoneTextNodes(root);
+      }
+    }
+  }
+
+  // Walk text nodes — replace phone numbers
+  // نتجنب inputs/textarea/contenteditable عشان ميحصلش conflict مع المستخدم
+  function maskPhoneTextNodes(root){
+    if (!root.nodeType) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node){
+        const p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        const tag = p.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+        if (p.closest('#b2c-va-banner')) return NodeFilter.FILTER_REJECT;
+        if (p.isContentEditable) return NodeFilter.FILTER_REJECT;
+        if (!PHONE_RE.test(node.nodeValue)) {
+          PHONE_RE.lastIndex = 0;
+          return NodeFilter.FILTER_REJECT;
+        }
+        PHONE_RE.lastIndex = 0;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const targets = [];
+    let n; while ((n = walker.nextNode())) targets.push(n);
+    targets.forEach(t => {
+      const masked = maskPhonesInText(t.nodeValue);
+      if (masked !== t.nodeValue) t.nodeValue = masked;
+    });
+  }
+
+  // Also mask phone values in input/textarea elements (read-only display)
+  function maskPhoneInputs(root){
+    if (!root.querySelectorAll) return;
+    root.querySelectorAll('input[value],input[readonly],input[disabled]').forEach(inp => {
+      if (inp.dataset.vaMasked) return;
+      const v = inp.value || inp.getAttribute('value') || '';
+      if (PHONE_RE.test(v)) {
+        PHONE_RE.lastIndex = 0;
+        inp.dataset.vaMasked = '1';
+        inp.dataset.vaOrig = v;
+        inp.value = maskPhonesInText(v);
+      }
+      PHONE_RE.lastIndex = 0;
+    });
+  }
+
+  // Initial pass + observe DOM changes (real-time apps re-render constantly)
+  function runMaskPass(){
+    if (!document.body) { setTimeout(runMaskPass, 50); return; }
+    applyMaskingToNode(document.body);
+    if (masks.phone) maskPhoneInputs(document.body);
+  }
+  runMaskPass();
+
+  const obs = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      m.addedNodes.forEach(node => {
+        if (node.nodeType === 1) {
+          applyMaskingToNode(node);
+          if (masks.phone) maskPhoneInputs(node);
+        } else if (node.nodeType === 3 && masks.phone) {
+          // text node added directly — mask if needed
+          if (PHONE_RE.test(node.nodeValue)) {
+            PHONE_RE.lastIndex = 0;
+            const p = node.parentElement;
+            if (p && !p.closest('#b2c-va-banner') && p.tagName !== 'SCRIPT' && p.tagName !== 'STYLE') {
+              node.nodeValue = maskPhonesInText(node.nodeValue);
+            }
+          }
+          PHONE_RE.lastIndex = 0;
+        }
+      });
+      // For attribute changes (value changes on inputs, href changes), re-check
+      if (m.type === 'attributes' && masks.phone) {
+        if (m.target.tagName === 'A' && (m.attributeName === 'href')) {
+          applyMaskingToNode(m.target.parentNode || m.target);
+        }
+        if ((m.target.tagName === 'INPUT' || m.target.tagName === 'TEXTAREA') && m.attributeName === 'value') {
+          maskPhoneInputs(m.target.parentNode || document.body);
+        }
+      }
+    }
+  });
+  if (document.body) {
+    obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['href','value','data-perm'] });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['href','value','data-perm'] });
+      runMaskPass();
+    });
+  }
+
+  // Add a debug badge to the banner showing what's masked
+  function addMaskingBadges(){
+    const banner = document.getElementById('b2c-va-banner');
+    if (!banner || banner.dataset.maskBadged) return;
+    const active = Object.entries(masks).filter(([,v])=>v).map(([k])=>k);
+    if (active.length === 0) return;
+    banner.dataset.maskBadged = '1';
+    const msg = banner.querySelector('.va-msg');
+    if (msg) {
+      const badge = document.createElement('span');
+      badge.style.cssText = 'background:rgba(0,0,0,.25);padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700';
+      badge.title = 'حقول مُقنّعة: ' + active.join(', ');
+      badge.textContent = '🛡 مُقنّع: ' + active.length + ' حقل';
+      msg.appendChild(badge);
+    }
+  }
+  if (document.body) addMaskingBadges();
+  else document.addEventListener('DOMContentLoaded', addMaskingBadges);
+
   // expose state on window for debugging
   window.__b2cViewAs.adminUid = getAdminUid();
+  window.__b2cViewAs.masks    = masks;
 })();
