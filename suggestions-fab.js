@@ -302,31 +302,28 @@ function cleanupDetail(){
   activeDetailComments = [];
 }
 
-function handleModalClick(e){
-  const m = document.getElementById(MODAL_ID);
-  if(!m) return;
-  // backdrop click (outside .sm-box) closes
-  if(e.target === m){ closeModal(); return; }
-  // walk up looking for action / tab / open targets
-  const actEl  = e.target.closest?.('[data-act]');
-  const tabEl  = e.target.closest?.('[data-tab]');
-  const openEl = e.target.closest?.('[data-open]');
-  if(actEl){
-    const act = actEl.getAttribute('data-act');
-    if(act === 'close')        return closeModal();
-    if(act === 'back')         { view = 'list'; cleanupDetail(); return renderModal(); }
-    if(act === 'goto-new')     { view = 'new'; return renderModal(); }
-    if(act === 'submit')       return submitSuggestion();
-    if(act === 'rerun-ai')     return rerunAi();
-    if(act === 'send-comment') return sendComment();
-  }
-  if(tabEl && view === 'list'){
-    activeTab = tabEl.getAttribute('data-tab');
-    return renderBody();
-  }
-  if(openEl){
-    return openDetail(openEl.getAttribute('data-open'));
-  }
+function handleAct(act){
+  if(act === 'close')        return closeModal();
+  if(act === 'back')         { view = 'list'; cleanupDetail(); return renderModal(); }
+  if(act === 'goto-new')     { view = 'new'; return renderModal(); }
+  if(act === 'submit')       return submitSuggestion();
+  if(act === 'rerun-ai')     return rerunAi();
+  if(act === 'send-comment') return sendComment();
+}
+
+function bindHandlers(root){
+  if(!root) return;
+  // Direct onclick on each interactive element — guaranteed to fire even if
+  // some ancestor stops propagation.
+  root.querySelectorAll('[data-act]').forEach(el => {
+    el.onclick = (ev) => { ev.stopPropagation(); handleAct(el.getAttribute('data-act')); };
+  });
+  root.querySelectorAll('[data-tab]').forEach(el => {
+    el.onclick = (ev) => { ev.stopPropagation(); activeTab = el.getAttribute('data-tab'); renderBody(); };
+  });
+  root.querySelectorAll('[data-open]').forEach(el => {
+    el.onclick = (ev) => { ev.stopPropagation(); openDetail(el.getAttribute('data-open')); };
+  });
 }
 
 function renderModal(){
@@ -352,11 +349,9 @@ function renderModal(){
       <div class="sm-body" id="sm-body"></div>
     </div>
   `;
-  // Attach listener once per modal element (idempotent via flag)
-  if(!m.dataset.bound){
-    m.addEventListener('click', handleModalClick);
-    m.dataset.bound = '1';
-  }
+  // Backdrop click closes — only when target is the wrapper itself
+  m.onclick = (ev) => { if(ev.target === m) closeModal(); };
+  bindHandlers(m);
   renderBody();
 }
 
@@ -369,9 +364,10 @@ function titleFor(v){
 function renderBody(){
   const body = document.getElementById('sm-body');
   if(!body) return;
-  if(view === 'new') return renderNewForm(body);
-  if(view === 'detail') return renderDetail(body);
-  return renderList(body);
+  if(view === 'new') renderNewForm(body);
+  else if(view === 'detail') renderDetail(body);
+  else renderList(body);
+  bindHandlers(body);
 }
 
 function renderList(body){
