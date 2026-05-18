@@ -34,16 +34,19 @@
     return t;
   }
 
-  // ── تطبيق الوضع على <html> ──
+  // ── تطبيق الوضع على <html> + body (لتغطية أي CSS يستهدف body) ──
   function apply(t){
     if (!VALID.includes(t)) t = DEFAULT;
     document.documentElement.setAttribute('data-theme', t);
+    if (document.body) document.body.setAttribute('data-theme', t);
     // تحديث ميتا اللون لشريط الموبايل
     const eff = effective(t);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', eff === 'light' ? '#FFFFFF' : '#0d0f1b');
     // بثّ event للصفحات لو محتاجة تتفاعل
-    window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: t, effective: eff } }));
+    try {
+      window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: t, effective: eff } }));
+    } catch(_) {}
   }
 
   // ── الحفظ + التطبيق ──
@@ -55,7 +58,9 @@
   }
 
   // ── دائري: dark → light → auto → dark ──
-  function cycle(){
+  function cycle(e){
+    if (e && e.preventDefault) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
     const order = ['dark','light','auto'];
     const cur = getStored();
     const next = order[(order.indexOf(cur) + 1) % order.length];
@@ -70,23 +75,34 @@
     const cur = getStored();
     const ico = cur === 'light' ? '☀' : cur === 'dark' ? '☾' : '⚙';
     const lbl = cur === 'light' ? 'فاتح' : cur === 'dark' ? 'غامق' : 'تلقائي';
-    btn.innerHTML = `<span style="font-size:14px;line-height:1">${ico}</span>`;
+    btn.innerHTML = `<span style="font-size:16px;line-height:1;display:inline-block;">${ico}</span>`;
     btn.setAttribute('data-tip', `الوضع: ${lbl} — انقر للتبديل`);
     btn.setAttribute('aria-label', `تبديل الوضع، الحالي: ${lbl}`);
+    btn.title = `الوضع: ${lbl} — انقر للتبديل`;
   }
 
   // ── حقن الزر تلقائيًا في الـ topbar ──
   function injectToggleButton(){
-    if (document.getElementById('themeToggleBtn')) return;
+    // لو موجود بالفعل وله handler → نتركه
+    const existing = document.getElementById('themeToggleBtn');
+    if (existing){
+      // التحقق إن الـ handler متربوط (لو الزر اتعاد بناء داخل re-render، لازم نربط تاني)
+      if (!existing.__themeBound){
+        existing.addEventListener('click', cycle);
+        existing.__themeBound = true;
+      }
+      return;
+    }
     const host = document.querySelector('.topbar-right');
     if (!host) return;
 
     const btn = document.createElement('button');
     btn.id = 'themeToggleBtn';
     btn.type = 'button';
-    btn.className = 'notif-bell'; // نستعمل نفس استايل أيقونات الـ topbar الموجودة (دائرة 34px)
+    btn.className = 'notif-bell'; // نفس استايل أيقونات الـ topbar (دائرة 34px)
     btn.style.cursor = 'pointer';
     btn.addEventListener('click', cycle);
+    btn.__themeBound = true;
 
     // نضعه أوّل عنصر (يمين أول حاجة في RTL)
     host.insertBefore(btn, host.firstChild);
@@ -108,22 +124,37 @@
 
   // ── حقن الزر بعد توفر DOM ──
   if (document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', injectToggleButton);
+    document.addEventListener('DOMContentLoaded', () => {
+      // إعادة تطبيق data-theme على body بعد توفره
+      apply(getStored());
+      injectToggleButton();
+    });
   } else {
+    apply(getStored());
     injectToggleButton();
   }
-  // مراقبة لو الـ topbar اتحط متأخر (بعض الصفحات تبنيه ديناميكيًا)
+
+  // مراقبة دائمة لإعادة بناء الـ topbar (بعض الصفحات تكتب innerHTML على .topbar)
+  // — لا تنتهي المراقبة، لأن إعادة البناء قد تحدث في أي وقت أثناء الـ session.
   if (typeof MutationObserver !== 'undefined'){
-    const mo = new MutationObserver(() => {
-      if (document.querySelector('.topbar-right') && !document.getElementById('themeToggleBtn')){
-        injectToggleButton();
-      }
-    });
-    document.addEventListener('DOMContentLoaded', () => {
-      mo.observe(document.body, { childList: true, subtree: true });
-      // نوقفه بعد 5 ثوان (طلبنا اتعمل، خلاص)
-      setTimeout(() => mo.disconnect(), 5000);
-    });
+    const startObserver = () => {
+      const mo = new MutationObserver(() => {
+        // لو الـ topbar اتحط متأخر وما فيش زر → احقن
+        if (document.querySelector('.topbar-right') && !document.getElementById('themeToggleBtn')){
+          injectToggleButton();
+        }
+        // لو data-theme اتمسح من html (لأي سبب) → إعادة تطبيق
+        if (!document.documentElement.hasAttribute('data-theme')){
+          document.documentElement.setAttribute('data-theme', getStored());
+        }
+      });
+      mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-theme'] });
+    };
+    if (document.readyState === 'loading'){
+      document.addEventListener('DOMContentLoaded', startObserver);
+    } else {
+      startObserver();
+    }
   }
 
   // ── الـ API العام ──
