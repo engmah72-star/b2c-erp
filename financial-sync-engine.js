@@ -150,6 +150,28 @@ export function approvalFields() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// C2: Engine Signature — يُضاف لكل كتابة مالية من الـ engines (FSE/MKE/RET).
+// Cloud Function `detectEngineBypass` يفحص الـ ledger entries عند الإنشاء:
+//   - لو engineSignature غائب → الـ entry كُتب مباشرة بدون engine → admin_alert
+// Observability فقط — لا يمنع الكتابة. Firestore rules لا تتحقق من الحقل
+// (للحفاظ على backward compatibility).
+// RULE 2 + C2: الـ engines هي المصدر الوحيد للكتابات المالية.
+// ══════════════════════════════════════════════════════════════════
+export function engineSignature(eventType) {
+  // الـ prefix يحدد أي engine كتب: FSE، MKE (marketplace)، RET (returns)
+  const t = eventType || '';
+  const isMKE = t.startsWith('MARKETPLACE') || t.startsWith('ESCROW') ||
+                t.startsWith('COMMISSION') || t.startsWith('PLATFORM') ||
+                t.startsWith('MERCHANT') || t.startsWith('AGENT_') ||
+                t === 'CHARGEBACK';
+  const isRET = t.startsWith('RETURN_') || t.startsWith('WARRANTY');
+  return {
+    engineSignature: isMKE ? 'MKE_v1' : isRET ? 'RET_v1' : 'FSE_v1',
+    engineWrite:     true,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // LOW-LEVEL: أضف إدخال ledger لـ batch موجود
 // استخدمه في الوحدات التي لديها batch منطقها الخاص
 // ══════════════════════════════════════════════════════════════════
@@ -190,6 +212,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     isDeleted:    false,
     editHistory:  [],
     ...approvalFields(),
+    ...engineSignature(eventType),  // C2: engine marker للـ Cloud Function detector
   });
   console.log('[FSE] 📝 ledger added to batch:', eventType, data.amount);
   return ref;
