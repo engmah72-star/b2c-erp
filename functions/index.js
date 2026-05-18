@@ -2088,3 +2088,128 @@ exports.callGeminiProxy = onCall(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Daily Aggregation — KPIs pre-computed for reports.html
+// ════════════════════════════════════════════════════════════════════════════
+//
+// يحسب metrics لكل يوم سابق ويخزنها في daily_stats/{YYYY-MM-DD}.
+// reports.html يستطيع قراءة هذه الـ aggregates بدل الـ client-side rollup
+// عند 100k+ docs → فتح أسرع 10x.
+//
+// Schedule: كل يوم في 2 AM Cairo (بعد الـ activity ينتهي للـ يوم السابق).
+// يحسب آخر يومين لتغطية late-arriving docs أو ساعات الـ DST.
+
+const STATS_BACKFILL_DAYS = 2;
+
+exports.aggregateDailyStats = onSchedule(
+  { schedule: '0 2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540 },
+  async () => {
+    const tz = 'Africa/Cairo';
+    const today = new Date();
+    const results = [];
+
+    for (let i = 1; i <= STATS_BACKFILL_DAYS; i++) {
+      const day = new Date(today);
+      day.setDate(day.getDate() - i);
+      const dayKey = day.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+      const dayStart = new Date(dayKey + 'T00:00:00.000+02:00');  // Cairo UTC+2
+      const dayEnd   = new Date(dayKey + 'T23:59:59.999+02:00');
+
+      try {
+        const stats = await computeDayStats(dayStart, dayEnd, dayKey);
+        await db.collection('daily_stats').doc(dayKey).set(stats, { merge: true });
+        results.push({ day: dayKey, ok: true, ...stats.summary });
+      } catch (e) {
+        console.error(`[aggregateDailyStats] ${dayKey} failed:`, e.message);
+        results.push({ day: dayKey, ok: false, error: e.message });
+      }
+    }
+    console.log('[aggregateDailyStats] results:', JSON.stringify(results));
+  }
+);
+
+async function computeDayStats(dayStart, dayEnd, dayKey) {
+  // Orders created in window
+  const ordersSnap = await db.collection('orders')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const orders = ordersSnap.docs.map(d => d.data());
+
+  // Transactions in window
+  const txSnap = await db.collection('transactions_v2')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const txs = txSnap.docs.map(d => d.data());
+
+  // Returns tickets in window
+  let rtSnap;
+  try {
+    rtSnap = await db.collection('returns_tickets')
+      .where('createdAt', '>=', dayStart)
+      .where('createdAt', '<=', dayEnd)
+      .get();
+  } catch (_) { rtSnap = { docs: [] }; }
+  const returns = rtSnap.docs.map(d => d.data());
+
+  // ── Compute KPIs ──
+  const orderCount   = orders.length;
+  const revenueSum   = orders.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+  const collected    = txs.filter(t => t.type === 'in').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const expenses     = txs.filter(t => t.type === 'out').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const cashflowNet  = collected - expenses;
+
+  // Order distribution by stage
+  const byStage = {};
+  orders.forEach(o => { byStage[o.stage || 'unknown'] = (byStage[o.stage || 'unknown'] || 0) + 1; });
+
+  // Returns metrics
+  const returnsCount  = returns.length;
+  const refundedCount = returns.filter(r => r.status === 'refunded').length;
+  const refundsSum    = returns.filter(r => r.status === 'refunded')
+                               .reduce((s, r) => s + (parseFloat(r.refundAmount) || 0), 0);
+  const returnRate = orderCount > 0 ? +(returnsCount / orderCount * 100).toFixed(2) : 0;
+
+  // Top reasons (return)
+  const reasonsMap = {};
+  returns.forEach(r => { reasonsMap[r.reason || 'other'] = (reasonsMap[r.reason || 'other'] || 0) + 1; });
+  const topReasons = Object.entries(reasonsMap).sort((a, b) => b[1] - a[1]).slice(0, 5)
+                           .map(([reason, count]) => ({ reason, count }));
+
+  // Blamed party
+  const blameMap = {};
+  returns.forEach(r => { blameMap[r.blamedParty || 'unknown'] = (blameMap[r.blamedParty || 'unknown'] || 0) + 1; });
+
+  return {
+    dayKey,
+    summary: {
+      orderCount,
+      revenueSum: +revenueSum.toFixed(2),
+      collected:  +collected.toFixed(2),
+      expenses:   +expenses.toFixed(2),
+      cashflowNet:+cashflowNet.toFixed(2),
+      returnsCount,
+      returnRate,
+      refundsSum: +refundsSum.toFixed(2),
+    },
+    byStage,
+    returns: {
+      count: returnsCount,
+      refundedCount,
+      refundsSum: +refundsSum.toFixed(2),
+      rate: returnRate,
+      topReasons,
+      byBlame: blameMap,
+    },
+    cashflow: {
+      in:  +collected.toFixed(2),
+      out: +expenses.toFixed(2),
+      net: +cashflowNet.toFixed(2),
+      txCount: txs.length,
+    },
+    computedAt: FieldValue.serverTimestamp(),
+    computedFrom: { ordersScanned: orderCount, txsScanned: txs.length, returnsScanned: returnsCount },
+  };
+}
