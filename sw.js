@@ -1,23 +1,21 @@
 // Business2Card ERP — Service Worker
 // Strategy:
-//   - Network-First (3s timeout) for HTML navigations + critical app shell JS.
-//     Guarantees users see new releases on the next page load, not the load
-//     after that. Falls back to cache only when offline / network is slow.
+//   - Network-First (no artificial timeout) for HTML navigations + critical
+//     app shell JS. Guarantees users see new releases on the next page load.
+//     Falls back to cache only when the network actually fails (offline).
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v151';
+const CACHE = 'b2c-v152';
 
 // Files we ALWAYS want fresh when online — code paths that change between
-// deploys and where stale-while-revalidate caused users to miss new nav
-// entries / fixes for one extra reload. Match by URL suffix.
+// deploys. Match by URL suffix.
 const NETWORK_FIRST_SUFFIXES = [
   '.html',
   '/shared.js',
   '/financial-sync-engine.js',
   '/sw.js',
 ];
-const NETWORK_FIRST_TIMEOUT_MS = 3000;
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
 // Includes role-landing dashboards so any signed-in user lands on a usable
@@ -104,12 +102,15 @@ self.addEventListener('fetch', e => {
   }
 });
 
-// Network-First: try network with a short timeout. Cache the fresh response
-// for offline fallback. If network fails or times out, serve from cache.
+// Network-First (no timeout): wait for the network as long as it takes.
+// Only fall back to cache when the network ACTUALLY fails (offline / DNS / etc).
+// Why no timeout? A 3s timeout broke slow mobile networks — the page would
+// fall back to cache (or empty) before the response arrived. Pure network-first
+// matches the browser's natural loading behavior: slow but correct.
 async function networkFirst(req) {
   const cache = await caches.open(CACHE);
   try {
-    const res = await fetchWithTimeout(req, NETWORK_FIRST_TIMEOUT_MS);
+    const res = await fetch(req);
     if (res && res.status === 200 && res.type !== 'opaqueredirect') {
       cache.put(req, res.clone()).catch(() => {});
     }
@@ -118,8 +119,10 @@ async function networkFirst(req) {
     const cached = await cache.match(req);
     if (cached) return cached;
     if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
-      return (await cache.match('./offline.html')) || Response.error();
+      const offline = await cache.match('./offline.html');
+      if (offline) return offline;
     }
+    // Genuine failure — let the browser show its native error.
     return Response.error();
   }
 }
@@ -139,12 +142,4 @@ async function staleWhileRevalidate(req) {
     return cached;
   });
   return cached || network;
-}
-
-function fetchWithTimeout(req, ms) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('network-timeout')), ms);
-    fetch(req).then(res => { clearTimeout(timer); resolve(res); },
-                    err => { clearTimeout(timer); reject(err); });
-  });
 }
