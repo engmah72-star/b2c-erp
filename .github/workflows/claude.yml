@@ -1,0 +1,43 @@
+name: Claude Auto-Implement
+
+# Triggers Claude Code Action when an issue is labeled 'claude-task' or
+# when a comment contains '@claude'. Claude reads the issue, implements
+# the change, opens a PR, and comments back with the PR link.
+#
+# Setup requirements:
+#   1. Repo secret ANTHROPIC_API_KEY (from console.anthropic.com → API Keys)
+#   2. Repo settings → Actions → General → Workflow permissions →
+#      enable "Allow GitHub Actions to create and approve pull requests"
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.labels.*.name, 'claude-task'))) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

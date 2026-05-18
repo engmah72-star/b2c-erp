@@ -30,6 +30,9 @@ initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
 const WHATSAPP_TOKEN = defineSecret('WHATSAPP_TOKEN');
+const GITHUB_PAT     = defineSecret('GITHUB_PAT');
+
+const GITHUB_REPO = 'engmah72-star/b2c-erp';
 
 const db = getFirestore();
 
@@ -2347,3 +2350,204 @@ async function computeDayStats(dayStart, dayEnd, dayKey) {
     computedFrom: { ordersScanned: orderCount, txsScanned: txs.length, returnsScanned: returnsCount },
   };
 }
+
+
+// ════════════════════════════════════════════════════════════
+// Suggestion → GitHub Issue + Claude Code Action trigger
+// ════════════════════════════════════════════════════════════
+// لما الأدمن يدوس "ابعت لـ Claude" في suggestions-admin.html:
+//   1. الفنكشن دي تنشئ GitHub Issue تلقائياً عبر GitHub API
+//   2. body الـ Issue يحتوي @claude → workflow .github/workflows/claude.yml
+//      يطلق ويشغّل anthropics/claude-code-action على الـ issue
+//   3. Claude يكتب الكود + يفتح PR + يعلق على الـ Issue برابط الـ PR
+//   4. الأدمن يراجع ويدمج الـ PR يدوياً
+//
+// Setup:
+//   firebase functions:secrets:set GITHUB_PAT  (Personal Access Token مع repo scope)
+//   GitHub repo settings → Secrets → ANTHROPIC_API_KEY
+
+const CATEGORY_LABELS_FN = {
+  dashboard:'⬡ داشبورد', page:'📄 صفحة', workflow:'🔄 دورة عمل',
+  report:'📊 تقرير', notification:'🔔 تنبيه', bug:'🐞 مشكلة', other:'💬 أخرى',
+};
+const PRIORITY_LABELS_FN = { low:'تحسين', medium:'مهم', high:'عاجل' };
+
+async function callGitHubApi(token, path, opts = {}) {
+  const fetchFn = (typeof fetch !== 'undefined') ? fetch : require('node-fetch');
+  const url = path.startsWith('http') ? path : `https://api.github.com${path}`;
+  const res = await fetchFn(url, {
+    ...opts,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
+    },
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch (_) {}
+  if (!res.ok) {
+    const msg = json?.message || text?.slice(0, 300) || `HTTP ${res.status}`;
+    throw new Error(`GitHub API ${res.status}: ${msg}`);
+  }
+  return json;
+}
+
+exports.createSuggestionIssue = onCall(
+  { memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
+  async (req) => {
+    if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    const { suggestionId } = req.data || {};
+    if (!suggestionId || typeof suggestionId !== 'string') {
+      throw new HttpsError('invalid-argument', 'suggestionId مطلوب');
+    }
+
+    // Permission: admin/ops only
+    const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
+    if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
+    const callerRole = callerSnap.data().role || '';
+    if (!['admin', 'operation_manager'].includes(callerRole)) {
+      throw new HttpsError('permission-denied', 'صلاحية الأدمن فقط');
+    }
+
+    const sugRef = db.doc(`employee_suggestions/${suggestionId}`);
+    const sugSnap = await sugRef.get();
+    if (!sugSnap.exists) throw new HttpsError('not-found', 'الاقتراح غير موجود');
+    const s = { _id: sugSnap.id, ...sugSnap.data() };
+
+    if (s.issueUrl) {
+      // Already created — return existing
+      return { ok: true, issueUrl: s.issueUrl, issueNumber: s.issueNumber, existed: true };
+    }
+
+    const token = GITHUB_PAT.value();
+    if (!token) {
+      throw new HttpsError('failed-precondition',
+        'GITHUB_PAT غير مضبوط. اضبطه: firebase functions:secrets:set GITHUB_PAT');
+    }
+
+    // Build issue title + body
+    const title = `[Suggestion] ${s.title}`;
+    const a = s.aiAnalysis;
+    let aiBlock = '';
+    if (a) {
+      aiBlock = `
+
+## 🤖 تحليل AI (Gemini)
+**الخلاصة:** ${a.tldr || '—'}
+**التعقيد:** ${a.estimatedComplexity}  •  **الأثر:** ${a.estimatedImpact}  •  **التوصية:** ${a.recommendation}
+
+### ✓ المميزات
+${(a.pros||[]).map(p => `- ${p}`).join('\n') || '—'}
+
+### ⚠ العيوب / المخاطر
+${(a.cons||[]).map(c => `- ${c}`).join('\n') || '—'}
+
+### 📋 خطة التنفيذ المقترحة
+${(a.actionPlan||[]).map((step, i) => `${i+1}. **${step.step}** — ${step.detail}`).join('\n') || '—'}
+
+### 📂 المناطق المتأثرة
+${(a.affectedAreas||[]).join(' • ') || '—'}
+`;
+    }
+    const submitterRole = s.submittedByRole ? ` (${s.submittedByRole})` : '';
+    const createdAt = s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('ar-EG') : '—';
+
+    const body = `## 💡 اقتراح موظف
+
+**من:** ${s.submittedByName || '—'}${submitterRole}
+**النوع:** ${CATEGORY_LABELS_FN[s.category] || s.category}
+**الأولوية:** ${PRIORITY_LABELS_FN[s.priority] || s.priority}
+**الصفحة:** ${s.targetPage || 'غير محدد'}
+**تاريخ:** ${createdAt}
+
+---
+
+### العنوان
+${s.title}
+
+### التفاصيل
+${s.description}
+
+${s.decisionNote ? '### ملاحظة الإدارة\n' + s.decisionNote + '\n' : ''}${aiBlock}
+---
+
+@claude نفّذ التعديل المطلوب. شوف خطة AI أعلاه واتبعها. افتح PR على \`main\` وعلّق هنا برابط الـ PR.
+
+> Suggestion ID: \`${s._id}\``;
+
+    // Create issue via GitHub REST API
+    const labels = ['claude-task', 'employee-suggestion', `priority-${s.priority || 'medium'}`];
+    const created = await callGitHubApi(token, `/repos/${GITHUB_REPO}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({ title, body, labels }),
+    });
+
+    // Update suggestion doc
+    await sugRef.update({
+      issueUrl: created.html_url,
+      issueNumber: created.number,
+      issueCreatedAt: new Date(),
+      issueCreatedBy: req.auth.uid,
+      status: 'pending_implementation',
+      reviewedBy: req.auth.uid,
+      reviewedByName: callerSnap.data().name || '',
+      reviewedAt: new Date(),
+      decisionNote: 'تم فتح GitHub Issue تلقائياً — Claude بيكتب الكود الآن.',
+    });
+
+    return { ok: true, issueUrl: created.html_url, issueNumber: created.number, existed: false };
+  }
+);
+
+// Check linked PR status for a suggestion's issue.
+// GitHub auto-links PRs that mention #N → returns first such PR.
+exports.checkSuggestionPR = onCall(
+  { memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
+  async (req) => {
+    if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    const { suggestionId } = req.data || {};
+    if (!suggestionId) throw new HttpsError('invalid-argument', 'suggestionId مطلوب');
+
+    const sugRef = db.doc(`employee_suggestions/${suggestionId}`);
+    const sugSnap = await sugRef.get();
+    if (!sugSnap.exists) throw new HttpsError('not-found', 'الاقتراح غير موجود');
+    const s = sugSnap.data();
+    if (!s.issueNumber) {
+      return { ok: false, message: 'الـ Issue لسه ماتفتحتش' };
+    }
+
+    const token = GITHUB_PAT.value();
+    if (!token) throw new HttpsError('failed-precondition', 'GITHUB_PAT غير مضبوط');
+
+    // Search PRs that reference this issue
+    const q = `repo:${GITHUB_REPO} is:pr ${s.issueNumber} in:body`;
+    const result = await callGitHubApi(token, `/search/issues?q=${encodeURIComponent(q)}&per_page=5`);
+    const prs = (result.items || []).filter(it => it.pull_request);
+
+    if (!prs.length) {
+      return { ok: false, message: 'مفيش PR مرتبط بالـ Issue لسه' };
+    }
+
+    // Pick the most recently updated
+    const pr = prs.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+
+    const patch = {
+      prUrl: pr.html_url,
+      prNumber: pr.number,
+      prState: pr.state, // 'open' | 'closed'
+      prMerged: !!pr.pull_request?.merged_at,
+      prCheckedAt: new Date(),
+    };
+    if (pr.state === 'closed' && pr.pull_request?.merged_at) {
+      patch.status = 'implemented';
+      patch.implementedAt = new Date();
+    }
+    await sugRef.update(patch);
+
+    return { ok: true, ...patch, prTitle: pr.title };
+  }
+);
+
