@@ -1566,7 +1566,7 @@ exports.weeklyProductRecommendations = onSchedule(
 //
 // Output is a Zod-validated structured object (see genkit-flows.js for schema).
 
-const { analyzeClient } = require('./genkit-flows');
+const { analyzeClient, analyzeSuggestion } = require('./genkit-flows');
 
 exports.analyzeClientWithAI = onCall(
   { memory: '512MiB', timeoutSeconds: 90 },
@@ -1607,3 +1607,743 @@ exports.analyzeClientWithAI = onCall(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════
+// Suggestion AI Analysis — Callable
+// ════════════════════════════════════════════════════════════
+// أي موظف مصادَق يقدر يحلّل اقتراحه الخاص. الأدمن يقدر يحلّل أي اقتراح.
+// التحليل يُكتب على /employee_suggestions/{id} في حقل aiAnalysis (admin SDK يتجاوز rules).
+// كمان يُضاف comment من نوع 'ai' في subcollection /comments للظهور في الـ thread.
+
+exports.analyzeSuggestionWithAI = onCall(
+  { memory: '512MiB', timeoutSeconds: 60 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    const { suggestionId, apiKey } = req.data || {};
+    if (!suggestionId || typeof suggestionId !== 'string') {
+      throw new HttpsError('invalid-argument', 'suggestionId مطلوب');
+    }
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('AIza')) {
+      throw new HttpsError('invalid-argument', 'مفتاح Gemini API مطلوب — اضبطه أولاً في ai-insights.html');
+    }
+
+    const sugRef = db.doc(`employee_suggestions/${suggestionId}`);
+    const sugSnap = await sugRef.get();
+    if (!sugSnap.exists) throw new HttpsError('not-found', 'الاقتراح غير موجود');
+    const suggestion = sugSnap.data();
+
+    // Permission: submitter or admin/ops can trigger
+    const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
+    if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
+    const callerRole = callerSnap.data().role || '';
+    const isAdmin = ['admin', 'operation_manager'].includes(callerRole);
+    const isOwner = suggestion.submittedBy === req.auth.uid;
+    if (!isAdmin && !isOwner) {
+      throw new HttpsError('permission-denied', 'صلاحية مراجعة الاقتراح غير متاحة');
+    }
+
+    try {
+      const analysis = await analyzeSuggestion(apiKey, suggestion);
+
+      // Write analysis back via Admin SDK
+      await sugRef.update({
+        aiAnalysis: analysis,
+        aiAnalyzedAt: new Date(),
+        aiAnalyzedBy: req.auth.uid,
+      });
+
+      // Add a 'ai' comment to the thread (so the conversation flow is visible)
+      const summary = [
+        `📊 **${analysis.tldr || 'تحليل الاقتراح'}**`,
+        '',
+        `**التعقيد:** ${analysis.estimatedComplexity}  •  **الأثر:** ${analysis.estimatedImpact}  •  **التوصية:** ${analysis.recommendation}`,
+        '',
+        analysis.clarifyingQuestion ? `❓ **سؤال للموظف:** ${analysis.clarifyingQuestion}` : '',
+      ].filter(Boolean).join('\n');
+
+      await sugRef.collection('comments').add({
+        senderId: 'ai',
+        senderName: 'Claude AI',
+        senderType: 'ai',
+        text: summary,
+        createdAt: new Date(),
+      });
+
+      return { ok: true, analysis };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error('[analyzeSuggestionWithAI] error', e);
+      const msg = e.message || String(e);
+      if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
+        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');
+      }
+      throw new HttpsError('internal', `AI: ${msg.slice(0, 200)}`);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: C2 — detect direct writes to financial_ledger bypassing the engine
+// ════════════════════════════════════════════════════════════════════════════
+//
+// كل ledger entry من الـ engines (FSE/MKE/RET) يحمل engineSignature.
+// لو entry تم إنشاؤه بدون الـ signature → يعني كُتب مباشرة بدون engine.
+// هذا انتهاك لـ RULE 2 — يُسجَّل في admin_alerts للمتابعة.
+//
+// Observability فقط — لا يمنع الكتابة (الـ Firestore rules تسمح بها).
+// بعد فترة مراقبة، يمكن تشديد الـ rules لرفض الكتابة بدون signature.
+
+exports.detectEngineBypass = onDocumentCreated(
+  { document: 'financial_ledger/{ledgerId}', region: 'us-central1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const d = snap.data() || {};
+
+    // الـ engines الجديدة دائماً تضيف engineSignature
+    if (d.engineWrite === true && d.engineSignature) return;
+
+    // entries قديمة قد لا يكون لها signature — تُتجاهَل بناءً على createdAt
+    // إذا اللديك entries قبل deploy هذا التغيير، فلترها بـ migration version
+    // لكن للأمان نُسجِّل كل ما لا يحمل signature
+    try {
+      await db.collection('admin_alerts').add({
+        type:        'rule2_bypass',
+        severity:    'high',
+        title:       '⛔ كتابة مالية بدون engine signature',
+        body:        `ledger entry ${event.params.ledgerId} كُتب بدون marker الـ engine. eventType=${d.eventType || 'unknown'}, amount=${d.amount || 0}`,
+        ledgerId:    event.params.ledgerId,
+        eventType:   d.eventType || null,
+        amount:      d.amount    || 0,
+        orderId:     d.orderId   || null,
+        clientId:    d.clientId  || null,
+        walletId:    d.walletId  || null,
+        createdBy:   d.createdBy || null,
+        createdByName: d.createdByName || null,
+        detectedAt:  FieldValue.serverTimestamp(),
+        resolved:    false,
+        suggestedFix: 'تحقق من المصدر — قد تكون صفحة تكتب مباشرة بدلاً من dispatchFinancialEvent / addLedgerToBatch',
+      });
+      console.warn(`[detectEngineBypass] 🚨 ledger entry بدون signature: ${event.params.ledgerId} eventType=${d.eventType}`);
+    } catch (e) {
+      console.error('[detectEngineBypass] failed to write alert:', e.message);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Returns SLA Monitor (every 2 hours)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// راجع returns_tickets ويعلّم slaBreached=true على الـ tickets التي تجاوزت
+// المدة الزمنية المسموحة:
+//   - status in [requested, inspecting] AND slaInspectDeadline < now → breach
+//   - status = approved AND slaRefundDeadline < now → breach
+//
+// الـ deadlines تُحفَظ كـ ISO string في returns-core.js (calcInspectDeadline /
+// calcRefundDeadline)، فالـ function يقارنها بنص ISO الحالي.
+//
+// لا يحرك أموالاً — فقط يضع flag للـ UI (kpi-sla card) + يرسل إشعار للـ
+// operation_manager إلى inbox.
+
+const SLA_BATCH_LIMIT = 200;
+
+exports.scanReturnsSla = onSchedule(
+  { schedule: '0 */2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 240 },
+  async () => {
+    const nowIso = new Date().toISOString();
+    const breaches = [];
+
+    // الـ tickets في الحالات النشطة فقط (مع limit حماية)
+    const activeStates = ['requested', 'inspecting', 'approved'];
+    const snap = await db.collection('returns_tickets')
+      .where('status', 'in', activeStates)
+      .limit(SLA_BATCH_LIMIT)
+      .get();
+
+    let scanned = 0, flagged = 0, alreadyFlagged = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const t = d.data();
+      scanned++;
+      if (t.slaBreached === true) { alreadyFlagged++; continue; }
+
+      let breached = false;
+      let reason   = '';
+
+      // فحص deadline حسب الـ status
+      if ((t.status === 'requested' || t.status === 'inspecting') && t.slaInspectDeadline) {
+        if (t.slaInspectDeadline < nowIso) {
+          breached = true;
+          reason   = 'inspect_overdue';
+        }
+      } else if (t.status === 'approved' && t.slaRefundDeadline) {
+        if (t.slaRefundDeadline < nowIso) {
+          breached = true;
+          reason   = 'refund_overdue';
+        }
+      }
+
+      if (breached) {
+        wb.update(d.ref, {
+          slaBreached:    true,
+          slaBreachedAt:  FieldValue.serverTimestamp(),
+          slaBreachReason: reason,
+          updatedAt:      FieldValue.serverTimestamp(),
+        });
+        breaches.push({ ticketId: d.id, ticketNo: t.ticketNo, reason, status: t.status });
+        flagged++;
+      }
+    }
+
+    if (flagged > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        console.error('[scanReturnsSla] batch failed:', e.message);
+        return;
+      }
+
+      // إشعار لكل ops_manager + admins
+      try {
+        const opsSnap = await db.collection('users')
+          .where('role', 'in', ['admin', 'operation_manager'])
+          .get();
+        const notifBatch = db.batch();
+        for (const u of opsSnap.docs) {
+          const ref = db.collection('notifications').doc();
+          notifBatch.set(ref, {
+            uid:       u.id,
+            type:      'returns_sla_breach',
+            title:     `⚠️ ${flagged} ticket مرتجع تجاوز SLA`,
+            body:      `راجع returns.html — أحدثها: ${breaches.slice(0, 3).map(b => b.ticketNo).join(', ')}`,
+            url:       '/returns.html',
+            read:      false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
+        await notifBatch.commit();
+      } catch (e) {
+        console.warn('[scanReturnsSla] notification dispatch failed (non-fatal):', e.message);
+      }
+    }
+
+    console.log(`[scanReturnsSla] scanned=${scanned} flagged=${flagged} alreadyFlagged=${alreadyFlagged} time=${nowIso}`);
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: M1 — Denormalization sync (auto-update cached names on source change)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// orders/transactions_v2/financial_ledger يحفظون أسماء مكرّرة (clientName,
+// designerName, supplierName، إلخ). لو الـ source يُعدَّل، النسخ تصبح stale.
+// هذه الـ triggers تزامن الأسماء الجديدة تلقائياً.
+//
+// scope محدد بـ limit لمنع الـ runaway updates عند تعديل واسع.
+
+const NAME_SYNC_BATCH = 500;
+
+// عند تعديل اسم العميل في /clients
+exports.syncClientNameOnUpdate = onDocumentUpdated(
+  { document: 'clients/{clientId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;  // الاسم لم يتغير
+    if (after.isDeleted === true) return;     // soft-deleted
+
+    const clientId = event.params.clientId;
+    const newName  = after.name || '';
+
+    // sync orders
+    try {
+      const orders = await db.collection('orders')
+        .where('clientId', '==', clientId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (orders.size > 0) {
+        const wb = db.batch();
+        orders.forEach(d => wb.update(d.ref, { clientName: newName }));
+        await wb.commit();
+        console.log(`[syncClientName] orders updated=${orders.size} client=${clientId}`);
+      }
+    } catch (e) { console.error('[syncClientName] orders failed:', e.message); }
+
+    // sync transactions_v2 (recent only — الأقدم immutable في الـ ledger audit pattern)
+    try {
+      const txs = await db.collection('transactions_v2')
+        .where('clientId', '==', clientId)
+        .where('isLocked', '==', false)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (txs.size > 0) {
+        const wb = db.batch();
+        txs.forEach(d => wb.update(d.ref, { clientName: newName }));
+        await wb.commit();
+        console.log(`[syncClientName] transactions updated=${txs.size}`);
+      }
+    } catch (e) { console.error('[syncClientName] transactions failed:', e.message); }
+  }
+);
+
+// عند تعديل اسم الموظف في /employees
+exports.syncEmployeeNameOnUpdate = onDocumentUpdated(
+  { document: 'employees/{empId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;
+
+    const empId   = event.params.empId;
+    const newName = after.name || '';
+    const authUid = after.authUid || before.authUid || '';
+
+    // sync orders: designerName, productionAgentName, shippingOfficerName
+    // الـ employees لها authUid وكذلك حقول role-specific في الأوردر
+    const updateFields = {};
+    try {
+      const fields = [
+        { f: 'designerId', n: 'designerName' },
+        { f: 'productionAgent', n: 'productionAgentName' },
+        { f: 'shippingOfficerId', n: 'shippingOfficerName' },
+      ];
+      for (const { f, n } of fields) {
+        const orders = await db.collection('orders')
+          .where(f, '==', authUid)
+          .limit(NAME_SYNC_BATCH)
+          .get();
+        if (orders.size > 0) {
+          const wb = db.batch();
+          orders.forEach(d => wb.update(d.ref, { [n]: newName }));
+          await wb.commit();
+          console.log(`[syncEmployeeName] ${f}→${n} updated=${orders.size}`);
+        }
+      }
+    } catch (e) { console.error('[syncEmployeeName] orders failed:', e.message); }
+
+    // sync employee_payments
+    try {
+      const payments = await db.collection('employee_payments')
+        .where('employeeId', '==', empId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (payments.size > 0) {
+        const wb = db.batch();
+        payments.forEach(d => wb.update(d.ref, { employeeName: newName }));
+        await wb.commit();
+        console.log(`[syncEmployeeName] payments updated=${payments.size}`);
+      }
+    } catch (e) { console.error('[syncEmployeeName] payments failed:', e.message); }
+  }
+);
+
+// عند تعديل اسم المورد/الشاحن
+exports.syncSupplierNameOnUpdate = onDocumentUpdated(
+  { document: 'suppliers_v2/{supId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;
+
+    const supId   = event.params.supId;
+    const newName = after.name || '';
+
+    try {
+      const payments = await db.collection('supplier_payments')
+        .where('supplierId', '==', supId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (payments.size > 0) {
+        const wb = db.batch();
+        payments.forEach(d => wb.update(d.ref, { supplierName: newName }));
+        await wb.commit();
+        console.log(`[syncSupplierName] payments updated=${payments.size}`);
+      }
+    } catch (e) { console.error('[syncSupplierName] payments failed:', e.message); }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: M7 — Auto-advance order stage when all products ready
+// ════════════════════════════════════════════════════════════════════════════
+//
+// عند تحديث order.products[] — لو كل المنتجات في stage 'ready' أو 'done'،
+// قدّم الأوردر للمرحلة التالية تلقائياً (لا تنتظر ops manager).
+// شرط الأمان: لا auto-advance من production إلى shipping إلا لو كل المنتجات done.
+// الأوردر يبقى في stage الحالي إذا لم تكتمل الشروط.
+
+exports.autoAdvanceOrderStage = onDocumentUpdated(
+  { document: 'orders/{orderId}', region: 'us-central1', timeoutSeconds: 60 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+
+    // تجنب infinite loop — لو الـ stage تغير في هذا الحدث، لا تتدخل
+    if (before.stage !== after.stage) return;
+    // المنتجات لازم تتغير — لو ما تغيروش، لا داعي للفحص
+    const beforeProducts = JSON.stringify(before.products || []);
+    const afterProducts  = JSON.stringify(after.products || []);
+    if (beforeProducts === afterProducts) return;
+
+    const stage = after.stage;
+    const products = after.products || [];
+    if (products.length === 0) return;
+
+    // تحديد الشرط حسب الـ stage الحالي
+    let canAdvance = false;
+    let nextStage  = null;
+    if (stage === 'design') {
+      // كل المنتجات لازم تكون ready (designed)
+      const allReady = products.every(p => ['ready', 'printed', 'done'].includes(p.productStatus));
+      if (allReady) { canAdvance = true; nextStage = 'printing'; }
+    } else if (stage === 'printing') {
+      const allPrinted = products.every(p => ['printed', 'done'].includes(p.productStatus));
+      if (allPrinted) { canAdvance = true; nextStage = 'production'; }
+    } else if (stage === 'production') {
+      const allDone = products.every(p => p.productStatus === 'done');
+      if (allDone) { canAdvance = true; nextStage = 'shipping'; }
+    }
+    if (!canAdvance || !nextStage) return;
+
+    // لا تقدّم لو فيه shipping issues أو remaining cost approvals
+    if (after.hasReturn === true) {
+      console.log(`[autoAdvance] order ${event.params.orderId} له مرتجع نشط — تخطي`);
+      return;
+    }
+
+    try {
+      await db.collection('orders').doc(event.params.orderId).update({
+        stage: nextStage,
+        [`${nextStage}EnteredAt`]: FieldValue.serverTimestamp(),
+        autoAdvancedAt: FieldValue.serverTimestamp(),
+        autoAdvancedFrom: stage,
+        timeline: FieldValue.arrayUnion({
+          date: new Date().toISOString(),
+          action: `🤖 تقديم تلقائي: ${stage} → ${nextStage}`,
+          by: 'system_auto',
+        }),
+      });
+      console.log(`[autoAdvance] order ${event.params.orderId}: ${stage} → ${nextStage}`);
+    } catch (e) {
+      console.error('[autoAdvance] failed:', e.message);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: M9 — Gemini API proxy (centralized key via Firebase Secret)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// لو admin ضبط الـ secret GEMINI_API_KEY، كل المستخدمين يستخدمون proxy
+// → لا يخزَّن مفتاح في localStorage → آمن من browser extensions.
+// لو الـ secret غير مضبوط → ai-engine.js يرجع للسلوك القديم (per-user key).
+
+const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
+
+exports.callGeminiProxy = onCall(
+  { region: 'us-central1', secrets: [GEMINI_API_KEY], timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
+    }
+    const key = GEMINI_API_KEY.value();
+    if (!key) {
+      throw new HttpsError('failed-precondition', 'GEMINI_API_KEY غير مضبوط في Firebase Secrets — استخدم المفتاح المحلي');
+    }
+    const prompt = String(request.data?.prompt || '').slice(0, 50000);
+    const model  = String(request.data?.model || 'gemini-flash-latest');
+    const temperature = +request.data?.temperature || 0.7;
+    const maxTokens   = +request.data?.maxTokens   || 2048;
+
+    if (!prompt) throw new HttpsError('invalid-argument', 'prompt مطلوب');
+
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature, maxOutputTokens: maxTokens },
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        const msg = data?.error?.message || r.statusText;
+        throw new HttpsError('internal', `Gemini ${r.status}: ${msg.slice(0, 200)}`);
+      }
+      const data = await r.json();
+      return {
+        text: data?.candidates?.[0]?.content?.parts?.[0]?.text || '',
+        model,
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      throw new HttpsError('internal', `proxy error: ${(e.message || '').slice(0, 200)}`);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Daily Aggregation — KPIs pre-computed for reports.html
+// ════════════════════════════════════════════════════════════════════════════
+//
+// يحسب metrics لكل يوم سابق ويخزنها في daily_stats/{YYYY-MM-DD}.
+// reports.html يستطيع قراءة هذه الـ aggregates بدل الـ client-side rollup
+// عند 100k+ docs → فتح أسرع 10x.
+//
+// Schedule: كل يوم في 2 AM Cairo (بعد الـ activity ينتهي للـ يوم السابق).
+// يحسب آخر يومين لتغطية late-arriving docs أو ساعات الـ DST.
+
+const STATS_BACKFILL_DAYS = 2;
+
+exports.aggregateDailyStats = onSchedule(
+  { schedule: '0 2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540 },
+  async () => {
+    const tz = 'Africa/Cairo';
+    const today = new Date();
+    const results = [];
+
+    for (let i = 1; i <= STATS_BACKFILL_DAYS; i++) {
+      const day = new Date(today);
+      day.setDate(day.getDate() - i);
+      const dayKey = day.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+      const dayStart = new Date(dayKey + 'T00:00:00.000+02:00');  // Cairo UTC+2
+      const dayEnd   = new Date(dayKey + 'T23:59:59.999+02:00');
+
+      try {
+        const stats = await computeDayStats(dayStart, dayEnd, dayKey);
+        await db.collection('daily_stats').doc(dayKey).set(stats, { merge: true });
+        results.push({ day: dayKey, ok: true, ...stats.summary });
+      } catch (e) {
+        console.error(`[aggregateDailyStats] ${dayKey} failed:`, e.message);
+        results.push({ day: dayKey, ok: false, error: e.message });
+      }
+    }
+    console.log('[aggregateDailyStats] results:', JSON.stringify(results));
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Multi-tenant Backfill — يضيف tenantId='merchant_001' للـ legacy
+// ════════════════════════════════════════════════════════════════════════════
+//
+// قبل marketplace Phase 2، الـ legacy docs (orders, clients, suppliers,
+// employees, transactions_v2) ما عندهاش tenantId. الـ backfill يضع
+// merchant_001 كـ default على كل doc ما عندهاش الحقل.
+//
+// admin يستدعيها مرة بعد الـ deploy. تعمل في batches آمنة (max 400 doc per
+// commit) ولا تعدّل الـ docs اللي عندها tenantId بالفعل.
+//
+// Usage من الـ console (admin only):
+//   const r = httpsCallable(functions, 'backfillTenantId');
+//   await r({ collection: 'orders' });
+//   // أو
+//   await r({ collection: 'clients' });
+
+const BACKFILL_COLLECTIONS = ['orders', 'clients', 'suppliers_v2', 'employees', 'transactions_v2', 'financial_ledger', 'employee_payments', 'supplier_payments'];
+const BACKFILL_BATCH_SIZE = 400;
+const DEFAULT_TENANT = 'merchant_001';
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Partner Sign-in — يعطي custom token للـ partner portal
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Partner يدخل tenantId + portalSecret → الـ function تتحقق من tenant.portalSecret
+// → ترجع Firebase custom token مع claim `partnerTenantId`.
+// الـ portal يستخدم signInWithCustomToken → الـ user يكون له auth.token.partnerTenantId
+// → الـ Firestore rules تسمح بقراءة data حسب tenantId match.
+//
+// تنفّذ بدون Firebase Auth user حقيقي (custom token uid = 'partner_<tid>_<rnd>').
+
+exports.partnerSignIn = onCall(
+  { region: 'us-central1', timeoutSeconds: 30 },
+  async (request) => {
+    const tenantId = String(request.data?.tenantId || '').trim();
+    const secret   = String(request.data?.secret || '').trim();
+    if (!tenantId || !secret) {
+      throw new HttpsError('invalid-argument', 'tenantId و secret مطلوبان');
+    }
+
+    const snap = await db.collection('tenants').doc(tenantId).get();
+    if (!snap.exists()) throw new HttpsError('not-found', 'tenant غير موجود');
+    const t = snap.data();
+    if (!t.isActive) throw new HttpsError('permission-denied', 'الحساب موقوف');
+    if (!t.portalSecret) throw new HttpsError('failed-precondition', 'portal غير مفعَّل لهذا الحساب');
+    if (t.portalSecret !== secret) throw new HttpsError('permission-denied', 'كود الوصول غير صحيح');
+
+    // أنشئ custom token مع claim
+    const uid = `partner_${tenantId}_${Date.now().toString(36)}`;
+    let token;
+    try {
+      token = await getAuth().createCustomToken(uid, {
+        partnerTenantId: tenantId,
+        partnerType:    t.type || 'merchant',
+        isPartner:      true,
+      });
+    } catch (e) {
+      throw new HttpsError('internal', `token creation failed: ${e.message}`);
+    }
+
+    // سجل الـ login
+    try {
+      await db.collection('partner_logins').add({
+        tenantId,
+        uid,
+        at: FieldValue.serverTimestamp(),
+        userAgent: request.rawRequest?.headers?.['user-agent'] || '',
+        ip:        request.rawRequest?.ip || '',
+      });
+    } catch (_) {}
+
+    return { token, tenantId, displayName: t.displayName || t.legalName };
+  }
+);
+
+exports.backfillTenantId = onCall(
+  { region: 'us-central1', timeoutSeconds: 540 },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
+
+    // تحقق من admin role من الـ users doc
+    const userSnap = await db.collection('users').doc(request.auth.uid).get();
+    const userRole = userSnap.exists() ? userSnap.data().role : null;
+    if (userRole !== 'admin') throw new HttpsError('permission-denied', 'admin only');
+
+    const target = String(request.data?.collection || '');
+    if (!BACKFILL_COLLECTIONS.includes(target)) {
+      throw new HttpsError('invalid-argument', `collection يجب أن يكون: ${BACKFILL_COLLECTIONS.join('|')}`);
+    }
+    const dryRun = request.data?.dryRun === true;
+
+    // اجلب docs بدون tenantId — Firestore لا يدعم where('field','==',null) بشكل
+    // مباشر، فنستخدم where('field','==',undefined) عبر الـ snapshot filter
+    let snap;
+    try {
+      snap = await db.collection(target).limit(BACKFILL_BATCH_SIZE).get();
+    } catch (e) {
+      throw new HttpsError('internal', `fetch failed: ${e.message}`);
+    }
+
+    let updated = 0, skipped = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.tenantId) { skipped++; continue; }
+      if (dryRun) { updated++; continue; }
+      wb.update(d.ref, { tenantId: DEFAULT_TENANT });
+      updated++;
+    }
+
+    if (!dryRun && updated > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        throw new HttpsError('internal', `commit failed: ${e.message}`);
+      }
+    }
+
+    return {
+      collection: target,
+      dryRun,
+      scanned: snap.size,
+      updated,
+      skipped,
+      hasMore: snap.size === BACKFILL_BATCH_SIZE,
+      hint: snap.size === BACKFILL_BATCH_SIZE
+        ? `ربما في المزيد — اشتغل الـ function مرة تانية على نفس الـ collection`
+        : `الـ collection اتجمع كاملاً`,
+    };
+  }
+);
+
+async function computeDayStats(dayStart, dayEnd, dayKey) {
+  // Orders created in window
+  const ordersSnap = await db.collection('orders')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const orders = ordersSnap.docs.map(d => d.data());
+
+  // Transactions in window
+  const txSnap = await db.collection('transactions_v2')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const txs = txSnap.docs.map(d => d.data());
+
+  // Returns tickets in window
+  let rtSnap;
+  try {
+    rtSnap = await db.collection('returns_tickets')
+      .where('createdAt', '>=', dayStart)
+      .where('createdAt', '<=', dayEnd)
+      .get();
+  } catch (_) { rtSnap = { docs: [] }; }
+  const returns = rtSnap.docs.map(d => d.data());
+
+  // ── Compute KPIs ──
+  const orderCount   = orders.length;
+  const revenueSum   = orders.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+  const collected    = txs.filter(t => t.type === 'in').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const expenses     = txs.filter(t => t.type === 'out').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const cashflowNet  = collected - expenses;
+
+  // Order distribution by stage
+  const byStage = {};
+  orders.forEach(o => { byStage[o.stage || 'unknown'] = (byStage[o.stage || 'unknown'] || 0) + 1; });
+
+  // Returns metrics
+  const returnsCount  = returns.length;
+  const refundedCount = returns.filter(r => r.status === 'refunded').length;
+  const refundsSum    = returns.filter(r => r.status === 'refunded')
+                               .reduce((s, r) => s + (parseFloat(r.refundAmount) || 0), 0);
+  const returnRate = orderCount > 0 ? +(returnsCount / orderCount * 100).toFixed(2) : 0;
+
+  // Top reasons (return)
+  const reasonsMap = {};
+  returns.forEach(r => { reasonsMap[r.reason || 'other'] = (reasonsMap[r.reason || 'other'] || 0) + 1; });
+  const topReasons = Object.entries(reasonsMap).sort((a, b) => b[1] - a[1]).slice(0, 5)
+                           .map(([reason, count]) => ({ reason, count }));
+
+  // Blamed party
+  const blameMap = {};
+  returns.forEach(r => { blameMap[r.blamedParty || 'unknown'] = (blameMap[r.blamedParty || 'unknown'] || 0) + 1; });
+
+  return {
+    dayKey,
+    summary: {
+      orderCount,
+      revenueSum: +revenueSum.toFixed(2),
+      collected:  +collected.toFixed(2),
+      expenses:   +expenses.toFixed(2),
+      cashflowNet:+cashflowNet.toFixed(2),
+      returnsCount,
+      returnRate,
+      refundsSum: +refundsSum.toFixed(2),
+    },
+    byStage,
+    returns: {
+      count: returnsCount,
+      refundedCount,
+      refundsSum: +refundsSum.toFixed(2),
+      rate: returnRate,
+      topReasons,
+      byBlame: blameMap,
+    },
+    cashflow: {
+      in:  +collected.toFixed(2),
+      out: +expenses.toFixed(2),
+      net: +cashflowNet.toFixed(2),
+      txCount: txs.length,
+    },
+    computedAt: FieldValue.serverTimestamp(),
+    computedFrom: { ordersScanned: orderCount, txsScanned: txs.length, returnsScanned: returnsCount },
+  };
+}

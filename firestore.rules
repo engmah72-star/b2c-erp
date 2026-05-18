@@ -89,6 +89,19 @@ service cloud.firestore {
           || can('canAddOrders')
           || can('canFinancialWrite');
     }
+    // ══ Partner Portal — partner authenticated via custom token ══
+    // الـ Cloud Function partnerSignIn يعطي custom token مع claim partnerTenantId.
+    // الـ rules بتفحصه لتقييد الـ partner لقراءة بيانات tenant بتاعه فقط.
+    function isPartner() {
+      return isAuth() && request.auth.token.get('isPartner', false) == true;
+    }
+    function partnerTenant() {
+      return isAuth() ? request.auth.token.get('partnerTenantId', '') : '';
+    }
+    function isOwnPartnerData(resourceData) {
+      return isPartner() && resourceData.get('tenantId', '__') == partnerTenant();
+    }
+
     function canFinancialRead() {
       return isAdmin()
           || hasPage('accounts')
@@ -270,6 +283,8 @@ service cloud.firestore {
         hasPage('production') ||
         hasPage('design') ||
         hasPage('print') ||
+        hasPage('clients') ||
+        hasPage('returns') ||
         resource.data.get('createdBy','__') == request.auth.uid ||
         resource.data.get('designerId','__') == request.auth.uid ||
         resource.data.get('productionAgent','__') == request.auth.uid ||
@@ -385,6 +400,130 @@ service cloud.firestore {
     match /designers_v2/{desId} {
       allow read: if isAuth() && (isAdmin() || hasPage('design'));
       allow write: if isAdmin();
+    }
+
+    // ══ C3: Collections كانت مكشوفة بدون أي قاعدة — مغطّاة الآن ══
+
+    // ══ Materials (خامات: ورق/أحبار/مواد طباعة) ══
+    match /materials/{matId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (isAdmin() || hasPage('materials'));
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Product Templates (قوالب منتجات محفوظة لشاشة التسعير) ══
+    match /product_templates/{tplId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (
+        isAdmin() || hasPage('products') || hasPage('product-pricing')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Pricing Templates (presets للـ smart-pricing) ══
+    match /pricing_templates/{tplId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (
+        isAdmin() || hasPage('smart-pricing') || hasPage('products')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Job Orders (طابور إنتاج الـ stages) ══
+    // قراءة: الأدوار التي تلمس الإنتاج. كتابة: admin/ops/production.
+    match /job_orders/{jobId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('job-orders') ||
+        hasPage('production') ||
+        hasPage('print') ||
+        hasPage('design')
+      );
+      allow create, update: if isAuth() && (
+        isAdmin() ||
+        hasPage('job-orders') ||
+        hasPage('production')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Employees v2 (قائمة موظفين بنسخة جديدة من الـ schema) ══
+    // قراءة: أي مستخدم مسجَّل (الأسماء تُستخدم في dropdowns/approver lookups).
+    // كتابة: admin أو صفحة employees فقط.
+    match /employees_v2/{empId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (isAdmin() || hasPage('employees'));
+      allow delete: if isAdminOnly();
+    }
+
+    // ══ Daily Stats — KPIs pre-computed by aggregateDailyStats Cloud Function ══
+    // الكتابة من الـ function فقط (Admin SDK يتجاوز rules).
+    // القراءة: أي auth user له صلاحية reports.
+    match /daily_stats/{dayKey} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        hasPage('reports') ||
+        hasPage('accounts') ||
+        canFinancialRead()
+      );
+      allow write: if false;
+    }
+
+    // ══ Returns / After-Sales Tickets (C6) ══
+    // الـ Module Definition الكامل في AUDIT_REPORT.md + RULE 7 doc.
+    // - قراءة: الأدوار اللي تدير العميل (admin/ops/cs/shipping) + الـ client صاحب الطلب.
+    //   designer/production يقرؤون metadata فقط (لتوضيح "هذا الطلب له مرتجع")، لكن
+    //   field-level filtering ليس مدعوماً في Firestore — يُطبّق client-side عبر canSee.
+    // - إنشاء: الأدوار اللي لديها client_phone (RULE 8) + client portal لاحقاً.
+    // - update: admin/ops/cs لتغيير status، wallet_manager لتنفيذ الـ refund.
+    // - delete: admin only (soft delete مفضّل عبر isDeleted=true).
+    match /returns_tickets/{ticketId} {
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients') ||
+        hasPage('design') ||
+        hasPage('production') ||
+        resource.data.get('clientId','__') == request.auth.uid ||
+        resource.data.get('createdBy','__') == request.auth.uid
+      );
+      // Internal create — موظف مسجَّل بصلاحية العملاء.
+      allow create: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        hasPage('clients')
+      );
+      // Client portal create — العميل ينشئ من client-portal.html بدون
+      // Firebase auth. الحماية: clientPhone في الـ ticket لازم يساوي
+      // clientPhone في الـ order (cross-validate من server-side data).
+      // نفس نمط /client_decisions.
+      allow create: if !isAuth()
+        && request.resource.data.keys().hasAll(['orderId','clientPhone','reason','status','requestedBy'])
+        && request.resource.data.requestedBy == 'client_portal'
+        && request.resource.data.status == 'requested'
+        && request.resource.data.reason is string
+        && request.resource.data.orderId is string
+        && request.resource.data.clientPhone is string
+        && request.resource.data.get('isDeleted', false) == false
+        // ownership: clientPhone في الـ ticket == clientPhone في الـ order
+        && request.resource.data.clientPhone ==
+           get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.clientPhone;
+      // update — تغيير status / decision / refund execution.
+      // الـ refund نفسه يكتب أيضاً على wallets/transactions_v2/financial_ledger
+      // وتلك قواعد منفصلة تتأكد من canFinancialWrite.
+      allow update: if isAuth() && (
+        isAdmin() ||
+        canSeeCustomerPhone() ||
+        canFinancialWrite()
+      );
+      // قراءة من client portal (بدون auth) — مقيدة بـ clientPhone match.
+      // مفيدة لعرض الـ tickets الموجودة على الـ portal.
+      allow read: if !isAuth()
+        && resource.data.get('requestedBy','__') == 'client_portal'
+        && resource.data.get('clientPhone','__') ==
+           get(/databases/$(database)/documents/orders/$(resource.data.orderId)).data.clientPhone;
+      // عمداً soft delete preferred — الـ tickets المغلقة جزء من الـ audit trail.
+      allow delete: if isAdminOnly();
     }
 
     // ══ Attendance ══
@@ -538,7 +677,13 @@ service cloud.firestore {
     // أي موظف يقدر ينشئ طلب (دفعة مورد / مرتب / سلفة)
     // المحاسب ينفّذ → الطالب يستلم بإيصال → ops يؤكد → admin يعتمد
     match /payment_requests/{reqId} {
-      allow read: if isAuth();
+      // C5: قراءة لـ admin + الأدوار المالية + الطالب نفسه فقط.
+      // كان: allow read: if isAuth(); — كشف رواتب/مصاريف موردين لأي موظف.
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        resource.data.get('requestedBy','') == request.auth.uid
+      );
       allow create: if isAuth()
         && request.resource.data.requestedBy == request.auth.uid
         && request.resource.data.status == 'requested'
@@ -876,9 +1021,16 @@ service cloud.firestore {
     // ══ Tenants — سجل المرشنتس وشركاء المنصة ══
     match /tenants/{tenantId} {
       // كل auth user يقرأ قائمة المرشنتس (لـ catalog ولـ profile lookups).
+      // Partner عبر custom token يستطيع قراءة tenant بتاعه فقط.
       allow read: if isAuth();
       // KYC والإدارة admin-only في Phase 1.
       allow create, update, delete: if isAdminOnly();
+    }
+
+    // ══ Partner Logins — audit log من partnerSignIn function ══
+    match /partner_logins/{loginId} {
+      allow read:  if isAuth() && isAdmin();
+      allow write: if false;  // function-only via Admin SDK
     }
 
     // ══ Marketplace Orders — طلبات بين العميل والمرشنت ══
@@ -887,7 +1039,8 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() ||
         canFinancialRead() ||
-        resource.data.get('customerId','__') == request.auth.uid
+        resource.data.get('customerId','__') == request.auth.uid ||
+        isOwnPartnerData(resource.data)
       );
       // Phase 1: admin يكتب يدوياً. Phase 2: engine فقط.
       allow create, update, delete: if isAdminOnly();
@@ -895,7 +1048,11 @@ service cloud.firestore {
 
     // ══ Commissions — العمولات المستحقة/المحصلة للمنصة ══
     match /commissions/{commId} {
-      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        isOwnPartnerData(resource.data)
+      );
       allow create, update, delete: if isAdminOnly();
     }
 
@@ -911,7 +1068,11 @@ service cloud.firestore {
 
     // ══ Payouts — دفعات للمرشنتس/الشحن/الوكلاء ══
     match /payouts/{payoutId} {
-      allow read: if isAuth() && (isAdmin() || canFinancialRead());
+      allow read: if isAuth() && (
+        isAdmin() ||
+        canFinancialRead() ||
+        isOwnPartnerData(resource.data)
+      );
       allow create, update, delete: if isAdminOnly();
     }
 
@@ -959,13 +1120,19 @@ service cloud.firestore {
     }
 
     // ══ Employee Suggestions — اقتراحات الموظفين لتطوير السيستم ══
-    // أي موظف مصادَق يقدر يقدّم اقتراح. يقرأ اقتراحاته فقط.
+    // أي موظف مصادَق يقدر يقدّم اقتراح.
+    // RULE: الموظف يقرأ (أ) اقتراحاته (ب) اقتراحات الصفحات اللي عنده صلاحيتها.
+    // التحكم في "مين يشوف ايه" بيتم عبر visibleToRoles[] على الـ doc:
+    //   - الـ FAB client بيحسبه من ROLE_PAGES + targetPage عند الإرسال
+    //   - دايماً بيحتوي على ['admin','operation_manager'] كحد أدنى
     // Admin + operation_manager يقرأوا الكل ويغيّروا الحالة.
     // الموظف يقدر يحذف اقتراحه طول ما الحالة 'new' فقط.
     match /employee_suggestions/{sugId} {
       allow read: if isAuth() && (
         isAdmin() ||
-        resource.data.get('submittedBy','__') == request.auth.uid
+        resource.data.get('submittedBy','__') == request.auth.uid ||
+        // أي مستخدم دوره موجود في visibleToRoles يقدر يشوف الاقتراح
+        role() in resource.data.get('visibleToRoles', [])
       );
       allow create: if isAuth()
         && request.resource.data.submittedBy == request.auth.uid
@@ -976,12 +1143,42 @@ service cloud.firestore {
         && request.resource.data.description.size() >= 10;
       // الموظف يقدر يحذف اقتراحه طول ما لسه 'new' (مالحدش راجعه).
       // التعديل (تغيير حالة، إضافة ملاحظة، ربط PR) admin/ops فقط.
+      // ملاحظة: تحديث aiAnalysis يحدث من Cloud Function عبر Admin SDK (يتجاوز rules).
       allow update: if isAuth() && isAdmin();
       allow delete: if isAuth() && (
         isAdminOnly() ||
         (resource.data.get('submittedBy','__') == request.auth.uid
          && resource.data.get('status','new') == 'new')
       );
+
+      // ── Comments thread (موظف + أدمن + AI) ──
+      // القراءة: نفس صلاحيات قراءة الاقتراح الأب.
+      // الإنشاء: لازم senderId == auth.uid (إلا لو 'ai' من Cloud Function عبر Admin SDK).
+      // التعديل/الحذف: الكاتب لنفسه، أو admin.
+      match /comments/{commentId} {
+        function parentSug() {
+          return get(/databases/$(database)/documents/employee_suggestions/$(sugId)).data;
+        }
+        function canSeeParent() {
+          let s = parentSug();
+          return isAdmin()
+              || s.get('submittedBy','__') == request.auth.uid
+              || role() in s.get('visibleToRoles', []);
+        }
+        allow read: if isAuth() && canSeeParent();
+        allow create: if isAuth()
+          && canSeeParent()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 4000;
+        allow update: if isAuth() && (
+          isAdmin() || resource.data.get('senderId','__') == request.auth.uid
+        );
+        allow delete: if isAuth() && (
+          isAdminOnly() || resource.data.get('senderId','__') == request.auth.uid
+        );
+      }
     }
 
     // ══ Designer Tenants — هوية المصممين كـ "service provider tenants" (Phase 2 ready) ══

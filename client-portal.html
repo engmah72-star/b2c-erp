@@ -122,6 +122,7 @@ textarea.inp::placeholder{color:var(--dim2);}
 <div class="portal-tabs">
   <button class="portal-tab active" id="tab-current" onclick="switchPortalTab('current')">📦 هذا الأوردر</button>
   <button class="portal-tab" id="tab-library" onclick="switchPortalTab('library')">📚 كل تصاميمي</button>
+  <button class="portal-tab" id="tab-returns" onclick="switchPortalTab('returns')">↩️ طلب مرتجع</button>
 </div>
 
 <div class="portal-content" id="portal-content">
@@ -328,7 +329,9 @@ window.switchPortalTab = function(tab) {
   currentTab = tab;
   document.getElementById('tab-current').classList.toggle('active', tab === 'current');
   document.getElementById('tab-library').classList.toggle('active', tab === 'library');
+  document.getElementById('tab-returns').classList.toggle('active', tab === 'returns');
   if (tab === 'library') renderLibrary();
+  else if (tab === 'returns') renderReturnsTab();
   else renderPortal();
 };
 
@@ -431,6 +434,189 @@ function subscribeAllMyDesigns() {
   );
 }
 if (clientId) subscribeAllMyDesigns();
+
+// ══════════════════════════════════════════════════════════════════
+// ↩️ Returns tab — client-initiated return request
+// ══════════════════════════════════════════════════════════════════
+let myReturnTickets = [];
+
+// listen for tickets on this order (rule allows read for client_portal tickets with phone match)
+onSnapshot(
+  query(collection(db,'returns_tickets'), where('orderId','==',orderDocId)),
+  snap=>{
+    myReturnTickets = snap.docs.map(d=>({...d.data(), _id:d.id}));
+    if(currentTab === 'returns') renderReturnsTab();
+  },
+  err => console.warn('[portal] returns listener:', err.message)
+);
+
+const RT_REASON_LABEL = {
+  damaged:'🔨 منتج تالف',
+  wrong_design:'🎨 تصميم غير مطابق',
+  late_delivery:'⏰ تأخر التسليم',
+  quality_low:'⭐ جودة ضعيفة',
+  wrong_product:'📦 منتج خاطئ',
+  customer_changed_mind:'🔄 تغيير رأي',
+  other:'📝 سبب آخر',
+};
+
+const RT_STATUS_LABEL = {
+  requested:'📋 طلب جديد',
+  inspecting:'🔍 قيد المراجعة',
+  approved:'✅ تمت الموافقة',
+  refunded:'💸 تم الاسترداد',
+  rejected:'❌ مرفوض',
+  replacement_issued:'🔁 صدر بديل',
+  cancelled:'🚫 ملغى',
+  closed:'📦 منتهي',
+};
+
+function escHtml(s){return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function renderReturnsTab(){
+  const content = document.getElementById('portal-content');
+  const existing = myReturnTickets.filter(t => !t.isDeleted);
+  // الـ tickets المغلقة ما تمنعش طلب جديد (لكن المفتوحة تمنع)
+  const blocking = existing.find(t => !['cancelled','closed','rejected'].includes(t.status));
+
+  let html = `
+    <div style="padding:16px;max-width:560px;margin:0 auto">
+      <h2 style="font-size:18px;margin-bottom:12px">↩️ طلب مرتجع</h2>
+      <p style="color:var(--dim2);font-size:13px;line-height:1.7;margin-bottom:16px">
+        لو الأوردر فيه مشكلة (تالف، تصميم غير مطابق، تأخر، إلخ)، تقدر تطلب مرتجع وفريقنا
+        هيراجع الطلب ويتواصل معاك خلال 24 ساعة.
+      </p>
+  `;
+
+  // Existing tickets list
+  if(existing.length){
+    html += `
+      <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:10px;padding:12px;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:800;color:var(--p);margin-bottom:8px">📋 طلباتك السابقة على هذا الأوردر:</div>
+        ${existing.map(t=>{
+          const st = RT_STATUS_LABEL[t.status] || t.status;
+          const dt = t.requestedAt?.seconds ? new Date(t.requestedAt.seconds*1000).toLocaleDateString('ar-EG') : '';
+          return `
+            <div style="padding:8px 10px;background:rgba(0,0,0,.2);border-radius:6px;margin-bottom:6px;font-size:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span><b>${escHtml(t.ticketNo||t._id.slice(-6))}</b> · ${st}</span>
+                <span style="font-size:10px;color:var(--dim2)">${dt}</span>
+              </div>
+              <div style="font-size:11px;color:var(--dim);margin-top:3px">${escHtml(RT_REASON_LABEL[t.reason]||t.reason||'')}</div>
+              ${t.status==='rejected' && t.rejectionReason ? `<div style="font-size:11px;color:#ff3d6e;margin-top:4px">سبب الرفض: ${escHtml(t.rejectionReason)}</div>` : ''}
+              ${t.status==='refunded' && t.refundAmount>0 ? `<div style="font-size:11px;color:#00d97e;margin-top:4px">✅ مبلغ مسترد: ${t.refundAmount} ج</div>` : ''}
+            </div>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // Block new requests if there's an active ticket
+  if(blocking){
+    html += `
+      <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:10px;padding:14px;color:var(--y);font-size:13px;line-height:1.7">
+        ⚠️ لديك طلب مرتجع نشط (${escHtml(blocking.ticketNo||'')}). انتظر مراجعته قبل تقديم طلب جديد.
+        لو محتاج تواصل عاجل، كلّم خدمة العملاء.
+      </div>
+    </div>`;
+    content.innerHTML = html;
+    return;
+  }
+
+  // New request form
+  html += `
+      <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px">
+        <div style="font-size:13px;font-weight:800;margin-bottom:10px">📝 طلب مرتجع جديد</div>
+
+        <label style="display:block;font-size:11px;color:var(--dim2);margin-bottom:4px">السبب *</label>
+        <select id="rt-reason" style="width:100%;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--snow);font-family:inherit;font-size:13px;margin-bottom:10px">
+          <option value="">— اختر السبب —</option>
+          <option value="damaged">🔨 منتج تالف</option>
+          <option value="wrong_design">🎨 تصميم غير مطابق</option>
+          <option value="late_delivery">⏰ تأخر التسليم</option>
+          <option value="quality_low">⭐ جودة ضعيفة</option>
+          <option value="wrong_product">📦 منتج خاطئ</option>
+          <option value="customer_changed_mind">🔄 تغيير رأي</option>
+          <option value="other">📝 سبب آخر</option>
+        </select>
+
+        <label style="display:block;font-size:11px;color:var(--dim2);margin-bottom:4px">تفاصيل المشكلة (اختياري)</label>
+        <textarea id="rt-details" rows="4" placeholder="اشرح المشكلة بالتفصيل — يساعدنا في معالجة طلبك بسرعة" style="width:100%;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--snow);font-family:inherit;font-size:13px;resize:vertical;margin-bottom:12px"></textarea>
+
+        <button onclick="submitClientReturn()" id="rt-submit-btn" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--p),var(--b));border:none;border-radius:8px;color:#fff;font-family:inherit;font-size:14px;font-weight:800;cursor:pointer">
+          📤 إرسال طلب المرتجع
+        </button>
+
+        <div style="font-size:11px;color:var(--dim2);margin-top:10px;line-height:1.6;text-align:center">
+          سيتم مراجعة طلبك خلال 24 ساعة وسنتواصل معك على رقم التليفون المسجّل.
+        </div>
+      </div>
+    </div>`;
+  content.innerHTML = html;
+}
+
+window.submitClientReturn = async function(){
+  const reason = document.getElementById('rt-reason').value;
+  if(!reason){ alert('⚠️ اختر سبب المرتجع'); return; }
+  const details = document.getElementById('rt-details').value.trim();
+  const btn = document.getElementById('rt-submit-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري الإرسال...';
+  try{
+    // makeTicketNo logic مطابق لـ returns-core.js لكن inline (مستقل عن Firebase auth)
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth()+1).padStart(2,'0');
+    const dd = String(now.getDate()).padStart(2,'0');
+    // sequential-ish: hex من الـ timestamp + random
+    const tail = (Date.now().toString(36) + Math.random().toString(36).slice(2,5)).slice(-6).toUpperCase();
+    const ticketNo = `RT-${yyyy}${mm}${dd}-${tail}`;
+
+    const slaInspectDeadline = new Date(now);
+    slaInspectDeadline.setHours(slaInspectDeadline.getHours() + 24);
+
+    await addDoc(collection(db, 'returns_tickets'), {
+      ticketNo,
+      tenantId:        'merchant_001',
+      orderId:         orderDocId,
+      orderRef:        orderCode || orderDocId.slice(-6),
+      productIds:      [],
+      returnType:      'full',
+      clientId:        clientId || '',
+      clientName:      clientName || '',
+      clientPhone:     session.phone,
+      reason,
+      reasonDetails:   details,
+      evidenceUrls:    [],
+      blamedParty:     'unknown',
+      status:          'requested',
+      requestedBy:     'client_portal',
+      requestedByName: clientName || '',
+      requestedAt:     now.toISOString(),
+      slaInspectDeadline: slaInspectDeadline.toISOString(),
+      slaBreached:     false,
+      decision:        null,
+      refundAmount:    0,
+      refundDest:      null,
+      refundWalletId:  null,
+      createdAt:       now.toISOString(),
+      createdBy:       'client_portal',
+      updatedAt:       now.toISOString(),
+      isDeleted:       false,
+      editHistory:     [],
+      timeline:        [{ action:'🆕 طلب مرتجع من العميل', date: now.toISOString(), by: 'client_portal', byName: clientName || '', note: details }],
+    });
+    alert('✅ تم إرسال طلبك بنجاح! رقم الطلب: ' + ticketNo + '\n\nسيتواصل معك فريقنا خلال 24 ساعة.');
+    // sleep a beat لـ snapshot يُحدِّث
+    setTimeout(()=>renderReturnsTab(), 400);
+  }catch(e){
+    console.error('[portal] return submit:', e);
+    alert('❌ حصل خطأ — تواصل مع خدمة العملاء: ' + e.message);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '📤 إرسال طلب المرتجع';
+  }
+};
 </script>
 </body>
 </html>

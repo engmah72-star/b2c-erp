@@ -37,7 +37,9 @@ export const FE = {
   SALARY_PAYMENT_REVERSAL:       'SALARY_PAYMENT_REVERSAL',
   PAYROLL:                       'PAYROLL',
   BONUS_PAYMENT:                 'BONUS_PAYMENT',
+  BONUS_PAYMENT_REVERSAL:        'BONUS_PAYMENT_REVERSAL',
   PENALTY:                       'PENALTY',
+  PENALTY_REVERSAL:              'PENALTY_REVERSAL',
   RETURN_LOSS:                   'RETURN_LOSS',
   GENERAL_EXPENSE:               'GENERAL_EXPENSE',
   WALLET_TRANSFER:               'WALLET_TRANSFER',
@@ -47,11 +49,26 @@ export const FE = {
   ESCROW_HOLD:                   'ESCROW_HOLD',
   ESCROW_RELEASE:                'ESCROW_RELEASE',
   ESCROW_REFUND:                 'ESCROW_REFUND',
+  COMMISSION_ACCRUED:            'COMMISSION_ACCRUED',
   COMMISSION_SETTLED:            'COMMISSION_SETTLED',
   PLATFORM_FEE_COLLECTED:        'PLATFORM_FEE_COLLECTED',
   MERCHANT_PAYOUT:               'MERCHANT_PAYOUT',
   MERCHANT_PAYOUT_REVERSAL:      'MERCHANT_PAYOUT_REVERSAL',
+  AGENT_COMMISSION:              'AGENT_COMMISSION',
+  AGENT_PAYOUT:                  'AGENT_PAYOUT',
   CHARGEBACK:                    'CHARGEBACK',
+  // ─── Returns / After-Sales Events (Phase 1) — handlers في returns-core.js ───
+  // التعريف الكامل في AUDIT_REPORT.md §C6 و module definition للموافقة.
+  RETURN_REQUESTED:              'RETURN_REQUESTED',
+  RETURN_INSPECTED:              'RETURN_INSPECTED',
+  RETURN_APPROVED:               'RETURN_APPROVED',
+  RETURN_REJECTED:               'RETURN_REJECTED',
+  RETURN_REFUNDED:               'RETURN_REFUNDED',
+  RETURN_REFUNDED_REVERSAL:      'RETURN_REFUNDED_REVERSAL',
+  RETURN_REPLACEMENT_ISSUED:     'RETURN_REPLACEMENT_ISSUED',
+  RETURN_CANCELLED:              'RETURN_CANCELLED',
+  RETURN_CLOSED:                 'RETURN_CLOSED',
+  WARRANTY_CLAIM_OPENED:         'WARRANTY_CLAIM_OPENED',
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -69,7 +86,9 @@ const LC = {
   SALARY_PAYMENT_REVERSAL:      { type:'reversal', category:'salary',              direction:'in',  icon:'🔄', label:'إلغاء راتب' },
   PAYROLL:                      { type:'expense',  category:'salary',              direction:'out', icon:'👥', label:'مسير رواتب' },
   BONUS_PAYMENT:                { type:'expense',  category:'bonus',               direction:'out', icon:'🎁', label:'مكافأة' },
+  BONUS_PAYMENT_REVERSAL:       { type:'reversal', category:'bonus',               direction:'in',  icon:'🔄', label:'إلغاء مكافأة' },
   PENALTY:                      { type:'expense',  category:'deduction',           direction:'out', icon:'✂️', label:'خصم' },
+  PENALTY_REVERSAL:             { type:'reversal', category:'deduction',           direction:'in',  icon:'🔄', label:'إلغاء خصم' },
   RETURN_LOSS:                  { type:'expense',  category:'return_loss',         direction:'out', icon:'↩️', label:'خسارة مرتجع' },
   GENERAL_EXPENSE:              { type:'expense',  category:'general_expense',     direction:'out', icon:'💸', label:'مصروف عام' },
   GENERAL_EXPENSE_REVERSAL:     { type:'reversal', category:'general_expense',     direction:'in',  icon:'🔄', label:'إلغاء مصروف عام' },
@@ -82,11 +101,17 @@ const LC = {
   ESCROW_HOLD:                  { type:'other',    category:'escrow',              direction:'in',  icon:'🔒', label:'حجز Escrow' },
   ESCROW_RELEASE:               { type:'transfer', category:'escrow',              direction:'out', icon:'🔓', label:'إفراج Escrow' },
   ESCROW_REFUND:                { type:'reversal', category:'escrow',              direction:'out', icon:'↩️', label:'استرداد Escrow' },
+  COMMISSION_ACCRUED:           { type:'other',    category:'platform_commission', direction:'in',  icon:'📊', label:'عمولة منصة مستحقة (accrual)' },
   COMMISSION_SETTLED:           { type:'income',   category:'platform_commission', direction:'in',  icon:'💼', label:'عمولة منصة محصّلة' },
   PLATFORM_FEE_COLLECTED:       { type:'income',   category:'platform_fee',        direction:'in',  icon:'🏛️', label:'رسوم منصة' },
   MERCHANT_PAYOUT:              { type:'expense',  category:'merchant_payout',     direction:'out', icon:'💸', label:'دفعة مرشنت' },
   MERCHANT_PAYOUT_REVERSAL:     { type:'reversal', category:'merchant_payout',     direction:'in',  icon:'🔄', label:'إلغاء دفعة مرشنت' },
+  AGENT_COMMISSION:             { type:'expense',  category:'agent_commission',    direction:'out', icon:'🤝', label:'عمولة مندوب' },
+  AGENT_PAYOUT:                 { type:'expense',  category:'agent_payout',        direction:'out', icon:'💵', label:'دفعة مندوب' },
   CHARGEBACK:                   { type:'reversal', category:'chargeback',          direction:'out', icon:'⚠️', label:'استرداد إجباري (chargeback)' },
+  // ─── Returns / After-Sales (Phase 1) — الأحداث المالية فقط في الـ ledger ───
+  RETURN_REFUNDED:              { type:'expense',  category:'return_refund',       direction:'out', icon:'↩️', label:'استرداد مرتجع' },
+  RETURN_REFUNDED_REVERSAL:     { type:'reversal', category:'return_refund',       direction:'in',  icon:'🔄', label:'إلغاء استرداد مرتجع' },
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -125,6 +150,28 @@ export function approvalFields() {
     approvedBy:  '', approvedByName:  '', approvedAt:  null,
     rejectedBy:  '', rejectedByName:  '', rejectedAt:  null, rejectReason: '',
     isLocked:    false,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// C2: Engine Signature — يُضاف لكل كتابة مالية من الـ engines (FSE/MKE/RET).
+// Cloud Function `detectEngineBypass` يفحص الـ ledger entries عند الإنشاء:
+//   - لو engineSignature غائب → الـ entry كُتب مباشرة بدون engine → admin_alert
+// Observability فقط — لا يمنع الكتابة. Firestore rules لا تتحقق من الحقل
+// (للحفاظ على backward compatibility).
+// RULE 2 + C2: الـ engines هي المصدر الوحيد للكتابات المالية.
+// ══════════════════════════════════════════════════════════════════
+export function engineSignature(eventType) {
+  // الـ prefix يحدد أي engine كتب: FSE، MKE (marketplace)، RET (returns)
+  const t = eventType || '';
+  const isMKE = t.startsWith('MARKETPLACE') || t.startsWith('ESCROW') ||
+                t.startsWith('COMMISSION') || t.startsWith('PLATFORM') ||
+                t.startsWith('MERCHANT') || t.startsWith('AGENT_') ||
+                t === 'CHARGEBACK';
+  const isRET = t.startsWith('RETURN_') || t.startsWith('WARRANTY');
+  return {
+    engineSignature: isMKE ? 'MKE_v1' : isRET ? 'RET_v1' : 'FSE_v1',
+    engineWrite:     true,
   };
 }
 
@@ -169,6 +216,7 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     isDeleted:    false,
     editHistory:  [],
     ...approvalFields(),
+    ...engineSignature(eventType),  // C2: engine marker للـ Cloud Function detector
   });
   console.log('[FSE] 📝 ledger added to batch:', eventType, data.amount);
   return ref;
@@ -203,14 +251,20 @@ export function getReversal(eventType) {
     VENDOR_PAYMENT_REVERSAL:      'VENDOR_PAYMENT',
     SALARY_PAYMENT:               'SALARY_PAYMENT_REVERSAL',
     SALARY_PAYMENT_REVERSAL:      'SALARY_PAYMENT',
-    BONUS_PAYMENT:                'SALARY_PAYMENT_REVERSAL',
-    PENALTY:                      'SALARY_PAYMENT_REVERSAL',
+    // M4: عكس متخصص لكل من Bonus/Penalty — كان يخلط مع SALARY_PAYMENT_REVERSAL.
+    // الـ ledger الآن يفرق بين عكس مكافأة وعكس خصم وعكس راتب.
+    BONUS_PAYMENT:                'BONUS_PAYMENT_REVERSAL',
+    BONUS_PAYMENT_REVERSAL:       'BONUS_PAYMENT',
+    PENALTY:                      'PENALTY_REVERSAL',
+    PENALTY_REVERSAL:             'PENALTY',
     SHIPPING_SETTLEMENT:          'SHIPPING_SETTLEMENT_REVERSAL',
     SHIPPING_SETTLEMENT_REVERSAL: 'SHIPPING_SETTLEMENT',
     SHIPPING_EXPENSE:             'GENERAL_EXPENSE_REVERSAL',
     RETURN_LOSS:                  'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE:              'GENERAL_EXPENSE_REVERSAL',
     GENERAL_EXPENSE_REVERSAL:     'GENERAL_EXPENSE',
+    RETURN_REFUNDED:              'RETURN_REFUNDED_REVERSAL',
+    RETURN_REFUNDED_REVERSAL:     'RETURN_REFUNDED',
   };
   return REVERSAL[eventType] || eventType;
 }
@@ -303,6 +357,9 @@ async function handleVendorPaymentReversal(db, p) {
 }
 
 async function handleSalaryPaymentReversal(db, p) {
+  // M4: eventType parameterized — يميّز بين عكس راتب / مكافأة / خصم في الـ ledger.
+  // الـ default 'SALARY_PAYMENT_REVERSAL' للحفاظ على backward compat.
+  const eventType = p.eventType || 'SALARY_PAYMENT_REVERSAL';
   const isDeduction = p.isDeduction;
   const batch = writeBatch(db);
 
@@ -319,13 +376,19 @@ async function handleSalaryPaymentReversal(db, p) {
     batch.delete(doc(db, 'employee_payments', p.epId));
   }
 
-  addLedgerToBatch(batch, db, 'SALARY_PAYMENT_REVERSAL', {
+  // notes حسب نوع العكس
+  const noteByEvent = {
+    SALARY_PAYMENT_REVERSAL: `إلغاء راتب — ${p.employeeName}`,
+    BONUS_PAYMENT_REVERSAL:  `إلغاء مكافأة — ${p.employeeName}`,
+    PENALTY_REVERSAL:        `إلغاء خصم — ${p.employeeName}`,
+  };
+  addLedgerToBatch(batch, db, eventType, {
     ...p, employeeId: p.employeeId, employeeName: p.employeeName,
-    notes: `إلغاء راتب — ${p.employeeName}`,
+    notes: noteByEvent[eventType] || `إلغاء — ${p.employeeName}`,
   });
 
   await batch.commit();
-  console.log('[FSE] ✅ completed: SALARY_PAYMENT_REVERSAL');
+  console.log('[FSE] ✅ completed:', eventType);
   return {};
 }
 
@@ -714,7 +777,11 @@ const HANDLERS = {
   SALARY_PAYMENT:          handleSalaryPayment,
   SALARY_PAYMENT_REVERSAL: handleSalaryPaymentReversal,
   BONUS_PAYMENT:           (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'bonus' }),
+  // M4: عكس مكافأة بحدث منفصل (BONUS_PAYMENT_REVERSAL) — يميّز في الـ ledger
+  BONUS_PAYMENT_REVERSAL:  (db, p) => handleSalaryPaymentReversal(db, { ...p, eventType: 'BONUS_PAYMENT_REVERSAL' }),
   PENALTY:                 (db, p) => handleSalaryPayment(db, { ...p, salaryType: 'deduction' }),
+  // M4: عكس خصم بحدث منفصل (PENALTY_REVERSAL) — direction=out بدل +amount
+  PENALTY_REVERSAL:        (db, p) => handleSalaryPaymentReversal(db, { ...p, eventType: 'PENALTY_REVERSAL', isDeduction: true }),
   PAYROLL:                 handlePayroll,
   GENERAL_EXPENSE:          handleGeneralExpense,
   GENERAL_EXPENSE_REVERSAL: (db, p) => handleGeneralExpense(db, { ...p, eventType: 'GENERAL_EXPENSE_REVERSAL', txCategory: p.txCategory || 'expense_reversal', _reverse: true }),
