@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v153';
+const CACHE = 'b2c-v154';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -84,6 +84,10 @@ self.addEventListener('fetch', e => {
 
   if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
+  // Kill switch: never intercept reset-sw.html — it must always come from
+  // the network so the user has a way out if the SW itself is broken.
+  if (sameOriginPath(url, 'reset-sw.html')) return;
+
   const sameOrigin = url.origin === self.location.origin;
   const cacheableCdn = CACHEABLE_HOSTS.some(h => url.hostname === h);
   if (!sameOrigin && !cacheableCdn) return;
@@ -125,6 +129,11 @@ async function networkFirst(req) {
     // Genuine failure — let the browser show its native error.
     return Response.error();
   }
+}
+
+function sameOriginPath(url, path) {
+  return url.origin === self.location.origin &&
+    (url.pathname === '/' + path || url.pathname.endsWith('/' + path));
 }
 
 async function staleWhileRevalidate(req) {

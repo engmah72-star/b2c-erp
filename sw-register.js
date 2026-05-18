@@ -1,25 +1,31 @@
-// Centralized Service Worker registration with auto-reload on update.
+// Centralized Service Worker registration with safe auto-reload.
 //
 // Why: when a new sw.js is deployed, the new SW installs in the background
-// but does NOT control existing pages until they're reloaded. Even with
-// skipWaiting() + clients.claim() the page still shows stale code (the
-// HTML/JS that's already in the DOM) until the user reloads. This file
-// listens for `controllerchange` — fired when clients.claim() takes effect —
-// and reloads the page ONCE so the user immediately sees the new version
-// without manual hard-reload.
+// but does NOT control existing pages until they're reloaded. We listen for
+// `controllerchange` (fired when clients.claim() takes effect) and reload
+// once so the user immediately sees the new version.
 //
-// Replaces the inline `register('sw.js')` snippets that were duplicated
-// across 17 HTML files.
+// Loop protection: a 10-second sessionStorage timestamp guards against
+// pathological cases where controllerchange fires on every load — without
+// this, the page could reload infinitely.
 
 if ('serviceWorker' in navigator) {
-  let __swReloaded = false;
+  const RELOAD_KEY = '__b2c_sw_last_reload';
+  const LOOP_WINDOW_MS = 10000;
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (__swReloaded) return;
-    __swReloaded = true;
-    // Reload once so the page is now served by the new SW (network-first
-    // will then fetch the latest HTML/JS).
+    let last = 0;
+    try { last = +sessionStorage.getItem(RELOAD_KEY) || 0; } catch (_) {}
+    const now = Date.now();
+    if (now - last < LOOP_WINDOW_MS) {
+      // Reloaded less than 10s ago — refuse to reload again to avoid a loop.
+      try { console.warn('[sw-register] suppressing reload loop'); } catch (_) {}
+      return;
+    }
+    try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
     window.location.reload();
   });
+
   // updateViaCache: 'none' tells the browser NOT to cache sw.js itself —
   // ensures we always pick up new SW versions on next page load.
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
