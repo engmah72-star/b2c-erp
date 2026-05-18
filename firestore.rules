@@ -461,11 +461,27 @@ service cloud.firestore {
         resource.data.get('clientId','__') == request.auth.uid ||
         resource.data.get('createdBy','__') == request.auth.uid
       );
+      // Internal create — موظف مسجَّل بصلاحية العملاء.
       allow create: if isAuth() && (
         isAdmin() ||
         canSeeCustomerPhone() ||
         hasPage('clients')
       );
+      // Client portal create — العميل ينشئ من client-portal.html بدون
+      // Firebase auth. الحماية: clientPhone في الـ ticket لازم يساوي
+      // clientPhone في الـ order (cross-validate من server-side data).
+      // نفس نمط /client_decisions.
+      allow create: if !isAuth()
+        && request.resource.data.keys().hasAll(['orderId','clientPhone','reason','status','requestedBy'])
+        && request.resource.data.requestedBy == 'client_portal'
+        && request.resource.data.status == 'requested'
+        && request.resource.data.reason is string
+        && request.resource.data.orderId is string
+        && request.resource.data.clientPhone is string
+        && request.resource.data.get('isDeleted', false) == false
+        // ownership: clientPhone في الـ ticket == clientPhone في الـ order
+        && request.resource.data.clientPhone ==
+           get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.clientPhone;
       // update — تغيير status / decision / refund execution.
       // الـ refund نفسه يكتب أيضاً على wallets/transactions_v2/financial_ledger
       // وتلك قواعد منفصلة تتأكد من canFinancialWrite.
@@ -474,6 +490,12 @@ service cloud.firestore {
         canSeeCustomerPhone() ||
         canFinancialWrite()
       );
+      // قراءة من client portal (بدون auth) — مقيدة بـ clientPhone match.
+      // مفيدة لعرض الـ tickets الموجودة على الـ portal.
+      allow read: if !isAuth()
+        && resource.data.get('requestedBy','__') == 'client_portal'
+        && resource.data.get('clientPhone','__') ==
+           get(/databases/$(database)/documents/orders/$(resource.data.orderId)).data.clientPhone;
       // عمداً soft delete preferred — الـ tickets المغلقة جزء من الـ audit trail.
       allow delete: if isAdminOnly();
     }
