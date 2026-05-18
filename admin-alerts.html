@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="manifest" href="manifest.json">
+<title>تنبيهات النظام — Business2Card</title>
+<link rel="stylesheet" href="shared.css?v=55">
+<style>
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+  .kpi-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px}
+  .kpi-lbl{font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:6px}
+  .kpi-val{font-size:22px;font-weight:900;color:var(--snow)}
+  .kpi-sub{font-size:10px;color:var(--dim2);margin-top:4px}
+  .kpi-high .kpi-val{color:#ff3d6e}
+  .kpi-med .kpi-val{color:#ffaa00}
+  .kpi-low .kpi-val{color:#3b9eff}
+  .kpi-ack .kpi-val{color:#00d97e}
+
+  .filter-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:8px}
+  .filter-btn{padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:11px;font-weight:700}
+  .filter-btn.on{background:var(--bg3);color:var(--snow);border-color:var(--p)}
+
+  .alert-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:10px;border-right:4px solid var(--line)}
+  .alert-card.sev-high{border-right-color:#ff3d6e;background:linear-gradient(to left,rgba(255,61,110,.04),var(--bg2))}
+  .alert-card.sev-medium{border-right-color:#ffaa00;background:linear-gradient(to left,rgba(255,170,0,.04),var(--bg2))}
+  .alert-card.sev-low{border-right-color:#3b9eff;background:linear-gradient(to left,rgba(59,158,255,.04),var(--bg2))}
+  .alert-card.acked{opacity:.55;border-right-color:#00d97e}
+  .ac-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .ac-ttl{font-weight:900;font-size:14px;color:var(--snow)}
+  .ac-meta{font-size:11px;color:var(--dim2);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
+  .ac-body{font-size:12px;color:var(--dim);margin:8px 0;line-height:1.6;background:var(--bg3);padding:10px;border-radius:6px}
+  .ac-payload{font-size:10px;color:var(--dim2);font-family:monospace;background:var(--bg3);padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-all;margin-top:6px}
+  .ac-actions{display:flex;gap:6px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap}
+  .ac-actions button{padding:7px 14px;border-radius:6px;border:1px solid;font-weight:800;font-size:11px;cursor:pointer;font-family:inherit}
+  .btn-ack{background:rgba(0,217,126,.15);color:#00d97e;border-color:rgba(0,217,126,.4)}
+  .btn-ack:hover{background:rgba(0,217,126,.25)}
+  .ack-info{font-size:10px;color:#00d97e;background:rgba(0,217,126,.08);padding:6px 10px;border-radius:6px;margin-top:6px}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:12px;font-size:10px;font-weight:800}
+  .sp-high{background:rgba(255,61,110,.15);color:#ff3d6e}
+  .sp-medium{background:rgba(255,170,0,.15);color:#ffaa00}
+  .sp-low{background:rgba(59,158,255,.15);color:#3b9eff}
+  .tp-bypass{background:rgba(167,139,250,.15);color:#a78bfa}
+  .tp-sla{background:rgba(255,170,0,.15);color:#ffaa00}
+  .tp-anomaly{background:rgba(255,61,110,.15);color:#ff3d6e}
+
+  .empty-pl{text-align:center;padding:40px 20px;color:var(--dim2);font-size:13px}
+</style>
+<script type="module" src="notifications.js"></script>
+<script type="module" src="inbox-badge.js"></script>
+<script src="smart-sidebar.js?v=1" defer></script>
+</head>
+<body>
+<aside class="sidenav" id="sidebar">
+  <div class="nav-brand">
+    <div class="nav-logo">🎨</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="nav-role">—</div>
+    </div>
+  </div>
+  <div class="nav-scroll" id="nav-links"></div>
+</aside>
+<header class="topbar">
+  <button class="menu-btn" id="menu-btn">☰</button>
+  <div>
+    <div class="page-title">🚨 تنبيهات النظام</div>
+    <div class="page-sub">Engine bypass · SLA breaches · Anomalies</div>
+  </div>
+  <div style="margin-right:auto;display:flex;align-items:center;gap:10px">
+    <span id="nav-name" style="font-size:12px;color:var(--dim);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <button onclick="logoutBtn()" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:transparent;color:#ff3d6e;font-size:11px;cursor:pointer;font-family:inherit">خروج</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="container">
+
+    <div class="kpi-row">
+      <div class="kpi-card kpi-high"><div class="kpi-lbl">🚨 خطر عالٍ</div><div class="kpi-val" id="kpi-high">0</div><div class="kpi-sub">يحتاج معالجة فورية</div></div>
+      <div class="kpi-card kpi-med"><div class="kpi-lbl">⚠️ خطر متوسط</div><div class="kpi-val" id="kpi-med">0</div><div class="kpi-sub">للمراجعة</div></div>
+      <div class="kpi-card kpi-low"><div class="kpi-lbl">ℹ️ معلوماتي</div><div class="kpi-val" id="kpi-low">0</div><div class="kpi-sub">للسياق فقط</div></div>
+      <div class="kpi-card kpi-ack"><div class="kpi-lbl">✅ معتمَد</div><div class="kpi-val" id="kpi-ack">0</div><div class="kpi-sub">acknowledged</div></div>
+    </div>
+
+    <div class="filter-bar">
+      <span style="font-size:11px;color:var(--dim2);align-self:center;margin-left:6px">الحالة:</span>
+      <button class="filter-btn on" id="f-active" onclick="setFilter('status','active')">🔥 نشطة (<span id="cnt-active">0</span>)</button>
+      <button class="filter-btn" id="f-acked" onclick="setFilter('status','acked')">✅ معتمَدة (<span id="cnt-acked">0</span>)</button>
+      <button class="filter-btn" id="f-all" onclick="setFilter('status','all')">📋 الكل (<span id="cnt-all">0</span>)</button>
+
+      <span style="font-size:11px;color:var(--dim2);align-self:center;margin:0 6px 0 12px">النوع:</span>
+      <button class="filter-btn on" id="t-all" onclick="setFilter('type','')">الكل</button>
+      <button class="filter-btn" id="t-bypass" onclick="setFilter('type','rule2_bypass')">🚨 Engine bypass</button>
+      <button class="filter-btn" id="t-sla" onclick="setFilter('type','returns_sla_breach')">⏰ SLA breach</button>
+      <button class="filter-btn" id="t-anomaly" onclick="setFilter('type','anomaly')">📊 Anomaly</button>
+    </div>
+
+    <div id="list-content"></div>
+  </div>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, onSnapshot, query, orderBy, limit, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { ROLE_PAGES } from "./shared.js";
+
+const app = initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+let currentUid='', currentUserName='', currentRole='';
+let alerts = [];
+let filterStatus = 'active';  // active | acked | all
+let filterType = '';            // ''=all | rule2_bypass | returns_sla_breach | anomaly
+
+const $ = id => document.getElementById(id);
+const fmtTime = t => t?.seconds ? new Date(t.seconds*1000).toLocaleString('ar-EG') : '—';
+function escHtml(s){return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function toast(msg, type=''){
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:20px;right:20px;padding:12px 18px;border-radius:8px;color:#fff;font-weight:700;z-index:9999;font-size:13px;'+
+    (type==='err'?'background:#ff3d6e':type==='ok'?'background:#00d97e':'background:#a78bfa');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 3500);
+}
+
+window.logoutBtn = async function(){ try{ await signOut(auth);}catch(e){} window.location.href='login.html'; };
+$('menu-btn')?.addEventListener('click', ()=> $('sidebar')?.classList.toggle('open'));
+
+onAuthStateChanged(auth, async u=>{
+  if(!u){ window.location.href='login.html'; return; }
+  currentUid = u.uid;
+  try{
+    const userSnap = await getDoc(doc(db,'users',u.uid));
+    if(!userSnap.exists()){ document.body.innerHTML='<div style="padding:40px;text-align:center;color:#ff3d6e">⛔ المستخدم غير موجود</div>'; return; }
+    const ud = userSnap.data();
+    currentRole = ud.role || '';
+    currentUserName = ud.name || u.email || '';
+
+    if(currentRole !== 'admin'){
+      document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#ff3d6e">⛔ هذه الصفحة للأدمن فقط</div>';
+      return;
+    }
+
+    buildSidebar();
+    $('nav-role').textContent = 'مدير عام';
+    $('nav-name').textContent = currentUserName;
+
+    onSnapshot(query(collection(db,'admin_alerts'), orderBy('detectedAt','desc'), limit(500)), snap=>{
+      alerts = snap.docs.map(d=>({...d.data(), _id:d.id}));
+      updateKpis();
+      render();
+    }, err=>{
+      console.error('[alerts]', err);
+      $('list-content').innerHTML = `<div class="empty-pl" style="color:#ff3d6e">⛔ ${escHtml(err.message)}</div>`;
+    });
+  }catch(e){
+    console.error('[alerts] init:', e);
+    $('list-content').innerHTML = `<div class="empty-pl" style="color:#ff3d6e">⛔ ${escHtml(e.message)}</div>`;
+  }
+});
+
+function buildSidebar(){
+  const SBPAGES = [
+    {f:'index.html',l:'لوحة التحكم',i:'⬡',k:'index'},
+    {f:'clients.html',l:'العملاء',i:'👤',k:'clients'},
+    {f:'design.html',l:'التصميم',i:'✏️',k:'design'},
+    {f:'production.html',l:'التنفيذ',i:'🏭',k:'production'},
+    {f:'print.html',l:'الطباعة',i:'🖨️',k:'print'},
+    {f:'shipping.html',l:'الشحن',i:'🚚',k:'shipping'},
+    {f:'accounts.html',l:'الحسابات',i:'💰',k:'accounts'},
+    {f:'approvals.html',l:'الاعتمادات',i:'🔐',k:'approvals'},
+    {f:'returns.html',l:'المرتجعات',i:'↩️',k:'returns'},
+    {f:'marketplace.html',l:'المنصة',i:'🏛️',k:'marketplace'},
+    {f:'reports.html',l:'التقارير',i:'📊',k:'reports'},
+    {f:'employees.html',l:'الموظفين',i:'👥',k:'employees'},
+    {f:'admin-alerts.html',l:'التنبيهات',i:'🚨',k:'admin-alerts'},
+    {f:'settings.html',l:'الإعدادات',i:'⚙️',k:'settings'},
+  ];
+  const allowed = ROLE_PAGES[currentRole] || [];
+  const navEl = $('nav-links');
+  let html = '';
+  for(const p of SBPAGES){
+    if(p.k !== 'admin-alerts' && !allowed.includes(p.k) && currentRole !== 'admin') continue;
+    const active = p.k === 'admin-alerts';
+    html += `<a class="nav-link${active?' active':''}" href="${p.f}"><span class="nav-ico">${p.i}</span> ${p.l}</a>`;
+  }
+  navEl.innerHTML = html;
+}
+
+function updateKpis(){
+  const active = alerts.filter(a=>a.acknowledged !== true);
+  const acked = alerts.filter(a=>a.acknowledged === true);
+  $('kpi-high').textContent = active.filter(a=>a.severity === 'high').length;
+  $('kpi-med').textContent  = active.filter(a=>a.severity === 'medium').length;
+  $('kpi-low').textContent  = active.filter(a=>a.severity === 'low' || !a.severity).length;
+  $('kpi-ack').textContent  = acked.length;
+
+  $('cnt-active').textContent = active.length;
+  $('cnt-acked').textContent  = acked.length;
+  $('cnt-all').textContent    = alerts.length;
+}
+
+window.setFilter = function(kind, value){
+  if(kind === 'status') {
+    filterStatus = value;
+    document.querySelectorAll('#f-active, #f-acked, #f-all').forEach(b=>b.classList.remove('on'));
+    $('f-'+value)?.classList.add('on');
+  } else if(kind === 'type') {
+    filterType = value;
+    document.querySelectorAll('#t-all, #t-bypass, #t-sla, #t-anomaly').forEach(b=>b.classList.remove('on'));
+    const id = value === '' ? 't-all' : value === 'rule2_bypass' ? 't-bypass' : value === 'returns_sla_breach' ? 't-sla' : 't-anomaly';
+    $(id)?.classList.add('on');
+  }
+  render();
+};
+
+function render(){
+  let filtered = alerts;
+  if(filterStatus === 'active') filtered = filtered.filter(a=>a.acknowledged !== true);
+  else if(filterStatus === 'acked') filtered = filtered.filter(a=>a.acknowledged === true);
+  if(filterType) filtered = filtered.filter(a=>a.type === filterType);
+
+  if(!filtered.length){
+    $('list-content').innerHTML = `<div class="empty-pl">✅ لا توجد تنبيهات في الفلتر الحالي</div>`;
+    return;
+  }
+  $('list-content').innerHTML = filtered.map(a=>renderAlert(a)).join('');
+}
+
+function renderAlert(a){
+  const sev = a.severity || 'low';
+  const tpClass = a.type === 'rule2_bypass' ? 'tp-bypass' : a.type === 'returns_sla_breach' ? 'tp-sla' : 'tp-anomaly';
+  const payloadJson = JSON.stringify({
+    ledgerId: a.ledgerId, eventType: a.eventType, amount: a.amount,
+    orderId: a.orderId, clientId: a.clientId, walletId: a.walletId,
+    createdBy: a.createdBy, createdByName: a.createdByName,
+  }, null, 2).replace(/null,?\n/g, '');  // hide null fields
+  return `
+    <div class="alert-card sev-${sev} ${a.acknowledged?'acked':''}">
+      <div class="ac-head">
+        <div style="flex:1;min-width:0">
+          <div class="ac-ttl">${escHtml(a.title || a.type || 'تنبيه')}</div>
+          <div class="ac-meta">
+            <span class="pill sp-${sev}">${labelSev(sev)}</span>
+            <span class="pill ${tpClass}">${labelType(a.type)}</span>
+            <span>🕒 ${fmtTime(a.detectedAt || a.createdAt)}</span>
+          </div>
+        </div>
+        ${!a.acknowledged ? `<button class="btn-ack" onclick="ackAlert('${a._id}')">✅ تأكيد المراجعة</button>` : ''}
+      </div>
+      ${a.body ? `<div class="ac-body">${escHtml(a.body)}</div>` : ''}
+      ${a.suggestedFix ? `<div style="font-size:11px;color:#3b9eff;background:rgba(59,158,255,.08);padding:8px 10px;border-radius:6px;margin-top:6px">💡 ${escHtml(a.suggestedFix)}</div>` : ''}
+      <details style="margin-top:6px">
+        <summary style="font-size:11px;color:var(--dim2);cursor:pointer">📋 تفاصيل تقنية</summary>
+        <div class="ac-payload">${escHtml(payloadJson)}</div>
+      </details>
+      ${a.acknowledged ? `<div class="ack-info">✅ تمت المراجعة بواسطة ${escHtml(a.acknowledgedByName || a.acknowledgedBy || '—')} في ${fmtTime(a.acknowledgedAt)}</div>` : ''}
+    </div>`;
+}
+
+function labelSev(s){
+  return {high:'🚨 خطر عالٍ', medium:'⚠️ متوسط', low:'ℹ️ معلوماتي'}[s] || s;
+}
+function labelType(t){
+  return {rule2_bypass:'🚨 Engine bypass', returns_sla_breach:'⏰ SLA breach', anomaly:'📊 Anomaly'}[t] || t || '—';
+}
+
+window.ackAlert = async function(id){
+  if(!confirm('تأكيد مراجعة هذا التنبيه؟')) return;
+  try{
+    await updateDoc(doc(db,'admin_alerts',id), {
+      acknowledged: true,
+      acknowledgedBy: currentUid,
+      acknowledgedByName: currentUserName,
+      acknowledgedAt: serverTimestamp(),
+    });
+    toast('✅ تم تأكيد المراجعة','ok');
+  }catch(e){ toast('❌ '+e.message,'err'); }
+};
+</script>
+</body>
+</html>

@@ -2088,3 +2088,262 @@ exports.callGeminiProxy = onCall(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Daily Aggregation — KPIs pre-computed for reports.html
+// ════════════════════════════════════════════════════════════════════════════
+//
+// يحسب metrics لكل يوم سابق ويخزنها في daily_stats/{YYYY-MM-DD}.
+// reports.html يستطيع قراءة هذه الـ aggregates بدل الـ client-side rollup
+// عند 100k+ docs → فتح أسرع 10x.
+//
+// Schedule: كل يوم في 2 AM Cairo (بعد الـ activity ينتهي للـ يوم السابق).
+// يحسب آخر يومين لتغطية late-arriving docs أو ساعات الـ DST.
+
+const STATS_BACKFILL_DAYS = 2;
+
+exports.aggregateDailyStats = onSchedule(
+  { schedule: '0 2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540 },
+  async () => {
+    const tz = 'Africa/Cairo';
+    const today = new Date();
+    const results = [];
+
+    for (let i = 1; i <= STATS_BACKFILL_DAYS; i++) {
+      const day = new Date(today);
+      day.setDate(day.getDate() - i);
+      const dayKey = day.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+      const dayStart = new Date(dayKey + 'T00:00:00.000+02:00');  // Cairo UTC+2
+      const dayEnd   = new Date(dayKey + 'T23:59:59.999+02:00');
+
+      try {
+        const stats = await computeDayStats(dayStart, dayEnd, dayKey);
+        await db.collection('daily_stats').doc(dayKey).set(stats, { merge: true });
+        results.push({ day: dayKey, ok: true, ...stats.summary });
+      } catch (e) {
+        console.error(`[aggregateDailyStats] ${dayKey} failed:`, e.message);
+        results.push({ day: dayKey, ok: false, error: e.message });
+      }
+    }
+    console.log('[aggregateDailyStats] results:', JSON.stringify(results));
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Multi-tenant Backfill — يضيف tenantId='merchant_001' للـ legacy
+// ════════════════════════════════════════════════════════════════════════════
+//
+// قبل marketplace Phase 2، الـ legacy docs (orders, clients, suppliers,
+// employees, transactions_v2) ما عندهاش tenantId. الـ backfill يضع
+// merchant_001 كـ default على كل doc ما عندهاش الحقل.
+//
+// admin يستدعيها مرة بعد الـ deploy. تعمل في batches آمنة (max 400 doc per
+// commit) ولا تعدّل الـ docs اللي عندها tenantId بالفعل.
+//
+// Usage من الـ console (admin only):
+//   const r = httpsCallable(functions, 'backfillTenantId');
+//   await r({ collection: 'orders' });
+//   // أو
+//   await r({ collection: 'clients' });
+
+const BACKFILL_COLLECTIONS = ['orders', 'clients', 'suppliers_v2', 'employees', 'transactions_v2', 'financial_ledger', 'employee_payments', 'supplier_payments'];
+const BACKFILL_BATCH_SIZE = 400;
+const DEFAULT_TENANT = 'merchant_001';
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Partner Sign-in — يعطي custom token للـ partner portal
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Partner يدخل tenantId + portalSecret → الـ function تتحقق من tenant.portalSecret
+// → ترجع Firebase custom token مع claim `partnerTenantId`.
+// الـ portal يستخدم signInWithCustomToken → الـ user يكون له auth.token.partnerTenantId
+// → الـ Firestore rules تسمح بقراءة data حسب tenantId match.
+//
+// تنفّذ بدون Firebase Auth user حقيقي (custom token uid = 'partner_<tid>_<rnd>').
+
+exports.partnerSignIn = onCall(
+  { region: 'us-central1', timeoutSeconds: 30 },
+  async (request) => {
+    const tenantId = String(request.data?.tenantId || '').trim();
+    const secret   = String(request.data?.secret || '').trim();
+    if (!tenantId || !secret) {
+      throw new HttpsError('invalid-argument', 'tenantId و secret مطلوبان');
+    }
+
+    const snap = await db.collection('tenants').doc(tenantId).get();
+    if (!snap.exists()) throw new HttpsError('not-found', 'tenant غير موجود');
+    const t = snap.data();
+    if (!t.isActive) throw new HttpsError('permission-denied', 'الحساب موقوف');
+    if (!t.portalSecret) throw new HttpsError('failed-precondition', 'portal غير مفعَّل لهذا الحساب');
+    if (t.portalSecret !== secret) throw new HttpsError('permission-denied', 'كود الوصول غير صحيح');
+
+    // أنشئ custom token مع claim
+    const uid = `partner_${tenantId}_${Date.now().toString(36)}`;
+    let token;
+    try {
+      token = await getAuth().createCustomToken(uid, {
+        partnerTenantId: tenantId,
+        partnerType:    t.type || 'merchant',
+        isPartner:      true,
+      });
+    } catch (e) {
+      throw new HttpsError('internal', `token creation failed: ${e.message}`);
+    }
+
+    // سجل الـ login
+    try {
+      await db.collection('partner_logins').add({
+        tenantId,
+        uid,
+        at: FieldValue.serverTimestamp(),
+        userAgent: request.rawRequest?.headers?.['user-agent'] || '',
+        ip:        request.rawRequest?.ip || '',
+      });
+    } catch (_) {}
+
+    return { token, tenantId, displayName: t.displayName || t.legalName };
+  }
+);
+
+exports.backfillTenantId = onCall(
+  { region: 'us-central1', timeoutSeconds: 540 },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
+
+    // تحقق من admin role من الـ users doc
+    const userSnap = await db.collection('users').doc(request.auth.uid).get();
+    const userRole = userSnap.exists() ? userSnap.data().role : null;
+    if (userRole !== 'admin') throw new HttpsError('permission-denied', 'admin only');
+
+    const target = String(request.data?.collection || '');
+    if (!BACKFILL_COLLECTIONS.includes(target)) {
+      throw new HttpsError('invalid-argument', `collection يجب أن يكون: ${BACKFILL_COLLECTIONS.join('|')}`);
+    }
+    const dryRun = request.data?.dryRun === true;
+
+    // اجلب docs بدون tenantId — Firestore لا يدعم where('field','==',null) بشكل
+    // مباشر، فنستخدم where('field','==',undefined) عبر الـ snapshot filter
+    let snap;
+    try {
+      snap = await db.collection(target).limit(BACKFILL_BATCH_SIZE).get();
+    } catch (e) {
+      throw new HttpsError('internal', `fetch failed: ${e.message}`);
+    }
+
+    let updated = 0, skipped = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.tenantId) { skipped++; continue; }
+      if (dryRun) { updated++; continue; }
+      wb.update(d.ref, { tenantId: DEFAULT_TENANT });
+      updated++;
+    }
+
+    if (!dryRun && updated > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        throw new HttpsError('internal', `commit failed: ${e.message}`);
+      }
+    }
+
+    return {
+      collection: target,
+      dryRun,
+      scanned: snap.size,
+      updated,
+      skipped,
+      hasMore: snap.size === BACKFILL_BATCH_SIZE,
+      hint: snap.size === BACKFILL_BATCH_SIZE
+        ? `ربما في المزيد — اشتغل الـ function مرة تانية على نفس الـ collection`
+        : `الـ collection اتجمع كاملاً`,
+    };
+  }
+);
+
+async function computeDayStats(dayStart, dayEnd, dayKey) {
+  // Orders created in window
+  const ordersSnap = await db.collection('orders')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const orders = ordersSnap.docs.map(d => d.data());
+
+  // Transactions in window
+  const txSnap = await db.collection('transactions_v2')
+    .where('createdAt', '>=', dayStart)
+    .where('createdAt', '<=', dayEnd)
+    .get();
+  const txs = txSnap.docs.map(d => d.data());
+
+  // Returns tickets in window
+  let rtSnap;
+  try {
+    rtSnap = await db.collection('returns_tickets')
+      .where('createdAt', '>=', dayStart)
+      .where('createdAt', '<=', dayEnd)
+      .get();
+  } catch (_) { rtSnap = { docs: [] }; }
+  const returns = rtSnap.docs.map(d => d.data());
+
+  // ── Compute KPIs ──
+  const orderCount   = orders.length;
+  const revenueSum   = orders.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+  const collected    = txs.filter(t => t.type === 'in').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const expenses     = txs.filter(t => t.type === 'out').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  const cashflowNet  = collected - expenses;
+
+  // Order distribution by stage
+  const byStage = {};
+  orders.forEach(o => { byStage[o.stage || 'unknown'] = (byStage[o.stage || 'unknown'] || 0) + 1; });
+
+  // Returns metrics
+  const returnsCount  = returns.length;
+  const refundedCount = returns.filter(r => r.status === 'refunded').length;
+  const refundsSum    = returns.filter(r => r.status === 'refunded')
+                               .reduce((s, r) => s + (parseFloat(r.refundAmount) || 0), 0);
+  const returnRate = orderCount > 0 ? +(returnsCount / orderCount * 100).toFixed(2) : 0;
+
+  // Top reasons (return)
+  const reasonsMap = {};
+  returns.forEach(r => { reasonsMap[r.reason || 'other'] = (reasonsMap[r.reason || 'other'] || 0) + 1; });
+  const topReasons = Object.entries(reasonsMap).sort((a, b) => b[1] - a[1]).slice(0, 5)
+                           .map(([reason, count]) => ({ reason, count }));
+
+  // Blamed party
+  const blameMap = {};
+  returns.forEach(r => { blameMap[r.blamedParty || 'unknown'] = (blameMap[r.blamedParty || 'unknown'] || 0) + 1; });
+
+  return {
+    dayKey,
+    summary: {
+      orderCount,
+      revenueSum: +revenueSum.toFixed(2),
+      collected:  +collected.toFixed(2),
+      expenses:   +expenses.toFixed(2),
+      cashflowNet:+cashflowNet.toFixed(2),
+      returnsCount,
+      returnRate,
+      refundsSum: +refundsSum.toFixed(2),
+    },
+    byStage,
+    returns: {
+      count: returnsCount,
+      refundedCount,
+      refundsSum: +refundsSum.toFixed(2),
+      rate: returnRate,
+      topReasons,
+      byBlame: blameMap,
+    },
+    cashflow: {
+      in:  +collected.toFixed(2),
+      out: +expenses.toFixed(2),
+      net: +cashflowNet.toFixed(2),
+      txCount: txs.length,
+    },
+    computedAt: FieldValue.serverTimestamp(),
+    computedFrom: { ordersScanned: orderCount, txsScanned: txs.length, returnsScanned: returnsCount },
+  };
+}

@@ -69,7 +69,7 @@ export const ROLES = {
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns','marketplace'],
+  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns','marketplace','admin-alerts'],
   operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns','marketplace'],
   customer_service: ['index','clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
@@ -172,6 +172,24 @@ export const DEFAULT_PERMISSIONS = {
  * roles is FALSE — fail-closed. For non-sensitive fields, default is TRUE.
  */
 const SENSITIVE_FIELDS = new Set(['client_phone', 'design_data']);
+/**
+ * Multi-tenant helper — الـ tenant الحالي للمستخدم.
+ * Phase 1: الكل في merchant_001 (الشركة الأساسية).
+ * Phase 2+: يُقرَأ من users.{uid}.tenantId.
+ *
+ * Usage:
+ *   import { getCurrentTenantId, tenantFields } from './shared.js';
+ *   const tid = getCurrentTenantId(userDoc);
+ *   batch.set(ref, { ...data, ...tenantFields(tid) });
+ */
+export const DEFAULT_TENANT_ID = 'merchant_001';
+export function getCurrentTenantId(userDoc) {
+  return (userDoc && userDoc.tenantId) || DEFAULT_TENANT_ID;
+}
+export function tenantFields(tenantId) {
+  return { tenantId: tenantId || DEFAULT_TENANT_ID };
+}
+
 export function canSee(field, userPerms, userRole) {
   // User-level override first
   if (userPerms && userPerms[field] !== undefined) return userPerms[field];
@@ -348,6 +366,7 @@ export function renderSidebar(activePage) {
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'returns',    ico:'↩️',  label:'المرتجعات' },
     { key:'marketplace',ico:'🏛️', label:'المنصة (Marketplace)' },
+    { key:'admin-alerts',ico:'🚨', label:'تنبيهات النظام' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'employees',  ico:'👥', label:'الموظفين' },
