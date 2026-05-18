@@ -1681,3 +1681,105 @@ exports.analyzeSuggestionWithAI = onCall(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Returns SLA Monitor (every 2 hours)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// راجع returns_tickets ويعلّم slaBreached=true على الـ tickets التي تجاوزت
+// المدة الزمنية المسموحة:
+//   - status in [requested, inspecting] AND slaInspectDeadline < now → breach
+//   - status = approved AND slaRefundDeadline < now → breach
+//
+// الـ deadlines تُحفَظ كـ ISO string في returns-core.js (calcInspectDeadline /
+// calcRefundDeadline)، فالـ function يقارنها بنص ISO الحالي.
+//
+// لا يحرك أموالاً — فقط يضع flag للـ UI (kpi-sla card) + يرسل إشعار للـ
+// operation_manager إلى inbox.
+
+const SLA_BATCH_LIMIT = 200;
+
+exports.scanReturnsSla = onSchedule(
+  { schedule: '0 */2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 240 },
+  async () => {
+    const nowIso = new Date().toISOString();
+    const breaches = [];
+
+    // الـ tickets في الحالات النشطة فقط (مع limit حماية)
+    const activeStates = ['requested', 'inspecting', 'approved'];
+    const snap = await db.collection('returns_tickets')
+      .where('status', 'in', activeStates)
+      .limit(SLA_BATCH_LIMIT)
+      .get();
+
+    let scanned = 0, flagged = 0, alreadyFlagged = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const t = d.data();
+      scanned++;
+      if (t.slaBreached === true) { alreadyFlagged++; continue; }
+
+      let breached = false;
+      let reason   = '';
+
+      // فحص deadline حسب الـ status
+      if ((t.status === 'requested' || t.status === 'inspecting') && t.slaInspectDeadline) {
+        if (t.slaInspectDeadline < nowIso) {
+          breached = true;
+          reason   = 'inspect_overdue';
+        }
+      } else if (t.status === 'approved' && t.slaRefundDeadline) {
+        if (t.slaRefundDeadline < nowIso) {
+          breached = true;
+          reason   = 'refund_overdue';
+        }
+      }
+
+      if (breached) {
+        wb.update(d.ref, {
+          slaBreached:    true,
+          slaBreachedAt:  FieldValue.serverTimestamp(),
+          slaBreachReason: reason,
+          updatedAt:      FieldValue.serverTimestamp(),
+        });
+        breaches.push({ ticketId: d.id, ticketNo: t.ticketNo, reason, status: t.status });
+        flagged++;
+      }
+    }
+
+    if (flagged > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        console.error('[scanReturnsSla] batch failed:', e.message);
+        return;
+      }
+
+      // إشعار لكل ops_manager + admins
+      try {
+        const opsSnap = await db.collection('users')
+          .where('role', 'in', ['admin', 'operation_manager'])
+          .get();
+        const notifBatch = db.batch();
+        for (const u of opsSnap.docs) {
+          const ref = db.collection('notifications').doc();
+          notifBatch.set(ref, {
+            uid:       u.id,
+            type:      'returns_sla_breach',
+            title:     `⚠️ ${flagged} ticket مرتجع تجاوز SLA`,
+            body:      `راجع returns.html — أحدثها: ${breaches.slice(0, 3).map(b => b.ticketNo).join(', ')}`,
+            url:       '/returns.html',
+            read:      false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
+        await notifBatch.commit();
+      } catch (e) {
+        console.warn('[scanReturnsSla] notification dispatch failed (non-fatal):', e.message);
+      }
+    }
+
+    console.log(`[scanReturnsSla] scanned=${scanned} flagged=${flagged} alreadyFlagged=${alreadyFlagged} time=${nowIso}`);
+  }
+);

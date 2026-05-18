@@ -352,6 +352,7 @@
         <button class="rep-tab" data-tab="clients" onclick="switchTab('clients',this)">👥 العملاء <span class="tab-badge dim" data-badge="clients" style="display:none"></span></button>
         <button class="rep-tab" data-tab="sales" onclick="switchTab('sales',this)">💰 المبيعات <span class="tab-badge dim" data-badge="sales" style="display:none"></span></button>
         <button class="rep-tab" data-tab="collection" onclick="switchTab('collection',this)">📋 جرد التحصيل <span class="tab-badge" data-badge="collection" style="display:none"></span></button>
+        <button class="rep-tab" data-tab="returns" onclick="switchTab('returns',this)">↩️ المرتجعات <span class="tab-badge warn" data-badge="returns" style="display:none"></span></button>
       </div>
       <!-- Mode toggle: executive summary (default) vs advanced tabs -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -505,7 +506,7 @@ import { dedupEmployees, resolveDesigner } from "./orders.js";
 const app=initializeApp({apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"});
 const auth=getAuth(app),db=getFirestore(app);
 
-let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[];
+let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
 // المستخدم يقدر يتحوّل لـ Advanced mode (التابات القديمة) من زر "🔧 عرض متقدم".
@@ -532,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
-const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false};
+const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false,returns:false};
 function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,80);}
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 
@@ -739,6 +740,9 @@ function updateTabBadges(){
   // overview: late count (global, not date-filtered)
   const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage)).length;
   set('overview',late);
+  // returns: SLA breaches (global — للتنبيه على الـ tickets العالقة)
+  const slaCnt = returns.filter(t=>t.slaBreached===true && !['cancelled','closed'].includes(t.status)).length;
+  set('returns', slaCnt);
 }
 
 // ══ Auth ══
@@ -767,6 +771,8 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(collection(db,'supplier_payments'),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
   onSnapshot(collection(db,'wallets'),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(collection(db,'transactions_v2'),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
+  // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
+  onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
   // طبّق active class على الـ tab/date button المختارين من URL
@@ -855,6 +861,7 @@ function render(){
     // أعد تطبيق الفلاتر بعد render (للحفاظ على state بعد sort)
     requestAnimationFrame(()=>applyCollectionFilters());
   }
+  else if(currentTab==='returns') el.innerHTML=renderReturns(filtered,range);
   updateTabBadges();
   // animate counters في كل KPI فيه data-counter
   requestAnimationFrame(()=>applyCounters(el));
@@ -1913,6 +1920,156 @@ function renderRevOrders(){
       <div style="font-size:16px;font-weight:900;color:var(--g)">${fn(amt)} ج</div>
     </div>`;
   }).join('');
+}
+
+// ══ Tab 7: المرتجعات / After-Sales ══
+function renderReturns(filteredOrders, range){
+  // فلتر returns ضمن نطاق الفترة (حسب createdAt)
+  const inRangeRet = (t, r) => {
+    const ts = t.createdAt?.seconds ? new Date(t.createdAt.seconds*1000) : null;
+    return ts && ts >= r.from && ts <= r.to;
+  };
+  const periodRets = returns.filter(t => inRangeRet(t, range));
+
+  if(!returns.length){
+    return `<div class="empty-pretty"><div class="ico">↩️</div><div class="ttl">لا توجد مرتجعات بعد</div><div class="sub">tickets تُنشأ من returns.html — الإحصاءات هنا عند توفر بيانات</div></div>`;
+  }
+
+  // ── KPIs ──
+  const totalOrders   = filteredOrders.length || 1;  // تجنب القسمة على صفر
+  const refunded      = periodRets.filter(t => t.status === 'refunded');
+  const refundedAmt   = refunded.reduce((s,t) => s + (parseFloat(t.refundAmount)||0), 0);
+  const returnRate    = (periodRets.length / totalOrders * 100).toFixed(1);
+  const slaBreached   = periodRets.filter(t => t.slaBreached === true && !['cancelled','closed'].includes(t.status)).length;
+  const active        = periodRets.filter(t => !['cancelled','closed','refunded','rejected'].includes(t.status)).length;
+  const pendingValue  = periodRets.filter(t => ['approved'].includes(t.status))
+                                  .reduce((s,t) => s + (parseFloat(t.refundAmount)||0), 0);
+
+  // ── Top reasons ──
+  const reasonsMap = {};
+  for(const t of periodRets){
+    const r = t.reason || 'other';
+    reasonsMap[r] = (reasonsMap[r] || 0) + 1;
+  }
+  const reasonsSorted = Object.entries(reasonsMap).sort((a,b) => b[1] - a[1]);
+  const REASON_LABEL = {
+    damaged:'🔨 تالف', wrong_design:'🎨 تصميم خاطئ', late_delivery:'⏰ تأخر',
+    quality_low:'⭐ جودة ضعيفة', wrong_product:'📦 منتج خاطئ',
+    customer_changed_mind:'🔄 تراجع العميل', other:'📝 أخرى',
+  };
+  const maxReasonCount = reasonsSorted[0]?.[1] || 1;
+
+  // ── Blamed party breakdown ──
+  const blameMap = {};
+  for(const t of periodRets){
+    const b = t.blamedParty || 'unknown';
+    blameMap[b] = (blameMap[b] || 0) + 1;
+  }
+  const BLAME_LABEL = {
+    designer:'🎨 المصمم', printer:'🖨️ المطبعة', shipping:'🚚 الشحن',
+    customer:'👤 العميل', unknown:'❓ غير محدد',
+  };
+
+  // ── Time-to-refund (للـ refunded فقط) ──
+  let avgTimeToRefund = 0;
+  const refundedWithTimes = refunded.filter(t => t.requestedAt?.seconds && t.refundedAt?.seconds);
+  if(refundedWithTimes.length){
+    const totalSec = refundedWithTimes.reduce((s,t) => s + (t.refundedAt.seconds - t.requestedAt.seconds), 0);
+    avgTimeToRefund = totalSec / refundedWithTimes.length / 86400; // أيام
+  }
+
+  // ── Top clients by return count ──
+  const clientMap = {};
+  for(const t of periodRets){
+    const k = t.clientId || t.clientName || 'unknown';
+    if(!clientMap[k]) clientMap[k] = { name: t.clientName || k, count: 0, amount: 0 };
+    clientMap[k].count++;
+    clientMap[k].amount += parseFloat(t.refundAmount) || 0;
+  }
+  const topClients = Object.values(clientMap).sort((a,b) => b.count - a.count).slice(0, 5);
+
+  return `
+    <div class="kpi-grid">
+      ${kpi(periodRets.length,'إجمالي المرتجعات','var(--p)')}
+      ${kpi(returnRate + '%','نسبة المرتجعات','var(--y)')}
+      ${kpi(fn(refundedAmt)+' ج','مستردات الفترة','var(--r)')}
+      ${kpi(active,'مرتجعات نشطة','var(--b)')}
+      ${kpi(slaBreached,'تجاوز SLA',slaBreached>0?'var(--r)':'var(--dim2)')}
+      ${kpi(fn(pendingValue)+' ج','بانتظار التنفيذ','var(--y)')}
+      ${refundedWithTimes.length ? kpi(avgTimeToRefund.toFixed(1)+' يوم','متوسط زمن الاسترداد','var(--g)') : ''}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px">
+      <!-- Top reasons -->
+      <div class="rep-card">
+        <div class="rep-card-head"><div class="rep-name">📊 أسباب المرتجعات</div></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+          ${reasonsSorted.length ? reasonsSorted.map(([r,c])=>{
+            const pct = Math.round(c/maxReasonCount*100);
+            return `
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+                  <span>${REASON_LABEL[r]||r}</span>
+                  <b style="color:var(--snow)">${c}</b>
+                </div>
+                <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--p),var(--b));border-radius:4px"></div>
+                </div>
+              </div>`;
+          }).join('') : '<div style="color:var(--dim2);font-size:11px;text-align:center;padding:20px">لا توجد بيانات</div>'}
+        </div>
+      </div>
+
+      <!-- Blamed party -->
+      <div class="rep-card">
+        <div class="rep-card-head"><div class="rep-name">🎯 الطرف المسؤول</div></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+          ${Object.entries(blameMap).sort((a,b)=>b[1]-a[1]).map(([b,c])=>{
+            const pct = Math.round(c/periodRets.length*100);
+            return `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
+                <span style="font-size:12px;font-weight:700">${BLAME_LABEL[b]||b}</span>
+                <span style="font-size:11px;color:var(--dim2)"><b style="color:var(--snow);font-size:13px">${c}</b> · ${pct}%</span>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Top clients with returns -->
+      <div class="rep-card">
+        <div class="rep-card-head"><div class="rep-name">👤 أكثر العملاء مرتجعاً</div></div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+          ${topClients.length ? topClients.map(c=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
+              <span style="font-size:12px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.name||'').slice(0,30)}</span>
+              <span style="font-size:11px"><b style="color:var(--y)">${c.count}</b> <span style="color:var(--dim2)">| ${fn(c.amount)} ج</span></span>
+            </div>`).join('') : '<div style="color:var(--dim2);font-size:11px;text-align:center;padding:20px">لا توجد بيانات</div>'}
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent tickets list -->
+    <div class="rep-card" style="margin-top:14px">
+      <div class="rep-card-head"><div class="rep-name">📋 آخر 10 tickets</div></div>
+      <div style="margin-top:10px;font-size:11px">
+        ${periodRets.slice(0,10).map(t=>{
+          const stPill = `<span style="padding:2px 8px;border-radius:10px;font-size:9px;font-weight:800;background:rgba(167,139,250,.15);color:#a78bfa">${t.status}</span>`;
+          const slaBadge = t.slaBreached ? ' <span style="font-size:9px;color:var(--r)">⚠️ SLA</span>' : '';
+          return `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
+              <div style="flex:1;min-width:0">
+                <div><b style="font-family:monospace">${(t.ticketNo||t._id.slice(-6))}</b> · ${(t.clientName||'—').slice(0,30)} ${slaBadge}</div>
+                <div style="color:var(--dim2);font-size:10px;margin-top:2px">${REASON_LABEL[t.reason]||t.reason||''} · ${stPill}</div>
+              </div>
+              <div style="font-weight:800;color:var(--r);text-align:left;white-space:nowrap">${t.refundAmount>0?fn(t.refundAmount)+' ج':'—'}</div>
+            </div>`;
+        }).join('') || '<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد tickets</div>'}
+      </div>
+      <div style="text-align:center;margin-top:12px">
+        <a href="returns.html" style="font-size:12px;color:var(--b);text-decoration:none">عرض الكل في returns.html ↗</a>
+      </div>
+    </div>
+  `;
 }
 
 // ══ Tab 6: جرد التحصيل ══
