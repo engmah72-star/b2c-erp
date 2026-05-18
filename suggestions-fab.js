@@ -302,13 +302,40 @@ function cleanupDetail(){
   activeDetailComments = [];
 }
 
+function handleModalClick(e){
+  const m = document.getElementById(MODAL_ID);
+  if(!m) return;
+  // backdrop click (outside .sm-box) closes
+  if(e.target === m){ closeModal(); return; }
+  // walk up looking for action / tab / open targets
+  const actEl  = e.target.closest?.('[data-act]');
+  const tabEl  = e.target.closest?.('[data-tab]');
+  const openEl = e.target.closest?.('[data-open]');
+  if(actEl){
+    const act = actEl.getAttribute('data-act');
+    if(act === 'close')        return closeModal();
+    if(act === 'back')         { view = 'list'; cleanupDetail(); return renderModal(); }
+    if(act === 'goto-new')     { view = 'new'; return renderModal(); }
+    if(act === 'submit')       return submitSuggestion();
+    if(act === 'rerun-ai')     return rerunAi();
+    if(act === 'send-comment') return sendComment();
+  }
+  if(tabEl && view === 'list'){
+    activeTab = tabEl.getAttribute('data-tab');
+    return renderBody();
+  }
+  if(openEl){
+    return openDetail(openEl.getAttribute('data-open'));
+  }
+}
+
 function renderModal(){
   const m = document.getElementById(MODAL_ID);
   if(!m) return;
   const showTabs = view === 'list';
   const showBack = view !== 'list';
   m.innerHTML = `
-    <div class="sm-box" onclick="event.stopPropagation()">
+    <div class="sm-box">
       <div class="sm-head">
         <div style="display:flex;align-items:center;gap:8px;">
           ${showBack ? `<button class="sm-back" type="button" data-act="back">← رجوع</button>` : ''}
@@ -325,20 +352,11 @@ function renderModal(){
       <div class="sm-body" id="sm-body"></div>
     </div>
   `;
-  m.addEventListener('click', e => {
-    if(e.target === m) closeModal();
-    const act = e.target.getAttribute?.('data-act');
-    if(act === 'close') closeModal();
-    if(act === 'back'){ view = 'list'; cleanupDetail(); renderModal(); }
-    if(act === 'goto-new'){ view = 'new'; renderModal(); }
-    if(act === 'submit') submitSuggestion();
-    if(act === 'rerun-ai') rerunAi();
-    if(act === 'send-comment') sendComment();
-    const tab = e.target.getAttribute?.('data-tab');
-    if(tab && view === 'list'){ activeTab = tab; renderBody(); }
-    const openId = e.target.closest?.('[data-open]')?.getAttribute?.('data-open');
-    if(openId){ openDetail(openId); }
-  });
+  // Attach listener once per modal element (idempotent via flag)
+  if(!m.dataset.bound){
+    m.addEventListener('click', handleModalClick);
+    m.dataset.bound = '1';
+  }
   renderBody();
 }
 
