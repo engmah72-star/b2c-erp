@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#22d3ee">
+<title>B2C — شبكة شركاء الشحن</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
+<script src="sidebar-config.js"></script>
+<script src="sync-monitor.js"></script>
+<script src="smart-sidebar.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<style>
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
+.kpi{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;border-top:3px solid var(--kc)}
+.kpi-val{font-size:24px;font-weight:900;color:var(--kc);margin-bottom:2px}
+.kpi-lbl{font-size:10px;color:var(--dim2);font-weight:700}
+.partner-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:8px;border-right:3px solid var(--c);transition:.2s}
+.partner-card:hover{border-color:var(--c)}
+.partner-grid{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center}
+.partner-ico{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;background:var(--bg)}
+.kyc-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800}
+.kyc-pending{background:#ffaa0018;color:#ffaa00}
+.kyc-approved{background:#00d97e18;color:#00d97e}
+.kyc-rejected{background:#ff3d6e18;color:#ff3d6e}
+.kyc-suspended{background:#4e567218;color:#4e5672}
+.rating-stars{color:#ffaa00;font-size:14px}
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.toolbar input,.toolbar select{background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px}
+.modal-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modal-form .full{grid-column:1/-1}
+.modal-form label{display:block;font-size:12px;color:var(--dim2);margin-bottom:4px;font-weight:700}
+.modal-form input,.modal-form select,.modal-form textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:8px;border-radius:6px;font-family:inherit;font-size:13px}
+@media(max-width:760px){.kpi-row{grid-template-columns:repeat(2,1fr)}.modal-form{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav"></aside>
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left"><button class="mob-menu-btn" onclick="toggleNav()">☰</button><div><h1>🤝 شبكة شركاء الشحن</h1><p>إدارة شركات الشحن، الكباتن المستقلين، فروع الامتياز</p></div></div>
+    <div class="topbar-right"><button class="btn btn-g btn-sm" onclick="openOnboardModal()">➕ شريك جديد</button></div>
+  </div>
+  <div class="content">
+    <!-- KPIs -->
+    <div class="kpi-row">
+      <div class="kpi" style="--kc:var(--c)"><div class="kpi-val" id="k-total">—</div><div class="kpi-lbl">إجمالي الشركاء</div></div>
+      <div class="kpi" style="--kc:var(--g)"><div class="kpi-val" id="k-active">—</div><div class="kpi-lbl">نشطين</div></div>
+      <div class="kpi" style="--kc:var(--y)"><div class="kpi-val" id="k-pending">—</div><div class="kpi-lbl">في انتظار KYC</div></div>
+      <div class="kpi" style="--kc:var(--r)"><div class="kpi-val" id="k-suspended">—</div><div class="kpi-lbl">مُجمَّدين</div></div>
+      <div class="kpi" style="--kc:var(--b)"><div class="kpi-val" id="k-avg-rating">—</div><div class="kpi-lbl">متوسط التقييم</div></div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="🔍 بحث عن شريك..." oninput="renderPartners()">
+      <select id="filter-type" onchange="renderPartners()">
+        <option value="">كل الأنواع</option>
+        <option value="shipping_company">شركات شحن</option>
+        <option value="freelance_courier">كباتن مستقلين</option>
+        <option value="franchise_branch">فروع امتياز</option>
+        <option value="internal_fleet">أسطول داخلي</option>
+      </select>
+      <select id="filter-kyc" onchange="renderPartners()">
+        <option value="">كل حالات KYC</option>
+        <option value="pending">قيد المراجعة</option>
+        <option value="approved">معتمد</option>
+        <option value="rejected">مرفوض</option>
+        <option value="suspended">مُجمَّد</option>
+      </select>
+      <select id="filter-gov" onchange="renderPartners()">
+        <option value="">كل المحافظات</option>
+      </select>
+    </div>
+
+    <!-- Partners list -->
+    <div id="partners-list"><div class="loader"><div class="spinner"></div></div></div>
+  </div>
+</div>
+</div>
+
+<!-- Onboard Modal -->
+<div class="overlay" id="ov-onboard">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-head">
+      <h3>🤝 إضافة شريك شحن جديد</h3>
+      <button class="btn-x" onclick="closeOnboardModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-form">
+        <div>
+          <label>نوع الشريك *</label>
+          <select id="f-type">
+            <option value="shipping_company">شركة شحن</option>
+            <option value="freelance_courier">كابتن مستقل</option>
+            <option value="franchise_branch">فرع امتياز</option>
+            <option value="internal_fleet">أسطول داخلي</option>
+          </select>
+        </div>
+        <div>
+          <label>الاسم التجاري *</label>
+          <input type="text" id="f-name" placeholder="مثلاً: شركة فيكس للشحن">
+        </div>
+        <div>
+          <label>الاسم القانوني</label>
+          <input type="text" id="f-legal-name">
+        </div>
+        <div>
+          <label>السجل التجاري / الرقم الضريبي</label>
+          <input type="text" id="f-tax-id">
+        </div>
+        <div>
+          <label>اسم المسؤول</label>
+          <input type="text" id="f-contact-name">
+        </div>
+        <div>
+          <label>هاتف المسؤول *</label>
+          <input type="tel" id="f-contact-phone">
+        </div>
+        <div>
+          <label>البريد الإلكتروني</label>
+          <input type="email" id="f-email">
+        </div>
+        <div>
+          <label>الواتساب</label>
+          <input type="tel" id="f-whatsapp">
+        </div>
+        <div>
+          <label>المحافظة الرئيسية</label>
+          <select id="f-governorate">
+            <option value="">— اختر —</option>
+            <option value="cairo">القاهرة</option>
+            <option value="giza">الجيزة</option>
+            <option value="alex">الإسكندرية</option>
+            <option value="dakahlia">الدقهلية</option>
+            <option value="sharqia">الشرقية</option>
+            <option value="gharbia">الغربية</option>
+            <option value="monufia">المنوفية</option>
+            <option value="qalyubia">القليوبية</option>
+            <option value="beheira">البحيرة</option>
+            <option value="kafr_elsheikh">كفر الشيخ</option>
+            <option value="damietta">دمياط</option>
+            <option value="port_said">بور سعيد</option>
+            <option value="ismailia">الإسماعيلية</option>
+            <option value="suez">السويس</option>
+            <option value="fayoum">الفيوم</option>
+            <option value="beni_suef">بني سويف</option>
+            <option value="minya">المنيا</option>
+            <option value="assiut">أسيوط</option>
+            <option value="sohag">سوهاج</option>
+            <option value="qena">قنا</option>
+            <option value="luxor">الأقصر</option>
+            <option value="aswan">أسوان</option>
+            <option value="red_sea">البحر الأحمر</option>
+            <option value="new_valley">الوادي الجديد</option>
+            <option value="matrouh">مطروح</option>
+            <option value="north_sinai">شمال سيناء</option>
+            <option value="south_sinai">جنوب سيناء</option>
+          </select>
+        </div>
+        <div>
+          <label>المدينة الرئيسية</label>
+          <input type="text" id="f-city" placeholder="مدينة نصر">
+        </div>
+        <div>
+          <label>نموذج التسعير *</label>
+          <select id="f-pricing-mode">
+            <option value="flat">سعر ثابت لكل شحنة</option>
+            <option value="per_zone">حسب المنطقة (zone)</option>
+            <option value="per_weight">حسب الوزن</option>
+            <option value="per_km">حسب المسافة (كم)</option>
+          </select>
+        </div>
+        <div>
+          <label>السعر الأساسي (ج)</label>
+          <input type="number" id="f-flat-rate" value="50" min="0">
+        </div>
+        <div>
+          <label>أدنى سعر (ج)</label>
+          <input type="number" id="f-min-price" value="30" min="0">
+        </div>
+        <div>
+          <label>أقصى سعر (ج)</label>
+          <input type="number" id="f-max-price" value="500" min="0">
+        </div>
+        <div>
+          <label>عمولة المنصة % *</label>
+          <input type="number" id="f-commission" value="10" min="0" max="50" step="0.5">
+        </div>
+        <div>
+          <label>هدف SLA — أقصى ساعات للتسليم</label>
+          <input type="number" id="f-sla-hours" value="48" min="1">
+        </div>
+        <div>
+          <label>هدف SLA — نسبة التسليم في الموعد %</label>
+          <input type="number" id="f-sla-ontime" value="90" min="0" max="100">
+        </div>
+        <div>
+          <label>طريقة الصرف</label>
+          <select id="f-payout-method">
+            <option value="wallet">محفظة (تلقائي)</option>
+            <option value="bank">تحويل بنكي</option>
+            <option value="cash">نقدي</option>
+          </select>
+        </div>
+        <div class="full">
+          <label>ملاحظات</label>
+          <textarea id="f-notes" rows="2" placeholder="اتفاقيات خاصة، شروط، إلخ..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeOnboardModal()">إلغاء</button>
+      <button class="btn btn-g" id="btn-save-partner" onclick="savePartner()">💾 إضافة الشريك</button>
+    </div>
+  </div>
+</div>
+
+<!-- Partner Details Modal -->
+<div class="overlay" id="ov-details">
+  <div class="modal" style="max-width:820px">
+    <div class="modal-head"><h3 id="dt-title">تفاصيل الشريك</h3><button class="btn-x" onclick="closeDetailsModal()">✕</button></div>
+    <div class="modal-body" id="dt-body"></div>
+    <div class="modal-foot" id="dt-foot"></div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db, AppState, initAuth, logout, toast } from './shared.js?v=1';
+import {
+  collection, doc, onSnapshot, query, orderBy, getDoc, updateDoc, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dispatchShippingNetworkEvent, PARTNER_KYC_STATUS, SN_COLLECTIONS } from './shipping-network-engine.js?v=1';
+
+window.toggleNav = ()=> document.querySelector('.sidenav')?.classList.toggle('mob-open');
+window.doLogout = logout;
+
+const PARTNER_TYPE_LABEL = {
+  shipping_company:  { label:'شركة شحن',   ico:'🏢', col:'#3b9eff' },
+  freelance_courier: { label:'كابتن مستقل', ico:'🏍️', col:'#a78bfa' },
+  franchise_branch:  { label:'فرع امتياز',  ico:'🏪', col:'#00d97e' },
+  internal_fleet:    { label:'أسطول داخلي', ico:'🚐', col:'#ffaa00' },
+};
+const KYC_LABEL = { pending:'قيد المراجعة', approved:'معتمد', rejected:'مرفوض', suspended:'مُجمَّد' };
+const GOV_LABELS = {
+  cairo:'القاهرة', giza:'الجيزة', alex:'الإسكندرية', dakahlia:'الدقهلية',
+  sharqia:'الشرقية', gharbia:'الغربية', monufia:'المنوفية', qalyubia:'القليوبية',
+  beheira:'البحيرة', kafr_elsheikh:'كفر الشيخ', damietta:'دمياط', port_said:'بور سعيد',
+  ismailia:'الإسماعيلية', suez:'السويس', fayoum:'الفيوم', beni_suef:'بني سويف',
+  minya:'المنيا', assiut:'أسيوط', sohag:'سوهاج', qena:'قنا', luxor:'الأقصر',
+  aswan:'أسوان', red_sea:'البحر الأحمر', new_valley:'الوادي الجديد', matrouh:'مطروح',
+  north_sinai:'شمال سيناء', south_sinai:'جنوب سيناء',
+};
+
+let allPartners = [];
+
+initAuth(async (state) => {
+  console.log('[partners] auth ready, role:', state.currentRole);
+  if (!['admin','operation_manager','shipping_dispatcher'].includes(state.currentRole)) {
+    document.body.innerHTML = '<div style="padding:40px;text-align:center"><h2>⛔ غير مصرح</h2><p>هذه الصفحة للإدارة فقط</p><a href="index.html" class="btn btn-c">عودة للرئيسية</a></div>';
+    return;
+  }
+
+  // Populate governorate filter
+  const govSel = document.getElementById('filter-gov');
+  Object.entries(GOV_LABELS).forEach(([k,v]) => {
+    const o = document.createElement('option'); o.value=k; o.textContent=v; govSel.appendChild(o);
+  });
+
+  // Live partners
+  onSnapshot(query(collection(db, SN_COLLECTIONS.PARTNERS), orderBy('createdAt','desc')), snap => {
+    allPartners = snap.docs.map(d => ({...d.data(), _id: d.id}));
+    renderKpis();
+    renderPartners();
+  });
+}, () => location.href='login.html');
+
+function renderKpis() {
+  const total = allPartners.length;
+  const active = allPartners.filter(p => p.status==='active').length;
+  const pending = allPartners.filter(p => p.kycStatus==='pending').length;
+  const suspended = allPartners.filter(p => p.status==='suspended').length;
+  const rated = allPartners.filter(p => (p.ratingCount||0) > 0);
+  const avgRating = rated.length ? (rated.reduce((s,p)=>s+(p.ratingAvg||0),0)/rated.length).toFixed(1) : '—';
+  document.getElementById('k-total').textContent = total;
+  document.getElementById('k-active').textContent = active;
+  document.getElementById('k-pending').textContent = pending;
+  document.getElementById('k-suspended').textContent = suspended;
+  document.getElementById('k-avg-rating').textContent = avgRating;
+}
+
+window.renderPartners = function() {
+  const q = (document.getElementById('search').value || '').trim().toLowerCase();
+  const fType = document.getElementById('filter-type').value;
+  const fKyc = document.getElementById('filter-kyc').value;
+  const fGov = document.getElementById('filter-gov').value;
+
+  let filtered = allPartners;
+  if (fType) filtered = filtered.filter(p => p.partnerType===fType);
+  if (fKyc)  filtered = filtered.filter(p => p.kycStatus===fKyc);
+  if (fGov)  filtered = filtered.filter(p => p.governorateId===fGov);
+  if (q) filtered = filtered.filter(p =>
+    (p.name||'').toLowerCase().includes(q) ||
+    (p.phones?.primary||'').includes(q) ||
+    (p.contactPerson?.phone||'').includes(q)
+  );
+
+  const list = document.getElementById('partners-list');
+  if (!filtered.length) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--dim2)">لا يوجد شركاء مطابقين</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(p => {
+    const meta = PARTNER_TYPE_LABEL[p.partnerType] || PARTNER_TYPE_LABEL.shipping_company;
+    const kycCls = `kyc-${p.kycStatus || 'pending'}`;
+    const rating = p.ratingAvg ? `<span class="rating-stars">${'★'.repeat(Math.round(p.ratingAvg))}${'☆'.repeat(5-Math.round(p.ratingAvg))}</span> <span style="color:var(--dim2);font-size:11px">(${p.ratingCount||0})</span>` : '<span style="color:var(--dim2);font-size:11px">لا تقييمات</span>';
+    const pending = p.pendingPayout || 0;
+    return `<div class="partner-card" style="--c:${meta.col}" onclick="showDetails('${p._id}')">
+      <div class="partner-grid">
+        <div class="partner-ico" style="color:${meta.col}">${meta.ico}</div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="font-weight:800;font-size:15px">${p.name}</div>
+            <span class="kyc-badge ${kycCls}">${KYC_LABEL[p.kycStatus]||'—'}</span>
+            <span style="font-size:11px;color:var(--dim2)">${meta.label}</span>
+          </div>
+          <div style="font-size:12px;color:var(--dim2);margin-top:4px">
+            📍 ${GOV_LABELS[p.governorateId]||'—'}
+            • 📞 ${p.contactPerson?.phone || p.phones?.primary || '—'}
+            • 💰 عمولة ${p.commissionPct||0}%
+            • ${rating}
+          </div>
+        </div>
+        <div style="text-align:left">
+          <div style="font-size:11px;color:var(--dim2)">مستحق</div>
+          <div style="font-weight:900;font-size:16px;color:${pending>0?'var(--r)':'var(--g)'}">${pending.toFixed(2)} ج</div>
+          <div style="font-size:10px;color:var(--dim2)">${p.totalShipments||0} شحنة</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+};
+
+window.openOnboardModal = () => document.getElementById('ov-onboard').classList.add('open');
+window.closeOnboardModal = () => document.getElementById('ov-onboard').classList.remove('open');
+
+window.savePartner = async function() {
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { toast('اسم الشريك مطلوب', 'err'); return; }
+  const phone = document.getElementById('f-contact-phone').value.trim();
+  if (!phone) { toast('هاتف المسؤول مطلوب', 'err'); return; }
+
+  const btn = document.getElementById('btn-save-partner');
+  btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...';
+  try {
+    await dispatchShippingNetworkEvent(db, 'PARTNER_ONBOARDED', {
+      partnerType:  document.getElementById('f-type').value,
+      name,
+      legalName:    document.getElementById('f-legal-name').value.trim(),
+      taxId:        document.getElementById('f-tax-id').value.trim(),
+      contactPerson:{ name:document.getElementById('f-contact-name').value.trim(), phone, email:document.getElementById('f-email').value.trim(), role:'' },
+      phones:       { primary:phone, secondary:'', whatsapp:document.getElementById('f-whatsapp').value.trim() },
+      email:        document.getElementById('f-email').value.trim(),
+      governorateId:document.getElementById('f-governorate').value,
+      headquartersCity:document.getElementById('f-city').value.trim(),
+      pricingMode:  document.getElementById('f-pricing-mode').value,
+      basePricing:  {
+        flatRate:  parseFloat(document.getElementById('f-flat-rate').value)||0,
+        minPrice:  parseFloat(document.getElementById('f-min-price').value)||0,
+        maxPrice:  parseFloat(document.getElementById('f-max-price').value)||0,
+        expressMultiplier: 1.5,
+      },
+      commissionPct:parseFloat(document.getElementById('f-commission').value)||0,
+      slaTargets:   {
+        maxDeliveryHours: parseFloat(document.getElementById('f-sla-hours').value)||48,
+        minOnTimePct:     parseFloat(document.getElementById('f-sla-ontime').value)||90,
+        maxDamageRate:    2,
+      },
+      payoutMethod: document.getElementById('f-payout-method').value,
+      notes:        document.getElementById('f-notes').value.trim(),
+      userId:       auth.currentUser.uid,
+      userName:     AppState.userName,
+    });
+    toast('✅ تم إضافة الشريك بنجاح', 'ok');
+    closeOnboardModal();
+    // reset form
+    ['f-name','f-legal-name','f-tax-id','f-contact-name','f-contact-phone','f-email','f-whatsapp','f-city','f-notes']
+      .forEach(id => document.getElementById(id).value = '');
+  } catch (e) {
+    console.error(e);
+    toast('❌ ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 إضافة الشريك';
+  }
+};
+
+window.showDetails = async function(partnerId) {
+  const p = allPartners.find(x => x._id === partnerId);
+  if (!p) return;
+  const meta = PARTNER_TYPE_LABEL[p.partnerType] || {};
+  document.getElementById('dt-title').textContent = `${meta.ico||'🤝'} ${p.name}`;
+
+  const onTime = p.onTimePct || 0;
+  const success = p.totalShipments ? Math.round(((p.successfulDeliveries||0) / p.totalShipments) * 100) : 0;
+
+  document.getElementById('dt-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div style="background:var(--bg);padding:12px;border-radius:8px">
+        <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:4px">حالة KYC</div>
+        <div style="font-weight:900;font-size:14px">${KYC_LABEL[p.kycStatus]||'—'}</div>
+      </div>
+      <div style="background:var(--bg);padding:12px;border-radius:8px">
+        <div style="font-size:11px;color:var(--dim2);font-weight:700;margin-bottom:4px">الحالة العامة</div>
+        <div style="font-weight:900;font-size:14px">${p.status==='active'?'✅ نشط':p.status==='suspended'?'⏸️ مُجمَّد':'⏳ في الانتظار'}</div>
+      </div>
+    </div>
+
+    <h4 style="margin:14px 0 8px;font-size:13px;color:var(--dim2)">📊 الأداء</h4>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:var(--bg);padding:10px;border-radius:6px;text-align:center">
+        <div style="font-weight:900;font-size:18px;color:var(--c)">${p.totalShipments||0}</div>
+        <div style="font-size:10px;color:var(--dim2)">إجمالي شحنات</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;text-align:center">
+        <div style="font-weight:900;font-size:18px;color:var(--g)">${success}%</div>
+        <div style="font-size:10px;color:var(--dim2)">نجاح التسليم</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;text-align:center">
+        <div style="font-weight:900;font-size:18px;color:${onTime>=80?'var(--g)':onTime>=60?'var(--y)':'var(--r)'}">${onTime}%</div>
+        <div style="font-size:10px;color:var(--dim2)">في الموعد</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;text-align:center">
+        <div style="font-weight:900;font-size:18px;color:#ffaa00">${(p.ratingAvg||0).toFixed(1)}★</div>
+        <div style="font-size:10px;color:var(--dim2)">تقييم</div>
+      </div>
+    </div>
+
+    <h4 style="margin:14px 0 8px;font-size:13px;color:var(--dim2)">💰 المالية</h4>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+      <div style="background:var(--bg);padding:12px;border-radius:6px">
+        <div style="font-size:11px;color:var(--dim2)">مستحق له الآن</div>
+        <div style="font-weight:900;font-size:20px;color:var(--r)">${(p.pendingPayout||0).toFixed(2)} ج</div>
+      </div>
+      <div style="background:var(--bg);padding:12px;border-radius:6px">
+        <div style="font-size:11px;color:var(--dim2)">إجمالي مصروف له</div>
+        <div style="font-weight:900;font-size:20px;color:var(--g)">${(p.totalPaidOut||0).toFixed(2)} ج</div>
+      </div>
+    </div>
+
+    <h4 style="margin:14px 0 8px;font-size:13px;color:var(--dim2)">📞 معلومات الاتصال</h4>
+    <div style="background:var(--bg);padding:12px;border-radius:6px;margin-bottom:14px;font-size:13px">
+      <div>👤 المسؤول: <b>${p.contactPerson?.name||'—'}</b></div>
+      <div>📞 الهاتف: <b>${p.contactPerson?.phone||p.phones?.primary||'—'}</b></div>
+      ${p.email?`<div>📧 ${p.email}</div>`:''}
+      ${p.phones?.whatsapp?`<div>💬 واتساب: ${p.phones.whatsapp}</div>`:''}
+    </div>
+
+    <h4 style="margin:14px 0 8px;font-size:13px;color:var(--dim2)">💸 التسعير</h4>
+    <div style="background:var(--bg);padding:12px;border-radius:6px;margin-bottom:14px;font-size:13px">
+      <div>الوضع: <b>${p.pricingMode||'flat'}</b></div>
+      <div>السعر الأساسي: <b>${p.basePricing?.flatRate||0} ج</b></div>
+      <div>عمولة المنصة: <b>${p.commissionPct||0}%</b></div>
+      <div>SLA الموعود: <b>أقصى ${p.slaTargets?.maxDeliveryHours||48} ساعة</b></div>
+    </div>
+  `;
+
+  // Action buttons based on current status
+  const foot = document.getElementById('dt-foot');
+  const actions = [];
+  if (p.kycStatus === 'pending') {
+    actions.push(`<button class="btn btn-g" onclick="kycAction('${partnerId}','approve')">✅ اعتماد KYC</button>`);
+    actions.push(`<button class="btn btn-r" onclick="kycAction('${partnerId}','reject')">⛔ رفض</button>`);
+  } else if (p.kycStatus === 'approved' && p.status !== 'suspended') {
+    actions.push(`<button class="btn btn-r" onclick="kycAction('${partnerId}','suspend')">⏸️ تجميد</button>`);
+  } else if (p.status === 'suspended') {
+    actions.push(`<button class="btn btn-g" onclick="kycAction('${partnerId}','reactivate')">▶️ إعادة تفعيل</button>`);
+  }
+  actions.push(`<button class="btn btn-ghost" onclick="closeDetailsModal()">إغلاق</button>`);
+  foot.innerHTML = actions.join('');
+
+  document.getElementById('ov-details').classList.add('open');
+};
+
+window.kycAction = async function(partnerId, action) {
+  const map = {
+    approve:    'PARTNER_KYC_APPROVED',
+    reject:     'PARTNER_KYC_REJECTED',
+    suspend:    'PARTNER_SUSPENDED',
+    reactivate: 'PARTNER_KYC_APPROVED',
+  };
+  const evt = map[action];
+  if (!evt) return;
+  let reason = '';
+  if (action === 'reject' || action === 'suspend') {
+    reason = prompt('السبب:');
+    if (reason === null) return;
+  }
+  try {
+    await dispatchShippingNetworkEvent(db, evt, {
+      partnerId,
+      reason,
+      userId:   auth.currentUser.uid,
+      userName: AppState.userName,
+    });
+    toast('✅ تم التحديث', 'ok');
+    closeDetailsModal();
+  } catch (e) {
+    toast('❌ ' + e.message, 'err');
+  }
+};
+
+window.closeDetailsModal = () => document.getElementById('ov-details').classList.remove('open');
+
+document.querySelectorAll('.overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+</script>
+</body>
+</html>

@@ -56,26 +56,32 @@ export const storage = getStorage(app);
 // ROLES
 // ═══════════════════════════════════════
 export const ROLES = {
-  admin:            { label:'Admin',           ico:'👑', col:'#a78bfa' },
-  operation_manager:{ label:'Ops Manager',     ico:'📋', col:'#3b9eff' },
-  customer_service: { label:'Cust. Service',   ico:'💬', col:'#22d3ee' },
-  graphic_designer: { label:'Designer',        ico:'✏️', col:'#a78bfa' },
-  design_operator:  { label:'Design Supervisor', ico:'⚙️', col:'#ffaa00' },
-  production_agent: { label:'Production',      ico:'🏭', col:'#ff3d6e' },
-  shipping_officer: { label:'Shipping',        ico:'🚚', col:'#22d3ee' },
-  wallet_manager:   { label:'Wallet Mgr',      ico:'💰', col:'#00d97e' },
+  admin:             { label:'Admin',             ico:'👑', col:'#a78bfa' },
+  operation_manager: { label:'Ops Manager',       ico:'📋', col:'#3b9eff' },
+  customer_service:  { label:'Cust. Service',     ico:'💬', col:'#22d3ee' },
+  graphic_designer:  { label:'Designer',          ico:'✏️', col:'#a78bfa' },
+  design_operator:   { label:'Design Supervisor', ico:'⚙️', col:'#ffaa00' },
+  production_agent:  { label:'Production',        ico:'🏭', col:'#ff3d6e' },
+  shipping_officer:  { label:'Shipping',          ico:'🚚', col:'#22d3ee' },
+  shipping_dispatcher:{ label:'Dispatcher',       ico:'🎯', col:'#ff3d6e' },
+  shipping_partner:  { label:'Partner',           ico:'🤝', col:'#00d97e' },
+  driver:            { label:'Driver',            ico:'🏍️', col:'#ffaa00' },
+  wallet_manager:    { label:'Wallet Mgr',        ico:'💰', col:'#00d97e' },
 };
 
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns','marketplace','admin-alerts'],
-  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns','marketplace'],
+  admin:            ['index','clients','design','production','print','shipping','shipping-partners','shipping-dispatch','shipping-sla','shipping-network-guide','accounts','approvals','products','suppliers','reports','employees','workforce-live','suggestions-admin','settings','returns','marketplace','admin-alerts'],
+  operation_manager:['index','clients','design','production','print','shipping','shipping-partners','shipping-dispatch','shipping-sla','approvals','suppliers','reports','employees','workforce-live','suggestions-admin','returns','marketplace'],
   customer_service: ['index','clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
   design_operator:  ['index','design','approvals','suppliers'],
   production_agent: ['index','production','print','approvals'],
-  shipping_officer: ['index','print','shipping','approvals','returns'],
+  shipping_officer: ['index','print','shipping','shipping-dispatch','approvals','returns'],
+  shipping_dispatcher:['index','shipping','shipping-partners','shipping-dispatch','shipping-sla','approvals'],
+  shipping_partner: ['partner-shipping-portal','driver-app'],
+  driver:           ['driver-app'],
   wallet_manager:   ['index','accounts','approvals','returns'],
 };
 
@@ -163,6 +169,9 @@ export const DEFAULT_PERMISSIONS = {
   design_operator:  { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:false, reports_sales:false, reports_perf:true,  kpi_revenue:false, ship_cost:false, ship_company:false },
   production_agent: { price_sale:false, price_paid:false, price_remaining:false, price_cost:true,  price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:true,  reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
   shipping_officer: { price_sale:false, price_paid:false, price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  design_data:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:true,  ship_company:true  },
+  shipping_dispatcher:{ price_sale:false, price_paid:false, price_remaining:false, price_cost:true, price_margin:true, client_phone:true, design_data:false, supplier_name:true, supplier_cost:true, reports_sales:false, reports_perf:true, kpi_revenue:false, ship_cost:true,  ship_company:true },
+  shipping_partner: { price_sale:false, price_paid:false, price_remaining:false, price_cost:true,  price_margin:false, client_phone:true,  design_data:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:true,  ship_company:false },
+  driver:           { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:true,  design_data:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
   wallet_manager:   { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:false, design_data:false, supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:false, kpi_revenue:true,  ship_cost:true,  ship_company:true  },
 };
 

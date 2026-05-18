@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ffaa00">
+<title>كابتن — تطبيق السائق</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e1219;--bg2:#171c26;--ink:#e6e9ef;--dim:#9aa4b2;--dim2:#6b7280;--line:#2a3142;--c:#22d3ee;--g:#00d97e;--r:#ff3d6e;--y:#ffaa00;--b:#3b9eff;--rad:14px;--rad2:10px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans Arabic',sans-serif;font-size:14px}
+.app{max-width:480px;margin:0 auto;min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.header{position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--line);padding:12px 14px;display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:900;font-size:16px;display:flex;align-items:center;gap:6px}
+.online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--r);margin-right:4px}
+.online-dot.on{background:var(--g);box-shadow:0 0 6px var(--g)}
+.content{padding:14px}
+.stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:10px;text-align:center}
+.stat-val{font-size:22px;font-weight:900}
+.stat-lbl{font-size:9px;color:var(--dim2);font-weight:700}
+.ship-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:14px;margin-bottom:10px}
+.ship-card.active{border-color:var(--y);box-shadow:0 0 0 1px var(--y)}
+.state-pill{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800}
+.btn{border:none;border-radius:var(--rad2);padding:12px 16px;font-weight:800;font-family:inherit;cursor:pointer;transition:.2s;font-size:13px;color:#fff}
+.btn-g{background:var(--g)}
+.btn-c{background:var(--c);color:#000}
+.btn-r{background:var(--r)}
+.btn-y{background:var(--y);color:#000}
+.btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn-block{width:100%;display:block;margin-top:8px}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:flex-end}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg2);width:100%;max-width:480px;margin:auto;border-radius:var(--rad) var(--rad) 0 0;padding:20px;max-height:90vh;overflow:auto}
+input,textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:10px;border-radius:8px;font-family:inherit;font-size:14px;margin-bottom:8px}
+.online-toggle{padding:6px 14px;border-radius:18px;font-weight:800;font-size:12px;cursor:pointer;border:none}
+.online-toggle.on{background:var(--g);color:#fff}
+.online-toggle.off{background:var(--r);color:#fff}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:10px 18px;font-weight:700;z-index:200;animation:slide-up .3s}
+.toast.ok{border-color:var(--g);color:var(--g)}
+.toast.err{border-color:var(--r);color:var(--r)}
+@keyframes slide-up{from{transform:translate(-50%,30px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
+.empty{text-align:center;padding:40px 20px;color:var(--dim2)}
+.empty-ico{font-size:48px;margin-bottom:10px}
+.photo-input{position:relative;background:var(--bg);border:2px dashed var(--line);border-radius:8px;padding:30px;text-align:center;cursor:pointer}
+.photo-input input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.tab-nav{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:4px;margin-bottom:14px}
+.tab-nav button{flex:1;background:transparent;color:var(--dim);border:none;padding:8px;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px}
+.tab-nav button.active{background:var(--c);color:#000}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="brand">🏍️ <span id="driver-name">جاري التحميل...</span></div>
+    <button class="online-toggle off" id="online-btn" onclick="toggleOnline()"><span class="online-dot" id="online-dot"></span> غير متاح</button>
+  </div>
+
+  <div class="content">
+    <!-- Login prompt -->
+    <div id="login-area" style="display:none">
+      <div class="empty">
+        <div class="empty-ico">🔐</div>
+        <p>سجّل دخول بحساب السائق</p>
+        <a href="login.html" class="btn btn-c btn-block">تسجيل دخول</a>
+      </div>
+    </div>
+
+    <!-- Driver dashboard -->
+    <div id="driver-area" style="display:none">
+      <!-- Stats -->
+      <div class="stat-row">
+        <div class="stat"><div class="stat-val" style="color:var(--c)" id="s-active">—</div><div class="stat-lbl">شحنات نشطة</div></div>
+        <div class="stat"><div class="stat-val" style="color:var(--g)" id="s-today">—</div><div class="stat-lbl">سُلِّمت اليوم</div></div>
+        <div class="stat"><div class="stat-val" style="color:var(--y)" id="s-earn">—</div><div class="stat-lbl">كسب اليوم (ج)</div></div>
+      </div>
+
+      <div class="tab-nav">
+        <button class="active" id="tab-pickup" onclick="switchTab('pickup')">📦 للاستلام</button>
+        <button id="tab-transit" onclick="switchTab('transit')">🚚 في الطريق</button>
+        <button id="tab-done" onclick="switchTab('done')">✅ منتهية</button>
+      </div>
+
+      <div id="shipments"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Deliver Modal -->
+<div class="modal-bg" id="modal-deliver">
+  <div class="modal">
+    <h3 style="margin:0 0 14px">🎉 إثبات التسليم</h3>
+    <div id="dlv-info" style="background:var(--bg);padding:10px;border-radius:8px;margin-bottom:12px;font-size:13px"></div>
+    <label style="font-size:12px;color:var(--dim);font-weight:700">اسم المستلم</label>
+    <input id="dlv-name" placeholder="الاسم بالكامل">
+    <label style="font-size:12px;color:var(--dim);font-weight:700">ملاحظات (اختياري)</label>
+    <textarea id="dlv-notes" rows="2" placeholder="مثلاً: تم تسليمه للحارس"></textarea>
+    <label style="font-size:12px;color:var(--dim);font-weight:700">صورة الإثبات</label>
+    <div class="photo-input">
+      📸 اضغط لالتقاط صورة
+      <input type="file" id="dlv-photo" accept="image/*" capture="environment">
+    </div>
+    <div style="font-size:11px;color:var(--y);margin:8px 0">💡 الـ GPS سيُسجَّل تلقائياً</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal('modal-deliver')">إلغاء</button>
+      <button class="btn btn-g" id="btn-dlv-confirm" onclick="confirmDelivery()">✓ تأكيد التسليم</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fail Modal -->
+<div class="modal-bg" id="modal-fail">
+  <div class="modal">
+    <h3 style="margin:0 0 14px">⚠️ فشل التسليم</h3>
+    <label style="font-size:12px;color:var(--dim);font-weight:700">السبب</label>
+    <select id="fail-reason" style="width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);padding:10px;border-radius:8px;margin-bottom:10px">
+      <option value="customer_unavailable">العميل غير متواجد</option>
+      <option value="wrong_address">العنوان خطأ</option>
+      <option value="customer_refused">العميل رفض</option>
+      <option value="payment_issue">مشكلة في الدفع</option>
+      <option value="other">أخرى</option>
+    </select>
+    <textarea id="fail-notes" rows="2" placeholder="تفاصيل..."></textarea>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal('modal-fail')">إلغاء</button>
+      <button class="btn btn-r" onclick="confirmFail()">تأكيد الفشل</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db, AppState, initAuth, logout } from './shared.js?v=1';
+import {
+  collection, doc, onSnapshot, query, where, getDocs, getDoc, updateDoc, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dispatchShippingNetworkEvent, SN_COLLECTIONS, SHIPMENT_STATE } from './shipping-network-engine.js?v=1';
+
+let myDriverDoc = null;
+let myShipments = [];
+let activeTab = 'pickup';
+let activeShipmentId = null;
+let isOnline = false;
+let gpsWatchId = null;
+
+window.toast = (msg, type='') => {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+};
+
+initAuth(async (state) => {
+  // For now, treat any authenticated user who has a driver doc as a driver
+  // OR allow any authenticated user (admin/etc.) to preview the app
+  const driverSnap = await getDocs(query(
+    collection(db, SN_COLLECTIONS.DRIVERS),
+    where('authUid','==', auth.currentUser.uid)
+  ));
+  if (!driverSnap.empty) {
+    myDriverDoc = { ...driverSnap.docs[0].data(), _id: driverSnap.docs[0].id };
+    document.getElementById('driver-name').textContent = myDriverDoc.name;
+    initDriverUI();
+  } else {
+    // Demo mode for admin: show interface populated with first shipment
+    if (['admin','operation_manager','shipping_dispatcher'].includes(state.currentRole)) {
+      myDriverDoc = { _id: 'demo', name: state.userName + ' (Admin view)', partnerId: null };
+      document.getElementById('driver-name').textContent = myDriverDoc.name;
+      initDriverUI(/*demoMode*/true);
+    } else {
+      document.getElementById('login-area').style.display = 'block';
+    }
+  }
+}, () => location.href='login.html');
+
+function initDriverUI(demoMode = false) {
+  document.getElementById('driver-area').style.display = 'block';
+
+  // Listen to my shipments
+  const baseQ = demoMode
+    ? query(collection(db, SN_COLLECTIONS.SHIPMENTS))
+    : query(collection(db, SN_COLLECTIONS.SHIPMENTS), where('driverId','==', myDriverDoc._id));
+
+  onSnapshot(baseQ, snap => {
+    myShipments = snap.docs.map(d => ({...d.data(), _id:d.id}));
+    // In demo mode, only show assigned/active ones
+    if (demoMode) myShipments = myShipments.filter(s => ['assigned','accepted','picked_up','in_transit','out_for_delivery','delivered','delivery_failed'].includes(s.state)).slice(0, 10);
+    renderStats(); renderShipments();
+  });
+}
+
+function renderStats() {
+  const active = myShipments.filter(s => ['assigned','accepted','picked_up','in_transit','out_for_delivery'].includes(s.state)).length;
+  const today = myShipments.filter(s => {
+    if (s.state !== 'delivered' || !s.deliveredAt) return false;
+    const d = s.deliveredAt.toDate?.() || new Date(s.deliveredAt);
+    return d.toDateString() === new Date().toDateString();
+  });
+  const earn = today.reduce((s,sh) => s + (sh.pricing?.partnerCost||0), 0);
+  document.getElementById('s-active').textContent = active;
+  document.getElementById('s-today').textContent = today.length;
+  document.getElementById('s-earn').textContent = earn.toFixed(0);
+}
+
+window.switchTab = (tab) => {
+  activeTab = tab;
+  ['pickup','transit','done'].forEach(t => {
+    document.getElementById('tab-'+t).classList.toggle('active', t === tab);
+  });
+  renderShipments();
+};
+
+function renderShipments() {
+  let filtered = [];
+  if (activeTab === 'pickup')       filtered = myShipments.filter(s => ['assigned','accepted'].includes(s.state));
+  else if (activeTab === 'transit') filtered = myShipments.filter(s => ['picked_up','in_transit','out_for_delivery','delivery_failed'].includes(s.state));
+  else                               filtered = myShipments.filter(s => ['delivered','settled'].includes(s.state));
+
+  const cont = document.getElementById('shipments');
+  if (!filtered.length) {
+    cont.innerHTML = `<div class="empty">
+      <div class="empty-ico">${activeTab==='pickup'?'📦':activeTab==='transit'?'🚚':'✅'}</div>
+      <p>لا شحنات في هذا التبويب</p>
+    </div>`;
+    return;
+  }
+
+  cont.innerHTML = filtered.map(s => {
+    const isCod = s.paymentMethod === 'cod';
+    let actions = '';
+    if (s.state === 'assigned') {
+      actions = `<button class="btn btn-c btn-block" onclick="actAccept('${s._id}')">✓ قبول المهمة</button>`;
+    } else if (s.state === 'accepted') {
+      actions = `<button class="btn btn-y btn-block" onclick="actPickup('${s._id}')">📦 تم الاستلام من المركز</button>`;
+    } else if (s.state === 'picked_up') {
+      actions = `<button class="btn btn-c btn-block" onclick="actTransit('${s._id}')">🚚 في الطريق</button>`;
+    } else if (s.state === 'in_transit') {
+      actions = `<button class="btn btn-c btn-block" onclick="actOutForDelivery('${s._id}')">📍 وصلت للمنطقة</button>`;
+    } else if (['out_for_delivery','delivery_failed'].includes(s.state)) {
+      actions = `<div class="btn-row">
+        <button class="btn btn-r" onclick="openFail('${s._id}')">⚠️ فشل</button>
+        <button class="btn btn-g" onclick="openDeliver('${s._id}')">✓ تم التسليم</button>
+      </div>`;
+    }
+
+    return `<div class="ship-card ${['out_for_delivery','in_transit'].includes(s.state)?'active':''}">
+      <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:8px">
+        <div style="flex:1">
+          <div style="font-weight:800;font-size:14px;margin-bottom:2px">${s.delivery?.contactName || 'عميل'}</div>
+          <div style="font-size:12px;color:var(--dim)">📍 ${s.delivery?.address || s.delivery?.zoneId || '—'}</div>
+        </div>
+        <span class="state-pill" style="background:${getStateColor(s.state)}30;color:${getStateColor(s.state)}">${getStateLabel(s.state)}</span>
+      </div>
+      ${s.delivery?.contactPhone ? `<div style="margin-bottom:8px"><a href="tel:${s.delivery.contactPhone}" style="color:var(--c);text-decoration:none;font-weight:700">📞 ${s.delivery.contactPhone}</a></div>` : ''}
+      ${isCod ? `<div style="background:rgba(255,170,0,.1);color:var(--y);padding:8px;border-radius:6px;text-align:center;font-weight:800;margin-bottom:8px">💰 حصّل: ${s.codAmount||0} ج (COD)</div>` : ''}
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:8px">
+        <span>كسبك من الشحنة: <b style="color:var(--g)">${(s.pricing?.partnerCost||0).toFixed(0)}ج</b></span>
+      </div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
+function getStateLabel(state) {
+  const m = {
+    assigned:'مُسندة',accepted:'مقبولة',picked_up:'استلمت',in_transit:'في الطريق',
+    out_for_delivery:'للتسليم',delivered:'تم التسليم',delivery_failed:'فشل',settled:'تم'
+  };
+  return m[state] || state;
+}
+function getStateColor(state) {
+  const m = {
+    assigned:'#3b9eff',accepted:'#00d97e',picked_up:'#22d3ee',in_transit:'#ffaa00',
+    out_for_delivery:'#ff3d6e',delivered:'#00d97e',delivery_failed:'#ffaa00',settled:'#00d97e'
+  };
+  return m[state] || '#4e5672';
+}
+
+window.toggleOnline = async () => {
+  isOnline = !isOnline;
+  const btn = document.getElementById('online-btn');
+  const dot = document.getElementById('online-dot');
+  if (isOnline) {
+    btn.classList.remove('off'); btn.classList.add('on');
+    dot.classList.add('on');
+    btn.innerHTML = '<span class="online-dot on"></span> متاح';
+    startGps();
+  } else {
+    btn.classList.remove('on'); btn.classList.add('off');
+    dot.classList.remove('on');
+    btn.innerHTML = '<span class="online-dot"></span> غير متاح';
+    stopGps();
+  }
+  if (myDriverDoc?._id && myDriverDoc._id !== 'demo') {
+    await updateDoc(doc(db, SN_COLLECTIONS.DRIVERS, myDriverDoc._id), {
+      isOnline,
+      lastSeenAt: serverTimestamp(),
+    });
+  }
+};
+
+function startGps() {
+  if (!navigator.geolocation) { toast('GPS غير مدعوم', 'err'); return; }
+  gpsWatchId = navigator.geolocation.watchPosition(
+    async pos => {
+      const gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      if (myDriverDoc?._id && myDriverDoc._id !== 'demo') {
+        try {
+          await dispatchShippingNetworkEvent(db, 'DRIVER_GPS_PING', {
+            driverId: myDriverDoc._id,
+            driverName: myDriverDoc.name,
+            partnerId: myDriverDoc.partnerId,
+            gps,
+            tenantId: myDriverDoc.tenantId,
+          });
+        } catch (e) { console.warn(e); }
+      }
+    },
+    err => console.warn('GPS error:', err),
+    { enableHighAccuracy: true, maximumAge: 15000 }
+  );
+}
+
+function stopGps() {
+  if (gpsWatchId) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+}
+
+async function getGps() {
+  return new Promise(res => {
+    if (!navigator.geolocation) return res(null);
+    navigator.geolocation.getCurrentPosition(
+      pos => res({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      () => res(null),
+      { timeout: 5000 }
+    );
+  });
+}
+
+const actEvt = async (shipmentId, evt) => {
+  try {
+    const gps = await getGps();
+    await dispatchShippingNetworkEvent(db, evt, {
+      shipmentId, gps,
+      userId: auth.currentUser.uid, userName: AppState.userName,
+    });
+    toast('✅ تم', 'ok');
+  } catch (e) { toast('❌ '+e.message, 'err'); }
+};
+window.actAccept = id => actEvt(id, 'SHIPMENT_ACCEPTED');
+window.actPickup = id => actEvt(id, 'SHIPMENT_PICKED_UP');
+window.actTransit = id => actEvt(id, 'SHIPMENT_IN_TRANSIT');
+window.actOutForDelivery = id => actEvt(id, 'SHIPMENT_OUT_FOR_DELIVERY');
+
+window.openDeliver = (id) => {
+  activeShipmentId = id;
+  const s = myShipments.find(x => x._id === id);
+  document.getElementById('dlv-info').innerHTML = `
+    <div><b>${s.delivery?.contactName||'—'}</b></div>
+    <div>📍 ${s.delivery?.address||'—'}</div>
+    ${s.paymentMethod==='cod' ? `<div style="color:var(--y);font-weight:800;margin-top:4px">💰 تأكد من تحصيل: ${s.codAmount}ج</div>` : ''}
+  `;
+  document.getElementById('modal-deliver').classList.add('open');
+};
+window.confirmDelivery = async () => {
+  const name = document.getElementById('dlv-name').value.trim();
+  if (!name) { toast('اسم المستلم مطلوب','err'); return; }
+  const notes = document.getElementById('dlv-notes').value.trim();
+  const btn = document.getElementById('btn-dlv-confirm');
+  btn.disabled = true; btn.textContent = '⏳...';
+  try {
+    const gps = await getGps();
+    await dispatchShippingNetworkEvent(db, 'SHIPMENT_DELIVERED', {
+      shipmentId: activeShipmentId,
+      recipientName: name,
+      deliveryNotes: notes,
+      gps,
+      photos: [],  // photo upload would go to Firebase Storage first
+      userId: auth.currentUser.uid, userName: AppState.userName,
+    });
+    toast('🎉 تم التسليم', 'ok');
+    closeModal('modal-deliver');
+    document.getElementById('dlv-name').value=''; document.getElementById('dlv-notes').value='';
+  } catch (e) { toast('❌ '+e.message, 'err'); }
+  finally { btn.disabled = false; btn.textContent = '✓ تأكيد التسليم'; }
+};
+
+window.openFail = (id) => {
+  activeShipmentId = id;
+  document.getElementById('modal-fail').classList.add('open');
+};
+window.confirmFail = async () => {
+  const reason = document.getElementById('fail-reason').value;
+  const notes  = document.getElementById('fail-notes').value;
+  try {
+    await dispatchShippingNetworkEvent(db, 'SHIPMENT_DELIVERY_FAILED', {
+      shipmentId: activeShipmentId,
+      notes: `${reason}: ${notes}`,
+      userId: auth.currentUser.uid, userName: AppState.userName,
+    });
+    toast('تم تسجيل الفشل', 'ok');
+    closeModal('modal-fail');
+  } catch (e) { toast('❌ '+e.message, 'err'); }
+};
+
+window.closeModal = (id) => document.getElementById(id).classList.remove('open');
+document.querySelectorAll('.modal-bg').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+</script>
+</body>
+</html>
