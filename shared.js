@@ -3,6 +3,11 @@
  * Central Firebase, Auth, State, Workflow, Permissions
  */
 
+// ── Theme Engine (Light/Dark/Auto) — يُحمَّل أولاً ليطبق الـ theme قبل أي rendering ──
+// theme.js يطبّق الاختيار المحفوظ في localStorage على <html data-theme="...">
+// ويحقن زر التبديل تلقائيًا في .topbar-right لكل الصفحات بدون تعديل HTML.
+import './theme.js';
+
 import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signOut
