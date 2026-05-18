@@ -149,6 +149,7 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn-ghost" onclick="fixLegacyStatus()" title="إصلاح العملاء المستوردين سابقاً بحيث يظهروا في تاب 'قديم'">🔧 إصلاح القدامى</button>
+      <button class="btn-ghost" onclick="purgeNoPhoneClients()" title="حذف العملاء المستوردين بدون أرقام تليفون + أوردراتهم">🚫 حذف بدون أرقام</button>
       <button class="btn-ghost" onclick="showHistory()">📂 تاريخ الاستيراد</button>
     </div>
   </div>
@@ -431,13 +432,15 @@ function renderStats(){
   const newOnes = total - matched;
   const ordTotal = parsedData.orders.length;
   const orphan = parsedData.orders.filter(o => !parsedData.customers.find(c => c.legacyId === o.customerLegacyId)).length;
-  const withPhone = parsedData.customers.filter(c => c.mobile).length;
+  const withPhone = parsedData.customers.filter(c => c.mobile || c.otherPhones).length;
+  const noPhone = total - withPhone;
 
   document.getElementById('stat-grid').innerHTML = `
     <div class="stat"><div class="stat-num">${total}</div><div class="stat-lbl">عملاء في الملف</div></div>
     <div class="stat ok"><div class="stat-num">${newOnes}</div><div class="stat-lbl">جديد (لا تطابق)</div></div>
     <div class="stat warn"><div class="stat-num">${matched}</div><div class="stat-lbl">تكرار محتمل (مراجعة)</div></div>
-    <div class="stat ${withPhone>0?'ok':'warn'}"><div class="stat-num">${withPhone}</div><div class="stat-lbl">بأرقام تليفون</div></div>
+    <div class="stat ok"><div class="stat-num">${withPhone}</div><div class="stat-lbl">بأرقام تليفون ✓</div></div>
+    ${noPhone>0?`<div class="stat danger"><div class="stat-num">${noPhone}</div><div class="stat-lbl">بدون أرقام (سيُتخطّى)</div></div>`:''}
     <div class="stat"><div class="stat-num">${ordTotal}</div><div class="stat-lbl">أوردرات في الملف</div></div>
     ${orphan>0?`<div class="stat danger"><div class="stat-num">${orphan}</div><div class="stat-lbl">أوردرات بلا عميل</div></div>`:''}
     <div class="stat"><div class="stat-num">${parsedData.products.length}</div><div class="stat-lbl">منتجات</div></div>
@@ -582,11 +585,18 @@ window.executeImport = async () => {
     log(`✓ Batch ID: ${batchId}`, 'ok');
 
     // 2. Import customers
-    const toImport = parsedData.customers.filter(c => decisions[c.legacyId] === 'new');
+    // RULE: العميل بدون رقم تليفون ممنوع — يُتخطّى تلقائياً
+    const hasPhone = c => !!(c.mobile || c.otherPhones);
+    const allNew = parsedData.customers.filter(c => decisions[c.legacyId] === 'new');
+    const toImport = allNew.filter(hasPhone);
+    const noPhoneSkipped = allNew.filter(c => !hasPhone(c));
     const toMerge  = parsedData.customers.filter(c => decisions[c.legacyId] && decisions[c.legacyId].startsWith('merge:'));
     const toSkip   = parsedData.customers.filter(c => decisions[c.legacyId] === 'skip');
 
-    log(`📊 العملاء: ${toImport.length} جديد، ${toMerge.length} دمج، ${toSkip.length} تخطّي`, 'info');
+    if(noPhoneSkipped.length > 0){
+      log(`⚠️ تم تخطّي ${noPhoneSkipped.length} عميل بدون أرقام تليفون (ممنوع)`, 'warn');
+    }
+    log(`📊 العملاء: ${toImport.length} جديد بأرقام، ${toMerge.length} دمج، ${toSkip.length} تخطّي يدوي، ${noPhoneSkipped.length} تخطّي بدون أرقام`, 'info');
 
     // Map legacyId → new firestoreId (للربط بالأوردرات لاحقاً)
     const legacyToFsId = {};
@@ -838,6 +848,66 @@ window.fixLegacyStatus = async () => {
     alert(`✓ تم إصلاح ${fixed} عميل\n\nادخل صفحة العملاء → تاب "📁 قديم" لتراهم.`);
   } catch(e){
     console.error('[fixLegacy] error:', e);
+    alert('❌ خطأ: ' + e.message);
+  }
+};
+
+// ─── Purge legacy clients without phone numbers + their orders ───
+// RULE: عميل بدون رقم تليفون ممنوع — يُحذف هو وأوردراته
+window.purgeNoPhoneClients = async () => {
+  if(currentRole !== 'admin'){
+    alert('هذه العملية متاحة للـ Admin فقط (حذف من Firestore)');
+    return;
+  }
+
+  try {
+    const snap = await getDocs(query(
+      collection(db,'clients'),
+      where('source','==','legacy_import_2026')
+    ));
+    if(snap.empty){ alert('لا يوجد عملاء مستوردون'); return; }
+
+    const noPhone = snap.docs.filter(d => {
+      const x = d.data();
+      return !x.phone1 && !x.phone2 && !x.intlPhone;
+    });
+    if(noPhone.length === 0){ alert(`✓ كل العملاء المستوردين (${snap.size}) لديهم أرقام. لا حاجة للحذف.`); return; }
+
+    if(!confirm(`🚫 حذف ${noPhone.length} عميل مستورد بدون أرقام تليفون\n\nسيتم أيضاً حذف كل الأوردرات المرتبطة بهم.\n\n⚠️ العملية لا يمكن التراجع عنها.\n\nهل تريد المتابعة؟`)) return;
+
+    let cDeleted = 0, oDeleted = 0;
+    const idsToDelete = noPhone.map(d => d.id);
+
+    // 1. Delete linked orders first (chunked queries: 30 IDs max per 'in' query)
+    for(let i=0; i<idsToDelete.length; i+=30){
+      const chunkIds = idsToDelete.slice(i, i+30);
+      const oSnap = await getDocs(query(
+        collection(db,'orders'),
+        where('source','==','legacy_import_2026'),
+        where('clientId','in',chunkIds)
+      ));
+      // Delete in batches of 400
+      for(let j=0; j<oSnap.docs.length; j+=400){
+        const oChunk = oSnap.docs.slice(j, j+400);
+        const batch = writeBatch(db);
+        oChunk.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        oDeleted += oChunk.length;
+      }
+    }
+
+    // 2. Delete the clients themselves
+    for(let i=0; i<noPhone.length; i+=400){
+      const chunk = noPhone.slice(i, i+400);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      cDeleted += chunk.length;
+    }
+
+    alert(`✓ تم الحذف:\n· ${cDeleted} عميل بدون أرقام\n· ${oDeleted} أوردر مرتبط\n\nالعملاء الباقون (بأرقام) لم يتأثروا.`);
+  } catch(e){
+    console.error('[purgeNoPhone] error:', e);
     alert('❌ خطأ: ' + e.message);
   }
 };
