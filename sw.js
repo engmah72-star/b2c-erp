@@ -3,7 +3,7 @@
 //           Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release,
 // so old caches are deleted on activate and users get fresh code on next load.
-const CACHE = 'b2c-v149';
+const CACHE = 'b2c-v150';
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
 // Includes role-landing dashboards so any signed-in user lands on a usable
