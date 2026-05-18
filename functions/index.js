@@ -1681,3 +1681,410 @@ exports.analyzeSuggestionWithAI = onCall(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: C2 — detect direct writes to financial_ledger bypassing the engine
+// ════════════════════════════════════════════════════════════════════════════
+//
+// كل ledger entry من الـ engines (FSE/MKE/RET) يحمل engineSignature.
+// لو entry تم إنشاؤه بدون الـ signature → يعني كُتب مباشرة بدون engine.
+// هذا انتهاك لـ RULE 2 — يُسجَّل في admin_alerts للمتابعة.
+//
+// Observability فقط — لا يمنع الكتابة (الـ Firestore rules تسمح بها).
+// بعد فترة مراقبة، يمكن تشديد الـ rules لرفض الكتابة بدون signature.
+
+exports.detectEngineBypass = onDocumentCreated(
+  { document: 'financial_ledger/{ledgerId}', region: 'us-central1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const d = snap.data() || {};
+
+    // الـ engines الجديدة دائماً تضيف engineSignature
+    if (d.engineWrite === true && d.engineSignature) return;
+
+    // entries قديمة قد لا يكون لها signature — تُتجاهَل بناءً على createdAt
+    // إذا اللديك entries قبل deploy هذا التغيير، فلترها بـ migration version
+    // لكن للأمان نُسجِّل كل ما لا يحمل signature
+    try {
+      await db.collection('admin_alerts').add({
+        type:        'rule2_bypass',
+        severity:    'high',
+        title:       '⛔ كتابة مالية بدون engine signature',
+        body:        `ledger entry ${event.params.ledgerId} كُتب بدون marker الـ engine. eventType=${d.eventType || 'unknown'}, amount=${d.amount || 0}`,
+        ledgerId:    event.params.ledgerId,
+        eventType:   d.eventType || null,
+        amount:      d.amount    || 0,
+        orderId:     d.orderId   || null,
+        clientId:    d.clientId  || null,
+        walletId:    d.walletId  || null,
+        createdBy:   d.createdBy || null,
+        createdByName: d.createdByName || null,
+        detectedAt:  FieldValue.serverTimestamp(),
+        resolved:    false,
+        suggestedFix: 'تحقق من المصدر — قد تكون صفحة تكتب مباشرة بدلاً من dispatchFinancialEvent / addLedgerToBatch',
+      });
+      console.warn(`[detectEngineBypass] 🚨 ledger entry بدون signature: ${event.params.ledgerId} eventType=${d.eventType}`);
+    } catch (e) {
+      console.error('[detectEngineBypass] failed to write alert:', e.message);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   SCHEDULED: Returns SLA Monitor (every 2 hours)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// راجع returns_tickets ويعلّم slaBreached=true على الـ tickets التي تجاوزت
+// المدة الزمنية المسموحة:
+//   - status in [requested, inspecting] AND slaInspectDeadline < now → breach
+//   - status = approved AND slaRefundDeadline < now → breach
+//
+// الـ deadlines تُحفَظ كـ ISO string في returns-core.js (calcInspectDeadline /
+// calcRefundDeadline)، فالـ function يقارنها بنص ISO الحالي.
+//
+// لا يحرك أموالاً — فقط يضع flag للـ UI (kpi-sla card) + يرسل إشعار للـ
+// operation_manager إلى inbox.
+
+const SLA_BATCH_LIMIT = 200;
+
+exports.scanReturnsSla = onSchedule(
+  { schedule: '0 */2 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 240 },
+  async () => {
+    const nowIso = new Date().toISOString();
+    const breaches = [];
+
+    // الـ tickets في الحالات النشطة فقط (مع limit حماية)
+    const activeStates = ['requested', 'inspecting', 'approved'];
+    const snap = await db.collection('returns_tickets')
+      .where('status', 'in', activeStates)
+      .limit(SLA_BATCH_LIMIT)
+      .get();
+
+    let scanned = 0, flagged = 0, alreadyFlagged = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const t = d.data();
+      scanned++;
+      if (t.slaBreached === true) { alreadyFlagged++; continue; }
+
+      let breached = false;
+      let reason   = '';
+
+      // فحص deadline حسب الـ status
+      if ((t.status === 'requested' || t.status === 'inspecting') && t.slaInspectDeadline) {
+        if (t.slaInspectDeadline < nowIso) {
+          breached = true;
+          reason   = 'inspect_overdue';
+        }
+      } else if (t.status === 'approved' && t.slaRefundDeadline) {
+        if (t.slaRefundDeadline < nowIso) {
+          breached = true;
+          reason   = 'refund_overdue';
+        }
+      }
+
+      if (breached) {
+        wb.update(d.ref, {
+          slaBreached:    true,
+          slaBreachedAt:  FieldValue.serverTimestamp(),
+          slaBreachReason: reason,
+          updatedAt:      FieldValue.serverTimestamp(),
+        });
+        breaches.push({ ticketId: d.id, ticketNo: t.ticketNo, reason, status: t.status });
+        flagged++;
+      }
+    }
+
+    if (flagged > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        console.error('[scanReturnsSla] batch failed:', e.message);
+        return;
+      }
+
+      // إشعار لكل ops_manager + admins
+      try {
+        const opsSnap = await db.collection('users')
+          .where('role', 'in', ['admin', 'operation_manager'])
+          .get();
+        const notifBatch = db.batch();
+        for (const u of opsSnap.docs) {
+          const ref = db.collection('notifications').doc();
+          notifBatch.set(ref, {
+            uid:       u.id,
+            type:      'returns_sla_breach',
+            title:     `⚠️ ${flagged} ticket مرتجع تجاوز SLA`,
+            body:      `راجع returns.html — أحدثها: ${breaches.slice(0, 3).map(b => b.ticketNo).join(', ')}`,
+            url:       '/returns.html',
+            read:      false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
+        await notifBatch.commit();
+      } catch (e) {
+        console.warn('[scanReturnsSla] notification dispatch failed (non-fatal):', e.message);
+      }
+    }
+
+    console.log(`[scanReturnsSla] scanned=${scanned} flagged=${flagged} alreadyFlagged=${alreadyFlagged} time=${nowIso}`);
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: M1 — Denormalization sync (auto-update cached names on source change)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// orders/transactions_v2/financial_ledger يحفظون أسماء مكرّرة (clientName,
+// designerName, supplierName، إلخ). لو الـ source يُعدَّل، النسخ تصبح stale.
+// هذه الـ triggers تزامن الأسماء الجديدة تلقائياً.
+//
+// scope محدد بـ limit لمنع الـ runaway updates عند تعديل واسع.
+
+const NAME_SYNC_BATCH = 500;
+
+// عند تعديل اسم العميل في /clients
+exports.syncClientNameOnUpdate = onDocumentUpdated(
+  { document: 'clients/{clientId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;  // الاسم لم يتغير
+    if (after.isDeleted === true) return;     // soft-deleted
+
+    const clientId = event.params.clientId;
+    const newName  = after.name || '';
+
+    // sync orders
+    try {
+      const orders = await db.collection('orders')
+        .where('clientId', '==', clientId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (orders.size > 0) {
+        const wb = db.batch();
+        orders.forEach(d => wb.update(d.ref, { clientName: newName }));
+        await wb.commit();
+        console.log(`[syncClientName] orders updated=${orders.size} client=${clientId}`);
+      }
+    } catch (e) { console.error('[syncClientName] orders failed:', e.message); }
+
+    // sync transactions_v2 (recent only — الأقدم immutable في الـ ledger audit pattern)
+    try {
+      const txs = await db.collection('transactions_v2')
+        .where('clientId', '==', clientId)
+        .where('isLocked', '==', false)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (txs.size > 0) {
+        const wb = db.batch();
+        txs.forEach(d => wb.update(d.ref, { clientName: newName }));
+        await wb.commit();
+        console.log(`[syncClientName] transactions updated=${txs.size}`);
+      }
+    } catch (e) { console.error('[syncClientName] transactions failed:', e.message); }
+  }
+);
+
+// عند تعديل اسم الموظف في /employees
+exports.syncEmployeeNameOnUpdate = onDocumentUpdated(
+  { document: 'employees/{empId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;
+
+    const empId   = event.params.empId;
+    const newName = after.name || '';
+    const authUid = after.authUid || before.authUid || '';
+
+    // sync orders: designerName, productionAgentName, shippingOfficerName
+    // الـ employees لها authUid وكذلك حقول role-specific في الأوردر
+    const updateFields = {};
+    try {
+      const fields = [
+        { f: 'designerId', n: 'designerName' },
+        { f: 'productionAgent', n: 'productionAgentName' },
+        { f: 'shippingOfficerId', n: 'shippingOfficerName' },
+      ];
+      for (const { f, n } of fields) {
+        const orders = await db.collection('orders')
+          .where(f, '==', authUid)
+          .limit(NAME_SYNC_BATCH)
+          .get();
+        if (orders.size > 0) {
+          const wb = db.batch();
+          orders.forEach(d => wb.update(d.ref, { [n]: newName }));
+          await wb.commit();
+          console.log(`[syncEmployeeName] ${f}→${n} updated=${orders.size}`);
+        }
+      }
+    } catch (e) { console.error('[syncEmployeeName] orders failed:', e.message); }
+
+    // sync employee_payments
+    try {
+      const payments = await db.collection('employee_payments')
+        .where('employeeId', '==', empId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (payments.size > 0) {
+        const wb = db.batch();
+        payments.forEach(d => wb.update(d.ref, { employeeName: newName }));
+        await wb.commit();
+        console.log(`[syncEmployeeName] payments updated=${payments.size}`);
+      }
+    } catch (e) { console.error('[syncEmployeeName] payments failed:', e.message); }
+  }
+);
+
+// عند تعديل اسم المورد/الشاحن
+exports.syncSupplierNameOnUpdate = onDocumentUpdated(
+  { document: 'suppliers_v2/{supId}', region: 'us-central1', timeoutSeconds: 240 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+    if (before.name === after.name) return;
+
+    const supId   = event.params.supId;
+    const newName = after.name || '';
+
+    try {
+      const payments = await db.collection('supplier_payments')
+        .where('supplierId', '==', supId)
+        .limit(NAME_SYNC_BATCH)
+        .get();
+      if (payments.size > 0) {
+        const wb = db.batch();
+        payments.forEach(d => wb.update(d.ref, { supplierName: newName }));
+        await wb.commit();
+        console.log(`[syncSupplierName] payments updated=${payments.size}`);
+      }
+    } catch (e) { console.error('[syncSupplierName] payments failed:', e.message); }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   TRIGGER: M7 — Auto-advance order stage when all products ready
+// ════════════════════════════════════════════════════════════════════════════
+//
+// عند تحديث order.products[] — لو كل المنتجات في stage 'ready' أو 'done'،
+// قدّم الأوردر للمرحلة التالية تلقائياً (لا تنتظر ops manager).
+// شرط الأمان: لا auto-advance من production إلى shipping إلا لو كل المنتجات done.
+// الأوردر يبقى في stage الحالي إذا لم تكتمل الشروط.
+
+exports.autoAdvanceOrderStage = onDocumentUpdated(
+  { document: 'orders/{orderId}', region: 'us-central1', timeoutSeconds: 60 },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (!before || !after) return;
+
+    // تجنب infinite loop — لو الـ stage تغير في هذا الحدث، لا تتدخل
+    if (before.stage !== after.stage) return;
+    // المنتجات لازم تتغير — لو ما تغيروش، لا داعي للفحص
+    const beforeProducts = JSON.stringify(before.products || []);
+    const afterProducts  = JSON.stringify(after.products || []);
+    if (beforeProducts === afterProducts) return;
+
+    const stage = after.stage;
+    const products = after.products || [];
+    if (products.length === 0) return;
+
+    // تحديد الشرط حسب الـ stage الحالي
+    let canAdvance = false;
+    let nextStage  = null;
+    if (stage === 'design') {
+      // كل المنتجات لازم تكون ready (designed)
+      const allReady = products.every(p => ['ready', 'printed', 'done'].includes(p.productStatus));
+      if (allReady) { canAdvance = true; nextStage = 'printing'; }
+    } else if (stage === 'printing') {
+      const allPrinted = products.every(p => ['printed', 'done'].includes(p.productStatus));
+      if (allPrinted) { canAdvance = true; nextStage = 'production'; }
+    } else if (stage === 'production') {
+      const allDone = products.every(p => p.productStatus === 'done');
+      if (allDone) { canAdvance = true; nextStage = 'shipping'; }
+    }
+    if (!canAdvance || !nextStage) return;
+
+    // لا تقدّم لو فيه shipping issues أو remaining cost approvals
+    if (after.hasReturn === true) {
+      console.log(`[autoAdvance] order ${event.params.orderId} له مرتجع نشط — تخطي`);
+      return;
+    }
+
+    try {
+      await db.collection('orders').doc(event.params.orderId).update({
+        stage: nextStage,
+        [`${nextStage}EnteredAt`]: FieldValue.serverTimestamp(),
+        autoAdvancedAt: FieldValue.serverTimestamp(),
+        autoAdvancedFrom: stage,
+        timeline: FieldValue.arrayUnion({
+          date: new Date().toISOString(),
+          action: `🤖 تقديم تلقائي: ${stage} → ${nextStage}`,
+          by: 'system_auto',
+        }),
+      });
+      console.log(`[autoAdvance] order ${event.params.orderId}: ${stage} → ${nextStage}`);
+    } catch (e) {
+      console.error('[autoAdvance] failed:', e.message);
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: M9 — Gemini API proxy (centralized key via Firebase Secret)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// لو admin ضبط الـ secret GEMINI_API_KEY، كل المستخدمين يستخدمون proxy
+// → لا يخزَّن مفتاح في localStorage → آمن من browser extensions.
+// لو الـ secret غير مضبوط → ai-engine.js يرجع للسلوك القديم (per-user key).
+
+const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
+
+exports.callGeminiProxy = onCall(
+  { region: 'us-central1', secrets: [GEMINI_API_KEY], timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
+    }
+    const key = GEMINI_API_KEY.value();
+    if (!key) {
+      throw new HttpsError('failed-precondition', 'GEMINI_API_KEY غير مضبوط في Firebase Secrets — استخدم المفتاح المحلي');
+    }
+    const prompt = String(request.data?.prompt || '').slice(0, 50000);
+    const model  = String(request.data?.model || 'gemini-flash-latest');
+    const temperature = +request.data?.temperature || 0.7;
+    const maxTokens   = +request.data?.maxTokens   || 2048;
+
+    if (!prompt) throw new HttpsError('invalid-argument', 'prompt مطلوب');
+
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature, maxOutputTokens: maxTokens },
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        const msg = data?.error?.message || r.statusText;
+        throw new HttpsError('internal', `Gemini ${r.status}: ${msg.slice(0, 200)}`);
+      }
+      const data = await r.json();
+      return {
+        text: data?.candidates?.[0]?.content?.parts?.[0]?.text || '',
+        model,
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      throw new HttpsError('internal', `proxy error: ${(e.message || '').slice(0, 200)}`);
+    }
+  }
+);

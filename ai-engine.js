@@ -4,6 +4,12 @@
  * Single source of truth for: API key, model selection, REST calls,
  * fallback logic, and Arabic error messages.
  *
+ * M9 update — Cloud Function proxy:
+ *   - يحاول استدعاء callGeminiProxy Cloud Function أولاً
+ *     (المفتاح في Firebase Secrets — لا يُكشف للمتصفح)
+ *   - لو الـ secret غير مضبوط (failed-precondition) → fallback للمفتاح المحلي
+ *   - لو فشل الـ Function لأي سبب آخر → fallback أيضاً
+ *
  * Usage:
  *   import { askAI, getKey, setKey } from './ai-engine.js';
  *   const reply = await askAI('سؤالك هنا', { temperature: 0.5 });
@@ -11,6 +17,10 @@
 
 const FALLBACK_MODEL = 'gemini-flash-latest';
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// M9: proxy state — تُضبَط ديناميكياً (avoid network on every call)
+let __proxyAvailable = null;   // true = use proxy, false = unavailable, null = unchecked
+let __proxyCallableRef = null; // cached httpsCallable reference
 
 // Sentinel error message — callers can detect and show key-entry UI.
 export const KEY_NEEDED = '__AI_KEY_NEEDED__';
@@ -41,14 +51,64 @@ export function setModel(m){ localStorage.setItem('gemini_model', m); }
  * @returns {Promise<string>}
  * @throws {Error} with message=KEY_NEEDED if no key, or friendly Arabic error otherwise
  */
+/**
+ * M9: Try Cloud Function proxy first. Returns null if proxy unavailable
+ * (key not set in Firebase Secrets OR previous call failed with that reason).
+ */
+async function tryProxy(prompt, model, options) {
+  if (__proxyAvailable === false) return null;
+  try {
+    // Lazy-load httpsCallable (avoid coupling to firebase imports in pages
+    // that don't have functions SDK)
+    if (!__proxyCallableRef) {
+      const fnMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
+      const appMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+      const app = appMod.getApp();
+      const functions = fnMod.getFunctions(app, 'us-central1');
+      __proxyCallableRef = fnMod.httpsCallable(functions, 'callGeminiProxy');
+    }
+    const result = await __proxyCallableRef({
+      prompt, model,
+      temperature: options.temperature,
+      maxTokens:   options.maxTokens,
+    });
+    __proxyAvailable = true;
+    return result.data?.text || '';
+  } catch (e) {
+    const msg = (e?.message || '').toLowerCase();
+    const code = e?.code || '';
+    // failed-precondition → secret not set on backend → fallback to localStorage
+    // unauthenticated → user not logged in → fallback (let Firebase handle login)
+    if (code === 'functions/failed-precondition' || msg.includes('غير مضبوط') ||
+        code === 'functions/unauthenticated') {
+      __proxyAvailable = false;
+      console.log('[ai-engine] proxy unavailable — using localStorage key');
+      return null;
+    }
+    // إذا كان خطأ كلاسيكي (network/timeout) — لا نخزن false، نعيد المحاولة عند الـ call التالي
+    if (msg.includes('network') || code === 'functions/deadline-exceeded') {
+      console.warn('[ai-engine] proxy transient error — falling back this call');
+      return null;
+    }
+    // أخطاء أخرى من Gemini نفسه عبر الـ proxy — نُعيد رمي الخطأ
+    throw e;
+  }
+}
+
 export async function askAI(prompt, options = {}) {
+  const model = options.model || getModel();
+
+  // M9: محاولة proxy أولاً (إذا كان متاحاً)
+  const proxyResult = await tryProxy(prompt, model, options);
+  if (proxyResult !== null) return proxyResult;
+
+  // Fallback: المفتاح المحلي
   const key = getKey();
   if (!key) {
     const err = new Error(KEY_NEEDED);
     err.code = KEY_NEEDED;
     throw err;
   }
-  const model = options.model || getModel();
   try {
     return await callModel(key, model, prompt, options);
   } catch (e) {
