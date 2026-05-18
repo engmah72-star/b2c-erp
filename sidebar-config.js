@@ -35,10 +35,15 @@
     { file:'print-routes.html',      label:'مسارات الإنتاج',   ico:'🗺️', group:'orders', adminOnly:true },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
     { file:'job-orders.html',        label:'أوامر التشغيل',    ico:'⚙️', group:'orders', perm:'production' },
-    { file:'shipping.html',          label:'الشحن',            ico:'🚚', group:'orders', perm:'shipping' },
-    { file:'shipping-followup.html', label:'متابعة الشحن',     ico:'📋', group:'orders', perm:'shipping' },
-    { file:'shipping-accounts.html', label:'حسابات الشحن',     ico:'📦', group:'orders', perm:'shipping-accounts' },
-    { file:'shipping-audit.html',    label:'تدقيق الشحن',      ico:'🔍', group:'orders', adminOnly:true },
+    { file:'shipping.html',           label:'الشحن (V1)',        ico:'🚚', group:'orders', perm:'shipping' },
+    { file:'shipping-followup.html',  label:'متابعة الشحن',      ico:'📋', group:'orders', perm:'shipping' },
+    { file:'shipping-accounts.html',  label:'حسابات الشحن',      ico:'📦', group:'orders', perm:'shipping-accounts' },
+    { file:'shipping-audit.html',     label:'تدقيق الشحن',       ico:'🔍', group:'orders', adminOnly:true },
+    // ─── Shipping Network V2 — Platform Architecture ───
+    { file:'shipping-partners.html',  label:'شبكة الشركاء',      ico:'🤝', group:'orders', perm:'shipping-partners' },
+    { file:'shipping-dispatch.html',  label:'إسناد الشحنات',     ico:'🎯', group:'orders', perm:'shipping-dispatch' },
+    { file:'shipping-sla.html',       label:'تتبع SLA',          ico:'⚖️', group:'orders', perm:'shipping-sla' },
+    { file:'shipping-network-guide.html', label:'دليل الشبكة',   ico:'📘', group:'orders', perm:'shipping-network-guide' },
     { file:'archive.html',           label:'الأرشيف',          ico:'📁', group:'orders', perm:'archive' },
     { file:'returns.html',           label:'المرتجعات',        ico:'↩️', group:'orders', perm:'returns' },
 
@@ -60,14 +65,17 @@
 
   // أين تذهب كل دور عند الـ login (الـ dashboard المخصص)
   const ROLE_HOME = {
-    admin:             'index.html',
-    operation_manager: 'ops-dashboard.html',
-    customer_service:  'cs-dashboard.html',
-    graphic_designer:  'designer-dashboard.html',
-    design_operator:   'designer-dashboard.html',
-    production_agent:  'production-dashboard.html',
-    shipping_officer:  'shipping-dashboard.html',
-    wallet_manager:    'accounts.html',
+    admin:               'index.html',
+    operation_manager:   'ops-dashboard.html',
+    customer_service:    'cs-dashboard.html',
+    graphic_designer:    'designer-dashboard.html',
+    design_operator:     'designer-dashboard.html',
+    production_agent:    'production-dashboard.html',
+    shipping_officer:    'shipping-dashboard.html',
+    shipping_dispatcher: 'shipping-dispatch.html',
+    shipping_partner:    'partner-shipping-portal.html',
+    driver:              'driver-app.html',
+    wallet_manager:      'accounts.html',
   };
 
   // labels للأقسام في الـ sidebar

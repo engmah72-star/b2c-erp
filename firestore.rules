@@ -81,6 +81,9 @@ service cloud.firestore {
           || hasPage('accounts')
           || hasPage('shipping')
           || hasPage('shipping-accounts')
+          || hasPage('shipping-partners')
+          || hasPage('shipping-dispatch')
+          || hasPage('shipping-sla')
           || hasPage('suppliers')
           || hasPage('production')
           || hasPage('design')
@@ -107,6 +110,9 @@ service cloud.firestore {
           || hasPage('accounts')
           || hasPage('shipping')
           || hasPage('shipping-accounts')
+          || hasPage('shipping-partners')
+          || hasPage('shipping-dispatch')
+          || hasPage('shipping-sla')
           || hasPage('suppliers')
           || hasPage('production')
           || hasPage('design')
@@ -633,6 +639,148 @@ service cloud.firestore {
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts') || can('canAddOrders')
       );
       allow update, delete: if isAdmin();
+    }
+
+    // ══ Shipping Network (v2 — Platform Architecture) ══
+    // Collections جديدة بالتوازي مع shippers_v2/shipping_settlements القديمة (RULE 6).
+    // الـ engine: shipping-network-engine.js — handlers مع SNE_v1 signature.
+    function canShippingNetworkRead() {
+      return isAdmin()
+          || hasPage('shipping')
+          || hasPage('shipping-partners')
+          || hasPage('shipping-dispatch')
+          || hasPage('shipping-sla')
+          || hasPage('shipping-accounts')
+          || isPartner();
+    }
+    function canShippingNetworkWrite() {
+      return isAdmin()
+          || hasPage('shipping-partners')
+          || hasPage('shipping-dispatch');
+    }
+
+    // shipping_partners — سجل الشركاء (شركات/كباتن/امتياز/داخلي)
+    match /shipping_partners/{partnerId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        // الشريك يقدر يقرأ بياناته الخاصة فقط
+        (isPartner() && resource.data.get('tenantId','__') == partnerTenant())
+      );
+      allow create: if isAuth() && canShippingNetworkWrite();
+      // updates: admin + manager فقط للحقول الإدارية. الـ engine يكتب الـ performance counters عبر canFinancialWrite.
+      allow update: if isAuth() && (canShippingNetworkWrite() || canFinancialWrite());
+      allow delete: if isAdminOnly();
+    }
+
+    // shipping_zones — المناطق + التسعير
+    match /shipping_zones/{zoneId} {
+      allow read: if isAuth();  // كل من له page شحن
+      allow create, update: if isAuth() && canShippingNetworkWrite();
+      allow delete: if isAdminOnly();
+    }
+
+    // shipments — الشحنات الجديدة (parallel للـ orders.ship* القديمة)
+    match /shipments/{shipmentId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        // الشريك يشوف شحناته فقط
+        (isPartner() && resource.data.get('partnerId','__') != '')
+      );
+      allow create: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('shipping-dispatch')
+        || hasPage('clients') || can('canAddOrders')
+      );
+      // الـ engine يكتب الـ state transitions — أي حامل صلاحية شحن
+      allow update: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('shipping-dispatch')
+        || canFinancialWrite()
+        // الشريك يقدر يحدث state لشحناته (pickup/delivered) عبر mobile app
+        || (isPartner() && resource.data.get('partnerId','__') != '')
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // shipment_bids — العروض في الـ Marketplace mode
+    match /shipment_bids/{bidId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        (isPartner() && resource.data.get('partnerId','__') != '')
+      );
+      // الشريك يقدم عرض على شحناته فقط
+      allow create: if isAuth() && (
+        canShippingNetworkWrite() ||
+        (isPartner() && request.resource.data.get('partnerId','__') != '')
+      );
+      // الـ engine يحدّث status (won/lost) — admin/dispatcher فقط
+      allow update: if isAuth() && canShippingNetworkWrite();
+      allow delete: if isAdminOnly();
+    }
+
+    // shipment_events — audit/tracking log (immutable)
+    match /shipment_events/{eventId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        // العميل يقدر يشوف tracking لأوردره (Phase 3 — public tracking)
+        // حالياً مقيد بالـ auth — للـ public tracking ضع قاعدة منفصلة
+        (isPartner())
+      );
+      allow create: if isAuth() && (
+        canShippingNetworkRead() ||
+        (isPartner())
+      );
+      // immutable — لا update ولا delete (RULE 5: full audit)
+      allow update, delete: if false;
+    }
+
+    // sla_breaches — سجل خرق الـ SLA
+    match /sla_breaches/{breachId} {
+      allow read: if isAuth() && canShippingNetworkRead();
+      // الـ engine يكتبه عند SHIPMENT_DELIVERED (لو متأخر)
+      allow create: if isAuth() && (canShippingNetworkWrite() || canFinancialWrite());
+      // فقط admin يحل النزاع ويطبق الغرامة
+      allow update: if isAuth() && (isAdmin() || hasPage('shipping-sla'));
+      allow delete: if isAdminOnly();
+    }
+
+    // partner_ratings — تقييمات العملاء
+    match /partner_ratings/{ratingId} {
+      allow read: if isAuth();  // كل المستخدمين يشوفوا التقييمات
+      // العميل المسجل يقدر يقيم (Phase 3) — حالياً مقيد بالـ CS/Admin
+      allow create: if isAuth() && (
+        isAdmin() || hasPage('shipping') || hasPage('clients') ||
+        role() == 'customer_service'
+      );
+      // immutable — التقييم لا يُعدَّل بعد الإرسال
+      allow update, delete: if isAdminOnly();
+    }
+
+    // drivers — السائقين التابعين للشركاء
+    match /drivers/{driverId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        (isPartner() && resource.data.get('partnerId','__') != '')
+      );
+      allow create, update: if isAuth() && (
+        canShippingNetworkWrite() ||
+        // الشريك يدير سائقيه
+        (isPartner() && request.resource.data.get('partnerId','__') != '') ||
+        // السائق نفسه يقدر يحدث GPS وحالته
+        (isAuth() && resource.data.get('authUid','__') == request.auth.uid)
+      );
+      allow delete: if isAdminOnly();
+    }
+
+    // driver_routes — المسارات اليومية للسائقين
+    match /driver_routes/{routeId} {
+      allow read: if isAuth() && (
+        canShippingNetworkRead() ||
+        (isAuth() && resource.data.get('driverAuthUid','__') == request.auth.uid)
+      );
+      allow create, update: if isAuth() && (
+        canShippingNetworkWrite() ||
+        (isAuth() && request.resource.data.get('driverAuthUid','__') == request.auth.uid)
+      );
+      allow delete: if isAdminOnly();
     }
 
     // ══ Reconciliations ══

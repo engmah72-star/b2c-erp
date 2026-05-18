@@ -57,6 +57,22 @@ export const FE = {
   AGENT_COMMISSION:              'AGENT_COMMISSION',
   AGENT_PAYOUT:                  'AGENT_PAYOUT',
   CHARGEBACK:                    'CHARGEBACK',
+  // ─── Shipping Network Events (Phase 1) — handlers في shipping-network-engine.js ───
+  // معمارية كاملة: shipping_partners + shipments + bids + ratings + SLA
+  // الـ shipping القديمة (SHIPPING_EXPENSE/SHIPPING_SETTLEMENT) تكمل شغّالة بالتوازي.
+  PARTNER_ONBOARDED:             'PARTNER_ONBOARDED',
+  PARTNER_KYC_APPROVED:          'PARTNER_KYC_APPROVED',
+  PARTNER_KYC_REJECTED:          'PARTNER_KYC_REJECTED',
+  PARTNER_SUSPENDED:             'PARTNER_SUSPENDED',
+  SHIPMENT_CREATED:              'SHIPMENT_CREATED',
+  SHIPMENT_ASSIGNED:             'SHIPMENT_ASSIGNED',
+  SHIPMENT_DELIVERED:            'SHIPMENT_DELIVERED',
+  SHIPMENT_CANCELLED:            'SHIPMENT_CANCELLED',
+  PARTNER_PAYOUT:                'PARTNER_PAYOUT',
+  PARTNER_PAYOUT_REVERSAL:       'PARTNER_PAYOUT_REVERSAL',
+  PLATFORM_SHIPPING_COMMISSION:  'PLATFORM_SHIPPING_COMMISSION',
+  SLA_PENALTY:                   'SLA_PENALTY',
+  SLA_PENALTY_REVERSAL:          'SLA_PENALTY_REVERSAL',
   // ─── Returns / After-Sales Events (Phase 1) — handlers في returns-core.js ───
   // التعريف الكامل في AUDIT_REPORT.md §C6 و module definition للموافقة.
   RETURN_REQUESTED:              'RETURN_REQUESTED',
@@ -112,6 +128,20 @@ const LC = {
   // ─── Returns / After-Sales (Phase 1) — الأحداث المالية فقط في الـ ledger ───
   RETURN_REFUNDED:              { type:'expense',  category:'return_refund',       direction:'out', icon:'↩️', label:'استرداد مرتجع' },
   RETURN_REFUNDED_REVERSAL:     { type:'reversal', category:'return_refund',       direction:'in',  icon:'🔄', label:'إلغاء استرداد مرتجع' },
+  // ─── Shipping Network (Phase 1) — handlers في shipping-network-engine.js ───
+  PARTNER_ONBOARDED:            { type:'other',    category:'partner_lifecycle',   direction:'in',  icon:'🤝', label:'انضمام شريك شحن' },
+  PARTNER_KYC_APPROVED:         { type:'other',    category:'partner_lifecycle',   direction:'in',  icon:'✅', label:'اعتماد شريك' },
+  PARTNER_KYC_REJECTED:         { type:'other',    category:'partner_lifecycle',   direction:'out', icon:'⛔', label:'رفض شريك' },
+  PARTNER_SUSPENDED:            { type:'other',    category:'partner_lifecycle',   direction:'out', icon:'⏸️', label:'تجميد شريك' },
+  SHIPMENT_CREATED:             { type:'other',    category:'shipment',            direction:'in',  icon:'📦', label:'إنشاء شحنة' },
+  SHIPMENT_ASSIGNED:            { type:'other',    category:'shipment',            direction:'in',  icon:'📨', label:'إسناد شحنة' },
+  SHIPMENT_DELIVERED:           { type:'other',    category:'shipment',            direction:'in',  icon:'🎉', label:'تسليم شحنة' },
+  SHIPMENT_CANCELLED:           { type:'reversal', category:'shipment',            direction:'out', icon:'✕',  label:'إلغاء شحنة' },
+  PARTNER_PAYOUT:               { type:'expense',  category:'shipping_partner_payout', direction:'out', icon:'💸', label:'صرف لشريك شحن' },
+  PARTNER_PAYOUT_REVERSAL:      { type:'reversal', category:'shipping_partner_payout', direction:'in',  icon:'🔄', label:'إلغاء صرف شريك' },
+  PLATFORM_SHIPPING_COMMISSION: { type:'income',   category:'shipping_commission', direction:'in',  icon:'💼', label:'عمولة شحن للمنصة' },
+  SLA_PENALTY:                  { type:'income',   category:'sla_penalty',         direction:'in',  icon:'⚖️', label:'غرامة SLA على شريك' },
+  SLA_PENALTY_REVERSAL:         { type:'reversal', category:'sla_penalty',         direction:'out', icon:'🔄', label:'إلغاء غرامة SLA' },
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -169,8 +199,11 @@ export function engineSignature(eventType) {
                 t.startsWith('MERCHANT') || t.startsWith('AGENT_') ||
                 t === 'CHARGEBACK';
   const isRET = t.startsWith('RETURN_') || t.startsWith('WARRANTY');
+  const isSNE = t.startsWith('PARTNER_') || t.startsWith('SHIPMENT_') ||
+                t === 'SLA_PENALTY' || t === 'SLA_PENALTY_REVERSAL' ||
+                t === 'PLATFORM_SHIPPING_COMMISSION';
   return {
-    engineSignature: isMKE ? 'MKE_v1' : isRET ? 'RET_v1' : 'FSE_v1',
+    engineSignature: isMKE ? 'MKE_v1' : isRET ? 'RET_v1' : isSNE ? 'SNE_v1' : 'FSE_v1',
     engineWrite:     true,
   };
 }
@@ -265,6 +298,14 @@ export function getReversal(eventType) {
     GENERAL_EXPENSE_REVERSAL:     'GENERAL_EXPENSE',
     RETURN_REFUNDED:              'RETURN_REFUNDED_REVERSAL',
     RETURN_REFUNDED_REVERSAL:     'RETURN_REFUNDED',
+    // Shipping Network
+    PARTNER_KYC_APPROVED:         'PARTNER_SUSPENDED',
+    PARTNER_SUSPENDED:            'PARTNER_KYC_APPROVED',
+    SHIPMENT_DELIVERED:           'SHIPMENT_CANCELLED',
+    PARTNER_PAYOUT:               'PARTNER_PAYOUT_REVERSAL',
+    PARTNER_PAYOUT_REVERSAL:      'PARTNER_PAYOUT',
+    SLA_PENALTY:                  'SLA_PENALTY_REVERSAL',
+    SLA_PENALTY_REVERSAL:         'SLA_PENALTY',
   };
   return REVERSAL[eventType] || eventType;
 }
