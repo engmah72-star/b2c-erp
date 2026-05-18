@@ -1001,3 +1001,84 @@ export function applyOrderHealPatch(batch, dbDocRef, order, issues, userName) {
   }];
   batch.update(dbDocRef, merged);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// M3: Stage advance with optimistic locking (transaction-based)
+// ═══════════════════════════════════════════════════════════════════
+//
+// buildStageAdvance() نقي (pure) — لا يكتب في Firestore. الـ caller يطبّق
+// الـ spec في batch خاص به. لكن بين قراءة الـ order وكتابة الـ batch
+// يمكن لمستخدم آخر تقديم نفس الأوردر — race condition (audit §M3).
+//
+// هذا الـ wrapper يستخدم Firestore transaction:
+//   1. يقرأ الأوردر داخل الـ transaction (snapshot طازج)
+//   2. يتحقق أن الـ stage الحالي == المتوقع (لو expectedCurrentStage محدد)
+//   3. يبني الـ spec ويطبّقه ذرّياً
+// لو تغيّر الـ stage في الأثناء، Firestore تعيد المحاولة تلقائياً
+// (max 5 محاولات) ثم ترمي خطأ.
+//
+// Usage:
+//   import { runTransaction, doc } from "firebase-firestore";
+//   import { advanceOrderStageWithLock } from "./orders.js";
+//   await advanceOrderStageWithLock({
+//     db, runTransaction, doc,
+//     orderId: 'abc123',
+//     expectedCurrentStage: 'design',  // اختياري — للحماية الإضافية
+//     role: currentRole, userId, userName,
+//     nextAssigneeId, nextAssigneeName,
+//     onSpec: (spec, tx, orderRef) => {  // اختياري — تعديلات إضافية في نفس الـ tx
+//       tx.update(otherDocRef, {...});
+//     },
+//   });
+//
+// الـ caller لا يحتاج إنشاء batch خاص به — كل شيء في الـ transaction.
+export async function advanceOrderStageWithLock({
+  db, runTransaction, doc,
+  orderId, expectedCurrentStage = null,
+  role, userId, userName,
+  targetStage = null, nextAssigneeId = '', nextAssigneeName = '',
+  bypassWarnings = false, extraFields = {},
+  onSpec = null,
+}) {
+  if (!db || !runTransaction || !doc) throw new Error('[orders] advanceOrderStageWithLock: db, runTransaction, doc مطلوبون');
+  if (!orderId) throw new Error('[orders] orderId مطلوب');
+
+  return await runTransaction(db, async (tx) => {
+    const orderRef = doc(db, 'orders', orderId);
+    const snap = await tx.get(orderRef);
+    if (!snap.exists()) throw new Error('[orders] الأوردر غير موجود: ' + orderId);
+    const order = { ...snap.data(), _id: orderId };
+
+    // M3 الجوهر: مقارنة الـ stage الحالي مع المتوقع
+    if (expectedCurrentStage && order.stage !== expectedCurrentStage) {
+      throw new Error(`[orders] الـ stage تغيّر بواسطة مستخدم آخر — متوقع "${expectedCurrentStage}"، الحالي "${order.stage}". أعد التحميل وحاول مرة أخرى.`);
+    }
+
+    // ابنِ الـ spec بـ buildStageAdvance الموجود
+    const result = buildStageAdvance({
+      order, role, userId, userName,
+      targetStage, nextAssigneeId, nextAssigneeName,
+      bypassWarnings, extraFields,
+    });
+    if (!result.ok) {
+      const msg = result.errors?.join(' / ') || 'تقديم المرحلة غير مسموح';
+      throw new Error('[orders] ' + msg + (result.warnings?.length ? ' (warnings: ' + result.warnings.join(', ') + ')' : ''));
+    }
+
+    // طبّق الـ spec في الـ transaction (وليس batch)
+    tx.update(orderRef, result.update);
+
+    // hook للـ caller — يقدر يضيف writes إضافية في نفس الـ transaction
+    if (typeof onSpec === 'function') {
+      await onSpec(result, tx, orderRef);
+    }
+
+    return {
+      ok: true,
+      from: order.stage,
+      to: result.update.stage,
+      orderId,
+      warnings: result.warnings || [],
+    };
+  });
+}
