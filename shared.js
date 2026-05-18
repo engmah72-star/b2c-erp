@@ -172,6 +172,24 @@ export const DEFAULT_PERMISSIONS = {
  * roles is FALSE — fail-closed. For non-sensitive fields, default is TRUE.
  */
 const SENSITIVE_FIELDS = new Set(['client_phone', 'design_data']);
+/**
+ * Multi-tenant helper — الـ tenant الحالي للمستخدم.
+ * Phase 1: الكل في merchant_001 (الشركة الأساسية).
+ * Phase 2+: يُقرَأ من users.{uid}.tenantId.
+ *
+ * Usage:
+ *   import { getCurrentTenantId, tenantFields } from './shared.js';
+ *   const tid = getCurrentTenantId(userDoc);
+ *   batch.set(ref, { ...data, ...tenantFields(tid) });
+ */
+export const DEFAULT_TENANT_ID = 'merchant_001';
+export function getCurrentTenantId(userDoc) {
+  return (userDoc && userDoc.tenantId) || DEFAULT_TENANT_ID;
+}
+export function tenantFields(tenantId) {
+  return { tenantId: tenantId || DEFAULT_TENANT_ID };
+}
+
 export function canSee(field, userPerms, userRole) {
   // User-level override first
   if (userPerms && userPerms[field] !== undefined) return userPerms[field];

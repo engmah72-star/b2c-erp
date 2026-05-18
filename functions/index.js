@@ -2129,6 +2129,85 @@ exports.aggregateDailyStats = onSchedule(
   }
 );
 
+// ════════════════════════════════════════════════════════════════════════════
+//   CALLABLE: Multi-tenant Backfill — يضيف tenantId='merchant_001' للـ legacy
+// ════════════════════════════════════════════════════════════════════════════
+//
+// قبل marketplace Phase 2، الـ legacy docs (orders, clients, suppliers,
+// employees, transactions_v2) ما عندهاش tenantId. الـ backfill يضع
+// merchant_001 كـ default على كل doc ما عندهاش الحقل.
+//
+// admin يستدعيها مرة بعد الـ deploy. تعمل في batches آمنة (max 400 doc per
+// commit) ولا تعدّل الـ docs اللي عندها tenantId بالفعل.
+//
+// Usage من الـ console (admin only):
+//   const r = httpsCallable(functions, 'backfillTenantId');
+//   await r({ collection: 'orders' });
+//   // أو
+//   await r({ collection: 'clients' });
+
+const BACKFILL_COLLECTIONS = ['orders', 'clients', 'suppliers_v2', 'employees', 'transactions_v2', 'financial_ledger', 'employee_payments', 'supplier_payments'];
+const BACKFILL_BATCH_SIZE = 400;
+const DEFAULT_TENANT = 'merchant_001';
+
+exports.backfillTenantId = onCall(
+  { region: 'us-central1', timeoutSeconds: 540 },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
+
+    // تحقق من admin role من الـ users doc
+    const userSnap = await db.collection('users').doc(request.auth.uid).get();
+    const userRole = userSnap.exists() ? userSnap.data().role : null;
+    if (userRole !== 'admin') throw new HttpsError('permission-denied', 'admin only');
+
+    const target = String(request.data?.collection || '');
+    if (!BACKFILL_COLLECTIONS.includes(target)) {
+      throw new HttpsError('invalid-argument', `collection يجب أن يكون: ${BACKFILL_COLLECTIONS.join('|')}`);
+    }
+    const dryRun = request.data?.dryRun === true;
+
+    // اجلب docs بدون tenantId — Firestore لا يدعم where('field','==',null) بشكل
+    // مباشر، فنستخدم where('field','==',undefined) عبر الـ snapshot filter
+    let snap;
+    try {
+      snap = await db.collection(target).limit(BACKFILL_BATCH_SIZE).get();
+    } catch (e) {
+      throw new HttpsError('internal', `fetch failed: ${e.message}`);
+    }
+
+    let updated = 0, skipped = 0;
+    const wb = db.batch();
+
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.tenantId) { skipped++; continue; }
+      if (dryRun) { updated++; continue; }
+      wb.update(d.ref, { tenantId: DEFAULT_TENANT });
+      updated++;
+    }
+
+    if (!dryRun && updated > 0) {
+      try {
+        await wb.commit();
+      } catch (e) {
+        throw new HttpsError('internal', `commit failed: ${e.message}`);
+      }
+    }
+
+    return {
+      collection: target,
+      dryRun,
+      scanned: snap.size,
+      updated,
+      skipped,
+      hasMore: snap.size === BACKFILL_BATCH_SIZE,
+      hint: snap.size === BACKFILL_BATCH_SIZE
+        ? `ربما في المزيد — اشتغل الـ function مرة تانية على نفس الـ collection`
+        : `الـ collection اتجمع كاملاً`,
+    };
+  }
+);
+
 async function computeDayStats(dayStart, dayEnd, dayKey) {
   // Orders created in window
   const ordersSnap = await db.collection('orders')
