@@ -67,7 +67,9 @@ service cloud.firestore {
     }
     function validTx() {
       let d = request.resource.data;
-      return d.amount is number && d.amount > 0
+      // amount >= 0 (السماح بـ 0 للتسويات الإقفالية بدون حركة مالية،
+      // مثلاً تسوية شحن لـ order مدفوع مسبقاً ولا تكلفة عليه).
+      return d.amount is number && d.amount >= 0
           && d.type in ['in', 'out']
           && d.category is string
           && (d.walletId == null || d.walletId is string);
@@ -137,7 +139,7 @@ service cloud.firestore {
                    || (d.get('vendorId', null)   != null && d.vendorId   != '')
                    || (d.get('walletId', null)   != null && d.walletId   != '')
                    || (d.get('refId', null)      != null && d.refId      != '');
-      return d.amount is number && d.amount > 0
+      return d.amount is number && d.amount >= 0
           && d.eventType is string
           && d.type in ['income', 'expense', 'reversal', 'transfer', 'other']
           && d.direction in ['in', 'out']
@@ -657,8 +659,11 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts') || hasPage('accounts')
       );
+      // shipping page perm يقدر يكتب — شركات الشحن تسوية يومية من shipping-lite.
+      // قبل: hasPage('shipping-accounts') فقط ➜ shipping_officer كان يحصل
+      // permission-denied عند التسوية.
       allow write: if isAuth() && (
-        isAdmin() || hasPage('shipping-accounts')
+        isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
       );
     }
     match /shipping_returns/{retId} {
