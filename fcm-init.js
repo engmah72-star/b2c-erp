@@ -82,18 +82,32 @@ export async function initFcm(app, user) {
     if (localStorage.getItem(TOKEN_CACHE_KEY) === token) {
       console.info('[fcm] token unchanged');
     } else {
-      const fns = getFunctions(app, 'us-central1');
-      const reg = httpsCallable(fns, 'registerFcmToken');
-      try {
-        await reg({
-          token,
-          userAgent: navigator.userAgent.slice(0, 200),
-          platform: 'web',
-        });
-        localStorage.setItem(TOKEN_CACHE_KEY, token);
-        console.info('[fcm] token registered');
-      } catch (e) {
-        console.warn('[fcm] register failed (will retry next visit):', e.message);
+      // Skip server registration on origins where the Cloud Function isn't
+      // CORS-allowed yet. The FCM SDK still receives foreground messages —
+      // only push delivery to closed tabs needs the server token. This avoids
+      // spamming the console with CORS errors during a deploy transition.
+      const FCM_REGISTER_ALLOWED = [
+        'business2card-c041b.web.app',
+        'business2card-c041b.firebaseapp.com',
+        'localhost', '127.0.0.1',
+      ];
+      const host = location.hostname;
+      if (!FCM_REGISTER_ALLOWED.includes(host)) {
+        console.info('[fcm] token-register skipped on non-Hosting origin:', host);
+      } else {
+        const fns = getFunctions(app, 'us-central1');
+        const reg = httpsCallable(fns, 'registerFcmToken');
+        try {
+          await reg({
+            token,
+            userAgent: navigator.userAgent.slice(0, 200),
+            platform: 'web',
+          });
+          localStorage.setItem(TOKEN_CACHE_KEY, token);
+          console.info('[fcm] token registered');
+        } catch (e) {
+          console.info('[fcm] token-register failed (non-fatal):', e?.message || e);
+        }
       }
     }
 
