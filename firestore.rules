@@ -167,10 +167,34 @@ service cloud.firestore {
     }
 
     // ══ Users ══
+    // S0-1 FIX: Field-level guard على self-update.
+    // الـ user يقدر يعدّل بياناته الشخصية (name, email, fcm tokens, preferences)
+    // لكن لا يقدر يلمس role/permissions/tenantId/ownership fields.
+    // الـ admin فقط يعدّل هذه الحقول. هذا يمنع privilege escalation.
+    function isProtectedUserField() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'role',
+          'permissions',
+          'tenantId',
+          'designerTenantId',
+          'partnerTenantId',
+          'isPartner',
+          'authUid',
+          'employeeId',
+          'mustChangePassword',
+          'passwordResetAt',
+          'passwordResetBy',
+          'passwordResetByName'
+        ]);
+    }
     match /users/{userId} {
       allow read: if isAuth();
       allow create: if isAdminOnly();
-      allow update: if isAuth() && (request.auth.uid == userId || isAdminOnly());
+      allow update: if isAuth() && (
+        isAdminOnly()
+        || (request.auth.uid == userId && !isProtectedUserField())
+      );
       allow delete: if isAdminOnly();
     }
 
