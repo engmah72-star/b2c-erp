@@ -713,6 +713,74 @@ if (v.errors.length) return toast(v.errors[0], 'err');
 
 ---
 
+## RULE C2 — CENTRAL CONSTANTS ENFORCEMENT (ميثاق توحيد الثوابت)
+
+> **كل قيمة ثابتة (string literal) في النظام تأتي من مصدر واحد.**
+>
+> هذه القاعدة تطبيق صريح لـ **C1.5 (منع التكرار) + C1.6 (منع State Chaos)** على طبقة القيم الثابتة.
+> أي magic string مكرَّر = Technical Debt يجب تحويله إلى constant.
+
+### C2.1 — Constants الأساسية
+الـ flat enums المعتمدة (كلها في `orders.js` و `financial-sync-engine.js`):
+
+| Constant | الموقع | الغرض |
+|----------|--------|--------|
+| `ORDER_STAGES` | `orders.js` | قيم `order.stage` (`DESIGN`, `PRINTING`, `PRODUCTION`, `SHIPPING`, `ARCHIVED`, `CANCELLED`) |
+| `USER_ROLES` | `orders.js` | الأدوار الـ 8 (`ADMIN`, `OPERATION_MANAGER`, ...) |
+| `SHIPPING_METHODS` | `orders.js` | `COMPANY`, `PICKUP`, `COURIER` |
+| `PAYMENT_TYPES` | `orders.js` | `CUSTOMER`, `REFUND`, `DISCOUNT` |
+| `PRODUCT_STATUSES` | `orders.js` | حالات `products[].productStatus` |
+| `SHIP_STAGES` | `orders.js` | قيم `order.shipStage` |
+| `RETURN_STATUSES` | `orders.js` | حالات المرتجعات |
+| `FE` (Event Types) | `financial-sync-engine.js` | أنواع الأحداث المالية |
+
+### C2.2 — صيغة الاستخدام
+```js
+// ❌ ممنوع (Magic String)
+if (order.stage === 'shipping') { ... }
+if (role === 'graphic_designer') { ... }
+if (order.shipMethod === 'company') { ... }
+
+// ✅ المسموح (Centralized)
+import { ORDER_STAGES, USER_ROLES, SHIPPING_METHODS } from './orders.js';
+if (order.stage === ORDER_STAGES.SHIPPING) { ... }
+if (role === USER_ROLES.GRAPHIC_DESIGNER) { ... }
+if (order.shipMethod === SHIPPING_METHODS.COMPANY) { ... }
+```
+
+### C2.3 — ممنوع تكرار القيم
+**ممنوع تماماً:**
+- ❌ Magic strings مكررة (`if(stage === 'shipping')` في عدة ملفات)
+- ❌ Hardcoded roles (`['admin','operation_manager']` في الـ HTML)
+- ❌ Hardcoded shipping methods, payment types, event types
+- ❌ تعريف enum محلي يكرر enum مركزي
+
+### C2.4 — Single Source of Truth
+كل constant **يُعرَّف مرة واحدة** في الملف المخصص له:
+- ✅ `ORDER_STAGES` يُعرَّف في `orders.js` فقط — أي ملف آخر يستورده
+- ❌ ممنوع `const STAGES = {...}` محلي في صفحة HTML
+
+### C2.5 — إضافة قيمة جديدة
+عند إضافة stage/role/payment-type جديد:
+1. أضفه في الـ constant المركزي **أولاً**
+2. أضفه في الـ object المرتبط (مثلاً `STAGES`, `STAGE_PERMISSIONS`)
+3. حدّث الـ migration للأوردرات القديمة لو لزم
+4. حدّث `firestore.rules` لو لزم
+5. حدّث الـ audit/dashboard للقيمة الجديدة
+
+### C2.6 — Backward Compatibility مع `STAGES`
+`STAGES` الموجود في `orders.js` كائن metadata-rich (`label/ico/col/next/prev/page`).
+`ORDER_STAGES` flat enum بنفس الـ keys → يطابق `Object.keys(STAGES)`.
+
+**لا تعارض** — `ORDER_STAGES.SHIPPING === 'shipping' === STAGES.shipping.key`.
+
+### 🚫 القاعدة النهائية
+**أي string literal مكرَّر مرتين أو أكثر داخل النظام = Technical Debt يجب تحويله إلى constant مركزي.**
+
+الترحيل من magic strings إلى constants يتم تدريجياً عبر PRs منفصلة (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
