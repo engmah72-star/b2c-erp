@@ -118,4 +118,13 @@
   }
 
   window.B2CSidebar = { init, build, guard };
+
+  // ── Legacy globals (backward compat للصفحات اللي اتهاجرت بحذف الـ inline) ──
+  // الصفحات اللي لسه عندها `function buildSidebar` inline → الـ function declaration
+  // عندها أولوية (hoisting)، فالـ window assignments دي ما بتعمل clash.
+  // بعد حذف الـ inline من أي صفحة، النداءات (initSidebar/buildSidebar/guardPage)
+  // تتحوّل تلقائياً على الـ shims دي.
+  if (typeof window.initSidebar  === 'undefined') window.initSidebar  = init;
+  if (typeof window.buildSidebar === 'undefined') window.buildSidebar = build;
+  if (typeof window.guardPage    === 'undefined') window.guardPage    = guard;
 })();
