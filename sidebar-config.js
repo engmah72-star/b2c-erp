@@ -56,8 +56,6 @@
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
     { file:'workforce-live.html',    label:'Workforce Live',   ico:'👷', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
-    { file:'suggestions-admin.html', label:'اقتراحات الموظفين', ico:'💡', group:'admin',  adminOnly:true },
-    { file:'marketplace.html',       label:'المنصة',          ico:'🏛️', group:'admin',  adminOnly:true },
     { file:'admin-alerts.html',      label:'تنبيهات النظام',   ico:'🚨', group:'admin',  adminOnly:true },
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
   ];
