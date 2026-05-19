@@ -575,6 +575,14 @@ export function validateStageRequirements(order, fromStage) {
                      || (order.designFiles && order.designFiles.length)
                      || (order.products || []).some(p => p.designImageUrl));
     if (!hasFiles) warnings.push('لم يُرفع ملف التصميم — يفضّل رفعه قبل الانتقال للطباعة');
+    // 🔒 W1: لو CS علّم الأوردر "بانتظار التحويل" والباقي > 0 → بلوك صلب
+    // (مُمَركَز هنا بدل تكرار الفحص في design.html — RULE V1.5)
+    if (order.designStage === 'awaiting_payment') {
+      const sale = parseFloat(order.salePrice) || 0;
+      const paid = parseFloat(order.totalPaid) || 0;
+      const rem  = Math.max(0, sale - paid);
+      if (rem > 0) errors.push(`يجب تحويل الباقي أولاً (${rem.toLocaleString('ar-EG')} ج)`);
+    }
   }
   else if (stage === 'printing') {
     // إلزامي: صورة واحدة على الأقل على الأوردر أو على أحد المنتجات (يُقبل designImages[] أو designImageUrl)
