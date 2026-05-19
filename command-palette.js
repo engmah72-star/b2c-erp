@@ -18,7 +18,7 @@
   const SKIP = [
     'login.html', 'client-login.html', 'client-portal.html',
     'waybill.html', 'reset-sw.html', 'offline.html',
-    'partner-portal.html', 'chat.html', 'privacy.html',
+    'chat.html', 'privacy.html',
     'firebase-messaging-sw.js', 'sw.js', '',
   ];
   if (SKIP.includes(PATH)) return;
