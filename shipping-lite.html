@@ -545,18 +545,58 @@ function renderRows(list) {
 }
 
 function detailHTML(o) {
-  const items = Array.isArray(o.items) ? o.items : [];
+  // ── حسابات مالية شاملة ──
+  const sale     = safeNum(o.salePrice);
+  const disc     = safeNum(o.discount);
+  const shipFee  = safeNum(o.customerShipFee);
+  const shipCost = safeNum(o.shippingCost);
+  const supCost  = safeNum(o.supplierCost);
+  const paid     = safeNum(o.totalPaid) || safeNum(o.paid) || safeNum(o.deposit);
+  const netInvoice = Math.max(0, sale + shipFee - disc);
+  const remaining  = safeNum(o.remaining) || Math.max(0, netInvoice - paid);
+  const totalCost  = supCost + shipCost;
+  const profit     = netInvoice - totalCost;
+
+  // ── صلاحيات (RULE 8 — visibility per role) ──
+  const seeSale   = canSee('price_sale',   myPerms, myRole);
+  const seePaid   = canSee('price_paid',   myPerms, myRole);
+  const seeRem    = canSee('price_remaining', myPerms, myRole);
+  const seeCost   = canSee('price_cost',   myPerms, myRole);
+  const seeMargin = canSee('price_margin', myPerms, myRole);
+  const seeShip   = canSee('ship_cost',    myPerms, myRole);
+
+  // ── المنتجات: من items[] أو من productName/qty ──
+  const items = Array.isArray(o.items) && o.items.length ? o.items
+              : (o.productName ? [{ name: o.productName, qty: o.qty || 1 }] : []);
+  const escapeHtml = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
   const itemsBlock = items.length
-    ? `<ul class="items-list">${items.slice(0,8).map(it => `<li>• ${(it.name||it.title||'منتج').replace(/</g,'&lt;')} ${it.qty?`× ${it.qty}`:''}</li>`).join('')}${items.length>8?`<li style="color:var(--dim2)">... +${items.length-8} منتج آخر</li>`:''}</ul>`
+    ? `<ul class="items-list">${items.slice(0,10).map(it => `<li>• ${escapeHtml(it.name||it.title||'منتج')}${it.qty?` × <b>${it.qty}</b>`:''}${seeSale && safeNum(it.price)?` — ${fmt(it.price)} ج`:''}</li>`).join('')}${items.length>10?`<li style="color:var(--dim2)">... +${items.length-10} منتج آخر</li>`:''}</ul>`
     : `<div style="color:var(--dim2);font-size:11px">لا منتجات مسجَّلة</div>`;
-  const created = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleString('ar-EG') : '—';
+
+  const created    = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleString('ar-EG') : '—';
   const dispatched = o.shipDispatchedAt?.toDate?.() ? o.shipDispatchedAt.toDate().toLocaleString('ar-EG') : '—';
-  const collected = o.shipCollectedAt?.toDate?.() ? o.shipCollectedAt.toDate().toLocaleString('ar-EG') : '—';
+  const collected  = o.shipCollectedAt?.toDate?.() ? o.shipCollectedAt.toDate().toLocaleString('ar-EG') : '—';
+
+  // ── Helper لعرض سطر مالي (يخفي القيمة لو الدور غير مصرح) ──
+  const moneyLine = (label, value, canSeeFlag, opts={}) => {
+    if (!canSeeFlag) {
+      return `<div class="dline"><span>${label}</span><span style="color:var(--dim2);font-size:10px">— محجوب —</span></div>`;
+    }
+    const cls = opts.cls || '';
+    const bold = opts.bold ? '<b>' : '';
+    const boldEnd = opts.bold ? '</b>' : '';
+    const style = opts.style || '';
+    return `<div class="dline" ${style?`style="${style}"`:''}>
+      <span>${bold}${label}${boldEnd}</span>
+      <span class="${cls}">${bold}${fmt(value)} ج${boldEnd}</span>
+    </div>`;
+  };
+
   return `
     <div class="detail-block">
       <h4>📦 المنتجات (${items.length})</h4>
       ${itemsBlock}
-      ${o.note ? `<div style="margin-top:6px;font-size:11px;color:var(--dim2)">📝 ${o.note.replace(/</g,'&lt;')}</div>` : ''}
+      ${o.note ? `<div style="margin-top:6px;font-size:11px;color:var(--dim2)">📝 ${escapeHtml(o.note)}</div>` : ''}
     </div>
     <div class="detail-block">
       <h4>📅 الـ Timeline</h4>
@@ -567,12 +607,18 @@ function detailHTML(o) {
     </div>
     <div class="detail-block">
       <h4>💰 المالية</h4>
-      <div class="dline"><span>إجمالي الفاتورة</span><span>${fmt(o.totalPrice||o.total||0)} ج</span></div>
-      <div class="dline"><span>مدفوع</span><span>${fmt(o.totalPaid||0)} ج</span></div>
-      <div class="dline"><span>باقي على العميل</span><span class="${(o.remaining||0)>0?'money-neg':'money-zero'}">${fmt(o.remaining||0)} ج</span></div>
-      <div class="dline"><span>تكلفة الشحن</span><span>${fmt(o.shippingCost||0)} ج</span></div>
-      <div class="dline"><span>مُحصَّل عبر الشحن</span><span class="money-pos">${fmt(o.shipCollected||0)} ج</span></div>
-      ${o.shipSettled ? `<div class="dline"><span>صافي التسوية</span><span class="money-pos">${fmt(o.shipSettledAmount||0)} ج</span></div>` : ''}
+      ${moneyLine('سعر الأوردر', sale, seeSale)}
+      ${disc > 0 ? moneyLine('خصم', -disc, seeSale, {cls:'money-neg'}) : ''}
+      ${moneyLine('شحن العميل', shipFee, seeSale)}
+      ${moneyLine('صافي الفاتورة', netInvoice, seeSale, {bold:true, style:'border-top:1px dashed var(--line);padding-top:4px;margin-top:4px'})}
+      ${moneyLine('مدفوع', paid, seePaid, {cls:'money-pos'})}
+      ${moneyLine('باقي على العميل', remaining, seeRem, {cls: remaining>0?'money-neg':'money-zero'})}
+      ${moneyLine('تكلفة المورد', supCost, seeCost, {style:'margin-top:8px'})}
+      ${moneyLine('تكلفة الشحن', shipCost, seeShip)}
+      ${moneyLine('إجمالي التكلفة', totalCost, seeCost && seeShip, {bold:true, style:'border-top:1px dashed var(--line);padding-top:4px;margin-top:4px'})}
+      ${moneyLine('الربح', profit, seeMargin, {bold:true, cls: profit>0?'money-pos':profit<0?'money-neg':'money-zero', style:'border-top:1px solid var(--line);padding-top:6px;margin-top:6px;font-size:13px'})}
+      ${moneyLine('مُحصَّل عبر الشحن', safeNum(o.shipCollected), seeShip, {cls:'money-pos', style:'margin-top:8px'})}
+      ${o.shipSettled ? moneyLine('صافي التسوية', safeNum(o.shipSettledAmount), seeShip, {cls:'money-pos'}) : ''}
     </div>`;
 }
 
