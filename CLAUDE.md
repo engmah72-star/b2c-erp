@@ -1048,6 +1048,95 @@ storage.rules تتبع نفس الفلسفة:
 
 ---
 
+## RULE X1 — SYSTEM SECURITY (الميثاق الأمني الشامل — Meta-Charter)
+
+> **الأمان هدفه حماية التشغيل الحقيقي للشركة، لا بناء طبقات تعطل المستخدمين أو التطوير.**
+>
+> هذه القاعدة meta-charter — تجمع وتوحّد جوانب الأمان عبر **W1 + C1 + V1 + A1 + F1 + S1 + R1 + RULE 1-8**.
+> الجديد فيها: account lifecycle + audit trail شامل + منع hardcoded admin/hidden permissions.
+
+### X1.1 — Defense-in-Depth (طبقات الدفاع)
+كل عملية حساسة محمية بـ **4 طبقات**:
+1. **UI**: زر مخفي/مُعطَّل (`canSee()`, `hasPage()`)
+2. **Validators**: `validateOrder/Payment/Refund` يرفض early
+3. **Central Actions**: `orderActions.*` يفرض pre-checks
+4. **Firebase Rules**: يرفض الكتابة حتى لو تجاوزت الطبقات 1-3
+
+**أي طبقة وحدها لا تكفي.** الـ rules هي الـ source of truth الأخير.
+
+### X1.2 — Account Lifecycle (جديد)
+**القواعد:**
+- **تسجيل الدخول إجباري** — كل صفحة تتحقق `onAuthStateChanged` وتعيد توجيه غير الموثَّقين
+- **ممنوع الحسابات المشتركة** — كل موظف له `uid` خاص و `users/{uid}` document
+- **الحسابات غير المستخدمة تُعطَّل** — `users/{uid}.disabled = true` أو Firebase Auth disable
+- **Password reset** عبر Cloud Function (لا exposure للـ admin SDK في الواجهة)
+- **Audit** لكل تسجيل دخول جديد + كل تغيير دور
+
+### X1.3 — منع Hardcoded Admin Logic
+**ممنوع تماماً:**
+- ❌ `if (user.uid === 'specific-uid-here')` — backdoor patterns
+- ❌ `if (email === 'admin@...')` — hardcoded credentials
+- ❌ "god mode" checks بدون الـ permissions matrix
+- ❌ Roles مكتوبة inline في HTML بدل `core/permissions-matrix.js`
+
+**المسموح:**
+- ✅ `if (currentRole === USER_ROLES.ADMIN)` عبر constants
+- ✅ `isAdmin()` helper في rules
+- ✅ `can('canFinancialWrite')` للصلاحيات الدقيقة
+
+### X1.4 — منع Hidden Permissions
+**ممنوع:**
+- ❌ checks في JS لا تطابق `core/permissions-matrix.js`
+- ❌ UI elements ظاهرة لـ role بدون أن تكون في `ROLE_PAGES`
+- ❌ "TODO: add permissions check" — يُرفض الـ commit
+
+**المسموح:** كل صلاحية موثَّقة في `core/permissions-matrix.js` و مُختبَرة في Rules.
+
+### X1.5 — Audit Trail الشامل (تعزيز RULE 5)
+**كل من العمليات التالية يجب أن تُسجَّل:**
+
+| العملية | المكان |
+|--------|------|
+| تغيير `order.stage` | `order.timeline[]` (تلقائي عبر `buildStageAdvance`) |
+| العمليات المالية | `financial_ledger` (إلزامي عبر FSE — RULE 5) |
+| الحذف (`deleteDoc`) | `audit_logs/{type}_deleted/{ts}` قبل الحذف |
+| المرتجعات | `returns_tickets.timeline[]` |
+| الأرشفة | `order.timeline[]` (تلقائي عبر `buildArchiveSpec`) |
+| تعديل `salePrice` / `costItems` | `order.editHistory[]` مع before/after + user |
+| تغيير `role` لمستخدم | `audit_logs/role_change/{ts}` |
+
+### X1.6 — منع الـ Bypass
+**ممنوع** أي مسار يتجاوز:
+- ❌ Workflow → استخدم `orderActions.*` أو `buildStageAdvance`
+- ❌ Financial → استخدم `dispatchFinancialEvent` أو `addLedgerToBatch`
+- ❌ Permissions → استخدم helpers (`canSee`, `hasPage`, `can`)
+- ❌ Storage → استخدم `core/storage-helpers.js`
+
+### X1.7 — Sensitive Operations تحتاج Validation صريح
+عمليات حساسة (حذف، إعادة فتح أوردر، تعديل أرصدة، تغيير دور):
+- يجب أن تكون عبر `validate*()` validator مركزي
+- يجب أن تظهر `confirm()` dialog واضح للمستخدم
+- يجب أن تُسجَّل في `audit_logs` مع `reason` field
+
+### X1.8 — Session Security
+- لا حفظ tokens أو passwords في `localStorage` (Firebase Auth يديرها بأمان)
+- لا exposure للـ Firebase Admin SDK في الـ client
+- callable Cloud Functions تستخدم `request.auth` للتحقق
+- Custom Claims لا تُكتب من الـ client (فقط من admin SDK)
+
+### X1.9 — Tenant Isolation (Phase 2 ready)
+- كل query بفلتر `tenantId == currentTenantId`
+- كل rule بفحص `inSameTenant(resource.data)`
+- لا cross-tenant data leak
+
+### 🚫 القاعدة النهائية
+**الأمان وُجد لحماية التشغيل، لا لتعطيله.**
+
+أي تعقيد أمني يعطل الموظفين بدون قيمة حقيقية = يُرفض.
+أي drift يُسجَّل في `SECURITY_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
