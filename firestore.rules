@@ -76,15 +76,23 @@ service cloud.firestore {
     // إضافة صفحة جديدة تكتب في wallets/transactions_v2/financial_ledger:
     //   1) أضفها هنا في canFinancialWrite()
     //   2) أو امنح المستخدم perms.canFinancialWrite=true
+    // S0-2 FIX: تضييق canFinancialWrite — إزالة pages التي لا تحتاج كتابة مالية مباشرة.
+    // قبل: hasPage('production'/'design'/'print') كانت تمنح صلاحية كتابة على
+    // wallets/transactions_v2/financial_ledger — designer/production_agent
+    // يقدر يضيف رصيد لمحفظته. هذا P0 escalation path.
+    //
+    // بعد: فقط الأدوار اللي تتعامل مع المال فعلاً (المحاسب، CS لدفعات العميل،
+    // shipping لتسوية الشحن، suppliers لدفعات المورد).
+    //
+    // ملاحظة: production يحتاج تسجيل تكاليف الإنتاج → عبر supplier_payments
+    // التي لها rule منفصلة (hasPage('production') || hasPage('suppliers')).
+    // لا حاجة لإعطاء production كتابة مباشرة على wallets.
     function canFinancialWrite() {
       return isAdmin()
           || hasPage('accounts')
           || hasPage('shipping')
           || hasPage('shipping-accounts')
           || hasPage('suppliers')
-          || hasPage('production')
-          || hasPage('design')
-          || hasPage('print')
           || hasPage('clients')
           || can('canAddOrders')
           || can('canFinancialWrite');
@@ -102,6 +110,10 @@ service cloud.firestore {
       return isPartner() && resourceData.get('tenantId', '__') == partnerTenant();
     }
 
+    // S0-2 FIX: canFinancialRead أوسع قليلاً من canFinancialWrite
+    // production/design/print يحتاجون قراءة (مثلاً للعرض في dashboards) لكن
+    // لا يحتاجون كتابة. القراءة هنا ليست خطرة (لا تعرض أرقام لا يجب أن
+    // يروها — حقل الإذونات client-side فيلتر المعروض).
     function canFinancialRead() {
       return isAdmin()
           || hasPage('accounts')
