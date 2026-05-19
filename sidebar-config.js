@@ -31,11 +31,15 @@
 
     // ─── الأوردرات (orders) ───
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
+    { file:'import-data.html',       label:'استيراد البيانات',  ico:'📥', group:'orders', perm:'clients' },
+    { file:'gallery.html',           label:'المعرض',           ico:'🖼️', group:'orders', public:true },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'design-workspace.html',  label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
+    { file:'client-design-library.html', label:'مكتبة التصاميم', ico:'🎨', group:'orders', public:true },
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
     { file:'print-routes.html',      label:'مسارات الإنتاج',   ico:'🗺️', group:'orders', adminOnly:true },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
+    { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
     { file:'shipping-lite.html',     label:'الشحن (مبسّط)',    ico:'⚡', group:'orders', perm:'shipping' },
     { file:'shipping.html',          label:'الشحن (الكامل)',   ico:'🚚', group:'orders', perm:'shipping' },
     { file:'shipping-followup.html', label:'متابعة الشحن',     ico:'📋', group:'orders', perm:'shipping' },

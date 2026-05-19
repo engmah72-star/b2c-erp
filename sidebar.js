@@ -64,7 +64,11 @@
 
   function build(userData, currentPage) {
     if (!userData) return;
-    const navEl = document.getElementById('nav-links');
+    // الـ DOM ID ليه 3 أشكال تاريخياً عبر الصفحات:
+    //   nav-links (الأحدث/الأكثر شيوعاً) — nav-scroll-dynamic — nav-scroll
+    const navEl = document.getElementById('nav-links')
+              || document.getElementById('nav-scroll-dynamic')
+              || document.getElementById('nav-scroll');
     if (!navEl) return;
 
     const SIDEBAR_PAGES = window.SIDEBAR_PAGES || [];
