@@ -414,6 +414,7 @@ import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, se
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
+import { buildArchiveSpec } from './orders.js';
 
 let me = null, myRole = '', myPerms = null;
 let orders = [], shippers = [], wallets = [];
@@ -1255,15 +1256,19 @@ window.confirmSettle = confirmSettle;
 window.confirmArchive = async (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
-  if (!o.shipSettled) { toast('⚠️ لازم تسوّي قبل الأرشفة', 'err'); return; }
+  // الفحوصات المُمَركَزة عبر buildArchiveSpec (RULE C1.3)
+  const baseArgs = { order:o, role:myRole, userId:me.uid, userName:$('nav-name').textContent, source:'shipping' };
+  let spec = buildArchiveSpec(baseArgs);
+  if (spec.errors.length) { toast('⛔ '+spec.errors.join(' · '),'err'); return; }
+  if (spec.needsConfirmation) {
+    if (!confirm('⚠️ '+spec.warnings.join(' · ')+'\n\nالمتابعة بالأرشفة؟')) return;
+    spec = buildArchiveSpec({ ...baseArgs, bypassWarnings:true });
+  }
   if (!confirm(`أرشفة طلب #${o.orderNumber || o._id.slice(0,6)} للعميل ${o.clientName||''}؟\n\nسينتقل من مرحلة الشحن إلى الأرشيف.`)) return;
   try {
     await updateDoc(doc(db, 'orders', orderId), {
-      stage: 'archived',
-      shipStage: 'completed',
-      archivedAt: serverTimestamp(),
-      archivedBy: me.uid,
-      archivedByName: $('nav-name').textContent,
+      ...spec.fields,
+      timeline: [...(o.timeline||[]), spec.timelineEntry],
       updatedAt: serverTimestamp(),
     });
     toast('📁 تم الأرشفة');
