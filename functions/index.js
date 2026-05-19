@@ -2676,3 +2676,195 @@ exports.checkSuggestionPR = onCall(
   }
 );
 
+// ════════════════════════════════════════════════════════════
+// S0-6: Rate-limit guard على الـ client portal submissions
+// ════════════════════════════════════════════════════════════
+// الـ Firestore rules تسمح للعملاء غير المصادَقين بإنشاء returns_tickets
+// و client_decisions (مع cross-validation لـ clientPhone).
+// الخطر: مهاجم يعرف orderId + clientPhone يقدر يصنع آلاف entries.
+//
+// هذه الـ functions تراقب الإنشاء وتطبّق rate limit per phone+orderId.
+// لو تجاوز الحد:
+//   1) tag الـ doc كـ isDeleted=true (soft delete)
+//   2) إضافة admin_alert
+//
+// الحدود (قابلة للضبط):
+//   - returns_tickets: 5 لكل clientPhone في الساعة الأخيرة
+//   - client_decisions: 10 لكل orderId في الساعة الأخيرة (revision spam)
+//
+// المرجع: STABILIZATION_PLAN.md §1.S0-6.
+
+const PORTAL_RATE_LIMITS = {
+  returns_tickets: { perKey: 'clientPhone', maxPerHour: 5 },
+  client_decisions: { perKey: 'orderDocId', maxPerHour: 10 },
+};
+
+async function enforcePortalRateLimit(collectionName, doc, e) {
+  const cfg = PORTAL_RATE_LIMITS[collectionName];
+  if (!cfg) return;
+
+  // طبّق فقط على submissions من client portal (غير مصادَقة).
+  // الـ requestedBy في returns_tickets, و decision في client_decisions
+  // مع clientPhone موجود — يوضّح المصدر.
+  const isClientPortal =
+    (collectionName === 'returns_tickets' && doc.requestedBy === 'client_portal') ||
+    (collectionName === 'client_decisions' && doc.clientPhone);
+  if (!isClientPortal) return;
+
+  const keyValue = doc[cfg.perKey];
+  if (!keyValue) return;
+
+  // عُد الـ entries في آخر ساعة من نفس الـ key
+  const cutoff = new Date(Date.now() - 3600 * 1000);
+  let countSnap;
+  try {
+    countSnap = await db.collection(collectionName)
+      .where(cfg.perKey, '==', keyValue)
+      .where('createdAt', '>=', cutoff)
+      .count().get();
+  } catch (err) {
+    console.warn(`[rateLimit] count failed for ${collectionName}:`, err.message);
+    return;
+  }
+
+  const count = countSnap.data().count;
+  if (count <= cfg.maxPerHour) return;
+
+  // تجاوز الحد — soft-delete + alert
+  console.log(`[rateLimit] 🚨 ${collectionName} exceeded: ${keyValue} = ${count} في ساعة`);
+
+  try {
+    await e.data.ref.update({
+      isDeleted: true,
+      deletedAt: FieldValue.serverTimestamp(),
+      deletedReason: 'rate_limit_exceeded',
+      rateLimitCount: count,
+    });
+  } catch (err) {
+    console.error(`[rateLimit] soft-delete failed:`, err.message);
+  }
+
+  try {
+    await db.collection('admin_alerts').add({
+      severity: 'high',
+      reasons: [`Rate limit exceeded on ${collectionName}`],
+      eventType: 'CLIENT_PORTAL_RATE_LIMIT',
+      type: 'security',
+      [cfg.perKey]: keyValue,
+      count,
+      windowMinutes: 60,
+      collectionName,
+      docId: e.params[Object.keys(e.params)[0]] || '',
+      createdBy: 'system_rate_limiter',
+      createdByName: 'Rate Limiter',
+      acknowledged: false,
+      acknowledgedBy: null,
+      acknowledgedAt: null,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error(`[rateLimit] alert creation failed:`, err.message);
+  }
+
+  // إرسال push للـ admin
+  try {
+    const tokens = await getRoleTokens(['admin', 'operation_manager']);
+    await sendPush({
+      tokens,
+      title: '🚨 محاولة إغراق من client portal',
+      body: `${count} ${collectionName} في ساعة من ${keyValue}`,
+      data: { type: 'rate_limit', collectionName, key: keyValue },
+      link: '/admin-alerts.html',
+    });
+  } catch (_) { /* ignore */ }
+}
+
+exports.guardReturnsTicketsRateLimit = onDocumentCreated(
+  'returns_tickets/{ticketId}',
+  async (e) => {
+    const t = e.data?.data();
+    if (!t) return;
+    await enforcePortalRateLimit('returns_tickets', t, e);
+  }
+);
+
+exports.guardClientDecisionsRateLimit = onDocumentCreated(
+  'client_decisions/{decId}',
+  async (e) => {
+    const d = e.data?.data();
+    if (!d) return;
+    await enforcePortalRateLimit('client_decisions', d, e);
+  }
+);
+
+// ════════════════════════════════════════════════════════════
+// S0-4 Helper: نشر role/tenantId كـ Auth custom claims
+// ════════════════════════════════════════════════════════════
+// الـ Storage rules لا تقدر تقرأ Firestore. الحل: نشر الحقول الحرجة
+// كـ custom claims على Firebase Auth user → request.auth.token في
+// storage.rules يحتوي على tenantId + role.
+//
+// تشتغل تلقائياً:
+//   - عند تعديل users/{uid} (role أو tenantId)
+//   - عبر admin callable لو احتاج reset
+//
+// المرجع: STABILIZATION_PLAN.md §1.S0-4.
+
+exports.syncUserAuthClaims = onDocumentUpdated('users/{uid}', async (e) => {
+  const before = e.data?.before?.data() || {};
+  const after  = e.data?.after?.data()  || {};
+  const uid    = e.params.uid;
+
+  // فقط لو الحقول الحساسة تغيّرت
+  const fieldsChanged =
+    before.role !== after.role ||
+    before.tenantId !== after.tenantId ||
+    before.permissions !== after.permissions;
+  if (!fieldsChanged) return;
+
+  try {
+    await getAuth().setCustomUserClaims(uid, {
+      role: after.role || 'customer_service',
+      tenantId: after.tenantId || 'merchant_001',
+      // ملاحظة: permissions قد تكون كبيرة — نقتصر على flags المهمة
+      cfw: (after.permissions || {}).canFinancialWrite === true,
+      cfr: (after.permissions || {}).canFinancialRead === true,
+    });
+    console.log(`[syncUserAuthClaims] ✓ ${uid} → role=${after.role} tenant=${after.tenantId}`);
+  } catch (err) {
+    console.error(`[syncUserAuthClaims] failed for ${uid}:`, err.message);
+  }
+});
+
+// Bootstrap: callable لـ admin لنشر claims على كل users الموجودة دفعة واحدة
+// (للـ migration). يشتغل مرة واحدة بعد deploy الأول.
+exports.backfillAuthClaims = onCall({ timeoutSeconds: 540 }, async (req) => {
+  if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
+
+  const callerSnap = await db.collection('users').doc(req.auth.uid).get();
+  if (!callerSnap.exists || callerSnap.data().role !== 'admin') {
+    throw new HttpsError('permission-denied', 'admin only');
+  }
+
+  const snap = await db.collection('users').get();
+  let success = 0, failed = 0;
+
+  for (const userDoc of snap.docs) {
+    const data = userDoc.data();
+    try {
+      await getAuth().setCustomUserClaims(userDoc.id, {
+        role: data.role || 'customer_service',
+        tenantId: data.tenantId || 'merchant_001',
+        cfw: (data.permissions || {}).canFinancialWrite === true,
+        cfr: (data.permissions || {}).canFinancialRead === true,
+      });
+      success++;
+    } catch (err) {
+      console.error(`[backfillAuthClaims] failed for ${userDoc.id}:`, err.message);
+      failed++;
+    }
+  }
+
+  return { success, failed, total: snap.size };
+});
+
