@@ -58,6 +58,21 @@
     حدّ batch = 400 doc لكل تشغيل. لو في "hasMore: true" → اضغط Run تاني.
   </div>
 
+  <div class="card" style="border-color: #3b9eff">
+    <h3>🩺 Cloud Functions Health Check</h3>
+    <p style="font-size:13px;color:var(--dim);margin-bottom:12px">
+      لو الأزرار بترجع <code>internal ❌</code>، فالسبب الأشيع: الـ functions لم يكتمل deploy لها بعد بعد آخر merge.
+      هذا الفحص يحدد إذا الـ functions جاهزة.
+    </p>
+    <div class="row">
+      <div class="col-name">حالة الـ Functions:</div>
+      <div class="col-status" id="deploy-status">— لم يُفحص بعد —</div>
+      <div class="actions">
+        <button class="primary" onclick="checkDeployStatus()">🩺 فحص الحالة الآن</button>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <h3>Auth Claims Backfill (S0-4 prerequisite)</h3>
     <p style="font-size:13px;color:var(--dim);margin-bottom:12px">
@@ -104,10 +119,98 @@ const COLLECTIONS = [
 const logGlobal = document.getElementById('log-global');
 function log(msg, type='info') {
   const time = new Date().toLocaleTimeString('ar-EG');
-  const color = type === 'error' ? '#ff3d6e' : type === 'success' ? '#00d97e' : '#aaa';
+  const color = type === 'error' ? '#ff3d6e' : type === 'success' ? '#00d97e' : type === 'warn' ? '#ffaa00' : '#aaa';
   logGlobal.innerHTML += `<div style="color:${color}">[${time}] ${msg}</div>`;
   logGlobal.scrollTop = logGlobal.scrollHeight;
 }
+
+// تشخيص ذكي لأخطاء callable functions
+function diagnoseCallableError(err) {
+  const code = err?.code || '';
+  const msg = err?.message || String(err);
+
+  // 'internal' من callable يعني عادةً:
+  //   1) الـ function لم يتم deploy لها بعد (شائع في الدقائق الأولى بعد merge)
+  //   2) الـ function deployed لكن throw exception غير مُتوقَّع
+  //   3) Cold start fail
+  if (code === 'internal' || (code === 'functions/internal') || msg.includes('INTERNAL')) {
+    return {
+      level: 'pending',
+      label: 'الـ Function في الغالب لم يكتمل deploy لها بعد (انتظر 5-10 دقائق)',
+      retry: true,
+    };
+  }
+  if (code === 'unauthenticated' || msg.includes('unauthenticated')) {
+    return { level: 'auth', label: 'سجّل دخول أولاً', retry: false };
+  }
+  if (code === 'permission-denied' || msg.includes('permission-denied')) {
+    return { level: 'denied', label: 'يحتاج صلاحية admin', retry: false };
+  }
+  if (code === 'unavailable' || msg.includes('unavailable')) {
+    return { level: 'pending', label: 'الـ Function يُعاد deploy حاليًا — انتظر', retry: true };
+  }
+  return { level: 'error', label: msg, retry: false };
+}
+
+// Retry تلقائي مع exponential backoff لأخطاء "pending"
+async function callWithRetry(callable, payload, opts = {}) {
+  const maxAttempts = opts.maxAttempts || 4;
+  const baseDelayMs = opts.baseDelayMs || 3000;
+  let lastErr;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await callable(payload);
+    } catch (err) {
+      lastErr = err;
+      const diag = diagnoseCallableError(err);
+      if (!diag.retry || attempt === maxAttempts - 1) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      log(`  ⏳ المحاولة ${attempt + 1}/${maxAttempts} فشلت (${diag.label}) — إعادة بعد ${delay / 1000}s`, 'warn');
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+// فحص حالة deploy: نحاول call خفيف لـ backfillTenantId بـ dryRun
+// ونستخدم النتيجة كمؤشّر لـ functions readiness.
+async function checkDeployStatus() {
+  const indicator = document.getElementById('deploy-status');
+  indicator.textContent = '⏳ جاري الفحص...';
+  indicator.className = 'col-status running';
+  log('[deploy-check] فحص حالة الـ Cloud Functions...');
+
+  try {
+    // dryRun على أصغر collection — يجب أن يرجع نتيجة سريعة لو الـ function deployed
+    await backfillTenantId({ collection: 'employee_payments', dryRun: true });
+    indicator.textContent = '✅ Cloud Functions جاهزة — يمكن البدء';
+    indicator.className = 'col-status done';
+    log('[deploy-check] ✓ Functions reachable', 'success');
+    return true;
+  } catch (err) {
+    const diag = diagnoseCallableError(err);
+    if (diag.level === 'pending') {
+      indicator.textContent = `⏳ ${diag.label}`;
+      indicator.className = 'col-status running';
+      log(`[deploy-check] ⏳ ${diag.label}`, 'warn');
+    } else if (diag.level === 'denied') {
+      indicator.textContent = `🔒 ${diag.label} — لكن الـ Functions جاهزة`;
+      indicator.className = 'col-status done';
+      log(`[deploy-check] ℹ️ ${diag.label} (لكن الـ function deployed)`, 'info');
+      return true;  // Function exists، فقط صلاحية المستخدم تالحالية ناقصة
+    } else if (diag.level === 'auth') {
+      indicator.textContent = `🔐 ${diag.label}`;
+      indicator.className = 'col-status error';
+      log(`[deploy-check] ${diag.label}`, 'error');
+    } else {
+      indicator.textContent = `❌ ${diag.label}`;
+      indicator.className = 'col-status error';
+      log(`[deploy-check] ❌ ${diag.label}`, 'error');
+    }
+    return false;
+  }
+}
+window.checkDeployStatus = checkDeployStatus;
 
 function renderCollections() {
   const list = document.getElementById('collections-list');
@@ -133,7 +236,7 @@ window.runBackfill = async function(collection, dryRun) {
   log(`[${collection}] ${dryRun ? 'Dry-running' : 'Running'}...`);
 
   try {
-    const res = await backfillTenantId({ collection, dryRun });
+    const res = await callWithRetry(backfillTenantId, { collection, dryRun });
     const d = res.data;
     status.className = d.hasMore ? 'col-status running' : 'col-status done';
     status.textContent = `✓ scanned: ${d.scanned}, updated: ${d.updated}, skipped: ${d.skipped}${d.hasMore ? ' (المزيد متاح)' : ''}`;
@@ -143,9 +246,10 @@ window.runBackfill = async function(collection, dryRun) {
       log(`[${collection}] hasMore=true — اضغط Run مرة أخرى لمعالجة الـ batch التالي`);
     }
   } catch (e) {
+    const diag = diagnoseCallableError(e);
     status.className = 'col-status error';
-    status.textContent = `❌ ${e.message}`;
-    log(`[${collection}] ❌ ${e.message}`, 'error');
+    status.textContent = `❌ ${diag.label}`;
+    log(`[${collection}] ❌ ${diag.label} (${e.code || 'unknown'})`, 'error');
   } finally {
     btn.disabled = false;
   }
@@ -156,29 +260,33 @@ window.runBackfillClaims = async function() {
   const logEl = document.getElementById('log-claims');
   btn.disabled = true;
   logEl.style.display = 'block';
-  logEl.textContent = '⏳ Running backfillAuthClaims على كل users...';
+  logEl.textContent = '⏳ Running backfillAuthClaims على كل users... (قد يستغرق 30-60 ثانية)';
   log('[claims] Running backfillAuthClaims...');
 
   try {
-    const res = await backfillAuthClaims({});
+    const res = await callWithRetry(backfillAuthClaims, {});
     const d = res.data;
     logEl.textContent = `✓ تم: success=${d.success}, failed=${d.failed}, total=${d.total}`;
     log(`[claims] ✓ ${JSON.stringify(d)}`, 'success');
   } catch (e) {
-    logEl.textContent = `❌ ${e.message}`;
-    log(`[claims] ❌ ${e.message}`, 'error');
+    const diag = diagnoseCallableError(e);
+    logEl.textContent = `❌ ${diag.label}`;
+    log(`[claims] ❌ ${diag.label} (${e.code || 'unknown'})`, 'error');
   } finally {
     btn.disabled = false;
   }
 };
 
-// التأكد من الـ admin role
+// التأكد من الـ admin role + Auto-check للـ deploy عند فتح الصفحة
 onAuthStateChanged(auth, async (user) => {
   if (!user) {
     document.body.innerHTML = '<div style="text-align:center;padding:60px"><h2>⛔ يجب تسجيل الدخول</h2><a href="login.html">سجّل دخول</a></div>';
     return;
   }
   log(`✓ مُسجَّل دخول: ${user.email}`);
+  // Auto-check deploy status لتفادي الـ "internal" surprise
+  log('بدء فحص حالة الـ Cloud Functions تلقائيًا...');
+  await checkDeployStatus();
 });
 </script>
 
