@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tenant Migration — Admin Tool</title>
+  <link rel="stylesheet" href="shared.css?v=1">
+  <script src="viewas.js?v=1" defer></script>
+  <style>
+    .container { max-width: 980px; margin: 24px auto; padding: 20px; }
+    .card { background: var(--bg2); border: 1px solid var(--bord); border-radius: 12px;
+            padding: 20px; margin-bottom: 16px; }
+    .card h3 { margin: 0 0 12px; color: var(--fg); }
+    .warning { background: rgba(255,170,0,.1); border: 1px solid rgba(255,170,0,.4);
+               color: #ffaa00; padding: 12px 16px; border-radius: 8px; margin: 12px 0;
+               font-size: 13px; line-height: 1.7; }
+    .row { display: flex; align-items: center; justify-content: space-between;
+           padding: 12px 0; border-bottom: 1px solid var(--bord); gap: 12px; flex-wrap: wrap; }
+    .row:last-child { border-bottom: none; }
+    .col-name { font-weight: 700; min-width: 180px; }
+    .col-status { flex: 1; font-size: 13px; color: var(--dim); }
+    .col-status.done { color: #00d97e; }
+    .col-status.error { color: #ff3d6e; }
+    .col-status.running { color: #ffaa00; }
+    button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--bord);
+             background: var(--bg3); color: var(--fg); cursor: pointer; font-size: 13px;
+             font-weight: 600; }
+    button:hover { background: var(--bg-hover); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.primary { background: #3b9eff; color: #fff; border-color: #3b9eff; }
+    button.danger { background: #ff3d6e; color: #fff; border-color: #ff3d6e; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .log { background: #0a0c1a; color: #aaa; padding: 12px; border-radius: 8px;
+           font-family: monospace; font-size: 12px; margin-top: 12px; max-height: 200px;
+           overflow-y: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <h1>🌐 Tenant ID Migration</h1>
+    <p>أداة Admin: backfill tenantId على الـ collections القديمة</p>
+  </div>
+  <div class="topbar-right">
+    <button onclick="window.location.href='index.html'">← لوحة التحكم</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="warning">
+    <strong>⚠️ تنبيه:</strong>
+    هذه أداة admin-only لتنفيذ الـ multi-tenant migration.<br>
+    كل ضغطة على "Run" تشغّل <code>backfillTenantId</code> Cloud Function — تكتب <code>tenantId='merchant_001'</code> على كل docs ليس لديها.<br>
+    <strong>الـ Dry Run يعرض الإحصائيات بدون كتابة فعلية.</strong> ابدأ به دائمًا.<br>
+    العملية idempotent — تشغيلها 100 مرة آمن.<br>
+    حدّ batch = 400 doc لكل تشغيل. لو في "hasMore: true" → اضغط Run تاني.
+  </div>
+
+  <div class="card">
+    <h3>Auth Claims Backfill (S0-4 prerequisite)</h3>
+    <p style="font-size:13px;color:var(--dim);margin-bottom:12px">
+      ينشر <code>role + tenantId + cfw + cfr</code> على كل users كـ Firebase Auth custom claims.
+      مطلوب لـ Storage rules الجديدة. شغّله مرة واحدة بعد deploy.
+    </p>
+    <div class="actions">
+      <button class="primary" onclick="runBackfillClaims()" id="btn-claims">🔐 Run backfillAuthClaims</button>
+    </div>
+    <div class="log" id="log-claims" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h3>Tenant ID Backfill</h3>
+    <p style="font-size:13px;color:var(--dim);margin-bottom:12px">
+      الـ Cloud Function <code>backfillTenantId</code> يكتب <code>tenantId='merchant_001'</code> على كل document بدون الحقل.
+    </p>
+
+    <div id="collections-list"></div>
+  </div>
+
+  <div class="card">
+    <h3>📜 Log الكامل</h3>
+    <div class="log" id="log-global">جاهز. اختر collection وابدأ.</div>
+  </div>
+
+</div>
+
+<script type="module">
+import { app, auth } from './core/firebase-init.js';
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const functions = getFunctions(app, 'us-central1');
+const backfillTenantId = httpsCallable(functions, 'backfillTenantId');
+const backfillAuthClaims = httpsCallable(functions, 'backfillAuthClaims');
+
+const COLLECTIONS = [
+  'orders', 'clients', 'suppliers_v2', 'employees',
+  'transactions_v2', 'financial_ledger',
+  'employee_payments', 'supplier_payments',
+];
+
+const logGlobal = document.getElementById('log-global');
+function log(msg, type='info') {
+  const time = new Date().toLocaleTimeString('ar-EG');
+  const color = type === 'error' ? '#ff3d6e' : type === 'success' ? '#00d97e' : '#aaa';
+  logGlobal.innerHTML += `<div style="color:${color}">[${time}] ${msg}</div>`;
+  logGlobal.scrollTop = logGlobal.scrollHeight;
+}
+
+function renderCollections() {
+  const list = document.getElementById('collections-list');
+  list.innerHTML = COLLECTIONS.map(c => `
+    <div class="row" data-col="${c}">
+      <div class="col-name">${c}</div>
+      <div class="col-status" id="status-${c}">—</div>
+      <div class="actions">
+        <button onclick="runBackfill('${c}', true)" id="btn-dry-${c}">Dry Run</button>
+        <button class="primary" onclick="runBackfill('${c}', false)" id="btn-run-${c}">Run</button>
+      </div>
+    </div>
+  `).join('');
+}
+renderCollections();
+
+window.runBackfill = async function(collection, dryRun) {
+  const btn = document.getElementById(`btn-${dryRun ? 'dry' : 'run'}-${collection}`);
+  const status = document.getElementById(`status-${collection}`);
+  btn.disabled = true;
+  status.className = 'col-status running';
+  status.textContent = `⏳ ${dryRun ? 'Dry running' : 'Running'}...`;
+  log(`[${collection}] ${dryRun ? 'Dry-running' : 'Running'}...`);
+
+  try {
+    const res = await backfillTenantId({ collection, dryRun });
+    const d = res.data;
+    status.className = d.hasMore ? 'col-status running' : 'col-status done';
+    status.textContent = `✓ scanned: ${d.scanned}, updated: ${d.updated}, skipped: ${d.skipped}${d.hasMore ? ' (المزيد متاح)' : ''}`;
+    log(`[${collection}] ✓ ${JSON.stringify(d)}`, 'success');
+
+    if (d.hasMore && !dryRun) {
+      log(`[${collection}] hasMore=true — اضغط Run مرة أخرى لمعالجة الـ batch التالي`);
+    }
+  } catch (e) {
+    status.className = 'col-status error';
+    status.textContent = `❌ ${e.message}`;
+    log(`[${collection}] ❌ ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.runBackfillClaims = async function() {
+  const btn = document.getElementById('btn-claims');
+  const logEl = document.getElementById('log-claims');
+  btn.disabled = true;
+  logEl.style.display = 'block';
+  logEl.textContent = '⏳ Running backfillAuthClaims على كل users...';
+  log('[claims] Running backfillAuthClaims...');
+
+  try {
+    const res = await backfillAuthClaims({});
+    const d = res.data;
+    logEl.textContent = `✓ تم: success=${d.success}, failed=${d.failed}, total=${d.total}`;
+    log(`[claims] ✓ ${JSON.stringify(d)}`, 'success');
+  } catch (e) {
+    logEl.textContent = `❌ ${e.message}`;
+    log(`[claims] ❌ ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// التأكد من الـ admin role
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    document.body.innerHTML = '<div style="text-align:center;padding:60px"><h2>⛔ يجب تسجيل الدخول</h2><a href="login.html">سجّل دخول</a></div>';
+    return;
+  }
+  log(`✓ مُسجَّل دخول: ${user.email}`);
+});
+</script>
+
+</body>
+</html>
