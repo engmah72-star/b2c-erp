@@ -765,6 +765,130 @@ export function buildArchiveSpec({
 }
 
 // ══════════════════════════════════════════
+// CENTRAL VALIDATORS — RULE V1 (Central Validation)
+// ══════════════════════════════════════════
+// Pure validators تُرجع {ok, errors, warnings} — لا تكتب في Firestore.
+// الـ caller يقرّر بناءً على النتيجة.
+// تستخدم نفس قواعد التحقق الداخلية المستخدَمة في build*Spec — لا تكرار.
+
+/**
+ * validatePayment — التحقق من صحة دفعة قبل تسجيلها (RULE V1.3)
+ *
+ * @param {Object} args
+ * @param {Object} args.order   — الأوردر المستهدف
+ * @param {number} args.amount  — قيمة الدفعة
+ * @param {string} args.source  — 'customer' | 'refund' | 'discount' (افتراضي: 'customer')
+ * @param {string} args.role    — دور المستخدم
+ * @returns { ok, errors, warnings }
+ */
+export function validatePayment({ order, amount, source = 'customer', role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0) errors.push('قيمة الدفعة يجب أن تكون أكبر من صفر');
+
+  // الأوردر يقبل دفعات؟
+  const cur = order.stage || 'design';
+  if (cur === 'cancelled') errors.push('لا يمكن تسجيل دفعة على أوردر ملغي');
+
+  // overpayment للدفعات العميل
+  if (source === 'customer' && amt > 0) {
+    const sale = parseFloat(order.salePrice) || 0;
+    const paid = parseFloat(order.totalPaid) || 0;
+    const remaining = Math.max(0, sale - paid);
+    if (amt > remaining && remaining >= 0) {
+      warnings.push(`الدفعة أكبر من المتبقّي (${remaining.toLocaleString('ar-EG')} ج)`);
+    }
+  }
+
+  // الصلاحية
+  if (role) {
+    const allowedRoles = source === 'refund'
+      ? ['admin','operation_manager','wallet_manager']
+      : ['admin','operation_manager','customer_service','wallet_manager'];
+    if (!allowedRoles.includes(role)) {
+      errors.push(`ليس لديك صلاحية تسجيل ${source === 'refund' ? 'استرداد' : 'دفعة'}`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateRefund — التحقق من صحة عملية استرداد (RULE V1.3)
+ *
+ * @returns { ok, errors, warnings }
+ */
+export function validateRefund({ order, amount, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0) errors.push('قيمة الاسترداد يجب أن تكون أكبر من صفر');
+
+  const paid = parseFloat(order.totalPaid) || 0;
+  if (amt > paid) {
+    errors.push(`الاسترداد (${amt.toLocaleString('ar-EG')}) أكبر من المدفوع (${paid.toLocaleString('ar-EG')} ج)`);
+  }
+
+  // refund warning لو الأوردر في مرحلة لم تكتمل
+  const cur = order.stage || 'design';
+  if (cur !== 'archived' && cur !== 'shipping') {
+    warnings.push('الأوردر ليس في مرحلة الشحن/الأرشيف — استرداد مبكر');
+  }
+
+  // الصلاحية
+  if (role && !['admin','operation_manager','wallet_manager'].includes(role)) {
+    errors.push('ليس لديك صلاحية تسجيل استرداد');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateOrder — التحقق من بيانات إنشاء أوردر جديد (RULE V1.3)
+ *
+ * @param {Object} orderData — بيانات الأوردر قبل الحفظ
+ * @returns { ok, errors, warnings }
+ */
+export function validateOrder(orderData) {
+  const errors = [];
+  const warnings = [];
+
+  if (!orderData) return { ok:false, errors:['لا توجد بيانات أوردر'], warnings:[] };
+
+  // العميل
+  if (!orderData.clientId) errors.push('clientId مطلوب');
+  if (!orderData.clientName) warnings.push('clientName فارغ');
+
+  // المنتجات
+  const products = orderData.products || [];
+  if (!Array.isArray(products) || products.length === 0) {
+    errors.push('يجب أن يحتوي الأوردر على منتج واحد على الأقل');
+  }
+
+  // السعر
+  const sale = parseFloat(orderData.salePrice) || 0;
+  if (sale <= 0) errors.push('salePrice يجب أن يكون أكبر من صفر');
+
+  // الدفعة المقدّمة
+  const paid = parseFloat(orderData.totalPaid) || 0;
+  if (paid < 0) errors.push('totalPaid لا يمكن أن يكون سالباً');
+  if (paid > sale && sale > 0) warnings.push('totalPaid أكبر من salePrice');
+
+  // المرحلة
+  const stage = orderData.stage || 'design';
+  if (!STAGES[stage]) errors.push(`stage غير معروف: ${stage}`);
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+// ══════════════════════════════════════════
 // FINANCIAL CALCULATIONS
 // ══════════════════════════════════════════
 export function calcOrderFinancials(order) {

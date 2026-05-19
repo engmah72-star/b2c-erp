@@ -580,6 +580,74 @@ await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, payload);
 
 ---
 
+## RULE V1 — CENTRAL VALIDATION (ميثاق توحيد التحقق)
+
+> **كل Business Rule تُكتب مرة واحدة فقط.**
+>
+> هذه القاعدة تطبيق صريح لـ **C1.3 (Central Business Logic)** على طبقة الـ validation.
+> أي validation مكرَّر داخل صفحة = Technical Debt يجب تقليله.
+
+### V1.1 — مصدر التحقق الوحيد
+كل قاعدة تحقق تشغيلية أو مالية تُعرَّف **مرة واحدة فقط** في:
+- `orders.js` (validators على الأوردر، المراحل، الأرشفة، الدفعات)
+- `financial-sync-engine.js` (validators على الأحداث المالية)
+- `core/permissions-matrix.js` (validators على الصلاحيات)
+
+**ممنوع:** كتابة validation منطقها يخص الأوردر/الدفعة/الانتقال داخل صفحة HTML.
+
+### V1.2 — صيغة الـ Validator الموحَّدة
+كل validator يجب أن يكون **دالة نقية** تُرجع:
+```js
+{ ok: boolean, errors: string[], warnings: string[] }
+```
+- **errors** → يمنع العملية نهائياً
+- **warnings** → يحتاج تأكيد المستخدم (`bypassWarnings:true` للتجاوز)
+- لا يكتب في Firestore — الـ caller يقرّر بناءً على النتيجة
+
+### V1.3 — Validators الأساسية
+| Validator | الموقع | الغرض |
+|-----------|--------|--------|
+| `validateStageRequirements()` | `orders.js` | شروط الانتقال بين المراحل |
+| `buildStageAdvance()` | `orders.js` | validate + build للانتقال للأمام |
+| `buildStageRevert()` | `orders.js` | validate + build للرجوع |
+| `buildArchiveSpec()` | `orders.js` | validate + build للأرشفة (V4) |
+| `validateOrder()` | `orders.js` | بيانات إنشاء أوردر جديد |
+| `validatePayment()` | `orders.js` | تسجيل دفعة عميل/استرداد |
+| `validateRefund()` | `orders.js` | عملية استرداد |
+
+### V1.4 — pattern: validate vs build*Spec
+- **`validate*()`** — تحقق نقي بدون build (للـ UI hints و pre-flight checks)
+- **`build*Spec()`** — تحقق + بناء spec للكتابة (للعمليات الفعلية)
+
+كلاهما يستخدم **نفس قواعد التحقق الداخلية** — لا تكرار.
+
+### V1.5 — منع validation داخل الصفحات
+**ممنوع تماماً:**
+- ❌ `if (order.remaining > 0) toast(...)` داخل صفحة HTML
+- ❌ `if (!order.shipSettled) ...` كقاعدة gating
+- ❌ تكرار شروط الدفع/الأرشفة في كل صفحة
+
+**المسموح:**
+```js
+const v = validatePayment({ order, amount, role });
+if (v.errors.length) return toast(v.errors[0], 'err');
+```
+
+### V1.6 — Reusability
+أي validator يخدم أكثر من صفحة → يجب أن يكون في `orders.js`.
+لا توجد "validators خاصة بصفحة معينة" إلا للحالات النادرة جداً (UI-only validators بدون منطق business).
+
+### 🚫 القاعدة النهائية
+**Business Rules لا تُكتب داخل الصفحات.** يجب أن تكون:
+1. مُعرَّفة مرة واحدة
+2. قابلة لإعادة الاستخدام
+3. مستقلة عن الـ UI
+4. تُرجع نتيجة موحَّدة `{ ok, errors, warnings }`
+
+**أي validation مكرَّر بين صفحتين = Technical Debt يجب توحيده.**
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
