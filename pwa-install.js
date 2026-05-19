@@ -12,7 +12,7 @@
 
   // Skip on public/redirect pages
   const PATH = (location.pathname.split('/').pop() || '').toLowerCase();
-  const SKIP = ['waybill.html','chat.html','whatsapp.html',''];
+  const SKIP = ['waybill.html','chat.html',''];
   if (SKIP.includes(PATH)) return;
 
   // Already installed? (running in standalone mode)

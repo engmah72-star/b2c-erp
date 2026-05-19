@@ -491,7 +491,7 @@ function renderDetail(body){
     </div>`;
   } else {
     aiHtml = `<div class="sm-section">
-      <div class="sm-ai-pending">🤖 لسه ماتمش تحليل AI<br><span style="font-size:10px;">${!localStorage.getItem('gemini_key')?'(محتاج مفتاح Gemini في ai-insights.html)':'الإدارة هتشغّله بعد المراجعة'}</span></div>
+      <div class="sm-ai-pending">🤖 لسه ماتمش تحليل AI<br><span style="font-size:10px;">${!localStorage.getItem('gemini_key')?'(محتاج تضبط مفتاح Gemini من زر "اسأل AI")':'الإدارة هتشغّله بعد المراجعة'}</span></div>
     </div>`;
   }
 
@@ -625,7 +625,7 @@ async function rerunAi(){
   if(!activeDetailId) return;
   const key = localStorage.getItem('gemini_key');
   if(!key){
-    showToast('محتاج تضبط مفتاح Gemini في ai-insights.html', '#ff3d6e');
+    showToast('محتاج تضبط مفتاح Gemini من زر "اسأل AI"', '#ff3d6e');
     return;
   }
   showToast('🤖 جاري التحليل...');

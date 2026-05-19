@@ -3,7 +3,7 @@
 // ══════════════════════════════════════════════════════════
 // زر عائم بأسفل-يمين الشاشة (مقابل زر المحادثات الداخلية على اليسار).
 // يفتح modal فيه شات بـ Gemini مع context مختصر للصفحة الحالية.
-// يُحقن في كل الصفحات الإدارية. ai-insights.html له واجهته الكاملة.
+// يُحقن في كل الصفحات الإدارية.
 // ══════════════════════════════════════════════════════════
 import { askAI, hasKey, setKey, getKey, clearKey, KEY_NEEDED } from './ai-engine.js';
 import { buildToday, PAGE_FOCUS, detectOpenEntity, buildEntitySection } from './ai-today.js';
@@ -14,8 +14,8 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
   const PATH = (location.pathname.split('/').pop() || '').toLowerCase();
   const SKIP = [
     'login.html','client-login.html','client-portal.html',
-    'order-tracking.html','waybill.html','whatsapp.html','chat.html',
-    'ai-insights.html','change-password.html','',
+    'order-tracking.html','waybill.html','chat.html',
+    'change-password.html','',
   ];
   if (SKIP.includes(PATH)) return;
 
@@ -198,8 +198,6 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
       #ai-input:focus{border-color:#10b981}
       #ai-send{width:38px;height:38px;background:#10b981;border:none;border-radius:10px;color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:inherit}
       #ai-send:disabled{opacity:.4;cursor:not-allowed}
-      #ai-foot{padding:6px 16px 8px;font-size:10px;color:#5c6878;text-align:center;border-top:1px solid #2a3348}
-      #ai-foot a{color:#4f8ef7}
       @media (max-width:768px){#ai-fab{bottom:80px;right:14px;width:50px;height:50px}}
     `;
     document.head.appendChild(style);
@@ -233,7 +231,6 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
           <textarea id="ai-input" rows="1" placeholder="اسأل أي سؤال عن الشركة..."></textarea>
           <button id="ai-send">↑</button>
         </div>
-        <div id="ai-foot">📋 <a href="ai-digest.html">الموجز اليومي</a> · 📊 <a href="ai-insights.html">AI Insights</a></div>
       </div>`;
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     document.body.appendChild(modal);

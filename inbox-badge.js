@@ -19,7 +19,7 @@ const BADGE_ID = 'inbox-fab-badge';
 function shouldSkipFab(){
   const path = (location.pathname.split('/').pop()||'').toLowerCase();
   if(path === 'inbox.html') return true; // don't link to self
-  const SKIP = ['login.html','client-login.html','client-portal.html','order-tracking.html','waybill.html','whatsapp.html','chat.html',''];
+  const SKIP = ['login.html','client-login.html','client-portal.html','order-tracking.html','waybill.html','chat.html',''];
   return SKIP.includes(path);
 }
 
