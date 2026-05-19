@@ -130,6 +130,20 @@ export const RETURN_STATUSES = Object.freeze({
   CLOSED:     'closed',
 });
 
+// PAYMENT_STATUSES — حالة الدفع للأوردر (order.paymentStatus)
+// مكتشَف في CONSTANTS_AUDIT: 132 magic string بدون enum مركزي
+export const PAYMENT_STATUSES = Object.freeze({
+  PENDING:  'pending',
+  PARTIAL:  'partial',
+  PAID:     'paid',
+  RETURNED: 'returned',
+});
+
+// ROLE GROUPINGS — مجموعات الأدوار المتكررة (مكتشَف في 15+ ملف)
+export const ADMIN_ROLES            = Object.freeze(['admin', 'operation_manager']);
+export const PAYMENT_ROLES_REFUND   = Object.freeze(['admin', 'operation_manager', 'wallet_manager']);
+export const PAYMENT_ROLES_CUSTOMER = Object.freeze(['admin', 'operation_manager', 'customer_service', 'wallet_manager']);
+
 // ─ Helper: التحقق من صحة قيمة constant ─
 /** يفحص لو القيمة تنتمي إلى enum معين. مفيد للـ validators. */
 export function isValidConstant(enumObj, value) {
