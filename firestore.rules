@@ -76,15 +76,23 @@ service cloud.firestore {
     // إضافة صفحة جديدة تكتب في wallets/transactions_v2/financial_ledger:
     //   1) أضفها هنا في canFinancialWrite()
     //   2) أو امنح المستخدم perms.canFinancialWrite=true
+    // S0-2 FIX: تضييق canFinancialWrite — إزالة pages التي لا تحتاج كتابة مالية مباشرة.
+    // قبل: hasPage('production'/'design'/'print') كانت تمنح صلاحية كتابة على
+    // wallets/transactions_v2/financial_ledger — designer/production_agent
+    // يقدر يضيف رصيد لمحفظته. هذا P0 escalation path.
+    //
+    // بعد: فقط الأدوار اللي تتعامل مع المال فعلاً (المحاسب، CS لدفعات العميل،
+    // shipping لتسوية الشحن، suppliers لدفعات المورد).
+    //
+    // ملاحظة: production يحتاج تسجيل تكاليف الإنتاج → عبر supplier_payments
+    // التي لها rule منفصلة (hasPage('production') || hasPage('suppliers')).
+    // لا حاجة لإعطاء production كتابة مباشرة على wallets.
     function canFinancialWrite() {
       return isAdmin()
           || hasPage('accounts')
           || hasPage('shipping')
           || hasPage('shipping-accounts')
           || hasPage('suppliers')
-          || hasPage('production')
-          || hasPage('design')
-          || hasPage('print')
           || hasPage('clients')
           || can('canAddOrders')
           || can('canFinancialWrite');
@@ -102,6 +110,10 @@ service cloud.firestore {
       return isPartner() && resourceData.get('tenantId', '__') == partnerTenant();
     }
 
+    // S0-2 FIX: canFinancialRead أوسع قليلاً من canFinancialWrite
+    // production/design/print يحتاجون قراءة (مثلاً للعرض في dashboards) لكن
+    // لا يحتاجون كتابة. القراءة هنا ليست خطرة (لا تعرض أرقام لا يجب أن
+    // يروها — حقل الإذونات client-side فيلتر المعروض).
     function canFinancialRead() {
       return isAdmin()
           || hasPage('accounts')
@@ -167,10 +179,34 @@ service cloud.firestore {
     }
 
     // ══ Users ══
+    // S0-1 FIX: Field-level guard على self-update.
+    // الـ user يقدر يعدّل بياناته الشخصية (name, email, fcm tokens, preferences)
+    // لكن لا يقدر يلمس role/permissions/tenantId/ownership fields.
+    // الـ admin فقط يعدّل هذه الحقول. هذا يمنع privilege escalation.
+    function isProtectedUserField() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'role',
+          'permissions',
+          'tenantId',
+          'designerTenantId',
+          'partnerTenantId',
+          'isPartner',
+          'authUid',
+          'employeeId',
+          'mustChangePassword',
+          'passwordResetAt',
+          'passwordResetBy',
+          'passwordResetByName'
+        ]);
+    }
     match /users/{userId} {
       allow read: if isAuth();
       allow create: if isAdminOnly();
-      allow update: if isAuth() && (request.auth.uid == userId || isAdminOnly());
+      allow update: if isAuth() && (
+        isAdminOnly()
+        || (request.auth.uid == userId && !isProtectedUserField())
+      );
       allow delete: if isAdminOnly();
     }
 
@@ -1044,10 +1080,12 @@ service cloud.firestore {
 
     // ══ Marketplace Orders — طلبات بين العميل والمرشنت ══
     // مختلفة عن orders الحالية: تحمل tenantId + commission + escrow refs.
+    // S0-3 FIX: tenant isolation. كان: isAdmin() || canFinancialRead() ||
+    // ... — يقرأ كل tenants. الآن: tenant check لكل path.
     match /marketplace_orders/{orderId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         resource.data.get('customerId','__') == request.auth.uid ||
         isOwnPartnerData(resource.data)
       );
@@ -1056,30 +1094,33 @@ service cloud.firestore {
     }
 
     // ══ Commissions — العمولات المستحقة/المحصلة للمنصة ══
+    // S0-3 FIX: tenant isolation
     match /commissions/{commId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         isOwnPartnerData(resource.data)
       );
       allow create, update, delete: if isAdminOnly();
     }
 
     // ══ Escrow Holds — الأموال المحتجزة لحين التسليم ══
+    // S0-3 FIX: tenant isolation
     match /escrow_holds/{holdId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         resource.data.get('customerId','__') == request.auth.uid
       );
       allow create, update, delete: if isAdminOnly();
     }
 
     // ══ Payouts — دفعات للمرشنتس/الشحن/الوكلاء ══
+    // S0-3 FIX: tenant isolation
     match /payouts/{payoutId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         isOwnPartnerData(resource.data)
       );
       allow create, update, delete: if isAdminOnly();

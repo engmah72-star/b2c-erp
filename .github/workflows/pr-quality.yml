@@ -1,0 +1,157 @@
+name: PR Quality Gates
+
+# يشتغل على كل PR إلى main — يفرض القواعد الإنتاجية تلقائياً.
+# المرجع: REGRESSION_PREVENTION.md §8.3
+#
+# الفحوصات (كلها non-blocking في البداية — set `continue-on-error: false`
+# بعد grace period أسبوع للتأكد من عدم وجود false positives).
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-lint:
+    name: 🔒 Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No Firebase config outside shared.js / core/
+        run: |
+          # الـ FB_CONFIG (apiKey: 'AIzaSy...') يجب أن يكون في shared.js فقط.
+          # إذا في ملف آخر = duplication + maintenance nightmare.
+          # core/firebase-init.js (مستقبلاً) سيكون المصدر الوحيد.
+          OFFENDERS=$(grep -rln 'AIzaSy' --include="*.html" --include="*.js" \
+            | grep -v "^shared.js$" \
+            | grep -v "^core/" \
+            | grep -v "^functions/" || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::warning::Firebase config مكرر في الملفات التالية. الـ canonical source هو shared.js."
+            echo "$OFFENDERS"
+            # غير-blocking حالياً — مجرد تحذير. غير لـ exit 1 بعد cleanup.
+          else
+            echo "✓ لا تكرار لـ Firebase config"
+          fi
+
+      - name: No unbounded onSnapshot in modified files
+        run: |
+          # ابحث عن onSnapshot بدون limit() في الـ files المعدَّلة في الـ PR.
+          NEW_FILES=$(git diff --name-only origin/main..HEAD \
+                     | grep -E '\.(js|html)$' || true)
+          OFFENDERS=""
+          for f in $NEW_FILES; do
+            [ ! -f "$f" ] && continue
+            # تخطّى ملفات معروفة بأنها bound بطبيعتها (notifications.js محدودة بالـ uid)
+            if grep -q "onSnapshot" "$f"; then
+              # أي onSnapshot على نفس السطر أو ضمن 5 أسطر بدون limit() قبله
+              UNBOUNDED=$(awk '/onSnapshot/,/[}\)]/{print}' "$f" \
+                | grep -c "onSnapshot" 2>/dev/null || echo "0")
+              LIMITED=$(awk '/onSnapshot/,/[}\)]/{print}' "$f" \
+                | grep -c "limit(" 2>/dev/null || echo "0")
+              if [ "$UNBOUNDED" -gt "$LIMITED" ]; then
+                OFFENDERS="$OFFENDERS $f"
+              fi
+            fi
+          done
+          if [ -n "$OFFENDERS" ]; then
+            echo "::warning::ملفات فيها onSnapshot بدون limit() قد تكون أُضيفت:"
+            echo "$OFFENDERS"
+            # غير-blocking — review manually
+          else
+            echo "✓ لا unbounded listeners في الـ files المعدَّلة"
+          fi
+
+      - name: viewas.js included in new internal pages
+        run: |
+          # أي صفحة HTML جديدة internal (تستخدم shared.js أو role logic)
+          # يجب أن تستورد viewas.js
+          NEW_PAGES=$(git diff --name-only --diff-filter=A origin/main..HEAD \
+                     | grep -E '\.html$' || true)
+          OFFENDERS=""
+          PUBLIC_PAGES="login.html|client-login.html|client-portal.html|partner-portal.html|offline.html|privacy.html|reset-sw.html|waybill.html|chat.html|whatsapp.html|gallery.html"
+          for f in $NEW_PAGES; do
+            [ ! -f "$f" ] && continue
+            # تخطّى public/auth pages
+            BASE=$(basename "$f")
+            echo "$BASE" | grep -qE "^($PUBLIC_PAGES)$" && continue
+            # تخطّى لو لا role logic
+            grep -q "shared.js\|ROLE_PAGES\|currentRole" "$f" || continue
+            # افحص viewas.js
+            grep -q "viewas.js" "$f" || OFFENDERS="$OFFENDERS $f"
+          done
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::صفحات internal جديدة بدون viewas.js — impersonation banner لن يظهر:"
+            echo "$OFFENDERS"
+            exit 1
+          else
+            echo "✓ كل الصفحات الجديدة internal تشمل viewas.js"
+          fi
+
+      - name: No direct wallets/transactions_v2/financial_ledger writes outside FSE
+        run: |
+          # RULE 2/3: كل كتابة مالية عبر FSE.
+          # افحص الـ PR على writes جديدة على الـ 3 collections من ملفات
+          # لا تستورد financial-sync-engine.
+          NEW_FILES=$(git diff --name-only origin/main..HEAD \
+                     | grep -E '\.(html|js)$' || true)
+          OFFENDERS=""
+          for f in $NEW_FILES; do
+            [ ! -f "$f" ] && continue
+            # تخطّى الـ engines نفسها
+            case "$f" in
+              financial-sync-engine.js|marketplace-engine.js|returns-core.js) continue ;;
+              functions/*) continue ;;
+            esac
+            # افحص للـ writes على collections المالية
+            WRITES=$(grep -cE "updateDoc.*['\"](wallets|transactions_v2|financial_ledger)['\"]|batch\.(set|update|delete)\(doc\(db,\s*['\"](wallets|transactions_v2|financial_ledger)['\"]" "$f" 2>/dev/null || echo 0)
+            if [ "$WRITES" -gt "0" ]; then
+              # هل يستورد FSE؟
+              IMPORTS_FSE=$(grep -c "financial-sync-engine\|dispatchFinancialEvent\|addLedgerToBatch" "$f" 2>/dev/null || echo 0)
+              if [ "$IMPORTS_FSE" -eq "0" ]; then
+                OFFENDERS="$OFFENDERS $f"
+              fi
+            fi
+          done
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::Engine bypass! الملفات التالية تكتب على wallets/tx/ledger بدون استيراد FSE:"
+            echo "$OFFENDERS"
+            echo "راجع RULE 2/3 في CLAUDE.md — كل الكتابات المالية عبر FSE."
+            exit 1
+          else
+            echo "✓ لا engine bypass في الـ PR"
+          fi
+
+  bundle-size:
+    name: 📦 Bundle Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check god files (>1500 lines)
+        run: |
+          # لا ملف HTML/JS جديد يتجاوز 1500 سطر بدون موافقة (god file warning).
+          NEW_FILES=$(git diff --name-only --diff-filter=A origin/main..HEAD \
+                     | grep -E '\.(html|js)$' || true)
+          for f in $NEW_FILES; do
+            [ ! -f "$f" ] && continue
+            LINES=$(wc -l < "$f")
+            if [ "$LINES" -gt "1500" ]; then
+              echo "::warning::$f لديه $LINES سطر — يتجاوز حد god file (1500). فكر في التقسيم."
+            fi
+          done
+          # لا تجعل الملفات الكبيرة الموجودة تكبر أكثر من 200 سطر في PR واحد
+          MODIFIED=$(git diff --name-only origin/main..HEAD | grep -E '\.(html|js)$' || true)
+          for f in $MODIFIED; do
+            [ ! -f "$f" ] && continue
+            LINES=$(wc -l < "$f")
+            if [ "$LINES" -gt "2000" ]; then
+              ADDED=$(git diff origin/main..HEAD --numstat -- "$f" | awk '{print $1}')
+              if [ "${ADDED:-0}" -gt "200" ]; then
+                echo "::warning::$f كبير ($LINES سطر) وأضاف $ADDED سطر — يحتاج refactor قبل أي زيادة."
+              fi
+            fi
+          done

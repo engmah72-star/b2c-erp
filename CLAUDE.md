@@ -335,3 +335,122 @@ validate-financial.html    ← صفحة الاختبار الحي (تشغّل ق
 - [ ] لا `await` متسلسلة بين writes مالية مختلفة
 - [ ] `employee_payments` لها write rule في `firestore.rules`
 - [ ] أي collection جديدة مضافة في `firestore.rules` قبل الاستخدام
+
+---
+
+# قواعد الحوكمة الهندسية — Engineering Governance (G1-G10)
+
+> **هدف هذه القواعد:** منع الـ Regression Cascade. كل feature جديد يجب أن لا يُضعف القديم.
+> **المصدر:** `REGRESSION_PREVENTION.md` §12.
+> **التطبيق:** PR template + CI quality gates تفرض معظم هذه القواعد تلقائياً.
+
+## RULE G1 — Stable Core
+
+5 modules تُعتبر **Stable Core** ولا تُعدَّل بدون 2-reviewer approval:
+
+| Module | السبب |
+|---|---|
+| `firestore.rules` | server-side trust boundary — أي خطأ = lockout |
+| `financial-sync-engine.js` | المحرك المالي — أي bug = corruption |
+| `shared.js` | يستورده 12+ صفحة — أي تغيير ripple |
+| `core/firebase-init.js` (مستقبلاً) | الـ FB init الوحيد |
+| `core/permissions-matrix.js` (مستقبلاً) | RULE 8 governance |
+
+**التطبيق:** PR يلمس أي من هذه يحتاج reviewer ثانٍ + smoke tests passing.
+
+## RULE G2 — One Firebase Config
+
+`FB_CONFIG` (apiKey: 'AIzaSy...') يُعرَّف في **مكان واحد فقط**: `shared.js` (حالياً) أو `core/firebase-init.js` (مستقبلاً).
+
+**ممنوع:** نسخ الـ config في صفحة جديدة. **المسموح:** `import { db, auth } from './shared.js'`.
+
+**التطبيق:** CI workflow `pr-quality.yml` يفحص هذا تلقائياً.
+
+## RULE G3 — Bounded Listeners
+
+**كل** `onSnapshot` يجب أن يحتوي `limit()`.
+
+```js
+// ❌ ممنوع
+onSnapshot(query(collection(db,'orders'), orderBy('createdAt')), ...);
+
+// ✅ مسموح
+onSnapshot(query(collection(db,'orders'), orderBy('createdAt'), limit(50)), ...);
+```
+
+**الاستثناء:** doc references (`onSnapshot(doc(db,'settings','main'),...)`) — هذه single doc، لا limit needed.
+
+**التطبيق:** PR Quality Gates يفحص الـ files المعدَّلة.
+
+## RULE G4 — Repository Pattern (target)
+
+كل query على Firestore يجب أن يمر عبر `features/{name}/repository.js` (في الـ structure المستقبلية).
+
+**حالياً:** in transition. أي ملف جديد **يجب** يستخدم repository لو موجود للـ collection.
+
+## RULE G5 — No God Pages
+
+أي ملف HTML/JS يتجاوز **1500 سطر** يجب تقسيمه قبل إضافة feature جديد. الـ god pages الحالية (`clients.html` 4760، `shipping.html` 3096، `reports.html` 3047، `employee-profile.html` 3168، `approvals.html` 2530، `inbox.html` 2526، `design-workspace.html` 2438، `production.html` 2432، `accounts.html` 2412) **مجمَّدة** بدون decomposition plan.
+
+**التطبيق:** PR Quality Gates يحذّر على ملفات > 1500 سطر جديدة و > 200 سطر زيادة على god pages.
+
+## RULE G6 — Engine Writes Only (تعزيز RULE 2)
+
+`wallets`, `transactions_v2`, `financial_ledger`, `employee_payments`, `supplier_payments` — **الكتابة عبر `financial-sync-engine.js` فقط**.
+
+**التطبيق:** PR Quality Gates ترفض PRs بـ direct writes خارج FSE.
+
+## RULE G7 — Tenant Aware
+
+كل doc جديد يكتب `tenantId`. كل query جديد يفلتر بـ `tenantId`. كل rule جديدة تستخدم `inSameTenant()`.
+
+```js
+// إنشاء
+batch.set(ref, { ...data, ...tenantFields(getCurrentTenantId(userDoc)) });
+
+// قراءة
+query(collection(db,'orders'), where('tenantId','==',currentTenantId), ...);
+
+// rule
+allow read: if isAuth() && inSameTenant(resource.data) && (...);
+```
+
+## RULE G8 — Test First (للـ Security-Critical)
+
+أي تعديل على:
+- `firestore.rules`
+- `financial-sync-engine.js`
+- Cloud Functions في `functions/index.js`
+
+**يحتاج** smoke test في `tests/` قبل merge.
+
+## RULE G9 — Incremental Migration
+
+**ممنوع** big-bang refactors. الـ refactor يأتي صفحة-صفحة أو module-module، مع نظام شغّال أثناء الانتقال.
+
+**ممنوع:** "أعدت كتابة shared.js" في PR واحد.
+**المسموح:** "أضفت `core/firebase-init.js` بجوار shared.js، الصفحات القديمة كما هي".
+
+## RULE G10 — Module Definition Required (تعزيز RULE 7)
+
+قبل أي **module جديد** (collection + UI + Cloud Function):
+
+1. **Entity Profile** — ما هو الكيان؟
+2. **Events** — ما الأحداث؟ (EVENT_TYPE + payload)
+3. **Accounting Impact** — أي wallets تتأثر؟
+4. **Dashboard Impact** — ما الأرقام؟
+5. **Reversal Logic** — كيف يُلغى كل حدث؟
+6. **Tenant Strategy** — هل multi-tenant؟ (G7)
+7. **Permissions** — أي أدوار تكتب/تقرأ؟ (RULE 8)
+8. **Test Plan** — ما الـ smoke tests؟ (G8)
+
+لا يبدأ التطوير إلا بعد موافقة المستخدم على كل النقاط الـ 8.
+
+---
+
+## وثائق التشخيص والخطط
+
+- `AUDIT_REPORT.md` (2026-05-17) — التشخيص الأصلي
+- `AUDIT_REPORT_v2.md` (2026-05-19) — تشخيص محدَّث + scores
+- `STABILIZATION_PLAN.md` (2026-05-19) — Sprint 14 يوم للـ security/perf
+- `REGRESSION_PREVENTION.md` (2026-05-19) — Feature isolation + governance
