@@ -1,68 +1,69 @@
-# features/design — Bounded Context للتصميم
+# features/design — Designer Hub
 
-> **الحالة:** PR-1 من 7 PRs لـ Design Modular Refactoring.
+> **النطاق النهائي:** مساحة التصميم فقط (work view).
 > **المرجع:** `/docs/RFC-design-refactor.md`
-> **الهدف:** توحيد `design.html` + `design-workspace.html` + `designer-dashboard.html` في bounded context واحد.
 
-## الحالة الحالية (PR-1)
+## التغييرات الأخيرة
 
-| المرحلة | الحالة |
-|---|---|
-| Skeleton + directory structure | ✅ |
-| `repository.js` (Firestore data access) | ✅ كل subscribers مع `limit()` |
-| `permissions.js` (role gates) | ✅ يستورد من `core/permissions-matrix.js` |
-| `state.js` (pub/sub state) | ✅ |
-| Services stubs | ✅ orders / upload / attendance |
-| Components | ⏳ PR-2 |
-| Modals | ⏳ PR-3 |
-| Views | ⏳ PR-4 |
-| Entry point + router | ⏳ PR-4 |
-| Cutover (redirect shims) | ⏳ PR-5 |
-| Repository enforcement | ⏳ PR-6 |
-| Cleanup | ⏳ PR-7 |
+- ❌ **أُلغي:** Tab "المكتبة" + Tab "المعرض" + زر "نشر للمعرض"
+- ✅ `designer-hub.html` = مساحة عمل المصمم (work view فقط)
+- ✅ `client-design-library.html` و `gallery.html` → redirect shims
 
 ## البنية
 
 ```
 features/design/
-├── repository.js       ← Firestore queries (G4) — كل subscribe* + getter*
-├── permissions.js      ← Role-based access (RULE 8)
-├── state.js            ← Module-scoped pub/sub state
-├── services/
-│   ├── orders.service.js       (STUB)
-│   ├── upload.service.js       (STUB)
-│   └── attendance.service.js   (STUB)
-├── views/              ⏳ PR-4
-├── components/         ⏳ PR-2
-└── modals/             ⏳ PR-3
+├── repository.js                 ← كل Firestore queries (G3 + G4)
+├── permissions.js                ← Role-based access (RULE 8)
+├── state.js                      ← Pub/sub state (محجوز)
+├── hub.entry.js                  ← Bootstrap + auth + mount work view
+│
+├── views/
+│   └── work-view.js              ← مساحة التصميم الكاملة
+│
+├── components/
+│   ├── utils.js                  ← escapeHtml + toast + helpers
+│   ├── lightbox.js               ← preview للنسخ
+│   ├── sidebar.js                ← sidebar موحَّد
+│   └── grid-card.js              ← order-card (للقائمة الجانبية)
+│
+└── services/
+    ├── design-items.service.js   ← markApproved + togglePrintReady + appendVersion
+    └── upload.service.js         ← uploadSlotFile + buildVersion + inferSlotKind
 ```
 
-## قواعد التطوير في هذا الـ feature
+## دورة العمل
 
-1. **كل Firestore query تمر عبر `repository.js`** — لا direct queries في views/services.
-2. **كل listener له `limit()`** — افتراضات في `LIMITS` constant.
-3. **كل صلاحية حقل تمر عبر `permissions.js`** — لا `_PHONE_ROLES` محلية.
-4. **كل كتابة مالية تستدعي `financial-sync-engine.js`** — لا direct `wallets`/`transactions_v2`/`financial_ledger`.
-5. **كل modal/view عند unmount تستدعي cleanup** — لا listener leaks.
-6. **state عبر `state.js` فقط** — لا `window.__xxx` globals.
+```
+يفتح designer-hub.html
+   ↓
+قائمة أوردراته (يمين: split view)
+   ↓
+يضغط أوردر → بنوده تظهر يسار
+   ↓
+لكل بند:
+   - رفع نسخة (Mockup/PDF/Source — يُستنتج من نوع الملف)
+   - اعتماد البند
+   - تعليم جاهز للطباعة
+```
+
+## قواعد الحوكمة
+
+| القاعدة | التطبيق |
+|---|---|
+| G2 | ✅ Firebase imports من `core/firebase-init.js` |
+| G3 | ✅ كل onSnapshot له `limit()` |
+| G4 | ✅ كل query في `repository.js` |
+| G6 | ✅ لا writes مالية |
+| G7 | ✅ كل query تقبل tenantId optional |
 
 ## الـ Imports النظيف
 
 ```js
-// من view أو modal:
-import { db } from '../../core/firebase-init.js';
-import { subscribeDesignOrders, LIMITS } from '../repository.js';
-import { canSeePhone, getOrdersScope } from '../permissions.js';
-import { getState, setState, subscribe } from '../state.js';
-import * as ordersService from '../services/orders.service.js';
-```
-
-## التحقق من PR-1
-
-```bash
-# لا أحد يستدعي features/design/ بعد (additive only)
-grep -rE "from ['\"].*features/design" --include="*.html" --include="*.js" \
-  | grep -v "features/design/" \
-  | wc -l
-# المتوقع: 0
+// من view أو service:
+import { subscribeDesignOrders, subscribeDesignItems, LIMITS } from '../repository.js';
+import { canAccessDesignerHub } from '../permissions.js';
+import { $, escapeHtml, toast } from '../components/utils.js';
+import * as itemsService from '../services/design-items.service.js';
+import * as uploadService from '../services/upload.service.js';
 ```

@@ -51,15 +51,13 @@ export function displayPhone(phone, role, userPerms) {
   return maskPhone(phone, canSeePhone(role, userPerms));
 }
 
-// ══ View routing default per role ═════════════════════════
+// ══ Page access ════════════════════════════════════════════
 /**
- * أي view افتراضية يدخلها كل دور عند فتح /design بدون ?view=
- * يخدم router داخل design.entry.js.
+ * هل الدور يقدر يدخل Designer Hub؟
+ * المصمم + Admin + CS فقط.
  */
-export function getDesignDefaultView(role) {
-  if (isDesignerRole(role)) return 'dashboard';
-  if (isAdmin(role) || isCSRole(role)) return 'kanban';
-  return 'kanban';
+export function canAccessDesignerHub(role) {
+  return isAdmin(role) || isCSRole(role) || isDesignerRole(role);
 }
 
 // ══ Orders scope per role (لـ repository queries) ════════
