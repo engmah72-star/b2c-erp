@@ -962,6 +962,92 @@ const result = await uploadOrderFile({
 
 ---
 
+## RULE R1 — FIREBASE RULES PRINCIPLE (ميثاق Rules كخط دفاع)
+
+> **Firebase Rules هي خط الدفاع الأساسي. هدفها الحماية بدون تعقيد.**
+>
+> هذه القاعدة توحّد فلسفة الأمان وتعزّز **RULE 8 + F1 + RULE 2/4/G6**.
+> أي rule مفتوحة أو duplicate role logic = Technical Debt.
+
+### R1.1 — Fail-Closed by Default
+- كل rule تبدأ من `allow read, write: if false;` (deny)
+- ثم تفتح وفق role + condition محدَّد
+- **ممنوع:** `if true` أو `if request.auth != null` بدون role check
+
+### R1.2 — Role-Based Access (تعزيز RULE 8)
+الـ rules تعتمد على **role الرسمي** فقط (من `users/{uid}.role` أو Custom Auth Claim):
+
+| Role | Read | Write |
+|------|------|-------|
+| `admin` | كل شيء | كل شيء (except FSE collections) |
+| `operation_manager` | كل شيء | معظم (عدا financial sensitive) |
+| `customer_service` | orders/clients/returns | orders updates، client comms |
+| `graphic_designer` | orders (design data) | design fields فقط |
+| `design_operator` | orders (design data) | design fields + assignment |
+| `production_agent` | orders (production data) | production fields |
+| `shipping_officer` | orders (shipping data) | shipping fields |
+| `wallet_manager` | financial collections | financial via FSE فقط |
+
+### R1.3 — Sensitive Field Protection (RULE 8)
+| الحقل | يقرأه |
+|------|------|
+| `clientPhone` / `phone1` / `phone2` | admin, ops, CS, shipping (`canSeeCustomerPhone()`) |
+| `designFiles[]` / `designFileUrl` | admin, CS, designers, production (`canSeeDesignData()`) |
+| `supplierCost` / `priceCost` / `priceMargin` | admin, ops, wallet_manager |
+
+**التطبيق:** rules + UI helpers (`canSee()` في `shared.js`) — دفاع طبقتين.
+
+### R1.4 — Financial Collections — FSE Only
+الـ collections التالية **يكتب بها admin SDK فقط** عبر `financial-sync-engine.js`:
+- `wallets`
+- `transactions_v2`
+- `financial_ledger`
+- `employee_payments`
+- `supplier_payments`
+- `shipping_settlements`
+
+**Read:** `wallet_manager`, `admin`, `operation_manager` فقط (RULE 1 + F1.5).
+
+### R1.5 — لا Duplicate Role Logic
+**ممنوع:**
+- ❌ تكرار `isAdmin()` بمنطق مختلف
+- ❌ helpers مختلفة لـ نفس الفحص
+- ❌ inline `role in [...]` بدل استخدام الـ helper
+
+**المسموح:** helpers موحَّدة (`isAdmin()`, `canSeeCustomerPhone()`, `canSeeDesignData()`).
+**الـ Storage:** نفس الـ helpers logic عبر Custom Auth Claims (`request.auth.token.role`).
+
+### R1.6 — Storage Parity
+storage.rules تتبع نفس الفلسفة:
+- fail-closed
+- role-based access (عبر Custom Auth Claims)
+- entity-scoped paths (`orders/{orderId}/...` للـ users اللي لهم وصول للأوردر)
+- file size / type limits
+
+### R1.7 — Audit Trail
+- Cloud Function `syncUserAuthClaims` تحدّث الـ claims عند تغيير دور المستخدم
+- كل drift عن الـ rules يُكتشف عبر `detectEngineBypass` (يكتب في `admin_alerts`)
+- التغييرات على الـ rules تُوثَّق في `firestore.rules` comments + CHANGELOG
+
+### R1.8 — Single Source for Permissions
+- `core/permissions-matrix.js` هو المصدر الوحيد لـ DEFAULT_PERMISSIONS (للـ UI)
+- `users/{uid}.role` + `users/{uid}.permissions` المصدر الوحيد للـ runtime (للـ rules)
+- لا hard-coded role lists في صفحات HTML
+
+### R1.9 — ممنوع Temporary Insecure Rules
+- ❌ `if true; // TODO: fix later`
+- ❌ rule مفتوحة "لـ debug فقط"
+- ❌ تعطيل rule لـ "deployment طارئ"
+
+**البديل:** Cloud Function callable مع admin auth ⇒ يكتب بـ admin SDK (يتجاوز rules بشكل آمن ومُدقَّق).
+
+### 🚫 القاعدة النهائية
+**Firebase Rules تمنع الفوضى والأخطاء — لا تحوّل النظام إلى طبقات أمان معقدة.**
+
+أي drift عن R1 يُسجَّل في `RULES_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
