@@ -373,6 +373,106 @@ await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, payload);
 
 ---
 
+## RULE C1 — CENTRALIZATION ENFORCEMENT (ميثاق المركزية)
+
+> **الأولوية القصوى للنظام الحالي: الحفاظ على المركزية ومنع تشتت الـ Logic أو البيانات أو الحالات.**
+>
+> النظام يعمل ككيان موحد، **وليس** مجموعة أنظمة منفصلة داخل نفس المشروع.
+> هذه القاعدة تُعزِّز RULE 1 + RULE 2 + RULE 4 + RULE W1 + RULE G6.
+
+### C1.1 — الـ Order هو المركز
+كل العمليات تدور حول `order`:
+- التصميم، الطباعة، التنفيذ، الشحن، التحصيل، المرتجعات، الملفات، الـ logs، الأحداث المالية
+- كلها أجزاء **مرتبطة بنفس الـ Order**.
+
+**ممنوع:** بناء workflow مستقل أو state مستقل لكل قسم.
+
+### C1.2 — مصدر حالة واحد فقط
+الحالة الرسمية الوحيدة = `order.stage`. (تطبيق صريح لـ W1.1)
+
+الحالات التالية مساعِدة فقط، **ممنوع تتعارض مع `order.stage`:**
+- `shipStage`
+- `approvalStatus`
+- `productStatus`
+- `returnStatus`
+
+### C1.3 — Central Business Logic
+**ممنوع:** كتابة business logic داخل الصفحات بشكل عشوائي.
+
+أي عملية أساسية تمر عبر:
+- **centralized actions** — مثل `orderActions.submitToPrinting()`, `orderActions.completeShipping()`, `orderActions.archiveOrder()`
+- **centralized validators** — قواعد التحقق في مكان واحد
+- **centralized financial engine** — `financial-sync-engine.js`
+
+> **التطبيق:** الـ stage transitions حالياً مُمَركَزة عبر `buildStageAdvance()` / `buildStageRevert()` في `orders.js`. أي action جديد يجب أن يضاف إلى نفس الطبقة، لا يُكتب inline داخل الصفحة.
+
+### C1.4 — Central Financial Authority
+كل كتابة مالية تمر **فقط** عبر `financial-sync-engine.js`. (تطبيق صريح لـ RULE 2 + RULE 4 + RULE G6)
+
+**ممنوع تماماً:**
+- ❌ direct ledger writes
+- ❌ financial duplication
+- ❌ bypassing financial engine
+
+**أي عملية مالية بدون audit trail = violation خطير.**
+
+### C1.5 — منع تكرار البيانات
+لكل معلومة **مصدر واحد فقط للحقيقة**.
+
+**ممنوع تكرار:**
+- حالة الطلب في عدة أماكن
+- بيانات العميل
+- التكلفة
+- الحسابات المالية
+- status logic
+
+### C1.6 — منع State Chaos
+**ممنوع:**
+- ❌ Phantom Stages (قيم تُقرأ ولا تُكتب)
+- ❌ Magic Strings (قيم stage غير معرَّفة في `STAGES`)
+- ❌ Hidden Statuses (حالات تُكتب ولا تُستخدم)
+- ❌ كود غير مستخدم فعلياً
+
+كل stage يجب أن يكون: **واضح + مستخدم + موحَّد + قابل للتتبع**.
+
+### C1.7 — Central UI Behavior
+المستخدم يجب يشعر أنه يستخدم **نظاماً واحداً موحَّداً**.
+
+يجب توحيد:
+- الجداول
+- الـ actions / الأزرار
+- الـ status badges
+- الرسائل
+- الـ dialogs
+- الـ navigation
+
+### C1.8 — الصفحات = Views لا أنظمة
+الصفحات **ليست أنظمة منفصلة** — هي views مختلفة لنفس البيانات المركزية.
+
+**ممنوع:**
+- ❌ duplicate workflows
+- ❌ page-specific business rules
+- ❌ hidden logic داخل صفحات منفصلة
+
+### C1.9 — اختبار قبول التعديلات (Quality Gate)
+أي تعديل جديد **يجب** يحقق كل النقاط الست:
+1. تقليل التعقيد
+2. **زيادة المركزية**
+3. تقليل التكرار
+4. توحيد السلوك
+5. تقليل احتمالات التضارب
+6. تحسين سهولة الصيانة
+
+### 🚫 القاعدة النهائية (الرفض المباشر)
+**أي تعديل يفعل أياً مما يلي = مخالفة مباشرة لفلسفة النظام ويُرفض:**
+- يوزع الـ Logic
+- يكرر البيانات
+- يخلق state إضافية
+- يبني workflow جانبي
+- يضع القرار في أكثر من مكان
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
