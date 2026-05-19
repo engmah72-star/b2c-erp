@@ -864,7 +864,24 @@ firebase.initializeApp(FB);
 const db=firebase.firestore(), auth=firebase.auth();
 // تفعيل الـ persistent cache (IndexedDB) — الزيارة التالية فوراً من الـ cache.
 // catch صامت لتجنب كسر الصفحة لو persistence غير مدعوم (Safari private mode، إلخ.).
-db.enablePersistence({synchronizeTabs:true}).catch(e => console.warn('[clients] persistence:', e?.code||e?.message));
+// نخفي الـ deprecation warning من Firebase compat SDK (enableMultiTabIndexedDbPersistence
+// will be deprecated) — compat SDK لا تدعم البديل FirestoreSettings.cache بعد.
+// الإصلاح الكامل: migration كامل لـ v9 modular SDK (مذكور في HIDDEN_FEATURES_AUDIT).
+(() => {
+  const origWarn = console.warn;
+  console.warn = function(...args) {
+    const msg = String(args[0] || '');
+    if (msg.includes('enableMultiTabIndexedDbPersistence') ||
+        msg.includes('enableIndexedDbPersistence') ||
+        msg.includes('FirestoreSettings.cache')) {
+      return; // suppress this specific deprecation warning
+    }
+    return origWarn.apply(console, args);
+  };
+  db.enablePersistence({synchronizeTabs:true})
+    .catch(e => origWarn.call(console, '[clients] persistence:', e?.code||e?.message))
+    .finally(() => { console.warn = origWarn; });
+})();
 
 // ══ EGYPT — التقسيم الإداري الرسمي (محدّث 2024) ══
 // 27 محافظة + ~210 مركز/مدينة/حي حسب التقسيم الرسمي (CAPMAS + وزارة التنمية المحلية)
