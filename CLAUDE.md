@@ -648,6 +648,71 @@ if (v.errors.length) return toast(v.errors[0], 'err');
 
 ---
 
+## RULE A1 — CENTRAL ACTIONS (ميثاق توحيد الأفعال)
+
+> **الصفحات مجرد واجهات. القرار الحقيقي و workflow الحقيقي مركزي بالكامل.**
+>
+> هذه القاعدة تطبيق صريح لـ **C1.3 + C1.8** + **V1.5** على طبقة الـ orchestration.
+> أي workflow transition مكتوب inline داخل صفحة = Technical Debt.
+
+### A1.1 — مصدر الأفعال الوحيد
+كل workflow action في النظام تُعرَّف **مرة واحدة فقط** في:
+- `order-actions.js` (أفعال الأوردر: transitions, archive, payments)
+- `financial-sync-engine.js → dispatchFinancialEvent()` (الكتابة المالية الذرّية)
+- `orders.js → advanceOrderStageWithLock()` (transactions على المراحل)
+
+**ممنوع:** كتابة workflow transition logic داخل صفحة HTML.
+
+### A1.2 — Actions API
+الـ actions الرسمية المتاحة عبر `orderActions`:
+
+| Action | الغرض | يستدعي |
+|--------|-------|--------|
+| `submitToPrinting({db, orderId, ...})` | design → printing | `advanceOrderStageWithLock` |
+| `submitToProduction({db, orderId, ...})` | printing → production | `advanceOrderStageWithLock` |
+| `submitToShipping({db, orderId, ...})` | production → shipping | `advanceOrderStageWithLock` |
+| `archiveOrder({db, orderId, ...})` | any → archived | `buildArchiveSpec` + batch |
+| `recordPayment({db, orderId, amount, ...})` | تسجيل دفعة عميل | `validatePayment` + `dispatchFinancialEvent(CUSTOMER_PAYMENT)` |
+| `refundOrder({db, orderId, amount, ...})` | استرداد للعميل | `validateRefund` + `dispatchFinancialEvent(CUSTOMER_REFUND)` |
+
+### A1.3 — كل action يجب أن
+1. **يتحقق من الصلاحية** (عبر validator أو STAGE_PERMISSIONS)
+2. **يتحقق من validation** (errors تمنع، warnings تحتاج `bypassWarnings:true`)
+3. **يكتب ذرياً** (transaction أو writeBatch)
+4. **يضيف timeline entry** (audit trail)
+5. **يمر عبر financial engine** عند وجود حدث مالي
+6. **يُرجع نتيجة موحَّدة** `{ ok, errors, warnings, orderId, ... }`
+
+### A1.4 — ممنوع داخل الصفحات
+- ❌ `updateDoc(orderRef, { stage:'shipping', ... })` مباشرة
+- ❌ `batch.set(ledgerRef, {...})` مباشرة (تجاوز FSE)
+- ❌ workflow logic منفصل (مثلاً: "لو في design غيّر للـ printing")
+- ❌ تكرار pre-flight checks (use validator)
+
+### A1.5 — المسموح داخل الصفحات
+- ✅ نداء action واحد: `await orderActions.submitToPrinting({...})`
+- ✅ معالجة النتيجة: `if (!result.ok) toast(result.errors[0], 'err')`
+- ✅ UI-only logic (modal opening, field validation للـ UX hints)
+
+### A1.6 — قراءة-فقط مسموحة بدون action
+الصفحات تستطيع `getDoc`/`onSnapshot` للقراءة بدون action. الـ actions للكتابة فقط.
+
+### A1.7 — Extensibility
+إضافة action جديد تتطلب:
+1. تعريف الـ signature في `order-actions.js`
+2. إضافته إلى جدول A1.2 أعلاه
+3. (اختياري) إضافة validator مناسب في `orders.js`
+
+### 🚫 القاعدة النهائية
+**أي صفحة تكتب على `orders`/`wallets`/`financial_ledger` مباشرة بدون المرور بـ:**
+- `orderActions.*`
+- `dispatchFinancialEvent`
+- `advanceOrderStageWithLock` / `buildArchiveSpec` + atomic batch
+
+**= مخالفة مباشرة لـ A1 + C1.4 + G6 ويُرفض.**
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
