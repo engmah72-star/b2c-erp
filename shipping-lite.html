@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#22d3ee">
+<title>B2C — الشحن المبسّط</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css?v=3">
+<script src="sidebar-config.js"></script>
+<script src="sync-monitor.js"></script>
+<script type="module" src="inbox-badge.js"></script>
+<script type="module" src="suggestions-fab.js"></script>
+<style>
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+.kpi{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;border-top:3px solid var(--kc)}
+.kpi-val{font-size:22px;font-weight:900;color:var(--kc);margin-bottom:2px;line-height:1.1}
+.kpi-lbl{font-size:10px;color:var(--dim2);font-weight:700}
+.filters{display:flex;gap:8px;flex-wrap:wrap;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:10px;margin-bottom:12px;align-items:center}
+.filters select,.filters input{background:var(--bg3);border:1px solid var(--line);color:inherit;padding:8px 12px;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:600;min-width:140px}
+.filters input{flex:1;min-width:180px}
+.tbl-wrap{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);overflow:hidden}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl th{background:var(--bg3);text-align:right;padding:11px 10px;font-size:11px;font-weight:800;color:var(--dim2);border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:hover td{background:rgba(255,255,255,.02)}
+.tbl tr:last-child td{border-bottom:0}
+.cell-name{font-weight:800}
+.cell-order{font-family:monospace;color:var(--dim2);font-size:11.5px}
+.cell-money{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.money-pos{color:var(--g)}
+.money-neg{color:var(--r)}
+.money-zero{color:var(--dim2)}
+.status-chip{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:99px;background:var(--bg3);color:var(--dim2);white-space:nowrap}
+.status-ready{background:rgba(34,211,238,.12);color:var(--c)}
+.status-transit{background:rgba(255,170,0,.12);color:var(--y)}
+.status-collected{background:rgba(34,217,126,.12);color:var(--g)}
+.status-settled{background:rgba(78,86,114,.2);color:var(--dim2)}
+.status-returned{background:rgba(255,61,110,.12);color:var(--r)}
+.row-actions{display:flex;gap:5px;flex-wrap:nowrap}
+.row-actions .btn{padding:5px 9px;font-size:10.5px;font-weight:800}
+.empty{padding:40px 20px;text-align:center;color:var(--dim2)}
+.empty-ico{font-size:42px;margin-bottom:8px}
+/* Modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+.modal.on{display:flex}
+.modal-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);width:100%;max-width:480px;max-height:90vh;overflow:auto;padding:20px}
+.modal-card h3{margin:0 0 14px 0;font-size:16px;font-weight:800}
+.modal-card .row{display:flex;flex-direction:column;gap:5px;margin-bottom:11px}
+.modal-card label{font-size:11px;font-weight:700;color:var(--dim2)}
+.modal-card input,.modal-card select,.modal-card textarea{background:var(--bg3);border:1px solid var(--line);color:inherit;padding:9px 12px;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:600}
+.modal-card .actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+.modal-info{background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:12px;font-size:12px}
+.modal-info-row{display:flex;justify-content:space-between;padding:3px 0}
+.modal-info-row span:first-child{color:var(--dim2)}
+.modal-info-row span:last-child{font-weight:800}
+.phone-masked{font-family:monospace;color:var(--dim2);font-size:11px}
+@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11.5px}.tbl th,.tbl td{padding:8px 6px}.cell-order,.phone-masked{font-size:10.5px}}
+</style>
+<script src="smart-sidebar.js?v=1" defer></script>
+<script src="viewas.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
+<script src="theme.js?v=3"></script>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav">
+  <div class="nav-brand">
+    <div class="nav-logo">🚚</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="role-badge">ERP</div>
+    </div>
+  </div>
+  <div class="nav-scroll"></div>
+  <div class="nav-foot">
+    <div class="nav-user" onclick="doLogout()">
+      <div class="nav-avatar" id="nav-av">A</div>
+      <div>
+        <div class="nav-user-name" id="nav-name">User</div>
+        <div class="nav-user-role">تسجيل خروج</div>
+      </div>
+    </div>
+  </div>
+</aside>
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <button class="mob-menu-btn" onclick="toggleNav()">☰</button>
+      <div>
+        <h1>🚚 الشحن المبسّط</h1>
+        <p id="sub">صفحة واحدة لكل ما يخص الشحن — الطلبات، الشركات، التحصيل، التسوية</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-ghost btn-sm" onclick="location.href='shipping.html'">📋 النظام الكامل</button>
+    </div>
+  </div>
+  <div class="content">
+
+    <!-- KPIs -->
+    <div class="kpi-row">
+      <div class="kpi" style="--kc:var(--c)"><div class="kpi-val" id="kpi-active">—</div><div class="kpi-lbl">شحنات نشطة</div></div>
+      <div class="kpi" style="--kc:var(--r)"><div class="kpi-val" id="kpi-due">—</div><div class="kpi-lbl">باقي على العملاء ج</div></div>
+      <div class="kpi" style="--kc:var(--y)"><div class="kpi-val" id="kpi-cost">—</div><div class="kpi-lbl">تكلفة الشحن ج</div></div>
+      <div class="kpi" style="--kc:var(--g)"><div class="kpi-val" id="kpi-collected">—</div><div class="kpi-lbl">مُحصَّل ج</div></div>
+      <div class="kpi" style="--kc:var(--b)"><div class="kpi-val" id="kpi-net">—</div><div class="kpi-lbl">صافي الشحن ج</div></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters">
+      <select id="f-company"><option value="">كل الشركات</option></select>
+      <select id="f-method">
+        <option value="">كل الطرق</option>
+        <option value="company">شركة شحن (CoD)</option>
+        <option value="internal">مندوب داخلي</option>
+        <option value="pickup">استلام من المطبعة</option>
+        <option value="prepaid">مدفوع مسبقاً</option>
+      </select>
+      <select id="f-status">
+        <option value="active">النشطة فقط</option>
+        <option value="all">الكل</option>
+        <option value="ready">جاهز للشحن</option>
+        <option value="transit">في الطريق</option>
+        <option value="collected">مُحصَّل (بانتظار التسوية)</option>
+        <option value="settled">تم تسويته</option>
+        <option value="returned">مرتجع</option>
+      </select>
+      <input id="f-search" placeholder="🔍 ابحث برقم الطلب أو اسم العميل">
+      <button class="btn btn-c btn-sm" data-needs-settle onclick="openBulkSettle()">📦 تسوية جماعية</button>
+    </div>
+
+    <!-- Table -->
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>العميل</th>
+            <th>الطلب</th>
+            <th>المحافظة</th>
+            <th>المدينة</th>
+            <th>باقي على العميل</th>
+            <th>تكلفة الشحن</th>
+            <th>المستلم</th>
+            <th>الحالة</th>
+            <th>إجراء</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="9" class="empty"><div class="loader"><div class="spinner"></div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<!-- ─── Modal: Dispatch (تسليم للشركة + تكلفة الشحن) ─── -->
+<div class="modal" id="m-dispatch">
+  <div class="modal-card">
+    <h3>🚚 تسليم الطلب لشركة الشحن</h3>
+    <div class="modal-info" id="m-dispatch-info"></div>
+    <div class="row"><label>شركة الشحن</label><select id="m-dispatch-company"></select></div>
+    <div class="row"><label>طريقة الشحن</label>
+      <select id="m-dispatch-method">
+        <option value="company">شركة شحن — CoD</option>
+        <option value="internal">مندوب داخلي</option>
+        <option value="prepaid">مدفوع مسبقاً</option>
+      </select>
+    </div>
+    <div class="row"><label>تكلفة الشحن (ج) — ما ندفعه للشركة</label><input id="m-dispatch-cost" type="number" min="0" step="0.5" placeholder="0"></div>
+    <div class="row"><label>محفظة الدفع (لو فوري)</label><select id="m-dispatch-wallet"><option value="">— مستحق على المنصة (بدون دفع الآن) —</option></select></div>
+    <div class="row"><label>ملاحظات</label><textarea id="m-dispatch-note" rows="2" placeholder="اختياري"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeModal('m-dispatch')">إلغاء</button>
+      <button class="btn btn-c" id="btn-dispatch-confirm" onclick="confirmDispatch()">✅ تسليم</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Collect (تأكيد تحصيل) ─── -->
+<div class="modal" id="m-collect">
+  <div class="modal-card">
+    <h3>💰 تأكيد تحصيل من العميل</h3>
+    <div class="modal-info" id="m-collect-info"></div>
+    <div class="row"><label>المبلغ المُحصَّل من العميل (ج)</label><input id="m-collect-amount" type="number" min="0" step="0.5" placeholder="0"></div>
+    <div class="row"><label>ملاحظات</label><textarea id="m-collect-note" rows="2" placeholder="اختياري"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeModal('m-collect')">إلغاء</button>
+      <button class="btn btn-g" id="btn-collect-confirm" onclick="confirmCollect()">✅ تأكيد التحصيل</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal: Settle (تسوية مع الشركة) ─── -->
+<div class="modal" id="m-settle">
+  <div class="modal-card">
+    <h3>📦 تسوية مع شركة الشحن</h3>
+    <div class="modal-info" id="m-settle-info"></div>
+    <div class="row"><label>المبلغ المُسلَّم من الشركة (ج)</label><input id="m-settle-amount" type="number" min="0" step="0.5" placeholder="0"></div>
+    <div class="row"><label>المحفظة المُستلمة فيها</label><select id="m-settle-wallet"></select></div>
+    <div class="row"><label>ملاحظات</label><textarea id="m-settle-note" rows="2" placeholder="اختياري"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeModal('m-settle')">إلغاء</button>
+      <button class="btn btn-c" id="btn-settle-confirm" onclick="confirmSettle()">✅ تسجيل التسوية</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getFirestore, collection, doc, onSnapshot, query, where, getDoc, updateDoc, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { FB_CONFIG } from './orders.js';
+import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
+
+const app = initializeApp(FB_CONFIG);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let me = null, myRole = '', myPerms = null;
+let orders = [], shippers = [], wallets = [];
+let pendingOrder = null;
+
+// hasPage: يطابق منطق shared.js / firestore rules — admin = الكل
+function hasPage(pg) {
+  if (myRole === 'admin') return true;
+  if (myPerms && Array.isArray(myPerms.pages)) return myPerms.pages.includes(pg);
+  return (ROLE_PAGES[myRole] || []).includes(pg);
+}
+function canSettle() { return hasPage('shipping-accounts') || hasPage('accounts') || myRole === 'admin'; }
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n||0).toLocaleString('ar-EG', {maximumFractionDigits:0});
+const safeNum = (v) => Number(v||0);
+
+window.toggleNav = () => document.body.classList.toggle('nav-open');
+window.doLogout = () => signOut(auth).then(() => location.href = 'login.html');
+window.closeModal = (id) => $(id).classList.remove('on');
+window.openBulkSettle = () => openSettleModal(null);
+
+function toast(msg, type='ok') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = `toast on ${type}`;
+  setTimeout(() => t.classList.remove('on'), 3000);
+}
+
+onAuthStateChanged(auth, async (u) => {
+  if (!u) { location.href = 'login.html'; return; }
+  me = u;
+  const ud = await getDoc(doc(db, 'users', u.uid));
+  const data = ud.exists() ? ud.data() : {};
+  myRole = data.role || '';
+  myPerms = data.permissions || null;
+  $('nav-name').textContent = data.name || u.email;
+  $('nav-av').textContent = (data.name || u.email).charAt(0).toUpperCase();
+  // إخفاء زر التسوية الجماعية للأدوار التي لا تملك صلاحية shipping-accounts
+  if (!canSettle()) {
+    document.querySelectorAll('[data-needs-settle]').forEach(el => el.style.display = 'none');
+  }
+  startListeners();
+});
+
+function startListeners() {
+  // أوردرات في مرحلة الشحن + المؤرشفة (لرؤية المُسوّاة)
+  onSnapshot(
+    query(collection(db, 'orders'), where('stage', 'in', ['shipping', 'archived'])),
+    (snap) => {
+      orders = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      renderAll();
+    }
+  );
+  onSnapshot(collection(db, 'shippers_v2'), (snap) => {
+    shippers = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    fillShippersDropdowns();
+    renderAll();
+  });
+  onSnapshot(collection(db, 'wallets'), (snap) => {
+    wallets = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    fillWalletsDropdowns();
+  });
+}
+
+function fillShippersDropdowns() {
+  const opts = shippers.map(s => `<option value="${s._id}">${s.name||'بدون اسم'}</option>`).join('');
+  $('f-company').innerHTML = '<option value="">كل الشركات</option>' + opts;
+  $('m-dispatch-company').innerHTML = '<option value="">— اختر شركة —</option>' + opts;
+}
+
+function fillWalletsDropdowns() {
+  const opts = wallets.map(w => {
+    const ico = w.type === 'cash' ? '💵' : w.type === 'bank' ? '🏦' : '💳';
+    return `<option value="${w._id}">${ico} ${w.name||'محفظة'}</option>`;
+  }).join('');
+  $('m-dispatch-wallet').innerHTML = '<option value="">— مستحق على المنصة —</option>' + opts;
+  $('m-settle-wallet').innerHTML = '<option value="">— اختر محفظة —</option>' + opts;
+}
+
+// ── Filters ──
+['f-company','f-method','f-status','f-search'].forEach(id => {
+  $(id).addEventListener('input', renderAll);
+});
+
+function getShipStage(o) {
+  const ss = (o.shipStage || 'ready').toLowerCase();
+  if (['returned','returned_refused','rejected'].includes(ss)) return 'returned';
+  if (o.shipSettled) return 'settled';
+  if (ss === 'collected') return 'collected';
+  if (['wait_delivery','wait_collection','in_transit','shipped'].includes(ss)) return 'transit';
+  if (ss === 'ready') return 'ready';
+  return ss;
+}
+
+function matchOrder(o) {
+  const fc = $('f-company').value;
+  const fm = $('f-method').value;
+  const fs = $('f-status').value;
+  const q = ($('f-search').value || '').trim().toLowerCase();
+  const stage = getShipStage(o);
+
+  if (fc && (o.shipCompanyId || '') !== fc) return false;
+  if (fm && (o.shipMethod || '') !== fm) return false;
+
+  if (fs === 'active') {
+    if (['settled','returned'].includes(stage)) return false;
+  } else if (fs && fs !== 'all') {
+    if (stage !== fs) return false;
+  }
+
+  if (q) {
+    const hay = `${o.orderNumber||''} ${o.clientName||''} ${o.city||''} ${o.gov||o.governorate||''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function renderAll() {
+  const filtered = orders.filter(matchOrder);
+  renderRows(filtered);
+  renderKPIs(filtered);
+}
+
+function renderKPIs(list) {
+  const active = list.filter(o => !['settled','returned'].includes(getShipStage(o)));
+  const due = list.reduce((s, o) => s + Math.max(0, safeNum(o.remaining)), 0);
+  const cost = list.reduce((s, o) => s + safeNum(o.shippingCost), 0);
+  const collected = list.reduce((s, o) => s + safeNum(o.shipCollected || o.totalPaid), 0);
+  // صافي = الإيراد (المدفوع للمنصة بطرق غير الشحن) - تكلفة الشحن
+  // تقريب بسيط: إجمالي الفواتير المُسوّاة - تكلفة الشحن المسجّلة
+  const settled = list.filter(o => o.shipSettled).reduce((s,o) => s + safeNum(o.shipSettledAmount), 0);
+  const net = settled - cost;
+  $('kpi-active').textContent = fmt(active.length);
+  $('kpi-due').textContent = fmt(due);
+  $('kpi-cost').textContent = fmt(cost);
+  $('kpi-collected').textContent = fmt(collected);
+  $('kpi-net').textContent = fmt(net);
+}
+
+function statusChip(stage) {
+  const map = {
+    ready: {cls:'status-ready', txt:'جاهز للشحن'},
+    transit: {cls:'status-transit', txt:'في الطريق'},
+    collected: {cls:'status-collected', txt:'مُحصَّل'},
+    settled: {cls:'status-settled', txt:'تم تسويته'},
+    returned: {cls:'status-returned', txt:'مرتجع'},
+  };
+  const c = map[stage] || {cls:'status-chip', txt:stage};
+  return `<span class="status-chip ${c.cls}">${c.txt}</span>`;
+}
+
+function actionsCell(o) {
+  const stage = getShipStage(o);
+  const id = o._id;
+  if (stage === 'ready')     return `<button class="btn btn-c btn-sm" onclick="window.openDispatch('${id}')">🚚 تسليم</button>`;
+  if (stage === 'transit')   return `<button class="btn btn-g btn-sm" onclick="window.openCollect('${id}')">💰 تحصيل</button>`;
+  if (stage === 'collected') return canSettle()
+    ? `<button class="btn btn-c btn-sm" onclick="window.openSettleSingle('${id}')">📦 تسوية</button>`
+    : `<span style="color:var(--y);font-size:11px">⏳ بانتظار التسوية</span>`;
+  if (stage === 'settled')   return `<span style="color:var(--dim2);font-size:11px">✅</span>`;
+  if (stage === 'returned')  return `<span style="color:var(--r);font-size:11px">⏎</span>`;
+  return '';
+}
+
+function renderRows(list) {
+  const tbody = $('rows');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty"><div class="empty-ico">📭</div>لا توجد شحنات تطابق الفلاتر</td></tr>`;
+    return;
+  }
+  // ترتيب: الأقدم في الأعلى (أولوية للشحنات المتراكمة)
+  const sorted = [...list].sort((a,b) => {
+    const ta = a.createdAt?.toMillis?.() || 0;
+    const tb = b.createdAt?.toMillis?.() || 0;
+    return ta - tb;
+  });
+  tbody.innerHTML = sorted.map(o => {
+    const remaining = safeNum(o.remaining);
+    const cost = safeNum(o.shippingCost);
+    const received = safeNum(o.shipCollected || o.totalPaid);
+    const phoneVisible = canSee('client_phone', null, myRole);
+    const phone = maskPhone(o.clientPhone || '', phoneVisible);
+    return `<tr>
+      <td>
+        <div class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</div>
+        ${phone ? `<div class="phone-masked">${phone}</div>` : ''}
+      </td>
+      <td><div class="cell-order">${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</div></td>
+      <td>${(o.gov || o.governorate || '—').replace(/</g,'&lt;')}</td>
+      <td>${(o.city || '—').replace(/</g,'&lt;')}</td>
+      <td><span class="cell-money ${remaining>0?'money-neg':'money-zero'}">${fmt(remaining)}</span></td>
+      <td><span class="cell-money ${cost>0?'money-neg':'money-zero'}">${fmt(cost)}</span></td>
+      <td><span class="cell-money ${received>0?'money-pos':'money-zero'}">${fmt(received)}</span></td>
+      <td>${statusChip(getShipStage(o))}</td>
+      <td><div class="row-actions">${actionsCell(o)}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════
+// ACTIONS: Dispatch / Collect / Settle
+// ══════════════════════════════════════════════════
+window.openDispatch = (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  pendingOrder = o;
+  $('m-dispatch-info').innerHTML = `
+    <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0,6)}</span></div>
+    <div class="modal-info-row"><span>العميل</span><span>${o.clientName||'—'}</span></div>
+    <div class="modal-info-row"><span>المحافظة/المدينة</span><span>${o.gov||o.governorate||''} ${o.city||''}</span></div>
+    <div class="modal-info-row"><span>باقي على العميل</span><span>${fmt(o.remaining||0)} ج</span></div>`;
+  $('m-dispatch-company').value = o.shipCompanyId || '';
+  $('m-dispatch-method').value = o.shipMethod || 'company';
+  $('m-dispatch-cost').value = o.shippingCost || '';
+  $('m-dispatch-wallet').value = '';
+  $('m-dispatch-note').value = '';
+  $('m-dispatch').classList.add('on');
+};
+
+async function confirmDispatch() {
+  if (!pendingOrder) return;
+  const companyId = $('m-dispatch-company').value;
+  const method = $('m-dispatch-method').value;
+  const cost = safeNum($('m-dispatch-cost').value);
+  const walletId = $('m-dispatch-wallet').value;
+  const note = $('m-dispatch-note').value.trim();
+
+  if (!companyId) { toast('⚠️ اختر شركة الشحن', 'err'); return; }
+  if (cost < 0) { toast('⚠️ التكلفة غير صالحة', 'err'); return; }
+
+  const company = shippers.find(s => s._id === companyId);
+  const btn = $('btn-dispatch-confirm');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+
+  try {
+    // 1) تحديث الأوردر بحقول الشحن (RULE 3 — التحديث + الـ event كل واحد ذرّي)
+    await updateDoc(doc(db, 'orders', pendingOrder._id), {
+      shipCompanyId: companyId,
+      shipCompanyName: company?.name || '',
+      shipMethod: method,
+      shippingCost: cost,
+      shipStage: method === 'pickup' ? 'ready' : 'wait_delivery',
+      shippingStatus: 'dispatched',
+      shipDispatchedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    // 2) لو في تكلفة + محفظة → نُسجّل المصروف فوراً (SHIPPING_EXPENSE)
+    // لو مفيش محفظة → التكلفة تبقى مسجَّلة على الأوردر فقط، وتتسوّى لاحقاً
+    if (cost > 0 && walletId) {
+      const wallet = wallets.find(w => w._id === walletId);
+      await dispatchFinancialEvent(db, FE.SHIPPING_EXPENSE, {
+        walletId, walletName: wallet?.name || '',
+        amount: cost,
+        description: `تكلفة شحن طلب #${pendingOrder.orderNumber || pendingOrder._id.slice(0,6)} — ${company?.name || ''}`,
+        note: note || '',
+        orderId: pendingOrder._id, orderNumber: pendingOrder.orderNumber || '',
+        vendorId: companyId, vendorName: company?.name || '',
+        userId: me.uid, userName: $('nav-name').textContent,
+        date: new Date().toLocaleDateString('ar-EG'),
+      });
+    }
+
+    toast('✅ تم تسليم الطلب لشركة الشحن');
+    closeModal('m-dispatch');
+  } catch (e) {
+    console.error(e);
+    toast('❌ ' + (e.message || 'خطأ في التسليم'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ تسليم';
+  }
+}
+window.confirmDispatch = confirmDispatch;
+
+window.openCollect = (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  pendingOrder = o;
+  $('m-collect-info').innerHTML = `
+    <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0,6)}</span></div>
+    <div class="modal-info-row"><span>العميل</span><span>${o.clientName||'—'}</span></div>
+    <div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName||'—'}</span></div>
+    <div class="modal-info-row"><span>باقي على العميل</span><span>${fmt(o.remaining||0)} ج</span></div>`;
+  $('m-collect-amount').value = o.remaining || 0;
+  $('m-collect-note').value = '';
+  $('m-collect').classList.add('on');
+};
+
+async function confirmCollect() {
+  if (!pendingOrder) return;
+  const amount = safeNum($('m-collect-amount').value);
+  const note = $('m-collect-note').value.trim();
+  if (amount < 0) { toast('⚠️ المبلغ غير صالح', 'err'); return; }
+
+  const btn = $('btn-collect-confirm');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+
+  try {
+    // تسجيل التحصيل على الأوردر فقط (المبلغ مع شركة الشحن، لم يدخل بعد محفظتنا)
+    // الدخول الفعلي للمحفظة يحصل في "تسوية" → SHIPPING_SETTLEMENT
+    await updateDoc(doc(db, 'orders', pendingOrder._id), {
+      shipCollected: amount,
+      shipCollectedAt: serverTimestamp(),
+      shipStage: 'collected',
+      shipCollectNote: note || '',
+      updatedAt: serverTimestamp(),
+    });
+    toast('✅ تم تأكيد التحصيل — بانتظار التسوية');
+    closeModal('m-collect');
+  } catch (e) {
+    console.error(e);
+    toast('❌ ' + (e.message || 'خطأ في تأكيد التحصيل'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
+  }
+}
+window.confirmCollect = confirmCollect;
+
+window.openSettleSingle = (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  pendingOrder = { _single: true, orders: [o] };
+  $('m-settle-info').innerHTML = `
+    <div class="modal-info-row"><span>طلب واحد</span><span>#${o.orderNumber || o._id.slice(0,6)}</span></div>
+    <div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName||'—'}</span></div>
+    <div class="modal-info-row"><span>مُحصَّل من العميل</span><span>${fmt(o.shipCollected||0)} ج</span></div>
+    <div class="modal-info-row"><span>تكلفة الشحن</span><span>${fmt(o.shippingCost||0)} ج</span></div>
+    <div class="modal-info-row"><span>المستحق من الشركة</span><span>${fmt((o.shipCollected||0)-(o.shippingCost||0))} ج</span></div>`;
+  $('m-settle-amount').value = Math.max(0, (o.shipCollected||0) - (o.shippingCost||0));
+  $('m-settle-wallet').value = '';
+  $('m-settle-note').value = '';
+  $('m-settle').classList.add('on');
+};
+
+function openSettleModal(_) {
+  // تسوية جماعية: كل الأوردرات collected ولم تُسوَّى — لشركة محددة
+  const fc = $('f-company').value;
+  const candidates = orders.filter(o => o.shipCollected && !o.shipSettled && (!fc || o.shipCompanyId === fc));
+  if (!candidates.length) { toast('⚠️ لا توجد شحنات جاهزة للتسوية', 'err'); return; }
+  // نجمع حسب الشركة
+  const byCompany = {};
+  candidates.forEach(o => {
+    const k = o.shipCompanyId || '_';
+    if (!byCompany[k]) byCompany[k] = { companyId: k, companyName: o.shipCompanyName || 'بدون شركة', orders: [], collected: 0, cost: 0 };
+    byCompany[k].orders.push(o);
+    byCompany[k].collected += safeNum(o.shipCollected);
+    byCompany[k].cost += safeNum(o.shippingCost);
+  });
+  const groups = Object.values(byCompany);
+  const first = groups[0];
+  pendingOrder = { _bulk: true, ...first };
+  $('m-settle-info').innerHTML = `
+    <div class="modal-info-row"><span>الشركة</span><span>${first.companyName}</span></div>
+    <div class="modal-info-row"><span>عدد الشحنات</span><span>${first.orders.length}</span></div>
+    <div class="modal-info-row"><span>إجمالي مُحصَّل</span><span>${fmt(first.collected)} ج</span></div>
+    <div class="modal-info-row"><span>إجمالي تكلفة الشحن</span><span>${fmt(first.cost)} ج</span></div>
+    <div class="modal-info-row"><span>المستحق من الشركة</span><span>${fmt(first.collected - first.cost)} ج</span></div>
+    ${groups.length>1?`<div style="color:var(--y);font-size:11px;margin-top:6px">⚠️ ${groups.length-1} شركة أخرى بحاجة لتسوية — سوِّ كل شركة على حدة</div>`:''}`;
+  $('m-settle-amount').value = Math.max(0, first.collected - first.cost);
+  $('m-settle-wallet').value = '';
+  $('m-settle-note').value = '';
+  $('m-settle').classList.add('on');
+}
+
+async function confirmSettle() {
+  if (!pendingOrder) return;
+  const amount = safeNum($('m-settle-amount').value);
+  const walletId = $('m-settle-wallet').value;
+  const note = $('m-settle-note').value.trim();
+
+  if (!walletId) { toast('⚠️ اختر المحفظة', 'err'); return; }
+  if (amount < 0) { toast('⚠️ المبلغ غير صالح', 'err'); return; }
+
+  const wallet = wallets.find(w => w._id === walletId);
+  const ordersToSettle = pendingOrder._bulk ? pendingOrder.orders : pendingOrder.orders;
+  const companyName = pendingOrder.companyName || ordersToSettle[0]?.shipCompanyName || '';
+
+  const orderIds = ordersToSettle.map(o => o._id);
+  const expectedAmount = ordersToSettle.reduce((s,o) => s + safeNum(o.shipCollected) - safeNum(o.shippingCost), 0);
+  const difference = amount - expectedAmount;
+
+  const orderUpdates = ordersToSettle.map(o => {
+    const due = safeNum(o.shipCollected) - safeNum(o.shippingCost);
+    const totalPaid = safeNum(o.totalPaid) + Math.max(0, due);
+    const remaining = Math.max(0, safeNum(o.totalPrice||o.total||0) - totalPaid);
+    return {
+      orderId: o._id,
+      totalPaid, remaining,
+      paymentStatus: remaining > 0 ? 'partial' : 'paid',
+      dueByCo: due,
+    };
+  });
+
+  const btn = $('btn-settle-confirm');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+
+  try {
+    await dispatchFinancialEvent(db, FE.SHIPPING_SETTLEMENT, {
+      walletId, walletName: wallet?.name || '',
+      amount,
+      companyName,
+      orderIds,
+      expectedAmount,
+      difference,
+      diffReason: difference !== 0 ? 'other' : '',
+      diffReasonLabel: difference !== 0 ? 'فرق في التسوية' : '',
+      diffNote: '',
+      orderUpdates,
+      note,
+      userId: me.uid, userName: $('nav-name').textContent,
+      date: new Date().toLocaleDateString('ar-EG'),
+    });
+    toast(`✅ تم تسجيل التسوية: ${fmt(amount)} ج`);
+    closeModal('m-settle');
+  } catch (e) {
+    console.error(e);
+    toast('❌ ' + (e.message || 'خطأ في التسوية'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ تسجيل التسوية';
+  }
+}
+window.confirmSettle = confirmSettle;
+</script>
+<script src="sw-register.js"></script>
+</body>
+</html>
