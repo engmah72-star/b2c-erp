@@ -367,17 +367,18 @@
 
 ## 16. Fix Priority Matrix
 
-### 🔴 P0 — يجب الإصلاح فوراً قبل أي نشر جديد
+### 🔴 P0 — حالة كل عنصر بعد الفحص العميق وتنفيذ الإصلاحات
 
-| # | المشكلة | الملف | الإصلاح |
+| # | المشكلة | الحالة | ملاحظة |
 |---|---|---|---|
-| P0-1 | viewas.js بدون role-gate | `viewas.js:~85` | أضف `if (!['admin','operation_manager'].includes(AppState?.currentRole)) return;` |
-| P0-2 | `SENSITIVE_FIELDS` ينقصه supplier_cost/price_cost/price_margin | `shared.js:179` | استورد من `core/permissions-matrix.js` أو وسِّع set |
-| P0-3 | Role escalation عبر `/users` PATCH | `firestore.rules:173` | منع تعديل `role`/`permissions` بـ field-level guard |
-| P0-4 | Unbounded listeners في `shared.js:301-326` | shared.js | أضف `limit(200)` على kل onSnapshot |
-| P0-5 | FCM coverage محدود (7/65 صفحة) | `notifications.js` | حمِّل notifications.js على جميع dashboards (cs/ops/production/shipping/index) لتفعيل FCM لكل المستخدمين |
-| P0-6 | CACHE bump لا يلتزم في git | `.github/workflows/deploy.yml` | commit الـ sw.js بعد bump SHA |
-| P0-7 | duplicate DEFAULT_PERMISSIONS (3 مصادر) | shared.js + viewas.js + core/ | اعتمد `core/permissions-matrix.js` كمصدر وحيد |
+| P0-1 | viewas.js بدون role-gate | ✅ **مُصلَح** (هذا الـ PR) | `gateAdminOrAbort()` في commit `cbf0a43` |
+| P0-2 | `SENSITIVE_FIELDS` ناقص (2 فقط بدلاً من 5) | ✅ **مُصلَح** (هذا الـ PR) | shared.js يستورد الآن من `core/permissions-matrix.js` ➜ 5 حقول كاملة |
+| P0-3 | Role escalation عبر `/users` PATCH | ✅ **مُصلَح مسبقاً** | `isProtectedUserField()` في firestore.rules:186-211 يمنع تعديل role/permissions/tenantId — تشخيص أولي خاطئ |
+| P0-4 | Unbounded listeners في shared.js | ✅ **مُصلَح مسبقاً** | shared.js:317+329 تحوي `limit(orderLimit ‖ 200)`، `limit(clientLimit ‖ 200)` — التقرير الأصلي اعتمد على audit v2 قبل S0-8 fix |
+| P0-5 | FCM coverage محدود (7/65 صفحة) | ⏳ **مفتوح** | يحتاج إضافة notifications.js على dashboards (cs/ops/production/shipping/index). كل dashboard له auth pattern مختلف ➜ تعديل متعدد الصفحات |
+| P0-6 | CACHE bump لا يلتزم في git | ⏳ **مفتوح** | يحتاج تعديل deploy.yml لـ commit + push آلي بعد bump SHA |
+| P0-7 | duplicate DEFAULT_PERMISSIONS | ✅ **مُصلَح جزئياً** (هذا الـ PR) | shared.js يعتمد core/. viewas.js يحتفظ بـ ROLE_CAN_SEE_* sets (IIFE — لا يدعم import) |
+| P0-8 | G2 — FB_CONFIG في 61 ملف | ⏳ **يحتاج migration plan** | محاولة migration في shared.js اكتُشف أنها تكسر approvals/returns/shipping-lite (يستوردون db,auth من shared ثم يستدعون initializeApp بنفسهم ➜ collision). يحتاج migration صفحة-بصفحة |
 
 ### 🟡 P1 — أسبوع واحد
 
@@ -492,9 +493,12 @@
 |---|---|---|---|
 | ✅ | إضافة `ai-insights` و `ai-digest` إلى Sidebar (admin only) | `sidebar-config.js:58-59` | DONE |
 | ✅ | توسيع `NETWORK_FIRST_SUFFIXES` لـ 14 ملف JS حرج | `sw.js:13-34` | DONE |
-| ✅ | **P0 Security** — defensive role-gate في `viewas.js` يمنع privilege escalation عبر sessionStorage tampering | `viewas.js:172-220` | DONE |
-| ✅ | تصحيح التقرير بعد إعادة الفحص: `initFcm()` يُستدعى فعلياً؛ المشكلة coverage فقط (7/65) | `HIDDEN_FEATURES_AUDIT.md §3.1, §12` | DONE |
-| ⏳ | باقي P0/P1 — يحتاج موافقة على Stable Core changes (firestore.rules, shared.js) | — | PENDING |
+| ✅ | **P0-1 Security** — defensive role-gate في `viewas.js` يمنع privilege escalation عبر sessionStorage tampering | `viewas.js:172-220` | DONE |
+| ✅ | **P0-2 Security** — توسيع SENSITIVE_FIELDS من 2 إلى 5 (supplier_cost, price_cost, price_margin) | shared.js — import من core/ | DONE |
+| ✅ | **P0-7 Architecture** — توحيد DEFAULT_PERMISSIONS عبر import من core/permissions-matrix.js في shared.js | shared.js:163-205 | DONE |
+| ✅ | تصحيح التقرير: P0-3 و P0-4 مُصلَحان مسبقاً؛ FCM يُستدعى فعلياً | §3.1, §12, §16 | DONE |
+| ❌ | محاولة G2 (FB_CONFIG migration in shared.js) | اكتُشف أنها تكسر 3 صفحات | REVERTED — يحتاج migration صفحة-بصفحة |
+| ⏳ | باقي P0/P1 — FCM coverage extension، CACHE bump persistence، theme على 6 صفحات | — | PENDING |
 
 ### تفاصيل P0 Fix لـ viewas.js
 
