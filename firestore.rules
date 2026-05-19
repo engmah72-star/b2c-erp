@@ -1080,10 +1080,12 @@ service cloud.firestore {
 
     // ══ Marketplace Orders — طلبات بين العميل والمرشنت ══
     // مختلفة عن orders الحالية: تحمل tenantId + commission + escrow refs.
+    // S0-3 FIX: tenant isolation. كان: isAdmin() || canFinancialRead() ||
+    // ... — يقرأ كل tenants. الآن: tenant check لكل path.
     match /marketplace_orders/{orderId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         resource.data.get('customerId','__') == request.auth.uid ||
         isOwnPartnerData(resource.data)
       );
@@ -1092,30 +1094,33 @@ service cloud.firestore {
     }
 
     // ══ Commissions — العمولات المستحقة/المحصلة للمنصة ══
+    // S0-3 FIX: tenant isolation
     match /commissions/{commId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         isOwnPartnerData(resource.data)
       );
       allow create, update, delete: if isAdminOnly();
     }
 
     // ══ Escrow Holds — الأموال المحتجزة لحين التسليم ══
+    // S0-3 FIX: tenant isolation
     match /escrow_holds/{holdId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         resource.data.get('customerId','__') == request.auth.uid
       );
       allow create, update, delete: if isAdminOnly();
     }
 
     // ══ Payouts — دفعات للمرشنتس/الشحن/الوكلاء ══
+    // S0-3 FIX: tenant isolation
     match /payouts/{payoutId} {
       allow read: if isAuth() && (
-        isAdmin() ||
-        canFinancialRead() ||
+        (isAdmin() && inSameTenant(resource.data)) ||
+        (canFinancialRead() && inSameTenant(resource.data)) ||
         isOwnPartnerData(resource.data)
       );
       allow create, update, delete: if isAdminOnly();
