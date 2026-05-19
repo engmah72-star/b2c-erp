@@ -132,3 +132,131 @@ export function maskPhone(phone, canShow = false) {
   if (s.length < 6) return '****';
   return s.slice(0, 3) + '****' + s.slice(-3);
 }
+
+// ══════════════════════════════════════════════════════════
+// CAPABILITY PERMISSIONS — RULE P1 (Action-Level Permissions)
+// ══════════════════════════════════════════════════════════
+// طبقة ثالثة من الصلاحيات (بجانب field-level و page-level):
+// تتحكم في **الأفعال** التي يمكن للمستخدم تنفيذها.
+//
+// الـ Roles = افتراضات. الـ user overrides في users/{uid}.permissions.capabilities
+// تفوز عند التعارض.
+//
+// الاستخدام:
+//   import { canDo } from './core/permissions-matrix.js';
+//   if (canDo('archive_orders', currentRole, userPerms)) { showButton(); }
+
+export const CAPABILITIES = Object.freeze({
+  VIEW_ORDERS:        'view_orders',
+  CREATE_ORDERS:      'create_orders',
+  EDIT_ORDERS:        'edit_orders',
+  ARCHIVE_ORDERS:     'archive_orders',
+  VIEW_CLIENTS:       'view_clients',
+  EDIT_CLIENTS:       'edit_clients',
+  UPLOAD_DESIGNS:     'upload_designs',
+  APPROVE_DESIGNS:    'approve_designs',
+  MANAGE_PRINTING:    'manage_printing',
+  MANAGE_SHIPPING:    'manage_shipping',
+  VIEW_FINANCIALS:    'view_financials',
+  MANAGE_PAYMENTS:    'manage_payments',
+  MANAGE_RETURNS:     'manage_returns',
+  MANAGE_EMPLOYEES:   'manage_employees',
+  SYSTEM_SETTINGS:    'system_settings',
+});
+
+// كل role وما يستطيع فعلياً.
+// admin/operation_manager = كل شيء. باقي الأدوار حسب طبيعة عملهم.
+export const DEFAULT_CAPABILITIES = {
+  admin: {
+    view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
+    view_clients:true, edit_clients:true,
+    upload_designs:true, approve_designs:true,
+    manage_printing:true, manage_shipping:true,
+    view_financials:true, manage_payments:true,
+    manage_returns:true, manage_employees:true, system_settings:true,
+  },
+  operation_manager: {
+    view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
+    view_clients:true, edit_clients:true,
+    upload_designs:true, approve_designs:true,
+    manage_printing:true, manage_shipping:true,
+    view_financials:true, manage_payments:true,
+    manage_returns:true, manage_employees:true, system_settings:false,
+  },
+  customer_service: {
+    view_orders:true, create_orders:true, edit_orders:true, archive_orders:false,
+    view_clients:true, edit_clients:true,
+    upload_designs:true, approve_designs:false,
+    manage_printing:false, manage_shipping:false,
+    view_financials:true, manage_payments:true,
+    manage_returns:true, manage_employees:false, system_settings:false,
+  },
+  graphic_designer: {
+    view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
+    view_clients:false, edit_clients:false,
+    upload_designs:true, approve_designs:false,
+    manage_printing:false, manage_shipping:false,
+    view_financials:false, manage_payments:false,
+    manage_returns:false, manage_employees:false, system_settings:false,
+  },
+  design_operator: {
+    view_orders:true, create_orders:false, edit_orders:true, archive_orders:false,
+    view_clients:false, edit_clients:false,
+    upload_designs:true, approve_designs:true,
+    manage_printing:false, manage_shipping:false,
+    view_financials:false, manage_payments:false,
+    manage_returns:false, manage_employees:false, system_settings:false,
+  },
+  production_agent: {
+    view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
+    view_clients:false, edit_clients:false,
+    upload_designs:false, approve_designs:false,
+    manage_printing:true, manage_shipping:false,
+    view_financials:false, manage_payments:false,
+    manage_returns:false, manage_employees:false, system_settings:false,
+  },
+  shipping_officer: {
+    view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
+    view_clients:false, edit_clients:false,
+    upload_designs:false, approve_designs:false,
+    manage_printing:false, manage_shipping:true,
+    view_financials:false, manage_payments:false,
+    manage_returns:false, manage_employees:false, system_settings:false,
+  },
+  wallet_manager: {
+    view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
+    view_clients:false, edit_clients:false,
+    upload_designs:false, approve_designs:false,
+    manage_printing:false, manage_shipping:false,
+    view_financials:true, manage_payments:true,
+    manage_returns:true, manage_employees:false, system_settings:false,
+  },
+};
+
+/**
+ * canDo — التحقق من قدرة المستخدم على فعل معين (RULE P1).
+ *
+ * Order of resolution:
+ *   1) user-level override (users.permissions.capabilities[capability])
+ *   2) role default (DEFAULT_CAPABILITIES[role][capability])
+ *   3) fail-closed (false)
+ *
+ * @param {string} capability — من CAPABILITIES أو string مباشر
+ * @param {string} userRole — دور المستخدم
+ * @param {Object} userPerms — users.permissions object (اختياري، مع .capabilities)
+ * @returns {boolean}
+ */
+export function canDo(capability, userRole, userPerms) {
+  if (!capability) return false;
+  // user override يفوز
+  const caps = userPerms?.capabilities;
+  if (caps && caps[capability] !== undefined) return !!caps[capability];
+  // role default
+  const def = DEFAULT_CAPABILITIES[userRole]?.[capability];
+  if (def !== undefined) return def;
+  // fail-closed
+  return false;
+}
+
+/** alias مرادف لـ canDo */
+export const hasCapability = canDo;

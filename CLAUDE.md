@@ -1178,6 +1178,113 @@ storage.rules تتبع نفس الفلسفة:
 
 ---
 
+## RULE P1 — PERMISSIONS PRINCIPLE (ميثاق الصلاحيات الدقيقة)
+
+> **النظام يعتمد على Permissions (دقيقة)، لا Roles ثابتة معقدة.**
+>
+> الـ Roles = تجميعة افتراضية. الـ Permissions = الحقيقة. RULE 8 + R1 + X1 يكتسبون قوتهم من هنا.
+
+### P1.1 — ثلاث طبقات صلاحيات
+| الطبقة | ماذا تتحكم | المصدر |
+|--------|--------------|---------|
+| **Page** | أي صفحة يدخل | `ROLE_PAGES` في `shared.js` |
+| **Field** | أي حقل يرى | `DEFAULT_PERMISSIONS` في `core/permissions-matrix.js` (`price_sale`, `client_phone`, `design_data`...) |
+| **Capability** | أي action ينفذ | `DEFAULT_CAPABILITIES` في `core/permissions-matrix.js` (`view_orders`, `create_orders`...) |
+
+كل عملية حساسة تستخدم الـ capability المناسب — لا role hardcoded.
+
+### P1.2 — Capability Catalog (15 capability)
+| Capability | الوصف |
+|-----------|-------|
+| `view_orders` | قراءة الأوردرات |
+| `create_orders` | إنشاء أوردر جديد |
+| `edit_orders` | تعديل بيانات الأوردر |
+| `archive_orders` | أرشفة الأوردر |
+| `view_clients` | قراءة العملاء |
+| `edit_clients` | تعديل بيانات العميل |
+| `upload_designs` | رفع ملفات التصميم |
+| `approve_designs` | اعتماد التصميم |
+| `manage_printing` | إدارة مرحلة الطباعة |
+| `manage_shipping` | إدارة الشحن |
+| `view_financials` | قراءة البيانات المالية |
+| `manage_payments` | تسجيل دفعات/استرداد |
+| `manage_returns` | معالجة المرتجعات |
+| `manage_employees` | إدارة الموظفين |
+| `system_settings` | إعدادات النظام |
+
+### P1.3 — التطبيق
+```js
+// ❌ ممنوع (hardcoded role)
+if (currentRole === 'admin' || currentRole === 'operation_manager') { ... }
+
+// ✅ المسموح (capability-based)
+import { canDo } from './core/permissions-matrix.js';
+if (canDo('archive_orders', currentRole, userPerms)) { ... }
+```
+
+**في Firestore Rules:**
+```js
+function canArchive() { return can('archive_orders'); }
+```
+
+### P1.4 — Role = Default Bundle
+الـ Roles الـ 8 = **افتراضات** لـ capability sets. كل user يمكن أن يحصل على overrides فردية في `users/{uid}.permissions.capabilities`.
+
+مثال:
+- `graphic_designer` افتراضياً: `{view_orders, upload_designs}`
+- لكن `users/{uid}.permissions.capabilities.approve_designs = true` يمنحه صلاحية اعتماد رغم دوره
+
+### P1.5 — UI Adapts to Capabilities (تعزيز RULE 8.3)
+الـ UI يتغيّر **قبل** الضغط:
+- الـ زر مخفي إذا `!canDo(capability)`
+- الـ action في القائمة مخفي
+- الـ field في الجدول مخفي
+- الـ section كاملة مخفية
+
+**ممنوع:** "click → error: لا صلاحية" — تجربة سيئة. الأفضل: لا يرى الأصلاً.
+
+### P1.6 — Central Source of Truth
+```
+core/permissions-matrix.js:
+  DEFAULT_PERMISSIONS    (field-level)
+  DEFAULT_CAPABILITIES   (action-level) ← الجديد
+  ROLE_PAGES             (page-level)
+  canSeeField()          (field check)
+  canDo()                (capability check) ← الجديد
+  hasPage()              (page check)
+```
+
+**ممنوع:**
+- ❌ permission lists محلية في pages
+- ❌ `if (role in [...])` للـ capabilities — استخدم `canDo()`
+- ❌ duplicate permission logic في Firestore Rules ↔ UI
+
+### P1.7 — User-Level Overrides
+الـ `users/{uid}.permissions.capabilities` يقدر يفعّل/يعطّل capability فردياً لمستخدم بعينه:
+```json
+{
+  "permissions": {
+    "capabilities": {
+      "approve_designs": true,
+      "system_settings": false
+    }
+  }
+}
+```
+الـ `canDo()` يدمج: default للـ role + user overrides (override يفوز).
+
+### P1.8 — Audit للـ Capability Changes
+أي تغيير في `users/{uid}.permissions.capabilities`:
+- يُسجَّل في `audit_logs/permission_change/{ts}`
+- مع before/after + by/byId
+
+### 🚫 القاعدة النهائية
+**الصلاحيات تنظّم التشغيل لا تعقّده.**
+
+أي عملية تستخدم role hardcoded بدل capability = drift يُعالَج (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
