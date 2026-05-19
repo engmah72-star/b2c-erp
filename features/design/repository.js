@@ -33,7 +33,6 @@ export const LIMITS = Object.freeze({
   items: 500,
   perOrderItems: 100,
   clientDecisions: 200,
-  gallery: 300,
   attendance: 60,
   goals: 12,
   evaluations: 24,
@@ -168,26 +167,6 @@ export function subscribeClientDecisions({
     ..._tenantFilter(tenantId),
     orderBy('createdAt', 'desc'),
     limit(max || LIMITS.clientDecisions),
-  );
-  return onSnapshot(q, ..._snapHandler(onUpdate, onError));
-}
-
-// ════════════════════════════════════════════════════════════════════
-//  GALLERY — public + portfolio
-// ════════════════════════════════════════════════════════════════════
-
-export function subscribeGallery({
-  visibleOnly = true, tenantId = null,
-  max, onUpdate, onError,
-}) {
-  const conds = [..._tenantFilter(tenantId)];
-  if (visibleOnly) conds.push(where('isVisible', '==', true));
-
-  const q = query(
-    collection(db, 'gallery'),
-    ...conds,
-    orderBy('publishedAt', 'desc'),
-    limit(max || LIMITS.gallery),
   );
   return onSnapshot(q, ..._snapHandler(onUpdate, onError));
 }

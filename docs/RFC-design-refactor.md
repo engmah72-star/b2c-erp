@@ -1,187 +1,120 @@
-# RFC — توحيد صفحات المصمم الثلاث (Designer Hub)
+# RFC — توحيد صفحات التصميم (Designer Hub)
 
-> **التاريخ:** 2026-05-19 (مُحدَّث)
-> **النطاق المصحَّح:** الصفحات الـ 3 المرتبطة بدور المصمم.
-> **الهدف:** **دورة عمل بسيطة، صفحة واحدة، لا تكرار.**
-> **الحاكمية:** يخضع لـ RULES G1-G10 + RULE 1-8 من `CLAUDE.md`.
-
----
-
-## الصفحات المستهدفة
-
-| # | الصفحة الحالية | الملف | السطور | الوظيفة |
-|---|---|---|---|---|
-| 1 | **مكتبة التصميمات** | `client-design-library.html` | 601 | عرض تصاميم كل العملاء + إحصائيات |
-| 2 | **مساحة التصميم** | `design-workspace.html` | 2,425 | فتح أوردر، رفع نسخ، اعتماد، نشر |
-| 3 | **المعرض** | `gallery.html` | 677 | معرض التصاميم العام |
-| | **الإجمالي** | | **3,703** | |
+> **التاريخ:** 2026-05-19 (مُحدَّث — Iteration 3)
+> **القرار النهائي:** إلغاء "المكتبة" و "المعرض" بناءً على طلب المستخدم.
+> **النطاق الفعلي:** `designer-hub.html` = مساحة التصميم فقط (work view).
 
 ---
 
-## التشخيص
+## التطور
 
-### التكرار (45-50% من الكود)
+**Iteration 1 (مُلغى):** 7 PRs لـ refactor 5 صفحات — Kanban + Workspace + Designer-Dashboard + Library + Gallery
+**Iteration 2 (مُلغى):** دمج 3 صفحات بـ 3 tabs — Library + Workspace + Gallery
+**Iteration 3 (نهائي):** ✅ صفحة واحدة بدون tabs — مساحة التصميم فقط
 
-| نوع التكرار | الموقع | التقدير |
+---
+
+## الصفحات
+
+| الصفحة الحالية | المصير | السبب |
 |---|---|---|
-| Sidebar | الـ 3 | 3× نسخة كاملة |
-| `escapeHtml` utility | الـ 3 | 3 تعريفات مختلفة |
-| Lightbox | workspace + gallery | 2× منطق |
-| onSnapshot(design_items) | library + workspace | 2× نفس الاشتراك |
-| Grid + cards | الـ 3 | layouts مختلفة بنفس الـ UX |
-| Search + filter | الـ 3 | منطق متشابه |
-| Empty + loader | الـ 3 | 3× messaging |
+| `design-workspace.html` (2,425 سطر) | **يُستبدل بـ `designer-hub.html`** | الـ refactor |
+| `client-design-library.html` (601 سطر) | **redirect shim → designer-hub.html** | مُلغاة بطلب المستخدم |
+| `gallery.html` (677 سطر) | **redirect shim → designer-hub.html** | مُلغاة بطلب المستخدم |
 
-### مشاكل G3 (limit() مفقود)
-
-- `client-design-library.html` → `design_items` بدون `limit()`
-- `gallery.html` → `gallery` query بدون `limit()`
-- `design-workspace.html` → `client_decisions` بدون `limit()`
-
-### مشاكل RULE 8
-
-- `client-design-library.html` لا تطبّق `canSee('client_phone')` — تعرض `clientName` بدون فلتر للأدوار غير المصرَّحة
+**الإجمالي الجديد:** ~1,400 سطر (vs 3,703 → -62%).
 
 ---
 
-## الهدف — Designer Hub موحَّد
-
-**صفحة واحدة بـ 3 tabs**: `features/design/designer-hub.html`
-
-```
-?tab=work       → مساحة عملي (المصمم/Admin)
-?tab=library    → مكتبة تصاميم العملاء (Admin/CS)
-?tab=gallery    → المعرض العام (الكل)
-```
-
-تبديل الـ tab = DOM toggle محلي (لا reload).
-
----
-
-## البنية
+## البنية النهائية
 
 ```
 features/design/
-├── designer-hub.html             ← entry موحَّد (~250 سطر)
-├── hub.entry.js                  ← bootstrap + auth + tab router
-├── repository.js                 ← (موجود من PR-1) — يُوسَّع بـ 2-3 subscribers
-├── permissions.js                ← (موجود من PR-1) — يُوسَّع بـ helpers
-├── state.js                      ← (موجود من PR-1)
+├── repository.js                 ← Firestore queries (G3 + G4)
+├── permissions.js                ← Role-based access (RULE 8)
+├── state.js                      ← Pub/sub state (محجوز)
+├── hub.entry.js                  ← Bootstrap + mount work view
 │
 ├── views/
-│   ├── work-view.js              ← من design-workspace.html (MVP)
-│   ├── library-view.js           ← من client-design-library.html
-│   └── gallery-view.js           ← من gallery.html
+│   └── work-view.js              ← مساحة التصميم الكاملة
 │
 ├── components/
-│   ├── sidebar.js                ← موحَّد (يحل التكرار الثلاثي)
-│   ├── lightbox.js               ← موحَّد
-│   ├── grid-card.js              ← مكوّن card بـ variants
-│   ├── filter-chips.js
-│   └── utils.js                  ← escapeHtml + toast + helpers
+│   ├── utils.js                  ← escapeHtml + toast + helpers
+│   ├── lightbox.js               ← preview للنسخ
+│   ├── sidebar.js                ← sidebar موحَّد
+│   └── grid-card.js              ← order-card (للقائمة الجانبية)
 │
 └── services/
-    ├── design-items.service.js   ← upload version + approve + print-ready
-    ├── gallery.service.js        ← publish + visibility
-    └── upload.service.js         ← (موجود من PR-1) — implementation
+    ├── design-items.service.js   ← markApproved + togglePrintReady + appendVersion + publishToClient
+    └── upload.service.js         ← uploadSlotFile + buildVersion + inferSlotKind
 ```
 
 ---
 
-## دورة العمل الجديدة (بسيطة)
+## دورة العمل النهائية
 
 ```
-المصمم يفتح Designer Hub
-  │
-  ├─ Tab "عملي" (الافتراضي للمصمم)
-  │    ├─ يشوف الأوردرات المسندة له
-  │    ├─ يضغط أوردر → يفتح بنوده
-  │    ├─ يرفع نسخة جديدة على بند (3 سلوتات: mockup/pdf/source)
-  │    ├─ يعتمد البند
-  │    └─ ينشر للمعرض (modal مدمج)
-  │
-  ├─ Tab "المكتبة" (الافتراضي للـ Admin/CS)
-  │    ├─ يشوف كل العملاء بإحصائياتهم
-  │    ├─ يضغط عميل → يشوف تصاميمه
-  │    └─ يفتح بند → يفتحه في Tab "عملي"
-  │
-  └─ Tab "المعرض" (للكل)
-       ├─ يشوف المعرض العام
-       ├─ فلترة بالتصنيف + بحث
-       └─ Lightbox بـ keyboard nav
+المصمم/Admin/CS يفتح designer-hub.html
+   ↓
+يشوف قائمة أوردراته (admin: كل أوردرات stage=design — CS: نفسها — المصمم: المسندة له)
+   ↓
+يضغط أوردر → بنوده تظهر يميناً
+   ↓
+لكل بند:
+   - يرفع نسخة جديدة (الـ slot يُستنتج تلقائياً من نوع الملف)
+   - ⬆️ Mockup (صورة) / 📄 PDF / 📁 Source (ملف تصميم خام)
+   - ✅ يعتمد البند
+   - 🖨️ يعلّمه جاهز للطباعة
 ```
 
 ---
 
-## ما يبقى من PR-1
+## ما أُلغي
 
-| الملف | الحالة |
+| الفيتشر | السبب |
 |---|---|
-| `repository.js` (349 سطر) | ✅ يبقى — يُوسَّع بـ `subscribeDesignItemsByClient` |
-| `permissions.js` (79 سطر) | ✅ يبقى — يُوسَّع بـ `getDesignerHubDefaultTab` |
-| `state.js` (126 سطر) | ✅ يبقى كما هو |
-| `services/upload.service.js` (47 سطر) | ✅ يبقى كـ stub، يُنفَّذ في PR-2 |
-| `services/orders.service.js` | ❌ **محذوف** — scope خاطئ |
-| `services/attendance.service.js` | ❌ **محذوف** — غير ذي صلة |
+| Tab "المكتبة" + library-view | إلغاء صفحة المكتبة |
+| Tab "المعرض" + gallery-view | إلغاء صفحة المعرض |
+| زر "نشر للمعرض" في work-view | إلغاء المعرض |
+| `gallery.service.js` | إلغاء المعرض |
+| `subscribeGallery` في repository | إلغاء المعرض |
+| `getVisibleTabs`/`getDesignerHubDefaultTab` في permissions | لا توجد tabs |
+| `client-design-library.html` (الصفحة) | redirect shim |
+| `gallery.html` (الصفحة) | redirect shim |
 
 ---
 
-## الخطة — 2 PRs فقط
+## قواعد الحوكمة المطبَّقة
 
-### PR-2 (هذا الـ PR) — Designer Hub Unified
-
-- بناء `designer-hub.html` بـ 3 tabs
-- 3 views + 5 components مشتركة
-- توسيع `repository.js` بـ subscribers جديدة (مع `limit()` مفروض على الكل)
-- تطبيق RULE 8 على library view
-- **الصفحات القديمة تظل شغالة** — لا breaking change
-- **الوقت المتوقع: ~20 ساعة**
-
-### PR-3 — Cutover
-
-- تحديث `sidebar-config.js`: حذف الـ 3 entries القديمة، إضافة `designer-hub.html`
-- الـ 3 صفحات القديمة → redirect shims لـ `designer-hub.html?tab=X`
-- بعد أسبوع مراقبة → حذف نهائي
-- **الوقت المتوقع: ~4 ساعات**
+| القاعدة | التطبيق |
+|---|---|
+| G2 — One Firebase Config | ✅ كل imports من `core/firebase-init.js` |
+| G3 — Bounded Listeners | ✅ كل `onSnapshot` له `limit()` (LIMITS constant) |
+| G4 — Repository Pattern | ✅ كل query في `repository.js` |
+| G6 — Engine Writes Only | ✅ لا writes مالية |
+| G7 — Tenant Aware | ✅ كل query تقبل `tenantId` optional |
+| G9 — Incremental Migration | ✅ redirect shims تمنع 404s |
 
 ---
 
-## MVP / Defer
+## التوفير المحقَّق
 
-### MVP في PR-2 (من اليوم الأول)
-
-- ✅ صفحة موحَّدة بـ 3 tabs
-- ✅ Tab Work: list orders → click → see items → upload version → approve → publish
-- ✅ Tab Library: client grid → click client → see designs
-- ✅ Tab Gallery: public grid + filter + lightbox
-- ✅ Phone visibility (RULE 8)
-- ✅ Single sidebar (لا تكرار)
-- ✅ كل onSnapshot مع limit()
-
-### مؤجَّل لـ Phase 2
-
-- 🔄 ZIP bulk download
-- 🔄 Drag-drop multi-file → auto slot distribution
-- 🔄 Keyboard shortcuts (j/k/`/`/Esc)
-- 🔄 Performance ring + advanced KPIs
-- 🔄 Edit item modal (rare admin operation)
-- 🔄 Revision modal (يمكن استبداله بـ inline form)
-- 🔄 Client decision processing UI (Admin-only)
-
-### خارج النطاق (Out)
-
-- ❌ Stats SVG ring الـ complex
-- ❌ Portfolio sub-tabs (My / Review / Public) — كله موحَّد في Gallery tab
-- ❌ Multi-row drag-drop matrix
-
----
-
-## التوفير المتوقع
-
-| | الآن | بعد الدمج |
+| | الآن | بعد الـ refactor |
 |---|---|---|
-| URLs | 3 | 1 |
-| Firestore reads/load | ~150 | ~50 (-66%) |
-| تكرار الكود | 45-50% | <15% |
-| خطوات التنقل للنشر | 3 | tab switch واحد |
-| سطور كود | 3,703 | ~1,500 (-60%) |
+| URLs نشطة | 3 | 1 |
+| تكرار الكود | 45-50% | <10% |
+| سطور كود (إجمالي) | 3,703 | ~1,400 (-62%) |
+| onSnapshot بدون limit | 5 | 0 |
+| RULE 8 violations | 1 (library) | 0 (أُلغيت) |
+
+---
+
+## الخطوات النهائية (Cutover Status)
+
+| الخطوة | الحالة |
+|---|---|
+| استبدال `design-workspace.html` بـ `designer-hub.html` في sidebar-config | ✅ تم |
+| `client-design-library.html` → redirect shim | ✅ تم |
+| `gallery.html` → redirect shim | ✅ تم |
+| `design-workspace.html` → redirect shim | ⏳ مؤجَّل (يمكن في PR لاحق بعد مراقبة) |
+| تنظيف الـ references في 20+ ملف HTML | ⏳ مؤجَّل (لا يكسر شيء حالياً بسبب redirects) |

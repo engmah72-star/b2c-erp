@@ -16,7 +16,6 @@ import {
   subscribeDesignOrders, subscribeDesignItems,
 } from '../repository.js';
 import * as itemsService from '../services/design-items.service.js';
-import * as galleryService from '../services/gallery.service.js';
 import * as uploadService from '../services/upload.service.js';
 import { isAdmin, isCSRole } from '../permissions.js';
 import {
@@ -235,9 +234,9 @@ function itemRow(item) {
         ${item.isApproved
           ? `<button class="dh-btn" disabled>✅ معتمد</button>`
           : `<button class="dh-btn" data-action="approve" data-item-id="${escapeAttr(item._id || item.id)}">✅ اعتماد</button>`}
-        ${item.galleryId
-          ? `<span class="dh-tag ok">🖼️ في المعرض</span>`
-          : `<button class="dh-btn dh-btn-ghost" data-action="publish-gallery" data-item-id="${escapeAttr(item._id || item.id)}" ${thumb ? '' : 'disabled'}>🖼️ نشر للمعرض</button>`}
+        ${item.isPrintReady
+          ? `<span class="dh-tag ok">🖨️ جاهز للطباعة</span>`
+          : `<button class="dh-btn dh-btn-ghost" data-action="toggle-print-ready" data-item-id="${escapeAttr(item._id || item.id)}" ${item.isApproved ? '' : 'disabled'}>🖨️ تعليم جاهز للطباعة</button>`}
       </div>
     </div>
   `;
@@ -260,9 +259,9 @@ async function onMainClick(e) {
     await onApprove(approveBtn.dataset.itemId);
     return;
   }
-  const publishBtn = e.target.closest('[data-action="publish-gallery"]');
-  if (publishBtn) {
-    await onPublishGallery(publishBtn.dataset.itemId);
+  const printReadyBtn = e.target.closest('[data-action="toggle-print-ready"]');
+  if (printReadyBtn) {
+    await onTogglePrintReady(printReadyBtn.dataset.itemId);
     return;
   }
   const lbThumb = e.target.closest('[data-action="lightbox"]');
@@ -329,34 +328,21 @@ async function onApprove(itemId) {
   }
 }
 
-async function onPublishGallery(itemId) {
+async function onTogglePrintReady(itemId) {
   const item = state.items.find(i => (i._id || i.id) === itemId);
   if (!item) return;
-  const v = getLatestVersion(item);
-  const imageUrl = v?.files?.mockup?.url || v?.imageUrl || '';
-  if (!imageUrl) {
-    _toast('⚠️ لا توجد صورة موك أب للنشر', 'err');
-    return;
-  }
-  const title = prompt('عنوان التصميم في المعرض:', item.itemName || '');
-  if (title === null) return; // canceled
+  const newState = !item.isPrintReady;
+  if (newState && !confirm('تعليم البند جاهز للطباعة؟')) return;
   try {
-    await galleryService.publishToGallery({
-      itemId,
-      imageUrl,
-      title: title || item.itemName || '',
-      description: '',
-      productType: item.productType || '',
-      designerName: v?.uploadedByName || state.userDoc?.name || '',
-      designerUid: state.user?.uid || null,
-      tenantId: state.userDoc?.tenantId || null,
+    await itemsService.togglePrintReady({
+      itemId, isPrintReady: newState,
       userId: state.user?.uid,
       userName: state.userDoc?.name || '',
     });
-    _toast('🖼️ تم النشر في المعرض', 'ok');
+    _toast(newState ? '🖨️ تم التعليم' : '↩️ تم الإلغاء', 'ok');
   } catch (err) {
-    console.error('[publish-gallery] failed:', err);
-    _toast('⚠️ تعذّر النشر', 'err');
+    console.error('[toggle-print-ready] failed:', err);
+    _toast('⚠️ تعذّر التحديث', 'err');
   }
 }
 
