@@ -121,7 +121,6 @@ export function buildToday({ orders = [], clients = [], ledger = [], jobOrders =
 // The launcher injects the matching focus line into the prompt so answers
 // stay tied to what the user is actually looking at.
 export const PAGE_FOCUS = {
-  'index.html':                'لوحة المدير. ركّز على ملخّص الأداء والتنبيهات الحرجة.',
   'exec-dashboard.html':       'لوحة المدير التنفيذي. ركّز على الإيراد، الهامش، اتجاهات الأسبوع.',
   'financial-dashboard.html':  'لوحة الماليات. ركّز على التدفق النقدي، الذمم، أكبر العمليات اليوم.',
   'ops-dashboard.html':        'لوحة العمليات. ركّز على المراحل النشطة والأوردرات المتأخرة.',
@@ -134,7 +133,6 @@ export const PAGE_FOCUS = {
   'clients.html':      'صفحة العملاء. ركّز على RFM، الخاملين، أعلى العملاء قيمة.',
   'suppliers.html':    'صفحة الموردين. ركّز على الموردين النشطين والمدفوعات لهم.',
   'employees.html':    'صفحة الموظفين. ركّز على الحضور، الرواتب، آخر نشاط.',
-  'materials.html':    'صفحة الخامات. ركّز على التوزيع، السعر، مخاطرة المورد الواحد.',
 
   'design.html':       'صفحة التصميم. ركّز على ما عالق في التصميم وآخر تحديثات اليوم.',
   'design-workspace.html': 'مساحة عمل المصمم. ركّز على الأوردرات المسندة لك واليوم.',

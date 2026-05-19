@@ -23,14 +23,12 @@
 
   const SIDEBAR_PAGES = [
     // ─── الرئيسية (main) ───
-    { file:'index.html',             label:'لوحة التحكم',     ico:'⬡',  group:'main',   adminOnly:true },
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
     { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
     { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
-    { file:'import-data.html',       label:'استيراد البيانات',  ico:'📥', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
@@ -38,7 +36,6 @@
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
     { file:'shipping.html',          label:'الشحن',             ico:'🚚', group:'orders', perm:'shipping' },
     { file:'shipping-accounts.html', label:'حسابات الشحن',     ico:'📦', group:'orders', perm:'shipping-accounts' },
-    { file:'shipping-audit.html',    label:'تدقيق الشحن',      ico:'🔍', group:'orders', adminOnly:true },
     { file:'archive.html',           label:'الأرشيف',          ico:'📁', group:'orders', perm:'archive' },
     { file:'returns.html',           label:'المرتجعات',        ico:'↩️', group:'orders', perm:'returns' },
 
@@ -47,18 +44,15 @@
     { file:'approvals.html',         label:'الاعتمادات',       ico:'🔐', group:'admin',  perm:'approvals' },
     { file:'suppliers.html',         label:'الموردين',         ico:'▣',  group:'admin',  perm:'suppliers' },
     { file:'products.html',          label:'المنتجات',         ico:'◈',  group:'admin',  perm:'products' },
-    { file:'materials.html',         label:'الخامات',          ico:'📦', group:'admin',  adminOnly:true },
     { file:'reports.html',           label:'التقارير',         ico:'📊', group:'admin',  perm:'reports' },
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
-    { file:'workforce-live.html',    label:'Workforce Live',   ico:'👷', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
-    { file:'admin-alerts.html',      label:'تنبيهات النظام',   ico:'🚨', group:'admin',  adminOnly:true },
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
   ];
 
   // أين تذهب كل دور عند الـ login (الـ dashboard المخصص)
   const ROLE_HOME = {
-    admin:             'index.html',
+    admin:             'accounts.html',
     operation_manager: 'ops-dashboard.html',
     customer_service:  'cs-dashboard.html',
     graphic_designer:  'designer-dashboard.html',

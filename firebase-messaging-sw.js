@@ -35,7 +35,7 @@ messaging.onBackgroundMessage(payload => {
   const body  = n.body  || '';
   const link  = (payload.fcmOptions && payload.fcmOptions.link)
              || data.link
-             || (BASE + 'index.html');
+             || (BASE + 'accounts.html');
 
   self.registration.showNotification(title, {
     body,
@@ -50,7 +50,7 @@ messaging.onBackgroundMessage(payload => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const link = (event.notification.data && event.notification.data.link) || (BASE + 'index.html');
+  const link = (event.notification.data && event.notification.data.link) || (BASE + 'accounts.html');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       // Reuse an open tab on the same origin if any

@@ -31,7 +31,7 @@
   'use strict';
 
   const DASH_LABELS = {
-    admin:             'لوحة التحكم',
+    admin:             'الحسابات',
     operation_manager: 'لوحة التحكم',
     customer_service:  'داشبوردي',
     graphic_designer:  'داشبوردي',
@@ -77,14 +77,14 @@
 
     const role     = userData.role || 'customer_service';
     const cur      = curPage(currentPage);
-    const dashHome = ROLE_HOME[role] || 'index.html';
+    const dashHome = ROLE_HOME[role] || 'accounts.html';
     const dashLabel = DASH_LABELS[role] || 'داشبوردي';
 
     let html = `<a class="nav-link${cur === dashHome ? ' active' : ''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${dashLabel}</a>`;
     let lastGroup = '';
 
     for (const cfg of SIDEBAR_PAGES) {
-      if (cfg.file === 'index.html') continue; // الأدمن يستخدمها كـ dashHome
+      if (cfg.file === dashHome) continue; // الـ dashHome مضاف بالفعل في الأعلى
       if (!isAllowed(cfg, userData)) continue;
       if (cfg.group !== lastGroup) {
         html += `<div class="nav-group">${GROUP_LABELS[cfg.group] || cfg.group}</div>`;

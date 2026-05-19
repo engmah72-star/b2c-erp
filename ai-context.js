@@ -11,14 +11,14 @@
 // ── Domain → Role access map ──
 // Which AI domains each role can access (subset of what they can read in UI).
 export const DOMAIN_ACCESS = {
-  admin:             ['orders','clients','finance','employees','suppliers','shipping','production','materials','workflow'],
-  operation_manager: ['orders','clients','suppliers','shipping','production','materials','workflow'],
+  admin:             ['orders','clients','finance','employees','suppliers','shipping','production','workflow'],
+  operation_manager: ['orders','clients','suppliers','shipping','production','workflow'],
   customer_service:  ['orders','clients'],
   graphic_designer:  ['orders'],
-  design_operator:   ['orders','suppliers','production','materials','workflow'],
-  production_agent:  ['orders','production','suppliers','materials','workflow'],
+  design_operator:   ['orders','suppliers','production','workflow'],
+  production_agent:  ['orders','production','suppliers','workflow'],
   shipping_officer:  ['orders','shipping'],
-  wallet_manager:    ['finance','clients','suppliers','materials'],
+  wallet_manager:    ['finance','clients','suppliers'],
 };
 
 export const DOMAIN_LABELS = {
@@ -29,7 +29,6 @@ export const DOMAIN_LABELS = {
   suppliers:  { ico:'▣',  label:'الموردين' },
   shipping:   { ico:'🚚', label:'الشحن' },
   production: { ico:'🏭', label:'الإنتاج' },
-  materials:  { ico:'🧱', label:'الخامات' },
   workflow:   { ico:'⚙️', label:'أوامر التشغيل' },
 };
 
@@ -300,58 +299,6 @@ function buildProduction({ orders }) {
 `.trim();
 }
 
-function buildMaterials({ materials, role }) {
-  const list = (materials || []).filter(m => !m.isDeleted);
-  if (!list.length) return '🧱 الخامات:\n- لا توجد بيانات.';
-  const showCost = role !== 'graphic_designer';
-
-  const active = list.filter(m => m.active !== false);
-  const inactive = list.length - active.length;
-
-  // By type
-  const byType = {};
-  active.forEach(m => {
-    const t = m.type || 'غير محدد';
-    if (!byType[t]) byType[t] = { count: 0, cost: 0, n: 0 };
-    byType[t].count++;
-    const c = parseFloat(m.cost) || 0;
-    if (c > 0) { byType[t].cost += c; byType[t].n++; }
-  });
-  const typeLines = Object.entries(byType)
-    .sort((a,b) => b[1].count - a[1].count)
-    .map(([t,d]) => {
-      const avg = d.n ? Math.round(d.cost / d.n) : 0;
-      return showCost
-        ? `- ${t}: ${d.count} خامة · متوسط السعر ${fn(avg)} ج`
-        : `- ${t}: ${d.count} خامة`;
-    });
-
-  // Single-source risk: materials with 0 or 1 suppliers
-  const singleSource = active.filter(m => !m.suppliers || m.suppliers.length <= 1).length;
-
-  // Top expensive (admin/wallet only)
-  let topExpensive = '';
-  if (showCost) {
-    const top = active
-      .filter(m => parseFloat(m.cost) > 0)
-      .sort((a,b) => (parseFloat(b.cost)||0) - (parseFloat(a.cost)||0))
-      .slice(0, 5);
-    if (top.length) {
-      topExpensive = `\n\nأغلى 5 خامات نشطة:\n${top.map((m,i) =>
-        `${i+1}. ${m.name}: ${fn(m.cost)} ج / ${m.unit || 'وحدة'}`).join('\n')}`;
-    }
-  }
-
-  return `
-🧱 الخامات:
-- إجمالي الخامات: ${list.length} (نشطة: ${active.length} · معطلة: ${inactive})
-- خامات بمورد واحد أو بدون مورد (مخاطرة): ${singleSource}
-
-التوزيع حسب النوع:
-${typeLines.join('\n')}${topExpensive}
-`.trim();
-}
-
 function buildWorkflow({ jobOrders, orders }) {
   const list = (jobOrders || []).filter(j => !j.isDeleted);
   if (!list.length) return '⚙️ أوامر التشغيل:\n- لا توجد بيانات.';
@@ -409,7 +356,6 @@ const BUILDERS = {
   suppliers:  buildSuppliers,
   shipping:   buildShipping,
   production: buildProduction,
-  materials:  buildMaterials,
   workflow:   buildWorkflow,
 };
 
@@ -436,7 +382,6 @@ export function buildContext({ domains, role, userId, data = {} }) {
       wallets:   data.wallets || [],
       employees: data.employees || [],
       suppliers: data.suppliers || [],
-      materials: data.materials || [],
       jobOrders: data.jobOrders || [],
       payments:  data.payments || [],          // generic — used for suppliers/employees
       settlements: data.settlements || [],

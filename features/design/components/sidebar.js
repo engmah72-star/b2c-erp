@@ -31,11 +31,12 @@ export async function buildSidebar({ userDoc, activePage = 'designer-hub.html' }
   if (nameEl) nameEl.textContent = userName || '—';
   if (avEl) avEl.textContent = (userName || '?')[0].toUpperCase();
 
-  const dash = ROLE_HOME[role] || 'index.html';
+  const dash = ROLE_HOME[role] || 'accounts.html';
   let html = '';
 
   // Dashboard link
-  html += `<a class="nav-link" href="${dash}"><span class="nav-ico">⬡</span> ${isAdmin ? 'لوحة التحكم' : 'داشبوردي'}</a>`;
+  const dashLabel = role === 'admin' ? 'الحسابات' : (isAdmin ? 'لوحة التحكم' : 'داشبوردي');
+  html += `<a class="nav-link" href="${dash}"><span class="nav-ico">⬡</span> ${dashLabel}</a>`;
 
   // Group pages
   const groups = { main: [], orders: [], admin: [] };
