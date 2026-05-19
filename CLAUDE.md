@@ -473,6 +473,113 @@ await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, payload);
 
 ---
 
+## RULE U1 — UI CENTRALIZATION (ميثاق توحيد الواجهة)
+
+> **النظام يجب أن يشعر المستخدم أنه منتج واحد موحَّد بصرياً وتشغيلياً.**
+>
+> هذه القاعدة تطبيق صريح لـ **C1.7 (Central UI Behavior)** على الطبقة البصرية.
+> أي تكرار أو عشوائية في الـ UI = Technical Debt يجب تقليله تدريجياً.
+
+### U1.1 — Central Design Tokens
+كل القيم البصرية تُعرَّف **مرة واحدة فقط** كمتغيرات CSS في `shared.css`:
+- الألوان (Colors)
+- الخطوط (Typography)
+- المسافات (Spacing)
+- نصف القطر (Border Radius)
+- الظلال (Shadows)
+- z-index
+- الانتقالات (Transitions)
+
+**ممنوع:** تعريف تلك القيم داخل صفحات HTML أو في `<style>` blocks محلية.
+
+### U1.2 — Central Colors
+كل لون يُستخدم في النظام **يجب** أن يكون عبر CSS variable.
+
+**ممنوع:**
+- ❌ Hex codes عشوائية داخل الصفحات (`color:#ff3d6e`)
+- ❌ Inline colors (`style="color:red"`)
+- ❌ Duplicate palettes (نفس اللون تقريباً بـ hex مختلف: `#22d3ee` vs `#0fc` vs `#0bd1e9`)
+
+**المسموح:**
+```css
+.btn-danger { color: var(--r); }
+.cell-money.pos { color: var(--g); }
+```
+
+### U1.3 — Central Typography
+الخط والأحجام والأوزان موحَّدة ومركزية.
+
+**ممنوع:**
+- ❌ `font-family` داخل الصفحات
+- ❌ `font-size: 14px` عشوائي
+- ❌ `line-height` مختلف بدون سبب موثَّق
+
+**المسموح:** Token-based: `var(--fs-sm)`, `var(--fs-md)`, `var(--fw-bold)`.
+
+### U1.4 — Central Components
+العناصر المتكررة موحَّدة في `shared.css` كـ classes:
+
+| Component | Class Pattern |
+|-----------|---------------|
+| Buttons | `.btn`, `.btn-sm`, `.btn-ghost`, `.btn-y`, `.btn-r`, `.btn-b` |
+| Tables | `.tbl`, `.tbl-wrap` |
+| Status Badges | `.bdg`, `.status-chip`, `.status-*` |
+| Inputs | `.inp`, موحَّد |
+| Modals | `.modal`, `.modal-card` |
+| Cards | `.card` |
+
+**ممنوع:** نسخ نفس الـ component بـ inline styles مختلفة في كل صفحة.
+
+### U1.5 — Central Status Colors
+ألوان الحالات **موحَّدة على مستوى النظام بالكامل**:
+
+| Status | اللون | Token |
+|--------|------|-------|
+| success / paid / done | أخضر | `var(--g)` |
+| warning / pending / partial | أصفر | `var(--y)` |
+| error / returned / cancelled | أحمر | `var(--r)` |
+| info / shipping | سماوي | `var(--c)` |
+| design | بنفسجي | `var(--p)` |
+| printing | برتقالي | `var(--o)` |
+| production | وردي/أحمر | `var(--r)` (أو خاص) |
+| archived | رمادي | `var(--dim2)` |
+
+**ممنوع:** نفس الحالة بلونين مختلفين في صفحتين.
+
+### U1.6 — منع الـ Inline Styling
+**ممنوع تماماً:**
+- ❌ `style="..."` عشوائي
+- ❌ `<style>` blocks ضخمة داخل صفحات HTML بدون مبرر
+- ❌ Page-specific styling بدون سبب حقيقي
+
+**الاستثناءات المسموحة:**
+- Dynamic styles مبنية من بيانات runtime (مثلاً `style="width:${pct}%"` لـ progress bar)
+- Animation-specific keyframes مرتبطة بـ page-only feature
+
+### U1.7 — تغيير واحد يؤثر على النظام بالكامل
+**اختبار الجودة:** هل تغيير لون النظام / الخط / المسافات يتم من **مكان واحد فقط**؟
+- ✅ نعم → التوكنز مركزية صحيحة
+- ❌ لا → debt يجب إصلاحه
+
+### U1.8 — البساطة قبل الاستعراض
+المطلوب: **UI بسيط · واضح · مريح · سريع · متناسق**.
+
+**ممنوع:**
+- ❌ مؤثرات بصرية مبالغ فيها
+- ❌ اختلافات بصرية بين صفحات لنفس النظام
+- ❌ تصميم استعراضي بدون قيمة تشغيلية
+
+### 🚫 القاعدة النهائية
+**أي تطوير UI جديد يجب أن يحقق:**
+1. Reuse مكوّن موجود في `shared.css` قبل إنشاء جديد
+2. لو محتاج لون جديد → أضف token في `shared.css` أولاً
+3. صفر inline `style=""` (إلا للحالات الديناميكية)
+4. صفر hex codes متطابقة لتوكنز موجودة
+
+**أي تكرار أو عشوائية بصرية = Technical Debt يُسجَّل ويُعالَج تدريجياً (RULE G9).**
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
