@@ -60,6 +60,83 @@ export function getStageOwnership(stage) {
 }
 
 // ══════════════════════════════════════════
+// FLAT ENUMS — RULE C2 (Central Constants)
+// ══════════════════════════════════════════
+// Single source of truth لكل قيمة ثابتة في النظام.
+// استخدمها بدل magic strings في كل مكان:
+//   ❌ if (order.stage === 'shipping')
+//   ✅ if (order.stage === ORDER_STAGES.SHIPPING)
+//
+// القيم متطابقة 100% مع الـ keys في STAGES/PRODUCT_STATUS/ROLES المُعرَّفة فوق/تحت،
+// فلا تعارض ولا تكرار — مجرد طبقة semantic للاستخدام في الفحوصات.
+
+export const ORDER_STAGES = Object.freeze({
+  DESIGN:     'design',
+  PRINTING:   'printing',
+  PRODUCTION: 'production',
+  SHIPPING:   'shipping',
+  ARCHIVED:   'archived',
+  CANCELLED:  'cancelled',
+});
+
+export const USER_ROLES = Object.freeze({
+  ADMIN:             'admin',
+  OPERATION_MANAGER: 'operation_manager',
+  CUSTOMER_SERVICE:  'customer_service',
+  GRAPHIC_DESIGNER:  'graphic_designer',
+  DESIGN_OPERATOR:   'design_operator',
+  PRODUCTION_AGENT:  'production_agent',
+  SHIPPING_OFFICER:  'shipping_officer',
+  WALLET_MANAGER:    'wallet_manager',
+});
+
+export const SHIPPING_METHODS = Object.freeze({
+  COMPANY: 'company',  // شركة شحن خارجية (تحتاج shipSettled)
+  PICKUP:  'pickup',   // استلام من المحل
+  COURIER: 'courier',  // مندوب داخلي
+});
+
+export const PAYMENT_TYPES = Object.freeze({
+  CUSTOMER: 'customer', // دفعة عميل عادية
+  REFUND:   'refund',   // استرداد للعميل
+  DISCOUNT: 'discount', // خصم
+});
+
+export const SHIP_STAGES = Object.freeze({
+  READY:           'ready',
+  WAIT_DELIVERY:   'wait_delivery',
+  WAIT_COLLECTION: 'wait_collection',
+  COLLECTED:       'collected',
+  COMPLETED:       'completed',
+  RETURNED:        'returned',
+});
+
+export const PRODUCT_STATUSES = Object.freeze({
+  PENDING:     'pending',
+  IN_PROGRESS: 'in_progress',
+  READY:       'ready',
+  PRINTED:     'printed',
+  DONE:        'done',
+  ON_HOLD:     'on_hold',
+});
+
+export const RETURN_STATUSES = Object.freeze({
+  REQUESTED:  'requested',
+  INSPECTING: 'inspecting',
+  APPROVED:   'approved',
+  REJECTED:   'rejected',
+  REFUNDED:   'refunded',
+  CANCELLED:  'cancelled',
+  CLOSED:     'closed',
+});
+
+// ─ Helper: التحقق من صحة قيمة constant ─
+/** يفحص لو القيمة تنتمي إلى enum معين. مفيد للـ validators. */
+export function isValidConstant(enumObj, value) {
+  return Object.values(enumObj).includes(value);
+}
+
+// ══════════════════════════════════════════
 // PRODUCT STATUS — حالة المنتج داخل الأوردر
 // ══════════════════════════════════════════
 // كل منتج في order.products[] يحمل productStatus مستقل عن الأوردر،
