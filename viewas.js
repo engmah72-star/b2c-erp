@@ -38,7 +38,7 @@
   window.__b2cViewAs = {
     get: getState,
     /**
-     * Start view-as mode.
+     * Start view-as mode (LIGHT — DOM masking only, auth stays as admin).
      * @param {Object} target - {uid,name,role,permissions,empId}
      * @param {String} adminUid - the real admin uid (for verification)
      * @param {String} [openUrl] - optional url to navigate to after starting
@@ -48,16 +48,36 @@
         console.warn('[viewas] target must include uid and role');
         return;
       }
-      setState(target);
+      setState({ ...target, mode: 'light' });
       setAdminUid(adminUid || '');
       if (openUrl) window.location.href = openUrl;
     },
+    /**
+     * Mark active state as DEEP (real auth swap). Called by role-viewer
+     * after signInWithCustomToken succeeds.
+     */
+    markDeep(meta){
+      const cur = getState() || {};
+      setState({ ...cur, ...meta, mode: 'deep' });
+    },
+    /**
+     * Clear view-as state. For deep mode, also signs out (caller's job).
+     */
     clear(reload=true){
+      const cur = getState();
       setState(null);
       sessionStorage.removeItem(ADMIN_UID_KEY);
+      // For deep mode, the caller is expected to sign out & redirect to login.
+      // For light mode, just reload to drop the AppState override.
+      if (cur?.mode === 'deep') {
+        // Force redirect to login (deep mode session is the target's, admin needs to re-auth)
+        window.location.href = 'login.html?after_deep=1';
+        return;
+      }
       if (reload) window.location.reload();
     },
     isActive(){ return !!getState(); },
+    isDeep(){ return getState()?.mode === 'deep'; },
   };
 
   // ── Run only if state is active ──
@@ -101,19 +121,49 @@
     `;
     document.head.appendChild(css);
 
+    const isDeep = va.mode === 'deep';
+    const expiresAt = va.expiresAt || 0;
     const b = document.createElement('div');
     b.id = 'b2c-va-banner';
+    if (isDeep) {
+      // Deep mode → different gradient + countdown
+      b.style.background = 'linear-gradient(90deg,#00d97e,#22d3ee,#3b9eff)';
+    }
     b.innerHTML = `
       <div class="va-msg">
-        <span>🔍 وضع المعاينة — أنت تتصفح كأنك:</span>
+        <span>${isDeep ? '🔐 Deep Mode — مُسجَّل دخول فعلي كـ' : '🔍 وضع المعاينة — أنت تتصفح كأنك:'}</span>
         <strong>${escHtml(va.name||'موظف')}</strong>
         <span class="va-tag">${escHtml(va.role||'')}</span>
-        <span style="font-size:11px;opacity:.85">· الكتابة مُعطّلة</span>
+        ${isDeep ? `<span class="va-tag" id="va-countdown" style="background:rgba(255,255,255,.2);font-weight:800">⏱ —</span>` : `<span style="font-size:11px;opacity:.85">· الكتابة مُعطّلة</span>`}
       </div>
-      <button onclick="window.__b2cViewAs.clear()">✕ خروج من المعاينة</button>
+      <button onclick="window.__b2cViewAs.clear()">✕ ${isDeep ? 'إنهاء وتسجيل دخول كأدمن' : 'خروج من المعاينة'}</button>
     `;
     if (document.body) document.body.prepend(b);
     else document.addEventListener('DOMContentLoaded', () => document.body.prepend(b));
+
+    // Deep mode: countdown timer + auto-expire
+    if (isDeep && expiresAt) {
+      const updateCountdown = () => {
+        const el = document.getElementById('va-countdown');
+        if (!el) return;
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
+          el.textContent = '⏱ انتهت';
+          // Auto sign out
+          if (!window.__b2cExpiring) {
+            window.__b2cExpiring = true;
+            blockClickToast('⏱ انتهت جلسة Deep Mode — جاري التسجيل خروج...');
+            setTimeout(() => window.__b2cViewAs.clear(), 1200);
+          }
+          return;
+        }
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        el.textContent = `⏱ ${mins}:${String(secs).padStart(2,'0')}`;
+      };
+      updateCountdown();
+      setInterval(updateCountdown, 1000);
+    }
   }
   function escHtml(s){return String(s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);}
 
@@ -165,24 +215,30 @@
     document.body.appendChild(t);
     setTimeout(()=>t.remove(), 2600);
   }
-  // Intercept form submits
-  document.addEventListener('submit', e => {
-    e.preventDefault(); e.stopPropagation();
-    blockClickToast('⛔ النموذج معطّل — أنت في وضع المعاينة');
-  }, true);
-  // Intercept clicks on common write buttons (save/delete/pay/...)
-  const WRITE_SIGNAL = /\b(حفظ|حذف|دفع|صرف|إرسال|أضف|إضافة|اعتماد|تأكيد|تسجيل|delete|save|submit|pay|confirm|approve|add)\b/i;
-  document.addEventListener('click', e => {
-    const target = e.target.closest('button, [role="button"], .btn');
-    if (!target) return;
-    if (target.id === 'b2c-va-banner' || target.closest('#b2c-va-banner')) return;
-    const txt = (target.textContent || '').trim();
-    const onclick = target.getAttribute('onclick') || '';
-    if (WRITE_SIGNAL.test(txt) || WRITE_SIGNAL.test(onclick)) {
+  // الكتابة معطّلة في:
+  //   - Light Mode دائماً (admin's auth ما لازمش يكتب باسم الموظف)
+  //   - Deep Mode + dryRun (للاختبار الآمن)
+  // الكتابة مسموحة في Deep Mode (real session) — Firestore rules بتطبّق صلاحيات الموظف.
+  const blockWrites = !isDeepMode || va.dryRun === true;
+
+  if (blockWrites) {
+    document.addEventListener('submit', e => {
       e.preventDefault(); e.stopPropagation();
-      blockClickToast('⛔ "' + txt.slice(0,40) + '" معطّل في المعاينة');
-    }
-  }, true);
+      blockClickToast('⛔ النموذج معطّل — أنت في وضع المعاينة');
+    }, true);
+    const WRITE_SIGNAL = /\b(حفظ|حذف|دفع|صرف|إرسال|أضف|إضافة|اعتماد|تأكيد|تسجيل|delete|save|submit|pay|confirm|approve|add)\b/i;
+    document.addEventListener('click', e => {
+      const target = e.target.closest('button, [role="button"], .btn');
+      if (!target) return;
+      if (target.id === 'b2c-va-banner' || target.closest('#b2c-va-banner')) return;
+      const txt = (target.textContent || '').trim();
+      const onclick = target.getAttribute('onclick') || '';
+      if (WRITE_SIGNAL.test(txt) || WRITE_SIGNAL.test(onclick)) {
+        e.preventDefault(); e.stopPropagation();
+        blockClickToast('⛔ "' + txt.slice(0,40) + '" معطّل في المعاينة');
+      }
+    }, true);
+  }
 
   // ──────────────────────────────────────────────────────────────
   // DOM MASKING — defense-in-depth field hiding by target role
@@ -219,6 +275,11 @@
   ]);
 
   const targetRole = va.role || '';
+  const isDeepMode = va.mode === 'deep';
+  // في Deep Mode، الـ auth الفعلي هو للموظف نفسه، فالـ Firestore rules بتحجب
+  // البيانات على مستوى الـ network — DOM masking غير ضروري (والـ data أصلاً
+  // مش بتوصل للـ client). لكن نخليه شغال كـ safety net لو حد عمل query
+  // واسعة قبل ما الـ rules تترفض جزء منها.
   const masks = {
     phone:    !ROLE_CAN_SEE_PHONE.has(targetRole),
     design:   !ROLE_CAN_SEE_DESIGN.has(targetRole),

@@ -472,6 +472,131 @@ exports.adminSetEmployeePassword = onCall(async (req) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//   Impersonate User — Custom Token for View-As (Deep Mode)
+// ════════════════════════════════════════════════════════════════════════════
+// Admin-only. Mints a short-lived custom token for the target user so the
+// admin can review the system *exactly* as that employee sees it — with real
+// Firestore rules enforcing visibility.
+//
+// Flow:
+//   1) Admin calls this from role-viewer.html → gets custom token
+//   2) Admin's client signs out, signs in with the custom token
+//   3) All Firestore reads/writes now happen as the target user
+//   4) Banner in viewas.js displays "🔐 Deep Mode" with countdown
+//   5) On exit, client signs out → redirects to login (admin re-logs in)
+//
+// Security:
+//   - Caller MUST be admin (operation_manager NOT allowed — too sensitive)
+//   - Target MUST exist in users + Firebase Auth
+//   - All impersonations logged to /impersonation_audit (immutable)
+//   - Token TTL = 15 minutes (via custom claim + client-side timer)
+//   - Rate limit: max 10 impersonations per admin per hour
+//
+// IMPORTANT: writes done while impersonating ARE real writes by the target.
+// Use the optional `dryRun:true` to add an isImpersonatingDryRun custom claim
+// that client-side viewas.js + Firestore rules can use to block writes.
+
+exports.impersonateUser = onCall(async (req) => {
+  try {
+    const callerUid = req.auth?.uid;
+    if (!callerUid) {
+      throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+    }
+
+    // 1) Verify caller is admin
+    const callerSnap = await db.doc(`users/${callerUid}`).get();
+    if (!callerSnap.exists) {
+      throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
+    }
+    const callerData = callerSnap.data() || {};
+    if (callerData.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'الـ Deep View-As للأدمن فقط (دورك: ' + (callerData.role || '—') + ')');
+    }
+
+    // 2) Validate target uid
+    const targetUid = req.data?.uid;
+    if (!targetUid || typeof targetUid !== 'string') {
+      throw new HttpsError('invalid-argument', 'uid مفقود أو غير صالح');
+    }
+    if (targetUid === callerUid) {
+      throw new HttpsError('invalid-argument', 'لا يمكنك انتحال نفسك');
+    }
+
+    // 3) Verify target exists in users + Firebase Auth
+    const targetSnap = await db.doc(`users/${targetUid}`).get();
+    if (!targetSnap.exists) {
+      throw new HttpsError('not-found', 'الموظف غير موجود في users');
+    }
+    const targetData = targetSnap.data() || {};
+    if (targetData.role === 'admin') {
+      throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
+    }
+    try {
+      await getAuth().getUser(targetUid);
+    } catch (e) {
+      throw new HttpsError('not-found', 'الموظف غير موجود في Firebase Auth');
+    }
+
+    // 4) Rate limit (10/hour per admin)
+    const oneHourAgo = new Date(Date.now() - 3600 * 1000);
+    const recent = await db.collection('impersonation_audit')
+      .where('callerUid', '==', callerUid)
+      .where('createdAt', '>', oneHourAgo)
+      .count().get().catch(() => ({ data: () => ({ count: 0 }) }));
+    const recentCount = recent.data?.()?.count ?? 0;
+    if (recentCount >= 10) {
+      throw new HttpsError('resource-exhausted', 'وصلت الحد الأقصى (10 مرات/ساعة) للـ Deep View-As');
+    }
+
+    // 5) Mint custom token with claims
+    const ttlMinutes = 15;
+    const expiresAt = Date.now() + ttlMinutes * 60 * 1000;
+    const dryRun = !!req.data?.dryRun;
+    const customClaims = {
+      isImpersonating: true,
+      impersonatingBy: callerUid,
+      impersonatingByName: callerData.name || callerData.email || '',
+      impersonatingExpiresAt: expiresAt,
+      impersonatingDryRun: dryRun,
+    };
+    const token = await getAuth().createCustomToken(targetUid, customClaims);
+
+    // 6) Audit log (immutable per firestore.rules — write from admin SDK)
+    const auditRef = await db.collection('impersonation_audit').add({
+      callerUid,
+      callerName: callerData.name || callerData.email || '',
+      callerRole: callerData.role,
+      targetUid,
+      targetName: targetData.name || targetData.email || '',
+      targetRole: targetData.role,
+      dryRun,
+      ttlMinutes,
+      expiresAt: new Date(expiresAt),
+      reason: (req.data?.reason || '').slice(0, 200),
+      ip: req.rawRequest?.ip || '',
+      userAgent: (req.rawRequest?.headers?.['user-agent'] || '').slice(0, 300),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log('[impersonateUser] admin=', callerUid, 'target=', targetUid, 'auditId=', auditRef.id, 'dryRun=', dryRun);
+
+    return {
+      success: true,
+      token,
+      expiresAt,
+      ttlMinutes,
+      auditId: auditRef.id,
+      targetName: targetData.name || targetData.email || '',
+      targetRole: targetData.role,
+    };
+  } catch (e) {
+    if (e instanceof HttpsError) throw e;
+    console.error('[impersonateUser] unexpected error', e);
+    throw new HttpsError('internal', 'خطأ غير متوقع: ' + (e.message || String(e)));
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //   FCM PUSH HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 //
