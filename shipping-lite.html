@@ -565,12 +565,25 @@ function detailHTML(o) {
   const seeMargin = canSee('price_margin', myPerms, myRole);
   const seeShip   = canSee('ship_cost',    myPerms, myRole);
 
-  // ── المنتجات: من items[] أو من productName/qty ──
-  const items = Array.isArray(o.items) && o.items.length ? o.items
-              : (o.productName ? [{ name: o.productName, qty: o.qty || 1 }] : []);
+  // ── المنتجات: ترتيب أولوية للحقول المختلفة في orders ──
+  //   1) o.products[]   — design.html يحفظها هنا كـ {productId, name, qty, unitPrice}
+  //   2) o.items[]      — صفحات أخرى قد تستخدم هذا الاسم
+  //   3) o.product (string) + o.qty — تنسيق نصي مختصر "منتج أ + منتج ب"
+  //   4) o.productName + o.qty — الـ orders القديمة
+  let items = [];
+  if (Array.isArray(o.products) && o.products.length) items = o.products;
+  else if (Array.isArray(o.items) && o.items.length) items = o.items;
+  else if (o.product && typeof o.product === 'string') {
+    // "منتج أ + منتج ب" → split بدون unitPrice
+    items = o.product.split('+').map(s => ({ name: s.trim(), qty: 0 }));
+    // لو فيه qty إجمالي على الـ order، خصِّصها للأول (بدون توزيع)
+    if (items.length === 1 && o.qty) items[0].qty = o.qty;
+  } else if (o.productName) {
+    items = [{ name: o.productName, qty: o.qty || 1 }];
+  }
   const escapeHtml = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
   const itemsBlock = items.length
-    ? `<ul class="items-list">${items.slice(0,10).map(it => `<li>• ${escapeHtml(it.name||it.title||'منتج')}${it.qty?` × <b>${it.qty}</b>`:''}${seeSale && safeNum(it.price)?` — ${fmt(it.price)} ج`:''}</li>`).join('')}${items.length>10?`<li style="color:var(--dim2)">... +${items.length-10} منتج آخر</li>`:''}</ul>`
+    ? `<ul class="items-list">${items.slice(0,10).map(it => `<li>• ${escapeHtml(it.name||it.title||'منتج')}${it.qty?` × <b>${it.qty}</b>`:''}${seeSale && safeNum(it.unitPrice||it.price)?` — ${fmt(it.unitPrice||it.price)} ج`:''}</li>`).join('')}${items.length>10?`<li style="color:var(--dim2)">... +${items.length-10} منتج آخر</li>`:''}</ul>`
     : `<div style="color:var(--dim2);font-size:11px">لا منتجات مسجَّلة</div>`;
 
   const created    = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleString('ar-EG') : '—';
