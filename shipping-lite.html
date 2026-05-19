@@ -110,6 +110,9 @@
       <div class="kpi" style="--kc:var(--b)"><div class="kpi-val" id="kpi-net">—</div><div class="kpi-lbl">صافي الشحن ج</div></div>
     </div>
 
+    <!-- Alerts strip — يظهر فقط لو في تنبيهات فعلية -->
+    <div id="alerts-strip" style="display:none;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:12px"></div>
+
     <!-- Filters -->
     <div class="filters">
       <select id="f-company"><option value="">كل الشركات</option></select>
@@ -128,6 +131,8 @@
         <option value="collected">مُحصَّل (بانتظار التسوية)</option>
         <option value="settled">تم تسويته</option>
         <option value="returned">مرتجع</option>
+        <option value="delayed">⏰ متأخر (>3 أيام)</option>
+        <option value="no_cost">⚠️ بدون تكلفة شحن</option>
       </select>
       <input id="f-search" placeholder="🔍 ابحث برقم الطلب أو اسم العميل">
       <button class="btn btn-c btn-sm" data-needs-settle onclick="openBulkSettle()">📦 تسوية جماعية</button>
@@ -320,6 +325,24 @@ function getShipStage(o) {
   return ss;
 }
 
+// ── Operational helpers (مطابقة لـ shipping.html الأصلية) ──
+const DELAY_THRESHOLD_DAYS = 3;
+function ageInDays(o) {
+  const ts = o.createdAt?.toMillis?.() || 0;
+  if (!ts) return 0;
+  return (Date.now() - ts) / (24 * 3600 * 1000);
+}
+function isDelayed(o) {
+  const stage = getShipStage(o);
+  if (['settled','returned'].includes(stage)) return false;
+  return ageInDays(o) > DELAY_THRESHOLD_DAYS;
+}
+function hasNoCost(o) {
+  const stage = getShipStage(o);
+  if (['settled','returned'].includes(stage)) return false;
+  return !safeNum(o.shippingCost) && (!Array.isArray(o.costItems) || !o.costItems.length);
+}
+
 function matchOrder(o) {
   const fc = $('f-company').value;
   const fm = $('f-method').value;
@@ -332,6 +355,10 @@ function matchOrder(o) {
 
   if (fs === 'active') {
     if (['settled','returned'].includes(stage)) return false;
+  } else if (fs === 'delayed') {
+    if (!isDelayed(o)) return false;
+  } else if (fs === 'no_cost') {
+    if (!hasNoCost(o)) return false;
   } else if (fs && fs !== 'all') {
     if (stage !== fs) return false;
   }
@@ -347,7 +374,32 @@ function renderAll() {
   const filtered = orders.filter(matchOrder);
   renderRows(filtered);
   renderKPIs(filtered);
+  renderAlerts();
 }
+
+function renderAlerts() {
+  // الـ alerts تحسب على كل الـ orders (لا تتأثر بالـ filters) — تنبيهات تشغيلية عامة
+  const delayed = orders.filter(isDelayed);
+  const noCost = orders.filter(hasNoCost);
+  const strip = $('alerts-strip');
+  const items = [];
+  if (delayed.length) items.push({
+    icon:'⏰', color:'var(--r)', label:`${delayed.length} شحنة متأخرة (>${DELAY_THRESHOLD_DAYS} أيام)`, filter:'delayed'
+  });
+  if (noCost.length) items.push({
+    icon:'⚠️', color:'var(--y)', label:`${noCost.length} طلب بدون تكلفة شحن`, filter:'no_cost'
+  });
+  if (!items.length) { strip.style.display = 'none'; return; }
+  strip.style.display = 'grid';
+  strip.innerHTML = items.map(a => `
+    <div onclick="window.setStatusFilter('${a.filter}')" style="cursor:pointer;background:var(--bg2);border:1px solid ${a.color}30;border-right:3px solid ${a.color};border-radius:var(--rad2);padding:11px 13px;display:flex;align-items:center;gap:9px">
+      <span style="font-size:18px">${a.icon}</span>
+      <span style="font-size:12px;font-weight:800;color:${a.color};flex:1">${a.label}</span>
+      <span style="font-size:10px;color:var(--dim2)">عرض ←</span>
+    </div>`).join('');
+}
+
+window.setStatusFilter = (val) => { $('f-status').value = val; renderAll(); };
 
 function renderKPIs(list) {
   const active = list.filter(o => !['settled','returned'].includes(getShipStage(o)));
@@ -407,11 +459,16 @@ function renderRows(list) {
     const cost = safeNum(o.shippingCost);
     const received = safeNum(o.shipCollected || o.totalPaid);
     const phoneVisible = canSee('client_phone', null, myRole);
+    const rawPhone = (o.clientPhone || '').toString().replace(/\D/g, '');
     const phone = maskPhone(o.clientPhone || '', phoneVisible);
+    // WhatsApp link: متاح فقط لمن يرى الرقم الكامل + لو الرقم صالح
+    const waLink = (phoneVisible && rawPhone.length >= 10)
+      ? ` <a href="https://wa.me/${rawPhone.startsWith('20') ? rawPhone : '20' + rawPhone.replace(/^0/, '')}" target="_blank" rel="noopener" title="واتساب" style="color:var(--g);text-decoration:none;font-size:13px;margin-inline-start:4px">💬</a>`
+      : '';
     return `<tr>
       <td>
         <div class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</div>
-        ${phone ? `<div class="phone-masked">${phone}</div>` : ''}
+        ${phone ? `<div class="phone-masked">${phone}${waLink}</div>` : ''}
       </td>
       <td><div class="cell-order">${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</div></td>
       <td>${(o.gov || o.governorate || '—').replace(/</g,'&lt;')}</td>
