@@ -38,6 +38,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/workforce-core.js',
   '/marketplace-core.js',
   '/marketplace-engine.js',
+  '/command-palette.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.

@@ -86,4 +86,15 @@
   window.SIDEBAR_PAGES = SIDEBAR_PAGES;
   window.ROLE_HOME     = ROLE_HOME;
   window.GROUP_LABELS  = GROUP_LABELS;
+
+  // ── Auto-load Command Palette (Ctrl+K / Cmd+K) ──
+  // ينشر التنقّل السريع على كل صفحة تحمّل sidebar-config.js.
+  // Self-contained module — لا تأثير على الـ DOM إلا عند الضغط على Ctrl+K.
+  if (!document.getElementById('cp-loader')) {
+    const s = document.createElement('script');
+    s.id = 'cp-loader';
+    s.src = 'command-palette.js?v=1';
+    s.defer = true;
+    document.head.appendChild(s);
+  }
 })();
