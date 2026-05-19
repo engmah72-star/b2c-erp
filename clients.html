@@ -839,6 +839,12 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 
+<!-- Module bridge: expose centralized order functions on window for non-module main script (RULE C1.3) -->
+<script type="module">
+  import { buildArchiveSpec } from './orders.js';
+  window.buildArchiveSpec = buildArchiveSpec;
+</script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -4258,6 +4264,27 @@ window.cgridSaveStatus=async function(orderId,newStatus,oldStatus){
   if(newStatus===oldStatus)return;
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
   const mapping=CGRID_STATUS_MAP[newStatus]||{};
+  // الأرشفة تمر عبر buildArchiveSpec المركزي (RULE C1.3)
+  if(mapping.stage==='archived'){
+    if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
+    const baseArgs={order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'status_change',reason:`تغيير الحالة: "${oldStatus}" → "${newStatus}"`};
+    let spec=window.buildArchiveSpec(baseArgs);
+    if(spec.errors.length){toast('⛔ '+spec.errors.join(' · '),'err');return;}
+    if(spec.needsConfirmation){
+      if(!confirm('⚠️ '+spec.warnings.join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
+      spec=window.buildArchiveSpec({...baseArgs,bypassWarnings:true});
+    }
+    try{
+      await db.collection('orders').doc(orderId).update({
+        ...spec.fields,
+        timeline:[...(o.timeline||[]),spec.timelineEntry],
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      toast('✅ الحالة: '+newStatus,'ok');
+    }catch(e){toast('❌ '+e.message,'err');}
+    return;
+  }
+  // الانتقالات الأخرى — السلوك القديم
   const tl=[...(o.timeline||[]),{date:nowStr(),action:`🔄 [أدمن] تغيير الحالة: "${oldStatus}" → "${newStatus}"`,by:userName||'admin'}];
   try{
     await db.collection('orders').doc(orderId).update({...mapping,hasProblem:newStatus==='مشكلة'?true:(mapping.hasProblem||false),timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
@@ -4283,23 +4310,29 @@ window.cgridBulkAction=async function(action){
   if(action==='export'){cgridExportSelected(ords);return;}
 
   if(action==='archive'){
-    // قاعدة: الأوردرات غير مكتملة الدفع لا تدخل الأرشيف
-    const _canArc=o=>{const r=parseFloat(o.remaining)||0;const ps=(o.paymentStatus||'').toLowerCase();return r<=0||['paid','returned','refunded'].includes(ps);};
-    const archivable=ords.filter(_canArc);
-    const blocked=ords.length-archivable.length;
+    // الفحوصات المُمَركَزة عبر buildArchiveSpec (RULE C1.3 + C1.5)
+    if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
+    const specs=ords.map(o=>({o,spec:window.buildArchiveSpec({order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'bulk_admin',bypassWarnings:true})}));
+    const archivable=specs.filter(x=>x.spec.ok);
+    const blocked=specs.filter(x=>!x.spec.ok);
     if(!archivable.length){
-      toast(`⛔ لا يمكن أرشفة أي أوردر — ${ords.length} غير مكتملة الدفع`,'err');return;
+      const reasons=[...new Set(blocked.flatMap(x=>x.spec.errors))].slice(0,3).join(' · ');
+      toast(`⛔ لا يمكن أرشفة أي أوردر${reasons?` — ${reasons}`:''}`,'err');return;
     }
-    if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked?`\n⚠️ ${blocked} أوردر مستثنى (غير مكتمل الدفع)`:''}`))return;
+    if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked.length?`\n⚠️ ${blocked.length} مستثنى (لا يستوفي شروط الأرشفة)`:''}`))return;
     // split into batches of 400 for Firestore limit
     for(let i=0;i<archivable.length;i+=400){
       const chunk=archivable.slice(i,i+400);
       const batch=db.batch();
-      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{stage:'archived','stageEnteredAt.archived':now2,timeline:[...(o.timeline||[]),{date:now2,action:'📁 [أدمن] أرشفة جماعية',by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
+      chunk.forEach(({o,spec})=>batch.update(db.collection('orders').doc(o._id),{
+        ...spec.fields,
+        timeline:[...(o.timeline||[]),spec.timelineEntry],
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      }));
       await batch.commit();
     }
-    logAudit('orders.bulk_archive',{count:archivable.length,blockedUnpaid:blocked,orderIds:archivable.slice(0,50).map(o=>o._id)});
-    toast(`✅ تم أرشفة ${archivable.length}${blocked?` (تخطّينا ${blocked} غير مدفوعة)`:''}`,'ok');cgridSelNone();return;
+    logAudit('orders.bulk_archive',{count:archivable.length,blocked:blocked.length,orderIds:archivable.slice(0,50).map(x=>x.o._id)});
+    toast(`✅ تم أرشفة ${archivable.length}${blocked.length?` (تخطّينا ${blocked.length})`:''}`,'ok');cgridSelNone();return;
   }
 
   if(action==='reopen'){
@@ -4319,14 +4352,31 @@ window.cgridBulkAction=async function(action){
     const choice=prompt(`نقل ${ids.length} أوردر إلى:\n${stagesAll}`);
     if(!choice||!CGRID_STATUS_MAP[choice]){toast('الحالة غير صحيحة','err');return;}
     const mapping=CGRID_STATUS_MAP[choice];
-    // قاعدة: الأرشيف يحتاج دفع كامل
+    // الأرشفة تمر عبر buildArchiveSpec المركزي (RULE C1.3 + C1.5)
     if(mapping.stage==='archived'){
-      const _canArc=o=>{const r=parseFloat(o.remaining)||0;const ps=(o.paymentStatus||'').toLowerCase();return r<=0||['paid','returned','refunded'].includes(ps);};
-      const unpaid=ords.filter(o=>!_canArc(o));
-      if(unpaid.length){
-        toast(`⛔ ${unpaid.length} أوردر غير مكتمل الدفع — لا يمكن أرشفته`,'err');return;
+      if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
+      const specs=ords.map(o=>({o,spec:window.buildArchiveSpec({order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'bulk_admin',reason:`نقل جماعي → ${choice}`,bypassWarnings:true})}));
+      const archivable=specs.filter(x=>x.spec.ok);
+      const blocked=specs.filter(x=>!x.spec.ok);
+      if(!archivable.length){
+        const reasons=[...new Set(blocked.flatMap(x=>x.spec.errors))].slice(0,3).join(' · ');
+        toast(`⛔ لا يمكن أرشفة أي أوردر${reasons?` — ${reasons}`:''}`,'err');return;
       }
+      if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked.length?`\n⚠️ ${blocked.length} مستثنى (لا يستوفي الشروط)`:''}`))return;
+      for(let i=0;i<archivable.length;i+=400){
+        const chunk=archivable.slice(i,i+400);
+        const batch=db.batch();
+        chunk.forEach(({o,spec})=>batch.update(db.collection('orders').doc(o._id),{
+          ...spec.fields,
+          timeline:[...(o.timeline||[]),spec.timelineEntry],
+          updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+        }));
+        await batch.commit();
+      }
+      logAudit('orders.bulk_stage_change',{count:archivable.length,target:choice,blocked:blocked.length,orderIds:archivable.slice(0,50).map(x=>x.o._id)});
+      toast(`✅ أُرشف ${archivable.length}${blocked.length?` (تخطّينا ${blocked.length})`:''}`,'ok');cgridSelNone();return;
     }
+    // الانتقالات الأخرى — السلوك القديم
     if(!confirm(`نقل ${ids.length} أوردر إلى "${choice}"؟`))return;
     for(let i=0;i<ords.length;i+=400){
       const chunk=ords.slice(i,i+400);

@@ -385,7 +385,7 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'production.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, increment, deleteDoc, addDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -431,20 +431,19 @@ window.archiveAwaitingNow=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(!o.awaitingFinalArchive)return toast('⚠️ هذا الأوردر ليس في انتظار الأرشفة','err');
-  if(!(o.costItems||[]).length)return toast('⚠️ سجّل بنود التكلفة أولاً','err');
-  // قاعدة: الأرشفة تتطلب دفع كامل (remaining<=0) أو حالة مرتجع/استرداد
-  const rem=parseFloat(o.remaining)||0;
-  const ps=(o.paymentStatus||'').toLowerCase();
-  if(rem>0 && !['paid','returned','refunded'].includes(ps)){
-    return toast(`⛔ لا يمكن الأرشفة — متبقّي ${rem.toLocaleString('ar-EG')} ج. حصّل أو ارجع المبلغ أولاً.`,'err');
+  // الفحوصات المُمَركَزة عبر buildArchiveSpec (RULE C1.3)
+  const baseArgs={order:o,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false}};
+  let spec=buildArchiveSpec(baseArgs);
+  if(spec.errors.length)return toast('⛔ '+spec.errors.join(' · '),'err');
+  if(spec.needsConfirmation){
+    if(!confirm('⚠️ '+spec.warnings.join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
+    spec=buildArchiveSpec({...baseArgs,bypassWarnings:true});
   }
   if(!confirm('📁 أرشفة الأوردر الآن بعد مراجعة بنود التكلفة؟'))return;
   try{
     await updateDoc(doc(db,'orders',activeId),{
-      stage:'archived',
-      'stageEnteredAt.archived':nowStr(),
-      awaitingFinalArchive:false,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:'archived',action:`📁 أُرشف يدوياً بعد مراجعة بنود التكلفة`,by:userName,byId:currentUser?.uid||''}],
+      ...spec.fields,
+      timeline:[...(o.timeline||[]),spec.timelineEntry],
       updatedAt:serverTimestamp()
     });
     closePanel();

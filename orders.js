@@ -649,6 +649,122 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
 }
 
 // ══════════════════════════════════════════
+// BUILD ARCHIVE SPEC — بناء تحديث الأرشفة (مُمَركَز — RULE C1.3 + C1.5)
+// ══════════════════════════════════════════
+/**
+ * بناء spec أرشفة موحَّد لكل المسارات (production, shipping, shipping-lite, bulk admin).
+ * دالة نقية: لا تكتب في Firestore — تُرجع spec يستخدمه الـ caller داخل updateDoc/batch.
+ *
+ * الفحوصات المُوحَّدة:
+ *   1. الأوردر مش مؤرشف بالفعل (error)
+ *   2. الصلاحية: admin/operation_manager دائماً، أو دور مرحلة حالية في STAGE_PERMISSIONS (error)
+ *   3. الدفع كامل: remaining<=0 أو paymentStatus ∈ {paid,returned,refunded} (error)
+ *   4. لو cur==='shipping' و shipMethod==='company' → shipSettled=true (error)
+ *   5. costItems موجودة → warning قابل للتجاوز عبر bypassWarnings:true
+ *
+ * @param  source   مصدر الأرشفة: 'shipping' | 'production' | 'bulk_admin' | 'status_change' | 'manual'
+ * @returns { ok, errors, warnings, fields, timelineEntry, needsConfirmation }
+ */
+export function buildArchiveSpec({
+  order,
+  role,
+  userId,
+  userName,
+  reason = '',
+  source = 'manual',
+  bypassWarnings = false,
+  extraFields = {},
+}) {
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+
+  const cur = order.stage || 'design';
+
+  // 1. مش مؤرشف بالفعل
+  if (cur === 'archived') {
+    return { ok:false, errors:['الأوردر مؤرشف بالفعل'], warnings:[] };
+  }
+
+  // 2. الصلاحية
+  const isAdmin = role === 'admin' || role === 'operation_manager';
+  const currentAllowed = STAGE_PERMISSIONS[cur] || [];
+  if (!isAdmin && !currentAllowed.includes(role)) {
+    return { ok:false, errors:['ليس لديك صلاحية أرشفة هذا الأوردر'], warnings:[] };
+  }
+
+  const errors = [];
+  const warnings = [];
+
+  // 3. الدفع كامل
+  const rem = parseFloat(order.remaining) || 0;
+  const ps  = (order.paymentStatus || '').toLowerCase();
+  if (rem > 0 && !['paid','returned','refunded'].includes(ps)) {
+    errors.push(`متبقّي ${rem.toLocaleString('ar-EG')} ج — حصّل أو ارجع المبلغ أولاً`);
+  }
+
+  // 4. تسوية شركة الشحن (لو في الشحن via company)
+  if (cur === 'shipping' && order.shipMethod === 'company' && !order.shipSettled) {
+    errors.push('لازم تسوّي شركة الشحن قبل الأرشفة');
+  }
+
+  // 5. costItems → warning
+  if (!(order.costItems || []).length) {
+    warnings.push('لا توجد بنود تكلفة مسجلة');
+  }
+
+  // إن وُجدت errors → بلوك صلب
+  if (errors.length) {
+    return { ok:false, errors, warnings, needsConfirmation:false };
+  }
+
+  // إن وُجدت warnings ولم يتم التجاوز → يحتاج تأكيد المستخدم
+  if (warnings.length && !bypassWarnings) {
+    return { ok:false, errors:[], warnings, needsConfirmation:true };
+  }
+
+  // ─ بناء الـ fields ─
+  const now = nowStr();
+
+  // shipStage: ضع 'completed' لو الأوردر من الشحن (لتوحيد السلوك مع shipping.html الحالي)
+  const shipStageUpdate = {};
+  if (cur === 'shipping') {
+    shipStageUpdate.shipStage = 'completed';
+  }
+
+  const fields = {
+    stage: 'archived',
+    'stageEnteredAt.archived': now,
+    archivedAt:     now,
+    archivedBy:     userId || '',
+    archivedByName: userName || '',
+    archivedFrom:   cur,
+    archiveSource:  source,
+    archiveReason:  reason || '',
+    ...shipStageUpdate,
+    ...extraFields,
+  };
+
+  // ─ timeline entry ─
+  const sourceLabel = {
+    bulk_admin:    '[أدمن] أرشفة جماعية',
+    shipping:      'أرشفة بعد إتمام الشحن',
+    production:    'أرشفة يدوية بعد مراجعة التكلفة',
+    status_change: '[أدمن] تغيير الحالة → أرشيف',
+    manual:        'أرشفة يدوية',
+  }[source] || 'أرشفة';
+
+  const reasonSuffix = reason ? ` — ${reason}` : '';
+  const timelineEntry = {
+    date:   now,
+    stage:  'archived',
+    action: `📁 ${sourceLabel}${reasonSuffix}`,
+    by:     userName || '',
+    byId:   userId   || '',
+  };
+
+  return { ok:true, errors:[], warnings, fields, timelineEntry, needsConfirmation:false };
+}
+
+// ══════════════════════════════════════════
 // FINANCIAL CALCULATIONS
 // ══════════════════════════════════════════
 export function calcOrderFinancials(order) {
