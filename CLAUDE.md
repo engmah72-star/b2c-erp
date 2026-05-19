@@ -874,6 +874,94 @@ await orderActions.submitToPrinting({db, orderId, ...});
 
 ---
 
+## RULE S1 — FILE/STORAGE PRINCIPLE (ميثاق إدارة الملفات)
+
+> **الملفات جزء أساسي من التشغيل. يجب الوصول إليها بسرعة بدون لخبطة أو تكرار.**
+>
+> هذه القاعدة تطبيق صريح لـ **F1.9 (Storage مركزي)** + **C1.5 (منع التكرار)**.
+> أي upload مبعثر أو path عشوائي = Technical Debt.
+
+### S1.1 — كل ملف مرتبط بـ Entity
+كل ملف في Storage **يجب أن يكون مرتبطاً بـ Order أو entity واضح** (Client/Employee/Supplier).
+
+**ممنوع:** ملفات "general-purpose" بدون entity owner.
+
+### S1.2 — Structured Storage Paths
+الـ paths تتبع pattern موحَّد:
+```
+{module}/{entityId}/{kind}/{timestamp}_{filename}
+```
+
+**أمثلة معتمدة:**
+```
+orders/{orderId}/design/1716130000_logo.pdf
+orders/{orderId}/print-final/1716130000_card_front.pdf
+orders/{orderId}/production/1716130000_proof.jpg
+clients/{clientId}/avatar/1716130000_photo.jpg
+employees/{empId}/documents/1716130000_id.pdf
+```
+
+**ممنوع:**
+- ❌ `designs/order_${orderId}_${ts}` — flat، يصعّب التنظيف
+- ❌ `gallery/mockup_${ts}` — بدون entity owner
+- ❌ paths بدون timestamp (overwrites محتملة)
+
+### S1.3 — Central Upload Helpers
+كل uploads تمر عبر `core/storage-helpers.js`:
+```js
+import { uploadOrderFile } from './core/storage-helpers.js';
+
+const result = await uploadOrderFile({
+  orderId, file, kind: 'design',
+  onProgress: (pct) => updateProgressBar(pct),
+});
+// returns: { url, path, fileName, size, contentType, kind }
+```
+
+**ممنوع داخل الصفحات:**
+- ❌ `ref(storage, ...)` + `uploadBytes(...)` inline
+- ❌ تكوين paths يدوياً (`designs/${id}_${ts}`)
+- ❌ تكرار logic رفع الصور في كل صفحة
+
+### S1.4 — أسماء الملفات منظمة
+- **Sanitization إلزامي:** `safeName = file.name.replace(/[^\w.\-]+/g, '_')`
+- timestamp إلزامي في الـ path (منع overwrite)
+- لا أحرف Arabic في الـ filename (storage compatibility)
+
+### S1.5 — Single Source per Logical File
+على Order واحد، **لا تكرار** للملفات بنفس المعنى:
+- `designFileUrl` (نسخة واحدة فقط للتصميم الحالي)
+- `printFinalUrl` (نسخة واحدة فقط للطباعة النهائية)
+- `designFiles[]` (مصفوفة للـ history فقط، الحالي يبقى في designFileUrl)
+
+**ممنوع:** 11 حقل مختلف لملفات تصميم (مكتشَف في الـ audit). يحتاج توحيد.
+
+### S1.6 — الحذف بحذر
+**ممنوع:** حذف عشوائي للملفات القديمة.
+
+**المسموح:**
+- حذف يدوي بـ admin confirmation
+- حذف orphan files عبر Cloud Function مع audit trail
+- التحويل إلى `archived/` prefix بدل الحذف الفوري
+
+### S1.7 — Reverse Lookup سهل
+كل ملف في Storage يجب يقدر:
+1. يُرجَع للـ entity صاحبه (من الـ path)
+2. يُعرَف نوعه (من الـ kind في الـ path)
+3. يُعرَف تاريخه (من الـ timestamp)
+
+### S1.8 — منع Re-upload
+قبل رفع ملف، تحقق:
+- لو نفس الـ hash موجود بالفعل لنفس الـ entity → استخدم الموجود
+- لو تعديل بسيط → version جديد (timestamp مختلف، احتفظ بالقديم)
+
+### 🚫 القاعدة النهائية
+**أي ملف يجب الوصول إليه بسرعة بدون لخبطة أو تكرار.**
+
+أي upload لا يمر بـ `core/storage-helpers.js` = مخالفة S1.3 يجب ترحيلها (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
