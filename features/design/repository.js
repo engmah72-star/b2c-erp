@@ -121,12 +121,13 @@ export async function getOrder(orderId) {
 /**
  * Subscribe to design_items.
  * scope:
- *   'all'         → كل البنود (admin)
+ *   'all'         → كل البنود (admin/library view)
  *   'mine'        → designerId == uid
  *   'perOrder'    → orderDocId == orderId (للأوردر المفتوح)
+ *   'perClient'   → clientId == clientId (للمكتبة لعميل واحد)
  */
 export function subscribeDesignItems({
-  scope = 'all', uid = null, orderDocId = null, tenantId = null,
+  scope = 'all', uid = null, orderDocId = null, clientId = null, tenantId = null,
   max, onUpdate, onError,
 }) {
   const itemsRef = collection(db, 'design_items');
@@ -138,6 +139,9 @@ export function subscribeDesignItems({
   } else if (scope === 'perOrder') {
     if (!orderDocId) throw new Error('subscribeDesignItems: scope=perOrder requires orderDocId');
     conds.push(where('orderDocId', '==', orderDocId));
+  } else if (scope === 'perClient') {
+    if (!clientId) throw new Error('subscribeDesignItems: scope=perClient requires clientId');
+    conds.push(where('clientId', '==', clientId));
   }
 
   const q = query(

@@ -1,47 +1,103 @@
 /**
  * features/design/services/upload.service.js
  *
- * Firebase Storage uploads لـ design feature (مرجعيات + ملفات تصميم + slots).
+ * رفع ملفات لـ Firebase Storage في سياق design feature.
+ * يدعم 3 سلوتات: mockup (image) / pdf (proofing) / source (editable).
+ */
+
+import { storage } from '../../../core/firebase-init.js';
+import {
+  ref, uploadBytesResumable, getDownloadURL,
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+
+/**
+ * Infer slot kind من MIME/extension.
+ *   image/*               → 'mockup'
+ *   application/pdf       → 'pdf'
+ *   .ai/.psd/.eps/.indd/.svg/.fig/...  → 'source'
+ *   else                  → 'source' (afe default)
+ */
+export function inferSlotKind(file) {
+  if (!file) return 'source';
+  const mime = (file.type || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'mockup';
+  if (mime === 'application/pdf') return 'pdf';
+  const name = (file.name || '').toLowerCase();
+  if (/\.(pdf)$/i.test(name)) return 'pdf';
+  if (/\.(jpe?g|png|webp|gif|bmp|svg)$/i.test(name)) return 'mockup';
+  return 'source';
+}
+
+/**
+ * Upload ملف لـ slot معيّن على بند.
+ * يرجّع { url, fileName, contentType, size, slot }.
  *
- * Status: STUB — التنفيذ الفعلي في PR-3.
+ * @param {Object} params
+ * @param {string} params.itemId
+ * @param {File}   params.file
+ * @param {string} params.slot       'mockup' | 'pdf' | 'source'
+ * @param {Function} [params.onProgress]  (pct: 0-100) => void
  */
+export async function uploadSlotFile({ itemId, file, slot, onProgress }) {
+  if (!itemId) throw new Error('uploadSlotFile: itemId required');
+  if (!file) throw new Error('uploadSlotFile: file required');
+  if (!['mockup', 'pdf', 'source'].includes(slot)) {
+    throw new Error(`uploadSlotFile: invalid slot "${slot}"`);
+  }
 
-// import { storage } from '../../../core/firebase-init.js';
+  const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+  const ts = Date.now();
+  const path = `design_items/${itemId}/${slot}/${ts}_${safeName}`;
+  const fileRef = ref(storage, path);
+  const task = uploadBytesResumable(fileRef, file, {
+    contentType: file.type || undefined,
+  });
 
-/**
- * Upload reference file (للـ new-order modal).
- * يرجّع { url, path, contentType }.
- */
-export async function uploadReferenceFile(/* { orderId, file, onProgress }, ctx */) {
-  throw new Error('upload.service.uploadReferenceFile: not implemented (PR-3)');
+  return new Promise((resolve, reject) => {
+    task.on(
+      'state_changed',
+      (snap) => {
+        if (onProgress) {
+          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+          onProgress(pct);
+        }
+      },
+      (err) => reject(err),
+      async () => {
+        try {
+          const url = await getDownloadURL(task.snapshot.ref);
+          resolve({
+            url, slot,
+            fileName: file.name,
+            contentType: file.type || '',
+            size: file.size,
+            path,
+          });
+        } catch (e) { reject(e); }
+      }
+    );
+  });
 }
 
 /**
- * Upload design file (final design).
+ * Helper: build a version object from one or more uploaded slot files.
+ * يستخدمه work-view لما يرفع المصمم ملف واحد أو أكثر.
  */
-export async function uploadDesignFile(/* { orderId, file, onProgress }, ctx */) {
-  throw new Error('upload.service.uploadDesignFile: not implemented (PR-3)');
-}
-
-/**
- * Upload to a specific slot in design_items (mockup/pdf/source).
- * inferSlotKind() يفهم نوع الملف من mime/ext.
- */
-export async function uploadSlotFile(/* { itemId, slot, file, onProgress }, ctx */) {
-  throw new Error('upload.service.uploadSlotFile: not implemented (PR-3)');
-}
-
-/**
- * Upload a new version (3 slots together).
- */
-export async function uploadVersion(/* { itemId, files, onProgress }, ctx */) {
-  throw new Error('upload.service.uploadVersion: not implemented (PR-3)');
-}
-
-/**
- * Infer slot kind from file metadata.
- * Pure function — لا I/O.
- */
-export function inferSlotKind(/* file */) {
-  throw new Error('upload.service.inferSlotKind: not implemented (PR-3)');
+export function buildVersion({ vNum, files, uploadedByName, uploadedBy }) {
+  const filesByKind = { mockup: null, pdf: null, source: null };
+  for (const f of files || []) {
+    if (f.slot && filesByKind[f.slot] !== undefined) {
+      filesByKind[f.slot] = { url: f.url, fileName: f.fileName, size: f.size };
+    }
+  }
+  return {
+    vNum,
+    uploadedAt: new Date().toISOString(),
+    uploadedBy: uploadedBy || null,
+    uploadedByName: uploadedByName || '',
+    files: filesByKind,
+    // Backward-compat: keep imageUrl للقراء القديمة
+    imageUrl: filesByKind.mockup?.url || '',
+    fileName: filesByKind.mockup?.fileName || '',
+  };
 }

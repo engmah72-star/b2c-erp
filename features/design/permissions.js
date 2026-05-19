@@ -51,15 +51,29 @@ export function displayPhone(phone, role, userPerms) {
   return maskPhone(phone, canSeePhone(role, userPerms));
 }
 
-// ══ View routing default per role ═════════════════════════
+// ══ Default tab for Designer Hub ══════════════════════════
 /**
- * أي view افتراضية يدخلها كل دور عند فتح /design بدون ?view=
- * يخدم router داخل design.entry.js.
+ * أي tab تفتح افتراضياً عند زيارة designer-hub.html بدون ?tab=
+ *   - المصمم → عملي
+ *   - Admin/CS → المكتبة
+ *   - زائر/آخرين → المعرض
  */
-export function getDesignDefaultView(role) {
-  if (isDesignerRole(role)) return 'dashboard';
-  if (isAdmin(role) || isCSRole(role)) return 'kanban';
-  return 'kanban';
+export function getDesignerHubDefaultTab(role) {
+  if (isDesignerRole(role)) return 'work';
+  if (isAdmin(role) || isCSRole(role)) return 'library';
+  return 'gallery';
+}
+
+/**
+ * أي tabs تظهر للدور؟
+ *   - المصمم: work + gallery (لا library — حماية الخصوصية)
+ *   - Admin/CS: كل الـ 3
+ *   - باقي الأدوار: gallery فقط
+ */
+export function getVisibleTabs(role) {
+  if (isAdmin(role) || isCSRole(role)) return ['work', 'library', 'gallery'];
+  if (isDesignerRole(role)) return ['work', 'gallery'];
+  return ['gallery'];
 }
 
 // ══ Orders scope per role (لـ repository queries) ════════
