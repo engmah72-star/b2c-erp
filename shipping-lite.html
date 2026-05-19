@@ -76,7 +76,20 @@
 .items-list{font-size:11.5px;line-height:1.7}
 .items-list li{padding:1px 0}
 .row-aged{border-right:2px solid var(--r) !important}
-@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11.5px}.tbl th,.tbl td{padding:8px 6px}.cell-order,.phone-masked{font-size:10.5px}.invoice-cell .iv-row{font-size:10.5px}}
+/* Smart Entity Link — button-like clickable name/order */
+.entity-link{background:transparent;border:none;padding:2px 4px;margin:-2px -4px;border-radius:5px;cursor:pointer;font-family:inherit;color:inherit;text-align:right;display:inline-flex;align-items:center;gap:4px;transition:background .12s,color .12s}
+.entity-link:hover{background:rgba(167,139,250,.12);color:var(--p)}
+.entity-link .entity-arrow{font-size:9px;opacity:.45;transition:opacity .12s,transform .15s}
+.entity-link:hover .entity-arrow{opacity:1;transform:translateY(1px)}
+/* Quick Actions Popover */
+.entity-menu{position:fixed;background:var(--bg2);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.4);padding:6px;min-width:220px;z-index:9999;display:flex;flex-direction:column;gap:2px;animation:emFade .12s ease-out}
+@keyframes emFade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.entity-menu-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--snow);text-decoration:none;border:none;background:transparent;font-family:inherit;width:100%;text-align:right;transition:background .1s}
+.entity-menu-item:hover{background:rgba(167,139,250,.14);color:var(--p)}
+.entity-menu-item .em-ico{font-size:16px;width:22px;text-align:center}
+.entity-menu-divider{height:1px;background:var(--line);margin:3px 6px}
+.entity-menu-header{padding:8px 12px 4px;font-size:10.5px;color:var(--dim2);font-weight:700}
+@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11.5px}.tbl th,.tbl td{padding:8px 6px}.cell-order,.phone-masked{font-size:10.5px}.invoice-cell .iv-row{font-size:10.5px}.entity-menu{min-width:200px}}
 </style>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -513,11 +526,15 @@ function renderRows(list) {
     return `<tr id="r-${o._id}" class="${aged}">
       <td><button class="expand-btn" onclick="window.toggleRow('${o._id}')" title="تفاصيل">▶</button></td>
       <td>
-        <div class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</div>
+        <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
+          <span class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</span> <span class="entity-arrow">▾</span>
+        </button>
         ${phone ? `<div class="phone-masked">${phone}${waLink}</div>` : ''}
       </td>
       <td>
-        <div class="cell-order">#${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</div>
+        <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
+          <span class="cell-order">#${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</span> <span class="entity-arrow">▾</span>
+        </button>
         <div class="cell-sub">${created} • ${ageStr}</div>
       </td>
       <td>
@@ -644,6 +661,82 @@ window.toggleRow = (id) => {
   detail.style.display = isOpen ? 'none' : '';
   row.classList.toggle('row-expanded', !isOpen);
   if (btn) btn.classList.toggle('on', !isOpen);
+};
+
+// ══════════════════════════════════════════════════
+// SMART ENTITY MENU — popover بالإجراءات السريعة
+// عند الضغط على اسم العميل أو رقم الأوردر → menu بكل الصفحات
+// المرتبطة (ملف العميل، متابعة الأوردر، مكتبة التصاميم، اتصال، واتساب).
+// ══════════════════════════════════════════════════
+window.openEntityMenu = (event, orderId, clientId, rawPhone) => {
+  event.stopPropagation();
+  // أغلق أي menu موجود
+  document.querySelectorAll('.entity-menu').forEach(m => m.remove());
+
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+
+  const phoneVisible = canSee('client_phone', null, myRole);
+  const wa = (rawPhone && phoneVisible)
+    ? (rawPhone.startsWith('20') ? rawPhone : '20' + rawPhone.replace(/^0/, ''))
+    : '';
+
+  const menu = document.createElement('div');
+  menu.className = 'entity-menu';
+  const esc = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
+
+  menu.innerHTML = `
+    <div class="entity-menu-header">${esc(o.clientName || '—')} · #${esc(o.orderNumber || o._id.slice(0,6))}</div>
+    <div class="entity-menu-divider"></div>
+    <a class="entity-menu-item" href="order-tracking.html?id=${encodeURIComponent(orderId)}" target="_blank" rel="noopener">
+      <span class="em-ico">📦</span><span>متابعة الأوردر</span>
+    </a>
+    ${clientId ? `
+      <a class="entity-menu-item" href="clients.html?openClient=${encodeURIComponent(clientId)}" target="_blank" rel="noopener">
+        <span class="em-ico">👤</span><span>ملف العميل + كل أوردراته</span>
+      </a>
+      <a class="entity-menu-item" href="client-design-library.html?clientId=${encodeURIComponent(clientId)}" target="_blank" rel="noopener">
+        <span class="em-ico">🎨</span><span>مكتبة التصاميم</span>
+      </a>
+    ` : ''}
+    ${phoneVisible && rawPhone ? `
+      <div class="entity-menu-divider"></div>
+      <a class="entity-menu-item" href="tel:${esc(rawPhone)}">
+        <span class="em-ico">📞</span><span>اتصال</span>
+      </a>
+      <a class="entity-menu-item" href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener">
+        <span class="em-ico">💬</span><span>واتساب</span>
+      </a>
+      <a class="entity-menu-item" href="https://wa.me/${esc(wa)}?text=${encodeURIComponent('أهلاً ' + (o.clientName||'') + ' 👋، بخصوص الأوردر #' + (o.orderNumber||o._id.slice(0,6)))}" target="_blank" rel="noopener">
+        <span class="em-ico">📨</span><span>رسالة واتساب جاهزة</span>
+      </a>
+    ` : ''}
+  `;
+  document.body.appendChild(menu);
+
+  // موقع الـ popover بجانب الزر المضغوط
+  const r = event.currentTarget.getBoundingClientRect();
+  const menuW = menu.offsetWidth, menuH = menu.offsetHeight;
+  let top = r.bottom + 4;
+  let left = r.right - menuW; // RTL — يفتح من اليمين
+  // ضبط لو خرج من حدود الشاشة
+  if (left < 8) left = 8;
+  if (top + menuH > window.innerHeight - 8) top = r.top - menuH - 4;
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+
+  // أغلق عند الضغط خارج الـ menu أو ESC
+  const closeMenu = (e) => {
+    if (e && menu.contains(e.target)) return;
+    menu.remove();
+    document.removeEventListener('click', closeMenu, true);
+    document.removeEventListener('keydown', escHandler);
+  };
+  const escHandler = (e) => { if (e.key === 'Escape') closeMenu(); };
+  setTimeout(() => {
+    document.addEventListener('click', closeMenu, true);
+    document.addEventListener('keydown', escHandler);
+  }, 50);
 };
 
 // ══════════════════════════════════════════════════
