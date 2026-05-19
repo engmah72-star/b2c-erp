@@ -16,7 +16,7 @@
  *   - WHATSAPP_TOKEN
  */
 
-const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -2880,4 +2880,199 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
 
   return { success, failed, total: snap.size };
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+//   DESIGN ITEMS — LIFECYCLE TRIGGERS
+// ════════════════════════════════════════════════════════════════════════════
+//
+// خلفية:
+// - الأوردر فيه products[] (كل واحد بـ productStatus pending/in_progress/ready/printed/done)
+// - designer-hub يشتغل على design_items (بنود مستقلة بـ versions + isApproved + isPrintReady)
+// - autoAdvanceOrderStage يحوّل الـ stage تلقائياً لما كل products.productStatus='ready'
+//
+// الجسر المفقود (Bug Audit 2026-05-19):
+//   1. مفيش حد بينشئ design_items → المصمم يلاقي الـ hub فاضي
+//   2. لما المصمم يعلّم بند جاهز للطباعة، products[].productStatus ما يتحدثش
+//   3. حذف الأوردر يخلي design_items orphaned
+//
+// الـ 3 triggers الجاية تحل هذه الفجوات.
+
+// ─────────────────────────────────────────────────────────────────
+// TRIGGER 1: إنشاء design_items تلقائياً عند إنشاء أوردر
+// ─────────────────────────────────────────────────────────────────
+exports.spawnDesignItemsOnOrderCreate = onDocumentCreated(
+  { document: 'orders/{orderId}', region: 'us-central1' },
+  async (event) => {
+    const order = event.data?.data();
+    if (!order) return;
+    const orderDocId = event.params.orderId;
+
+    // فقط للأوردرات اللي تدخل design stage (الافتراضي لو ما اتحدد)
+    const stage = order.stage || 'design';
+    if (stage !== 'design') {
+      console.log(`[spawnDesignItems] order ${orderDocId} stage=${stage} — تخطي`);
+      return;
+    }
+
+    const products = order.products || [];
+    if (!products.length) {
+      console.log(`[spawnDesignItems] order ${orderDocId} بلا منتجات — تخطي`);
+      return;
+    }
+
+    // تجنب التكرار: لو design_items موجودة بالفعل (مثلاً seed يدوي)، تخطى
+    const existing = await db.collection('design_items')
+      .where('orderDocId', '==', orderDocId)
+      .limit(1)
+      .get();
+    if (!existing.empty) {
+      console.log(`[spawnDesignItems] order ${orderDocId} عنده items بالفعل — تخطي`);
+      return;
+    }
+
+    const batch = db.batch();
+    const now = FieldValue.serverTimestamp();
+    let created = 0;
+
+    products.forEach((p, idx) => {
+      const ref = db.collection('design_items').doc();
+      batch.set(ref, {
+        orderDocId,
+        orderId: order.orderId || order.serial || orderDocId.slice(0, 6),
+        clientId: order.clientId || null,
+        clientName: order.clientName || '',
+        designerId: order.designerId || null,
+        designerName: order.designerName || '',
+        productIndex: idx,
+        productId: p.productId || null,
+        itemName: p.name || `بند ${idx + 1}`,
+        itemQty: Number(p.qty) || 1,
+        productType: p.name || '',
+        instructions: p.instructions || '',
+        versions: [],
+        isApproved: false,
+        isPrintReady: false,
+        visibility: 'staging',
+        status: 'pending',
+        tenantId: order.tenantId || null,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: 'system_spawn',
+        spawnedFromTrigger: true,
+        editHistory: [],
+      });
+      created++;
+    });
+
+    try {
+      await batch.commit();
+      console.log(`[spawnDesignItems] order ${orderDocId}: تم إنشاء ${created} بند`);
+    } catch (err) {
+      console.error(`[spawnDesignItems] order ${orderDocId} فشل:`, err.message);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────
+// TRIGGER 2: مزامنة isPrintReady ↔ products[].productStatus
+// ─────────────────────────────────────────────────────────────────
+// لما المصمم يعلّم بند "جاهز للطباعة" في designer-hub:
+//   → نحدّث orders.products[productIndex].productStatus = 'ready'
+//   → autoAdvanceOrderStage (الموجود) يحرّك الـ stage لما كله جاهز
+//
+// كمان لو شال العلامة (isPrintReady=false) أو عُكس isApproved:
+//   → نرجع productStatus لـ 'in_progress'
+exports.syncDesignItemStatusToProduct = onDocumentUpdated(
+  { document: 'design_items/{itemId}', region: 'us-central1' },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after  = event.data?.after?.data();
+    if (!before || !after) return;
+
+    // لا تغيير في isPrintReady ولا isApproved → تخطى
+    const printReadyChanged = before.isPrintReady !== after.isPrintReady;
+    const approvedChanged   = before.isApproved   !== after.isApproved;
+    if (!printReadyChanged && !approvedChanged) return;
+
+    const orderDocId = after.orderDocId;
+    const idx = after.productIndex;
+    if (!orderDocId || typeof idx !== 'number') {
+      console.log(`[syncDesignItemStatus] item ${event.params.itemId}: orderDocId/productIndex ناقص — تخطى`);
+      return;
+    }
+
+    // تحديد productStatus المستهدف بناءً على حالة البند
+    let targetStatus;
+    if (after.isPrintReady) {
+      targetStatus = 'ready';
+    } else if (after.isApproved) {
+      targetStatus = 'in_progress';
+    } else if ((after.versions || []).length > 0) {
+      targetStatus = 'in_progress';
+    } else {
+      targetStatus = 'pending';
+    }
+
+    const orderRef = db.collection('orders').doc(orderDocId);
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(orderRef);
+        if (!snap.exists) return;
+        const order = snap.data();
+        const products = Array.isArray(order.products) ? [...order.products] : [];
+        if (idx < 0 || idx >= products.length) {
+          console.log(`[syncDesignItemStatus] order ${orderDocId} idx=${idx} خارج النطاق`);
+          return;
+        }
+        const current = products[idx]?.productStatus || 'pending';
+        // لا تنزل من حالة أعلى (printed/done) لحالة أدنى — منع regression
+        const PRIORITY = { pending:0, in_progress:1, ready:2, printed:3, done:4, on_hold:-1 };
+        if ((PRIORITY[targetStatus] ?? 0) < (PRIORITY[current] ?? 0) && current !== 'on_hold') {
+          console.log(`[syncDesignItemStatus] order ${orderDocId} idx=${idx} skipping ${current}→${targetStatus} (regression)`);
+          return;
+        }
+        if (current === targetStatus) return;
+        products[idx] = { ...products[idx], productStatus: targetStatus };
+        tx.update(orderRef, {
+          products,
+          updatedAt: FieldValue.serverTimestamp(),
+          timeline: FieldValue.arrayUnion({
+            date: new Date().toISOString(),
+            action: `🔗 مزامنة منتج #${idx + 1}: ${current} → ${targetStatus}`,
+            by: 'system_sync',
+          }),
+        });
+        console.log(`[syncDesignItemStatus] order ${orderDocId} idx=${idx}: ${current}→${targetStatus}`);
+      });
+    } catch (err) {
+      console.error(`[syncDesignItemStatus] فشل ${event.params.itemId}:`, err.message);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────
+// TRIGGER 3: حذف design_items تلقائياً عند حذف الأوردر
+// ─────────────────────────────────────────────────────────────────
+exports.cleanupDesignItemsOnOrderDelete = onDocumentDeleted(
+  { document: 'orders/{orderId}', region: 'us-central1' },
+  async (event) => {
+    const orderDocId = event.params.orderId;
+    try {
+      const snap = await db.collection('design_items')
+        .where('orderDocId', '==', orderDocId)
+        .limit(500)
+        .get();
+      if (snap.empty) {
+        console.log(`[cleanupDesignItems] order ${orderDocId}: لا توجد بنود للحذف`);
+        return;
+      }
+      const batch = db.batch();
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      console.log(`[cleanupDesignItems] order ${orderDocId}: حُذف ${snap.size} بند`);
+    } catch (err) {
+      console.error(`[cleanupDesignItems] order ${orderDocId} فشل:`, err.message);
+    }
+  }
+);
 
