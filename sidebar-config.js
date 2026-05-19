@@ -26,15 +26,16 @@
     { file:'index.html',             label:'لوحة التحكم',     ico:'⬡',  group:'main',   adminOnly:true },
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
     { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
-    { file:'whatsapp.html',          label:'واتساب الشغل',     ico:'💚', group:'main',   public:true },
+    { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
+    { file:'import-data.html',       label:'استيراد البيانات',  ico:'📥', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
-    { file:'print-routes.html',      label:'مسارات الإنتاج',   ico:'🗺️', group:'orders', adminOnly:true },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
+    { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
     { file:'shipping-lite.html',     label:'الشحن (مبسّط)',    ico:'⚡', group:'orders', perm:'shipping' },
     { file:'shipping.html',          label:'الشحن (الكامل)',   ico:'🚚', group:'orders', perm:'shipping' },
     { file:'shipping-followup.html', label:'متابعة الشحن',     ico:'📋', group:'orders', perm:'shipping' },
@@ -53,11 +54,7 @@
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
     { file:'workforce-live.html',    label:'Workforce Live',   ico:'👷', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
-    { file:'suggestions-admin.html', label:'اقتراحات الموظفين', ico:'💡', group:'admin',  adminOnly:true },
-    { file:'marketplace.html',       label:'المنصة',          ico:'🏛️', group:'admin',  adminOnly:true },
     { file:'admin-alerts.html',      label:'تنبيهات النظام',   ico:'🚨', group:'admin',  adminOnly:true },
-    { file:'ai-insights.html',       label:'AI Insights',      ico:'🧠', group:'admin',  adminOnly:true },
-    { file:'ai-digest.html',         label:'الموجز اليومي',    ico:'📰', group:'admin',  adminOnly:true },
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
   ];
 

@@ -15,7 +15,7 @@
 
   const PATH = (location.pathname.split('/').pop() || '').toLowerCase();
   const SKIP = ['login.html','client-login.html','client-portal.html',
-                'waybill.html','chat.html','whatsapp.html','order-tracking.html',''];
+                'waybill.html','chat.html','order-tracking.html',''];
   if (SKIP.includes(PATH)) return;
 
   // ── localStorage keys (per browser) ──

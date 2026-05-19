@@ -1742,7 +1742,7 @@ exports.analyzeClientWithAI = onCall(
       console.error('[analyzeClientWithAI] error', e);
       const msg = e.message || String(e);
       if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
-        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');
+        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من زر "اسأل AI"');
       }
       throw new HttpsError('internal', `AI: ${msg.slice(0, 200)}`);
     }
@@ -1765,7 +1765,7 @@ exports.analyzeSuggestionWithAI = onCall(
       throw new HttpsError('invalid-argument', 'suggestionId مطلوب');
     }
     if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('AIza')) {
-      throw new HttpsError('invalid-argument', 'مفتاح Gemini API مطلوب — اضبطه أولاً في ai-insights.html');
+      throw new HttpsError('invalid-argument', 'مفتاح Gemini API مطلوب — اضبطه أولاً من زر "اسأل AI"');
     }
 
     const sugRef = db.doc(`employee_suggestions/${suggestionId}`);
@@ -1816,7 +1816,7 @@ exports.analyzeSuggestionWithAI = onCall(
       console.error('[analyzeSuggestionWithAI] error', e);
       const msg = e.message || String(e);
       if (msg.includes('API key') || msg.includes('401') || msg.includes('403')) {
-        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من ai-insights.html');
+        throw new HttpsError('failed-precondition', 'مفتاح API غير صالح — حدّثه من زر "اسأل AI"');
       }
       throw new HttpsError('internal', `AI: ${msg.slice(0, 200)}`);
     }
