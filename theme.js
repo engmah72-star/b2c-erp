@@ -114,18 +114,53 @@
       return;
     }
     const host = document.querySelector('.topbar-right');
-    if (!host) return;
+    if (host){
+      const btn = document.createElement('button');
+      btn.id = 'themeToggleBtn';
+      btn.type = 'button';
+      btn.className = 'notif-bell'; // نفس استايل أيقونات الـ topbar (دائرة 34px)
+      btn.style.cursor = 'pointer';
+      btn.addEventListener('click', cycle);
+      btn.__themeBound = true;
+
+      // نضعه أوّل عنصر (يمين أول حاجة في RTL)
+      host.insertBefore(btn, host.firstChild);
+      updateToggleUI();
+      return;
+    }
+
+    // ── Fallback: زر عائم للصفحات اللي مفيهاش topbar-right ──
+    // يُفعَّل عبر <body data-theme-floating> (opt-in حتى ما يظهرش في الصفحات الـ print/iframe)
+    if (document.body && document.body.hasAttribute('data-theme-floating')){
+      injectFloatingButton();
+    }
+  }
+
+  // ── زر عائم في الزاوية لصفحات login/portals/standalone ──
+  function injectFloatingButton(){
+    if (document.getElementById('themeToggleBtn')) return;
+    if (!document.body) return;
 
     const btn = document.createElement('button');
     btn.id = 'themeToggleBtn';
     btn.type = 'button';
-    btn.className = 'notif-bell'; // نفس استايل أيقونات الـ topbar (دائرة 34px)
-    btn.style.cursor = 'pointer';
+    btn.className = 'theme-floating-btn';
+    // RTL → top-start = top-right. نضعه يمين-أعلى لتجنّب تداخل أزرار اللوغ-أوت/الإغلاق يسارًا.
+    btn.style.cssText = [
+      'position:fixed','top:14px','right:14px','z-index:9999',
+      'width:38px','height:38px','border-radius:50%',
+      'border:1px solid var(--line2,rgba(255,255,255,.15))',
+      'background:var(--bg2,#0d0f1b)','color:var(--snow,#e4eaf6)',
+      'display:inline-flex','align-items:center','justify-content:center',
+      'cursor:pointer','box-shadow:0 4px 14px rgba(0,0,0,.18)',
+      'transition:transform .2s ease, background .25s ease, color .25s ease, border-color .25s ease',
+      'backdrop-filter:blur(8px)','-webkit-backdrop-filter:blur(8px)',
+      'padding:0'
+    ].join(';') + ';';
     btn.addEventListener('click', cycle);
     btn.__themeBound = true;
 
-    // نضعه أوّل عنصر (يمين أول حاجة في RTL)
-    host.insertBefore(btn, host.firstChild);
+    document.body.appendChild(btn);
     updateToggleUI();
   }
 
@@ -158,7 +193,11 @@
   // لا CPU overhead في الـ idle time (بعكس observer دائم).
   function retryInject(){
     if (document.getElementById('themeToggleBtn')) return;
-    if (document.querySelector('.topbar-right')) injectToggleButton();
+    if (document.querySelector('.topbar-right')) {
+      injectToggleButton();
+    } else if (document.body && document.body.hasAttribute('data-theme-floating')) {
+      injectFloatingButton();
+    }
   }
   window.addEventListener('load', retryInject);
   [200, 500, 1000, 2000].forEach(d => setTimeout(retryInject, d));
