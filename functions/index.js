@@ -29,6 +29,19 @@ const { getMessaging } = require('firebase-admin/messaging');
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
+// CORS — السماح للـ web app يستدعي onCall functions من أي origin مصرَّح.
+// لـ Firebase Hosting + GitHub Pages + localhost للتطوير.
+// Note: كل الـ callable functions تتطلب req.auth (Firebase Auth token) ➜
+// CORS عام آمن — السماح للـ origin ≠ السماح للوصول بدون auth.
+const CORS_ALLOWED = [
+  'https://business2card-c041b.web.app',
+  'https://business2card-c041b.firebaseapp.com',
+  'https://engmah72-star.github.io',
+  /^http:\/\/localhost(:\d+)?$/,
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+];
+const CALL_OPTS = { cors: CORS_ALLOWED };
+
 const WHATSAPP_TOKEN = defineSecret('WHATSAPP_TOKEN');
 const GITHUB_PAT     = defineSecret('GITHUB_PAT');
 
@@ -297,7 +310,7 @@ exports.onPaymentLogged = onDocumentCreated(
 // CALLABLE: manual send (test from settings UI)
 // ════════════════════════════════════════════════════════════
 exports.sendWhatsAppTest = onCall(
-  { secrets: [WHATSAPP_TOKEN] },
+  { ...CALL_OPTS, secrets: [WHATSAPP_TOKEN] },
   async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'لازم تسجل دخول');
     const userSnap = await db.doc(`users/${req.auth.uid}`).get();
@@ -344,7 +357,7 @@ function genTempPassword() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-exports.adminResetEmployeePassword = onCall(async (req) => {
+exports.adminResetEmployeePassword = onCall(CALL_OPTS, async (req) => {
   // Top-level try/catch: any unexpected throw becomes an "internal" error on
   // the client side, hiding the cause. Convert to a typed HttpsError so the
   // admin sees the actual reason. Server-side logs keep the full stack via
@@ -422,7 +435,7 @@ exports.adminResetEmployeePassword = onCall(async (req) => {
 // in employee-profile.html. Also flips mustChangePassword=true so the
 // employee is still forced to set their own on next login.
 
-exports.adminSetEmployeePassword = onCall(async (req) => {
+exports.adminSetEmployeePassword = onCall(CALL_OPTS, async (req) => {
   try {
     const callerUid = req.auth?.uid;
     if (!callerUid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
@@ -496,7 +509,7 @@ exports.adminSetEmployeePassword = onCall(async (req) => {
 // Use the optional `dryRun:true` to add an isImpersonatingDryRun custom claim
 // that client-side viewas.js + Firestore rules can use to block writes.
 
-exports.impersonateUser = onCall(async (req) => {
+exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
   try {
     const callerUid = req.auth?.uid;
     if (!callerUid) {
@@ -692,7 +705,7 @@ async function createInAppNotification({ toUid, title, desc, ico, link, type, en
 // ════════════════════════════════════════════════════════════════════════════
 //   FCM TOKEN REGISTRATION (callable from clients)
 // ════════════════════════════════════════════════════════════════════════════
-exports.registerFcmToken = onCall(async (req) => {
+exports.registerFcmToken = onCall(CALL_OPTS, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
   const token = req.data?.token;
   if (!token || typeof token !== 'string' || token.length < 20) {
@@ -711,7 +724,7 @@ exports.registerFcmToken = onCall(async (req) => {
   return { ok: true };
 });
 
-exports.unregisterFcmToken = onCall(async (req) => {
+exports.unregisterFcmToken = onCall(CALL_OPTS, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
   const token = req.data?.token;
   if (!token) throw new HttpsError('invalid-argument', 'token مفقود');
@@ -1697,7 +1710,7 @@ exports.weeklyProductRecommendations = onSchedule(
 const { analyzeClient, analyzeSuggestion } = require('./genkit-flows');
 
 exports.analyzeClientWithAI = onCall(
-  { memory: '512MiB', timeoutSeconds: 90 },
+  { ...CALL_OPTS, memory: '512MiB', timeoutSeconds: 90 },
   async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
     const { clientId, apiKey } = req.data || {};
@@ -1744,7 +1757,7 @@ exports.analyzeClientWithAI = onCall(
 // كمان يُضاف comment من نوع 'ai' في subcollection /comments للظهور في الـ thread.
 
 exports.analyzeSuggestionWithAI = onCall(
-  { memory: '512MiB', timeoutSeconds: 60 },
+  { ...CALL_OPTS, memory: '512MiB', timeoutSeconds: 60 },
   async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
     const { suggestionId, apiKey } = req.data || {};
@@ -2175,7 +2188,7 @@ exports.autoAdvanceOrderStage = onDocumentUpdated(
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 
 exports.callGeminiProxy = onCall(
-  { region: 'us-central1', secrets: [GEMINI_API_KEY], timeoutSeconds: 60 },
+  { ...CALL_OPTS, region: 'us-central1', secrets: [GEMINI_API_KEY], timeoutSeconds: 60 },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
@@ -2290,7 +2303,7 @@ const DEFAULT_TENANT = 'merchant_001';
 // تنفّذ بدون Firebase Auth user حقيقي (custom token uid = 'partner_<tid>_<rnd>').
 
 exports.partnerSignIn = onCall(
-  { region: 'us-central1', timeoutSeconds: 30 },
+  { ...CALL_OPTS, region: 'us-central1', timeoutSeconds: 30 },
   async (request) => {
     const tenantId = String(request.data?.tenantId || '').trim();
     const secret   = String(request.data?.secret || '').trim();
@@ -2334,7 +2347,7 @@ exports.partnerSignIn = onCall(
 );
 
 exports.backfillTenantId = onCall(
-  { region: 'us-central1', timeoutSeconds: 540 },
+  { ...CALL_OPTS, region: 'us-central1', timeoutSeconds: 540 },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'مسجَّل دخول مطلوب');
 
@@ -2521,7 +2534,7 @@ async function callGitHubApi(token, path, opts = {}) {
 }
 
 exports.createSuggestionIssue = onCall(
-  { memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
+  { ...CALL_OPTS, memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
   async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
     const { suggestionId } = req.data || {};
@@ -2630,7 +2643,7 @@ ${s.decisionNote ? '### ملاحظة الإدارة\n' + s.decisionNote + '\n' :
 // Check linked PR status for a suggestion's issue.
 // GitHub auto-links PRs that mention #N → returns first such PR.
 exports.checkSuggestionPR = onCall(
-  { memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
+  { ...CALL_OPTS, memory: '256MiB', timeoutSeconds: 30, secrets: [GITHUB_PAT] },
   async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
     const { suggestionId } = req.data || {};
@@ -2838,7 +2851,7 @@ exports.syncUserAuthClaims = onDocumentUpdated('users/{uid}', async (e) => {
 
 // Bootstrap: callable لـ admin لنشر claims على كل users الموجودة دفعة واحدة
 // (للـ migration). يشتغل مرة واحدة بعد deploy الأول.
-exports.backfillAuthClaims = onCall({ timeoutSeconds: 540 }, async (req) => {
+exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async (req) => {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
 
   const callerSnap = await db.collection('users').doc(req.auth.uid).get();
