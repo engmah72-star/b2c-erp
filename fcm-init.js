@@ -63,7 +63,10 @@ export async function initFcm(app, user) {
     }
 
     // Register SW (idempotent — browser dedupes by scope+url)
-    const swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+    // استخدم relative path ليعمل في أي subpath (مثلاً engmah72-star.github.io/b2c-erp/)
+    // الـ scope يأخذ تلقائياً موقع الـ SW (يغطي كل الصفحات في نفس المجلد).
+    const swUrl = new URL('./firebase-messaging-sw.js', import.meta.url).href;
+    const swReg = await navigator.serviceWorker.register(swUrl);
 
     const messaging = getMessaging(app);
     const token = await getToken(messaging, {
