@@ -30,18 +30,11 @@ export const db = _coreDb;
 export const storage = _coreStorage;
 
 // ═══════════════════════════════════════
-// ROLES
+// ROLES — re-export من المصدر الوحيد (orders.js) — RULE C1.5
 // ═══════════════════════════════════════
-export const ROLES = {
-  admin:            { label:'Admin',           ico:'👑', col:'#a78bfa' },
-  operation_manager:{ label:'Ops Manager',     ico:'📋', col:'#3b9eff' },
-  customer_service: { label:'Cust. Service',   ico:'💬', col:'#22d3ee' },
-  graphic_designer: { label:'Designer',        ico:'✏️', col:'#a78bfa' },
-  design_operator:  { label:'Design Supervisor', ico:'⚙️', col:'#ffaa00' },
-  production_agent: { label:'Production',      ico:'🏭', col:'#ff3d6e' },
-  shipping_officer: { label:'Shipping',        ico:'🚚', col:'#22d3ee' },
-  wallet_manager:   { label:'Wallet Mgr',      ico:'💰', col:'#00d97e' },
-};
+// لا نعرّف ROLES هنا. المصدر الوحيد في orders.js.
+// هذا re-export للحفاظ على التوافق مع consumers موجودين (مثل ml-dashboard.html).
+export { ROLES } from './orders.js';
 
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
@@ -57,72 +50,13 @@ export const ROLE_PAGES = {
 };
 
 // ═══════════════════════════════════════
-// WORKFLOW ENGINE
+// WORKFLOW ENGINE — موجود في orders.js (المصدر الوحيد)
 // ═══════════════════════════════════════
-export const STAGES = {
-  'design_pending':  { label:'تصميم',       ico:'✏️',  col:'#a78bfa', next:'design_approved',  page:'design',      badge:'bg-p' },
-  'design_approved': { label:'اعتمد',       ico:'✅',  col:'#00d97e', next:'production',        page:'production',  badge:'bg-g' },
-  'production':      { label:'تنفيذ',       ico:'🏭',  col:'#ff3d6e', next:'printing',          page:'print',       badge:'bg-r' },
-  'printing':        { label:'طباعة',       ico:'🖨️', col:'#ffaa00', next:'ready',             page:'print',       badge:'bg-y' },
-  'ready':           { label:'جاهز',        ico:'📦',  col:'#3b9eff', next:'shipped',           page:'shipping',    badge:'bg-b' },
-  'shipped':         { label:'شحن',         ico:'🚚',  col:'#22d3ee', next:'delivered',         page:'shipping',    badge:'bg-c' },
-  'delivered':       { label:'تسليم',       ico:'🎉',  col:'#00d97e', next:'archived',          page:'archive',     badge:'bg-g' },
-  'archived':        { label:'أرشيف',       ico:'📁',  col:'#4e5672', next:null,                page:'archive',     badge:'bg-d' },
-  'cancelled':       { label:'ملغي',        ico:'✕',   col:'#4e5672', next:null,                page:null,          badge:'bg-d' },
-};
-
-// Who can advance each stage
-export const STAGE_PERMISSIONS = {
-  'design_pending':  ['admin','operation_manager','design_operator','graphic_designer'],
-  'design_approved': ['admin','operation_manager','design_operator'],
-  'production':      ['admin','operation_manager','production_agent'],
-  'printing':        ['admin','operation_manager','production_agent','customer_service'],
-  'ready':           ['admin','operation_manager','shipping_officer'],
-  'shipped':         ['admin','operation_manager','shipping_officer'],
-  'delivered':       ['admin','operation_manager'],
-  'archived':        ['admin'],
-};
-
-/**
- * Advance order to next stage
- */
-export async function advanceOrder(orderId, currentStage, userRole) {
-  const stage = STAGES[currentStage];
-  if (!stage?.next) throw new Error('لا توجد مرحلة تالية');
-  if (!STAGE_PERMISSIONS[currentStage]?.includes(userRole)) {
-    throw new Error('ليس لديك صلاحية تقدم هذه المرحلة');
-  }
-  const now = nowStr();
-  await updateDoc(doc(db, 'orders', orderId), {
-    stage:   stage.next,
-    [`stage_${stage.next}_at`]: now,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-/**
- * Get orders for a specific page/stage
- */
-export function getOrdersForPage(orders, page, userRole, userId) {
-  return orders.filter(o => {
-    const stage = STAGES[o.stage];
-    if (!stage) return false;
-
-    // Graphic designer only sees own orders
-    if (userRole === 'graphic_designer') {
-      return o.designerId === userId && stage.page === page;
-    }
-    // Production agent only sees production+printing
-    if (userRole === 'production_agent') {
-      return ['production','printing','ready'].includes(o.stage);
-    }
-    // Shipping officer only sees ready+shipped
-    if (userRole === 'shipping_officer') {
-      return ['ready','shipped'].includes(o.stage);
-    }
-    return stage.page === page;
-  });
-}
+// تم حذف STAGES / STAGE_PERMISSIONS / advanceOrder / getOrdersForPage
+// التي كانت معرَّفة هنا بقيم legacy متعارضة (design_pending, design_approved,
+// ready, shipped, delivered) ولم تكن مستخدَمة من أي صفحة.
+// المصدر الوحيد الآن: orders.js (RULE C1.5 + قاعدة Central Constants).
+// لو احتجت STAGES أو STAGE_PERMISSIONS: import { STAGES } from './orders.js'.
 
 // ═══════════════════════════════════════
 // PERMISSIONS ENGINE
