@@ -46,14 +46,14 @@ export const ROLES = {
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['index','clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','workforce-live','role-viewer','suggestions-admin','settings','returns','marketplace','admin-alerts'],
-  operation_manager:['index','clients','design','production','print','shipping','approvals','suppliers','reports','employees','workforce-live','role-viewer','suggestions-admin','returns','marketplace'],
-  customer_service: ['index','clients','design','approvals','returns'],
+  admin:            ['clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','role-viewer','suggestions-admin','settings','returns','marketplace'],
+  operation_manager:['clients','design','production','print','shipping','approvals','suppliers','reports','employees','role-viewer','suggestions-admin','returns','marketplace'],
+  customer_service: ['clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
-  design_operator:  ['index','design','approvals','suppliers'],
-  production_agent: ['index','production','print','approvals'],
-  shipping_officer: ['index','print','shipping','approvals','returns'],
-  wallet_manager:   ['index','accounts','approvals','returns'],
+  design_operator:  ['design','approvals','suppliers'],
+  production_agent: ['production','print','approvals'],
+  shipping_officer: ['print','shipping','approvals','returns'],
+  wallet_manager:   ['accounts','approvals','returns'],
 };
 
 // ═══════════════════════════════════════
@@ -352,7 +352,6 @@ export function renderSidebar(activePage) {
   const r     = ROLES[role] || ROLES.customer_service;
 
   const NAV_ITEMS = [
-    { key:'index',      ico:'⬡',  label:'لوحة التحكم' },
     { key:'clients',    ico:'👤', label:'العملاء' },
     { key:'design',     ico:'✏️', label:'التصميم' },
     { key:'production', ico:'🏭', label:'التنفيذ' },
@@ -362,11 +361,9 @@ export function renderSidebar(activePage) {
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'returns',    ico:'↩️',  label:'المرتجعات' },
     { key:'marketplace',ico:'🏛️', label:'المنصة (Marketplace)' },
-    { key:'admin-alerts',ico:'🚨', label:'تنبيهات النظام' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'employees',  ico:'👥', label:'الموظفين' },
-    { key:'workforce-live', ico:'👷', label:'Workforce Live' },
     { key:'role-viewer', ico:'🔍', label:'معاينة الأدوار' },
     { key:'reports',    ico:'📊', label:'التقارير' },
     { key:'suggestions-admin', ico:'💡', label:'اقتراحات الموظفين' },
@@ -389,7 +386,7 @@ export function renderSidebar(activePage) {
     <div class="nav-scroll">
       ${allowed.map(n => `
         <a class="nav-link ${n.key === activePage ? 'active' : ''}"
-           href="${n.key === 'index' ? 'index.html' : n.key + '.html'}">
+           href="${n.key}.html">
           <span class="nav-ico">${n.ico}</span>
           ${n.label}
         </a>`).join('')}

@@ -217,9 +217,9 @@ async function analyzeSuggestion(apiKey, suggestion) {
       'وصلك اقتراح من موظف لتطوير السيستم. مهمتك تحلّل الاقتراح وتساعد الإدارة على اتخاذ قرار.',
       '',
       'الـ ERP فيه الصفحات دي تقريباً:',
-      'index (لوحة تحكم), clients (عملاء), design (تصميم), production (تنفيذ), print (طباعة),',
+      'clients (عملاء), design (تصميم), production (تنفيذ), print (طباعة),',
       'shipping (شحن), accounts (حسابات), approvals (اعتمادات), products (منتجات), suppliers (موردين),',
-      'employees (موظفين), workforce-live (متابعة شغل), reports (تقارير), settings (إعدادات).',
+      'employees (موظفين), reports (تقارير), settings (إعدادات).',
       '',
       'بيانات الاقتراح:',
       JSON.stringify({

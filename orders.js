@@ -923,7 +923,6 @@ export function stageProgressBar(order, opts = {}) {
 export function renderSidebar(activePage, role, userName) {
   const r = ROLES[role] || ROLES.customer_service;
   const allPages = [
-    { key:'index',      ico:'⬡',  label:'لوحة التحكم',  href:'index.html' },
     { key:'clients',    ico:'👤', label:'العملاء',       href:'clients.html' },
     { key:'design',     ico:'✏️', label:'التصميم',       href:'design.html' },
     { key:'print',      ico:'🖨️',label:'الطباعة',       href:'print.html' },

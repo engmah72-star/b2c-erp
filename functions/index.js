@@ -1431,8 +1431,7 @@ exports.weeklyRevenueForecast = onSchedule(
     }
 
     // Bucket revenue by ISO date (UTC). Cancelled orders excluded — they are
-    // non-revenue. We use sale + ship - discount as the booking value (matches
-    // calcRem in index.html so dashboards stay consistent).
+    // non-revenue. We use sale + ship - discount as the booking value.
     const byDay = new Map();
     snap.forEach(d => {
       const o = d.data();
@@ -2787,7 +2786,7 @@ async function enforcePortalRateLimit(collectionName, doc, e) {
       title: '🚨 محاولة إغراق من client portal',
       body: `${count} ${collectionName} في ساعة من ${keyValue}`,
       data: { type: 'rate_limit', collectionName, key: keyValue },
-      link: '/admin-alerts.html',
+      link: '/accounts.html',
     });
   } catch (_) { /* ignore */ }
 }
