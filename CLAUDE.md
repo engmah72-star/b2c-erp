@@ -1129,6 +1129,47 @@ storage.rules تتبع نفس الفلسفة:
 - كل rule بفحص `inSameTenant(resource.data)`
 - لا cross-tenant data leak
 
+### X1.10 — Password Strength (Anti-Breach)
+- **Min length:** 8 chars (Firebase Auth default)
+- **mustChangePassword:** true عند إنشاء حساب جديد (force first-login change)
+- **No plaintext storage:** Firebase Auth يديرها بـ bcrypt — لا custom password handling
+- **Password reset:** عبر Cloud Function callable (لا exposure للـ admin SDK في الـ client)
+- **يُمنع:** كلمات مرور مشتركة بين موظفين، storage في localStorage
+
+### X1.11 — Periodic Admin Review
+- **شهرياً:** مراجعة قائمة `users where role in ['admin','operation_manager']`
+- التحقق من:
+  - كل admin له use case نشط
+  - لا حسابات admin قديمة (آخر login > 90 يوم) — تُعطَّل أو تُخفَّض
+  - عدد الـ admins معقول للحجم (~2-4 لشركة بهذا الحجم)
+- **يُسجَّل في:** `audit_logs/admin_review/{YYYY-MM}`
+
+### X1.12 — File Type Whitelist (Anti-Breach — تعزيز S1.4)
+**المسموح:** قائمة موجبة فقط:
+- **Images:** `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/svg+xml`
+- **Documents:** `application/pdf`
+- **Design source:** `.ai`, `.psd`, `.eps`, `.indd`, `.svg`, `.fig` (بـ MIME validation)
+
+**ممنوع:**
+- ❌ `.exe`, `.bat`, `.sh`, `.cmd`, `.vbs`, `.js` (executable)
+- ❌ `.html`, `.htm` (XSS risk)
+- ❌ `.zip`, `.rar` (يخفي خطر) — استخدم individual files
+
+**Storage rules:** Storage يفرض MIME validation (storage.rules تحتاج تحديث للـ legacy paths).
+**Application layer:** `core/storage-helpers.js → inferKind()` يكشف الـ kind قبل الـ upload.
+
+### X1.13 — منع Direct Database Edits (تعزيز RULE 2 + 4)
+**ممنوع تماماً:**
+- ❌ Firebase Console manual edits على collections مالية (إلا في طوارئ مع audit log)
+- ❌ Direct Firestore admin SDK writes من scripts بدون trace
+- ❌ "Quick fix" مباشر على البيانات
+
+**المسموح فقط:**
+- ✅ عبر `financial-sync-engine.js` (للمالية)
+- ✅ عبر `orderActions.*` (للـ workflow)
+- ✅ Cloud Function callable مع admin auth + audit_logs entry
+- ✅ Migration scripts موثَّقة في `tests/` مع dry-run
+
 ### 🚫 القاعدة النهائية
 **الأمان وُجد لحماية التشغيل، لا لتعطيله.**
 
