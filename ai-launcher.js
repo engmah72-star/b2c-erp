@@ -31,7 +31,6 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
     'reports.html':     ['ما أداء آخر 30 يوم؟','مقارنة بآخر 90 يوم؟'],
     'suppliers.html':   ['أكثر الموردين تعاملاً؟'],
     'employees.html':   ['ما إجمالي الرواتب الشهر؟'],
-    'job-orders.html':  ['ما الأوردرات المتأخرة؟','أكثر المنتجات طلباً؟'],
   };
   const hints = PAGE_HINTS[PATH] || ['ملخص الأداء','أبرز الفرص الحالية','تحديات تحتاج اهتمام'];
 
