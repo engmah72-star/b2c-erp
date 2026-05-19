@@ -501,7 +501,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentRole='admin';
@@ -2059,14 +2059,15 @@ window.closePay=()=>{document.getElementById('ov-pay').classList.remove('open');
 
 window.confirmRecordPayment=async function(){
   const id=window.__payOrderId;if(!id)return;
-  if(!['customer_service','admin','operation_manager'].includes(currentRole))return toast('⛔ صلاحية CS فقط','err');
   const o=orders.find(x=>x._id===id);if(!o)return;
   const amt=parseFloat(gv('pay-amount'))||0;
   const wId=gv('pay-wallet');
   const wEl=document.getElementById('pay-wallet');
   const wName=wId?(wEl.options[wEl.selectedIndex]?.text||''):'';
   const note=gv('pay-note').trim();
-  if(amt<=0)return toast('⚠️ أدخل مبلغ صحيح','err');
+  // RULE V1.5: validation مُمَركَزة عبر validatePayment
+  const v=validatePayment({order:o,amount:amt,source:'customer',role:currentRole});
+  if(!v.ok)return toast('⛔ '+v.errors[0],'err');
   if(!wId)return toast('⚠️ اختر المحفظة','err');
   const sale=parseFloat(o.salePrice)||0;
   const paid=parseFloat(o.totalPaid)||0;
