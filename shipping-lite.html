@@ -567,8 +567,14 @@ function detailHTML(o) {
   const disc     = safeNum(o.discount);
   const shipFee  = safeNum(o.customerShipFee);
   const shipCost = safeNum(o.shippingCost);
-  const supCost  = safeNum(o.supplierCost);
   const paid     = safeNum(o.totalPaid) || safeNum(o.paid) || safeNum(o.deposit);
+  // تكلفة التنفيذ: تُجمَع من costItems[] الموجودة على الأوردر (كل entry فيه
+  // total + supplierName + type + prodIdx). fallback إلى o.supplierCost لو
+  // الـ array مش موجود (orders قديمة).
+  const costItems = Array.isArray(o.costItems) ? o.costItems : [];
+  const supCost   = costItems.length
+                  ? costItems.reduce((s, c) => s + safeNum(c.total || c.amount || c.cost), 0)
+                  : safeNum(o.supplierCost);
   const netInvoice = Math.max(0, sale + shipFee - disc);
   const remaining  = safeNum(o.remaining) || Math.max(0, netInvoice - paid);
   const totalCost  = supCost + shipCost;
@@ -629,6 +635,17 @@ function detailHTML(o) {
       ${o.note ? `<div style="margin-top:6px;font-size:11px;color:var(--dim2)">📝 ${escapeHtml(o.note)}</div>` : ''}
     </div>
     <div class="detail-block">
+      <h4>🏭 تكلفة التنفيذ (${costItems.length})</h4>
+      ${seeCost
+        ? (costItems.length
+            ? `<ul class="items-list">${costItems.slice(0,12).map(c =>
+                `<li>• <b>${escapeHtml(c.supplierName || 'مورد')}</b>${c.type?` — ${escapeHtml(c.type)}`:''}${c.note?` <span style="color:var(--dim2);font-size:10.5px">(${escapeHtml(c.note)})</span>`:''} <span class="money-neg" style="float:left">${fmt(c.total || c.amount || c.cost)} ج</span></li>`
+              ).join('')}${costItems.length>12?`<li style="color:var(--dim2)">... +${costItems.length-12}</li>`:''}</ul>
+              <div class="dline" style="border-top:1px dashed var(--line);padding-top:4px;margin-top:4px"><span><b>إجمالي التنفيذ</b></span><span class="money-neg"><b>${fmt(supCost)} ج</b></span></div>`
+            : `<div style="color:var(--dim2);font-size:11px">لا تكاليف تنفيذ مسجَّلة</div>`)
+        : `<div style="color:var(--dim2);font-size:11px">— محجوب (الدور لا يرى التكاليف) —</div>`}
+    </div>
+    <div class="detail-block">
       <h4>📅 الـ Timeline</h4>
       <div class="dline"><span>تم الإنشاء</span><span>${created}</span></div>
       <div class="dline"><span>تسليم الشركة</span><span>${dispatched}</span></div>
@@ -643,9 +660,9 @@ function detailHTML(o) {
       ${moneyLine('صافي الفاتورة', netInvoice, seeSale, {bold:true, style:'border-top:1px dashed var(--line);padding-top:4px;margin-top:4px'})}
       ${moneyLine('مدفوع', paid, seePaid, {cls:'money-pos'})}
       ${moneyLine('باقي على العميل', remaining, seeRem, {cls: remaining>0?'money-neg':'money-zero'})}
-      ${moneyLine('تكلفة المورد', supCost, seeCost, {style:'margin-top:8px'})}
-      ${moneyLine('تكلفة الشحن', shipCost, seeShip)}
-      ${moneyLine('إجمالي التكلفة', totalCost, seeCost && seeShip, {bold:true, style:'border-top:1px dashed var(--line);padding-top:4px;margin-top:4px'})}
+      ${moneyLine(`تكلفة التنفيذ${costItems.length?` (${costItems.length})`:''}`, supCost, seeCost, {style:'margin-top:8px', cls:'money-neg'})}
+      ${moneyLine('تكلفة الشحن', shipCost, seeShip, {cls:'money-neg'})}
+      ${moneyLine('إجمالي التكلفة', totalCost, seeCost && seeShip, {bold:true, cls:'money-neg', style:'border-top:1px dashed var(--line);padding-top:4px;margin-top:4px'})}
       ${moneyLine('الربح', profit, seeMargin, {bold:true, cls: profit>0?'money-pos':profit<0?'money-neg':'money-zero', style:'border-top:1px solid var(--line);padding-top:6px;margin-top:6px;font-size:13px'})}
       ${moneyLine('مُحصَّل عبر الشحن', safeNum(o.shipCollected), seeShip, {cls:'money-pos', style:'margin-top:8px'})}
       ${o.shipSettled ? moneyLine('صافي التسوية', safeNum(o.shipSettledAmount), seeShip, {cls:'money-pos'}) : ''}
