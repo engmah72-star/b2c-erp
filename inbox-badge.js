@@ -7,16 +7,9 @@
 // الاستخدام: ضع <script type="module" src="inbox-badge.js"></script>
 // في أي صفحة تستخدم Firebase auth.
 
-import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
-
-// Reuse if already initialized
-const app = getApps().length ? getApp() : initializeApp(FB);
-const auth = getAuth(app);
-const db = getFirestore(app);
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const STYLE_ID = 'inbox-fab-style';
 const FAB_ID   = 'inbox-fab';

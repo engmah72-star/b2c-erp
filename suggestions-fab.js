@@ -8,19 +8,14 @@
 //
 // الاستخدام: <script type="module" src="suggestions-fab.js"></script>
 
-import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, query, where, orderBy, onSnapshot,
+  collection, addDoc, query, where, orderBy, onSnapshot,
   serverTimestamp, doc, getDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
-const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
-
-const app = getApps().length ? getApp() : initializeApp(FB);
-const auth = getAuth(app);
-const db = getFirestore(app);
 const functions = getFunctions(app);
 
 const STYLE_ID = 'sugg-fab-style';

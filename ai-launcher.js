@@ -7,8 +7,8 @@
 // ══════════════════════════════════════════════════════════
 import { askAI, hasKey, setKey, getKey, clearKey, KEY_NEEDED } from './ai-engine.js';
 import { buildToday, PAGE_FOCUS, detectOpenEntity, buildEntitySection } from './ai-today.js';
-import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, getDocs, getDoc, doc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { app, db } from "./core/firebase-init.js";
+import { collection, getDocs, getDoc, doc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 (function() {
   const PATH = (location.pathname.split('/').pop() || '').toLowerCase();
@@ -35,15 +35,7 @@ import { getFirestore, collection, getDocs, getDoc, doc, query, where, limit } f
   };
   const hints = PAGE_HINTS[PATH] || ['ملخص الأداء','أبرز الفرص الحالية','تحديات تحتاج اهتمام'];
 
-  // ── Firebase (reuse existing app if shared.js already initialized one) ──
-  const FB_CONFIG = {
-    apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",
-    projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",
-    messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336",
-  };
-  let app, db;
-  try { app = getApp(); } catch { app = initializeApp(FB_CONFIG); }
-  db = getFirestore(app);
+  // ── Firebase: app/db imported from core/firebase-init.js (G2 single source) ──
 
   // ── Cached compact context (loaded once per session) ──
   let contextCache = '';

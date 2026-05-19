@@ -15,16 +15,11 @@
  */
 
 // ══════════════════════════════════════════
-// FIREBASE CONFIG
+// FIREBASE CONFIG — Deprecated (re-exported from core/firebase-init.js)
 // ══════════════════════════════════════════
-export const FB_CONFIG = {
-  apiKey:            "AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
-  authDomain:        "business2card-c041b.firebaseapp.com",
-  projectId:         "business2card-c041b",
-  storageBucket:     "business2card-c041b.firebasestorage.app",
-  messagingSenderId: "235622448899",
-  appId:             "1:235622448899:web:d8652ff71082f7d003f336",
-};
+// G2 Migration: FB_CONFIG الآن في core/firebase-init.js. هذا re-export
+// للتوافق مع أي مستهلك قديم. الصفحات الجديدة يجب تستورد من core مباشرة.
+export { FB_CONFIG } from './core/firebase-init.js';
 
 // ══════════════════════════════════════════
 // STAGES — تعريف المراحل وترتيبها (يطابق الواقع)
