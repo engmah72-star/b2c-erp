@@ -561,7 +561,13 @@ async function handleShippingSettlement(db, p) {
   //      diffReason, diffReasonLabel, diffNote, note, date, userId, userName,
   //      orderUpdates: [{orderId, totalPaid, remaining, paymentStatus, dueByCo}] }
   if (!p.walletId) throw new Error('[FSE] SHIPPING_SETTLEMENT: walletId مطلوب');
-  if (!(p.amount > 0)) throw new Error('[FSE] SHIPPING_SETTLEMENT: amount غير صالح');
+  // amount = 0 مسموح إذا expectedAmount = 0 (تحصيل صفر ➜ مستحق صفر — تسوية
+  // لـ إقفال الـ orders فقط بدون حركة مالية). نرفض السالب أو الـ amount > 0
+  // مع expectedAmount = 0 (لا يفترض الدفع لو لا يوجد استحقاق).
+  const amt = Number(p.amount);
+  if (!Number.isFinite(amt) || amt < 0) {
+    throw new Error('[FSE] SHIPPING_SETTLEMENT: amount غير صالح');
+  }
 
   const batch = writeBatch(db);
   const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
