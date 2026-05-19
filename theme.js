@@ -80,12 +80,15 @@
   function updateToggleUI(){
     const btn = document.getElementById('themeToggleBtn');
     if (!btn) return;
+    const order = ['dark','light','auto'];
     const cur = getStored();
-    const lbl = cur === 'light' ? 'فاتح' : cur === 'dark' ? 'غامق' : 'تلقائي';
+    const next = order[(order.indexOf(cur) + 1) % order.length];
+    const lblOf = (t) => t === 'light' ? 'فاتح' : t === 'dark' ? 'غامق' : 'تلقائي';
+    const tip = `الوضع: ${lblOf(cur)} · انقر للانتقال إلى ${lblOf(next)} · Ctrl+Shift+L`;
     btn.innerHTML = `<span class="theme-ico-wrap" style="display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:transform .35s cubic-bezier(.4,0,.2,1);">${ICONS[cur] || ICONS.dark}</span>`;
-    btn.setAttribute('data-tip', `الوضع: ${lbl} — انقر للتبديل`);
-    btn.setAttribute('aria-label', `تبديل الوضع، الحالي: ${lbl}`);
-    btn.title = `الوضع: ${lbl} — انقر للتبديل`;
+    btn.setAttribute('data-tip', tip);
+    btn.setAttribute('aria-label', tip);
+    btn.title = tip;
   }
 
   // ── ميكرو-أنيميشن عند الضغط (دوران الأيقونة) ──
@@ -142,8 +145,7 @@
   // ── حقن الزر بعد توفر DOM ──
   if (document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', () => {
-      // إعادة تطبيق data-theme على body بعد توفره
-      apply(getStored());
+      apply(getStored()); // ضبط data-theme على body بعد توفره
       injectToggleButton();
     });
   } else {
@@ -151,28 +153,38 @@
     injectToggleButton();
   }
 
-  // مراقبة دائمة لإعادة بناء الـ topbar (بعض الصفحات تكتب innerHTML على .topbar)
-  // — لا تنتهي المراقبة، لأن إعادة البناء قد تحدث في أي وقت أثناء الـ session.
-  if (typeof MutationObserver !== 'undefined'){
-    const startObserver = () => {
-      const mo = new MutationObserver(() => {
-        // لو الـ topbar اتحط متأخر وما فيش زر → احقن
-        if (document.querySelector('.topbar-right') && !document.getElementById('themeToggleBtn')){
-          injectToggleButton();
-        }
-        // لو data-theme اتمسح من html (لأي سبب) → إعادة تطبيق
-        if (!document.documentElement.hasAttribute('data-theme')){
-          document.documentElement.setAttribute('data-theme', getStored());
-        }
-      });
-      mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-theme'] });
-    };
-    if (document.readyState === 'loading'){
-      document.addEventListener('DOMContentLoaded', startObserver);
-    } else {
-      startObserver();
-    }
+  // ── إعادة محاولات حقن الزر (للصفحات اللي تبني topbar متأخر) ──
+  // بديل خفيف للـ MutationObserver subtree — مجرد محاولات مجدولة.
+  // لا CPU overhead في الـ idle time (بعكس observer دائم).
+  function retryInject(){
+    if (document.getElementById('themeToggleBtn')) return;
+    if (document.querySelector('.topbar-right')) injectToggleButton();
   }
+  window.addEventListener('load', retryInject);
+  [200, 500, 1000, 2000].forEach(d => setTimeout(retryInject, d));
+
+  // ── مراقبة data-theme فقط (attribute واحد) — خفيف جدًا ──
+  // لو سكربت ثانٍ مسح data-theme نُعيد ضبطه. attributeFilter يقصره على
+  // attribute واحد، بدون subtree — مفيش performance hit.
+  if (typeof MutationObserver !== 'undefined'){
+    const mo = new MutationObserver(() => {
+      if (!document.documentElement.hasAttribute('data-theme')){
+        document.documentElement.setAttribute('data-theme', getStored());
+      }
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  // ── Keyboard shortcut: Ctrl/Cmd + Shift + L ──
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'L' || e.key === 'l' || e.code === 'KeyL')){
+      // لا تسرق الـ shortcut لو المستخدم في input/textarea (ما عدا الـ Ctrl)
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+      e.preventDefault();
+      cycle();
+    }
+  });
 
   // ── الـ API العام ──
   const API = {
