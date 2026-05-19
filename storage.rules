@@ -1,66 +1,169 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // إيصالات طلبات الدفع — أي مستخدم مصادق عليه يستطيع الرفع/القراءة
-    match /receipts/{file=**} {
-      allow read:  if request.auth != null;
+
+    // ══════════════════════════════════════════════════════════
+    // S0-4: Helper functions باستخدام Auth custom claims
+    // ══════════════════════════════════════════════════════════
+    // الـ Cloud Function syncUserAuthClaims ينشر:
+    //   request.auth.token.role      → دور المستخدم
+    //   request.auth.token.tenantId  → الـ tenant
+    //   request.auth.token.cfw       → canFinancialWrite flag
+    //   request.auth.token.cfr       → canFinancialRead flag
+    //
+    // backward compat: لو الـ user لم يُعمل له backfillAuthClaims بعد:
+    //   request.auth.token.tenantId == null → نعامله كـ 'merchant_001'
+    //   request.auth.token.role == null → role check يفشل (آمن، fail-closed)
+
+    function tenantOf(uid) {
+      return request.auth != null && request.auth.token.tenantId != null
+        ? request.auth.token.tenantId
+        : 'merchant_001';
+    }
+    function userRole() {
+      return request.auth != null && request.auth.token.role != null
+        ? request.auth.token.role
+        : '';
+    }
+    function isStaff() {
+      return userRole() in ['admin','operation_manager','customer_service',
+                            'graphic_designer','design_operator','production_agent',
+                            'shipping_officer','wallet_manager'];
+    }
+    function isFinancialRole() {
+      return userRole() in ['admin','operation_manager','wallet_manager']
+        || request.auth.token.cfw == true
+        || request.auth.token.cfr == true;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // NEW: Tenant-scoped paths (preferred — استخدمها في الـ uploads الجديدة)
+    // ══════════════════════════════════════════════════════════
+    // الـ frontend يبني الـ path هكذا:
+    //   const path = `receipts/${tenantId}/${user.uid}/${Date.now()}.jpg`;
+
+    // إيصالات طلبات الدفع — tenant + user scoped
+    match /receipts/{tenantId}/{userId}/{file=**} {
+      allow read: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && (request.auth.uid == userId || isFinancialRole());
       allow write: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && request.auth.uid == userId
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
-    // ملفات التصميم — أي مستخدم مصادق
-    match /designs/{file=**} {
-      allow read:  if request.auth != null;
+
+    // ملفات تصميم — tenant + order scoped
+    match /design-files/{tenantId}/{orderId}/{file=**} {
+      allow read: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','customer_service',
+                          'graphic_designer','design_operator','production_agent'];
       allow write: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','customer_service',
+                          'graphic_designer','design_operator']
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
+    // ملفات الطباعة النهائية — tenant + order scoped
+    match /print-finals/{tenantId}/{orderId}/{file=**} {
+      allow read: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','production_agent',
+                          'graphic_designer','design_operator'];
+      allow write: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','production_agent','design_operator']
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
+    // ملفات الإنتاج — tenant + order scoped
+    match /production/{tenantId}/{orderId}/{file=**} {
+      allow read: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','production_agent'];
+      allow write: if request.auth != null
+        && tenantOf(request.auth.uid) == tenantId
+        && userRole() in ['admin','operation_manager','production_agent']
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // LEGACY paths — backward compat (deprecation pending migration)
+    // ══════════════════════════════════════════════════════════
+    // هذه الـ paths القديمة لا تحتوي tenantId. الصفحات الموجودة تستمر
+    // ترفع إليها. مع migration الـ frontend خلال 3 شهور، الـ writes
+    // الجديدة تنتقل إلى الـ paths المنفصلة أعلاه.
+    //
+    // التضييق المحدود الآمن:
+    //   - الـ read محصور على staff (الـ public لا يقرأ receipts/designs)
+    //   - الـ write يبقى كما كان لتفادي كسر uploads حالية
+
+    // إيصالات طلبات الدفع — LEGACY
+    match /receipts/{file=**} {
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+    // ملفات التصميم — LEGACY
+    match /designs/{file=**} {
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
         && request.resource.size < 20 * 1024 * 1024;
     }
     match /design-refs/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
         && request.resource.size < 20 * 1024 * 1024;
     }
-    // ملفات الجاليري العام — قراءة عامة (للزوار)، الكتابة للمصادقين
+    // ملفات التصميم المهيكلة — LEGACY (paths بدون tenant)
+    match /design-files/{file=**} {
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+    // ملفات الطباعة النهائية — LEGACY
+    match /print-finals/{file=**} {
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+    // ملفات الإنتاج — LEGACY
+    match /production/{file=**} {
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+    // ملفات الجاليري العام — قراءة عامة (للزوار)، الكتابة للمصممين/الأدمن فقط
     match /gallery/{file=**} {
       allow read:  if true;
       allow write: if request.auth != null
+        && userRole() in ['admin','operation_manager','customer_service',
+                          'graphic_designer','design_operator']
         && request.resource.size < 20 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
-    }
-    // ملفات التصميم المهيكلة per-client/order/item/version
-    match /design-files/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
-        && request.resource.size < 50 * 1024 * 1024;
-    }
-    // ملفات الطباعة النهائية
-    match /print-finals/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
-        && request.resource.size < 50 * 1024 * 1024;
     }
     // صور المنتجات النهائية
     match /product-images/{file=**} {
-      allow read:  if request.auth != null;
+      allow read:  if request.auth != null && isStaff();
       allow write: if request.auth != null
+        && userRole() in ['admin','operation_manager','production_agent','graphic_designer']
         && request.resource.size < 20 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
-    // ملفات الإنتاج النهائية
-    match /production/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
-        && request.resource.size < 50 * 1024 * 1024;
-    }
-    // ملفات الشات (نصوص + صوت + ملفات)
+    // ملفات الشات (نصوص + صوت + ملفات) — staff only
     match /chat/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
         && request.resource.size < 20 * 1024 * 1024;
     }
-    // ستوريز الموظفين/الفريق
+    // ستوريز الموظفين/الفريق — staff only
     match /stories/{file=**} {
-      allow read:  if request.auth != null;
-      allow write: if request.auth != null
+      allow read:  if request.auth != null && isStaff();
+      allow write: if request.auth != null && isStaff()
         && request.resource.size < 20 * 1024 * 1024;
     }
     // أي مسار آخر — مرفوض افتراضياً (default-deny)
