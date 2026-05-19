@@ -16,7 +16,7 @@ import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
-  query, orderBy, serverTimestamp, getDocs, where
+  query, orderBy, serverTimestamp, getDocs, where, limit
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
   getStorage
@@ -294,41 +294,80 @@ export async function logout() {
 // ═══════════════════════════════════════
 // DATA LISTENERS — subscribe once, share everywhere
 // ═══════════════════════════════════════
-export function startListeners(callbacks = {}) {
+// S0-8 FIX: Bounded listeners. كانت تُحمَّل collections كاملة بدون حد →
+// عند 50k order = browser hang + Firestore reads bill explosion.
+// الآن: limit مفروض على collections الكبيرة (orders, clients).
+// products + wallets صغيرة طبعيًا (عشرات/مئات) — لا limit.
+//
+// الـ caller يقدر يخصّص الحدود عبر opts:
+//   startListeners({...}, { orderLimit: 500, clientLimit: 300 })
+// أو يمكنه أن يعطّل listener معين عبر opts.skip = ['orders', ...] لو
+// الصفحة تستخدم repository بديل.
+export function startListeners(callbacks = {}, opts = {}) {
   const subs = [];
+  const orderLimit  = opts.orderLimit  || 200;
+  const clientLimit = opts.clientLimit || 200;
+  const skip = new Set(opts.skip || []);
 
-  // Clients
-  subs.push(onSnapshot(query(collection(db,'clients'), orderBy('createdAt','desc')), snap => {
-    AppState.clients = snap.docs.map(d => ({...d.data(), _id: d.id}));
-    callbacks.onClients?.(AppState.clients);
-  }));
+  // Clients — bounded. الـ "آخر 200 عميل" يكفي للـ dropdown lookups والـ
+  // dashboards. الصفحات اللي تحتاج العملاء كاملين (clients.html, reports)
+  // تستخدم paginated queries محلية.
+  if (!skip.has('clients')) {
+    subs.push(onSnapshot(
+      query(collection(db,'clients'), orderBy('createdAt','desc'), limit(clientLimit)),
+      snap => {
+        AppState.clients = snap.docs.map(d => ({...d.data(), _id: d.id}));
+        callbacks.onClients?.(AppState.clients);
+      }
+    ));
+  }
 
-  // Orders (unified collection)
-  subs.push(onSnapshot(query(collection(db,'orders'), orderBy('createdAt','desc')), snap => {
-    AppState.orders = snap.docs.map(d => ({...d.data(), _id: d.id}));
-    callbacks.onOrders?.(AppState.orders);
-  }));
+  // Orders (unified collection) — bounded. أهم إصلاح أداء.
+  // الـ archived و cancelled مستبعدة لتقليل الـ payload (هم >50% عادة).
+  if (!skip.has('orders')) {
+    subs.push(onSnapshot(
+      query(collection(db,'orders'), orderBy('createdAt','desc'), limit(orderLimit)),
+      snap => {
+        AppState.orders = snap.docs.map(d => ({...d.data(), _id: d.id}));
+        callbacks.onOrders?.(AppState.orders);
+      }
+    ));
+  }
 
-  // Products
-  subs.push(onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc')), snap => {
-    AppState.products = snap.docs.map(d => ({...d.data(), _id: d.id}));
-    callbacks.onProducts?.(AppState.products);
-  }));
+  // Products — لا limit (عادة < 200 منتج). لو نمت → نضيف limit لاحقاً.
+  if (!skip.has('products')) {
+    subs.push(onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc')), snap => {
+      AppState.products = snap.docs.map(d => ({...d.data(), _id: d.id}));
+      callbacks.onProducts?.(AppState.products);
+    }));
+  }
 
-  // Wallets
-  subs.push(onSnapshot(query(collection(db,'wallets'), orderBy('name','asc')), snap => {
-    AppState.wallets = snap.docs.map(d => ({...d.data(), _id: d.id}));
-    callbacks.onWallets?.(AppState.wallets);
-  }));
+  // Wallets — لا limit (عشرات في كل الأحوال).
+  if (!skip.has('wallets')) {
+    subs.push(onSnapshot(query(collection(db,'wallets'), orderBy('name','asc')), snap => {
+      AppState.wallets = snap.docs.map(d => ({...d.data(), _id: d.id}));
+      callbacks.onWallets?.(AppState.wallets);
+    }));
+  }
 
-  // Settings
-  subs.push(onSnapshot(doc(db,'settings','main'), snap => {
-    if (snap.exists()) AppState.settings = snap.data();
-    callbacks.onSettings?.(AppState.settings);
-  }));
+  // Settings — doc واحدة، آمنة.
+  if (!skip.has('settings')) {
+    subs.push(onSnapshot(doc(db,'settings','main'), snap => {
+      if (snap.exists()) AppState.settings = snap.data();
+      callbacks.onSettings?.(AppState.settings);
+    }));
+  }
 
   AppState._unsubs = subs;
   return () => subs.forEach(u => u());
+}
+
+// S0-8 PART 2: Auto-cleanup عند navigation/unload لتفادي memory leak.
+// الصفحات SPA-like (التي تستبدل URL بدون reload) ترث listeners قديمة.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    try { (AppState._unsubs || []).forEach(u => u?.()); } catch(_){}
+  }, { once: true });
 }
 
 // ═══════════════════════════════════════
