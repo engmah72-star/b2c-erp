@@ -8,59 +8,26 @@
 // ويحقن زر التبديل تلقائيًا في .topbar-right لكل الصفحات بدون تعديل HTML.
 import './theme.js';
 
-import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signOut
+  onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
   query, orderBy, serverTimestamp, getDocs, where, limit
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import {
-  getStorage
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 // ═══════════════════════════════════════
-// FIREBASE CONFIG
+// FIREBASE — Single Source via core/firebase-init.js (RULE G2)
 // ═══════════════════════════════════════
-// ملاحظة (G2 Migration): core/firebase-init.js يحتوي على نسخة مطابقة وهو
-// الـ canonical singleton. لا يمكن استيراد منه هنا حالياً لأن 3 صفحات تستورد
-// {auth,db} من shared.js ثم تستدعي initializeApp() مباشرةً (approvals.html،
-// returns.html، shipping-lite.html). الـ migration يحتاج خطوة-بخطوة على
-// مستوى الصفحات حسب RULE G9.
-const FB_CONFIG = {
-  apiKey:            "AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
-  authDomain:        "business2card-c041b.firebaseapp.com",
-  projectId:         "business2card-c041b",
-  storageBucket:     "business2card-c041b.firebasestorage.app",
-  messagingSenderId: "235622448899",
-  appId:             "1:235622448899:web:d8652ff71082f7d003f336",
-};
-
-export const app  = initializeApp(FB_CONFIG);
-export const auth = getAuth(app);
-
-// ═══════════════════════════════════════
-// FIRESTORE مع Local Cache (IndexedDB)
-// ═══════════════════════════════════════
-// initializeFirestore يجب أن يُستدعى مرة واحدة وقبل أي getFirestore.
-// لو فشل (مثلاً صفحة استدعت getFirestore قبلاً)، نستخدم fallback.
-// النتيجة: الزيارة الثانية لأي صفحة تُحمَّل من الـ cache فوراً بدون
-// انتظار round-trip للشبكة.
-let _db;
-try {
-  _db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-  });
-  console.log('[shared] ✅ Firestore persistent cache enabled');
-} catch (e) {
-  console.warn('[shared] persistent cache unavailable, fallback to default:', e?.message);
-  _db = getFirestore(app);
-}
-export const db = _db;
-export const storage = getStorage(app);
+// shared.js يعتمد الآن على core/firebase-init.js كـ singleton مصدر لـ
+// app/auth/db/storage. الصفحات القديمة لا تحتاج تعديل لأن shared.js يُعيد
+// التصدير. الصفحات الجديدة يجب أن تستورد مباشرة من core/firebase-init.js.
+import { app as _coreApp, auth as _coreAuth, db as _coreDb, storage as _coreStorage } from './core/firebase-init.js';
+export const app = _coreApp;
+export const auth = _coreAuth;
+export const db = _coreDb;
+export const storage = _coreStorage;
 
 // ═══════════════════════════════════════
 // ROLES
