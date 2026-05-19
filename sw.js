@@ -17,6 +17,21 @@ const NETWORK_FIRST_SUFFIXES = [
   '/theme.js',
   '/financial-sync-engine.js',
   '/sw.js',
+  // ── Core JS modules without version pins — must stay fresh across deploys ──
+  '/sidebar-config.js',
+  '/smart-sidebar.js',
+  '/viewas.js',
+  '/financial-guard.js',
+  '/inbox-badge.js',
+  '/suggestions-fab.js',
+  '/notifications.js',
+  '/finance-core.js',
+  '/sync-monitor.js',
+  '/sw-register.js',
+  '/pwa-install.js',
+  '/ai-launcher.js',
+  '/ai-engine.js',
+  '/orders.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.

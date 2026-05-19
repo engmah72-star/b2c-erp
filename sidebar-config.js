@@ -57,6 +57,8 @@
     { file:'suggestions-admin.html', label:'اقتراحات الموظفين', ico:'💡', group:'admin',  adminOnly:true },
     { file:'marketplace.html',       label:'المنصة',          ico:'🏛️', group:'admin',  adminOnly:true },
     { file:'admin-alerts.html',      label:'تنبيهات النظام',   ico:'🚨', group:'admin',  adminOnly:true },
+    { file:'ai-insights.html',       label:'AI Insights',      ico:'🧠', group:'admin',  adminOnly:true },
+    { file:'ai-digest.html',         label:'الموجز اليومي',    ico:'📰', group:'admin',  adminOnly:true },
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
   ];
 

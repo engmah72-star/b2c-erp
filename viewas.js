@@ -169,12 +169,47 @@
 
   injectBanner();
 
+  // ── Defensive role-gate (P0 security) ─────────────────────────────
+  // قبل تطبيق أي override على AppState، نتحقق أن المستخدم الحقيقي (قبل
+  // المعاينة) هو admin أو operation_manager. هذا يمنع أي محاولة لرفع
+  // الصلاحيات عبر ضبط sessionStorage يدوياً من DevTools.
+  //
+  // viewas.js يعمل كـ IIFE قبل shared.js initAuth، لذلك currentRole لا
+  // يكون متوفراً فوراً. نلتقط أول قيمة نراها كـ "real role" قبل أي override.
+  let __vaAborted = false;
+  function gateAdminOrAbort(){
+    if (__vaAborted) return false;
+    if (!window.AppState) return null; // غير جاهز بعد — نُعيد المحاولة
+    // ألتقط الدور الحقيقي مرة واحدة قبل أي override
+    if (window.AppState._realRole === undefined) {
+      const cur = window.AppState.currentRole;
+      // إذا كان الدور الحالي مطابقاً للـ target → ربما override طُبِّق سابقاً
+      // أو لا يزال غير محمَّل. نتجاهل ونعيد المحاولة.
+      if (!cur || cur === va.role) return null;
+      window.AppState._realRole = cur;
+    }
+    const realRole = window.AppState._realRole;
+    if (['admin', 'operation_manager'].includes(realRole)) return true;
+    // غير مصرّح → امسح الحالة وأخفِ البانر
+    console.warn('[viewas] non-admin role detected:', realRole, '— clearing state');
+    __vaAborted = true;
+    setState(null);
+    sessionStorage.removeItem(ADMIN_UID_KEY);
+    document.getElementById('b2c-va-banner')?.remove();
+    document.getElementById('b2c-va-style')?.remove();
+    try { obs?.disconnect?.(); } catch(_){}
+    return false;
+  }
+
   // ── Apply identity override to common globals (best effort) ──
   // Pages that use shared.js → AppState gets overridden
   // Pages with their own currentRole need to opt in via window.__b2cApplyViewAs()
   function applyIdentity(){
     if (window.AppState) {
       try {
+        const gate = gateAdminOrAbort();
+        if (gate === false) return; // غير مصرّح
+        if (gate === null) return;  // غير جاهز — انتظر التكرار التالي
         window.AppState.currentRole = va.role;
         window.AppState.userPerms   = va.permissions || {};
         window.AppState.userName    = va.name;
@@ -183,7 +218,7 @@
     // Provide a helper that pages can call after they load their own user doc
     window.__b2cApplyViewAs = function(userDataLike){
       // Returns a merged user-data object using the view-as identity
-      if (!va) return userDataLike;
+      if (!va || __vaAborted) return userDataLike;
       return {
         ...userDataLike,
         role:        va.role,
@@ -200,7 +235,7 @@
   const tick = setInterval(()=>{
     n++;
     applyIdentity();
-    if (n >= 20) clearInterval(tick);
+    if (n >= 20 || __vaAborted) clearInterval(tick);
   }, 250);
 
   // ── Block writes (defensive — visible signal) ──

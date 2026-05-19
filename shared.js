@@ -8,54 +8,26 @@
 // ويحقن زر التبديل تلقائيًا في .topbar-right لكل الصفحات بدون تعديل HTML.
 import './theme.js';
 
-import { initializeApp }  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signOut
+  onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
   query, orderBy, serverTimestamp, getDocs, where, limit
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import {
-  getStorage
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 // ═══════════════════════════════════════
-// FIREBASE CONFIG
+// FIREBASE — Single Source via core/firebase-init.js (RULE G2)
 // ═══════════════════════════════════════
-const FB_CONFIG = {
-  apiKey:            "AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",
-  authDomain:        "business2card-c041b.firebaseapp.com",
-  projectId:         "business2card-c041b",
-  storageBucket:     "business2card-c041b.firebasestorage.app",
-  messagingSenderId: "235622448899",
-  appId:             "1:235622448899:web:d8652ff71082f7d003f336",
-};
-
-export const app  = initializeApp(FB_CONFIG);
-export const auth = getAuth(app);
-
-// ═══════════════════════════════════════
-// FIRESTORE مع Local Cache (IndexedDB)
-// ═══════════════════════════════════════
-// initializeFirestore يجب أن يُستدعى مرة واحدة وقبل أي getFirestore.
-// لو فشل (مثلاً صفحة استدعت getFirestore قبلاً)، نستخدم fallback.
-// النتيجة: الزيارة الثانية لأي صفحة تُحمَّل من الـ cache فوراً بدون
-// انتظار round-trip للشبكة.
-let _db;
-try {
-  _db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-  });
-  console.log('[shared] ✅ Firestore persistent cache enabled');
-} catch (e) {
-  console.warn('[shared] persistent cache unavailable, fallback to default:', e?.message);
-  _db = getFirestore(app);
-}
-export const db = _db;
-export const storage = getStorage(app);
+// shared.js يعتمد الآن على core/firebase-init.js كـ singleton مصدر لـ
+// app/auth/db/storage. الصفحات القديمة لا تحتاج تعديل لأن shared.js يُعيد
+// التصدير. الصفحات الجديدة يجب أن تستورد مباشرة من core/firebase-init.js.
+import { app as _coreApp, auth as _coreAuth, db as _coreDb, storage as _coreStorage } from './core/firebase-init.js';
+export const app = _coreApp;
+export const auth = _coreAuth;
+export const db = _coreDb;
+export const storage = _coreStorage;
 
 // ═══════════════════════════════════════
 // ROLES
@@ -155,28 +127,21 @@ export function getOrdersForPage(orders, page, userRole, userId) {
 // ═══════════════════════════════════════
 // PERMISSIONS ENGINE
 // ═══════════════════════════════════════
-
-// Default permissions per role (can be overridden per user)
-// RULE 8 — DATA ACCESS BOUNDARIES (انظر CLAUDE.md)
+// G9 Incremental Migration: المصدر الوحيد لـ DEFAULT_PERMISSIONS و
+// SENSITIVE_FIELDS هو core/permissions-matrix.js. هنا نُعيد التصدير فقط
+// للحفاظ على التوافق مع الصفحات القديمة (`import { DEFAULT_PERMISSIONS } from './shared.js'`).
+//
+// RULE 8 — DATA ACCESS BOUNDARIES (انظر CLAUDE.md):
 // - client_phone:   CS + Admin + Ops + Shipping فقط
 // - design_data:    CS + Admin + Designer + Design Op + Production فقط
-export const DEFAULT_PERMISSIONS = {
-  admin:            { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  design_data:true,  supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
-  operation_manager:{ price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:true,  design_data:false, supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:true,  kpi_revenue:true,  ship_cost:true,  ship_company:true },
-  customer_service: { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  design_data:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:true },
-  graphic_designer: { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, design_data:true,  supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
-  design_operator:  { price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:false, reports_sales:false, reports_perf:true,  kpi_revenue:false, ship_cost:false, ship_company:false },
-  production_agent: { price_sale:false, price_paid:false, price_remaining:false, price_cost:true,  price_margin:false, client_phone:false, design_data:true,  supplier_name:true,  supplier_cost:true,  reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:false, ship_company:false },
-  shipping_officer: { price_sale:false, price_paid:false, price_remaining:true,  price_cost:false, price_margin:false, client_phone:true,  design_data:false, supplier_name:false, supplier_cost:false, reports_sales:false, reports_perf:false, kpi_revenue:false, ship_cost:true,  ship_company:true  },
-  wallet_manager:   { price_sale:true,  price_paid:true,  price_remaining:true,  price_cost:true,  price_margin:true,  client_phone:false, design_data:false, supplier_name:true,  supplier_cost:true,  reports_sales:true,  reports_perf:false, kpi_revenue:true,  ship_cost:true,  ship_company:true  },
-};
+// - supplier_cost / price_cost / price_margin: ضمن SENSITIVE_FIELDS (fail-closed)
+import {
+  DEFAULT_PERMISSIONS as _DEFAULT_PERMISSIONS,
+  canSeeField as _canSeeField,
+  maskPhone as _maskPhone,
+} from './core/permissions-matrix.js';
 
-/**
- * Check if current user can see a field.
- * For sensitive fields (client_phone, design_data) the default for unknown
- * roles is FALSE — fail-closed. For non-sensitive fields, default is TRUE.
- */
-const SENSITIVE_FIELDS = new Set(['client_phone', 'design_data']);
+export const DEFAULT_PERMISSIONS = _DEFAULT_PERMISSIONS;
 /**
  * Multi-tenant helper — الـ tenant الحالي للمستخدم.
  * Phase 1: الكل في merchant_001 (الشركة الأساسية).
@@ -195,29 +160,16 @@ export function tenantFields(tenantId) {
   return { tenantId: tenantId || DEFAULT_TENANT_ID };
 }
 
+// Backward-compat wrapper: shared.js's legacy signature is canSee(field, userPerms, userRole)
+// while core/permissions-matrix.js uses canSeeField(field, userRole, userPerms).
+// Keep the legacy order stable so existing call sites in approvals.html, returns.html,
+// shipping-lite.html keep working without modification.
 export function canSee(field, userPerms, userRole) {
-  // User-level override first
-  if (userPerms && userPerms[field] !== undefined) return userPerms[field];
-  // Fall back to role default
-  const def = DEFAULT_PERMISSIONS[userRole]?.[field];
-  if (def !== undefined) return def;
-  // Unknown role: fail-closed on sensitive fields, open on the rest.
-  return !SENSITIVE_FIELDS.has(field);
+  return _canSeeField(field, userRole, userPerms);
 }
 
-/**
- * Mask a phone number for display to roles without `client_phone` permission.
- * Returns the original phone if `canShow` is true, else a masked form.
- *   01234567890 → 012****7890
- * Always safe to call — never throws on null/empty input.
- */
-export function maskPhone(phone, canShow = false) {
-  if (!phone) return '';
-  if (canShow) return phone;
-  const s = String(phone).replace(/\D/g, '');
-  if (s.length < 6) return '****';
-  return s.slice(0, 3) + '****' + s.slice(-3);
-}
+// Re-export maskPhone from core (same signature, no transformation needed).
+export const maskPhone = _maskPhone;
 
 // Expose masking helper to non-module pages (legacy HTML that loads shared.js as a regular script)
 if (typeof window !== 'undefined') {

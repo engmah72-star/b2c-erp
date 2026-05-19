@@ -22,6 +22,12 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+// BASE: المجلد الذي يحتوي على هذا الـ SW (مع slash نهائي). يدعم أي host:
+//   - Firebase Hosting:  business2card-c041b.web.app/    → BASE = '/'
+//   - GitHub Pages user: engmah72-star.github.io/        → BASE = '/'
+//   - GitHub Pages repo: engmah72-star.github.io/b2c-erp/ → BASE = '/b2c-erp/'
+const BASE = self.location.pathname.replace(/[^/]+$/, '');
+
 messaging.onBackgroundMessage(payload => {
   const n     = payload.notification || {};
   const data  = payload.data || {};
@@ -29,12 +35,12 @@ messaging.onBackgroundMessage(payload => {
   const body  = n.body  || '';
   const link  = (payload.fcmOptions && payload.fcmOptions.link)
              || data.link
-             || '/index.html';
+             || (BASE + 'index.html');
 
   self.registration.showNotification(title, {
     body,
-    icon:  '/icon-192.png',
-    badge: '/icon-192.png',
+    icon:  BASE + 'icon-192.png',
+    badge: BASE + 'icon-192.png',
     dir:   'rtl',
     lang:  'ar',
     data:  { link, ...data },
@@ -44,7 +50,7 @@ messaging.onBackgroundMessage(payload => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const link = (event.notification.data && event.notification.data.link) || '/index.html';
+  const link = (event.notification.data && event.notification.data.link) || (BASE + 'index.html');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       // Reuse an open tab on the same origin if any
