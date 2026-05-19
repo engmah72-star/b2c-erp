@@ -32,6 +32,12 @@ const NETWORK_FIRST_SUFFIXES = [
   '/ai-launcher.js',
   '/ai-engine.js',
   '/orders.js',
+  '/fcm-init.js',
+  '/firebase-messaging-sw.js',
+  '/returns-core.js',
+  '/workforce-core.js',
+  '/marketplace-core.js',
+  '/marketplace-engine.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
