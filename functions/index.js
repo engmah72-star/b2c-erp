@@ -2311,7 +2311,7 @@ exports.partnerSignIn = onCall(
     }
 
     const snap = await db.collection('tenants').doc(tenantId).get();
-    if (!snap.exists()) throw new HttpsError('not-found', 'tenant غير موجود');
+    if (!snap.exists) throw new HttpsError('not-found', 'tenant غير موجود');
     const t = snap.data();
     if (!t.isActive) throw new HttpsError('permission-denied', 'الحساب موقوف');
     if (!t.portalSecret) throw new HttpsError('failed-precondition', 'portal غير مفعَّل لهذا الحساب');
@@ -2352,7 +2352,7 @@ exports.backfillTenantId = onCall(
 
     // تحقق من admin role من الـ users doc
     const userSnap = await db.collection('users').doc(request.auth.uid).get();
-    const userRole = userSnap.exists() ? userSnap.data().role : null;
+    const userRole = userSnap.exists ? userSnap.data().role : null;
     if (userRole !== 'admin') throw new HttpsError('permission-denied', 'admin only');
 
     const target = String(request.data?.collection || '');
