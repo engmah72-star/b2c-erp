@@ -781,6 +781,99 @@ if (order.shipMethod === SHIPPING_METHODS.COMPANY) { ... }
 
 ---
 
+## RULE F1 — FIREBASE PRINCIPLE (ميثاق Firebase = بنية تحتية)
+
+> **Firebase بنية تحتية، ليس Architecture معقدة.**
+>
+> الهدف: السرعة + البساطة + الاستقرار + سهولة التطوير + التشغيل اليومي.
+> ليس: design patterns مبالَغ فيها أو abstractions غير ضرورية.
+> هذه القاعدة توحّد وتوسّع: RULE 1 + RULE 2 + RULE 3 + RULE G2 + RULE G4.
+
+### F1.1 — Firebase كبنية تحتية مركزية
+| الخدمة | المصدر الوحيد |
+|--------|---------------|
+| App / Auth / DB / Storage init | `core/firebase-init.js` (RULE G2) |
+| Firestore data | `Firestore` هو المصدر الرسمي للحقيقة |
+| Authentication | `core/firebase-init.js` → `auth` |
+| Storage | `core/firebase-init.js` → `storage` |
+
+**ممنوع:** أي صفحة تستدعي `initializeApp()` بـ config محلي.
+**الاستثناء:** Secondary apps لإنشاء users جدد (employees.html) — pattern Firebase معتمد.
+
+### F1.2 — Firestore = Single Source of Truth (تعزيز RULE 1)
+- لا cache محلي للأرصدة أو الحالات
+- لا "نسخة احتياطية" من البيانات في localStorage إلا لـ UI preferences
+- التغييرات تنعكس فوراً عبر `onSnapshot`
+
+### F1.3 — Collections منظمة، لا عشوائية
+**كل collection جديد يجب:**
+1. يخدم أحد الأطراف الـ 4 (شركة/عملاء/موظفين/موردين)
+2. له ownership واضح (من يكتب؟ من يقرأ؟)
+3. مُسجَّل في `firestore.rules`
+4. له purpose واحد محدَّد — لا "general-purpose collections"
+
+**ممنوع:**
+- ❌ Collections لـ features غير مستخدمة
+- ❌ Duplicate collections (مثل `clients_v2` بجانب `clients`)
+- ❌ Collections بدون write rules صريحة
+
+### F1.4 — Atomic Writes (تعزيز RULE 3)
+- العمليات المرتبطة تُكتب في `writeBatch` واحد
+- الحدث المالي يمر عبر `dispatchFinancialEvent()` (atomic داخلياً)
+- لا `await` متسلسلة بين writes
+
+### F1.5 — Financial Writes عبر FSE فقط (تعزيز RULE 2 + 4 + G6)
+الـ collections التالية تُكتب **فقط** عبر `financial-sync-engine.js`:
+- `wallets`
+- `transactions_v2`
+- `financial_ledger`
+- `employee_payments`
+- `supplier_payments`
+
+**Helpers معتمدة:** `dispatchFinancialEvent`, `addLedgerToBatch`.
+**ممنوع:** أي `updateDoc/setDoc/addDoc` مباشر على هذه الـ collections من صفحة.
+
+### F1.6 — Pages ليست Repositories
+- الصفحات لا تحتوي **business logic معقد**
+- الـ Firestore calls المتكررة (queries، writes) تُجمَّع في:
+  - `orders.js` (للأوردرات)
+  - `order-actions.js` (للأفعال)
+  - `financial-sync-engine.js` (للمالية)
+  - مستقبلاً: `features/{name}/repository.js` (RULE G4 target)
+
+**النمط المسموح في الصفحة:**
+```js
+// قراءة (مسموحة inline):
+onSnapshot(query(collection(db,'orders'), where('stage','==','design'), limit(50)), ...);
+
+// كتابة (يجب أن تمر بـ action مركزي):
+await orderActions.submitToPrinting({db, orderId, ...});
+```
+
+### F1.7 — Bounded Queries (تعزيز RULE G3)
+كل `onSnapshot`/`getDocs` يجب أن يحتوي `limit()`. (G3)
+
+### F1.8 — Trace Clarity (تعزيز RULE 5)
+- كل كتابة مالية تُسجَّل في `financial_ledger`
+- كل تغيير على `order.stage` يُسجَّل في `order.timeline`
+- كل عملية أدمن تُسجَّل في `audit_logs` (لو نقدر)
+
+### F1.9 — Storage مركزي
+- كل uploads تمر عبر helpers (مستقبلاً: `core/storage-helpers.js`)
+- structure موحَّد للـ paths: `{module}/{entityId}/{filename}`
+- ممنوع inline `uploadBytes` مبعثر — يصعّب الـ migration والـ cleanup
+
+### F1.10 — Cloud Functions
+- Functions في `functions/index.js` تتبع نفس القواعد (FSE، atomic، tenant-aware)
+- لا financial logic داخل Cloud Function إلا عبر helpers من FSE
+
+### 🚫 القاعدة النهائية
+**Firebase وُجد لنُسرع لا لنُعقّد. أي pattern يضيف layer بدون قيمة تشغيلية مباشرة = يُرفض.**
+
+أي drift عن هذه القواعد = Technical Debt يُسجَّل في `FIREBASE_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
