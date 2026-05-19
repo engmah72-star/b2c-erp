@@ -13,7 +13,7 @@
 
 | التصنيف | العدد | الأثر |
 |---|---|---|
-| **Modules ميتة (Dead Code)** | 4 | `core/firebase-init.js`، `core/permissions-matrix.js`، `fcm-init.js`، `sidebar-manager.js` |
+| **Modules ميتة (Dead Code)** | 3 | `core/firebase-init.js`، `core/permissions-matrix.js`، `sidebar-manager.js` (legacy) |
 | **Modules مُهاجَرة جزئياً (Partial)** | 9 | duplication في `returns-core`، `finance-core` غير موسَّع، `date-range-picker` widget محصور |
 | **صفحات Orphan (لا sidebar ولا inbound)** | 4 | `exec-cost-entry.html` (98KB!)، `agent-pricing.html` (44KB)، `validate-financial.html`، `whatsapp.html` |
 | **صفحات في sidebar لكن بنقاط دخول هشة (Single Source)** | 3 | `supplier-requests.html`، `ai-digest.html`، `employee-profile.html` |
@@ -72,11 +72,12 @@
 
 ## 3. Broken Integrations Report — Integrations مكسورة
 
-### 3.1 FCM Push Notifications — مكسور كلياً
-- `fcm-init.js` يُستورَد في `notifications.js:6` بـ `import { initFcm }` لكن **لا يُستدعى أبداً** بعد import.
-- `firebase-messaging-sw.js` يستخدم config مُدمَج (hardcoded)، لا يمر عبر `fcm-init.js`.
-- Service Worker الرئيسي `sw.js` لا يستدعي FCM SW.
-- **النتيجة:** لا توجد push notifications فعلية على المتصفح، فقط in-page toasts.
+### 3.1 FCM Push Notifications — تغطية ناقصة (تصحيح بعد إعادة الفحص)
+- `fcm-init.js` يُستدعى فعلياً في `notifications.js:43` عبر `initFcm(app, currentUser)`.
+- VAPID key مُهيَّأ، التسجيل يستدعي Cloud Function `registerFcmToken`.
+- **المشكلة الفعلية:** `notifications.js` مُحمَّل على **7 صفحات فقط** من أصل 65 ➜ FCM يُهيَّأ فقط في تلك الصفحات.
+- صفحات حرجة بدون FCM: `cs-dashboard`, `ops-dashboard`, `production-dashboard`, `shipping-dashboard`, `inbox.html`, `clients.html`, `index.html`.
+- **النتيجة:** المستخدم يحصل على push notifications فقط لو زار إحدى الصفحات الـ 7 خلال الجلسة.
 
 ### 3.2 Notifications.js Coverage — مكسور
 - `notifications.js` (367 سطر) يحتوي 8 listeners (tasks, orders × 4 stages, followups, notifications collection).
@@ -129,7 +130,7 @@
 
 | Script | حالته |
 |---|---|
-| `fcm-init.js` | يُستورَد لكن `initFcm()` لا تُستدعى |
+| `fcm-init.js` | ✅ مستدعى صحيح في notifications.js:43 — لكن notifications.js محصور في 7 صفحات |
 | `mobile-bridge.js` | يُستورَد دون `await initNativeBridge()` |
 | `core/firebase-init.js` | منشور لكن لم يربطه أي صفحة |
 | `core/permissions-matrix.js` | منشور لكن لم يستخدمه أي صفحة |
@@ -295,9 +296,15 @@
 |---|---|---|
 | `core/firebase-init.js` | **DEAD** | 0 imports |
 | `core/permissions-matrix.js` | **DEAD** | 0 imports |
-| `fcm-init.js` | **DEAD** | يُستورَد بدون استدعاء |
-| `sidebar-manager.js` | **LEGACY** | استبدَل بـ `smart-sidebar.js`؛ استخدام واحد في `whatsapp.html` |
-| `chat.html` | **STUB** | 1KB redirect إلى `inbox.html` فقط |
+| `sidebar-manager.js` | **LEGACY** | builds sidebar من صفر؛ مستخدم فقط في `whatsapp.html` (1 صفحة)؛ بقية الصفحات تستخدم `shared.js renderSidebar()` بقائمة NAV_ITEMS مستقلة |
+| `chat.html` | **STUB** | 1KB redirect إلى `inbox.html` فقط (لا href داخلي يقود إليه، فقط في SKIP lists لـ 4 modules) |
+
+> ⚠️ **اكتشاف إضافي بعد الفحص:** يوجد **3 نسخ من sidebar definition** في النظام:
+> 1. `shared.js:402-422` — `NAV_ITEMS` (19 entries)
+> 2. `sidebar-manager.js:5-24` — `SIDEBAR_PAGES` (15 entries، legacy)
+> 3. `sidebar-config.js:24-61` — `SIDEBAR_PAGES` (30 entries، canonical)
+>
+> هذا تكرار أعمق مما تم رصده أول مرة، ويحتاج refactor مخطَّط له (ليس Quick Win).
 
 ---
 
@@ -368,7 +375,7 @@
 | P0-2 | `SENSITIVE_FIELDS` ينقصه supplier_cost/price_cost/price_margin | `shared.js:179` | استورد من `core/permissions-matrix.js` أو وسِّع set |
 | P0-3 | Role escalation عبر `/users` PATCH | `firestore.rules:173` | منع تعديل `role`/`permissions` بـ field-level guard |
 | P0-4 | Unbounded listeners في `shared.js:301-326` | shared.js | أضف `limit(200)` على kل onSnapshot |
-| P0-5 | `fcm-init.js` import بدون call | `notifications.js:6` | احذف أو اربط `initFcm()` فعلياً |
+| P0-5 | FCM coverage محدود (7/65 صفحة) | `notifications.js` | حمِّل notifications.js على جميع dashboards (cs/ops/production/shipping/index) لتفعيل FCM لكل المستخدمين |
 | P0-6 | CACHE bump لا يلتزم في git | `.github/workflows/deploy.yml` | commit الـ sw.js بعد bump SHA |
 | P0-7 | duplicate DEFAULT_PERMISSIONS (3 مصادر) | shared.js + viewas.js + core/ | اعتمد `core/permissions-matrix.js` كمصدر وحيد |
 
@@ -458,7 +465,7 @@
 - **7 من 65** صفحة تحمِّل notifications.js (11% coverage).
 - **18 من 50** صفحة لديها SW registration رغم وجود pwa-install (36% misaligned).
 - **0** imports لـ `core/firebase-init.js` رغم إنشائه قبل ~6 commits.
-- **0** استدعاءات حقيقية لـ `initFcm()` ➜ Push Notifications ميتة.
+- **7/65** صفحة فقط تُحمِّل `notifications.js` ➜ FCM يعمل لكن coverage محدود (89% miss).
 - **1** صفحة فقط (partner-portal.html) تستخدم `tenantId` في query (RULE G7 على الورق).
 
 ---
@@ -467,7 +474,7 @@
 
 1. ✅ احذف `chat.html` واستبدل المراجع بـ `inbox.html` (10 دقائق).
 2. ✅ أضف version pin على 8 JS files (15 دقيقة).
-3. ✅ احذف `import { initFcm }` من `notifications.js:6` (5 دقائق).
+3. ✅ أضف `<script type="module" src="notifications.js">` إلى dashboards (cs/ops/production/shipping/index) لتوسيع تغطية FCM (15 دقيقة).
 4. ✅ أضف defensive role-check في `viewas.js:85` (10 دقائق).
 5. ✅ أضف `ai-digest` و `ai-insights` إلى `sidebar-config.js` (10 دقائق).
 6. ✅ أضف 4 JS files إلى NETWORK_FIRST_SUFFIXES في `sw.js` (5 دقائق).
@@ -476,3 +483,42 @@
 ---
 
 > **هذا التقرير يكمل التحليل في `AUDIT_REPORT_v2.md` و `STABILIZATION_PLAN.md` ويُركّز على VISIBILITY GAPS تحديداً (ما هو موجود لكن مخفي). يجب أن يكون مدخلاً لـ Sprint Plan إصلاح Hidden Features قبل Phase 2 Partner Onboarding.**
+
+---
+
+## 20. الإصلاحات المُنفَّذة في هذا الـ PR
+
+| # | Fix | الملف | الحالة |
+|---|---|---|---|
+| ✅ | إضافة `ai-insights` و `ai-digest` إلى Sidebar (admin only) | `sidebar-config.js:58-59` | DONE |
+| ✅ | توسيع `NETWORK_FIRST_SUFFIXES` لـ 14 ملف JS حرج | `sw.js:13-34` | DONE |
+| ✅ | **P0 Security** — defensive role-gate في `viewas.js` يمنع privilege escalation عبر sessionStorage tampering | `viewas.js:172-220` | DONE |
+| ✅ | تصحيح التقرير بعد إعادة الفحص: `initFcm()` يُستدعى فعلياً؛ المشكلة coverage فقط (7/65) | `HIDDEN_FEATURES_AUDIT.md §3.1, §12` | DONE |
+| ⏳ | باقي P0/P1 — يحتاج موافقة على Stable Core changes (firestore.rules, shared.js) | — | PENDING |
+
+### تفاصيل P0 Fix لـ viewas.js
+
+قبل الإصلاح:
+```js
+const va = getState();
+if (!va) return;
+// → كان يطبّق banner + AppState override فوراً بدون أي تحقُّق من دور المستخدم
+```
+
+بعد الإصلاح:
+```js
+// يلتقط الـ _realRole من AppState قبل أي override
+function gateAdminOrAbort() {
+  if (window.AppState._realRole === undefined) {
+    const cur = window.AppState.currentRole;
+    if (!cur || cur === va.role) return null;  // غير جاهز
+    window.AppState._realRole = cur;
+  }
+  if (['admin', 'operation_manager'].includes(window.AppState._realRole)) return true;
+  // غير مصرّح → امسح state + أخفِ banner
+  setState(null); ...
+  return false;
+}
+```
+
+**الأثر:** أي مستخدم غير admin/operation_manager يحاول تفعيل view-as يدوياً ➜ الـ state يُمسَح والـ banner يختفي تلقائياً بعد ms من تحميل الصفحة.
