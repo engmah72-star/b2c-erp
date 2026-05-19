@@ -64,21 +64,38 @@
     const order = ['dark','light','auto'];
     const cur = getStored();
     const next = order[(order.indexOf(cur) + 1) % order.length];
+    animateBtn();
     setTheme(next);
     return next;
   }
+
+  // ── أيقونات SVG احترافية (موحَّدة عبر الأجهزة) ──
+  const ICONS = {
+    light: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+    dark:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+    auto:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" fill="currentColor"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>'
+  };
 
   // ── تحديث UI الزر لو موجود ──
   function updateToggleUI(){
     const btn = document.getElementById('themeToggleBtn');
     if (!btn) return;
     const cur = getStored();
-    const ico = cur === 'light' ? '☀' : cur === 'dark' ? '☾' : '⚙';
     const lbl = cur === 'light' ? 'فاتح' : cur === 'dark' ? 'غامق' : 'تلقائي';
-    btn.innerHTML = `<span style="font-size:16px;line-height:1;display:inline-block;">${ico}</span>`;
+    btn.innerHTML = `<span class="theme-ico-wrap" style="display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:transform .35s cubic-bezier(.4,0,.2,1);">${ICONS[cur] || ICONS.dark}</span>`;
     btn.setAttribute('data-tip', `الوضع: ${lbl} — انقر للتبديل`);
     btn.setAttribute('aria-label', `تبديل الوضع، الحالي: ${lbl}`);
     btn.title = `الوضع: ${lbl} — انقر للتبديل`;
+  }
+
+  // ── ميكرو-أنيميشن عند الضغط (دوران الأيقونة) ──
+  function animateBtn(){
+    const btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+    const wrap = btn.querySelector('.theme-ico-wrap');
+    if (!wrap) return;
+    wrap.style.transform = 'rotate(360deg) scale(.85)';
+    setTimeout(() => { wrap.style.transform = 'rotate(0) scale(1)'; }, 50);
   }
 
   // ── حقن الزر تلقائيًا في الـ topbar ──
