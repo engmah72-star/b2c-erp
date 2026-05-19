@@ -57,7 +57,26 @@
 .modal-info-row span:first-child{color:var(--dim2)}
 .modal-info-row span:last-child{font-weight:800}
 .phone-masked{font-family:monospace;color:var(--dim2);font-size:11px}
-@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11.5px}.tbl th,.tbl td{padding:8px 6px}.cell-order,.phone-masked{font-size:10.5px}}
+.cell-sub{font-size:10.5px;color:var(--dim2);margin-top:2px}
+.invoice-cell{font-variant-numeric:tabular-nums;line-height:1.4}
+.invoice-cell .iv-row{display:flex;justify-content:space-between;gap:8px;font-size:11px}
+.invoice-cell .iv-row span:first-child{color:var(--dim2);font-weight:600}
+.invoice-cell .iv-row span:last-child{font-weight:800}
+.expand-btn{background:transparent;border:0;color:var(--dim2);cursor:pointer;font-size:14px;padding:4px 6px;border-radius:6px;transition:all .15s}
+.expand-btn:hover{background:var(--bg3);color:var(--c)}
+.expand-btn.on{color:var(--c);transform:rotate(90deg)}
+.row-expanded{background:var(--bg3) !important}
+.row-detail td{padding:0 !important;border-bottom:1px solid var(--line) !important}
+.row-detail-inner{padding:14px 20px;background:var(--bg3);display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.detail-block{background:var(--bg2);border-radius:var(--rad);padding:10px 12px}
+.detail-block h4{margin:0 0 6px 0;font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px}
+.detail-block .dline{font-size:12px;padding:2px 0;display:flex;justify-content:space-between}
+.detail-block .dline span:first-child{color:var(--dim2)}
+.detail-block .dline span:last-child{font-weight:700}
+.items-list{font-size:11.5px;line-height:1.7}
+.items-list li{padding:1px 0}
+.row-aged{border-right:2px solid var(--r) !important}
+@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11.5px}.tbl th,.tbl td{padding:8px 6px}.cell-order,.phone-masked{font-size:10.5px}.invoice-cell .iv-row{font-size:10.5px}}
 </style>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -143,11 +162,12 @@
       <table class="tbl">
         <thead>
           <tr>
+            <th style="width:30px"></th>
             <th>العميل</th>
             <th>الطلب</th>
-            <th>المحافظة</th>
-            <th>المدينة</th>
-            <th>باقي على العميل</th>
+            <th>الموقع</th>
+            <th>الشركة / الطريقة</th>
+            <th>الفاتورة (إجمالي / مدفوع / باقي)</th>
             <th>تكلفة الشحن</th>
             <th>المستلم</th>
             <th>الحالة</th>
@@ -155,7 +175,7 @@
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="9" class="empty"><div class="loader"><div class="spinner"></div></div></td></tr>
+          <tr><td colspan="10" class="empty"><div class="loader"><div class="spinner"></div></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -437,7 +457,9 @@ function actionsCell(o) {
   if (stage === 'collected') return canSettle()
     ? `<button class="btn btn-c btn-sm" onclick="window.openSettleSingle('${id}')">📦 تسوية</button>`
     : `<span style="color:var(--y);font-size:11px">⏳ بانتظار التسوية</span>`;
-  if (stage === 'settled')   return `<span style="color:var(--dim2);font-size:11px">✅</span>`;
+  if (stage === 'settled')   return o.stage === 'archived'
+    ? `<span style="color:var(--dim2);font-size:11px">📁 مؤرشف</span>`
+    : `<button class="btn btn-ghost btn-sm" onclick="window.confirmArchive('${id}')">📁 أرشفة</button>`;
   if (stage === 'returned')  return `<span style="color:var(--r);font-size:11px">⏎</span>`;
   return '';
 }
@@ -445,7 +467,7 @@ function actionsCell(o) {
 function renderRows(list) {
   const tbody = $('rows');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty"><div class="empty-ico">📭</div>لا توجد شحنات تطابق الفلاتر</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty"><div class="empty-ico">📭</div>لا توجد شحنات تطابق الفلاتر</td></tr>`;
     return;
   }
   // ترتيب: الأقدم في الأعلى (أولوية للشحنات المتراكمة)
@@ -454,33 +476,105 @@ function renderRows(list) {
     const tb = b.createdAt?.toMillis?.() || 0;
     return ta - tb;
   });
+
+  const methodLabel = (m) => ({
+    company:'شركة شحن (CoD)', internal:'مندوب داخلي',
+    pickup:'استلام من المطبعة', prepaid:'مدفوع مسبقاً'
+  }[m] || m || '—');
+
   tbody.innerHTML = sorted.map(o => {
     const remaining = safeNum(o.remaining);
     const cost = safeNum(o.shippingCost);
     const received = safeNum(o.shipCollected || o.totalPaid);
+    const total = safeNum(o.totalPrice || o.total || 0);
+    const paid = safeNum(o.totalPaid || 0);
     const phoneVisible = canSee('client_phone', null, myRole);
     const rawPhone = (o.clientPhone || '').toString().replace(/\D/g, '');
     const phone = maskPhone(o.clientPhone || '', phoneVisible);
-    // WhatsApp link: متاح فقط لمن يرى الرقم الكامل + لو الرقم صالح
     const waLink = (phoneVisible && rawPhone.length >= 10)
       ? ` <a href="https://wa.me/${rawPhone.startsWith('20') ? rawPhone : '20' + rawPhone.replace(/^0/, '')}" target="_blank" rel="noopener" title="واتساب" style="color:var(--g);text-decoration:none;font-size:13px;margin-inline-start:4px">💬</a>`
       : '';
-    return `<tr>
+    const ageDays = ageInDays(o);
+    const ageStr = ageDays >= 1 ? `${Math.floor(ageDays)} يوم` : 'اليوم';
+    const aged = isDelayed(o) ? 'row-aged' : '';
+    const created = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleDateString('ar-EG', {day:'2-digit', month:'2-digit'}) : '';
+
+    return `<tr id="r-${o._id}" class="${aged}">
+      <td><button class="expand-btn" onclick="window.toggleRow('${o._id}')" title="تفاصيل">▶</button></td>
       <td>
         <div class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</div>
         ${phone ? `<div class="phone-masked">${phone}${waLink}</div>` : ''}
       </td>
-      <td><div class="cell-order">${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</div></td>
-      <td>${(o.gov || o.governorate || '—').replace(/</g,'&lt;')}</td>
-      <td>${(o.city || '—').replace(/</g,'&lt;')}</td>
-      <td><span class="cell-money ${remaining>0?'money-neg':'money-zero'}">${fmt(remaining)}</span></td>
+      <td>
+        <div class="cell-order">#${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</div>
+        <div class="cell-sub">${created} • ${ageStr}</div>
+      </td>
+      <td>
+        <div>${(o.gov || o.governorate || '—').replace(/</g,'&lt;')}</div>
+        <div class="cell-sub">${(o.city || '—').replace(/</g,'&lt;')}</div>
+      </td>
+      <td>
+        <div style="font-weight:700">${(o.shipCompanyName || '—').replace(/</g,'&lt;')}</div>
+        <div class="cell-sub">${methodLabel(o.shipMethod)}</div>
+      </td>
+      <td class="invoice-cell">
+        <div class="iv-row"><span>إجمالي</span><span>${fmt(total)}</span></div>
+        <div class="iv-row"><span>مدفوع</span><span class="money-pos">${fmt(paid)}</span></div>
+        <div class="iv-row"><span>باقي</span><span class="${remaining>0?'money-neg':'money-zero'}">${fmt(remaining)}</span></div>
+      </td>
       <td><span class="cell-money ${cost>0?'money-neg':'money-zero'}">${fmt(cost)}</span></td>
       <td><span class="cell-money ${received>0?'money-pos':'money-zero'}">${fmt(received)}</span></td>
       <td>${statusChip(getShipStage(o))}</td>
       <td><div class="row-actions">${actionsCell(o)}</div></td>
+    </tr>
+    <tr id="d-${o._id}" class="row-detail" style="display:none">
+      <td colspan="10"><div class="row-detail-inner">${detailHTML(o)}</div></td>
     </tr>`;
   }).join('');
 }
+
+function detailHTML(o) {
+  const items = Array.isArray(o.items) ? o.items : [];
+  const itemsBlock = items.length
+    ? `<ul class="items-list">${items.slice(0,8).map(it => `<li>• ${(it.name||it.title||'منتج').replace(/</g,'&lt;')} ${it.qty?`× ${it.qty}`:''}</li>`).join('')}${items.length>8?`<li style="color:var(--dim2)">... +${items.length-8} منتج آخر</li>`:''}</ul>`
+    : `<div style="color:var(--dim2);font-size:11px">لا منتجات مسجَّلة</div>`;
+  const created = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleString('ar-EG') : '—';
+  const dispatched = o.shipDispatchedAt?.toDate?.() ? o.shipDispatchedAt.toDate().toLocaleString('ar-EG') : '—';
+  const collected = o.shipCollectedAt?.toDate?.() ? o.shipCollectedAt.toDate().toLocaleString('ar-EG') : '—';
+  return `
+    <div class="detail-block">
+      <h4>📦 المنتجات (${items.length})</h4>
+      ${itemsBlock}
+      ${o.note ? `<div style="margin-top:6px;font-size:11px;color:var(--dim2)">📝 ${o.note.replace(/</g,'&lt;')}</div>` : ''}
+    </div>
+    <div class="detail-block">
+      <h4>📅 الـ Timeline</h4>
+      <div class="dline"><span>تم الإنشاء</span><span>${created}</span></div>
+      <div class="dline"><span>تسليم الشركة</span><span>${dispatched}</span></div>
+      <div class="dline"><span>تأكيد التحصيل</span><span>${collected}</span></div>
+      ${o.shipSettled ? `<div class="dline"><span>تم تسويته</span><span>✅</span></div>` : ''}
+    </div>
+    <div class="detail-block">
+      <h4>💰 المالية</h4>
+      <div class="dline"><span>إجمالي الفاتورة</span><span>${fmt(o.totalPrice||o.total||0)} ج</span></div>
+      <div class="dline"><span>مدفوع</span><span>${fmt(o.totalPaid||0)} ج</span></div>
+      <div class="dline"><span>باقي على العميل</span><span class="${(o.remaining||0)>0?'money-neg':'money-zero'}">${fmt(o.remaining||0)} ج</span></div>
+      <div class="dline"><span>تكلفة الشحن</span><span>${fmt(o.shippingCost||0)} ج</span></div>
+      <div class="dline"><span>مُحصَّل عبر الشحن</span><span class="money-pos">${fmt(o.shipCollected||0)} ج</span></div>
+      ${o.shipSettled ? `<div class="dline"><span>صافي التسوية</span><span class="money-pos">${fmt(o.shipSettledAmount||0)} ج</span></div>` : ''}
+    </div>`;
+}
+
+window.toggleRow = (id) => {
+  const detail = document.getElementById('d-' + id);
+  const row = document.getElementById('r-' + id);
+  if (!detail || !row) return;
+  const btn = row.querySelector('.expand-btn');
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : '';
+  row.classList.toggle('row-expanded', !isOpen);
+  if (btn) btn.classList.toggle('on', !isOpen);
+};
 
 // ══════════════════════════════════════════════════
 // ACTIONS: Dispatch / Collect / Settle
@@ -705,6 +799,32 @@ async function confirmSettle() {
   }
 }
 window.confirmSettle = confirmSettle;
+
+// ══════════════════════════════════════════════════
+// ARCHIVE: نقل الأوردر من stage=shipping إلى stage=archived
+// — بدون أي حركة مالية (التسوية حصلت بالفعل)
+// — يخفي الأوردر من قوائم الشحن النشطة
+// ══════════════════════════════════════════════════
+window.confirmArchive = async (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  if (!o.shipSettled) { toast('⚠️ لازم تسوّي قبل الأرشفة', 'err'); return; }
+  if (!confirm(`أرشفة طلب #${o.orderNumber || o._id.slice(0,6)} للعميل ${o.clientName||''}؟\n\nسينتقل من مرحلة الشحن إلى الأرشيف.`)) return;
+  try {
+    await updateDoc(doc(db, 'orders', orderId), {
+      stage: 'archived',
+      shipStage: 'completed',
+      archivedAt: serverTimestamp(),
+      archivedBy: me.uid,
+      archivedByName: $('nav-name').textContent,
+      updatedAt: serverTimestamp(),
+    });
+    toast('📁 تم الأرشفة');
+  } catch (e) {
+    console.error(e);
+    toast('❌ ' + (e.message || 'خطأ في الأرشفة'), 'err');
+  }
+};
 </script>
 <script src="sw-register.js"></script>
 </body>
