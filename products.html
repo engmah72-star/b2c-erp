@@ -330,6 +330,8 @@
 <script type="module">
 
 import { app, auth, db } from "./core/firebase-init.js";
+import { productActions } from "./product-actions.js";
+import { canDo } from "./core/permissions-matrix.js";
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
   const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
@@ -782,27 +784,13 @@ window.saveProd=async function(){
     data.basePrice = basePrice;
     data.variantOptions = cleanOpts;
   }
-  try{
-    if(editId){
-      const cur = products.find(x => x._id === editId);
-      const oldRefPrice = parseFloat(hasVariants ? cur?.basePrice : cur?.defaultPrice) || 0;
-      const newRefPrice = hasVariants ? basePrice : newPrice;
-      if (cur && oldRefPrice !== newRefPrice) {
-        data.priceHistory = [...(cur.priceHistory || []), {
-          oldPrice: oldRefPrice, newPrice: newRefPrice,
-          field: hasVariants ? 'basePrice' : 'defaultPrice',
-          changedBy: currentUser?.uid || '',
-          changedByName: currentUserName || currentUser?.email || '',
-          changedAt: new Date().toISOString(),
-        }];
-      }
-      data.updatedAt = serverTimestamp();
-      await updateDoc(doc(db,'products_v2',editId),data);
-    } else {
-      await addDoc(collection(db,'products_v2'),{...data,createdAt:serverTimestamp()});
-    }
-    cM('add-prod');resetForm();toast(editId?'✅ تم التحديث':'✅ تم الإضافة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // RULE A1 + P1: عبر productActions (validation + canDo + priceHistory مُمَركَزة)
+  const baseArgs = { db, role:currentRole, userId:currentUser?.uid||'', userName:currentUserName||currentUser?.email||'' };
+  const r = editId
+    ? await productActions.update({ ...baseArgs, productId:editId, data, currentProduct: products.find(x => x._id === editId) })
+    : await productActions.create({ ...baseArgs, data });
+  if (!r.ok) { toast('⛔ '+r.errors.join(' · '), 'err'); return; }
+  cM('add-prod'); resetForm(); toast(editId?'✅ تم التحديث':'✅ تم الإضافة','ok');
 };
 
 window.editProd=function(id){
@@ -841,8 +829,25 @@ window.editProd=function(id){
 
 window.delProd=async function(id,name){
   if(!confirm(`حذف "${name}"؟`))return;
-  try{await deleteDoc(doc(db,'products_v2',id));toast('✅ تم الحذف','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  // RULE A1: عبر productActions.delete (delete safety + permission check)
+  const baseArgs = { db, productId:id, role:currentRole, userId:currentUser?.uid||'', userName:currentUserName||currentUser?.email||'' };
+  let r = await productActions.delete(baseArgs);
+  // delete safety: لو المنتج مستخدم، نقترح archive
+  if (!r.ok && r.references?.count > 0) {
+    if (confirm(`⛔ المنتج مستخدم في ${r.references.count}+ أوردر.\n\nهل تريد أرشفته بدلاً من الحذف؟\n(الأوردرات السابقة ستبقى مرئية، المنتج يختفي من القوائم النشطة)`)) {
+      const ar = await productActions.archive({ ...baseArgs, reason:'استخدام في orders — أرشفة بدلاً من الحذف' });
+      if (!ar.ok) { toast('❌ '+ar.errors.join(' · '), 'err'); return; }
+      toast('📁 تم الأرشفة','ok'); return;
+    }
+    return;
+  }
+  // soft warning (لا productIds[] flat على الـ orders)
+  if (!r.ok && r.needsConfirmation) {
+    if (!confirm('⚠️ '+r.warnings[0]+'\n\nالمتابعة بالحذف؟')) return;
+    r = await productActions.delete({ ...baseArgs, force:true });
+  }
+  if (!r.ok) { toast('❌ '+r.errors.join(' · '), 'err'); return; }
+  toast('✅ تم الحذف','ok');
 };
 
 window.resetForm=function(){
