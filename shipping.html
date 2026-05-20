@@ -256,6 +256,14 @@
   .attn-feed::before{font-size:10px}
   .attn-chip{padding:4px 9px;font-size:10.5px}
 }
+/* Keyboard shortcuts cheatsheet (Step 8.6) */
+.kb-help{position:fixed;inset:0;z-index:9500;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+.kb-help.on{display:flex}
+.kb-help-card{background:var(--bg2);border:1px solid var(--bd);border-radius:12px;padding:0;width:min(420px,92vw);box-shadow:0 10px 40px rgba(0,0,0,.4)}
+.kb-help-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.kb-help-body{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.kb-row{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--snow)}
+.kb-row kbd{display:inline-block;min-width:34px;text-align:center;padding:4px 8px;background:var(--bg);border:1px solid var(--bd);border-bottom-width:2px;border-radius:6px;font-family:ui-monospace,monospace;font-size:11.5px;font-weight:800;color:var(--c)}
 
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
@@ -629,6 +637,23 @@
   <button class="ops-history-close" onclick="document.getElementById('ops-history').style.display='none'" aria-label="إخفاء">✕</button>
 </div>
 
+<!-- Keyboard shortcuts help (Step 8.6) — opens on ?, closes on Esc/click outside -->
+<div id="kb-help" class="kb-help" aria-hidden="true" onclick="if(event.target===this)closeKbHelp()">
+  <div class="kb-help-card" role="dialog" aria-label="اختصارات لوحة المفاتيح">
+    <div class="kb-help-head">
+      <div style="font-weight:900;font-size:14px">⌨️ اختصارات لوحة المفاتيح</div>
+      <button class="btn btn-ghost btn-sm" onclick="closeKbHelp()" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="kb-help-body">
+      <div class="kb-row"><kbd>/</kbd><span>بحث</span></div>
+      <div class="kb-row"><kbd>F</kbd><span>بحث (بديل)</span></div>
+      <div class="kb-row"><kbd>G</kbd><span>فتح دليل التشغيل</span></div>
+      <div class="kb-row"><kbd>?</kbd><span>عرض هذه القائمة</span></div>
+      <div class="kb-row"><kbd>Esc</kbd><span>إغلاق اللوحة الجانبية أو الـ modal</span></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script type="module">
@@ -882,11 +907,59 @@ function orderTimelineHTML(o) {
     `).join('')}
   </div>`;
 }
+// Keyboard shortcuts (Step 8.6) — power-user workflow momentum.
+// Skipped when user is typing in an input, textarea, or contenteditable.
+//
+// Shortcuts:
+//   /   focus the search input
+//   f   focus the search input (alt for non-Arabic keyboards)
+//   ?   show shortcuts cheatsheet
+//   g   open the guide drawer
+//   Esc close drawers (order → guide → modal)
+function _isTyping(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  if ($('order-drawer')?.classList.contains('on')) closeOrderDrawer();
-  else if ($('guide-drawer')?.classList.contains('on')) closeGuide();
+  // Esc always works — close drawers in stack order
+  if (e.key === 'Escape') {
+    if ($('order-drawer')?.classList.contains('on')) { closeOrderDrawer(); return; }
+    if ($('guide-drawer')?.classList.contains('on')) { closeGuide(); return; }
+    if ($('kb-help')?.classList.contains('on')) { closeKbHelp(); return; }
+    return;
+  }
+  // Skip other shortcuts when typing
+  if (_isTyping(e.target)) return;
+  // Skip if a modal is open (don't disturb modal flow)
+  const anyModalOn = document.querySelector('.modal.on');
+  if (anyModalOn) return;
+
+  if (e.key === '/' || e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    const s = $('f-search'); if (s) { s.focus(); s.select(); }
+  } else if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+    e.preventDefault();
+    openKbHelp();
+  } else if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault();
+    if (typeof openGuide === 'function') openGuide();
+  }
 });
+
+window.openKbHelp = () => {
+  const d = $('kb-help');
+  if (!d) return;
+  d.classList.add('on'); d.setAttribute('aria-hidden','false');
+};
+window.closeKbHelp = () => {
+  const d = $('kb-help');
+  if (!d) return;
+  d.classList.remove('on'); d.setAttribute('aria-hidden','true');
+};
 
 function toast(msg, type='ok') {
   const t = $('toast');
