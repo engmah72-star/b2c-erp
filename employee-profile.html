@@ -437,6 +437,7 @@ import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
+import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
@@ -1748,15 +1749,19 @@ const ALL_PERMS=[
   {key:'canAssignTasks',label:'✅ يضيف مهام للموظفين'},
   {key:'canViewCosts',label:'🏭 يشوف التكاليف والأرباح'},
 ];
-const ROLE_DEFAULTS_PROFILE={
-  customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
-  graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
-  design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canViewClients:false,canAddClients:false,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
-  production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
-  shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts','shipping-followup'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
-  wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
-  operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canViewCosts:true},
-};
+// Phase A #2: استخدم canonical من permissions-matrix (بدل ROLE_DEFAULTS_PROFILE المحلية)
+// projection: نأخذ فقط الـ 9 fields التي كانت تُكتب تاريخياً.
+// admin يُعالج بشكل منفصل (early return) — لا يصل لهذا الـ projection.
+function _legacyProfilePermissions(role){
+  const f=getRoleDefaultPermissions(role);
+  return {
+    pages:f.pages,
+    canSeePrices:f.canSeePrices, canSeeAllOrders:f.canSeeAllOrders, canAddOrders:f.canAddOrders,
+    canViewClients:f.canViewClients, canAddClients:f.canAddClients,
+    canAssignDesigner:f.canAssignDesigner, canAssignTasks:f.canAssignTasks,
+    canViewCosts:f.canViewCosts,
+  };
+}
 
 async function renderPermissions(){
   const el=document.getElementById('permissions-container');if(!el||!emp)return;
@@ -1766,7 +1771,7 @@ async function renderPermissions(){
     el.innerHTML='<div style="font-size:12px;color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة (محمية)</div>';
     return;
   }
-  const defaults=ROLE_DEFAULTS_PROFILE[emp.role]||{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false};
+  const defaults=_legacyProfilePermissions(emp.role);
   let current={...defaults};
   try{
     // ابحث عن الـ user document
