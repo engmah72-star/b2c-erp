@@ -282,6 +282,10 @@
 .risk-flag.risk-crit{background:rgba(255,61,110,.14);color:var(--r);border:1px solid rgba(255,61,110,.3)}
 
 /* Operational specs summary (Step 7.2) — one-line product/qty/spec under order# */
+/* Row metadata: last-updated relative + officer name (Gap B + C) */
+.cell-updated{color:var(--dim2);font-weight:600;cursor:help;white-space:nowrap}
+.cell-officer{font-size:10.5px;color:var(--dim);margin-top:3px;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+
 .cell-specs{font-size:10.5px;color:var(--snow);margin-top:3px;line-height:1.4;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cell-specs b{font-weight:700;color:var(--snow)}
 .cell-specs-spec{font-size:10px;color:var(--dim2);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1531,6 +1535,35 @@ function riskFlags(order) {
   ).join('')}</div>`;
 }
 
+// Row metadata (Gap B + C from brief) — surface "last updated" + "responsible
+// officer" without taking new columns. Both are tiny inline additions that
+// answer common operator questions while scanning.
+function lastUpdatedLine(order) {
+  // Most-recent timestamp the order saw any activity. updatedAt is the canonical
+  // — but if missing, fall back to the nearest event timestamp.
+  const ts = order.updatedAt?.toMillis?.()
+          || order.shipSettledAt?.toMillis?.()
+          || order.shipCollectedAt?.toMillis?.()
+          || order.shipDispatchedAt?.toMillis?.()
+          || 0;
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  // Compact relative time
+  let label;
+  if (diff < 60_000)       label = 'الآن';
+  else if (diff < 3600_000) label = `${Math.floor(diff/60_000)}د`;
+  else if (diff < 86400_000) label = `${Math.floor(diff/3600_000)}س`;
+  else                       label = `${Math.floor(diff/86400_000)}ي`;
+  const full = new Date(ts).toLocaleString('ar-EG');
+  return ` <span class="cell-updated" title="آخر تحديث: ${full}">· 🕐${label}</span>`;
+}
+
+function officerLine(order) {
+  const name = order.shippingOfficerName || order.shipOfficerName || '';
+  if (!name) return '';
+  return `<div class="cell-officer" title="مسؤول الشحن">👤 ${name.toString().replace(/</g,'&lt;')}</div>`;
+}
+
 function specsLine(order) {
   const prods = Array.isArray(order.products) ? order.products : [];
   if (!prods.length) {
@@ -1606,7 +1639,7 @@ function renderRows(list) {
         <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
           <span class="cell-order">#${(o.orderNumber || o._id.slice(0,6)).replace(/</g,'&lt;')}</span> <span class="entity-arrow">▾</span>
         </button>
-        <div class="cell-sub">${created} • ${ageStr}</div>
+        <div class="cell-sub">${created} • ${ageStr}${lastUpdatedLine(o)}</div>
         ${specsLine(o)}
       </td>
       <td data-label="الموقع">
@@ -1614,6 +1647,7 @@ function renderRows(list) {
       </td>
       <td data-label="الشحن">
         <div style="font-weight:700">${(o.shipCompanyName || '—').replace(/</g,'&lt;')} <span class="cell-sub">· ${methodLabel(o.shipMethod)}</span></div>
+        ${officerLine(o)}
       </td>
       <td class="invoice-cell td-invoice" data-label="الفاتورة">
         ${invoiceCellHTML(o, total, paid, remaining)}
