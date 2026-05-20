@@ -1050,6 +1050,49 @@ export function validateCollect({ order, amount, walletId, remaining, role }) {
 }
 
 /**
+ * validateCompanyCollect — التحقق من "تأكيد التحصيل" لشحنة شركة (Step 1.2).
+ * هذا marker فقط — العميل دفع للشركة (CoD)، الفلوس لسه ما دخلتش محفظتنا.
+ * الدخول الفعلي للمحفظة يحصل عبر validateSettle لاحقاً.
+ *
+ * الفرق عن validateCollect: لا يلزم walletId، لا يطبّق سقف remaining،
+ * ويتطلب صراحةً shipMethod === 'company'.
+ *
+ * @param {Object} args
+ * @param {Object} args.order   — الأوردر
+ * @param {number} args.amount  — المبلغ المُحصَّل (>=0 — قد يكون صفر لو الشركة لم تحصِّل)
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateCompanyCollect({ order, amount, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['⚠️ الأوردر غير موجود'], warnings: [] };
+
+  if (order.stage === 'archived')        errors.push('⛔ الأوردر مغلق');
+  if (order.stage === 'cancelled')       errors.push('⛔ الأوردر ملغي');
+  if (order.shipStage === 'returned')    errors.push('⛔ الأوردر مرتجع');
+  if (order.shipSettled === true)        errors.push('⛔ مسوّى مع شركة الشحن بالفعل');
+
+  // هذا الـ marker مخصّص لشحنات الشركات فقط.
+  // pickup/courier يستخدم validateCollect (يدخل المحفظة فوراً).
+  if (order.shipMethod && order.shipMethod !== 'company') {
+    errors.push('⛔ هذا الـ marker لشحنات الشركات فقط — استخدم تحصيل المحفظة لـ pickup/courier');
+  }
+
+  const amt = parseFloat(amount);
+  if (!Number.isFinite(amt) || amt < 0) {
+    errors.push('⚠️ المبلغ غير صالح');
+  }
+
+  if (role && !SHIPPING_COLLECT_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تأكيد التحصيل');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
  * validateSettle — التحقق من تسوية مع شركة شحن (bulk أو single-order).
  * الـ optimistic lock الفعلي يُفرَض داخل runTransaction في
  * shipping-accounts.html:saveSettle. هذا الـ validator هو UX guard.
