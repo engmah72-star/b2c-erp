@@ -216,7 +216,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipReadyToClose, isShipPendingSettle, isShipTerminal } from "./orders.js";
+import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect } from "./orders.js";
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
 let canViewCosts=false;
@@ -697,17 +697,12 @@ window.updateCfPreview=function(){
 
 window.saveCollectFl=async function(){
   const o=orders.find(x=>x._id===__cfOrderId);
-  if(!o)return toast('⚠️ الأوردر غير موجود','err');
-  if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق','err');
-  if(o.shipSettled)return toast('⛔ مسوّى مع شركة الشحن — ألغي التسوية أولاً','err');
-  // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط
-  if(o.shipMethod==='company')return toast('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط','err');
   const amt=parseFloat(gv('cf-amt'))||0;
-  if(!amt||amt<=0)return toast('⚠️ أدخل المبلغ','err');
   const wId=gv('cf-wid');const wName=gv('cf-wname');
-  if(!wId)return toast('⚠️ اختر طريقة الدفع','err');
-  const rem=calcRem(o);
-  if(amt>rem+0.01)return toast(`⚠️ المبلغ (${fn(amt)} ج) أكبر من المتبقي (${fn(rem)} ج)`,'err');
+  const rem=o?calcRem(o):0;
+  // RULE V1.3 — central validator (orders.js)
+  const v=validateCollect({order:o,amount:amt,walletId:wId,remaining:rem,role:userRole});
+  if(!v.ok)return toast(v.errors[0],'err');
   const w=wallets.find(x=>x._id===wId);
   if(!w)return toast('❌ المحفظة غير موجودة','err');
   const bb=parseFloat(w.balance)||0;
