@@ -1146,13 +1146,18 @@ export function validateSettle({ orders, amount, expectedAmount, walletId, diffR
   const warnings = [];
 
   const amt = parseFloat(amount);
-  if (!(amt > 0)) errors.push('⚠️ أدخل المبلغ الوارد');
+  const expected = parseFloat(expectedAmount) || 0;
+  // No-op close (UX fix): when expected from the company is 0 (because the
+  // customer paid us directly, or it's a free/internal shipment), allow a
+  // 0-amount settle to formally close the order without money flow. The
+  // wallet is still required for the audit field (shipSettledWalletId).
+  const isNoopClose = (amt === 0 && expected === 0);
+  if (!isNoopClose && !(amt > 0)) errors.push('⚠️ أدخل المبلغ الوارد');
   if (!walletId) errors.push('⚠️ اختر المحفظة');
   if (!Array.isArray(orders) || !orders.length) {
     errors.push('⚠️ اختر أوردر واحد على الأقل');
   }
 
-  const expected = parseFloat(expectedAmount) || 0;
   const diff = Number.isFinite(amt) ? (amt - expected) : 0;
   if (Math.abs(diff) > 0.01 && !diffReason) {
     errors.push('⚠️ يوجد فرق بين المبلغ والأوردرات — حدد سبب الفرق');
