@@ -425,9 +425,9 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch } from "./orders.js";
+import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle } from "./orders.js";
 // ══ State ══
-let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='';
+let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
 
 // ══ Helpers ══
@@ -466,7 +466,7 @@ onAuthStateChanged(auth,async u=>{
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
-    const d=snap.data();userName=d.name||u.email;
+    const d=snap.data();userName=d.name||u.email;userRole=d.role||'';
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=(userName[0]||'A').toUpperCase();
     buildSidebar(d,'shipping-accounts.html');
@@ -985,24 +985,20 @@ window.calcSettleDiff=function(){
 // ══ saveSettle ══
 window.saveSettle=async function(){
   const amount=parseFloat(gv('settle-amount'));
-  if(!amount||amount<=0)return toast('⚠️ أدخل المبلغ الوارد','err');
   const wId=gv('settle-wallet');
-  if(!wId)return toast('⚠️ اختر المحفظة','err');
   const selectedCbs=Array.from(document.querySelectorAll('.settle-order-cb:checked'));
-  if(!selectedCbs.length)return toast('⚠️ اختر أوردر واحد على الأقل من القسم ②','err');
   const selectedIds=selectedCbs.map(cb=>cb.value);
   const selectedAmt=selectedCbs.reduce((s,cb)=>s+(parseFloat(cb.dataset.amount)||0),0);
+  const selectedOrders=selectedIds.map(id=>allOrders.find(o=>o._id===id)).filter(Boolean);
   const diff=amount-selectedAmt;
-
-  // Validation: فرق بدون سبب → امنع الحفظ
   const diffReason=gv('settle-diff-reason');
   const diffReasonLabel=gv('settle-diff-reason-label');
   const diffNote=gv('settle-diff-note');
-  if(Math.abs(diff)>0.01&&!diffReason)return toast('⚠️ يوجد فرق بين المبلغ والأوردرات — حدد سبب الفرق في القسم ④','err');
 
-  // Guard مبدئي (UX) — تحقق من cache. الـ runTransaction أدناه يفرض الفحص بشكل ذرّي.
-  const alreadySettledCache=selectedIds.filter(id=>allOrders.find(o=>o._id===id)?.shipSettled);
-  if(alreadySettledCache.length)return toast(`⛔ ${alreadySettledCache.length} أوردر مسوّى بالفعل — أعد فتح الشاشة لتحديث القائمة`,'err');
+  // RULE V1.3 — central validator (orders.js). Atomic enforcement
+  // still lives inside the runTransaction below.
+  const v=validateSettle({orders:selectedOrders,amount,expectedAmount:selectedAmt,walletId:wId,diffReason,diffNote,role:userRole});
+  if(!v.ok)return toast(v.errors[0],'err');
 
   const btn=document.getElementById('settle-save-btn');
   if(btn){btn.disabled=true;btn.textContent='...';}
