@@ -419,7 +419,8 @@ import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, addDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { orderActions } from "./order-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
@@ -836,34 +837,31 @@ window.confirmMoveToProduction=async function(){
   const sel=document.getElementById('pick-prod-sel');
   const prodId=sel?.value||'';
   const prodName=prodId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // RULE A1 + L1: stage transition عبر orderActions.submitToProduction
+  // (validation + warning surfacing + atomic transaction with lock)
   const baseArgs={
-    order:o, role:currentRole, userId:auth?.currentUser?.uid||'', userName,
+    db, orderId:activeId, role:currentRole, userId:auth?.currentUser?.uid||'', userName,
     nextAssigneeId:prodId, nextAssigneeName:prodName,
   };
-  let adv=buildStageAdvance(baseArgs);
-  if(adv.errors&&adv.errors.length)return toast('⛔ '+adv.errors.join(' · '),'err');
-  if(adv.warnings&&adv.warnings.length){
-    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+adv.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
-    adv=buildStageAdvance({...baseArgs,bypassWarnings:true});
+  let r=await orderActions.submitToProduction(baseArgs);
+  if(r.needsConfirmation){
+    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    r=await orderActions.submitToProduction({...baseArgs,bypassWarnings:true});
   }
-  // ـ تجميع كل صور التصميم من المنتجات لحفظها في معرض العميل ـ
-  const imagesToSave=[];
-  (o.products||[]).forEach(p=>{
-    const arr=Array.isArray(p.designImages)?p.designImages.filter(Boolean):[];
-    arr.forEach(url=>{ if(url)imagesToSave.push({url,productName:p.name||'',orderId:activeId,orderRef:o.orderId||activeId.slice(-6),savedAt:nowStr()}); });
-    if(p.designImageUrl && !arr.includes(p.designImageUrl)){
-      imagesToSave.push({url:p.designImageUrl,productName:p.name||'',orderId:activeId,orderRef:o.orderId||activeId.slice(-6),savedAt:nowStr()});
-    }
-  });
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      ...adv.fields,
-      timeline:[...(o.timeline||[]),adv.timelineEntry],
-      updatedAt:serverTimestamp()
+  if(!r.ok)return toast('⛔ '+r.errors.join(' · '),'err');
+  // ـ Best-effort: حفظ صور التصميم في معرض العميل بعد نجاح التقديم ـ
+  // (side-effect منفصل عن stage transition — يفشل بصمت لو ما في صلاحية)
+  let savedCount=0;
+  if(o.clientId){
+    const imagesToSave=[];
+    (o.products||[]).forEach(p=>{
+      const arr=Array.isArray(p.designImages)?p.designImages.filter(Boolean):[];
+      arr.forEach(url=>{ if(url)imagesToSave.push({url,productName:p.name||'',orderId:activeId,orderRef:o.orderId||activeId.slice(-6),savedAt:nowStr()}); });
+      if(p.designImageUrl && !arr.includes(p.designImageUrl)){
+        imagesToSave.push({url:p.designImageUrl,productName:p.name||'',orderId:activeId,orderRef:o.orderId||activeId.slice(-6),savedAt:nowStr()});
+      }
     });
-    // محاولة حفظ الصور في معرض العميل — تفشل بصمت لو ما عنده صلاحية تعديل clients
-    let savedCount=0;
-    if(o.clientId && imagesToSave.length){
+    if(imagesToSave.length){
       try{
         const cRef=doc(db,'clients',o.clientId);
         const cSnap=await getDoc(cRef);
@@ -874,10 +872,10 @@ window.confirmMoveToProduction=async function(){
           await updateDoc(cRef,{gallery:[...existing,...fresh],updatedAt:serverTimestamp()});
           savedCount=fresh.length;
         }
-      }catch(_){/* صلاحية الكتابة على clients اختيارية — ما تمنعش الانتقال */}
+      }catch(_){/* صلاحية الكتابة على clients اختيارية */}
     }
-    cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }
+  cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
 };
 
 // Reject
