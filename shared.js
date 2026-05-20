@@ -265,8 +265,18 @@ if (typeof window !== 'undefined') {
 // قاعدة UX موحَّدة على مستوى النظام:
 //   • Escape يغلق الـ overlay الأعلى المفتوح
 //   • الضغط على الخلفية (خارج .modal) يغلق الـ overlay
-// كلاهما يعمل دون تعديل الصفحات — مادامت تستورد shared.js.
+//   • Enter داخل input في modal يستدعي الزر الأساسي في .modal-foot
+// كل ذلك بدون تعديل الصفحات — مادامت تستورد shared.js.
 // لا يتعارض مع image-viewer (id="img-viewer") لأنه ليس .overlay.
+//
+// Convention (موجودة بالفعل في كل الصفحات):
+//   .modal-foot → buttons من الـ left:
+//     btn.btn-ghost (إلغاء) … btn.btn-g/btn-r/btn-b/btn-y (الأساسي = آخر زر)
+// الـ Enter يضغط آخر زر غير-ghost في .modal-foot.
+const PRIMARY_INPUT_TYPES = new Set([
+  'text','number','email','tel','password','url','search','date','time',
+  'datetime-local','month','week',
+]);
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // Click on the backdrop (the .overlay element itself, not its children) → close
   document.addEventListener('click', e => {
@@ -276,12 +286,38 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
   });
   // Escape → close the most recently opened .overlay
+  // Enter inside an input in an open modal → invoke the primary action button
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape') return;
-    const opened = document.querySelectorAll('.overlay.open');
-    if (!opened.length) return;
-    // Close the last one in DOM order (topmost typically)
-    opened[opened.length - 1].classList.remove('open');
+    if (e.key === 'Escape') {
+      const opened = document.querySelectorAll('.overlay.open');
+      if (!opened.length) return;
+      opened[opened.length - 1].classList.remove('open');
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    // Skip if another handler already claimed this Enter (autocomplete, custom input).
+    if (e.defaultPrevented) return;
+    // Skip modifier combos (Shift+Enter = newline in textarea, Ctrl+Enter = send, ...)
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const t = e.target;
+    if (!t || t.tagName !== 'INPUT') return;
+    // Only text-like input types — checkboxes/radios fire on Space, not Enter.
+    const type = (t.type || 'text').toLowerCase();
+    if (!PRIMARY_INPUT_TYPES.has(type)) return;
+    // Must be inside an open overlay (any other input — sidebar search etc — ignored).
+    const overlay = t.closest('.overlay.open');
+    if (!overlay) return;
+    // Convention: last non-ghost button inside .modal-foot = primary action.
+    const foot = overlay.querySelector('.modal-foot');
+    if (!foot) return;
+    const buttons = foot.querySelectorAll('button:not([disabled])');
+    let primary = null;
+    for (let i = buttons.length - 1; i >= 0; i--) {
+      if (!buttons[i].classList.contains('btn-ghost')) { primary = buttons[i]; break; }
+    }
+    if (!primary) return;
+    e.preventDefault();
+    primary.click();
   });
 }
 
