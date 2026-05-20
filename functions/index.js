@@ -2834,17 +2834,52 @@ exports.syncUserAuthClaims = onDocumentUpdated('users/{uid}', async (e) => {
     before.permissions !== after.permissions;
   if (!fieldsChanged) return;
 
+  const claims = {
+    role: after.role || 'customer_service',
+    tenantId: after.tenantId || 'merchant_001',
+    // ملاحظة: permissions قد تكون كبيرة — نقتصر على flags المهمة
+    cfw: (after.permissions || {}).canFinancialWrite === true,
+    cfr: (after.permissions || {}).canFinancialRead === true,
+  };
+
+  // P0-2 hardening (SECURITY_AUDIT Finding #1 / RULES_AUDIT R-A4):
+  // retry with exponential backoff للحماية من transient failures (network, quota، إلخ).
+  // عند فشل كل المحاولات → كتابة admin_alert للـ visibility (لا silent failure).
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await getAuth().setCustomUserClaims(uid, claims);
+      console.log(`[syncUserAuthClaims] ✓ ${uid} → role=${claims.role} tenant=${claims.tenantId} (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[syncUserAuthClaims] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${uid}: ${err.message}`);
+      if (attempt < MAX_ATTEMPTS) {
+        // exponential backoff: 500ms, 1500ms
+        await new Promise(r => setTimeout(r, 500 * Math.pow(3, attempt - 1)));
+      }
+    }
+  }
+
+  // كل المحاولات فشلت — اكتب admin alert (Firestore + Stackdriver)
+  console.error(`[syncUserAuthClaims] ❌ ALL ATTEMPTS FAILED for ${uid}: ${lastErr?.message}`);
   try {
-    await getAuth().setCustomUserClaims(uid, {
-      role: after.role || 'customer_service',
-      tenantId: after.tenantId || 'merchant_001',
-      // ملاحظة: permissions قد تكون كبيرة — نقتصر على flags المهمة
-      cfw: (after.permissions || {}).canFinancialWrite === true,
-      cfr: (after.permissions || {}).canFinancialRead === true,
+    await db.collection('admin_alerts').add({
+      type: 'sync_user_claims_failed',
+      severity: 'high',
+      uid,
+      attemptedClaims: claims,
+      error: lastErr?.message || 'unknown',
+      errorCode: lastErr?.code || null,
+      attempts: MAX_ATTEMPTS,
+      tenantId: claims.tenantId,
+      createdAt: FieldValue.serverTimestamp(),
+      resolved: false,
+      message: `فشل sync لـ user ${uid} بعد ${MAX_ATTEMPTS} محاولات — claims في Firestore لا تطابق Auth tokens.`,
     });
-    console.log(`[syncUserAuthClaims] ✓ ${uid} → role=${after.role} tenant=${after.tenantId}`);
-  } catch (err) {
-    console.error(`[syncUserAuthClaims] failed for ${uid}:`, err.message);
+  } catch (alertErr) {
+    console.error(`[syncUserAuthClaims] FAILED TO LOG ALERT for ${uid}: ${alertErr.message}`);
   }
 });
 
