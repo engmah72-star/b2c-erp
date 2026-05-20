@@ -230,7 +230,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle } from "./orders.js";
+import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle, buildSettlementUpdates } from "./orders.js";
 import { canDo } from "./core/permissions-matrix.js";
 import { orderActions } from "./order-actions.js";
 // ── State ──
@@ -850,13 +850,24 @@ window.saveSettleFromCo=async function(){
   if(o&&o.shipSettled)return toast('✅ مسوّى بالفعل','ok'); // ok toast, not err
   const amount=parseFloat(gv('sco-amt'))||0;
   const wId=gv('sco-wid');
-  const sale=parseFloat(o?.salePrice)||0;
-  const cust=parseFloat(o?.customerShipFee)||0;
-  const disc=parseFloat(o?.discount)||0;
-  const oldPaid=o?calcPaid(o):0;
-  const expected=Math.max(0,sale+cust-disc-oldPaid);
-  const diff=amount-expected;
   const diffNote=gv('sco-diff-note').trim();
+
+  // Settle-Fix #3 — Use the central buildSettlementUpdates (orders.js).
+  // Canonical formula: expected = shipCollected − shippingCost (per order).
+  // Replaces the old formula (sale + custShip − disc − oldPaid) which
+  // ignored o.shipCollected and produced wrong totalPaid when company
+  // collected less than the customer's full debt.
+  const spec = buildSettlementUpdates({
+    orders: o ? [o] : [],
+    actualAmount: amount,
+    userName,
+    companyName: o?.shipCompanyName || '',
+    diffNote,
+  });
+  if (!spec.ok) return toast(spec.errors[0] || 'خطأ في بناء التسوية', 'err');
+
+  const expected = spec.summary.sumExpected;
+  const diff = spec.summary.diff;
   // Single-order UI uses a free-text note (no categorized reason). Map to
   // diffReason='other' synthetically so validateSettle enforces the ≥5-char rule.
   const synthDiffReason = Math.abs(diff) > 0.01 ? 'other' : '';
@@ -871,8 +882,7 @@ window.saveSettleFromCo=async function(){
   try{
     const now=nowStr();
     const bb=parseFloat(w.balance)||0;
-    const newPaid=oldPaid+expected;
-    const newRem=Math.max(0,sale+cust-disc-newPaid);
+    const u = spec.updates[0]; // single order
     const batch=writeBatch(db);
 
     // 1. wallet
@@ -909,16 +919,14 @@ window.saveSettleFromCo=async function(){
       createdAt:serverTimestamp()
     });
 
-    // 4. order
-    const tlEntry={date:now,action:`🏁 تسوية من ${o.shipCompanyName||'شركة الشحن'} — ${fn(expected)} ج${Math.abs(diff)>0.01?` (فرق: ${diff>0?'+':''}${fn(diff)} ج — ${diffNote})`:''}`,by:userName};
+    // 4. order — apply the helper's computed fields + per-order audit
+    const tlEntry={date:now,action:u.timelineEntry.action,by:userName};
     batch.update(doc(db,'orders',__scoOrderId),{
-      shipSettled:true,
-      shipSettledAmount:expected,
+      ...u.fields,                       // shipSettled, shipSettledAmount (= share),
+                                         // shipSettledExpected, shipSettledDiff,
+                                         // totalPaid, remaining, paymentStatus
       shipSettledWalletId:wId,
       shipStage:'collected',
-      totalPaid:newPaid,
-      remaining:newRem,
-      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       timeline:[...(o.timeline||[]),tlEntry],
       updatedAt:serverTimestamp(),
     });
