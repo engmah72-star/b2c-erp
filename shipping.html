@@ -452,7 +452,7 @@ function applyFilters(list) {
     if (fc && o.shipCompanyId !== fc) return false;
     if (fm && o.shipMethod !== fm) return false;
     if (q) {
-      const hay = `${o.orderNumber || ''} ${o.clientName || ''} ${o._id} ${o.clientPhone || ''}`.toLowerCase();
+      const hay = `${o.orderNumber || ''} ${o.clientName || ''} ${o._id} ${o.clientPhone || ''} ${o.shipGov || o.clientGov || ''} ${o.shipAddress || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -573,7 +573,7 @@ function renderOrdersTable(list, tab) {
           <tr>
             <th>الطلب</th>
             <th>العميل</th>
-            <th>المنطقة</th>
+            <th>عنوان التسليم</th>
             <th>الشركة</th>
             <th>المالي</th>
             <th>الحالة</th>
@@ -596,13 +596,20 @@ function getEmptyHint(tab) {
   })[tab] || '';
 }
 
+function getDeliveryAddress(o) {
+  // العنوان الرسمي يأتي من shipGov + shipAddress (fallback إلى clientGov لو غير مُسجَّل)
+  const gov = o.shipGov || o.clientGov || '';
+  const addr = o.shipAddress || '';
+  return { gov, addr, full: [gov, addr].filter(Boolean).join(' — ') };
+}
+
 function renderRow(o, tab) {
   const id = o._id;
   const num = o.orderNumber || id.slice(0, 6);
   const phone = canSee('client_phone', AppState.userPerms, myRole)
     ? (o.clientPhone || '')
     : maskPhone(o.clientPhone, myRole);
-  const city = `${o.gov || ''}${o.city ? ' · ' + o.city : ''}`;
+  const addr = getDeliveryAddress(o);
 
   const sale = parseFloat(o.salePrice) || 0;
   const cust = parseFloat(o.customerShipFee) || 0;
@@ -620,7 +627,11 @@ function renderRow(o, tab) {
         <div class="cell-name">${o.clientName || '—'}</div>
         <div class="cell-sub">${phone}</div>
       </td>
-      <td>${city || '—'}</td>
+      <td>
+        ${addr.gov
+          ? `<div style="font-weight:700">📍 ${escAttr(addr.gov)}</div>${addr.addr ? `<div class="cell-sub" style="white-space:normal;line-height:1.45;max-width:260px">${escAttr(addr.addr)}</div>` : ''}`
+          : '<span class="cell-sub">— لا يوجد عنوان —</span>'}
+      </td>
       <td>
         <div>${o.shipCompanyName || '—'}</div>
         <div class="cell-sub">${shipMethodLabel(o.shipMethod)}</div>
@@ -633,6 +644,10 @@ function renderRow(o, tab) {
       <td>${o.shippingOfficerName || o.shipDispatchedBy || '—'}</td>
       <td>${rowActions(o, tab)}</td>
     </tr>`;
+}
+
+function escAttr(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
 function shipMethodLabel(m) {
@@ -719,6 +734,8 @@ function renderDelayRow(d) {
     collected: `<button class="btn btn-sm btn-g" onclick="openSettleSingle('${id}')">📋 سوِّ</button>`,
   })[d.shipStage] || '—';
 
+  const addr = getDeliveryAddress(o);
+
   return `
     <tr class="${cls}">
       <td>
@@ -728,6 +745,7 @@ function renderDelayRow(d) {
       <td>
         <div class="cell-name">${o.clientName || '—'}</div>
         <div class="cell-sub">${phone}</div>
+        ${addr.gov ? `<div class="cell-sub" style="margin-top:3px;white-space:normal;line-height:1.4;max-width:240px">📍 ${escAttr(addr.gov)}${addr.addr ? ' — ' + escAttr(addr.addr) : ''}</div>` : ''}
       </td>
       <td>${o.shipCompanyName || shipMethodLabel(o.shipMethod)}</td>
       <td>${shipStageBadgeHTML(o.shipStage)}</td>
@@ -904,7 +922,12 @@ window.openDispatch = (orderId) => {
   $('m-dispatch-info').innerHTML = `
     <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0, 6)}</span></div>
     <div class="modal-info-row"><span>العميل</span><span>${o.clientName || '—'}</span></div>
-    <div class="modal-info-row"><span>المنطقة</span><span>${o.gov || ''} · ${o.city || ''}</span></div>
+    ${(function(){
+      const a = getDeliveryAddress(o);
+      return a.gov
+        ? `<div class="modal-info-row" style="align-items:flex-start"><span>📍 العنوان</span><span style="text-align:left;max-width:65%;line-height:1.5">${escAttr(a.gov)}${a.addr ? '<br><span style="color:var(--dim2);font-weight:600;font-size:11.5px">' + escAttr(a.addr) + '</span>' : ''}</span></div>`
+        : `<div class="modal-info-row"><span>📍 العنوان</span><span style="color:var(--y)">— لا يوجد عنوان مُسجَّل —</span></div>`;
+    })()}
   `;
   $('m-dispatch-method').value = 'company';
   $('m-dispatch-company').value = '';
