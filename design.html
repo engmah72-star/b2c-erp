@@ -501,7 +501,8 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
+import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
+import { orderActions } from "./order-actions.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentRole='admin';
@@ -1985,40 +1986,48 @@ window.approveOrder=function(){
 window.confirmApproveWithPrinter=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  // ✅ W1.5 + V1.5: فحص "بانتظار التحويل" مُمَركَز في validateStageRequirements (orders.js)
-  // الـ buildStageAdvance تحت يستدعيه تلقائياً ويرفع error إذا لزم.
   const sel=document.getElementById('pick-printer-sel');
   const printerId=sel?.value||'';
   const printerName=printerId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // RULE A1 + L1: stage transition عبر orderActions.submitToPrinting
+  // (validation + atomic transaction with lock + warning surfacing)
   const baseArgs={
-    order:o, role:currentRole, userId:currentUser?.uid||'', userName,
+    db, orderId:activeId, role:currentRole, userId:currentUser?.uid||'', userName,
     nextAssigneeId:printerId, nextAssigneeName:printerName,
     extraFields:{designStage:'approved',approvedAt:nowStr(),approvedBy:userName}
   };
-  // محاولة أولى — تكشف warnings/errors
-  let adv=buildStageAdvance(baseArgs);
-  // errors صلبة → بلوك (مع override للأدمن فقط)
-  if(adv.errors&&adv.errors.length){
-    const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
-    if(!isAdmin)return toast('⛔ '+adv.errors.join(' · '),'err');
-    if(!confirm('⚠️ '+adv.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟ (override أدمن)'))return;
-    adv=buildStageAdvance({...baseArgs,bypassWarnings:true,targetStage:'printing'});
+  let r=await orderActions.submitToPrinting(baseArgs);
+  // warnings — تأكيد + retry
+  if(r.needsConfirmation){
+    if(!confirm('⚠️ ملاحظات قبل الاعتماد:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    r=await orderActions.submitToPrinting({...baseArgs,bypassWarnings:true});
   }
-  // warnings — تأكيد ثم تجاوز (متاح لكل الأدوار)
-  else if(adv.warnings&&adv.warnings.length){
-    if(!confirm('⚠️ ملاحظات قبل الاعتماد:\n• '+adv.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
-    adv=buildStageAdvance({...baseArgs,bypassWarnings:true});
+  // Happy path
+  if(r.ok){
+    document.getElementById('ov-pick-printer').classList.remove('open');
+    closePanel();toast('✅ اعتُمد — انتقل للطباعة 🖨️'+(printerName?` (${printerName})`:''),'ok');
+    return;
   }
+  // ── Admin override (escape hatch موثَّق) ──
+  // errors تبلوك الجميع، إلا admin/ops يقدر يفرض المرور بعد تأكيد صريح.
+  // المسار ده exception لـ L1.2 — موثَّق بـ override flag + reason في الـ timeline.
+  const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
+  if(!isAdmin)return toast('⛔ '+r.errors.join(' · '),'err');
+  if(!confirm('⚠️ '+r.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟ (override أدمن)'))return;
   try{
-    const fields=adv.ok?adv.fields:{stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName,...(printerId?{printerId,printerName}:{})};
-    const tlEntry=adv.ok?adv.timelineEntry:{date:nowStr(),stage:'printing',action:'✅ اعتُمد التصميم (override) — انتقل للطباعة 🖨️',by:userName,byId:currentUser?.uid||''};
     await updateDoc(doc(db,'orders',activeId),{
-      ...fields,
-      timeline:[...(o.timeline||[]),tlEntry],
+      stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName,
+      ...(printerId?{printerId,printerName}:{}),
+      timeline:[...(o.timeline||[]),{
+        date:nowStr(),stage:'printing',
+        action:'⚠️ اعتُمد التصميم بـ admin override — '+r.errors.join(' · '),
+        by:userName,byId:currentUser?.uid||'',
+        override:true,overrideReason:r.errors.join(' · '),
+      }],
       updatedAt:serverTimestamp()
     });
     document.getElementById('ov-pick-printer').classList.remove('open');
-    closePanel();toast('✅ اعتُمد — انتقل للطباعة 🖨️'+(printerName?` (${printerName})`:''),'ok');
+    closePanel();toast('⚠️ اعتُمد (admin override) — انتقل للطباعة 🖨️','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
