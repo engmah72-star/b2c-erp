@@ -1886,7 +1886,15 @@ export async function advanceOrderStageWithLock({
     }
 
     // طبّق الـ spec في الـ transaction (وليس batch)
-    tx.update(orderRef, result.update);
+    // buildStageAdvance يُرجع { fields, timelineEntry } — نَدمج الـ
+    // timelineEntry مع الـ timeline الحالي ونكتب الكل دفعة واحدة
+    // (نفس contract الـ batch callers في production.html / print.html).
+    const updatePayload = {
+      ...result.fields,
+      timeline: [...(order.timeline || []), result.timelineEntry],
+      updatedAt: nowStr(),
+    };
+    tx.update(orderRef, updatePayload);
 
     // hook للـ caller — يقدر يضيف writes إضافية في نفس الـ transaction
     if (typeof onSpec === 'function') {
@@ -1896,7 +1904,7 @@ export async function advanceOrderStageWithLock({
     return {
       ok: true,
       from: order.stage,
-      to: result.update.stage,
+      to: result.newStage,
       orderId,
       warnings: result.warnings || [],
     };
