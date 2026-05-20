@@ -216,7 +216,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect } from "./orders.js";
+import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle } from "./orders.js";
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
 let canViewCosts=false;
@@ -828,25 +828,24 @@ window.updateScoPreview=function(){
 
 window.saveSettleFromCo=async function(){
   const o=orders.find(x=>x._id===__scoOrderId);
-  if(!o)return toast('⚠️ الأوردر غير موجود','err');
-  if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق','err');
-  if(o.shipSettled)return toast('✅ مسوّى بالفعل','ok');
+  if(o&&o.shipSettled)return toast('✅ مسوّى بالفعل','ok'); // ok toast, not err
   const amount=parseFloat(gv('sco-amt'))||0;
-  if(amount<=0)return toast('⚠️ أدخل المبلغ الفعلي','err');
   const wId=gv('sco-wid');
-  if(!wId)return toast('⚠️ اختر المحفظة','err');
-  const w=wallets.find(x=>x._id===wId);
-  if(!w)return toast('❌ المحفظة غير موجودة','err');
-  const sale=parseFloat(o.salePrice)||0;
-  const cust=parseFloat(o.customerShipFee)||0;
-  const disc=parseFloat(o.discount)||0;
-  const oldPaid=calcPaid(o);
+  const sale=parseFloat(o?.salePrice)||0;
+  const cust=parseFloat(o?.customerShipFee)||0;
+  const disc=parseFloat(o?.discount)||0;
+  const oldPaid=o?calcPaid(o):0;
   const expected=Math.max(0,sale+cust-disc-oldPaid);
   const diff=amount-expected;
   const diffNote=gv('sco-diff-note').trim();
-  if(Math.abs(diff)>0.01 && diffNote.length<5){
-    return toast('⚠️ يوجد فرق بين المتوقع والفعلي — اكتب سبب الفرق (≥ 5 أحرف)','err');
-  }
+  // Single-order UI uses a free-text note (no categorized reason). Map to
+  // diffReason='other' synthetically so validateSettle enforces the ≥5-char rule.
+  const synthDiffReason = Math.abs(diff) > 0.01 ? 'other' : '';
+  // RULE V1.3 — central validator (orders.js)
+  const v=validateSettle({orders:o?[o]:[],amount,expectedAmount:expected,walletId:wId,diffReason:synthDiffReason,diffNote,role:userRole});
+  if(!v.ok)return toast(v.errors[0],'err');
+  const w=wallets.find(x=>x._id===wId);
+  if(!w)return toast('❌ المحفظة غير موجودة','err');
   const transferRef=gv('sco-ref').trim();
   const btn=$('btn-save-sco');
   if(btn){btn.disabled=true;btn.textContent='...';}
