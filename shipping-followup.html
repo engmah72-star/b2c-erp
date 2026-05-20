@@ -231,9 +231,10 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, getDoc, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle } from "./orders.js";
+import { canDo } from "./core/permissions-matrix.js";
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
-let canViewCosts=false;
+let canViewCosts=false, canManageShipping=false, userPerms=null;
 let currentFilter='active', __cfOrderId='', __scoOrderId='';
 
 // ── Helpers ──
@@ -330,13 +331,12 @@ onAuthStateChanged(auth,async u=>{
     $('nav-av').textContent=(userName[0]||'A').toUpperCase();
     setText('role-badge',userRole==='admin'?'Admin':userRole==='shipping_officer'?'شحن':userRole);
     buildSidebar(ud);
-    // Permission gate
-    const perms=ud.permissions||{};
-    const pages=perms.pages||[];
-    const isAdm=['admin','operation_manager'].includes(userRole);
-    const isShipping=userRole==='shipping_officer';
-    canViewCosts = isAdm || perms.canViewCosts === true;
-    if(!isAdm && !isShipping && !pages.includes('*') && !pages.includes('shipping')){
+    // Permission gate (Step 6.2) — capability-based per RULE P1.3
+    userPerms = ud.permissions||{};
+    const pages=userPerms.pages||[];
+    canManageShipping = canDo('manage_shipping', userRole, userPerms);
+    canViewCosts = canDo('view_financials', userRole, userPerms) || userPerms.canViewCosts === true;
+    if(!canManageShipping && !pages.includes('*') && !pages.includes('shipping')){
       $('orders-list').innerHTML='<div class="fl-empty">⛔ ليس لديك صلاحية على متابعة الشحن</div>';
       return;
     }
@@ -605,8 +605,8 @@ window.openOrderDetails=function(orderId){
       ${(o.costItems||[]).map(c=>`<div class="det-row"><span class="det-row-lbl">${escHtml(c.type||'—')}${c.note?' · '+escHtml(c.note):''}</span><span class="det-row-val" style="color:var(--r)">${fn(parseFloat(c.total)||0)} ج</span></div>`).join('')}
     </div>`:''}
 
-    <!-- Timeline — للأدمن/مدير العمليات فقط -->
-    ${(['admin','operation_manager'].includes(userRole)&&recentTl.length)?`<div class="det-sec">
+    <!-- Timeline — لمن لديه صلاحية إدارة الشحن (Step 6.2 — canDo) -->
+    ${(canManageShipping && recentTl.length)?`<div class="det-sec">
       <div class="det-sec-ttl">📋 آخر الأحداث (${(o.timeline||[]).length})</div>
       ${recentTl.map(t=>`<div class="det-tl-item"><span style="color:var(--b);font-weight:700">${escHtml(t.date||'—')}</span> — ${escHtml(t.action||'—')}${t.by?' · <span style="color:var(--c)">'+escHtml(t.by)+'</span>':''}</div>`).join('')}
     </div>`:''}
