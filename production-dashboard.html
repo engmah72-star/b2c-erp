@@ -257,6 +257,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { orderActions } from "./order-actions.js";
 let myOrders=[],allOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='active',currentRole='production_agent';
 let myGoal=null,myEmpId='',myLastEval=null;
 let suppliersMap={};
@@ -610,20 +611,16 @@ window.closePanel=function(){
 };
 
 // ── Status Update ──
+// RULE A1 + L1: العملية مُمَركَزة عبر orderActions.setProductionStatus
 window.setStatus=async function(status){
   if(!activeOrderId)return;
-  const o=myOrders.find(x=>x._id===activeOrderId)||allOrders.find(x=>x._id===activeOrderId);
-  if(!o)return;
   const labels={received:'📥 استلمت الأوردر',wip:'🔄 بدأ التنفيذ',done:'✅ خلص التنفيذ',problem:'⚠️ وجدت مشكلة'};
-  try{
-    await updateDoc(doc(db,'orders',activeOrderId),{
-      prodStatus:status,
-      ...((!o.productionAgent&&currentUser)?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status]||status,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast(labels[status]||'تم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setProductionStatus({
+    db, orderId:activeOrderId, status, role:currentRole,
+    userId:currentUser?.uid||'', userName,
+  });
+  if(!r.ok)return toast('❌ '+r.errors.join(' · '),'err');
+  toast(labels[status]||'تم','ok');
 };
 
 // ── Save Supplier ──
