@@ -172,7 +172,7 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let requests = [];
@@ -271,8 +271,8 @@ onAuthStateChanged(auth, async u=>{
 });
 
 function startListeners(){
-  // طلباتي فقط
-  onSnapshot(query(collection(db,'payment_requests'), where('requestedBy','==',currentUid)),
+  // طلباتي فقط (RULE G3: bounded per user — 500 historical requests max).
+  onSnapshot(query(collection(db,'payment_requests'), where('requestedBy','==',currentUid), limit(500)),
     snap=>{
       requests = snap.docs.map(d=>({...d.data(),_id:d.id}));
       requests.sort((a,b)=>{
@@ -288,15 +288,16 @@ function startListeners(){
     }
   );
 
-  onSnapshot(collection(db,'orders'),
+  // orders are only used as a lookup map for displayed request rows. Recent 3000.
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),
     snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); },
     err=>console.error('[my-requests] orders:', err)
   );
-  onSnapshot(collection(db,'suppliers_v2'),
+  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),
     snap=>{ suppliers = snap.docs.map(d=>({...d.data(),_id:d.id})); },
     err=>console.error('[my-requests] suppliers:', err)
   );
-  onSnapshot(collection(db,'employees_v2'),
+  onSnapshot(query(collection(db,'employees_v2'),limit(200)),
     snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
     err=>console.error('[my-requests] employees:', err)
   );

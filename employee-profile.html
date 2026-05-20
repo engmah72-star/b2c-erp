@@ -435,7 +435,7 @@ async function buildDynamicSidebar(uid, currentPage) {
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, serverTimestamp, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
@@ -622,11 +622,14 @@ onAuthStateChanged(auth,async u=>{
       renderPasswordCard();
     });
   }
-  onSnapshot(collection(db,'orders'),snap=>{
+  // RULE G3: bound orders to the most recent 5000 (covers ~2 years of
+  // activity for the largest employees). Profile aggregations are weighted
+  // toward current performance — deep history lives in reports.html.
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderAll();
   });
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',emp.authUid||empId)),snap=>{
+  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',emp.authUid||empId),limit(500)),snap=>{
     empTasks=snap.docs.map(d=>({...d.data(),_id:d.id}))
       .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
     renderTasks();
@@ -645,42 +648,42 @@ onAuthStateChanged(auth,async u=>{
     // calendar/score (which refresh independently).
     if(allOrders.length||emp){renderAll();}
   };
-  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',empId),limit(1000)),snap=>{
     __attById=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
     __mergeAtt();
   });
   if(emp?.authUid){
-    onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid)),snap=>{
+    onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid),limit(1000)),snap=>{
       __attByUid=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
       __mergeAtt();
     });
   }
-  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',empId),limit(500)),snap=>{
     empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderSalaries();renderInsights();
   });
-  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',empId),limit(200)),snap=>{
     empLeaves=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
     renderLeaves();renderAttendance();
   });
   // أهداف الموظف
-  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId),limit(60)),snap=>{
     empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderGoals();
   });
   // تقييمات الموظف
-  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId),limit(60)),snap=>{
     empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
     renderEvaluations();
   });
   // إخفاقات الموظف
-  onSnapshot(query(collection(db,'employee_incidents'),where('employeeId','==',empId)),snap=>{
+  onSnapshot(query(collection(db,'employee_incidents'),where('employeeId','==',empId),limit(200)),snap=>{
     empIncidents=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     renderIncidents();renderScore();
   });
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
-  onSnapshot(collection(db,'wallets'),snap=>{
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const sel=document.getElementById('sal-wallet');
     if(sel)sel.innerHTML='<option value="">— اختر —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
