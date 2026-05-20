@@ -559,7 +559,29 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
+import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 const functions = getFunctions(app);
+
+// Phase A #3 — settings.html legacy permissions projection.
+// نحافظ على نفس fields/values السابقة (zero expansion، zero reduction).
+// راجع SETTINGS_MIGRATION_REPORT.md للتفاصيل.
+const SETTINGS_LEGACY_FIELDS = {
+  admin:             ['pages','canSeePrices','canSeeAllOrders','canAddOrders','canAddClients','canAssignDesigner','canAssignTasks','canAccessAccounts','canAccessEmployees'],
+  operation_manager: ['pages','canSeePrices','canSeeAllOrders','canAddOrders','canAddClients','canAssignDesigner','canAssignTasks','canAccessAccounts','canAccessEmployees'],
+  _default:          ['pages','canSeePrices','canSeeAllOrders','canAddOrders','canAddClients','canAssignDesigner'],
+};
+const SETTINGS_LEGACY_OVERRIDES = {
+  // settings.html legacy لم يكن يكتب 'shipping-followup' لـ shipping_officer
+  shipping_officer: { pages: ['shipping','shipping-dashboard','shipping-accounts'] },
+};
+function _legacySettingsPermissions(role) {
+  const full = getRoleDefaultPermissions(role);
+  const fields = SETTINGS_LEGACY_FIELDS[role] || SETTINGS_LEGACY_FIELDS._default;
+  const overrides = SETTINGS_LEGACY_OVERRIDES[role] || {};
+  const result = {};
+  fields.forEach(k => { result[k] = (k in overrides) ? overrides[k] : full[k]; });
+  return result;
+}
 
 const ROLES = {
   admin:            {label:'Admin',           ico:'👑', col:'var(--p)'},
@@ -848,17 +870,9 @@ window._savePermsImpl = async function() {
 
 window.changeRole = async function(uid, role) {
   try {
-    const ROLE_PERMS_DEFAULTS={
-      admin:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:true},
-      operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canAccessAccounts:true,canAccessEmployees:false},
-      customer_service:{pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canAddClients:true,canAssignDesigner:true},
-      graphic_designer:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-      design_operator:{pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canAddClients:false,canAssignDesigner:true},
-      production_agent:{pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-      shipping_officer:{pages:['shipping','shipping-dashboard','shipping-accounts'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-      wallet_manager:{pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canAddClients:false,canAssignDesigner:false},
-    };
-    const permissions=ROLE_PERMS_DEFAULTS[role]||ROLE_PERMS_DEFAULTS.customer_service;
+    // Phase A #3 — projection from canonical في core/permissions-matrix.js
+    // يحافظ على نفس الـ schema/values القديمة (راجع SETTINGS_MIGRATION_REPORT.md)
+    const permissions = _legacySettingsPermissions(role);
     const batch=writeBatch(db);
     batch.update(doc(db,'users',uid),{role,permissions});
     const empSnap=await getDocs(query(collection(db,'employees'),where('authUid','==',uid)));
