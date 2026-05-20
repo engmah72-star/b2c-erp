@@ -16,7 +16,7 @@
 | Read-only (ML/system-generated) | 5 (admin_alerts, client_segments, forecasts, product_affinities, rfm_runs) |
 | Cloud Functions | **42** (14 triggers + 9 callables + 7 scheduled + 12 helpers) |
 | Firebase singleton (G2) compliance | ✅ مع 1 legacy exception |
-| 🚨 **RULE 1 violations مؤكَّدة** | **2 ملفات** (`accounts.html` × 5+، `settings.html` × 1) |
+| 🚨 **RULE 1 violations** | ⚠️ مُراجَعة 2026-05-20 — راجع §2.1 (accounts.html تَبَيَّن FSE-compliant) |
 | Repository pattern (G4 target) | 1 من ~10+ ممكنة (features/design/repository.js) |
 | Storage pattern | 1 centralized + 9 inline |
 
@@ -88,21 +88,28 @@
 
 ---
 
-## 2) 🚨 RULE 1 Violations مؤكَّدة (Wallets Writes خارج FSE)
+## 2) 🚨 RULE 1 Violations — تصحيح 2026-05-20
 
-### `accounts.html` — **5+ direct writes**
-```js
-// السطر 1460: batch.update(doc(db,'wallets',walletId),{balance:increment(type==='in'?-amount:amount)})
-// السطر 1653: batch.update(doc(db,'wallets',walletId),{balance:actual})
-// السطر 1719: batch.update(doc(db,'wallets',walletId),{balance:newBal})
-// السطر 1805: await updateDoc(doc(db,'wallets',walletId),{...})
-// السطر 1976: batch.update(doc(db,'wallets',walletId),{balance:increment(adj)})
-```
-**التحليل:** هذه عمليات admin reconciliation/adjustment للأرصدة. كانت تستخدم helpers قبل، الآن مباشرة → خرق صريح لـ F1.5 + RULE 1.
-**الـ Severity:** **عالية** — يكسر invariant "FSE هو المصدر الوحيد للأرصدة".
-**الإصلاح المقترح:** إضافة `walletActions.adjustBalance()` و `walletActions.reconcile()` كـ central actions تمر بـ FSE.
+### 2.1 — `accounts.html` (مُراجَعة): **FALSE POSITIVE**
+الـ claim الأصلي كان "5+ direct wallet writes خارج FSE" بناءً على grep سطحي.
 
-### `settings.html` — **1 write (للإنشاء)**
+**التحقق العميق كشف:** كل الـ 7 wallet writes المالية متبوعة بـ `addLedgerToBatch(...)` في نفس الـ batch (FSE helper مُعتَمَد):
+
+| السطر | العملية | FSE pairing |
+|------|---------|-------------|
+| 1460 | deleteTransaction | `addLedgerToBatch(REVERSAL)` at 1479 |
+| 1653 | reconciliation | `addLedgerToBatch(WALLET_ADJUSTMENT)` at 1671 |
+| 1719 | adjustment | `addLedgerToBatch(WALLET_ADJUSTMENT)` at 1741 |
+| 1976-81 | edit transaction | `addLedgerToBatch` at 2036/2041 |
+| 2090 | new manual transaction | `addLedgerToBatch` at 2119 |
+| 2152 | supplier payment manual | `addLedgerToBatch(VENDOR_PAYMENT)` at 2157 |
+| 2239-40 | wallet transfer | `addLedgerToBatch(WALLET_TRANSFER)` at 2270 |
+
+النمط مطابق لـ `handleCustomerPayment` في FSE نفسه. **`addLedgerToBatch` هو FSE.** Line 1805 يحدّث metadata فقط (provider) — ليس مالي.
+
+**النتيجة:** accounts.html ✅ FSE-compliant. P0-4 الإصلاح غير لازم.
+
+### 2.2 — `settings.html` — Wallet Creation (مقبول)
 ```js
 // السطر 884: await addDoc(collection(db,'wallets'), { name, type, balance:0, ... })
 ```
