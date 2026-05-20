@@ -183,7 +183,9 @@ export function addLedgerToBatch(batch, db, eventType, data) {
   if (!LC[eventType]) {
     console.warn(`[FSE] ⚠️ eventType غير معروف: "${eventType}" — أضفه إلى LC map أو تحقق من الاسم`);
   }
-  if (!(data.amount > 0)) {
+  // amount=0 مسموح للـ "no-op close" — التسوية بدون حركة مالية (settle close).
+  // فقط amount<0 تكون فعلاً غير صالحة.
+  if (data.amount < 0) {
     console.warn(`[FSE] ⚠️ addLedgerToBatch: amount=${data.amount} غير صالح لـ eventType=${eventType}`);
   }
   // تحذير عند غياب أي ربط بكيان (أوردر/عميل/موظف/مورد/محفظة) — قيد يتيم بدون ربط
