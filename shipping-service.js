@@ -71,6 +71,9 @@ export function getOrdersPendingSettlement(orders) {
 /**
  * الطلبات المسوّاة (للأرشيف القريب):
  *   shipSettled=true + stage='shipping' (لم تُؤرشَف بعد)
+ *   ملاحظة: عادةً صفر — الأرشفة التلقائية بعد التسوية تنقل الأوردر مباشرة
+ *   لـ stage='archived' (يظهر في archive.html). هذا الـ filter لتغطية الـ
+ *   edge cases (auto-archive فشل لأي سبب).
  */
 export function getOrdersSettled(orders) {
   return (orders || []).filter(o => {
