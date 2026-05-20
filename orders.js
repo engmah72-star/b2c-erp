@@ -1498,6 +1498,184 @@ export function isShipActive(order) {
   return !isShipReadyToClose(order);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SETTLEMENT BUILDER (PR Settle-Fix #1) — Single source of truth for
+// computing per-order updates when settling shipments with a company.
+//
+// THE BUG IT FIXES (verified across 3 settle paths):
+//   - shipping.html confirmSettle      — used (shipCollected − shippingCost) ✓ correct
+//   - shipping-accounts.html saveSettle — used getDueByCo (customer remaining) ✗
+//   - shipping-followup.html saveSettleFromCo — used (sale + cust − disc − oldPaid) ✗
+// Three different formulas for one operation. Two of them ignored
+// `shipCollected` (the actual collection recorded at confirmCollect).
+//
+// THIS HELPER:
+//   - Uses `shipCollected − shippingCost` as the canonical expected per
+//     order (matches what the company actually owes us)
+//   - Distributes the actual amount proportionally when diff != expected
+//   - Returns per-order updates plus a summary
+//
+// EDGE CASES:
+//   - sumExpected === 0  → fall back to even distribution across selected
+//   - one order has expected=0 → gets 0 share (no inflation)
+//   - actualAmount === sumExpected → each order gets exactly its expected
+//   - actualAmount < sumExpected → each order gets its proportional share
+//                                  (smaller than expected); shortfall is
+//                                  thus distributed, not orphaned
+//   - actualAmount > sumExpected → each order gets proportionally more;
+//                                  positive diff treated symmetrically
+//
+// USAGE:
+//   const spec = buildSettlementUpdates({
+//     orders: [...],          // full order objects
+//     actualAmount: 720,      // what the company actually paid us
+//     userName: 'Mohamed',    // for timeline entries
+//     companyName: 'شركة س',  // for timeline entries
+//     diffReason: 'weight',   // optional, audit
+//   });
+//   if (!spec.ok) return toast(spec.errors[0], 'err');
+//   // Use spec.updates in your writeBatch / runTransaction
+//
+// ═══════════════════════════════════════════════════════════════════
+
+/** صافي ما تدين به الشركة لنا لهذا الأوردر = shipCollected − shippingCost */
+function _expectedFromCompany(order) {
+  const collected = parseFloat(order?.shipCollected) || 0;
+  const cost      = parseFloat(order?.shippingCost) || 0;
+  return Math.max(0, collected - cost);
+}
+
+/** المجموع الكلي للأوردر بعد customer ship fee و discount */
+function _orderGrossTotal(order) {
+  const sale     = parseFloat(order?.salePrice) || 0;
+  const custShip = parseFloat(order?.customerShipFee) || 0;
+  const disc     = parseFloat(order?.discount) || 0;
+  return Math.max(0, sale + custShip - disc);
+}
+
+/**
+ * buildSettlementUpdates — pure function. Returns the per-order updates
+ * to apply atomically (writeBatch or runTransaction).
+ *
+ * @param {Object} args
+ * @param {Array<Object>} args.orders         — selected orders (full docs)
+ * @param {number}        args.actualAmount   — what the company actually paid us
+ * @param {string}        [args.userName]     — for timeline entries
+ * @param {string}        [args.companyName]  — for timeline entries
+ * @param {string}        [args.diffReasonLabel] — Arabic label for diff reason
+ * @param {string}        [args.diffNote]     — free-text note for the diff
+ * @returns {Object} { ok, errors[], warnings[], updates[], summary }
+ */
+export function buildSettlementUpdates({
+  orders = [],
+  actualAmount = 0,
+  userName = '',
+  companyName = '',
+  diffReasonLabel = '',
+  diffNote = '',
+}) {
+  const errors = [];
+  const warnings = [];
+
+  if (!Array.isArray(orders) || orders.length === 0) {
+    errors.push('⚠️ لا توجد أوردرات للتسوية');
+    return { ok: false, errors, warnings, updates: [], summary: null };
+  }
+
+  const actual = parseFloat(actualAmount);
+  if (!Number.isFinite(actual) || actual < 0) {
+    errors.push('⚠️ المبلغ الفعلي غير صالح');
+    return { ok: false, errors, warnings, updates: [], summary: null };
+  }
+
+  // Per-order expected: shipCollected − shippingCost (the canonical formula)
+  const perOrderExpected = orders.map(o => _expectedFromCompany(o));
+  const sumExpected = perOrderExpected.reduce((s, x) => s + x, 0);
+
+  // Distribution strategy:
+  // - If sumExpected > 0: proportional (each order gets actual * (its_expected / total_expected))
+  // - If sumExpected === 0: even split (e.g., all shipCollected were 0 — rare edge case)
+  const shares = orders.map((_, i) => {
+    if (sumExpected > 0) return actual * (perOrderExpected[i] / sumExpected);
+    return actual / orders.length;
+  });
+
+  const diff = actual - sumExpected;
+
+  // Optional warning: shipCollected missing for any order
+  const missingCollected = orders.filter(o => !(parseFloat(o?.shipCollected) > 0));
+  if (missingCollected.length) {
+    warnings.push(`⚠️ ${missingCollected.length} أوردر بدون shipCollected — قد يحتاج مراجعة`);
+  }
+
+  // Already-settled guard (UX hint; the atomic write enforces it for real)
+  const alreadySettled = orders.filter(o => o?.shipSettled === true);
+  if (alreadySettled.length) {
+    errors.push(`⛔ ${alreadySettled.length} أوردر مسوّى بالفعل`);
+    return { ok: false, errors, warnings, updates: [], summary: null };
+  }
+
+  const ts = new Date().toLocaleDateString('ar-EG') + ' ' +
+             new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
+  // Build per-order update specs
+  const updates = orders.map((o, i) => {
+    const expected = perOrderExpected[i];
+    const share    = Math.round(shares[i] * 100) / 100;  // 2-decimal precision
+    const oldPaid  = parseFloat(o?.totalPaid) || parseFloat(o?.paid) || parseFloat(o?.deposit) || 0;
+    const newPaid  = oldPaid + share;
+    const gross    = _orderGrossTotal(o);
+    const newRem   = Math.max(0, gross - newPaid);
+    const paymentStatus = newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
+
+    // Diff narrative for this order's timeline entry
+    let diffNarrative = '';
+    if (Math.abs(share - expected) > 0.01) {
+      const sign = share > expected ? '+' : '−';
+      diffNarrative = ` (${sign}${Math.abs(share - expected).toFixed(2)} ج عن المتوقع${diffReasonLabel ? ' — ' + diffReasonLabel : ''})`;
+    }
+    const action = `✅ تسوية شحن — ${companyName || ''} — ${share.toFixed(2)} ج${diffNarrative}`;
+
+    return {
+      orderId: o._id,
+      // Fields to write on orders/{orderId}:
+      fields: {
+        shipSettled: true,
+        shipSettledAmount: share,           // actual share (NOT expected)
+        shipSettledExpected: expected,      // audit: what we expected from this order
+        shipSettledDiff: share - expected,  // audit: per-order diff
+        totalPaid: newPaid,
+        remaining: newRem,
+        paymentStatus,
+      },
+      timelineEntry: { date: ts, action, by: userName || 'system' },
+      // For convenience to callers:
+      expected,
+      share,
+      newPaid,
+      newRem,
+    };
+  });
+
+  return {
+    ok: true,
+    errors,
+    warnings,
+    updates,
+    summary: {
+      actual,
+      sumExpected,
+      diff,
+      orderCount: orders.length,
+      hasDiff: Math.abs(diff) > 0.01,
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// END SETTLEMENT BUILDER
+// ═══════════════════════════════════════════════════════════════════
+
 // ══════════════════════════════════════════
 // ORDER SELF-HEALER — كشف وإصلاح الـ inconsistencies تلقائياً
 // المبدأ: نحسب الحالة الحقيقية من salePrice/customerShipFee/discount/totalPaid وplags
