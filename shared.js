@@ -33,8 +33,9 @@ export const storage = _coreStorage;
 // ROLES — re-export من المصدر الوحيد (orders.js) — RULE C1.5
 // ═══════════════════════════════════════
 // لا نعرّف ROLES هنا. المصدر الوحيد في orders.js.
-// هذا re-export للحفاظ على التوافق مع consumers موجودين (مثل ml-dashboard.html).
-export { ROLES } from './orders.js';
+// نستوردها للـ local scope (renderSidebar يحتاجها) ونعيد التصدير معًا.
+import { ROLES } from './orders.js';
+export { ROLES };
 
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
