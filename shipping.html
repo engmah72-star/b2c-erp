@@ -207,6 +207,22 @@
 .profit-flag.profit-neutral{background:rgba(255,170,0,.14);color:var(--y);border:1px solid rgba(255,170,0,.28)}
 .profit-flag.profit-loss{background:rgba(255,61,110,.14);color:var(--r);border:1px solid rgba(255,61,110,.3)}
 
+/* Row severity tint (Step 8.1) — subtle bg + right-edge bar by highest active flag.
+   The brief: "النظام يجب أن يوجّه عين المستخدم تلقائيًا" — eye locks on problems
+   without reading any cell. Tints are intentionally soft (4-8% alpha) so they
+   group rows visually without screaming. */
+.tbl tbody tr.row-sev-crit > td{background:linear-gradient(90deg,rgba(255,61,110,.08),transparent 60%)!important;box-shadow:inset 3px 0 0 var(--r)}
+.tbl tbody tr.row-sev-warn > td{background:linear-gradient(90deg,rgba(255,170,0,.06),transparent 60%)!important;box-shadow:inset 3px 0 0 var(--y)}
+.tbl tbody tr.row-sev-info > td{background:linear-gradient(90deg,rgba(110,189,255,.05),transparent 60%)!important;box-shadow:inset 3px 0 0 var(--c)}
+/* Severity stays visible on hover but with slight intensification */
+.tbl tbody tr.row-sev-crit:hover > td{background:linear-gradient(90deg,rgba(255,61,110,.12),transparent 60%)!important}
+.tbl tbody tr.row-sev-warn:hover > td{background:linear-gradient(90deg,rgba(255,170,0,.10),transparent 60%)!important}
+.tbl tbody tr.row-sev-info:hover > td{background:linear-gradient(90deg,rgba(110,189,255,.09),transparent 60%)!important}
+/* The row-pending pulse from #592 takes precedence — restore its tint on top */
+.tbl tbody tr.row-pending.row-sev-crit > td,
+.tbl tbody tr.row-pending.row-sev-warn > td,
+.tbl tbody tr.row-pending.row-sev-info > td{background:rgba(110,189,255,.06)!important}
+
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
 .risk-flag{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:99px;font-size:9.5px;font-weight:800;white-space:nowrap;cursor:help}
@@ -1220,6 +1236,36 @@ function profitFlag(order) {
   return `<span class="profit-flag ${cls}" title="${title.replace(/"/g,'&quot;')}"><span>${icon}</span><span>${label}</span></span>`;
 }
 
+// Row severity (Step 8.1) — single CSS class on <tr> driving the visual
+// urgency hierarchy. The eye locks onto problem rows without reading.
+//
+// Severity priority (highest wins):
+//   crit  → returned + active loss, or settled-but-unpaid drift
+//   warn  → delayed > 3d, partial return, no-cost, profit-loss
+//   info  → pending settle (company collected, waiting on settlement)
+//   ok    → everything else (no class — default styling)
+//
+// Computed from existing data + helpers — no new fields, no new reads.
+function rowSeverityClass(order) {
+  const stage = getShipStage(order);
+  // crit: returned with money on the line
+  if (stage === 'returned') {
+    const loss = safeNum(order.shippingCost) + safeNum(order.totalPaid);
+    if (loss > 0) return 'row-sev-crit';
+  }
+  // crit: settled-but-unpaid drift (caught by self-heal but worth visual flag)
+  if (order.shipSettled === true && safeNum(order.totalPaid) < safeNum(order.salePrice || order.totalPrice) - 0.01) {
+    return 'row-sev-crit';
+  }
+  // warn: delayed + missing cost + partial return + active loss-profit
+  if (isDelayed(order)) return 'row-sev-warn';
+  if (hasNoCost(order)) return 'row-sev-warn';
+  if (Array.isArray(order.returnedItems) && order.returnedItems.length > 0 && stage !== 'returned') return 'row-sev-warn';
+  // info: pending settlement (company collected, awaiting bulk settle)
+  if (order.shipMethod === 'company' && order.shipStage === 'collected' && !order.shipSettled) return 'row-sev-info';
+  return '';
+}
+
 // Risk / loss indicators (Step 7.5) — small chips under the status badge.
 // Each chip flags a single risk: returned, partial return, delayed,
 // missing shipping cost, settled-but-unpaid (legacy drift, caught by
@@ -1318,7 +1364,7 @@ function renderRows(list) {
     const aged = isDelayed(o) ? 'row-aged' : '';
     const created = o.createdAt?.toDate?.() ? o.createdAt.toDate().toLocaleDateString('ar-EG', {day:'2-digit', month:'2-digit'}) : '';
 
-    return `<tr id="r-${o._id}" class="${aged}">
+    return `<tr id="r-${o._id}" class="${aged} ${rowSeverityClass(o)}">
       <td class="td-expand"><button class="expand-btn" onclick="window.toggleRow('${o._id}')" title="تفاصيل">▶</button></td>
       <td class="td-client">
         <div class="td-client-with-thumb">
