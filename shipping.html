@@ -239,6 +239,25 @@
 .guide-drawer.on .guide-drawer-panel{transform:translateX(0)}
 .guide-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bd);background:var(--bg)}
 .guide-drawer-frame{flex:1;border:0;width:100%;background:var(--bg2)}
+/* Order details drawer tabs (Step 7.6) */
+.order-tabs{display:flex;border-bottom:1px solid var(--bd);background:var(--bg)}
+.order-tab{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 8px;border:0;background:transparent;color:var(--dim);font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;transition:color .12s,border-color .12s}
+.order-tab:hover{color:var(--snow)}
+.order-tab.active{color:var(--p);border-bottom-color:var(--p)}
+.order-tab-body{flex:1;overflow-y:auto;padding:14px 18px;background:var(--bg2);scrollbar-width:thin}
+.od-sec{margin-bottom:16px}
+.od-sec-ttl{font-size:11px;font-weight:800;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.od-row{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;margin-bottom:4px;font-size:12.5px}
+.od-row .l{color:var(--dim2);font-weight:600}
+.od-row .v{font-weight:800;color:var(--snow)}
+.od-row .v.pos{color:var(--g)}
+.od-row .v.neg{color:var(--r)}
+.od-tl-item{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bd);border-right:3px solid var(--c);border-radius:8px;margin-bottom:4px;font-size:12px}
+.od-tl-item .od-tl-date{font-size:11px;color:var(--b);font-weight:700;white-space:nowrap}
+.od-tl-item .od-tl-act{line-height:1.5}
+.od-tl-item .od-tl-by{font-size:10.5px;color:var(--dim2);margin-top:2px}
+.od-thumb-big{width:100%;max-width:240px;height:auto;border-radius:8px;border:1px solid var(--bd);margin-bottom:10px}
+.od-empty{text-align:center;color:var(--dim2);font-size:12px;padding:24px}
 @media(max-width:640px){
   .guide-drawer-panel{inline-size:100vw}
   #alerts-strip{grid-template-columns:1fr !important}
@@ -511,7 +530,7 @@
   </div>
 </div>
 
-<!-- Generic info drawer — embeds an in-app page (guide, order tracking, ...) to remove navigation friction -->
+<!-- Generic info drawer — embeds an in-app page (guide). Order details now uses #order-drawer below. -->
 <div id="guide-drawer" class="guide-drawer" aria-hidden="true">
   <div class="guide-drawer-overlay" onclick="closeGuide()"></div>
   <div class="guide-drawer-panel" role="dialog" aria-labelledby="guide-drawer-title">
@@ -523,6 +542,26 @@
       </div>
     </div>
     <iframe id="guide-frame" class="guide-drawer-frame" title="دليل تشغيل الشحن" loading="lazy"></iframe>
+  </div>
+</div>
+
+<!-- Order details drawer (Step 7.6) — native 3-tab view (no iframe) -->
+<div id="order-drawer" class="guide-drawer" aria-hidden="true">
+  <div class="guide-drawer-overlay" onclick="closeOrderDrawer()"></div>
+  <div class="guide-drawer-panel" role="dialog" aria-labelledby="order-drawer-title">
+    <div class="guide-drawer-head">
+      <div id="order-drawer-title" style="font-weight:900;font-size:14px">📋 تفاصيل الأوردر</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" id="order-drawer-popout" title="فتح صفحة المتابعة الكاملة">↗</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeOrderDrawer()" aria-label="إغلاق">✕</button>
+      </div>
+    </div>
+    <div class="order-tabs">
+      <button class="order-tab active" data-tab="op"      onclick="switchOrderTab('op')"><span>📦</span><span>التشغيل</span></button>
+      <button class="order-tab"        data-tab="money"   onclick="switchOrderTab('money')"><span>💰</span><span>المالي</span></button>
+      <button class="order-tab"        data-tab="timeline" onclick="switchOrderTab('timeline')"><span>📋</span><span>المتابعة</span></button>
+    </div>
+    <div class="order-tab-body" id="order-tab-body"></div>
   </div>
 </div>
 
@@ -621,13 +660,154 @@ window.closeGuide = () => {
   const d = $('guide-drawer');
   d.classList.remove('on'); d.setAttribute('aria-hidden','true');
 };
+// ════════════════════════════════════════════════════════════════
+// Order details drawer (Step 7.6) — native 3-tab view, no iframe
+// ════════════════════════════════════════════════════════════════
+// Replaces the old iframe-based detail panel. Renders directly from the
+// order in memory — no extra Firestore reads, no page navigation.
+//
+// Tabs:
+//   - 📦 التشغيل    — design preview, products, ship method, addresses
+//   - 💰 المالي     — sale/paid/remaining/cost/expected/net + RULE 8 gates
+//   - 📋 المتابعة   — timeline entries (newest first), RULE 8 cost data
+
+let _currentOrderId = null;
+let _currentTab = 'op';
+
 window.openOrderDetails = (orderId) => {
   const o = orders.find(x => x._id === orderId);
-  const label = o ? `📋 #${o.orderNumber || o._id.slice(0,6)} · ${o.clientName || ''}` : '📋 تفاصيل الأوردر';
-  openGuide(`order-tracking.html?id=${encodeURIComponent(orderId)}`, label);
+  if (!o) return;
+  _currentOrderId = orderId;
+  _currentTab = 'op';
+  const title = `📋 #${o.orderNumber || o._id.slice(0,6)} · ${o.clientName || ''}`;
+  $('order-drawer-title').textContent = title;
+  $('order-drawer-popout').onclick = () =>
+    window.open(`order-tracking.html?id=${encodeURIComponent(orderId)}`, '_blank');
+  document.querySelectorAll('.order-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === 'op');
+  });
+  renderOrderTab(o, 'op');
+  const d = $('order-drawer');
+  d.classList.add('on'); d.setAttribute('aria-hidden','false');
 };
+
+window.closeOrderDrawer = () => {
+  const d = $('order-drawer');
+  d.classList.remove('on'); d.setAttribute('aria-hidden','true');
+  _currentOrderId = null;
+};
+
+window.switchOrderTab = (tab) => {
+  _currentTab = tab;
+  document.querySelectorAll('.order-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  const o = orders.find(x => x._id === _currentOrderId);
+  if (o) renderOrderTab(o, tab);
+};
+
+function renderOrderTab(o, tab) {
+  const body = $('order-tab-body');
+  if (tab === 'op')        body.innerHTML = orderOpHTML(o);
+  else if (tab === 'money') body.innerHTML = orderMoneyHTML(o);
+  else if (tab === 'timeline') body.innerHTML = orderTimelineHTML(o);
+}
+
+function orderOpHTML(o) {
+  const t = getDesignThumb(o);
+  const thumbSection = t.locked
+    ? `<div class="od-empty">🔒 بيانات التصميم محجوبة عن دورك</div>`
+    : t.url
+      ? `<img src="${t.url}" alt="معاينة" class="od-thumb-big" onerror="this.outerHTML='&lt;div class=\\'od-empty\\'&gt;🖼️ تعذر التحميل&lt;/div&gt;'">`
+      : `<div class="od-empty">🎨 لا توجد معاينة${t.count ? ' · ' + t.count + ' ملفات تصميم' : ''}</div>`;
+  const prods = Array.isArray(o.products) ? o.products : [];
+  const prodRows = prods.length
+    ? prods.map(p => {
+        const spec = buildProductSpec(p);
+        return `<div class="od-row"><span class="l">${(p.name||'منتج').replace(/</g,'&lt;')} × ${parseInt(p.qty)||0}</span><span class="v">${spec.replace(/</g,'&lt;')}</span></div>`;
+      }).join('')
+    : (o.product ? `<div class="od-row"><span class="l">${o.product.replace(/</g,'&lt;')}</span><span class="v">—</span></div>` : `<div class="od-empty">لا توجد منتجات</div>`);
+  return `
+    <div class="od-sec">
+      <div class="od-sec-ttl">🎨 معاينة التصميم</div>
+      ${thumbSection}
+    </div>
+    <div class="od-sec">
+      <div class="od-sec-ttl">📦 المنتجات</div>
+      ${prodRows}
+    </div>
+    <div class="od-sec">
+      <div class="od-sec-ttl">🚚 الشحن</div>
+      <div class="od-row"><span class="l">شركة الشحن</span><span class="v">${(o.shipCompanyName||'—').replace(/</g,'&lt;')}</span></div>
+      <div class="od-row"><span class="l">الطريقة</span><span class="v">${methodLabel(o.shipMethod)}</span></div>
+      ${o.shipStage ? `<div class="od-row"><span class="l">مرحلة الشحن</span><span class="v">${o.shipStage}</span></div>` : ''}
+      ${o.shippingOfficerName ? `<div class="od-row"><span class="l">المندوب</span><span class="v">${o.shippingOfficerName.replace(/</g,'&lt;')}</span></div>` : ''}
+    </div>
+    <div class="od-sec">
+      <div class="od-sec-ttl">📍 العنوان</div>
+      <div class="od-row"><span class="l">المحافظة · المدينة</span><span class="v">${(o.gov||o.governorate||'—').replace(/</g,'&lt;')} · ${(o.city||'').replace(/</g,'&lt;')}</span></div>
+      ${o.area ? `<div class="od-row"><span class="l">المنطقة</span><span class="v">${o.area.replace(/</g,'&lt;')}</span></div>` : ''}
+      ${o.address ? `<div class="od-row"><span class="l">العنوان</span><span class="v">${o.address.replace(/</g,'&lt;')}</span></div>` : ''}
+    </div>
+  `;
+}
+
+function orderMoneyHTML(o) {
+  const seeSale   = canSee('price_sale',   myPerms, myRole);
+  const seePaid   = canSee('price_paid',   myPerms, myRole);
+  const seeRem    = canSee('price_remaining', myPerms, myRole);
+  const seeShip   = canSee('ship_cost',    myPerms, myRole);
+  const seeCost   = canSee('price_cost',   myPerms, myRole);
+  const sale     = safeNum(o.salePrice || o.totalPrice || o.total);
+  const paid     = safeNum(o.totalPaid || o.shipCollected);
+  const rem      = safeNum(o.remaining);
+  const shipCost = safeNum(o.shippingCost);
+  const cust     = safeNum(o.customerShipFee);
+  const disc     = safeNum(o.discount);
+  const execCost = (o.costItems||[]).reduce((s,c) => s + safeNum(c.total), 0);
+  const net      = paid - shipCost - execCost - disc;
+  let html = `<div class="od-sec"><div class="od-sec-ttl">💵 الإيرادات</div>`;
+  if (seeSale) html += `<div class="od-row"><span class="l">سعر البيع</span><span class="v">${fmt(sale)} ج</span></div>`;
+  if (cust > 0) html += `<div class="od-row"><span class="l">رسوم الشحن (للعميل)</span><span class="v">${fmt(cust)} ج</span></div>`;
+  if (disc > 0) html += `<div class="od-row"><span class="l">الخصم</span><span class="v neg">−${fmt(disc)} ج</span></div>`;
+  if (seePaid) html += `<div class="od-row"><span class="l">المُحصَّل</span><span class="v pos">${fmt(paid)} ج</span></div>`;
+  if (seeRem)  html += `<div class="od-row"><span class="l">المتبقّي</span><span class="v ${rem>0?'neg':''}">${fmt(rem)} ج</span></div>`;
+  html += `</div>`;
+  html += `<div class="od-sec"><div class="od-sec-ttl">🚚 الشحن</div>`;
+  if (seeShip) html += `<div class="od-row"><span class="l">تكلفة الشحن (لنا)</span><span class="v neg">${fmt(shipCost)} ج</span></div>`;
+  if (o.shipSettled && seeShip) html += `<div class="od-row"><span class="l">المُسوَّى</span><span class="v pos">${fmt(o.shipSettledAmount)} ج</span></div>`;
+  html += `</div>`;
+  if (seeCost) {
+    html += `<div class="od-sec"><div class="od-sec-ttl">📊 صافي العملية</div>`;
+    if (execCost > 0) html += `<div class="od-row"><span class="l">تكلفة التنفيذ</span><span class="v neg">${fmt(execCost)} ج</span></div>`;
+    html += `<div class="od-row"><span class="l"><b>الصافي</b></span><span class="v ${net<0?'neg':'pos'}"><b>${fmt(net)} ج</b></span></div>`;
+    html += `</div>`;
+  }
+  return html;
+}
+
+function orderTimelineHTML(o) {
+  const tl = Array.isArray(o.timeline) ? o.timeline : [];
+  if (!tl.length) return `<div class="od-empty">لا توجد أحداث مسجّلة</div>`;
+  // Newest first; cap at 50 entries to keep DOM light
+  const items = tl.slice(-50).reverse();
+  return `<div class="od-sec">
+    <div class="od-sec-ttl">📋 آخر ${items.length} حدث</div>
+    ${items.map(t => `
+      <div class="od-tl-item">
+        <span class="od-tl-date">${(t.date||'—').toString().replace(/</g,'&lt;')}</span>
+        <div>
+          <div class="od-tl-act">${(t.action||'—').toString().replace(/</g,'&lt;')}</div>
+          ${t.by ? `<div class="od-tl-by">بواسطة: ${t.by.toString().replace(/</g,'&lt;')}</div>` : ''}
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
+}
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && $('guide-drawer')?.classList.contains('on')) closeGuide();
+  if (e.key !== 'Escape') return;
+  if ($('order-drawer')?.classList.contains('on')) closeOrderDrawer();
+  else if ($('guide-drawer')?.classList.contains('on')) closeGuide();
 });
 
 function toast(msg, type='ok') {
