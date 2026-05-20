@@ -222,6 +222,15 @@
 .tbl tbody tr.row-pending.row-sev-crit > td,
 .tbl tbody tr.row-pending.row-sev-warn > td,
 .tbl tbody tr.row-pending.row-sev-info > td{background:rgba(110,189,255,.06)!important}
+/* Next-Best-Action emphasis (Step 8.2) — urgent rows get a brighter, pulsing
+   primary button so the operator's hand goes straight to it. Terminal/waiting
+   states get muted text instead of competing buttons. */
+@keyframes action-pulse{0%,100%{box-shadow:0 0 0 0 rgba(110,189,255,.5)}50%{box-shadow:0 0 0 6px rgba(110,189,255,0)}}
+.btn-primary-action{font-weight:900;animation:action-pulse 1.8s ease-in-out infinite}
+.btn-primary-action:hover{animation:none;transform:scale(1.03)}
+.action-waiting{display:inline-flex;align-items:center;gap:4px;color:var(--y);font-size:11px;font-weight:700;opacity:.85}
+.action-done{display:inline-flex;align-items:center;gap:4px;color:var(--dim2);font-size:11px;font-weight:600}
+.action-terminal{display:inline-flex;align-items:center;gap:4px;color:var(--r);font-size:11px;font-weight:700;opacity:.75}
 
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
@@ -1018,18 +1027,30 @@ function statusChip(stage) {
   return `<span class="status-chip ${c.cls}">${c.txt}</span>`;
 }
 
+// Action priority (Step 8.2) — Next-Best-Action emphasis.
+// Marks the primary action visually distinct when the row is urgent
+// (delayed / at-risk) or muted when it's terminal (archived / returned).
+// The brief: "Primary Action بوضوح، بدل 10 أزرار متساوية الأهمية"
+//
+// Severity logic (matches rowSeverityClass from #609):
+//   crit/warn → action gets .btn-primary-action (pulse + brighter)
+//   info      → action stays normal (it's just "next in line")
+//   archived/returned → muted text, no button
 function actionsCell(o) {
   const stage = getShipStage(o);
   const id = o._id;
-  if (stage === 'ready')     return `<button class="btn btn-c btn-sm" onclick="window.openDispatch('${id}')">🚚 تسليم</button>`;
-  if (stage === 'transit')   return `<button class="btn btn-g btn-sm" onclick="window.openCollect('${id}')">💰 تحصيل</button>`;
+  const urgent = isDelayed(o) || hasNoCost(o);
+  const sevCls = urgent ? ' btn-primary-action' : '';
+
+  if (stage === 'ready')     return `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openDispatch('${id}')" title="${urgent ? 'متأخر — سلّم الآن' : 'تسليم لشركة الشحن'}">🚚 تسليم</button>`;
+  if (stage === 'transit')   return `<button class="btn btn-g btn-sm${sevCls}" onclick="window.openCollect('${id}')" title="${urgent ? 'متأخر — حصّل الآن' : 'تحصيل من العميل'}">💰 تحصيل</button>`;
   if (stage === 'collected') return canSettle()
-    ? `<button class="btn btn-c btn-sm" onclick="window.openSettleSingle('${id}')">📦 تسوية</button>`
-    : `<span style="color:var(--y);font-size:11px">⏳ بانتظار التسوية</span>`;
+    ? `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openSettleSingle('${id}')" title="تسوية مع شركة الشحن">📦 تسوية</button>`
+    : `<span class="action-waiting" title="بانتظار wallet_manager">⏳ بانتظار التسوية</span>`;
   if (stage === 'settled')   return o.stage === 'archived'
-    ? `<span style="color:var(--dim2);font-size:11px">📁 مؤرشف</span>`
-    : `<button class="btn btn-ghost btn-sm" onclick="window.confirmArchive('${id}')">📁 أرشفة</button>`;
-  if (stage === 'returned')  return `<span style="color:var(--r);font-size:11px">⏎</span>`;
+    ? `<span class="action-done" title="أُرشف">📁 مؤرشف</span>`
+    : `<button class="btn btn-ghost btn-sm" onclick="window.confirmArchive('${id}')" title="نقل للأرشيف">📁 أرشفة</button>`;
+  if (stage === 'returned')  return `<span class="action-terminal" title="مرتجع — حالة نهائية">⏎ مرتجع</span>`;
   return '';
 }
 
