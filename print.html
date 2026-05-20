@@ -417,7 +417,7 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, addDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, addDoc, increment, writeBatch, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
@@ -474,7 +474,9 @@ function startListeners(){
   // Deep-link: open specific order if ?orderId= in URL
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
-  onSnapshot(query(collection(db,'orders'),where('stage','==','printing')),snap=>{
+  // RULE G3: cap printing-stage stream. An active printing queue should
+  // never approach 500 orders — beyond that it's bottlenecked, not "real-time".
+  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),limit(500)),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     updateKPIs();renderList();
     if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderPanel(o);}}
@@ -484,10 +486,10 @@ function startListeners(){
       setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 250);
     }
   });
-  onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
   // المنفّذين (production_agent) لـ pick-prod modal — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__prodAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-prod-sel');if(!s)return;
@@ -1621,13 +1623,13 @@ window.setEditProdQty=function(i,v){editProdsData[i].qty=parseInt(v)||1;calcAuto
 window.setEditProdPrice=function(i,v){editProdsData[i].unitPrice=parseFloat(v)||0;calcAutoPrice();};
 
 // تحميل الكتالوج مرة واحدة
-onSnapshot(collection(db,'products_v2'), snap => {
+onSnapshot(query(collection(db,'products_v2'),limit(500)), snap => {
   productsCatalog = snap.docs.map(d=>({...d.data(),_id:d.id}))
     .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
 });
 
 // تحميل الموردين (للمطابع — فلتر حسب الفئة وقت العرض في النموذج)
-onSnapshot(collection(db,'suppliers_v2'), snap => {
+onSnapshot(query(collection(db,'suppliers_v2'),limit(500)), snap => {
   suppliers = snap.docs.map(d=>({...d.data(),_id:d.id}))
     .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   if(activeOrder) renderPanel(activeOrder);

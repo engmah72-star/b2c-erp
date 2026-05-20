@@ -391,7 +391,7 @@ const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clie
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'suppliers.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, getDocs, setDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, getDocs, setDoc, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 console.log('[SUPPLIER] 🟢 SUPPLIER UI LOADED v2 — financial-sync-engine active');
 let suppliers=[],shippers=[],payments=[],orders=[],wallets=[];
@@ -431,11 +431,13 @@ onAuthStateChanged(auth,async u=>{
   }
   loadMasterLists();
   // Listeners
-  onSnapshot(collection(db,'suppliers_v2'),s=>{window.markSynced&&window.markSynced();suppliers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'printer'}));renderAll();});
-  onSnapshot(collection(db,'shippers_v2'),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'shipper'}));renderAll();});
-  onSnapshot(collection(db,'supplier_payments'),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});
-  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','printing','shipping','archived'])),s=>{orders=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});
-  onSnapshot(collection(db,'wallets'),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));fillWallets();});
+  // RULE G3: bound all suppliers-page subscriptions. Safety caps well above
+  // realistic counts; the page can later add pagination when data grows.
+  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{window.markSynced&&window.markSynced();suppliers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'printer'}));renderAll();});
+  onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'shipper'}));renderAll();});
+  onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});
+  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','printing','shipping','archived']),limit(3000)),s=>{orders=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});
+  onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));fillWallets();});
 });
 
 function fillWallets(){
