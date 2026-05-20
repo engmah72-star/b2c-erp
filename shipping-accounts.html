@@ -423,7 +423,7 @@ window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gsta
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch } from "./orders.js";
 // ══ State ══
@@ -488,7 +488,9 @@ function startListeners(){
     if(urlOrd) __pendingOrderId=urlOrd;
   })();
 
-  onSnapshot(collection(db,'orders'),snap=>{
+  // RULE G3: cap shipping-accounts subscriptions. Settlements stream the
+  // recent operational window; historical exports go through reports.html.
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     fillFilters();
     if(window.__pendingCoFilter){
@@ -504,13 +506,13 @@ function startListeners(){
       __pendingOrderId='';
     }
   });
-  onSnapshot(collection(db,'shipping_settlements'),snap=>{
+  onSnapshot(query(collection(db,'shipping_settlements'),limit(2000)),snap=>{
     settlements=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
   });
-  onSnapshot(collection(db,'shipping_returns'),snap=>{
+  onSnapshot(query(collection(db,'shipping_returns'),limit(2000)),snap=>{
     returns=snap.docs.map(d=>({...d.data(),_id:d.id}));render();
   });
-  onSnapshot(collection(db,'wallets'),snap=>{
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const sel=document.getElementById('settle-wallet');
     if(sel){const cur=sel.value;sel.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');if(cur)sel.value=cur;}

@@ -541,7 +541,7 @@ const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clie
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'reports.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, addDoc, query, where, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, addDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { dedupEmployees, resolveDesigner } from "./orders.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
@@ -898,16 +898,20 @@ onAuthStateChanged(auth,async u=>{
     document.getElementById('nav-av').textContent=(userName[0]||'U').toUpperCase();
     buildSidebar(d,'reports.html');
   }
-  onSnapshot(collection(db,'orders'),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.orders=true;scheduleRender();});
-  onSnapshot(collection(db,'clients'),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
-  onSnapshot(collection(db,'employees'),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
-  onSnapshot(collection(db,'suppliers_v2'),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
-  onSnapshot(collection(db,'shippers_v2'),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
-  onSnapshot(collection(db,'supplier_payments'),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
-  onSnapshot(collection(db,'wallets'),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
-  onSnapshot(collection(db,'transactions_v2'),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
+  // RULE G3: bound the reports listeners. These are the largest streams in
+  // the system — previously unbounded, so every page-load streamed the entire
+  // history of every collection. Caps reflect "operational analytics" depth;
+  // deeper historical analysis uses one-shot getDocs() with date filters.
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(10000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.orders=true;scheduleRender();});
+  onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
+  onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
+  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
+  onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
+  onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
+  onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
+  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(10000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
   // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
-  onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
+  onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
   // طبّق active class على الـ tab/date button المختارين من URL

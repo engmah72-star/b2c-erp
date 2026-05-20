@@ -220,17 +220,20 @@ export function startListeners(callbacks = {}, opts = {}) {
     ));
   }
 
-  // Products — لا limit (عادة < 200 منتج). لو نمت → نضيف limit لاحقاً.
+  // Products — safety cap (RULE G3). Typically <200 in practice; cap at
+  // opts.productLimit (default 500) for headroom.
+  const productLimit = opts.productLimit || 500;
   if (!skip.has('products')) {
-    subs.push(onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc')), snap => {
+    subs.push(onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc'), limit(productLimit)), snap => {
       AppState.products = snap.docs.map(d => ({...d.data(), _id: d.id}));
       callbacks.onProducts?.(AppState.products);
     }));
   }
 
-  // Wallets — لا limit (عشرات في كل الأحوال).
+  // Wallets — safety cap (RULE G3). Real wallets are tens, never hundreds.
+  const walletLimit = opts.walletLimit || 100;
   if (!skip.has('wallets')) {
-    subs.push(onSnapshot(query(collection(db,'wallets'), orderBy('name','asc')), snap => {
+    subs.push(onSnapshot(query(collection(db,'wallets'), orderBy('name','asc'), limit(walletLimit)), snap => {
       AppState.wallets = snap.docs.map(d => ({...d.data(), _id: d.id}));
       callbacks.onWallets?.(AppState.wallets);
     }));
