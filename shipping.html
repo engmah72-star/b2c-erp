@@ -516,6 +516,7 @@ import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, se
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
+import { canDo } from './core/permissions-matrix.js';
 import { orderActions } from './order-actions.js';
 import { validateDispatch, validateCollect, validateSettle } from './orders.js';
 
@@ -529,7 +530,13 @@ function hasPage(pg) {
   if (myPerms && Array.isArray(myPerms.pages)) return myPerms.pages.includes(pg);
   return (ROLE_PAGES[myRole] || []).includes(pg);
 }
-function canSettle() { return hasPage('shipping-accounts') || hasPage('accounts') || myRole === 'admin'; }
+// canSettle (Step 6.1): capability-based instead of page-based.
+// Settle is a financial action → requires 'manage_payments' capability.
+// This unifies with the rest of the system per RULE P1.3 (canDo not hasPage).
+// Default mapping:
+//   admin, operation_manager, wallet_manager, customer_service → can settle
+//   shipping_officer, graphic_designer, design_operator, production_agent → cannot
+function canSettle() { return canDo('manage_payments', myRole, myPerms); }
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n||0).toLocaleString('ar-EG', {maximumFractionDigits:0});
