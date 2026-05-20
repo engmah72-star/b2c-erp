@@ -100,6 +100,9 @@
 <script src="theme.js?v=4"></script>
 </head>
 <body>
+<!-- RULE M1.5: datalist autocomplete من master_lists/materials + master_lists/finishings -->
+<datalist id="materials-list"></datalist>
+<datalist id="finishings-list"></datalist>
 <div class="app-shell">
 
 <aside class="sidenav">
@@ -461,10 +464,13 @@ function renderVarOpts(kind){
     el.innerHTML = `<div style="text-align:center;padding:8px;color:var(--dim2);font-size:11px">لا توجد ${VAR_LABELS[kind]}ات بعد</div>`;
     return;
   }
+  // RULE M1.5: ربط datalist يوجِّه المستخدم لقوائم master_lists (يقلل drift في الأسماء)
+  const dl = kind === 'papers' ? 'materials-list' : (kind === 'finishings' ? 'finishings-list' : '');
+  const listAttr = dl ? ` list="${dl}"` : '';
   el.innerHTML = list.map((o, i) => {
     if (kind === 'papers') {
       return `<div class="var-row with-weight">
-        <input class="inp" value="${esc(o.value || '')}" placeholder="مثلاً: كوشيه" oninput="updateVarOpt('${kind}',${i},'value',this.value)">
+        <input class="inp" value="${esc(o.value || '')}" placeholder="اختر أو اكتب: كوشيه"${listAttr} oninput="updateVarOpt('${kind}',${i},'value',this.value)">
         <input class="inp" type="number" value="${o.weight || ''}" placeholder="وزن" oninput="updateVarOpt('${kind}',${i},'weight',this.value)">
         <input class="inp" type="number" value="${o.priceModifier || ''}" placeholder="0" oninput="updateVarOpt('${kind}',${i},'priceModifier',this.value)">
         <input class="inp" type="number" value="${o.costModifier || ''}" placeholder="0" oninput="updateVarOpt('${kind}',${i},'costModifier',this.value)">
@@ -472,7 +478,7 @@ function renderVarOpts(kind){
       </div>`;
     }
     return `<div class="var-row">
-      <input class="inp" value="${esc(o.value || '')}" placeholder="مثلاً: ${kind==='sizes'?'A4':kind==='colors'?'4 ألوان':'سلوفان مات'}" oninput="updateVarOpt('${kind}',${i},'value',this.value)">
+      <input class="inp" value="${esc(o.value || '')}" placeholder="${kind==='sizes'?'مثلاً: A4':kind==='colors'?'مثلاً: 4 ألوان':'اختر أو اكتب: سلوفان مات'}"${listAttr} oninput="updateVarOpt('${kind}',${i},'value',this.value)">
       <input class="inp" type="number" value="${o.priceModifier || ''}" placeholder="0" oninput="updateVarOpt('${kind}',${i},'priceModifier',this.value)">
       <input class="inp" type="number" value="${o.costModifier || ''}" placeholder="0" oninput="updateVarOpt('${kind}',${i},'costModifier',this.value)">
       <button class="vr-del" onclick="removeVarOpt('${kind}',${i})" title="حذف">✕</button>
@@ -581,6 +587,23 @@ getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
 });
 onSnapshot(collection(db,'suppliers_v2'),snap=>{
   suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
+});
+
+// RULE M1: master lists للخامات والتشطيبات (datalist autocomplete)
+let materialsList=[],finishingsList=[];
+function refreshDataLists(){
+  const ml=document.getElementById('materials-list');
+  const fl=document.getElementById('finishings-list');
+  if(ml)ml.innerHTML=materialsList.map(m=>`<option value="${(m.name||'').replace(/"/g,'&quot;')}">${m.weights?m.weights.join('/')+' ج':''}</option>`).join('');
+  if(fl)fl.innerHTML=finishingsList.map(f=>`<option value="${(f.name||'').replace(/"/g,'&quot;')}">${f.type||''}</option>`).join('');
+}
+onSnapshot(doc(db,'master_lists','materials'),s=>{
+  materialsList=s.exists()?((s.data().items||[]).filter(x=>x.isActive!==false)):[];
+  refreshDataLists();
+});
+onSnapshot(doc(db,'master_lists','finishings'),s=>{
+  finishingsList=s.exists()?((s.data().items||[]).filter(x=>x.isActive!==false)):[];
+  refreshDataLists();
 });
 
 async function seedProducts(){

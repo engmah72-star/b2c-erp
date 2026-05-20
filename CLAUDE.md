@@ -1285,6 +1285,97 @@ core/permissions-matrix.js:
 
 ---
 
+## RULE M1 — MATERIALS & FINISHINGS PRINCIPLE (ميثاق الخامات والتشطيبات)
+
+> **الخامات والتشطيبات ليست تفاصيل إضافية — جزء أساسي من التسعير + التنفيذ + التكلفة.**
+>
+> يجب أن تكون منظمة، مركزية، ومستخدَمة بقوائم موحَّدة (لا free-text drift).
+
+### M1.1 — Single Source of Truth في `master_lists`
+| Document | الغرض |
+|----------|------|
+| `master_lists/materials` | كل الخامات: كوشيه، PVC، كانسون، استيكر، فوم، بنر، ... |
+| `master_lists/finishings` | كل التشطيبات: سلوفان، UV، ذهب حراري، دبوس، تجليد، قص ليزر، طباعة بارزة، ... |
+| `master_lists/supplier_categories` | (موجود) فئات التكاليف عند الموردين |
+| `master_lists/print_brief_templates` | (موجود) قوالب الإنتاج |
+
+كل واحدة لها schema `{ items: [...], updatedAt }`.
+
+### M1.2 — Schema لكل خامة
+```js
+{
+  id: 'mat_couche_300',      // unique key
+  name: 'كوشيه',              // الاسم العربي
+  type: 'paper',              // paper | plastic | vinyl | fabric | ...
+  weights: [80,100,150,250,300,350],  // الأوزان المتاحة
+  sizes: ['A4','A3','70x100','100x70'], // المقاسات
+  defaultCost: 0,             // التكلفة الافتراضية (اختياري)
+  defaultSupplierId: '',      // مورد افتراضي (اختياري)
+  isActive: true,
+  notes: ''
+}
+```
+
+### M1.3 — Schema لكل تشطيب
+```js
+{
+  id: 'fin_uv',
+  name: 'UV',
+  type: 'coating',            // lamination | coating | foil | mounting | cutting | embossing
+  costImpact: 'percent',      // 'fixed' | 'percent'
+  defaultCostModifier: 15,    // %15 أو 15 ج (حسب costImpact)
+  affectsExecution: true,     // هل يؤثر على وقت الإنتاج
+  isActive: true,
+  notes: ''
+}
+```
+
+### M1.4 — Product Variants تشير إلى Master
+على كل منتج، `variantOptions.papers/finishings` تحمل **اسم** الخامة/التشطيب (من master_lists) + cost modifier محلي:
+```js
+product.variantOptions.papers = [
+  { value: 'كوشيه', priceModifier: 0, costModifier: 0, weight: 300 },
+  // ↑ "كوشيه" يجب أن تكون موجودة في master_lists/materials.items[].name
+];
+```
+
+**ممنوع:** كتابة `papers: [{value:'كوشيه ', ...}]` (مسافة زائدة) — يخلق duplicate في النظام.
+
+### M1.5 — UI — لا free-text حر
+products.html (ومستقبلاً exec-cost-entry.html) يستخدم `<datalist>` يُحَمَّل من `master_lists`:
+```html
+<datalist id="materials-list">
+  <option>كوشيه</option>
+  <option>PVC</option>
+  ...
+</datalist>
+<input list="materials-list" placeholder="اختر أو اكتب اسم الخامة">
+```
+
+الفائدة: المستخدم يختار من القائمة (no typos) لكن يقدر يضيف جديد لو احتاج (يُحَفَّز لإضافته لـ master_lists أولاً).
+
+### M1.6 — Cost & Profitability
+- التكلفة الافتراضية في `master_lists/materials[].defaultCost`
+- التكلفة الفعلية في `costItems[].total` (من production.html)
+- الـ supplier price history يحتفظ بتقلبات الأسعار
+
+### M1.7 — إدارة مركزية
+- إضافة/تعديل عبر `settings.html` (admin/operation_manager فقط)
+- نفس pattern `supplier_categories` الموجود
+- لا تكرار logic في صفحات أخرى
+
+### M1.8 — Backward Compatibility
+- المنتجات القديمة تحتفظ بـ `variantOptions.papers[]` كما هي
+- الـ datalist يقترح من master_lists لكن لا يفرض
+- migration تدريجي (RULE G9)
+
+### 🚫 القاعدة النهائية
+**خامات/تشطيبات بأسماء مكررة أو drift = Technical Debt يُحَل بـ master_lists.**
+
+استخدام `<datalist>` + قوائم منظمة = الـ defense ضد free-text chaos.
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
