@@ -260,6 +260,32 @@ if (typeof window !== 'undefined') {
 }
 
 // ═══════════════════════════════════════
+// GLOBAL MODAL ERGONOMICS — auto-applied
+// ═══════════════════════════════════════
+// قاعدة UX موحَّدة على مستوى النظام:
+//   • Escape يغلق الـ overlay الأعلى المفتوح
+//   • الضغط على الخلفية (خارج .modal) يغلق الـ overlay
+// كلاهما يعمل دون تعديل الصفحات — مادامت تستورد shared.js.
+// لا يتعارض مع image-viewer (id="img-viewer") لأنه ليس .overlay.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  // Click on the backdrop (the .overlay element itself, not its children) → close
+  document.addEventListener('click', e => {
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('overlay') && t.classList.contains('open')) {
+      t.classList.remove('open');
+    }
+  });
+  // Escape → close the most recently opened .overlay
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const opened = document.querySelectorAll('.overlay.open');
+    if (!opened.length) return;
+    // Close the last one in DOM order (topmost typically)
+    opened[opened.length - 1].classList.remove('open');
+  });
+}
+
+// ═══════════════════════════════════════
 // ORDER OPERATIONS
 // ═══════════════════════════════════════
 export async function createOrder(data) {
