@@ -684,7 +684,7 @@ import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
 import { canDo } from './core/permissions-matrix.js';
 import { orderActions } from './order-actions.js';
-import { validateDispatch, validateCollect, validateCompanyCollect, validateSettle } from './orders.js';
+import { validateDispatch, validateCollect, validateCompanyCollect, validateSettle, buildSettlementUpdates } from './orders.js';
 import { loadPricingRules, getExpectedCost, diffActualVsExpected, isPricingLoaded } from './shipping-pricing.js';
 
 let me = null, myRole = '', myPerms = null;
@@ -2271,26 +2271,40 @@ async function confirmSettle() {
   const wallet = wallets.find(w => w._id === walletId);
   const ordersToSettle = pendingOrder.orders;
   const companyName = pendingOrder.companyName || ordersToSettle[0]?.shipCompanyName || '';
-
   const orderIds = ordersToSettle.map(o => o._id);
-  const expectedAmount = ordersToSettle.reduce((s,o) => s + safeNum(o.shipCollected) - safeNum(o.shippingCost), 0);
-  const difference = amount - expectedAmount;
+  const userName = $('nav-name').textContent;
 
-  // RULE V1.3 — central validator (orders.js)
+  // Settle-Fix #2 — Use the central buildSettlementUpdates (orders.js).
+  // Proportional distribution of the actual amount across orders based on
+  // each order's expected (shipCollected − shippingCost). Replaces the
+  // previous inline math that didn't distribute shortfalls/surpluses.
+  const spec = buildSettlementUpdates({
+    orders: ordersToSettle,
+    actualAmount: amount,
+    userName,
+    companyName,
+    diffReasonLabel: diffReason ? diffReasonLabel(diffReason) : '',
+    diffNote: note,
+  });
+  if (!spec.ok) { toast(spec.errors[0] || 'خطأ في بناء التسوية', 'err'); return; }
+
+  const expectedAmount = spec.summary.sumExpected;
+  const difference = spec.summary.diff;
+
+  // Validator runs alongside (capability + diff-reason rules)
   const v = validateSettle({ orders: ordersToSettle, amount, expectedAmount, walletId, diffReason, diffNote: note, role: myRole });
   if (!v.ok) { toast(v.errors[0], 'err'); return; }
 
-  const orderUpdates = ordersToSettle.map(o => {
-    const due = safeNum(o.shipCollected) - safeNum(o.shippingCost);
-    const totalPaid = safeNum(o.totalPaid) + Math.max(0, due);
-    const remaining = Math.max(0, safeNum(o.totalPrice||o.total||0) - totalPaid);
-    return {
-      orderId: o._id,
-      totalPaid, remaining,
-      paymentStatus: remaining > 0 ? 'partial' : 'paid',
-      dueByCo: due,
-    };
-  });
+  // Adapt helper output to FSE's orderUpdates shape. The handler writes:
+  //   shipSettledAmount = u.dueByCo (← we pass the actual `share`, not expected)
+  //   totalPaid, remaining, paymentStatus = direct passthrough
+  const orderUpdates = spec.updates.map(u => ({
+    orderId: u.orderId,
+    totalPaid: u.fields.totalPaid,
+    remaining: u.fields.remaining,
+    paymentStatus: u.fields.paymentStatus,
+    dueByCo: u.fields.shipSettledAmount,  // = actual share, not expected
+  }));
 
   const btn = $('btn-settle-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
