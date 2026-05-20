@@ -23,6 +23,7 @@ import { runTransaction, doc, getDoc, writeBatch, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
+  buildStageAdvance,
   validatePayment,
   validateRefund,
   advanceOrderStageWithLock,
@@ -42,13 +43,50 @@ async function _loadOrder(db, orderId) {
   return { ...snap.data(), _id: orderId, _ref: ref };
 }
 
-/** wrapper موحَّد للـ stage transitions — يستدعي advanceOrderStageWithLock */
+/**
+ * wrapper موحَّد للـ stage transitions — يستدعي advanceOrderStageWithLock.
+ *
+ * Pre-flight: يحمّل الأوردر ويبني الـ spec بـ buildStageAdvance (pure) لاكتشاف
+ * الـ errors والـ warnings قبل الـ transaction. لو في warnings والـ caller لم يمرّر
+ * bypassWarnings=true، يُرجع { ok:false, needsConfirmation:true, warnings:[...] }
+ * بدون أي كتابة — نفس pattern archiveOrder.
+ *
+ * هذا يسمح للـ UI أن يعرض dialog: "في warnings، تأكيد؟" ثم يعيد النداء
+ * بـ bypassWarnings:true ليكتمل التقديم.
+ */
 async function _advanceFromStage({
   db, orderId, expectedCurrentStage,
   role, userId, userName,
   nextAssigneeId = '', nextAssigneeName = '',
   bypassWarnings = false, extraFields = {},
 }) {
+  // Pre-flight — اكتشاف الـ warnings بدون كتابة
+  const order = await _loadOrder(db, orderId);
+  if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+  if (expectedCurrentStage && order.stage !== expectedCurrentStage) {
+    return {
+      ok: false,
+      errors: [`الـ stage تغيّر — متوقع "${expectedCurrentStage}"، الحالي "${order.stage}"`],
+      warnings: [],
+      orderId,
+    };
+  }
+  const preview = buildStageAdvance({
+    order, role, userId, userName,
+    nextAssigneeId, nextAssigneeName,
+    bypassWarnings, extraFields,
+  });
+  if (!preview.ok) {
+    return {
+      ok: false,
+      errors: preview.errors || [],
+      warnings: preview.warnings || [],
+      needsConfirmation: preview.needsConfirmation || false,
+      orderId,
+    };
+  }
+
+  // OK — atomic transaction with stage lock
   try {
     const result = await advanceOrderStageWithLock({
       db, runTransaction, doc,
@@ -60,10 +98,10 @@ async function _advanceFromStage({
     return {
       ok: true,
       errors: [],
-      warnings: [],
+      warnings: result?.warnings || [],
       orderId,
-      newStage: result?.newStage || null,
-      action: `advance_${expectedCurrentStage}_to_${result?.newStage || 'next'}`,
+      newStage: result?.to || null,
+      action: `advance_${expectedCurrentStage}_to_${result?.to || 'next'}`,
     };
   } catch (e) {
     return {
