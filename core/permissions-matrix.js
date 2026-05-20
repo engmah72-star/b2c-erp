@@ -236,6 +236,90 @@ export const DEFAULT_CAPABILITIES = {
   },
 };
 
+// ══════════════════════════════════════════════════════════
+// DEFAULT_ROLE_PERMISSIONS — Legacy `users.permissions` shape (Phase A — Foundation)
+// ══════════════════════════════════════════════════════════
+// هذا الـ object يطابق الـ shape المُستخدَم على Firestore: users/{uid}.permissions
+// تاريخياً كان مُكرَّر في 3 ملفات بقيم مختلفة (drift خطير):
+//   - employees.html       (الـ schema الموسَّع — canonical)
+//   - employee-profile.html (مطابق لـ employees.html)
+//   - settings.html         (schema أصغر — مفقود حقول)
+//
+// **هذا هو الـ canonical** — موحَّد من employees.html (الأشمل).
+// migration تدريجي:
+//   PR 1 (هذا): إضافة canonical فقط (foundation). لا تعديل HTML.
+//   PR 2-3:    ترحيل settings.html / employees.html / employee-profile.html
+//             تدريجياً واحد بواحد بعد تحقق دقيق.
+//
+// Resolution:
+//   const perms = DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.customer_service;
+
+export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
+  admin: {
+    pages: ['*'],
+    canSeePrices: true, canSeeAllOrders: true, canAddOrders: true,
+    canViewClients: true, canAddClients: true,
+    canAssignDesigner: true, canAssignTasks: true,
+    canViewCosts: true, canAccessAccounts: true, canAccessEmployees: true,
+  },
+  operation_manager: {
+    pages: ['*'],
+    canSeePrices: true, canSeeAllOrders: true, canAddOrders: true,
+    canViewClients: true, canAddClients: true,
+    canAssignDesigner: true, canAssignTasks: true,
+    canViewCosts: true, canAccessAccounts: true, canAccessEmployees: false,
+  },
+  customer_service: {
+    pages: ['clients', 'design', 'cs-dashboard'],
+    canSeePrices: true, canSeeAllOrders: false, canAddOrders: true,
+    canViewClients: true, canAddClients: true,
+    canAssignDesigner: true, canAssignTasks: false,
+    canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
+  },
+  graphic_designer: {
+    pages: ['design', 'designer-dashboard'],
+    canSeePrices: false, canSeeAllOrders: false, canAddOrders: false,
+    canViewClients: false, canAddClients: false,
+    canAssignDesigner: false, canAssignTasks: false,
+    canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
+  },
+  design_operator: {
+    pages: ['design', 'designer-dashboard'],
+    canSeePrices: false, canSeeAllOrders: false, canAddOrders: true,
+    canViewClients: false, canAddClients: false,
+    canAssignDesigner: true, canAssignTasks: false,
+    canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
+  },
+  production_agent: {
+    pages: ['production', 'production-dashboard'],
+    canSeePrices: false, canSeeAllOrders: false, canAddOrders: false,
+    canViewClients: false, canAddClients: false,
+    canAssignDesigner: false, canAssignTasks: false,
+    canViewCosts: true, canAccessAccounts: false, canAccessEmployees: false,
+  },
+  shipping_officer: {
+    pages: ['shipping', 'shipping-dashboard', 'shipping-accounts', 'shipping-followup'],
+    canSeePrices: false, canSeeAllOrders: false, canAddOrders: false,
+    canViewClients: true, canAddClients: false,
+    canAssignDesigner: false, canAssignTasks: false,
+    canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
+  },
+  wallet_manager: {
+    pages: ['accounts', 'reports'],
+    canSeePrices: true, canSeeAllOrders: true, canAddOrders: false,
+    canViewClients: true, canAddClients: false,
+    canAssignDesigner: false, canAssignTasks: false,
+    canViewCosts: true, canAccessAccounts: true, canAccessEmployees: false,
+  },
+});
+
+/** يُرجع نسخة قابلة للتعديل (mutable copy) من الـ defaults للـ role */
+export function getRoleDefaultPermissions(role) {
+  const def = DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.customer_service;
+  // Deep copy لتجنب mutation للـ frozen object
+  return JSON.parse(JSON.stringify(def));
+}
+
 /**
  * canDo — التحقق من قدرة المستخدم على فعل معين (RULE P1).
  *
