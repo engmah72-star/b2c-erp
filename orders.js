@@ -1410,6 +1410,21 @@ export function isShipReadyToClose(order) {
   return order.shipSettled === true;
 }
 
+/** هل الأوردر "وصل للعميل"؟ (Step 4.2 — استبدال shippingStatus==='delivered' الميت)
+ *  مصدر canonical واحد لمعنى "تم التسليم" يستخدمه: reports, suppliers, exec-dashboard.
+ *  يشمل: وصلت للعميل (wait_collection / collected) أو تمت التسوية أو مؤرشف.
+ *  يستثني: المرتجع (final terminal state).
+ */
+export function isDelivered(order) {
+  if (!order) return false;
+  if (order.shipStage === 'returned') return false;
+  const ss = order.shipStage || 'ready';
+  if (['wait_collection', 'collected'].includes(ss)) return true;
+  if (order.shipSettled === true) return true;
+  if (order.stage === 'archived') return true;
+  return false;
+}
+
 /** هل الأوردر "في الطريق" مع شركة شحن (لسه ما اتسوّاش)؟
  *  بنستخدمه للتمييز إن المسؤولية حالياً على صفحة "حسابات الشحن" أو "متابعة الشحن"
  *  بدلاً من صفحة "الشحن" الرئيسية.
