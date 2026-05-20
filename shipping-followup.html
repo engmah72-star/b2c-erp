@@ -232,6 +232,7 @@ import { collection, doc, getDoc, query, where, onSnapshot, updateDoc, writeBatc
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle } from "./orders.js";
 import { canDo } from "./core/permissions-matrix.js";
+import { orderActions } from "./order-actions.js";
 // ── State ──
 let orders=[],wallets=[],currentUser=null,userName='',userRole='';
 let canViewCosts=false, canManageShipping=false, userPerms=null;
@@ -638,25 +639,16 @@ window.closeDetails=function(){
 };
 
 // ══ Mark Delivered (advance shipStage from wait_delivery → wait_collection) ══
+// RULE A1 + L1: العملية مُمَركَزة عبر orderActions.markDelivered
 window.markDelivered=async function(orderId){
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
-  if(o.stage==='archived')return toast('⛔ مؤرشف','err');
-  if(o.shipStage==='returned')return toast('⛔ مرتجع','err');
-  if((o.shipStage||'ready')!=='wait_delivery')return toast('⚠️ الأوردر ليس في حالة "في الطريق"','');
   if(!confirm(`تأكيد تسليم "${o.clientName||'—'}"؟\nالأوردر هينقل لـ "انتظار التحصيل".`))return;
-  try{
-    await updateDoc(doc(db,'orders',orderId),{
-      shipStage:'wait_collection',
-      deliveredAt:nowStr(),
-      deliveredBy:userName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'✅ تم التسليم — انتظار التحصيل',by:userName}],
-      updatedAt:serverTimestamp(),
-    });
-    toast('✅ تم تسجيل التسليم — الأوردر جاهز للتحصيل','ok');
-  }catch(e){
-    toast('❌ '+(e.message||e),'err');
-  }
+  const r=await orderActions.markDelivered({
+    db, orderId, role:userRole, userId:currentUser?.uid||'', userName,
+  });
+  if(!r.ok)return toast('⛔ '+r.errors.join(' · '),'err');
+  toast('✅ تم تسجيل التسليم — الأوردر جاهز للتحصيل','ok');
 };
 
 // ══ Collect (atomic batch — same pattern as openCollectAcc) ══
