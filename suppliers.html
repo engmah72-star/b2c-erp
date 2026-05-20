@@ -384,6 +384,8 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
+import { supplierActions } from "./supplier-actions.js";
+import { canDo } from "./core/permissions-matrix.js";
 // ══ Sidebar ══
 const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -394,7 +396,7 @@ import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 console.log('[SUPPLIER] 🟢 SUPPLIER UI LOADED v2 — financial-sync-engine active');
 let suppliers=[],shippers=[],payments=[],orders=[],wallets=[];
 let masterCategories=[];
-let currentTab='printers',activeId=null,activeSup=null,userName='',role='';
+let currentTab='printers',activeId=null,activeSup=null,userName='',role='',userPerms={};
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
@@ -418,6 +420,7 @@ onAuthStateChanged(auth,async u=>{
   if(snap.exists()){
     const d=snap.data();
     role=d.role||'';
+    userPerms=d.permissions||{};
     const pages=(d.permissions?.pages)||[];
     const isAdm=['admin','operation_manager'].includes(role);
     if(!isAdm&&!pages.includes('*')&&!pages.includes('suppliers')){window.location.href=RMAP[role]||'login.html';return;}
@@ -1043,7 +1046,6 @@ window.saveSup=async function(){
   const name=gv('f-name').trim();if(!name)return toast('⚠️ أدخل الاسم','err');
   const type=gv('add-type');
   const editId=gv('edit-id');
-  const col=type==='printer'?'suppliers_v2':'shippers_v2';
   // work days
   const workDays=ALL_SVC_IDS.map(id=>document.getElementById(id)).filter(el=>el?.checked).map(el=>el.value);
   const data={
@@ -1052,8 +1054,8 @@ window.saveSup=async function(){
     address:gv('f-address'),area:gv('f-area'),
     note:gv('f-note'),status:gv('f-status')||'active',
     ...(gv('f-rating')?{rating:parseInt(gv('f-rating'))}:{}),
+    supType:type,
     ...(type==='printer'?{
-      supType:'printer',
       specialties:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value),
       printType:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value)[0]||'',
       workDays,
@@ -1065,31 +1067,44 @@ window.saveSup=async function(){
       bankAccount:gv('f-bankaccount'),
       taxNumber:gv('f-taxnumber'),
     }:{}),
-    ...(type==='shipper'?{supType:'shipper',shipFee:parseFloat(gv('f-shipfee'))||0,areas:gv('f-areas')}:{}),
-    updatedAt:serverTimestamp()
+    ...(type==='shipper'?{shipFee:parseFloat(gv('f-shipfee'))||0,areas:gv('f-areas')}:{}),
   };
-  try{
-    if(editId)await updateDoc(doc(db,col,editId),data);
-    else await addDoc(collection(db,col),{...data,createdAt:serverTimestamp()});
-    cM('add');toast('✅ تم حفظ ملف المورد','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // RULE A1 + P1: via supplierActions
+  const baseArgs={db,role,userId:auth.currentUser?.uid||'',userName,userPerms};
+  const r=editId
+    ? await supplierActions.update({...baseArgs,supplierId:editId,supType:type,data})
+    : await supplierActions.create({...baseArgs,data});
+  if(!r.ok){toast('⛔ '+r.errors.join(' · '),'err');return;}
+  cM('add');toast('✅ تم حفظ ملف المورد','ok');
 };
 
 window.delSup=async function(){
   if(!activeSup)return;
-  const linkedPayments=payments.filter(p=>p.supplierId===activeSup._id);
+  // pre-check محلي (UX سريع) — orders.costItems[] لا يمكن فحصها server-side
   const linkedOrders=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===activeSup._id));
-  if(linkedPayments.length){
-    return toast(`⛔ لا يمكن حذف "${activeSup.name}" — مرتبط بـ ${linkedPayments.length} دفعة مالية. يجب حذف الدفعات أولاً.`,'err');
+  const baseArgs={db,supplierId:activeId,supType:activeSup.supType,role,userId:auth.currentUser?.uid||'',userName,userPerms};
+  // RULE A1: محاولة delete via supplierActions (يفحص supplier_payments + supplier_orders)
+  let r=await supplierActions.delete(baseArgs);
+  // لو في references مالية → اقترح archive
+  if(!r.ok && r.references?.count>0){
+    const breakdown=Object.entries(r.references.breakdown).map(([k,v])=>`${k}: ${v}+`).join(', ');
+    if(confirm(`⛔ المورد مستخدم (${breakdown}).\n\nهل تريد أرشفته بدلاً من الحذف؟\n(يبقى مرئياً في السجلات السابقة، يختفي من القوائم النشطة)`)){
+      const ar=await supplierActions.archive({...baseArgs,reason:'مستخدم في النظام — أرشفة بدلاً من الحذف'});
+      if(!ar.ok){toast('❌ '+ar.errors.join(' · '),'err');return;}
+      closePanel();toast('📁 تم الأرشفة','ok');return;
+    }
+    return;
   }
-  if(linkedOrders.length){
-    if(!confirm(`⚠️ "${activeSup.name}" مرتبط بـ ${linkedOrders.length} أوردر.\nسيُحذف المورد وتبقى الأوردرات بدون ارتباط. هل تريد الاستمرار؟`))return;
-  }else{
-    if(!confirm(`حذف "${activeSup.name}"؟`))return;
+  // soft warning (orders.costItems[] لا يمكن فحصها بـ query)
+  if(!r.ok && r.needsConfirmation){
+    const msg=linkedOrders.length
+      ? `⚠️ "${activeSup.name}" مرتبط بـ ${linkedOrders.length} أوردر في الذاكرة.\nسيُحذف المورد وتبقى الأوردرات بدون ارتباط.\n\nالاستمرار؟`
+      : `⚠️ ${r.warnings[0]}\n\nالاستمرار؟`;
+    if(!confirm(msg))return;
+    r=await supplierActions.delete({...baseArgs,force:true});
   }
-  const col=activeSup.supType==='printer'?'suppliers_v2':'shippers_v2';
-  try{await deleteDoc(doc(db,col,activeId));closePanel();toast('✅ تم الحذف','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  if(!r.ok){toast('❌ '+r.errors.join(' · '),'err');return;}
+  closePanel();toast('✅ تم الحذف','ok');
 };
 
 // ══ تسجيل دفعة ══
@@ -1120,32 +1135,32 @@ window.savePay=async function(){
         costItemRefs.push({costItemId:c.costItemId,orderId:c.orderId||o._id,type:c.type||'',total:parseFloat(c.total)||0});
     });
   });
-  try{
-    const w=wallets.find(x=>x._id===walletId);
-    if(walletId&&w&&(parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');
-    await dispatchFinancialEvent(db,FE.VENDOR_PAYMENT,{
-      supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
-      amount,walletId,walletName:w?.name||'',note,
-      userId:auth.currentUser?.uid||'',userName,date:nowStr(),
-      ...(costItemRefs.length?{costItemRefs}:{}),
-    });
-    cM('pay');toast('✅ تم تسجيل الدفعة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // wallet balance pre-check (UX — server يفحص أيضاً)
+  const w=wallets.find(x=>x._id===walletId);
+  if(walletId&&w&&(parseFloat(w.balance)||0)<amount)return toast('⚠️ رصيد غير كافٍ','err');
+  // RULE A1 + P1: عبر supplierActions.createPayment (يفحص manage_supplier_payments)
+  const r=await supplierActions.createPayment({
+    db,role,userId:auth.currentUser?.uid||'',userName,userPerms,
+    supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
+    amount,walletId,walletName:w?.name||'',note,costItemRefs,
+  });
+  if(!r.ok){toast('⛔ '+r.errors.join(' · '),'err');return;}
+  cM('pay');toast('✅ تم تسجيل الدفعة','ok');
 };
 
 window.delPay=async function(payId,amount,walletId){
   if(!confirm('حذف هذه الدفعة؟'))return;
-  try{
-    const w=wallets.find(x=>x._id===walletId);
-    await dispatchFinancialEvent(db,FE.VENDOR_PAYMENT_REVERSAL,{
-      supplierId:activeId,supplierName:activeSup.name,supplierType:activeSup.supType,
-      amount,walletId,walletName:w?.name||'',
-      paymentId:payId,
-      userId:auth.currentUser?.uid||'',userName,
-    });
-    toast('✅ تم حذف الدفعة','ok');
-    if(activeSup)renderPanelContent(activeSup);
-  }catch(e){toast('❌ '+e.message,'err');}
+  const w=wallets.find(x=>x._id===walletId);
+  // RULE A1 + P1: عبر supplierActions.reversePayment
+  const r=await supplierActions.reversePayment({
+    db,role,userId:auth.currentUser?.uid||'',userName,userPerms,
+    paymentId:payId,supplierId:activeId,supplierName:activeSup.name,
+    amount,walletId,walletName:w?.name||'',
+    reason:'حذف يدوي من قائمة الدفعات',
+  });
+  if(!r.ok){toast('⛔ '+r.errors.join(' · '),'err');return;}
+  toast('✅ تم حذف الدفعة','ok');
+  if(activeSup)renderPanelContent(activeSup);
 };
 </script>
 </body>
