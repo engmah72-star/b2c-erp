@@ -1057,21 +1057,23 @@ async function confirmDispatch() {
   const btn = $('btn-dispatch-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
-  try {
-    // 1) تحديث الأوردر بحقول الشحن
-    await updateDoc(doc(db, 'orders', pendingOrder._id), {
-      shipCompanyId: companyId,
-      shipCompanyName: company?.name || '',
-      shipMethod: method,
-      shippingCost: cost,
-      shipStage: method === 'pickup' ? 'ready' : 'wait_delivery',
-      shippingStatus: 'dispatched',
-      shipDispatchedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+  // Build the order shipping update once — applied either atomically
+  // alongside the expense (when cost>0 + walletId) or standalone otherwise.
+  const orderFields = {
+    shipCompanyId: companyId,
+    shipCompanyName: company?.name || '',
+    shipMethod: method,
+    shippingCost: cost,
+    shipStage: method === 'pickup' ? 'ready' : 'wait_delivery',
+    shippingStatus: 'dispatched',
+    shipDispatchedAt: serverTimestamp(),
+  };
 
-    // 2) لو في تكلفة + محفظة → نُسجّل المصروف فوراً (SHIPPING_EXPENSE)
+  try {
     if (cost > 0 && walletId) {
+      // Atomic path: order update + wallet/tx/ledger all in the same FSE batch.
+      // The orderUpdate hook on handleGeneralExpense ensures we never end up
+      // with "dispatched but no expense" or "expense but order not updated".
       const wallet = wallets.find(w => w._id === walletId);
       await dispatchFinancialEvent(db, FE.SHIPPING_EXPENSE, {
         walletId, walletName: wallet?.name || '',
@@ -1082,6 +1084,14 @@ async function confirmDispatch() {
         vendorId: companyId, vendorName: company?.name || '',
         userId: me.uid, userName: $('nav-name').textContent,
         date: new Date().toLocaleDateString('ar-EG'),
+        orderUpdate: { orderId: pendingOrder._id, fields: orderFields },
+      });
+    } else {
+      // No expense to record (free dispatch or no wallet selected) — a
+      // standalone updateDoc is already atomic by itself.
+      await updateDoc(doc(db, 'orders', pendingOrder._id), {
+        ...orderFields,
+        updatedAt: serverTimestamp(),
       });
     }
 

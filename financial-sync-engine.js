@@ -764,6 +764,18 @@ async function handleGeneralExpense(db, p) {
     console.log('[FSE] 🏭 module updated: transactions_v2');
   }
 
+  // Optional per-event order update — keeps the order shipping/dispatch
+  // fields atomic with the expense entry. Backward compatible: callers
+  // that don't pass `orderUpdate` see no change. Mirrors the contract
+  // used by handleShippingSettlement's `orderUpdates[]`.
+  if (p.orderUpdate && p.orderUpdate.orderId && p.orderUpdate.fields) {
+    batch.update(doc(db, 'orders', p.orderUpdate.orderId), {
+      ...p.orderUpdate.fields,
+      updatedAt: serverTimestamp(),
+    });
+    console.log('[FSE] 📦 module updated: order fields (atomic with expense)', p.orderUpdate.orderId);
+  }
+
   addLedgerToBatch(batch, db, p.eventType || 'GENERAL_EXPENSE', { ...p, notes: p.note });
 
   await batch.commit();
