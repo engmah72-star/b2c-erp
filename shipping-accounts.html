@@ -439,7 +439,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn } from "./orders.js";
+import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn, buildSettlementUpdates } from "./orders.js";
 // ══ State ══
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
@@ -1034,6 +1034,8 @@ window.saveSettle=async function(){
 
     // ══ Atomic Transaction (مع قفل تفاؤلي على المحفظة والأوردرات) ══
     // RULE 3 + إغلاق ثغرة double-payment: قراءة الأوردرات داخل transaction ورفض المسوّى مسبقًا
+    // Settle-Fix #4: buildSettlementUpdates computed inside the tx on fresh
+    // snapshots so the per-order math uses authoritative state.
     await runTransaction(db,async tx=>{
       // ── 1) كل القراءات أولًا (متطلب Firestore: reads قبل writes) ──
       const walletRef=doc(db,'wallets',wId);
@@ -1055,18 +1057,34 @@ window.saveSettle=async function(){
         orderItems.push({ref:orderRefs[i],data:{...data,_id:selectedIds[i]}});
       }
 
+      // ── Compute settlement spec on FRESH data (Settle-Fix #4) ──
+      // Canonical formula: per-order expected = max(0, shipCollected − shippingCost)
+      // Proportional distribution of `amount` across orders.
+      const freshOrders = orderItems.map(it => it.data);
+      const spec = buildSettlementUpdates({
+        orders: freshOrders,
+        actualAmount: amount,
+        userName,
+        companyName: settleCompanyName,
+        diffReasonLabel: diffReasonLabel || '',
+        diffNote,
+      });
+      if (!spec.ok) throw new Error(spec.errors[0] || 'خطأ في بناء التسوية');
+      const expectedAmount = spec.summary.sumExpected;
+      const difference = spec.summary.diff;
+
       // ── 2) كل الكتابات بعد ذلك ──
       // محفظة
       tx.update(walletRef,{balance:increment(amount)});
 
-      // transaction_v2
+      // transaction_v2 — uses spec's authoritative expected/diff (not cached)
       const txRef=doc(collection(db,'transactions_v2'));
       tx.set(txRef,{
         walletId:wId,type:'in',amount,fees:0,
         description:`تسوية شحن — ${settleCompanyName}`,
         category:'shipping_settlement',
         companyName:settleCompanyName,orderIds:selectedIds,
-        expectedAmount:selectedAmt,difference:diff,
+        expectedAmount,difference,
         diffReason,diffReasonLabel,diffNote,
         balanceBefore:bb,balanceAfter:bb+amount,
         note:gv('settle-ref'),date:now,
@@ -1079,27 +1097,25 @@ window.saveSettle=async function(){
       const settleRef=doc(collection(db,'shipping_settlements'));
       tx.set(settleRef,{
         companyName:settleCompanyName,amount,
-        orderIds:selectedIds,expectedAmount:selectedAmt,
-        difference:diff,diffReason,diffReasonLabel,diffNote,
+        orderIds:selectedIds,expectedAmount,
+        difference,diffReason,diffReasonLabel,diffNote,
         walletId:wId,walletName:w?.name||'',
         note:gv('settle-ref'),date:now,txId:txRef.id,
         createdBy:currentUser.uid,createdByName:userName,
         createdAt:serverTimestamp()
       });
 
-      // كل أوردر — استخدم البيانات الطازجة من القراءة داخل الـ transaction
-      for(const item of orderItems){
+      // كل أوردر — استخدم spec.updates مرتبة بنفس ترتيب orderItems
+      for(let i=0;i<orderItems.length;i++){
+        const item=orderItems[i];
+        const u=spec.updates[i];
         const o=item.data;
-        const due=FC.getDueByCo(o);
-        const oldPaid=FC.getPaid(o);
-        const newPaid=oldPaid+due;
-        const newRem=Math.max(0,FC.getNet(o)-newPaid);
-        const tlEntry={date:now,action:`✅ تسوية شحن — ${settleCompanyName} — ${fn(due)} ج${diffReasonLabel?' — فرق: '+diffReasonLabel:''}`,by:userName};
+        const tlEntry={date:now,action:u.timelineEntry.action,by:userName};
         tx.update(item.ref,{
-          shipSettled:true,shipSettledAmount:due,
+          ...u.fields,                       // shipSettled, shipSettledAmount (= share),
+                                             // shipSettledExpected, shipSettledDiff,
+                                             // totalPaid, remaining, paymentStatus
           shipSettledWalletId:wId,
-          totalPaid:newPaid,remaining:newRem,
-          paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
           timeline:[...(o.timeline||[]),tlEntry],
           updatedAt:serverTimestamp()
         });
