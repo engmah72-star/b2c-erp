@@ -949,6 +949,215 @@ export function validateRefund({ order, amount, role }) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SHIPPING VALIDATORS — RULE V1.3 (Shipping Stabilization Step 1)
+// ═══════════════════════════════════════════════════════════════════
+// Pure functions. No Firestore reads, no side effects. Each returns
+// { ok, errors[], warnings[] } so the caller can:
+//   - block on errors (toast the first one)
+//   - request user confirmation on warnings (bypassWarnings:true)
+//   - present a unified message set across pages
+//
+// These mirror the existing validatePayment/validateRefund pattern and
+// are intended to replace the inline checks currently duplicated across
+// shipping.html, shipping-followup.html, and shipping-accounts.html.
+
+const SHIPPING_DISPATCH_ROLES = ['admin', 'operation_manager', 'shipping_officer'];
+const SHIPPING_COLLECT_ROLES  = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
+const SHIPPING_SETTLE_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
+const SHIPPING_RETURN_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
+
+/**
+ * validateDispatch — التحقق من تسليم أوردر لشركة شحن (مرحلة الشحن)
+ *
+ * @param {Object} args
+ * @param {Object} args.order        — الأوردر المستهدف
+ * @param {string} args.companyId    — معرّف شركة الشحن
+ * @param {string} args.method       — 'company' | 'pickup' | 'courier' | 'prepaid'
+ * @param {number} args.cost         — تكلفة الشحن
+ * @param {string} [args.walletId]   — محفظة الخصم (لو cost>0)
+ * @param {string} [args.role]       — دور المستخدم
+ * @returns { ok, errors, warnings }
+ */
+export function validateDispatch({ order, companyId, method, cost, walletId, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['لا يوجد أوردر'], warnings: [] };
+
+  if (order.stage === 'archived')           errors.push('⛔ الأوردر مؤرشف');
+  if (order.stage === 'cancelled')          errors.push('⛔ الأوردر ملغي');
+  if (order.shipStage === 'returned')       errors.push('⛔ الأوردر مرتجع');
+
+  if (!companyId) errors.push('⚠️ اختر شركة الشحن');
+  const amt = parseFloat(cost) || 0;
+  if (amt < 0) errors.push('⚠️ التكلفة غير صالحة');
+
+  // prepaid method requires wallet to debit from
+  if (method === 'prepaid' && amt > 0 && !walletId) {
+    errors.push('⚠️ مدفوع مسبقاً: اختر محفظة الخصم');
+  }
+
+  // Soft warning: cost>0 without wallet (caller may proceed but skips expense recording)
+  if (amt > 0 && !walletId && method !== 'prepaid') {
+    warnings.push('لا توجد محفظة محددة — التكلفة لن تُسجَّل كمصروف الآن');
+  }
+
+  if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تسليم الأوردر للشحن');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateCollect — التحقق من تحصيل مبلغ من العميل (pickup/courier فقط).
+ * شحنات الشركات (company) تُسوَّى عبر validateSettle بدل التحصيل المباشر.
+ *
+ * @param {Object} args
+ * @param {Object} args.order      — الأوردر
+ * @param {number} args.amount     — المبلغ المراد تحصيله
+ * @param {string} args.walletId   — المحفظة المُودَع فيها
+ * @param {number} args.remaining  — المتبقّي على الأوردر (محسوب مسبقاً)
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateCollect({ order, amount, walletId, remaining, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['⚠️ الأوردر غير موجود'], warnings: [] };
+
+  if (order.stage === 'archived')        errors.push('⛔ الأوردر مغلق');
+  if (order.shipStage === 'returned')    errors.push('⛔ الأوردر مرتجع');
+  if (order.shipSettled === true)        errors.push('⛔ مسوّى مع شركة الشحن — ألغِ التسوية أولاً');
+  if (order.shipMethod === 'company')    errors.push('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط');
+
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0) errors.push('⚠️ أدخل المبلغ');
+  if (!walletId) errors.push('⚠️ اختر طريقة الدفع');
+
+  const rem = parseFloat(remaining);
+  if (Number.isFinite(rem) && amt > rem + 0.01) {
+    errors.push(`⚠️ المبلغ (${amt.toLocaleString('ar-EG')} ج) أكبر من المتبقّي (${rem.toLocaleString('ar-EG')} ج)`);
+  }
+
+  if (role && !SHIPPING_COLLECT_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تحصيل دفعة');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateSettle — التحقق من تسوية مع شركة شحن (bulk أو single-order).
+ * الـ optimistic lock الفعلي يُفرَض داخل runTransaction في
+ * shipping-accounts.html:saveSettle. هذا الـ validator هو UX guard.
+ *
+ * @param {Object} args
+ * @param {Array<Object>} args.orders     — الأوردرات المختارة (بعد التحقق من snapshot الـ cache)
+ * @param {number} args.amount            — المبلغ الفعلي المُستلَم
+ * @param {number} args.expectedAmount    — المبلغ المتوقَّع (sum of dueByCo)
+ * @param {string} args.walletId          — المحفظة المُودَع فيها
+ * @param {string} [args.diffReason]      — سبب الفرق (لو فيه فرق)
+ * @param {string} [args.diffNote]        — ملاحظة الفرق (للسبب 'other')
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateSettle({ orders, amount, expectedAmount, walletId, diffReason, diffNote, role }) {
+  const errors = [];
+  const warnings = [];
+
+  const amt = parseFloat(amount);
+  if (!(amt > 0)) errors.push('⚠️ أدخل المبلغ الوارد');
+  if (!walletId) errors.push('⚠️ اختر المحفظة');
+  if (!Array.isArray(orders) || !orders.length) {
+    errors.push('⚠️ اختر أوردر واحد على الأقل');
+  }
+
+  const expected = parseFloat(expectedAmount) || 0;
+  const diff = Number.isFinite(amt) ? (amt - expected) : 0;
+  if (Math.abs(diff) > 0.01 && !diffReason) {
+    errors.push('⚠️ يوجد فرق بين المبلغ والأوردرات — حدد سبب الفرق');
+  }
+  if (diffReason === 'other' && (!diffNote || diffNote.trim().length < 5)) {
+    errors.push('⚠️ اكتب ملاحظة سبب الفرق (≥ 5 أحرف)');
+  }
+
+  // UX guard: pre-flight check against the cache. The atomic enforcement
+  // lives inside runTransaction at shipping-accounts.html:saveSettle.
+  const settled = (orders || []).filter(o => o && o.shipSettled === true);
+  if (settled.length) {
+    errors.push(`⛔ ${settled.length} أوردر مسوّى بالفعل — أعد فتح الشاشة`);
+  }
+
+  // Returned orders cannot enter a settlement batch
+  const returned = (orders || []).filter(o => o && o.shipStage === 'returned');
+  if (returned.length) {
+    errors.push(`⛔ ${returned.length} أوردر مرتجع — لا يدخل في التسوية`);
+  }
+
+  if (Math.abs(diff) > 0.01) {
+    const sign = diff > 0 ? '+' : '';
+    warnings.push(`فرق ${sign}${diff.toLocaleString('ar-EG')} ج عن المتوقع`);
+  }
+
+  if (role && !SHIPPING_SETTLE_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تنفيذ التسوية');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateReturn — التحقق من تسجيل مرتجع.
+ *
+ * @param {Object} args
+ * @param {Object} args.order        — الأوردر
+ * @param {string} args.reason       — مفتاح السبب (e.g. 'damaged', 'wrong_design', 'other')
+ * @param {string} args.lossParty    — 'client' | 'company' | 'shipper'
+ * @param {number} args.cost         — تكلفة الخسارة (≥ 0)
+ * @param {string} [args.returnType] — 'full' | 'partial' (افتراضي: 'full')
+ * @param {string} [args.note]       — ملاحظة (إلزامية لو reason='other')
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateReturn({ order, reason, lossParty, cost, returnType = 'full', note = '', role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['⚠️ اختر أوردر'], warnings: [] };
+
+  if (order.stage === 'cancelled') errors.push('⛔ الأوردر ملغي');
+  if (order.shipStage === 'returned' && returnType === 'full') {
+    errors.push('⛔ الأوردر مرتجع بالفعل');
+  }
+
+  if (!reason)    errors.push('⚠️ اختر سبب المرتجع');
+  if (!lossParty) errors.push('⚠️ حدد من يتحمل الخسارة');
+
+  const lossAmt = parseFloat(cost) || 0;
+  if (lossAmt < 0) errors.push('⚠️ تكلفة المرتجع غير صالحة');
+
+  if (reason === 'other' && note.trim().length < 5) {
+    errors.push('⚠️ اكتب ملاحظة سبب المرتجع (≥ 5 أحرف)');
+  }
+
+  if (!['full', 'partial'].includes(returnType)) {
+    errors.push('⚠️ نوع المرتجع غير صالح');
+  }
+
+  if (returnType === 'full' && order.shipSettled === true) {
+    warnings.push('الأوردر مسوّى — المرتجع سيُلغي التسوية');
+  }
+
+  if (role && !SHIPPING_RETURN_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تسجيل مرتجع');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 /**
  * validateOrder — التحقق من بيانات إنشاء أوردر جديد (RULE V1.3)
  *
