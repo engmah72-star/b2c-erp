@@ -2008,20 +2008,25 @@ window.openDispatch = (orderId) => {
 };
 
 async function confirmDispatch() {
-  if (!pendingOrder) return;
+  console.time('[DBG] confirmDispatch');
+  console.log('[DBG] step:1 entered', { pendingOrderId: pendingOrder?._id, pendingOrderStage: pendingOrder?.stage });
+  if (!pendingOrder) { console.warn('[DBG] aborted: no pendingOrder'); console.timeEnd('[DBG] confirmDispatch'); return; }
   const companyId = $('m-dispatch-company').value;
   const method = $('m-dispatch-method').value;
   const cost = safeNum($('m-dispatch-cost').value);
   const walletId = $('m-dispatch-wallet').value;
   const note = $('m-dispatch-note').value.trim();
+  console.log('[DBG] step:2 inputs', { companyId, method, cost, walletId, noteLen: note.length, myRole });
 
   // RULE V1.3 — central validator (orders.js)
   const v = validateDispatch({ order: pendingOrder, companyId, method, cost, walletId, role: myRole });
-  if (!v.ok) { toast(v.errors[0], 'err'); return; }
+  console.log('[DBG] step:3 validation', { ok: v.ok, errors: v.errors, warnings: v.warnings });
+  if (!v.ok) { toast(v.errors[0], 'err'); console.timeEnd('[DBG] confirmDispatch'); return; }
 
   const company = shippers.find(s => s._id === companyId);
   const btn = $('btn-dispatch-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+  console.log('[DBG] step:4 button disabled');
 
   // Build the order shipping update once — applied either atomically
   // alongside the expense (when cost>0 + walletId) or standalone otherwise.
@@ -2039,9 +2044,7 @@ async function confirmDispatch() {
 
   try {
     if (cost > 0 && walletId) {
-      // Atomic path: order update + wallet/tx/ledger all in the same FSE batch.
-      // The orderUpdate hook on handleGeneralExpense ensures we never end up
-      // with "dispatched but no expense" or "expense but order not updated".
+      console.log('[DBG] step:5 FSE path (cost+wallet)', { cost, walletId });
       const wallet = wallets.find(w => w._id === walletId);
       await dispatchFinancialEvent(db, FE.SHIPPING_EXPENSE, {
         walletId, walletName: wallet?.name || '',
@@ -2054,27 +2057,31 @@ async function confirmDispatch() {
         date: new Date().toLocaleDateString('ar-EG'),
         orderUpdate: { orderId: pendingOrder._id, fields: orderFields },
       });
+      console.log('[DBG] step:6 FSE done');
     } else {
-      // No expense to record (free dispatch or no wallet selected) — a
-      // standalone updateDoc is already atomic by itself.
+      console.log('[DBG] step:5 plain updateDoc path (no cost or no wallet)', { orderFields });
       await updateDoc(doc(db, 'orders', pendingOrder._id), {
         ...orderFields,
         updatedAt: serverTimestamp(),
       });
+      console.log('[DBG] step:6 updateDoc done');
     }
 
     toast('✅ تم تسليم الطلب لشركة الشحن');
     clearOpError();
     recordOp('ok', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
     closeModal('m-dispatch');
+    console.log('[DBG] step:7 success path complete');
   } catch (e) {
-    console.error(e);
+    console.error('[DBG] step:err caught', e);
     const msg = e.message || 'خطأ في التسليم';
     toast('❌ ' + msg, 'err');
     showOpError(`فشل تسليم الطلب #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}: ${msg}`, () => confirmDispatch());
     recordOp('err', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تسليم';
+    console.log('[DBG] step:finally btn reset');
+    console.timeEnd('[DBG] confirmDispatch');
   }
 }
 window.confirmDispatch = confirmDispatch;
