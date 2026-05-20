@@ -1717,6 +1717,31 @@ window.toggleRow = (id) => {
   if (btn) btn.classList.toggle('on', !isOpen);
 };
 
+// Quick-copy utility (Step 8.8) — copy values to clipboard from the entity
+// menu. Safe inline mini-action: zero risk, no write, no atomic concern.
+// Used for order #, phone, address — values an operator commonly needs to
+// paste into WhatsApp/notes without opening the order.
+window.copyToClipboard = (text, label) => {
+  if (!text) { toast('لا توجد قيمة للنسخ', 'err'); return; }
+  const value = String(text).trim();
+  const done = () => toast(`✓ تم نسخ ${label || ''} — ${value.length > 24 ? value.slice(0,22)+'…' : value}`);
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); done(); } catch { toast('تعذر النسخ', 'err'); }
+    ta.remove();
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(value).then(done).catch(fallback);
+  } else {
+    fallback();
+  }
+};
+
 window.openEntityMenu = (event, orderId, clientId, rawPhone) => {
   event.stopPropagation();
   document.querySelectorAll('.entity-menu').forEach(m => m.remove());
@@ -1762,6 +1787,19 @@ window.openEntityMenu = (event, orderId, clientId, rawPhone) => {
         <span class="em-ico">📨</span><span>رسالة واتساب جاهزة</span>
       </a>
     ` : ''}
+    <div class="entity-menu-divider"></div>
+    <div class="entity-menu-header">⚡ نسخ سريع</div>
+    <button class="entity-menu-item" onclick="copyToClipboard('${esc(o.orderNumber || o._id.slice(0,6))}', 'رقم الطلب'); document.querySelectorAll('.entity-menu').forEach(m=>m.remove()); return false;">
+      <span class="em-ico">#️⃣</span><span>نسخ رقم الطلب</span>
+    </button>
+    ${phoneVisible && rawPhone ? `
+      <button class="entity-menu-item" onclick="copyToClipboard('${esc(rawPhone)}', 'رقم التليفون'); document.querySelectorAll('.entity-menu').forEach(m=>m.remove()); return false;">
+        <span class="em-ico">📱</span><span>نسخ رقم التليفون</span>
+      </button>
+    ` : ''}
+    <button class="entity-menu-item" onclick="copyToClipboard('${esc((o.gov||o.governorate||'') + (o.city ? ' · ' + o.city : '') + (o.area ? ' · ' + o.area : '') + (o.address ? ' · ' + o.address : ''))}', 'العنوان'); document.querySelectorAll('.entity-menu').forEach(m=>m.remove()); return false;">
+      <span class="em-ico">📍</span><span>نسخ العنوان</span>
+    </button>
   `;
   document.body.appendChild(menu);
 
