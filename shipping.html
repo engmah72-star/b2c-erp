@@ -194,6 +194,12 @@
 .row-pending{animation:row-pending-pulse 1.1s ease-in-out infinite;background:rgba(110,189,255,.06)!important;pointer-events:none}
 .row-pending td:first-child::before{content:'⏳ ';color:var(--c);font-weight:700;margin-inline-end:4px}
 
+/* Risk / loss indicators (Step 7.5) — small chips under status badge */
+.risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
+.risk-flag{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:99px;font-size:9.5px;font-weight:800;white-space:nowrap;cursor:help}
+.risk-flag.risk-warn{background:rgba(255,170,0,.14);color:var(--y);border:1px solid rgba(255,170,0,.28)}
+.risk-flag.risk-crit{background:rgba(255,61,110,.14);color:var(--r);border:1px solid rgba(255,61,110,.3)}
+
 /* Operational specs summary (Step 7.2) — one-line product/qty/spec under order# */
 .cell-specs{font-size:10.5px;color:var(--snow);margin-top:3px;line-height:1.4;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cell-specs b{font-weight:700;color:var(--snow)}
@@ -890,6 +896,43 @@ function buildProductSpec(p) {
   return parts.join(' · ');
 }
 
+// Risk / loss indicators (Step 7.5) — small chips under the status badge.
+// Each chip flags a single risk: returned, partial return, delayed,
+// missing shipping cost, settled-but-unpaid (legacy drift, caught by
+// self-heal in #582 but worth a visual flag too).
+function riskFlags(order) {
+  const flags = [];
+  const stage = getShipStage(order);
+  // Partial return: order has returnedItems[] (set by savePartialReturn) but
+  // isn't fully returned (still active in shipping or archived after partial)
+  const hasReturnedItems = Array.isArray(order.returnedItems) && order.returnedItems.length > 0;
+  if (hasReturnedItems && stage !== 'returned') {
+    flags.push({ icon:'↩️', label:'مرتجع جزئي', cls:'risk-warn', title:`${order.returnedItems.length} منتج مرتجع` });
+  }
+  // Delayed: > DELAY_THRESHOLD_DAYS days since creation, still active
+  if (isDelayed(order)) {
+    const days = Math.floor(ageInDays(order));
+    flags.push({ icon:'⏰', label:`متأخر ${days}يوم`, cls:'risk-warn', title:`عمر ${days} يوم بدون حسم` });
+  }
+  // Missing shipping cost on an active company shipment
+  if (hasNoCost(order)) {
+    flags.push({ icon:'💸', label:'بدون تكلفة', cls:'risk-warn', title:'لم تُسجَّل تكلفة شحن' });
+  }
+  // Returned: full stop — show even though the status badge already says it
+  // (the badge is operational, this is the "operational loss" signal)
+  if (stage === 'returned') {
+    const cost = safeNum(order.shippingCost);
+    const loss = cost + safeNum(order.totalPaid);
+    if (loss > 0) {
+      flags.push({ icon:'🔴', label:`خسارة ${fmt(loss)} ج`, cls:'risk-crit', title:'تكلفة شحن + استرداد' });
+    }
+  }
+  if (!flags.length) return '';
+  return `<div class="risk-flags">${flags.map(f =>
+    `<span class="risk-flag ${f.cls}" title="${(f.title||'').replace(/"/g,'&quot;')}"><span>${f.icon}</span><span>${f.label}</span></span>`
+  ).join('')}</div>`;
+}
+
 function specsLine(order) {
   const prods = Array.isArray(order.products) ? order.products : [];
   if (!prods.length) {
@@ -984,7 +1027,7 @@ function renderRows(list) {
       </td>
       <td data-label="تكلفة الشحن"><span class="cell-money ${cost>0?'money-neg':'money-zero'}">${fmt(cost)} ج</span></td>
       <td data-label="المستلم"><span class="cell-money ${received>0?'money-pos':'money-zero'}">${fmt(received)} ج</span></td>
-      <td data-label="الحالة">${statusChip(getShipStage(o))}</td>
+      <td data-label="الحالة">${statusChip(getShipStage(o))}${riskFlags(o)}</td>
       <td class="td-actions"><div class="row-actions">${actionsCell(o)}</div></td>
     </tr>
     <tr id="d-${o._id}" class="row-detail" style="display:none">
