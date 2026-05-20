@@ -72,6 +72,8 @@
 .invoice-cell{font-variant-numeric:tabular-nums;line-height:1.4}
 .invoice-cell .iv-row{display:flex;justify-content:space-between;gap:8px;font-size:11px}
 .invoice-cell .iv-row span:first-child{color:var(--dim2);font-weight:600}
+.invoice-cell .iv-row.iv-sub{font-size:10px;padding-inline-start:6px;opacity:.85}
+.invoice-cell .iv-row.iv-sub span:first-child{color:var(--dim2);font-weight:500}
 .invoice-cell .iv-row span:last-child{font-weight:800}
 .expand-btn{background:transparent;border:0;color:var(--dim2);cursor:pointer;font-size:14px;padding:4px 6px;border-radius:6px;transition:all .15s}
 .expand-btn:hover{background:var(--bg3);color:var(--c)}
@@ -1082,6 +1084,49 @@ function buildProductSpec(p) {
   return parts.join(' · ');
 }
 
+// Invoice cell HTML (Step 7.3) — expanded financial breakdown in the row.
+// Adds discount + customer ship-fee + partial-return refund lines when
+// non-zero. Existing total/paid/remaining lines preserved.
+//
+// Visibility: each line gates on the matching canSee(...) capability so
+// restricted roles don't see numbers they shouldn't.
+function invoiceCellHTML(o, total, paid, remaining) {
+  const lines = [];
+  const seeSale = canSee('price_sale', myPerms, myRole);
+  const seePaid = canSee('price_paid', myPerms, myRole);
+  const seeRem  = canSee('price_remaining', myPerms, myRole);
+
+  if (seeSale) lines.push(`<div class="iv-row"><span>إجمالي</span><span>${fmt(total)}</span></div>`);
+
+  const custShip = safeNum(o.customerShipFee);
+  if (custShip > 0 && seeSale) {
+    lines.push(`<div class="iv-row iv-sub"><span>+ شحن العميل</span><span>${fmt(custShip)}</span></div>`);
+  }
+
+  const disc = safeNum(o.discount);
+  if (disc > 0 && seeSale) {
+    lines.push(`<div class="iv-row iv-sub"><span>− خصم</span><span class="money-neg">${fmt(disc)}</span></div>`);
+  }
+
+  if (seePaid) lines.push(`<div class="iv-row"><span>مدفوع</span><span class="money-pos">${fmt(paid)}</span></div>`);
+
+  // Partial return refund — visible only when applicable
+  const returnedItems = Array.isArray(o.returnedItems) ? o.returnedItems : [];
+  if (returnedItems.length > 0 && seePaid) {
+    const refunded = returnedItems.reduce((s,i) => s + safeNum(i.refund || i.lineTotal), 0);
+    if (refunded > 0) {
+      lines.push(`<div class="iv-row iv-sub"><span>↩️ مرتجع جزئي</span><span class="money-neg">${fmt(refunded)}</span></div>`);
+    }
+  }
+
+  if (seeRem) {
+    const remCls = remaining > 0 ? 'money-neg' : 'money-zero';
+    lines.push(`<div class="iv-row"><span>باقي</span><span class="${remCls}">${fmt(remaining)}</span></div>`);
+  }
+
+  return lines.join('');
+}
+
 // Profitability flag (Step 7.8) — single chip showing ✅/⚠️/🔴 based on net.
 // Net = totalPaid - shippingCost - execCost - discount (canonical formula
 // from shipping-followup.html:530).
@@ -1252,9 +1297,7 @@ function renderRows(list) {
         <div style="font-weight:700">${(o.shipCompanyName || '—').replace(/</g,'&lt;')} <span class="cell-sub">· ${methodLabel(o.shipMethod)}</span></div>
       </td>
       <td class="invoice-cell td-invoice" data-label="الفاتورة">
-        <div class="iv-row"><span>إجمالي</span><span>${fmt(total)}</span></div>
-        <div class="iv-row"><span>مدفوع</span><span class="money-pos">${fmt(paid)}</span></div>
-        <div class="iv-row"><span>باقي</span><span class="${remaining>0?'money-neg':'money-zero'}">${fmt(remaining)}</span></div>
+        ${invoiceCellHTML(o, total, paid, remaining)}
       </td>
       <td data-label="تكلفة الشحن"><span class="cell-money ${cost>0?'money-neg':'money-zero'}">${fmt(cost)} ج</span></td>
       <td data-label="المستلم"><span class="cell-money ${received>0?'money-pos':'money-zero'}">${fmt(received)} ج</span></td>
