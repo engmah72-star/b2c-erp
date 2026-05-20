@@ -380,6 +380,12 @@
 
     <div class="row"><label>المبلغ المُحصَّل من العميل (ج)</label><input id="m-collect-amount" type="number" min="0" step="0.5" placeholder="0"></div>
 
+    <!-- Wallet picker — يظهر فقط لـ pickup/courier (شحنات الشركات تُسوَّى عبر "حسابات الشحن") -->
+    <div class="row" id="m-collect-wallet-row" style="display:none">
+      <label>المحفظة المُستلمة فيها</label>
+      <select id="m-collect-wallet"></select>
+    </div>
+
     <!-- لوحة الحساب الحيّة -->
     <div class="calc-panel" id="collect-calc">
       <div class="calc-panel-title">💡 المعادلة (live)</div>
@@ -464,12 +470,12 @@
 <script type="module">
 import { app, auth, db } from './core/firebase-init.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, serverTimestamp }
+import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, serverTimestamp, writeBatch, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
 import { orderActions } from './order-actions.js';
-import { validateDispatch } from './orders.js';
+import { validateDispatch, validateCollect } from './orders.js';
 
 let me = null, myRole = '', myPerms = null;
 let orders = [], shippers = [], wallets = [];
@@ -561,6 +567,7 @@ function fillWalletsDropdowns() {
     return `<option value="${w._id}">${ico} ${w.name||'محفظة'}</option>`;
   }).join('');
   $('m-dispatch-wallet').innerHTML = '<option value="">— مستحق على الشركة —</option>' + opts;
+  if ($('m-collect-wallet')) $('m-collect-wallet').innerHTML = '<option value="">— اختر محفظة —</option>' + opts;
   $('m-settle-wallet').innerHTML = '<option value="">— اختر محفظة —</option>' + opts;
 }
 
@@ -1187,29 +1194,112 @@ window.openCollect = (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
   pendingOrder = o;
+  // Wallet-debit mode for pickup/courier (money enters our wallet on collect).
+  // Company shipments keep the marker-only behavior — settled later via shipping-accounts.
+  const walletMode = o.shipMethod === 'pickup' || o.shipMethod === 'courier' || o.shipMethod === 'internal';
   $('m-collect-info').innerHTML = `
     <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0,6)}</span></div>
     <div class="modal-info-row"><span>العميل</span><span>${o.clientName||'—'}</span></div>
-    <div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName||'—'}</span></div>`;
+    <div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName||'—'}</span></div>
+    ${walletMode ? `<div class="modal-info-row" style="color:var(--g)"><span>الوضع</span><span>💵 تحصيل مباشر — يدخل المحفظة فوراً</span></div>` : `<div class="modal-info-row" style="color:var(--c)"><span>الوضع</span><span>📦 تحصيل عبر شركة الشحن — يُسوَّى لاحقاً</span></div>`}`;
   $('m-collect-amount').value = o.remaining || 0;
   $('m-collect-note').value = '';
+  const walletRow = $('m-collect-wallet-row');
+  if (walletRow) {
+    walletRow.style.display = walletMode ? '' : 'none';
+    if (walletMode) {
+      const last = localStorage.getItem('b2c_lastWalletId') || '';
+      if (last && wallets.some(w => w._id === last)) $('m-collect-wallet').value = last;
+      else $('m-collect-wallet').value = '';
+    }
+  }
   updateCollectCalc();
   $('m-collect').classList.add('on');
 };
 
 async function confirmCollect() {
   if (!pendingOrder) return;
+  const o = pendingOrder;
   const amount = safeNum($('m-collect-amount').value);
   const note = $('m-collect-note').value.trim();
-  if (amount < 0) { toast('⚠️ المبلغ غير صالح', 'err'); return; }
-
+  const walletMode = o.shipMethod === 'pickup' || o.shipMethod === 'courier' || o.shipMethod === 'internal';
   const btn = $('btn-collect-confirm');
-  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
+  if (walletMode) {
+    // ── Quick-collect (pickup/courier/internal): wallet-crediting flow.
+    // Mirrors shipping-followup.html saveCollectFl exactly to keep behavior unified.
+    const wId = $('m-collect-wallet').value;
+    const w = wallets.find(x => x._id === wId);
+    const rem = safeNum(o.remaining);
+    // RULE V1.3 — central validator (orders.js)
+    const v = validateCollect({ order: o, amount, walletId: wId, remaining: rem, role: myRole });
+    if (!v.ok) { toast(v.errors[0], 'err'); return; }
+    if (!w) { toast('❌ المحفظة غير موجودة', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+    try {
+      const bb = safeNum(w.balance);
+      const oldPaid = safeNum(o.totalPaid);
+      const newPaid = oldPaid + amount;
+      const sale = safeNum(o.salePrice);
+      const cust = safeNum(o.customerShipFee);
+      const disc = safeNum(o.discount);
+      const totalDue = Math.max(0, sale + cust - disc);
+      const newRem = Math.max(0, totalDue - newPaid);
+      const curSS = o.shipStage || 'ready';
+      const autoCollected = newRem <= 0 && curSS === 'wait_collection';
+      const tsLabel = new Date().toLocaleDateString('ar-EG') + ' ' + new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' });
+      const userDisplay = $('nav-name').textContent || '';
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'wallets', wId), { balance: increment(amount) });
+      const colRef = doc(collection(db, 'transactions_v2'));
+      batch.set(colRef, {
+        walletId: wId, walletName: w.name || '', type: 'in', amount,
+        description: `تحصيل شحن — ${o.clientName||''} — ${o.orderNumber||''}`,
+        category: 'collection', orderId: o._id, clientName: o.clientName||'',
+        balanceBefore: bb, balanceAfter: bb + amount,
+        date: tsLabel, createdBy: me?.uid || '', createdByName: userDisplay,
+        createdAt: serverTimestamp(),
+        ...approvalFields(),
+      });
+      batch.update(doc(db, 'orders', o._id), {
+        totalPaid: newPaid, remaining: newRem,
+        paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+        ...(autoCollected ? { shipStage: 'collected', shipCollectedAt: serverTimestamp() } : {}),
+        ...(note ? { shipCollectNote: note } : {}),
+        timeline: [...(o.timeline||[]), {
+          date: tsLabel,
+          action: `💰 تحصيل ${fmt(amount)} ج عبر ${w.name||''}${autoCollected ? ' — ✅ محصّل بالكامل' : ''}`,
+          by: userDisplay,
+        }],
+        updatedAt: serverTimestamp(),
+      });
+      addLedgerToBatch(batch, db, FE.CUSTOMER_PAYMENT, {
+        amount, walletId: wId, walletName: w.name || '',
+        orderId: o._id, clientId: o.clientId||'', clientName: o.clientName||'',
+        notes: `تحصيل شحن — ${o.clientName||''} — ${o.orderNumber||''}`,
+        userId: me?.uid || '', userName: userDisplay,
+      });
+      await batch.commit();
+      localStorage.setItem('b2c_lastWalletId', wId);
+      toast('✅ تم التحصيل ودخل المحفظة');
+      closeModal('m-collect');
+    } catch (e) {
+      console.error(e);
+      toast('❌ ' + (e.message || 'خطأ في التحصيل'), 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
+    }
+    return;
+  }
+
+  // ── Company-marker flow (existing): mark shipCollected, no wallet impact.
+  // The actual wallet entry happens later via SHIPPING_SETTLEMENT.
+  if (amount < 0) { toast('⚠️ المبلغ غير صالح', 'err'); return; }
+  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
   try {
-    // تسجيل التحصيل على الأوردر فقط (المبلغ مع شركة الشحن، لم يدخل بعد محفظتنا)
-    // الدخول الفعلي للمحفظة يحصل في "تسوية" → SHIPPING_SETTLEMENT
-    await updateDoc(doc(db, 'orders', pendingOrder._id), {
+    await updateDoc(doc(db, 'orders', o._id), {
       shipCollected: amount,
       shipCollectedAt: serverTimestamp(),
       shipStage: 'collected',
