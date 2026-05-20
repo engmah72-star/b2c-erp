@@ -266,18 +266,24 @@ if (typeof window !== 'undefined') {
 //   • Escape يغلق الـ overlay الأعلى المفتوح
 //   • الضغط على الخلفية (خارج .modal) يغلق الـ overlay
 //   • Enter داخل input في modal يستدعي الزر الأساسي في .modal-foot
-// كل ذلك بدون تعديل الصفحات — مادامت تستورد shared.js.
-// لا يتعارض مع image-viewer (id="img-viewer") لأنه ليس .overlay.
+//   • Auto-focus لأول text input عند فتح modal
+// كل ذلك بدون تعديل الصفحات.
 //
-// Convention (موجودة بالفعل في كل الصفحات):
+// الـ logic مكرَّر في ux-globals.js (يُحمَّل من sidebar-config.js على
+// 35+ صفحة). الـ guard window.__b2cUxGlobals يمنع double-registration
+// عند تحميل الملفين معاً.
+//
+// Convention الـ footer (موجودة بالفعل في كل الصفحات):
 //   .modal-foot → buttons من الـ left:
 //     btn.btn-ghost (إلغاء) … btn.btn-g/btn-r/btn-b/btn-y (الأساسي = آخر زر)
-// الـ Enter يضغط آخر زر غير-ghost في .modal-foot.
 const PRIMARY_INPUT_TYPES = new Set([
   'text','number','email','tel','password','url','search','date','time',
   'datetime-local','month','week',
 ]);
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+const SKIP_INPUT_TYPES = new Set(['hidden','checkbox','radio','submit','button','file','image','reset','range','color']);
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.__b2cUxGlobals) {
+  window.__b2cUxGlobals = true;
+
   // Click on the backdrop (the .overlay element itself, not its children) → close
   document.addEventListener('click', e => {
     const t = e.target;
@@ -285,6 +291,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       t.classList.remove('open');
     }
   });
+
   // Escape → close the most recently opened .overlay
   // Enter inside an input in an open modal → invoke the primary action button
   document.addEventListener('keydown', e => {
@@ -295,19 +302,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return;
     }
     if (e.key !== 'Enter') return;
-    // Skip if another handler already claimed this Enter (autocomplete, custom input).
     if (e.defaultPrevented) return;
-    // Skip modifier combos (Shift+Enter = newline in textarea, Ctrl+Enter = send, ...)
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     const t = e.target;
     if (!t || t.tagName !== 'INPUT') return;
-    // Only text-like input types — checkboxes/radios fire on Space, not Enter.
     const type = (t.type || 'text').toLowerCase();
     if (!PRIMARY_INPUT_TYPES.has(type)) return;
-    // Must be inside an open overlay (any other input — sidebar search etc — ignored).
     const overlay = t.closest('.overlay.open');
     if (!overlay) return;
-    // Convention: last non-ghost button inside .modal-foot = primary action.
     const foot = overlay.querySelector('.modal-foot');
     if (!foot) return;
     const buttons = foot.querySelectorAll('button:not([disabled])');
@@ -319,6 +321,53 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     e.preventDefault();
     primary.click();
   });
+
+  // Auto-focus the first text-like input when an overlay opens.
+  function _autoFocusFirstInput(overlay) {
+    requestAnimationFrame(() => {
+      if (!overlay.classList.contains('open')) return;
+      const active = document.activeElement;
+      if (active && overlay.contains(active) && active.tagName !== 'BODY') return;
+      if (overlay.querySelector('[autofocus]')) return;
+      const cands = overlay.querySelectorAll('input, textarea');
+      for (const el of cands) {
+        if (el.disabled || el.readOnly) continue;
+        if (el.offsetParent === null) continue;
+        if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has((el.type || 'text').toLowerCase())) continue;
+        try { el.focus(); } catch (_) {}
+        return;
+      }
+    });
+  }
+  const _classObserver = new MutationObserver(muts => {
+    for (const m of muts) {
+      if (m.type !== 'attributes' || m.attributeName !== 'class') continue;
+      const el = m.target;
+      const wasOpen = (m.oldValue || '').split(/\s+/).includes('open');
+      const isOpen = el.classList.contains('open');
+      if (!wasOpen && isOpen && el.classList.contains('overlay')) _autoFocusFirstInput(el);
+    }
+  });
+  function _attach(el) {
+    _classObserver.observe(el, { attributes: true, attributeOldValue: true, attributeFilter: ['class'] });
+  }
+  function _bootObservers() {
+    document.querySelectorAll('.overlay').forEach(_attach);
+    new MutationObserver(muts => {
+      for (const m of muts) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if (node.classList && node.classList.contains('overlay')) _attach(node);
+          if (node.querySelectorAll) node.querySelectorAll('.overlay').forEach(_attach);
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _bootObservers, { once: true });
+  } else {
+    _bootObservers();
+  }
 }
 
 // ═══════════════════════════════════════

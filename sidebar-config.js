@@ -85,4 +85,15 @@
     s.defer = true;
     document.head.appendChild(s);
   }
+
+  // ── Auto-load UX Globals (Esc / Enter / backdrop close / auto-focus) ──
+  // Self-contained IIFE — يضمن أن كل صفحة admin تحصل على نفس الـ keyboard
+  // ergonomics بدون الاعتماد على استيراد shared.js كـ module.
+  if (!document.getElementById('ux-globals-loader')) {
+    const s = document.createElement('script');
+    s.id = 'ux-globals-loader';
+    s.src = 'ux-globals.js?v=1';
+    s.defer = true;
+    document.head.appendChild(s);
+  }
 })();
