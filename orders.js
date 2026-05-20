@@ -989,7 +989,10 @@ export function validateDispatch({ order, companyId, method, cost, walletId, rol
   if (order.stage === 'cancelled')          errors.push('⛔ الأوردر ملغي');
   if (order.shipStage === 'returned')       errors.push('⛔ الأوردر مرتجع');
 
-  if (!companyId) errors.push('⚠️ اختر شركة الشحن');
+  // Pickup (استلام من المطبعة) doesn't need a shipping company — العميل بيستلم
+  // من المطبعة مباشرة. Only require company for methods that involve one.
+  const needsCompany = method !== 'pickup';
+  if (needsCompany && !companyId) errors.push('⚠️ اختر شركة الشحن');
   const amt = parseFloat(cost) || 0;
   if (amt < 0) errors.push('⚠️ التكلفة غير صالحة');
 
