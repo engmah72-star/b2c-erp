@@ -38,6 +38,7 @@ import {
 import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
 } from './financial-sync-engine.js';
+import { orderActions } from './order-actions.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -231,9 +232,27 @@ export const shippingActions = {
       });
 
       await batch.commit();
+
+      // Auto-archive: pickup/courier بعد تحصيل كامل = أوردر منتهي تشغيلياً.
+      // (الـ method != 'company' لذا لا تسوية مطلوبة — جاهز للأرشفة فوراً).
+      let archiveResult = null;
+      if (autoCollected) {
+        try {
+          archiveResult = await orderActions.archiveOrder({
+            db, orderId,
+            role, userId, userName,
+            source: 'shipping', reason: 'auto-archive بعد تحصيل كامل',
+            bypassWarnings: true,
+          });
+        } catch (e) {
+          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        }
+      }
+
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderId, action: 'collect_customer', autoCollected,
+        archived: archiveResult,
       };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التحصيل'], warnings: [], orderId };
@@ -349,12 +368,31 @@ export const shippingActions = {
         })),
       });
 
+      // Auto-archive كل الأوردرات المُسوَّاة — الأوردر اكتمل تشغيلياً + مالياً.
+      // buildArchiveSpec في orders.js يحقق إن shipSettled=true قبل الكتابة.
+      // فشل الأرشفة لأي سبب لا يُلغي التسوية (الكتابة المالية كاملة).
+      const archiveResults = [];
+      for (const id of orders.map(o => o._id)) {
+        try {
+          const ar = await orderActions.archiveOrder({
+            db, orderId: id,
+            role, userId, userName,
+            source: 'shipping', reason: 'auto-archive بعد تسوية شركة الشحن',
+            bypassWarnings: true,
+          });
+          archiveResults.push({ orderId: id, ok: ar.ok, errors: ar.errors });
+        } catch (e) {
+          archiveResults.push({ orderId: id, ok: false, errors: [e.message || 'فشل الأرشفة'] });
+        }
+      }
+
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderIds: orders.map(o => o._id),
         settlementId: result.settleId,
         action: 'settle',
         summary: spec.summary,
+        archived: archiveResults,
       };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التسوية'], warnings: [] };
