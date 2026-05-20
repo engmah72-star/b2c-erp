@@ -204,7 +204,7 @@ $ grep -rn "validate-financial" --include="*.js"
 | **P0-1** | إصلاح `canFinancialWrite()` — حذف `hasPage('clients')`+`hasPage('suppliers')` | 🔴 HIGH | 1h | RULES_AUDIT R-A1 |
 | **P0-2** | التحقق من reliability `syncUserAuthClaims` + retry+alert | 🔴 HIGH | 3h | RULES_AUDIT R-A4 |
 | **P0-3** | 🆕 إضافة auth gate لـ `validate-financial.html` (admin only) أو حذفها من production | 🔴 HIGH | 30m | §4 #3 |
-| **P0-4** | إصلاح 5+ wallet writes في accounts.html (RULE 1 violation) | 🔴 HIGH | 4h | FIREBASE_AUDIT F-A1 |
+| ~~**P0-4**~~ | ~~إصلاح 5+ wallet writes في accounts.html~~ — **FALSE POSITIVE** | ⚪ Resolved | — | راجع §13 |
 | **P1-1** | Soft-delete + audit_logs لـ inbox stories | 🟡 MEDIUM | 4h | §5 #4 |
 | **P1-2** | إضافة `editHistory[]` للـ salePrice/cost edits | 🟡 MEDIUM | 6h | §5 #5 |
 | **P1-3** | تقييد `/settings` على admin | 🟡 MEDIUM | 1h | RULES_AUDIT R-A2 |
@@ -255,6 +255,48 @@ $ grep -rn "validate-financial" --include="*.js"
 - كل callable Cloud Functions auth enforcement
 - role change events — هل تُسجَّل؟
 - chat.html / design-workspace.html embedded auth
+
+---
+
+## 13) تصحيح: P0-4 — FALSE POSITIVE (2026-05-20)
+
+**الـ Claim الأصلي:** "accounts.html بها 5+ direct wallet writes خارج FSE = RULE 1 violation"
+
+**التحقق العميق (PR P0-4 investigation):** كل الـ 7 wallet writes المالية في accounts.html **متبوعة بـ `addLedgerToBatch(...)`** في نفس الـ batch:
+
+| السطر | العملية | FSE pairing |
+|------|---------|-------------|
+| 1460 | deleteTransaction reversal | `addLedgerToBatch(REVERSAL)` at 1479 |
+| 1653 | reconciliation | `addLedgerToBatch(WALLET_ADJUSTMENT)` at 1671 |
+| 1719 | adjustment | `addLedgerToBatch(WALLET_ADJUSTMENT)` at 1741 |
+| 1976-1981 | edit transaction | `addLedgerToBatch` at 2036/2041 |
+| 2090 | new manual transaction | `addLedgerToBatch` at 2119 |
+| 2152 | supplier payment manual | `addLedgerToBatch(VENDOR_PAYMENT)` at 2157 |
+| 2239-2240 | wallet transfer | `addLedgerToBatch(WALLET_TRANSFER)` at 2270 |
+
+**`addLedgerToBatch` هو الـ official FSE helper** — يحدّد نفسه في `financial-sync-engine.js` كـ public API معتمد (مرجع: RULE 2 + CLAUDE.md "Helpers معتمدة: dispatchFinancialEvent, addLedgerToBatch").
+
+**النمط المُتَّبَع:**
+```js
+const batch = writeBatch(db);
+batch.update(doc(db,'wallets',...), {balance: increment(amount)});
+batch.set(doc(collection(db,'transactions_v2')), {...});
+addLedgerToBatch(batch, db, EVENT_TYPE, {...});  // ← FSE helper
+await batch.commit();  // atomic ✓
+```
+
+هذا **بالضبط** نفس pattern `handleCustomerPayment` في FSE نفسه (financial-sync-engine.js:508-557).
+
+**الخلاصة:**
+- ✅ RULE 1 (FSE-only): **مطابق** — addLedgerToBatch هو FSE
+- ✅ RULE 3 (atomic): **مطابق** — كل العمليات في writeBatch واحد
+- ✅ RULE 5 (audit trail): **مطابق** — كل write له ledger entry
+
+**Line 1805 استثناء:** يحدّث `provider` metadata فقط (ليس balance) — لا يحتاج FSE event. مقبول كـ pure metadata update.
+
+**الـ Action الأصلي P0-4 لا يلزم.** الـ audit أساء التصنيف لأنه عدّ `batch.update(wallets, ...)` كـ "direct write" بدون أخذ سياق `addLedgerToBatch` في الاعتبار.
+
+**Lesson learned:** عند فحص RULE 1 compliance، الحكم لا يعتمد على شكل الـ write فقط — يحتاج التحقق من وجود ledger entry في نفس الـ batch.
 
 ---
 
