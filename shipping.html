@@ -1251,7 +1251,7 @@ function actionsCell(o) {
   const urgent = isDelayed(o) || hasNoCost(o);
   const sevCls = urgent ? ' btn-primary-action' : '';
 
-  if (stage === 'ready')     return `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openDispatch('${id}')" title="${urgent ? 'متأخر — سلّم الآن' : 'تسليم لشركة الشحن'}">🚚 تسليم</button>`;
+  if (stage === 'ready')     return `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openDispatch('${id}')" title="${urgent ? 'متأخر — سلّم الآن' : 'تسليم لشركة الشحن (يفتح نموذج)'}">🚚 تسليم</button><button class="btn btn-ghost btn-sm" style="margin-inline-start:4px" onclick="window.quickPickupDispatch('${id}')" title="استلام من المطبعة — تسجيل فوري بدون نموذج">🏬 استلام</button>`;
   if (stage === 'transit')   return `<button class="btn btn-g btn-sm${sevCls}" onclick="window.openCollect('${id}')" title="${urgent ? 'متأخر — حصّل الآن' : 'تحصيل من العميل'}">💰 تحصيل</button>`;
   if (stage === 'collected') return canSettle()
     ? `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openSettleSingle('${id}')" title="تسوية مع شركة الشحن">📦 تسوية</button>`
@@ -2084,6 +2084,57 @@ async function confirmDispatch() {
   }
 }
 window.confirmDispatch = confirmDispatch;
+
+// Quick Pickup Dispatch — one-click dispatch for "استلام من المطبعة" orders.
+// No modal, no form. Auto-fills:
+//   shipMethod = 'pickup'
+//   shippingCost = 0
+//   shipStage = 'ready' (unchanged — pickup waits for customer)
+//   shipDispatchedAt = serverTimestamp()
+//   shipCompanyId/Name = '' (no company involved)
+// Plus a timeline entry. After this, the row shows 💰 تحصيل button.
+window.quickPickupDispatch = async (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  // Use central validator with method='pickup' for safety
+  const v = validateDispatch({ order: o, companyId: '', method: 'pickup', cost: 0, walletId: '', role: myRole });
+  if (!v.ok) { toast(v.errors[0], 'err'); return; }
+
+  const label = `#${o.orderNumber || o._id.slice(0,6)} · ${o.clientName || ''}`;
+  if (!confirm(`🏬 تسجيل ${label} كـ "استلام من المطبعة"؟\n\nبدون شركة شحن وبدون تكلفة. التحصيل يحصل عند استلام العميل.`)) return;
+
+  markRowPending(orderId);
+  try {
+    const ts = new Date().toLocaleDateString('ar-EG') + ' ' +
+               new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const userDisplay = $('nav-name').textContent || '';
+    await updateDoc(doc(db, 'orders', orderId), {
+      shipCompanyId: '',
+      shipCompanyName: '',
+      shipMethod: 'pickup',
+      shippingCost: 0,
+      shipStage: 'ready',
+      shipDispatchedAt: serverTimestamp(),
+      timeline: [...(o.timeline || []), {
+        date: ts,
+        action: '🏬 جاهز للاستلام من المطبعة — بدون شركة شحن',
+        by: userDisplay,
+      }],
+      updatedAt: serverTimestamp(),
+    });
+    toast('✅ جاهز للاستلام من المطبعة');
+    recordOp('ok', `استلام · ${label}`);
+    clearOpError();
+  } catch (e) {
+    console.error(e);
+    const msg = e.message || 'خطأ في التسجيل';
+    toast('❌ ' + msg, 'err');
+    showOpError(`فشل تسجيل ${label} للاستلام: ${msg}`, () => window.quickPickupDispatch(orderId));
+    recordOp('err', `استلام · ${label}`);
+  } finally {
+    unmarkRowPending(orderId);
+  }
+};
 
 window.openCollect = (orderId) => {
   const o = orders.find(x => x._id === orderId);
