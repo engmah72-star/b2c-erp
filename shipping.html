@@ -732,19 +732,39 @@ window.closeGuide = () => {
 let _currentOrderId = null;
 let _currentTab = 'op';
 
+// Adaptive drawer tab (Step 8.5) — open on the tab most relevant to the
+// order's current state, so the operator doesn't have to click around to
+// find the info that matters now.
+//
+// Rules (first match wins):
+//   returned / has returnedItems            → timeline (history of what happened)
+//   shipSettled OR pendingSettle OR remaining>0 → money (financial state needs attention)
+//   default                                 → op (the standard view)
+function pickInitialTab(o) {
+  if (!o) return 'op';
+  const stage = getShipStage(o);
+  if (stage === 'returned')                                              return 'timeline';
+  if (Array.isArray(o.returnedItems) && o.returnedItems.length > 0)      return 'timeline';
+  // Money-priority states: pending company settle, or significant remaining
+  if (o.shipMethod === 'company' && o.shipStage === 'collected' && !o.shipSettled) return 'money';
+  if (safeNum(o.remaining) > 0 && stage !== 'ready')                     return 'money';
+  return 'op';
+}
+
 window.openOrderDetails = (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
   _currentOrderId = orderId;
-  _currentTab = 'op';
+  const initial = pickInitialTab(o);
+  _currentTab = initial;
   const title = `📋 #${o.orderNumber || o._id.slice(0,6)} · ${o.clientName || ''}`;
   $('order-drawer-title').textContent = title;
   $('order-drawer-popout').onclick = () =>
     window.open(`order-tracking.html?id=${encodeURIComponent(orderId)}`, '_blank');
   document.querySelectorAll('.order-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.tab === 'op');
+    t.classList.toggle('active', t.dataset.tab === initial);
   });
-  renderOrderTab(o, 'op');
+  renderOrderTab(o, initial);
   const d = $('order-drawer');
   d.classList.add('on'); d.setAttribute('aria-hidden','false');
 };
