@@ -194,6 +194,14 @@
 .row-pending{animation:row-pending-pulse 1.1s ease-in-out infinite;background:rgba(110,189,255,.06)!important;pointer-events:none}
 .row-pending td:first-child::before{content:'⏳ ';color:var(--c);font-weight:700;margin-inline-end:4px}
 
+/* Design thumbnail (Step 7.1) — compact 36px preview in client cell */
+.design-thumb{width:36px;height:36px;border-radius:6px;background:var(--bg);border:1px solid var(--bd);object-fit:cover;cursor:pointer;flex-shrink:0;transition:transform .12s ease,border-color .12s ease}
+.design-thumb:hover{transform:scale(1.06);border-color:var(--p)}
+.design-thumb-placeholder{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:6px;background:var(--bg);border:1px dashed var(--bd);font-size:14px;color:var(--dim2);flex-shrink:0;cursor:default}
+.design-thumb-locked{cursor:not-allowed;opacity:.55}
+.td-client-with-thumb{display:flex;align-items:flex-start;gap:8px}
+.td-client-with-thumb .client-info{flex:1;min-width:0}
+
 /* Stage breakdown chips — clickable, filter the table by stage */
 .stage-strip{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .stage-chip{display:inline-flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--bd);border-right:3px solid var(--sc);border-radius:var(--rad2);padding:8px 12px;cursor:pointer;font-family:inherit;transition:transform .08s ease,border-color .12s ease}
@@ -801,6 +809,50 @@ function actionsCell(o) {
   return '';
 }
 
+// Design thumbnail helper (Step 7.1) — picks the best preview URL from the
+// order, respecting RULE 8.2 (design_data visibility per role).
+//
+// Priority (first non-empty wins):
+//   1. order.designImageUrl       — primary CS-uploaded preview
+//   2. order.finalImageUrl        — final approved render
+//   3. order.printFinalUrl        — print-ready file (image only)
+//   4. products[0].imageUrl       — first product variant preview
+//   5. products[0].designImageUrl
+//   6. products[0].thumbnailUrl
+//
+// Returns { url, count, locked }. locked=true when role can't see design_data.
+function getDesignThumb(order) {
+  const allowed = canSee('design_data', myPerms, myRole);
+  if (!allowed) return { url: '', count: 0, locked: true };
+  const prod0 = (order.products || [])[0] || {};
+  const candidates = [
+    order.designImageUrl,
+    order.finalImageUrl,
+    typeof order.printFinalUrl === 'string' && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(order.printFinalUrl) ? order.printFinalUrl : '',
+    prod0.imageUrl,
+    prod0.designImageUrl,
+    prod0.thumbnailUrl,
+  ].filter(Boolean);
+  const filesCount = Array.isArray(order.designFiles) ? order.designFiles.length : 0;
+  return { url: candidates[0] || '', count: filesCount, locked: false };
+}
+
+function designThumbCell(order) {
+  const t = getDesignThumb(order);
+  if (t.locked) {
+    return `<span class="design-thumb-placeholder design-thumb-locked" title="بيانات التصميم محجوبة">🔒</span>`;
+  }
+  const orderId = order._id;
+  if (!t.url) {
+    const title = t.count ? `${t.count} ملفات تصميم — لا توجد معاينة` : 'لا توجد معاينة';
+    return `<span class="design-thumb-placeholder" title="${title}">🎨</span>`;
+  }
+  return `<img src="${t.url}" alt="معاينة التصميم" class="design-thumb"
+            loading="lazy" decoding="async"
+            onclick="openOrderDetails('${orderId}')"
+            onerror="this.outerHTML='&lt;span class=\\'design-thumb-placeholder\\' title=\\'تعذر تحميل المعاينة\\'&gt;🖼️&lt;/span&gt;'">`;
+}
+
 function renderRows(list) {
   const tbody = $('rows');
   if (!list.length) {
@@ -838,10 +890,15 @@ function renderRows(list) {
     return `<tr id="r-${o._id}" class="${aged}">
       <td class="td-expand"><button class="expand-btn" onclick="window.toggleRow('${o._id}')" title="تفاصيل">▶</button></td>
       <td class="td-client">
-        <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
-          <span class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</span> <span class="entity-arrow">▾</span>
-        </button>
-        ${phone ? `<div class="phone-masked">${phone}${waLink}</div>` : ''}
+        <div class="td-client-with-thumb">
+          ${designThumbCell(o)}
+          <div class="client-info">
+            <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
+              <span class="cell-name">${(o.clientName || '—').replace(/</g,'&lt;')}</span> <span class="entity-arrow">▾</span>
+            </button>
+            ${phone ? `<div class="phone-masked">${phone}${waLink}</div>` : ''}
+          </div>
+        </div>
       </td>
       <td class="td-order">
         <button class="entity-link" onclick="window.openEntityMenu(event, '${o._id}', '${o.clientId||''}', '${rawPhone}')" title="إجراءات سريعة">
