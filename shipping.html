@@ -167,6 +167,21 @@
   .entity-menu{min-width:90vw;left:5vw !important;right:5vw !important}
 }
 
+/* Operations history footer (Step 5.3) — bottom-anchored pill with last 3 ops */
+.ops-history{position:fixed;bottom:14px;inset-inline-start:14px;z-index:50;display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--bd);border-radius:99px;padding:6px 10px 6px 14px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:min(560px,92vw);font-size:11.5px}
+.ops-history-label{color:var(--dim2);font-weight:700;flex-shrink:0}
+.ops-history-items{display:flex;gap:6px;overflow:hidden}
+.ops-history-item{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;background:var(--bg);border:1px solid var(--bd);white-space:nowrap;font-weight:700}
+.ops-history-item.ok{color:var(--g);border-color:rgba(0,217,126,.3)}
+.ops-history-item.err{color:var(--r);border-color:rgba(255,61,110,.3)}
+.ops-history-item .ops-history-time{color:var(--dim2);font-size:10px;font-weight:500}
+.ops-history-close{background:transparent;border:0;color:var(--dim2);padding:2px 6px;cursor:pointer;font-family:inherit;border-radius:50%;flex-shrink:0}
+.ops-history-close:hover{background:var(--bg);color:var(--snow)}
+@media(max-width:640px){
+  .ops-history{font-size:10.5px;padding:4px 8px 4px 10px}
+  .ops-history-label{display:none}
+}
+
 /* Persistent error banner (Step 5) — stays until dismissed or replaced by success */
 .op-error{display:flex;align-items:center;gap:10px;padding:11px 14px;margin-bottom:12px;background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.35);border-right:3px solid var(--r);border-radius:var(--rad2);font-size:12.5px;color:var(--snow)}
 .op-error-icon{font-size:18px;flex-shrink:0}
@@ -485,6 +500,13 @@
   </div>
 </div>
 
+<!-- Operations history footer (Step 5.3) — last 3 actions with timestamps -->
+<div id="ops-history" class="ops-history" style="display:none">
+  <span class="ops-history-label">آخر عمليات:</span>
+  <div class="ops-history-items" id="ops-history-items"></div>
+  <button class="ops-history-close" onclick="document.getElementById('ops-history').style.display='none'" aria-label="إخفاء">✕</button>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script type="module">
@@ -517,6 +539,25 @@ window.toggleNav = () => document.body.classList.toggle('nav-open');
 window.doLogout = () => signOut(auth).then(() => location.href = 'login.html');
 window.closeModal = (id) => $(id).classList.remove('on');
 window.openBulkSettle = () => openSettleModal(null);
+
+// Operations history (Step 5.3) — keeps the last 3 actions visible in a
+// bottom-left pill. Toasts vanish; this stays so operators can verify
+// "did my last collect go through?" without scrolling timelines.
+const opsHistory = [];
+function recordOp(status, label) {
+  const ts = new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' });
+  opsHistory.unshift({ status, label, ts });
+  if (opsHistory.length > 3) opsHistory.length = 3;
+  const wrap = $('ops-history');
+  const items = $('ops-history-items');
+  items.innerHTML = opsHistory.map(o => {
+    const icon = o.status === 'ok' ? '✓' : '✗';
+    const cls = o.status === 'ok' ? 'ok' : 'err';
+    return `<span class="ops-history-item ${cls}"><span>${icon}</span><span>${o.label}</span><span class="ops-history-time">${o.ts}</span></span>`;
+  }).join('');
+  wrap.style.display = 'flex';
+}
+window.recordOp = recordOp;
 
 // Persistent error banner (Step 5) — survives toast timeout so operators
 // don't miss a critical failure while their attention is elsewhere.
@@ -1230,12 +1271,14 @@ async function confirmDispatch() {
 
     toast('✅ تم تسليم الطلب لشركة الشحن');
     clearOpError();
+    recordOp('ok', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
     closeModal('m-dispatch');
   } catch (e) {
     console.error(e);
     const msg = e.message || 'خطأ في التسليم';
     toast('❌ ' + msg, 'err');
     showOpError(`فشل تسليم الطلب #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}: ${msg}`, () => confirmDispatch());
+    recordOp('err', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تسليم';
   }
@@ -1337,12 +1380,14 @@ async function confirmCollect() {
       localStorage.setItem('b2c_lastWalletId', wId);
       toast('✅ تم التحصيل ودخل المحفظة');
       clearOpError();
+      recordOp('ok', `تحصيل ${fmt(amount)} ج · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
       closeModal('m-collect');
     } catch (e) {
       console.error(e);
       const msg = e.message || 'خطأ في التحصيل';
       toast('❌ ' + msg, 'err');
       showOpError(`فشل التحصيل (${fmt(amount)} ج) للطلب #${o?.orderNumber || o?._id?.slice(0,6) || ''}: ${msg}`, () => confirmCollect());
+      recordOp('err', `تحصيل #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
     } finally {
       btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
     }
@@ -1363,12 +1408,14 @@ async function confirmCollect() {
     });
     toast('✅ تم تأكيد التحصيل — بانتظار التسوية');
     clearOpError();
+    recordOp('ok', `تحصيل (شركة) · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
     closeModal('m-collect');
   } catch (e) {
     console.error(e);
     const msg = e.message || 'خطأ في تأكيد التحصيل';
     toast('❌ ' + msg, 'err');
     showOpError(`فشل تأكيد التحصيل للطلب #${o?.orderNumber || o?._id?.slice(0,6) || ''}: ${msg}`, () => confirmCollect());
+    recordOp('err', `تحصيل (شركة) · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
   }
@@ -1470,6 +1517,10 @@ async function confirmSettle() {
     });
     toast(`✅ تم تسجيل التسوية: ${fmt(amount)} ج`);
     clearOpError();
+    const opLabel = pendingOrder?._single
+      ? `تسوية · #${pendingOrder.orders?.[0]?.orderNumber || ''} · ${fmt(amount)} ج`
+      : `تسوية (${orderIds.length} طلب) · ${fmt(amount)} ج`;
+    recordOp('ok', opLabel);
     closeModal('m-settle');
   } catch (e) {
     console.error(e);
@@ -1477,6 +1528,7 @@ async function confirmSettle() {
     toast('❌ ' + msg, 'err');
     const label = pendingOrder?._single ? `للطلب #${pendingOrder.orders?.[0]?.orderNumber || ''}` : `(${orderIds.length} طلب)`;
     showOpError(`فشل تسجيل التسوية ${label} — ${fmt(amount)} ج: ${msg}`, () => confirmSettle());
+    recordOp('err', `تسوية ${label}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تسجيل التسوية';
   }
@@ -1507,10 +1559,12 @@ window.confirmArchive = async (orderId) => {
       const msg = r.errors.join(' · ');
       toast('⛔ '+msg,'err');
       showOpError(`فشل أرشفة الطلب #${o.orderNumber || o._id.slice(0,6)}: ${msg}`, () => window.confirmArchive(orderId));
+      recordOp('err', `أرشفة · #${o.orderNumber || o._id.slice(0,6)}`);
       return;
     }
     toast('📁 تم الأرشفة');
     clearOpError();
+    recordOp('ok', `أرشفة · #${o.orderNumber || o._id.slice(0,6)}`);
   } finally {
     unmarkRowPending(orderId);
   }
