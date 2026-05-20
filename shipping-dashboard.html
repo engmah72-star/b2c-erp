@@ -104,6 +104,7 @@
 <script type="module">
 
 import { app, auth, db } from "./core/firebase-init.js";
+import { canDo } from "./core/permissions-matrix.js";
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
   const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
@@ -115,7 +116,9 @@ async function buildDynamicSidebar(uid, currentPage) {
     const role = ud.role || 'admin';
     const perms = ud.permissions || {};
     const userPages = perms.pages || [];
-    const isAdm = ['admin','operation_manager'].includes(role);
+    // Step 6.3 — capability-based per RULE P1.3. view_all_shipments
+    // matches the admin + operation_manager set (supervisor tier).
+    const isAdm = canDo('view_all_shipments', role, perms);
     
     const ROLE_DASH = {
       admin:'accounts.html', operation_manager:'ops-dashboard.html',
@@ -221,7 +224,8 @@ onAuthStateChanged(auth,async u=>{
   setText('nav-name',userName);setText('greeting','أهلاً '+userName.split(' ')[0]);
   document.getElementById('nav-av').textContent=userName[0].toUpperCase();
   setText('sub',MONTHS[now.getMonth()]+' '+now.getFullYear());
-  const isAdminShip=['admin','operation_manager'].includes(d.role);
+  // Step 6.3 — capability-based per RULE P1.3
+  const isAdminShip=canDo('view_all_shipments', d.role, d.permissions||{});
   onSnapshot(query(collection(db,'orders'),where('stage','in',['shipping','archived','production']),limit(3000)),snap=>{
     const all=snap.docs.map(x=>({...x.data(),_id:x.id}));
     // KPIs تُحسب للشخص الحالي فقط (ما لم يكن أدمن)
