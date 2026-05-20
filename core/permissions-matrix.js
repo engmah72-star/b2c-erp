@@ -160,9 +160,11 @@ export const CAPABILITIES = Object.freeze({
   VIEW_FINANCIALS:    'view_financials',
   MANAGE_PAYMENTS:    'manage_payments',
   MANAGE_RETURNS:     'manage_returns',
-  MANAGE_EMPLOYEES:   'manage_employees',
-  MANAGE_PRODUCTS:    'manage_products',
-  SYSTEM_SETTINGS:    'system_settings',
+  MANAGE_EMPLOYEES:        'manage_employees',
+  MANAGE_PRODUCTS:         'manage_products',
+  MANAGE_SUPPLIERS:        'manage_suppliers',
+  MANAGE_SUPPLIER_PAYMENTS:'manage_supplier_payments',
+  SYSTEM_SETTINGS:         'system_settings',
 });
 
 // كل role وما يستطيع فعلياً.
@@ -174,7 +176,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:true, manage_products:true, system_settings:true,
+    manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:true,
   },
   operation_manager: {
     view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
@@ -182,7 +184,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:true, manage_products:true, system_settings:false,
+    manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:false,
   },
   customer_service: {
     view_orders:true, create_orders:true, edit_orders:true, archive_orders:false,
@@ -190,7 +192,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:false,
     manage_printing:false, manage_shipping:false,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:true, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   graphic_designer: {
     view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
@@ -198,7 +200,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:false,
     manage_printing:false, manage_shipping:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   design_operator: {
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:false,
@@ -206,7 +208,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:false, manage_shipping:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   production_agent: {
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
@@ -214,7 +216,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:true, manage_shipping:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   shipping_officer: {
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
@@ -222,7 +224,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:false, manage_shipping:true,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   wallet_manager: {
     view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
@@ -230,7 +232,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:false, manage_shipping:false,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:false, manage_products:false, system_settings:false,
+    manage_returns:true, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:true, system_settings:false,
   },
 };
 
