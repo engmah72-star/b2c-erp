@@ -2191,8 +2191,13 @@ async function confirmCollect() {
   // ── Company-marker flow: mark shipCollected, no wallet impact.
   // The actual wallet entry happens later via SHIPPING_SETTLEMENT.
   // RULE V1.3 — central validator (orders.js, Step 1.2)
-  const cv = validateCompanyCollect({ order: o, amount, role: myRole });
+  // Settle-Fix #5: pass remaining as expectedFromCustomer so the validator
+  // can warn on drift (amount far from what the customer actually owes).
+  const expectedFromCustomer = safeNum(o.remaining);
+  const cv = validateCompanyCollect({ order: o, amount, expectedFromCustomer, role: myRole });
   if (!cv.ok) { toast(cv.errors[0], 'err'); return; }
+  // Warnings → ask the operator to confirm before writing
+  if (cv.warnings.length && !confirm(cv.warnings.join('\n\n') + '\n\nالمتابعة؟')) return;
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
   try {
     await updateDoc(doc(db, 'orders', o._id), {

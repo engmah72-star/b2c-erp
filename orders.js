@@ -1057,13 +1057,19 @@ export function validateCollect({ order, amount, walletId, remaining, role }) {
  * الفرق عن validateCollect: لا يلزم walletId، لا يطبّق سقف remaining،
  * ويتطلب صراحةً shipMethod === 'company'.
  *
+ * Settle-Fix #5 enhancement: warnings for amount-vs-expected drift.
+ * الـ amount اللي بيدخله الموظف يجب يكون قريب من المتوقع من العميل.
+ * لو فرق كبير → warning (مش error) — قد يكون typo أو حالة حقيقية تحتاج توثيق.
+ *
  * @param {Object} args
- * @param {Object} args.order   — الأوردر
- * @param {number} args.amount  — المبلغ المُحصَّل (>=0 — قد يكون صفر لو الشركة لم تحصِّل)
+ * @param {Object} args.order              — الأوردر
+ * @param {number} args.amount             — المبلغ المُحصَّل (>=0)
+ * @param {number} [args.expectedFromCustomer] — المتوقَّع من العميل (عادة = order.remaining).
+ *                                              لو غير محدد، يُحسب من الـ order.
  * @param {string} [args.role]
  * @returns { ok, errors, warnings }
  */
-export function validateCompanyCollect({ order, amount, role }) {
+export function validateCompanyCollect({ order, amount, expectedFromCustomer, role }) {
   const errors = [];
   const warnings = [];
 
@@ -1087,6 +1093,34 @@ export function validateCompanyCollect({ order, amount, role }) {
 
   if (role && !SHIPPING_COLLECT_ROLES.includes(role)) {
     errors.push('ليس لديك صلاحية تأكيد التحصيل');
+  }
+
+  // Warnings on drift between operator-entered amount and customer's
+  // remaining balance. The "expected from customer" defaults to:
+  //   salePrice + customerShipFee − discount − totalPaid
+  // i.e. what the customer owes us at the moment of collect.
+  if (Number.isFinite(amt) && amt >= 0 && errors.length === 0) {
+    let expected = parseFloat(expectedFromCustomer);
+    if (!Number.isFinite(expected)) {
+      const sale = parseFloat(order.salePrice) || 0;
+      const cust = parseFloat(order.customerShipFee) || 0;
+      const disc = parseFloat(order.discount) || 0;
+      const paid = parseFloat(order.totalPaid) || parseFloat(order.deposit) || 0;
+      expected = Math.max(0, sale + cust - disc - paid);
+    }
+    const diff = amt - expected;
+    const absDiff = Math.abs(diff);
+    if (expected > 0 && absDiff > 0.5) {
+      const fmt = (n) => n.toLocaleString('ar-EG', { maximumFractionDigits: 0 });
+      if (amt > expected) {
+        warnings.push(`⚠️ المبلغ (${fmt(amt)} ج) أكبر من المتوقع من العميل (${fmt(expected)} ج) بـ ${fmt(absDiff)} ج — تأكد أن الرقم صحيح`);
+      } else {
+        warnings.push(`⚠️ المبلغ (${fmt(amt)} ج) أقل من المتوقع (${fmt(expected)} ج) بـ ${fmt(absDiff)} ج — الشركة قصّرت في التحصيل، سيُسجَّل العجز على العميل`);
+      }
+    }
+    if (amt === 0 && expected > 0) {
+      warnings.push(`⚠️ صفر تحصيل — هل الشركة لم تحصِّل شيئاً؟ المتوقع كان ${expected.toLocaleString('ar-EG', { maximumFractionDigits: 0 })} ج`);
+    }
   }
 
   return { ok: errors.length === 0, errors, warnings };
