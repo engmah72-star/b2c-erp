@@ -798,21 +798,66 @@ function renderSmartBadges(o) {
 }
 
 // ── Product images + thumbnails ───────────────────────────────
-function getProductImage(p, o) {
-  return p?.designImageUrl || p?.imageUrl || p?.printFinalUrl || '';
+// المصدر الكامل لصور الأوردر (يطابق archive.html / design.html / reports.html):
+//   1. منتجات: p.designImages[] (مصفوفة) أو p.designImageUrl (مفرد)
+//   2. أوردر:  o.designImageUrl (تصميم)
+//   3. أوردر:  o.finalImageUrl  (صورة المنتج النهائي من مرحلة التنفيذ — الأهم للشحن)
+//   ⚠️ printFinalUrl و designFileUrl غالباً PDF/AI — لا نعرضهم كصور (لكن كـ روابط ملفات)
+
+function isImageUrl(url) {
+  if (!url) return false;
+  const path = String(url).split('?')[0].toLowerCase();
+  if (/\.(jpe?g|png|gif|webp|svg|bmp|heic|heif)$/i.test(path)) return true;
+  if (/image%2[fF]/.test(url)) return true;
+  if (/\.(pdf|ai|eps|psd|indd|cdr|zip)$/i.test(path)) return false;
+  return true;  // غير معروف — الـ <img onerror> سيتعامل مع الفشل
+}
+
+function getProductImage(p) {
+  if (!p) return '';
+  if (Array.isArray(p.designImages) && p.designImages.length) {
+    const first = p.designImages.find(Boolean);
+    if (first) return first;
+  }
+  return p.designImageUrl || p.imageUrl || '';
 }
 
 function getOrderImages(o) {
   const imgs = [];
+  // 1. كل منتج وصوره
   (o.products || []).forEach(p => {
-    const url = getProductImage(p, o);
-    if (url) imgs.push({ url, name: p.name || 'منتج' });
+    if (Array.isArray(p.designImages)) {
+      p.designImages.filter(Boolean).forEach((url, i) => {
+        if (isImageUrl(url)) imgs.push({ url, name: `${p.name || 'منتج'}${p.designImages.length > 1 ? ' ' + (i + 1) : ''}` });
+      });
+    } else if (p.designImageUrl && isImageUrl(p.designImageUrl)) {
+      imgs.push({ url: p.designImageUrl, name: p.name || 'منتج' });
+    }
   });
-  if (!imgs.length && o.designImageUrl) imgs.push({ url: o.designImageUrl, name: 'التصميم' });
-  if (o.printFinalUrl && !imgs.some(i => i.url === o.printFinalUrl)) {
-    imgs.push({ url: o.printFinalUrl, name: 'ملف الطباعة' });
+  // 2. صورة التصميم على الأوردر (fallback لو لا توجد صور منتجات)
+  if (!imgs.length && o.designImageUrl && isImageUrl(o.designImageUrl)) {
+    imgs.push({ url: o.designImageUrl, name: 'التصميم' });
+  }
+  // 3. صورة المنتج النهائي (من مرحلة التنفيذ) — مهمة جداً للشحن
+  if (o.finalImageUrl && isImageUrl(o.finalImageUrl) && !imgs.some(i => i.url === o.finalImageUrl)) {
+    imgs.push({ url: o.finalImageUrl, name: '📸 الصورة النهائية' });
   }
   return imgs;
+}
+
+// روابط الملفات (PDF/AI) المرتبطة بالأوردر — تُعرَض كأزرار تحميل
+function getOrderFiles(o) {
+  const files = [];
+  if (o.printFinalUrl) files.push({ url: o.printFinalUrl, name: '📄 ملف الطباعة' });
+  if (o.designFileUrl && o.designFileUrl !== o.printFinalUrl) {
+    files.push({ url: o.designFileUrl, name: '🎨 ملف التصميم' });
+  }
+  (o.designFiles || []).forEach((f, i) => {
+    if (f && f.url && !files.some(x => x.url === f.url)) {
+      files.push({ url: f.url, name: f.name || `ملف ${i + 1}` });
+    }
+  });
+  return files;
 }
 
 // ── Phone / WhatsApp helpers ──────────────────────────────────
@@ -940,10 +985,11 @@ function renderRowDetail(o) {
             <h4>🛒 المنتجات (${products.length || 0})</h4>
             ${products.length
               ? `<ul class="prod-list">${products.map(p => {
-                  const img = getProductImage(p, o);
+                  const img = getProductImage(p);
+                  const safeImg = escAttr(img);
                   return `<li class="prod-item">
                     ${img
-                      ? `<img class="prod-thumb" src="${escAttr(img)}" alt="${escAttr(p.name || '')}" loading="lazy" onclick="openLightbox('${escAttr(img)}')">`
+                      ? `<img class="prod-thumb" src="${safeImg}" alt="${escAttr(p.name || '')}" loading="lazy" onclick="openLightbox('${safeImg}')" onerror="this.outerHTML='<div class=&quot;prod-thumb-empty&quot;>🖼️</div>'">`
                       : `<div class="prod-thumb-empty">🖼️</div>`}
                     <div class="prod-info">
                       <div class="prod-name">${escAttr(p.name || '—')}</div>
@@ -952,8 +998,21 @@ function renderRowDetail(o) {
                   </li>`;
                 }).join('')}</ul>`
               : `<div style="color:var(--dim2);font-size:12px;padding:6px 0">لا توجد منتجات مسجَّلة</div>`}
-            ${imgs.length === 0 && products.length > 0 ? `<div style="color:var(--dim2);font-size:11px;margin-top:6px">📷 لا توجد صور</div>` : ''}
-            ${o.printFinalUrl ? `<a href="${escAttr(o.printFinalUrl)}" target="_blank" class="qa-chip" style="margin-top:8px">📄 ملف الطباعة</a>` : ''}
+            ${imgs.length === 0 && products.length > 0 ? `<div style="color:var(--y);font-size:11px;margin-top:8px;padding:6px 8px;background:rgba(255,170,0,.08);border-radius:6px">⚠️ لا توجد صور مرفوعة — راجع الأوردر في مرحلة التصميم/التنفيذ</div>` : ''}
+
+            ${o.finalImageUrl && isImageUrl(o.finalImageUrl) ? `
+              <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">
+                <div style="font-size:10.5px;color:var(--dim2);font-weight:800;margin-bottom:6px">📸 الصورة النهائية (من التنفيذ)</div>
+                <img src="${escAttr(o.finalImageUrl)}" loading="lazy" onclick="openLightbox('${escAttr(o.finalImageUrl)}')" onerror="this.style.display='none'" style="width:100%;max-height:160px;object-fit:contain;background:var(--bg3);border:1px solid var(--line);border-radius:8px;cursor:zoom-in">
+              </div>
+            ` : ''}
+
+            ${(function(){
+              const files = getOrderFiles(o);
+              return files.length
+                ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:flex;flex-wrap:wrap;gap:6px">${files.map(f => `<a href="${escAttr(f.url)}" target="_blank" class="qa-chip">${escAttr(f.name)}</a>`).join('')}</div>`
+                : '';
+            })()}
           </div>
 
           <!-- ── المالية التفصيلية ── -->
