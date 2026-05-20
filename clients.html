@@ -1141,8 +1141,12 @@ auth.onAuthStateChanged(async u=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
-    renderOccasionsBanner();
-    renderSegmentStrip();
+    // Skip secondary banner/strip rebuilds while the add/edit modal is open
+    // to keep the form responsive; closeClientModal() flushes them.
+    if(!isClientModalOpen()){
+      renderOccasionsBanner();
+      renderSegmentStrip();
+    }
     if(activeId) renderPanel(activeId);
     // Deep-link: ?openClient={id}[&tab=followups]
     if(!window.__deepLinked){
@@ -1179,10 +1183,12 @@ auth.onAuthStateChanged(async u=>{
     scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
   });
-  db.collection('products_v2').onSnapshot(snap=>{
+  // G3: bounded listeners — products/wallets/employees/segments shouldn't
+  // stream entire collections on this page.
+  db.collection('products_v2').limit(500).onSnapshot(snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });
-  db.collection('wallets').onSnapshot(snap=>{
+  db.collection('wallets').limit(100).onSnapshot(snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
   // ── المصممون: المصدر الوحيد هو `employees` ──
@@ -1191,7 +1197,7 @@ auth.onAuthStateChanged(async u=>{
   // record (أو بمعلومات مختلفة). دلوقتي employees هي مصدر الحقيقة الوحيد
   // (مطابق لـ design.html و designer-dashboard.html). أي مصمم لازم يكون عنده
   // employee record عشان يظهر هنا.
-  db.collection('employees').onSnapshot(snap=>{
+  db.collection('employees').limit(500).onSnapshot(snap=>{
     const raw = snap.docs
       .map(d=>({...d.data(),_id:d.id}))
       .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
@@ -1263,11 +1269,11 @@ auth.onAuthStateChanged(async u=>{
 
   // RFM segments — written weekly by Cloud Function. Permission errors are
   // silenced because non-CRM roles don't get read access.
-  db.collection('client_segments').onSnapshot(snap=>{
+  db.collection('client_segments').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
     clientSegments.clear();
     snap.forEach(d=>clientSegments.set(d.id,d.data()));
-    renderGrid();
-    renderSegmentStrip();
+    scheduleStatsAndGrid();
+    if(!isClientModalOpen()) renderSegmentStrip();
     if(activeId) renderPanel(activeId);
   },err=>console.warn('client_segments listener:',err?.message||err));
 
@@ -1609,9 +1615,18 @@ function getClientOrders(c){
 
 // ── Debounce updateStats + renderGrid to avoid triple-execution on snapshots ──
 let _statsTimer=null, _gridTimer=null;
+let _pendingRerender=false;
 const _origUpdateStats=null;
+function isClientModalOpen(){
+  const m=document.getElementById('ov-client');
+  return !!(m && m.classList.contains('open'));
+}
 function scheduleStatsAndGrid(){
   invalidateOrdersIndex();
+  // While the add/edit client modal is open, snapshot-driven re-renders of
+  // 2000-card grid + stats freeze the form. Mark dirty and let
+  // closeClientModal() flush once when the user finishes typing.
+  if(isClientModalOpen()){ _pendingRerender=true; return; }
   clearTimeout(_statsTimer);
   clearTimeout(_gridTimer);
   _statsTimer=setTimeout(()=>{ try{ updateStats(); }catch(e){console.warn('updateStats:',e);} },80);
@@ -3006,6 +3021,12 @@ function openAddLegacy(){
 
 function closeClientModal(){
   document.getElementById('ov-client').classList.remove('open');
+  // Flush deferred renders that were skipped while the modal was open.
+  if(_pendingRerender){
+    _pendingRerender=false;
+    scheduleStatsAndGrid();
+    try{ renderOccasionsBanner(); renderSegmentStrip(); }catch(e){}
+  }
 }
 
 function editClient(id){
