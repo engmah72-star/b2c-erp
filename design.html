@@ -742,7 +742,7 @@ function initAttendance(){
   if(!['graphic_designer','design_operator'].includes(currentRole))return;
   const uid=auth.currentUser?.uid;if(!uid)return;
   const today=new Date().toISOString().slice(0,10);
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid)),snap=>{
+  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
     const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
     todayAtt=atts.find(a=>a.date===today);
     renderAttBtn();
@@ -895,8 +895,9 @@ function startListeners(){
   const currentUid=auth.currentUser?.uid;
 
   if(isAdmin2){
-    // Admin — كل أوردرات التصميم
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+    // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
+    // a healthy design pipeline rarely exceeds 100 active orders).
+    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
@@ -910,8 +911,8 @@ function startListeners(){
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
     });
   } else if(isCS){
-    // CS — الأوردرات اللي هي عملتها
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+    // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
+    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       window.markSynced&&window.markSynced();
       const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
       // CS تشوف اللي عملتها + اللي مش مكلّف
@@ -928,8 +929,8 @@ function startListeners(){
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
     });
   } else {
-    // المصمم — أوردراته المكلّف بيها
-    onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design')),snap=>{
+    // المصمم — أوردراته المكلّف بيها (limit 200 — per-designer cap)
+    onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design'),limit(200)),snap=>{
       const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
       window.__assignedDesign=assigned;
       const unassigned=(window.__unassignedDesign||[]);
@@ -946,8 +947,8 @@ function startListeners(){
       renderDesignDashboard();
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
     });
-    // أوردرات التصميم بدون مصمم (للسحب)
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design')),snap=>{
+    // أوردرات التصميم بدون مصمم (للسحب) — cap matches admin/CS view
+    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       window.__unassignedDesign=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(o=>!o.designerId);
       const assigned=(window.__assignedDesign||[]);
       const unassigned=window.__unassignedDesign;
@@ -965,18 +966,18 @@ function startListeners(){
     snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));},
     err=>console.warn('[design] clients snapshot failed:',err)
   );
-  onSnapshot(collection(db,'products_v2'),snap=>{
+  onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
   });
   // جيب المصممين من employees — مصدر وحيد + dedup مركزي (orders.js)
-  onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator'])),snap=>{
+  onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator']),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     designers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('np-des');if(!s)return;
     s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
   });
   // جيب الطابعين (production_agent) لـ pick-printer modal — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__printers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-printer-sel');if(!s)return;
@@ -984,7 +985,7 @@ function startListeners(){
     s.innerHTML='<option value="">— أول طابع متاح —</option>'+(window.__printers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
     if(cur)s.value=cur;
   });
-  onSnapshot(collection(db,'wallets'),snap=>{
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const s=document.getElementById('np-dep-wallet');if(!s)return;
     s.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');

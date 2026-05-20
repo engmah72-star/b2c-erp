@@ -383,7 +383,7 @@ const MOB_NAV_CFG={shipping_officer:[{h:'shipping-dashboard.html',i:'⬡',l:'د�
 function buildMobNav(role,cur){const el=document.getElementById('mob-nav-items');if(!el)return;const items=MOB_NAV_CFG[role]||MOB_NAV_CFG.admin;el.innerHTML=items.map(n=>`<a class="mob-nav-item${n.h===cur?' active':''}" href="${n.h}"><div class="mob-nav-ico">${n.i}</div><div class="mob-nav-lbl">${n.l}</div></a>`).join('');}
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'production.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, increment, deleteDoc, addDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, increment, deleteDoc, addDoc, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -562,7 +562,8 @@ onAuthStateChanged(auth,async u=>{
   let __lastOrderHash='';
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
-  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','shipping'])),snap=>{
+  // RULE G3: cap active production/shipping queue (workshop bandwidth bounds it naturally).
+  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','shipping']),limit(1000)),snap=>{
     window.markSynced&&window.markSynced();
     orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
@@ -603,10 +604,10 @@ onAuthStateChanged(auth,async u=>{
     if(changed){renderList();}
     if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
   });
-  onSnapshot(collection(db,'products_v2'),snap=>{
+  onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
     productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
-  onSnapshot(collection(db,'suppliers_v2'),snap=>{
+  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
     suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
     // المطابع فقط للـ panel
     printers=suppliers.filter(s=>s.type==='مطبعة'||s.category==='مطبعة');
@@ -614,9 +615,9 @@ onAuthStateChanged(auth,async u=>{
     // تعبئة ac-sup بكل الموردين (النوع يُحدَّد من المورد عند الحفظ)
     filterSupsByType('','ac-sup');
   });
-  onSnapshot(collection(db,'wallets'),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   // موظفي الشحن (shipping_officer) لـ pick-ship modal — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer')),snap=>{
+  onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__shipOfficers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-ship-sel');if(!s)return;
@@ -625,7 +626,7 @@ onAuthStateChanged(auth,async u=>{
     if(cur)s.value=cur;
   });
   // موظفو التنفيذ (production_agent) لتعيين المندوب — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent')),snap=>{
+  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__productionAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   });

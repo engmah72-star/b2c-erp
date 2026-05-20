@@ -160,7 +160,7 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, query, where, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 const ROLES={
   admin:{label:'Admin',col:'#ff3d6e',ico:'👑'},
   operation_manager:{label:'مدير عمليات',col:'#3b9eff',ico:'📋'},
@@ -713,35 +713,36 @@ onAuthStateChanged(auth,async u=>{
     myAttendance=[...m.values()];
     if(me)renderAll();
   };
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',myAuthUid)),s=>{
+  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',myAuthUid),limit(1000)),s=>{
     __attA=new Map(s.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));__mergeA();
   },err=>console.warn('att-uid:',err.message));
-  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',myEmpId)),s=>{
+  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',myEmpId),limit(1000)),s=>{
     __attB=new Map(s.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));__mergeA();
   },err=>console.warn('att-id:',err.message));
 
-  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId)),s=>{
+  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId),limit(500)),s=>{
     myPayments=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     renderAll();
   },err=>console.warn('pay:',err.message));
 
-  onSnapshot(query(collection(db,'employee_incidents'),where('authUid','==',myAuthUid)),s=>{
+  onSnapshot(query(collection(db,'employee_incidents'),where('authUid','==',myAuthUid),limit(200)),s=>{
     myIncidents=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     renderAll();
   },err=>console.warn('inc:',err.message));
 
-  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId)),s=>{
+  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId),limit(60)),s=>{
     myEvaluations=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
     renderAll();
   },err=>console.warn('eval:',err.message));
 
-  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId)),s=>{
+  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),limit(60)),s=>{
     myGoals=s.docs.map(d=>({...d.data(),_id:d.id}));
     renderAll();
   },err=>console.warn('goal:',err.message));
 
-  // Orders relevant to me — for productivity score
-  onSnapshot(collection(db,'orders'),s=>{
+  // Orders relevant to me — for productivity score (bounded, RULE G3).
+  // Reads the most recent 3000 orders; productivity is current-quarter heavy.
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),s=>{
     const all=s.docs.map(d=>({...d.data(),_id:d.id}));
     const uid=myAuthUid;
     myOrders=all.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficerId===uid||o.createdBy===uid||o.designerId===myEmpId||o.productionAgent===myEmpId||o.shippingOfficerId===myEmpId);
