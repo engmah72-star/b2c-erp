@@ -751,7 +751,7 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
 // BUILD ARCHIVE SPEC — بناء تحديث الأرشفة (مُمَركَز — RULE C1.3 + C1.5)
 // ══════════════════════════════════════════
 /**
- * بناء spec أرشفة موحَّد لكل المسارات (production, shipping, shipping-lite, bulk admin).
+ * بناء spec أرشفة موحَّد لكل المسارات (production, shipping, bulk admin).
  * دالة نقية: لا تكتب في Firestore — تُرجع spec يستخدمه الـ caller داخل updateDoc/batch.
  *
  * الفحوصات المُوحَّدة:

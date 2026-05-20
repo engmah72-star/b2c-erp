@@ -97,7 +97,7 @@ export function tenantFields(tenantId) {
 // Backward-compat wrapper: shared.js's legacy signature is canSee(field, userPerms, userRole)
 // while core/permissions-matrix.js uses canSeeField(field, userRole, userPerms).
 // Keep the legacy order stable so existing call sites in approvals.html, returns.html,
-// shipping-lite.html keep working without modification.
+// shipping.html keep working without modification.
 export function canSee(field, userPerms, userRole) {
   return _canSeeField(field, userRole, userPerms);
 }
