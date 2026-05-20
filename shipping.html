@@ -231,6 +231,28 @@
 .action-waiting{display:inline-flex;align-items:center;gap:4px;color:var(--y);font-size:11px;font-weight:700;opacity:.85}
 .action-done{display:inline-flex;align-items:center;gap:4px;color:var(--dim2);font-size:11px;font-weight:600}
 .action-terminal{display:inline-flex;align-items:center;gap:4px;color:var(--r);font-size:11px;font-weight:700;opacity:.75}
+/* Needs-Attention priority feed (Step 8.3) — compact chip strip aggregating
+   problem counts. Hidden when clean. Each chip is one-click filter. */
+.attn-feed{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;align-items:center}
+.attn-feed::before{content:'يحتاج تدخل:';font-size:11px;font-weight:800;color:var(--dim2);margin-inline-end:4px}
+.attn-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;border:1px solid var(--bd);background:var(--bg2);font-family:inherit;cursor:pointer;font-size:11.5px;font-weight:700;transition:transform .1s ease,border-color .12s ease}
+.attn-chip:hover{transform:translateY(-1px)}
+.attn-ico{font-size:13px}
+.attn-count{font-weight:900;font-size:13px;min-width:18px;text-align:center;background:var(--bg);padding:1px 6px;border-radius:99px}
+.attn-lbl{color:var(--dim);font-weight:700}
+.attn-chip.attn-crit{border-color:rgba(255,61,110,.35);background:rgba(255,61,110,.06)}
+.attn-chip.attn-crit .attn-count{color:var(--r);background:rgba(255,61,110,.14)}
+.attn-chip.attn-crit .attn-lbl{color:var(--r)}
+.attn-chip.attn-warn{border-color:rgba(255,170,0,.32);background:rgba(255,170,0,.05)}
+.attn-chip.attn-warn .attn-count{color:var(--y);background:rgba(255,170,0,.14)}
+.attn-chip.attn-warn .attn-lbl{color:var(--y)}
+.attn-chip.attn-info{border-color:rgba(110,189,255,.3);background:rgba(110,189,255,.04)}
+.attn-chip.attn-info .attn-count{color:var(--c);background:rgba(110,189,255,.14)}
+.attn-chip.attn-info .attn-lbl{color:var(--c)}
+@media(max-width:640px){
+  .attn-feed::before{font-size:10px}
+  .attn-chip{padding:4px 9px;font-size:10.5px}
+}
 
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
@@ -388,7 +410,7 @@
     </div>
 
     <!-- Alerts strip — يظهر فقط لو في تنبيهات فعلية -->
-    <div id="alerts-strip" style="display:none;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:12px"></div>
+    <div id="alerts-strip" class="attn-feed" style="display:none"></div>
 
     <!-- Filters -->
     <div class="filters">
@@ -969,25 +991,46 @@ function renderAll() {
   renderAlerts();
 }
 
+// Needs-Attention priority feed (Step 8.3) — aggregates all rows that need
+// the operator's attention into a sticky compact strip at top of the page.
+// Each chip is one click → filters table to that subset.
+//
+// Coverage (from the brief's "Operational Visibility"):
+//   - delayed (>3d active)
+//   - returned (full)
+//   - partial-return (active orders with returnedItems[])
+//   - pending settle (company collected, awaiting bulk settle)
+//   - loss (returned + money on the line)
+//   - no-cost (active company shipments)
+//   - active with diff (Expected vs Actual major diff — placeholder)
+//
+// Hidden when everything is clean (no clutter).
 function renderAlerts() {
-  const delayed = orders.filter(isDelayed);
-  const noCost = orders.filter(hasNoCost);
   const strip = $('alerts-strip');
   const items = [];
-  if (delayed.length) items.push({
-    icon:'⏰', color:'var(--r)', label:`${delayed.length} شحنة متأخرة (>${DELAY_THRESHOLD_DAYS} أيام)`, filter:'delayed'
-  });
-  if (noCost.length) items.push({
-    icon:'⚠️', color:'var(--y)', label:`${noCost.length} طلب بدون تكلفة شحن`, filter:'no_cost'
-  });
+
+  const delayed       = orders.filter(isDelayed);
+  const noCost        = orders.filter(hasNoCost);
+  const returnedFull  = orders.filter(o => getShipStage(o) === 'returned');
+  const partialReturn = orders.filter(o => Array.isArray(o.returnedItems) && o.returnedItems.length > 0 && getShipStage(o) !== 'returned');
+  const pendingSettle = orders.filter(o => o.shipMethod === 'company' && o.shipStage === 'collected' && !o.shipSettled);
+  const losses        = returnedFull.filter(o => safeNum(o.shippingCost) + safeNum(o.totalPaid) > 0);
+
+  if (delayed.length)       items.push({ icon:'⏰',  cls:'warn', label:'متأخر',           count:delayed.length, filter:'delayed' });
+  if (pendingSettle.length) items.push({ icon:'📦', cls:'info', label:'بانتظار التسوية', count:pendingSettle.length, filter:'collected' });
+  if (partialReturn.length) items.push({ icon:'↩️', cls:'warn', label:'مرتجع جزئي',      count:partialReturn.length, filter:'all' });
+  if (returnedFull.length)  items.push({ icon:'⏎',  cls:'crit', label:'مرتجع',           count:returnedFull.length, filter:'returned' });
+  if (losses.length)        items.push({ icon:'💸', cls:'crit', label:'خسارة',           count:losses.length, filter:'returned' });
+  if (noCost.length)        items.push({ icon:'⚠️',  cls:'warn', label:'بدون تكلفة',      count:noCost.length, filter:'no_cost' });
+
   if (!items.length) { strip.style.display = 'none'; return; }
-  strip.style.display = 'grid';
+  strip.style.display = 'flex';
   strip.innerHTML = items.map(a => `
-    <div onclick="window.setStatusFilter('${a.filter}')" style="cursor:pointer;background:var(--bg2);border:1px solid ${a.color}30;border-right:3px solid ${a.color};border-radius:var(--rad2);padding:11px 13px;display:flex;align-items:center;gap:9px">
-      <span style="font-size:18px">${a.icon}</span>
-      <span style="font-size:12px;font-weight:800;color:${a.color};flex:1">${a.label}</span>
-      <span style="font-size:10px;color:var(--dim2)">عرض ←</span>
-    </div>`).join('');
+    <button class="attn-chip attn-${a.cls}" onclick="window.setStatusFilter('${a.filter}')" title="انقر للفلترة">
+      <span class="attn-ico">${a.icon}</span>
+      <span class="attn-count">${a.count}</span>
+      <span class="attn-lbl">${a.label}</span>
+    </button>`).join('');
 }
 
 window.setStatusFilter = (val) => { $('f-status').value = val; renderAll(); };
