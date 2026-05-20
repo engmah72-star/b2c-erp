@@ -102,14 +102,86 @@ export const PAYMENT_TYPES = Object.freeze({
   DISCOUNT: 'discount', // خصم
 });
 
+// SHIP_STAGES — قيم order.shipStage
+// New canonical values (PR-1 redesign — Section 2.1):
+//   READY → SHIPPED → DELIVERED → (UNDER_COLLECTION) → COLLECTED → CLOSED
+//                 ↘ RETURNED_FULL | RETURNED_PARTIAL
+// Legacy values (WAIT_DELIVERY/WAIT_COLLECTION/COMPLETED/RETURNED) kept for
+// backward-compat reads — use normalizeShipStage() to map on read.
 export const SHIP_STAGES = Object.freeze({
-  READY:           'ready',
-  WAIT_DELIVERY:   'wait_delivery',
-  WAIT_COLLECTION: 'wait_collection',
-  COLLECTED:       'collected',
-  COMPLETED:       'completed',
-  RETURNED:        'returned',
+  READY:            'ready',
+  SHIPPED:          'shipped',            // new — replaces WAIT_DELIVERY
+  DELIVERED:        'delivered',          // new — replaces WAIT_COLLECTION
+  UNDER_COLLECTION: 'under_collection',   // new
+  COLLECTED:        'collected',
+  RETURNED_FULL:    'returned_full',      // new — replaces RETURNED
+  RETURNED_PARTIAL: 'returned_partial',   // new
+  CLOSED:           'closed',             // new — replaces COMPLETED
+  // ── legacy (do not write; read-only via normalizeShipStage) ──
+  WAIT_DELIVERY:    'wait_delivery',
+  WAIT_COLLECTION:  'wait_collection',
+  COMPLETED:        'completed',
+  RETURNED:         'returned',
 });
+
+/** يحوّل قيمة shipStage القديمة إلى القيمة الجديدة. مستخدم في كل reader. */
+export function normalizeShipStage(value) {
+  switch (value) {
+    case 'wait_delivery':   return 'shipped';
+    case 'wait_collection': return 'delivered';
+    case 'returned':        return 'returned_full';
+    case 'completed':       return 'closed';
+    default:                return value || 'ready';
+  }
+}
+
+const _SHIP_STAGE_LABELS = Object.freeze({
+  ready:            'جاهز للشحن',
+  shipped:          'تم الشحن',
+  delivered:        'تم التسليم',
+  under_collection: 'تحت التحصيل',
+  collected:        'تم التحصيل',
+  returned_full:    'مرتجع كامل',
+  returned_partial: 'مرتجع جزئي',
+  closed:           'مغلق',
+});
+
+/** Arabic label موحَّد لحالة الشحن. يتعامل مع القيم القديمة عبر normalizeShipStage. */
+export function getShipStageLabel(order) {
+  if (!order) return '';
+  const s = normalizeShipStage(order.shipStage);
+  return _SHIP_STAGE_LABELS[s] || s || '';
+}
+
+const _SHIP_METHOD_LABELS = Object.freeze({
+  company: 'شركة شحن',
+  pickup:  'استلام من المكتب',
+  courier: 'مندوب داخلي',
+});
+
+/** Arabic label موحَّد لطريقة الشحن. **يحلّ methodLabel ReferenceError المتكرر**. */
+export function getShipMethodLabel(order) {
+  if (!order) return '';
+  return _SHIP_METHOD_LABELS[order.shipMethod] || order.shipMethod || '';
+}
+
+/** المتوقَّع تحصيله من العميل = salePrice + customerShipFee − discount − totalPaid. */
+export function getExpectedCollection(order) {
+  if (!order) return 0;
+  const sale     = Number(order.salePrice)        || 0;
+  const shipFee  = order.priceIncludesShipping ? 0 : (Number(order.customerShipFee) || 0);
+  const discount = Number(order.discount)         || 0;
+  const paid     = Number(order.totalPaid)        || 0;
+  return Math.max(0, sale + shipFee - discount - paid);
+}
+
+/** المتوقَّع تسليمه من شركة الشحن = shipCollected − shippingCost. */
+export function getExpectedFromCompany(order) {
+  if (!order) return 0;
+  const collected = Number(order.shipCollected) || 0;
+  const cost      = Number(order.shippingCost)  || 0;
+  return collected - cost;
+}
 
 export const PRODUCT_STATUSES = Object.freeze({
   PENDING:     'pending',
