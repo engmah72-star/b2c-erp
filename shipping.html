@@ -194,6 +194,12 @@
 .row-pending{animation:row-pending-pulse 1.1s ease-in-out infinite;background:rgba(110,189,255,.06)!important;pointer-events:none}
 .row-pending td:first-child::before{content:'⏳ ';color:var(--c);font-weight:700;margin-inline-end:4px}
 
+/* Profitability flag (Step 7.8) — single chip under status badge */
+.profit-flag{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:99px;font-size:10px;font-weight:800;margin-top:5px;cursor:help;white-space:nowrap}
+.profit-flag.profit-good{background:rgba(0,217,126,.14);color:var(--g);border:1px solid rgba(0,217,126,.3)}
+.profit-flag.profit-neutral{background:rgba(255,170,0,.14);color:var(--y);border:1px solid rgba(255,170,0,.28)}
+.profit-flag.profit-loss{background:rgba(255,61,110,.14);color:var(--r);border:1px solid rgba(255,61,110,.3)}
+
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
 .risk-flag{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:99px;font-size:9.5px;font-weight:800;white-space:nowrap;cursor:help}
@@ -896,6 +902,51 @@ function buildProductSpec(p) {
   return parts.join(' · ');
 }
 
+// Profitability flag (Step 7.8) — single chip showing ✅/⚠️/🔴 based on net.
+// Net = totalPaid - shippingCost - execCost - discount (canonical formula
+// from shipping-followup.html:530).
+//
+// RULE 8 (price_cost): only shown to roles that can see costs. For others
+// the chip is hidden entirely (no info leak).
+//
+// Thresholds:
+//   net < 0           → 🔴 loss (red)
+//   net/sale < 10%    → ⚠️ thin margin / break-even (yellow)
+//   net/sale >= 10%   → ✅ healthy profit (green)
+//
+// Skipped when:
+//   - role can't see costs
+//   - no costItems (can't compute reliable margin)
+//   - order in 'returned' state (riskFlags already shows the loss)
+function profitFlag(order) {
+  if (!canSee('price_cost', myPerms, myRole)) return '';
+  const costItems = order.costItems || [];
+  if (!costItems.length) return '';
+  if (getShipStage(order) === 'returned') return '';
+  const execCost = costItems.reduce((s,c) => s + safeNum(c.total), 0);
+  const paid     = safeNum(order.totalPaid || order.shipCollected);
+  const shipCost = safeNum(order.shippingCost);
+  const discount = safeNum(order.discount);
+  const sale     = safeNum(order.salePrice || order.totalPrice || order.total);
+  const net      = paid - shipCost - execCost - discount;
+  const marginPct = sale > 0 ? (net / sale) * 100 : 0;
+  let icon, label, cls, title;
+  if (net < 0) {
+    icon='🔴'; cls='profit-loss';
+    label=`خسارة ${fmt(Math.abs(net))} ج`;
+    title=`صافي ${fmt(net)} ج · دفع ${fmt(paid)} − شحن ${fmt(shipCost)} − تنفيذ ${fmt(execCost)}${discount?' − خصم '+fmt(discount):''}`;
+  } else if (marginPct < 10) {
+    icon='⚠️'; cls='profit-neutral';
+    label='متعادل';
+    title=`هامش ${marginPct.toFixed(1)}% · صافي ${fmt(net)} ج / سعر ${fmt(sale)} ج`;
+  } else {
+    icon='✅'; cls='profit-good';
+    label=`+${fmt(net)} ج`;
+    title=`هامش ${marginPct.toFixed(1)}% · صافي ${fmt(net)} ج / سعر ${fmt(sale)} ج`;
+  }
+  return `<span class="profit-flag ${cls}" title="${title.replace(/"/g,'&quot;')}"><span>${icon}</span><span>${label}</span></span>`;
+}
+
 // Risk / loss indicators (Step 7.5) — small chips under the status badge.
 // Each chip flags a single risk: returned, partial return, delayed,
 // missing shipping cost, settled-but-unpaid (legacy drift, caught by
@@ -1027,7 +1078,7 @@ function renderRows(list) {
       </td>
       <td data-label="تكلفة الشحن"><span class="cell-money ${cost>0?'money-neg':'money-zero'}">${fmt(cost)} ج</span></td>
       <td data-label="المستلم"><span class="cell-money ${received>0?'money-pos':'money-zero'}">${fmt(received)} ج</span></td>
-      <td data-label="الحالة">${statusChip(getShipStage(o))}${riskFlags(o)}</td>
+      <td data-label="الحالة">${statusChip(getShipStage(o))}${profitFlag(o)}${riskFlags(o)}</td>
       <td class="td-actions"><div class="row-actions">${actionsCell(o)}</div></td>
     </tr>
     <tr id="d-${o._id}" class="row-detail" style="display:none">
