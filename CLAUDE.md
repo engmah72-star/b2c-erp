@@ -1376,6 +1376,122 @@ products.html (ومستقبلاً exec-cost-entry.html) يستخدم `<datalist>
 
 ---
 
+## RULE L1 — LAYER INDEPENDENCE (ميثاق فصل UI عن Business Logic)
+
+> **النظام يجب أن يصبح طبقات مستقلة:**
+> **UI = View فقط · Business Logic مركزية · تغيير التصميم لا يكسر التشغيل.**
+>
+> هذه القاعدة meta-charter — تجمع وتوسّع: **C1.3 + C1.8 + A1 + V1 + P1 + C2 + U1**.
+> الهدف: تغيير شكل النظام لاحقًا = عملية UI فقط، **وليست** إعادة بناء للـ business logic.
+
+### L1.1 — Layered Architecture (الهيكل المستهدف)
+```
+┌─────────────────────────────────────────┐
+│  UI Layer (HTML pages)                  │  ← View فقط
+│  - render data                          │
+│  - capture input                        │
+│  - call central actions                 │
+└────────────┬────────────────────────────┘
+             │ (one-way calls)
+┌────────────▼────────────────────────────┐
+│  Central Core                           │
+│  - orderActions / productActions / ...  │  ← Actions (A1)
+│  - validators (orders.js)               │  ← Validation (V1)
+│  - canDo / canSee / hasPage             │  ← Permissions (P1)
+│  - financial-sync-engine                │  ← Money (RULE 2/4/G6)
+│  - storage-helpers                      │  ← Files (S1)
+└────────────┬────────────────────────────┘
+             │
+┌────────────▼────────────────────────────┐
+│  Constants & Tokens                     │
+│  - ORDER_STAGES, USER_ROLES, FE         │  ← Constants (C2)
+│  - shared.css design tokens             │  ← UI Tokens (U1)
+└─────────────────────────────────────────┘
+```
+
+### L1.2 — ممنوع داخل الـ UI Pages
+| ❌ ممنوع في HTML pages | البديل المركزي |
+|---|---|
+| `updateDoc/setDoc/addDoc` مباشر على orders/wallets/financial_ledger | `orderActions.*` أو FSE |
+| Workflow transition inline (`batch.update(... stage: 'shipping' ...)`) | `orderActions.submitToShipping` |
+| Permissions check بـ `currentRole === 'admin'` | `canDo('capability')` |
+| Validation inline (`if (order.remaining > 0) toast(...)`) | `validatePayment/validateOrder` |
+| Magic strings (`'shipping'`, `'graphic_designer'`) | `ORDER_STAGES.SHIPPING`, `USER_ROLES.GRAPHIC_DESIGNER` |
+| Inline CSS hex / fonts / spacing | `var(--token)` من `shared.css` |
+| ROLE_PERMS / DEFAULTS محلية | `getRoleDefaultPermissions()` |
+| `uploadBytes(ref(storage,...))` مباشر | `core/storage-helpers.js` |
+
+### L1.3 — المسموح داخل الـ UI Pages
+| ✅ مسموح في HTML pages |
+|---|
+| `onSnapshot/getDoc` لقراءة بيانات |
+| Render templates، DOM manipulation |
+| Modal open/close، form validation للـ UX hints |
+| نداء واحد لـ central action: `await orderActions.X(...)` |
+| Toast/UI feedback بعد نتيجة الـ action |
+| Page-specific UI state (selected tab، collapsed sections...) |
+
+### L1.4 — Test الـ Independence
+لكل صفحة، يجب أن تكون **هذه الأسئلة الـ 5 إجاباتها نعم**:
+1. لو غيّرت شكل الصفحة بالكامل (HTML+CSS) — هل الـ business logic يبقى كما هو؟
+2. لو حذفت الصفحة — هل الـ central actions تبقى تعمل من صفحات أخرى؟
+3. لو نقلت زر من صفحة لصفحة أخرى — هل سيعمل بنفس السلوك؟
+4. لو غيّرت كل ألوان النظام من مكان واحد — هل الصفحة تتبع تلقائياً؟
+5. لو غيّرت تعريف stage في `ORDER_STAGES` — هل الصفحة لا تحتاج تعديل؟
+
+**إذا "لا" على أي سؤال → الصفحة فيها coupling يحتاج إصلاح.**
+
+### L1.5 — Migration Approach (Phase B)
+**كل migration:**
+- صغيرة (page واحدة أو concern واحد)
+- آمنة (نفس الـ behavior بالضبط)
+- قابلة للتراجع (revert = ملف واحد فقط)
+- minimal diff
+- لا تكسر التشغيل
+- لا تغيّر الـ schema
+- One concern per PR
+
+**أولويات Phase B (تنفذ تدريجياً):**
+1. **Direct Firestore writes from UI** → central actions (أعلى أولوية)
+2. **Workflow transitions inline** → `orderActions.*`
+3. **Magic strings** → `ORDER_STAGES.*` / `USER_ROLES.*`
+4. **Inline role checks** → `canDo()`
+5. **Duplicated validations** → central validators
+6. **Inline UI styling** → design tokens
+7. **Page-to-page dependencies** → فصل عبر central core
+
+### L1.6 — قواعد التنفيذ (الإلزامية)
+1. **اقرأ أولاً** — قبل أي migration، افهم الـ dependencies وأثر التغيير
+2. **افهم Before/After** — وثّق ما يتغير بالضبط (PR description)
+3. **لا تخلط Concerns** — PR واحد = concern واحد
+4. **زِد المركزية** — كل migration يجب أن **تقلل** التكرار و**تزيد** Single Source of Truth
+5. **اختبر** — UI test (manual) + سلوك مطابق للقديم
+6. **اكتب التقرير** — حسب الحاجة (مثل SETTINGS_MIGRATION_REPORT.md)
+
+### L1.7 — ما هو **خارج النطاق** (لا تفعل)
+- ❌ Rewrite كامل لأي صفحة
+- ❌ تغيير architecture (لا React/Vue migration)
+- ❌ إضافة layers جديدة (Redux/MobX/state management)
+- ❌ تغيير الـ schema جذرياً
+- ❌ Big-bang refactors
+- ❌ تغيير الـ workflow للتشغيل
+- ❌ "Modernization" بدون قيمة تشغيلية مباشرة
+
+### 🚫 القاعدة النهائية
+**الصفحة الجيدة في النظام الحالي =**
+- لا تكتب على Firestore مباشرة (إلا للـ UI state البحت)
+- لا تحتوي business rules
+- لا تحتوي workflow transitions
+- لا تحتوي permission logic
+- لا تحتوي magic strings
+- لا تحتوي hex colors / hardcoded spacing
+
+**النتيجة:** redesign لاحق = ملف CSS واحد + templates، **وليس** إعادة كتابة لـ ERP.
+
+أي drift عن L1 يُسجَّل في `LAYER_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
+
+---
+
 ## الهيكل التقني الحالي
 
 ```
