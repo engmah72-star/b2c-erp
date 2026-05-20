@@ -1,11 +1,22 @@
 // ══ Notifications System ══
 // يراقب المهام والأوردرات المعيّنة للموظف ويعرض إشعارات
 
-import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, updateDoc, writeBatch, serverTimestamp }
+import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, updateDoc, writeBatch, serverTimestamp, limit }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { initFcm } from "./fcm-init.js";
 
 const STORAGE_KEY = 'b2c_notif_seen';
+
+// Per-listener safety caps (RULE G3). Each employee sees a finite number of
+// active items at a time — these are well above realistic counts and exist
+// only to bound Firestore reads when a user accumulates historical rows.
+const NOTIF_LIMITS = Object.freeze({
+  tasks:        50,
+  ordersByRole: 100,  // designer/printer/shipper/producer
+  auditFlags:   100,
+  followups:    100,
+  sysNotifs:    100,
+});
 
 // Track all active listeners so we can unsubscribe on logout/navigation
 // Prevents memory leaks: each page navigation otherwise accumulates a new set.
@@ -78,7 +89,7 @@ export function initNotifications(app, currentUser) {
   });
 
   // ── مراقبة المهام المعيّنة للموظف ──
-  const tasksQ = query(collection(db, 'tasks'), where('assignedTo', '==', uid));
+  const tasksQ = query(collection(db, 'tasks'), where('assignedTo', '==', uid), limit(NOTIF_LIMITS.tasks));
   __register(onSnapshot(tasksQ, snap => {
     const taskNotifs = snap.docs.map(d => {
       const t = d.data();
@@ -96,7 +107,7 @@ export function initNotifications(app, currentUser) {
   }));
 
   // ── مراقبة الأوردرات المعيّنة للموظف ──
-  const ordersQ = query(collection(db, 'orders'), where('designerId', '==', uid));
+  const ordersQ = query(collection(db, 'orders'), where('designerId', '==', uid), limit(NOTIF_LIMITS.ordersByRole));
   __register(onSnapshot(ordersQ, snap => {
     const orderNotifs = snap.docs
       .filter(d => ['design', 'printing'].includes(d.data().stage))
@@ -115,7 +126,7 @@ export function initNotifications(app, currentUser) {
     mergeNotifs('order_design', orderNotifs);
   }));
 
-  const ordersShipQ = query(collection(db, 'orders'), where('shippingOfficerId', '==', uid));
+  const ordersShipQ = query(collection(db, 'orders'), where('shippingOfficerId', '==', uid), limit(NOTIF_LIMITS.ordersByRole));
   __register(onSnapshot(ordersShipQ, snap => {
     const shipNotifs = snap.docs
       .filter(d => d.data().stage === 'shipping')
@@ -135,7 +146,7 @@ export function initNotifications(app, currentUser) {
   }));
 
   // ── الأوردرات المُسلَّمة للطابع (printerId) ──
-  const ordersPrintQ = query(collection(db, 'orders'), where('printerId', '==', uid));
+  const ordersPrintQ = query(collection(db, 'orders'), where('printerId', '==', uid), limit(NOTIF_LIMITS.ordersByRole));
   __register(onSnapshot(ordersPrintQ, snap => {
     const printNotifs = snap.docs
       .filter(d => d.data().stage === 'printing')
@@ -159,7 +170,7 @@ export function initNotifications(app, currentUser) {
     if (!userSnap.exists()) return;
     const role = userSnap.data().role || '';
     if (!['admin', 'operation_manager'].includes(role)) return;
-    const auditQ = query(collection(db, 'orders'), where('hasUnreviewedAudit', '==', true));
+    const auditQ = query(collection(db, 'orders'), where('hasUnreviewedAudit', '==', true), limit(NOTIF_LIMITS.auditFlags));
     __register(onSnapshot(auditQ, snap => {
       const auditNotifs = snap.docs.map(d => {
         const o = d.data();
@@ -180,7 +191,7 @@ export function initNotifications(app, currentUser) {
   }).catch(err => console.warn('[notif] user fetch failed:', err?.message || err));
 
   // ── متابعات العملاء — تذكيرات مستحقّة (assignedTo == current user) ──
-  const fuQ = query(collection(db, 'client_followups'), where('assignedTo', '==', uid));
+  const fuQ = query(collection(db, 'client_followups'), where('assignedTo', '==', uid), limit(NOTIF_LIMITS.followups));
   __register(onSnapshot(fuQ, snap => {
     const now = Date.now();
     const fuNotifs = snap.docs
@@ -204,7 +215,7 @@ export function initNotifications(app, currentUser) {
 
   // ── إشعارات النظام (notifications collection) ──
   // كتابات Cloud Functions: followup_due, approval_pending, order_assigned,...
-  const notifQ = query(collection(db, 'notifications'), where('toUid', '==', uid));
+  const notifQ = query(collection(db, 'notifications'), where('toUid', '==', uid), limit(NOTIF_LIMITS.sysNotifs));
   __register(onSnapshot(notifQ, snap => {
     const sysNotifs = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
@@ -222,7 +233,7 @@ export function initNotifications(app, currentUser) {
   }, err => console.warn('[notif] system notifs listener error:', err?.message || err)));
 
   // ── الأوردرات المُسلَّمة للمنفّذ (productionAgent) ──
-  const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid));
+  const ordersProdQ = query(collection(db, 'orders'), where('productionAgent', '==', uid), limit(NOTIF_LIMITS.ordersByRole));
   __register(onSnapshot(ordersProdQ, snap => {
     const prodNotifs = snap.docs
       .filter(d => d.data().stage === 'production')

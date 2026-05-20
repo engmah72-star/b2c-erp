@@ -9,7 +9,12 @@
 
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// RULE G3: cap the conversations subscription. The FAB only renders an
+// unread badge — a user with 200+ active threads is a corner case the
+// badge can over-count without breaking the UX.
+const CONVERSATIONS_LIMIT = 200;
 
 const STYLE_ID = 'inbox-fab-style';
 const FAB_ID   = 'inbox-fab';
@@ -112,7 +117,7 @@ onAuthStateChanged(auth, user=>{
   }
   const setup=()=>{
     injectFab();
-    const q=query(collection(db,'conversations'),where('participants','array-contains',user.uid));
+    const q=query(collection(db,'conversations'),where('participants','array-contains',user.uid),limit(CONVERSATIONS_LIMIT));
     unsubConv=onSnapshot(q,snap=>{
       let total=0;
       const newMap=new Map();
