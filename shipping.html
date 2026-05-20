@@ -1235,6 +1235,17 @@ function statusChip(stage) {
 //   info      → action stays normal (it's just "next in line")
 //   archived/returned → muted text, no button
 function actionsCell(o) {
+  // Bugfix: order.stage='archived' is terminal regardless of shipStage value.
+  // Previously, archived orders with shipStage='ready' or unset would still
+  // show the 🚚 تسليم button (because getShipStage returned 'ready'), and the
+  // user could click it → dispatch modal opened → validator rejected silently.
+  // Now: archived orders always show the 📁 مؤرشف marker, no actionable button.
+  if (o.stage === 'archived') {
+    return `<span class="action-done" title="أُرشف — لا يمكن إعادة تسليمه">📁 مؤرشف</span>`;
+  }
+  if (o.stage === 'cancelled') {
+    return `<span class="action-terminal" title="ملغي — حالة نهائية">⛔ ملغي</span>`;
+  }
   const stage = getShipStage(o);
   const id = o._id;
   const urgent = isDelayed(o) || hasNoCost(o);
@@ -1245,9 +1256,7 @@ function actionsCell(o) {
   if (stage === 'collected') return canSettle()
     ? `<button class="btn btn-c btn-sm${sevCls}" onclick="window.openSettleSingle('${id}')" title="تسوية مع شركة الشحن">📦 تسوية</button>`
     : `<span class="action-waiting" title="بانتظار wallet_manager">⏳ بانتظار التسوية</span>`;
-  if (stage === 'settled')   return o.stage === 'archived'
-    ? `<span class="action-done" title="أُرشف">📁 مؤرشف</span>`
-    : `<button class="btn btn-ghost btn-sm" onclick="window.confirmArchive('${id}')" title="نقل للأرشيف">📁 أرشفة</button>`;
+  if (stage === 'settled')   return `<button class="btn btn-ghost btn-sm" onclick="window.confirmArchive('${id}')" title="نقل للأرشيف">📁 أرشفة</button>`;
   if (stage === 'returned')  return `<span class="action-terminal" title="مرتجع — حالة نهائية">⏎ مرتجع</span>`;
   return '';
 }
@@ -2008,25 +2017,20 @@ window.openDispatch = (orderId) => {
 };
 
 async function confirmDispatch() {
-  console.time('[DBG] confirmDispatch');
-  console.log('[DBG] step:1 entered', { pendingOrderId: pendingOrder?._id, pendingOrderStage: pendingOrder?.stage });
-  if (!pendingOrder) { console.warn('[DBG] aborted: no pendingOrder'); console.timeEnd('[DBG] confirmDispatch'); return; }
+  if (!pendingOrder) return;
   const companyId = $('m-dispatch-company').value;
   const method = $('m-dispatch-method').value;
   const cost = safeNum($('m-dispatch-cost').value);
   const walletId = $('m-dispatch-wallet').value;
   const note = $('m-dispatch-note').value.trim();
-  console.log('[DBG] step:2 inputs', { companyId, method, cost, walletId, noteLen: note.length, myRole });
 
   // RULE V1.3 — central validator (orders.js)
   const v = validateDispatch({ order: pendingOrder, companyId, method, cost, walletId, role: myRole });
-  console.log('[DBG] step:3 validation', { ok: v.ok, errors: v.errors, warnings: v.warnings });
-  if (!v.ok) { toast(v.errors[0], 'err'); console.timeEnd('[DBG] confirmDispatch'); return; }
+  if (!v.ok) { toast(v.errors[0], 'err'); return; }
 
   const company = shippers.find(s => s._id === companyId);
   const btn = $('btn-dispatch-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
-  console.log('[DBG] step:4 button disabled');
 
   // Build the order shipping update once — applied either atomically
   // alongside the expense (when cost>0 + walletId) or standalone otherwise.
@@ -2044,7 +2048,7 @@ async function confirmDispatch() {
 
   try {
     if (cost > 0 && walletId) {
-      console.log('[DBG] step:5 FSE path (cost+wallet)', { cost, walletId });
+      // Atomic path: order update + wallet/tx/ledger all in the same FSE batch.
       const wallet = wallets.find(w => w._id === walletId);
       await dispatchFinancialEvent(db, FE.SHIPPING_EXPENSE, {
         walletId, walletName: wallet?.name || '',
@@ -2057,31 +2061,26 @@ async function confirmDispatch() {
         date: new Date().toLocaleDateString('ar-EG'),
         orderUpdate: { orderId: pendingOrder._id, fields: orderFields },
       });
-      console.log('[DBG] step:6 FSE done');
     } else {
-      console.log('[DBG] step:5 plain updateDoc path (no cost or no wallet)', { orderFields });
+      // No expense to record — standalone updateDoc is already atomic by itself.
       await updateDoc(doc(db, 'orders', pendingOrder._id), {
         ...orderFields,
         updatedAt: serverTimestamp(),
       });
-      console.log('[DBG] step:6 updateDoc done');
     }
 
     toast('✅ تم تسليم الطلب لشركة الشحن');
     clearOpError();
     recordOp('ok', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
     closeModal('m-dispatch');
-    console.log('[DBG] step:7 success path complete');
   } catch (e) {
-    console.error('[DBG] step:err caught', e);
+    console.error(e);
     const msg = e.message || 'خطأ في التسليم';
     toast('❌ ' + msg, 'err');
     showOpError(`فشل تسليم الطلب #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}: ${msg}`, () => confirmDispatch());
     recordOp('err', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تسليم';
-    console.log('[DBG] step:finally btn reset');
-    console.timeEnd('[DBG] confirmDispatch');
   }
 }
 window.confirmDispatch = confirmDispatch;
