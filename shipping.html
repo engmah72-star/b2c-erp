@@ -264,6 +264,16 @@
 .kb-help-body{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
 .kb-row{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--snow)}
 .kb-row kbd{display:inline-block;min-width:34px;text-align:center;padding:4px 8px;background:var(--bg);border:1px solid var(--bd);border-bottom-width:2px;border-radius:6px;font-family:ui-monospace,monospace;font-size:11.5px;font-weight:800;color:var(--c)}
+/* Quick date filters (Step 8.7) — one-click time preset row */
+.qf-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.qf-row::before{content:'الفترة:';font-size:11px;font-weight:800;color:var(--dim2);margin-inline-end:4px}
+.qf-chip{padding:5px 12px;border-radius:99px;border:1px solid var(--bd);background:var(--bg2);color:var(--dim);font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;transition:transform .1s,border-color .12s,color .12s,background .12s}
+.qf-chip:hover{transform:translateY(-1px);border-color:var(--c)}
+.qf-chip.qf-active{background:rgba(110,189,255,.12);border-color:var(--c);color:var(--c)}
+@media(max-width:640px){
+  .qf-row::before{font-size:10px}
+  .qf-chip{padding:4px 10px;font-size:10.5px}
+}
 
 /* Risk / loss indicators (Step 7.5) — small chips under status badge */
 .risk-flags{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-width:140px}
@@ -446,6 +456,15 @@
       </select>
       <input id="f-search" placeholder="🔍 ابحث برقم الطلب أو اسم العميل">
       <button class="btn btn-c btn-sm" data-needs-settle onclick="openBulkSettle()">📦 تسوية جماعية</button>
+    </div>
+
+    <!-- Quick date filters (Step 8.7) — one-click time presets -->
+    <div class="qf-row">
+      <button class="qf-chip qf-active" data-qf="" onclick="setQuickFilter('')">📅 الكل</button>
+      <button class="qf-chip" data-qf="today" onclick="setQuickFilter('today')">اليوم</button>
+      <button class="qf-chip" data-qf="yesterday" onclick="setQuickFilter('yesterday')">أمس</button>
+      <button class="qf-chip" data-qf="week" onclick="setQuickFilter('week')">آخر 7 أيام</button>
+      <button class="qf-chip" data-qf="month" onclick="setQuickFilter('month')">آخر 30 يوم</button>
     </div>
 
     <!-- Table -->
@@ -1053,6 +1072,33 @@ function hasNoCost(o) {
   return !safeNum(o.shippingCost) && (!Array.isArray(o.costItems) || !o.costItems.length);
 }
 
+// Quick date filter state (Step 8.7) — one-click time presets above the table.
+// '' | 'today' | 'yesterday' | 'week' | 'month'
+let _quickFilter = '';
+
+window.setQuickFilter = (val) => {
+  _quickFilter = val || '';
+  document.querySelectorAll('.qf-chip').forEach(c => {
+    c.classList.toggle('qf-active', c.dataset.qf === _quickFilter);
+  });
+  renderAll();
+};
+
+function matchesQuickFilter(o) {
+  if (!_quickFilter) return true;
+  const ts = o.createdAt?.toMillis?.() || 0;
+  if (!ts) return false;
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  // Start-of-day boundaries in local time
+  const startOfToday = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+  if (_quickFilter === 'today')     return ts >= startOfToday;
+  if (_quickFilter === 'yesterday') return ts >= startOfToday - day && ts < startOfToday;
+  if (_quickFilter === 'week')      return ts >= now - 7 * day;
+  if (_quickFilter === 'month')     return ts >= now - 30 * day;
+  return true;
+}
+
 function matchOrder(o) {
   const fc = $('f-company').value;
   const fm = $('f-method').value;
@@ -1060,6 +1106,7 @@ function matchOrder(o) {
   const q = ($('f-search').value || '').trim().toLowerCase();
   const stage = getShipStage(o);
 
+  if (!matchesQuickFilter(o)) return false;
   if (fc && (o.shipCompanyId || '') !== fc) return false;
   if (fm && (o.shipMethod || '') !== fm) return false;
 
