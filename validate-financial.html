@@ -156,13 +156,27 @@ const near = (a,b) => Math.abs(a-b) < 0.01;
 const fmt  = n => (+n).toFixed(2);
 
 // ── login ─────────────────────────────────────────────────────────────────
+// 🔒 SECURITY (P0-3 — SECURITY_AUDIT Finding #3):
+// هذه صفحة testing/validation تنفّذ كتابات حقيقية على Firestore.
+// الـ login لازم يتم + admin role check قبل أي عملية.
+// لو غير admin → block + توضيح. مستخدم بدون login → form فقط.
 window.doLogin = async () => {
   const email=$('em').value.trim(), pass=$('pw').value;
   if(!email||!pass) return st('أدخل البريد وكلمة المرور','serr');
   st('جاري تسجيل الدخول...','sinf');
   try {
-    me = (await signInWithEmailAndPassword(auth,email,pass)).user;
-    st('✓ تسجيل ناجح — جاري تحميل بيانات الاختبار...','sok');
+    const user = (await signInWithEmailAndPassword(auth,email,pass)).user;
+    // ⚠️ role gate: يجب أن يكون admin (أو operation_manager)
+    const userSnap = await getDoc(doc(db,'users',user.uid));
+    const role = userSnap.exists() ? (userSnap.data().role || '') : '';
+    if (!['admin','operation_manager'].includes(role)) {
+      // sign out forcefully + block
+      try { await auth.signOut(); } catch(_) {}
+      me = null;
+      return st(`⛔ هذه الصفحة محصورة على admin/operation_manager. دورك الحالي: ${role||'غير محدد'}`,'serr');
+    }
+    me = user;
+    st(`✓ تسجيل ناجح (${role}) — جاري تحميل بيانات الاختبار...`,'sok');
     await loadData();
   } catch(e) { st('❌ '+e.message,'serr'); }
 };
