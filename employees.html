@@ -451,6 +451,7 @@ import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.
 import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 import { dedupEmployees } from "./orders.js";
+import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -1616,15 +1617,16 @@ window.saveEmp=async function(){
         } else { throw authErr; }
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;
-      const ROLE_DEFAULTS={
-        customer_service: {pages:['clients','design','cs-dashboard'],canSeePrices:true,canSeeAllOrders:false,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
-        graphic_designer: {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
-        design_operator:  {pages:['design','designer-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:true,canViewClients:false,canAddClients:false,canAssignDesigner:true,canAssignTasks:false,canViewCosts:false},
-        production_agent: {pages:['production','production-dashboard'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
-        shipping_officer: {pages:['shipping','shipping-dashboard','shipping-accounts','shipping-followup'],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:false},
-        wallet_manager:   {pages:['accounts','reports'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:false,canViewClients:true,canAddClients:false,canAssignDesigner:false,canAssignTasks:false,canViewCosts:true},
-        operation_manager:{pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canViewCosts:true},
-        admin:            {pages:['*'],canSeePrices:true,canSeeAllOrders:true,canAddOrders:true,canViewClients:true,canAddClients:true,canAssignDesigner:true,canAssignTasks:true,canViewCosts:true},
+      // Phase A #2: استخدم canonical من permissions-matrix (نفس الـ 9-field shape بالضبط)
+      // projection: نأخذ فقط الـ 9 fields التي كان employees.html يكتبها تاريخياً
+      // لا توسيع ولا تضييق — same behavior.
+      const _f = getRoleDefaultPermissions(role);
+      const _permissions = {
+        pages: _f.pages,
+        canSeePrices: _f.canSeePrices, canSeeAllOrders: _f.canSeeAllOrders, canAddOrders: _f.canAddOrders,
+        canViewClients: _f.canViewClients, canAddClients: _f.canAddClients,
+        canAssignDesigner: _f.canAssignDesigner, canAssignTasks: _f.canAssignTasks,
+        canViewCosts: _f.canViewCosts,
       };
       // atomic: create employees + users in one batch (both succeed or both fail)
       const batch=writeBatch(db);
@@ -1632,7 +1634,7 @@ window.saveEmp=async function(){
       batch.set(empRef,empData);
       // displayPassword: نخزّن الكلمة المعروفة للأدمن — تُمسح تلقائياً عند
       // أول تغيير كلمة سر يقوم به الموظف من change-password.html.
-      batch.set(doc(db,'users',authUid),{name,role,email,phone,isActive:true,mustChangePassword:true,displayPassword:'123456',permissions:ROLE_DEFAULTS[role]||ROLE_DEFAULTS.customer_service,createdAt:serverTimestamp()});
+      batch.set(doc(db,'users',authUid),{name,role,email,phone,isActive:true,mustChangePassword:true,displayPassword:'123456',permissions:_permissions,createdAt:serverTimestamp()});
       await batch.commit();
       toast(`✅ تم إضافة ${name} · كلمة السر: 123456`,'ok');
     }
