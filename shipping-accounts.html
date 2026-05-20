@@ -64,6 +64,12 @@
 .ship-tab.active .ship-tab-counter{background:rgba(59,158,255,.25);color:var(--b)}
 .ship-tab-counter.urgent{background:rgba(255,61,110,.2);color:var(--r)}
 @media(max-width:600px){.ship-tab{padding:8px 8px;font-size:11px;gap:4px}.ship-tab-counter{font-size:9px;padding:1px 5px}}
+/* Persistent error banner (Step 5.4 — mirrors shipping.html) */
+.op-error{display:flex;align-items:center;gap:10px;padding:11px 14px;margin-bottom:12px;background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.35);border-right:3px solid var(--r);border-radius:var(--rad2);font-size:12.5px;color:var(--snow)}
+.op-error-icon{font-size:18px;flex-shrink:0}
+.op-error-msg{flex:1;font-weight:700;line-height:1.4;color:var(--r)}
+.op-error-close{background:transparent;border:0;color:var(--dim);font-size:14px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit;flex-shrink:0}
+.op-error-close:hover{background:rgba(255,61,110,.12);color:var(--r)}
 </style>
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
@@ -89,6 +95,14 @@
   </div>
 
   <div class="content">
+
+    <!-- Persistent error banner (Step 5.4) — stays until dismissed or replaced by success -->
+    <div id="op-error" class="op-error" style="display:none" role="alert" aria-live="assertive">
+      <span class="op-error-icon">⚠️</span>
+      <div class="op-error-msg" id="op-error-msg"></div>
+      <button class="btn btn-ghost btn-sm" id="op-error-retry" style="display:none">↻ إعادة المحاولة</button>
+      <button class="op-error-close" onclick="clearOpError()" aria-label="إخفاء">✕</button>
+    </div>
 
     <!-- Cross-page tabs -->
     <div class="ship-tabs">
@@ -438,6 +452,17 @@ const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;
 const escHtml=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const toast=(msg,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
+
+// Persistent error banner (Step 5.4 — mirrors shipping.html) — survives toast timeout.
+window.showOpError=(message,retry)=>{
+  const b=document.getElementById('op-error');if(!b)return;
+  document.getElementById('op-error-msg').textContent=message;
+  const r=document.getElementById('op-error-retry');
+  if(typeof retry==='function'){r.style.display='';r.onclick=()=>{clearOpError();retry();};}
+  else{r.style.display='none';r.onclick=null;}
+  b.style.display='flex';
+};
+window.clearOpError=()=>{const b=document.getElementById('op-error');if(b)b.style.display='none';};
 
 // ══ Finance Core (fallback لو مش محمّل) ══
 const FC=window.FC||{
@@ -1091,8 +1116,10 @@ window.saveSettle=async function(){
     closeSettle();
     const diffMsg=Math.abs(diff)>0.01?` (فرق: ${fn(Math.abs(diff))} ج — ${diffReasonLabel})`:'';
     toast(`✅ تسوية ${fn(amount)} ج من ${settleCompanyName}${diffMsg}`,'ok');
+    clearOpError();
   }catch(e){
     toast('❌ '+e.message,'err');
+    showOpError(`فشل تسوية ${fn(amount)} ج مع ${settleCompanyName}: ${e.message||'خطأ'}`, () => window.saveSettle());
   }finally{
     if(btn){btn.disabled=false;btn.textContent='✓ تأكيد التسوية';}
   }
@@ -1381,7 +1408,11 @@ window.saveReturn=async function(){
     await batch.commit();
     document.getElementById('ov-return').classList.remove('open');
     toast('✅ تم تسجيل المرتجع','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+    clearOpError();
+  }catch(e){
+    toast('❌ '+e.message,'err');
+    showOpError(`فشل تسجيل المرتجع للطلب #${o.orderId||o._id?.slice(0,6)||''}: ${e.message||'خطأ'}`, () => window.saveReturn());
+  }
 };
 
 // ══ savePartialReturn ══
