@@ -27,6 +27,7 @@ import {
   validatePayment,
   validateRefund,
   advanceOrderStageWithLock,
+  nowStr,
 } from './orders.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 
@@ -199,6 +200,48 @@ export const orderActions = {
         warnings: [],
         orderId,
       };
+    }
+  },
+
+  // ─── Shipping Sub-Workflow ────────────────
+
+  /**
+   * shipStage: wait_delivery → wait_collection
+   * تسجيل تسليم الأوردر للعميل (قبل التحصيل).
+   *
+   * يحفظ deliveredAt + deliveredBy + timeline entry.
+   * لا يحدث `stage` الرئيسي (يبقى 'shipping').
+   * لا يولّد أي حدث مالي.
+   */
+  async markDelivered({ db, orderId, role, userId, userName }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.stage === 'archived') {
+      return { ok: false, errors: ['الأوردر مؤرشف'], warnings: [], orderId };
+    }
+    if (order.shipStage === 'returned') {
+      return { ok: false, errors: ['الأوردر مرتجع'], warnings: [], orderId };
+    }
+    if ((order.shipStage || 'ready') !== 'wait_delivery') {
+      return { ok: false, errors: ['الأوردر ليس في حالة "في الطريق"'], warnings: [], orderId };
+    }
+    try {
+      const now = nowStr();
+      const batch = writeBatch(db);
+      batch.update(order._ref, {
+        shipStage: 'wait_collection',
+        deliveredAt: now,
+        deliveredBy: userName || '',
+        timeline: [
+          ...(order.timeline || []),
+          { date: now, action: '✅ تم التسليم — انتظار التحصيل', by: userName || '', byId: userId || '' },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_delivered' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تسجيل التسليم'], warnings: [], orderId };
     }
   },
 
