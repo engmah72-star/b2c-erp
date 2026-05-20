@@ -425,7 +425,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle } from "./orders.js";
+import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn } from "./orders.js";
 // ══ State ══
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
@@ -1219,14 +1219,15 @@ window.saveReturn=async function(){
   const ordId=document.querySelector('input[name="return-order"]:checked')?.value;
   if(!ordId)return toast('⚠️ اختر أوردر','err');
   const reason=gv('ret-reason-key');
-  if(!reason)return toast('⚠️ اختر سبب المرتجع','err');
   const reasonLabel=gv('ret-reason-label');
   const lossParty=gv('ret-loss-party');
-  if(!lossParty)return toast('⚠️ حدد من يتحمل الخسارة','err');
   const cost=parseFloat(gv('return-cost'))||0;
   const note=gv('return-note');
   const returnType=gv('ret-type')||'full';
   const o=allOrders.find(x=>x._id===ordId);if(!o)return;
+  // RULE V1.3 — central validator (orders.js)
+  const v=validateReturn({order:o,reason,lossParty,cost,returnType,note,role:userRole});
+  if(!v.ok)return toast(v.errors[0],'err');
   // ── PARTIAL RETURN BRANCH ──
   if(returnType==='partial'){
     return await savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note);
