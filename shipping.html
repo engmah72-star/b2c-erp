@@ -174,6 +174,11 @@
 .op-error-close{background:transparent;border:0;color:var(--dim);font-size:14px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit;flex-shrink:0}
 .op-error-close:hover{background:rgba(255,61,110,.12);color:var(--r)}
 
+/* Row pending state (Step 5.2) — visual feedback for async ops without a modal */
+@keyframes row-pending-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.row-pending{animation:row-pending-pulse 1.1s ease-in-out infinite;background:rgba(110,189,255,.06)!important;pointer-events:none}
+.row-pending td:first-child::before{content:'⏳ ';color:var(--c);font-weight:700;margin-inline-end:4px}
+
 /* Stage breakdown chips — clickable, filter the table by stage */
 .stage-strip{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .stage-chip{display:inline-flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--bd);border-right:3px solid var(--sc);border-radius:var(--rad2);padding:8px 12px;cursor:pointer;font-family:inherit;transition:transform .08s ease,border-color .12s ease}
@@ -1489,20 +1494,38 @@ window.confirmArchive = async (orderId) => {
   // RULE A1: العملية مُمَركَزة بالكامل عبر orderActions.archiveOrder
   // (validation + atomic write + audit trail في call واحد)
   const baseArgs = { db, orderId, role:myRole, userId:me.uid, userName:$('nav-name').textContent, source:'shipping' };
-  let r = await orderActions.archiveOrder(baseArgs);
-  if (r.needsConfirmation) {
-    if (!confirm('⚠️ '+r.warnings.join(' · ')+'\n\nالمتابعة؟')) return;
-    r = await orderActions.archiveOrder({ ...baseArgs, bypassWarnings:true });
+  markRowPending(orderId);
+  try {
+    let r = await orderActions.archiveOrder(baseArgs);
+    if (r.needsConfirmation) {
+      unmarkRowPending(orderId);
+      if (!confirm('⚠️ '+r.warnings.join(' · ')+'\n\nالمتابعة؟')) return;
+      markRowPending(orderId);
+      r = await orderActions.archiveOrder({ ...baseArgs, bypassWarnings:true });
+    }
+    if (!r.ok) {
+      const msg = r.errors.join(' · ');
+      toast('⛔ '+msg,'err');
+      showOpError(`فشل أرشفة الطلب #${o.orderNumber || o._id.slice(0,6)}: ${msg}`, () => window.confirmArchive(orderId));
+      return;
+    }
+    toast('📁 تم الأرشفة');
+    clearOpError();
+  } finally {
+    unmarkRowPending(orderId);
   }
-  if (!r.ok) {
-    const msg = r.errors.join(' · ');
-    toast('⛔ '+msg,'err');
-    showOpError(`فشل أرشفة الطلب #${o.orderNumber || o._id.slice(0,6)}: ${msg}`, () => window.confirmArchive(orderId));
-    return;
-  }
-  toast('📁 تم الأرشفة');
-  clearOpError();
 };
+
+// Row-pending helpers (Step 5.2) — visual feedback when a row is busy with an
+// async operation outside a modal (archive is currently the main case).
+function markRowPending(orderId) {
+  const row = document.getElementById('r-' + orderId);
+  if (row) row.classList.add('row-pending');
+}
+function unmarkRowPending(orderId) {
+  const row = document.getElementById('r-' + orderId);
+  if (row) row.classList.remove('row-pending');
+}
 </script>
 <script src="sw-register.js"></script>
 </body>
