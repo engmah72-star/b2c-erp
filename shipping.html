@@ -475,7 +475,7 @@ import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, se
 import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
 import { orderActions } from './order-actions.js';
-import { validateDispatch, validateCollect } from './orders.js';
+import { validateDispatch, validateCollect, validateSettle } from './orders.js';
 
 let me = null, myRole = '', myPerms = null;
 let orders = [], shippers = [], wallets = [];
@@ -1367,9 +1367,6 @@ async function confirmSettle() {
   const note = $('m-settle-note').value.trim();
   const diffReason = $('m-settle-diff-reason').value;
 
-  if (!walletId) { toast('⚠️ اختر المحفظة', 'err'); return; }
-  if (!Number.isFinite(amount) || amount < 0) { toast('⚠️ المبلغ غير صالح', 'err'); return; }
-
   const wallet = wallets.find(w => w._id === walletId);
   const ordersToSettle = pendingOrder.orders;
   const companyName = pendingOrder.companyName || ordersToSettle[0]?.shipCompanyName || '';
@@ -1378,10 +1375,9 @@ async function confirmSettle() {
   const expectedAmount = ordersToSettle.reduce((s,o) => s + safeNum(o.shipCollected) - safeNum(o.shippingCost), 0);
   const difference = amount - expectedAmount;
 
-  // عند وجود فرق، سبب الفرق إلزامي
-  if (Math.abs(difference) > 0.01 && !diffReason) {
-    toast('⚠️ يوجد فرق في التسوية — اختر سبب الفرق', 'err'); return;
-  }
+  // RULE V1.3 — central validator (orders.js)
+  const v = validateSettle({ orders: ordersToSettle, amount, expectedAmount, walletId, diffReason, diffNote: note, role: myRole });
+  if (!v.ok) { toast(v.errors[0], 'err'); return; }
 
   const orderUpdates = ordersToSettle.map(o => {
     const due = safeNum(o.shipCollected) - safeNum(o.shippingCost);
