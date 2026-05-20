@@ -245,6 +245,51 @@ export const orderActions = {
     }
   },
 
+  // ─── Production Sub-Workflow ──────────────
+
+  /**
+   * تحديث prodStatus داخل مرحلة production (received/wip/done/problem).
+   * يضيف auto-assign للموظف لو ما في productionAgent.
+   * لا يحدث `stage` الرئيسي.
+   */
+  async setProductionStatus({ db, orderId, status, role, userId, userName }) {
+    const ALLOWED = {
+      received: '📥 استلمت الأوردر',
+      wip: '🔄 بدأ التنفيذ',
+      done: '✅ خلص التنفيذ',
+      problem: '⚠️ وجدت مشكلة',
+    };
+    if (!ALLOWED[status]) {
+      return { ok: false, errors: ['status غير معروف: ' + status], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.stage === 'archived') {
+      return { ok: false, errors: ['الأوردر مؤرشف'], warnings: [], orderId };
+    }
+    try {
+      const now = nowStr();
+      const updates = {
+        prodStatus: status,
+        timeline: [
+          ...(order.timeline || []),
+          { date: now, action: ALLOWED[status], by: userName || '', byId: userId || '' },
+        ],
+        updatedAt: serverTimestamp(),
+      };
+      if (!order.productionAgent && userId) {
+        updates.productionAgent = userId;
+        updates.productionAgentName = userName || '';
+      }
+      const batch = writeBatch(db);
+      batch.update(order._ref, updates);
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_production_status', status };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تحديث حالة التنفيذ'], warnings: [], orderId };
+    }
+  },
+
   // ─── Financial Actions ────────────────────
 
   /**
