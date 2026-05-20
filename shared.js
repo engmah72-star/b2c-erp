@@ -452,6 +452,23 @@ export function isToday(ts) {
   return d.getDate()===t.getDate() && d.getMonth()===t.getMonth() && d.getFullYear()===t.getFullYear();
 }
 
+// Debounce helper — used by search inputs to avoid running an expensive
+// render on every keystroke. ms=200 matches the human input cadence: fast
+// enough to feel live, slow enough to skip ~80% of intermediate renders.
+//
+// Usage:
+//   const onSearch = debounce(renderList, 200);
+//   $('search').oninput = e => onSearch(e.target.value);
+export function debounce(fn, ms = 200) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+if (typeof window !== 'undefined') window.debounce = debounce;
+
 // ═══════════════════════════════════════
 // WALLET OPERATIONS — REMOVED
 // كانت هنا recordCollection/recordPayment كـ helpers مباشرة على wallets+transactions_v2،
