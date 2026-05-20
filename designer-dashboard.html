@@ -253,7 +253,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 // ══ STATE ══
 let myOrders=[], myTasks=[], myAttendance=[], myEmployee={};
 let currentUser=null, userName='', uid='';
@@ -307,24 +307,24 @@ onAuthStateChanged(auth,async u=>{
   document.getElementById('nav-av').textContent=userName[0].toUpperCase();
 
   // جيب بيانات الموظف
-  onSnapshot(collection(db,'employees'),snap=>{
+  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
     const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid||e.email===u.email);
     myEmployee=emp||{baseSalary:0,commissionPct:0};
     myEmpId=emp?._id||'';
     if(myEmpId){
       // أهداف الشهر
-      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),where('month','==',monthKey())),snap=>{
+      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),where('month','==',monthKey()),limit(5)),snap=>{
         myGoal=snap.docs.length?snap.docs[0].data():null;
         render();
       });
       // آخر تقييم
-      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId)),snap=>{
+      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId),limit(60)),snap=>{
         const evals=snap.docs.map(d=>d.data()).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
         myLastEval=evals[0]||null;
         render();
       });
       // الدخل الفعلي المدفوع (RULE 1)
-      onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId)),snap=>{
+      onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId),limit(500)),snap=>{
         myPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));
         render();
       });
@@ -334,7 +334,7 @@ onAuthStateChanged(auth,async u=>{
 
   // الأوردرات — query محددة للمصمم
   // 1. أوردرات مكلّف بيها (designerId = uid) في مرحلة التصميم فقط — لا يجب أن يرى المؤرشف/الملغي
-  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid),where('stage','==','design')),snap=>{
+  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid),where('stage','==','design'),limit(200)),snap=>{
     const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__myUid=uid;
     // 2. أوردرات stage=design بدون مصمم (متاحة للكل)
@@ -355,14 +355,14 @@ onAuthStateChanged(auth,async u=>{
   });
 
   // المهام
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid)),snap=>{
+  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid),limit(100)),snap=>{
     myTasks=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(t=>t.status==='pending')
       .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
     render();
   });
 
   // الحضور
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid)),snap=>{
+  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
     const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
     todayAtt=atts.find(a=>a.date===todayStr());
     myAttendance=atts;
