@@ -156,9 +156,52 @@
     btn.textContent = '☰';
     btn.addEventListener('click', () => {
       try { localStorage.setItem(LS_HIDDEN, '0'); } catch(_) {}
+      document.body.classList.remove('sb-peek');
       applyHidden(sidenav, false);
     });
     document.body.appendChild(btn);
+  }
+
+  // ── Hover-peek (Notion-style) — show sidebar as overlay when mouse
+  // ── approaches the right edge (RTL); hide again on mouseleave ──
+  function setupHoverPeek(sidenav) {
+    if (document.querySelector('.sb-hot-zone')) return;
+
+    const hot = document.createElement('div');
+    hot.className = 'sb-hot-zone';
+    hot.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(hot);
+
+    let hideTimer = null;
+    const HIDE_DELAY = 220; // ms — pause before re-hiding to avoid flicker
+
+    const peekOn  = () => {
+      clearTimeout(hideTimer);
+      // Only peek while persistently hidden — otherwise sidebar is already visible
+      if (!document.body.classList.contains('sb-hidden')) return;
+      document.body.classList.add('sb-peek');
+    };
+
+    const peekOff = (immediate) => {
+      clearTimeout(hideTimer);
+      // Don't hide while a focused input inside the sidebar is active
+      // (e.g., user typing in the search box)
+      if (sidenav.contains(document.activeElement)) return;
+      const delay = immediate ? 0 : HIDE_DELAY;
+      hideTimer = setTimeout(() => {
+        document.body.classList.remove('sb-peek');
+      }, delay);
+    };
+
+    hot.addEventListener('mouseenter', peekOn);
+    sidenav.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+    sidenav.addEventListener('mouseleave', () => peekOff(false));
+    // Clicking a nav link → navigate; clear peek immediately so the new page
+    // doesn't briefly render with the overlay still on
+    sidenav.addEventListener('click', (e) => {
+      const link = e.target.closest('a.nav-link');
+      if (link) peekOff(true);
+    });
   }
 
   // ── Build toolbar — INSERTED BETWEEN .nav-brand AND .nav-scroll ──
@@ -196,12 +239,14 @@
       applyCompact(sidenav, next);
     });
 
-    // Hide toggle (desktop full-hide; reveal via .sb-show-btn floating button)
+    // Hide toggle (desktop full-hide; hover-peek + floating ☰ reveal it)
     const hideBtn = tools.querySelector('.sb-hide-toggle');
     applyHidden(sidenav, isHidden());
     hideBtn.addEventListener('click', () => {
       const next = !isHidden();
       try { localStorage.setItem(LS_HIDDEN, next ? '1' : '0'); } catch(_) {}
+      // Reset peek state so the hide/show transition is clean
+      document.body.classList.remove('sb-peek');
       applyHidden(sidenav, next);
     });
 
@@ -367,6 +412,9 @@
 
     // 1b) Floating reveal button on document.body (needed while sidebar hidden)
     ensureShowButton(sidenav);
+
+    // 1c) Hover-peek — sidebar reveals as overlay when mouse hits right edge
+    setupHoverPeek(sidenav);
 
     // 2) First enhancement
     enhanceLinks(navScroll);
