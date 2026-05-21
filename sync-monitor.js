@@ -9,7 +9,7 @@
     syncBanner.style.cssText = `
       position:fixed;top:0;left:0;right:0;z-index:9999;
       background:var(--r);color:#fff;text-align:center;
-      padding:10px;font-size:13px;font-weight:700;
+      padding:10px;font-size:var(--fs-md);font-weight:700;
       font-family:IBM Plex Sans Arabic,sans-serif;
     `;
     syncBanner.innerHTML = `

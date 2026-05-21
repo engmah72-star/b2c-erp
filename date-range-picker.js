@@ -147,18 +147,18 @@ export function mountDateRangePicker({ container, storageKey, onChange }){
     css.id = 'drp-styles';
     css.textContent = `
       .drp-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg2,#13141a);border:1px solid var(--line,rgba(255,255,255,.08));border-radius:14px;padding:10px 14px;margin-bottom:14px;}
-      .drp-label{font-size:12px;font-weight:800;color:var(--dim2,#647298);}
+      .drp-label{font-size:var(--fs-base);font-weight:800;color:var(--dim2,#647298);}
       .drp-chips{display:flex;gap:6px;flex-wrap:wrap;}
-      .drp-chip{background:var(--bg3,rgba(255,255,255,.04));border:1px solid var(--line,rgba(255,255,255,.08));color:var(--snow,#e7eaf6);border-radius:20px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s;-webkit-tap-highlight-color:transparent;}
+      .drp-chip{background:var(--bg3,rgba(255,255,255,.04));border:1px solid var(--line,rgba(255,255,255,.08));color:var(--snow,#e7eaf6);border-radius:20px;padding:6px 12px;font-size:var(--fs-sm);font-weight:700;cursor:pointer;transition:all .15s;-webkit-tap-highlight-color:transparent;}
       .drp-chip:hover{border-color:rgba(74,142,245,.4);}
       .drp-active{background:rgba(74,142,245,.18);border-color:var(--b,#4a8ef5);color:var(--b,#4a8ef5);}
       .drp-custom{display:flex;align-items:center;gap:6px;}
-      .drp-date{background:var(--bg3,rgba(255,255,255,.04));border:1px solid var(--line,rgba(255,255,255,.08));color:var(--snow,#e7eaf6);border-radius:8px;padding:4px 8px;font-size:11px;}
-      .drp-arrow{color:var(--dim2,#647298);font-size:12px;}
-      .drp-current{margin-inline-start:auto;font-size:11px;font-weight:700;color:var(--dim2,#647298);}
+      .drp-date{background:var(--bg3,rgba(255,255,255,.04));border:1px solid var(--line,rgba(255,255,255,.08));color:var(--snow,#e7eaf6);border-radius:8px;padding:4px 8px;font-size:var(--fs-sm);}
+      .drp-arrow{color:var(--dim2,#647298);font-size:var(--fs-base);}
+      .drp-current{margin-inline-start:auto;font-size:var(--fs-sm);font-weight:700;color:var(--dim2,#647298);}
       @media(max-width:600px){
         .drp-wrap{padding:8px 10px;gap:6px;}
-        .drp-chip{padding:5px 10px;font-size:10px;}
+        .drp-chip{padding:5px 10px;font-size:var(--fs-xs);}
         .drp-current{width:100%;text-align:center;margin-inline-start:0;margin-top:4px;}
       }
     `;
