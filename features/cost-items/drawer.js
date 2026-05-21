@@ -4,13 +4,14 @@
 // Vanilla module — Cost Items Drawer for production.html
 //
 // PRINCIPLES:
-//  • UI-only layer. Save logic stays in production.html (RULE 6 compat).
+//  • UI-only layer. Save logic lives in orderActions.recordCostItem
+//    (RULE A1 central action) — drawer just builds the payload.
 //  • Reads order/suppliers/wallets/master-cats from window.__costItemsCtx
 //    (set by production.html when its globals are ready).
-//  • On submit: fills the legacy panel's hidden form fields then calls
-//    window.addCostFromPanel(prodIdx) — so the existing financial flow
-//    (writeBatch + addLedgerToBatch + supplier_orders + transactions)
-//    runs unchanged. Zero refactor to production save logic.
+//  • On submit: lazy-imports orderActions + Firestore db, then calls
+//    orderActions.recordCostItem(...) which does atomic batch write +
+//    addLedgerToBatch (FE.VENDOR_PAYMENT | GENERAL_EXPENSE) +
+//    supplier_orders + transactions. Single source of truth.
 //  • Module exports nothing; registers window.openCostDrawer /
 //    window.closeCostDrawer when loaded. If this file fails to load,
 //    production.html's openCostPanel still works as fallback.
@@ -550,53 +551,77 @@
   }
 
   // ── submit ────────────────────────────────────────────────
-  // Strategy: fill the legacy panel's hidden form fields then call
-  // window.addCostFromPanel(prodIdx). This routes through the existing
-  // financial flow (writeBatch + addLedgerToBatch + supplier_orders +
-  // transactions) without any refactor.
+  // Calls orderActions.recordCostItem (RULE A1 central action) — single
+  // source of truth for cost-item writes. No more DOM bridging.
   async function submitDraft(){
     if(!_draft.type){ toast('⚠️ اختر نوع البند', 'err'); return; }
     const total = parseFloat(_draft.total) || 0;
     if(total <= 0){ toast('⚠️ أدخل التكلفة', 'err'); return; }
 
-    // Render legacy panel form for the same prodIdx (offscreen — panel stays hidden)
-    if(typeof window.renderCostPanel !== 'function'){
-      toast('❌ نظام الحفظ غير جاهز', 'err');
+    const c = ctx();
+    if(!c){ toast('❌ السياق غير جاهز', 'err'); return; }
+    const o = c.getOrder(_orderId);
+    if(!o){ toast('❌ الأوردر غير متاح', 'err'); return; }
+
+    // Lazy-load orderActions (cached after first use) — keeps drawer.js
+    // independent of production.html's module scope
+    let actions = window.__orderActions;
+    if(!actions){
+      try {
+        actions = (await import('../../order-actions.js')).orderActions;
+        window.__orderActions = actions;
+      } catch(e){
+        toast('❌ فشل تحميل نظام الحفظ', 'err');
+        console.error('cost-items drawer: failed to import orderActions', e);
+        return;
+      }
+    }
+
+    // Resolve Firestore db from the existing firebase-init module
+    let db = window.__firestoreDb;
+    if(!db){
+      try {
+        db = (await import('../../core/firebase-init.js')).db;
+        window.__firestoreDb = db;
+      } catch(e){
+        toast('❌ فشل تحميل Firestore', 'err');
+        console.error('cost-items drawer: failed to import db', e);
+        return;
+      }
+    }
+
+    const wallets = c.getWallets ? c.getWallets() : [];
+    const result = await actions.recordCostItem({
+      db, orderId: _orderId, prodIdx: _prodIdx,
+      payload: {
+        type: _draft.type,
+        total,
+        supplierId: _draft.supplierId || '',
+        supplierName: _draft.supplierName || '',
+        note: _draft.note || '',
+        walletId: _draft.walletId || '',
+        paperMeta: {},
+        isExternal: _draft.mode === 'ext',
+      },
+      role: c.getCurrentRole ? c.getCurrentRole() : '',
+      userId: (c.getCurrentUser && c.getCurrentUser()?.uid) || '',
+      userName: c.getUserName ? c.getUserName() : '',
+      wallets,
+      isEdit: false,
+      editIdx: -1,
+    });
+
+    if(!result.ok){
+      toast('❌ '+(result.errors?.[0] || 'فشل الحفظ'), 'err');
       return;
     }
-    const c = ctx();
-    const o = c?.getOrder(_orderId);
-    if(!o){ toast('❌ الأوردر غير متاح', 'err'); return; }
-    window.renderCostPanel(o, _prodIdx);
-    const sfx = _prodIdx < 0 ? 'g' : String(_prodIdx);
-
-    // Wait for next tick so DOM exists
-    await new Promise(r => setTimeout(r, 0));
-
-    // Fill hidden form fields
-    setField(`cp-type-${sfx}`, _draft.type);
-    setField(`cp-total-${sfx}`, String(total));
-    setField(`cp-note-${sfx}`, _draft.note || '');
-    setField(`cp-wallet-${sfx}`, _draft.walletId || '');
-    // Mode toggle
-    if(window._setCpExternal) window._setCpExternal(sfx, _draft.mode === 'ext');
-    // Supplier dropdown — filter then select
-    if(window.filterSupsByType) window.filterSupsByType(_draft.type, `cp-sup-${sfx}`);
-    if(_draft.supplierId){
-      const supSel = document.getElementById(`cp-sup-${sfx}`);
-      if(supSel) supSel.value = _draft.supplierId;
-    }
-
-    // Trigger the existing save path
-    try {
-      await window.addCostFromPanel(_prodIdx);
-      // success — clear draft, re-render
-      _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
-      render();
-    } catch(e){
-      // addCostFromPanel handles its own toasts on error — just log here
-      console.error('cost-items drawer submit failed', e);
-    }
+    toast(_draft.supplierName
+      ? `✅ تم — ${_draft.supplierName} · ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`
+      : `✅ تم — ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`,
+      'ok');
+    // Clear draft + re-render with new state (order onSnapshot will update soon)
+    _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+    render();
   }
 
   async function submitMany(sugs){
@@ -606,11 +631,6 @@
       // small delay so toasts don't overlap
       await new Promise(r => setTimeout(r, 80));
     }
-  }
-
-  function setField(id, val){
-    const el = document.getElementById(id);
-    if(el){ el.value = val; el.dispatchEvent(new Event('input', { bubbles:true })); }
   }
 
   // ── escape helper ─────────────────────────────────────────
