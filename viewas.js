@@ -95,9 +95,9 @@
         color:#fff;padding:9px 16px;direction:rtl;
         font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:var(--fs-md);
         font-weight:800;display:flex;justify-content:space-between;align-items:center;
-        gap:12px;box-shadow:0 2px 10px rgba(0,0,0,.35);
+        gap:var(--space-md);box-shadow:0 2px 10px rgba(0,0,0,.35);
         border-bottom:2px solid rgba(255,255,255,.25)}
-      #b2c-va-banner .va-msg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;flex:1}
+      #b2c-va-banner .va-msg{display:flex;align-items:center;gap:var(--space-sm);flex-wrap:wrap;min-width:0;flex:1}
       #b2c-va-banner .va-tag{background:rgba(0,0,0,.25);padding:3px 10px;border-radius:20px;font-size:var(--fs-sm)}
       #b2c-va-banner button{background:#fff;color:var(--r);border:none;padding:6px 14px;
         border-radius:20px;font-weight:800;cursor:pointer;font-family:inherit;font-size:var(--fs-base);

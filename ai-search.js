@@ -31,14 +31,14 @@ function ensureStyle() {
     #${CHIP_ID}:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(16,185,129,.25);
       background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(79,142,247,.12))}
     #${OV_ID}{position:fixed;inset:0;background:rgba(15,17,23,.7);z-index:9990;
-      display:none;align-items:center;justify-content:center;padding:16px;
+      display:none;align-items:center;justify-content:center;padding:var(--space-lg);
       backdrop-filter:blur(4px);font-family:system-ui,-apple-system,sans-serif;direction:rtl}
     #${OV_ID}.open{display:flex}
     #${OV_ID} .panel{background:#161b27;color:#e8eaf0;border:1px solid #2a3348;
       border-radius:18px;width:100%;max-width:520px;padding:18px;
       animation:as-pop .2s ease-out}
     @keyframes as-pop{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
-    #${OV_ID} h3{font-size:15px;font-weight:800;margin:0 0 6px;display:flex;align-items:center;gap:8px}
+    #${OV_ID} h3{font-size:15px;font-weight:800;margin:0 0 6px;display:flex;align-items:center;gap:var(--space-sm)}
     #${OV_ID} .sub{font-size:var(--fs-sm);color:#8892a4;margin-bottom:14px;line-height:1.6}
     #${OV_ID} textarea{width:100%;background:#1e2535;border:1px solid #2a3348;border-radius:10px;
       padding:10px 12px;color:#e8eaf0;font-size:var(--fs-md);outline:none;font-family:inherit;
@@ -48,7 +48,7 @@ function ensureStyle() {
     #${OV_ID} .ex{padding:6px 10px;background:#1e2535;border:1px solid #2a3348;
       border-radius:18px;font-size:var(--fs-sm);color:#8892a4;cursor:pointer;transition:.15s}
     #${OV_ID} .ex:hover{border-color:#10b981;color:#10b981}
-    #${OV_ID} .row{display:flex;gap:8px;margin-top:14px;align-items:center}
+    #${OV_ID} .row{display:flex;gap:var(--space-sm);margin-top:14px;align-items:center}
     #${OV_ID} .btn-apply{flex:1;padding:10px;background:#10b981;color:#fff;border:none;
       border-radius:10px;font-size:var(--fs-md);font-weight:800;cursor:pointer;font-family:inherit}
     #${OV_ID} .btn-apply:disabled{opacity:.5;cursor:not-allowed}

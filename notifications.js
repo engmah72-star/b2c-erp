@@ -323,7 +323,7 @@ export function initNotifications(app, currentUser) {
       </div>
       <div class="notif-list">
         ${isEmpty
-          ? `<div class="empty" style="padding:32px 20px"><div class="empty-icon">🎉</div><div class="empty-text">لا توجد إشعارات</div></div>`
+          ? `<div class="empty" style="padding:var(--space-3xl) var(--space-xl)"><div class="empty-icon">🎉</div><div class="empty-text">لا توجد إشعارات</div></div>`
           : allNotifs.map((n, i) => `
             <div class="notif-item" data-idx="${i}">
               <div class="notif-ico">${__esc(n.ico)}</div>

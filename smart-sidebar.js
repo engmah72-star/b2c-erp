@@ -49,9 +49,9 @@
       + 'font-family:inherit;font-size:var(--fs-base);min-width:0;padding:2px 0;}'
       + '.sb-search-row input::placeholder{color:rgba(255,255,255,.35);}'
       + '.sb-search-ico{font-size:var(--fs-sm);opacity:.55;flex-shrink:0;}'
-      + '.sb-tools-btns{display:flex;gap:4px;align-items:center;}'
+      + '.sb-tools-btns{display:flex;gap:var(--space-xs);align-items:center;}'
       + '.sb-tool-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);'
-      + 'color:rgba(255,255,255,.55);font-size:var(--fs-xs);padding:4px 8px;border-radius:6px;cursor:pointer;'
+      + 'color:rgba(255,255,255,.55);font-size:var(--fs-xs);padding:var(--space-xs) var(--space-sm);border-radius:6px;cursor:pointer;'
       + 'font-family:inherit;font-weight:600;transition:all .15s;flex:1;line-height:1.3;}'
       + '.sb-tool-btn:hover{color:#fff;border-color:rgba(167,139,250,.4);}'
       + '.sb-tool-btn.on{background:rgba(167,139,250,.18);color:var(--p);border-color:rgba(167,139,250,.45);}'
@@ -71,7 +71,7 @@
       + '.sb-noresults{padding:14px 12px;color:rgba(255,255,255,.45);font-size:var(--fs-sm);'
       + 'text-align:center;font-style:italic;}'
       // Favorites section
-      + '.sb-favs-section{padding:4px 0 6px;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:4px;}'
+      + '.sb-favs-section{padding:4px 0 6px;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:var(--space-xs);}'
       + '.nav-group.sb-favs-label{color:#fbbf24!important;opacity:.85;}'
       // Collapsible groups
       + '.nav-group{cursor:pointer;user-select:none;}'
@@ -92,12 +92,12 @@
       + '.sidenav.sb-compact .nav-user-name,'
       + '.sidenav.sb-compact .nav-user-role{display:none;}'
       + '.sidenav.sb-compact .sb-flame{display:none;}'
-      + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:2px;}'
+      + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:var(--space-2xs);}'
       // Active link polish — no !important (let page styles take precedence if needed)
       + '.nav-link.active{background:linear-gradient(135deg,rgba(167,139,250,.16),rgba(74,142,245,.08));}'
       // Mobile compact toolbar (يوفر مساحة عمودية للعناصر)
       + '@media (max-width:768px){'
-      +   '.sb-tools{padding:6px 8px;gap:4px;}'
+      +   '.sb-tools{padding:6px 8px;gap:var(--space-xs);}'
       +   '.sb-search-row{padding:4px 7px;}'
       +   '.sb-search-row input{font-size:var(--fs-md);}'
       +   '.sb-tool-btn{padding:5px 6px;font-size:var(--fs-xs);}'
