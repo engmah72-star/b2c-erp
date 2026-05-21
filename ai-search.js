@@ -26,7 +26,7 @@ function ensureStyle() {
     #${CHIP_ID}{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;
       background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(79,142,247,.08));
       border:1px solid rgba(16,185,129,.35);border-radius:18px;color:#10b981;
-      font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;
+      font-size:var(--fs-sm);font-weight:800;cursor:pointer;font-family:inherit;
       transition:.15s;white-space:nowrap}
     #${CHIP_ID}:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(16,185,129,.25);
       background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(79,142,247,.12))}
@@ -39,22 +39,22 @@ function ensureStyle() {
       animation:as-pop .2s ease-out}
     @keyframes as-pop{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
     #${OV_ID} h3{font-size:15px;font-weight:800;margin:0 0 6px;display:flex;align-items:center;gap:8px}
-    #${OV_ID} .sub{font-size:11px;color:#8892a4;margin-bottom:14px;line-height:1.6}
+    #${OV_ID} .sub{font-size:var(--fs-sm);color:#8892a4;margin-bottom:14px;line-height:1.6}
     #${OV_ID} textarea{width:100%;background:#1e2535;border:1px solid #2a3348;border-radius:10px;
-      padding:10px 12px;color:#e8eaf0;font-size:13px;outline:none;font-family:inherit;
+      padding:10px 12px;color:#e8eaf0;font-size:var(--fs-md);outline:none;font-family:inherit;
       direction:rtl;resize:none;min-height:60px;line-height:1.6}
     #${OV_ID} textarea:focus{border-color:#10b981}
     #${OV_ID} .examples{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
     #${OV_ID} .ex{padding:6px 10px;background:#1e2535;border:1px solid #2a3348;
-      border-radius:18px;font-size:11px;color:#8892a4;cursor:pointer;transition:.15s}
+      border-radius:18px;font-size:var(--fs-sm);color:#8892a4;cursor:pointer;transition:.15s}
     #${OV_ID} .ex:hover{border-color:#10b981;color:#10b981}
     #${OV_ID} .row{display:flex;gap:8px;margin-top:14px;align-items:center}
     #${OV_ID} .btn-apply{flex:1;padding:10px;background:#10b981;color:#fff;border:none;
-      border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit}
+      border-radius:10px;font-size:var(--fs-md);font-weight:800;cursor:pointer;font-family:inherit}
     #${OV_ID} .btn-apply:disabled{opacity:.5;cursor:not-allowed}
     #${OV_ID} .btn-cancel{padding:10px 14px;background:#1e2535;color:#8892a4;
-      border:1px solid #2a3348;border-radius:10px;font-size:12px;cursor:pointer;font-family:inherit}
-    #${OV_ID} .status{font-size:11px;color:#8892a4;margin-top:10px;min-height:14px}
+      border:1px solid #2a3348;border-radius:10px;font-size:var(--fs-base);cursor:pointer;font-family:inherit}
+    #${OV_ID} .status{font-size:var(--fs-sm);color:#8892a4;margin-top:10px;min-height:14px}
     #${OV_ID} .status.err{color:#f87171}
     #${OV_ID} .status.ok{color:#10b981}
   `;

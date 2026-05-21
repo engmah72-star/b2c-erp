@@ -42,22 +42,22 @@
         display:none; align-items:center; justify-content:center; padding:20px;
         font-family:Arial,sans-serif; direction:rtl; backdrop-filter:blur(4px); }
       #fg-overlay.show { display:flex; }
-      #fg-modal { background:#1a1d2e; border:2px solid #ff3d6e; border-radius:16px;
+      #fg-modal { background:#1a1d2e; border:2px solid var(--r); border-radius:16px;
         max-width:560px; width:100%; padding:24px; box-shadow:0 20px 60px rgba(255,61,110,.3); }
-      #fg-modal h2 { color:#ff3d6e; margin:0 0 14px; font-size:20px; display:flex; align-items:center; gap:10px; }
+      #fg-modal h2 { color:var(--r); margin:0 0 14px; font-size:20px; display:flex; align-items:center; gap:10px; }
       #fg-modal .fg-warn { background:rgba(255,170,0,.12); border:1px solid rgba(255,170,0,.4);
-        color:#ffaa00; padding:12px 14px; border-radius:8px; font-size:13px; margin-bottom:14px; line-height:1.7; }
-      #fg-modal .fg-row { display:flex; gap:8px; padding:8px 0; border-bottom:1px solid #2a2d3e; font-size:13px; }
+        color:var(--y); padding:12px 14px; border-radius:8px; font-size:var(--fs-md); margin-bottom:14px; line-height:1.7; }
+      #fg-modal .fg-row { display:flex; gap:8px; padding:8px 0; border-bottom:1px solid #2a2d3e; font-size:var(--fs-md); }
       #fg-modal .fg-row:last-child { border-bottom:none; }
       #fg-modal .fg-lbl { color:#888; min-width:100px; }
       #fg-modal .fg-val { color:#fff; word-break:break-word; flex:1; }
       #fg-modal .fg-actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
       #fg-modal button { padding:11px 20px; border-radius:8px; border:none; cursor:pointer;
-        font-weight:700; font-size:14px; font-family:inherit; }
+        font-weight:700; font-size:var(--fs-lg); font-family:inherit; }
       #fg-modal .fg-copy { background:rgba(59,158,255,.2); color:#3b9eff; border:1px solid rgba(59,158,255,.4); }
-      #fg-modal .fg-close { background:rgba(255,61,110,.2); color:#ff3d6e; border:1px solid rgba(255,61,110,.4); flex:1; }
+      #fg-modal .fg-close { background:rgba(255,61,110,.2); color:var(--r); border:1px solid rgba(255,61,110,.4); flex:1; }
       #fg-modal .fg-tech { background:#0a0c1a; border-radius:6px; padding:8px 10px; font-family:monospace;
-        font-size:11px; color:#aaa; margin-top:8px; max-height:80px; overflow-y:auto; }
+        font-size:var(--fs-sm); color:#aaa; margin-top:8px; max-height:80px; overflow-y:auto; }
     `;
     document.head.appendChild(s);
   }

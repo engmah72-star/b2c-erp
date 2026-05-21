@@ -91,30 +91,30 @@
     css.id = 'b2c-va-style';
     css.textContent = `
       #b2c-va-banner{position:fixed;top:0;left:0;right:0;z-index:99999;
-        background:linear-gradient(90deg,#ff3d6e,#a78bfa,#22d3ee);
+        background:linear-gradient(90deg,var(--r),var(--p),#22d3ee);
         color:#fff;padding:9px 16px;direction:rtl;
-        font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:13px;
+        font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:var(--fs-md);
         font-weight:800;display:flex;justify-content:space-between;align-items:center;
         gap:12px;box-shadow:0 2px 10px rgba(0,0,0,.35);
         border-bottom:2px solid rgba(255,255,255,.25)}
       #b2c-va-banner .va-msg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;flex:1}
-      #b2c-va-banner .va-tag{background:rgba(0,0,0,.25);padding:3px 10px;border-radius:20px;font-size:11px}
-      #b2c-va-banner button{background:#fff;color:#ff3d6e;border:none;padding:6px 14px;
-        border-radius:20px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;
+      #b2c-va-banner .va-tag{background:rgba(0,0,0,.25);padding:3px 10px;border-radius:20px;font-size:var(--fs-sm)}
+      #b2c-va-banner button{background:#fff;color:var(--r);border:none;padding:6px 14px;
+        border-radius:20px;font-weight:800;cursor:pointer;font-family:inherit;font-size:var(--fs-base);
         white-space:nowrap;flex-shrink:0}
       #b2c-va-banner button:hover{background:#ffe3e9}
       body{padding-top:46px !important}
       .topbar{top:46px !important}
       .sidenav{top:46px !important;height:calc(100vh - 46px) !important}
       @media(max-width:700px){
-        #b2c-va-banner{font-size:11px;padding:7px 10px}
+        #b2c-va-banner{font-size:var(--fs-sm);padding:7px 10px}
         body{padding-top:60px !important}
         .topbar{top:60px !important}
         .sidenav{top:60px !important;height:calc(100vh - 60px) !important}
       }
       .va-write-blocked-toast{position:fixed;bottom:24px;right:24px;z-index:99998;
-        background:#ff3d6e;color:#fff;padding:12px 18px;border-radius:10px;
-        font-family:inherit;font-weight:800;font-size:13px;
+        background:var(--r);color:#fff;padding:12px 18px;border-radius:10px;
+        font-family:inherit;font-weight:800;font-size:var(--fs-md);
         box-shadow:0 8px 22px rgba(255,61,110,.4);animation:vaToast .25s ease-out;
         max-width:320px;direction:rtl}
       @keyframes vaToast{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -127,14 +127,14 @@
     b.id = 'b2c-va-banner';
     if (isDeep) {
       // Deep mode → different gradient + countdown
-      b.style.background = 'linear-gradient(90deg,#00d97e,#22d3ee,#3b9eff)';
+      b.style.background = 'linear-gradient(90deg,var(--g),#22d3ee,#3b9eff)';
     }
     b.innerHTML = `
       <div class="va-msg">
         <span>${isDeep ? '🔐 Deep Mode — مُسجَّل دخول فعلي كـ' : '🔍 وضع المعاينة — أنت تتصفح كأنك:'}</span>
         <strong>${escHtml(va.name||'موظف')}</strong>
         <span class="va-tag">${escHtml(va.role||'')}</span>
-        ${isDeep ? `<span class="va-tag" id="va-countdown" style="background:rgba(255,255,255,.2);font-weight:800">⏱ —</span>` : `<span style="font-size:11px;opacity:.85">· الكتابة مُعطّلة</span>`}
+        ${isDeep ? `<span class="va-tag" id="va-countdown" style="background:rgba(255,255,255,.2);font-weight:800">⏱ —</span>` : `<span style="font-size:var(--fs-sm);opacity:.85">· الكتابة مُعطّلة</span>`}
       </div>
       <button onclick="window.__b2cViewAs.clear()">✕ ${isDeep ? 'إنهاء وتسجيل دخول كأدمن' : 'خروج من المعاينة'}</button>
     `;
@@ -483,7 +483,7 @@
     const msg = banner.querySelector('.va-msg');
     if (msg) {
       const badge = document.createElement('span');
-      badge.style.cssText = 'background:rgba(0,0,0,.25);padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700';
+      badge.style.cssText = 'background:rgba(0,0,0,.25);padding:3px 9px;border-radius:20px;font-size:var(--fs-xs);font-weight:700';
       badge.title = 'حقول مُقنّعة: ' + active.join(', ');
       badge.textContent = '🛡 مُقنّع: ' + active.length + ' حقل';
       msg.appendChild(badge);

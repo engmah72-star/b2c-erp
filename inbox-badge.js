@@ -41,13 +41,13 @@ function ensureStyle(){
       text-decoration:none;}
     #${FAB_ID}:hover{transform:scale(1.08);box-shadow:0 6px 22px rgba(124,92,255,.55);}
     #${FAB_ID}:active{transform:scale(.96);}
-    #${BADGE_ID}{position:absolute;top:-3px;right:-3px;background:#ff3d6e;color:#fff;
-      font-size:11px;font-weight:800;border-radius:11px;padding:2px 6px;min-width:20px;
+    #${BADGE_ID}{position:absolute;top:-3px;right:-3px;background:var(--r);color:#fff;
+      font-size:var(--fs-sm);font-weight:800;border-radius:11px;padding:2px 6px;min-width:20px;
       text-align:center;border:2px solid #07080f;
       box-shadow:0 0 0 1px rgba(255,61,110,.4);line-height:1;}
     #${BADGE_ID}.hidden{display:none;}
     @media (max-width:768px){
-      #${FAB_ID}{bottom:80px;left:14px;width:50px;height:50px;font-size:22px;}
+      #${FAB_ID}{bottom:80px;left:14px;width:50px;height:50px;font-size:var(--fs-3xl);}
     }
   `;
   document.head.appendChild(s);
