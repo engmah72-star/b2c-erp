@@ -91,7 +91,7 @@
     css.id = 'b2c-va-style';
     css.textContent = `
       #b2c-va-banner{position:fixed;top:0;left:0;right:0;z-index:99999;
-        background:linear-gradient(90deg,#ff3d6e,#a78bfa,#22d3ee);
+        background:linear-gradient(90deg,var(--r),var(--p),#22d3ee);
         color:#fff;padding:9px 16px;direction:rtl;
         font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:13px;
         font-weight:800;display:flex;justify-content:space-between;align-items:center;
@@ -99,7 +99,7 @@
         border-bottom:2px solid rgba(255,255,255,.25)}
       #b2c-va-banner .va-msg{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;flex:1}
       #b2c-va-banner .va-tag{background:rgba(0,0,0,.25);padding:3px 10px;border-radius:20px;font-size:11px}
-      #b2c-va-banner button{background:#fff;color:#ff3d6e;border:none;padding:6px 14px;
+      #b2c-va-banner button{background:#fff;color:var(--r);border:none;padding:6px 14px;
         border-radius:20px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;
         white-space:nowrap;flex-shrink:0}
       #b2c-va-banner button:hover{background:#ffe3e9}
@@ -113,7 +113,7 @@
         .sidenav{top:60px !important;height:calc(100vh - 60px) !important}
       }
       .va-write-blocked-toast{position:fixed;bottom:24px;right:24px;z-index:99998;
-        background:#ff3d6e;color:#fff;padding:12px 18px;border-radius:10px;
+        background:var(--r);color:#fff;padding:12px 18px;border-radius:10px;
         font-family:inherit;font-weight:800;font-size:13px;
         box-shadow:0 8px 22px rgba(255,61,110,.4);animation:vaToast .25s ease-out;
         max-width:320px;direction:rtl}
@@ -127,7 +127,7 @@
     b.id = 'b2c-va-banner';
     if (isDeep) {
       // Deep mode → different gradient + countdown
-      b.style.background = 'linear-gradient(90deg,#00d97e,#22d3ee,#3b9eff)';
+      b.style.background = 'linear-gradient(90deg,var(--g),#22d3ee,#3b9eff)';
     }
     b.innerHTML = `
       <div class="va-msg">

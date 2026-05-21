@@ -54,7 +54,7 @@
       + 'color:rgba(255,255,255,.55);font-size:10px;padding:4px 8px;border-radius:6px;cursor:pointer;'
       + 'font-family:inherit;font-weight:600;transition:all .15s;flex:1;line-height:1.3;}'
       + '.sb-tool-btn:hover{color:#fff;border-color:rgba(167,139,250,.4);}'
-      + '.sb-tool-btn.on{background:rgba(167,139,250,.18);color:#a78bfa;border-color:rgba(167,139,250,.45);}'
+      + '.sb-tool-btn.on{background:rgba(167,139,250,.18);color:var(--p);border-color:rgba(167,139,250,.45);}'
       // Star (favorite) — appearance only when nav-link has class
       + '.sb-star{position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:11px;'
       + 'opacity:0;cursor:pointer;padding:4px 5px;border-radius:4px;'
