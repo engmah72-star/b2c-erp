@@ -147,7 +147,7 @@ async function callModel(key, model, prompt, options) {
 }
 
 export function friendlyError(status, apiMsg, model) {
-  const raw = `\n\n<span style="font-size:11px;color:#5c6878;direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
+  const raw = `\n\n<span style="font-size:var(--fs-sm);color:#5c6878;direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
   const newKeyLink = `<a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f8ef7;font-weight:700">→ مفتاح جديد من AI Studio</a>`;
   if (status === 400 && /API_KEY|invalid/i.test(apiMsg))
     return `🔑 المفتاح غير صحيح — تأكد من نسخه كاملاً.<br>${newKeyLink}${raw}`;
