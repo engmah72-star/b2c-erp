@@ -22,12 +22,14 @@
   const LS_FAVORITES = 'sb_favorites_v1';
   const LS_USAGE     = 'sb_usage_v1';
   const LS_COMPACT   = 'sb_compact_v1';
+  const LS_HIDDEN    = 'sb_hidden_v1';
 
   const getFavs   = () => { try { return JSON.parse(localStorage.getItem(LS_FAVORITES) || '[]'); } catch(_) { return []; } };
   const setFavs   = (a) => { try { localStorage.setItem(LS_FAVORITES, JSON.stringify(a)); } catch(_) {} };
   const getUsage  = () => { try { return JSON.parse(localStorage.getItem(LS_USAGE) || '{}'); } catch(_) { return {}; } };
   const setUsage  = (o) => { try { localStorage.setItem(LS_USAGE, JSON.stringify(o)); } catch(_) {} };
   const isCompact = () => localStorage.getItem(LS_COMPACT) === '1';
+  const isHidden  = () => localStorage.getItem(LS_HIDDEN) === '1';
 
   function pageKey(href) {
     return (href || '').split('/').pop().split('?')[0].split('#')[0].toLowerCase();
@@ -131,6 +133,34 @@
     }
   }
 
+  // ── Apply hidden mode (full hide, desktop only) ──
+  // CSS in shared.css handles the actual hide via @media(min-width:769px).
+  // On mobile, .mob-open + the default slide-off behavior take precedence,
+  // so toggling this class on mobile is a no-op visually (safe).
+  function applyHidden(sidenav, on) {
+    if (!sidenav) return;
+    sidenav.classList.toggle('sb-hidden', on);
+    document.body.classList.toggle('sb-hidden', on);
+    const btn = sidenav.querySelector('.sb-hide-toggle');
+    if (btn) btn.textContent = on ? '👁️‍🗨️ إظهار' : '👁️ إخفاء';
+  }
+
+  // ── Floating reveal button (created once, lives on document.body) ──
+  function ensureShowButton(sidenav) {
+    if (document.querySelector('.sb-show-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'sb-show-btn';
+    btn.type = 'button';
+    btn.title = 'إظهار القائمة';
+    btn.setAttribute('aria-label', 'إظهار القائمة');
+    btn.textContent = '☰';
+    btn.addEventListener('click', () => {
+      try { localStorage.setItem(LS_HIDDEN, '0'); } catch(_) {}
+      applyHidden(sidenav, false);
+    });
+    document.body.appendChild(btn);
+  }
+
   // ── Build toolbar — INSERTED BETWEEN .nav-brand AND .nav-scroll ──
   // ── (i.e., as a sibling INSIDE .sidenav, NOT inside .nav-scroll) ──
   function buildToolbar(sidenav, navScroll) {
@@ -144,6 +174,7 @@
       + '</div>'
       + '<div class="sb-tools-btns">'
       +   '<button class="sb-tool-btn sb-compact-toggle" type="button" title="وضع مضغوط">📌 مضغوط</button>'
+      +   '<button class="sb-tool-btn sb-hide-toggle" type="button" title="إخفاء القائمة">👁️ إخفاء</button>'
       +   '<button class="sb-tool-btn sb-reset-favs" type="button" title="مسح المفضلة">⭐ مسح</button>'
       + '</div>';
     // Insert before .nav-scroll (so it stays even if nav-scroll is rebuilt)
@@ -163,6 +194,15 @@
       const next = !isCompact();
       try { localStorage.setItem(LS_COMPACT, next ? '1' : '0'); } catch(_) {}
       applyCompact(sidenav, next);
+    });
+
+    // Hide toggle (desktop full-hide; reveal via .sb-show-btn floating button)
+    const hideBtn = tools.querySelector('.sb-hide-toggle');
+    applyHidden(sidenav, isHidden());
+    hideBtn.addEventListener('click', () => {
+      const next = !isHidden();
+      try { localStorage.setItem(LS_HIDDEN, next ? '1' : '0'); } catch(_) {}
+      applyHidden(sidenav, next);
     });
 
     // Reset favorites
@@ -324,6 +364,9 @@
   function attach(sidenav, navScroll) {
     // 1) Toolbar — outside .nav-scroll so it survives innerHTML rebuilds
     buildToolbar(sidenav, navScroll);
+
+    // 1b) Floating reveal button on document.body (needed while sidebar hidden)
+    ensureShowButton(sidenav);
 
     // 2) First enhancement
     enhanceLinks(navScroll);
