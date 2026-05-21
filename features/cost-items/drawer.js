@@ -54,6 +54,7 @@
   let _orderId = null;
   let _prodIdx = -1;
   let _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+  let _editIdx = -1; // -1 = creating; >=0 = editing item at this index in order.costItems
   let _pop = null; // current popover element (auto-close on outside click)
 
   // ── DOM references (mounted once) ────────────────────────
@@ -193,9 +194,11 @@
 
         <section class="cid-sect">
           <div class="cid-sect-label">
-            <span>➕ إضافة بند جديد</span>
+            <span>${_editIdx >= 0 ? '✏️ تعديل البند' : '➕ إضافة بند جديد'}</span>
             <span class="cid-line"></span>
-            <span class="cid-hint"><span class="cid-kbd">Enter</span> للإضافة</span>
+            ${_editIdx >= 0
+              ? `<button class="cid-cancel-edit" type="button" data-action="cancel-edit">إلغاء التعديل</button>`
+              : `<span class="cid-hint"><span class="cid-kbd">Enter</span> للإضافة</span>`}
           </div>
 
           <div class="cid-tbl">
@@ -270,13 +273,17 @@
             <span>${fn(dayTotal)} ج</span>
           </div>
           ${dayItems.map(it => `
-            <div class="cid-item-row">
+            <div class="cid-item-row${_editIdx === it._gi ? ' is-editing' : ''}">
               <div class="cid-item-main">
-                <div class="cid-item-name">${getCostIco(it.type)} ${escapeHtml(it.type||'—')}</div>
+                <div class="cid-item-name">${getCostIco(it.type)} ${escapeHtml(it.type||'—')}${it.paid ? ' <span class="cid-paid-tag">مدفوع</span>' : ''}</div>
                 ${it.supplierName ? `<div class="cid-item-sub">🏭 ${escapeHtml(it.supplierName)}</div>` : ''}
                 ${it.note ? `<div class="cid-item-sub">💬 ${escapeHtml(it.note)}</div>` : ''}
               </div>
               <div class="cid-item-amt">${fn(it.total)} ج</div>
+              <div class="cid-item-actions">
+                <button class="cid-item-btn cid-item-btn-edit" type="button" data-action="edit-item" data-gi="${it._gi}" title="تعديل">✏️</button>
+                <button class="cid-item-btn cid-item-btn-del" type="button" data-action="delete-item" data-gi="${it._gi}" title="حذف">✕</button>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -315,7 +322,7 @@
           </button>
         </div>
         <div style="display:flex;justify-content:center">
-          <button class="cid-row-x cid-add" type="button" data-action="submit-draft" aria-label="إضافة">＋</button>
+          <button class="cid-row-x cid-add" type="button" data-action="submit-draft" aria-label="${_editIdx >= 0 ? 'حفظ التعديل' : 'إضافة'}">${_editIdx >= 0 ? '💾' : '＋'}</button>
         </div>
       </div>
     `;
@@ -460,6 +467,15 @@
     });
     _drawer.querySelector('[data-action="submit-draft"]')?.addEventListener('click', submitDraft);
 
+    // edit/delete on existing items
+    _drawer.querySelectorAll('[data-action="edit-item"]').forEach(el => {
+      el.addEventListener('click', () => startEdit(parseInt(el.dataset.gi, 10)));
+    });
+    _drawer.querySelectorAll('[data-action="delete-item"]').forEach(el => {
+      el.addEventListener('click', () => deleteItem(parseInt(el.dataset.gi, 10)));
+    });
+    _drawer.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', cancelEdit);
+
     // supplier input — autocomplete on focus/type
     const supInput = _drawer.querySelector('[data-action="supplier-input"]');
     if(supInput){
@@ -545,9 +561,66 @@
     _draft.supplierName = sug.supplierName || '';
     _draft.total = String(sug.total || '');
     _draft.mode = sug.supplierId || sug.supplierName ? 'ext' : 'int';
+    _editIdx = -1; // suggestions always create new
     render();
     // focus the total field for quick confirm
     setTimeout(() => _drawer.querySelector('[data-cid-field="total"]')?.focus(), 50);
+  }
+
+  // ── edit mode: pre-fill draft row from an existing item ────
+  function startEdit(gi){
+    const c = ctx();
+    const o = c?.getOrder(_orderId);
+    const item = (o?.costItems || [])[gi];
+    if(!item){ toast('⚠️ البند غير موجود', 'err'); return; }
+    if(item.paid){
+      toast('⛔ البند مدفوع — التعديل من اللوحة القديمة فقط (admin only)', 'warn');
+      return;
+    }
+    _editIdx = gi;
+    _draft = {
+      type: item.type || '',
+      supplierId: item.supplierId || '',
+      supplierName: item.supplierName || '',
+      total: String(item.total || ''),
+      mode: item.supplierId ? 'ext' : 'int',
+      note: item.note || '',
+      walletId: '', // wallet deduction does NOT re-trigger on edit (RULE 6 — preserve existing flow)
+    };
+    render();
+    setTimeout(() => _drawer.querySelector('[data-cid-field="total"]')?.focus(), 50);
+  }
+
+  function cancelEdit(){
+    _editIdx = -1;
+    _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+    render();
+  }
+
+  // ── delete: confirms then delegates to legacy window.rmCost ────
+  // rmCost in production.html handles the complex paid-item reversal flow
+  // (notifications, supplier_orders void, payment_request cleanup). We
+  // delegate instead of duplicating that logic.
+  async function deleteItem(gi){
+    const c = ctx();
+    const o = c?.getOrder(_orderId);
+    const item = (o?.costItems || [])[gi];
+    if(!item){ toast('⚠️ البند غير موجود', 'err'); return; }
+    if(typeof window.rmCost !== 'function'){
+      toast('❌ نظام الحذف غير متاح', 'err');
+      return;
+    }
+    if(!item.paid){
+      if(!confirm(`حذف البند: ${item.type || ''} — ${fn(item.total||0)} ج؟`)) return;
+    }
+    // window.rmCost handles its own confirmations for paid items + does
+    // the atomic batch + notifications. We just trigger it.
+    try {
+      await window.rmCost(gi);
+      if(_editIdx === gi) cancelEdit();
+    } catch(e){
+      console.error('cost-items drawer delete failed', e);
+    }
   }
 
   // ── submit ────────────────────────────────────────────────
@@ -591,6 +664,7 @@
     }
 
     const wallets = c.getWallets ? c.getWallets() : [];
+    const isEdit = _editIdx >= 0;
     const result = await actions.recordCostItem({
       db, orderId: _orderId, prodIdx: _prodIdx,
       payload: {
@@ -607,19 +681,22 @@
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid) || '',
       userName: c.getUserName ? c.getUserName() : '',
       wallets,
-      isEdit: false,
-      editIdx: -1,
+      isEdit,
+      editIdx: _editIdx,
     });
 
     if(!result.ok){
       toast('❌ '+(result.errors?.[0] || 'فشل الحفظ'), 'err');
       return;
     }
-    toast(_draft.supplierName
-      ? `✅ تم — ${_draft.supplierName} · ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`
-      : `✅ تم — ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`,
+    toast(isEdit
+      ? `✅ تم التعديل — ${fn(total)} ج`
+      : (_draft.supplierName
+          ? `✅ تم — ${_draft.supplierName} · ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`
+          : `✅ تم — ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`),
       'ok');
-    // Clear draft + re-render with new state (order onSnapshot will update soon)
+    // Clear draft + exit edit mode; onSnapshot will refresh the order soon
+    _editIdx = -1;
     _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
     render();
   }
@@ -658,6 +735,7 @@
     _orderId = orderId;
     _prodIdx = (prodIdx == null || prodIdx < 0) ? -1 : parseInt(prodIdx, 10);
     _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+    _editIdx = -1;
     _open = true;
     render();
     // Animate in
