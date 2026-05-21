@@ -63,7 +63,7 @@
       + '#pwa-install-banner .pwa-actions{display:flex;gap:6px;flex-shrink:0}'
       + '#pwa-install-banner button{border:none;cursor:pointer;font-family:inherit;font-weight:700;'
       + 'padding:7px 13px;border-radius:9px;font-size:12px;transition:opacity .15s}'
-      + '#pwa-install-banner .pwa-btn-install{background:linear-gradient(135deg,#a78bfa,#3b9aff);color:#fff}'
+      + '#pwa-install-banner .pwa-btn-install{background:linear-gradient(135deg,var(--p),#3b9aff);color:#fff}'
       + '#pwa-install-banner .pwa-btn-install:hover{opacity:.9}'
       + '#pwa-install-banner .pwa-btn-dismiss{background:transparent;color:#7878a0;padding:7px 9px}'
       + '#pwa-install-banner .pwa-btn-dismiss:hover{color:#fff}'
