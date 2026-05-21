@@ -19,17 +19,18 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, writeBatch, serverTimestamp }
+import { runTransaction, doc, getDoc, writeBatch, serverTimestamp, collection, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
   buildStageAdvance,
   validatePayment,
   validateRefund,
+  validateCostItem,
   advanceOrderStageWithLock,
   nowStr,
 } from './orders.js';
-import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -345,6 +346,212 @@ export const orderActions = {
       return {
         ok: false,
         errors: [e.message || 'فشل تنفيذ الاسترداد'],
+        warnings: [],
+        orderId,
+      };
+    }
+  },
+
+  /**
+   * recordCostItem — تسجيل أو تعديل بند تكلفة على الأوردر (RULE A1).
+   *
+   * المركزي الوحيد لتسجيل بنود التكلفة في النظام. الصفحات (production.html،
+   * features/cost-items/drawer.js، exec-cost-entry.html...) كلها تنادي هذا
+   * الـ action بدل كتابة writeBatch مباشرة.
+   *
+   * يبني batch واحد ذرّي يحوي:
+   *   • تحديث order.costItems + timeline (+ productionAgent لو غير محدد)
+   *   • خصم من المحفظة + transaction record (لو walletId && !isEdit)
+   *   • supplier_payments (لو walletId && supplierId && !isEdit)
+   *   • supplier_orders (جديد/تحديث/إبطال حسب التغيير)
+   *   • addLedgerToBatch بـ FE.VENDOR_PAYMENT أو FE.GENERAL_EXPENSE (لو !isEdit)
+   *
+   * @param {Object} args
+   * @param {Object} args.db                  — Firestore instance
+   * @param {string} args.orderId
+   * @param {number} args.prodIdx             — index في order.products أو -1 (عام)
+   * @param {Object} args.payload             — { type, total, supplierId, supplierName, note, walletId, paperMeta, isExternal }
+   * @param {string} args.role
+   * @param {string} args.userId
+   * @param {string} args.userName
+   * @param {Array}  [args.wallets=[]]        — قائمة المحافظ للـ validation
+   * @param {boolean}[args.isEdit=false]
+   * @param {number} [args.editIdx=-1]        — index في order.costItems للتعديل
+   * @returns {{ ok, errors, warnings, orderId, costItemId, eventType, action }}
+   */
+  async recordCostItem({
+    db, orderId, prodIdx,
+    payload,
+    role, userId, userName,
+    wallets = [],
+    isEdit = false, editIdx = -1,
+  }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    const v = validateCostItem({ order, payload, role, wallets, isEdit });
+    if (!v.ok) return { ...v, orderId };
+
+    const {
+      type, total: rawTotal,
+      supplierId = '', supplierName = '',
+      note = '', walletId = '',
+      paperMeta = {},
+    } = payload;
+    const total = parseFloat(rawTotal) || 0;
+
+    // ── prepare refs + ids ────────────────────────────────
+    const orderRef = order._ref;
+    const txRef    = (walletId && !isEdit) ? doc(collection(db, 'transactions_v2')) : null;
+    const spRef    = (walletId && !isEdit && supplierId) ? doc(collection(db, 'supplier_payments')) : null;
+
+    const existingItem = isEdit ? (order.costItems || [])[editIdx] : null;
+    const existingId   = existingItem?.costItemId;
+    const costItemId   = existingId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
+
+    // supplier_orders handling (RULE 7 — formal supplier record)
+    const existingSoId    = existingItem?.supplierOrderId || '';
+    const supplierChanged = isEdit && !!existingSoId && (existingItem?.supplierId || '') !== supplierId;
+    const needNewSo       = !!supplierId && (!isEdit || !existingSoId || supplierChanged);
+    const soRef           = needNewSo ? doc(collection(db, 'supplier_orders')) : null;
+    const supplierOrderId = soRef ? soRef.id : (!supplierChanged && existingSoId && supplierId ? existingSoId : '');
+
+    // ── build new item ────────────────────────────────────
+    const newItem = {
+      costItemId,
+      orderId,
+      isExternal: !!supplierId,
+      ...(supplierOrderId ? { supplierOrderId } : {}),
+      type,
+      supplierId,
+      supplierName,
+      prodIdx: prodIdx >= 0 ? prodIdx : null,
+      total,
+      note,
+      ...(paperMeta && Object.keys(paperMeta).length ? { paperMeta } : {}),
+      date: new Date().toISOString().slice(0, 10),
+      addedAt: nowStr(),
+      addedBy: userName,
+      ...(txRef ? { txId: txRef.id, walletId } : {}),
+      ...(spRef ? { spId: spRef.id } : {}),
+    };
+
+    // ── splice into costItems ─────────────────────────────
+    const newCi = [...(order.costItems || [])];
+    if (isEdit && editIdx >= 0) newCi.splice(editIdx, 1, newItem);
+    else newCi.push(newItem);
+
+    // ── build atomic batch ────────────────────────────────
+    const batch = writeBatch(db);
+    const action = isEdit
+      ? `✏️ تعديل بند ${type}: ${total.toLocaleString('ar-EG')} ج`
+      : `💰 ${type}: ${total.toLocaleString('ar-EG')} ج${note ? ' — ' + note : ''}`;
+
+    // 1) order update
+    batch.update(orderRef, {
+      costItems: newCi,
+      ...(!order.productionAgent && userId ? { productionAgent: userId, productionAgentName: userName } : {}),
+      timeline: [...(order.timeline || []), { date: nowStr(), action, by: userName }],
+      updatedAt: serverTimestamp(),
+    });
+
+    // 2) wallet debit + transaction (only new items)
+    if (txRef) {
+      batch.update(doc(db, 'wallets', walletId), { balance: increment(-total) });
+      const walletName = (wallets.find(x => x._id === walletId) || {}).name || '';
+      batch.set(txRef, {
+        type: 'out',
+        walletId, walletName,
+        amount: total,
+        category: type === 'تصميم' ? 'designer_fee' : 'printer_payment',
+        description: `${type}${note ? ' — ' + note : ''} · ${order.clientName || orderId}`,
+        supplierId, supplierName,
+        orderId, orderClient: order.clientName || '',
+        date: new Date().toISOString().slice(0, 10),
+        createdAt: serverTimestamp(),
+        createdBy: userName,
+        source: 'production',
+      });
+      if (spRef) {
+        batch.set(spRef, {
+          supplierId, supplierName,
+          amount: total,
+          orderId, orderClient: order.clientName || '',
+          note: `${type}${note ? ' — ' + note : ''}`,
+          walletId, walletName,
+          date: new Date().toISOString().slice(0, 10),
+          createdAt: serverTimestamp(),
+          createdBy: userName,
+          source: 'production',
+        });
+      }
+    }
+
+    // 3) ledger entry — only new items (edits don't re-emit financial events)
+    const eventType = supplierId ? FE.VENDOR_PAYMENT : FE.GENERAL_EXPENSE;
+    if (!isEdit) {
+      const walletName = walletId ? (wallets.find(x => x._id === walletId) || {}).name || '' : '';
+      addLedgerToBatch(batch, db, eventType, {
+        amount: total,
+        orderId,
+        clientName: order.clientName || '',
+        vendorId: supplierId,
+        vendorName: supplierName,
+        walletId, walletName,
+        notes: `تكلفة تنفيذ — ${type}${note ? ' — ' + note : ''} · ${order.clientName || ''}`,
+        userId: userId || '',
+        userName,
+      });
+    }
+
+    // 4) supplier_orders — new / update / void
+    if (existingSoId && (supplierChanged || (isEdit && !supplierId))) {
+      batch.update(doc(db, 'supplier_orders', existingSoId), {
+        isDeleted: true,
+        voidedAt: serverTimestamp(),
+        voidReason: supplierId ? 'تغيير المورد' : 'تحويل إلى داخلي',
+      });
+    }
+    if (soRef) {
+      batch.set(soRef, {
+        costItemId,
+        orderId, orderRef: order.orderId || orderId.slice(-6),
+        clientName: order.clientName || '',
+        supplierId, supplierName,
+        type, total,
+        note: note || '',
+        status: 'pending',
+        deliveryStatus: 'awaiting',
+        paidAmount: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: userId || '',
+        createdByName: userName,
+        isDeleted: false,
+      });
+    } else if (!supplierChanged && isEdit && existingSoId && supplierId) {
+      batch.update(doc(db, 'supplier_orders', existingSoId), {
+        type, total, note: note || '',
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    // ── commit ────────────────────────────────────────────
+    try {
+      await batch.commit();
+      return {
+        ok: true,
+        errors: [],
+        warnings: v.warnings,
+        orderId,
+        costItemId,
+        eventType: isEdit ? null : eventType,
+        action: isEdit ? 'edit_cost_item' : 'record_cost_item',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل حفظ البند'],
         warnings: [],
         orderId,
       };

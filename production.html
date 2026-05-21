@@ -389,6 +389,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, increment, deleteDoc, addDoc, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { orderActions } from "./order-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
 
@@ -1041,6 +1042,10 @@ window.startCostEdit=function(gi){
   toast('✏️ جاهز للتعديل','');
 };
 
+// Thin wrapper — reads the legacy panel's form fields, builds a payload,
+// and delegates to orderActions.recordCostItem (RULE A1 central action).
+// All financial logic (writeBatch + addLedgerToBatch + supplier_orders +
+// transactions) lives there now — single source of truth.
 window.addCostFromPanel=async function(prodIdx){
   const sfx=prodIdx<0?'g':String(prodIdx);
   const type=document.getElementById('cp-type-'+sfx)?.value||'';
@@ -1061,79 +1066,31 @@ window.addCostFromPanel=async function(prodIdx){
     if(!note&&(pType||pW||pSheets)){note=[pType,pW?pW+'جم':'',pSheets?pSheets+' فرخة':''].filter(Boolean).join(' · ');}
     if(pType||pSheets)paperMeta={paperType:pType,paperWeight:pW,sheets:pSheets,cutSize:pCut,pricePerSheet:pPrice};
   }
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const isEdit=__editCostIdx>=0;
-  // validate wallet balance before deducting
-  if(walletId&&!isEdit){
-    const w=wallets.find(x=>x._id===walletId);
-    if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
-  }
   const supplierId=supOpt?.value||'';
   const supplierName=supOpt?.dataset?.name||'';
-  const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
-  const spRef=walletId&&!isEdit&&supplierId?doc(collection(db,'supplier_payments')):null;
-  const existingId=isEdit?(o.costItems||[])[__editCostIdx]?.costItemId:null;
-  const costItemId=existingId||Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-  // ── Supplier Order (RULE 7: document formal per external cost item) ──
-  const origItem=isEdit?(o.costItems||[])[__editCostIdx]:null;
-  const existingSoId=origItem?.supplierOrderId||'';
-  const supplierChanged=isEdit&&!!existingSoId&&(origItem?.supplierId||'')!==supplierId;
-  const needNewSo=!!supplierId&&(!isEdit||!existingSoId||supplierChanged);
-  const soRef=needNewSo?doc(collection(db,'supplier_orders')):null;
-  const supplierOrderId=soRef?soRef.id:(!supplierChanged&&existingSoId&&supplierId?existingSoId:'');
-  function _applySOToBatch(b){
-    if(existingSoId&&(supplierChanged||(isEdit&&!supplierId)))b.update(doc(db,'supplier_orders',existingSoId),{isDeleted:true,voidedAt:serverTimestamp(),voidReason:supplierId?'تغيير المورد':'تحويل إلى داخلي'});
-    if(soRef)b.set(soRef,{costItemId,orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'',supplierId,supplierName,type,total,note:note||'',status:'pending',deliveryStatus:'awaiting',paidAmount:0,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:currentUser?.uid||'',createdByName:userName,isDeleted:false});
-    else if(!supplierChanged&&isEdit&&existingSoId&&supplierId)b.update(doc(db,'supplier_orders',existingSoId),{type,total,note:note||'',updatedAt:serverTimestamp()});
+  const isEdit=__editCostIdx>=0;
+
+  const result = await orderActions.recordCostItem({
+    db, orderId: activeId, prodIdx,
+    payload: { type, total, supplierId, supplierName, note, walletId, paperMeta, isExternal: !!supplierId },
+    role: currentRole, userId: currentUser?.uid || '', userName,
+    wallets,
+    isEdit, editIdx: __editCostIdx,
+  });
+
+  if (!result.ok) {
+    toast('❌ '+(result.errors?.[0]||'فشل الحفظ'),'err');
+    return;
   }
-  const newItem={costItemId,orderId:activeId,isExternal:!!supplierId,...(supplierOrderId?{supplierOrderId}:{}),type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note,...(Object.keys(paperMeta).length?{paperMeta}:{}),date:new Date().toISOString().slice(0,10),addedAt:nowStr(),addedBy:userName,...(txRef?{txId:txRef.id,walletId}:{}),...(spRef?{spId:spRef.id}:{})};
-  const ci=[...(o.costItems||[])];
-  if(isEdit){ci.splice(__editCostIdx,1,newItem);}else{ci.push(newItem);}
-  try{
-    const action=isEdit?`✏️ تعديل بند ${type}: ${fn(total)} ج`:`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
-    if(txRef){
-      // atomic: order + wallet debit + transaction record
-      const batch=writeBatch(db);
-      batch.update(doc(db,'orders',activeId),{costItems:ci,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-      batch.update(doc(db,'wallets',walletId),{balance:increment(-total)});
-      const walletName=(wallets.find(x=>x._id===walletId)||{}).name||'';
-      batch.set(txRef,{type:'out',walletId,walletName,amount:total,category:type==='تصميم'?'designer_fee':'printer_payment',description:`${type}${note?' — '+note:''} · ${o.clientName||o._id}`,supplierId,supplierName,orderId:activeId,orderClient:o.clientName||'',date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
-      if(spRef){
-        batch.set(spRef,{supplierId,supplierName,amount:total,orderId:activeId,orderClient:o.clientName||'',note:`${type}${note?' — '+note:''}`,walletId,walletName,date:new Date().toISOString().slice(0,10),createdAt:serverTimestamp(),createdBy:userName,source:'production'});
-      }
-      // VENDOR_PAYMENT لو في مورد، GENERAL_EXPENSE لو مفيش (يربط القيد بالمورد رسمياً — RULE 5)
-      const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
-      if(!isEdit) addLedgerToBatch(batch,db,ledgerEvent,{
-        amount:total,orderId:activeId,clientName:o.clientName||'',
-        vendorId:supplierId,vendorName:supplierName,walletId,walletName,
-        notes:`تكلفة تنفيذ — ${type}${newItem.note?' — '+newItem.note:''} · ${o.clientName||''}`,
-        userId:currentUser?.uid||'',userName,
-      });
-      _applySOToBatch(batch);
-      await batch.commit();
-    } else {
-      const nb=writeBatch(db);
-      nb.update(doc(db,'orders',activeId),{costItems:ci,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName}],updatedAt:serverTimestamp()});
-      // VENDOR_PAYMENT لو في مورد، GENERAL_EXPENSE لو مفيش
-      const ledgerEvent2=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
-      if(!isEdit) addLedgerToBatch(nb,db,ledgerEvent2,{
-        amount:total,orderId:activeId,clientName:o.clientName||'',
-        vendorId:supplierId,vendorName:supplierName,
-        notes:`تكلفة تنفيذ — ${type}${newItem.note?' — '+newItem.note:''} · ${o.clientName||''}`,
-        userId:currentUser?.uid||'',userName,
-      });
-      _applySOToBatch(nb);
-      await nb.commit();
-    }
-    // toast
-    if(supplierId&&supplierName){
-      const supTotal=ci.filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-      toast(`✅ ${isEdit?'تعديل':'إضافة'} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
-    } else {
-      toast(isEdit?'✅ تم التعديل':`✅ تم الإضافة${walletId?' · خُصم من المحفظة':''}`,'ok');
-    }
-    _clearCpForm(sfx);
-  }catch(e){toast('❌ '+e.message,'err');}
+  // toast — friendly summary
+  if (supplierId && supplierName) {
+    const o = orders.find(x=>x._id===activeId);
+    const supTotal = (o?.costItems||[]).filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0) + (isEdit?0:total);
+    toast(`✅ ${isEdit?'تعديل':'إضافة'} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
+  } else {
+    toast(isEdit?'✅ تم التعديل':`✅ تم الإضافة${walletId?' · خُصم من المحفظة':''}`,'ok');
+  }
+  _clearCpForm(sfx);
 };
 
 // ══ إغلاق وحفظ التكاليف في سجل المنتجات ══

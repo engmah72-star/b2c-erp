@@ -1244,6 +1244,67 @@ export function validateReturn({ order, reason, lossParty, cost, returnType = 'f
 }
 
 /**
+ * validateCostItem — التحقق من صحة بند تكلفة قبل تسجيله (RULE V1.3)
+ *
+ * يُستخدم من orderActions.recordCostItem ومن addCostFromPanel في
+ * production.html. يفحص: نوع البند، الإجمالي، الـ stage، الصلاحية،
+ * ورصيد المحفظة (لو طُلب خصم وليس edit).
+ *
+ * @param {Object} args
+ * @param {Object} args.order            — الأوردر المستهدف
+ * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta, isExternal }
+ * @param {string} args.role             — دور المستخدم
+ * @param {Array}  [args.wallets=[]]     — قائمة المحافظ (للتحقق من الرصيد)
+ * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
+ * @returns { ok, errors, warnings }
+ */
+export function validateCostItem({ order, payload, role, wallets = [], isEdit = false }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+  if (!payload) return { ok:false, errors:['بيانات البند ناقصة'], warnings:[] };
+
+  const { type = '', total, walletId = '', supplierId = '' } = payload;
+  const amt = parseFloat(total) || 0;
+
+  // النوع
+  if (!type || !type.trim()) errors.push('اختر نوع البند');
+
+  // المبلغ
+  if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
+
+  // الـ stage
+  const cur = order.stage || '';
+  if (cur === 'cancelled') errors.push('لا يمكن تسجيل تكلفة على أوردر ملغي');
+
+  // الصلاحية — admin, operation_manager, production_agent
+  if (role && !['admin', 'operation_manager', 'production_agent'].includes(role)) {
+    errors.push('ليس لديك صلاحية تسجيل بنود تكلفة');
+  }
+
+  // خصم محفظة: تحقق من الرصيد
+  if (walletId && !isEdit) {
+    const w = wallets.find(x => x._id === walletId);
+    if (!w) {
+      errors.push('المحفظة المختارة غير موجودة');
+    } else {
+      const bal = parseFloat(w.balance) || 0;
+      if (bal < amt) {
+        errors.push(`رصيد ${w.name} غير كافٍ (${bal.toLocaleString('ar-EG')} ج)`);
+      }
+    }
+  }
+
+  // تحذير: بند خارجي بدون مورد
+  if (payload.isExternal && !supplierId && !errors.length) {
+    warnings.push('بند خارجي بدون مورد محدد');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
  * validateOrder — التحقق من بيانات إنشاء أوردر جديد (RULE V1.3)
  *
  * @param {Object} orderData — بيانات الأوردر قبل الحفظ
