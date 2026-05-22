@@ -2747,21 +2747,9 @@ const CGRID_STATUS_CLR={
   'مشكلة':'var(--r)','أرشيف':'var(--dim2)','ملغي':'var(--dim)',
 };
 
-function cgridGetDisplayStatus(o){
-  if(o.stage==='cancelled') return 'ملغي';
-  if(o.stage==='archived') return 'أرشيف';
-  if(o.paymentStatus==='returned'||o.shipStage==='returned') return 'مرتجع كامل';
-  if(o.returnType==='partial') return 'مرتجع جزئي';
-  if(o.hasProblem) return 'مشكلة';
-  if((o.paymentStatus==='paid')&&['shipping','delivered'].includes(o.stage)) return 'تم التحصيل';
-  if(o.stage==='shipping'){
-    if(o.shipStage==='delivered') return 'تحت التحصيل';
-    if(o.shipStage==='shipped') return 'في الشحن';
-    if(o.shipStage==='ready') return 'جاهز للشحن';
-    return 'في الشحن';
-  }
-  return {design:'تصميم',printing:'طباعة',production:'تنفيذ',delivered:'تم التسليم',shipping:'في الشحن'}[o.stage]||o.stage||'—';
-}
+// God-page decomp PR-14: cgrid pure data extracted to clients-data.js
+// (window.cgridGetDisplayStatus / cgridFilter / cgridSort / cgridExportCSV).
+// The in-page `cgridGetDisplayStatus` symbol now resolves to the window export.
 
 let __cgSort={field:'createdAt',dir:-1};
 let __cgSel=new Set();
@@ -2769,62 +2757,24 @@ let __cgEditRows=new Set();
 let __cgEmpPopulated=false;
 let __cgGovPopulated=false;
 
+// God-page decomp PR-14: read DOM controls + delegate to clients-data.js.
 function cgridGetFiltered(){
-  const q=(document.getElementById('cg-search')?.value||'').toLowerCase().trim();
-  const fStage=document.getElementById('cg-f-stage')?.value||'';
-  const fEmp=document.getElementById('cg-f-emp')?.value||'';
-  const fGov=document.getElementById('cg-f-gov')?.value||'';
-  const fPeriod=document.getElementById('cg-f-period')?.value||'';
-  const fRem=document.getElementById('cg-f-rem')?.value||'';
-  const fProb=document.getElementById('cg-f-prob')?.value||'';
-  const now2=new Date();
-  const startDay=new Date(now2.getFullYear(),now2.getMonth(),now2.getDate());
-  const startWeek=new Date(+startDay-(now2.getDay()||7)*864e5);
-  const startMonth=new Date(now2.getFullYear(),now2.getMonth(),1);
-  return allOrders.filter(o=>{
-    if(q){
-      const hay=[(o.clientName||''),(o.clientPhone||''),(o.orderId||''),(o.clientBusiness||o.job||''),(o.product||'')].join(' ').toLowerCase();
-      if(!hay.includes(q)) return false;
-    }
-    if(fStage&&cgridGetDisplayStatus(o)!==fStage) return false;
-    if(fEmp&&o.assignedTo!==fEmp&&o.designerId!==fEmp&&o.productionAgent!==fEmp) return false;
-    if(fGov){const g=o.shipGov||o.clientGov||'';if(g!==fGov) return false;}
-    if(fPeriod){
-      const ts=o.createdAt?.toDate?o.createdAt.toDate():(o.createdAt?.seconds?new Date(o.createdAt.seconds*1000):null);
-      if(!ts) return false;
-      if(fPeriod==='today'&&ts<startDay) return false;
-      if(fPeriod==='week'&&ts<startWeek) return false;
-      if(fPeriod==='month'&&ts<startMonth) return false;
-    }
-    const rem=calcRem(o);
-    if(fRem==='has_rem'&&rem<=0) return false;
-    if(fRem==='no_rem'&&rem>0) return false;
-    if(fProb==='has_prob'&&!o.hasProblem) return false;
-    if(fProb==='has_ret'&&!(o.paymentStatus==='returned'||o.shipStage==='returned')) return false;
-    return true;
+  return cgridFilter({
+    orders: allOrders,
+    calcRem,
+    criteria: {
+      q:      document.getElementById('cg-search')?.value || '',
+      stage:  document.getElementById('cg-f-stage')?.value || '',
+      emp:    document.getElementById('cg-f-emp')?.value || '',
+      gov:    document.getElementById('cg-f-gov')?.value || '',
+      period: document.getElementById('cg-f-period')?.value || '',
+      rem:    document.getElementById('cg-f-rem')?.value || '',
+      prob:   document.getElementById('cg-f-prob')?.value || '',
+    },
   });
 }
-
 function cgridGetSorted(data){
-  const {field,dir}=__cgSort;
-  return [...data].sort((a,b)=>{
-    let av,bv;
-    if(field==='createdAt'){
-      av=a.createdAt?.seconds||(a.createdAt?.toDate?.().getTime()/1000)||0;
-      bv=b.createdAt?.seconds||(b.createdAt?.toDate?.().getTime()/1000)||0;
-    } else if(field==='rem'){av=calcRem(a);bv=calcRem(b);}
-    else if(field==='cost'){
-      av=(a.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(a.totalCost)||0);
-      bv=(b.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(b.totalCost)||0);
-    }else if(field==='profit'){
-      const costA=(a.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(a.totalCost)||0);
-      const costB=(b.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)||(parseFloat(b.totalCost)||0);
-      av=(parseFloat(a.totalPaid)||parseFloat(a.paid)||parseFloat(a.deposit)||0)-costA;
-      bv=(parseFloat(b.totalPaid)||parseFloat(b.paid)||parseFloat(b.deposit)||0)-costB;
-    }else if(field==='salePrice'||field==='paid'){av=parseFloat(a[field])||0;bv=parseFloat(b[field])||0;}
-    else{av=(a[field]||'').toString();bv=(b[field]||'').toString();}
-    return av<bv?-dir:av>bv?dir:0;
-  });
+  return cgridSort({ data, sort: __cgSort, calcRem });
 }
 
 // Debounced wrapper for the search input — skips intermediate renders
@@ -3171,19 +3121,10 @@ window.cgridBulkAction=async function(action){
   }
 };
 
+// God-page decomp PR-14: CSV generation extracted to clients-data.js
+// (window.cgridExportCSV). Wrapper does the DOM download + toast only.
 function cgridExportSelected(ords){
-  const header=['رقم الأوردر','العميل','الهاتف','الشركة','الخدمة','الموظف','الإجمالي','المدفوع','المتبقي','الحالة','تاريخ الإنشاء','مشكلة؟','مرتجع؟'];
-  const rows=ords.map(o=>[
-    o.orderId||o._id.slice(-6),o.clientName||'',o.clientPhone||'',o.clientBusiness||o.job||'',
-    o.products?.map(p=>p.name).join('+')||o.product||'',
-    o.csName||o.designerName||'',
-    (parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0),
-    parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0,
-    calcRem(o),cgridGetDisplayStatus(o),o.createdDate||'',
-    o.hasProblem?'نعم':'لا',
-    (o.paymentStatus==='returned'||o.shipStage==='returned')?'نعم':'لا'
-  ]);
-  const csv=[header,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const csv=cgridExportCSV({orders:ords,calcRem});
   const a=document.createElement('a');
   a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
   a.download='control-grid.csv';a.click();
