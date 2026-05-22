@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, writeBatch, serverTimestamp }
+import { runTransaction, doc, getDoc, getDocs, collection, query, where, writeBatch, serverTimestamp, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -41,7 +41,7 @@ import {
   buildSettlementUpdates,
   normalizeShipStage,
 } from './orders.js';
-import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -829,20 +829,25 @@ export const orderActions = {
   },
 
   /**
-   * تسجيل مرتجع كامل → RETURN_LOSS (+ optional CUSTOMER_REFUND, SHIPPING_SETTLEMENT_REVERSAL).
-   * يضع shipStage='returned_full' (terminal).
+   * تسجيل مرتجع كامل — ATOMIC single-batch operation (RULE F3).
+   * يجمع في batch واحد:
+   *   1. shipping_returns audit doc
+   *   2. order update (shipStage='returned_full', paymentStatus='returned', flags reset)
+   *   3. settlement reversal (لو shipSettled=true) — wallet + tx + ledger
+   *   4. deposit reversal (لو في deposit/totalPaid مدفوع للأوردر) — wallet + tx + ledger
+   *   5. all-collections reversal — يستعلم transactions_v2 (category in [collection,
+   *      collection_adjustment]) ويعكس كل tx على محفظتها
+   *   6. RETURN_LOSS ledger (لو cost>0)
    *
    * @param {string} args.lossParty — 'client' | 'company' | 'shipper'
-   * @param {number} args.cost      — تكلفة الخسارة
-   * @param {string} [args.walletId] — للـ RETURN_LOSS
-   * @param {string} [args.refundAmount] — لو نسترد للعميل
-   * @param {string} [args.refundWalletId] — محفظة الاسترداد
+   * @param {number} args.cost      — تكلفة الخسارة (لـ RETURN_LOSS)
+   * @param {string} [args.companyName] — اسم شركة الشحن (للـ description)
+   * @param {string} [args.reasonLabel] — Arabic label للسبب (للـ audit)
    */
   async markFullReturn({
     db, orderId, role, userId, userName,
-    reason = '', lossParty = '', cost = 0, note = '',
-    walletId = '', walletName = '',
-    refundAmount = 0, refundWalletId = '', refundWalletName = '',
+    reason = '', reasonLabel = '', lossParty = '', cost = 0, note = '',
+    companyName = '',
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
@@ -852,67 +857,211 @@ export const orderActions = {
 
     const now = nowStr();
     const lossAmt = parseFloat(cost) || 0;
-    const refAmt = parseFloat(refundAmount) || 0;
+    const settledAmt = parseFloat(order.shipSettledAmount) || 0;
+    const isManualSettled = order.shipSettled && order.shipSettledManual;
+    const isRealSettled = order.shipSettled && !isManualSettled;
 
     try {
-      // 1) خسارة المرتجع (لو cost>0 و walletId)
-      if (lossAmt > 0 && walletId) {
-        await dispatchFinancialEvent(db, FE.RETURN_LOSS, {
-          orderId,
-          amount: lossAmt,
-          walletId, walletName,
-          clientId: order.clientId || '', clientName: order.clientName || '',
-          note: `خسارة مرتجع — ${reason || ''}`,
-          userId: userId || '', userName: userName || '',
-        });
+      // ── PRE-FETCH (queries لا تعمل داخل writeBatch) ──
+      // عربون: مبلغ مدفوع للأوردر باستثناء التسوية
+      const totalPaidNow = parseFloat(order.totalPaid) || parseFloat(order.deposit) || 0;
+      const depAmt = Math.max(0, totalPaidNow - settledAmt);
+      let depWalletId = order.depositWalletId || order.walletId || '';
+      if (!depWalletId && depAmt > 0) {
+        const depSnap = await getDocs(query(
+          collection(db, 'transactions_v2'),
+          where('orderId', '==', orderId),
+          where('category', '==', 'deposit'),
+        ));
+        depWalletId = depSnap.docs[0]?.data()?.walletId || '';
       }
+      // كل التحصيلات + تعديلاتها لعكسها
+      const colSnap = await getDocs(query(
+        collection(db, 'transactions_v2'),
+        where('orderId', '==', orderId),
+        where('category', '==', 'collection'),
+      ));
+      const adjSnap = await getDocs(query(
+        collection(db, 'transactions_v2'),
+        where('orderId', '==', orderId),
+        where('category', '==', 'collection_adjustment'),
+      ));
+      const colTxDocs = [...colSnap.docs, ...adjSnap.docs];
 
-      // 2) استرداد العميل (لو refundAmount>0)
-      if (refAmt > 0 && refundWalletId) {
-        await dispatchFinancialEvent(db, FE.CUSTOMER_REFUND, {
-          orderId,
-          clientId: order.clientId || '', clientName: order.clientName || '',
-          walletId: refundWalletId, walletName: refundWalletName,
-          amount: refAmt,
-          orderData: {
-            totalPaid: parseFloat(order.totalPaid) || 0,
-            salePrice: parseFloat(order.salePrice) || 0,
-            discount: parseFloat(order.discount) || 0,
-            customerShipFee: parseFloat(order.customerShipFee) || 0,
-          },
-          note: `استرداد مرتجع — ${reason || ''}`,
-          userId: userId || '', userName: userName || '',
-        });
-      }
+      const lossLabel = lossParty === 'client' ? 'العميل'
+                      : lossParty === 'company' ? 'الشركة'
+                      : 'شركة الشحن';
+      const coName = companyName || order.shipCompanyName || '';
 
-      // 3) update الأوردر — shipStage='returned_full' + paymentStatus='returned'
+      // ── BUILD SINGLE ATOMIC BATCH ──
       const batch = writeBatch(db);
+
+      // 1. shipping_returns audit
+      const retRef = doc(collection(db, 'shipping_returns'));
+      const fullNote = [reasonLabel, note].filter(Boolean).join(' — ');
+      batch.set(retRef, {
+        orderId, companyName: coName,
+        clientName: order.clientName || '',
+        cost: lossAmt, note: fullNote,
+        reason, reasonLabel, lossParty,
+        returnType: 'full',
+        status: 'returned', date: now,
+        createdBy: userId || '', createdByName: userName || '',
+        createdAt: serverTimestamp(),
+      });
+
+      // 2. order update
       batch.update(order._ref, {
         shipStage: 'returned_full',
         paymentStatus: 'returned',
+        totalPaid: 0, deposit: 0, remaining: 0,
+        ...(order.shipSettled ? { shipSettled: false, shipSettledAmount: 0, shipSettledManual: false } : {}),
         returnReason: reason || '',
         returnLossParty: lossParty,
         returnCost: lossAmt,
-        returnRefundAmount: refAmt,
         returnNote: note || '',
         returnedAt: now,
         returnedBy: userName || '',
         timeline: [
           ...(order.timeline || []),
-          {
-            date: now,
-            action: `↩️ مرتجع كامل — ${reason || ''} — خسارة ${lossAmt.toLocaleString('ar-EG')} ج على ${lossParty}${refAmt > 0 ? ` — استرداد ${refAmt.toLocaleString('ar-EG')} ج` : ''}`,
-            by: userName || '', byId: userId || '',
-          },
+          { date: now, action: `↩️ مرتجع من ${coName} — ${reasonLabel || reason || ''} — يتحمل: ${lossLabel}${note ? ' — ' + note : ''}`, by: userName || '', byId: userId || '' },
         ],
         updatedAt: serverTimestamp(),
       });
+
+      // 3. settlement reversal (real settlement = wallet movement happened)
+      if (isRealSettled && settledAmt > 0) {
+        const settledWId = order.shipSettledWalletId || '';
+        if (settledWId) {
+          batch.update(doc(db, 'wallets', settledWId), { balance: increment(-settledAmt) });
+        }
+        const revTxRef = doc(collection(db, 'transactions_v2'));
+        batch.set(revTxRef, {
+          type: 'out', amount: settledAmt,
+          description: `↩️ عكس تسوية مرتجع — ${order.clientName || ''} — ${order.orderId || ''}`,
+          category: 'settlement_reversal',
+          orderId,
+          clientName: order.clientName || '',
+          shipCompanyName: coName,
+          walletId: settledWId,
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+        });
+        addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT_REVERSAL', {
+          amount: settledAmt,
+          walletId: settledWId,
+          walletName: '',
+          orderId,
+          clientName: order.clientName || '',
+          notes: `عكس تسوية مرتجع — ${order.clientName || ''} — ${coName}`,
+          userId: userId || '', userName: userName || '',
+        });
+      } else if (isManualSettled && settledAmt > 0) {
+        // Manual settled (لم تمر بمحفظة) → ledger flag-reversal فقط
+        addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT_REVERSAL', {
+          amount: settledAmt,
+          walletId: '', walletName: '',
+          orderId,
+          clientName: order.clientName || '',
+          vendorId: '', vendorName: coName,
+          notes: `عكس تسوية يدوية (manual) لمرتجع — ${order.clientName || ''} — ${coName}`,
+          userId: userId || '', userName: userName || '',
+        });
+      }
+
+      // 4. deposit reversal
+      if (depAmt > 0 && depWalletId) {
+        batch.update(doc(db, 'wallets', depWalletId), { balance: increment(-depAmt) });
+        batch.set(doc(collection(db, 'transactions_v2')), {
+          type: 'out', amount: depAmt,
+          description: `استرداد عربون مرتجع — ${order.clientName || ''}`,
+          category: 'deposit_reversal',
+          orderId,
+          clientName: order.clientName || '',
+          walletId: depWalletId,
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+        });
+        addLedgerToBatch(batch, db, 'CUSTOMER_REFUND', {
+          amount: depAmt,
+          walletId: depWalletId, walletName: '',
+          orderId,
+          clientName: order.clientName || '',
+          notes: `استرداد عربون مرتجع — ${order.clientName || ''} — ${coName}`,
+          userId: userId || '', userName: userName || '',
+        });
+      }
+
+      // 5. all-collections reversal (type-aware للـ collection_adjustment السالب)
+      for (const tx of colTxDocs) {
+        const d = tx.data();
+        const amt = parseFloat(d.amount) || 0;
+        const wid = d.walletId;
+        if (amt > 0 && wid) {
+          const isIn = d.type === 'in';
+          batch.update(doc(db, 'wallets', wid), { balance: increment(isIn ? -amt : amt) });
+          const rRef = doc(collection(db, 'transactions_v2'));
+          batch.set(rRef, {
+            type: isIn ? 'out' : 'in', amount: amt,
+            description: `↩️ عكس ${d.category === 'collection_adjustment' ? 'تعديل تحصيل' : 'تحصيل'} مرتجع — ${order.clientName || ''} — ${order.orderId || ''}`,
+            category: 'collection_reversal',
+            orderId,
+            clientName: order.clientName || '',
+            walletId: wid,
+            walletName: d.walletName || '',
+            isReversal: true, reversesTxId: tx.id,
+            date: now,
+            createdBy: userId || '', createdByName: userName || '',
+            createdAt: serverTimestamp(),
+            ...approvalFields(),
+          });
+          addLedgerToBatch(batch, db, isIn ? 'CUSTOMER_REFUND' : 'CUSTOMER_PAYMENT', {
+            amount: amt,
+            walletId: wid, walletName: d.walletName || '',
+            orderId,
+            clientName: order.clientName || '',
+            notes: `عكس ${d.category || 'collection'} (مرتجع) — ${order.clientName || ''} — ${coName}`,
+            userId: userId || '', userName: userName || '',
+          });
+        }
+      }
+
+      // 6. RETURN_LOSS (لو cost>0)
+      if (lossAmt > 0) {
+        batch.set(doc(collection(db, 'transactions_v2')), {
+          type: 'out', amount: lossAmt,
+          description: `تكلفة مرتجع — ${order.clientName || ''} — ${coName}`,
+          category: 'return_cost',
+          orderId,
+          clientName: order.clientName || '',
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+        });
+        addLedgerToBatch(batch, db, 'RETURN_LOSS', {
+          amount: lossAmt,
+          walletId: '', walletName: '',
+          orderId,
+          clientName: order.clientName || '',
+          notes: `تكلفة مرتجع — ${order.clientName || ''} — ${coName}`,
+          userId: userId || '', userName: userName || '',
+        });
+      }
+
+      // ── COMMIT ATOMIC ──
       await batch.commit();
 
       return {
         ok:true, errors:[], warnings:v.warnings,
         orderId, action:'mark_full_return',
-        lossAmount: lossAmt, refundAmount: refAmt,
+        lossAmount: lossAmt,
+        settlementReversed: isRealSettled || isManualSettled,
+        settlementReversedAmount: settledAmt,
+        depositReversed: depAmt > 0,
+        depositReversedAmount: depAmt,
+        collectionsReversed: colTxDocs.length,
       };
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تسجيل المرتجع الكامل'], warnings:[], orderId };
@@ -920,79 +1069,149 @@ export const orderActions = {
   },
 
   /**
-   * تسجيل مرتجع جزئي → RETURN_LOSS (+ optional salePrice delta).
-   * يضع shipStage='returned_partial' (غير terminal — الأوردر يكمل على الباقي).
+   * تسجيل مرتجع جزئي — ATOMIC single-batch operation (RULE F3).
+   * يجمع في batch واحد:
+   *   1. shipping_returns audit doc (returnType='partial' + returnedItems)
+   *   2. order update: products[] (qty مخفضة)، salePrice، totalPaid، remaining
+   *   3. refund للعميل (لو refundFromWallet>0) — wallet + tx + CUSTOMER_REFUND ledger
+   *   4. RETURN_LOSS ledger (لو cost>0)
+   * الأوردر يبقى نشط (غير terminal) — shipStage='returned_partial'.
    *
-   * @param {Array<{idx, qty, reason?}>} args.returnedItems
-   * @param {number} args.lossCost
-   * @param {string} args.lossParty
-   * @param {number} [args.salePriceDelta] — مقدار خصم السعر (سالب)
+   * @param {Array<{prodIdx, name, productId, unitPrice, returnedQty, lineTotal}>} args.returnedItems
+   * @param {Object[]} [args.newProducts] — قائمة المنتجات بعد تخفيض الكمية (يحسبها الـ caller)
+   * @param {number}   [args.newSale]     — السعر الجديد بعد المرتجع
+   * @param {number}   args.refundAmount  — إجمالي المرتجع المالي
+   * @param {number}   [args.refundFromWallet] — كم منه يُسترد فعلياً من المحفظة
+   * @param {string}   [args.refundWalletId]   — محفظة الاسترداد
+   * @param {number}   [args.cost]        — تكلفة الخسارة (للـ RETURN_LOSS)
+   * @param {string}   [args.lossParty]
+   * @param {string}   [args.companyName]
    */
   async markPartialReturn({
     db, orderId, role, userId, userName,
-    returnedItems = [], lossCost = 0, lossParty = '', salePriceDelta = 0,
-    walletId = '', walletName = '', note = '',
+    returnedItems = [], newProducts = null, newSale = null,
+    refundAmount = 0, refundFromWallet = 0, refundWalletId = '', refundWalletName = '',
+    cost = 0, lossParty = '', reason = '', reasonLabel = '', note = '',
+    companyName = '',
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
+    // Validator يقبل {idx, qty} — نبني shape مبسط من الـ returnedItems الأصلية
+    const simpleItems = returnedItems.map(it => ({
+      idx: Number(it.prodIdx ?? it.idx),
+      qty: Number(it.returnedQty ?? it.qty) || 0,
+      reason: it.reason || '',
+    }));
     const v = validatePartialReturn({
-      order, returnedItems, lossCost, lossParty, salePriceDelta, role,
+      order, returnedItems: simpleItems,
+      lossCost: cost, lossParty, salePriceDelta: -(parseFloat(refundAmount) || 0),
+      role,
     });
     if (!v.ok) return { ...v, orderId };
 
     const now = nowStr();
-    const lossAmt = parseFloat(lossCost) || 0;
-    const delta = parseFloat(salePriceDelta) || 0;
+    const lossAmt = parseFloat(cost) || 0;
+    const refAmt = parseFloat(refundAmount) || 0;
+    const refFromWallet = parseFloat(refundFromWallet) || 0;
+    const coName = companyName || order.shipCompanyName || '';
+
+    // حسب payment fields الجديدة (لو الـ caller لم يمررها)
+    const oldPaid = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+    const newPaid = Math.max(0, oldPaid - refFromWallet);
+    const computedNewSale = newSale != null ? Math.max(0, parseFloat(newSale)) : Math.max(0, (parseFloat(order.salePrice) || 0) - refAmt);
+    const custFee = parseFloat(order.customerShipFee) || 0;
+    const disc = parseFloat(order.discount) || 0;
+    const newTotal = Math.max(0, computedNewSale + custFee - disc);
+    const newRem = Math.max(0, newTotal - newPaid);
+    const paymentStatus = newRem <= 0 ? (newPaid > 0 ? 'paid' : 'pending') : (newPaid > 0 ? 'partial' : 'pending');
 
     try {
-      // 1) خسارة المرتجع الجزئي (لو cost>0)
-      if (lossAmt > 0 && walletId) {
-        await dispatchFinancialEvent(db, FE.RETURN_LOSS, {
+      const batch = writeBatch(db);
+
+      // 1) shipping_returns audit
+      const retRef = doc(collection(db, 'shipping_returns'));
+      const fullNote = [reasonLabel, note].filter(Boolean).join(' — ');
+      batch.set(retRef, {
+        orderId, companyName: coName,
+        clientName: order.clientName || '',
+        cost: lossAmt, note: fullNote,
+        reason, reasonLabel, lossParty,
+        returnType: 'partial',
+        returnedItems,
+        refundAmount: refAmt, refundFromWallet: refFromWallet,
+        walletId: refundWalletId || '',
+        status: 'returned', date: now,
+        createdBy: userId || '', createdByName: userName || '',
+        createdAt: serverTimestamp(),
+      });
+
+      // 2) order update — يفضل نشط
+      const lossLabel = lossParty === 'client' ? 'العميل'
+                      : lossParty === 'company' ? 'الشركة'
+                      : 'شركة الشحن';
+      const orderUpdateFields = {
+        salePrice: computedNewSale,
+        totalPaid: newPaid,
+        remaining: newRem,
+        paymentStatus,
+        shipStage: 'returned_partial',
+        timeline: [
+          ...(order.timeline || []),
+          { date: now, action: `↩️ مرتجع جزئي (${returnedItems.length} منتج · ${refAmt.toLocaleString('ar-EG')} ج) — ${reasonLabel || reason || ''} — ${lossLabel}${note ? ' — ' + note : ''}`, by: userName || '', byId: userId || '' },
+        ],
+        updatedAt: serverTimestamp(),
+      };
+      if (Array.isArray(newProducts)) orderUpdateFields.products = newProducts;
+      batch.update(order._ref, orderUpdateFields);
+
+      // 3) refund للعميل (لو refundFromWallet > 0)
+      if (refFromWallet > 0 && refundWalletId) {
+        batch.update(doc(db, 'wallets', refundWalletId), { balance: increment(-refFromWallet) });
+        batch.set(doc(collection(db, 'transactions_v2')), {
+          type: 'out', amount: refFromWallet,
+          description: `استرداد مرتجع جزئي — ${order.clientName || ''}`,
+          category: 'partial_return_refund',
           orderId,
-          amount: lossAmt,
-          walletId, walletName,
-          clientId: order.clientId || '', clientName: order.clientName || '',
-          note: `خسارة مرتجع جزئي — ${returnedItems.length} منتج`,
+          clientName: order.clientName || '',
+          walletId: refundWalletId, walletName: refundWalletName || '',
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+          ...approvalFields(),
+        });
+        addLedgerToBatch(batch, db, 'CUSTOMER_REFUND', {
+          amount: refFromWallet,
+          walletId: refundWalletId, walletName: refundWalletName || '',
+          orderId,
+          clientName: order.clientName || '',
+          notes: `استرداد مرتجع جزئي — ${order.clientName || ''}`,
           userId: userId || '', userName: userName || '',
         });
       }
 
-      // 2) update الأوردر — shipStage='returned_partial' + cumulative returnedItems + salePrice adjust
-      const oldSale = parseFloat(order.salePrice) || 0;
-      const newSale = Math.max(0, oldSale + delta); // delta عادة سالبة
-      const oldItems = Array.isArray(order.returnedItems) ? order.returnedItems : [];
-      const mergedItems = [...oldItems, ...returnedItems.map(it => ({
-        idx: Number(it.idx),
-        qty: Number(it.qty) || 0,
-        reason: it.reason || '',
-        at: now,
-      }))];
-      const oldPartialLoss = parseFloat(order.partialReturnLoss) || 0;
+      // 4) RETURN_LOSS (لو cost>0)
+      if (lossAmt > 0) {
+        addLedgerToBatch(batch, db, 'RETURN_LOSS', {
+          amount: lossAmt,
+          walletId: '', walletName: '',
+          orderId,
+          clientName: order.clientName || '',
+          notes: `تكلفة مرتجع جزئي — ${returnedItems.length} منتج`,
+          userId: userId || '', userName: userName || '',
+        });
+      }
 
-      const batch = writeBatch(db);
-      batch.update(order._ref, {
-        shipStage: 'returned_partial',
-        salePrice: newSale,
-        returnedItems: mergedItems,
-        partialReturnLoss: oldPartialLoss + lossAmt,
-        timeline: [
-          ...(order.timeline || []),
-          {
-            date: now,
-            action: `↩️ مرتجع جزئي — ${returnedItems.length} منتج — خسارة ${lossAmt.toLocaleString('ar-EG')} ج${delta !== 0 ? ` — تعديل السعر ${delta.toLocaleString('ar-EG')} ج` : ''}${note ? ' — ' + note : ''}`,
-            by: userName || '', byId: userId || '',
-          },
-        ],
-        updatedAt: serverTimestamp(),
-      });
       await batch.commit();
 
       return {
         ok:true, errors:[], warnings:v.warnings,
         orderId, action:'mark_partial_return',
-        itemsCount: returnedItems.length, lossAmount: lossAmt, salePriceDelta: delta,
-        newSalePrice: newSale,
+        itemsCount: returnedItems.length,
+        refundAmount: refAmt,
+        refundFromWallet: refFromWallet,
+        lossAmount: lossAmt,
+        newSalePrice: computedNewSale,
       };
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تسجيل المرتجع الجزئي'], warnings:[], orderId };
