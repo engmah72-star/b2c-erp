@@ -448,6 +448,8 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn, buildSettlementUpdates } from "./orders.js";
+import { shippingActions } from "./shipping-actions.js";
+import { orderActions } from "./order-actions.js";
 // ══ State ══
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
@@ -1039,106 +1041,20 @@ window.saveSettle=async function(){
   if(btn){btn.disabled=true;btn.textContent='...';}
 
   try{
-    const now=nowStr();
     const w=wallets.find(x=>x._id===wId);
-
-    // ══ Atomic Transaction (مع قفل تفاؤلي على المحفظة والأوردرات) ══
-    // RULE 3 + إغلاق ثغرة double-payment: قراءة الأوردرات داخل transaction ورفض المسوّى مسبقًا
-    // Settle-Fix #4: buildSettlementUpdates computed inside the tx on fresh
-    // snapshots so the per-order math uses authoritative state.
-    await runTransaction(db,async tx=>{
-      // ── 1) كل القراءات أولًا (متطلب Firestore: reads قبل writes) ──
-      const walletRef=doc(db,'wallets',wId);
-      const walletSnap=await tx.get(walletRef);
-      if(!walletSnap.exists())throw new Error('المحفظة غير موجودة');
-      const bb=parseFloat(walletSnap.data().balance)||0;
-
-      const orderRefs=selectedIds.map(oid=>doc(db,'orders',oid));
-      const orderSnaps=await Promise.all(orderRefs.map(r=>tx.get(r)));
-      const orderItems=[];
-      for(let i=0;i<orderSnaps.length;i++){
-        const snap=orderSnaps[i];
-        if(!snap.exists())throw new Error(`أوردر ${selectedIds[i].slice(-6)} غير موجود`);
-        const data=snap.data();
-        if(data.shipSettled===true){
-          const label=data.orderId||selectedIds[i].slice(-6);
-          throw new Error(`⛔ أوردر ${label} مسوّى بالفعل — أعد فتح الشاشة`);
-        }
-        orderItems.push({ref:orderRefs[i],data:{...data,_id:selectedIds[i]}});
-      }
-
-      // ── Compute settlement spec on FRESH data (Settle-Fix #4) ──
-      // Canonical formula: per-order expected = max(0, shipCollected − shippingCost)
-      // Proportional distribution of `amount` across orders.
-      const freshOrders = orderItems.map(it => it.data);
-      const spec = buildSettlementUpdates({
-        orders: freshOrders,
-        actualAmount: amount,
-        userName,
-        companyName: settleCompanyName,
-        diffReasonLabel: diffReasonLabel || '',
-        diffNote,
-      });
-      if (!spec.ok) throw new Error(spec.errors[0] || 'خطأ في بناء التسوية');
-      const expectedAmount = spec.summary.sumExpected;
-      const difference = spec.summary.diff;
-
-      // ── 2) كل الكتابات بعد ذلك ──
-      // محفظة
-      tx.update(walletRef,{balance:increment(amount)});
-
-      // transaction_v2 — uses spec's authoritative expected/diff (not cached)
-      const txRef=doc(collection(db,'transactions_v2'));
-      tx.set(txRef,{
-        walletId:wId,type:'in',amount,fees:0,
-        description:`تسوية شحن — ${settleCompanyName}`,
-        category:'shipping_settlement',
-        companyName:settleCompanyName,orderIds:selectedIds,
-        expectedAmount,difference,
-        diffReason,diffReasonLabel,diffNote,
-        balanceBefore:bb,balanceAfter:bb+amount,
-        note:gv('settle-ref'),date:now,
-        createdBy:currentUser.uid,createdByName:userName,
-        createdAt:serverTimestamp(),
-        ...approvalFields()
-      });
-
-      // shipping_settlements
-      const settleRef=doc(collection(db,'shipping_settlements'));
-      tx.set(settleRef,{
-        companyName:settleCompanyName,amount,
-        orderIds:selectedIds,expectedAmount,
-        difference,diffReason,diffReasonLabel,diffNote,
-        walletId:wId,walletName:w?.name||'',
-        note:gv('settle-ref'),date:now,txId:txRef.id,
-        createdBy:currentUser.uid,createdByName:userName,
-        createdAt:serverTimestamp()
-      });
-
-      // كل أوردر — استخدم spec.updates مرتبة بنفس ترتيب orderItems
-      for(let i=0;i<orderItems.length;i++){
-        const item=orderItems[i];
-        const u=spec.updates[i];
-        const o=item.data;
-        const tlEntry={date:now,action:u.timelineEntry.action,by:userName};
-        tx.update(item.ref,{
-          ...u.fields,                       // shipSettled, shipSettledAmount (= share),
-                                             // shipSettledExpected, shipSettledDiff,
-                                             // totalPaid, remaining, paymentStatus
-          shipSettledWalletId:wId,
-          timeline:[...(o.timeline||[]),tlEntry],
-          updatedAt:serverTimestamp()
-        });
-      }
-
-      // Ledger — Transaction object يستوفي واجهة batch (set/update)
-      addLedgerToBatch(tx,db,FE.SHIPPING_SETTLEMENT,{
-        amount,walletId:wId,walletName:w?.name||'',
-        notes:`تسوية شحن — ${settleCompanyName}${diffReasonLabel?' — فرق ('+diffReasonLabel+') '+fn(Math.abs(diff))+' ج':''}`,
-        userId:currentUser.uid,userName,
-      });
+    const r=await shippingActions.settleWithCompany({
+      db,orderIds:selectedIds,amount,walletId:wId,walletName:w?.name||'',
+      companyName:settleCompanyName,
+      diffReason,diffReasonLabel,diffNote,
+      note:gv('settle-ref'),
+      role:userRole,userId:currentUser.uid,userName,
+      bypassWarnings:true, // pre-flight validateSettle already passed above
     });
-
+    if(!r.ok){
+      toast('❌ '+((r.errors||[]).join(' · ')||'فشل التسوية'),'err');
+      showOpError(`فشل تسوية ${fn(amount)} ج مع ${settleCompanyName}: ${(r.errors||[])[0]||'خطأ'}`, () => window.saveSettle());
+      return;
+    }
     closeSettle();
     const diffMsg=Math.abs(diff)>0.01?` (فرق: ${fn(Math.abs(diff))} ج — ${diffReasonLabel})`:'';
     toast(`✅ تسوية ${fn(amount)} ج من ${settleCompanyName}${diffMsg}`,'ok');
@@ -1585,75 +1501,18 @@ async function savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note)
 // ══ deleteSettle ══
 window.deleteSettle=async function(settleId,amount,walletId,coName){
   if(!confirm(`حذف تسوية ${fn(amount)} ج من ${coName}؟ سيتم عكس كل العمليات.`))return;
-  try{
-    // FIX (RULE 1): اقرأ بيانات التسوية أولاً للـ guard ضد orderIds الفاسدة قبل أي كتابة
-    const settleSnap=await getDoc(doc(db,'shipping_settlements',settleId));
-    if(!settleSnap.exists()){toast('⛔ التسوية غير موجودة (محذوفة سابقاً؟)','err');return;}
-    const settleData=settleSnap.data();
-    const orderIds=Array.isArray(settleData.orderIds)?settleData.orderIds:[];
-    if(!orderIds.length){
-      // تسوية بدون orderIds = data corruption — منع الـ delete اللي هيخرج فلوس بدون عكس على أي أوردر
-      if(!confirm(`⚠️ تنبيه: التسوية ده ملهاش orderIds مرتبطة (data corruption?). الحذف هيرجّع ${fn(amount)} ج من المحفظة بدون أي عكس على أي أوردر. هل أنت متأكد؟`))return;
-    }
-    // 1. خصم من المحفظة + تسجيل عملية عكسية
-    const w=wallets.find(x=>x._id===walletId);
-    const bb=parseFloat(w?.balance)||0;
-    const revBatch=writeBatch(db);
-    if(w)revBatch.update(doc(db,'wallets',walletId),{balance:increment(-amount)});
-    const revTxRef=doc(collection(db,'transactions_v2'));
-    revBatch.set(revTxRef,{
-      walletId,walletName:w?.name||'',type:'out',amount,
-      description:`↩️ إلغاء تسوية شحن — ${coName}`,
-      category:'shipping_settlement_reversal',
-      companyName:coName,settleId,
-      orderIds,  // نسجّل الأوردرات المتأثرة في الـ tx الرئيسي
-      balanceBefore:bb,balanceAfter:bb-amount,
-      date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
-      createdAt:serverTimestamp()
-    });
-    const now=nowStr();
-    for(const oid of orderIds){
-      const o=allOrders.find(x=>x._id===oid);if(!o)continue;
-      const settled=parseFloat(o.shipSettledAmount)||0;
-      const oldPaid=FC.getPaid(o);
-      const newPaid=Math.max(0,oldPaid-settled);
-      const newRem=Math.max(0,FC.getNet(o)-newPaid);
-      revBatch.update(doc(db,'orders',oid),{
-        shipSettled:false,shipSettledAmount:0,shipSettledManual:false,
-        totalPaid:newPaid,remaining:newRem,
-        paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
-        timeline:[...(o.timeline||[]),{date:now,action:`↩️ إلغاء تسوية شحن — ${coName} (-${fn(settled)} ج)`,by:userName}],
-        updatedAt:serverTimestamp()
-      });
-      // FIX (RULE 5): ledger entry لكل أوردر — مش بس الـ aggregate
-      if(settled>0){
-        addLedgerToBatch(revBatch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
-          amount:settled,walletId,walletName:w?.name||'',
-          orderId:oid,clientName:o.clientName||'',
-          notes:`إلغاء تسوية لأوردر — ${o.clientName||''} — ${coName}`,
-          userId:currentUser?.uid||'',userName,
-        });
-      }
-    }
-    revBatch.delete(doc(db,'shipping_settlements',settleId));
-    // الـ aggregate ledger (الإجمالي على المحفظة) — لو الفرق بين الإجمالي ومجموع الأوردرات
-    const orderSettledSum=orderIds.reduce((s,oid)=>{
-      const o=allOrders.find(x=>x._id===oid);
-      return s+(o?(parseFloat(o.shipSettledAmount)||0):0);
-    },0);
-    const diff=amount-orderSettledSum;
-    if(Math.abs(diff)>0.01){
-      // الفرق (مثلاً عمولة الشركة) — يتسجّل كـ ledger مستقل
-      addLedgerToBatch(revBatch,db,FE.SHIPPING_SETTLEMENT_REVERSAL,{
-        amount:Math.abs(diff),walletId,walletName:w?.name||'',
-        notes:`إلغاء تسوية — فرق ${diff>0?'+':''}${fn(diff)} ج (عمولة/خصم) — ${coName}`,
-        userId:currentUser?.uid||'',userName,
-      });
-    }
-    await revBatch.commit();
-
-    toast('✅ تم إلغاء التسوية','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // pre-fetch settlement لاستخراج orderIds — guard ضد corrupt data
+  const settleSnap=await getDoc(doc(db,'shipping_settlements',settleId));
+  if(!settleSnap.exists()){toast('⛔ التسوية غير موجودة (محذوفة سابقاً؟)','err');return;}
+  const settleData=settleSnap.data();
+  const orderIds=Array.isArray(settleData.orderIds)?settleData.orderIds:[];
+  if(!orderIds.length){
+    if(!confirm(`⚠️ تنبيه: التسوية ده ملهاش orderIds مرتبطة (data corruption?). الحذف هيرجّع ${fn(amount)} ج من المحفظة بدون أي عكس على أي أوردر. هل أنت متأكد؟`))return;
+  }
+  const w=wallets.find(x=>x._id===walletId);
+  const r=await shippingActions.reverseSettlement({db,settlementId:settleId,walletId,walletName:w?.name||'',amount,companyName:coName,orderIds,role:userRole,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم إلغاء التسوية','ok');
 };
 
 // ══ بانال تفاصيل الأوردر والتكاليف ══
@@ -2077,22 +1936,12 @@ window.rmAccCost=async function(idx){
   if(!confirm('حذف البند؟'))return;
   const o=allOrders.find(x=>x._id===__accOrderId);if(!o)return;
   const item=(o.costItems||[])[idx];if(!item)return;
+  const r=await orderActions.removeUnpaidCostItem({db,orderId:__accOrderId,itemIndex:idx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ حُذف','ok');
   const ci=[...(o.costItems||[])];ci.splice(idx,1);
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__accOrderId),{costItems:ci,updatedAt:serverTimestamp()});
-    if(item.txId)batch.delete(doc(db,'transactions_v2',item.txId));
-    addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-      amount:parseFloat(item.total)||0,walletId:'',walletName:'',
-      orderId:__accOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`إلغاء تكلفة ${item.type||''} — ${o.clientName||''}`,
-      userId:currentUser?.uid||'',userName,direction:'in'
-    });
-    await batch.commit();
-    toast('✅ حُذف','ok');
-    const i=allOrders.findIndex(x=>x._id===__accOrderId);
-    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};__renderAccCostList(allOrders[i]);}
-  }catch(e){toast('❌ '+e.message,'err');}
+  const i=allOrders.findIndex(x=>x._id===__accOrderId);
+  if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};__renderAccCostList(allOrders[i]);}
 };
 
 window.saveAccCost=async function(){
@@ -2102,49 +1951,22 @@ window.saveAccCost=async function(){
   if(!total)return toast('⚠️ أدخل التكلفة','err');
   const note=document.getElementById('acc-note')?.value||'';
   const o=allOrders.find(x=>x._id===__accOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
-  const uName=userName||'';
-  const now=nowStr();
   const isEdit=__accEditIdx>=0&&__accEditIdx<(o.costItems||[]).length;
-  const txRef=isEdit?null:doc(collection(db,'transactions_v2'));
-  const item={type,total,note,addedAt:now,addedBy:uName,supplierId:'',supplierName:'',prodIdx:null,...(txRef?{txId:txRef.id}:{})};
-  const ci=[...(o.costItems||[])];
-  let action;
-  if(isEdit){
-    ci[__accEditIdx]={...ci[__accEditIdx],...item,editedAt:now};
-    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
-  } else {
-    ci.push(item);
-    action=`💰 ${type}: ${fn(total)} ج`;
-  }
   const saveBtn=document.getElementById('acc-save-btn');
   if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='جاري...';}
   try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__accOrderId),{
-      costItems:ci,
-      timeline:[...(o.timeline||[]),{date:now,action,by:uName}],
-      updatedAt:serverTimestamp()
+    const r=await orderActions.recordCostItem({
+      db,orderId:__accOrderId,prodIdx:-1,
+      payload:{type,total,supplierId:'',supplierName:'',note,walletId:''},
+      role:userRole,userId:currentUser?.uid||'',userName,
+      wallets:[],isEdit,editIdx:__accEditIdx,
     });
-    if(txRef){
-      batch.set(txRef,{type:'out',amount:total,category:'execution_cost',
-        description:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,
-        orderId:__accOrderId,clientName:o.clientName||'',walletId:'',
-        date:now,createdBy:currentUser?.uid||'',createdByName:uName,createdAt:serverTimestamp()});
-      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-        amount:total,walletId:'',walletName:'',
-        orderId:__accOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,
-        userId:currentUser?.uid||'',userName:uName
-      });
-    }
-    await batch.commit();
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     toast('✅ تم','ok');
-    const i=allOrders.findIndex(x=>x._id===__accOrderId);
-    if(i>=0)allOrders[i]={...allOrders[i],costItems:ci};
     __accHideForm();
-    __renderAccCostList(allOrders[allOrders.findIndex(x=>x._id===__accOrderId)]);
-  }catch(e){toast('❌ '+e.message,'err');}
-  finally{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent=isEdit?'💾 حفظ':'＋ إضافة';}}
+    // الـ snapshot سيُحدّث الـ list؛ مؤقتاً نعيد الرسم من الـ DOM للسرعة
+    setTimeout(()=>{const updated=allOrders.find(x=>x._id===__accOrderId);if(updated)__renderAccCostList(updated);},100);
+  }finally{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent=isEdit?'💾 حفظ':'＋ إضافة';}}
 };
 </script>
 </body>
