@@ -395,7 +395,175 @@ export function filterClientsForGrid({
   });
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Control Grid (cgrid) — pure data layer for the admin grid view
+// ════════════════════════════════════════════════════════════════════
+// Filtering / sorting / display-status / CSV export — all pure.
+// The page reads UI controls + state and delegates here.
+
+/**
+ * cgridGetDisplayStatus(order) → Arabic status label for the cgrid
+ * status column. Single source of truth for "what status is this row?".
+ * Pure.
+ */
+export function cgridGetDisplayStatus(o) {
+  if (!o) return '—';
+  if (o.stage === 'cancelled')                                         return 'ملغي';
+  if (o.stage === 'archived')                                          return 'أرشيف';
+  if (o.paymentStatus === 'returned' || o.shipStage === 'returned')    return 'مرتجع كامل';
+  if (o.returnType === 'partial')                                      return 'مرتجع جزئي';
+  if (o.hasProblem)                                                    return 'مشكلة';
+  if ((o.paymentStatus === 'paid') && ['shipping','delivered'].includes(o.stage)) return 'تم التحصيل';
+  if (o.stage === 'shipping') {
+    if (o.shipStage === 'delivered') return 'تحت التحصيل';
+    if (o.shipStage === 'shipped')   return 'في الشحن';
+    if (o.shipStage === 'ready')     return 'جاهز للشحن';
+    return 'في الشحن';
+  }
+  return { design:'تصميم', printing:'طباعة', production:'تنفيذ', delivered:'تم التسليم', shipping:'في الشحن' }[o.stage]
+      || o.stage || '—';
+}
+
+/**
+ * cgridFilter({orders, criteria, calcRem}) → filtered orders[].
+ *
+ * criteria = { q, stage, emp, gov, period, rem, prob }
+ *   q       — search text (matches clientName / phone / orderId / business / product)
+ *   stage   — display status (matches cgridGetDisplayStatus output)
+ *   emp     — assignedTo / designerId / productionAgent uid
+ *   gov     — shipGov / clientGov
+ *   period  — '' | 'today' | 'week' | 'month'
+ *   rem     — '' | 'has_rem' | 'no_rem'
+ *   prob    — '' | 'has_prob' | 'has_ret'
+ *
+ * Pure: no DOM, no closure capture.
+ */
+export function cgridFilter({
+  orders = [],
+  criteria = {},
+  calcRem = () => 0,
+} = {}) {
+  const {
+    q = '', stage = '', emp = '', gov = '',
+    period = '', rem = '', prob = '',
+  } = criteria;
+  const qLower = (q || '').toLowerCase().trim();
+
+  const now      = new Date();
+  const startDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startWeek  = new Date(+startDay - (now.getDay() || 7) * 864e5);
+  const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  return (orders || []).filter(o => {
+    if (qLower) {
+      const hay = [
+        (o.clientName || ''), (o.clientPhone || ''), (o.orderId || ''),
+        (o.clientBusiness || o.job || ''), (o.product || ''),
+      ].join(' ').toLowerCase();
+      if (!hay.includes(qLower)) return false;
+    }
+    if (stage && cgridGetDisplayStatus(o) !== stage) return false;
+    if (emp && o.assignedTo !== emp && o.designerId !== emp && o.productionAgent !== emp) return false;
+    if (gov) {
+      const g = o.shipGov || o.clientGov || '';
+      if (g !== gov) return false;
+    }
+    if (period) {
+      const ts = o.createdAt?.toDate ? o.createdAt.toDate()
+              : (o.createdAt?.seconds ? new Date(o.createdAt.seconds * 1000) : null);
+      if (!ts) return false;
+      if (period === 'today' && ts < startDay)   return false;
+      if (period === 'week'  && ts < startWeek)  return false;
+      if (period === 'month' && ts < startMonth) return false;
+    }
+    const r = calcRem(o);
+    if (rem === 'has_rem' && r <= 0) return false;
+    if (rem === 'no_rem'  && r >  0) return false;
+    if (prob === 'has_prob' && !o.hasProblem) return false;
+    if (prob === 'has_ret'  && !(o.paymentStatus === 'returned' || o.shipStage === 'returned')) return false;
+    return true;
+  });
+}
+
+/**
+ * cgridSort({data, sort, calcRem}) → sorted orders[] (non-mutating).
+ *
+ * sort = { field, dir }   dir: 1 asc, -1 desc
+ * Supported fields: createdAt, rem, cost, profit, salePrice, paid, *.
+ */
+export function cgridSort({
+  data = [],
+  sort = { field: 'createdAt', dir: -1 },
+  calcRem = () => 0,
+} = {}) {
+  const { field, dir } = sort;
+  return [...data].sort((a, b) => {
+    let av, bv;
+    if (field === 'createdAt') {
+      av = a.createdAt?.seconds || (a.createdAt?.toDate?.().getTime() / 1000) || 0;
+      bv = b.createdAt?.seconds || (b.createdAt?.toDate?.().getTime() / 1000) || 0;
+    } else if (field === 'rem') {
+      av = calcRem(a); bv = calcRem(b);
+    } else if (field === 'cost') {
+      av = (a.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0) || (parseFloat(a.totalCost) || 0);
+      bv = (b.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0) || (parseFloat(b.totalCost) || 0);
+    } else if (field === 'profit') {
+      const costA = (a.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0) || (parseFloat(a.totalCost) || 0);
+      const costB = (b.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0) || (parseFloat(b.totalCost) || 0);
+      av = (parseFloat(a.totalPaid) || parseFloat(a.paid) || parseFloat(a.deposit) || 0) - costA;
+      bv = (parseFloat(b.totalPaid) || parseFloat(b.paid) || parseFloat(b.deposit) || 0) - costB;
+    } else if (field === 'salePrice' || field === 'paid') {
+      av = parseFloat(a[field]) || 0;
+      bv = parseFloat(b[field]) || 0;
+    } else {
+      av = (a[field] || '').toString();
+      bv = (b[field] || '').toString();
+    }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+}
+
+/**
+ * cgridExportCSV({orders, calcRem}) → CSV string (UTF-8 BOM prefix included).
+ * Caller is responsible for creating download link / triggering toast.
+ *
+ * Columns: orderId, client, phone, business, service, employee,
+ *          total (sale + ship fee), paid, remaining, status, createdDate,
+ *          hasProblem, isReturned.
+ */
+export function cgridExportCSV({
+  orders = [],
+  calcRem = () => 0,
+} = {}) {
+  const header = [
+    'رقم الأوردر','العميل','الهاتف','الشركة','الخدمة','الموظف',
+    'الإجمالي','المدفوع','المتبقي','الحالة','تاريخ الإنشاء','مشكلة؟','مرتجع؟',
+  ];
+  const rows = (orders || []).map(o => [
+    o.orderId || o._id.slice(-6),
+    o.clientName  || '',
+    o.clientPhone || '',
+    o.clientBusiness || o.job || '',
+    o.products?.map(p => p.name).join('+') || o.product || '',
+    o.csName || o.designerName || '',
+    (parseFloat(o.salePrice) || 0) + (parseFloat(o.customerShipFee) || 0),
+    parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0,
+    calcRem(o),
+    cgridGetDisplayStatus(o),
+    o.createdDate || '',
+    o.hasProblem ? 'نعم' : 'لا',
+    (o.paymentStatus === 'returned' || o.shipStage === 'returned') ? 'نعم' : 'لا',
+  ]);
+  return [header, ...rows]
+    .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 if (typeof window !== 'undefined') {
-  Object.assign(window, { computeClientStats, parseBizCardText, filterClientsForGrid });
+  Object.assign(window, {
+    computeClientStats, parseBizCardText, filterClientsForGrid,
+    // PR-14:
+    cgridGetDisplayStatus, cgridFilter, cgridSort, cgridExportCSV,
+  });
 }
