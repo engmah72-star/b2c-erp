@@ -856,6 +856,10 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      Side-effect import: clients-render.js attaches them to window. -->
 <script type="module" src="./clients-render.js"></script>
 
+<!-- God-page decomp PR-8: pure stats + aggregations (computeClientStats).
+     Side-effect import: clients-data.js attaches them to window. -->
+<script type="module" src="./clients-data.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -1255,93 +1259,35 @@ auth.onAuthStateChanged(async u=>{
 });
 
 // ══ STATS ══
+// God-page decomp PR-8: stats computation moved to clients-data.js
+// (window.computeClientStats). Wrapper does only the DOM writes.
 function updateStats(){
-  const cIds=new Set(clients.map(c=>c._id));
-  const myOrders=allOrders.filter(o=>cIds.has(o.clientId)||(o.clientPhone&&clients.find(c=>c.phone1===o.clientPhone)));
-  const sales=myOrders.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const rem=myOrders.reduce((s,o)=>s+calcRem(o),0);
-  setText('s-sales',fn(sales)+' ج');
-  setText('s-rem',fn(rem)+' ج');
-  setText('sub',clients.length+' عميل');
-
-  // ── Time Period Stats ──
-  const now=new Date();
-  const todayStart=new Date();todayStart.setHours(0,0,0,0);
-  const yesterdayStart=new Date(todayStart);yesterdayStart.setDate(yesterdayStart.getDate()-1);
-  const weekStart=new Date(todayStart);weekStart.setDate(weekStart.getDate()-todayStart.getDay());
-  const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
-  const lastMonthStart=new Date(now.getFullYear(),now.getMonth()-1,1);
-  const lastMonthEnd=new Date(now.getFullYear(),now.getMonth(),1);
-
-  const inRange=(c,from,to)=>{
-    const ts=c.createdAt?.seconds?new Date(c.createdAt.seconds*1000):null;
-    if(!ts)return false;
-    return ts>=from && (!to||ts<to);
-  };
-  const ordersIn=(from,to)=>myOrders.filter(o=>{
-    const t=o.createdAt?.toDate?.()?.getTime()||((o.createdAt?.seconds||0)*1000);
-    return t>=from.getTime() && (!to||t<to.getTime());
+  const stats=computeClientStats({
+    clients, orders:allOrders, calcRem, ordersIndex:buildClientOrdersIndex(),
   });
-  const sumPaid=arr=>arr.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-
-  const todayC=clients.filter(c=>inRange(c,todayStart));
-  const yestC=clients.filter(c=>inRange(c,yesterdayStart,todayStart));
-  const weekC=clients.filter(c=>inRange(c,weekStart));
-  const monthC=clients.filter(c=>inRange(c,monthStart));
-  const lastMonthC=clients.filter(c=>inRange(c,lastMonthStart,lastMonthEnd));
-
-  setText('tp-today-n',todayC.length);
-  setText('tp-today-r',fn(sumPaid(ordersIn(todayStart,null)))+' ج');
-  setText('tp-yest-n',yestC.length);
-  setText('tp-yest-r',fn(sumPaid(ordersIn(yesterdayStart,todayStart)))+' ج');
-  setText('tp-week-n',weekC.length);
-  setText('tp-week-r',fn(sumPaid(ordersIn(weekStart,null)))+' ج');
-  setText('tp-month-n',monthC.length);
-  setText('tp-month-r',fn(sumPaid(ordersIn(monthStart,null)))+' ج');
-  setText('tp-lm-n',lastMonthC.length);
-  setText('tp-lm-r',fn(sumPaid(ordersIn(lastMonthStart,lastMonthEnd)))+' ج');
-
-  // Compare current vs previous month
+  setText('s-sales',fn(stats.totals.sales)+' ج');
+  setText('s-rem',fn(stats.totals.rem)+' ج');
+  setText('sub',stats.totals.clientCount+' عميل');
+  const P=stats.periods;
+  setText('tp-today-n',P.today.n);     setText('tp-today-r',fn(P.today.r)+' ج');
+  setText('tp-yest-n',P.yesterday.n);  setText('tp-yest-r',fn(P.yesterday.r)+' ج');
+  setText('tp-week-n',P.week.n);       setText('tp-week-r',fn(P.week.r)+' ج');
+  setText('tp-month-n',P.month.n);     setText('tp-month-r',fn(P.month.r)+' ج');
+  setText('tp-lm-n',P.lastMonth.n);    setText('tp-lm-r',fn(P.lastMonth.r)+' ج');
+  // MoM delta
   const compEl=document.getElementById('tp-lm-c');
   if(compEl){
-    const cur=monthC.length, prev=lastMonthC.length;
-    if(prev>0){
-      const diff=Math.round(((cur-prev)/prev)*100);
-      compEl.textContent=(diff>=0?'↗ +':'↘ ')+diff+'%';
-      compEl.className='tp-comp '+(diff>=0?'up':'down');
-    } else compEl.textContent='';
+    const {pct,direction}=stats.monthDelta;
+    if(pct===null){compEl.textContent='';}
+    else{compEl.textContent=(direction==='up'?'↗ +':'↘ ')+pct+'%';compEl.className='tp-comp '+direction;}
   }
-
-  // Quick filter counts (uses pre-built index — O(N) instead of O(N*M))
-  const idx=buildClientOrdersIndex();
-  const nowSec=Date.now()/1000;
-  let nVip=0,nActive=0,nRem=0,nRisk=0,nNew=0,nSleep=0;
-  for(const c of clients){
-    if(c.status==='legacy')continue;
-    const ords=idx.get(c._id)||[];
-    let cRem=0, hasAct=false, lastTs=0;
-    for(const o of ords){
-      cRem+=calcRem(o);
-      if(o.stage!=='archived') hasAct=true;
-      const t=o.createdAt?.seconds||0;
-      if(t>lastTs) lastTs=t;
-    }
-    const daysSince=lastTs?Math.floor((nowSec-lastTs)/86400):999;
-    if(ords.length>=3)nVip++;
-    if(hasAct)nActive++;
-    if(cRem>0)nRem++;
-    if(daysSince>=30&&daysSince<90)nRisk++;
-    if(inRange(c,weekStart))nNew++;
-    if(daysSince>=90&&daysSince<999)nSleep++;
-  }
+  // Quick-filter badges
   const setBadge=(id,n)=>{const e=document.getElementById(id);if(e)e.textContent=n>0?`(${n})`:'';};
-  setBadge('qf-all-n',clients.filter(c=>c.status!=='legacy').length);
-  setBadge('qf-vip-n',nVip);
-  setBadge('qf-active-n',nActive);
-  setBadge('qf-rem-n',nRem);
-  setBadge('qf-risk-n',nRisk);
-  setBadge('qf-new-n',nNew);
-  setBadge('qf-sleep-n',nSleep);
+  const Q=stats.quickFilters;
+  setBadge('qf-all-n',Q.all);     setBadge('qf-vip-n',Q.vip);
+  setBadge('qf-active-n',Q.active); setBadge('qf-rem-n',Q.rem);
+  setBadge('qf-risk-n',Q.risk);   setBadge('qf-new-n',Q.new);
+  setBadge('qf-sleep-n',Q.sleep);
 }
 
 // ── Period & Quick Filters ──
