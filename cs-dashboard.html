@@ -303,8 +303,9 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
+import { orderActions } from "./order-actions.js";
 // ── Utils ──
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -423,16 +424,16 @@ function renderAttPill(){
 window.doAtt=async function(){
   if(!currentUser)return;
   const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    if(!todayAtt){
-      await addDoc(collection(db,'attendance'),{employeeUid:uid,employeeName:userName,date:todayStr,checkIn:serverTimestamp(),checkInStr:timeStr,checkOut:null,hoursWorked:0,createdAt:serverTimestamp()});
-      toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-    } else if(!todayAtt.checkOut){
-      const hrs=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(36e5)).toFixed(1):0;
-      await updateDoc(doc(db,'attendance',todayAtt._id),{checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hrs)});
-      toast('✅ انصراف — '+hrs+' ساعة','ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
+  if(!todayAtt){
+    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:todayStr,lateMinutes:0,recordedBy:uid,recordedByName:userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
+  } else if(!todayAtt.checkOut){
+    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    const hrs=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(36e5)).toFixed(1):0;
+    toast('✅ انصراف — '+hrs+' ساعة','ok');
+  }
 };
 
 // ── Main render ──
@@ -858,39 +859,8 @@ window.savePayment=async function(){
   const dateStr=nowDate.toLocaleDateString('ar-EG',{year:'numeric',month:'long',day:'numeric'});
 
   try{
-    // Get current order to compute new totalPaid
-    const oSnap=await getDoc(doc(db,'orders',payOrderId));
-    if(!oSnap.exists()){toast('الأوردر غير موجود','err');return;}
-    const oData=oSnap.data();
-    const prevPaid=parseFloat(oData.totalPaid)||parseFloat(oData.paid)||parseFloat(oData.deposit)||0;
-    const newPaid=prevPaid+amount;
-    const shipFee=parseFloat(oData.customerShipFee)||0;
-    const rem=Math.max(0,(parseFloat(oData.salePrice)||0)+shipFee-(parseFloat(oData.discount)||0)-newPaid);
-
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',payOrderId),{
-      totalPaid:newPaid,
-      paymentStatus:rem<=0?'paid':newPaid>0?'partial':'pending',
-      updatedAt:serverTimestamp(),
-      timeline:[...(oData.timeline||[]),{date:dateStr+' '+timeStr,action:`💰 دفعة ${fn(amount)} ج — باقي ${fn(rem)} ج`,by:userName}]
-    });
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      type:'in',category:'collection',amount,
-      walletId,walletName:wallet?.name||'',
-      orderId:payOrderId,orderRef:payOrderRef?.orderRef||'',
-      clientName:payOrderRef?.clientName||oData.clientName||'',
-      note:note||'تحصيل',date:dateStr,
-      createdBy:uid,createdByName:userName,createdAt:serverTimestamp()
-    });
-    if(wallet)batch.update(doc(db,'wallets',walletId),{balance:increment(amount)});
-    addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
-      amount,walletId,walletName:wallet?.name||'',
-      orderId:payOrderId,clientName:payOrderRef?.clientName||oData.clientName||'',
-      notes:note||`تحصيل — ${payOrderRef?.clientName||oData.clientName||''}`,
-      userId:uid,userName,
-    });
-    await batch.commit();
+    const r=await orderActions.recordPayment({db,orderId:payOrderId,amount,walletId,walletName:wallet?.name||'',role:'customer_service',userId:uid,userName,source:'customer',note:note||`تحصيل — ${payOrderRef?.clientName||''}`});
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');return;}
     toast(`✅ تم تسجيل ${fn(amount)} ج`,'ok');
     document.getElementById('pay-ov').classList.remove('open');
     payOrderId=null;
