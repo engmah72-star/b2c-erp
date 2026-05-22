@@ -437,9 +437,12 @@ window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gsta
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn, buildSettlementUpdates } from "./orders.js";
+// PR-6 cleanup: removed direct FSE imports + dropped Firestore mutation helpers.
+// Kept: collection/doc/onSnapshot/getDoc/query/where/orderBy/limit (read-only) +
+//       writeBatch + serverTimestamp (only used by healOrder/healAll/healCompany
+//       which apply applyOrderHealPatch from orders.js — RULE A11 self-heal).
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 // ══ State ══
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
@@ -1548,56 +1551,24 @@ window.markManualSettled=async function(orderId){
 
 اكتب سبب التسوية اليدوية (إجباري ≥ 5 أحرف):`);
   if(reason===null)return;
-  const r=(reason||'').trim();
-  if(r.length<5)return toast('⚠️ السبب لازم ≥ 5 أحرف','err');
+  // PR-6 Phase 6 — orderActions.manualSettle (single atomic batch).
   try{
-    const now=nowStr();
-    const auditEntry={
-      type:'manual_settle',
-      changedBy:userName, changedById:currentUser?.uid||'',
-      date:now, reason:r,
-      changes:[{field:'shipSettled',label:'تسوية شركة الشحن',before:'false',after:'true (يدوي)'}],
-      requiresReview:true,
-    };
-    // قرار التحديث: لو totalPaid أقل من الإجمالي، نرفعه للإجمالي عشان الأوردر يبقى consistent
-    // (الفلوس فعلياً وصلتنا — يا من الشركة، يا من العميل مباشرة، يا من بره النظام)
-    const needsTotalPaidUpdate = paid+0.01 < totalDue;
-    const newTotalPaid = needsTotalPaidUpdate ? totalDue : paid;
-    const newRemaining = Math.max(0, totalDue - newTotalPaid);
-    // FIX (RULE 3): writeBatch بدل updateDoc — لمنع race conditions مع saveSettle المتزامنة
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',orderId),{
-      shipSettled:true,
-      shipSettledAmount:Math.max(totalDue,paid),  // best-effort: نسجل الـ due أو الـ paid أيهما أكبر
-      shipSettledManual:true,
-      shipSettledManualBy:userName,
-      shipSettledManualByUid:currentUser?.uid||'',
-      shipSettledManualAt:now,
-      shipSettledManualReason:r,
-      // نحدّث totalPaid عشان الأوردر يطلع consistent (الفلوس فعلياً وصلت سواء عبر الشركة أو خارج النظام)
-      ...(needsTotalPaidUpdate?{
-        totalPaid:newTotalPaid,
-        remaining:newRemaining,
-        paymentStatus:'paid',
-      }:{}),
-      auditLog:[...(o.auditLog||[]),auditEntry],
-      hasUnreviewedAudit:true,
-      timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate?` · ضبط المحصّل ${fn(paid)} → ${fn(newTotalPaid)} ج`:''}`,by:userName}],
-      updatedAt:serverTimestamp(),
+    const r=await orderActions.manualSettle({
+      db,
+      orderId,
+      role:userRole,
+      userId:currentUser?.uid||'',
+      userName,
+      reason,
     });
-    // FIX (RULE 5): manual settle = financial event من خارج النظام — لازم ledger entry للـ audit trail
-    // amount = شكلي (totalDue) لأن المال لم يمر بالـ wallet — الـ ledger هنا audit-only
-    addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
-      amount:Math.max(totalDue,paid),
-      walletId:'',walletName:'',
-      orderId,clientId:o.clientId||'',clientName:o.clientName||'',
-      vendorId:'',vendorName:o.shipCompanyName||'',
-      notes:`🏁 تسوية يدوية (manual): ${r}${needsTotalPaidUpdate?` · totalPaid ${fn(paid)}→${fn(newTotalPaid)}`:''}`,
-      userId:currentUser?.uid||'',userName,
-    });
-    await batch.commit();
-    toast(`✅ تم تسجيل التسوية اليدوية${needsTotalPaidUpdate?` · المحصّل اتضبط على ${fn(newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
+    if(!r.ok){
+      console.warn('[ACCOUNTS_ACTION] manualSettle failed',r);
+      toast('❌ '+((r.errors||['فشل التسوية اليدوية'])[0]),'err');
+      return;
+    }
+    toast(`✅ تم تسجيل التسوية اليدوية${r.totalPaidAdjusted?` · المحصّل اتضبط على ${fn(r.newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
   }catch(e){
+    console.warn('[ACCOUNTS_ACTION] manualSettle exception',e);
     toast('❌ '+(e.message||e),'err');
   }
 };
@@ -1670,62 +1641,36 @@ window.updateSfPreview=function(){
 window.saveShipFeeEdit=async function(){
   const o=allOrders.find(x=>x._id===__sfOrderId);
   if(!o){toast('⚠️ الأوردر غير موجود','err');return;}
-  if(o.stage==='archived'||o.shipStage==='returned')return toast('⛔ الأوردر مغلق للتعديل','err');
   const newCost=parseFloat(gv('sf-cost'))||0;
   const newCust=parseFloat(gv('sf-cust'))||0;
   const oldCost=parseFloat(o.shipCost)||0;
   const oldCust=parseFloat(o.customerShipFee)||0;
   if(newCost===oldCost && newCust===oldCust){toast('لا توجد تغييرات','');return;}
-  // ─ Lock بعد التسوية: تغيير customerShipFee بيغيّر totalDue ومش هيتطابق مع shipSettledAmount المسجّل
+  // UI guard: تعديل customerShipFee بعد التسوية يكسر invariant — يبقى inline لأنه شرط UX
   if(o.shipSettled && newCust!==oldCust){
     return toast('⛔ الأوردر مسوّى مع شركة الشحن — لا يمكن تعديل رسوم العميل. ألغي التسوية أولاً.','err');
   }
-  const sale=parseFloat(o.salePrice)||0;
-  const paid=FC.getPaid(o);
-  const newDue=sale+newCust-(parseFloat(o.discount)||0);
-  // ─ Invariant: تخفيض رسوم الشحن لا يصح يخلّي الإجمالي < المحصّل المسجّل
-  if(paid>newDue+0.01){
-    return toast(`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${fn(newDue)} ج) أقل من المحصّل (${fn(paid)} ج). عدّل التحصيل أولاً.`,'err');
-  }
-  const newRem=Math.max(0,newDue-paid);
-  const costDelta=newCost-oldCost;
   const btn=document.getElementById('btn-save-sf');btn.disabled=true;btn.textContent='...';
+  // PR-6 Phase 6 — orderActions.editShipFee (single atomic batch).
   try{
-    const batch=writeBatch(db);
-    // delta tx لـ shipCost
-    if(costDelta!==0){
-      const adjRef=doc(collection(db,'transactions_v2'));
-      batch.set(adjRef,{
-        type:costDelta>0?'out':'in',
-        amount:Math.abs(costDelta),
-        description:`تعديل تكلفة الشحن (${costDelta>0?'+':'-'}${fn(Math.abs(costDelta))} ج) — ${o.clientName||''} — ${o.shipCompanyName||''}`,
-        category:costDelta>0?'shipping_cost':'shipping_cost_reversal',
-        orderId:__sfOrderId,clientName:o.clientName||'',walletId:'',
-        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
-        createdAt:serverTimestamp(),...approvalFields()
-      });
-      addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
-        amount:Math.abs(costDelta),walletId:'',walletName:'',
-        orderId:__sfOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تعديل تكلفة شحن (${costDelta>0?'+':'-'}${fn(Math.abs(costDelta))} ج) — ${o.shipCompanyName||''}`,
-        userId:currentUser?.uid||'',userName,
-        direction:costDelta>0?'out':'in',
-      });
-    }
-    // تحديث الأوردر
-    const tlEntry=`✏️ تعديل شحن: ${oldCost!==newCost?`تكلفة ${fn(oldCost)}→${fn(newCost)} ج`:''}${oldCost!==newCost&&oldCust!==newCust?' · ':''}${oldCust!==newCust?`رسوم العميل ${fn(oldCust)}→${fn(newCust)} ج`:''}`;
-    batch.update(doc(db,'orders',__sfOrderId),{
-      shipCost:newCost,
-      customerShipFee:newCust,
-      remaining:newRem,
-      paymentStatus:newRem<=0?'paid':paid>0?'partial':'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:tlEntry,by:userName}],
-      updatedAt:serverTimestamp(),
+    const r=await orderActions.editShipFee({
+      db,
+      orderId:__sfOrderId,
+      role:userRole,
+      userId:currentUser?.uid||'',
+      userName,
+      newShipCost:newCost,
+      newCustomerShipFee:newCust,
     });
-    await batch.commit();
+    if(!r.ok){
+      console.warn('[ACCOUNTS_ACTION] editShipFee failed',r);
+      toast('❌ '+((r.errors||['فشل التعديل'])[0]),'err');
+      return;
+    }
     document.getElementById('ov-ship-fee').classList.remove('open');
     toast('✅ تم التعديل','ok');
   }catch(e){
+    console.warn('[ACCOUNTS_ACTION] editShipFee exception',e);
     toast('❌ '+(e.message||e),'err');
   }finally{
     btn.disabled=false;btn.textContent='💾 حفظ';
@@ -1773,78 +1718,69 @@ window.editAccCost=function(idx){
   document.getElementById('acc-cost-form').scrollIntoView({behavior:'smooth',block:'nearest'});
 };
 
+// PR-6 Phase 6 — orderActions.removeOrderCost (append-only ledger counter-entry,
+// لا deleteDoc على tx — RULE F2 approximation).
 window.rmAccCost=async function(idx){
   if(!confirm('حذف البند؟'))return;
-  const o=allOrders.find(x=>x._id===__accOrderId);if(!o)return;
-  const item=(o.costItems||[])[idx];if(!item)return;
-  const ci=[...(o.costItems||[])];ci.splice(idx,1);
   try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__accOrderId),{costItems:ci,updatedAt:serverTimestamp()});
-    if(item.txId)batch.delete(doc(db,'transactions_v2',item.txId));
-    addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-      amount:parseFloat(item.total)||0,walletId:'',walletName:'',
-      orderId:__accOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`إلغاء تكلفة ${item.type||''} — ${o.clientName||''}`,
-      userId:currentUser?.uid||'',userName,direction:'in'
+    const r=await orderActions.removeOrderCost({
+      db,
+      orderId:__accOrderId,
+      role:userRole,
+      userId:currentUser?.uid||'',
+      userName,
+      idx,
     });
-    await batch.commit();
+    if(!r.ok){
+      console.warn('[ACCOUNTS_ACTION] removeOrderCost failed',r);
+      toast('❌ '+((r.errors||['فشل الحذف'])[0]),'err');
+      return;
+    }
     toast('✅ حُذف','ok');
     const i=allOrders.findIndex(x=>x._id===__accOrderId);
-    if(i>=0){allOrders[i]={...allOrders[i],costItems:ci};__renderAccCostList(allOrders[i]);}
-  }catch(e){toast('❌ '+e.message,'err');}
+    if(i>=0){allOrders[i]={...allOrders[i],costItems:r.costItems};__renderAccCostList(allOrders[i]);}
+  }catch(e){
+    console.warn('[ACCOUNTS_ACTION] removeOrderCost exception',e);
+    toast('❌ '+(e.message||e),'err');
+  }
 };
 
+// PR-6 Phase 6 — orderActions.addOrderCost (single atomic batch).
 window.saveAccCost=async function(){
   const type=document.getElementById('acc-type')?.value||'';
   const total=parseFloat(document.getElementById('acc-total')?.value)||0;
-  if(!type)return toast('⚠️ اختر نوع البند','err');
-  if(!total)return toast('⚠️ أدخل التكلفة','err');
   const note=document.getElementById('acc-note')?.value||'';
-  const o=allOrders.find(x=>x._id===__accOrderId);if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
-  const uName=userName||'';
-  const now=nowStr();
+  const o=allOrders.find(x=>x._id===__accOrderId);
+  if(!o){toast('⚠️ لم يُعثر على الأوردر','err');return;}
   const isEdit=__accEditIdx>=0&&__accEditIdx<(o.costItems||[]).length;
-  const txRef=isEdit?null:doc(collection(db,'transactions_v2'));
-  const item={type,total,note,addedAt:now,addedBy:uName,supplierId:'',supplierName:'',prodIdx:null,...(txRef?{txId:txRef.id}:{})};
-  const ci=[...(o.costItems||[])];
-  let action;
-  if(isEdit){
-    ci[__accEditIdx]={...ci[__accEditIdx],...item,editedAt:now};
-    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
-  } else {
-    ci.push(item);
-    action=`💰 ${type}: ${fn(total)} ج`;
-  }
   const saveBtn=document.getElementById('acc-save-btn');
   if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='جاري...';}
   try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__accOrderId),{
-      costItems:ci,
-      timeline:[...(o.timeline||[]),{date:now,action,by:uName}],
-      updatedAt:serverTimestamp()
+    const r=await orderActions.addOrderCost({
+      db,
+      orderId:__accOrderId,
+      role:userRole,
+      userId:currentUser?.uid||'',
+      userName:userName||'',
+      type,total,note,
+      editIdx:isEdit?__accEditIdx:-1,
     });
-    if(txRef){
-      batch.set(txRef,{type:'out',amount:total,category:'execution_cost',
-        description:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,
-        orderId:__accOrderId,clientName:o.clientName||'',walletId:'',
-        date:now,createdBy:currentUser?.uid||'',createdByName:uName,createdAt:serverTimestamp()});
-      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-        amount:total,walletId:'',walletName:'',
-        orderId:__accOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تكلفة ${type} — ${o.clientName||''} — ${o.orderId||''}`,
-        userId:currentUser?.uid||'',userName:uName
-      });
+    if(!r.ok){
+      console.warn('[ACCOUNTS_ACTION] addOrderCost failed',r);
+      toast('❌ '+((r.errors||['فشل حفظ البند'])[0]),'err');
+      return;
     }
-    await batch.commit();
     toast('✅ تم','ok');
     const i=allOrders.findIndex(x=>x._id===__accOrderId);
-    if(i>=0)allOrders[i]={...allOrders[i],costItems:ci};
+    if(i>=0)allOrders[i]={...allOrders[i],costItems:r.costItems};
     __accHideForm();
     __renderAccCostList(allOrders[allOrders.findIndex(x=>x._id===__accOrderId)]);
-  }catch(e){toast('❌ '+e.message,'err');}
-  finally{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent=isEdit?'💾 حفظ':'＋ إضافة';}}
+  }catch(e){
+    console.warn('[ACCOUNTS_ACTION] addOrderCost exception',e);
+    toast('❌ '+(e.message||e),'err');
+  }finally{
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent=isEdit?'💾 حفظ':'＋ إضافة';}
+  }
 };
 </script>
 </body>

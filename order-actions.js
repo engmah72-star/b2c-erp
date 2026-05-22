@@ -1219,6 +1219,278 @@ export const orderActions = {
   },
 
   /**
+   * تسوية يدوية (manual) — لم تمر بمحفظة، الفلوس وصلت من بره النظام.
+   * يضع shipSettled=true + shipSettledManual=true + audit entry + ledger
+   * (amount شكلي للـ audit، لا حركة على wallet).
+   *
+   * Atomic single batch (RULE F3).
+   */
+  async manualSettle({ db, orderId, role, userId, userName, reason = '' }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
+    if (order.stage === 'archived')  return { ok:false, errors:['⛔ الأوردر مؤرشف'], warnings:[], orderId };
+    if (order.stage === 'cancelled') return { ok:false, errors:['⛔ الأوردر ملغي'], warnings:[], orderId };
+    if (order.shipSettled === true)  return { ok:false, errors:['✅ مسوّى بالفعل'], warnings:[], orderId };
+    const r = (reason || '').trim();
+    if (r.length < 5)                return { ok:false, errors:['⚠️ السبب لازم ≥ 5 أحرف'], warnings:[], orderId };
+
+    const now = nowStr();
+    const sale     = parseFloat(order.salePrice)        || 0;
+    const cust     = order.priceIncludesShipping ? 0 : (parseFloat(order.customerShipFee) || 0);
+    const disc     = parseFloat(order.discount)         || 0;
+    const totalDue = Math.max(0, sale + cust - disc);
+    const paid     = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+    const needsTotalPaidUpdate = paid + 0.01 < totalDue;
+    const newTotalPaid = needsTotalPaidUpdate ? totalDue : paid;
+    const newRemaining = Math.max(0, totalDue - newTotalPaid);
+    const ledgerAmt = Math.max(totalDue, paid);
+
+    const auditEntry = {
+      type: 'manual_settle',
+      changedBy: userName || '', changedById: userId || '',
+      date: now, reason: r,
+      changes: [{ field: 'shipSettled', label: 'تسوية شركة الشحن', before: 'false', after: 'true (يدوي)' }],
+      requiresReview: true,
+    };
+
+    try {
+      const batch = writeBatch(db);
+      batch.update(order._ref, {
+        shipSettled: true,
+        shipSettledAmount: ledgerAmt,
+        shipSettledManual: true,
+        shipSettledManualBy: userName || '',
+        shipSettledManualByUid: userId || '',
+        shipSettledManualAt: now,
+        shipSettledManualReason: r,
+        ...(needsTotalPaidUpdate ? {
+          totalPaid: newTotalPaid,
+          remaining: newRemaining,
+          paymentStatus: 'paid',
+        } : {}),
+        auditLog: [...(order.auditLog || []), auditEntry],
+        hasUnreviewedAudit: true,
+        timeline: [
+          ...(order.timeline || []),
+          { date: now, action: `🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate ? ` · ضبط المحصّل ${paid.toLocaleString('ar-EG')} → ${newTotalPaid.toLocaleString('ar-EG')} ج` : ''}`, by: userName || '', byId: userId || '' },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+      addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT', {
+        amount: ledgerAmt,
+        walletId: '', walletName: '',
+        orderId,
+        clientId: order.clientId || '', clientName: order.clientName || '',
+        vendorId: '', vendorName: order.shipCompanyName || '',
+        notes: `🏁 تسوية يدوية (manual): ${r}${needsTotalPaidUpdate ? ` · totalPaid ${paid}→${newTotalPaid}` : ''}`,
+        userId: userId || '', userName: userName || '',
+      });
+      await batch.commit();
+      return {
+        ok:true, errors:[], warnings:[],
+        orderId, action:'manual_settle',
+        totalPaidAdjusted: needsTotalPaidUpdate,
+        newTotalPaid,
+      };
+    } catch (e) {
+      return { ok:false, errors:[e.message || 'فشل التسوية اليدوية'], warnings:[], orderId };
+    }
+  },
+
+  /**
+   * تعديل تكلفة الشحن (shipCost) و رسوم العميل (customerShipFee) على أوردر نشط.
+   * لو في delta على shipCost → ينشئ adjustment tx + SHIPPING_EXPENSE ledger.
+   * يعيد حساب remaining + paymentStatus.
+   *
+   * Atomic single batch.
+   */
+  async editShipFee({
+    db, orderId, role, userId, userName,
+    newShipCost, newCustomerShipFee,
+  }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
+    if (order.stage === 'archived')        return { ok:false, errors:['⛔ الأوردر مؤرشف — لا يمكن تعديله'], warnings:[], orderId };
+    if (normalizeShipStage(order.shipStage) === 'returned_full') return { ok:false, errors:['⛔ الأوردر مرتجع — لا يمكن تعديله'], warnings:[], orderId };
+
+    const oldCost = parseFloat(order.shipCost) || 0;
+    const oldCust = parseFloat(order.customerShipFee) || 0;
+    const newCost = parseFloat(newShipCost);
+    const newCust = parseFloat(newCustomerShipFee);
+    if (!Number.isFinite(newCost) || newCost < 0) return { ok:false, errors:['⚠️ تكلفة الشحن غير صالحة'], warnings:[], orderId };
+    if (!Number.isFinite(newCust) || newCust < 0) return { ok:false, errors:['⚠️ رسوم العميل غير صالحة'], warnings:[], orderId };
+
+    const sale = parseFloat(order.salePrice) || 0;
+    const disc = parseFloat(order.discount)  || 0;
+    const paid = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+    const newDue = Math.max(0, sale + newCust - disc);
+    if (paid > newDue + 0.01) {
+      return { ok:false, errors:[`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${newDue}) أقل من المحصّل (${paid}). عدّل التحصيل أولاً.`], warnings:[], orderId };
+    }
+    const newRem = Math.max(0, newDue - paid);
+    const costDelta = newCost - oldCost;
+    const now = nowStr();
+
+    try {
+      const batch = writeBatch(db);
+      if (costDelta !== 0) {
+        batch.set(doc(collection(db, 'transactions_v2')), {
+          type: costDelta > 0 ? 'out' : 'in',
+          amount: Math.abs(costDelta),
+          description: `تعديل تكلفة الشحن (${costDelta > 0 ? '+' : '-'}${Math.abs(costDelta).toLocaleString('ar-EG')} ج) — ${order.clientName || ''} — ${order.shipCompanyName || ''}`,
+          category: costDelta > 0 ? 'shipping_cost' : 'shipping_cost_reversal',
+          orderId,
+          clientName: order.clientName || '',
+          walletId: '',
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+          ...approvalFields(),
+        });
+        addLedgerToBatch(batch, db, 'SHIPPING_EXPENSE', {
+          amount: Math.abs(costDelta),
+          walletId: '', walletName: '',
+          orderId,
+          clientId: order.clientId || '', clientName: order.clientName || '',
+          notes: `تعديل تكلفة شحن (${costDelta > 0 ? '+' : '-'}${Math.abs(costDelta).toLocaleString('ar-EG')} ج) — ${order.shipCompanyName || ''}`,
+          userId: userId || '', userName: userName || '',
+          direction: costDelta > 0 ? 'out' : 'in',
+        });
+      }
+      const tlAction = `✏️ تعديل شحن: ${oldCost !== newCost ? `تكلفة ${oldCost}→${newCost} ج` : ''}${oldCost !== newCost && oldCust !== newCust ? ' · ' : ''}${oldCust !== newCust ? `رسوم العميل ${oldCust}→${newCust} ج` : ''}`;
+      batch.update(order._ref, {
+        shipCost: newCost,
+        customerShipFee: newCust,
+        remaining: newRem,
+        paymentStatus: newRem <= 0 ? 'paid' : paid > 0 ? 'partial' : 'pending',
+        timeline: [...(order.timeline || []), { date: now, action: tlAction, by: userName || '', byId: userId || '' }],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return { ok:true, errors:[], warnings:[], orderId, action:'edit_ship_fee', costDelta };
+    } catch (e) {
+      return { ok:false, errors:[e.message || 'فشل تعديل رسوم الشحن'], warnings:[], orderId };
+    }
+  },
+
+  /**
+   * إضافة/تعديل بند تكلفة على الأوردر (costItems).
+   * لو إضافة جديدة (مش edit) → ينشئ tx execution_cost + GENERAL_EXPENSE ledger.
+   *
+   * @param {string} [args.editIdx] — لو موجود، يعدّل البند بدلاً من إضافته
+   */
+  async addOrderCost({
+    db, orderId, role, userId, userName,
+    type = '', total = 0, note = '', supplierId = '', supplierName = '',
+    editIdx = -1, prodIdx = null,
+  }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
+    if (!type)   return { ok:false, errors:['⚠️ اختر نوع البند'], warnings:[], orderId };
+    const amt = parseFloat(total) || 0;
+    if (amt <= 0) return { ok:false, errors:['⚠️ أدخل التكلفة'], warnings:[], orderId };
+
+    const now = nowStr();
+    const isEdit = editIdx >= 0 && editIdx < (order.costItems || []).length;
+    const txRef = isEdit ? null : doc(collection(db, 'transactions_v2'));
+    const newItem = {
+      type, total: amt, note,
+      addedAt: now, addedBy: userName || '',
+      supplierId, supplierName,
+      prodIdx,
+      ...(txRef ? { txId: txRef.id } : {}),
+    };
+    const ci = [...(order.costItems || [])];
+    let actionText;
+    if (isEdit) {
+      ci[editIdx] = { ...ci[editIdx], ...newItem, editedAt: now };
+      actionText = `✏️ تعديل ${type}: ${amt.toLocaleString('ar-EG')} ج`;
+    } else {
+      ci.push(newItem);
+      actionText = `💰 ${type}: ${amt.toLocaleString('ar-EG')} ج`;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      batch.update(order._ref, {
+        costItems: ci,
+        timeline: [...(order.timeline || []), { date: now, action: actionText, by: userName || '', byId: userId || '' }],
+        updatedAt: serverTimestamp(),
+      });
+      if (txRef) {
+        batch.set(txRef, {
+          type: 'out', amount: amt, category: 'execution_cost',
+          description: `تكلفة ${type} — ${order.clientName || ''} — ${order.orderId || ''}`,
+          orderId,
+          clientName: order.clientName || '',
+          walletId: '',
+          date: now,
+          createdBy: userId || '', createdByName: userName || '',
+          createdAt: serverTimestamp(),
+        });
+        addLedgerToBatch(batch, db, 'GENERAL_EXPENSE', {
+          amount: amt,
+          walletId: '', walletName: '',
+          orderId,
+          clientId: order.clientId || '', clientName: order.clientName || '',
+          notes: `تكلفة ${type} — ${order.clientName || ''} — ${order.orderId || ''}`,
+          userId: userId || '', userName: userName || '',
+        });
+      }
+      await batch.commit();
+      return { ok:true, errors:[], warnings:[], orderId, action: isEdit ? 'edit_cost_item' : 'add_cost_item', costItems: ci };
+    } catch (e) {
+      return { ok:false, errors:[e.message || 'فشل حفظ البند'], warnings:[], orderId };
+    }
+  },
+
+  /**
+   * حذف بند تكلفة من الأوردر. ينشئ ledger entry للعكس (direction='in' للـ refund).
+   * لا يحذف tx الأصلية من Firestore (نتركها للـ audit، الـ ledger بيوضّح أنها انعكست).
+   *
+   * NOTE: behavior الحالي في الصفحة يستخدم batch.delete على tx — هنا نسجّل ledger
+   * counter-entry بدل المسح، يقترب من RULE F2 (append-only) لكن بدون كسر الـ
+   * legacy data (الـ tx القديمة تبقى موجودة كـ historical record).
+   */
+  async removeOrderCost({
+    db, orderId, role, userId, userName, idx,
+  }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
+    const items = order.costItems || [];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= items.length) {
+      return { ok:false, errors:['⚠️ فهرس بند غير صالح'], warnings:[], orderId };
+    }
+    const item = items[idx];
+    const amt = parseFloat(item.total) || 0;
+    const ci = [...items]; ci.splice(idx, 1);
+    const now = nowStr();
+
+    try {
+      const batch = writeBatch(db);
+      batch.update(order._ref, {
+        costItems: ci,
+        timeline: [...(order.timeline || []), { date: now, action: `🗑️ حذف بند ${item.type || ''} (${amt.toLocaleString('ar-EG')} ج)`, by: userName || '', byId: userId || '' }],
+        updatedAt: serverTimestamp(),
+      });
+      // append-only: counter-ledger بدل deleteDoc على الـ tx
+      addLedgerToBatch(batch, db, 'GENERAL_EXPENSE', {
+        amount: amt,
+        walletId: '', walletName: '',
+        orderId,
+        clientId: order.clientId || '', clientName: order.clientName || '',
+        notes: `إلغاء تكلفة ${item.type || ''} — ${order.clientName || ''}`,
+        userId: userId || '', userName: userName || '',
+        direction: 'in',
+      });
+      await batch.commit();
+      return { ok:true, errors:[], warnings:[], orderId, action:'remove_cost_item', costItems: ci, removedItem: item };
+    } catch (e) {
+      return { ok:false, errors:[e.message || 'فشل حذف البند'], warnings:[], orderId };
+    }
+  },
+
+  /**
    * إغلاق الشحنة → stage='archived' + shipStage='closed'.
    * wrapper مبسّط حول archiveOrder({source:'shipping'}).
    */
