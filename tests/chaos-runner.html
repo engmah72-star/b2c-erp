@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Chaos Runner — PR #632</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+* { box-sizing:border-box }
+body { font-family:'SF Mono',Monaco,Consolas,monospace; background:#0a0e1a; color:#cdd6f4; margin:0; padding:24px; line-height:1.6 }
+h1 { font-size:18px; color:#f9e2af; border-bottom:1px solid #313244; padding-bottom:10px }
+h2 { font-size:14px; color:#94e2d5; margin-top:24px }
+.warn { color:#f9e2af }
+.crit { color:#f38ba8 }
+.ok { color:#a6e3a1 }
+.dim { color:#7f849c }
+.card { background:#11151f; border:1px solid #1e2235; border-radius:8px; padding:16px; margin-bottom:16px }
+.card h3 { margin:0 0 8px; font-size:13px; color:#cba6f7 }
+.card p { margin:4px 0; font-size:12px }
+input, select { background:#1e2235; color:#cdd6f4; border:1px solid #313244; border-radius:4px; padding:6px 10px; font-family:inherit; font-size:12px; min-width:280px }
+button { background:#89b4fa; color:#11151f; border:0; border-radius:6px; padding:8px 14px; font-weight:700; cursor:pointer; font-family:inherit; margin-left:6px; font-size:12px }
+button:disabled { opacity:0.4; cursor:not-allowed }
+button.danger { background:#f38ba8 }
+button.warn { background:#f9e2af }
+pre { background:#0a0e1a; border:1px solid #1e2235; border-radius:6px; padding:10px; font-size:11px; overflow:auto; max-height:280px; white-space:pre-wrap; word-break:break-all }
+.row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0 }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700 }
+.b-pass { background:rgba(166,227,161,.18); color:#a6e3a1 }
+.b-fail { background:rgba(243,139,168,.22); color:#f38ba8 }
+.b-warn { background:rgba(249,226,175,.18); color:#f9e2af }
+.b-running { background:rgba(137,180,250,.18); color:#89b4fa }
+.b-pending { background:#313244; color:#7f849c }
+.kbd { background:#313244; border-radius:3px; padding:1px 5px; font-size:11px }
+</style>
+</head>
+<body>
+
+<h1>🧪 Chaos Runner — PR #632 (Shipping Financial Runtime)</h1>
+
+<p class="dim">
+يشغّل الـ 8 chaos tests على staging مباشرة. لا يكتب على main.<br>
+<span class="warn">⚠️ قبل ما تبدأ:</span> تأكد إنك على staging environment + سجل دخول
+بـ admin/operation_manager + جهّز order test (في حالة <code>shipStage='collected'</code>
+ومش <code>shipSettled</code> — جاهز للتسوية).
+</p>
+
+<div class="card">
+  <h3>⚙️ Setup</h3>
+  <div class="row">
+    <label>Order ID للاختبار</label>
+    <input id="testOrderId" placeholder="مثال: AbC123XyZ...">
+    <button onclick="loadOrder()">📥 تحميل</button>
+  </div>
+  <div class="row">
+    <label>Wallet ID</label>
+    <input id="testWalletId" placeholder="cash / bank / ...">
+  </div>
+  <div class="row">
+    <label>Settle amount</label>
+    <input id="testAmount" type="number" step="0.01" value="100">
+  </div>
+  <pre id="orderInfo" class="dim">لم يُحمَّل order بعد</pre>
+</div>
+
+<div class="card">
+  <h3>📜 Console output (مباشر)</h3>
+  <pre id="log" class="dim">[انتظار...]</pre>
+  <button onclick="clearLog()">🗑️ مسح</button>
+</div>
+
+<!-- ─── Tests ─── -->
+
+<div class="card" id="t1">
+  <h3>Test 1 — Double-click Settle <span class="badge b-pending" id="t1-badge">pending</span></h3>
+  <p>يُطلق <code>settleFromCompany</code> مرتين في نفس الـ tick. المتوقّع: 2nd return = <code>idempotent:true</code>.</p>
+  <button onclick="runTest1()">▶ شغّل</button>
+  <pre id="t1-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t2">
+  <h3>Test 2 — Parallel Race (Promise.all) <span class="badge b-pending" id="t2-badge">pending</span></h3>
+  <p>يُطلق action 2 promises متوازية بنفس payload. المتوقّع: واحدة فقط تنفّذ، الثانية pending أو cached.</p>
+  <button onclick="runTest2()">▶ شغّل</button>
+  <pre id="t2-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t3">
+  <h3>Test 3 — Refresh Mid-action (manual) <span class="badge b-pending" id="t3-badge">pending</span></h3>
+  <p>يبدأ collect ثم بعد 200ms يقلب على شاشة inspection. أنت اضغط <span class="kbd">Ctrl+R</span> يدوياً بعد ما تشوف الـ pending state.</p>
+  <button onclick="runTest3()">▶ شغّل (refresh يدوي)</button>
+  <pre id="t3-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t4">
+  <h3>Test 4 — Retry After "Failure" (simulated) <span class="badge b-pending" id="t4-badge">pending</span></h3>
+  <p>نحاكي failure بتعديل status='failed' في <code>financial_operations</code> ثم نعيد المحاولة.</p>
+  <button onclick="runTest4()">▶ شغّل</button>
+  <pre id="t4-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t5">
+  <h3>Test 5 — Reverse After Return <span class="badge b-pending" id="t5-badge">pending</span></h3>
+  <p>يعمل full return ثم يحاول reverseSettlement. المتوقّع: الـ reverseSettlement يرفض لأن settlement.reversed=true (بعد bugfix).</p>
+  <button onclick="runTest5()" class="warn">▶ شغّل (يكتب فعلياً)</button>
+  <pre id="t5-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t6">
+  <h3>Test 6 — Partial Return Twice <span class="badge b-pending" id="t6-badge">pending</span></h3>
+  <p>يستخدم بيانات الـ order الحالية ويحاول 2 partial returns على نفس الـ items.</p>
+  <button onclick="runTest6()" class="warn">▶ شغّل (يكتب فعلياً)</button>
+  <pre id="t6-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t7">
+  <h3>Test 7 — Network Disconnect (manual) <span class="badge b-pending" id="t7-badge">pending</span></h3>
+  <p>افتح DevTools → Network → "Offline" → ثم اضغط الزر. المتوقّع: action throws cleanly، operations.status='failed'.</p>
+  <button onclick="runTest7()">▶ شغّل</button>
+  <pre id="t7-out" class="dim">—</pre>
+</div>
+
+<div class="card" id="t8">
+  <h3>Test 8 — Projection Rebuild <span class="badge b-pending" id="t8-badge">pending</span></h3>
+  <p>يستدعي <code>rebuildFinancialProjection</code> + <code>compareProjectionVsLedger</code> ويعرض الـ drift.</p>
+  <button onclick="runTest8()">▶ شغّل</button>
+  <pre id="t8-out" class="dim">—</pre>
+</div>
+
+<div class="card">
+  <h3>📊 Summary</h3>
+  <pre id="summary" class="dim">شغّل الـ tests لتظهر النتيجة</pre>
+  <button onclick="copySummary()">📋 نسخ تقرير</button>
+</div>
+
+<script type="module">
+import { auth, db } from '../core/firebase-init.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { orderActions } from '../order-actions.js';
+import { rebuildFinancialProjection, compareProjectionVsLedger } from '../core/projection.js';
+import { detectFinancialDrift } from '../core/financial-invariants.js';
+
+const $ = id => document.getElementById(id);
+let me = null, myRole = '';
+const results = {};
+
+onAuthStateChanged(auth, async (u) => {
+  if (!u) { log('⛔ سجّل دخول أولاً'); return; }
+  me = u;
+  const udoc = await getDoc(doc(db, 'users', u.uid));
+  myRole = udoc.exists() ? (udoc.data().role || '') : '';
+  log(`✅ logged in: ${u.email} (${myRole})`);
+});
+
+function log(...args) {
+  const ts = new Date().toISOString().split('T')[1].slice(0,12);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+  $('log').textContent = `[${ts}] ${msg}\n` + $('log').textContent;
+}
+
+window.clearLog = () => { $('log').textContent = '[cleared]'; };
+window.copySummary = () => {
+  navigator.clipboard.writeText($('summary').textContent);
+  log('📋 تم النسخ للحافظة');
+};
+
+function setBadge(testId, state, msg) {
+  const cls = state === 'pass' ? 'b-pass' : state === 'fail' ? 'b-fail' : state === 'warn' ? 'b-warn' : 'b-running';
+  $(`${testId}-badge`).className = `badge ${cls}`;
+  $(`${testId}-badge`).textContent = state.toUpperCase();
+  if (msg) $(`${testId}-out`).textContent = msg;
+  results[testId] = { state, msg };
+  refreshSummary();
+}
+
+function refreshSummary() {
+  const lines = ['Chaos Runner — PR #632\n'];
+  for (const [k, v] of Object.entries(results)) {
+    lines.push(`${k.toUpperCase()}: ${v.state.toUpperCase()}`);
+  }
+  $('summary').textContent = lines.join('\n');
+}
+
+window.loadOrder = async () => {
+  const id = $('testOrderId').value.trim();
+  if (!id) return log('⚠️ ادخل order ID');
+  try {
+    const snap = await getDoc(doc(db, 'orders', id));
+    if (!snap.exists()) return log('❌ Order مش موجود');
+    const o = { _id: id, ...snap.data() };
+    $('orderInfo').className = 'ok';
+    $('orderInfo').textContent = JSON.stringify({
+      orderNumber: o.orderNumber || o.orderId,
+      clientName: o.clientName,
+      stage: o.stage,
+      shipStage: o.shipStage,
+      shipMethod: o.shipMethod,
+      shipCompanyName: o.shipCompanyName,
+      shipSettled: o.shipSettled,
+      shipCollected: o.shipCollected,
+      shippingCost: o.shippingCost,
+      totalPaid: o.totalPaid,
+      remaining: o.remaining,
+      salePrice: o.salePrice,
+    }, null, 2);
+    log(`✅ Loaded order ${o.orderNumber || id.slice(0,6)}`);
+  } catch (e) { log('❌ ' + e.message); }
+};
+
+// ─── Tests ───
+
+window.runTest1 = async () => {
+  setBadge('t1', 'running', 'firing 2 settles in same tick...');
+  const args = baseSettleArgs();
+  if (!args) { setBadge('t1', 'warn', 'setup incomplete'); return; }
+  const [r1, r2] = await Promise.all([
+    orderActions.settleFromCompany(args),
+    orderActions.settleFromCompany(args),
+  ]);
+  log('Test 1', { r1, r2 });
+  const oneOk = (r1.ok && r2.idempotent) || (r2.ok && r1.idempotent);
+  const passing = oneOk && (r1.operationId === r2.operationId);
+  setBadge('t1', passing ? 'pass' : 'fail', JSON.stringify({
+    r1: { ok: r1.ok, op: r1.operationId, idem: r1.idempotent, pending: r1.pending },
+    r2: { ok: r2.ok, op: r2.operationId, idem: r2.idempotent, pending: r2.pending },
+  }, null, 2));
+};
+
+window.runTest2 = async () => {
+  setBadge('t2', 'running', 'simulating parallel tabs via Promise.all...');
+  // نفس Test 1 — الفرق هو إنه يختبر race conditions داخل runTransaction
+  // الـ minute-bucket fingerprint يجمعهم في نفس operationId.
+  const args = baseSettleArgs();
+  if (!args) { setBadge('t2', 'warn', 'setup incomplete'); return; }
+  // إطلاق 3 على نفس الـ tick
+  const all = await Promise.all([
+    orderActions.settleFromCompany(args),
+    orderActions.settleFromCompany(args),
+    orderActions.settleFromCompany(args),
+  ]);
+  log('Test 2', all);
+  const winners = all.filter(r => r.ok && !r.idempotent);
+  const passing = winners.length === 1;
+  setBadge('t2', passing ? 'pass' : 'fail', JSON.stringify({
+    winners: winners.length,
+    expected: 1,
+    statuses: all.map(r => ({ ok:r.ok, idem:r.idempotent, pending:r.pending, op:r.operationId?.slice(0,8) })),
+  }, null, 2));
+};
+
+window.runTest3 = async () => {
+  setBadge('t3', 'running', 'starting collect — REFRESH NOW (Ctrl+R)');
+  log('🔄 Test 3: شغّل collect — اضغط Ctrl+R خلال 300ms');
+  // Note: هذه manual فعلياً. الـ runner يبدأ والمستخدم يعمل refresh.
+  // بعد الـ refresh، شغّل Test 3 مرة تانية لتشوف الـ pending state.
+  const args = {
+    db, orderId: $('testOrderId').value.trim(),
+    amount: 50,
+    walletId: $('testWalletId').value.trim(),
+    role: myRole, userId: me.uid, userName: me.email,
+  };
+  setTimeout(() => log('⚠️ 200ms passed — refresh now if you want to test'), 200);
+  try {
+    const r = await orderActions.collectFromCustomer(args);
+    log('Test 3', r);
+    setBadge('t3', r.ok ? 'pass' : 'warn', JSON.stringify(r, null, 2));
+  } catch (e) {
+    setBadge('t3', 'warn', e.message);
+  }
+};
+
+window.runTest4 = async () => {
+  setBadge('t4', 'running', 'simulating failed-then-retry...');
+  const args = baseSettleArgs();
+  if (!args) { setBadge('t4', 'warn', 'setup incomplete'); return; }
+  // 1. شغّل أول مرة
+  const r1 = await orderActions.settleFromCompany(args);
+  log('Test 4 r1', r1);
+  if (!r1.operationId) { setBadge('t4', 'fail', 'no operationId'); return; }
+  // 2. اقلب status إلى failed
+  try {
+    await updateDoc(doc(db, 'financial_operations', r1.operationId), {
+      status: 'failed',
+      error: 'simulated for chaos test',
+      completedAt: serverTimestamp(),
+    });
+    log('🔁 Forced status=failed');
+  } catch (e) {
+    setBadge('t4', 'warn', 'cannot force failed (rules may block): ' + e.message);
+    return;
+  }
+  // 3. أعد المحاولة
+  const r2 = await orderActions.settleFromCompany(args);
+  log('Test 4 r2 (after force-failed)', r2);
+  // المتوقّع: r2 ينفّذ من جديد، لكن validateSettle يرفض (مسوّى بالفعل)
+  setBadge('t4', r2.ok ? 'warn' : 'pass', JSON.stringify({
+    r1: { ok: r1.ok, op: r1.operationId?.slice(0,8) },
+    r2: { ok: r2.ok, errors: r2.errors, op: r2.operationId?.slice(0,8) },
+    note: r2.ok ? '⚠️ DUPLICATE — retry succeeded after force-failed' : '✅ blocked by validateSettle (already settled)',
+  }, null, 2));
+};
+
+window.runTest5 = async () => {
+  setBadge('t5', 'running', 'chained: collect → settle → return → tryReverse...');
+  const orderId = $('testOrderId').value.trim();
+  if (!orderId) { setBadge('t5', 'warn', 'no order'); return; }
+  // هذا destructive — يحرّك حالة فعلية
+  if (!confirm('Test 5 سيغيّر الـ order فعلياً (return + reverse attempt). متابعة؟')) {
+    setBadge('t5', 'warn', 'skipped by user');
+    return;
+  }
+  // اعمل return كامل
+  const r1 = await orderActions.markFullReturn({
+    db, orderId,
+    role: myRole, userId: me.uid, userName: me.email,
+    reason: 'chaos-test', reasonLabel: 'اختبار chaos',
+    lossParty: 'client', cost: 0,
+  });
+  log('Test 5 markFullReturn', r1);
+  if (!r1.ok) { setBadge('t5', 'warn', 'return failed: ' + (r1.errors||[''])[0]); return; }
+
+  // اقرأ أي settlement مرتبط بالـ order
+  const settlementsSnap = await getDocs(query(
+    collection(db, 'shipping_settlements'),
+    where('orderIds', 'array-contains', orderId),
+  ));
+  const liveSettlements = settlementsSnap.docs.filter(d => d.data().reversed !== true);
+  log(`After return: ${settlementsSnap.size} settlements total, ${liveSettlements.length} marked active`);
+
+  if (liveSettlements.length === 0) {
+    setBadge('t5', 'pass', `✅ all ${settlementsSnap.size} settlements marked reversed:true by markFullReturn (bugfix verified)`);
+    return;
+  }
+
+  // لو في settlement لسه active، حاول reverseSettlement
+  const s = liveSettlements[0];
+  const r2 = await orderActions.reverseSettlement({
+    db, settlementId: s.id,
+    role: myRole, userId: me.uid, userName: me.email,
+  });
+  log('Test 5 reverseSettlement attempt', r2);
+  // المتوقع بعد الإصلاح: r2.ok=false (مرفوض لأنه reversed بالفعل)
+  // قبل الإصلاح: r2.ok=true (double-deduct)
+  setBadge('t5', r2.ok ? 'fail' : 'pass', JSON.stringify({
+    settlement: s.id.slice(0,8),
+    reverseResult: { ok: r2.ok, errors: r2.errors },
+    bugStatus: r2.ok ? '❌ DOUBLE-DEDUCT BUG REPRODUCED' : '✅ blocked correctly',
+  }, null, 2));
+};
+
+window.runTest6 = async () => {
+  setBadge('t6', 'running', 'partial return twice...');
+  const orderId = $('testOrderId').value.trim();
+  if (!orderId) { setBadge('t6', 'warn', 'no order'); return; }
+  if (!confirm('Test 6 يعمل 2 partial returns. متابعة؟')) {
+    setBadge('t6', 'warn', 'skipped');
+    return;
+  }
+  const oSnap = await getDoc(doc(db, 'orders', orderId));
+  const o = oSnap.data();
+  const products = o.products || [];
+  if (products.length === 0) { setBadge('t6', 'warn', 'order has no products'); return; }
+
+  const items = [{ prodIdx: 0, returnedQty: 1, unitPrice: products[0].unitPrice || 10, lineTotal: products[0].unitPrice || 10 }];
+  const args = {
+    db, orderId, role: myRole, userId: me.uid, userName: me.email,
+    returnedItems: items, refundAmount: 10, refundFromWallet: 0,
+    cost: 0, lossParty: 'client', reason: 'chaos', reasonLabel: 'chaos test',
+  };
+
+  const r1 = await orderActions.markPartialReturn(args);
+  log('Test 6 r1', r1);
+
+  const r2 = await orderActions.markPartialReturn(args);
+  log('Test 6 r2 (second attempt)', r2);
+  // المتوقع: r1.ok=true, r2.ok=false (validator رفض)
+  // أو: r2.idempotent=true لو نفس الـ fingerprint (داخل نفس الدقيقة)
+  const passing = r1.ok && (r2.idempotent === true || !r2.ok);
+  setBadge('t6', passing ? 'pass' : 'fail', JSON.stringify({
+    r1: { ok: r1.ok, op: r1.operationId?.slice(0,8) },
+    r2: { ok: r2.ok, idem: r2.idempotent, errors: r2.errors, op: r2.operationId?.slice(0,8) },
+  }, null, 2));
+};
+
+window.runTest7 = async () => {
+  setBadge('t7', 'running', 'attempting under offline mode...');
+  log('⚠️ افتح DevTools → Network → "Offline" قبل ما الـ action يبدأ');
+  const args = baseSettleArgs();
+  if (!args) { setBadge('t7', 'warn', 'setup incomplete'); return; }
+  try {
+    const r = await orderActions.settleFromCompany(args);
+    log('Test 7', r);
+    setBadge('t7', r.ok ? 'warn' : 'pass', `${r.ok ? '⚠️ succeeded — network was up' : '✅ failed gracefully: ' + (r.errors||[''])[0]}`);
+  } catch (e) {
+    log('Test 7 threw', e.message);
+    // العملية فشلت مع exception — لكن idempotency راجع status='failed'
+    setBadge('t7', 'pass', '✅ failed gracefully: ' + e.message);
+  }
+};
+
+window.runTest8 = async () => {
+  setBadge('t8', 'running', 'rebuilding projection from ledger...');
+  const orderId = $('testOrderId').value.trim();
+  if (!orderId) { setBadge('t8', 'warn', 'no order'); return; }
+  const proj = await rebuildFinancialProjection(db, orderId);
+  log('Test 8 projection', proj);
+  const oSnap = await getDoc(doc(db, 'orders', orderId));
+  const o = { _id: orderId, ...oSnap.data() };
+  const cmp = await compareProjectionVsLedger(db, o);
+  log('Test 8 compare', cmp);
+  const drift = detectFinancialDrift(o);
+  log('Test 8 invariants', drift);
+  const passing = cmp.drift.length === 0 && drift.filter(d => d.severity === 'crit').length === 0;
+  setBadge('t8', passing ? 'pass' : 'fail', JSON.stringify({
+    derivedPaid: proj.derivedPaid,
+    storedPaid: o.totalPaid,
+    drift: cmp.drift,
+    invariants: drift,
+  }, null, 2));
+};
+
+function baseSettleArgs() {
+  const orderId = $('testOrderId').value.trim();
+  const walletId = $('testWalletId').value.trim();
+  const amount = parseFloat($('testAmount').value) || 0;
+  if (!orderId || !walletId || !amount) {
+    log('⚠️ املأ orderId + walletId + amount');
+    return null;
+  }
+  return {
+    db,
+    orderIds: [orderId],
+    amount,
+    walletId,
+    walletName: 'chaos-test',
+    role: myRole,
+    userId: me.uid,
+    userName: me.email,
+    companyName: 'Chaos Test',
+  };
+}
+</script>
+</body>
+</html>

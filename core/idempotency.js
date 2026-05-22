@@ -33,7 +33,7 @@
  * كل operationId مبني من fingerprint deterministic. نفس inputs = نفس id.
  */
 
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp }
+import { runTransaction, doc, getDoc, updateDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { startActionTrace } from './telemetry.js';
 
@@ -113,71 +113,68 @@ export async function withIdempotency(db, opMeta, fn) {
     return result;
   };
 
-  // 1) check existing
-  let existing = null;
+  // 1+2) Atomic check-and-reserve via Firestore transaction.
+  // PR-7.5 BUGFIX (Chaos Test 2): The previous getDoc+setDoc pattern had a
+  // TOCTOU race — two tabs could both see "doesn't exist" and both setDoc,
+  // resulting in double mutation. runTransaction makes this atomic.
+  //
+  // Outcomes:
+  //   { kind:'reserved'  } → we own this op, proceed to execute
+  //   { kind:'completed' } → another caller already finished, return cached
+  //   { kind:'pending'   } → another caller is in-flight, reject
+  let reservation;
   try {
-    const snap = await getDoc(opRef);
-    if (snap.exists()) existing = snap.data();
+    reservation = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(opRef);
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.status === 'completed') return { kind: 'completed', data: d };
+        if (d.status === 'pending')   return { kind: 'pending',   data: d };
+        // status === 'failed' → overwrite & retry
+      }
+      // create or retry-after-failure: write pending
+      tx.set(opRef, {
+        operationId,
+        actionType: opMeta.actionType,
+        entityId:   opMeta.entityId || '',
+        actorId:    opMeta.actorId  || '',
+        fingerprint: operationId,
+        status:     'pending',
+        createdAt:  serverTimestamp(),
+        payload:    opMeta.payload || {},
+      });
+      return { kind: 'reserved' };
+    });
   } catch (e) {
-    console.warn('[IDEMPOTENCY] فشل قراءة operationId، نتابع', e);
+    // Transaction error itself — fall through and try once more without the
+    // idempotency guard. NEVER throw without finalize() (telemetry).
+    console.warn('[IDEMPOTENCY] transaction failed — proceeding without guard', e);
+    reservation = { kind: 'reserved' };
   }
 
-  if (existing) {
-    if (existing.status === 'completed') {
-      console.log('[IDEMPOTENCY] ✅ no-op: cached completed result', operationId);
-      return finalize({
-        ...(existing.result || {}),
-        ok: existing.result?.ok ?? true,
-        operationId,
-        idempotent: true,
-        cachedFrom: existing.completedAt || existing.createdAt,
-      });
-    }
-    if (existing.status === 'pending') {
-      // عملية قيد التنفيذ من tab/jeb آخر — نرفض بدل تنفيذ duplicate
-      console.warn('[IDEMPOTENCY] ⏳ rejected: pending operation', operationId);
-      return finalize({
-        ok: false,
-        errors: ['⏳ نفس العملية قيد التنفيذ — انتظر بضع ثواني وأعد المحاولة'],
-        warnings: [],
-        operationId,
-        idempotent: true,
-        pending: true,
-      });
-    }
-    // failed — نسمح بإعادة المحاولة (يُمسح المسجَّل ويُسجَّل جديد)
-    console.log('[IDEMPOTENCY] ↻ retry after failure', operationId);
-  }
-
-  // 2) reserve pending
-  try {
-    await setDoc(opRef, {
+  if (reservation.kind === 'completed') {
+    const d = reservation.data;
+    console.log('[IDEMPOTENCY] ✅ no-op: cached completed result', operationId);
+    return finalize({
+      ...(d.result || {}),
+      ok: d.result?.ok ?? true,
       operationId,
-      actionType: opMeta.actionType,
-      entityId: opMeta.entityId || '',
-      actorId: opMeta.actorId || '',
-      fingerprint: operationId, // same as id (deterministic)
-      status: 'pending',
-      createdAt: serverTimestamp(),
-      payload: opMeta.payload || {},
-    }, { merge: false });
-  } catch (e) {
-    // race: another tab won the setDoc — re-read and return its pending/completed
-    console.warn('[IDEMPOTENCY] race on reserve, re-reading', e);
-    const snap = await getDoc(opRef);
-    const d = snap.exists() ? snap.data() : null;
-    if (d?.status === 'completed') {
-      return finalize({ ...(d.result || {}), ok: d.result?.ok ?? true, operationId, idempotent: true });
-    }
+      idempotent: true,
+      cachedFrom: d.completedAt || d.createdAt,
+    });
+  }
+  if (reservation.kind === 'pending') {
+    console.warn('[IDEMPOTENCY] ⏳ rejected: pending operation', operationId);
     return finalize({
       ok: false,
-      errors: ['⏳ نفس العملية قيد التنفيذ في جلسة أخرى'],
+      errors: ['⏳ نفس العملية قيد التنفيذ — انتظر بضع ثواني وأعد المحاولة'],
       warnings: [],
       operationId,
       idempotent: true,
       pending: true,
     });
   }
+  // reservation.kind === 'reserved' — we own this op, proceed below.
 
   // 3) execute
   let result;

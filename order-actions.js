@@ -953,6 +953,20 @@ export const orderActions = {
       ));
       const colTxDocs = [...colSnap.docs, ...adjSnap.docs];
 
+      // PR-7.5 BUGFIX (Chaos Test 5): إلاّ شركة الشحن تكون مسوّاة و reversed بشكل
+      // ذرّي مع باقي عمليات المرتجع — وإلا الـ reverseSettlement اللاحق
+      // هيقرأ التسوية كـ "active" ويعمل double-deduct.
+      // نستعلم لكل الـ shipping_settlements اللي تتضمن هذا الـ orderId و reversed!=true.
+      let settlementDocsToReverse = [];
+      if (isRealSettled || isManualSettled) {
+        const settlementsSnap = await getDocs(query(
+          collection(db, 'shipping_settlements'),
+          where('orderIds', 'array-contains', orderId),
+        ));
+        settlementDocsToReverse = settlementsSnap.docs
+          .filter(d => d.data().reversed !== true);
+      }
+
       const lossLabel = lossParty === 'client' ? 'العميل'
                       : lossParty === 'company' ? 'الشركة'
                       : 'شركة الشحن';
@@ -1034,6 +1048,20 @@ export const orderActions = {
           notes: `عكس تسوية يدوية (manual) لمرتجع — ${order.clientName || ''} — ${coName}`,
           userId: userId || '', userName: userName || '',
           operationId, // PR-7.5 R2
+        });
+      }
+
+      // PR-7.5 BUGFIX (Chaos Test 5): mark shipping_settlements docs as
+      // reversed:true in the same batch so a later reverseSettlement call
+      // sees them as already-reversed and refuses to double-deduct.
+      for (const sDoc of settlementDocsToReverse) {
+        batch.update(sDoc.ref, {
+          reversed: true,
+          reversedAt: serverTimestamp(),
+          reversedBy: userId || '',
+          reversedByName: userName || '',
+          reversalReason: `auto-reversed by markFullReturn — ${reason || reasonLabel || ''}`,
+          reversalOperationId: operationId,
         });
       }
 
