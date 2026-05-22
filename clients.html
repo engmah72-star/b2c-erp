@@ -851,6 +851,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      Used by saveNewOrder (deposit-aware atomic batch via createOrder action). -->
 <script type="module" src="./order-actions.js"></script>
 
+<!-- God-page decomp PR-1: pure render + formatting helpers (escapeHtml,
+     fmtOccasion, pRow, bcInput, bcTextarea, bcSection, fuTimeAgo, ...).
+     Side-effect import: clients-render.js attaches them to window. -->
+<script type="module" src="./clients-render.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -991,37 +996,13 @@ const STAGE_HREF={design:'design',printing:'print',production:'production',shipp
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
 
-// ── Occasions helpers (birthday/anniversary) ──
-function fmtOccasion(dateStr){
-  if(!dateStr)return '';
-  const d=new Date(dateStr);if(isNaN(d))return dateStr;
-  const now=new Date();
-  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
-  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
-  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
-  const md=d.toLocaleDateString('ar-EG',{month:'long',day:'numeric'});
-  const years=now.getFullYear()-d.getFullYear()-(next.getFullYear()>now.getFullYear()?0:0);
-  let label=md;
-  if(daysAway===0)label+=' 🎉 اليوم!';
-  else if(daysAway===1)label+=' (غداً)';
-  else if(daysAway<=7)label+=` (بعد ${daysAway} أيام)`;
-  return label;
-}
-function isOccasionToday(dateStr){
-  if(!dateStr)return false;
-  const d=new Date(dateStr);if(isNaN(d))return false;
-  const now=new Date();
-  return d.getMonth()===now.getMonth()&&d.getDate()===now.getDate();
-}
-function isOccasionSoon(dateStr,withinDays=7){
-  if(!dateStr)return false;
-  const d=new Date(dateStr);if(isNaN(d))return false;
-  const now=new Date();
-  const next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
-  if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(now.getFullYear()+1);
-  const daysAway=Math.ceil((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
-  return daysAway>0&&daysAway<=withinDays;
-}
+// ── Occasions helpers + render formatters + HTML builders ──
+// God-page decomp PR-1 (RULE G5): extracted to clients-render.js and
+// attached to `window` on module load. Functions extracted:
+//   fmtOccasion, isOccasionToday, isOccasionSoon, isThisMonth,
+//   escapeHtml, pRow, bcInput, bcTextarea, bcSection,
+//   fuTimeAgo, fuFmtDate, toLocalDT
+// All names remain globally callable from the in-page compat code below.
 
 // Render the RFM segment strip: counts per segment with click-to-filter.
 window.renderSegmentStrip=function(){
@@ -1106,7 +1087,7 @@ const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-function isThisMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();}
+// isThisMonth — extracted to clients-render.js (window.isThisMonth)
 
 function toast(msg,t=''){
   const c=document.getElementById('toasts');if(!c)return;
@@ -1750,7 +1731,7 @@ function renderAiAnalysis(d){
   `;
 }
 
-function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// escapeHtml — extracted to clients-render.js (window.escapeHtml)
 function renderPanel(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
   const pnOrdBtn=document.querySelector('#panel-ov .btn-g');
@@ -1979,19 +1960,8 @@ function renderPanel(id){
 // ═══════════════════════════════════════════════════════════
 window._bizCardClientId = null;
 
-function bcInput(id, label, ph, val, type){
-  type = type || 'text';
-  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><input type="${type}" id="bc-${id}" placeholder="${ph||''}" value="${(val||'').toString().replace(/"/g,'&quot;')}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none"></div>`;
-}
-function bcTextarea(id, label, ph, val){
-  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><textarea id="bc-${id}" placeholder="${ph||''}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:60px;resize:vertical">${(val||'').toString().replace(/</g,'&lt;')}</textarea></div>`;
-}
-function bcSection(title, body){
-  return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
-    <div style="font-size:var(--fs-base);font-weight:800;color:var(--snow);margin-bottom:10px;display:flex;align-items:center;gap:6px">${title}</div>
-    ${body}
-  </div>`;
-}
+// bcInput, bcTextarea, bcSection — extracted to clients-render.js
+// (window.bcInput, window.bcTextarea, window.bcSection)
 
 function renderBizCardTab(c){
   const bc = c.businessCard || {};
@@ -2442,28 +2412,15 @@ window.filterPanelOrders=function(filter){
   if(listEl&&window.__panelOrds) listEl.innerHTML=renderPanelOrders(window.__panelOrds,filter);
 };
 
-function pRow(l,v){return`<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:var(--fs-tiny);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div style="font-size:var(--fs-base);font-weight:700">${v}</div></div>`;}
+// pRow — extracted to clients-render.js (window.pRow)
 
 // ══ FOLLOW-UPS (CRM) ══
 const FU_TYPES={call:'📞 مكالمة',whatsapp:'💬 واتساب',email:'📧 إيميل',visit:'🏠 زيارة',note:'📝 ملاحظة',reminder:'⏰ تذكير'};
 const FU_OUTCOMES={answered:'✅ ردّ',no_answer:'📵 لم يردّ',interested:'🎯 مهتم',not_interested:'🚫 غير مهتم',order_placed:'🛒 طلب جديد',follow_later:'⏳ متابعة لاحقاً'};
 const FU_TYPE_COL={call:'var(--g)',whatsapp:'#25d366',email:'var(--y)',visit:'var(--p)',note:'var(--dim2)',reminder:'var(--b)'};
 
-function fuTimeAgo(ts){
-  if(!ts)return '';
-  const d=ts.toDate?ts.toDate():(ts instanceof Date?ts:new Date(ts));
-  const diff=Math.floor((Date.now()-d.getTime())/1000);
-  if(diff<60)return 'الآن';
-  if(diff<3600)return `منذ ${Math.floor(diff/60)} دقيقة`;
-  if(diff<86400)return `منذ ${Math.floor(diff/3600)} ساعة`;
-  if(diff<86400*30)return `منذ ${Math.floor(diff/86400)} يوم`;
-  return d.toLocaleDateString('ar-EG');
-}
-function fuFmtDate(s){
-  if(!s)return '';
-  const d=new Date(s);if(isNaN(d))return s;
-  return d.toLocaleDateString('ar-EG')+' '+d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-}
+// fuTimeAgo, fuFmtDate — extracted to clients-render.js
+// (window.fuTimeAgo, window.fuFmtDate)
 function getClientFollowups(clientId){
   return (followupsByClient.get(clientId)||[]).slice().sort((a,b)=>{
     const ta=a.createdAt?.seconds||0, tb=b.createdAt?.seconds||0;
@@ -2516,7 +2473,7 @@ function renderClientFollowups(clientId){
   }).join('');
   return errBanner+rendered;
 }
-function escapeHtml(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);}
+// escapeHtml duplicate — extracted to clients-render.js (window.escapeHtml)
 
 function updateFollowupsBadge(clientId){
   const badge=document.getElementById('ptab-fu-badge');
@@ -2569,12 +2526,7 @@ window.setFuRating=function(n){
   const labels={0:'— غير مُقيَّم —',1:'⭐ ضعيف',2:'⭐⭐ مقبول',3:'⭐⭐⭐ جيد',4:'⭐⭐⭐⭐ ممتاز',5:'⭐⭐⭐⭐⭐ رائع'};
   if(lbl)lbl.textContent=labels[val];
 };
-function toLocalDT(s){
-  const d=new Date(s);if(isNaN(d))return '';
-  const off=d.getTimezoneOffset();
-  const local=new Date(d.getTime()-off*60000);
-  return local.toISOString().slice(0,16);
-}
+// toLocalDT — extracted to clients-render.js (window.toLocalDT)
 window.closeFollowupModal=function(){document.getElementById('ov-followup').classList.remove('open');};
 
 // P1.3 — Thin orchestration over window.clientActions.saveFollowup.
