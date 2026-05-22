@@ -599,8 +599,8 @@ const MOB_NAV_CFG={production_agent:[{h:'production-dashboard.html',i:'⬡',l:'�
 function buildMobNav(role,cur){const el=document.getElementById('mob-nav-items');if(!el)return;const items=MOB_NAV_CFG[role]||MOB_NAV_CFG.admin;el.innerHTML=items.map(n=>`<a class="mob-nav-item${n.h===cur?' active':''}" href="${n.h}"><div class="mob-nav-ico">${n.i}</div><div class="mob-nav-lbl">${n.l}</div></a>`).join('');}
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'exec-cost-entry.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, serverTimestamp, writeBatch, increment, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { orderActions } from "./order-actions.js";
 import { askAI, hasKey, KEY_NEEDED } from "./ai-engine.js";
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='',activeId=null,currentFilter='all',currentSort='priority',aiActiveId=null,editCostIdx=-1;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
@@ -1521,31 +1521,9 @@ window.deleteCost=async function(idx){
   const item=(o.costItems||[])[idx];if(!item)return;
   if(item.walletId)return toast('⚠️ هذا البند مدفوع من محفظة — احذفه من production.html','err');
   if(!confirm(`حذف "${item.type} · ${fn(item.total||0)} ج"؟`))return;
-  try{
-    const ci=[...(o.costItems||[])];ci.splice(idx,1);
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{
-      costItems:ci,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🗑️ حذف بند: ${item.type} · ${fn(item.total||0)} ج`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    // Void supplier_order إن وُجد
-    if(item.supplierOrderId){
-      batch.update(doc(db,'supplier_orders',item.supplierOrderId),{isDeleted:true,voidedAt:serverTimestamp(),voidReason:'حذف بند تكلفة'});
-    }
-    // Reversal ledger
-    const revEvent=item.supplierId?FE.VENDOR_PAYMENT_REVERSAL:FE.GENERAL_EXPENSE;
-    if(item.supplierId){
-      addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT_REVERSAL,{
-        amount:parseFloat(item.total)||0,orderId:activeId,clientName:o.clientName||'',
-        vendorId:item.supplierId,vendorName:item.supplierName||'',
-        notes:`عكس بند تكلفة محذوف — ${item.type}${item.note?' — '+item.note:''}`,
-        userId:currentUser?.uid||'',userName
-      });
-    }
-    await batch.commit();
-    toast('🗑️ تم الحذف','ok');
-  }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
+  const r=await orderActions.removeUnpaidCostItem({db,orderId:activeId,itemIndex:idx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('🗑️ تم الحذف','ok');
 };
 
 window.closeCostModal=function(){
@@ -1590,122 +1568,22 @@ window.saveCost=async function(){
     if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
   }
 
-  const origItem=isEdit?(o.costItems||[])[editCostIdx]:null;
-  const existingId=origItem?.costItemId||'';
-  const costItemId=existingId||(Date.now().toString(36)+Math.random().toString(36).slice(2,7));
-
-  // supplier_orders linking (RULE 7)
-  const existingSoId=origItem?.supplierOrderId||'';
-  const supplierChanged=isEdit&&!!existingSoId&&(origItem?.supplierId||'')!==supplierId;
-  const needNewSo=!!supplierId&&(!isEdit||!existingSoId||supplierChanged);
-  const soRef=needNewSo?doc(collection(db,'supplier_orders')):null;
-  const supplierOrderId=soRef?soRef.id:(!supplierChanged&&existingSoId&&supplierId?existingSoId:'');
-
-  // Wallet refs — كله يحدث فقط عند الإضافة (التعديل لا يعدّل الدفع الموجود)
-  const txRef=walletId&&!isEdit?doc(collection(db,'transactions_v2')):null;
-  const spRef=walletId&&!isEdit&&supplierId?doc(collection(db,'supplier_payments')):null;
-
-  const newItem={
-    costItemId,orderId:activeId,isExternal:!!supplierId,
-    ...(supplierOrderId?{supplierOrderId}:{}),
-    type,supplierId,supplierName,
-    prodIdx:prodIdx>=0?prodIdx:null,
-    total,note,
-    ...(Object.keys(paperMeta).length?{paperMeta}:{}),
-    date:new Date().toISOString().slice(0,10),
-    addedAt:nowStr(),addedAtMs:Date.now(),
-    addedBy:userName,addedById:currentUser?.uid||'',
-    ...(txRef?{txId:txRef.id,walletId}:{}),
-    ...(spRef?{spId:spRef.id}:{}),
-    // عند التعديل، احتفظ بالحقول المالية الموجودة
-    ...(isEdit&&origItem?.walletId?{walletId:origItem.walletId,txId:origItem.txId}:{}),
-    ...(isEdit&&origItem?.spId?{spId:origItem.spId}:{})
-  };
-
-  const ci=[...(o.costItems||[])];
-  if(isEdit)ci.splice(editCostIdx,1,newItem);else ci.push(newItem);
-
   try{
-    const batch=writeBatch(db);
-    const tlAction=isEdit?`✏️ تعديل بند ${type}: ${fn(total)} ج`:`💰 ${type}: ${fn(total)} ج${note?' — '+note:''}`;
-    const tlEntry={date:nowStr(),action:tlAction,by:userName};
-    const updFields={
-      costItems:ci,
-      timeline:[...(o.timeline||[]),tlEntry],
-      updatedAt:serverTimestamp()
-    };
-    // أرشفة تلقائية عند awaiting — فقط لو مكتمل الدفع (قاعدة جديدة)
+    // central recordCostItem يعالج كل الـ atomic batch + supplier_orders + ledger + wallet/tx
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx,
+      payload:{type,total,supplierId,supplierName,note,walletId,paperMeta},
+      role:currentRole,userId:currentUser?.uid||'',userName,
+      wallets,isEdit,editIdx:editCostIdx,
+    });
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    // auto-archive لو awaitingFinalArchive + مكتمل الدفع
     const _remEC=parseFloat(o.remaining)||0;
     const _psEC=(o.paymentStatus||'').toLowerCase();
     const _canArcEC=_remEC<=0 || ['paid','returned','refunded'].includes(_psEC);
     if(!isEdit && o.awaitingFinalArchive && _canArcEC){
-      updFields.stage='archived';
-      updFields['stageEnteredAt.archived']=nowStr();
-      updFields.awaitingFinalArchive=false;
-      tlEntry.action=`${tlEntry.action} — 📁 أُرشف تلقائياً بعد تسجيل بنود التكلفة`;
-    } else if(!isEdit && o.awaitingFinalArchive && !_canArcEC){
-      tlEntry.action=`${tlEntry.action} — ⏳ بانتظار التحصيل قبل الأرشفة (متبقّي ${_remEC.toLocaleString('ar-EG')} ج)`;
+      await orderActions.archiveOrder({db,orderId:activeId,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false},bypassWarnings:true});
     }
-    if(!o.productionAgent && currentUser){
-      updFields.productionAgent=currentUser.uid;
-      updFields.productionAgentName=userName;
-    }
-    batch.update(doc(db,'orders',activeId),updFields);
-
-    // Wallet payment branch — atomic
-    if(txRef){
-      batch.update(doc(db,'wallets',walletId),{balance:increment(-total)});
-      const walletName=(wallets.find(x=>x._id===walletId)||{}).name||'';
-      batch.set(txRef,{
-        type:'out',walletId,walletName,amount:total,
-        category:type==='تصميم'?'designer_fee':'printer_payment',
-        description:`${type}${note?' — '+note:''} · ${o.clientName||o._id}`,
-        supplierId,supplierName,orderId:activeId,orderClient:o.clientName||'',
-        date:new Date().toISOString().slice(0,10),
-        createdAt:serverTimestamp(),createdBy:userName,source:'exec-cost-entry'
-      });
-      if(spRef){
-        batch.set(spRef,{
-          supplierId,supplierName,amount:total,orderId:activeId,orderClient:o.clientName||'',
-          note:`${type}${note?' — '+note:''}`,walletId,walletName,
-          date:new Date().toISOString().slice(0,10),
-          createdAt:serverTimestamp(),createdBy:userName,source:'exec-cost-entry'
-        });
-      }
-    }
-
-    // Ledger (إضافة فقط — التعديل ما يكرّر القيد)
-    if(!isEdit){
-      const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
-      addLedgerToBatch(batch,db,ledgerEvent,{
-        amount:total,orderId:activeId,clientName:o.clientName||'',
-        vendorId:supplierId,vendorName:supplierName,
-        ...(walletId?{walletId,walletName:(wallets.find(x=>x._id===walletId)||{}).name||''}:{}),
-        notes:`تكلفة تنفيذ — ${type}${note?' — '+note:''} · ${o.clientName||''}`,
-        userId:currentUser?.uid||'',userName
-      });
-    }
-
-    // supplier_orders (RULE 7)
-    if(existingSoId&&(supplierChanged||(isEdit&&!supplierId))){
-      batch.update(doc(db,'supplier_orders',existingSoId),{isDeleted:true,voidedAt:serverTimestamp(),voidReason:supplierId?'تغيير المورد':'تحويل إلى داخلي'});
-    }
-    if(soRef){
-      batch.set(soRef,{
-        costItemId,orderId:activeId,
-        orderRef:o.orderId||activeId.slice(-6),
-        clientName:o.clientName||'',
-        supplierId,supplierName,type,total,note:note||'',
-        status:'pending',deliveryStatus:'awaiting',paidAmount:0,
-        createdAt:serverTimestamp(),updatedAt:serverTimestamp(),
-        createdBy:currentUser?.uid||'',createdByName:userName,
-        isDeleted:false
-      });
-    }else if(!supplierChanged&&isEdit&&existingSoId&&supplierId){
-      batch.update(doc(db,'supplier_orders',existingSoId),{type,total,note:note||'',updatedAt:serverTimestamp()});
-    }
-
-    await batch.commit();
     setLastCost({supplierId,supplierName,total,note:note||'',type,savedAt:Date.now()});
 
     if(isEdit){
