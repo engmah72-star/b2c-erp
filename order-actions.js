@@ -498,6 +498,310 @@ export const orderActions = {
     });
   },
 
+  // ─── Bulk Operations (P1.8) ───────────────
+  //
+  // Admin bulk actions on selected orders from the Control Grid.
+  // Each handler:
+  //   - loads all orders in parallel
+  //   - chunks writes into batches of 400 (Firestore 500-write cap, headroom)
+  //   - emits auditEntry() timeline entries (RULE H3 — actor required)
+  //   - returns { ok, count, blocked?, blockedReasons?, orderIds }
+  //
+  // Archive paths delegate to buildArchiveSpec → same central validation as
+  // single-order archive (no duplicated logic — RULE C1.3).
+
+  async bulkArchive({
+    db = defaultDb,
+    orderIds = [],
+    role = '',
+    userId, userName,
+    source = 'bulk_admin', reason = '',
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!Array.isArray(orderIds) || !orderIds.length) {
+      return { ok: false, errors: ['⚠️ orderIds مطلوب'], warnings: [] };
+    }
+    try {
+      const refs = orderIds.map(id => doc(db, 'orders', id));
+      const snaps = await Promise.all(refs.map(r => getDoc(r)));
+      const loaded = snaps
+        .map((s, i) => s.exists() ? { ...s.data(), _id: orderIds[i], _ref: refs[i] } : null)
+        .filter(Boolean);
+      const specs = loaded.map(o => ({
+        o,
+        spec: buildArchiveSpec({
+          order: o, role, userId, userName,
+          source, reason, bypassWarnings: true,
+        }),
+      }));
+      const archivable = specs.filter(x => x.spec.ok);
+      const blocked    = specs.filter(x => !x.spec.ok);
+      if (!archivable.length) {
+        const reasons = [...new Set(blocked.flatMap(x => x.spec.errors))].slice(0, 3);
+        return {
+          ok: false,
+          errors: [reasons.length
+            ? `⛔ لا يمكن أرشفة أي أوردر — ${reasons.join(' · ')}`
+            : '⛔ لا يمكن أرشفة أي أوردر'],
+          warnings: [],
+          count: 0,
+          blocked: blocked.length,
+          blockedReasons: reasons,
+        };
+      }
+      for (let i = 0; i < archivable.length; i += 400) {
+        const chunk = archivable.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(({ o, spec }) => batch.update(o._ref, {
+          ...spec.fields,
+          timeline: [...(o.timeline || []), spec.timelineEntry],
+          updatedAt: serverTimestamp(),
+        }));
+        await batch.commit();
+      }
+      return {
+        ok: true,
+        errors: [],
+        warnings: blocked.length ? [`⚠️ ${blocked.length} مستثنى (لا يستوفي شروط الأرشفة)`] : [],
+        action: 'bulk_archive',
+        count: archivable.length,
+        blocked: blocked.length,
+        orderIds: archivable.map(x => x.o._id),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية الأرشفة'
+          : (e.message || 'فشل الأرشفة الجماعية')],
+        warnings: [],
+      };
+    }
+  },
+
+  async bulkReopen({
+    db = defaultDb,
+    orderIds = [],
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!Array.isArray(orderIds) || !orderIds.length) {
+      return { ok: false, errors: ['⚠️ orderIds مطلوب'], warnings: [] };
+    }
+    try {
+      const refs = orderIds.map(id => doc(db, 'orders', id));
+      const snaps = await Promise.all(refs.map(r => getDoc(r)));
+      const loaded = snaps
+        .map((s, i) => s.exists() ? { ...s.data(), _id: orderIds[i], _ref: refs[i] } : null)
+        .filter(Boolean);
+      const now = nowStr();
+      for (let i = 0; i < loaded.length; i += 400) {
+        const chunk = loaded.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(o => {
+          const targetStage = o.stage === 'archived' ? 'design' : o.stage;
+          const entry = auditEntry({
+            action: `🔄 [أدمن] إعادة فتح → ${targetStage}`,
+            userId, userName, kind: 'op',
+          });
+          batch.update(o._ref, {
+            stage: targetStage,
+            [`stageEnteredAt.${targetStage}`]: now,
+            timeline: [...(o.timeline || []), entry],
+            updatedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+      return {
+        ok: true, errors: [], warnings: [],
+        action: 'bulk_reopen',
+        count: loaded.length,
+        orderIds: loaded.map(o => o._id),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية إعادة الفتح'
+          : (e.message || 'فشل إعادة الفتح الجماعية')],
+        warnings: [],
+      };
+    }
+  },
+
+  /**
+   * Bulk stage move. If mapping.stage==='archived' delegates to buildArchiveSpec
+   * for proper validation; otherwise applies mapping fields directly with a
+   * stageEnteredAt update when stage changes.
+   *
+   * @param {string} target  — human-readable label for timeline + audit
+   * @param {Object} mapping — { stage?, shipStage?, paymentStatus?, returnType?, hasProblem? }
+   */
+  async bulkStageMove({
+    db = defaultDb,
+    orderIds = [],
+    target = '',
+    mapping = {},
+    role = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!Array.isArray(orderIds) || !orderIds.length) {
+      return { ok: false, errors: ['⚠️ orderIds مطلوب'], warnings: [] };
+    }
+    if (!mapping || typeof mapping !== 'object' || !Object.keys(mapping).length) {
+      return { ok: false, errors: ['⚠️ mapping مطلوب'], warnings: [] };
+    }
+    try {
+      const refs = orderIds.map(id => doc(db, 'orders', id));
+      const snaps = await Promise.all(refs.map(r => getDoc(r)));
+      const loaded = snaps
+        .map((s, i) => s.exists() ? { ...s.data(), _id: orderIds[i], _ref: refs[i] } : null)
+        .filter(Boolean);
+
+      // Archive → central spec
+      if (mapping.stage === 'archived') {
+        const specs = loaded.map(o => ({
+          o,
+          spec: buildArchiveSpec({
+            order: o, role, userId, userName,
+            source: 'bulk_admin',
+            reason: `نقل جماعي → ${target || 'أرشيف'}`,
+            bypassWarnings: true,
+          }),
+        }));
+        const archivable = specs.filter(x => x.spec.ok);
+        const blocked    = specs.filter(x => !x.spec.ok);
+        if (!archivable.length) {
+          const reasons = [...new Set(blocked.flatMap(x => x.spec.errors))].slice(0, 3);
+          return {
+            ok: false,
+            errors: [reasons.length
+              ? `⛔ لا يمكن أرشفة أي أوردر — ${reasons.join(' · ')}`
+              : '⛔ لا يمكن أرشفة أي أوردر'],
+            warnings: [],
+            count: 0,
+            blocked: blocked.length,
+            blockedReasons: reasons,
+          };
+        }
+        for (let i = 0; i < archivable.length; i += 400) {
+          const chunk = archivable.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(({ o, spec }) => batch.update(o._ref, {
+            ...spec.fields,
+            timeline: [...(o.timeline || []), spec.timelineEntry],
+            updatedAt: serverTimestamp(),
+          }));
+          await batch.commit();
+        }
+        return {
+          ok: true,
+          errors: [],
+          warnings: blocked.length ? [`⚠️ ${blocked.length} مستثنى`] : [],
+          action: 'bulk_stage_move',
+          target,
+          count: archivable.length,
+          blocked: blocked.length,
+          orderIds: archivable.map(x => x.o._id),
+        };
+      }
+
+      // Non-archive — direct field mapping
+      const now = nowStr();
+      for (let i = 0; i < loaded.length; i += 400) {
+        const chunk = loaded.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(o => {
+          const entry = auditEntry({
+            action: `🔄 [أدمن] نقل جماعي → ${target || 'مرحلة جديدة'}`,
+            userId, userName, kind: 'op',
+          });
+          const upd = {
+            ...mapping,
+            timeline: [...(o.timeline || []), entry],
+            updatedAt: serverTimestamp(),
+          };
+          if (mapping.stage && mapping.stage !== o.stage) {
+            upd[`stageEnteredAt.${mapping.stage}`] = now;
+          }
+          batch.update(o._ref, upd);
+        });
+        await batch.commit();
+      }
+      return {
+        ok: true, errors: [], warnings: [],
+        action: 'bulk_stage_move',
+        target,
+        count: loaded.length,
+        orderIds: loaded.map(o => o._id),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية النقل الجماعي'
+          : (e.message || 'فشل النقل الجماعي')],
+        warnings: [],
+      };
+    }
+  },
+
+  async bulkAssign({
+    db = defaultDb,
+    orderIds = [],
+    employeeId = '', employeeName = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!Array.isArray(orderIds) || !orderIds.length) {
+      return { ok: false, errors: ['⚠️ orderIds مطلوب'], warnings: [] };
+    }
+    if (!employeeId && !employeeName) {
+      return { ok: false, errors: ['⚠️ بيانات الموظف مطلوبة'], warnings: [] };
+    }
+    try {
+      const refs = orderIds.map(id => doc(db, 'orders', id));
+      const snaps = await Promise.all(refs.map(r => getDoc(r)));
+      const loaded = snaps
+        .map((s, i) => s.exists() ? { ...s.data(), _id: orderIds[i], _ref: refs[i] } : null)
+        .filter(Boolean);
+      for (let i = 0; i < loaded.length; i += 400) {
+        const chunk = loaded.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(o => {
+          const entry = auditEntry({
+            action: `👤 [أدمن] تعيين ${employeeName}`,
+            userId, userName, kind: 'op',
+          });
+          batch.update(o._ref, {
+            assignedTo: employeeId,
+            csName: employeeName,
+            timeline: [...(o.timeline || []), entry],
+            updatedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+      return {
+        ok: true, errors: [], warnings: [],
+        action: 'bulk_assign',
+        count: loaded.length,
+        employeeId, employeeName,
+        orderIds: loaded.map(o => o._id),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية التعيين'
+          : (e.message || 'فشل التعيين الجماعي')],
+        warnings: [],
+      };
+    }
+  },
+
   async archiveOrder({
     db, orderId, role, userId, userName,
     source = 'manual', reason = '',
