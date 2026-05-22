@@ -238,7 +238,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, query, where, onSnapshot, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle, buildSettlementUpdates } from "./orders.js";
+import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle, buildSettlementUpdates, getShipMethodLabel } from "./orders.js";
 import { canDo } from "./core/permissions-matrix.js";
 import { orderActions } from "./order-actions.js";
 import { shippingActions } from "./shipping-actions.js";
@@ -474,7 +474,8 @@ function buildCard(o){
   const totalDue=calcTotalDue(o);
   const rem=calcRem(o);
   const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
-  const methodLabel={pickup:'🏠 استلام',courier:'🏍️ مندوب',company:'📦 '+(o.shipCompanyName||'شركة')}[o.shipMethod]||'⏸ غير محدد';
+  const _ml=getShipMethodLabel(o);
+  const methodLabel=_ml.raw?`${_ml.ico} ${_ml.text}`:'⏸ غير محدد';
   const canMarkDelivered=(o.shipStage||'ready')==='wait_delivery';
   const isReturned=o.shipStage==='returned';
   return `<div class="fl-card" onclick="openOrderDetails('${o._id}')" title="افتح كل التفاصيل">
@@ -540,7 +541,8 @@ window.openOrderDetails=function(orderId){
   const execCost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const profit=paid-shipCost-execCost;
   const prods=(o.products||[]).map(p=>p.name+(p.qty?' × '+p.qty:'')).join('<br>')||o.product||'—';
-  const methodLabel={pickup:'🏠 استلام بالمحل',courier:'🏍️ مندوب',company:'📦 '+(o.shipCompanyName||'شركة شحن')}[o.shipMethod]||'⏸ غير محدد';
+  const _ml=getShipMethodLabel(o);
+  const methodLabel=_ml.raw?`${_ml.ico} ${_ml.text}`:'⏸ غير محدد';
   const ready=isReadyToClose(o);
 
   // Header
@@ -647,13 +649,13 @@ window.closeDetails=function(){
   window.__detailOrderId=null;
 };
 
-// ══ Mark Delivered (advance shipStage from wait_delivery → wait_collection) ══
-// RULE A1 + L1: العملية مُمَركَزة عبر orderActions.markDelivered
+// ══ Mark Delivered (advance shipStage from shipped/wait_delivery → delivered/wait_collection) ══
+// RULE A1 + L1: العملية مُمَركَزة عبر shippingActions.confirmDelivered (PR-5)
 window.markDelivered=async function(orderId){
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
   if(!confirm(`تأكيد تسليم "${o.clientName||'—'}"؟\nالأوردر هينقل لـ "انتظار التحصيل".`))return;
-  const r=await orderActions.markDelivered({
+  const r=await shippingActions.confirmDelivered({
     db, orderId, role:userRole, userId:currentUser?.uid||'', userName,
   });
   if(!r.ok)return toast('⛔ '+r.errors.join(' · '),'err');
@@ -859,7 +861,7 @@ window.saveSettleFromCo=async function(){
   const btn=$('btn-save-sco');
   if(btn){btn.disabled=true;btn.textContent='...';}
   try{
-    const r=await shippingActions.settleWithCompany({
+    const r=await shippingActions.settleFromCompany({
       db,orderIds:[__scoOrderId],amount,walletId:wId,walletName:w.name||'',
       companyName:o.shipCompanyName||'',
       diffReason:synthDiffReason,diffReasonLabel:synthDiffReason,diffNote,
