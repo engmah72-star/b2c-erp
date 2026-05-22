@@ -890,6 +890,72 @@ export function clientPanelBodyHTML(ctx = {}) {
     </div>`;
 }
 
+/**
+ * segmentStripHTML({clients, segments, currentSeg, SEG_STYLE, fn})
+ *   → HTML string for the RFM-segment counts strip, or '' if nothing
+ *     to show (caller hides the container in that case).
+ *
+ * Pure: no DOM writes, no closure capture.
+ */
+export function segmentStripHTML({
+  clients = [],
+  segments,
+  currentSeg = '',
+  SEG_STYLE = {},
+  fn: fmtNum = (n) => String(parseFloat(n) || 0),
+} = {}) {
+  if (!segments || segments.size === 0) return '';
+  const counts = {};
+  let totalClv = 0;
+  for (const c of clients) {
+    if (c.status === 'legacy') continue;
+    const seg = segments.get(c._id);
+    if (!seg) continue;
+    counts[seg.segment] = (counts[seg.segment] || 0) + 1;
+    totalClv += (seg.totalRevenue || 0);
+  }
+  const order  = ['champion','cant_lose','loyal','new','needs_attention','at_risk','about_to_sleep','lost'];
+  const labels = {
+    champion:        '🏆 أبطال',
+    cant_lose:       '🚨 لا يجب فقدهم',
+    loyal:           '💎 أوفياء',
+    new:             '🌱 جدد',
+    needs_attention: '👀 يحتاجون اهتمام',
+    at_risk:         '⚠️ مهدّدون',
+    about_to_sleep:  '😴 على وشك الفقد',
+    lost:            '💤 فُقدوا',
+  };
+  const visible = order.filter(s => (counts[s] || 0) > 0);
+  if (visible.length === 0) return '';
+
+  return `
+    <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad2);padding:10px 12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px">
+        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2)">إجمالي CLV: <b style="color:var(--g)">${fmtNum(totalClv)} ج</b></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">
+        ${visible.map(s => {
+          const st = SEG_STYLE[s] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
+          const active = currentSeg === s;
+          return `<button onclick="filterBySegment('${active ? '' : s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active ? st.fg : st.fg + '40'};background:${active ? st.fg + '25' : st.bg};color:${st.fg};font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s] || s} <span style="background:${active ? 'var(--bg1)' : st.fg + '18'};padding:1px 6px;border-radius:10px;margin-right:3px">${counts[s]}</span></button>`;
+        }).join('')}
+        ${currentSeg ? `<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-xs);font-weight:700;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>` : ''}
+      </div>
+    </div>`;
+}
+
+/**
+ * prodOptsHTML(products) — يبني <option> tags لقائمة المنتجات.
+ * Trivial — extracted for consistency with the other renderers.
+ */
+export function prodOptsHTML(products = []) {
+  return '<option value="">— اختر المنتج —</option>' +
+    (products || []).map(p =>
+      `<option value="${p._id}" data-name="${(p.name || '').replace(/"/g, '')}" data-price="${p.defaultPrice || 0}">${p.name}</option>`
+    ).join('');
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -911,5 +977,7 @@ if (typeof window !== 'undefined') {
     clientCardHTML, clientListRowHTML,
     // PR-6:
     clientPanelHeaderHTML, clientPanelBodyHTML,
+    // PR-7:
+    segmentStripHTML, prodOptsHTML,
   });
 }
