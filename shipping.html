@@ -682,13 +682,16 @@
 <script type="module">
 import { app, auth, db } from './core/firebase-init.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { collection, doc, onSnapshot, query, where, limit, getDoc, updateDoc, serverTimestamp, writeBatch, increment }
+// PR-4 cleanup: removed direct Firestore + FSE imports — all writes via orderActions.
+import { collection, doc, onSnapshot, query, where, limit, getDoc }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
 import { canSee, maskPhone, ROLE_PAGES } from './shared.js';
 import { canDo } from './core/permissions-matrix.js';
 import { orderActions } from './order-actions.js';
-import { validateDispatch, validateCollect, validateCompanyCollect, validateSettle, buildSettlementUpdates } from './orders.js';
+// validateCompanyCollect kept for the soft-warnings UX path (company-marker
+// flow needs to surface drift warnings before submit — same as PR-2 plan
+// notes; full removal pending UI-level needsConfirmation flow).
+import { validateCompanyCollect } from './orders.js';
 import { loadPricingRules, getExpectedCost, diffActualVsExpected, isPricingLoaded } from './shipping-pricing.js';
 
 let me = null, myRole = '', myPerms = null;
@@ -2311,6 +2314,9 @@ function openSettleModal(_) {
   $('m-settle').classList.add('on');
 }
 
+// PR-4C — Thin orchestration. صفر settlement math داخل الصفحة.
+// orderActions.settleFromCompany يستخدم buildSettlementUpdates داخلياً
+// ويُرسل SHIPPING_SETTLEMENT atomic عبر FSE.
 async function confirmSettle() {
   if (!pendingOrder) return;
   const amount = safeNum($('m-settle-amount').value);
@@ -2318,75 +2324,52 @@ async function confirmSettle() {
   const note = $('m-settle-note').value.trim();
   const diffReason = $('m-settle-diff-reason').value;
 
-  const wallet = wallets.find(w => w._id === walletId);
-  const ordersToSettle = pendingOrder.orders;
+  const wallet = walletId ? wallets.find(w => w._id === walletId) : null;
+  const ordersToSettle = pendingOrder.orders || [];
   const companyName = pendingOrder.companyName || ordersToSettle[0]?.shipCompanyName || '';
   const orderIds = ordersToSettle.map(o => o._id);
-  const userName = $('nav-name').textContent;
-
-  // Settle-Fix #2 — Use the central buildSettlementUpdates (orders.js).
-  // Proportional distribution of the actual amount across orders based on
-  // each order's expected (shipCollected − shippingCost). Replaces the
-  // previous inline math that didn't distribute shortfalls/surpluses.
-  const spec = buildSettlementUpdates({
-    orders: ordersToSettle,
-    actualAmount: amount,
-    userName,
-    companyName,
-    diffReasonLabel: diffReason ? diffReasonLabel(diffReason) : '',
-    diffNote: note,
-  });
-  if (!spec.ok) { toast(spec.errors[0] || 'خطأ في بناء التسوية', 'err'); return; }
-
-  const expectedAmount = spec.summary.sumExpected;
-  const difference = spec.summary.diff;
-
-  // Validator runs alongside (capability + diff-reason rules)
-  const v = validateSettle({ orders: ordersToSettle, amount, expectedAmount, walletId, diffReason, diffNote: note, role: myRole });
-  if (!v.ok) { toast(v.errors[0], 'err'); return; }
-
-  // Adapt helper output to FSE's orderUpdates shape. The handler writes:
-  //   shipSettledAmount = u.dueByCo (← we pass the actual `share`, not expected)
-  //   totalPaid, remaining, paymentStatus = direct passthrough
-  const orderUpdates = spec.updates.map(u => ({
-    orderId: u.orderId,
-    totalPaid: u.fields.totalPaid,
-    remaining: u.fields.remaining,
-    paymentStatus: u.fields.paymentStatus,
-    dueByCo: u.fields.shipSettledAmount,  // = actual share, not expected
-  }));
+  const label = pendingOrder?._single
+    ? `للطلب #${ordersToSettle[0]?.orderNumber || ''}`
+    : `(${orderIds.length} طلب)`;
 
   const btn = $('btn-settle-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
   try {
-    await dispatchFinancialEvent(db, FE.SHIPPING_SETTLEMENT, {
-      walletId, walletName: wallet?.name || '',
-      amount,
-      companyName,
+    const r = await orderActions.settleFromCompany({
+      db,
       orderIds,
-      expectedAmount,
-      difference,
-      diffReason: diffReason || (difference !== 0 ? 'other' : ''),
+      amount,
+      walletId,
+      walletName: wallet?.name || '',
+      role: myRole,
+      userId: me.uid,
+      userName: $('nav-name').textContent || '',
+      companyName,
+      diffReason: diffReason || '',
       diffReasonLabel: diffReason ? diffReasonLabel(diffReason) : '',
-      diffNote: '',
-      orderUpdates,
-      note,
-      userId: me.uid, userName: $('nav-name').textContent,
-      date: new Date().toLocaleDateString('ar-EG'),
+      diffNote: note,
+      note: '',
     });
+    if (!r.ok) {
+      console.warn('[SHIPPING_ACTION] settleFromCompany failed', r);
+      const msg = (r.errors || ['خطأ في التسوية'])[0];
+      toast('❌ ' + msg, 'err');
+      showOpError(`فشل تسجيل التسوية ${label} — ${fmt(amount)} ج: ${msg}`, () => confirmSettle());
+      recordOp('err', `تسوية ${label}`);
+      return;
+    }
     toast(`✅ تم تسجيل التسوية: ${fmt(amount)} ج`);
     clearOpError();
     const opLabel = pendingOrder?._single
-      ? `تسوية · #${pendingOrder.orders?.[0]?.orderNumber || ''} · ${fmt(amount)} ج`
+      ? `تسوية · #${ordersToSettle[0]?.orderNumber || ''} · ${fmt(amount)} ج`
       : `تسوية (${orderIds.length} طلب) · ${fmt(amount)} ج`;
     recordOp('ok', opLabel);
     closeModal('m-settle');
   } catch (e) {
-    console.error(e);
+    console.warn('[SHIPPING_ACTION] settleFromCompany exception', e);
     const msg = e.message || 'خطأ في التسوية';
     toast('❌ ' + msg, 'err');
-    const label = pendingOrder?._single ? `للطلب #${pendingOrder.orders?.[0]?.orderNumber || ''}` : `(${orderIds.length} طلب)`;
     showOpError(`فشل تسجيل التسوية ${label} — ${fmt(amount)} ج: ${msg}`, () => confirmSettle());
     recordOp('err', `تسوية ${label}`);
   } finally {
