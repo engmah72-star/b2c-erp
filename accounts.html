@@ -442,8 +442,9 @@ window.addEventListener('unhandledrejection', e=>{
 });
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, query, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, inferEventType, getReversal, calcOrderPayment, FE, approvalFields } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, getDoc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { calcOrderPayment } from "./financial-sync-engine.js";
+import { walletActions } from "./wallet-actions.js";
 // ── State ──
 let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[], shippingSettlements=[], shippingReturns=[];
 let currentUser=null, currentRole='admin', currentSection='wallets';
@@ -1457,45 +1458,10 @@ window.setTxFilter=function(key,val){
 // ══ حذف دفعة ══
 window.deleteTx=async function(txId, walletId, amount, type, balanceBefore){
   if(!confirm('حذف هذه الدفعة؟\nسيتم استرجاع الرصيد وتحديث الأوردر تلقائياً.'))return;
-  try{
-    // جيب بيانات الدفعة عشان نعرف الأوردر المرتبط
-    const txSnap=await getDoc(doc(db,'transactions_v2',txId));
-    const txData=txSnap.exists()?txSnap.data():{};
-    const orderId=txData.orderId||'';
-
-    const batch=writeBatch(db);
-
-    // استرجاع رصيد المحفظة
-    const w=wallets.find(x=>x._id===walletId);
-    if(w){
-      batch.update(doc(db,'wallets',walletId),{balance:increment(type==='in'?-amount:amount)});
-    }
-
-    // لو مرتبطة بأوردر → حدّث totalPaid و remaining
-    if(orderId){
-      const ordSnap=await getDoc(doc(db,'orders',orderId));
-      if(ordSnap.exists()){
-        const ord=ordSnap.data();
-        const {totalPaid:newPaid,remaining:newRem,paymentStatus}=calcOrderPayment(ord,-amount);
-        batch.update(doc(db,'orders',orderId),{totalPaid:newPaid,remaining:newRem,paymentStatus});
-      }
-    }
-
-    // حذف السجلات المرتبطة (إن وُجدت)
-    if(txData.spId){batch.delete(doc(db,'supplier_payments',txData.spId));}
-    if(txData.epId){batch.delete(doc(db,'employee_payments',txData.epId));}
-
-    // حذف الدفعة
-    batch.delete(doc(db,'transactions_v2',txId));
-    addLedgerToBatch(batch,db,getReversal(inferEventType(type,txData.category||'')),{
-      amount,walletId,walletName:wallets.find(x=>x._id===walletId)?.name||'',
-      orderId:orderId||null,
-      notes:`حذف دفعة — ${txData.description||txData.category||''}`,
-      userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
-    });
-    await batch.commit();
-    toast('✅ تم حذف الدفعة واسترجاع الرصيد','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const walletName=wallets.find(x=>x._id===walletId)?.name||'';
+  const r=await walletActions.deleteTransaction({db,transactionId:txId,walletId,walletName,amount,type,balanceBefore,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم حذف الدفعة واسترجاع الرصيد','ok');
 };
 
 function renderSuppliers(){
@@ -1657,51 +1623,12 @@ window.saveReconciliation=async function(walletId,sysBal){
   const actual=parseFloat(val);
   if(isNaN(actual))return toast('⚠️ رقم غير صحيح','err');
   const w=wallets.find(x=>x._id===walletId);if(!w)return;
-  const diff=actual-sysBal;
-  const dateStr=nowStr();
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',walletId),{balance:actual});
-    if(diff!==0){
-      const type=diff>0?'in':'out';
-      const amount=Math.abs(diff);
-      const txRef=doc(collection(db,'transactions_v2'));
-      const byNameRec=document.getElementById('nav-name')?.textContent||'';
-      batch.set(txRef,{
-        walletId,type,amount,fees:0,
-        description:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
-        category:'adjustment',
-        adjustmentType:diff>0?'surplus':'deficit',
-        balanceBefore:sysBal,balanceAfter:actual,
-        date:dateStr,
-        createdBy:currentUser?.uid||'',
-        createdByName:byNameRec,
-        createdAt:serverTimestamp(),
-        ...approvalFields()
-      });
-      addLedgerToBatch(batch,db,FE.WALLET_ADJUSTMENT,{
-        amount,walletId,walletName:w.name,
-        notes:(diff>0?'تسوية — زيادة':'تسوية — عجز')+' · '+w.name,
-        direction:diff>0?'in':'out',
-        userId:currentUser?.uid||'',userName:byNameRec,
-      });
-    }
-    const recRef=doc(collection(db,'reconciliations'));
-    batch.set(recRef,{
-      walletId,walletName:w.name,
-      sysBal,actualBal:actual,diff,
-      adjustmentType:diff>0?'surplus':diff<0?'deficit':'match',
-      date:dateStr,
-      createdBy:currentUser?.uid||'',
-      createdByName:document.getElementById('nav-name')?.textContent||'',
-      createdAt:serverTimestamp()
-    });
-    await batch.commit();
-    document.getElementById('rec-'+walletId).value='';
-    updateRecDiff(walletId,actual);
-    if(diff===0) toast('✅ الأرصدة متطابقة — لا توجد فروقات','ok');
-    else toast(`✅ تسوية: ${diff>0?'زيادة':'عجز'} ${fn(Math.abs(diff))} ج — رصيد جديد: ${fn(actual)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.saveReconciliation({db,walletId,walletName:w.name,systemBalance:sysBal,actualBalance:actual,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('rec-'+walletId).value='';
+  updateRecDiff(walletId,actual);
+  if(r.diff===0) toast('✅ الأرصدة متطابقة — لا توجد فروقات','ok');
+  else toast(`✅ تسوية: ${r.diff>0?'زيادة':'عجز'} ${fn(Math.abs(r.diff))} ج — رصيد جديد: ${fn(actual)} ج`,'ok');
 };
 
 window.openSetOpening=function(walletId){
@@ -1722,44 +1649,10 @@ window.saveSetOpening=async function(){
   if(!walletId)return toast('⚠️ خطأ: لا توجد محفظة','err');
   if(isNaN(newBal))return toast('⚠️ أدخل الرصيد','err');
   const w=wallets.find(x=>x._id===walletId);if(!w)return;
-  const oldBal=parseFloat(w.balance)||0;
-  const diff=newBal-oldBal;
-  const displayDate=dateStr?new Date(dateStr).toLocaleDateString('ar-EG'):nowStr();
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',walletId),{balance:newBal});
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      walletId,type:diff>=0?'in':'out',amount:Math.abs(diff)||newBal,fees:0,
-      description:'رصيد افتتاحي'+(note?' — '+note:'')+' · '+displayDate,
-      category:'opening_balance',
-      balanceBefore:oldBal,balanceAfter:newBal,
-      date:displayDate,
-      createdBy:currentUser?.uid||'',
-      createdByName:document.getElementById('nav-name')?.textContent||'',
-      createdAt:serverTimestamp(), ...approvalFields()});
-    const recRef=doc(collection(db,'reconciliations'));
-    batch.set(recRef,{
-      walletId,walletName:w.name,
-      type:'opening_balance',
-      sysBal:oldBal,actualBal:newBal,diff,
-      note,date:displayDate,
-      createdBy:currentUser?.uid||'',
-      createdByName:document.getElementById('nav-name')?.textContent||'',
-      createdAt:serverTimestamp()
-    });
-    if(Math.abs(diff)>0){
-      addLedgerToBatch(batch,db,FE.WALLET_ADJUSTMENT,{
-        amount:Math.abs(diff),walletId,walletName:w.name,
-        notes:'ضبط رصيد افتتاحي — '+w.name+(note?' — '+note:''),
-        direction:diff>0?'in':'out',
-        userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
-      });
-    }
-    await batch.commit();
-    cM('set-opening');
-    toast(`✅ رصيد "${w.name}" ضُبط على ${fn(newBal)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.setOpeningBalance({db,walletId,walletName:w.name,newBalance:newBal,oldBalance:parseFloat(w.balance)||0,dateStr,note,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('set-opening');
+  toast(`✅ رصيد "${w.name}" ضُبط على ${fn(newBal)} ج`,'ok');
 };
 
 // ══ WALLET PANEL ══
@@ -1811,18 +1704,11 @@ window.editWalletProvider=async function(walletId){
   if(!idx) return;
   const sel = PROVIDERS[parseInt(idx)-1];
   if(!sel) return toast('⚠️ رقم غير صحيح','err');
-  try{
-    // تعديل metadata فقط (المزود) — ليس حركة مالية. مع audit trail.
-    await updateDoc(doc(db,'wallets',walletId),{
-      provider: sel.v,
-      providerChangedBy: currentUser?.uid || '',
-      providerChangedByName: document.getElementById('nav-name')?.textContent || '',
-      providerChangedAt: serverTimestamp(),
-      previousProvider: w.provider || ''
-    });
-    toast(`✅ المزود: ${sel.l}`,'ok');
-    setTimeout(()=>openWallet(walletId), 200);
-  }catch(e){toast('❌ '+e.message,'err');}
+  // تعديل metadata فقط (المزود) — ليس حركة مالية. مع audit trail.
+  const r=await walletActions.updateWalletProvider({db,walletId,provider:sel.v,previousProvider:w.provider||'',userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ المزود: ${sel.l}`,'ok');
+  setTimeout(()=>openWallet(walletId), 200);
 };
 
 // ══ ACTIONS ══
@@ -1975,91 +1861,10 @@ window.saveTx=async function(){
   // وضع التعديل
   // ══════════════════════════════════════════
   if(editTxId){
-    const old=editTxData;
-    const oldType=old.type||'in', oldAmount=parseFloat(old.amount)||0, oldWalletId=old.walletId||'';
-    const oldCat=old.category||'', oldSupplierId=old.supplierId||'', oldEmployeeId=old.employeeId||'';
-    try{
-      const batch=writeBatch(db);
-
-      // رصيد المحفظة
-      if(oldWalletId===walletId){
-        const adj=(type==='in'?amount:-amount)-(oldType==='in'?oldAmount:-oldAmount);
-        if(adj!==0)batch.update(doc(db,'wallets',walletId),{balance:increment(adj)});
-      } else {
-        const reversal=oldType==='in'?-oldAmount:oldAmount;
-        const apply=type==='in'?amount:-amount;
-        if(reversal!==0)batch.update(doc(db,'wallets',oldWalletId),{balance:increment(reversal)});
-        if(apply!==0)batch.update(doc(db,'wallets',walletId),{balance:increment(apply)});
-      }
-
-      // supplier_payments / employee_payments — pre-compute before tx update
-      const supChanged=cat!==oldCat||supplierId!==oldSupplierId||amount!==oldAmount||walletId!==oldWalletId;
-      const empCats=['salary','designer_fee'];
-      const empChanged=cat!==oldCat||employeeId!==oldEmployeeId||amount!==oldAmount||walletId!==oldWalletId;
-      const supCats=['supplier','printer_payment','shipper_payment'];
-      const needNewSp=supCats.includes(cat)&&supplierId&&supChanged;
-      const needNewEp=empCats.includes(cat)&&employeeId&&empChanged;
-      const newSpRef=needNewSp?doc(collection(db,'supplier_payments')):null;
-      const newEpRef=needNewEp?doc(collection(db,'employee_payments')):null;
-
-      // سجل الحركة — include cross-reference IDs when changed
-      batch.update(doc(db,'transactions_v2',editTxId),{
-        walletId,type,amount,description:fullDesc,category:cat,
-        clientName,supplierId,supplierName,employeeId,employeeName,
-        orderId:orderId||'',date:nowStr(),
-        paymentMethod:document.getElementById('tx-paymethod')?.value||'',
-        updatedAt:serverTimestamp(),updatedBy:currentUser?.uid||'',
-        ...(supChanged?{spId:newSpRef?.id||null}:{}),
-        ...(empChanged?{epId:newEpRef?.id||null}:{}),
-      });
-
-      // supplier_payments
-      if(supCats.includes(oldCat)&&oldSupplierId&&supChanged){
-        if(old.spId){
-          batch.delete(doc(db,'supplier_payments',old.spId));
-        } else {
-          // fallback for records without spId cross-reference
-          const oldSP=supplierPays.find(p=>p.supplierId===oldSupplierId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-          if(oldSP)batch.delete(doc(db,'supplier_payments',oldSP._id));
-        }
-      }
-      if(newSpRef){
-        batch.set(newSpRef,{supplierId,supplierName,supplierType:'printer',amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
-      }
-
-      // employee_payments
-      if(empCats.includes(oldCat)&&oldEmployeeId&&empChanged){
-        if(old.epId){
-          batch.delete(doc(db,'employee_payments',old.epId));
-        } else {
-          // fallback for records without epId cross-reference
-          const oldEP=employeePays.find(p=>p.employeeId===oldEmployeeId&&Math.abs(parseFloat(p.amount)-oldAmount)<0.01);
-          if(oldEP)batch.delete(doc(db,'employee_payments',oldEP._id));
-        }
-      }
-      if(newEpRef){
-        const mk=new Date().toISOString().slice(0,7);
-        batch.set(newEpRef,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:mk,note:desc||'',date:nowStr(),txId:editTxId,createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
-      }
-
-      const byName=document.getElementById('nav-name')?.textContent||'';
-      // لوجر: عكس القديم + تسجيل الجديد في نفس الـ batch
-      addLedgerToBatch(batch,db,inferEventType(oldType==='in'?'out':'in',oldCat),{
-        amount:oldAmount,walletId:oldWalletId,walletName:wallets.find(x=>x._id===oldWalletId)?.name||'',
-        notes:`تعديل — عكس القديم: ${old.description||oldCat||''}`,
-        userId:currentUser?.uid||'',userName:byName,
-      });
-      addLedgerToBatch(batch,db,inferEventType(type,cat),{
-        amount,walletId,walletName:wallets.find(x=>x._id===walletId)?.name||'',
-        orderId:orderId||null,clientName,supplierId,supplierName,employeeId,employeeName,
-        notes:`تعديل — جديد: ${fullDesc}`,
-        userId:currentUser?.uid||'',userName:byName,
-      });
-
-      await batch.commit();
-      closeTxModal();
-      toast(`✅ تم التعديل — ${fn(amount)} ج`,'ok');
-    }catch(e){toast('❌ '+e.message,'err');}
+    const r=await walletActions.editTransaction({db,transactionId:editTxId,oldData:editTxData,newData:{walletId,type,amount,description:fullDesc,category:cat,supplierId,supplierName,employeeId,employeeName,orderId,clientName,paymentMethod:document.getElementById('tx-paymethod')?.value||''},walletsList:wallets,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    closeTxModal();
+    toast(`✅ تم التعديل — ${fn(amount)} ج`,'ok');
     return;
   }
 
@@ -2095,52 +1900,11 @@ window.saveTx=async function(){
   if(o&&type==='in'){const rem=calcRem(o);if(amount>rem)return toast(`⚠️ المبلغ أكبر من الباقي (${fn(rem)} ج)`,'err');}
   const balBefore=parseFloat(w.balance)||0;
   const balAfter=type==='in'?balBefore+amount:balBefore-amount;
-  if(type==='out'&&balAfter<0)return toast('⚠️ الرصيد غير كافٍ','err');
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',walletId),{balance:increment(type==='in'?amount:-amount)});
-    if(o&&type==='in'){
-      const {totalPaid:newPaid,remaining:newRem,paymentStatus}=calcOrderPayment(o,amount);
-      const tl=[...(o.timeline||[]),{date:nowStr(),action:`💰 دفعة: ${fn(amount)} ج — باقي: ${fn(newRem)} ج`,by:document.getElementById('nav-name')?.textContent||''}];
-      batch.update(doc(db,'orders',orderId),{totalPaid:newPaid,remaining:newRem,paymentStatus,lastPaymentDate:nowStr(),timeline:tl});
-    }
-    const n2=new Date();
-    const curMonthKey=n2.getFullYear()+'-'+String(n2.getMonth()+1).padStart(2,'0');
-    // pre-create sub-doc refs so we can store their IDs in the tx record (prevents orphans on delete)
-    const spRef2=['supplier','printer_payment','shipper_payment'].includes(cat)&&supplierId?doc(collection(db,'supplier_payments')):null;
-    const epRef2=(cat==='salary'||cat==='designer_fee')&&employeeId?doc(collection(db,'employee_payments')):null;
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      walletId,type,amount,fees:0,description:fullDesc,category:cat,
-      clientName,supplierId,supplierName,employeeId,employeeName,
-      orderId:orderId||'',balanceBefore:balBefore,balanceAfter:balAfter,
-      paymentMethod:document.getElementById('tx-paymethod')?.value||'',
-      ...((cat==='salary'||cat==='designer_fee')&&employeeId?{month:curMonthKey,salaryType:cat==='designer_fee'?'designer_fee':'salary'}:{}),
-      ...(spRef2?{spId:spRef2.id}:{}),
-      ...(epRef2?{epId:epRef2.id}:{}),
-      date:nowStr(),createdBy:currentUser?.uid||'',
-      createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp()
-    });
-    if(spRef2){
-      batch.set(spRef2,{supplierId,supplierName,supplierType:'printer',amount,walletId,note:desc||'',date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
-    }
-    if(epRef2){
-      batch.set(epRef2,{employeeId,employeeName,amount,walletId,category:cat,salaryType:cat==='designer_fee'?'designer_fee':'salary',month:curMonthKey,note:desc||'',date:nowStr(),txId:txRef.id,createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
-    }
-    addLedgerToBatch(batch,db,inferEventType(type,cat),{
-      amount,walletId,walletName:w.name||'',
-      orderId:orderId||null,clientName,
-      vendorId:supplierId||null,vendorName:supplierName||null,
-      employeeId:employeeId||null,employeeName:employeeName||null,
-      notes:fullDesc,
-      paymentMethod:document.getElementById('tx-paymethod')?.value||'',
-      userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
-    });
-    await batch.commit();
-    closeTxModal();
-    toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
-    if(o&&type==='in'&&calcRem(o)<=amount)toast('🎉 تم سداد الأوردر بالكامل!','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.recordTransaction({db,walletId,walletName:w.name||'',type,amount,description:fullDesc,category:cat,orderId,clientName,supplierId,supplierName,employeeId,employeeName,paymentMethod:document.getElementById('tx-paymethod')?.value||'',balanceBefore:balBefore,balanceAfter:balAfter,orderData:o,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeTxModal();
+  toast(`✅ ${type==='in'?'دخل':'خرج'} ${fn(amount)} ج — رصيد: ${fn(balAfter)} ج`,'ok');
+  if(o&&type==='in'&&calcRem(o)<=amount)toast('🎉 تم سداد الأوردر بالكامل!','ok');
 };
 
 window.quickPaySup=function(supId,supName,due){
@@ -2157,23 +1921,9 @@ window.savePaySup=async function(){
   if(!amount)return toast('⚠️ أدخل المبلغ','err');
   const w=wallets.find(x=>x._id===walletId);const sup=suppliers.find(s=>s._id===supId);
   const balBefore=parseFloat(w?.balance)||0;const balAfter=balBefore-amount;
-  if(balAfter<0)return toast('⚠️ الرصيد غير كافٍ','err');
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',walletId),{balance:increment(-amount)});
-    const spRef=doc(collection(db,'supplier_payments'));
-    batch.set(spRef,{supplierId:supId,supplierName:sup?.name||'',supplierType:'printer',amount,walletId,note,date:nowStr(),createdBy:currentUser?.uid||'',createdAt:serverTimestamp()});
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{walletId,type:'out',amount,fees:0,description:'دفع لمورد: '+(sup?.name||''),category:sup?.supType==='shipper'?'shipper_payment':'printer_payment',supplierId:supId,supplierName:sup?.name||'',spId:spRef.id,balanceBefore:balBefore,balanceAfter:balAfter,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',createdAt:serverTimestamp(), ...approvalFields()});
-    addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT,{
-      amount,walletId,walletName:w?.name||'',
-      vendorId:supId,vendorName:sup?.name||'',
-      notes:note||`دفعة مورد — ${sup?.name||''}`,
-      userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
-    });
-    await batch.commit();
-    cM('pay-sup');toast(`✅ تم دفع ${fn(amount)} ج لـ ${sup?.name||'المورد'}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.recordSupplierPayment({db,walletId,walletName:w?.name||'',supplierId:supId,supplierName:sup?.name||'',supplierType:sup?.supType==='shipper'?'shipper':'printer',amount,note,balanceBefore:balBefore,balanceAfter:balAfter,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('pay-sup');toast(`✅ تم دفع ${fn(amount)} ج لـ ${sup?.name||'المورد'}`,'ok');
 };
 
 // ══ تحويل بين المحافظ ══
@@ -2240,55 +1990,12 @@ window.saveTransfer=async function(){
   if(!fromW||!toW)return;
   const { fee, label: feeLabel, kind } = computeTransferFee(fromW, toW, amount);
   const isWithdrawal = kind === 'withdrawal';
-  const totalDeducted = amount + fee;
-  if((parseFloat(fromW.balance)||0)<totalDeducted)return toast(`⚠️ الرصيد غير كافٍ — تحتاج ${fn(totalDeducted)} ج (شامل الرسوم ${fn(fee)} ج)`,'err');
-  const dateStr=nowStr();
-  const byName=document.getElementById('nav-name')?.textContent||'';
-  const fromBal=parseFloat(fromW.balance)||0, toBal=parseFloat(toW.balance)||0;
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'wallets',fromId),{balance:increment(-totalDeducted)});
-    batch.update(doc(db,'wallets',toId),{balance:increment(amount)});
-    const transferGroupId=doc(collection(db,'transactions_v2')).id;
-    const txCategory = isWithdrawal ? 'withdrawal' : 'transfer';
-    const outDescPrefix = isWithdrawal ? '💵 سحب إلى: ' : '🔄 تحويل إلى: ';
-    const inDescPrefix  = isWithdrawal ? '💵 سحب من: '  : '🔄 تحويل من: ';
-    const outRef=doc(collection(db,'transactions_v2'));
-    batch.set(outRef,{walletId:fromId,type:'out',amount,fees:fee,description:outDescPrefix+toW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferTo:toId,balanceBefore:fromBal,balanceAfter:fromBal-amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
-    const inRef=doc(collection(db,'transactions_v2'));
-    batch.set(inRef,{walletId:toId,type:'in',amount,fees:0,description:inDescPrefix+fromW.name+(note?' — '+note:''),category:txCategory,transferGroupId,transferFrom:fromId,balanceBefore:toBal,balanceAfter:toBal+amount,date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
-    // tx منفصلة للرسوم لو > 0 — تظهر في حركات المحفظة وتحتاج اعتماد كباقي العمليات
-    if(fee > 0){
-      const feeRef=doc(collection(db,'transactions_v2'));
-      const feeCat = isWithdrawal ? 'withdrawal_fee' : 'transfer_fee';
-      const feeDesc = isWithdrawal
-        ? `💰 رسوم سحب — ${fromW.name} → ${toW.name}${note?' — '+note:''}`
-        : `💰 رسوم تحويل — ${fromW.name} → ${toW.name}${note?' — '+note:''}`;
-      batch.set(feeRef,{
-        walletId:fromId,walletName:fromW.name||'',type:'out',amount:fee,fees:0,
-        description:feeDesc, category:feeCat, transferGroupId,
-        balanceBefore:fromBal-amount,balanceAfter:fromBal-totalDeducted,
-        date:dateStr,createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(),
-        ...approvalFields()
-      });
-      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE,{
-        amount:fee,walletId:fromId,walletName:fromW.name||'',
-        notes:`${isWithdrawal?'رسوم سحب':'رسوم تحويل'} ${fromW.name} → ${toW.name}: ${feeLabel}`,
-        userId:currentUser?.uid||'',userName:byName,
-        categoryOverride:feeCat,
-      });
-    }
-    addLedgerToBatch(batch,db,FE.WALLET_TRANSFER,{
-      amount,walletId:fromId,walletName:fromW.name||'',
-      notes:`تحويل من ${fromW.name} إلى ${toW.name}${note?' — '+note:''}`,
-      userId:currentUser?.uid||'',userName:byName,
-    });
-    await batch.commit();
-    cM('transfer');
-    sv('tr-amount','');sv('tr-note','');
-    document.getElementById('tr-info').style.display='none';
-    toast(`✅ ${isWithdrawal?'سحب':'تحويل'} ${fn(amount)} ج: ${fromW.name} ${isWithdrawal?'→':'← →'} ${toW.name}${fee>0?` (رسوم ${fn(fee)} ج)`:''}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.walletTransfer({db,fromWalletId:fromId,fromWalletName:fromW.name||'',toWalletId:toId,toWalletName:toW.name||'',amount,fee,feeLabel,kind,note,fromBalance:parseFloat(fromW.balance)||0,toBalance:parseFloat(toW.balance)||0,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('transfer');
+  sv('tr-amount','');sv('tr-note','');
+  document.getElementById('tr-info').style.display='none';
+  toast(`✅ ${isWithdrawal?'سحب':'تحويل'} ${fn(amount)} ج: ${fromW.name} ${isWithdrawal?'→':'← →'} ${toW.name}${fee>0?` (رسوم ${fn(fee)} ج)`:''}`,'ok');
 };
 
 // ══ تدقيق أرصدة ══
@@ -2338,20 +2045,10 @@ function renderDriftBanner(){
 window.saveWallet=async function(){
   const name=gv('nw-name'),type=gv('nw-type'),provider=gv('nw-provider')||'',bal=parseFloat(gv('nw-bal'))||0,mgr=gv('nw-manager');
   if(!name)return toast('⚠️ أدخل اسم الحساب','err');
-  const byName=document.getElementById('nav-name')?.textContent||'';
-  try{
-    const batch=writeBatch(db);
-    const walletRef=doc(collection(db,'wallets'));
-    batch.set(walletRef,{name,type,provider,balance:bal,managerId:mgr||'',createdAt:serverTimestamp()});
-    if(bal>0){
-      const txRef=doc(collection(db,'transactions_v2'));
-      batch.set(txRef,{walletId:walletRef.id,type:'in',amount:bal,fees:0,description:'رصيد افتتاحي — '+name,category:'opening_balance',balanceBefore:0,balanceAfter:bal,date:nowStr(),createdBy:currentUser?.uid||'',createdByName:byName,createdAt:serverTimestamp(), ...approvalFields()});
-      addLedgerToBatch(batch,db,FE.OPENING_BALANCE,{amount:bal,walletId:walletRef.id,walletName:name,notes:'رصيد افتتاحي — '+name,userId:currentUser?.uid||'',userName:byName});
-    }
-    await batch.commit();
-    cM('new-wallet');sv('nw-name','');sv('nw-bal','0');
-    toast('✅ تم إضافة الحساب'+(bal>0?` برصيد ${fn(bal)} ج`:''),'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await walletActions.createWallet({db,name,type,provider,managerId:mgr||'',openingBalance:bal,userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('new-wallet');sv('nw-name','');sv('nw-bal','0');
+  toast('✅ تم إضافة الحساب'+(bal>0?` برصيد ${fn(bal)} ج`:''),'ok');
 };
 
 window.exportCSV=function(){
