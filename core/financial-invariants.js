@@ -97,6 +97,49 @@ export function detectFinancialDrift(order) {
       ['paymentStatus', 'remaining']));
   }
 
+  // ─── PR-7.5 R5 — Advanced invariants ──────────────────────────────────
+  const refundAmount = num(order.returnRefundAmount) + num(order.partialReturnRefund);
+
+  // I10: refund <= paid  (لا يصح استرداد أكثر من المُحصَّل)
+  if (refundAmount > paid + EPS && shipStage !== 'returned_full') {
+    violations.push(v('REFUND_EXCEEDS_PAID', 'crit',
+      `الاسترداد (${refundAmount.toFixed(2)}) يتجاوز المدفوع (${paid.toFixed(2)})`,
+      ['returnRefundAmount', 'totalPaid']));
+  }
+
+  // I11: shipSettledAmount + reversed history — لو order.shipSettled=false لكن
+  //      shipSettledAmount != 0 → drift
+  if (order.shipSettled === false && shipSettledAmount > EPS) {
+    violations.push(v('SETTLED_FLAG_FALSE_BUT_AMOUNT', 'warn',
+      `shipSettled=false لكن shipSettledAmount=${shipSettledAmount}`,
+      ['shipSettled', 'shipSettledAmount']));
+  }
+
+  // I12: لو returned_partial → returnedItems[] غير فاضي + salePrice تم تعديله
+  if (shipStage === 'returned_partial') {
+    const items = Array.isArray(order.returnedItems) ? order.returnedItems : [];
+    if (items.length === 0) {
+      violations.push(v('PARTIAL_RETURN_NO_ITEMS', 'warn',
+        'shipStage=returned_partial لكن returnedItems فارغة',
+        ['shipStage', 'returnedItems']));
+    }
+    // I13: مجموع returnedItems[].qty <= مجموع products[].qty الأصلي
+    const totalReturnedQty = items.reduce((s, it) => s + (Number(it.returnedQty || it.qty) || 0), 0);
+    // الـ original qty صعب نعرفه بدون snapshot — هنا فقط الـ sanity check
+    if (totalReturnedQty < 0) {
+      violations.push(v('PARTIAL_RETURN_NEGATIVE_QTY', 'crit',
+        `returnedItems quantity سالب: ${totalReturnedQty}`,
+        ['returnedItems']));
+    }
+  }
+
+  // I14: لو closed (مغلق) → stage يجب يكون archived
+  if (shipStage === 'closed' && order.stage !== 'archived') {
+    violations.push(v('CLOSED_NOT_ARCHIVED', 'warn',
+      `shipStage='closed' لكن stage='${order.stage}' (ليس archived)`,
+      ['shipStage', 'stage']));
+  }
+
   return violations;
 }
 

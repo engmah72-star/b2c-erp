@@ -210,6 +210,13 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     walletName:   data.walletName   || '',
     notes:        data.notes || data.note || '',
     refId:        data.refId        || null,
+    // PR-7.5 R2 — Causal linkage for forensic audit:
+    //   operationId         = the idempotency op that created THIS ledger entry
+    //   causedByOperationId = the op of the ORIGINAL event (for reversals only)
+    //   reversalOf          = ledger entry id being reversed (if known)
+    operationId:         data.operationId         || null,
+    causedByOperationId: data.causedByOperationId || null,
+    reversalOf:          data.reversalOf          || null,
     createdBy:     data.userId      || data.createdBy     || '',
     createdByName: data.userName    || data.createdByName || '',
     createdAt:    serverTimestamp(),

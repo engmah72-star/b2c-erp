@@ -275,6 +275,14 @@ export const orderActions = {
     role, userId, userName,
     note = '', source = 'customer',
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    // G1: idempotency
+    return withIdempotency(db, {
+      actionType: source === 'refund' ? 'refund_payment' : 'record_payment',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0, source },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -294,6 +302,7 @@ export const orderActions = {
         note,
         createdBy:     userId   || '',
         createdByName: userName || '',
+        operationId, // PR-7.5 R2
       });
       return {
         ok: true,
@@ -312,6 +321,7 @@ export const orderActions = {
         orderId,
       };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -327,6 +337,13 @@ export const orderActions = {
     role, userId, userName,
     note = '', reason = '',
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    return withIdempotency(db, {
+      actionType: 'refund_order',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0 },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -344,6 +361,7 @@ export const orderActions = {
         note:       note || reason || '',
         createdBy:     userId   || '',
         createdByName: userName || '',
+        operationId, // PR-7.5 R2
       });
       return {
         ok: true,
@@ -362,6 +380,7 @@ export const orderActions = {
         orderId,
       };
     }
+    }); // end withIdempotency
   },
   // ══════════════════════════════════════════
   // PR-3 SHIPPING LIFECYCLE (scalable-drifting-ember)
@@ -586,7 +605,7 @@ export const orderActions = {
       entityId: orderId,
       actorId: userId || '',
       payload: { walletId, amount: Number(amount) || 0 },
-    }, async () => {
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -618,6 +637,7 @@ export const orderActions = {
         },
         note,
         userId: userId || '', userName: userName || '',
+        operationId, // PR-7.5 R2 forensic linkage
       });
 
       // 2) لو remaining بعد الدفعة = 0 → نقل shipStage إلى 'collected' + timeline
@@ -681,7 +701,7 @@ export const orderActions = {
       entityId: [...orderIds].sort().join(','),
       actorId: userId || '',
       payload: { walletId, amount: Number(amount) || 0, prepaid: !!prepaid },
-    }, async () => {
+    }, async (operationId) => {
     // 1) حمّل كل الأوردرات
     const loaded = [];
     for (const id of orderIds) {
@@ -742,6 +762,7 @@ export const orderActions = {
         note,
         userId: userId || '', userName: userName || '',
         orderUpdates,
+        operationId, // PR-7.5 R2 forensic linkage
       });
 
       // 7) Follow-up batch: shipStage + shipPrepaid + shipSettledAt (الـ handler لا يكتبها)
@@ -892,7 +913,7 @@ export const orderActions = {
       entityId: orderId,
       actorId: userId || '',
       payload: { reason, lossParty, cost: Number(cost) || 0 },
-    }, async () => {
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -1000,6 +1021,7 @@ export const orderActions = {
           clientName: order.clientName || '',
           notes: `عكس تسوية مرتجع — ${order.clientName || ''} — ${coName}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       } else if (isManualSettled && settledAmt > 0) {
         // Manual settled (لم تمر بمحفظة) → ledger flag-reversal فقط
@@ -1011,6 +1033,7 @@ export const orderActions = {
           vendorId: '', vendorName: coName,
           notes: `عكس تسوية يدوية (manual) لمرتجع — ${order.clientName || ''} — ${coName}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
 
@@ -1035,6 +1058,7 @@ export const orderActions = {
           clientName: order.clientName || '',
           notes: `استرداد عربون مرتجع — ${order.clientName || ''} — ${coName}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
 
@@ -1068,6 +1092,8 @@ export const orderActions = {
             clientName: order.clientName || '',
             notes: `عكس ${d.category || 'collection'} (مرتجع) — ${order.clientName || ''} — ${coName}`,
             userId: userId || '', userName: userName || '',
+            operationId,            // PR-7.5 R2 — this reversal entry's op
+            reversalOf: tx.id,      // points at the original ledger/tx being undone
           });
         }
       }
@@ -1091,6 +1117,7 @@ export const orderActions = {
           clientName: order.clientName || '',
           notes: `تكلفة مرتجع — ${order.clientName || ''} — ${coName}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
 
@@ -1150,7 +1177,7 @@ export const orderActions = {
         refundAmount: Number(refundAmount) || 0,
         refundWalletId,
       },
-    }, async () => {
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -1244,6 +1271,7 @@ export const orderActions = {
           clientName: order.clientName || '',
           notes: `استرداد مرتجع جزئي — ${order.clientName || ''}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
 
@@ -1256,6 +1284,7 @@ export const orderActions = {
           clientName: order.clientName || '',
           notes: `تكلفة مرتجع جزئي — ${returnedItems.length} منتج`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
 
@@ -1291,7 +1320,7 @@ export const orderActions = {
       entityId: orderId,
       actorId: userId || '',
       payload: { reasonLen: (reason || '').length },
-    }, async () => {
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
     if (order.stage === 'archived')  return { ok:false, errors:['⛔ الأوردر مؤرشف'], warnings:[], orderId };
@@ -1350,6 +1379,7 @@ export const orderActions = {
         vendorId: '', vendorName: order.shipCompanyName || '',
         notes: `🏁 تسوية يدوية (manual): ${r}${needsTotalPaidUpdate ? ` · totalPaid ${paid}→${newTotalPaid}` : ''}`,
         userId: userId || '', userName: userName || '',
+        operationId, // PR-7.5 R2
       });
       await batch.commit();
       return {
@@ -1375,6 +1405,13 @@ export const orderActions = {
     db, orderId, role, userId, userName,
     newShipCost, newCustomerShipFee,
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    return withIdempotency(db, {
+      actionType: 'edit_ship_fee',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { newShipCost: Number(newShipCost) || 0, newCustomerShipFee: Number(newCustomerShipFee) || 0 },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
     if (order.stage === 'archived')        return { ok:false, errors:['⛔ الأوردر مؤرشف — لا يمكن تعديله'], warnings:[], orderId };
@@ -1422,6 +1459,7 @@ export const orderActions = {
           notes: `تعديل تكلفة شحن (${costDelta > 0 ? '+' : '-'}${Math.abs(costDelta).toLocaleString('ar-EG')} ج) — ${order.shipCompanyName || ''}`,
           userId: userId || '', userName: userName || '',
           direction: costDelta > 0 ? 'out' : 'in',
+          operationId, // PR-7.5 R2
         });
       }
       const tlAction = `✏️ تعديل شحن: ${oldCost !== newCost ? `تكلفة ${oldCost}→${newCost} ج` : ''}${oldCost !== newCost && oldCust !== newCust ? ' · ' : ''}${oldCust !== newCust ? `رسوم العميل ${oldCust}→${newCust} ج` : ''}`;
@@ -1438,6 +1476,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تعديل رسوم الشحن'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -1451,6 +1490,13 @@ export const orderActions = {
     type = '', total = 0, note = '', supplierId = '', supplierName = '',
     editIdx = -1, prodIdx = null,
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    return withIdempotency(db, {
+      actionType: 'add_order_cost',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { type, total: Number(total) || 0, editIdx: Number(editIdx) },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
     if (!type)   return { ok:false, errors:['⚠️ اختر نوع البند'], warnings:[], orderId };
@@ -1502,6 +1548,7 @@ export const orderActions = {
           clientId: order.clientId || '', clientName: order.clientName || '',
           notes: `تكلفة ${type} — ${order.clientName || ''} — ${order.orderId || ''}`,
           userId: userId || '', userName: userName || '',
+          operationId, // PR-7.5 R2
         });
       }
       await batch.commit();
@@ -1509,6 +1556,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل حفظ البند'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -1522,6 +1570,13 @@ export const orderActions = {
   async removeOrderCost({
     db, orderId, role, userId, userName, idx,
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    return withIdempotency(db, {
+      actionType: 'remove_order_cost',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { idx: Number(idx) },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
     const items = order.costItems || [];
@@ -1549,12 +1604,15 @@ export const orderActions = {
         notes: `إلغاء تكلفة ${item.type || ''} — ${order.clientName || ''}`,
         userId: userId || '', userName: userName || '',
         direction: 'in',
+        operationId,                         // PR-7.5 R2
+        reversalOf: item.txId || null,       // counter-ledger يشير لـ tx الأصلية
       });
       await batch.commit();
       return { ok:true, errors:[], warnings:[], orderId, action:'remove_cost_item', costItems: ci, removedItem: item };
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل حذف البند'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**

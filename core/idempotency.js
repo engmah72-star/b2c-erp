@@ -35,6 +35,7 @@
 
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { startActionTrace } from './telemetry.js';
 
 // ─── DETERMINISTIC HASH (browser-safe, sync) ──────────────────────────────
 // djb2 + xor — 32-bit hash → hex. ليس cryptographic لكن كافٍ للـ deduplication.
@@ -100,6 +101,18 @@ export async function withIdempotency(db, opMeta, fn) {
   const operationId = mintOperationId(opMeta);
   const opRef = doc(db, 'financial_operations', operationId);
 
+  // PR-7.5 R6 — auto-telemetry for every wrapped action
+  const trace = startActionTrace({
+    actionType: opMeta.actionType,
+    actorId:    opMeta.actorId,
+    actorName:  opMeta.actorName,
+    entityId:   opMeta.entityId,
+  });
+  const finalize = async (result) => {
+    try { await trace.finish(db, { ...result, operationId }); } catch {}
+    return result;
+  };
+
   // 1) check existing
   let existing = null;
   try {
@@ -112,25 +125,25 @@ export async function withIdempotency(db, opMeta, fn) {
   if (existing) {
     if (existing.status === 'completed') {
       console.log('[IDEMPOTENCY] ✅ no-op: cached completed result', operationId);
-      return {
+      return finalize({
         ...(existing.result || {}),
         ok: existing.result?.ok ?? true,
         operationId,
         idempotent: true,
         cachedFrom: existing.completedAt || existing.createdAt,
-      };
+      });
     }
     if (existing.status === 'pending') {
       // عملية قيد التنفيذ من tab/jeb آخر — نرفض بدل تنفيذ duplicate
       console.warn('[IDEMPOTENCY] ⏳ rejected: pending operation', operationId);
-      return {
+      return finalize({
         ok: false,
         errors: ['⏳ نفس العملية قيد التنفيذ — انتظر بضع ثواني وأعد المحاولة'],
         warnings: [],
         operationId,
         idempotent: true,
         pending: true,
-      };
+      });
     }
     // failed — نسمح بإعادة المحاولة (يُمسح المسجَّل ويُسجَّل جديد)
     console.log('[IDEMPOTENCY] ↻ retry after failure', operationId);
@@ -154,16 +167,16 @@ export async function withIdempotency(db, opMeta, fn) {
     const snap = await getDoc(opRef);
     const d = snap.exists() ? snap.data() : null;
     if (d?.status === 'completed') {
-      return { ...(d.result || {}), ok: d.result?.ok ?? true, operationId, idempotent: true };
+      return finalize({ ...(d.result || {}), ok: d.result?.ok ?? true, operationId, idempotent: true });
     }
-    return {
+    return finalize({
       ok: false,
       errors: ['⏳ نفس العملية قيد التنفيذ في جلسة أخرى'],
       warnings: [],
       operationId,
       idempotent: true,
       pending: true,
-    };
+    });
   }
 
   // 3) execute
@@ -179,6 +192,7 @@ export async function withIdempotency(db, opMeta, fn) {
         completedAt: serverTimestamp(),
       });
     } catch (_) {}
+    await finalize({ ok: false, errors: [e.message || String(e)], operationId });
     throw e;
   }
 
@@ -193,7 +207,7 @@ export async function withIdempotency(db, opMeta, fn) {
     console.warn('[IDEMPOTENCY] فشل تسجيل completed (العملية تمت):', e);
   }
 
-  return { ...result, operationId, idempotent: false };
+  return finalize({ ...result, operationId, idempotent: false });
 }
 
 /**

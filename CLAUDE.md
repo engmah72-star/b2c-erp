@@ -1728,7 +1728,74 @@ dispatchFinancialEvent(   addLedgerToBatch(
 - `order-actions.js`
 - `orders.js` (validators + builders + state machine)
 - `core/idempotency.js`
+- `core/telemetry.js`
+- `core/projection.js`
+- `core/financial-invariants.js`
 - `core/firebase-init.js`
 - `core/permissions-matrix.js`
 
 أي drift عن H1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.
+
+---
+
+# RULE H2 — POST-PR7.5 RUNTIME GOVERNANCE (Resilience Layer)
+
+> **بعد PR-7.5 (Runtime Stabilization) — kapja الـ runtime guards.**
+
+## H2.1 — Forensic Causal Linkage
+كل reversal ledger entry **يجب** أن يحتوي:
+- `operationId` — الـ op الحالية (idempotency wrapper)
+- `causedByOperationId` — الـ op الأصلية (لو معروفة)
+- `reversalOf` — id لـ tx الأصلية (لو reversal تخص واحد محدد)
+
+الـ FSE handler (`addLedgerToBatch`) يقبلها تلقائياً.
+
+## H2.2 — Projection vs Ledger Drift
+- `core/projection.js → rebuildFinancialProjection(db, orderId)` — يبني projection من ledger.
+- `compareProjectionVsLedger(db, order)` — يكتشف drift بين projection المخزن والـ derived truth.
+- Cloud Function دورية (مستقبلاً) يجب أن تستدعيها على عينة من الأوردرات يومياً.
+
+عند اكتشاف drift `severity:'crit'`:
+- audit log فوري
+- banner تحذير على الـ admin panel
+- ❌ ممنوع silent correction — يجب admin approval قبل أي repair
+
+## H2.3 — Telemetry Required (Runtime)
+كل action مُغلَّفة بـ `withIdempotency` تُسجَّل تلقائياً عبر `startActionTrace` في:
+- `console.log/warn` (دائماً)
+- `action_telemetry` (للـ failures + slow ops + critical actions)
+- `window.dispatchEvent('b2c:action')` (للـ UI listeners)
+
+**ممنوع silent failures.** الـ wrapper يضمن كل result يمر بـ `finalize()` حتى لو exception.
+
+## H2.4 — Invariants — 13 إجمالي بعد PR-7.5
+- **9 basic** (PR-7 G3): paid≥0, remaining≥0, sale≥0, paid≤total, paid+remaining≈total, settled≤collected, returned_full→zero, settled-needs-wallet, paid-status-no-remaining
+- **5 advanced** (PR-7.5 R5): refund≤paid, settled-flag-amount-match, partial-return-items, partial-return-qty, closed-archived-pair
+
+تُستدعى من `detectFinancialDrift(order)`. الـ banner في صفحات الشحن يستخدم `summarizeFinancialDrift(orders[])`.
+
+## H2.5 — Runtime Mutation Enforcement (CI is the layer)
+الـ Firestore modular SDK لا يدعم monkey-patching بسهولة، لذا:
+- **Build-time:** `.github/workflows/architecture-guard.yml` يفشل أي PR فيه direct writes في UI.
+- **Code review:** أي drift عن H1.1 يُرفض في الـ review.
+- **Dev-time:** `console.warn` في idempotency layer لو exception أثناء التنفيذ.
+
+Runtime hard-fail غير ممكن بدون refactor شامل للـ Firestore imports — مؤجل.
+
+## H2.6 — Manual Chaos Tests (Mandatory قبل merge)
+قبل أي PR يلمس financial layer:
+- ☐ Double-click settle button — يجب return cached result
+- ☐ Parallel settle من 2 tabs — يجب pending rejection للثاني
+- ☐ Refresh أثناء collect — لا duplicate wallet credit
+- ☐ Retry after timeout — idempotent guard يُمسك
+- ☐ Reverse after archive — works (لا state corruption)
+- ☐ Partial return twice — cumulative، items accumulated
+- ☐ Settle بعد return — blocked (الـ return أزال shipSettled)
+- ☐ Network interruption mid-action — لا half-applied state
+
+## H2.7 — Stable Core (H2 addendum)
+إضافة على H1.8:
+- `core/projection.js`, `core/telemetry.js`, `core/financial-invariants.js`
+- `.github/workflows/architecture-guard.yml`
+
+أي drift عن H2 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.
