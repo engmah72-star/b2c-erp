@@ -384,6 +384,7 @@ export const shippingActions = {
         note: note || '',
         date: new Date().toLocaleDateString('ar-EG'),
         userId: userId || '', userName: userName || '',
+        operationId, // CHAOS HOTFIX T8: forensic linkage to op
         orderUpdates: spec.updates.map((u, i) => ({
           orderId: u.orderId,
           totalPaid: u.fields.totalPaid,
@@ -461,14 +462,21 @@ export const shippingActions = {
         totalPaid: newPaid,
         remaining: newRem,
         paymentStatus: newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+        reverseShare: settledAmt, // CHAOS HOTFIX T8: per-order amount being reversed
       };
     });
+    // CHAOS HOTFIX T8: build orderAllocations for ledger so reversal sums by order
+    const reverseAllocations = orderUpdates.reduce((acc, u) => {
+      acc[u.orderId] = u.reverseShare || 0;
+      return acc;
+    }, {});
 
     try {
       await dispatchFinancialEvent(db, FE.SHIPPING_SETTLEMENT_REVERSAL, {
         settlementId, walletId, walletName,
         amount: parseFloat(amount) || 0,
         companyName, orderIds,
+        orderAllocations: reverseAllocations,
         date: new Date().toLocaleDateString('ar-EG'),
         userId: userId || '', userName: userName || '',
         orderUpdates,

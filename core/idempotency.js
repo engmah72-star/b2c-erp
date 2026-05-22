@@ -114,9 +114,12 @@ export async function withIdempotency(db, opMeta, fn) {
   };
 
   // 1+2) Atomic check-and-reserve via Firestore transaction.
-  // PR-7.5 BUGFIX (Chaos Test 2): The previous getDoc+setDoc pattern had a
-  // TOCTOU race — two tabs could both see "doesn't exist" and both setDoc,
-  // resulting in double mutation. runTransaction makes this atomic.
+  // CHAOS HOTFIX (T1/T2): The previous "transaction failed → proceed as
+  // reserved" fallback was FAIL-OPEN — under contention, network blip, or
+  // rule rejection, both parallel tabs would treat themselves as the
+  // winner and double-execute the mutation. Now FAIL-CLOSED: any
+  // reservation error returns a rejected result; user can retry
+  // immediately and the next try sees the persisted state.
   //
   // Outcomes:
   //   { kind:'reserved'  } → we own this op, proceed to execute
@@ -146,10 +149,20 @@ export async function withIdempotency(db, opMeta, fn) {
       return { kind: 'reserved' };
     });
   } catch (e) {
-    // Transaction error itself — fall through and try once more without the
-    // idempotency guard. NEVER throw without finalize() (telemetry).
-    console.warn('[IDEMPOTENCY] transaction failed — proceeding without guard', e);
-    reservation = { kind: 'reserved' };
+    // FAIL-CLOSED — never silently proceed without the guard.
+    // Under contention/abort/rule-rejection, return a deterministic
+    // failure so the caller (and chaos runner) sees a clear signal
+    // and can retry. The other tab's reservation, if any, persists.
+    console.warn('[IDEMPOTENCY] reservation transaction failed — failing closed', e);
+    return finalize({
+      ok: false,
+      errors: [`عملية مزدحمة — حاول بعد لحظات (reservation failed: ${e.message || e})`],
+      warnings: [],
+      operationId,
+      idempotent: true,
+      pending: true,
+      reservationError: true,
+    });
   }
 
   if (reservation.kind === 'completed') {

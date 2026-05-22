@@ -200,6 +200,15 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     eventType,
     amount:       data.amount       || 0,
     orderId:      data.orderId      || null,
+    // CHAOS HOTFIX (T8): multi-order events (SHIPPING_SETTLEMENT) didn't
+    // persist per-order linkage. Now:
+    //   orderIds[]        = which orders this entry touches (for array-contains query)
+    //   orderAllocations  = { [orderId]: share } map for per-order projection
+    // Projection rebuild uses allocations[orderId] when present, falling
+    // back to amount only if the entry has a single matching orderId.
+    orderIds:         Array.isArray(data.orderIds) ? data.orderIds : null,
+    orderAllocations: (data.orderAllocations && typeof data.orderAllocations === 'object')
+                       ? data.orderAllocations : null,
     clientId:     data.clientId     || null,
     clientName:   data.clientName   || null,
     employeeId:   data.employeeId   || null,
@@ -622,11 +631,20 @@ async function handleShippingSettlement(db, p) {
     });
   }
 
+  // CHAOS HOTFIX (T8): build per-order allocations map from orderUpdates
+  // so projection rebuild can compute each order's correct share.
+  const orderAllocations = (p.orderUpdates || []).reduce((acc, u) => {
+    if (u.orderId) acc[u.orderId] = parseFloat(u.dueByCo) || 0;
+    return acc;
+  }, {});
   addLedgerToBatch(batch, db, 'SHIPPING_SETTLEMENT', {
     amount: p.amount, walletId: p.walletId, walletName: p.walletName || '',
     notes: `تسوية شحن — ${p.companyName || ''}${p.diffReasonLabel ? ' — فرق: ' + p.diffReasonLabel : ''}`,
     refId: settleRef.id,
+    orderIds: p.orderIds || [],
+    orderAllocations,
     userId: p.userId, userName: p.userName,
+    operationId: p.operationId || null,
   });
 
   await batch.commit();
@@ -685,7 +703,13 @@ async function handleShippingSettlementReversal(db, p) {
     amount: p.amount, walletId: p.walletId, walletName: p.walletName || '',
     notes: `إلغاء تسوية شحن — ${p.companyName || ''}`,
     refId: p.settlementId,
+    // CHAOS HOTFIX (T8): per-order linkage for projection rebuild.
+    orderIds: p.orderIds || [],
+    orderAllocations: p.orderAllocations || null,
     userId: p.userId, userName: p.userName,
+    operationId: p.reversalOperationId || p.operationId || null,
+    causedByOperationId: p.causedByOperationId || null,
+    reversalOf: p.settlementId,
   });
 
   await batch.commit();

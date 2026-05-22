@@ -48,10 +48,30 @@ export async function rebuildFinancialProjection(db, orderId) {
     return { ok: false, errors: ['db + orderId مطلوبان'], orderId };
   }
 
-  const ledgerSnap = await getDocs(query(
-    collection(db, 'financial_ledger'),
-    where('orderId', '==', orderId),
-  ));
+  // CHAOS HOTFIX (T8): SHIPPING_SETTLEMENT ledger entries span multiple
+  // orders and store orderIds[] (not a single orderId). We MUST query
+  // both paths to find all ledger entries that touch this order.
+  // Firestore doesn't support OR queries — execute both and de-dup.
+  const [byOrderId, byOrderIds] = await Promise.all([
+    getDocs(query(
+      collection(db, 'financial_ledger'),
+      where('orderId', '==', orderId),
+    )),
+    getDocs(query(
+      collection(db, 'financial_ledger'),
+      where('orderIds', 'array-contains', orderId),
+    )),
+  ]);
+  // De-dup by doc id (entries with single orderId may also have orderIds[orderId])
+  const seen = new Set();
+  const allDocs = [];
+  for (const snap of [byOrderId, byOrderIds]) {
+    for (const d of snap.docs) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      allDocs.push(d);
+    }
+  }
 
   let derivedPaid = 0;
   let totalRefund = 0;
@@ -62,7 +82,23 @@ export async function rebuildFinancialProjection(db, orderId) {
   let generalExpenseIn = 0;
   let reversedOps = 0;
 
-  for (const d of ledgerSnap.docs) {
+  // CHAOS HOTFIX (T8): for multi-order events, compute THIS order's share:
+  //   1) If e.orderAllocations[orderId] exists, use that (per-order share)
+  //   2) Else if e.orderId === orderId, use full amount (single-order legacy entry)
+  //   3) Else if orderIds[orderId] is the only one, use full amount
+  //   4) Else fallback to amount/orderIds.length (best-effort proportional)
+  function shareFor(e, fullAmount) {
+    if (e.orderAllocations && Number.isFinite(parseFloat(e.orderAllocations[orderId]))) {
+      return parseFloat(e.orderAllocations[orderId]);
+    }
+    if (e.orderId === orderId) return fullAmount;
+    const ids = Array.isArray(e.orderIds) ? e.orderIds : [];
+    if (ids.length === 1 && ids[0] === orderId) return fullAmount;
+    if (ids.includes(orderId)) return fullAmount / ids.length; // last-resort fallback
+    return 0;
+  }
+
+  for (const d of allDocs) {
     const e = d.data();
     if (e.isDeleted === true) continue; // soft-deleted (rare — FSE is append-only)
     const amount = parseFloat(e.amount) || 0;
@@ -78,15 +114,19 @@ export async function rebuildFinancialProjection(db, orderId) {
         totalRefund += amount;
         if (e.reversalOf) reversedOps++;
         break;
-      case 'SHIPPING_SETTLEMENT':
-        derivedPaid += amount;
-        totalSettled += amount;
+      case 'SHIPPING_SETTLEMENT': {
+        const share = shareFor(e, amount);
+        derivedPaid += share;
+        totalSettled += share;
         break;
-      case 'SHIPPING_SETTLEMENT_REVERSAL':
-        derivedPaid -= amount;
-        totalSettlementReversed += amount;
+      }
+      case 'SHIPPING_SETTLEMENT_REVERSAL': {
+        const share = shareFor(e, amount);
+        derivedPaid -= share;
+        totalSettlementReversed += share;
         reversedOps++;
         break;
+      }
       case 'RETURN_LOSS':
         totalReturnLoss += amount;
         break;
