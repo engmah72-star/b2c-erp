@@ -791,28 +791,15 @@ function renderAiAnalysis(d){
 // clients-render.js. renderPanel computes the derived data here, then
 // delegates the HTML to clientPanelHeaderHTML + clientPanelBodyHTML.
 function renderPanel(id){
+  // God-page decomp PR-22: derived data extracted to clients-data.js
+  // (window.computeClientPanelData). Templates: clients-render.js (PR-6).
   const c=clients.find(x=>x._id===id);if(!c)return;
   const pnOrdBtn=document.querySelector('#panel-ov .btn-g');
   if(pnOrdBtn)pnOrdBtn.style.display=c.status==='legacy'?'none':'';
   const col=COLORS[clients.indexOf(c)%COLORS.length];
-  const cOrds=getClientOrders(c);
-  const tot=cOrds.reduce((s,o)=>s+(parseFloat(o.salePrice)||0)+(parseFloat(o.customerShipFee)||0),0);
-  const paid=cOrds.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const rem=cOrds.reduce((s,o)=>s+(calcRem(o)),0);
-  const totalCost=cOrds.reduce((s,o)=>s+((o.costItems||[]).reduce((x,ci)=>x+(parseFloat(ci.total)||0),0)||(parseFloat(o.totalCost)||0)),0);
-  const totalProfit=paid-totalCost;
-  const profitPct=paid>0?Math.round(totalProfit/paid*100):null;
-  const clientTx=cOrds.flatMap(o=>(txByOrder.get(o._id)||[]).filter(tx=>tx.type==='in'&&tx.amount>0));
-  const byWallet={};
-  clientTx.forEach(tx=>{const wn=tx.walletName||'—';byWallet[wn]=(byWallet[wn]||0)+(parseFloat(tx.amount)||0);});
-  const firstOrd=cOrds.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))[0];
-  const memberDays=firstOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-firstOrd.createdAt.seconds)/86400):null;
-  const pct=tot>0?Math.min(paid/tot*100,100):0;
-  const activeOrds=cOrds.filter(o=>o.stage!=='archived');
-  const lateOrds=cOrds.filter(o=>o.stage!=='archived'&&o.deadline&&new Date(o.deadline)<new Date());
-  const lastOrd=cOrds.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))[0];
-  const daysSince=lastOrd?.createdAt?.seconds?Math.floor((Date.now()/1000-lastOrd.createdAt.seconds)/86400):null;
-  const tags=c.tags||[];
+  const d=computeClientPanelData({
+    client:c, orders:getClientOrders(c), txByOrder, calcRem,
+  });
 
   document.getElementById('pn-hdr').innerHTML=clientPanelHeaderHTML({client:c,color:col});
 
@@ -834,19 +821,14 @@ function renderPanel(id){
   </div>`:'';
 
   document.getElementById('panel-body').innerHTML=clientPanelBodyHTML({
-    client:c,id,
-    cOrds,activeOrds,lateOrds,
-    tot,paid,rem,pct,
-    totalCost,totalProfit,profitPct,
-    memberDays,daysSince,
-    byWallet,tags,lastFuLine,
+    client:c,id, ...d, lastFuLine,
     segments:clientSegments,
     SEG_STYLE,TAG_LABELS,TAG_COL,
     renderClientFollowups,renderPanelOrders,renderBizCardTab,
     fn,pRow,fmtOccasion,
   });
 
-  window.__panelOrds=cOrds;
+  window.__panelOrds=d.cOrds;
 }
 
 // ═══════════════════════════════════════════════════════════
