@@ -210,6 +210,13 @@ export function addLedgerToBatch(batch, db, eventType, data) {
     walletName:   data.walletName   || '',
     notes:        data.notes || data.note || '',
     refId:        data.refId        || null,
+    // PR-7-salvage R2 — Causal linkage for forensic audit:
+    //   operationId         = the idempotency op that created THIS entry
+    //   causedByOperationId = the op of the ORIGINAL event (for reversals)
+    //   reversalOf          = ledger/tx id being undone (when known)
+    operationId:         data.operationId         || null,
+    causedByOperationId: data.causedByOperationId || null,
+    reversalOf:          data.reversalOf          || null,
     createdBy:     data.userId      || data.createdBy     || '',
     createdByName: data.userName    || data.createdByName || '',
     createdAt:    serverTimestamp(),
@@ -652,7 +659,17 @@ async function handleShippingSettlementReversal(db, p) {
     ...approvalFields(),
   });
 
-  batch.delete(doc(db, 'shipping_settlements', p.settlementId));
+  // PR-7-salvage G2 — Append-only: no delete on financial history.
+  // Mark reversed with forensic metadata. Readers filter where reversed!=true.
+  batch.update(doc(db, 'shipping_settlements', p.settlementId), {
+    reversed: true,
+    reversedAt: serverTimestamp(),
+    reversedBy: p.userId || '',
+    reversedByName: p.userName || '',
+    reversalReason: p.reversalReason || '',
+    reversalOperationId: p.reversalOperationId || '',
+    reversalTxId: txRef.id,
+  });
 
   for (const u of (p.orderUpdates || [])) {
     if (!u.orderId) continue;

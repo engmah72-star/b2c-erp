@@ -652,11 +652,35 @@ service cloud.firestore {
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts') || hasPage('accounts')
       );
       // shipping page perm يقدر يكتب — شركات الشحن تسوية يومية من shipping.html.
-      // قبل: hasPage('shipping-accounts') فقط ➜ shipping_officer كان يحصل
-      // permission-denied عند التسوية.
-      allow write: if isAuth() && (
+      // PR-7-salvage G2: append-only — no delete. Reversal sets reversed:true.
+      allow create, update: if isAuth() && (
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
       );
+    }
+    // PR-7-salvage G1: financial_operations — idempotency log (append-only).
+    match /financial_operations/{opId} {
+      allow read: if isAuth() && (isAdmin() || resource.data.actorId == request.auth.uid);
+      allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
+      allow update: if isAuth() && (
+        isAdmin() || resource.data.actorId == request.auth.uid
+      );
+      // no delete (idempotency log is forever)
+    }
+    // PR-7-salvage R6: action_telemetry — observable action history.
+    match /action_telemetry/{evtId} {
+      allow read: if isAuth() && (isAdmin() || resource.data.actorId == request.auth.uid);
+      allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
+      // append-only: no updates/deletes
+    }
+    // PR-7-salvage A.1: migration_logs — Cloud Function only, admin reads.
+    match /migration_logs/{logId} {
+      allow read: if isAuth() && isAdminOnly();
+      allow write: if false;
+    }
+    // PR-7-salvage A.2: drift_reports — scheduled CF writes, admin reads.
+    match /drift_reports/{reportId} {
+      allow read: if isAuth() && isAdminOnly();
+      allow write: if false;
     }
     match /shipping_returns/{retId} {
       allow read: if isAuth() && (
