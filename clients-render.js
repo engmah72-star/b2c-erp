@@ -344,6 +344,150 @@ export function panelOrdersHTML({
   }).join('');
 }
 
+/**
+ * bizCardTabHTML(client) → HTML string for the business-card tab in
+ * the client panel. The whole tab is a static template populated from
+ * `client.businessCard`. All controls call `window.*` action handlers
+ * defined in clients.html (bizCardSmartPaste / saveBizCard / etc.).
+ *
+ * The caller is responsible for setting `window._bizCardClientId` before
+ * mounting the HTML, since the action handlers rely on it. The wrapper
+ * in clients.html (`renderBizCardTab`) does both.
+ *
+ * Internally composes bcSection/bcInput/bcTextarea from this module.
+ */
+export function bizCardTabHTML(client) {
+  const c  = client || {};
+  const bc = c.businessCard || {};
+  const updatedTxt = bc.updatedAt
+    ? new Date(bc.updatedAt.seconds * 1000).toLocaleDateString('ar-EG')
+    : '';
+  return `
+    <!-- Smart Paste -->
+    <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(6,182,212,.05));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:12px;margin-bottom:14px">
+      <div style="font-size:var(--fs-base);font-weight:900;color:#a855f7;margin-bottom:6px">🧠 لزق ذكي — Smart Paste</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;line-height:1.5">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
+      <textarea id="bc-paste-area" placeholder="مثال: ايمن شوق المشد&#10;المستشار&#10;للمحاماة والاستشارات القانونية&#10;Ayman Shawky Al-Mashad&#10;Law Firm and Legal Consultations&#10;01022662220&#10;Aymanshawkylawfirm@gmail.com&#10;كمبوند فاليو 2 - القاهرة الجديدة" style="width:100%;background:var(--bg3);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:90px;resize:vertical"></textarea>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-p btn-sm" onclick="window.bizCardSmartPaste()" style="flex:1">🧠 استخرج البيانات</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bc-paste-area').value=''" title="مسح">✕</button>
+      </div>
+      <div id="bc-paste-result" style="font-size:var(--fs-xs);color:var(--g);margin-top:6px;min-height:14px"></div>
+    </div>
+
+    ${bcSection('📝 الهوية',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('prefix','اللقب','د. / م. / أ. / المستشار',bc.prefix)}
+        ${bcInput('nickname','اسم مختصر','أبو محمد',bc.nickname)}
+      </div>
+      ${bcInput('name-ar','الاسم الكامل (عربي)','الاسم بالعربي',bc.nameAr)}
+      ${bcInput('name-en','Full Name (English)','Name in English',bc.nameEn)}`
+    )}
+
+    ${bcSection('💼 المهنة والشركة',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('job-ar','المسمى الوظيفي (AR)','المستشار / محامي',bc.jobTitleAr)}
+        ${bcInput('job-en','Job Title (EN)','Legal Consultant',bc.jobTitleEn)}
+      </div>
+      ${bcInput('company-ar','اسم الشركة (AR)','للمحاماة والاستشارات القانونية',bc.companyAr)}
+      ${bcInput('company-en','Company Name (EN)','Law Firm and Legal Consultations',bc.companyEn)}
+      ${bcInput('biz-type','نوع النشاط','محاماة / طب / مطعم / مهندس',bc.businessType)}`
+    )}
+
+    ${bcSection('📞 وسائل التواصل',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('office-phone','تليفون مكتب','011xxxxxxxx',bc.officePhone,'tel')}
+        ${bcInput('mobile-phone','موبايل','01xxxxxxxxx',bc.mobilePhone,'tel')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('whatsapp','واتساب (لو مختلف)','01xxxxxxxxx',bc.whatsapp,'tel')}
+        ${bcInput('fax','فاكس (اختياري)','',bc.fax,'tel')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('email','إيميل','example@gmail.com',bc.email,'email')}
+        ${bcInput('email-2','إيميل بديل','',bc.email2,'email')}
+      </div>
+      ${bcInput('website','الموقع الإلكتروني','https://example.com',bc.website,'url')}`
+    )}
+
+    ${bcSection('📍 العنوان',
+      `${bcTextarea('address-ar','العنوان (AR)','العنوان الكامل بالعربي',bc.addressAr)}
+      ${bcTextarea('address-en','Address (EN)','Address in English',bc.addressEn)}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+        ${bcInput('city','المدينة/الحي','القاهرة الجديدة',bc.city)}
+        ${bcInput('gov','المحافظة','القاهرة',bc.gov)}
+        ${bcInput('country','الدولة','مصر',bc.country)}
+      </div>
+      ${bcInput('maps-link','رابط Google Maps','https://maps.app.goo.gl/...',bc.mapsLink,'url')}`
+    )}
+
+    ${bcSection('🌐 السوشيال ميديا',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('fb','Facebook','facebook.com/...',bc.facebook,'url')}
+        ${bcInput('ig','Instagram','instagram.com/...',bc.instagram,'url')}
+        ${bcInput('tw','Twitter / X','x.com/...',bc.twitter,'url')}
+        ${bcInput('linkedin','LinkedIn','linkedin.com/in/...',bc.linkedin,'url')}
+        ${bcInput('tiktok','TikTok','tiktok.com/@...',bc.tiktok,'url')}
+        ${bcInput('yt','YouTube','youtube.com/@...',bc.youtube,'url')}
+        ${bcInput('snap','Snapchat','snapchat.com/add/...',bc.snapchat,'url')}
+        ${bcInput('telegram','Telegram','t.me/...',bc.telegram,'url')}
+      </div>`
+    )}
+
+    ${bcSection('⏰ ساعات العمل',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('hours-week','أيام الأسبوع','9 ص - 5 م',bc.hoursWeek)}
+        ${bcInput('hours-weekend','الإجازات','مغلق / 10 ص - 2 م',bc.hoursWeekend)}
+      </div>
+      ${bcInput('closed-days','أيام الإغلاق','الجمعة',bc.closedDays)}`
+    )}
+
+    ${bcSection('🎨 الهوية البصرية',
+      `${bcInput('logo-url','رابط اللوجو','https://...',bc.logoUrl,'url')}
+      ${bc.logoUrl ? `<div style="margin-bottom:8px"><img src="${bc.logoUrl}" loading="lazy" decoding="async" alt="logo" style="max-width:120px;max-height:80px;border-radius:8px;border:1px solid var(--line);background:#fff;padding:4px"></div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+        ${bcInput('color-1','اللون الأساسي','#000000',bc.color1)}
+        ${bcInput('color-2','اللون الثاني','#ffffff',bc.color2)}
+        ${bcInput('color-3','اللون الثالث','',bc.color3)}
+      </div>
+      ${bcInput('fonts','الخطوط المفضلة','Cairo / Tajawal',bc.fonts)}`
+    )}
+
+    ${bcSection('📅 تواريخ مهمة',
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${bcInput('founded','تاريخ التأسيس','',bc.founded,'date')}
+        ${bcInput('birthday','يوم الميلاد','',bc.birthday,'date')}
+      </div>
+      ${bcInput('anniversary','مناسبة سنوية','',bc.anniversary,'date')}`
+    )}
+
+    ${bcSection('🎯 تفضيلات التصميم',
+      `<div style="margin-bottom:8px">
+        <label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">الأسلوب المفضل</label>
+        <select id="bc-style" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none">
+          <option value="">— اختر —</option>
+          <option value="classic" ${bc.style==='classic'?'selected':''}>كلاسيكي</option>
+          <option value="modern" ${bc.style==='modern'?'selected':''}>مودرن</option>
+          <option value="minimal" ${bc.style==='minimal'?'selected':''}>بسيط/ميني-ميل</option>
+          <option value="bold" ${bc.style==='bold'?'selected':''}>جريء/Bold</option>
+          <option value="elegant" ${bc.style==='elegant'?'selected':''}>أنيق/Elegant</option>
+          <option value="playful" ${bc.style==='playful'?'selected':''}>مرح/Playful</option>
+        </select>
+      </div>
+      ${bcInput('avoid-colors','ألوان لا يفضلها','',bc.avoidColors)}
+      ${bcTextarea('design-notes','ملاحظات إضافية للمصمم','أي تفاصيل خاصة، تفضيلات، أو متطلبات...',bc.designNotes)}`
+    )}
+
+    <!-- Actions -->
+    <div style="display:flex;gap:6px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);position:sticky;bottom:0;background:var(--bg);padding-bottom:10px">
+      <button class="btn btn-g" onclick="window.saveBizCard()" style="flex:1">💾 حفظ</button>
+      <button class="btn btn-b" onclick="window.applyBizCardToNewOrder()">🚀 طبّق على أوردر جديد</button>
+      <button class="btn btn-ghost" onclick="window.exportBizCardText()" title="تصدير نص">📋</button>
+    </div>
+    ${updatedTxt ? `<div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;margin-top:6px">آخر تحديث: ${updatedTxt}</div>` : ''}
+  `;
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -359,5 +503,7 @@ if (typeof window !== 'undefined') {
     aiAnalysisHTML, clientFollowupsHTML,
     // PR-3:
     panelOrdersHTML,
+    // PR-4:
+    bizCardTabHTML,
   });
 }
