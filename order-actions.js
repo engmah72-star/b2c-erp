@@ -24,6 +24,7 @@ import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, co
 import {
   buildArchiveSpec,
   buildStageAdvance,
+  buildOrderSplit,
   validatePayment,
   validateRefund,
   validateCostItem,
@@ -1202,6 +1203,662 @@ export const orderActions = {
         warnings: [],
         orderId,
       };
+    }
+  },
+
+  // ─── Production Actions (P2.1) ────────────
+  //
+  // Order-level operations triggered from production.html. All follow the
+  // same shape as the other actions: load → optional validate → atomic
+  // batch → return uniform result. Timeline entries use auditEntry().
+
+  /**
+   * نقل قسري بين المراحل — أدمن only (override المسار العادي).
+   * يخالف buildStageAdvance قواعد التحقق فبيُستخدم بحذر.
+   */
+  async moveStage({
+    db = defaultDb, orderId, targetStage,
+    role, userId, userName,
+  }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (!['admin', 'operation_manager'].includes(role)) {
+      return { ok: false, errors: ['⛔ القفز بين المراحل متاح للأدمن فقط'], warnings: [], orderId };
+    }
+    if (!targetStage) return { ok: false, errors: ['⚠️ targetStage مطلوب'], warnings: [], orderId };
+    if (targetStage === order.stage) return { ok: false, errors: ['⚠️ نفس المرحلة الحالية'], warnings: [], orderId };
+    if (targetStage === 'archived' && !(order.costItems || []).length) {
+      return { ok: false, errors: ['⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً'], warnings: [], orderId };
+    }
+    const labels = { design: 'تصميم', printing: 'طباعة', production: 'تنفيذ', shipping: 'شحن', archived: 'أرشيف' };
+    try {
+      const entry = auditEntry({
+        action: `🔄 [أدمن] نُقل ${labels[order.stage] || order.stage} → ${labels[targetStage] || targetStage}`,
+        userId, userName, kind: 'op',
+        meta: { fromStage: order.stage, toStage: targetStage },
+      });
+      entry.stage = targetStage;
+      await updateDoc(order._ref, {
+        stage: targetStage,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'move_stage', from: order.stage, to: targetStage };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل النقل'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * حذف entry من timeline الأوردر بفهرس.
+   */
+  async removeTimelineEntry({
+    db = defaultDb, orderId, entryIndex,
+    userId,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const tl = [...(order.timeline || [])];
+    if (entryIndex < 0 || entryIndex >= tl.length) {
+      return { ok: false, errors: ['⚠️ فهرس غير صالح'], warnings: [], orderId };
+    }
+    tl.splice(entryIndex, 1);
+    try {
+      await updateDoc(order._ref, { timeline: tl, updatedAt: serverTimestamp() });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'remove_timeline_entry' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * إضافة مصروف مندوب (agent expense) إلى الأوردر — للنقل/الطعام/إلخ.
+   */
+  async addAgentExpense({
+    db = defaultDb, orderId,
+    type, amount, note = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل مبلغ صحيح'], warnings: [], orderId };
+    const newExp = { type, amount: amt, note, addedAt: nowStr(), addedBy: userId, addedByName: userName };
+    const exps = [...(order.agentExpenses || []), newExp];
+    try {
+      await updateDoc(order._ref, { agentExpenses: exps, updatedAt: serverTimestamp() });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'add_agent_expense' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تعيين مندوب التنفيذ — يستخدم لـ doAssignAgent + pickupOrder.
+   * @param {boolean} [pickup=false] — true لو من pickupOrder
+   */
+  async assignProductionAgent({
+    db = defaultDb, orderId,
+    agentId, agentName,
+    userId, userName,
+    pickup = false,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!agentId) return { ok: false, errors: ['⚠️ agentId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (pickup && order.productionAgent) {
+      return { ok: false, errors: ['⚠️ هذا الأوردر له مالك بالفعل'], warnings: [], orderId };
+    }
+    try {
+      const entry = auditEntry({
+        action: pickup ? `📥 ${agentName} التقط الأوردر` : `👷 تعيين مندوب التنفيذ: ${agentName}`,
+        userId, userName, kind: 'op',
+        meta: { agentId, pickup },
+      });
+      if (pickup) {
+        entry.stage = order.stage;
+        entry.assigneeId = agentId;
+        entry.assigneeName = agentName;
+      }
+      await updateDoc(order._ref, {
+        productionAgent: agentId,
+        productionAgentName: agentName,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: pickup ? 'pickup' : 'assign_agent' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تحديث `prodStatus` المستقل للأوردر (المُجمَّع) + يلتقطه كمندوب لو غير محدد.
+   */
+  async setProductionStatus({
+    db = defaultDb, orderId, status,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const labels = { received: '📥 استلمت', wip: '🔄 جاري', done: '✅ خلصت', problem: '⚠️ مشكلة' };
+    if (!labels[status]) return { ok: false, errors: ['⚠️ status غير صالح'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({ action: labels[status], userId, userName, kind: 'op' });
+      const upd = {
+        prodStatus: status,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (!order.productionAgent && userId) {
+        upd.productionAgent = userId;
+        upd.productionAgentName = userName;
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_production_status', status };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تحديث execStatus لمنتج بعينه داخل الأوردر (toggle).
+   * يُمرَّر `derivedProdStatus` من الـ caller (الـ derive يحتاج EXEC_STATUS labels من الصفحة).
+   */
+  async setProductExecStatus({
+    db = defaultDb, orderId, prodIdx, execStatus,
+    derivedProdStatus, statusLabel,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    prods[prodIdx] = {
+      ...prods[prodIdx],
+      execStatus,
+      ...(execStatus === 'done' ? { execDoneAt: nowStr(), execDoneBy: userName, productStatus: 'done' } : {}),
+    };
+    try {
+      const entry = auditEntry({
+        action: `${statusLabel || execStatus} — ${prods[prodIdx].name || 'منتج'}`,
+        userId, userName, kind: 'op',
+        meta: { prodIdx, execStatus },
+      });
+      const upd = {
+        products: prods,
+        prodStatus: derivedProdStatus,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (!order.productionAgent && userId) {
+        upd.productionAgent = userId;
+        upd.productionAgentName = userName;
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_product_exec_status', prodIdx, execStatus };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تحديد المورد لمنتج بعينه داخل الأوردر.
+   */
+  async setProductSupplier({
+    db = defaultDb, orderId, prodIdx,
+    supplierId, supplierName, supplierPhone = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    const before = prods[prodIdx].supplierName || '—';
+    prods[prodIdx] = { ...prods[prodIdx], supplierId, supplierName, supplierPhone };
+    try {
+      const entry = auditEntry({
+        action: `🏭 مورد ${prods[prodIdx].name || 'منتج'}: ${before} → ${supplierName || 'بدون'}`,
+        userId, userName, kind: 'op',
+        meta: { prodIdx, supplierId },
+      });
+      await updateDoc(order._ref, {
+        products: prods,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_product_supplier' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * حذف منتج من الأوردر — يحذف بنود تكلفته ويعيد ترقيم البنود الباقية،
+   * ويعيد حساب الـ salePrice + remaining.
+   */
+  async removeProductFromOrder({
+    db = defaultDb, orderId, prodIdx,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    const removedProd = prods[prodIdx];
+    prods.splice(prodIdx, 1);
+    const ci = [...(order.costItems || [])];
+    const newCi = ci
+      .filter(c => c.prodIdx !== prodIdx)
+      .map(c => ({ ...c, prodIdx: c.prodIdx > prodIdx ? c.prodIdx - 1 : c.prodIdx }));
+    const removedPrice = parseFloat(removedProd?.salePrice || removedProd?.price || 0);
+    const newSalePrice = Math.max(0, (parseFloat(order.salePrice) || 0) - removedPrice);
+    const paidOrDep = parseFloat(order.totalPaid) || parseFloat(order.deposit) || 0;
+    const newRemaining = Math.max(0, newSalePrice - (parseFloat(order.discount) || 0) - paidOrDep);
+    try {
+      const entry = auditEntry({
+        action: `🗑 حُذف منتج: ${removedProd?.name || '—'} × ${removedProd?.qty || 0}`,
+        userId, userName, kind: 'op',
+        meta: { prodIdx, removedPrice },
+      });
+      const upd = {
+        products: prods,
+        costItems: newCi,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (removedPrice > 0) {
+        upd.salePrice = newSalePrice;
+        upd.remaining = newRemaining;
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'remove_product', productName: removedProd?.name || '' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تحديث ملاحظة الإنتاج (prodNote) — حقل واحد بدون timeline.
+   */
+  async updateProductionNote({
+    db = defaultDb, orderId, note,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        prodNote: note || '',
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'update_production_note' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تعيين رابط الصورة النهائية للمنتج (بعد رفعها إلى Storage).
+   */
+  async setFinalProductImage({
+    db = defaultDb, orderId, imageUrl,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({ action: '📸 صورة المنتج النهائي', userId, userName, kind: 'op' });
+      await updateDoc(order._ref, {
+        finalImageUrl: imageUrl,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_final_image' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * حذف بند تكلفة غير مدفوع — يعكس tx + supplier_payments + supplier_orders.
+   * الـ caller يحقق إن البند `!item.paid` قبل النداء.
+   * (المسار المدفوع admin destructive ولسه فيه inline — pending separate PR).
+   */
+  async removeUnpaidCostItem({
+    db = defaultDb, orderId, itemIndex,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const ci = [...(order.costItems || [])];
+    const item = ci[itemIndex];
+    if (!item) return { ok: false, errors: ['⚠️ البند غير موجود'], warnings: [], orderId };
+    if (item.paid) {
+      return { ok: false, errors: ['⛔ هذا البند مدفوع — استخدم مسار الأدمن'], warnings: [], orderId };
+    }
+    ci.splice(itemIndex, 1);
+    try {
+      const batch = writeBatch(db);
+      batch.update(order._ref, { costItems: ci, updatedAt: serverTimestamp() });
+      const total = parseFloat(item.total) || 0;
+      if (item?.txId && item?.walletId) {
+        batch.update(doc(db, 'wallets', item.walletId), { balance: increment(total) });
+        batch.delete(doc(db, 'transactions_v2', item.txId));
+        addLedgerToBatch(batch, db, FE.GENERAL_EXPENSE_REVERSAL, {
+          amount: total,
+          walletId: item.walletId, walletName: item.walletName || '',
+          orderId,
+          notes: `إلغاء تكلفة إنتاج — ${item.type || ''} ${item.supplierName ? '· ' + item.supplierName : ''}`,
+          userId, userName,
+        });
+      }
+      if (item?.spId) batch.delete(doc(db, 'supplier_payments', item.spId));
+      if (item?.supplierOrderId) batch.delete(doc(db, 'supplier_orders', item.supplierOrderId));
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'remove_unpaid_cost_item',
+        refundedToWallet: !!(item?.txId && item?.walletId),
+        amount: total,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * إغلاق بنود تكلفة منتج وحفظها في سجل products_v2.costHistory.
+   * Atomic: يحدّث الكتالوج + الأوردر معاً.
+   *
+   * @param {string} productId        — productId من الكتالوج
+   * @param {number} prodIdx          — index في order.products (أو -1 = عام)
+   */
+  async finalizeProductCosts({
+    db = defaultDb, orderId, productId, prodIdx = -1,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!productId) return { ok: false, errors: ['⚠️ المنتج غير مرتبط بالكتالوج'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = order.products || [];
+    const prod = prodIdx >= 0 ? prods[prodIdx] : prods[0];
+    if (!prod) return { ok: false, errors: ['⚠️ المنتج غير موجود'], warnings: [], orderId };
+    const ci = order.costItems || [];
+    const prodCi = prodIdx >= 0 ? ci.filter(c => c.prodIdx === prodIdx || c.prodIdx == null) : ci;
+    if (!prodCi.length) return { ok: false, errors: ['⚠️ لا توجد بنود للحفظ'], warnings: [], orderId };
+    const total = prodCi.reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = {
+      date: today,
+      qty: parseFloat(prod.qty) || 0,
+      paper: [prod.paper, prod.weight ? prod.weight + 'جم' : ''].filter(Boolean).join(' '),
+      notes: `أوردر ${order.orderId || orderId.slice(-6)} · ${order.clientName || ''}`,
+      items: prodCi.map(c => ({
+        type: c.type || '—',
+        supplierId: c.supplierId || '', supplierName: c.supplierName || '',
+        total: parseFloat(c.total) || 0,
+      })),
+      total,
+      orderId,
+      clientName: order.clientName || '',
+      source: 'production',
+    };
+    try {
+      const prodDocRef = doc(db, 'products_v2', productId);
+      const prodSnap = await getDoc(prodDocRef);
+      if (!prodSnap.exists()) return { ok: false, errors: ['⚠️ المنتج غير موجود في الكتالوج'], warnings: [], orderId };
+      const history = [...(prodSnap.data()?.costHistory || [])].filter(h => h.orderId !== orderId);
+      history.push(entry);
+      const tlEntry = auditEntry({
+        action: `✅ تم إغلاق تكاليف "${prod.name || 'المنتج'}": ${total.toLocaleString('ar-EG')} ج → حُفظ في الكتالوج`,
+        userId, userName, kind: 'op',
+        meta: { productId, total, itemCount: prodCi.length },
+      });
+      const batch = writeBatch(db);
+      batch.update(prodDocRef, { costHistory: history, lastCostTotal: total, updatedAt: serverTimestamp() });
+      batch.update(order._ref, {
+        costFinalized: true,
+        costFinalizedAt: serverTimestamp(),
+        costFinalizedBy: userId,
+        costFinalizedByName: userName,
+        timeline: [...(order.timeline || []), tlEntry],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [], orderId, action: 'finalize_product_costs', total, itemCount: prodCi.length };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * استيراد بنود تكلفة من products_v2.costHistory إلى الأوردر الحالي.
+   * Atomic: order.costItems + ledger entries لكل بند جديد.
+   *
+   * @param {Array} items  — بنود مُحضَّرة من الـ caller (بعد deduplication)
+   * @param {string} catalogProductName  — اسم المنتج في الكتالوج (للتي timeline)
+   * @param {number} prodIdx
+   */
+  async importCostsFromCatalog({
+    db = defaultDb, orderId, items, catalogProductName = '', prodIdx = -1,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!Array.isArray(items) || !items.length) {
+      return { ok: false, errors: ['⚠️ لا توجد بنود للاستيراد'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const total = items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0);
+    try {
+      const tlEntry = auditEntry({
+        action: `🤖 استيراد ${items.length} بند من كتالوج "${catalogProductName}" · ${total.toLocaleString('ar-EG')} ج`,
+        userId, userName, kind: 'op',
+        meta: { count: items.length, total, prodIdx },
+      });
+      const batch = writeBatch(db);
+      const updatedCi = [...(order.costItems || []), ...items];
+      const upd = {
+        costItems: updatedCi,
+        timeline: [...(order.timeline || []), tlEntry],
+        updatedAt: serverTimestamp(),
+      };
+      if (!order.productionAgent && userId) {
+        upd.productionAgent = userId;
+        upd.productionAgentName = userName;
+      }
+      batch.update(order._ref, upd);
+      for (const item of items) {
+        const ev = item.supplierId ? FE.VENDOR_PAYMENT : FE.GENERAL_EXPENSE;
+        addLedgerToBatch(batch, db, ev, {
+          amount: parseFloat(item.total) || 0,
+          orderId,
+          clientName: order.clientName || '',
+          vendorId: item.supplierId,
+          vendorName: item.supplierName,
+          notes: `تكلفة مستوردة من الكتالوج — ${item.type} · ${order.clientName || ''}`,
+          userId, userName,
+        });
+      }
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [], orderId, action: 'import_costs_from_catalog', count: items.length, total };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الاستيراد'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * نقل أوردر التنفيذ بالكامل إلى الشحن.
+   *
+   * يحفظ تكلفة كل منتج في الكتالوج (داخل نفس الـ batch) + يستدعي
+   * buildStageAdvance للتحويل الفعلي.
+   *
+   * @param {Array} catalogUpdates  — caller-prepared updates: [{productId, history, lastCostTotal}]
+   * @param {string} shipId
+   * @param {string} shipName
+   * @param {boolean} bypassWarnings
+   */
+  async submitProductionToShipping({
+    db = defaultDb, orderId,
+    shipId = '', shipName = '',
+    catalogUpdates = [],
+    role, userId, userName,
+    bypassWarnings = false,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const adv = buildStageAdvance({
+      order, role, userId, userName,
+      nextAssigneeId: shipId, nextAssigneeName: shipName,
+      bypassWarnings,
+      extraFields: {
+        prodStatus: 'done',
+        prodDoneAt: nowStr(),
+        productionAgent: userId || order.productionAgent || '',
+        productionAgentName: userName,
+      },
+    });
+    if (!adv.ok) {
+      return {
+        ok: false, errors: adv.errors || [], warnings: adv.warnings || [],
+        needsConfirmation: adv.needsConfirmation || false,
+        orderId,
+      };
+    }
+    try {
+      const batch = writeBatch(db);
+      for (const cu of catalogUpdates) {
+        batch.update(doc(db, 'products_v2', cu.productId), {
+          costHistory: cu.history,
+          lastCostTotal: cu.lastCostTotal,
+          lastCostDate: cu.lastCostDate || nowStr(),
+        });
+      }
+      batch.update(order._ref, {
+        ...adv.fields,
+        timeline: [...(order.timeline || []), adv.timelineEntry],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: adv.warnings || [],
+        orderId, action: 'submit_production_to_shipping',
+        newStage: 'shipping',
+        catalogUpdatesCount: catalogUpdates.length,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل النقل'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * شحن جزئي — إنشاء أوردر فرعي يحوي المنتجات المنفّذة + تحديث الأصلي.
+   * Atomic. يستخدم buildOrderSplit للتحقق + بناء الفرعي.
+   *
+   * @param {number[]} doneIdx — indices للمنتجات الـ done في الأوردر الأصلي
+   * @param {string} shipId
+   * @param {string} shipName
+   */
+  async splitOrderForShipping({
+    db = defaultDb, orderId, doneIdx = [],
+    shipId = '', shipName = '',
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!Array.isArray(doneIdx) || !doneIdx.length) {
+      return { ok: false, errors: ['⚠️ لا يوجد منتج منفّذ للشحن'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const split = buildOrderSplit({
+      order, productIndices: doneIdx, role, userId, userName, targetStage: 'shipping',
+    });
+    if (!split.ok) {
+      return { ok: false, errors: split.errors || [], warnings: split.warnings || [], orderId };
+    }
+    try {
+      const prods = order.products || [];
+      const ci = order.costItems || [];
+      const now = nowStr();
+      const idxSet = new Set(doneIdx);
+      const idxRemap = new Map();
+      let newI = 0;
+      prods.forEach((_, i) => { if (!idxSet.has(i)) idxRemap.set(i, newI++); });
+      const childCi = ci
+        .filter(c => c.prodIdx != null && idxSet.has(c.prodIdx))
+        .map(c => {
+          const childIdx = doneIdx.indexOf(c.prodIdx);
+          return { ...c, prodIdx: childIdx >= 0 ? childIdx : null };
+        });
+      const parentCi = ci
+        .filter(c => c.prodIdx == null || !idxSet.has(c.prodIdx))
+        .map(c => c.prodIdx == null ? c : { ...c, prodIdx: idxRemap.get(c.prodIdx) ?? null });
+
+      const childData = {
+        ...split.childOrderData,
+        costItems: childCi,
+        prodStatus: 'done',
+        prodDoneAt: now,
+        shippingOfficerId: shipId || '',
+        shippingOfficerName: shipName || '',
+        clientId: order.clientId || '',
+        clientName: order.clientName || '',
+        clientPhone: order.clientPhone || '',
+        salePrice: 0, deposit: 0, totalPaid: 0, remaining: 0, paymentStatus: 'parent_holds',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      const childRef = doc(collection(db, 'orders'));
+      const batch = writeBatch(db);
+      batch.set(childRef, childData);
+      const remainingProds = prods.filter((_, i) => !idxSet.has(i));
+      const childIds = [...(order.childOrderIds || []), childRef.id];
+      // Re-derive prodStatus for the parent (caller has the helper; we mirror logic safely)
+      let newProdStatus = 'pending';
+      if (!remainingProds.length) newProdStatus = 'pending';
+      else if (remainingProds.every(p => p.execStatus === 'done')) newProdStatus = 'done';
+      else if (remainingProds.some(p => p.execStatus === 'problem')) newProdStatus = 'problem';
+      else if (remainingProds.some(p => ['wip', 'done'].includes(p.execStatus))) newProdStatus = 'wip';
+      const tlEntry = auditEntry({
+        action: `🔀 شحن جزئي: ${doneIdx.length}/${prods.length} بند → ${split.childOrderId}`,
+        userId, userName, kind: 'op',
+        meta: { childOrderId: split.childOrderId, doneCount: doneIdx.length },
+      });
+      tlEntry.stage = order.stage;
+      batch.update(order._ref, {
+        products: remainingProds,
+        costItems: parentCi,
+        childOrderIds: childIds,
+        prodStatus: newProdStatus,
+        timeline: [...(order.timeline || []), tlEntry],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'split_order_for_shipping',
+        childOrderId: split.childOrderId,
+        childOrderDocId: childRef.id,
+        doneCount: doneIdx.length,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التقسيم'], warnings: [], orderId };
     }
   },
 };
