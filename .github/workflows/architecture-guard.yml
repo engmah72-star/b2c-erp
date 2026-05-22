@@ -45,10 +45,28 @@ jobs:
           # to block NEW additions, not to fail every PR that touches a legacy
           # file with one filter-line change.
           #
-          # Forbidden patterns: writeBatch( / updateDoc( / setDoc( / addDoc(
-          #   deleteDoc( / runTransaction( / dispatchFinancialEvent( / addLedgerToBatch(
-          # Comments (// or *) are excluded.
-          PATTERNS='\b(updateDoc|setDoc|writeBatch|addDoc|deleteDoc|runTransaction|dispatchFinancialEvent|addLedgerToBatch)\s*\('
+          # P1.0 (post-merge audit, 2026-05-22): added Firebase Compat SDK
+          # patterns. clients.html (4851 lines) uses pure compat — previously
+          # 100% invisible to this guard. The compat SDK is a governance
+          # bypass layer, not just legacy syntax. We close that hole here.
+          #
+          # Patterns detected (in ADDED diff lines only):
+          # ── Modular SDK ──────────────────────────────────────────
+          #   updateDoc(, setDoc(, writeBatch(, addDoc(, deleteDoc(,
+          #   runTransaction(, dispatchFinancialEvent(, addLedgerToBatch(
+          # ── Compat SDK (new in P1.0) ─────────────────────────────
+          #   .collection('x').add(
+          #   .collection('x').doc('y').set/update/delete(   (chained)
+          #   .doc('y').set/update/delete(                    (direct)
+          #   batch.set/update/delete(                        (compat OR modular batch)
+          # ── Reads NOT flagged ────────────────────────────────────
+          #   .collection().get/where/orderBy/onSnapshot — these are reads
+          #   .doc().get() — read
+          #   batch.commit() — terminator, not a mutation
+          # ── Excluded ─────────────────────────────────────────────
+          #   Comments (// or *) on the same line
+          #   Files in allowlist (action layer, FSE, orders.js, core/, etc.)
+          PATTERNS='\b(updateDoc|setDoc|writeBatch|addDoc|deleteDoc|runTransaction|dispatchFinancialEvent|addLedgerToBatch)\s*\(|\.collection\([^)]+\)\.add\s*\(|\.doc\([^)]*\)\.(set|update|delete)\s*\(|\bbatch\.(set|update|delete)\s*\('
           VIOLATIONS=0
           for f in $FILES; do
             [ -f "$f" ] || continue
@@ -74,12 +92,14 @@ jobs:
             echo "──────────────────────────────────────────────────────"
             echo "🚫 Architecture Guard — $VIOLATIONS file(s) with forbidden writes"
             echo "──────────────────────────────────────────────────────"
-            echo "All Firestore/FSE mutations from UI must go through:"
-            echo "  - orderActions.*  (order-actions.js)"
+            echo "All Firestore mutations from UI must go through:"
+            echo "  - shippingActions.*  (shipping-actions.js)"
+            echo "  - orderActions.*     (order-actions.js)"
+            echo "  - clientActions.*    (planned — clientActions.js, P1.1)"
             echo "  - financial-sync-engine.js  (FSE handlers)"
             echo "  - core/idempotency.js  (op-wrapped flows)"
-            echo "  - repositories/*  (future)"
             echo ""
+            echo "Both Modular SDK and Compat SDK patterns are now detected."
             echo "If this is a legitimate self-heal or system write,"
             echo "move it to a helper in orders.js or core/."
             exit 1
