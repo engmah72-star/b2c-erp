@@ -193,6 +193,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      them to window. -->
 <script type="module" src="./clients-upload.js"></script>
 
+<!-- God-page decomp PR-21: image viewer lightbox + AI search installer.
+     Side-effect imports — each module mounts/installs on DOMContentLoaded. -->
+<script type="module" src="./clients-image-viewer.js"></script>
+<script type="module" src="./clients-ai-search.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -2596,99 +2601,8 @@ window.setStatusTab=function(tab,btn){
 </div>
 
 <!-- ── AI Smart Search — install once both the page filters and the ai-search module are ready ── -->
-<script>
-(function waitForSearch(){
-  const filterBar = document.getElementById('filter-bar');
-  if (!window.aiSearch || !filterBar) { setTimeout(waitForSearch, 200); return; }
-  window.aiSearch.install({
-    host: filterBar,
-    label: '🪄 بحث ذكي',
-    placeholder: 'مثال: العملاء VIP عليهم فلوس',
-    schema: {
-      q:       { type:'text', desc:'بحث نصي بالاسم أو الهاتف' },
-      flt:     { type:'enum', desc:'فلتر الحالة العامة',
-                 values:['all','today','rem','active','inactive','vip'] },
-      tag:     { type:'enum', desc:'تصنيف العميل',
-                 values:['','vip','regular','new','wholesale','delayed'] },
-      segment: { type:'enum', desc:'شريحة RFM',
-                 values:['','champion','loyal','new','needs_attention','at_risk','cant_lose','about_to_sleep','lost'] },
-    },
-    examples: [
-      { q:'عملاء VIP',                    a:{ tag:'vip' } },
-      { q:'العملاء اللي عليهم فلوس',      a:{ flt:'rem' } },
-      { q:'المهدّدون بالفقد',             a:{ segment:'at_risk' } },
-      { q:'العملاء الخاملين',             a:{ flt:'inactive' } },
-      { q:'عملاء الجملة',                 a:{ tag:'wholesale' } },
-    ],
-    apply: (spec) => {
-      const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
-      if ('q'   in spec) setVal('q', spec.q || '');
-      if ('tag' in spec) setVal('f-tag', spec.tag || '');
-      if ('segment' in spec) setVal('f-segment', spec.segment || '');
-      if ('flt' in spec && spec.flt) {
-        setVal('flt-select', spec.flt);
-        window.setClientFilter?.(spec.flt);
-      } else {
-        window.renderGrid?.();
-        window.scheduleStatsAndGrid?.();
-      }
-    },
-  });
-})();
-</script>
+<!-- God-page decomp PR-21: AI search installer + image viewer extracted to dedicated modules -->
 
-<!-- ═══ Image Viewer (Lightbox) ═══ -->
-<div id="img-viewer" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)" onclick="if(event.target===this)window.closeImageViewer()">
-  <div style="position:absolute;top:16px;right:16px;left:16px;display:flex;justify-content:space-between;align-items:center;z-index:2">
-    <span id="iv-counter" style="color:#fff;font-size:var(--fs-md);font-weight:800;background:rgba(0,0,0,.4);padding:8px 14px;border-radius:99px">1 / 1</span>
-    <div style="display:flex;gap:8px">
-      <a id="iv-download" href="#" target="_blank" title="فتح في تبويب جديد" style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--fs-2xl);text-decoration:none;backdrop-filter:blur(10px)">↗</a>
-      <button onclick="window.closeImageViewer()" title="إغلاق" style="width:42px;height:42px;border-radius:50%;background:rgba(255,61,110,.2);border:1px solid rgba(255,61,110,.4);color:#fff;font-size:var(--fs-2xl);cursor:pointer;backdrop-filter:blur(10px)">✕</button>
-    </div>
-  </div>
-  <img id="iv-img" src="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:92vw;max-height:82vh;border-radius:12px;box-shadow:0 20px 80px rgba(0,0,0,.6);user-select:none;-webkit-user-drag:none">
-  <button id="iv-prev" onclick="window.imgViewerNav(-1)" style="position:absolute;top:50%;right:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">›</button>
-  <button id="iv-next" onclick="window.imgViewerNav(1)" style="position:absolute;top:50%;left:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">‹</button>
-</div>
-
-<script>
-window.__ivState = {urls:[], idx:0};
-window.openImageViewer = function(idx, urls){
-  if(!urls || !urls.length) return;
-  window.__ivState = {urls, idx: idx||0};
-  _ivRender();
-  document.getElementById('img-viewer').style.display = 'block';
-  document.body.style.overflow = 'hidden';
-};
-window.closeImageViewer = function(){
-  document.getElementById('img-viewer').style.display = 'none';
-  document.body.style.overflow = '';
-};
-window.imgViewerNav = function(dir){
-  const s = window.__ivState;
-  s.idx = (s.idx + dir + s.urls.length) % s.urls.length;
-  _ivRender();
-};
-function _ivRender(){
-  const s = window.__ivState;
-  const img = document.getElementById('iv-img');
-  const counter = document.getElementById('iv-counter');
-  const dl = document.getElementById('iv-download');
-  const prev = document.getElementById('iv-prev');
-  const next = document.getElementById('iv-next');
-  if(img) img.src = s.urls[s.idx] || '';
-  if(counter) counter.textContent = (s.idx+1) + ' / ' + s.urls.length;
-  if(dl) dl.href = s.urls[s.idx] || '#';
-  if(prev) prev.style.display = s.urls.length>1 ? '' : 'none';
-  if(next) next.style.display = s.urls.length>1 ? '' : 'none';
-}
-document.addEventListener('keydown', e => {
-  if(document.getElementById('img-viewer')?.style.display !== 'block') return;
-  if(e.key === 'Escape') window.closeImageViewer();
-  else if(e.key === 'ArrowLeft') window.imgViewerNav(1);
-  else if(e.key === 'ArrowRight') window.imgViewerNav(-1);
-});
-</script>
 
 <script src="sw-register.js"></script>
 </body>
