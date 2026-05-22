@@ -1637,81 +1637,8 @@ window.bizCardSmartPaste = function(){
 };
 
 // Parser — regex + heuristics
-function parseBizCardText(text){
-  const r = {};
-  if(!text) return r;
-  // Phones (Egyptian)
-  const phones = text.match(/(?:\+?20)?0?1[0125]\d{8}/g) || [];
-  const landlines = text.match(/0\d{2,3}[-\s]?\d{6,8}/g) || [];
-  if(phones[0]) r['mobile-phone'] = phones[0];
-  if(phones[1]) r['whatsapp'] = phones[1];
-  if(landlines[0] && !phones.includes(landlines[0])) r['office-phone'] = landlines[0];
-  if(!r['office-phone'] && phones[0] && /تليفون.{0,15}مكتب|مكتب.{0,15}تليفون|office/i.test(text)){
-    r['office-phone'] = phones[0]; delete r['mobile-phone'];
-  }
-  // Emails
-  const emails = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [];
-  if(emails[0]) r['email'] = emails[0];
-  if(emails[1]) r['email-2'] = emails[1];
-  // URLs
-  const urls = text.match(/https?:\/\/[^\s,،]+|(?:facebook|instagram|twitter|x|linkedin|tiktok|youtube|snapchat)\.com\/[\w@.-]+|wa\.me\/\d+|t\.me\/\w+/gi) || [];
-  urls.forEach(u => {
-    const url = u.startsWith('http') ? u : 'https://'+u;
-    if(/facebook\.com|fb\.com/i.test(u)) r['fb'] = url;
-    else if(/instagram\.com/i.test(u)) r['ig'] = url;
-    else if(/(twitter\.com|^x\.com|\/x\.com)/i.test(u)) r['tw'] = url;
-    else if(/linkedin\.com/i.test(u)) r['linkedin'] = url;
-    else if(/tiktok\.com/i.test(u)) r['tiktok'] = url;
-    else if(/youtube\.com/i.test(u)) r['yt'] = url;
-    else if(/snapchat\.com/i.test(u)) r['snap'] = url;
-    else if(/t\.me/i.test(u)) r['telegram'] = url;
-    else if(/wa\.me/i.test(u)) r['whatsapp'] = url;
-    else if(/maps\.|goo\.gl\/maps|maps\.google/i.test(u)) r['maps-link'] = url;
-    else if(!r['website']) r['website'] = url;
-  });
-  // Lines analysis
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const isAr = s => /[؀-ۿ]/.test(s);
-  const isEn = s => /^[A-Za-z][A-Za-z\s.&,'-]+$/.test(s);
-  const isPhoneOrEmail = s => /^[\d\s\-+()]+$/.test(s) || /@/.test(s) || /^https?:/.test(s);
-  // Job title keywords
-  const jobKwAr = /^(د\.|دكتور|م\.|مهندس|أ\.|أستاذ|المستشار|محامي|طبيب|محامى|كابتن|الشيف|chef|دكتورة|محاسب|مدير|مالك|رئيس|نائب)/;
-  const companyKwAr = /شركة|مكتب|مطعم|كافيه|عيادة|مركز|مؤسسة|مصنع|محل|استوديو|أكاديمية|مدرسة|للـ?(محاماة|استشارات|طباعة|تجارة|توريدات|خدمات)/;
-  const companyKwEn = /\b(company|firm|llc|inc|ltd|consulting|consultations?|services|group|studio|agency|center|clinic|restaurant|cafe|cafe|hotel|store|shop)\b/i;
-  let bestNameAr='', bestNameEn='', bestJobAr='', bestJobEn='', bestCompAr='', bestCompEn='', addrLines=[];
-  for(const line of lines){
-    if(isPhoneOrEmail(line)) continue;
-    if(line.length < 2) continue;
-    if(/^(تليفون|هاتف|واتساب|whatsapp|email|mail|بريد|عنوان|address|website|موقع|الموقع)\s*[:،.-]?\s*$/i.test(line)) continue;
-    if(isAr(line)){
-      if(jobKwAr.test(line)) { if(!bestJobAr) bestJobAr = line; continue; }
-      if(companyKwAr.test(line)){ if(!bestCompAr) bestCompAr = line; continue; }
-      if(/(شارع|كمبوند|عمارة|الدور|المبنى|بجوار|أمام|حي|منطقة|المنطقة|طريق|كورنيش|ميدان)/i.test(line) || addrLines.length){ addrLines.push(line); continue; }
-      if(!bestNameAr && line.split(/\s+/).length <= 5) { bestNameAr = line; continue; }
-    } else if(isEn(line)){
-      if(companyKwEn.test(line)){ if(!bestCompEn) bestCompEn = line; continue; }
-      if(/^(Mr|Mrs|Ms|Dr|Eng|Prof)\.?\s/i.test(line) || (!bestNameEn && line.split(/\s+/).length <= 5)){ bestNameEn = line; continue; }
-      if(!bestJobEn && /(consultant|engineer|doctor|lawyer|manager|director|owner|founder|ceo|cto|cfo|attorney|chef)/i.test(line)){ bestJobEn = line; continue; }
-    }
-  }
-  if(bestNameAr) r['name-ar'] = bestNameAr;
-  if(bestNameEn) r['name-en'] = bestNameEn;
-  if(bestJobAr) r['job-ar'] = bestJobAr;
-  if(bestJobEn) r['job-en'] = bestJobEn;
-  if(bestCompAr) r['company-ar'] = bestCompAr;
-  if(bestCompEn) r['company-en'] = bestCompEn;
-  if(addrLines.length) r['address-ar'] = addrLines.join(' - ');
-  // Detect business type from company keywords
-  if(bestCompAr || bestJobAr){
-    const allTxt = (bestCompAr||'') + ' ' + (bestJobAr||'');
-    if(/محام|قانون|استشارات قانون/i.test(allTxt)) r['biz-type'] = 'محاماة وقانون';
-    else if(/طب|عياد|دكتور|طبيب/i.test(allTxt)) r['biz-type'] = 'طب وصحة';
-    else if(/مطعم|كافيه|chef/i.test(allTxt)) r['biz-type'] = 'مطاعم وكافيهات';
-    else if(/مهندس|engineer/i.test(allTxt)) r['biz-type'] = 'هندسة';
-    else if(/محاسب|تجارة|توريد/i.test(allTxt)) r['biz-type'] = 'تجارة ومحاسبة';
-  }
-  return r;
-}
+// God-page decomp PR-9: parser extracted to clients-data.js
+// (window.parseBizCardText).
 
 // Save to Firestore
 // P1.3 — Thin orchestration over window.clientActions.saveBizCard.
