@@ -1104,7 +1104,8 @@ export function validateCollect({ order, amount, walletId, remaining, role }) {
   if (!order) return { ok: false, errors: ['⚠️ الأوردر غير موجود'], warnings: [] };
 
   if (order.stage === 'archived')        errors.push('⛔ الأوردر مغلق');
-  if (order.shipStage === 'returned')    errors.push('⛔ الأوردر مرتجع');
+  const _ss = normalizeShipStage(order.shipStage);
+  if (_ss === 'returned_full')           errors.push('⛔ الأوردر مرتجع');
   if (order.shipSettled === true)        errors.push('⛔ مسوّى مع شركة الشحن — ألغِ التسوية أولاً');
   if (order.shipMethod === 'company')    errors.push('⛔ شحنات الشركات تتم تسويتها من "📦 حسابات الشحن" فقط');
 
@@ -1310,6 +1311,204 @@ export function validateReturn({ order, reason, lossParty, cost, returnType = 'f
 
   if (role && !SHIPPING_RETURN_ROLES.includes(role)) {
     errors.push('ليس لديك صلاحية تسجيل مرتجع');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+// ══════════════════════════════════════════
+// PR-2 VALIDATORS — New shipping lifecycle (scalable-drifting-ember)
+// ══════════════════════════════════════════
+
+/**
+ * validatePrepareShipping — يفحص قابلية تجهيز الأوردر للشحن.
+ * يُستدعى قبل حفظ بيانات الشحن (العنوان + الطريقة + priceIncludesShipping).
+ * لا يغيّر state — مجرد validation.
+ *
+ * @param {Object} args
+ * @param {Object} args.order
+ * @param {Object} [args.deliveryAddress] — { gov, city, area, street, landmark, notes }
+ * @param {string} [args.shipMethod]      — 'company' | 'pickup' | 'courier'
+ * @param {string} [args.shipCompanyId]   — مطلوب لو method != 'pickup'
+ * @param {boolean}[args.priceIncludesShipping]
+ * @param {number} [args.customerShipFee]
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validatePrepareShipping({ order, deliveryAddress, shipMethod, shipCompanyId, priceIncludesShipping, customerShipFee, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['لا يوجد أوردر'], warnings: [] };
+
+  if (order.stage === 'archived')  errors.push('⛔ الأوردر مؤرشف');
+  if (order.stage === 'cancelled') errors.push('⛔ الأوردر ملغي');
+  const ss = normalizeShipStage(order.shipStage);
+  if (ss === 'returned_full')      errors.push('⛔ الأوردر مرتجع');
+
+  if (!shipMethod) errors.push('⚠️ اختر طريقة الشحن');
+  else if (!['company', 'pickup', 'courier'].includes(shipMethod)) {
+    errors.push('⚠️ طريقة شحن غير صالحة');
+  }
+
+  // Pickup لا يحتاج شركة شحن — العميل بيستلم من المكتب
+  if (shipMethod && shipMethod !== 'pickup' && !shipCompanyId) {
+    errors.push('⚠️ اختر شركة الشحن');
+  }
+
+  // العنوان مطلوب لكل الطرق ما عدا pickup
+  if (shipMethod && shipMethod !== 'pickup') {
+    if (!deliveryAddress || !deliveryAddress.gov) {
+      errors.push('⚠️ المحافظة مطلوبة');
+    }
+    if (deliveryAddress && !deliveryAddress.area && !deliveryAddress.street) {
+      warnings.push('عنوان غير كامل — أضف المنطقة أو الشارع');
+    }
+  }
+
+  // تعارض: priceIncludesShipping=true مع customerShipFee>0
+  const fee = parseFloat(customerShipFee) || 0;
+  if (priceIncludesShipping === true && fee > 0) {
+    errors.push('⛔ السعر شامل الشحن — لا يصح إضافة customerShipFee');
+  }
+  if (fee < 0) errors.push('⚠️ رسوم الشحن للعميل غير صالحة');
+
+  if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تجهيز الأوردر للشحن');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateMarkDelivered — يفحص قابلية تسجيل التسليم للعميل.
+ * يُستدعى من confirmDelivered (`shipped → delivered`).
+ *
+ * @param {Object} args
+ * @param {Object} args.order
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateMarkDelivered({ order, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['لا يوجد أوردر'], warnings: [] };
+
+  if (order.stage === 'archived')  errors.push('⛔ الأوردر مؤرشف');
+  if (order.stage === 'cancelled') errors.push('⛔ الأوردر ملغي');
+
+  const ss = normalizeShipStage(order.shipStage);
+  if (ss === 'returned_full')     errors.push('⛔ الأوردر مرتجع');
+  if (ss === 'closed')            errors.push('⛔ الأوردر مغلق');
+  if (ss !== 'shipped')           errors.push(`⛔ يجب أن يكون الأوردر "تم الشحن" — الحالة الحالية: ${getShipStageLabel(order)}`);
+
+  if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تسجيل التسليم');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validatePartialReturn — يفحص قابلية تسجيل مرتجع جزئي.
+ * المرتجع الجزئي يبقى الأوردر في الـ flow (غير terminal).
+ *
+ * @param {Object} args
+ * @param {Object} args.order
+ * @param {Array<{idx:number, qty:number, reason?:string}>} args.returnedItems
+ * @param {number} [args.lossCost]
+ * @param {string} [args.lossParty] — 'client' | 'company' | 'shipper'
+ * @param {number} [args.salePriceDelta] — مقدار خصم السعر (سالب)
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validatePartialReturn({ order, returnedItems, lossCost, lossParty, salePriceDelta, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!order) return { ok: false, errors: ['لا يوجد أوردر'], warnings: [] };
+
+  if (order.stage === 'archived')  errors.push('⛔ الأوردر مؤرشف');
+  if (order.stage === 'cancelled') errors.push('⛔ الأوردر ملغي');
+
+  const ss = normalizeShipStage(order.shipStage);
+  if (ss === 'returned_full')      errors.push('⛔ الأوردر مرتجع كامل بالفعل');
+
+  if (!Array.isArray(returnedItems) || returnedItems.length === 0) {
+    errors.push('⚠️ اختر منتجاً واحداً على الأقل للمرتجع الجزئي');
+  } else {
+    const products = order.products || [];
+    for (const item of returnedItems) {
+      const idx = Number(item?.idx);
+      const qty = Number(item?.qty) || 0;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= products.length) {
+        errors.push(`⚠️ فهرس منتج غير صالح: ${idx}`);
+        continue;
+      }
+      if (qty <= 0) {
+        errors.push(`⚠️ كمية المرتجع للمنتج ${idx + 1} يجب أن تكون > 0`);
+        continue;
+      }
+      const origQty = Number(products[idx]?.qty) || 0;
+      if (qty > origQty) {
+        errors.push(`⚠️ كمية المرتجع (${qty}) أكبر من الكمية الأصلية (${origQty}) للمنتج ${idx + 1}`);
+      }
+    }
+  }
+
+  if (!lossParty) errors.push('⚠️ حدد من يتحمل الخسارة');
+  else if (!['client', 'company', 'shipper'].includes(lossParty)) {
+    errors.push('⚠️ قيمة lossParty غير صالحة');
+  }
+
+  const loss = parseFloat(lossCost) || 0;
+  if (loss < 0) errors.push('⚠️ تكلفة المرتجع غير صالحة');
+
+  const delta = parseFloat(salePriceDelta) || 0;
+  if (delta > 0) warnings.push('salePriceDelta موجب — هل المقصود زيادة في السعر؟');
+  if (delta === 0) warnings.push('لا يوجد خصم على السعر — تحقق من المنطق');
+
+  if (role && !SHIPPING_RETURN_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية تسجيل مرتجع جزئي');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * validateReverseSettle — يفحص قابلية إلغاء تسوية شحن سابقة.
+ * يُستدعى من reverseSettlement قبل توليد SHIPPING_SETTLEMENT_REVERSAL.
+ *
+ * @param {Object} args
+ * @param {Object} [args.settlement] — وثيقة shipping_settlements/{id}
+ * @param {Object} [args.order]      — الأوردر المرتبط (للـ context)
+ * @param {string} [args.role]
+ * @returns { ok, errors, warnings }
+ */
+export function validateReverseSettle({ settlement, order, role }) {
+  const errors = [];
+  const warnings = [];
+
+  if (!settlement) {
+    errors.push('⛔ التسوية غير موجودة');
+    return { ok: false, errors, warnings };
+  }
+
+  if (settlement.reversed === true || settlement.isDeleted === true) {
+    errors.push('⛔ التسوية ملغاة بالفعل');
+  }
+
+  if (order) {
+    if (order.stage === 'cancelled') errors.push('⛔ الأوردر ملغي');
+    const ss = normalizeShipStage(order.shipStage);
+    if (ss === 'closed' && order.stage === 'archived') {
+      warnings.push('الأوردر مؤرشف — إلغاء التسوية سيعيد فتحه');
+    }
+  }
+
+  if (role && !SHIPPING_SETTLE_ROLES.includes(role)) {
+    errors.push('ليس لديك صلاحية إلغاء التسوية');
   }
 
   return { ok: errors.length === 0, errors, warnings };
