@@ -649,12 +649,38 @@ export function computeClientPanelData({
   };
 }
 
+/**
+ * cgridEmployeeOptions(orders) → [{uid, name}, ...]
+ *
+ * Collects unique employee uid → name mappings from orders (admin grid
+ * filter). Looks at assignedTo+csName, designerId+designerName,
+ * productionAgent+productionAgentName.
+ */
+export function cgridEmployeeOptions(orders = []) {
+  const emps = {};
+  for (const o of (orders || [])) {
+    if (o.assignedTo && o.csName)              emps[o.assignedTo] = o.csName;
+    if (o.designerId && o.designerName)        emps[o.designerId] = o.designerName;
+    if (o.productionAgent && o.productionAgentName) emps[o.productionAgent] = o.productionAgentName;
+  }
+  return Object.entries(emps).map(([uid, name]) => ({ uid, name }));
+}
+
+/**
+ * cgridGovernorateOptions(orders) → sorted unique governorate strings
+ * from orders' shipGov || clientGov field.
+ */
+export function cgridGovernorateOptions(orders = []) {
+  return [...new Set((orders || []).map(o => o.shipGov || o.clientGov || '').filter(Boolean))].sort();
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 if (typeof window !== 'undefined') {
   Object.assign(window, {
     computeClientStats, parseBizCardText, filterClientsForGrid,
     cgridGetDisplayStatus, cgridFilter, cgridSortRows, cgridExportCSV,
-    // PR-22:
     computeClientPanelData,
+    // PR-25:
+    cgridEmployeeOptions, cgridGovernorateOptions,
   });
 }
