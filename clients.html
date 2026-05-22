@@ -843,6 +843,10 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
   window.buildArchiveSpec = buildArchiveSpec;
 </script>
 
+<!-- P1.2: clientActions module — exposes window.clientActions for compat consumers below.
+     Side-effect import: client-actions.js sets window.clientActions on load. -->
+<script type="module" src="./client-actions.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -3130,45 +3134,15 @@ function fillFilters(){
     fEl.innerHTML='<option value="">كل المحافظات</option>'+govs.map(g=>`<option>${g}</option>`).join('');
 }
 
+// P1.2 — Thin orchestration. كل validation + dedup + writes + audit عبر
+// window.clientActions.addClient / editClient. الصفحة تجمع inputs فقط.
 async function saveClient(){
   const name=gv('c-name').trim();
   const phone1=gv('c-phone1').trim();
-  const btn=document.getElementById('save-client-btn'); // أولاً
-  if(!name){toast('⚠️ أدخل اسم العميل','err');return;}
-  if(!phone1){toast('⚠️ الهاتف مطلوب','err');return;}
-  if(!/^01[0125][0-9]{8}$/.test(phone1)){toast('⚠️ رقم الهاتف غير صحيح','err');return;}
-  // تحقق من تكرار رقم التليفون
-  const phone2=gv('c-phone2').trim();
-  const email=gv('c-email').trim().toLowerCase();
-  // أولاً: تحقق من الـ array المحلي (يفحص phone1/phone2/email)
-  let dup=clients.find(cl=>{
-    if(cl._id===editId||cl.isDeleted) return false;
-    if(cl.phone1===phone1||cl.phone2===phone1) return true;
-    if(phone2&&(cl.phone1===phone2||cl.phone2===phone2)) return true;
-    if(email&&(cl.email||'').toLowerCase()===email) return true;
-    return false;
-  });
-  // ثانياً: لو مش موجود في المحلي - تحقق من Firebase مباشرة (phone1 + phone2 + email)
-  if(!dup){
-    const qf=firebase.firestore().collection('clients');
-    const queries=[qf.where('phone1','==',phone1).limit(1).get()];
-    if(phone2) queries.push(qf.where('phone1','==',phone2).limit(1).get(),qf.where('phone2','==',phone2).limit(1).get());
-    if(email)  queries.push(qf.where('email','==',email).limit(1).get());
-    try{
-      const results=await Promise.all(queries);
-      for(const q of results){
-        if(q.empty) continue;
-        const d=q.docs[0]; if(d.id===editId) continue;
-        const data=d.data(); if(data.isDeleted) continue;
-        dup={...data,_id:d.id}; break;
-      }
-    }catch(e){console.warn('[clients] dedup query failed — proceeding with local check only:',e.code||e.message);}
-  }
-  if(dup){
-    showDupModal(dup);
-    return;
-  }
-  // Validate intl phone (optional)
+  const btn=document.getElementById('save-client-btn');
+
+  // UI-only validations that affect form behavior (not duplicated by action)
+  // Intl phone validation produces composite intlPhone string from 2 fields.
   const intlCC=gv('c-intl-cc').trim();
   const intlPhoneRaw=(gv('c-intl-phone')||'').replace(/[^\d]/g,'');
   let intlPhone='';
@@ -3179,13 +3153,14 @@ async function saveClient(){
     if(intlPhoneRaw.length<6||intlPhoneRaw.length>15){toast('⚠️ الرقم الدولي غير صحيح','err');return;}
     intlPhone=intlCC+intlPhoneRaw;
   }
+
   const tags=[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag);
-  btn.disabled=true; btn.textContent='جاري...';
   const isLegacy=window.__isLegacyMode||false;
-  // Internal notes — track who last edited
   const internalNotes=(gv('c-internal-notes')||'').trim();
   const prevClient=editId?clients.find(c=>c._id===editId):null;
   const internalChanged=(prevClient?.internalNotes||'')!==internalNotes;
+
+  // Build payload — schema-faithful to action's expectations
   const data={
     name, phone1, phone2:gv('c-phone2')||'',
     intlCountryCode:intlCC, intlPhone,
@@ -3210,44 +3185,78 @@ async function saveClient(){
       lastOrderDateLegacy: gv('c-legacy-last-order')||'',
       legacyProjects: gv('c-legacy-projects')||''
     } : {}),
-    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
-  const done=()=>{
+
+  if(!window.clientActions){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
+    return;
+  }
+
+  btn.disabled=true; btn.textContent='جاري...';
+  try{
+    let r;
+    if(editId){
+      r=await window.clientActions.editClient({
+        clientId: editId,
+        changes: data,
+        userId: currentUser?.uid||'',
+        userName: userName||'',
+      });
+    } else {
+      r=await window.clientActions.addClient({
+        data,
+        userId: currentUser?.uid||'',
+        userName: userName||'',
+      });
+    }
+
+    if(!r.ok){
+      // Dedup path — action returns { ok:false, duplicate:{...} }
+      if(r.duplicate){
+        showDupModal(r.duplicate);
+        btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';
+        return;
+      }
+      console.warn('[clientActions] saveClient failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');
+      btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';
+      return;
+    }
     closeClientModal();
     toast(editId?'✅ تم تحديث بيانات العميل':'✅ تم إضافة العميل','ok');
     btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';
-  };
-  if(editId){
-    db.collection('clients').doc(editId).update(data).then(done).catch(e=>{
-      if(e.code==='permission-denied')toast('🔒 ليس لديك صلاحية تعديل العملاء','err');
-      else toast('❌ '+e.message,'err');
-      btn.disabled=false;btn.textContent='✓ حفظ';
-    });
-  } else {
-    data.createdBy=currentUser.uid; data.createdByName=userName;
-    data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
-    db.collection('clients').add(data).then(done).catch(e=>{
-      if(e.code==='permission-denied')toast('🔒 ليس لديك صلاحية إضافة عملاء — راجع الأدمن','err');
-      else toast('❌ '+e.message,'err');
-      btn.disabled=false;btn.textContent='✓ إضافة';
-    });
+  }catch(e){
+    console.warn('[clientActions] saveClient exception', e);
+    toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');
+    btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';
   }
 }
 
-function deleteClient(id){
+// P1.2 — Thin orchestration over window.clientActions.deleteClient.
+async function deleteClient(id){
   const c=clients.find(x=>x._id===id);if(!c)return;
   if(!confirm(`حذف ${c.name}؟ سيتم إخفاؤه من القوائم مع حفظ التاريخ.`))return;
-  // Soft-delete: نحتفظ بسجل العميل لحفظ تاريخ الأوردرات والمدفوعات المرتبطة.
-  db.collection('clients').doc(id).update({
-    isDeleted:true,
-    deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
-    deletedBy:currentUser?.uid||'',
-    deletedByName:userName||'',
-  }).then(()=>{
-    logAudit('client.soft_delete',{clientId:id,clientName:c.name||''});
+  if(!window.clientActions){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
+    return;
+  }
+  try{
+    const r=await window.clientActions.deleteClient({
+      clientId:id,
+      userId:currentUser?.uid||'',
+      userName:userName||'',
+    });
+    if(!r.ok){
+      console.warn('[clientActions] deleteClient failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحذف'),'err');
+      return;
+    }
     toast('✅ تم حذف العميل','ok');
     closePanel();
-  }).catch(e=>toast('❌ '+e.message,'err'));
+  }catch(e){
+    console.warn('[clientActions] deleteClient exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 }
 
 // ── Audit helper (inline) ──
@@ -3364,18 +3373,33 @@ window.__clientFilter = 'all';
 window.__statusTab = 'active';
 window.__isLegacyMode = false;
 
-window.convertToActive = function(id) {
+// P1.2 — Thin orchestration over window.clientActions.convertToActive.
+window.convertToActive = async function(id) {
   const c = clients.find(x => x._id === id);
   if(!c) return;
   if(!confirm(`تحويل "${c.name}" من عميل قديم إلى نشط؟\nسيظهر في قائمة العملاء النشطين.`)) return;
-  db.collection('clients').doc(id).update({
-    status: 'active',
-    convertedAt: firebase.firestore.FieldValue.serverTimestamp()
-  }).then(() => {
+  if(!window.clientActions){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
+    return;
+  }
+  try{
+    const r=await window.clientActions.convertToActive({
+      clientId:id,
+      userId:currentUser?.uid||'',
+      userName:userName||'',
+    });
+    if(!r.ok){
+      console.warn('[clientActions] convertToActive failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل التحويل'),'err');
+      return;
+    }
     toast('✅ تم تحويل العميل للنشطين', 'ok');
     closePanel();
     window.setStatusTab('active', document.getElementById('stab-active'));
-  }).catch(e => toast('❌ ' + e.message, 'err'));
+  }catch(e){
+    console.warn('[clientActions] convertToActive exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 };
 
 window.setClientFilter = function(filter) {
