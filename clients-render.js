@@ -956,6 +956,69 @@ export function prodOptsHTML(products = []) {
     ).join('');
 }
 
+/**
+ * controlGridStatsHTML({data, calcRem, fn, selectedCount}) → HTML
+ *
+ * KPI cards above the admin control grid. Computes:
+ *   - count, total revenue (sale + ship fee), paid, remaining,
+ *     cost (sum of costItems[].total or totalCost), profit (paid - cost),
+ *     selected (echoes input)
+ *
+ * Profit/cost KPIs render only when totalCost > 0.
+ * Selected KPI renders only when selectedCount > 0.
+ *
+ * Pure — no DOM writes, no closure capture.
+ */
+export function controlGridStatsHTML({
+  data = [],
+  calcRem = () => 0,
+  fn: fmtNum = (n) => String(parseFloat(n) || 0),
+  selectedCount = 0,
+} = {}) {
+  const totalRev   = data.reduce((s, o) => s + (parseFloat(o.salePrice) || 0) + (parseFloat(o.customerShipFee) || 0), 0);
+  const totalPaid  = data.reduce((s, o) => s + (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0), 0);
+  const totalRem   = data.reduce((s, o) => s + calcRem(o), 0);
+  const totalCost  = data.reduce((s, o) => s + ((o.costItems || []).reduce((x, c) => x + (parseFloat(c.total) || 0), 0) || (parseFloat(o.totalCost) || 0)), 0);
+  const totalProfit = data.reduce((s, o) => {
+    const cost  = (o.costItems || []).reduce((x, c) => x + (parseFloat(c.total) || 0), 0) || (parseFloat(o.totalCost) || 0);
+    const opaid = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
+    return s + (opaid - cost);
+  }, 0);
+
+  return `
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:var(--snow)">${data.length}</div>
+      <div class="cg-kpi-lbl">📋 أوردر</div>
+    </div>
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:var(--b)">${fmtNum(totalRev)}</div>
+      <div class="cg-kpi-lbl">💵 الإجمالي (ج)</div>
+    </div>
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:var(--g)">${fmtNum(totalPaid)}</div>
+      <div class="cg-kpi-lbl">✅ المحصّل (ج)</div>
+    </div>
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:${totalRem > 0 ? 'var(--r)' : 'var(--dim2)'}">${fmtNum(totalRem)}</div>
+      <div class="cg-kpi-lbl">⏳ المتبقي (ج)</div>
+    </div>
+    ${totalCost > 0 ? `
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:var(--r)">${fmtNum(totalCost)}</div>
+      <div class="cg-kpi-lbl">🔴 التكلفة (ج)</div>
+    </div>
+    <div class="cg-kpi">
+      <div class="cg-kpi-val" style="color:${totalProfit >= 0 ? 'var(--g)' : 'var(--r)'}">${fmtNum(totalProfit)}</div>
+      <div class="cg-kpi-lbl">🟢 الربح (ج)</div>
+    </div>` : ''}
+    ${selectedCount > 0 ? `
+    <div class="cg-kpi" style="border-color:rgba(59,158,255,.4);background:rgba(59,158,255,.07)">
+      <div class="cg-kpi-val" style="color:var(--b)">${selectedCount}</div>
+      <div class="cg-kpi-lbl">☑ محدد</div>
+    </div>` : ''}
+  `;
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -979,5 +1042,7 @@ if (typeof window !== 'undefined') {
     clientPanelHeaderHTML, clientPanelBodyHTML,
     // PR-7:
     segmentStripHTML, prodOptsHTML,
+    // PR-10:
+    controlGridStatsHTML,
   });
 }
