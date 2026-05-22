@@ -573,6 +573,8 @@ import {
   onSnapshot, query, collection, where, orderBy, limit, doc, getDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { shippingActions } from './shipping-actions.js';
+// PR-1 helpers (scalable-drifting-ember): central method/stage labels.
+import { getShipMethodLabel, getShipStageLabel, normalizeShipStage } from './orders.js';
 import {
   getOrdersReadyToDispatch, getOrdersInTransit, getOrdersWaitingCollection,
   getOrdersPendingSettlement, getOrdersSettled, getOrdersReturned,
@@ -1302,7 +1304,11 @@ function renderRowDetail(o) {
 }
 
 function shipMethodLabel(m) {
-  return ({ company: '🚚 شركة شحن', pickup: '🏬 استلام من المطبعة', courier: '🛵 مندوب', internal: '🛵 مندوب' })[m] || '—';
+  // PR-4: source of truth now in orders.js (getShipMethodLabel).
+  // Legacy 'internal' alias preserved for older orders.
+  if (m === 'internal') m = 'courier';
+  const lbl = getShipMethodLabel({ shipMethod: m });
+  return lbl.raw ? `${lbl.ico} ${lbl.text}` : '—';
 }
 
 function fmtTimestamp(ts) {
@@ -1647,7 +1653,7 @@ window.confirmDispatch = async () => {
   const btn = $('btn-dispatch-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
-  const result = await shippingActions.dispatchOrder({
+  const result = await shippingActions.confirmShipped({
     db, orderId: pendingOrder._id,
     companyId, companyName: company?.name || '',
     method, cost, walletId, walletName: wallet?.name || '',
@@ -1674,7 +1680,7 @@ window.quickPickup = async (orderId) => {
 
 window.markDelivered = async (orderId) => {
   if (!confirm('✅ تأكيد التسليم للعميل؟')) return;
-  const result = await shippingActions.markDelivered({
+  const result = await shippingActions.confirmDelivered({
     db, orderId, role: myRole, userId: me.uid, userName: myUserName,
   });
   if (!result.ok) { toast(result.errors[0] || 'فشل', 'err'); return; }
@@ -1755,14 +1761,14 @@ window.confirmCollect = async () => {
       note, role: myRole, userId: me.uid, userName: myUserName,
     });
   } else {
-    result = await shippingActions.markCompanyCollected({
+    result = await shippingActions.markUnderCollection({
       db, orderId: o._id, amount, note,
       role: myRole, userId: me.uid, userName: myUserName,
       bypassWarnings: false,
     });
     if (result.needsConfirmation && result.warnings?.length) {
       if (confirm(result.warnings.join('\n\n') + '\n\nالمتابعة؟')) {
-        result = await shippingActions.markCompanyCollected({
+        result = await shippingActions.markUnderCollection({
           db, orderId: o._id, amount, note,
           role: myRole, userId: me.uid, userName: myUserName,
           bypassWarnings: true,
@@ -1848,7 +1854,7 @@ window.confirmSettle = async () => {
   const btn = $('btn-settle-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
-  let result = await shippingActions.settleWithCompany({
+  let result = await shippingActions.settleFromCompany({
     db, orderIds: pendingOrders.map(o => o._id),
     amount, walletId, walletName: wallet?.name || '',
     companyName,
@@ -1860,7 +1866,7 @@ window.confirmSettle = async () => {
 
   if (result.needsConfirmation && result.warnings?.length) {
     if (confirm(result.warnings.join('\n\n') + '\n\nالمتابعة؟')) {
-      result = await shippingActions.settleWithCompany({
+      result = await shippingActions.settleFromCompany({
         db, orderIds: pendingOrders.map(o => o._id),
         amount, walletId, walletName: wallet?.name || '',
         companyName,
@@ -1915,9 +1921,9 @@ window.confirmReturn = async () => {
   const btn = $('btn-return-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
-  const result = await shippingActions.registerReturn({
+  const result = await shippingActions.markFullReturn({
     db, orderId: pendingOrder._id,
-    reason, lossParty: party, cost, returnType: 'full', note,
+    reason, lossParty: party, cost, note,
     walletId, walletName: wallet?.name || '',
     role: myRole, userId: me.uid, userName: myUserName,
   });
