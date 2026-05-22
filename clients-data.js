@@ -248,7 +248,154 @@ export function parseBizCardText(text) {
   return r;
 }
 
+/**
+ * filterClientsForGrid({clients, criteria, getOrders, calcRem, segments})
+ *   → filtered array of clients.
+ *
+ * Applies the full clients-grid filter stack in one pass:
+ *   - tab          (legacy vs active)
+ *   - text query   (name / phone1 / phone2 / intlPhone)
+ *   - tag          (criteria.tag)
+ *   - segment      (RFM segment from segments Map)
+ *   - governorate  (gov || governorate)
+ *   - source
+ *   - period       (today / yesterday / week / month / lastmonth)
+ *   - quick filter (vip / active / rem / atrisk / new / sleeping)
+ *   - legacy financial filter (today / rem / active / inactive / vip)
+ *
+ * Pure: no DOM, no closure capture. The page reads filter inputs from
+ * window/UI and forwards them via `criteria` + the two filter knobs.
+ *
+ * @param {Object} args
+ * @param {Array}  args.clients
+ * @param {Object} args.criteria   — { q, tag, seg, gov, src, isLegacyTab,
+ *                                     periodFilter, quickFilter, clientFilter }
+ * @param {(client)=>Array} args.getOrders  — client → orders[]
+ * @param {(order)=>number} args.calcRem    — order → remaining balance
+ * @param {Map<string,Object>} [args.segments] — clientId → segment
+ * @returns {Array} matching clients
+ */
+export function filterClientsForGrid({
+  clients = [],
+  criteria = {},
+  getOrders = () => [],
+  calcRem = () => 0,
+  segments,
+} = {}) {
+  const {
+    q = '', tag = '', seg = '', gov = '', src = '',
+    isLegacyTab = false,
+    periodFilter = null,
+    quickFilter = 'all',
+    clientFilter = 'all',
+  } = criteria;
+
+  const qLower = (q || '').toLowerCase();
+
+  // ── Time-period boundaries (built once per render) ──
+  const now           = new Date();
+  const nowSec        = Date.now() / 1000;
+  const todayStart    = new Date();    todayStart.setHours(0, 0, 0, 0);
+  const todayStartSec = todayStart.getTime() / 1000;
+  const yesterdayStart = new Date(todayStart); yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const weekStart     = new Date(todayStart); weekStart.setDate(weekStart.getDate() - todayStart.getDay());
+  const weekStartSec  = weekStart.getTime() / 1000;
+  const monthStart    = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd  = new Date(now.getFullYear(), now.getMonth(), 1);
+  const periodOf = {
+    today:     [todayStart, null],
+    yesterday: [yesterdayStart, todayStart],
+    week:      [weekStart, null],
+    month:     [monthStart, null],
+    lastmonth: [lastMonthStart, lastMonthEnd],
+  };
+
+  // Single-pass latest order — O(N), no allocation.
+  const latestOrder = (arr) => {
+    let best = null, bestSec = -1;
+    for (const o of arr) {
+      const s = o.createdAt?.seconds || 0;
+      if (s > bestSec) { bestSec = s; best = o; }
+    }
+    return best;
+  };
+
+  return clients.filter(c => {
+    // Tab
+    if (isLegacyTab) { if (c.status !== 'legacy') return false; }
+    else             { if (c.status === 'legacy') return false; }
+
+    // Text query (name + 3 phone fields)
+    if (qLower &&
+        !(c.name || '').toLowerCase().includes(qLower) &&
+        !(c.phone1 || '').includes(qLower) &&
+        !(c.phone2 || '').includes(qLower) &&
+        !(c.intlPhone || '').includes(qLower)) return false;
+
+    // Tag
+    if (tag && !(c.tags || []).includes(tag)) return false;
+
+    // RFM segment
+    if (seg) {
+      const s = segments?.get?.(c._id);
+      if (!s || s.segment !== seg) return false;
+    }
+
+    // Governorate
+    if (gov && c.gov !== gov && c.governorate !== gov) return false;
+
+    // Source
+    if (src && c.source !== src) return false;
+
+    const cSec = c.createdAt?.seconds || 0;
+
+    // Period filter
+    if (periodFilter && periodOf[periodFilter]) {
+      const [from, to] = periodOf[periodFilter];
+      if (!cSec || cSec * 1000 < from.getTime() || (to && cSec * 1000 >= to.getTime())) return false;
+    }
+
+    // Quick filter
+    if (quickFilter && quickFilter !== 'all') {
+      const cOrds = getOrders(c);
+      const cRem  = cOrds.reduce((s, o) => s + calcRem(o), 0);
+      const hasAct = cOrds.some(o => o.stage !== 'archived');
+      const lastOrd = latestOrder(cOrds);
+      const daysSince = lastOrd?.createdAt?.seconds
+        ? Math.floor((nowSec - lastOrd.createdAt.seconds) / 86400)
+        : 999;
+      if (quickFilter === 'vip'    && cOrds.length < 3) return false;
+      if (quickFilter === 'active' && !hasAct) return false;
+      if (quickFilter === 'rem'    && cRem <= 0) return false;
+      if (quickFilter === 'atrisk' && !(daysSince >= 30 && daysSince < 90)) return false;
+      if (quickFilter === 'new') {
+        if (!cSec || cSec < weekStartSec) return false;
+      }
+      if (quickFilter === 'sleeping' && !(daysSince >= 90 && daysSince < 999)) return false;
+    }
+
+    // Legacy financial filter
+    if (clientFilter && clientFilter !== 'all') {
+      const cOrds2 = getOrders(c);
+      const rem2   = cOrds2.reduce((s, o) => s + (calcRem(o)), 0);
+      const hasActive = cOrds2.some(o => o.stage !== 'archived');
+      const lastOrd = latestOrder(cOrds2);
+      const daysSinceLast = lastOrd?.createdAt?.seconds
+        ? Math.floor((nowSec - lastOrd.createdAt.seconds) / 86400)
+        : 999;
+      if (clientFilter === 'today')    { if (!cSec || cSec < todayStartSec) return false; }
+      if (clientFilter === 'rem'      && rem2 <= 0) return false;
+      if (clientFilter === 'active'   && !hasActive) return false;
+      if (clientFilter === 'inactive' && daysSinceLast < 90) return false;
+      if (clientFilter === 'vip'      && cOrds2.length < 3) return false;
+    }
+
+    return true;
+  });
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 if (typeof window !== 'undefined') {
-  Object.assign(window, { computeClientStats, parseBizCardText });
+  Object.assign(window, { computeClientStats, parseBizCardText, filterClientsForGrid });
 }
