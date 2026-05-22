@@ -102,14 +102,120 @@ export const PAYMENT_TYPES = Object.freeze({
   DISCOUNT: 'discount', // خصم
 });
 
+// SHIP_STAGES — PR-1 (scalable-drifting-ember):
+// New canonical values added alongside legacy. Existing data keeps reading
+// legacy values; `normalizeShipStage` maps both to the canonical set.
+// Legacy values stay in the enum for backward compat (read + audit).
 export const SHIP_STAGES = Object.freeze({
-  READY:           'ready',
-  WAIT_DELIVERY:   'wait_delivery',
-  WAIT_COLLECTION: 'wait_collection',
-  COLLECTED:       'collected',
-  COMPLETED:       'completed',
-  RETURNED:        'returned',
+  READY:            'ready',
+  // Legacy (kept for backward compatibility — DO NOT remove until data migration):
+  WAIT_DELIVERY:    'wait_delivery',     // → SHIPPED
+  WAIT_COLLECTION:  'wait_collection',   // → DELIVERED
+  RETURNED:         'returned',          // → RETURNED_FULL
+  COMPLETED:        'completed',         // → CLOSED
+  // New canonical (PR-1):
+  SHIPPED:          'shipped',
+  DELIVERED:        'delivered',
+  UNDER_COLLECTION: 'under_collection',
+  COLLECTED:        'collected',
+  RETURNED_FULL:    'returned_full',
+  RETURNED_PARTIAL: 'returned_partial',
+  CLOSED:           'closed',
 });
+
+/**
+ * normalizeShipStage — يحوّل قيمة `shipStage` المخزَّنة (قديمة أو جديدة)
+ * إلى القيمة الـ canonical الجديدة. read-only normalizer — لا يكتب على الـ DB.
+ * يُستخدم في الـ UI labels و الـ helpers الجديدة فقط (PR-1).
+ * @param {string} v
+ * @returns {string}
+ */
+export function normalizeShipStage(v) {
+  switch (v) {
+    case 'wait_delivery':   return 'shipped';
+    case 'wait_collection': return 'delivered';
+    case 'returned':        return 'returned_full';
+    case 'completed':       return 'closed';
+    default:                return v || 'ready';
+  }
+}
+
+// SHIP_STAGE_LABELS — Arabic labels للقيم الجديدة (post-normalize).
+// الترجمة موحَّدة بين الصفحات بدلاً من تكرار `{pickup:'🏠 استلام', ...}`.
+const SHIP_STAGE_LABELS = Object.freeze({
+  ready:            { ico:'📦', text:'جاهز للشحن' },
+  shipped:          { ico:'🚚', text:'تم الشحن' },
+  delivered:        { ico:'✅', text:'تم التسليم' },
+  under_collection: { ico:'⏳', text:'تحت التحصيل' },
+  collected:        { ico:'💰', text:'تم التحصيل' },
+  returned_full:    { ico:'↩️', text:'مرتجع كامل' },
+  returned_partial: { ico:'↪️', text:'مرتجع جزئي' },
+  closed:           { ico:'🗄️', text:'مغلق' },
+});
+
+const SHIP_METHOD_LABELS = Object.freeze({
+  pickup:  { ico:'🏠', text:'استلام بالمحل' },
+  courier: { ico:'🏍️', text:'مندوب' },
+  company: { ico:'📦', text:'شركة شحن' },
+});
+
+/**
+ * getShipStageLabel — نص + أيقونة لمرحلة الشحن (post-normalize).
+ * المصدر الوحيد لـ "كيف نعرض shipStage" — يُسقط الـ `methodLabel` الـ inline.
+ * @param {Object} order
+ * @returns {{ ico:string, text:string, raw:string }}
+ */
+export function getShipStageLabel(order) {
+  const raw = normalizeShipStage(order?.shipStage);
+  const lbl = SHIP_STAGE_LABELS[raw] || { ico:'⏸', text: raw || 'غير محدد' };
+  return { ico: lbl.ico, text: lbl.text, raw };
+}
+
+/**
+ * getShipMethodLabel — نص + أيقونة لطريقة الشحن.
+ * يحلّ ReferenceError القديم اللي كان كل صفحة تبني `methodLabel` بنفسها.
+ * @param {Object} order
+ * @returns {{ ico:string, text:string, raw:string }}
+ */
+export function getShipMethodLabel(order) {
+  const raw = order?.shipMethod || '';
+  const lbl = SHIP_METHOD_LABELS[raw];
+  if (!lbl) return { ico:'⏸', text:'غير محدد', raw };
+  // لـ company نرفق اسم الشركة لو موجود
+  const text = raw === 'company' && order?.shipCompanyName
+    ? lbl.text + ' — ' + order.shipCompanyName
+    : lbl.text;
+  return { ico: lbl.ico, text, raw };
+}
+
+/**
+ * getExpectedCollection — المتوقَّع تحصيله من العميل.
+ * salePrice + customerShipFee − discount − totalPaid (لا يطرح أقل من 0).
+ * يُستخدم في الـ UI كـ "المطلوب تحصيله من العميل عند التسليم".
+ * @param {Object} order
+ * @returns {number}
+ */
+export function getExpectedCollection(order) {
+  if (!order) return 0;
+  const sale     = Number(order.salePrice)        || 0;
+  const shipFee  = Number(order.customerShipFee)  || 0;
+  const discount = Number(order.discount)         || 0;
+  const paid     = Number(order.totalPaid)        || 0;
+  return Math.max(0, sale + shipFee - discount - paid);
+}
+
+/**
+ * getExpectedFromCompany — المتوقَّع تحصيله من شركة الشحن.
+ * shipCollected − shippingCost (يقبل سالباً لو الشركة تطالبنا).
+ * @param {Object} order
+ * @returns {number}
+ */
+export function getExpectedFromCompany(order) {
+  if (!order) return 0;
+  const collected = Number(order.shipCollected) || 0;
+  const cost      = Number(order.shippingCost)  || 0;
+  return collected - cost;
+}
 
 export const PRODUCT_STATUSES = Object.freeze({
   PENDING:     'pending',
@@ -534,6 +640,14 @@ export function createOrderData(data, userId, userName) {
     shipCompanyName: '',
     shipCost:      0,
     shipSettled:   false,
+
+    // الشحن — PR-1 (scalable-drifting-ember) — additive defaults، لم يُستخدم بعد
+    priceIncludesShipping: false,         // هل salePrice يشمل الشحن؟
+    deliveryAddress:       null,          // {gov, city, area, street, landmark, notes}
+    customerPhoneShip:     '',            // رقم تواصل التسليم (يفول back على clientPhone)
+    shipPrepaid:           false,         // الشركة دفعتنا قبل التسليم
+    returnedItems:         [],            // Array<{idx, qty, reason}> — partial returns
+    partialReturnLoss:     0,             // تكلفة الجزء المرفوض
 
     // Timeline
     timeline: [{
