@@ -2293,49 +2293,14 @@ window.switchPanelTab=function(tab,btn){
   if(tab==='bizcard' && window._bizCardLoadFromState) window._bizCardLoadFromState();
 };
 
+// God-page decomp PR-3: builder body extracted to clients-render.js
+// (window.panelOrdersHTML). Thin wrapper delegates with the page-scoped
+// constants + helpers.
 function renderPanelOrders(ords, filter){
-  let data=ords.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  if(filter==='active') data=data.filter(o=>o.stage!=='archived');
-  else if(filter==='rem') data=data.filter(o=>calcRem(o)>0);
-  else if(filter==='late') data=data.filter(o=>o.stage!=='archived'&&o.deadline&&new Date(o.deadline)<new Date());
-  if(!data.length) return`<div style="color:var(--dim2);font-size:var(--fs-base);text-align:center;padding:16px">لا توجد أوردرات</div>`;
-  return data.map(o=>{
-    const sc=STAGE_COL[o.stage]||'var(--dim2)';
-    const href=(STAGE_HREF[o.stage]||'index')+'.html';
-    const rem2=calcRem(o);
-    const paid2=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const nm=o.product||(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||'—';
-    const isLate=o.stage!=='archived'&&o.deadline&&new Date(o.deadline)<new Date();
-    return`<div class="ord-row" style="margin-bottom:8px;border-radius:10px;overflow:hidden">
-      <div onclick="location.href='${href}'" style="cursor:pointer">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-              <span style="font-size:var(--fs-xs);font-weight:700;padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage]||o.stage}</span>
-              ${isLate?'<span style="font-size:var(--fs-xs);color:var(--r);font-weight:800">⚠️ متأخر</span>':''}
-            </div>
-            <div style="font-size:var(--fs-md);font-weight:800">${nm}</div>
-            <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${o.orderId||o._id.slice(-6)} · ${o.createdDate||'—'}</div>
-            ${o.deadline?`<div style="font-size:var(--fs-xs);color:${isLate?'var(--r)':'var(--dim2)'};margin-top:1px">📅 ${o.deadline}</div>`:''}
-          </div>
-          <div style="text-align:left;margin-right:8px;flex-shrink:0">
-            ${canSee('price_sale')&&parseFloat(o.salePrice)>0?`<div style="font-size:var(--fs-lg);font-weight:900;color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>`:''}
-            ${canSee('price_paid')&&paid2>0?`<div style="font-size:var(--fs-sm);color:var(--g);font-weight:700">محصّل: ${fn(paid2)} ج</div>`:''}
-            ${canSee('price_remaining')&&rem2>0?`<div style="font-size:var(--fs-base);color:var(--r);font-weight:900">باقي: ${fn(rem2)} ج</div>`:''}
-            ${canSee('price_remaining')&&rem2<=0&&paid2>0?`<div style="font-size:var(--fs-sm);color:var(--g);font-weight:800">✅ مكتمل</div>`:''}
-          </div>
-        </div>
-        ${canSee('price_sale')&&parseFloat(o.salePrice)>0?`<div style="height:4px;background:var(--bg3);margin-top:-1px"><div style="height:100%;width:${Math.min(100,paid2/parseFloat(o.salePrice)*100)}%;background:${rem2<=0?'var(--g)':paid2>0?'var(--b)':'var(--line)'}"></div></div>`:''}
-      </div>
-      <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;flex-wrap:wrap">
-        <a href="waybill.html?id=${o._id}" target="_blank" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-xs);font-weight:800;text-decoration:none">🧾 البوليصة</a>
-        <button onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:#00c87a;font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit">📤 إرسال</button>
-        <button onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit">💬 تعليقات</button>
-        ${['shipping','archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:800;text-decoration:none">↩️ مرتجع</a>` : ''}
-        ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:800;text-decoration:none">↩️ له مرتجع</a>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+  return panelOrdersHTML({
+    orders: ords, filter, calcRem, fn,
+    STAGE_COL, STAGE_HREF, STAGE_AR,
+  });
 }
 // Helpers: open inbox.html with a pending share / open order thread.
 window.shareOrderToInbox=function(orderDocId){
