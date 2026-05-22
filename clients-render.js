@@ -132,6 +132,141 @@ export function bcSection(title, body) {
   </div>`;
 }
 
+// ─── SECTION-LEVEL HTML BUILDERS (PR-2) ──────────────────────────────
+// Larger HTML blocks moved out of clients.html — each one is a pure
+// function: takes data (+ a small ctx object for refs that aren't part
+// of the data itself), returns an HTML string. The page does its own
+// DOM insertion. No closure state assumed.
+
+/**
+ * aiAnalysisHTML(d) — يبني HTML للوحة تحليل العميل بالذكاء الاصطناعي.
+ * d: { summary, churnRiskAssessment, predictedNextProduct,
+ *      opportunities[], recommendedActions[{priority, action, reason}] }
+ *
+ * Returns HTML string. Caller writes into the target element:
+ *   document.getElementById('ai-body').innerHTML = aiAnalysisHTML(d);
+ */
+export function aiAnalysisHTML(d) {
+  if (!d) {
+    return '<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد بيانات</div>';
+  }
+  const priorityCol = { high: 'var(--r)', medium: 'var(--y)', low: 'var(--g)' };
+  const priorityIco = { high: '🔥', medium: '⚡', low: '🌱' };
+  const actions = (d.recommendedActions || []).map(a => `
+    <div style="background:var(--bg3);border-right:3px solid ${priorityCol[a.priority] || 'var(--dim)'};border-radius:8px;padding:10px 12px;margin-bottom:6px">
+      <div style="font-weight:700;color:var(--snow);font-size:var(--fs-md);margin-bottom:4px">${priorityIco[a.priority] || '•'} ${escapeHtml(a.action || '')}</div>
+      <div style="font-size:var(--fs-sm);color:var(--dim);line-height:1.6">${escapeHtml(a.reason || '')}</div>
+    </div>`).join('');
+  const opps = (d.opportunities || []).map(o => `<li style="margin-bottom:4px">${escapeHtml(o)}</li>`).join('');
+
+  return `
+    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--ai,#10b981);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
+      <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.summary || '')}</div>
+    </div>
+
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
+      <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.churnRiskAssessment || '')}</div>
+    </div>
+
+    ${d.predictedNextProduct ? `
+    <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--pu,var(--p));text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🔮 المنتج المتوقع للطلب القادم</div>
+      <div style="color:var(--snow);font-size:var(--fs-lg);font-weight:700">${escapeHtml(d.predictedNextProduct)}</div>
+    </div>` : ''}
+
+    ${opps ? `
+    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💡 فرص</div>
+      <ul style="margin:0;padding-right:18px;color:var(--snow);font-size:var(--fs-md)">${opps}</ul>
+    </div>` : ''}
+
+    ${actions ? `
+    <div>
+      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📋 الإجراءات المقترحة</div>
+      ${actions}
+    </div>` : ''}
+
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-xs);color:var(--dim2);text-align:center">
+      🤖 توليد بـ Genkit + Gemini · هذا تحليل آلي، راجع قبل التنفيذ
+    </div>
+  `;
+}
+
+/**
+ * clientFollowupsHTML({followups, err, orders, FU_TYPE_COL, FU_TYPES,
+ *                      FU_OUTCOMES, STAGE_HREF}) — يبني HTML لتبويب
+ * المتابعات داخل لوحة العميل. كل الـ refs الخارجية تمرَّر صراحةً.
+ *
+ * Returns HTML string. Caller writes the result into the panel container.
+ */
+export function clientFollowupsHTML({
+  followups = [],
+  err = '',
+  orders = [],
+  FU_TYPE_COL = {},
+  FU_TYPES = {},
+  FU_OUTCOMES = {},
+  STAGE_HREF = {},
+} = {}) {
+  const errBanner = err
+    ? `<div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:10px 12px;margin-bottom:10px;font-size:var(--fs-sm);color:var(--r)">⚠️ تعذّر تحميل سجل المتابعات: ${escapeHtml(err)}<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">قد يكون نظام الأذونات يحتاج تحديث — راجع الأدمن لتفعيل صلاحية المتابعات.</div></div>`
+    : '';
+
+  if (!followups.length) {
+    return errBanner +
+      `<div style="color:var(--dim2);font-size:var(--fs-base);text-align:center;padding:20px;background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad)">📭 لا يوجد متابعات بعد — اضغط <b>＋ متابعة جديدة</b> لتسجيل أول تواصل.</div>`;
+  }
+
+  const rendered = followups.map(f => {
+    const col      = FU_TYPE_COL[f.type] || 'var(--dim2)';
+    const typeLbl  = FU_TYPES[f.type] || f.type;
+    const outLbl   = f.outcome ? (FU_OUTCOMES[f.outcome] || f.outcome) : '';
+    const overdue  = !f.nextActionDone && f.nextActionDate &&
+                     new Date(f.nextActionDate).getTime() < Date.now();
+    const upcoming = !f.nextActionDone && f.nextActionDate &&
+                     new Date(f.nextActionDate).getTime() >= Date.now();
+    return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${col};border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          <span style="font-size:var(--fs-sm);font-weight:800;color:${col}">${typeLbl}</span>
+          ${outLbl ? `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:700">${outLbl}</span>` : ''}
+          ${overdue ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.15);color:var(--r);font-weight:800">⚠️ متأخر</span>' : ''}
+          ${upcoming ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.15);color:var(--b);font-weight:800">⏰ قادم</span>' : ''}
+          ${f.nextActionDone ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:800">✅ تم</span>' : ''}
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          ${!f.nextActionDone && f.nextActionDate ? `<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="markFollowupDone('${f._id}')">✓ تم</button>` : ''}
+          <button class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="editFollowup('${f._id}')">✏️</button>
+          <button class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="deleteFollowup('${f._id}')">🗑</button>
+        </div>
+      </div>
+      ${f.note ? `<div style="font-size:var(--fs-base);color:var(--snow);line-height:1.6;white-space:pre-wrap">${escapeHtml(f.note)}</div>` : ''}
+      ${(f.orderId || f.productRating || f.productReview) ? `
+      <div style="margin-top:8px;padding:8px 10px;background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.18);border-radius:8px">
+        ${f.orderId ? (() => {
+          const o = orders.find(x => x._id === f.orderId);
+          const code = f.orderCode || o?.orderId || (o?._id || '').slice(-6);
+          const pn   = f.productName || o?.product ||
+                       (o?.products || []).map(p => p.name + '×' + p.qty).join(' + ') || '';
+          const href = o ? (STAGE_HREF[o.stage] || 'index') + '.html' : '#';
+          return `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:700">${code}${pn ? ' · ' + escapeHtml(pn) : ''}</a></div>`;
+        })() : ''}
+        ${f.productRating > 0 ? `<div style="font-size:var(--fs-md);color:var(--y);letter-spacing:2px;margin-bottom:${f.productReview ? '4' : '0'}px">${'★'.repeat(f.productRating)}<span style="color:var(--line2)">${'★'.repeat(5 - f.productRating)}</span></div>` : ''}
+        ${f.productReview ? `<div style="font-size:var(--fs-sm);color:var(--snow);line-height:1.5;font-style:italic">"${escapeHtml(f.productReview)}"</div>` : ''}
+      </div>` : ''}
+      ${f.nextActionDate ? `<div style="margin-top:6px;font-size:var(--fs-xs);color:${overdue ? 'var(--r)' : 'var(--dim2)'};font-weight:700">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>` : ''}
+      <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:var(--fs-tiny);color:var(--dim2)">
+        <span>👤 ${f.createdByName || '—'}</span>
+        <span>${fuTimeAgo(f.createdAt)}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  return errBanner + rendered;
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -143,5 +278,7 @@ if (typeof window !== 'undefined') {
     fuTimeAgo, fuFmtDate, toLocalDT,
     escapeHtml,
     pRow, bcInput, bcTextarea, bcSection,
+    // PR-2:
+    aiAnalysisHTML, clientFollowupsHTML,
   });
 }
