@@ -450,44 +450,32 @@ window.archiveAwaitingNow=async function(){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(!o.awaitingFinalArchive)return toast('⚠️ هذا الأوردر ليس في انتظار الأرشفة','err');
-  // الفحوصات المُمَركَزة عبر buildArchiveSpec (RULE C1.3)
+  // pre-flight: spec preview للتحقق من الـ warnings قبل أي confirm
   const baseArgs={order:o,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false}};
-  let spec=buildArchiveSpec(baseArgs);
-  if(spec.errors.length)return toast('⛔ '+spec.errors.join(' · '),'err');
-  if(spec.needsConfirmation){
-    if(!confirm('⚠️ '+spec.warnings.join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
-    spec=buildArchiveSpec({...baseArgs,bypassWarnings:true});
+  const preview=buildArchiveSpec(baseArgs);
+  if(preview.errors?.length)return toast('⛔ '+preview.errors.join(' · '),'err');
+  let bypass=false;
+  if(preview.needsConfirmation){
+    if(!confirm('⚠️ '+(preview.warnings||[]).join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
+    bypass=true;
   }
   if(!confirm('📁 أرشفة الأوردر الآن بعد مراجعة بنود التكلفة؟'))return;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      ...spec.fields,
-      timeline:[...(o.timeline||[]),spec.timelineEntry],
-      updatedAt:serverTimestamp()
-    });
-    closePanel();
-    toast('✅ تم الأرشفة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.archiveOrder({db,orderId:activeId,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false},bypassWarnings:bypass});
+  if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+  closePanel();
+  toast('✅ تم الأرشفة','ok');
 };
 
 window.moveStage=async function(stage){
   if(!activeId)return;
-  const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
-  if(!isAdmin)return toast('⛔ القفز بين المراحل متاح للأدمن فقط','err');
   const labels={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف'};
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(stage===o.stage)return;
-  if(stage==='archived'&&!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
   if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟ (override أدمن)`))return;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      stage,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage,action:`🔄 [أدمن] نُقل ${labels[o.stage]||o.stage} → ${labels[stage]}`,by:userName,byId:currentUser?.uid||''}],
-      updatedAt:serverTimestamp()
-    });
-    closePanel();
-    toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.moveStage({db,orderId:activeId,targetStage:stage,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+  closePanel();
+  toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
 };
 
 window.saveAdminFinance=async function(){
@@ -496,18 +484,19 @@ window.saveAdminFinance=async function(){
   const sale=parseFloat(document.getElementById('adm-sale-price').value)||0;
   const paid=parseFloat(document.getElementById('adm-paid').value)||0;
   const discount=parseFloat(document.getElementById('adm-discount').value)||0;
-  const net=Math.max(0,sale-discount);
-  const remaining=Math.max(0,net-paid);
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      salePrice:sale,totalPaid:paid,
-      discount,remaining,
-      paymentStatus:remaining===0?'paid':paid>0?'partial':'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✏️ تعديل مالي: سعر ${fn(sale)} ج | مدفوع ${fn(paid)} ج | خصم ${fn(discount)} ج`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم التعديل المالي','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // الـ caller يبني الـ changes — الفرق المالي يحتاج walletId. لو لا يوجد wallet، نمر فقط بحقول الـ non-financial.
+  const oldPaid=parseFloat(o.totalPaid)||0;
+  const paidDiff=Math.abs(paid-oldPaid);
+  if(paidDiff>0.01){
+    // تغيير مدفوع — يحتاج محفظة (admin path). نحذّر المستخدم.
+    toast('⚠️ تعديل المدفوع يحتاج walletId — استخدم صفحة الحسابات لتسجيل دفعة','err');
+    return;
+  }
+  const changes={salePrice:sale,discount};
+  const changesLabel=`سعر ${fn(sale)} ج | خصم ${fn(discount)} ج`;
+  const r=await orderActions.editOrderPayment({db,orderId:activeId,changes,changesLabel,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم التعديل المالي','ok');
 };
 
 window.deleteOrderFull=async function(){
@@ -665,12 +654,9 @@ window.closeCostPanel=function(){
 
 window.deleteTlEntry=async function(idx){
   if(!confirm('حذف هذا الإدخال من السجل؟'))return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const tl=[...(o.timeline||[])];tl.splice(idx,1);
-  try{
-    await updateDoc(doc(db,'orders',activeId),{timeline:tl,updatedAt:serverTimestamp()});
-    toast('✅ حُذف من السجل','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.removeTimelineEntry({db,orderId:activeId,entryIndex:idx,userId:currentUser?.uid||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ حُذف من السجل','ok');
 };
 
 const COST_ICO={طباعة:'🖨️',ورق:'📄',قص:'✂️',سلفنة:'✨',زنكات:'🔵',تجميع:'📦',شحن:'🚚',تصميم:'✏️',أخرى:'📌'};
@@ -761,19 +747,15 @@ function renderAgentTab(){
 
 window.saveAgentExpense=async function(){
   if(!activeId)return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
   const amount=parseFloat(document.getElementById('agent-exp-amt')?.value||0);
   if(amount<=0){toast('⚠️ أدخل مبلغ صحيح','err');return;}
   const note=document.getElementById('agent-exp-note')?.value||'';
-  const newExp={type:_agentCat,amount,note,addedAt:nowStr(),addedBy:currentUser?.uid||'',addedByName:userName};
-  const exps=[...(o.agentExpenses||[]),newExp];
-  try{
-    await updateDoc(doc(db,'orders',activeId),{agentExpenses:exps,updatedAt:serverTimestamp()});
-    if(document.getElementById('agent-exp-amt'))document.getElementById('agent-exp-amt').value='';
-    if(document.getElementById('agent-exp-note'))document.getElementById('agent-exp-note').value='';
-    toast('✅ تم تسجيل المصروف','ok');
-    renderAgentTab();
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.addAgentExpense({db,orderId:activeId,type:_agentCat,amount,note,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  if(document.getElementById('agent-exp-amt'))document.getElementById('agent-exp-amt').value='';
+  if(document.getElementById('agent-exp-note'))document.getElementById('agent-exp-note').value='';
+  toast('✅ تم تسجيل المصروف','ok');
+  renderAgentTab();
 };
 
 window.renderCostPanel=function(o,prodIdx){
@@ -1096,43 +1078,11 @@ window.addCostFromPanel=async function(prodIdx){
 // ══ إغلاق وحفظ التكاليف في سجل المنتجات ══
 window.finalizeCosts=async function(prodIdx){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const prods=o.products||[];
-  const prod=prodIdx>=0?prods[prodIdx]:prods[0];
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
   if(!prod?.productId)return toast('⚠️ المنتج غير مرتبط بالكتالوج — لا يمكن الحفظ','err');
-  const ci=o.costItems||[];
-  const prodCi=prodIdx>=0?ci.filter(c=>c.prodIdx===prodIdx||c.prodIdx==null):ci;
-  if(!prodCi.length)return toast('⚠️ لا توجد بنود للحفظ','err');
-  const total=prodCi.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-  const today=new Date().toISOString().slice(0,10);
-  const entry={
-    date:today,
-    qty:parseFloat(prod.qty)||0,
-    paper:[prod.paper,prod.weight?prod.weight+'جم':''].filter(Boolean).join(' '),
-    notes:`أوردر ${o.orderId||o._id.slice(-6)} · ${o.clientName||''}`,
-    items:prodCi.map(c=>({type:c.type||'—',supplierId:c.supplierId||'',supplierName:c.supplierName||'',total:parseFloat(c.total)||0})),
-    total,
-    orderId:o._id,
-    clientName:o.clientName||'',
-    source:'production'
-  };
-  try{
-    const prodDocRef=doc(db,'products_v2',prod.productId);
-    const prodSnap=await getDoc(prodDocRef);
-    if(!prodSnap.exists())return toast('⚠️ المنتج غير موجود في الكتالوج','err');
-    const history=[...(prodSnap.data()?.costHistory||[])];
-    // تحديث أو إضافة — نحذف أي سجل سابق لنفس الأوردر
-    const filtered=history.filter(h=>h.orderId!==o._id);
-    filtered.push(entry);
-    const batch=writeBatch(db);
-    batch.update(prodDocRef,{costHistory:filtered,lastCostTotal:total,updatedAt:serverTimestamp()});
-    batch.update(doc(db,'orders',activeId),{
-      costFinalized:true,costFinalizedAt:serverTimestamp(),costFinalizedBy:currentUser?.uid||'',costFinalizedByName:userName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✅ تم إغلاق تكاليف "${prod.name||'المنتج'}": ${fn(total)} ج → حُفظ في الكتالوج`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    await batch.commit();
-    toast(`✅ تم حفظ ${prodCi.length} بند (${fn(total)} ج) في سجل "${prod.name||'المنتج'}"`, 'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.finalizeProductCosts({db,orderId:activeId,productId:prod.productId,prodIdx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم حفظ ${r.itemCount} بند (${fn(r.total)} ج) في سجل "${prod.name||'المنتج'}"`, 'ok');
 };
 
 window.filterSupsByType=function(typeVal,supId){
@@ -1187,37 +1137,28 @@ window.calcPaperCost=function(sfx,fromTotal){
   }
 };
 window.setStatusDirect=async function(id,status){
-  const o=orders.find(x=>x._id===id);if(!o)return;
   const labels={received:'📥 استلمت',wip:'🔄 جاري',done:'✅ خلصت',problem:'⚠️ مشكلة'};
-  try{await updateDoc(doc(db,'orders',id),{prodStatus:status,...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status],by:userName}],updatedAt:serverTimestamp()});toast(labels[status],'ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setProductionStatus({db,orderId:id,status,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(labels[status],'ok');
 };
 
 // ══ تنفيذ بند مستقل: تغيير الحالة ══
 window.setProductExecStatus=async function(prodIdx,status){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const prods=[...(o.products||[])];
+  const prods=o.products||[];
   if(prodIdx<0||prodIdx>=prods.length)return;
   const cur=prods[prodIdx].execStatus||'pending';
   const next=cur===status?'pending':status; // toggle
-  prods[prodIdx]={
-    ...prods[prodIdx],
-    execStatus:next,
-    ...(next==='done'?{execDoneAt:nowStr(),execDoneBy:userName,productStatus:'done'}:{})
-  };
-  const newProdStatus=deriveProdStatus(prods);
+  // pre-compute the derived prodStatus locally — the action wires it through
+  const previewProds=[...prods];
+  previewProds[prodIdx]={...previewProds[prodIdx],execStatus:next};
+  const derived=deriveProdStatus(previewProds);
   const lbl=EXEC_STATUS[next]?.lbl||next;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      products:prods,
-      prodStatus:newProdStatus,
-      ...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`${lbl} — ${prods[prodIdx].name||'منتج'}`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast(`${lbl} — ${prods[prodIdx].name||''}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setProductExecStatus({db,orderId:activeId,prodIdx,execStatus:next,derivedProdStatus:derived,statusLabel:lbl,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`${lbl} — ${prods[prodIdx].name||''}`,'ok');
 };
 
 // ══ تنفيذ بند مستقل: تحديد المورد ══
@@ -1228,18 +1169,10 @@ window.setProductSupplier=async function(prodIdx,sel){
   const supplierId=opt?.value||'';
   const supplierName=opt?.dataset?.name||'';
   const supplierPhone=opt?.dataset?.phone||'';
-  const prods=[...(o.products||[])];
-  if(prodIdx<0||prodIdx>=prods.length)return;
-  const before=prods[prodIdx].supplierName||'—';
-  prods[prodIdx]={...prods[prodIdx],supplierId,supplierName,supplierPhone};
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      products:prods,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🏭 مورد ${prods[prodIdx].name||'منتج'}: ${before} → ${supplierName||'بدون'}`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast(`✅ ${prods[prodIdx].name||''} → ${supplierName||'بدون مورد'}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const prodName=(o.products||[])[prodIdx]?.name||'';
+  const r=await orderActions.setProductSupplier({db,orderId:activeId,prodIdx,supplierId,supplierName,supplierPhone,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ ${prodName} → ${supplierName||'بدون مورد'}`,'ok');
 };
 
 // ══ تنفيذ بند مستقل: واتساب لمورد البند ══
@@ -1674,7 +1607,7 @@ function renderCosts(o){
 
 window.saveNote=async function(){
   if(!activeId)return;
-  try{await updateDoc(doc(db,'orders',activeId),{prodNote:gv('prod-note'),updatedAt:serverTimestamp()});}catch(e){}
+  try{ await orderActions.updateProductionNote({db,orderId:activeId,note:gv('prod-note')}); }catch(e){}
 };
 
 let addCostProdIdx=-1,editCostIdx=-1;
@@ -1720,101 +1653,36 @@ window.saveCost=async function(){
   const type=_typeFromPrintType(sup?.printType||'');
   const prodIdx=parseInt(document.getElementById('cost-prod-idx')?.value??-1);
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const ci=[...(o.costItems||[])];
-  const isEdit=editCostIdx>=0&&editCostIdx<ci.length;
-  const existingId=isEdit?ci[editCostIdx]?.costItemId:null;
-  const costItemId=existingId||Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-  const scOrigItem=isEdit?ci[editCostIdx]:null;
-  const scExistingSoId=scOrigItem?.supplierOrderId||'';
-  const scSupplierChanged=isEdit&&!!scExistingSoId&&(scOrigItem?.supplierId||'')!==supplierId;
-  const scNeedNewSo=!!supplierId&&(!isEdit||!scExistingSoId||scSupplierChanged);
-  const scSoRef=scNeedNewSo?doc(collection(db,'supplier_orders')):null;
-  const scSupplierOrderId=scSoRef?scSoRef.id:(!scSupplierChanged&&scExistingSoId&&supplierId?scExistingSoId:'');
-  const scNote=gv('ac-note');
-  const item={costItemId,orderId:activeId,isExternal:!!supplierId,...(scSupplierOrderId?{supplierOrderId:scSupplierOrderId}:{}),type,supplierId,supplierName,prodIdx:prodIdx>=0?prodIdx:null,total,note:scNote,addedAt:nowStr()};
-  let action;
-  if(isEdit){
-    ci[editCostIdx]={...ci[editCostIdx],...item,editedAt:nowStr()};
-    action=`✏️ تعديل ${type}: ${fn(total)} ج`;
-  } else {
-    ci.push(item);
-    action=`💰 ${type}: ${fn(total)} ج`;
+  const isEdit=editCostIdx>=0&&editCostIdx<(o.costItems||[]).length;
+  const note=gv('ac-note');
+  // المركزي يعالج الـ atomic batch + supplier_orders + ledger
+  const r=await orderActions.recordCostItem({
+    db,orderId:activeId,prodIdx,
+    payload:{type,total,supplierId,supplierName,note},
+    role:currentRole,userId:currentUser?.uid||'',userName,
+    wallets:[], // ليس فيه دفع مالي مباشر — مسار الدفع منفصل (requestPaymentForCostItem)
+    isEdit,editIdx:editCostIdx,
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  // Auto-archive: لو الأوردر في انتظار + مكتمل الدفع → أرشف فوراً (بدون double-confirm)
+  let autoArchived=false;
+  const _remNow=parseFloat(o.remaining)||0;
+  const _psNow=(o.paymentStatus||'').toLowerCase();
+  const _canArchive=_remNow<=0||['paid','returned','refunded'].includes(_psNow);
+  if(!isEdit && o.awaitingFinalArchive && _canArchive){
+    const ar=await orderActions.archiveOrder({db,orderId:activeId,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false},bypassWarnings:true});
+    autoArchived=!!ar.ok;
   }
-  try{
-    // RULE 3 — atomic batch: order + ledger entry + supplier_orders معاً
-    const batch=writeBatch(db);
-    // ـ لو الأوردر مُسلَّم وفي انتظار مراجعة بنود التكلفة → اكتب البند + أرشف في نفس الـ batch
-    // قاعدة: الأوردر يدخل الأرشيف فقط لو مكتمل الدفع (remaining<=0)
-    // أو حالة مرتجع/استرداد. لو غير مكتمل، نسجّل البند بدون أرشفة.
-    const _remNow=parseFloat(o.remaining)||0;
-    const _psNow=(o.paymentStatus||'').toLowerCase();
-    const _canArchive=_remNow<=0 || ['paid','returned','refunded'].includes(_psNow);
-    const autoArchive=!!o.awaitingFinalArchive && !isEdit && _canArchive;
-    const updFields={costItems:ci,updatedAt:serverTimestamp()};
-    const tlEntry={date:nowStr(),action,by:userName};
-    if(autoArchive){
-      updFields.stage='archived';
-      updFields['stageEnteredAt.archived']=nowStr();
-      updFields.awaitingFinalArchive=false;
-      tlEntry.action=`${action} — 📁 أُرشف تلقائياً بعد تسجيل بنود التكلفة`;
-    } else if(!!o.awaitingFinalArchive && !isEdit && !_canArchive){
-      tlEntry.action=`${action} — ⏳ بانتظار التحصيل قبل الأرشفة (متبقّي ${_remNow.toLocaleString('ar-EG')} ج)`;
-    }
-    batch.update(doc(db,'orders',activeId),{...updFields,timeline:[...(o.timeline||[]),tlEntry]});
-    if(!isEdit){
-      // RULE 5 — قيد محاسبي ربط بالمورد لو موجود (VENDOR_PAYMENT) أو مصروف عام
-      const ledgerEvent=supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
-      addLedgerToBatch(batch,db,ledgerEvent,{
-        amount:total,orderId:activeId,clientName:o.clientName||'',
-        vendorId:supplierId,vendorName:supplierName,
-        notes:`تكلفة تنفيذ — ${type}${item.note?' — '+item.note:''} · ${o.clientName||''}`,
-        userId:currentUser?.uid||'',userName,
-      });
-    }
-    if(scExistingSoId&&(scSupplierChanged||(isEdit&&!supplierId)))batch.update(doc(db,'supplier_orders',scExistingSoId),{isDeleted:true,voidedAt:serverTimestamp(),voidReason:supplierId?'تغيير المورد':'تحويل إلى داخلي'});
-    if(scSoRef)batch.set(scSoRef,{costItemId,orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'',supplierId,supplierName,type,total,note:scNote||'',status:'pending',deliveryStatus:'awaiting',paidAmount:0,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:currentUser?.uid||'',createdByName:userName,isDeleted:false});
-    else if(!scSupplierChanged&&isEdit&&scExistingSoId&&supplierId)batch.update(doc(db,'supplier_orders',scExistingSoId),{type,total,note:scNote||'',updatedAt:serverTimestamp()});
-    await batch.commit();
-    cM('cost');toast(autoArchive?'✅ تم + أُرشف الأوردر تلقائياً':'✅ تم','ok');editCostIdx=-1;
-  }catch(e){toast('❌ '+e.message,'err');}
+  cM('cost');
+  toast(autoArchived?'✅ تم + أُرشف الأوردر تلقائياً':'✅ تم','ok');
+  editCostIdx=-1;
 };
 
 window.rmProduct=async function(prodIdx){
   if(!confirm('حذف هذا المنتج وكل بنود تكلفته من الأوردر؟'))return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  
-  // احذف المنتج من الـ array
-  const prods=[...(o.products||[])];
-  if(prodIdx>=0&&prodIdx<prods.length){
-    prods.splice(prodIdx,1);
-  }
-  
-  // احذف بنود التكلفة المرتبطة بالمنتج + أعد ترقيم الباقي
-  const ci=[...(o.costItems||[])];
-  const newCi=ci
-    .filter(c=>c.prodIdx!==prodIdx) // احذف بنود المنتج
-    .map(c=>({...c,prodIdx:c.prodIdx>prodIdx?(c.prodIdx-1):c.prodIdx})); // أعد الترقيم
-  
-  // أعد حساب السعر بعد حذف المنتج
-  const removedProd=o.products?.[prodIdx];
-  const removedPrice=parseFloat(removedProd?.salePrice||removedProd?.price||0);
-  const newSalePrice=Math.max(0,(parseFloat(o.salePrice)||0)-removedPrice);
-  const newRemaining=Math.max(0,newSalePrice-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.deposit)||0));
-  
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      products:prods,
-      costItems:newCi,
-      ...(removedPrice>0?{salePrice:newSalePrice,remaining:newRemaining}:{}),
-      timeline:[...(o.timeline||[]),{
-        date:nowStr(),
-        action:`🗑 حُذف منتج: ${removedProd?.name||'—'} × ${removedProd?.qty||0}`,
-        by:userName
-      }],
-      updatedAt:serverTimestamp()
-    });
-    toast(`✅ حُذف ${removedProd?.name||'المنتج'} وبنوده`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.removeProductFromOrder({db,orderId:activeId,prodIdx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ حُذف ${r.productName||'المنتج'} وبنوده`,'ok');
 };
 
 window.requestPaymentForCostItem=async function(idx){
@@ -2006,30 +1874,9 @@ window.rmCost=async function(idx){
 
   // البند غير مدفوع — أي مستخدم يقدر يحذفه (السلوك القديم)
   if(!confirm('حذف البند؟'))return;
-  const ci=[...(o.costItems||[])]; ci.splice(idx,1);
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
-    if(item?.txId&&item?.walletId){
-      batch.update(doc(db,'wallets',item.walletId),{balance:increment(parseFloat(item.total)||0)});
-      batch.delete(doc(db,'transactions_v2',item.txId));
-      addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE_REVERSAL,{
-        amount:parseFloat(item.total)||0,
-        walletId:item.walletId,walletName:item.walletName||'',
-        orderId:activeId,
-        notes:`إلغاء تكلفة إنتاج — ${item.type||''} ${item.supplierName?'· '+item.supplierName:''}`,
-        userId:currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||'',
-      });
-    }
-    if(item?.spId){
-      batch.delete(doc(db,'supplier_payments',item.spId));
-    }
-    if(item?.supplierOrderId){
-      batch.delete(doc(db,'supplier_orders',item.supplierOrderId));
-    }
-    await batch.commit();
-    toast(item?.txId?'✅ حُذف · رُجِّع المبلغ للمحفظة':'✅ حُذف','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.removeUnpaidCostItem({db,orderId:activeId,itemIndex:idx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(r.refundedToWallet?'✅ حُذف · رُجِّع المبلغ للمحفظة':'✅ حُذف','ok');
 };
 
 // ══ مندوب التنفيذ ══
@@ -2101,16 +1948,9 @@ window.confirmAssignAgent=async function(){
 
 async function doAssignAgent(uid,name){
   if(!uid||!activeId)return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      productionAgent:uid,
-      productionAgentName:name,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`👷 تعيين مندوب التنفيذ: ${name}`,by:userName,byId:currentUser?.uid||''}],
-      updatedAt:serverTimestamp()
-    });
-    toast(`✅ تم تعيين ${name}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.assignProductionAgent({db,orderId:activeId,agentId:uid,agentName:name,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم تعيين ${name}`,'ok');
 }
 // ════════════════════════
 
@@ -2157,8 +1997,9 @@ async function uploadFinal(file){
     err=>{toast('❌ '+err.message,'err');pw.style.display='none';},
     async()=>{
       const url=await getDownloadURL(task.snapshot.ref);
-      await updateDoc(doc(db,'orders',activeId),{finalImageUrl:url,timeline:[...(o.timeline||[]),{date:nowStr(),action:'📸 صورة المنتج النهائي',by:userName}],updatedAt:serverTimestamp()});
+      const r=await orderActions.setFinalProductImage({db,orderId:activeId,imageUrl:url,userId:currentUser?.uid||'',userName});
       pw.style.display='none';
+      if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
       toast('✅ تم رفع الصورة','ok');
     }
   );
@@ -2170,16 +2011,10 @@ window.pickupOrder=async function(orderId){
   if(!o)return;
   if(o.productionAgent)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
   if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
-  try{
-    const uid=currentUser?.uid||'';
-    await updateDoc(doc(db,'orders',orderId),{
-      productionAgent:uid,
-      productionAgentName:userName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الالتقاط','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const uid=currentUser?.uid||'';
+  const r=await orderActions.assignProductionAgent({db,orderId,agentId:uid,agentName:userName,userId:uid,userName,pickup:true});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الالتقاط','ok');
 };
 
 // ══ استيراد التكاليف من كتالوج المنتجات ══
@@ -2218,27 +2053,9 @@ window.importCatalogCosts=async function(prodIdx){
   if(!newItems.length)return toast('ℹ️ كل البنود موجودة بالفعل','');
   const importTotal=newItems.reduce((s,it)=>s+(parseFloat(it.total)||0),0);
   if(!confirm(`استيراد ${newItems.length} بند من آخر تكاليف "${catProd.name}"؟\nالإجمالي المرجعي: ${fn(importTotal)} ج`))return;
-  const updatedCi=[...ci,...newItems];
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{
-      costItems:updatedCi,
-      ...(!o.productionAgent&&currentUser?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`🤖 استيراد ${newItems.length} بند من كتالوج "${catProd.name}" · ${fn(importTotal)} ج`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    for(const item of newItems){
-      const ev=item.supplierId?FE.VENDOR_PAYMENT:FE.GENERAL_EXPENSE;
-      addLedgerToBatch(batch,db,ev,{
-        amount:item.total,orderId:activeId,clientName:o.clientName||'',
-        vendorId:item.supplierId,vendorName:item.supplierName,
-        notes:`تكلفة مستوردة من الكتالوج — ${item.type} · ${o.clientName||''}`,
-        userId:currentUser?.uid||'',userName
-      });
-    }
-    await batch.commit();
-    toast(`✅ تم استيراد ${newItems.length} بند · ${fn(importTotal)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.importCostsFromCatalog({db,orderId:activeId,items:newItems,catalogProductName:catProd.name,prodIdx,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم استيراد ${r.count} بند · ${fn(r.total)} ج`,'ok');
 };
 // ════════════════════════
 
@@ -2283,117 +2100,49 @@ window.confirmMoveToShipping=async function(){
   // ══ مسار الشحن الجزئي عبر buildOrderSplit ══
   if(isPartial){
     const doneIdx=prods.map((p,i)=>p.execStatus==='done'?i:-1).filter(i=>i>=0);
-    const split=buildOrderSplit({
-      order:o, productIndices:doneIdx, role:currentRole,
-      userId:currentUser?.uid||'', userName, targetStage:'shipping'
-    });
-    if(!split.ok)return toast('⛔ '+(split.errors||[]).join(' · '),'err');
-    try{
-      // فلترة بنود التكلفة: نقل بنود المنتجات المنفذة إلى الفرعي، وتحديث indices
-      const idxSet=new Set(doneIdx);
-      const idxRemap=new Map(); // old → new (للأصلي)
-      let newI=0;
-      prods.forEach((_,i)=>{ if(!idxSet.has(i)){ idxRemap.set(i,newI++); } });
-      const childCi=ci
-        .filter(c=>c.prodIdx!=null&&idxSet.has(c.prodIdx))
-        .map(c=>{
-          const childIdx=doneIdx.indexOf(c.prodIdx);
-          return{...c,prodIdx:childIdx>=0?childIdx:null};
-        });
-      const parentCi=ci
-        .filter(c=>c.prodIdx==null||!idxSet.has(c.prodIdx))
-        .map(c=>c.prodIdx==null?c:{...c,prodIdx:idxRemap.get(c.prodIdx)??null});
-      // أضف الموزِّع للفرعي
-      const childData={
-        ...split.childOrderData,
-        costItems:childCi,
-        prodStatus:'done',
-        prodDoneAt:now,
-        shippingOfficerId:shipId||'',
-        shippingOfficerName:shipName||'',
-        // حقول العميل/الشحن الموروثة
-        clientId:o.clientId||'',clientName:o.clientName||'',clientPhone:o.clientPhone||'',
-        salePrice:0,deposit:0,totalPaid:0,remaining:0,paymentStatus:'parent_holds',
-        createdAt:serverTimestamp(),
-        updatedAt:serverTimestamp(),
-      };
-      const childRef=doc(collection(db,'orders'));
-      const batch=writeBatch(db);
-      batch.set(childRef,childData);
-      // حدّث الأصلي
-      const remainingProds=prods.filter((_,i)=>!idxSet.has(i));
-      const childIds=[...(o.childOrderIds||[]),childRef.id];
-      const newProdStatus=deriveProdStatus(remainingProds);
-      batch.update(doc(db,'orders',activeId),{
-        products:remainingProds,
-        costItems:parentCi,
-        childOrderIds:childIds,
-        prodStatus:newProdStatus,
-        timeline:[...(o.timeline||[]),{
-          date:now, stage:o.stage,
-          action:`🔀 شحن جزئي: ${doneIdx.length}/${prods.length} بند → ${split.childOrderId}`,
-          by:userName, byId:currentUser?.uid||''
-        }],
-        updatedAt:serverTimestamp(),
-      });
-      await batch.commit();
-      document.getElementById('ov-pick-ship').classList.remove('open');
-      closePanel();
-      toast(`✅ ${doneIdx.length} بند → الشحن (${split.childOrderId})`,'ok');
-    }catch(e){toast('❌ '+e.message,'err');}
+    const r=await orderActions.splitOrderForShipping({db,orderId:activeId,doneIdx,shipId,shipName,role:currentRole,userId:currentUser?.uid||'',userName});
+    if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+    document.getElementById('ov-pick-ship').classList.remove('open');
+    closePanel();
+    toast(`✅ ${r.doneCount} بند → الشحن (${r.childOrderId})`,'ok');
     return;
   }
 
-  // ══ المسار الكامل (كل البنود done أو لا توجد بنود) ══
-  const adv=buildStageAdvance({
-    order:o, role:currentRole, userId:currentUser?.uid||'', userName,
-    nextAssigneeId:shipId, nextAssigneeName:shipName,
-    bypassWarnings: !!window.__bypassWarningsShipping,
-    extraFields:{
-      prodStatus:'done',
-      prodDoneAt:now,
-      productionAgent:currentUser?.uid||o.productionAgent||'',
-      productionAgentName:userName,
+  // ══ المسار الكامل ══ — جهّز catalogUpdates قبل المرور للـ action
+  // (يحتاج معرفة productsCatalog من الـ page state — يبقى في الـ UI)
+  const catalogUpdates=[];
+  for(let pi=0;pi<prods.length;pi++){
+    const prod=prods[pi];
+    const pName=(prod.name||'').trim().toLowerCase();
+    const pQty=parseFloat(prod.qty)||0;
+    const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&(prods.length===1||pi===prods.length-1)));
+    if(!prodCi.length)continue;
+    const total=prodCi.reduce((s,x)=>s+(parseFloat(x.total)||0),0);
+    const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
+    if(!catProd)continue;
+    const history=[...(catProd.costHistory||[])];
+    const lastSameQty=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0];
+    if(lastSameQty&&lastSameQty.total>0){
+      const pct=Math.round((total-lastSameQty.total)/lastSameQty.total*100);
+      if(Math.abs(pct)>15)toast(`🚨 تكلفة ${prod.name} ${pct>0?'زادت':'انخفضت'} ${Math.abs(pct)}% (${fn(lastSameQty.total)} ← ${fn(total)} ج)`,'err');
     }
-  });
-  if(adv.errors&&adv.errors.length)return toast('⛔ '+adv.errors.join(' · '),'err');
-  if(adv.warnings&&adv.warnings.length&&!window.__bypassWarningsShipping){
-    if(!confirm('⚠️ '+adv.warnings.join(' · ')+'\n\nالمتابعة؟'))return;
+    history.push({date:now,orderId:activeId,clientName:o.clientName||'',qty:pQty,paper:prod.paper||'',items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),total});
+    if(history.length>100)history.splice(0,history.length-100);
+    catalogUpdates.push({productId:catProd._id,history,lastCostTotal:total,lastCostDate:now});
   }
-  try{
-    const batch=writeBatch(db);
-
-    // ══ حفظ التكاليف في سجل المنتج (ضمن نفس الـ batch) — RULE 3 ══
-    for(let pi=0;pi<prods.length;pi++){
-      const prod=prods[pi];
-      const pName=(prod.name||'').trim().toLowerCase();
-      const pQty=parseFloat(prod.qty)||0;
-      const prodCi=ci.filter(x=>x.prodIdx===pi||(x.prodIdx==null&&(prods.length===1||pi===prods.length-1)));
-      if(!prodCi.length)continue;
-      const total=prodCi.reduce((s,x)=>s+(parseFloat(x.total)||0),0);
-      const catProd=productsCatalog.find(cp=>(cp.name||'').trim().toLowerCase()===pName||pName.includes((cp.name||'').trim().toLowerCase())||(cp.name||'').trim().toLowerCase().includes(pName));
-      if(!catProd)continue;
-      const history=[...(catProd.costHistory||[])];
-      const lastSameQty=history.filter(h=>parseFloat(h.qty)===pQty).slice(-1)[0];
-      if(lastSameQty&&lastSameQty.total>0){
-        const pct=Math.round((total-lastSameQty.total)/lastSameQty.total*100);
-        if(Math.abs(pct)>15)toast(`🚨 تكلفة ${prod.name} ${pct>0?'زادت':'انخفضت'} ${Math.abs(pct)}% (${fn(lastSameQty.total)} ← ${fn(total)} ج)`,'err');
-      }
-      history.push({date:now,orderId:activeId,clientName:o.clientName||'',qty:pQty,paper:prod.paper||'',items:prodCi.map(x=>({type:x.type,supplierId:x.supplierId||'',supplierName:x.supplierName||'',total:x.total})),total});
-      if(history.length>100)history.splice(0,history.length-100);
-      batch.update(doc(db,'products_v2',catProd._id),{costHistory:history,lastCostTotal:total,lastCostDate:now});
+  let r=await orderActions.submitProductionToShipping({db,orderId:activeId,shipId,shipName,catalogUpdates,role:currentRole,userId:currentUser?.uid||'',userName,bypassWarnings:!!window.__bypassWarningsShipping});
+  if(!r.ok){
+    if(r.needsConfirmation){
+      if(!confirm('⚠️ '+(r.warnings||[]).join(' · ')+'\n\nالمتابعة؟'))return;
+      r=await orderActions.submitProductionToShipping({db,orderId:activeId,shipId,shipName,catalogUpdates,role:currentRole,userId:currentUser?.uid||'',userName,bypassWarnings:true});
+      if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+    } else {
+      return toast('⛔ '+(r.errors||[]).join(' · '),'err');
     }
-
-    batch.update(doc(db,'orders',activeId),{
-      ...adv.fields,
-      timeline:[...(o.timeline||[]),adv.timelineEntry],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
-    document.getElementById('ov-pick-ship').classList.remove('open');
-    closePanel();
-    toast('✅ انتقل للشحن 🚚'+(shipName?` (${shipName})`:''),'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }
+  document.getElementById('ov-pick-ship').classList.remove('open');
+  closePanel();
+  toast('✅ انتقل للشحن 🚚'+(shipName?` (${shipName})`:''),'ok');
 };
 </script>
 <script src="sw-register.js"></script>
