@@ -34,6 +34,11 @@ import {
 import {
   validateDispatch, validateCollect, validateCompanyCollect,
   validateSettle, validateReturn, buildSettlementUpdates, nowStr,
+  // PR-2 (scalable-drifting-ember) validators:
+  validatePrepareShipping, validateMarkDelivered,
+  validatePartialReturn, validateReverseSettle,
+  // PR-1 helper:
+  normalizeShipStage,
 } from './orders.js';
 import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
@@ -554,6 +559,197 @@ export const shippingActions = {
       return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع'], warnings: [], orderId };
     }
     }); // end withIdempotency
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // PR-3 (scalable-drifting-ember) — Central actions, parallel layer
+  // ════════════════════════════════════════════════════════════
+  // Actions below use canonical names from the new state machine.
+  // The 2 truly-new actions (prepareForShipping, markPartialReturn)
+  // implement fresh logic. The 6 renames are thin aliases that delegate
+  // to the existing legacy-named actions — UI pages migrating in PR-4..6
+  // call the canonical names so the legacy names can be removed in PR-7.
+
+  /**
+   * prepareForShipping — تجهيز الأوردر للشحن قبل confirmShipped.
+   * يكتب: shipMethod, shipCompanyId/Name, deliveryAddress, customerShipFee,
+   * priceIncludesShipping, customerPhoneShip. لا حدث مالي.
+   */
+  async prepareForShipping({
+    db, orderId,
+    shipMethod, shipCompanyId = '', shipCompanyName = '',
+    deliveryAddress = null,
+    customerShipFee = 0,
+    priceIncludesShipping = false,
+    customerPhoneShip = '',
+    note = '',
+    role, userId, userName,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    const v = validatePrepareShipping({
+      order, shipMethod, shipCompanyName,
+      deliveryAddress, customerShipFee, priceIncludesShipping, role,
+    });
+    if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings, orderId };
+
+    const fee = parseFloat(customerShipFee) || 0;
+    const fields = {
+      shipMethod,
+      shipCompanyId: shipMethod === 'company' ? (shipCompanyId || '') : '',
+      shipCompanyName: shipMethod === 'company' ? (shipCompanyName || '') : '',
+      deliveryAddress: shipMethod === 'pickup' ? null : (deliveryAddress || null),
+      customerShipFee: priceIncludesShipping ? 0 : fee,
+      priceIncludesShipping: !!priceIncludesShipping,
+      customerPhoneShip: customerPhoneShip || order.customerPhoneShip || order.clientPhone || '',
+      shipStage: order.shipStage || 'ready',
+      timeline: [...(order.timeline || []), _tlEntry(
+        `📋 تجهيز للشحن — ${shipMethod}${shipMethod === 'company' && shipCompanyName ? ' (' + shipCompanyName + ')' : ''}`,
+        userName, userId
+      )],
+      updatedAt: serverTimestamp(),
+      ...(note ? { shipPrepareNote: note } : {}),
+    };
+
+    try {
+      await updateDoc(order._ref, fields);
+      return {
+        ok: true, errors: [], warnings: v.warnings,
+        orderId, action: 'prepare_for_shipping', shipMethod,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التجهيز'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * markPartialReturn — تسجيل مرتجع جزئي (NEW).
+   * يضيف items[] إلى returnedItems[]، يحسم salePriceDelta من salePrice،
+   * يجمّع partialReturnLoss، ويسجّل FE.RETURN_LOSS لو lossParty != 'client'
+   * وlossCost>0 وwalletId موجود.
+   * الـ shipStage يصبح 'returned_partial' (لا يقفل الأوردر).
+   */
+  async markPartialReturn({
+    db, orderId,
+    items = [], lossCost = 0, salePriceDelta = 0,
+    reason, lossParty, note = '',
+    walletId = '', walletName = '',
+    role, userId, userName,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    return withIdempotency(db, {
+      actionType: 'mark_partial_return',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: {
+        itemIdx: (items || []).map(i => i?.idx).join(','),
+        itemQty: (items || []).map(i => i?.qty).join(','),
+        lossCost: Number(lossCost) || 0,
+        salePriceDelta: Number(salePriceDelta) || 0,
+      },
+    }, async (operationId) => {
+      const order = await _loadOrder(db, orderId);
+      if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+      const v = validatePartialReturn({
+        order, items, lossCost, salePriceDelta,
+        reason, lossParty, note, role,
+      });
+      if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings, orderId };
+
+      const loss  = parseFloat(lossCost)       || 0;
+      const delta = parseFloat(salePriceDelta) || 0;
+      const prevSale = parseFloat(order.salePrice) || 0;
+      const newSale  = Math.max(0, prevSale - delta);
+      const prevLoss = parseFloat(order.partialReturnLoss) || 0;
+      const newLoss  = prevLoss + loss;
+      const prevReturnedItems = Array.isArray(order.returnedItems) ? order.returnedItems : [];
+      const ts = nowStr();
+      const newReturnedItems = [
+        ...prevReturnedItems,
+        ...items.map(it => ({
+          idx: it.idx, qty: parseFloat(it.qty) || 0,
+          reason: it.reason || reason || '',
+          at: ts, byId: userId || '', by: userName || '',
+        })),
+      ];
+
+      const REASON_LABELS = {
+        damaged: 'تلف', wrong_design: 'خطأ تصميم', wrong_item: 'منتج خاطئ',
+        late: 'تأخير', refused: 'العميل رفض', other: 'أخرى',
+      };
+      const reasonLabel = REASON_LABELS[reason] || reason;
+      const totalReturnedQty = items.reduce((s, it) => s + (parseFloat(it.qty) || 0), 0);
+
+      const orderFields = {
+        shipStage: 'returned_partial',
+        salePrice: newSale,
+        partialReturnLoss: newLoss,
+        returnedItems: newReturnedItems,
+        returnReason: reason,
+        returnReasonLabel: reasonLabel,
+        returnLossParty: lossParty,
+        returnNote: note || '',
+        partialReturnedAt: serverTimestamp(),
+        partialReturnedBy: userName || '',
+        partialReturnedById: userId || '',
+        timeline: [...(order.timeline || []), _tlEntry(
+          `↪️ مرتجع جزئي — ${totalReturnedQty} قطعة — خصم ${delta} ج — خسارة ${loss} ج (${reasonLabel})`,
+          userName, userId
+        )],
+        updatedAt: serverTimestamp(),
+      };
+
+      try {
+        const batch = writeBatch(db);
+        batch.update(order._ref, orderFields);
+        if (loss > 0 && lossParty !== 'client' && walletId) {
+          addLedgerToBatch(batch, db, FE.RETURN_LOSS, {
+            amount: loss, walletId, walletName: walletName || '',
+            orderId, clientId: order.clientId || '', clientName: order.clientName || '',
+            notes: `خسارة مرتجع جزئي — ${order.clientName || ''} — ${reasonLabel}`,
+            userId: userId || '', userName: userName || '',
+            operationId,
+          });
+        }
+        await batch.commit();
+        return {
+          ok: true, errors: [], warnings: v.warnings,
+          orderId, action: 'mark_partial_return', operationId,
+          newSalePrice: newSale, accumulatedLoss: newLoss,
+        };
+      } catch (e) {
+        return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع الجزئي'], warnings: [], orderId };
+      }
+    });
+  },
+
+  // ─── Renames (thin aliases — delegate to existing legacy-named actions) ───
+  // UI pages migrating in PR-4..6 call the canonical names below.
+  // Existing pages keep calling the legacy names. PR-7 may consolidate.
+
+  /** confirmShipped — alias for dispatchOrder (will write 'shipped' once PR-7 migrates) */
+  async confirmShipped(args) { return shippingActions.dispatchOrder(args); },
+
+  /** confirmDelivered — alias for markDelivered */
+  async confirmDelivered(args) { return shippingActions.markDelivered(args); },
+
+  /** markUnderCollection — alias for markCompanyCollected */
+  async markUnderCollection(args) { return shippingActions.markCompanyCollected(args); },
+
+  /** settleFromCompany — alias for settleWithCompany */
+  async settleFromCompany(args) { return shippingActions.settleWithCompany(args); },
+
+  /** markFullReturn — registerReturn with returnType='full' */
+  async markFullReturn(args) {
+    return shippingActions.registerReturn({ ...args, returnType: 'full' });
+  },
+
+  /** closeShipment — delegates to orderActions.archiveOrder */
+  async closeShipment(args) {
+    return orderActions.archiveOrder({ ...args, source: args?.source || 'shipping' });
   },
 };
 
