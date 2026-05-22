@@ -257,7 +257,9 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
+import { orderActions } from "./order-actions.js";
 let myOrders=[],allOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='active',currentRole='production_agent';
 let myGoal=null,myEmpId='',myLastEval=null;
 let suppliersMap={};
@@ -350,16 +352,17 @@ onAuthStateChanged(auth,async u=>{
 // ── Attendance ──
 window.doAtt=async function(){
   const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    if(!todayAtt){
-      await addDoc(collection(db,'attendance'),{employeeUid:currentUser.uid,employeeName:userName,date:today,checkIn:serverTimestamp(),checkInStr:timeStr,checkOut:null,hoursWorked:0,createdAt:serverTimestamp()});
-      toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-    } else if(!todayAtt.checkOut){
-      const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
-      await updateDoc(doc(db,'attendance',todayAtt._id),{checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hours)});
-      toast('✅ تم الانصراف — '+hours+' ساعة','ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
+  const uid=currentUser.uid;
+  if(!todayAtt){
+    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,recordedBy:uid,recordedByName:userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
+  } else if(!todayAtt.checkOut){
+    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
+    toast('✅ تم الانصراف — '+hours+' ساعة','ok');
+  }
 };
 
 function renderAttBox(){
@@ -613,18 +616,10 @@ window.closePanel=function(){
 // ── Status Update ──
 window.setStatus=async function(status){
   if(!activeOrderId)return;
-  const o=myOrders.find(x=>x._id===activeOrderId)||allOrders.find(x=>x._id===activeOrderId);
-  if(!o)return;
+  const r=await orderActions.setProductionStatus({db,orderId:activeOrderId,status,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   const labels={received:'📥 استلمت الأوردر',wip:'🔄 بدأ التنفيذ',done:'✅ خلص التنفيذ',problem:'⚠️ وجدت مشكلة'};
-  try{
-    await updateDoc(doc(db,'orders',activeOrderId),{
-      prodStatus:status,
-      ...((!o.productionAgent&&currentUser)?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:labels[status]||status,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast(labels[status]||'تم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  toast(labels[status]||'تم','ok');
 };
 
 // ── Save Supplier ──
@@ -637,19 +632,16 @@ window.saveSupplier=async function(supId){
   const phone=sup?.phone||sup?.whatsapp||'';
   const waBtn=document.getElementById('pn-wa-btn');
   const waProbBtn=document.getElementById('pn-wa-prob-btn');
-  try{
-    await updateDoc(doc(db,'orders',activeOrderId),{
-      supplierId:supId||'',
-      supplierName:name,
-      supplierPhone:phone,
-      ...((!o.productionAgent&&currentUser)?{productionAgent:currentUser.uid,productionAgentName:userName}:{}),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:supId?`🏭 مورد: ${name}`:'🏭 إلغاء المورد',by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    waBtn.style.display=supId&&phone?'flex':'none';
-    waProbBtn.style.display=supId&&phone?'flex':'none';
-    toast(supId?`✅ تم اختيار ${name}`:'✅ تم إلغاء المورد','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // production-dashboard sets order-level supplier (not per-product) — orderActions.setProductSupplier
+  // is per-product; use index 0 if products exist, else this is a primary-supplier flow
+  const prodIdx=(o.products||[]).length>0?0:-1;
+  if(prodIdx>=0){
+    const r=await orderActions.setProductSupplier({db,orderId:activeOrderId,prodIdx,supplierId:supId||'',supplierName:name,supplierPhone:phone,userId:currentUser?.uid||'',userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  }
+  waBtn.style.display=supId&&phone?'flex':'none';
+  waProbBtn.style.display=supId&&phone?'flex':'none';
+  toast(supId?`✅ تم اختيار ${name}`:'✅ تم إلغاء المورد','ok');
 };
 
 // ── Supplier WhatsApp ──
@@ -718,22 +710,16 @@ window.saveExpense=async function(){
   const amount=parseFloat(document.getElementById('exp-amount').value)||0;
   if(amount<=0){toast('⚠️ أدخل مبلغ صحيح','err');return;}
   const note=gv('exp-note');
-  const o=myOrders.find(x=>x._id===activeOrderId)||allOrders.find(x=>x._id===activeOrderId);
-  if(!o)return;
-  const newExp={type:expCat,amount,note,addedAt:nowStr(),addedBy:currentUser.uid,addedByName:userName};
-  const exps=[...(o.agentExpenses||[]),newExp];
-  try{
-    await updateDoc(doc(db,'orders',activeOrderId),{agentExpenses:exps,updatedAt:serverTimestamp()});
-    toast('✅ تم تسجيل المصروف','ok');
-    closeAddExpense();
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.addAgentExpense({db,orderId:activeOrderId,type:expCat,amount,note,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم تسجيل المصروف','ok');
+  closeAddExpense();
 };
 
 // ── Save Note ──
 window.saveNote=async function(){
   if(!activeOrderId)return;
-  const note=gv('pn-note');
-  try{await updateDoc(doc(db,'orders',activeOrderId),{prodNote:note,updatedAt:serverTimestamp()});}catch(e){}
+  try{ await orderActions.updateProductionNote({db,orderId:activeOrderId,note:gv('pn-note')}); }catch(e){}
 };
 </script>
 </body>

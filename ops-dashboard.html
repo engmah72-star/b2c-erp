@@ -101,8 +101,9 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dedupEmployees } from "./orders.js";
+import { employeeActions } from "./employee-actions.js";
 let allOrders=[],myTasks=[],myAttendance=[],todayAtt=null;
 let allEmployees=[],todaysAttendance=[],empPaymentsAll=[],myGoalOps=null,myLastEvalOps=null,myEmpIdOps='';
 let currentUser=null,userName='',uid='',activeTab='late';
@@ -427,22 +428,23 @@ window.doAtt=async function(){
   if(!currentUser)return;
   const today=todayStr();
   const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    if(!todayAtt){
-      await addDoc(collection(db,'attendance'),{employeeUid:uid,employeeName:userName,date:today,checkIn:serverTimestamp(),checkInStr:timeStr,checkOut:null,hoursWorked:0,createdAt:serverTimestamp()});
-      toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-    }else if(!todayAtt.checkOut){
-      const inTime=todayAtt.checkIn?.toDate?.();
-      const hours=inTime?((new Date()-inTime)/(1000*60*60)).toFixed(1):0;
-      await updateDoc(doc(db,'attendance',todayAtt._id),{checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hours)});
-      toast('✅ تم الانصراف — '+hours+' ساعة','ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
+  if(!todayAtt){
+    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,recordedBy:uid,recordedByName:userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
+  } else if(!todayAtt.checkOut){
+    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    const inTime=todayAtt.checkIn?.toDate?.();
+    const hours=inTime?((new Date()-inTime)/(1000*60*60)).toFixed(1):0;
+    toast('✅ تم الانصراف — '+hours+' ساعة','ok');
+  }
 };
 
 window.doneTask=async function(id){
-  try{await updateDoc(doc(db,'tasks',id),{status:'done',doneAt:serverTimestamp()});toast('✅ تم إنجاز المهمة','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.setTaskStatus({db,taskId:id,status:'done'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم إنجاز المهمة','ok');
 };
 </script>
 <script src="sw-register.js"></script>

@@ -141,7 +141,8 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, getDoc, addDoc, onSnapshot, updateDoc, writeBatch, serverTimestamp, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { approvalActions } from "./approval-actions.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let requests = [];
@@ -568,50 +569,16 @@ window.saveRequest = async function(){
     reqData.orderStage = first.stage || '';
   }
 
-  try{
-    if(reqData.costItemRefs && reqData.costItemRefs.length){
-      const reqRef = doc(collection(db,'payment_requests'));
-      const batch = writeBatch(db);
-      batch.set(reqRef, reqData);
-      const byOrder = new Map();
-      for(const r of reqData.costItemRefs){
-        if(!byOrder.has(r.orderId)) byOrder.set(r.orderId, []);
-        byOrder.get(r.orderId).push(r);
-      }
-      for(const [oid, refs] of byOrder.entries()){
-        const oSnap = await getDoc(doc(db,'orders',oid));
-        if(!oSnap.exists()) continue;
-        const oData = oSnap.data();
-        const items = [...(oData.costItems||[])];
-        let mutated = false;
-        for(const r of refs){
-          const i = r.costItemIndex;
-          if(items[i] && !items[i].paid && !items[i].pendingPaymentRequestId){
-            items[i] = { ...items[i], pendingPaymentRequestId: reqRef.id, pendingRequestedAt: new Date().toLocaleString('ar-EG'), pendingRequestedBy: currentUserName };
-            mutated = true;
-          }
-        }
-        if(mutated){
-          batch.update(doc(db,'orders',oid), {
-            costItems: items,
-            timeline: [...(oData.timeline||[]), { date: new Date().toLocaleString('ar-EG'), action: `💸 طلب دفع مُجمَّع (${refs.length} بند) → ${reqData.supplierName||''} — ${fn(refs.reduce((s,x)=>s+x.amount,0))} ج`, by: currentUserName }],
-            updatedAt: serverTimestamp(),
-          });
-        }
-      }
-      await batch.commit();
-    } else {
-      // طلب يدوي بدون ربط ببنود (الموظف اختار مبلغ يدوي)
-      await addDoc(collection(db,'payment_requests'), reqData);
-    }
-    showToast('✅ تم إرسال الطلب — بانتظار التنفيذ من المحاسب','ok');
-    __supItemsSelected = [];
-    cM('new-req');
-    setTab('active');
-  }catch(e){
-    const handled = window.financialGuard?.(e,{operation:'إنشاء طلب', amount});
-    if(!handled) showToast('❌ '+e.message,'err');
+  const r = await approvalActions.createPaymentRequest({db,requestData:reqData,userId:currentUid,userName:currentUserName});
+  if(!r.ok){
+    const handled = window.financialGuard?.({message:(r.errors||[])[0]||'فشل'},{operation:'إنشاء طلب', amount});
+    if(!handled) showToast('❌ '+((r.errors||[]).join(' · ')||'فشل'),'err');
+    return;
   }
+  showToast('✅ تم إرسال الطلب — بانتظار التنفيذ من المحاسب','ok');
+  __supItemsSelected = [];
+  cM('new-req');
+  setTab('active');
 };
 
 // ══════════════ إلغاء طلب ══════════════
@@ -624,53 +591,13 @@ window.cancelMyRequest = async function(reqId){
   }
   const reason = prompt('سبب الإلغاء (إجباري):');
   if(!reason || !reason.trim()) return;
-  try{
-    const batch = writeBatch(db);
-    batch.update(doc(db,'payment_requests',reqId), {
-      status: 'rejected',
-      rejectedBy: currentUid,
-      rejectedByName: currentUserName,
-      rejectedAt: serverTimestamp(),
-      rejectReason: 'إلغاء من الطالب: ' + reason.trim(),
-      cancelledByRequester: true,
-    });
-    const refs = (r.costItemRefs && r.costItemRefs.length)
-      ? r.costItemRefs
-      : (r.costItemIndex !== undefined && r.orderId
-          ? [{ orderId: r.orderId, costItemIndex: r.costItemIndex }]
-          : []);
-    const byOrder = new Map();
-    for(const ref of refs){
-      if(!byOrder.has(ref.orderId)) byOrder.set(ref.orderId, []);
-      byOrder.get(ref.orderId).push(ref);
-    }
-    for(const [oid, list] of byOrder.entries()){
-      const oSnap = await getDoc(doc(db,'orders',oid));
-      if(!oSnap.exists()) continue;
-      const oData = oSnap.data();
-      const items = [...(oData.costItems||[])];
-      let mutated = false;
-      for(const ref of list){
-        const idx = ref.costItemIndex;
-        if(items[idx] && items[idx].pendingPaymentRequestId === reqId){
-          items[idx] = { ...items[idx], pendingPaymentRequestId: null, pendingRequestedAt: null, pendingRequestedBy: null };
-          mutated = true;
-        }
-      }
-      if(mutated){
-        batch.update(doc(db,'orders',oid), {
-          costItems: items,
-          timeline: [...(oData.timeline||[]), { date: new Date().toLocaleString('ar-EG'), action: `❌ ألغى الطالب طلب الدفع (${list.length} بند) — ${reason.trim()}`, by: currentUserName }],
-          updatedAt: serverTimestamp(),
-        });
-      }
-    }
-    await batch.commit();
-    showToast('✅ تم إلغاء الطلب','ok');
-  }catch(e){
-    const handled = window.financialGuard?.(e,{operation:'إلغاء طلب'});
-    if(!handled) showToast('❌ '+e.message,'err');
+  const result = await approvalActions.rejectPaymentRequest({db,request:r,reason:'إلغاء من الطالب: '+reason.trim(),userId:currentUid,userName:currentUserName});
+  if(!result.ok){
+    const handled = window.financialGuard?.({message:(result.errors||[])[0]||'فشل'},{operation:'إلغاء طلب'});
+    if(!handled) showToast('❌ '+((result.errors||[]).join(' · ')||'فشل'),'err');
+    return;
   }
+  showToast('✅ تم إلغاء الطلب','ok');
 };
 
 // ══════════════ Modal: رفع إيصال ══════════════
@@ -710,16 +637,12 @@ window.uploadReceipt = async function(){
         s=>{ const p = Math.round(s.bytesTransferred/s.totalBytes*100); prog.textContent = `جاري الرفع... ${p}%`; },
         rej,
         async ()=>{
-          const url = await getDownloadURL(task.snapshot.ref);
-          await updateDoc(doc(db,'payment_requests',receivingReq._id), {
-            status: 'pending',
-            receiptImageUrl: url,
-            receiptImagePath: path,
-            receivedBy: currentUid,
-            receivedByName: currentUserName,
-            receivedAt: serverTimestamp(),
-          });
-          res();
+          try{
+            const url = await getDownloadURL(task.snapshot.ref);
+            const result = await approvalActions.attachReceiptToRequest({db,requestId:receivingReq._id,txId:receivingReq.txId||'',receiptUrl:url,receiptPath:path,userId:currentUid,userName:currentUserName});
+            if(!result.ok) throw new Error((result.errors||[])[0]||'فشل الإرفاق');
+            res();
+          }catch(err){ rej(err); }
         }
       );
     });
