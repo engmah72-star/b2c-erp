@@ -4228,11 +4228,9 @@ window.cgridSaveField=async function(orderId,field,newVal,oldVal,extra){
     return cgridSaveFinancial(orderId,field,newVal,oldVal,o.depositWalletId||o.walletId||'');
   }
   const FIELD_AR={clientName:'اسم العميل',clientPhone:'رقم الهاتف',clientBusiness:'الشركة/الوظيفة',assignedTo:'الموظف المسؤول',notes:'ملاحظات'};
-  const tl=[...(o.timeline||[]),{date:nowStr(),action:`✏️ [أدمن] تعديل ${FIELD_AR[field]||field}: "${oldVal||'—'}" → "${newVal}"`,by:userName||'admin'}];
-  try{
-    await db.collection('orders').doc(orderId).update({[field]:newVal,...extra,timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
-    toast('✅ تم الحفظ','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await window.orderActions.updateOrderField({db,orderId,changes:{[field]:newVal,...extra},timelineAction:`✏️ [أدمن] تعديل ${FIELD_AR[field]||field}: "${oldVal||'—'}" → "${newVal}"`,userId:currentUser?.uid||'',userName:userName||'admin'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحفظ','ok');
 };
 
 // P1.6+P1.7 — Thin orchestration over window.orderActions.editOrderPayment.
@@ -4302,39 +4300,30 @@ window.cgridSaveStatus=async function(orderId,newStatus,oldStatus){
   const mapping=CGRID_STATUS_MAP[newStatus]||{};
   // الأرشفة تمر عبر buildArchiveSpec المركزي (RULE C1.3)
   if(mapping.stage==='archived'){
-    if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
-    const baseArgs={order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'status_change',reason:`تغيير الحالة: "${oldStatus}" → "${newStatus}"`};
-    let spec=window.buildArchiveSpec(baseArgs);
-    if(spec.errors.length){toast('⛔ '+spec.errors.join(' · '),'err');return;}
-    if(spec.needsConfirmation){
-      if(!confirm('⚠️ '+spec.warnings.join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
-      spec=window.buildArchiveSpec({...baseArgs,bypassWarnings:true});
+    // archive path — يستخدم orderActions.archiveOrder (pre-flight + central spec)
+    const preview=window.buildArchiveSpec?window.buildArchiveSpec({order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'status_change',reason:`تغيير الحالة: "${oldStatus}" → "${newStatus}"`}):null;
+    if(preview?.errors?.length){toast('⛔ '+preview.errors.join(' · '),'err');return;}
+    let bypass=false;
+    if(preview?.needsConfirmation){
+      if(!confirm('⚠️ '+(preview.warnings||[]).join(' · ')+'\n\nالمتابعة بالأرشفة؟'))return;
+      bypass=true;
     }
-    try{
-      await db.collection('orders').doc(orderId).update({
-        ...spec.fields,
-        timeline:[...(o.timeline||[]),spec.timelineEntry],
-        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-      });
-      toast('✅ الحالة: '+newStatus,'ok');
-    }catch(e){toast('❌ '+e.message,'err');}
+    const r=await window.orderActions.archiveOrder({db,orderId,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'status_change',reason:`تغيير الحالة: "${oldStatus}" → "${newStatus}"`,bypassWarnings:bypass});
+    if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+    toast('✅ الحالة: '+newStatus,'ok');
     return;
   }
-  // الانتقالات الأخرى — السلوك القديم
-  const tl=[...(o.timeline||[]),{date:nowStr(),action:`🔄 [أدمن] تغيير الحالة: "${oldStatus}" → "${newStatus}"`,by:userName||'admin'}];
-  try{
-    await db.collection('orders').doc(orderId).update({...mapping,hasProblem:newStatus==='مشكلة'?true:(mapping.hasProblem||false),timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
-    toast('✅ الحالة: '+newStatus,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // الانتقالات الأخرى — generic field update
+  const changes={...mapping,hasProblem:newStatus==='مشكلة'?true:(mapping.hasProblem||false)};
+  const r=await window.orderActions.updateOrderField({db,orderId,changes,timelineAction:`🔄 [أدمن] تغيير الحالة: "${oldStatus}" → "${newStatus}"`,userId:currentUser?.uid||'',userName:userName||'admin'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ الحالة: '+newStatus,'ok');
 };
 
 window.cgridToggleProblem=async function(orderId,newVal){
-  const o=allOrders.find(x=>x._id===orderId);if(!o)return;
-  const tl=[...(o.timeline||[]),{date:nowStr(),action:`⚠️ [أدمن] ${newVal?'تم تعليم مشكلة':'إزالة علامة المشكلة'}`,by:userName||'admin'}];
-  try{
-    await db.collection('orders').doc(orderId).update({hasProblem:newVal,timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
-    toast(newVal?'⚠️ مشكلة مُسجَّلة':'✅ تم إزالة المشكلة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await window.orderActions.updateOrderField({db,orderId,changes:{hasProblem:newVal},timelineAction:`⚠️ [أدمن] ${newVal?'تم تعليم مشكلة':'إزالة علامة المشكلة'}`,userId:currentUser?.uid||'',userName:userName||'admin'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(newVal?'⚠️ مشكلة مُسجَّلة':'✅ تم إزالة المشكلة','ok');
 };
 
 window.cgridBulkAction=async function(action){
