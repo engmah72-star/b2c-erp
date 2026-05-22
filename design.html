@@ -560,32 +560,23 @@ window.calcAdmRemaining=function(){
 
 window.moveStage=async function(stage){
   if(!activeId)return;
-  const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
-  if(!isAdmin)return toast('⛔ القفز بين المراحل متاح للأدمن فقط','err');
   const labels={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن',archived:'أرشيف'};
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(stage===o.stage)return;
-  if(stage==='archived'&&!(o.costItems||[]).length)return toast('⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً','err');
   if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟ (override أدمن)`))return;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      stage,
-      [`stageEnteredAt.${stage}`]:nowStr(),
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage,action:`🔄 [أدمن] نُقل ${labels[o.stage]||o.stage} → ${labels[stage]}`,by:userName,byId:currentUser?.uid||''}],
-      updatedAt:serverTimestamp()
-    });
-    // audit trail لـ admin stage override (يكسر الـ stage gate الطبيعي)
-    addDoc(collection(db,'audit_logs'),{
-      action:'order.admin_stage_override',
-      details:{orderId:activeId,clientName:o.clientName||'',fromStage:o.stage||'',toStage:stage},
-      userId:currentUser?.uid||'',userName:userName||'',
-      userRole:currentRole||'',
-      timestamp:serverTimestamp(),
-      url:location.pathname,
-    }).catch(e=>console.warn('[audit] failed:',e?.code||e?.message));
-    closePanel();
-    toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.moveStage({db,orderId:activeId,targetStage:stage,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+  // audit trail لـ admin override — best effort (logAudit بنفس pattern في صفحات أخرى)
+  addDoc(collection(db,'audit_logs'),{
+    action:'order.admin_stage_override',
+    details:{orderId:activeId,clientName:o.clientName||'',fromStage:o.stage||'',toStage:stage},
+    userId:currentUser?.uid||'',userName:userName||'',
+    userRole:currentRole||'',
+    timestamp:serverTimestamp(),
+    url:location.pathname,
+  }).catch(e=>console.warn('[audit] failed:',e?.code||e?.message));
+  closePanel();
+  toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
 };
 
 window.saveAdminFinance=async function(){
@@ -594,18 +585,16 @@ window.saveAdminFinance=async function(){
   const sale=parseFloat(document.getElementById('adm-sale-price').value)||0;
   const paid=parseFloat(document.getElementById('adm-paid').value)||0;
   const discount=parseFloat(document.getElementById('adm-discount').value)||0;
-  const net=Math.max(0,sale-discount);
-  const remaining=Math.max(0,net-paid);
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      salePrice:sale,totalPaid:paid,
-      discount,remaining,
-      paymentStatus:remaining===0?'paid':paid>0?'partial':'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✏️ تعديل مالي: سعر ${fn(sale)} ج | مدفوع ${fn(paid)} ج | خصم ${fn(discount)} ج`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم التعديل المالي','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const oldPaid=parseFloat(o.totalPaid)||0;
+  if(Math.abs(paid-oldPaid)>0.01){
+    toast('⚠️ تعديل المدفوع يحتاج walletId — استخدم تسجيل دفعة عميل','err');
+    return;
+  }
+  const changes={salePrice:sale,discount};
+  const changesLabel=`✏️ تعديل مالي: سعر ${fn(sale)} ج | خصم ${fn(discount)} ج`;
+  const r=await orderActions.editOrderPayment({db,orderId:activeId,changes,changesLabel,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم التعديل المالي','ok');
 };
 
 // ── تعديل بيانات التصميم (notes) — يسمح لـ CS/Admin/Ops/Designer ──
@@ -644,13 +633,8 @@ window.saveDesignNotes=async function(orderId){
   if(newNotes===(o.notes||'').trim()){toggleEditNotes(orderId,true);return;}
   if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='⏳ جاري...';}
   try{
-    const oldLen=(o.notes||'').length, newLen=newNotes.length;
-    const action=o.notes?`✏️ تعديل بيانات التصميم (${oldLen}→${newLen} حرف)`:`📝 إضافة بيانات التصميم (${newLen} حرف)`;
-    await updateDoc(doc(db,'orders',orderId),{
-      notes:newNotes,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action,by:userName,byId:currentUser?.uid||''}],
-      updatedAt:serverTimestamp(),
-    });
+    const r=await orderActions.updateOrderNotes({db,orderId,notes:newNotes,userId:currentUser?.uid||'',userName});
+    if(!r.ok)throw new Error((r.errors||[]).join(' · '));
     toast('✅ تم حفظ بيانات التصميم','ok');
     // الـ onSnapshot هيعيد رسم البانل، لكن للأمان نقفل وضع التعديل
     toggleEditNotes(orderId,true);
@@ -1497,24 +1481,11 @@ window.saveDesignFile=async function(){
     }catch(e){toast('❌ فشل رفع الصورة: '+e.message,'err');return;}
   }
   if(!finalUrl)return toast('⚠️ ارفع صورة أو أدخل رابط','err');
-  try{
-    const isDesigner=['graphic_designer','design_operator'].includes(currentRole);
-    const wasInWip=o.designStage==='wip';
-    const updates={
-      designFileUrl:finalUrl,designFileNote:gv('design-note'),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'🖼️ رُفعت صورة التصميم النهائي',by:userName}],
-      updatedAt:serverTimestamp()
-    };
-    // المصمم لما يخلّص ويرفع الملف وهو في wip → ينتقل تلقائياً لـ "انتظار التحويل"
-    if(isDesigner&&wasInWip){
-      updates.designStage='awaiting_payment';
-      updates.designFinishedAt=nowStr();
-      updates.timeline.push({date:nowStr(),action:'📤 المصمم خلّص — في انتظار تحويل العميل',by:userName});
-    }
-    await updateDoc(doc(db,'orders',activeId),updates);
-    closeUpload();
-    toast(isDesigner&&wasInWip?'✅ تم رفع التصميم — انتقل للانتظار التحويل':'✅ تم رفع التصميم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const isDesigner=['graphic_designer','design_operator'].includes(currentRole);
+  const r=await orderActions.saveDesignFile({db,orderId:activeId,fileUrl:finalUrl,fileNote:gv('design-note'),autoTransitionFromWip:isDesigner,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeUpload();
+  toast(r.transitioned?'✅ تم رفع التصميم — انتقل للانتظار التحويل':'✅ تم رفع التصميم','ok');
 };
 
 // ── بحث العملاء ──
@@ -1664,86 +1635,51 @@ window.saveOrder=async function(){
   const desSel=document.getElementById('np-des');
   const desOpt=desSel?.options[desSel.selectedIndex];
   const orderId='ORD-'+Date.now().toString().slice(-8);
-  try{
-    // ══ batch ذرّي واحد: order + (wallet + tx + ledger للعربون) ══
-    const batch=writeBatch(db);
-    const orderRef=doc(collection(db,'orders'));
-
-    batch.set(orderRef,{
-      orderId,stage:'design',designStage:'pending',
-      clientId:selClient._id,clientName:selClient.name,clientPhone:selClient.phone,
-      products:prods,product:prods.map(p=>p.name).join(' + '),qty:prods.reduce((s,p)=>s+p.qty,0),
-      deposit:dep,depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
-      totalPaid:dep,remaining:0,salePrice:0,
-      designerId:desOpt?.value||'',designerName:desOpt?.value?desOpt.text:'',
-      designerAssignedAt:desOpt?.value?serverTimestamp():null,
-      designerAssignedBy:desOpt?.value?(currentUser.uid||''):'',
-      designerAcceptedAt:null,designerAcceptedBy:'',
-      deadline:gv('np-dl'),notes:gv('np-notes'),
-      designFileUrl:'',designFileNote:'',
-      costItems:[],printAddons:[],
-      createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdAt:serverTimestamp(),updatedAt:serverTimestamp(),
-      timeline:[{date:nowStr(),action:`🆕 طلب جديد${dep>0?' — عربون '+fn(dep)+' ج عبر '+wName:''}`,by:userName}],
-    });
-
-    if(dep>0&&wId){
-      batch.update(doc(db,'wallets',wId),{balance:increment(dep)});
-      const txRef=doc(collection(db,'transactions_v2'));
-      batch.set(txRef,{
-        walletId:wId,walletName:wName,type:'in',amount:dep,fees:0,
-        description:`عربون تصميم — ${selClient.name} — ${orderId}`,
-        category:'client_payment',
-        orderId:orderRef.id,clientId:selClient._id||'',clientName:selClient.name,
-        date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp(),
-        ...approvalFields()
+  const r=await orderActions.createOrder({
+    db,orderId,stage:'design',
+    clientId:selClient._id,clientName:selClient.name,clientPhone:selClient.phone,
+    products:prods,salePrice:0,deposit:dep,
+    walletId:dep>0?wId:'',walletName:dep>0?wName:'',
+    designerId:desOpt?.value||'',designerName:desOpt?.value?desOpt.text:'',
+    deadline:gv('np-dl'),notes:gv('np-notes'),
+    userId:currentUser.uid,userName,
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeNewOrder();
+  // رفع الملف المرجعي لو موجود — يحدّث الـ doc عبر setRefFileUrl
+  if(window.__refFile){
+    const ov=document.getElementById('upload-overlay');
+    const bar=document.getElementById('upl-bar');
+    const pct=document.getElementById('upl-pct');
+    const fn2=document.getElementById('upl-filename');
+    fn2.textContent=window.__refFile.name||'جاري الرفع...';
+    ov.style.display='flex';
+    try{
+      const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+      const storage2=getStorage();
+      const sRefPath=sRef(storage2,`design-refs/${r.orderDocId}_${Date.now()}`);
+      const task=uploadBytesResumable(sRefPath,window.__refFile);
+      await new Promise((res,rej)=>{
+        task.on('state_changed',
+          s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);bar.style.width=p+'%';pct.textContent=p+'%';},
+          rej,
+          async()=>{
+            const url=await getDownloadURL(task.snapshot.ref);
+            await orderActions.setRefFileUrl({db,orderId:r.orderDocId,url,mimeType:window.__refFile.type});
+            window.__refFile=null;res();
+          }
+        );
       });
-      addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
-        amount:dep,walletId:wId,walletName:wName,
-        orderId:orderRef.id,clientId:selClient._id||'',clientName:selClient.name||'',
-        notes:`عربون تصميم — ${selClient.name} — ${orderId}`,
-        userId:currentUser.uid,userName,
-      });
+      ov.style.display='none';
+      toast('✅ تم إنشاء الطلب ورفع الملف','ok');
+    }catch(e){
+      ov.style.display='none';
+      console.warn('ref upload:',e.message);
+      toast('✅ تم إنشاء الطلب (الملف لم يُرفع)','ok');
     }
-
-    await batch.commit();
-    closeNewOrder();
-
-    // رفع الملف المرجعي لو موجود
-    if(window.__refFile){
-      const ov=document.getElementById('upload-overlay');
-      const bar=document.getElementById('upl-bar');
-      const pct=document.getElementById('upl-pct');
-      const fn2=document.getElementById('upl-filename');
-      fn2.textContent=window.__refFile.name||'جاري الرفع...';
-      ov.style.display='flex';
-      try{
-        const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
-        const storage=getStorage();
-        const sRefPath=sRef(storage,`design-refs/${orderRef.id}_${Date.now()}`);
-        const task=uploadBytesResumable(sRefPath,window.__refFile);
-        await new Promise((res,rej)=>{
-          task.on('state_changed',
-            s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);bar.style.width=p+'%';pct.textContent=p+'%';},
-            rej,
-            async()=>{
-              const url=await getDownloadURL(task.snapshot.ref);
-              await updateDoc(doc(db,'orders',orderRef.id),{refFileUrl:url,refFileType:window.__refFile.type});
-              window.__refFile=null;res();
-            }
-          );
-        });
-        ov.style.display='none';
-        toast('✅ تم إنشاء الطلب ورفع الملف','ok');
-      }catch(e){
-        ov.style.display='none';
-        console.warn('ref upload:',e.message);
-        toast('✅ تم إنشاء الطلب (الملف لم يُرفع)','ok');
-      }
-    } else {
-      toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
+  } else {
+    toast('✅ تم إنشاء الطلب'+(dep>0?' مع تسجيل العربون':''),'ok');
+  }
 };
 
 // ══ تعيين المصمم من الـ Panel ══
@@ -1818,61 +1754,23 @@ window.saveAssignDesigner=async function(){
   const sel=document.getElementById('assign-des-sel');
   const desId=sel?.value||'';
   const desName=sel?.options[sel.selectedIndex]?.dataset?.name||sel?.options[sel.selectedIndex]?.text||'';
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  try{
-    const updates={
-      designerId:desId,
-      designerName:desId?desName:'',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:desId?`👤 تم تعيين المصمم: ${desName} — بانتظار تأكيد الاستلام`:'👤 إلغاء تعيين المصمم',by:userName}],
-      updatedAt:serverTimestamp()
-    };
-    if(desId){
-      updates.designerAssignedAt=serverTimestamp();
-      updates.designerAssignedBy=auth.currentUser?.uid||'';
-      updates.designerAcceptedAt=null;
-      updates.designerAcceptedBy='';
-    }else{
-      updates.designerAssignedAt=null;
-      updates.designerAssignedBy='';
-      updates.designerAcceptedAt=null;
-      updates.designerAcceptedBy='';
-    }
-    await updateDoc(doc(db,'orders',activeId),updates);
-    cM('assign-des');
-    toast(desId?`✅ تم تعيين ${desName} — بانتظار تأكيده`:'✅ تم إلغاء التعيين','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.assignDesigner({db,orderId:activeId,designerId:desId,designerName:desName,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('assign-des');
+  toast(desId?`✅ تم تعيين ${desName} — بانتظار تأكيده`:'✅ تم إلغاء التعيين','ok');
 };
 
 window.startWork=async function(id){
-  const o=orders.find(x=>x._id===id);if(!o)return;
-  if(o.designerId&&!o.designerAcceptedAt){
-    return toast('⚠️ أكّد استلام الأوردر أولاً','err');
-  }
-  try{
-    await updateDoc(doc(db,'orders',id),{
-      designStage:'wip',designStartedAt:nowStr(),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'▶ بدأ المصمم العمل',by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ بدأ العمل','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.startDesignWork({db,orderId:id,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ بدأ العمل','ok');
 };
 
 window.acceptOrder=async function(id){
-  const o=orders.find(x=>x._id===id);if(!o)return;
   const uid=auth.currentUser?.uid||'';
-  if(!o.designerId){return toast('⚠️ الأوردر غير مكلّف','err');}
-  if(o.designerId!==uid){return toast('⚠️ الأوردر غير مُعيَّن لك','err');}
-  if(o.designerAcceptedAt){return toast('ℹ️ تم تأكيد الاستلام مسبقاً','');}
-  try{
-    await updateDoc(doc(db,'orders',id),{
-      designerAcceptedAt:serverTimestamp(),
-      designerAcceptedBy:uid,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`✓ المصمم أكّد استلام الأوردر`,by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم تأكيد الاستلام — يمكنك بدء العمل','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.acceptDesignAssignment({db,orderId:id,userId:uid,userName});
+  if(!r.ok)return toast(((r.errors||[])[0]||'').startsWith('ℹ️')?(r.errors[0]):'❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم تأكيد الاستلام — يمكنك بدء العمل','ok');
 };
 
 // فتح modal فصل الأوردر
@@ -1900,70 +1798,39 @@ window.openSplitOrder=function(){
 
 window.confirmSplitOrder=async function(){
   if(!activeId)return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
   const checks=document.querySelectorAll('.split-prod-chk:checked');
   const indices=[...checks].map(c=>parseInt(c.dataset.idx));
   if(!indices.length)return toast('⚠️ اختر منتجاً واحداً على الأقل','err');
-  const split=buildOrderSplit({
-    order:o, productIndices:indices, role:currentRole,
-    userId:currentUser?.uid||'', userName,
-    targetStage:'printing'
-  });
-  if(!split.ok)return toast('⛔ '+split.errors.join(' · '),'err');
-  if(!confirm(`فصل ${split.splitCount} منتجات في أوردر فرعي ينتقل للطباعة؟`))return;
-  try{
-    const batch=writeBatch(db);
-    // 1) إنشاء الأوردر الفرعي
-    const childRef=doc(collection(db,'orders'));
-    batch.set(childRef,{
-      ...split.childOrderData,
-      parentOrderId:activeId,
-      createdAt:serverTimestamp(),
-      updatedAt:serverTimestamp(),
-    });
-    // 2) تحديث الأوردر الأصلي
-    batch.update(doc(db,'orders',activeId),{
-      ...split.parentUpdate.fields,
-      childOrderIds:[...(o.childOrderIds||[]),childRef.id],
-      timeline:[...(o.timeline||[]),{...split.parentUpdate.timelineEntry,childOrderId:childRef.id}],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
-    document.getElementById('ov-split-order').classList.remove('open');
-    toast(`✅ تم فصل ${split.splitCount} منتجات في أوردر فرعي`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // pre-flight via buildOrderSplit (read-only) للتأكيد قبل العمل الفعلي
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const preview=buildOrderSplit({order:o,productIndices:indices,role:currentRole,userId:currentUser?.uid||'',userName,targetStage:'printing'});
+  if(!preview.ok)return toast('⛔ '+(preview.errors||[]).join(' · '),'err');
+  if(!confirm(`فصل ${preview.splitCount} منتجات في أوردر فرعي ينتقل للطباعة؟`))return;
+  const r=await orderActions.splitDesignOrder({db,orderId:activeId,indices,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-split-order').classList.remove('open');
+  toast(`✅ تم فصل ${r.splitCount} منتجات في أوردر فرعي`,'ok');
 };
 
 // تحديث حالة منتج واحد داخل الأوردر
 window.setProductStatus=async function(idx,status){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const prods=[...(o.products||[])];
-  if(idx<0||idx>=prods.length)return;
-  const oldStatus=prods[idx].productStatus||'pending';
-  if(oldStatus===status)return;
-  prods[idx]={...prods[idx],productStatus:status,statusUpdatedAt:nowStr(),statusUpdatedBy:userName};
+  const prodName=(o.products||[])[idx]?.name||'';
   const sLbl=({pending:'في الانتظار',in_progress:'جاري',ready:'جاهز للطباعة',on_hold:'مؤجَّل',printed:'مطبوع',done:'منتهي'})[status]||status;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      products:prods,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📦 ${prods[idx].name}: ${sLbl}`,by:userName,byId:currentUser?.uid||''}],
-      updatedAt:serverTimestamp()
-    });
-    toast(`✅ ${prods[idx].name}: ${sLbl}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setProductCatalogStatus({db,orderId:activeId,prodIdx:idx,status,userId:currentUser?.uid||'',userName});
+  if(!r.ok){
+    // اللي معاهم "نفس الحالة" يخرجوا بدون toast
+    if(((r.errors||[])[0]||'')==='⚠️ نفس الحالة')return;
+    return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  }
+  toast(`✅ ${prodName}: ${sLbl}`,'ok');
 };
 
 window.pauseWork=async function(id){
-  const o=orders.find(x=>x._id===id);if(!o)return;
-  try{
-    await updateDoc(doc(db,'orders',id),{
-      designStage:'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'⏸ إيقاف مؤقت للتصميم',by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الإيقاف المؤقت','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setDesignStage({db,orderId:id,stage:'pending',isPause:true,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الإيقاف المؤقت','ok');
 };
 
 window.finishWork=function(id){
@@ -1972,9 +1839,10 @@ window.finishWork=function(id){
 };
 
 window.setDS=async function(stage){
-  if(!activeId)return;const o=orders.find(x=>x._id===activeId);
-  const lbl={pending:'في الانتظار',wip:'جاري التصميم',awaiting_payment:'انتظار التحويل',rejected:'مرفوض'}[stage]||stage;
-  try{await updateDoc(doc(db,'orders',activeId),{designStage:stage,timeline:[...(o.timeline||[]),{date:nowStr(),action:`🔄 ${lbl}`,by:userName}],updatedAt:serverTimestamp()});toast('✅ تم','ok');}catch(e){toast('❌ '+e.message,'err');}
+  if(!activeId)return;
+  const r=await orderActions.setDesignStage({db,orderId:activeId,stage,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم','ok');
 };
 
 window.approveOrder=function(){
@@ -2016,29 +1884,22 @@ window.confirmApproveWithPrinter=async function(){
   const isAdmin=currentRole==='admin'||currentRole==='operation_manager';
   if(!isAdmin)return toast('⛔ '+r.errors.join(' · '),'err');
   if(!confirm('⚠️ '+r.errors.join(' · ')+'\nاعتماد بدون استيفاء الشروط؟ (override أدمن)'))return;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      stage:'printing',designStage:'approved',approvedAt:nowStr(),approvedBy:userName,
-      ...(printerId?{printerId,printerName}:{}),
-      timeline:[...(o.timeline||[]),{
-        date:nowStr(),stage:'printing',
-        action:'⚠️ اعتُمد التصميم بـ admin override — '+r.errors.join(' · '),
-        by:userName,byId:currentUser?.uid||'',
-        override:true,overrideReason:r.errors.join(' · '),
-      }],
-      updatedAt:serverTimestamp()
-    });
-    document.getElementById('ov-pick-printer').classList.remove('open');
-    closePanel();toast('⚠️ اعتُمد (admin override) — انتقل للطباعة 🖨️','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const overrideReason=r.errors.join(' · ');
+  const or=await orderActions.adminOverrideToPrinting({db,orderId:activeId,printerId,printerName,overrideReason,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!or.ok)return toast('❌ '+(or.errors||[]).join(' · '),'err');
+  document.getElementById('ov-pick-printer').classList.remove('open');
+  closePanel();
+  toast('⚠️ اعتُمد (admin override) — انتقل للطباعة 🖨️','ok');
 };
 
 window.openReject=()=>{sv('reject-reason','');document.getElementById('ov-reject').classList.add('open');};
 window.closeReject=()=>document.getElementById('ov-reject').classList.remove('open');
 window.confirmReject=async function(){
   const reason=gv('reject-reason');if(!reason.trim())return toast('⚠️ أدخل السبب','err');
-  const o=orders.find(x=>x._id===activeId);
-  try{await updateDoc(doc(db,'orders',activeId),{designStage:'rejected',rejectReason:reason,timeline:[...(o.timeline||[]),{date:nowStr(),action:'✕ رُفض: '+reason,by:userName}],updatedAt:serverTimestamp()});closeReject();closePanel();toast('تم تسجيل الرفض','ok');}catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setDesignStage({db,orderId:activeId,stage:'rejected',rejectReason:reason,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeReject();closePanel();
+  toast('تم تسجيل الرفض','ok');
 };
 
 // ══ تسجيل تحويل العميل من كرت "انتظار التحويل" — CS فقط ══
@@ -2071,43 +1932,15 @@ window.confirmRecordPayment=async function(){
   const wEl=document.getElementById('pay-wallet');
   const wName=wId?(wEl.options[wEl.selectedIndex]?.text||''):'';
   const note=gv('pay-note').trim();
-  // RULE V1.5: validation مُمَركَزة عبر validatePayment
-  const v=validatePayment({order:o,amount:amt,source:'customer',role:currentRole});
-  if(!v.ok)return toast('⛔ '+v.errors[0],'err');
   if(!wId)return toast('⚠️ اختر المحفظة','err');
+  const r=await orderActions.recordPayment({db,orderId:id,amount:amt,walletId:wId,walletName:wName,role:currentRole,userId:currentUser.uid,userName,source:'customer',note:`تحويل عميل (انتظار التحويل) — ${o.orderId||id.slice(-6)}${note?` — ${note}`:''}`});
+  if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+  // re-compute remaining locally للـ toast
   const sale=parseFloat(o.salePrice)||0;
-  const paid=parseFloat(o.totalPaid)||0;
-  const newPaid=paid+amt;
+  const newPaid=(parseFloat(o.totalPaid)||0)+amt;
   const newRem=Math.max(0,sale-newPaid);
-  const newPayStatus=newRem<=0?'paid':'partial';
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',id),{
-      totalPaid:newPaid,remaining:newRem,paymentStatus:newPayStatus,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💸 [CS] تحويل عميل ${fn(amt)} ج عبر ${wName}${note?` — ${note}`:''}`,by:userName}],
-      updatedAt:serverTimestamp(),
-      ...(newPayStatus==='paid'?{paidAt:serverTimestamp()}:{})
-    });
-    batch.update(doc(db,'wallets',wId),{balance:increment(amt)});
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      walletId:wId,walletName:wName,type:'in',amount:amt,fees:0,
-      description:`تحويل عميل — ${o.clientName||'—'} — ${o.orderId||id.slice(-6)}${note?` — ${note}`:''}`,
-      category:'client_payment',
-      orderId:id,clientId:o.clientId||'',clientName:o.clientName||'',
-      date:nowStr(),createdBy:currentUser.uid,createdByName:userName,createdAt:serverTimestamp(),
-      ...approvalFields()
-    });
-    addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
-      amount:amt,walletId:wId,walletName:wName,
-      orderId:id,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`تحويل عميل (انتظار التحويل) — ${o.orderId||id.slice(-6)}${note?` — ${note}`:''}`,
-      userId:currentUser.uid,userName,
-    });
-    await batch.commit();
-    closePay();
-    toast(newRem<=0?'✅ تم السداد بالكامل — جاهز للاعتماد':`✅ تم تسجيل ${fn(amt)} ج — متبقي ${fn(newRem)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  closePay();
+  toast(newRem<=0?'✅ تم السداد بالكامل — جاهز للاعتماد':`✅ تم تسجيل ${fn(amt)} ج — متبقي ${fn(newRem)} ج`,'ok');
 };
 
 // ══ اعتماد سريع من الكرت (لما الباقي = 0) — يفتح modal اختيار الطابع ══
@@ -2124,16 +1957,10 @@ window.approveFromCard=function(id){
 // ══ إعادة للمصمم (من awaiting_payment إلى wip) — للأدمن/Ops ══
 window.sendBackToWip=async function(id){
   if(!['admin','operation_manager'].includes(currentRole))return toast('⛔ صلاحية أدمن فقط','err');
-  const o=orders.find(x=>x._id===id);if(!o)return;
   if(!confirm('إعادة الأوردر للمصمم لتعديل التصميم؟'))return;
-  try{
-    await updateDoc(doc(db,'orders',id),{
-      designStage:'wip',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:'↩ أُعيد للمصمم لتعديل التصميم',by:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الإرجاع للمصمم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setDesignStage({db,orderId:id,stage:'wip',isReturnToWip:true,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الإرجاع للمصمم','ok');
 };
 </script>
 
