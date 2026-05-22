@@ -423,6 +423,7 @@ import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, s
 import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { clientActions } from "./client-actions.js";
+import { masterListsActions } from "./master-lists-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
@@ -966,15 +967,13 @@ async function saveBriefTemplate(orderId, idx, name){
     createdByName: userName || '',
   };
   try{
+    // pre-fetch existing items للـ merge (caller builds the new array)
     const ref = doc(db,'master_lists','print_brief_templates');
     const snap = await getDoc(ref);
     const items = snap.exists() ? (snap.data().items || []) : [];
     items.push(tpl);
-    if(snap.exists()){
-      await updateDoc(ref, {items, updatedAt: serverTimestamp()});
-    }else{
-      await setDoc(ref, {items, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
-    }
+    const r=await masterListsActions.savePrintBriefTemplates({db,items});
+    if(!r.ok)throw new Error((r.errors||[])[0]||'فشل الحفظ');
     toast(`💾 حُفظ القالب "${name}"`,'ok');
   }catch(e){
     if((e?.message||'').toLowerCase().includes('permission')){

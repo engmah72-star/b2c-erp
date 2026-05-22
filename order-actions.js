@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment }
+import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, addDoc }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -1232,10 +1232,11 @@ export const orderActions = {
     }
     const labels = { design: 'تصميم', printing: 'طباعة', production: 'تنفيذ', shipping: 'شحن', archived: 'أرشيف' };
     try {
+      const fromStage = order.stage;
       const entry = auditEntry({
-        action: `🔄 [أدمن] نُقل ${labels[order.stage] || order.stage} → ${labels[targetStage] || targetStage}`,
+        action: `🔄 [أدمن] نُقل ${labels[fromStage] || fromStage} → ${labels[targetStage] || targetStage}`,
         userId, userName, kind: 'op',
-        meta: { fromStage: order.stage, toStage: targetStage },
+        meta: { fromStage, toStage: targetStage },
       });
       entry.stage = targetStage;
       await updateDoc(order._ref, {
@@ -1243,7 +1244,23 @@ export const orderActions = {
         timeline: [...(order.timeline || []), entry],
         updatedAt: serverTimestamp(),
       });
-      return { ok: true, errors: [], warnings: [], orderId, action: 'move_stage', from: order.stage, to: targetStage };
+      // Cross-page admin override audit log (best-effort, doesn't block).
+      // Centralized here so every moveStage caller benefits (archive.html
+      // restoreOrder / production.html moveStage / design.html moveStage).
+      addDoc(collection(db, 'audit_logs'), {
+        action: fromStage === 'archived' ? 'order.restore_from_archive' : 'order.admin_stage_override',
+        details: {
+          orderId,
+          clientName: order.clientName || '',
+          fromStage: fromStage || '',
+          toStage: targetStage,
+        },
+        userId, userName: userName || '',
+        userRole: role || '',
+        timestamp: serverTimestamp(),
+        source: 'orderActions.moveStage',
+      }).catch(e => console.warn('[audit] moveStage log failed:', e?.code || e?.message));
+      return { ok: true, errors: [], warnings: [], orderId, action: 'move_stage', from: fromStage, to: targetStage };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل النقل'], warnings: [], orderId };
     }
