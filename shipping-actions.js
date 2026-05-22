@@ -80,6 +80,14 @@ export const shippingActions = {
     note = '',
     role, userId, userName,
   }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    // PR-7-salvage G1: idempotency — dispatch may issue SHIPPING_EXPENSE
+    return withIdempotency(db, {
+      actionType: 'dispatch_order',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { companyId, method, cost: Number(cost) || 0, walletId },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -117,6 +125,7 @@ export const shippingActions = {
           userId: userId || '', userName: userName || '',
           date: new Date().toLocaleDateString('ar-EG'),
           orderUpdate: { orderId, fields: orderFields },
+          operationId, // PR-7-salvage R2 forensic linkage
         });
       } else {
         // No expense — single update
@@ -130,6 +139,7 @@ export const shippingActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التسليم'], warnings: [], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
