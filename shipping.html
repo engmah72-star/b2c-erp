@@ -2179,6 +2179,9 @@ window.openCollect = (orderId) => {
   $('m-collect').classList.add('on');
 };
 
+// PR-4B — Thin orchestration. صفر financial math داخل الصفحة.
+// walletMode → orderActions.collectFromCustomer (FSE CUSTOMER_PAYMENT)
+// company-marker → orderActions.markUnderCollection (لا حركة محفظة)
 async function confirmCollect() {
   if (!pendingOrder) return;
   const o = pendingOrder;
@@ -2186,110 +2189,79 @@ async function confirmCollect() {
   const note = $('m-collect-note').value.trim();
   const walletMode = o.shipMethod === 'pickup' || o.shipMethod === 'courier' || o.shipMethod === 'internal';
   const btn = $('btn-collect-confirm');
+  const orderLabel = `#${o?.orderNumber || o?._id?.slice(0,6) || ''}`;
 
-  if (walletMode) {
-    // ── Quick-collect (pickup/courier/internal): wallet-crediting flow.
-    // Mirrors shipping-followup.html saveCollectFl exactly to keep behavior unified.
-    const wId = $('m-collect-wallet').value;
-    const w = wallets.find(x => x._id === wId);
-    const rem = safeNum(o.remaining);
-    // RULE V1.3 — central validator (orders.js)
-    const v = validateCollect({ order: o, amount, walletId: wId, remaining: rem, role: myRole });
-    if (!v.ok) { toast(v.errors[0], 'err'); return; }
-    if (!w) { toast('❌ المحفظة غير موجودة', 'err'); return; }
-
-    btn.disabled = true; btn.textContent = '⏳ جارٍ...';
-    try {
-      const bb = safeNum(w.balance);
-      const oldPaid = safeNum(o.totalPaid);
-      const newPaid = oldPaid + amount;
-      const sale = safeNum(o.salePrice);
-      const cust = safeNum(o.customerShipFee);
-      const disc = safeNum(o.discount);
-      const totalDue = Math.max(0, sale + cust - disc);
-      const newRem = Math.max(0, totalDue - newPaid);
-      const curSS = o.shipStage || 'ready';
-      const autoCollected = newRem <= 0 && curSS === 'wait_collection';
-      const tsLabel = new Date().toLocaleDateString('ar-EG') + ' ' + new Date().toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' });
-      const userDisplay = $('nav-name').textContent || '';
-
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'wallets', wId), { balance: increment(amount) });
-      const colRef = doc(collection(db, 'transactions_v2'));
-      batch.set(colRef, {
-        walletId: wId, walletName: w.name || '', type: 'in', amount,
-        description: `تحصيل شحن — ${o.clientName||''} — ${o.orderNumber||''}`,
-        category: 'collection', orderId: o._id, clientName: o.clientName||'',
-        balanceBefore: bb, balanceAfter: bb + amount,
-        date: tsLabel, createdBy: me?.uid || '', createdByName: userDisplay,
-        createdAt: serverTimestamp(),
-        ...approvalFields(),
-      });
-      batch.update(doc(db, 'orders', o._id), {
-        totalPaid: newPaid, remaining: newRem,
-        paymentStatus: newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
-        ...(autoCollected ? { shipStage: 'collected', shipCollectedAt: serverTimestamp() } : {}),
-        ...(note ? { shipCollectNote: note } : {}),
-        timeline: [...(o.timeline||[]), {
-          date: tsLabel,
-          action: `💰 تحصيل ${fmt(amount)} ج عبر ${w.name||''}${autoCollected ? ' — ✅ محصّل بالكامل' : ''}`,
-          by: userDisplay,
-        }],
-        updatedAt: serverTimestamp(),
-      });
-      addLedgerToBatch(batch, db, FE.CUSTOMER_PAYMENT, {
-        amount, walletId: wId, walletName: w.name || '',
-        orderId: o._id, clientId: o.clientId||'', clientName: o.clientName||'',
-        notes: `تحصيل شحن — ${o.clientName||''} — ${o.orderNumber||''}`,
-        userId: me?.uid || '', userName: userDisplay,
-      });
-      await batch.commit();
-      localStorage.setItem('b2c_lastWalletId', wId);
-      toast('✅ تم التحصيل ودخل المحفظة');
-      clearOpError();
-      recordOp('ok', `تحصيل ${fmt(amount)} ج · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
-      closeModal('m-collect');
-    } catch (e) {
-      console.error(e);
-      const msg = e.message || 'خطأ في التحصيل';
-      toast('❌ ' + msg, 'err');
-      showOpError(`فشل التحصيل (${fmt(amount)} ج) للطلب #${o?.orderNumber || o?._id?.slice(0,6) || ''}: ${msg}`, () => confirmCollect());
-      recordOp('err', `تحصيل #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
-    } finally {
-      btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
-    }
-    return;
-  }
-
-  // ── Company-marker flow: mark shipCollected, no wallet impact.
-  // The actual wallet entry happens later via SHIPPING_SETTLEMENT.
-  // RULE V1.3 — central validator (orders.js, Step 1.2)
-  // Settle-Fix #5: pass remaining as expectedFromCustomer so the validator
-  // can warn on drift (amount far from what the customer actually owes).
-  const expectedFromCustomer = safeNum(o.remaining);
-  const cv = validateCompanyCollect({ order: o, amount, expectedFromCustomer, role: myRole });
-  if (!cv.ok) { toast(cv.errors[0], 'err'); return; }
-  // Warnings → ask the operator to confirm before writing
-  if (cv.warnings.length && !confirm(cv.warnings.join('\n\n') + '\n\nالمتابعة؟')) return;
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+
   try {
-    await updateDoc(doc(db, 'orders', o._id), {
-      shipCollected: amount,
-      shipCollectedAt: serverTimestamp(),
-      shipStage: 'collected',
-      shipCollectNote: note || '',
-      updatedAt: serverTimestamp(),
+    if (walletMode) {
+      const wId = $('m-collect-wallet').value;
+      const w = wId ? wallets.find(x => x._id === wId) : null;
+      const r = await orderActions.collectFromCustomer({
+        db,
+        orderId: o._id,
+        amount,
+        walletId: wId,
+        walletName: w?.name || '',
+        role: myRole,
+        userId: me?.uid || '',
+        userName: $('nav-name').textContent || '',
+        note,
+      });
+      if (!r.ok) {
+        console.warn('[SHIPPING_ACTION] collectFromCustomer failed', r);
+        const msg = (r.errors || ['خطأ في التحصيل'])[0];
+        toast('❌ ' + msg, 'err');
+        showOpError(`فشل التحصيل (${fmt(amount)} ج) للطلب ${orderLabel}: ${msg}`, () => confirmCollect());
+        recordOp('err', `تحصيل ${orderLabel}`);
+        return;
+      }
+      if (wId) localStorage.setItem('b2c_lastWalletId', wId);
+      toast(r.fullyCollected ? '✅ تم التحصيل بالكامل — دخل المحفظة' : '✅ تم التحصيل الجزئي');
+      clearOpError();
+      recordOp('ok', `تحصيل ${fmt(amount)} ج · ${orderLabel}`);
+      closeModal('m-collect');
+      return;
+    }
+
+    // Company-marker flow — لا حركة محفظة هنا. التسوية لاحقاً عبر shipping-accounts.
+    // warnings من validateCompanyCollect تظهر للمستخدم قبل الكتابة (المنطق داخل الـ action،
+    // لكن needsConfirmation pattern غير مُفعَّل هنا — حافظنا على confirm() البسيط).
+    const expectedFromCustomer = safeNum(o.remaining);
+    const cv = validateCompanyCollect({ order: o, amount, expectedFromCustomer, role: myRole });
+    if (!cv.ok) {
+      toast(cv.errors[0], 'err');
+      return;
+    }
+    if (cv.warnings.length && !confirm(cv.warnings.join('\n\n') + '\n\nالمتابعة؟')) return;
+
+    const r = await orderActions.markUnderCollection({
+      db,
+      orderId: o._id,
+      amount,
+      role: myRole,
+      userId: me?.uid || '',
+      userName: $('nav-name').textContent || '',
+      note,
     });
+    if (!r.ok) {
+      console.warn('[SHIPPING_ACTION] markUnderCollection failed', r);
+      const msg = (r.errors || ['خطأ في تأكيد التحصيل'])[0];
+      toast('❌ ' + msg, 'err');
+      showOpError(`فشل تأكيد التحصيل للطلب ${orderLabel}: ${msg}`, () => confirmCollect());
+      recordOp('err', `تحصيل (شركة) · ${orderLabel}`);
+      return;
+    }
     toast('✅ تم تأكيد التحصيل — بانتظار التسوية');
     clearOpError();
-    recordOp('ok', `تحصيل (شركة) · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
+    recordOp('ok', `تحصيل (شركة) · ${orderLabel}`);
     closeModal('m-collect');
   } catch (e) {
-    console.error(e);
-    const msg = e.message || 'خطأ في تأكيد التحصيل';
+    console.warn('[SHIPPING_ACTION] confirmCollect exception', e);
+    const msg = e.message || 'خطأ في التحصيل';
     toast('❌ ' + msg, 'err');
-    showOpError(`فشل تأكيد التحصيل للطلب #${o?.orderNumber || o?._id?.slice(0,6) || ''}: ${msg}`, () => confirmCollect());
-    recordOp('err', `تحصيل (شركة) · #${o?.orderNumber || o?._id?.slice(0,6) || ''}`);
+    showOpError(`فشل التحصيل للطلب ${orderLabel}: ${msg}`, () => confirmCollect());
+    recordOp('err', `تحصيل ${orderLabel}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تأكيد التحصيل';
   }
