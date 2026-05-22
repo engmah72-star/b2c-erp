@@ -803,6 +803,14 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     ...extraFields,
   };
 
+  // B1 (Phase 2): تهيئة shipStage عند الدخول لـ shipping (يسد فجوة G1).
+  // الأوردر كان يدخل shipping بـ shipStage=null، فالـ UI يضطر لقراءة دفاعية
+  // (o.shipStage || 'ready'). نكتب القيمة الافتراضية مرة واحدة هنا.
+  // idempotent: لا نكتب فوق قيمة موجودة أو قيمة مرسلة في extraFields.
+  if (target === 'shipping' && !order.shipStage && !('shipStage' in extraFields)) {
+    fields.shipStage = SHIP_STAGES.READY;
+  }
+
   // ـ سطر timeline يوضح الانتقال + المستلم لو معيَّن ـ
   const handoffSuffix = nextAssigneeName ? ` — تسليم إلى ${nextAssigneeName}` : '';
   const timelineEntry = {
