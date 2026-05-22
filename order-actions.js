@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, writeBatch, serverTimestamp, collection, increment }
+import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -335,6 +335,169 @@ export const orderActions = {
    *
    * @param {string} args.source — 'shipping'|'production'|'bulk_admin'|'status_change'|'manual'
    */
+
+  /**
+   * تعديل حقول الأوردر (مع side-effect مالي لو totalPaid تغيّر).
+   *
+   * Use cases:
+   *   - cgridSaveFinancial — single field edit (salePrice/totalPaid/discount)
+   *   - cgridSaveRowEdit   — multi-field edit (name/business/sale/paid/assignee)
+   *
+   * إذا تغيّر totalPaid:
+   *   - يفتح batch ذرّي يكتب: order + wallets (increment delta) +
+   *     transactions_v2 (admin_edit) + financial_ledger (CUSTOMER_PAYMENT
+   *     أو CUSTOMER_REFUND حسب إشارة الـ delta)
+   *   - يحتاج walletId — لو ما فيش، يرفض
+   *
+   * إذا totalPaid لم يتغيّر:
+   *   - updateDoc بسيط للحقول
+   *
+   * Locked-tx warning: الـ caller (clients.html) يفحص قبل النداء.
+   * editReason يُمرَّر من الـ caller لو موجود، يُسجَّل في ledger + timeline.
+   *
+   * @param {string} args.changesLabel  — human-readable text للـ timeline
+   *                                       (caller يبني الـ format)
+   */
+  async editOrderPayment({
+    db = defaultDb,
+    orderId,
+    changes = {},          // { salePrice?, totalPaid?, discount?, customerShipFee?, clientName?, clientBusiness?, assignedTo?, csName? }
+    walletId = '',
+    walletName = '',
+    changesLabel = '',
+    editReason = '',
+    userId, userName,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!changes || typeof changes !== 'object' || !Object.keys(changes).length) {
+      return { ok: false, errors: ['⚠️ لا توجد تغييرات'], warnings: [] };
+    }
+
+    // Idempotency fingerprint covers the changes signature
+    const changesHash = Object.keys(changes).sort().map(k => `${k}:${changes[k]}`).join('|');
+    return withIdempotency(db, {
+      actionType: 'edit_order_payment',
+      entityId: orderId,
+      actorId: userId,
+      payload: { changesHash, walletId },
+    }, async (operationId) => {
+
+      const order = await _loadOrder(db, orderId);
+      if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId, operationId };
+
+      // Resolve old vs new for the 4 financial fields
+      const oldSale  = parseFloat(order.salePrice)        || 0;
+      const oldPaid  = parseFloat(order.totalPaid) || parseFloat(order.paid) || parseFloat(order.deposit) || 0;
+      const oldDisc  = parseFloat(order.discount)         || 0;
+      const oldCFee  = parseFloat(order.customerShipFee)  || 0;
+
+      const newSale  = changes.salePrice        != null ? (parseFloat(changes.salePrice)        || 0) : oldSale;
+      const newPaid  = changes.totalPaid        != null ? (parseFloat(changes.totalPaid)        || 0) : oldPaid;
+      const newDisc  = changes.discount         != null ? (parseFloat(changes.discount)         || 0) : oldDisc;
+      const newCFee  = changes.customerShipFee  != null ? (parseFloat(changes.customerShipFee)  || 0) : oldCFee;
+
+      const newRem        = Math.max(0, newSale + newCFee - newDisc - newPaid);
+      const newPayStatus  = newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
+      const paidDiff      = newPaid - oldPaid;
+
+      if (Math.abs(paidDiff) > 0.01 && !walletId) {
+        return {
+          ok: false,
+          errors: ['⚠️ تغيير totalPaid يحتاج walletId للـ wallet sync'],
+          warnings: [], orderId, operationId,
+        };
+      }
+
+      // Timeline entry — universal audit (H3)
+      const tlAction = changesLabel || (editReason
+        ? `💰 [أدمن] تعديل أوردر · سبب: ${editReason}`
+        : '💰 [أدمن] تعديل أوردر');
+      const tlEntry = auditEntry({
+        action: tlAction,
+        userId, userName,
+        kind: editReason ? 'edit' : 'edit',
+        meta: {
+          changedFields: Object.keys(changes),
+          paidDiff: Math.round(paidDiff * 100) / 100,
+          editReason: editReason || null,
+        },
+      });
+
+      const orderUpdates = {
+        ...changes,
+        remaining: newRem,
+        paymentStatus: newPayStatus,
+        timeline: [...(order.timeline || []), tlEntry],
+        updatedAt: serverTimestamp(),
+        ...(newPayStatus === 'paid' ? { paidAt: serverTimestamp() } : {}),
+      };
+
+      try {
+        if (Math.abs(paidDiff) > 0.01 && walletId) {
+          // Financial path — atomic batch with wallet/tx/ledger
+          const batch = writeBatch(db);
+          batch.update(order._ref, orderUpdates);
+          batch.update(doc(db, 'wallets', walletId), {
+            balance: increment(paidDiff),
+          });
+          const isIn = paidDiff > 0;
+          batch.set(doc(collection(db, 'transactions_v2')), {
+            walletId, walletName,
+            type: isIn ? 'in' : 'out',
+            amount: Math.abs(paidDiff),
+            description: `تعديل أدمن — ${isIn ? 'دفعة' : 'استرداد'} — ${order.clientName || ''}`,
+            category: 'admin_edit',
+            orderId,
+            clientName: order.clientName || '',
+            date: new Date().toLocaleDateString('ar-EG'),
+            createdAt: serverTimestamp(),
+            createdBy: userId, createdByName: userName || 'admin',
+            approvalStatus: 'pending',
+            confirmedBy: '', confirmedByName: '', confirmedAt: null,
+            approvedBy: '', approvedByName: '', approvedAt: null,
+            rejectedBy: '', rejectedByName: '', rejectedAt: null,
+            rejectReason: '', isLocked: false,
+          });
+          addLedgerToBatch(batch, db, isIn ? 'CUSTOMER_PAYMENT' : 'CUSTOMER_REFUND', {
+            amount: Math.abs(paidDiff),
+            orderId,
+            clientId: order.clientId || '',
+            clientName: order.clientName || '',
+            walletId, walletName,
+            notes: editReason
+              ? `[أدمن] ${changesLabel || 'تعديل'} · سبب: ${editReason}`
+              : `[أدمن] ${changesLabel || 'تعديل أوردر'}`,
+            adminEditReason: editReason || '',
+            userId, userName: userName || 'admin',
+            operationId, // R2 forensic linkage
+          });
+          await batch.commit();
+        } else {
+          // Non-financial path — single updateDoc
+          await updateDoc(order._ref, orderUpdates);
+        }
+
+        return {
+          ok: true, errors: [], warnings: [],
+          orderId, operationId,
+          action: 'edit_order_payment',
+          paidDiff: Math.round(paidDiff * 100) / 100,
+          newRem, newPayStatus,
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          errors: [e.code === 'permission-denied'
+            ? '🔒 ليس لديك صلاحية تعديل الأوردرات'
+            : (e.message || 'فشل التعديل')],
+          warnings: [],
+          orderId, operationId,
+        };
+      }
+    });
+  },
+
   async archiveOrder({
     db, orderId, role, userId, userName,
     source = 'manual', reason = '',
