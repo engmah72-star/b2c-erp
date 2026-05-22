@@ -39,8 +39,16 @@ import {
   doc, collection, getDoc, getDocs, addDoc, updateDoc,
   query, where, limit, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry } from './core/audit.js';
+
+// P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
+// modular `db` instance. When called from compat consumers, the `db`
+// argument is omitted and we fall back to the shared modular default.
+// Modular consumers (shipping.html, future pages) still pass their own
+// `db` explicitly — same as shippingActions/orderActions.
+// Each action below accepts `db = defaultDb` so both styles work.
 
 // ══════════════════════════════════════════
 // VALIDATORS (inline — domain restructure will move to validators.js)
@@ -136,7 +144,7 @@ export const clientActions = {
    * Returns: { ok, errors, warnings, clientId?, duplicate? }
    *   - duplicate: لو في عميل بنفس الرقم/البريد → نُرجعه للـ UI يعرض dup modal
    */
-  async addClient({ db, data, userId, userName }) {
+  async addClient({ db = defaultDb, data, userId, userName }) {
     if (!data) return { ok: false, errors: ['⚠️ data مطلوبة'], warnings: [] };
 
     return withIdempotency(db, {
@@ -210,7 +218,7 @@ export const clientActions = {
   /**
    * تعديل عميل موجود. يتتبّع التغييرات في editHistory[].
    */
-  async editClient({ db, clientId, changes, userId, userName }) {
+  async editClient({ db = defaultDb, clientId, changes, userId, userName }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
     if (!changes || typeof changes !== 'object') {
       return { ok: false, errors: ['⚠️ changes مطلوبة'], warnings: [] };
@@ -292,7 +300,7 @@ export const clientActions = {
   /**
    * Soft-delete عميل. نحتفظ بـ doc للـ history.
    */
-  async deleteClient({ db, clientId, userId, userName, reason = '' }) {
+  async deleteClient({ db = defaultDb, clientId, userId, userName, reason = '' }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
 
     return withIdempotency(db, {
@@ -350,7 +358,7 @@ export const clientActions = {
   /**
    * تحويل عميل من legacy → active.
    */
-  async convertToActive({ db, clientId, userId, userName }) {
+  async convertToActive({ db = defaultDb, clientId, userId, userName }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
 
     return withIdempotency(db, {
@@ -399,7 +407,7 @@ export const clientActions = {
   /**
    * تحديث بيانات بطاقة العمل (bizCard subfield).
    */
-  async saveBizCard({ db, clientId, bizCard, userId, userName }) {
+  async saveBizCard({ db = defaultDb, clientId, bizCard, userId, userName }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
     if (!bizCard || typeof bizCard !== 'object') {
       return { ok: false, errors: ['⚠️ bizCard data مطلوبة'], warnings: [] };
@@ -452,7 +460,7 @@ export const clientActions = {
    * إضافة أو تعديل followup. لو fId موجود → edit، وإلا add.
    */
   async saveFollowup({
-    db, fId = '', clientId, type, outcome = '', note = '',
+    db = defaultDb, fId = '', clientId, type, outcome = '', note = '',
     nextActionDate = '', assignedTo = '',
     userId, userName,
   }) {
@@ -531,7 +539,7 @@ export const clientActions = {
   /**
    * Toggle nextActionDone على followup.
    */
-  async markFollowupDone({ db, fId, done = true, userId, userName }) {
+  async markFollowupDone({ db = defaultDb, fId, done = true, userId, userName }) {
     if (!fId) return { ok: false, errors: ['⚠️ fId مطلوب'], warnings: [] };
 
     return withIdempotency(db, {
@@ -578,7 +586,7 @@ export const clientActions = {
   /**
    * Soft-delete followup.
    */
-  async deleteFollowup({ db, fId, userId, userName, reason = '' }) {
+  async deleteFollowup({ db = defaultDb, fId, userId, userName, reason = '' }) {
     if (!fId) return { ok: false, errors: ['⚠️ fId مطلوب'], warnings: [] };
 
     return withIdempotency(db, {
