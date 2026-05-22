@@ -1643,3 +1643,157 @@ allow read: if isAuth() && inSameTenant(resource.data) && (...);
 - `AUDIT_REPORT_v2.md` (2026-05-19) — تشخيص محدَّث + scores
 - `STABILIZATION_PLAN.md` (2026-05-19) — Sprint 14 يوم للـ security/perf
 - `REGRESSION_PREVENTION.md` (2026-05-19) — Feature isolation + governance
+
+# RULE H1 — POST-PR7 GOVERNANCE FREEZE (Architecture Hardening)
+
+> **بعد PR-7 (Platform Hardening Phase) — هذه القواعد إلزامية ومُفعَّلة على الـ CI.**
+
+## H1.1 — Zero Direct UI Writes
+**ممنوع بشكل قاطع** داخل أي ملف HTML أو في صفحات `pages/components`:
+```
+updateDoc(   setDoc(   addDoc(   deleteDoc(   writeBatch(   runTransaction(
+dispatchFinancialEvent(   addLedgerToBatch(
+```
+
+**Allowlist (المسموح لها بهذه الـ APIs):**
+- `orders.js` (helpers + builders + advanceOrderStageWithLock + heal helpers)
+- `order-actions.js` (central actions)
+- `financial-sync-engine.js` (FSE handlers)
+- `core/` (idempotency, invariants, storage-helpers, firebase-init)
+- `repositories/` (مستقبلاً)
+- `functions/` (Cloud Functions)
+- `tests/`
+
+**Enforcement:** `.github/workflows/architecture-guard.yml` يفحص كل PR.
+
+## H1.2 — Idempotency Required
+كل financial action في `order-actions.js` يجب يُلَفّ بـ `withIdempotency(...)` من `core/idempotency.js`.
+
+**Operations المغطَّاة (إلزامياً):**
+- `settleFromCompany` / `reverseSettlement`
+- `collectFromCustomer`
+- `markFullReturn` / `markPartialReturn`
+- `manualSettle`
+- `recordPayment` / `refundOrder`
+
+**Fingerprint inputs:** `{ actionType, entityId, actorId, payload, windowMs }`.
+**Window افتراضي:** 60 ثانية. لو نفس fingerprint خلال الـ window:
+- `completed` → ارجع cached result (no-op)
+- `pending` → ارفض
+- `failed` → اعد المحاولة
+
+## H1.3 — Append-Only Financial History
+الـ collections التالية **append-only**:
+- `financial_ledger` — never delete (موجود مسبقاً)
+- `transactions_v2` — never delete (موجود مسبقاً، الـ reversal = inverse tx جديد)
+- `shipping_settlements` — never delete (PR-7 G2: reversed:true flag بدلاً من delete)
+- `financial_operations` — never delete (idempotency log)
+
+**Queries على settlements للـ active view يجب أن تفلتر `where('reversed','!=',true)`.**
+
+## H1.4 — Drift Detection (Pre-Action Optional, Post-Action Always)
+- `core/financial-invariants.js` → `detectFinancialDrift(order)` يفحص 9 invariants
+- صفحات الشحن والحسابات يمكنها استدعاء `summarizeFinancialDrift(orders)` لـ banner
+- Cloud Function دورية (مستقبلاً) يجب أن تستدعيها على كل الأوردرات
+
+## H1.5 — Action Result Contract
+كل action تُرجع:
+```ts
+{
+  ok: boolean,
+  errors: string[],
+  warnings: string[],
+  operationId?: string,
+  idempotent?: boolean,    // true لو كان no-op من cache
+  pending?: boolean,       // true لو operation أخرى pending
+  ... domainSpecific,
+}
+```
+
+## H1.6 — Telemetry Required
+كل action على فشل يجب أن تستدعي `console.warn('[ACTION_NAME]', payload, result)`.
+صفحات الـ UI يجب أن تعرض persistent error (showOpError) + recordOp('err', ...).
+**ممنوع** silent failures.
+
+## H1.7 — God Page Budget
+ملف > 1500 سطر = CI warning. > 2500 = freeze حتى decomposition plan.
+الموجودين حالياً (clients/employee-profile/reports/inbox/etc) مُجمَّدون.
+
+## H1.8 — Architectural Files = Stable Core
+الـ files التالية تتطلب 2-reviewer + smoke tests قبل أي تعديل:
+- `firestore.rules`
+- `financial-sync-engine.js`
+- `order-actions.js`
+- `orders.js` (validators + builders + state machine)
+- `core/idempotency.js`
+- `core/telemetry.js`
+- `core/projection.js`
+- `core/financial-invariants.js`
+- `core/firebase-init.js`
+- `core/permissions-matrix.js`
+
+أي drift عن H1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.
+
+---
+
+# RULE H2 — POST-PR7.5 RUNTIME GOVERNANCE (Resilience Layer)
+
+> **بعد PR-7.5 (Runtime Stabilization) — kapja الـ runtime guards.**
+
+## H2.1 — Forensic Causal Linkage
+كل reversal ledger entry **يجب** أن يحتوي:
+- `operationId` — الـ op الحالية (idempotency wrapper)
+- `causedByOperationId` — الـ op الأصلية (لو معروفة)
+- `reversalOf` — id لـ tx الأصلية (لو reversal تخص واحد محدد)
+
+الـ FSE handler (`addLedgerToBatch`) يقبلها تلقائياً.
+
+## H2.2 — Projection vs Ledger Drift
+- `core/projection.js → rebuildFinancialProjection(db, orderId)` — يبني projection من ledger.
+- `compareProjectionVsLedger(db, order)` — يكتشف drift بين projection المخزن والـ derived truth.
+- Cloud Function دورية (مستقبلاً) يجب أن تستدعيها على عينة من الأوردرات يومياً.
+
+عند اكتشاف drift `severity:'crit'`:
+- audit log فوري
+- banner تحذير على الـ admin panel
+- ❌ ممنوع silent correction — يجب admin approval قبل أي repair
+
+## H2.3 — Telemetry Required (Runtime)
+كل action مُغلَّفة بـ `withIdempotency` تُسجَّل تلقائياً عبر `startActionTrace` في:
+- `console.log/warn` (دائماً)
+- `action_telemetry` (للـ failures + slow ops + critical actions)
+- `window.dispatchEvent('b2c:action')` (للـ UI listeners)
+
+**ممنوع silent failures.** الـ wrapper يضمن كل result يمر بـ `finalize()` حتى لو exception.
+
+## H2.4 — Invariants — 13 إجمالي بعد PR-7.5
+- **9 basic** (PR-7 G3): paid≥0, remaining≥0, sale≥0, paid≤total, paid+remaining≈total, settled≤collected, returned_full→zero, settled-needs-wallet, paid-status-no-remaining
+- **5 advanced** (PR-7.5 R5): refund≤paid, settled-flag-amount-match, partial-return-items, partial-return-qty, closed-archived-pair
+
+تُستدعى من `detectFinancialDrift(order)`. الـ banner في صفحات الشحن يستخدم `summarizeFinancialDrift(orders[])`.
+
+## H2.5 — Runtime Mutation Enforcement (CI is the layer)
+الـ Firestore modular SDK لا يدعم monkey-patching بسهولة، لذا:
+- **Build-time:** `.github/workflows/architecture-guard.yml` يفشل أي PR فيه direct writes في UI.
+- **Code review:** أي drift عن H1.1 يُرفض في الـ review.
+- **Dev-time:** `console.warn` في idempotency layer لو exception أثناء التنفيذ.
+
+Runtime hard-fail غير ممكن بدون refactor شامل للـ Firestore imports — مؤجل.
+
+## H2.6 — Manual Chaos Tests (Mandatory قبل merge)
+قبل أي PR يلمس financial layer:
+- ☐ Double-click settle button — يجب return cached result
+- ☐ Parallel settle من 2 tabs — يجب pending rejection للثاني
+- ☐ Refresh أثناء collect — لا duplicate wallet credit
+- ☐ Retry after timeout — idempotent guard يُمسك
+- ☐ Reverse after archive — works (لا state corruption)
+- ☐ Partial return twice — cumulative، items accumulated
+- ☐ Settle بعد return — blocked (الـ return أزال shipSettled)
+- ☐ Network interruption mid-action — لا half-applied state
+
+## H2.7 — Stable Core (H2 addendum)
+إضافة على H1.8:
+- `core/projection.js`, `core/telemetry.js`, `core/financial-invariants.js`
+- `.github/workflows/architecture-guard.yml`
+
+أي drift عن H2 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.

@@ -39,6 +39,7 @@ import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
 } from './financial-sync-engine.js';
 import { orderActions } from './order-actions.js';
+import { withIdempotency } from './core/idempotency.js'; // PR-7-salvage G1
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -79,6 +80,14 @@ export const shippingActions = {
     note = '',
     role, userId, userName,
   }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    // PR-7-salvage G1: idempotency — dispatch may issue SHIPPING_EXPENSE
+    return withIdempotency(db, {
+      actionType: 'dispatch_order',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { companyId, method, cost: Number(cost) || 0, walletId },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -116,6 +125,7 @@ export const shippingActions = {
           userId: userId || '', userName: userName || '',
           date: new Date().toLocaleDateString('ar-EG'),
           orderUpdate: { orderId, fields: orderFields },
+          operationId, // PR-7-salvage R2 forensic linkage
         });
       } else {
         // No expense — single update
@@ -129,6 +139,7 @@ export const shippingActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التسليم'], warnings: [], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -177,6 +188,14 @@ export const shippingActions = {
     db, orderId, amount, walletId, walletName = '',
     note = '', role, userId, userName,
   }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    // PR-7-salvage G1: idempotency
+    return withIdempotency(db, {
+      actionType: 'collect_from_customer',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0 },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -257,6 +276,7 @@ export const shippingActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التحصيل'], warnings: [], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -318,6 +338,13 @@ export const shippingActions = {
     if (!Array.isArray(orderIds) || !orderIds.length) {
       return { ok: false, errors: ['اختر أوردر واحد على الأقل'], warnings: [] };
     }
+    // PR-7-salvage G1: idempotency — settle-fingerprint = orderIds + walletId + amount
+    return withIdempotency(db, {
+      actionType: 'settle_with_company',
+      entityId: [...orderIds].sort().join(','),
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0 },
+    }, async (operationId) => {
 
     // Load all orders fresh from Firestore (atomic snapshot for the spec)
     const loaded = await Promise.all(orderIds.map(id => _loadOrder(db, id)));
@@ -357,6 +384,7 @@ export const shippingActions = {
         note: note || '',
         date: new Date().toLocaleDateString('ar-EG'),
         userId: userId || '', userName: userName || '',
+        operationId, // CHAOS HOTFIX T8: forensic linkage to op
         orderUpdates: spec.updates.map((u, i) => ({
           orderId: u.orderId,
           totalPaid: u.fields.totalPaid,
@@ -397,11 +425,12 @@ export const shippingActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التسوية'], warnings: [] };
     }
+    }); // end withIdempotency
   },
 
   /**
    * إلغاء تسوية مع شركة شحن.
-   * يعكس المحفظة + يحذف shipping_settlements + يعيد الأوردرات لحالة "محصَّل غير مسوّى".
+   * (PR-7-salvage G2): append-only — settlement.reversed=true بدل deleteDoc.
    */
   async reverseSettlement({
     db, settlementId, walletId, walletName = '',
@@ -409,6 +438,13 @@ export const shippingActions = {
     role, userId, userName,
   }) {
     if (!settlementId) return { ok: false, errors: ['settlementId مطلوب'], warnings: [] };
+    // PR-7-salvage G1: idempotency
+    return withIdempotency(db, {
+      actionType: 'reverse_settlement',
+      entityId: settlementId,
+      actorId: userId || '',
+      payload: {},
+    }, async (operationId) => {
 
     // Load orders to compute reversal updates
     const orders = await Promise.all((orderIds || []).map(id => _loadOrder(db, id)));
@@ -426,22 +462,31 @@ export const shippingActions = {
         totalPaid: newPaid,
         remaining: newRem,
         paymentStatus: newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+        reverseShare: settledAmt, // CHAOS HOTFIX T8: per-order amount being reversed
       };
     });
+    // CHAOS HOTFIX T8: build orderAllocations for ledger so reversal sums by order
+    const reverseAllocations = orderUpdates.reduce((acc, u) => {
+      acc[u.orderId] = u.reverseShare || 0;
+      return acc;
+    }, {});
 
     try {
       await dispatchFinancialEvent(db, FE.SHIPPING_SETTLEMENT_REVERSAL, {
         settlementId, walletId, walletName,
         amount: parseFloat(amount) || 0,
         companyName, orderIds,
+        orderAllocations: reverseAllocations,
         date: new Date().toLocaleDateString('ar-EG'),
         userId: userId || '', userName: userName || '',
         orderUpdates,
+        reversalOperationId: operationId, // PR-7-salvage G2 forensic linkage
       });
       return { ok: true, errors: [], warnings: [], action: 'reverse_settlement', settlementId };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل إلغاء التسوية'], warnings: [] };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -453,6 +498,14 @@ export const shippingActions = {
     walletId = '', walletName = '',
     role, userId, userName,
   }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    // PR-7-salvage G1: idempotency — return per order per minute
+    return withIdempotency(db, {
+      actionType: `register_return_${returnType}`,
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { lossParty, cost: Number(cost) || 0, returnType },
+    }, async (operationId) => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
@@ -500,6 +553,7 @@ export const shippingActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع'], warnings: [], orderId };
     }
+    }); // end withIdempotency
   },
 };
 

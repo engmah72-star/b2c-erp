@@ -1,0 +1,116 @@
+name: 🏛️ Architecture Guard
+
+# PR-7 G4 — fails the build if forbidden mutation patterns appear in UI files.
+# All financial/state writes must go through orderActions.* or core/.
+
+on:
+  pull_request:
+    paths:
+      - '**/*.html'
+      - '**/*.js'
+
+jobs:
+  forbidden-writes:
+    name: 🚫 Forbidden Firestore writes in UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed UI files
+        id: changed
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          # كل .html / .js عدا الملفات المُسموح لها بالكتابة (action layer + repos + FSE + self-heal)
+          git diff --name-only "$BASE_SHA" HEAD -- '*.html' '*.js' \
+            | grep -vE '^(order-actions\.js|financial-sync-engine\.js|orders\.js|core/|repositories/|functions/|tests/|sw\.js|scripts/)' \
+            > changed-ui.txt || true
+          echo "files=$(cat changed-ui.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          echo "── changed UI files ──"
+          cat changed-ui.txt || echo "(none)"
+
+      - name: Scan for newly-introduced forbidden writes (diff additions only)
+        run: |
+          set +e
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          FILES=$(cat changed-ui.txt 2>/dev/null)
+          if [ -z "$FILES" ]; then
+            echo "✅ no UI files changed — skipping"
+            exit 0
+          fi
+          # FIX (post-failure run #1): scan ONLY added lines in the diff —
+          # not the whole file. Legacy UI files contain pre-existing forbidden
+          # patterns from before the guard was introduced; the guard's job is
+          # to block NEW additions, not to fail every PR that touches a legacy
+          # file with one filter-line change.
+          #
+          # Forbidden patterns: writeBatch( / updateDoc( / setDoc( / addDoc(
+          #   deleteDoc( / runTransaction( / dispatchFinancialEvent( / addLedgerToBatch(
+          # Comments (// or *) are excluded.
+          PATTERNS='\b(updateDoc|setDoc|writeBatch|addDoc|deleteDoc|runTransaction|dispatchFinancialEvent|addLedgerToBatch)\s*\('
+          VIOLATIONS=0
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+            # Extract only ADDED lines (starting with '+', not '+++') from the diff
+            added=$(git diff "$BASE_SHA" HEAD -- "$f" \
+              | grep -E '^\+' \
+              | grep -vE '^\+\+\+' \
+              | sed 's/^+//')
+            [ -z "$added" ] && continue
+            # Match forbidden patterns in added lines, excluding comments
+            hits=$(echo "$added" \
+              | grep -nE "$PATTERNS" \
+              | grep -vE '^\s*[0-9]+:\s*(//|\*)')
+            if [ -n "$hits" ]; then
+              VIOLATIONS=$((VIOLATIONS+1))
+              echo ""
+              echo "❌ $f — newly-introduced forbidden writes:"
+              echo "$hits" | sed 's/^/    /'
+            fi
+          done
+          if [ $VIOLATIONS -gt 0 ]; then
+            echo ""
+            echo "──────────────────────────────────────────────────────"
+            echo "🚫 Architecture Guard — $VIOLATIONS file(s) with forbidden writes"
+            echo "──────────────────────────────────────────────────────"
+            echo "All Firestore/FSE mutations from UI must go through:"
+            echo "  - orderActions.*  (order-actions.js)"
+            echo "  - financial-sync-engine.js  (FSE handlers)"
+            echo "  - core/idempotency.js  (op-wrapped flows)"
+            echo "  - repositories/*  (future)"
+            echo ""
+            echo "If this is a legitimate self-heal or system write,"
+            echo "move it to a helper in orders.js or core/."
+            exit 1
+          fi
+          echo "✅ no forbidden writes in changed UI files"
+
+  god-page-warning:
+    name: 📏 God page line-count warning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check line counts of changed files
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          BUDGET=1500
+          OFFENDERS=""
+          for f in $(git diff --name-only "$BASE_SHA" HEAD -- '*.html' '*.js'); do
+            [ -f "$f" ] || continue
+            lines=$(wc -l < "$f")
+            if [ "$lines" -gt "$BUDGET" ]; then
+              OFFENDERS="$OFFENDERS\n  - $f ($lines lines)"
+            fi
+          done
+          if [ -n "$OFFENDERS" ]; then
+            echo "⚠️  God-page warning — files above $BUDGET-line budget (RULE G5):"
+            echo -e "$OFFENDERS"
+            echo ""
+            echo "These files should be decomposed before adding new features."
+            echo "This is a WARNING, not a failure (legacy god-pages are tracked separately)."
+          else
+            echo "✅ all changed files within $BUDGET-line budget"
+          fi
