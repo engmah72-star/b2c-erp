@@ -488,6 +488,175 @@ export function bizCardTabHTML(client) {
   `;
 }
 
+/**
+ * clientCardHTML(client, idx, ctx) — يبني كرت عميل واحد في الـ grid.
+ * Pure function — does all derivation (rem/active/lastTs/pills/health)
+ * internally so the caller only loops.
+ *
+ * ctx = {
+ *   color,            // background color for the card
+ *   getOrders,        // (client) -> orders[]
+ *   calcRem,          // (order) -> number
+ *   fn,               // number formatter
+ *   countOpenReminders, // (clientId) -> number
+ *   getSegment,       // (clientId) -> segment | null
+ *   SEG_STYLE,        // segment label-color map
+ *   TAG_LABELS,       // tag-name → display label map
+ *   nowMs, nowSec,    // pre-computed time refs (caller computes once)
+ * }
+ *
+ * canSee() is read from window (compat field permissions — global per RULE 8).
+ */
+export function clientCardHTML(client, idx, ctx = {}) {
+  const c = client || {};
+  const {
+    color,
+    getOrders = () => [],
+    calcRem = () => 0,
+    fn = (n) => String(parseFloat(n) || 0),
+    countOpenReminders = () => 0,
+    getSegment = () => null,
+    SEG_STYLE = {},
+    TAG_LABELS = {},
+    nowMs = Date.now(),
+    nowSec = Date.now() / 1000,
+  } = ctx;
+  const canSee = (typeof window !== 'undefined' && window.canSee)
+    ? window.canSee : () => true;
+
+  const cOrds = getOrders(c);
+  let rem = 0, active = 0, hasLate = false, lastTs = 0;
+  for (const o of cOrds) {
+    rem += calcRem(o);
+    if (o.stage !== 'archived') {
+      active++;
+      if (o.deadline && new Date(o.deadline).getTime() < nowMs) hasLate = true;
+    }
+    const t = o.createdAt?.seconds || 0;
+    if (t > lastTs) lastTs = t;
+  }
+  const tags = c.tags || [];
+  const daysSince = lastTs ? Math.floor((nowSec - lastTs) / 86400) : null;
+  const isVip      = cOrds.length >= 3;
+  const isInactive = daysSince !== null && daysSince >= 90;
+  const atRisk     = daysSince !== null && daysSince >= 30 && daysSince < 90;
+  const isNew      = cOrds.length === 0 ||
+                     (c.createdAt?.seconds && (Date.now() / 1000 - c.createdAt.seconds) < 7 * 86400);
+  const openReminders = countOpenReminders(c._id);
+
+  // Status pills
+  const pills = [];
+  if (openReminders > 0) pills.push(`<span class="cs-pill purple">⏰ ${openReminders} متابعة</span>`);
+  if (hasLate) pills.push(`<span class="cs-pill danger">⚠️ متأخر</span>`);
+  if (rem > 0) pills.push(`<span class="cs-pill danger">💰 ${fn(rem)} ج</span>`);
+  if (isVip && !hasLate && rem <= 0) pills.push(`<span class="cs-pill gold">⭐ VIP</span>`);
+  if (atRisk) pills.push(`<span class="cs-pill warning">⚠️ يحتاج اهتمام</span>`);
+  if (isInactive) pills.push(`<span class="cs-pill grey">😴 نايم ${daysSince}ي</span>`);
+  if (isNew && !isVip && !atRisk && !isInactive) pills.push(`<span class="cs-pill success">🌱 جديد</span>`);
+
+  // RFM segment chip
+  const seg = getSegment(c._id);
+  if (seg && seg.segment && seg.segment !== 'normal') {
+    const st = SEG_STYLE[seg.segment] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
+    const riskTxt = (seg.churnRisk >= 60) ? ` · ${seg.churnRisk}%` : '';
+    pills.push(`<span title="RFM: ${seg.rfmCode || ''} · ${seg.recencyDays}d منذ آخر طلب" style="font-size:10.5px;padding:4px 10px;border-radius:99px;background:${st.bg};color:${st.fg};font-weight:800;border:1px solid ${st.fg}30">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}${riskTxt}</span>`);
+  }
+  if (tags.length && pills.length === 0) pills.push(`<span class="cs-pill info">${TAG_LABELS[tags[0]] || tags[0]}</span>`);
+
+  // Customer Health Score
+  let health = { dot: 'green', txt: 'نشط جداً' };
+  if (hasLate || rem > 1000)                  health = { dot: 'red',    txt: 'يحتاج تدخل' };
+  else if (atRisk)                            health = { dot: 'yellow', txt: `آخر طلب قبل ${daysSince}ي` };
+  else if (isInactive)                        health = { dot: 'grey',   txt: `بدون نشاط ${daysSince}ي` };
+  else if (isVip)                             health = { dot: 'green',  txt: '⭐ من المميزين' };
+  else if (daysSince !== null && daysSince < 7) health = { dot: 'green',txt: 'تواصل حديث' };
+  else if (daysSince !== null)                health = { dot: 'green',  txt: `نشط · قبل ${daysSince}ي` };
+  else                                        health = { dot: 'grey',   txt: 'لا توجد طلبات' };
+
+  const avBg = `linear-gradient(135deg,${color},${color}99)`;
+  return `<div class="cc" style="--cc:${color}" onclick="openClient('${c._id}')">
+      <div style="display:flex;gap:11px;align-items:center;margin-bottom:${pills.length ? '10' : '12'}px">
+        <div class="cc-av" style="background:${avBg}">${(c.name || '?')[0].toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div class="cc-name">${c.name || '—'} ${c.intlPhone && canSee('client_phone') ? `<span title="${c.intlPhone}" style="font-size:var(--fs-sm);color:#fbbf24;margin-right:4px">🌍</span>` : ''}</div>
+          <div class="cc-phone">${canSee('client_phone') ? `📞 ${c.phone1 || '—'}` : ''}${c.job ? (canSee('client_phone') ? ' · ' : '') + c.job : ''}</div>
+        </div>
+        ${canSee('client_phone') && c.phone1 ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
+      </div>
+      ${pills.length ? `<div style="margin-bottom:10px;display:flex;gap:5px;flex-wrap:wrap">${pills.join('')}</div>` : ''}
+      <div style="display:grid;grid-template-columns:${canSee('price_remaining') ? '1fr 1fr 1fr' : '1fr 1fr'};gap:6px">
+        <div class="cc-stat">
+          <div class="cc-stat-val" style="color:#3b82f6">${active || '—'}</div>
+          <div class="cc-stat-lbl">نشط</div>
+        </div>
+        <div class="cc-stat">
+          <div class="cc-stat-val" style="color:#7c5cff">${cOrds.length}</div>
+          <div class="cc-stat-lbl">إجمالي</div>
+        </div>
+        ${canSee('price_remaining') ? `<div class="cc-stat">
+          <div class="cc-stat-val" style="color:${rem > 0 ? 'var(--r)' : '#10d27e'};font-size:${rem > 0 && rem >= 10000 ? '12px' : rem > 0 ? '14px' : '18px'}">${rem > 0 ? fn(rem) : '✓'}</div>
+          <div class="cc-stat-lbl">${rem > 0 ? 'باقي' : 'مسدد'}</div>
+        </div>` : ''}
+      </div>
+      <div class="cc-health">
+        <span class="cc-health-dot ${health.dot}"></span>
+        <span>${health.txt}</span>
+      </div>
+    </div>`;
+}
+
+/**
+ * clientListRowHTML(client, idx, ctx) — يبني صف عميل في الـ list view.
+ * Pure function. ctx = { color, getOrders, calcRem, fn, TAG_LABELS, TAG_COL }.
+ * canSee() read from window.
+ */
+export function clientListRowHTML(client, idx, ctx = {}) {
+  const c = client || {};
+  const {
+    color,
+    getOrders = () => [],
+    calcRem = () => 0,
+    fn = (n) => String(parseFloat(n) || 0),
+    TAG_LABELS = {},
+    TAG_COL = {},
+  } = ctx;
+  const canSee = (typeof window !== 'undefined' && window.canSee)
+    ? window.canSee : () => true;
+
+  const cOrds = getOrders(c);
+  const tot   = cOrds.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+  const paid2 = cOrds.reduce((s, o) => s + (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0), 0);
+  const rem   = cOrds.reduce((s, o) => s + (calcRem(o)), 0);
+  const active = cOrds.filter(o => o.stage !== 'archived').length;
+  const tags  = c.tags || [];
+
+  return `<div class="list-row" onclick="openClient('${c._id}')">
+      <div class="list-av" style="background:${color}18;color:${color}">${(c.name || '?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:var(--fs-lg);font-weight:800">${c.name || '—'}
+          ${c.intlPhone && canSee('client_phone') ? `<span title="${c.intlPhone}" style="font-size:var(--fs-sm);color:var(--y);margin-right:4px">🌍</span>` : ''}
+          ${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'};font-size:var(--fs-tiny)">${TAG_LABELS[t] || t}</span>`).join('')}
+        </div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${canSee('client_phone') ? `📞 ${c.phone1 || '—'} ` : ''}${c.intlPhone && canSee('client_phone') ? `· 🌍 ${c.intlPhone} ` : ''}${c.job ? '· 💼 ' + c.job : ''} ${c.governorate ? '· 📍 ' + c.governorate : ''}</div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;flex-shrink:0">
+        <div style="text-align:center">
+          <div style="font-size:var(--fs-md);font-weight:800;color:var(--b)">${active}</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">نشط</div>
+        </div>
+        ${canSee('price_sale') ? `<div style="text-align:center">
+          <div style="font-size:var(--fs-md);font-weight:800;color:var(--g)">${fn(tot)}</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">مبيعات ج</div>
+        </div>` : ''}
+        ${canSee('price_remaining') ? `<div style="text-align:center;min-width:60px">
+          <div style="font-size:var(--fs-md);font-weight:800;color:${rem > 0 ? 'var(--r)' : 'var(--g)'}">${rem > 0 ? fn(rem) : '✅'}</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">${rem > 0 ? 'باقي ج' : 'محصّل'}</div>
+        </div>` : ''}
+        ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
+      </div>
+    </div>`;
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -505,5 +674,7 @@ if (typeof window !== 'undefined') {
     panelOrdersHTML,
     // PR-4:
     bizCardTabHTML,
+    // PR-5:
+    clientCardHTML, clientListRowHTML,
   });
 }
