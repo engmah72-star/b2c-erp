@@ -2216,6 +2216,7 @@ function parseBizCardText(text){
 }
 
 // Save to Firestore
+// P1.3 — Thin orchestration over window.clientActions.saveBizCard.
 window.saveBizCard = async function(){
   const cid = window._bizCardClientId;
   if(!cid){ alert('لم يُحدَّد عميل'); return; }
@@ -2230,23 +2231,26 @@ window.saveBizCard = async function(){
       if(v) bc[key] = v;
     }
   });
-  bc.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
-  bc.updatedBy = currentUser?.uid || '';
+  if(!window.clientActions){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
+    return;
+  }
   try{
-    await db.collection('clients').doc(cid).update({
-      businessCard: bc,
-      lastUpdate: firebase.firestore.FieldValue.serverTimestamp(),
-      editHistory: firebase.firestore.FieldValue.arrayUnion({
-        action: '📇 تحديث بطاقة الأعمال',
-        date: new Date().toISOString(),
-        by: currentUser?.uid || '',
-        fields: Object.keys(bc).filter(k=>k!=='updatedAt'&&k!=='updatedBy').length+' حقل'
-      })
+    const r = await window.clientActions.saveBizCard({
+      clientId: cid,
+      bizCard: bc,
+      userId: currentUser?.uid || '',
+      userName: userName || '',
     });
+    if(!r.ok){
+      console.warn('[clientActions] saveBizCard failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');
+      return;
+    }
     toast('✓ تم حفظ بطاقة الأعمال','ok');
   }catch(e){
-    console.error('saveBizCard:',e);
-    alert('فشل الحفظ: '+(e.message||e));
+    console.warn('[clientActions] saveBizCard exception', e);
+    toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');
   }
 };
 
@@ -2569,11 +2573,11 @@ function toLocalDT(s){
 }
 window.closeFollowupModal=function(){document.getElementById('ov-followup').classList.remove('open');};
 
+// P1.3 — Thin orchestration over window.clientActions.saveFollowup.
 window.saveFollowup=async function(){
-  console.log('[followup] saveFollowup called');
   const btn=document.getElementById('save-followup-btn');
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
-  if(!db||!firebase?.firestore){toast('❌ Firebase غير محمَّل','err');return;}
+  if(!window.clientActions){toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;}
   if(btn){btn.disabled=true;const _o=btn.innerHTML;btn.dataset._orig=_o;btn.innerHTML='⏳ جاري...';}
   try{
     const clientId=gv('fu-client-id');
@@ -2587,9 +2591,7 @@ window.saveFollowup=async function(){
     const orderId=gv('fu-order');
     const productRating=parseInt(gv('fu-rating'))||0;
     const productReview=gv('fu-review').trim();
-    console.log('[followup] form values:',{clientId,fId,type,outcome,note,nextRaw,orderId,productRating});
-    if(!clientId){toast('❌ العميل غير محدد','err');if(btn){btn.disabled=false;if(btn.dataset._orig)btn.innerHTML=btn.dataset._orig;}return;}
-    if(!type){toast('❌ اختر نوع المتابعة','err');if(btn){btn.disabled=false;if(btn.dataset._orig)btn.innerHTML=btn.dataset._orig;}return;}
+
     // Snapshot order/product info for display
     let orderCode='', productName='';
     if(orderId){
@@ -2599,47 +2601,45 @@ window.saveFollowup=async function(){
         productName=o.product||(o.products||[]).map(p=>p.name+'×'+p.qty).join(' + ')||'';
       }
     }
+
+    // Schema-faithful payload — action stamps audit/timestamps automatically
     const data={
       clientId,
       clientName:c?.name||'',
       type,outcome:outcome||'',
       note,
       orderId:orderId||'',
-      orderCode:orderCode,
-      productName:productName,
-      productRating:productRating,
-      productReview:productReview,
+      orderCode,
+      productName,
+      productRating,
+      productReview,
       nextActionDate:nextRaw?new Date(nextRaw).toISOString():'',
       nextActionDone:nextDone||!nextRaw,
       assignedTo:currentUser.uid,
       assignedToName:userName||'',
-      isDeleted:false,
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      updatedBy:currentUser.uid,
-      updatedByName:userName||'',
     };
-    if(fId){
-      console.log('[followup] updating doc:',fId);
-      await db.collection('client_followups').doc(fId).update(data);
-      toast('✅ تم تحديث المتابعة','ok');
-    }else{
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
-      data.createdBy=currentUser.uid;
-      data.createdByName=userName||'';
-      console.log('[followup] creating new doc with payload:',data);
-      const ref=await db.collection('client_followups').add(data);
-      console.log('[followup] created with id:',ref.id);
-      toast('✅ تم تسجيل المتابعة','ok');
+
+    const r=await window.clientActions.saveFollowup({
+      fId: fId || '',
+      data,
+      userId: currentUser?.uid||'',
+      userName: userName||'',
+    });
+    if(!r.ok){
+      console.warn('[clientActions] saveFollowup failed', r);
+      const msg=(r.errors?.[0]||'فشل الحفظ');
+      if(msg.includes('permission')||msg.includes('insufficient')||msg.includes('صلاحية')){
+        toast('🔒 لا تملك صلاحية كتابة المتابعات — راجع الأدمن','err');
+      }else{
+        toast('❌ '+msg,'err');
+      }
+      return;
     }
+    toast(fId?'✅ تم تحديث المتابعة':'✅ تم تسجيل المتابعة','ok');
     closeFollowupModal();
   }catch(e){
-    console.error('saveFollowup failed:',e);
-    const msg=e?.message||String(e)||'فشل الحفظ';
-    if(msg.includes('permission')||msg.includes('insufficient')){
-      toast('🔒 لا تملك صلاحية كتابة المتابعات — راجع الأدمن','err');
-    }else{
-      toast('❌ '+msg,'err');
-    }
+    console.warn('[clientActions] saveFollowup exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
   }finally{if(btn){btn.disabled=false;if(btn.dataset._orig)btn.innerHTML=btn.dataset._orig;}}
 };
 
@@ -2648,27 +2648,48 @@ window.editFollowup=function(fId){
   openFollowupModal(f.clientId,fId);
 };
 
+// P1.3 — Thin orchestration over window.clientActions.markFollowupDone.
 window.markFollowupDone=async function(fId){
+  if(!window.clientActions){toast('⚠️ النظام يحمّل','err');return;}
   try{
-    await db.collection('client_followups').doc(fId).update({
-      nextActionDone:true,
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      updatedBy:currentUser?.uid||'',updatedByName:userName||'',
+    const r=await window.clientActions.markFollowupDone({
+      fId,
+      done: true,
+      userId: currentUser?.uid||'',
+      userName: userName||'',
     });
+    if(!r.ok){
+      console.warn('[clientActions] markFollowupDone failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل'),'err');
+      return;
+    }
     toast('✅ تم تحديد التذكير كمنفّذ','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }catch(e){
+    console.warn('[clientActions] markFollowupDone exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 };
 
+// P1.3 — Thin orchestration over window.clientActions.deleteFollowup.
 window.deleteFollowup=async function(fId){
   if(!confirm('حذف هذه المتابعة نهائياً من السجل؟'))return;
+  if(!window.clientActions){toast('⚠️ النظام يحمّل','err');return;}
   try{
-    await db.collection('client_followups').doc(fId).update({
-      isDeleted:true,
-      deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      deletedBy:currentUser?.uid||'',deletedByName:userName||'',
+    const r=await window.clientActions.deleteFollowup({
+      fId,
+      userId: currentUser?.uid||'',
+      userName: userName||'',
     });
+    if(!r.ok){
+      console.warn('[clientActions] deleteFollowup failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحذف'),'err');
+      return;
+    }
     toast('🗑 تم الحذف','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }catch(e){
+    console.warn('[clientActions] deleteFollowup exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 };
 
 // ══ MODAL: أوردر جديد ══

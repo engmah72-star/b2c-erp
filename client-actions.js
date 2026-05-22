@@ -405,7 +405,9 @@ export const clientActions = {
   // ════════════════════════════════════════
 
   /**
-   * تحديث بيانات بطاقة العمل (bizCard subfield).
+   * تحديث بيانات بطاقة العمل (businessCard subfield).
+   * Schema-faithful: writes to `businessCard` field + `lastUpdate` timestamp,
+   * matching existing clients.html readers.
    */
   async saveBizCard({ db = defaultDb, clientId, bizCard, userId, userName }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
@@ -425,20 +427,23 @@ export const clientActions = {
         return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [], operationId };
       }
 
+      // Stamp metadata on the bizCard object (schema-faithful to existing readers).
+      const payload = {
+        ...bizCard,
+        updatedAt: serverTimestamp(),
+        updatedBy: userId || '',
+      };
+
       const entry = auditEntry({
-        action: 'تحديث بطاقة العمل',
+        action: '📇 تحديث بطاقة الأعمال',
         userId, userName, kind: 'edit',
-        meta: { fields: Object.keys(bizCard) },
+        meta: { fieldCount: Object.keys(bizCard).length },
       });
 
       try {
         await updateDoc(current._ref, {
-          bizCard: { ...(current.bizCard || {}), ...bizCard },
-          bizCardLastEdit: {
-            by: userId || '',
-            byName: userName || '',
-            at: serverTimestamp(),
-          },
+          businessCard: { ...(current.businessCard || {}), ...payload },
+          lastUpdate: serverTimestamp(),
           editHistory: [...(current.editHistory || []), entry],
           updatedAt: serverTimestamp(),
         });
@@ -457,34 +462,35 @@ export const clientActions = {
   // ════════════════════════════════════════
 
   /**
-   * إضافة أو تعديل followup. لو fId موجود → edit، وإلا add.
+   * إضافة أو تعديل followup.
+   * Schema-flexible: accepts `data` object with full followup payload. Action
+   * stamps audit fields (createdAt/By, updatedAt/By, editHistory) and routes
+   * to either add or update based on fId presence.
+   *
+   * @param {string} [args.fId] — if present, edit; else add
+   * @param {Object} args.data  — must include clientId + type at minimum
    */
-  async saveFollowup({
-    db = defaultDb, fId = '', clientId, type, outcome = '', note = '',
-    nextActionDate = '', assignedTo = '',
-    userId, userName,
-  }) {
-    const v = validateFollowupPayload({ clientId, type, nextActionDate });
+  async saveFollowup({ db = defaultDb, fId = '', data, userId, userName }) {
+    if (!data || typeof data !== 'object') {
+      return { ok: false, errors: ['⚠️ data مطلوبة'], warnings: [] };
+    }
+    const v = validateFollowupPayload({
+      clientId: data.clientId,
+      type: data.type,
+      nextActionDate: data.nextActionDate,
+    });
     if (!v.ok) return { ...v };
 
     return withIdempotency(db, {
       actionType: fId ? 'edit_followup' : 'add_followup',
-      entityId: fId || `new:${clientId}`,
+      entityId: fId || `new:${data.clientId}`,
       actorId: userId || '',
-      payload: { type, outcome, nextActionDate },
+      payload: { type: data.type, nextActionDate: data.nextActionDate },
     }, async (operationId) => {
-
-      const data = {
-        clientId, type, outcome, note,
-        nextActionDate,
-        nextActionDone: false,
-        assignedTo: assignedTo || userId || '',
-        updatedAt: serverTimestamp(),
-      };
 
       try {
         if (fId) {
-          // Edit existing — append to internal history
+          // Edit existing
           const ref = doc(db, 'client_followups', fId);
           const snap = await getDoc(ref);
           if (!snap.exists()) {
@@ -500,6 +506,9 @@ export const clientActions = {
           });
           await updateDoc(ref, {
             ...data,
+            updatedAt: serverTimestamp(),
+            updatedBy: userId || '',
+            updatedByName: userName || '',
             editHistory: [...(cur.editHistory || []), entry],
           });
           return {
@@ -515,9 +524,12 @@ export const clientActions = {
         const ref = await addDoc(collection(db, 'client_followups'), {
           ...data,
           isDeleted: false,
+          createdAt: serverTimestamp(),
           createdBy: userId || '',
           createdByName: userName || '',
-          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: userId || '',
+          updatedByName: userName || '',
           editHistory: [entry],
         });
         return {
