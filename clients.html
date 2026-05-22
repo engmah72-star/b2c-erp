@@ -4341,87 +4341,40 @@ window.cgridBulkAction=async function(action){
   if(__cgSel.size===0){toast('حدد أوردرات أولاً','err');return;}
   const ids=[...__cgSel];
   const ords=allOrders.filter(o=>ids.includes(o._id));
-  const now2=nowStr();
 
   if(action==='export'){cgridExportSelected(ords);return;}
 
+  // P1.8 — كل العمليات الجماعية تمر عبر orderActions المركزي (RULE A1 + C1.3)
+  if(!window.orderActions){toast('⏳ جاري تحميل الوحدات…','err');return;}
+  const ctx={role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin'};
+
   if(action==='archive'){
-    // الفحوصات المُمَركَزة عبر buildArchiveSpec (RULE C1.3 + C1.5)
-    if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
-    const specs=ords.map(o=>({o,spec:window.buildArchiveSpec({order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'bulk_admin',bypassWarnings:true})}));
-    const archivable=specs.filter(x=>x.spec.ok);
-    const blocked=specs.filter(x=>!x.spec.ok);
-    if(!archivable.length){
-      const reasons=[...new Set(blocked.flatMap(x=>x.spec.errors))].slice(0,3).join(' · ');
-      toast(`⛔ لا يمكن أرشفة أي أوردر${reasons?` — ${reasons}`:''}`,'err');return;
-    }
-    if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked.length?`\n⚠️ ${blocked.length} مستثنى (لا يستوفي شروط الأرشفة)`:''}`))return;
-    // split into batches of 400 for Firestore limit
-    for(let i=0;i<archivable.length;i+=400){
-      const chunk=archivable.slice(i,i+400);
-      const batch=db.batch();
-      chunk.forEach(({o,spec})=>batch.update(db.collection('orders').doc(o._id),{
-        ...spec.fields,
-        timeline:[...(o.timeline||[]),spec.timelineEntry],
-        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-      }));
-      await batch.commit();
-    }
-    logAudit('orders.bulk_archive',{count:archivable.length,blocked:blocked.length,orderIds:archivable.slice(0,50).map(x=>x.o._id)});
-    toast(`✅ تم أرشفة ${archivable.length}${blocked.length?` (تخطّينا ${blocked.length})`:''}`,'ok');cgridSelNone();return;
+    if(!confirm(`أرشفة ${ids.length} أوردر؟`))return;
+    const r=await window.orderActions.bulkArchive({orderIds:ids,...ctx});
+    if(!r.ok){toast(r.errors?.[0]||'فشل الأرشفة','err');return;}
+    logAudit('orders.bulk_archive',{count:r.count,blocked:r.blocked||0,orderIds:(r.orderIds||[]).slice(0,50)});
+    toast(`✅ تم أرشفة ${r.count}${r.blocked?` (تخطّينا ${r.blocked})`:''}`,'ok');cgridSelNone();return;
   }
 
   if(action==='reopen'){
     if(!confirm(`إعادة فتح ${ids.length} أوردر؟`))return;
-    for(let i=0;i<ords.length;i+=400){
-      const chunk=ords.slice(i,i+400);
-      const batch=db.batch();
-      chunk.forEach(o=>{const ts=o.stage==='archived'?'design':o.stage;batch.update(db.collection('orders').doc(o._id),{stage:ts,[`stageEnteredAt.${ts}`]:now2,timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] إعادة فتح → ${ts}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});});
-      await batch.commit();
-    }
-    logAudit('orders.bulk_reopen',{count:ids.length,orderIds:ids.slice(0,50)});
-    toast(`✅ إعادة فتح ${ids.length} أوردر`,'ok');cgridSelNone();return;
+    const r=await window.orderActions.bulkReopen({orderIds:ids,...ctx});
+    if(!r.ok){toast(r.errors?.[0]||'فشل إعادة الفتح','err');return;}
+    logAudit('orders.bulk_reopen',{count:r.count,orderIds:(r.orderIds||[]).slice(0,50)});
+    toast(`✅ إعادة فتح ${r.count} أوردر`,'ok');cgridSelNone();return;
   }
 
   if(action==='stage'){
     const stagesAll=Object.keys(CGRID_STATUS_MAP).join(' | ');
     const choice=prompt(`نقل ${ids.length} أوردر إلى:\n${stagesAll}`);
     if(!choice||!CGRID_STATUS_MAP[choice]){toast('الحالة غير صحيحة','err');return;}
-    const mapping=CGRID_STATUS_MAP[choice];
-    // الأرشفة تمر عبر buildArchiveSpec المركزي (RULE C1.3 + C1.5)
-    if(mapping.stage==='archived'){
-      if(!window.buildArchiveSpec){toast('⏳ جاري تحميل الوحدات…','err');return;}
-      const specs=ords.map(o=>({o,spec:window.buildArchiveSpec({order:o,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin',source:'bulk_admin',reason:`نقل جماعي → ${choice}`,bypassWarnings:true})}));
-      const archivable=specs.filter(x=>x.spec.ok);
-      const blocked=specs.filter(x=>!x.spec.ok);
-      if(!archivable.length){
-        const reasons=[...new Set(blocked.flatMap(x=>x.spec.errors))].slice(0,3).join(' · ');
-        toast(`⛔ لا يمكن أرشفة أي أوردر${reasons?` — ${reasons}`:''}`,'err');return;
-      }
-      if(!confirm(`أرشفة ${archivable.length} أوردر؟${blocked.length?`\n⚠️ ${blocked.length} مستثنى (لا يستوفي الشروط)`:''}`))return;
-      for(let i=0;i<archivable.length;i+=400){
-        const chunk=archivable.slice(i,i+400);
-        const batch=db.batch();
-        chunk.forEach(({o,spec})=>batch.update(db.collection('orders').doc(o._id),{
-          ...spec.fields,
-          timeline:[...(o.timeline||[]),spec.timelineEntry],
-          updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-        }));
-        await batch.commit();
-      }
-      logAudit('orders.bulk_stage_change',{count:archivable.length,target:choice,blocked:blocked.length,orderIds:archivable.slice(0,50).map(x=>x.o._id)});
-      toast(`✅ أُرشف ${archivable.length}${blocked.length?` (تخطّينا ${blocked.length})`:''}`,'ok');cgridSelNone();return;
-    }
-    // الانتقالات الأخرى — السلوك القديم
     if(!confirm(`نقل ${ids.length} أوردر إلى "${choice}"؟`))return;
-    for(let i=0;i<ords.length;i+=400){
-      const chunk=ords.slice(i,i+400);
-      const batch=db.batch();
-      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{...mapping,...(mapping.stage&&mapping.stage!==o.stage?{[`stageEnteredAt.${mapping.stage}`]:now2}:{}),timeline:[...(o.timeline||[]),{date:now2,action:`🔄 [أدمن] نقل جماعي → ${choice}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
-      await batch.commit();
-    }
-    logAudit('orders.bulk_stage_change',{count:ids.length,target:choice,orderIds:ids.slice(0,50)});
-    toast(`✅ نُقل ${ids.length} أوردر إلى ${choice}`,'ok');cgridSelNone();return;
+    const r=await window.orderActions.bulkStageMove({
+      orderIds:ids, target:choice, mapping:CGRID_STATUS_MAP[choice], ...ctx,
+    });
+    if(!r.ok){toast(r.errors?.[0]||'فشل النقل','err');return;}
+    logAudit('orders.bulk_stage_change',{count:r.count,target:choice,blocked:r.blocked||0,orderIds:(r.orderIds||[]).slice(0,50)});
+    toast(`✅ ${r.count} → ${choice}${r.blocked?` (تخطّينا ${r.blocked})`:''}`,'ok');cgridSelNone();return;
   }
 
   if(action==='assign'){
@@ -4430,13 +4383,14 @@ window.cgridBulkAction=async function(action){
     const emp=designers.find(e=>(e.name||e.displayName||'')===nm);
     if(!emp){toast('الموظف غير موجود','err');return;}
     if(!confirm(`تعيين "${emp.name||emp.displayName}" على ${ids.length} أوردر؟`))return;
-    for(let i=0;i<ords.length;i+=400){
-      const chunk=ords.slice(i,i+400);
-      const batch=db.batch();
-      chunk.forEach(o=>batch.update(db.collection('orders').doc(o._id),{assignedTo:emp._id||emp.uid||'',csName:emp.name||emp.displayName||'',timeline:[...(o.timeline||[]),{date:now2,action:`👤 [أدمن] تعيين ${emp.name||emp.displayName}`,by:userName||'admin'}],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}));
-      await batch.commit();
-    }
-    toast(`✅ تم التعيين على ${ids.length} أوردر`,'ok');cgridSelNone();return;
+    const r=await window.orderActions.bulkAssign({
+      orderIds:ids,
+      employeeId:emp._id||emp.uid||'',
+      employeeName:emp.name||emp.displayName||'',
+      ...ctx,
+    });
+    if(!r.ok){toast(r.errors?.[0]||'فشل التعيين','err');return;}
+    toast(`✅ تم التعيين على ${r.count} أوردر`,'ok');cgridSelNone();return;
   }
 };
 
