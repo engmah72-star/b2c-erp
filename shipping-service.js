@@ -16,6 +16,9 @@
 import {
   isShipTerminal, isShipReadyToClose, isShipPendingSettle,
   isShipCompanyInTransit, isShipActive,
+  // PR-7 (scalable-drifting-ember): normalize legacy and canonical
+  // shipStage values uniformly across the filter layer.
+  normalizeShipStage,
 } from './orders.js';
 
 // ══════════════════════════════════════════
@@ -38,25 +41,25 @@ export function getOrdersReadyToDispatch(orders) {
 
 /**
  * الطلبات قيد التوصيل:
- *   stage='shipping' + shipStage='wait_delivery'
+ *   stage='shipping' + shipStage ∈ {'wait_delivery' (legacy), 'shipped' (canonical)}
  */
 export function getOrdersInTransit(orders) {
   return (orders || []).filter(o => {
     if (!o || o.stage !== 'shipping') return false;
     if (isShipTerminal(o)) return false;
-    return o.shipStage === 'wait_delivery';
+    return normalizeShipStage(o.shipStage) === 'shipped';
   });
 }
 
 /**
  * الطلبات الجاهزة للتحصيل (وصلت للعميل):
- *   stage='shipping' + shipStage='wait_collection'
+ *   stage='shipping' + shipStage ∈ {'wait_collection' (legacy), 'delivered' (canonical)}
  */
 export function getOrdersWaitingCollection(orders) {
   return (orders || []).filter(o => {
     if (!o || o.stage !== 'shipping') return false;
     if (isShipTerminal(o)) return false;
-    return o.shipStage === 'wait_collection';
+    return normalizeShipStage(o.shipStage) === 'delivered';
   });
 }
 
@@ -84,10 +87,15 @@ export function getOrdersSettled(orders) {
 }
 
 /**
- * المرتجعات.
+ * المرتجعات الكاملة (terminal). يستثني المرتجعات الجزئية لأنها non-terminal
+ * (الأوردر بيكمل عادي بعد خصم الجزء المرتجع).
+ *   shipStage ∈ {'returned' (legacy), 'returned_full' (canonical)}
  */
 export function getOrdersReturned(orders) {
-  return (orders || []).filter(o => o && o.shipStage === 'returned');
+  return (orders || []).filter(o => {
+    if (!o) return false;
+    return normalizeShipStage(o.shipStage) === 'returned_full';
+  });
 }
 
 // ══════════════════════════════════════════
@@ -263,18 +271,34 @@ export function getShippingKPIs(orders) {
 // FORMATTING HELPERS
 // ══════════════════════════════════════════
 
+// SHIP_STAGE_LABELS — Both legacy and canonical keys are listed.
+// PR-7 (scalable-drifting-ember): when a stored shipStage is in legacy
+// form, the lookup goes through normalizeShipStage first, so legacy data
+// renders with the canonical label. Direct lookup by canonical key works
+// for new data without normalization overhead.
 export const SHIP_STAGE_LABELS = {
   '': { label: 'جديد', col: '#4e5672', ico: '🆕' },
   ready: { label: 'جاهز للشحن', col: '#22d3ee', ico: '📦' },
-  wait_delivery: { label: 'جاري التوصيل', col: '#ffaa00', ico: '🚚' },
-  wait_collection: { label: 'بانتظار التحصيل', col: '#a78bfa', ico: '🏠' },
-  collected: { label: 'مُحصَّل', col: '#00d97e', ico: '💰' },
-  completed: { label: 'مكتمل', col: '#4e5672', ico: '✓' },
-  returned: { label: 'مرتجع', col: '#ff3d6e', ico: '↩️' },
+  // Canonical (post-PR-1):
+  shipped:          { label: 'تم الشحن',         col: '#ffaa00', ico: '🚚' },
+  delivered:        { label: 'تم التسليم',       col: '#00d97e', ico: '✅' },
+  under_collection: { label: 'تحت التحصيل',      col: '#a78bfa', ico: '⏳' },
+  collected:        { label: 'مُحصَّل',           col: '#00d97e', ico: '💰' },
+  returned_full:    { label: 'مرتجع كامل',       col: '#ff3d6e', ico: '↩️' },
+  returned_partial: { label: 'مرتجع جزئي',       col: '#f0a020', ico: '↪️' },
+  closed:           { label: 'مغلق',              col: '#4e5672', ico: '🗄️' },
+  // Legacy (kept as fallback so direct lookup still works on old data):
+  wait_delivery:    { label: 'جاري التوصيل',     col: '#ffaa00', ico: '🚚' },
+  wait_collection:  { label: 'بانتظار التحصيل',   col: '#a78bfa', ico: '🏠' },
+  completed:        { label: 'مكتمل',             col: '#4e5672', ico: '✓'  },
+  returned:         { label: 'مرتجع',             col: '#ff3d6e', ico: '↩️' },
 };
 
 export function shipStageBadgeHTML(shipStage) {
-  const s = SHIP_STAGE_LABELS[shipStage || ''] || SHIP_STAGE_LABELS[''];
+  // PR-7: normalize first — legacy data ('wait_delivery', 'returned', ...) maps
+  // to canonical labels ('تم الشحن', 'مرتجع كامل', ...) for consistent UX.
+  const key = normalizeShipStage(shipStage);
+  const s = SHIP_STAGE_LABELS[key] || SHIP_STAGE_LABELS[shipStage || ''] || SHIP_STAGE_LABELS[''];
   return `<span class="ship-bdg" style="background:${s.col}1f;color:${s.col};border:1px solid ${s.col}40">
     ${s.ico} ${s.label}
   </span>`;
