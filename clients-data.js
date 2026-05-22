@@ -565,12 +565,96 @@ export function cgridExportCSV({
     .join('\n');
 }
 
+/**
+ * computeClientPanelData({client, orders, txByOrder, calcRem}) → derived
+ *
+ * Aggregates everything renderPanel needs in one pass:
+ *   - tot       (salePrice + customerShipFee summed across orders)
+ *   - paid      (totalPaid | paid | deposit fallback chain)
+ *   - rem       (sum of calcRem per order)
+ *   - totalCost (sum of costItems[].total or totalCost fallback)
+ *   - totalProfit, profitPct
+ *   - byWallet  ({walletName: amountSum}) from in-direction tx_v2 only
+ *   - memberDays  (days since first order)
+ *   - pct       (paid/tot * 100, clamped)
+ *   - activeOrds, lateOrds  (filtered subsets)
+ *   - daysSince (days since most recent order)
+ *   - tags      (client.tags fallback to [])
+ *
+ * Pure: no DOM, no closure capture. The page wrapper passes the
+ * client's own orders array + the tx_v2 index Map + calcRem.
+ */
+export function computeClientPanelData({
+  client,
+  orders = [],
+  txByOrder,
+  calcRem = () => 0,
+} = {}) {
+  const c = client || {};
+  const cOrds = orders || [];
+
+  const tot = cOrds.reduce(
+    (s, o) => s + (parseFloat(o.salePrice) || 0) + (parseFloat(o.customerShipFee) || 0),
+    0
+  );
+  const paid = cOrds.reduce(
+    (s, o) => s + (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0),
+    0
+  );
+  const rem = cOrds.reduce((s, o) => s + calcRem(o), 0);
+  const totalCost = cOrds.reduce(
+    (s, o) =>
+      s + ((o.costItems || []).reduce((x, ci) => x + (parseFloat(ci.total) || 0), 0)
+         || (parseFloat(o.totalCost) || 0)),
+    0
+  );
+  const totalProfit = paid - totalCost;
+  const profitPct = paid > 0 ? Math.round(totalProfit / paid * 100) : null;
+
+  const clientTx = cOrds.flatMap(o =>
+    ((txByOrder?.get?.(o._id)) || []).filter(tx => tx.type === 'in' && tx.amount > 0)
+  );
+  const byWallet = {};
+  clientTx.forEach(tx => {
+    const wn = tx.walletName || '—';
+    byWallet[wn] = (byWallet[wn] || 0) + (parseFloat(tx.amount) || 0);
+  });
+
+  const firstOrd = cOrds.slice().sort(
+    (a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)
+  )[0];
+  const memberDays = firstOrd?.createdAt?.seconds
+    ? Math.floor((Date.now() / 1000 - firstOrd.createdAt.seconds) / 86400)
+    : null;
+
+  const pct = tot > 0 ? Math.min(paid / tot * 100, 100) : 0;
+  const activeOrds = cOrds.filter(o => o.stage !== 'archived');
+  const lateOrds = cOrds.filter(o =>
+    o.stage !== 'archived' && o.deadline && new Date(o.deadline) < new Date()
+  );
+  const lastOrd = cOrds.slice().sort(
+    (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
+  )[0];
+  const daysSince = lastOrd?.createdAt?.seconds
+    ? Math.floor((Date.now() / 1000 - lastOrd.createdAt.seconds) / 86400)
+    : null;
+  const tags = c.tags || [];
+
+  return {
+    cOrds, activeOrds, lateOrds,
+    tot, paid, rem, pct,
+    totalCost, totalProfit, profitPct,
+    memberDays, daysSince,
+    byWallet, tags,
+  };
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 if (typeof window !== 'undefined') {
   Object.assign(window, {
     computeClientStats, parseBizCardText, filterClientsForGrid,
-    // PR-14 (PR-15 rename: cgridSort → cgridSortRows to avoid conflict
-    // with the in-page column-toggle window.cgridSort(field)):
     cgridGetDisplayStatus, cgridFilter, cgridSortRows, cgridExportCSV,
+    // PR-22:
+    computeClientPanelData,
   });
 }
