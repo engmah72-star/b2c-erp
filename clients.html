@@ -847,6 +847,10 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      Side-effect import: client-actions.js sets window.clientActions on load. -->
 <script type="module" src="./client-actions.js"></script>
 
+<!-- P1.4: orderActions module — exposes window.orderActions for compat consumers.
+     Used by saveNewOrder (deposit-aware atomic batch via createOrder action). -->
+<script type="module" src="./order-actions.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -2865,8 +2869,12 @@ window.removeDesignFile=function(idx){
   window.__noDesignFiles.splice(idx,1);
   renderDesignFilesList();
 };
+// P1.4 + P1.5 — Thin orchestration over window.orderActions.createOrder.
+// File upload (Firebase Storage compat) stays in the page; action receives URLs.
 function saveNewOrder(){
-  const stage=gv('no-stage');if(!stage){toast('⚠️ اختر نوع الأوردر','err');return;}
+  // ─ Form collection + UI-only validation ─
+  const stage=gv('no-stage');
+  if(!stage){toast('⚠️ اختر نوع الأوردر','err');return;}
   const rows=document.querySelectorAll('#no-prod-rows .no-prod-row');
   const prods=[];
   for(const row of rows){
@@ -2877,8 +2885,6 @@ function saveNewOrder(){
   }
   if(!prods.length){toast('⚠️ أضف منتجاً على الأقل','err');return;}
   const salePrice=parseFloat(gv('no-sale-price'))||0;
-  // السعر اختياري عند إنشاء أوردر تصميم (يمكن تحديده لاحقاً)
-  // إجباري لأوردر طباعة مباشرة (الباقي معروف من البداية)
   if(stage==='printing'&&salePrice<=0){toast('⚠️ يجب إدخال سعر الأوردر','err');document.getElementById('no-sale-price')?.focus();return;}
   const cl=clients.find(x=>x._id===pendingClientId);if(!cl)return;
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
@@ -2887,14 +2893,17 @@ function saveNewOrder(){
   const wEl=document.getElementById('no-wallet');
   const wName=wEl?.options[wEl?.selectedIndex]?.text||'';
   if(dep>0&&!wId){toast('⚠️ اختر المحفظة للعربون','err');return;}
+  if(!window.orderActions){toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;}
+
   const desSel=document.getElementById('no-designer');
   const designerId=desSel?.value||'';
   const designerName=designerId?(desSel?.options[desSel?.selectedIndex]?.text||''):'';
   const orderId='ORD-'+Date.now().toString().slice(-8);
-  const now=nowStr();
   const productName=prods.map(p=>p.name).join(' + ');
   const btn=document.getElementById('no-save-btn');btn.disabled=true;btn.textContent='جاري...';
   const designNote=gv('no-design-note');
+
+  // ─ File upload helper (compat Storage — stays in page, NOT in action) ─
   const uploadDesignFile=async()=>{
     const files=window.__noDesignFiles||[];
     const urlField=gv('no-design-url');
@@ -2906,7 +2915,6 @@ function saveNewOrder(){
     progWrap.style.display='block';
     progLbl.textContent=`رفع ${files.length} ملف...`;
     btn.textContent='جاري الرفع...';
-    // ضغط الصور قبل الرفع
     const compressImg=f=>new Promise(res=>{
       if(!f.type.startsWith('image/')){res(f);return;}
       const img=new Image(),url=URL.createObjectURL(f);
@@ -2925,7 +2933,6 @@ function saveNewOrder(){
       img.onerror=()=>res(f);
       img.src=url;
     });
-    // رفع ملف واحد مع تتبع التقدم
     const progress=new Array(files.length).fill(0);
     const updateProgress=()=>{
       const avg=Math.round(progress.reduce((s,p)=>s+p,0)/files.length);
@@ -2940,68 +2947,49 @@ function saveNewOrder(){
         ()=>sRef.getDownloadURL().then(url=>res({url,name:f.name,type:f.type})).catch(rej)
       );
     }));
-    // رفع كل الملفات بالتوازي
     const results=await Promise.all(files.map((f,i)=>uploadOne(f,i)));
     progWrap.style.display='none';
     return{firstUrl:results[0]?.url||'',allFiles:results};
   };
-  // ══ batch ذرّي واحد: order + (wallet + tx + ledger للعربون) — RULE 3 ══
-  uploadDesignFile().then(({firstUrl:designFileUrl,allFiles:designFiles})=>{
-    const orderRef=db.collection('orders').doc();
-    const batch=db.batch();
-    batch.set(orderRef,{
-      orderId,stage,designStage:stage==='design'?'pending':'',
-      clientId:pendingClientId,clientName:cl.name||'',clientPhone:cl.phone1||'',
-      products:prods,product:productName,qty:prods.reduce((s,p)=>s+p.qty,0),
+
+  // ─ Upload first → call action with URLs ─
+  uploadDesignFile().then(async ({firstUrl:designFileUrl,allFiles:designFiles})=>{
+    const r=await window.orderActions.createOrder({
+      clientId: pendingClientId,
+      clientName: cl.name||'',
+      clientPhone: cl.phone1||'',
+      products: prods,
+      stage,
       salePrice,
-      deposit:dep,totalPaid:dep,
-      remaining:Math.max(0,salePrice-dep),
-      // عند salePrice=0 (تصميم بدون سعر بعد): partial لو في عربون، pending لو لا
-      paymentStatus:salePrice<=0?(dep>0?'partial':'pending'):(dep>0&&dep>=salePrice?'paid':dep>0?'partial':'pending'),
-      depositWallet:dep>0?wName:'',depositWalletId:dep>0?wId:'',
-      designerId,designerName,deadline:gv('no-deadline'),notes:gv('no-notes'),
-      // طوابع زمن دخول المراحل (لـ SLA tracking)
-      stageEnteredAt:{[stage]:now},
-      designFileUrl,designFiles,designFileNote:designNote,costItems:[],printAddons:[],
-      createdDate:new Date().toLocaleDateString('ar-EG'),
-      createdBy:currentUser.uid,createdByName:userName,
-      timeline:[{date:now,stage,action:`🆕 طلب جديد — ${productName}${dep>0?' · عربون '+fn(dep)+' ج':''}${designerName?' · '+designerName:''}`,by:userName,byId:currentUser.uid,assigneeId:designerId||'',assigneeName:designerName||''}],
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      deposit: dep,
+      walletId: wId,
+      walletName: wName,
+      designerId, designerName,
+      deadline: gv('no-deadline'),
+      notes: gv('no-notes'),
+      designNote,
+      designFileUrl,
+      designFiles,
+      orderId,
+      userId: currentUser.uid,
+      userName: userName||'',
     });
-    if(dep>0&&wId){
-      const w=wallets.find(x=>x._id===wId);
-      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(dep)});
-      batch.set(db.collection('transactions_v2').doc(),{
-        walletId:wId,walletName:w?.name||'',type:'in',amount:dep,fees:0,
-        description:`عربون — ${cl.name} — ${orderId}`,
-        category:'client_payment',
-        orderId:orderRef.id,clientId:pendingClientId||'',clientName:cl.name||'',
-        date:now,createdBy:currentUser.uid,createdByName:userName,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-        approvalStatus:'pending',confirmedBy:'',confirmedByName:'',confirmedAt:null,
-        approvedBy:'',approvedByName:'',approvedAt:null,
-        rejectedBy:'',rejectedByName:'',rejectedAt:null,rejectReason:'',
-        isLocked:false
-      });
-      batch.set(db.collection('financial_ledger').doc(),{
-        type:'income',category:'client_payment',direction:'in',icon:'💰',label:'دفعة عميل',
-        eventType:'CUSTOMER_PAYMENT',amount:dep,
-        orderId:orderRef.id,clientId:pendingClientId||'',clientName:cl.name||'',
-        walletId:wId,walletName:w?.name||'',
-        notes:`عربون — ${cl.name} — ${orderId}`,
-        createdBy:currentUser.uid,createdByName:userName,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-        isDeleted:false,editHistory:[]
-      });
+    if(!r.ok){
+      console.warn('[orderActions] createOrder failed', r);
+      const errMsg=r.errors?.[0]||'فشل إنشاء الأوردر';
+      // Preserve financialGuard hook for ops_manager review flow
+      const handled=window.financialGuard?.({code:'',message:errMsg},{operation:'إنشاء أوردر بعربون',amount:dep,walletName:wName,clientName:cl.name,orderId});
+      if(!handled)toast('❌ '+errMsg,'err');
+      btn.disabled=false;btn.textContent='✓ إنشاء الطلب';
+      return;
     }
-    return batch.commit();
-  }).then(()=>{
     closeOrderModal();
     toast('✅ تم إنشاء الطلب'+(dep>0?' مع العربون':''),'ok');
     setTimeout(()=>window.location.href=stage==='design'?'design.html':'print.html',700);
   }).catch(e=>{
+    console.warn('[orderActions] createOrder exception', e);
     const handled=window.financialGuard?.(e,{operation:'إنشاء أوردر بعربون',amount:dep,walletName:wName,clientName:cl.name,orderId});
-    if(!handled)toast('❌ '+e.message,'err');
+    if(!handled)toast('❌ '+(e?.message||'خطأ'),'err');
     btn.disabled=false;btn.textContent='✓ إنشاء الطلب';
   });
 }
