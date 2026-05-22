@@ -277,6 +277,55 @@ export const productActions = {
       return { ok: false, errors: [e.message || 'فشل الاستعادة'], warnings: [] };
     }
   },
+
+  // ─── Cost History (P2.11) ─────────────────
+
+  /**
+   * استبدال costHistory كاملاً + lastCostTotal لـ product بعينه.
+   * يستخدم من products.html لإضافة/تعديل/حذف بنود التاريخ يدوياً.
+   *
+   * @param {Array} history — array كامل بعد التعديل (caller يبنيه)
+   */
+  async setCostHistory({ db, productId, history }) {
+    if (!productId) return { ok: false, errors: ['⚠️ productId مطلوب'], warnings: [] };
+    if (!Array.isArray(history)) {
+      return { ok: false, errors: ['⚠️ history مطلوب (array)'], warnings: [] };
+    }
+    try {
+      await updateDoc(doc(db, 'products_v2', productId), {
+        costHistory: history,
+        lastCostTotal: history.length ? (parseFloat(history[history.length - 1].total) || 0) : 0,
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], productId, count: history.length };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+    }
+  },
+
+  /**
+   * Seed-mode: bulk create default products (admin tool — لو الـ catalog فاضي).
+   *
+   * @param {Array<Object>} defaults — قوائم منتجات افتراضية
+   */
+  async seedDefaults({ db, defaults }) {
+    if (!Array.isArray(defaults) || !defaults.length) {
+      return { ok: false, errors: ['⚠️ defaults مطلوب'], warnings: [] };
+    }
+    try {
+      const ids = [];
+      for (const p of defaults) {
+        const ref = await addDoc(collection(db, 'products_v2'), {
+          ...p,
+          createdAt: serverTimestamp(),
+        });
+        ids.push(ref.id);
+      }
+      return { ok: true, errors: [], warnings: [], count: ids.length, productIds: ids };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الإنشاء'], warnings: [] };
+    }
+  },
 };
 
 export default productActions;

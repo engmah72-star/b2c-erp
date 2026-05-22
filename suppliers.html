@@ -392,7 +392,8 @@ const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clie
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'suppliers.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, getDocs, setDoc, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { masterListsActions } from "./master-lists-actions.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 import { isDelivered } from "./orders.js";
 console.log('[SUPPLIER] 🟢 SUPPLIER UI LOADED v2 — financial-sync-engine active');
@@ -880,11 +881,10 @@ async function loadSupplierOrders(supId){
 
 window.confirmDelivery=async function(soId){
   if(!confirm('تأكيد استلام هذا البند من المورد؟'))return;
-  try{
-    await updateDoc(doc(db,'supplier_orders',soId),{deliveryStatus:'received',receivedAt:serverTimestamp(),receivedBy:auth.currentUser?.uid||''});
-    toast('✅ تم تسجيل الاستلام','ok');
-    if(activeSup)loadSupplierOrders(activeSup._id);
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await masterListsActions.markSupplierOrderReceived({db,supplierOrderId:soId,userId:auth.currentUser?.uid||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم تسجيل الاستلام','ok');
+  if(activeSup)loadSupplierOrders(activeSup._id);
 };
 
 // ══ إضافة/تعديل ══
@@ -939,18 +939,16 @@ async function loadMasterLists(){
   try{
     const catSnap=await getDoc(doc(db,'master_lists','supplier_categories'));
     if(!catSnap.exists()){
-      await setDoc(doc(db,'master_lists','supplier_categories'),{
-        items:_SEED_CAT.map((c,i)=>({...c,isActive:true,order:i})),
-        seededAt:serverTimestamp(),updatedAt:serverTimestamp(),
-      });
-      masterCategories=_SEED_CAT.map((c,i)=>({...c,isActive:true,order:i}));
+      const seedItems=_SEED_CAT.map((c,i)=>({...c,isActive:true,order:i}));
+      await masterListsActions.saveSupplierCategories({db,items:seedItems});
+      masterCategories=seedItems;
     }else{
       const existing=catSnap.data()?.items||[];
       const existNorm=new Set(existing.map(c=>_norm(c.label)));
       const toAdd=_SEED_CAT.filter(c=>!existNorm.has(_norm(c.label))).map((c,i)=>({...c,isActive:true,order:existing.length+i}));
       if(toAdd.length){
         const merged=[...existing,...toAdd];
-        await setDoc(doc(db,'master_lists','supplier_categories'),{items:merged,updatedAt:serverTimestamp()},{merge:true});
+        await masterListsActions.saveSupplierCategories({db,items:merged});
         masterCategories=merged.filter(c=>c.isActive!==false);
       }else{
         masterCategories=existing.filter(c=>c.isActive!==false);
@@ -986,9 +984,8 @@ window.saveNewCat=async function(){
   if(masterCategories.some(c=>_norm(c.label)===_norm(label)))return toast('⚠️ هذا التخصص موجود بالفعل','err');
   const newItem={label,group:'🔧 أخرى',isActive:true,order:masterCategories.length};
   masterCategories.push(newItem);
-  try{
-    await setDoc(doc(db,'master_lists','supplier_categories'),{items:masterCategories,updatedAt:serverTimestamp()},{merge:true});
-  }catch(e){console.warn('saveNewCat Firestore err:',e.message);}
+  const r=await masterListsActions.saveSupplierCategories({db,items:masterCategories});
+  if(!r.ok)console.warn('saveNewCat Firestore err:',(r.errors||[]).join(' · '));
   renderCategorySelect();
   // auto-check the newly added category
   document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{if(cb.value===label)cb.checked=true;});

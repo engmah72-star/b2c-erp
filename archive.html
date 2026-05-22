@@ -156,7 +156,8 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, addDoc, updateDoc, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { orderActions } from "./order-actions.js";
 let orders=[],currentUser=null,userName='',activeId=null,currentRole='';
 
 // RULE 8 — قناع رقم العميل للأدوار غير المصرّحة
@@ -563,30 +564,11 @@ window.restoreOrder=async function(){
   const stage=document.getElementById('restore-stage-sel')?.value||'design';
   const stageAr={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'}[stage]||stage;
   if(!confirm(`استعادة أوردر "${o.clientName}" إلى مرحلة ${stageAr}؟`))return;
-  try{
-    const now=new Date().toISOString();
-    await updateDoc(doc(db,'orders',activeId),{
-      stage,
-      archivedStage:undefined,
-      [`stageEnteredAt.${stage}`]:now,
-      restoredAt:serverTimestamp(),
-      restoredBy:currentUser?.uid||'',
-      restoredByName:userName||'admin',
-      timeline:[...(o.timeline||[]),{date:now,action:`🔄 استُعيد من الأرشيف إلى ${stageAr}`,by:userName||'admin'}],
-      updatedAt:serverTimestamp()
-    });
-    // audit trail لاستعادة من الأرشيف (admin override صريح)
-    addDoc(collection(db,'audit_logs'),{
-      action:'order.restore_from_archive',
-      details:{orderId:activeId,clientName:o.clientName||'',toStage:stage},
-      userId:currentUser?.uid||'',userName:userName||'',
-      userRole:currentRole||'',
-      timestamp:serverTimestamp(),
-      url:location.pathname,
-    }).catch(e=>console.warn('[audit] failed:',e?.code||e?.message));
-    closePanel();
-    toast('✅ تم استعادة الأوردر إلى '+stageAr,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // orderActions.moveStage يعالج الـ stage transition + audit_logs entry + timeline (RULE A1 + H3)
+  const r=await orderActions.moveStage({db,orderId:activeId,targetStage:stage,role:currentRole,userId:currentUser?.uid||'',userName:userName||'admin'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closePanel();
+  toast('✅ تم استعادة الأوردر إلى '+stageAr,'ok');
 };
 
 // ── Reorder ──

@@ -414,7 +414,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 const ROLES_CFG={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Manager',col:'var(--b)'},customer_service:{label:'Cust. Service',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op.',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet Mgr',col:'var(--g)'}};
 
 let products=[],editId=null,currentUser=null,currentRole='admin',currentUserName='';
@@ -618,7 +618,7 @@ async function seedProducts(){
     {name:'بانر',printType:'digital',paper:'فينيل',weight:0,size:'متغير',defaultPrice:150,notes:'سعر المتر'},
     {name:'باكدج',printType:'offset',paper:'كرتون',weight:400,size:'متغير',defaultPrice:1200,notes:''},
   ];
-  for(const p of defaults) await addDoc(collection(db,'products_v2'),{...p,createdAt:serverTimestamp()});
+  await productActions.seedDefaults({db,defaults});
 }
 
 function updateStats(){
@@ -1354,15 +1354,10 @@ window.saveCostEntry=async function(){
   const entry={date,qty,paper,notes,items,total,clientName:'يدوي',orderId:null,source:'manual',createdBy:currentUser?.uid||'',createdByName:currentUserName||currentUser?.email||''};
   if(costEditIdx!==null){history[costEditIdx]=entry;}
   else{history.push(entry);}
-  try{
-    await updateDoc(doc(db,'products_v2',costTargetProdId),{
-      costHistory:history,
-      lastCostTotal:history[history.length-1]?.total||0,
-      updatedAt:serverTimestamp()
-    });
-    cM('add-cost');resetCostForm();toast('✅ تم حفظ التكلفة','ok');
-    if(activeTab==='costs'){renderCosts();updateCostStats();}
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await productActions.setCostHistory({db,productId:costTargetProdId,history});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('add-cost');resetCostForm();toast('✅ تم حفظ التكلفة','ok');
+  if(activeTab==='costs'){renderCosts();updateCostStats();}
 };
 
 window.deleteCostEntry=async function(prodId,idx,prodName){
@@ -1370,15 +1365,10 @@ window.deleteCostEntry=async function(prodId,idx,prodName){
   const p=products.find(x=>x._id===prodId);
   const history=[...(p?.costHistory||[])];
   history.splice(idx,1);
-  try{
-    await updateDoc(doc(db,'products_v2',prodId),{
-      costHistory:history,
-      lastCostTotal:history.length?history[history.length-1].total:0,
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الحذف','ok');
-    if(activeTab==='costs'){renderCosts();updateCostStats();}
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await productActions.setCostHistory({db,productId:prodId,history});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
+  if(activeTab==='costs'){renderCosts();updateCostStats();}
 };
 
 window.resetCostForm=function(){
