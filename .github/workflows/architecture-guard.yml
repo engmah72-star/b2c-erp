@@ -30,27 +30,42 @@ jobs:
           echo "── changed UI files ──"
           cat changed-ui.txt || echo "(none)"
 
-      - name: Scan for forbidden write patterns
+      - name: Scan for newly-introduced forbidden writes (diff additions only)
         run: |
           set +e
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
           FILES=$(cat changed-ui.txt 2>/dev/null)
           if [ -z "$FILES" ]; then
             echo "✅ no UI files changed — skipping"
             exit 0
           fi
-          # كل النمط: writeBatch( / updateDoc( / setDoc( / addDoc( / deleteDoc( / runTransaction(
-          # أو دوال FSE inline: dispatchFinancialEvent( / addLedgerToBatch(
-          # نتجاهل comments (lines starting with // or *) — grep -v
+          # FIX (post-failure run #1): scan ONLY added lines in the diff —
+          # not the whole file. Legacy UI files contain pre-existing forbidden
+          # patterns from before the guard was introduced; the guard's job is
+          # to block NEW additions, not to fail every PR that touches a legacy
+          # file with one filter-line change.
+          #
+          # Forbidden patterns: writeBatch( / updateDoc( / setDoc( / addDoc(
+          #   deleteDoc( / runTransaction( / dispatchFinancialEvent( / addLedgerToBatch(
+          # Comments (// or *) are excluded.
           PATTERNS='\b(updateDoc|setDoc|writeBatch|addDoc|deleteDoc|runTransaction|dispatchFinancialEvent|addLedgerToBatch)\s*\('
           VIOLATIONS=0
           for f in $FILES; do
             [ -f "$f" ] || continue
-            # نأخذ السطور التي تطابق النمط وتتجاوز التعليقات السطرية
-            hits=$(grep -nE "$PATTERNS" "$f" | grep -vE '^\s*[0-9]+:\s*(//|\*)')
+            # Extract only ADDED lines (starting with '+', not '+++') from the diff
+            added=$(git diff "$BASE_SHA" HEAD -- "$f" \
+              | grep -E '^\+' \
+              | grep -vE '^\+\+\+' \
+              | sed 's/^+//')
+            [ -z "$added" ] && continue
+            # Match forbidden patterns in added lines, excluding comments
+            hits=$(echo "$added" \
+              | grep -nE "$PATTERNS" \
+              | grep -vE '^\s*[0-9]+:\s*(//|\*)')
             if [ -n "$hits" ]; then
               VIOLATIONS=$((VIOLATIONS+1))
               echo ""
-              echo "❌ $f"
+              echo "❌ $f — newly-introduced forbidden writes:"
               echo "$hits" | sed 's/^/    /'
             fi
           done
