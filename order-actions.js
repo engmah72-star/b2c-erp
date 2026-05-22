@@ -1861,6 +1861,392 @@ export const orderActions = {
       return { ok: false, errors: [e.message || 'فشل التقسيم'], warnings: [], orderId };
     }
   },
+
+  // ─── Design Workflow Actions (P2.2) ───────
+  //
+  // Actions used by design.html. Most are simple order-field updates with a
+  // timeline entry; splitDesignOrder is the complex multi-write case.
+
+  /**
+   * تحديث ملاحظات الأوردر (notes / designNote) — مع timeline.
+   * يستخدم لـ saveDesignNotes في design.html.
+   */
+  async updateOrderNotes({
+    db = defaultDb, orderId,
+    notes,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const newNotes = (notes || '').trim();
+    const oldLen = (order.notes || '').length;
+    const newLen = newNotes.length;
+    const action = order.notes
+      ? `✏️ تعديل بيانات التصميم (${oldLen}→${newLen} حرف)`
+      : `📝 إضافة بيانات التصميم (${newLen} حرف)`;
+    try {
+      const entry = auditEntry({ action, userId, userName, kind: 'edit' });
+      await updateDoc(order._ref, {
+        notes: newNotes,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'update_order_notes' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * حفظ ملف التصميم النهائي على الأوردر + إضافة سطر timeline.
+   * إذا كان `autoTransitionFromWip` true والـ designStage='wip' حالياً،
+   * ينقله إلى 'awaiting_payment' ويعلّم designFinishedAt.
+   */
+  async saveDesignFile({
+    db = defaultDb, orderId,
+    fileUrl, fileNote = '',
+    autoTransitionFromWip = false,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!fileUrl) return { ok: false, errors: ['⚠️ fileUrl مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const wasInWip = order.designStage === 'wip';
+    const willTransition = autoTransitionFromWip && wasInWip;
+    try {
+      const tl = [...(order.timeline || []), auditEntry({
+        action: '🖼️ رُفعت صورة التصميم النهائي',
+        userId, userName, kind: 'op',
+      })];
+      const updates = {
+        designFileUrl: fileUrl,
+        designFileNote: fileNote,
+        timeline: tl,
+        updatedAt: serverTimestamp(),
+      };
+      if (willTransition) {
+        updates.designStage = 'awaiting_payment';
+        updates.designFinishedAt = nowStr();
+        updates.timeline = [...tl, auditEntry({
+          action: '📤 المصمم خلّص — في انتظار تحويل العميل',
+          userId, userName, kind: 'op',
+        })];
+      }
+      await updateDoc(order._ref, updates);
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'save_design_file',
+        transitioned: willTransition,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تعيين رابط الملف المرجعي بعد رفعه إلى Storage — يُستخدم في الـ
+   * post-createOrder callback من design.html.
+   */
+  async setRefFileUrl({
+    db = defaultDb, orderId, url, mimeType,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!url) return { ok: false, errors: ['⚠️ url مطلوب'], warnings: [], orderId };
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        refFileUrl: url,
+        refFileType: mimeType || '',
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_ref_file_url' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تعيين/إلغاء تعيين المصمم على الأوردر.
+   * تمرير `designerId=''` يفصل التعيين.
+   */
+  async assignDesigner({
+    db = defaultDb, orderId,
+    designerId = '', designerName = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({
+        action: designerId
+          ? `👤 تم تعيين المصمم: ${designerName} — بانتظار تأكيد الاستلام`
+          : '👤 إلغاء تعيين المصمم',
+        userId, userName, kind: 'op',
+        meta: { designerId },
+      });
+      const updates = {
+        designerId,
+        designerName: designerId ? designerName : '',
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+        designerAcceptedAt: null,
+        designerAcceptedBy: '',
+      };
+      if (designerId) {
+        updates.designerAssignedAt = serverTimestamp();
+        updates.designerAssignedBy = userId;
+      } else {
+        updates.designerAssignedAt = null;
+        updates.designerAssignedBy = '';
+      }
+      await updateDoc(order._ref, updates);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'assign_designer' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * المصمم يأكد استلام الأوردر المُعيَّن له.
+   */
+  async acceptDesignAssignment({
+    db = defaultDb, orderId,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (!order.designerId) return { ok: false, errors: ['⚠️ الأوردر غير مكلّف'], warnings: [], orderId };
+    if (order.designerId !== userId) return { ok: false, errors: ['⚠️ الأوردر غير مُعيَّن لك'], warnings: [], orderId };
+    if (order.designerAcceptedAt) return { ok: false, errors: ['ℹ️ تم تأكيد الاستلام مسبقاً'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({
+        action: '✓ المصمم أكّد استلام الأوردر',
+        userId, userName, kind: 'op',
+      });
+      await updateDoc(order._ref, {
+        designerAcceptedAt: serverTimestamp(),
+        designerAcceptedBy: userId,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'accept_design_assignment' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التأكيد'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * المصمم يبدأ العمل (designStage → 'wip' + designStartedAt).
+   * يفترض أن الـ caller تحقق إن designerAcceptedAt موجود.
+   */
+  async startDesignWork({
+    db = defaultDb, orderId,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.designerId && !order.designerAcceptedAt) {
+      return { ok: false, errors: ['⚠️ أكّد استلام الأوردر أولاً'], warnings: [], orderId };
+    }
+    try {
+      const entry = auditEntry({
+        action: '▶ بدأ المصمم العمل',
+        userId, userName, kind: 'op',
+      });
+      await updateDoc(order._ref, {
+        designStage: 'wip',
+        designStartedAt: nowStr(),
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'start_design_work' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل البدء'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تغيير designStage مع timeline + حقول مرتبطة (إجباري — قائمة محصورة).
+   *
+   * @param {string} stage  — 'pending' | 'wip' | 'awaiting_payment' | 'rejected' | 'approved' | 'paused'
+   * @param {string} [rejectReason]  — لو stage='rejected'
+   * @param {boolean} [isPause]  — مجرد action label hint
+   * @param {boolean} [isReturnToWip]  — مجرد action label hint
+   */
+  async setDesignStage({
+    db = defaultDb, orderId, stage,
+    rejectReason = '',
+    isPause = false, isReturnToWip = false,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const valid = ['pending', 'wip', 'awaiting_payment', 'rejected', 'approved'];
+    if (!valid.includes(stage)) {
+      return { ok: false, errors: [`⚠️ designStage '${stage}' غير صالح`], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const lblMap = { pending: 'في الانتظار', wip: 'جاري التصميم', awaiting_payment: 'انتظار التحويل', rejected: 'مرفوض', approved: 'معتمد' };
+    const lbl = lblMap[stage] || stage;
+    let actionText = `🔄 ${lbl}`;
+    if (stage === 'rejected' && rejectReason) actionText = '✕ رُفض: ' + rejectReason;
+    else if (isPause) actionText = '⏸ إيقاف مؤقت للتصميم';
+    else if (isReturnToWip) actionText = '↩ أُعيد للمصمم لتعديل التصميم';
+    try {
+      const entry = auditEntry({ action: actionText, userId, userName, kind: 'op', meta: { stage } });
+      const upd = {
+        designStage: stage,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (stage === 'rejected' && rejectReason) upd.rejectReason = rejectReason;
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_design_stage', stage };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تحديث productStatus لمنتج بعينه (workflow الكتالوج، يختلف عن execStatus
+   * المستخدم في production).
+   */
+  async setProductCatalogStatus({
+    db = defaultDb, orderId, prodIdx, status,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    const oldStatus = prods[prodIdx].productStatus || 'pending';
+    if (oldStatus === status) {
+      return { ok: false, errors: ['⚠️ نفس الحالة'], warnings: [], orderId };
+    }
+    prods[prodIdx] = {
+      ...prods[prodIdx],
+      productStatus: status,
+      statusUpdatedAt: nowStr(),
+      statusUpdatedBy: userName,
+    };
+    const sLblMap = { pending: 'في الانتظار', in_progress: 'جاري', ready: 'جاهز للطباعة', on_hold: 'مؤجَّل', printed: 'مطبوع', done: 'منتهي' };
+    const sLbl = sLblMap[status] || status;
+    try {
+      const entry = auditEntry({
+        action: `📦 ${prods[prodIdx].name}: ${sLbl}`,
+        userId, userName, kind: 'op',
+        meta: { prodIdx, status, oldStatus },
+      });
+      entry.stage = order.stage;
+      await updateDoc(order._ref, {
+        products: prods,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_product_catalog_status', label: sLbl };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * شحن جزئي من design → printing (مماثل لـ splitOrderForShipping).
+   *
+   * @param {number[]} indices — indices للمنتجات المُختارة للنقل
+   */
+  async splitDesignOrder({
+    db = defaultDb, orderId, indices = [],
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!Array.isArray(indices) || !indices.length) {
+      return { ok: false, errors: ['⚠️ اختر منتجاً واحداً على الأقل'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const split = buildOrderSplit({
+      order, productIndices: indices, role, userId, userName, targetStage: 'printing',
+    });
+    if (!split.ok) {
+      return { ok: false, errors: split.errors || [], warnings: split.warnings || [], orderId };
+    }
+    try {
+      const childRef = doc(collection(db, 'orders'));
+      const batch = writeBatch(db);
+      batch.set(childRef, {
+        ...split.childOrderData,
+        parentOrderId: orderId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(order._ref, {
+        ...split.parentUpdate.fields,
+        childOrderIds: [...(order.childOrderIds || []), childRef.id],
+        timeline: [...(order.timeline || []), { ...split.parentUpdate.timelineEntry, childOrderId: childRef.id }],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'split_design_order',
+        childOrderId: split.childOrderId,
+        childOrderDocId: childRef.id,
+        splitCount: split.splitCount,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التقسيم'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * Admin override لاعتماد التصميم → طباعة بدون استيفاء شروط submitToPrinting.
+   * Escape hatch موثَّق — يكتب override:true + overrideReason في الـ timeline.
+   */
+  async adminOverrideToPrinting({
+    db = defaultDb, orderId,
+    printerId = '', printerName = '',
+    overrideReason = '',
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!['admin', 'operation_manager'].includes(role)) {
+      return { ok: false, errors: ['⛔ صلاحية أدمن فقط'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({
+        action: '⚠️ اعتُمد التصميم بـ admin override — ' + (overrideReason || 'بدون استيفاء الشروط'),
+        userId, userName, kind: 'op',
+        meta: { override: true, overrideReason },
+      });
+      entry.stage = 'printing';
+      entry.override = true;
+      entry.overrideReason = overrideReason;
+      const upd = {
+        stage: 'printing',
+        designStage: 'approved',
+        approvedAt: nowStr(),
+        approvedBy: userName,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (printerId) {
+        upd.printerId = printerId;
+        upd.printerName = printerName;
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'admin_override_to_printing' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الـ override'], warnings: [], orderId };
+    }
+  },
 };
 
 // ══════════════════════════════════════════
