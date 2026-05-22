@@ -418,10 +418,11 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, addDoc, increment, writeBatch, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+// FSE imports removed — financial writes now go through orderActions.recordPayment/recordPrintAdvance
 import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { clientActions } from "./client-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
@@ -782,16 +783,18 @@ function renderPanel(o){
 // Set Print Type
 window.setPrintType=async function(type){
   if(!activeId)return;
-  try{await updateDoc(doc(db,'orders',activeId),{printType:type,updatedAt:serverTimestamp()});toast('✅ نوع الطباعة: '+type,'ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setPrintType({db,orderId:activeId,printType:type});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ نوع الطباعة: '+type,'ok');
 };
 
 // Save Notes
 window.savePrintNotes=async function(){
   if(!activeId)return;
   const notes=document.getElementById('print-notes-inp')?.value||'';
-  try{await updateDoc(doc(db,'orders',activeId),{printNotes:notes,updatedAt:serverTimestamp()});toast('✅ تم الحفظ','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.savePrintNotes({db,orderId:activeId,notes});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحفظ','ok');
 };
 
 // Move to Production
@@ -801,16 +804,10 @@ window.pickupOrder=async function(orderId){
   if(!o)return;
   if(o.printerId)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
   if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
-  try{
-    const uid=auth?.currentUser?.uid||'';
-    await updateDoc(doc(db,'orders',orderId),{
-      printerId:uid,
-      printerName:userName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الالتقاط','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const uid=auth?.currentUser?.uid||'';
+  const r=await orderActions.assignPrinter({db,orderId,printerId:uid,printerName:userName,userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الالتقاط','ok');
 };
 
 window.moveTo=function(_stage){
@@ -865,17 +862,8 @@ window.confirmMoveToProduction=async function(){
       }
     });
     if(imagesToSave.length){
-      try{
-        const cRef=doc(db,'clients',o.clientId);
-        const cSnap=await getDoc(cRef);
-        const existing=cSnap.exists()?(cSnap.data().gallery||[]):[];
-        const existingUrls=new Set(existing.map(x=>x?.url).filter(Boolean));
-        const fresh=imagesToSave.filter(x=>!existingUrls.has(x.url));
-        if(fresh.length){
-          await updateDoc(cRef,{gallery:[...existing,...fresh],updatedAt:serverTimestamp()});
-          savedCount=fresh.length;
-        }
-      }catch(_){/* صلاحية الكتابة على clients اختيارية */}
+      const gr=await clientActions.appendToClientGallery({db,clientId:o.clientId,images:imagesToSave});
+      savedCount=gr.ok?gr.count:0; // صلاحية الكتابة على clients اختيارية — لا نتعطل
     }
   }
   cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
@@ -909,32 +897,14 @@ window.confirmSplitOrder=async function(){
   const checks=document.querySelectorAll('.split-prod-chk:checked');
   const indices=[...checks].map(c=>parseInt(c.dataset.idx));
   if(!indices.length)return toast('⚠️ اختر منتجاً واحداً على الأقل','err');
-  const split=buildOrderSplit({
-    order:o, productIndices:indices, role:currentRole,
-    userId:auth?.currentUser?.uid||'', userName,
-    targetStage:'production'
-  });
-  if(!split.ok)return toast('⛔ '+split.errors.join(' · '),'err');
-  if(!confirm(`فصل ${split.splitCount} منتجات في أوردر فرعي ينتقل للتنفيذ؟`))return;
-  try{
-    const batch=writeBatch(db);
-    const childRef=doc(collection(db,'orders'));
-    batch.set(childRef,{
-      ...split.childOrderData,
-      parentOrderId:activeId,
-      createdAt:serverTimestamp(),
-      updatedAt:serverTimestamp(),
-    });
-    batch.update(doc(db,'orders',activeId),{
-      ...split.parentUpdate.fields,
-      childOrderIds:[...(o.childOrderIds||[]),childRef.id],
-      timeline:[...(o.timeline||[]),{...split.parentUpdate.timelineEntry,childOrderId:childRef.id}],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
-    cM('split-order');
-    toast(`✅ تم فصل ${split.splitCount} منتجات في أوردر فرعي`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // pre-flight للـ user confirm
+  const preview=buildOrderSplit({order:o,productIndices:indices,role:currentRole,userId:auth?.currentUser?.uid||'',userName,targetStage:'production'});
+  if(!preview.ok)return toast('⛔ '+(preview.errors||[]).join(' · '),'err');
+  if(!confirm(`فصل ${preview.splitCount} منتجات في أوردر فرعي ينتقل للتنفيذ؟`))return;
+  const r=await orderActions.splitPrintOrder({db,orderId:activeId,indices,role:currentRole,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('split-order');
+  toast(`✅ تم فصل ${r.splitCount} منتجات في أوردر فرعي`,'ok');
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
@@ -958,11 +928,9 @@ window.applyBriefTemplate = async function(orderId, idx, tplId){
     const press = suppliers.find(s => s._id === tpl.defaultPressId);
     if(press){ patch.pressId = press._id; patch.pressName = press.name||''; }
   }
-  prods[idx] = {...prods[idx], ...patch};
-  try{
-    await updateDoc(doc(db,'orders',orderId), {products: prods, updatedAt: serverTimestamp()});
-    toast(`✅ طُبق قالب "${tpl.name}"`,'ok');
-  }catch(e){ toast('❌ '+e.message,'err'); }
+  const r=await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ طُبق قالب "${tpl.name}"`,'ok');
 };
 
 window.openSaveTemplate = function(orderId, idx){
@@ -1068,18 +1036,9 @@ window.sendProductBrief = async function(orderId, idx){
   const waPhone = phone.startsWith('0') ? '20'+phone.slice(1) : phone.startsWith('20') ? phone : '20'+phone;
   const message = buildProductBriefMessage(o, p);
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
-  // Save timestamp (best-effort)
-  try{
-    const prods = [...(o.products||[])];
-    prods[idx] = {...prods[idx], briefSentAt: nowStr(), briefSentBy: auth?.currentUser?.uid||'', briefSentByName: userName||''};
-    await updateDoc(doc(db,'orders',orderId), {
-      products: prods,
-      timeline: [...(o.timeline||[]), {date: nowStr(), action:`📤 إرسال بيانات الإنتاج للمطبعة (${p.name||''} → ${press?.name||''})`, by: userName, byId: auth?.currentUser?.uid||''}],
-      updatedAt: serverTimestamp(),
-    });
-  }catch(e){
-    console.warn('briefSentAt save:', e?.message||e);
-  }
+  // Save timestamp (best-effort) — لا نُعطّل الـ WhatsApp لو فشلت الكتابة
+  const br=await orderActions.markProductBriefSent({db,orderId,prodIdx:idx,pressName:press?.name||'',userId:auth?.currentUser?.uid||'',userName});
+  if(!br.ok)console.warn('briefSentAt save:',(br.errors||[]).join(' · '));
   // Open WhatsApp in new tab
   window.open(waUrl, '_blank');
   toast('💬 فُتح واتساب · أرفق صورة التصميم يدوياً','ok');
@@ -1314,37 +1273,24 @@ function queueBriefSave(orderId, idx, patch){
 }
 
 async function commitBriefSave(orderId, idx, patch){
-  const o = orders.find(x => x._id===orderId);
-  if(!o) return;
-  const prods = [...(o.products||[])];
-  if(idx<0 || idx>=prods.length) return;
-  prods[idx] = {...prods[idx], ...patch};
-  try{
-    await updateDoc(doc(db,'orders',orderId), {
-      products: prods,
-      updatedAt: serverTimestamp(),
-    });
-  }catch(e){
-    console.warn('brief save failed:', e?.message||e);
-    toast('⚠️ تعذّر الحفظ — '+(e?.message||''),'err');
+  const r=await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok){
+    console.warn('brief save failed:',(r.errors||[]).join(' · '));
+    toast('⚠️ تعذّر الحفظ — '+((r.errors||[])[0]||''),'err');
   }
 }
 
 window.setPrintProductStatus=async function(idx,status){
   if(!activeId)return;
   const o=orders.find(x=>x._id===activeId)||activeOrder;if(!o)return;
-  const prods=[...(o.products||[])];
-  if(idx<0||idx>=prods.length)return;
-  prods[idx]={...prods[idx],productStatus:status,statusUpdatedAt:nowStr(),statusUpdatedBy:userName};
+  const prodName=(o.products||[])[idx]?.name||'';
   const sLbl=({pending:'في الانتظار',in_progress:'جاري',ready:'جاهز للطباعة',on_hold:'مؤجَّل',printed:'مطبوع',done:'منتهي'})[status]||status;
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      products:prods,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📦 ${prods[idx].name}: ${sLbl}`,by:userName,byId:auth?.currentUser?.uid||''}],
-      updatedAt:serverTimestamp()
-    });
-    toast(`✅ ${prods[idx].name}: ${sLbl}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setProductCatalogStatus({db,orderId:activeId,prodIdx:idx,status,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok){
+    if(((r.errors||[])[0]||'')==='⚠️ نفس الحالة')return;
+    return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  }
+  toast(`✅ ${prodName}: ${sLbl}`,'ok');
 };
 
 window.openReject=function(){document.getElementById('ov-reject')?.classList.add('open');};
@@ -1352,21 +1298,9 @@ window.confirmReject=async function(){
   if(!activeId||!activeOrder)return;
   const reason=document.getElementById('reject-reason')?.value||'';
   if(!reason.trim())return toast('⚠️ أدخل سبب الإرجاع','err');
-  // المرور عبر بوابة الارتداد الموحّدة (orders.js)
-  const rev=buildStageRevert({
-    order:activeOrder, role:currentRole, userId:auth?.currentUser?.uid||'', userName,
-    targetStage:'design', reason,
-    extraFields:{designStage:'rejected',printRejectNote:reason}
-  });
-  if(!rev.ok)return toast('⛔ '+rev.errors.join(' · '),'err');
-  try{
-    await updateDoc(doc(db,'orders',activeId),{
-      ...rev.fields,
-      timeline:[...(activeOrder.timeline||[]),rev.timelineEntry],
-      updatedAt:serverTimestamp()
-    });
-    window.cM('reject');closePanel();toast('↩️ أُعيد للتصميم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.rejectFromPrinting({db,orderId:activeId,reason,role:currentRole,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+  window.cM('reject');closePanel();toast('↩️ أُعيد للتصميم','ok');
 };
 
 // Collect
@@ -1430,37 +1364,9 @@ window.saveCollect=async function(){
   if(!wid){toast('⚠️ اختر طريقة الدفع','err');return;}
   const rem=getRem(o);
   if(amt>rem+0.01){toast(`⚠️ يتجاوز الباقي (${fn(rem)} ج)`,'err');return;}
-  const newPaid=getPaid(o)+amt;
-  const newRem=Math.max(0,getNet(o)-newPaid);
-  const status=newRem<=0?'paid':newPaid>0?'partial':'pending';
-  try{
-    const w=wallets.find(x=>x._id===wid);
-    const bb=parseFloat(w?.balance)||0;
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',activeId),{
-      totalPaid:newPaid,remaining:newRem,paymentStatus:status,updatedAt:serverTimestamp(),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💰 تحصيل ${fn(amt)} ج عبر ${wname}`,by:userName}]
-    });
-    const txRef=doc(collection(db,'transactions_v2'));
-    batch.set(txRef,{
-      type:'in',category:'collection',amount:amt,
-      walletId:wid,walletName:wname,
-      orderId:activeId,orderRef:o.orderId||activeId.slice(-6),clientName:o.clientName||'—',
-      note:`تحصيل — ${o.clientName||'—'}`,
-      balanceBefore:bb,balanceAfter:bb+amt,
-      date:nowStr(),createdAt:serverTimestamp(),by:userName,
-      ...approvalFields()
-    });
-    if(w)batch.update(doc(db,'wallets',wid),{balance:increment(amt)});
-    addLedgerToBatch(batch,db,FE.CUSTOMER_PAYMENT,{
-      amount:amt,walletId:wid,walletName:wname,
-      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`تحصيل — ${o.clientName||'—'}`,
-      userId:auth?.currentUser?.uid||'',userName,
-    });
-    await batch.commit();
-    window.cM('collect');toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.recordPayment({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,role:currentRole,userId:auth?.currentUser?.uid||'',userName,source:'customer',note:`تحصيل — ${o.clientName||'—'}`});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  window.cM('collect');toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');
 };
 
 // Upload
@@ -1492,12 +1398,9 @@ async function _uploadFile(file){
         rej,
         async()=>{
           const url=await getDownloadURL(task.snapshot.ref);
-          const o=activeOrder;
-          await updateDoc(doc(db,'orders',activeId),{
-            printFinalUrl:url,printFinalType:file.type,updatedAt:serverTimestamp(),
-            timeline:[...(o.timeline||[]),{date:nowStr(),action:'📁 رُفع الملف النهائي للمطبعة',by:userName}]
-          });
+          const sf=await orderActions.setPrintFinalFile({db,orderId:activeId,fileUrl:url,fileType:file.type,userId:auth?.currentUser?.uid||'',userName});
           if(pw)pw.style.display='none';
+          if(!sf.ok){toast('❌ '+(sf.errors||[]).join(' · '),'err');return rej(new Error((sf.errors||[])[0]||'فشل الحفظ'));}
           const updated=orders.find(x=>x._id===activeId);
           if(updated)renderPanel({...updated,printFinalUrl:url,printFinalType:file.type});
           const prodBtn=document.getElementById('pn-prod-btn');
@@ -1562,54 +1465,14 @@ window.updatePaPreview=function(){
 
 window.savePrintAdvance=async function(){
   if(!activeId||!activeOrder)return;
-  const o=activeOrder;
   const amt=parseFloat(document.getElementById('pa-amount')?.value)||0;
   const wid=document.getElementById('pa-wid')?.value;
   const wname=document.getElementById('pa-wname')?.value;
   const note=document.getElementById('pa-note')?.value||'';
-  if(!amt||amt<=0){toast('⚠️ أدخل مبلغاً','err');return;}
-  if(!wid){toast('⚠️ اختر طريقة الدفع','err');return;}
-  const rem=getRem(o);
-  if(amt>rem+0.01){toast(`⚠️ يتجاوز الباقي (${fn(rem)} ج)`,'err');return;}
-  const newPaid=getPaid(o)+amt;
-  const newRem=Math.max(0,getNet(o)-newPaid);
-  const status=newRem<=0?'paid':newPaid>0?'partial':'pending';
-  const newPrintAdvance=(parseFloat(o.printAdvance)||0)+amt;
-  const label=note?`مقدم طباعة — ${note}`:'مقدم طباعة';
-  try{
-    const w=wallets.find(x=>x._id===wid);
-    const bb=parseFloat(w?.balance)||0;
-    const pb=writeBatch(db);
-    pb.update(doc(db,'orders',activeId),{
-      totalPaid:newPaid,remaining:newRem,paymentStatus:status,
-      printAdvance:newPrintAdvance,updatedAt:serverTimestamp(),
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💵 ${label} ${fn(amt)} ج عبر ${wname}`,by:userName}]
-    });
-    const txRef=doc(collection(db,'transactions_v2'));
-    pb.set(txRef,{
-      type:'in',category:'print_advance',amount:amt,
-      walletId:wid,walletName:wname,
-      orderId:activeId,orderRef:o.orderId||activeId.slice(-6),
-      clientId:o.clientId||'',clientName:o.clientName||'—',
-      description:`${label} — ${o.clientName||'—'}`,
-      note:`${label} — ${o.clientName||'—'}`,
-      balanceBefore:bb,balanceAfter:bb+amt,
-      date:nowStr(),
-      createdBy:auth?.currentUser?.uid||'',createdByName:userName,by:userName,
-      createdAt:serverTimestamp(),
-      ...approvalFields()
-    });
-    if(w)pb.update(doc(db,'wallets',wid),{balance:increment(amt)});
-    addLedgerToBatch(pb,db,FE.CUSTOMER_PAYMENT,{
-      amount:amt,walletId:wid,walletName:wname,
-      orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-      notes:`${label} — ${o.clientName||'—'}`,
-      userId:auth?.currentUser?.uid||'',userName,
-    });
-    await pb.commit();
-    window.cM('print-advance');
-    toast(`✅ تم تسجيل مقدم ${fn(amt)} ج`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.recordPrintAdvance({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,note,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  window.cM('print-advance');
+  toast(`✅ تم تسجيل مقدم ${fn(amt)} ج`,'ok');
 };
 
 // ════════════════════════════════════════
@@ -1825,30 +1688,15 @@ window.saveEditProds = async function() {
   const autoSum = editProdsData.reduce((s,p)=>s+(parseFloat(p.unitPrice||p.price||0)),0);
   const salePrice = parseFloat(document.getElementById('ep-sale-price')?.value)||autoSum||0;
   const productName = editProdsData.map(p=>p.name).join(' + ');
-  const totalQty = editProdsData.reduce((s,p)=>s+parseInt(p.qty||1),0);
-  // إعادة حساب المالية
-  const o = activeOrder;
-  const paid = getPaid(o);
-  const rem = Math.max(0, salePrice - (parseFloat(o.discount)||0) - paid);
-  const status = rem<=0 && salePrice>0 ? 'paid' : paid>0 ? 'partial' : 'pending';
-  try {
-    await updateDoc(doc(db,'orders',activeId), {
-      products: editProdsData,
-      product: productName,
-      qty: totalQty,
-      salePrice,
-      remaining: rem,
-      paymentStatus: status,
-      updatedAt: serverTimestamp(),
-      timeline: [...(o.timeline||[]), {
-        date: nowStr(),
-        action: `📦 تعديل المنتجات — ${productName} · ${fn(salePrice)} ج`,
-        by: userName
-      }]
-    });
-    window.cM('edit-prods');
-    toast('✅ تم حفظ التعديلات','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  const r = await orderActions.saveOrderProducts({
+    db, orderId: activeId, products: editProdsData,
+    recalcFinancials: true, overrideSalePrice: salePrice,
+    timelineAction: `📦 تعديل المنتجات — ${productName} · ${fn(salePrice)} ج`,
+    userId: auth?.currentUser?.uid||'', userName,
+  });
+  if(!r.ok) return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  window.cM('edit-prods');
+  toast('✅ تم حفظ التعديلات','ok');
 };
 
 // ════════════════════════════════════════
@@ -1911,7 +1759,7 @@ window.removeProductImgAt = async function(imgIdx) {
   // مزامنة designImageUrl مع أول صورة (للـ backward compat)
   p.designImageUrl = p.designImages[0] || '';
   if(activeId) {
-    try { await updateDoc(doc(db,'orders',activeId),{products:editProdsData,updatedAt:serverTimestamp()}); } catch(_){}
+    try { await orderActions.saveOrderProducts({db,orderId:activeId,products:editProdsData}); } catch(_){}
   }
   renderProdImgGallery();
   renderEditProdsList();
@@ -1924,7 +1772,7 @@ window.removeProductImg = async function() {
   editProdsData[piProdIdx].designImages = [];
   editProdsData[piProdIdx].designImageUrl = '';
   if(activeId) {
-    try { await updateDoc(doc(db,'orders',activeId),{products:editProdsData,updatedAt:serverTimestamp()}); } catch(_){}
+    try { await orderActions.saveOrderProducts({db,orderId:activeId,products:editProdsData}); } catch(_){}
   }
   renderProdImgGallery();
   renderEditProdsList();
@@ -1984,12 +1832,7 @@ window.uploadProductImg = async function(inp) {
     }
     // حفظ كل الصور دفعة واحدة بعد رفع الكل
     if(activeId) {
-      try {
-        await updateDoc(doc(db,'orders',activeId),{
-          products: editProdsData,
-          updatedAt: serverTimestamp()
-        });
-      } catch(_){}
+      try { await orderActions.saveOrderProducts({db,orderId:activeId,products:editProdsData}); } catch(_){}
     }
     renderProdImgGallery();
     renderEditProdsList();
