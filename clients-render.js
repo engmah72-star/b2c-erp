@@ -1134,6 +1134,379 @@ export function controlGridRowHTML(order, ctx = {}) {
     </tr>`;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Stats Drawer — top-of-page KPI cards that open a detail drawer
+// ════════════════════════════════════════════════════════════════════
+// The drawer has 6 types (total / today / month / sales / rem / orders).
+// Each builds its own body HTML. The drawer header (title) and the
+// container open/close stay in clients.html.
+
+const _DRAWER_TITLES = {
+  total:  '👥 كل العملاء',
+  today:  '📅 عملاء اليوم',
+  month:  '🆕 عملاء هذا الشهر',
+  sales:  '🚀 رحلة العملاء — تفاصيل المبيعات',
+  rem:    '💳 باقي التحصيل',
+  orders: '📦 الأوردرات النشطة',
+};
+
+// Customer-journey config (shared between 'sales' + 'rem' drawer branches).
+const _JOURNEY = [
+  { key: 'design',     label: 'تصميم',  ico: '✏️', page: 'design.html',     col: '#7c5cff' },
+  { key: 'printing',   label: 'طباعة',  ico: '🖨️', page: 'print.html',      col: '#fbbf24' },
+  { key: 'production', label: 'تنفيذ',  ico: '🏭', page: 'production.html', col: '#ff4d8d' },
+  { key: 'shipping',   label: 'شحن',    ico: '🚚', page: 'shipping.html',   col: '#06b6d4' },
+  { key: 'done',       label: 'تسليم',  ico: '✅', page: 'archive.html',    col: '#10d27e' },
+];
+function _stageIdx(o) {
+  if (['archived', 'delivered'].includes(o.stage)) return 4;
+  if (o.stage === 'shipping')   return 3;
+  if (o.stage === 'production') return 2;
+  if (o.stage === 'printing')   return 1;
+  return 0;
+}
+function _lastStageChange(o) {
+  const ts = o.stageChangedAt?.seconds || o.lastUpdate?.seconds || o.updatedAt?.seconds || o.createdAt?.seconds || 0;
+  return ts ? Math.floor((Date.now() / 1000 - ts) / 86400) : null;
+}
+function _isLate(o) {
+  return o.deadline && new Date(o.deadline).getTime() < Date.now() && !['archived', 'delivered'].includes(o.stage);
+}
+function _lateDays(o) {
+  return o.deadline ? Math.max(0, Math.floor((Date.now() - new Date(o.deadline).getTime()) / 86400000)) : 0;
+}
+
+/** Customer-journey timeline block (5 stage circles + label + days badge). */
+function _journeyHTML(o) {
+  const idx  = _stageIdx(o);
+  const days = _lastStageChange(o);
+  const late = _isLate(o);
+  const cur  = _JOURNEY[idx];
+
+  const stages = _JOURNEY.map((s, i) => {
+    const done   = i < idx;
+    const active = i === idx;
+    const bg     = done ? '#10d27e' : active ? s.col : 'var(--line)';
+    const txt    = done ? '#fff'    : active ? '#fff' : 'var(--dim)';
+    const ring   = active ? `box-shadow:0 0 0 3px ${s.col}30;` : '';
+    const pulse  = active ? 'animation:journeyPulse 2s infinite;' : '';
+    return `<div title="${s.label}" style="width:28px;height:28px;border-radius:50%;background:${bg};color:${txt};display:flex;align-items:center;justify-content:center;font-size:var(--fs-md);font-weight:900;flex-shrink:0;${ring}${pulse}">${done ? '✓' : s.ico}</div>`;
+  });
+  const lines = _JOURNEY.slice(0, -1).map((_, i) => {
+    const done = i < idx;
+    return `<div style="flex:1;height:3px;background:${done ? '#10d27e' : 'var(--line)'};margin:0 -2px;align-self:center;border-radius:99px"></div>`;
+  });
+  const merged = [];
+  for (let i = 0; i < stages.length; i++) {
+    merged.push(stages[i]);
+    if (i < lines.length) merged.push(lines[i]);
+  }
+
+  const lateBadge = late ? `<span style="font-size:var(--fs-xs);font-weight:900;color:var(--r);background:rgba(255,61,110,.12);padding:3px 9px;border-radius:99px;border:1px solid rgba(255,61,110,.3)">⚠️ متأخر ${_lateDays(o)}ي</span>` : '';
+  const daysBadge = days !== null ? `<span style="font-size:var(--fs-xs);font-weight:700;color:var(--dim2)">في ${cur.label} منذ ${days === 0 ? 'اليوم' : days + ' يوم'}</span>` : '';
+  return `<div style="margin:10px 0 6px">
+      <div style="display:flex;align-items:center;gap:0;padding:0 4px">${merged.join('')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:800;color:${cur.col}">
+          ${cur.ico} ${cur.label}
+        </div>
+        ${daysBadge}
+        ${lateBadge}
+      </div>
+    </div>`;
+}
+
+/**
+ * statsDrawerTitle(type) → الـ title النصي للـ drawer header.
+ */
+export function statsDrawerTitle(type) {
+  return _DRAWER_TITLES[type] || 'التفاصيل';
+}
+
+/**
+ * statsDrawerHTML({type, clients, allOrders, calcRem, salesStageFilter, remStageFilter})
+ *   → HTML body for the drawer content area.
+ *
+ * Pure: no DOM writes. The page wrapper sets title + assigns the
+ * returned HTML to `#drawer-content`.
+ *
+ * Filter state (`salesStageFilter`, `remStageFilter`) is passed in;
+ * the rendered HTML embeds onclick handlers that set those flags and
+ * call back into `window.showStatsDrawer(...)` for the re-render.
+ */
+export function statsDrawerHTML({
+  type,
+  clients = [],
+  allOrders = [],
+  calcRem = () => 0,
+  salesStageFilter,
+  remStageFilter,
+} = {}) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const fn = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');
+
+  if (type === 'total') {
+    return `<div style="text-align:center;padding:12px;color:var(--dim2);font-size:var(--fs-xl);font-weight:800">${clients.length} عميل</div>` +
+      clients.slice(0, 30).map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-size:var(--fs-md);font-weight:800">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div></div>
+        <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
+      </div>`).join('');
+  }
+
+  if (type === 'today') {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayC = clients.filter(c2 => {
+      const d = c2.createdAt?.seconds ? new Date(c2.createdAt.seconds * 1000) : null;
+      return d && d >= today;
+    });
+    return `<div style="text-align:center;padding:12px;color:var(--b);font-size:var(--fs-2xl);font-weight:900">${todayC.length} عميل اليوم</div>` +
+      (todayC.length ? todayC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-size:var(--fs-lg);font-weight:900">${c2.name || '—'}</div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2)">${c2.source || ''}</div></div>
+        <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="font-size:var(--fs-3xl);text-decoration:none">💬</a>
+      </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:30px;font-size:var(--fs-lg)">لا يوجد عملاء اليوم</div>');
+  }
+
+  if (type === 'month') {
+    const monthC = clients.filter(c2 => {
+      const d = c2.createdAt?.seconds ? new Date(c2.createdAt.seconds * 1000) : null;
+      return d && d.getFullYear() === y && d.getMonth() === m;
+    });
+    return `<div style="text-align:center;padding:12px;color:var(--g);font-size:var(--fs-2xl);font-weight:900">${monthC.length} عميل جديد</div>` +
+      (monthC.length ? monthC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-size:var(--fs-md);font-weight:800">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'}</div></div>
+        <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
+      </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:20px">لا يوجد عملاء جدد</div>');
+  }
+
+  if (type === 'sales') {
+    const allSales  = allOrders.filter(o => parseFloat(o.salePrice) > 0);
+    const activeIdx = (typeof salesStageFilter === 'number') ? salesStageFilter : -1;
+
+    const byStageCount = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    const byStageSales = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+    allSales.forEach(o => {
+      const i = _stageIdx(o);
+      byStageCount[i] = (byStageCount[i] || 0) + 1;
+      byStageSales[i] = (byStageSales[i] || 0) + (parseFloat(o.salePrice) || 0);
+    });
+
+    const ords = (activeIdx === -1 ? allSales : allSales.filter(o => _stageIdx(o) === activeIdx))
+                 .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    const tot       = ords.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+    const totPaid   = ords.reduce((s, o) => s + (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0), 0);
+    const totRem    = ords.reduce((s, o) => s + calcRem(o), 0);
+    const lateCount = ords.filter(o => _isLate(o)).length;
+    const titleLabel = activeIdx === -1 ? 'إجمالي المبيعات' : `مبيعات مرحلة ${_JOURNEY[activeIdx].label}`;
+
+    const header = `
+      <div style="background:linear-gradient(135deg,rgba(124,92,255,.1),rgba(6,182,212,.05));border:1px solid rgba(124,92,255,.2);border-radius:14px;padding:14px;margin-bottom:14px">
+        <div style="text-align:center;margin-bottom:12px">
+          <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:800;margin-bottom:4px">${titleLabel}</div>
+          <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,#10d27e,#06b6d4);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(tot)} ج</div>
+          <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:var(--fs-sm);flex-wrap:wrap">
+            <span style="color:var(--g);font-weight:800">✓ تم: ${fn(totPaid)} ج</span>
+            ${totRem > 0 ? `<span style="color:var(--r);font-weight:800">⏳ باقي: ${fn(totRem)} ج</span>` : ''}
+            ${lateCount > 0 ? `<span style="color:#fbbf24;font-weight:800">⚠️ ${lateCount} متأخر</span>` : ''}
+            <span style="color:#a8b1cc;font-weight:800">${ords.length} أوردر</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
+          <div onclick="window.__salesStageFilter=-1;window.showStatsDrawer('sales')"
+            style="background:${activeIdx === -1 ? 'rgba(167,139,250,.2)' : 'var(--row-hover)'};border:1px solid ${activeIdx === -1 ? 'var(--p)' : 'var(--line)'};border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;transition:.15s">
+            <div style="font-size:var(--fs-lg);margin-bottom:2px">🌐</div>
+            <div style="font-size:var(--fs-xl);font-weight:900;color:${activeIdx === -1 ? 'var(--p)' : '#a8b1cc'};line-height:1">${allSales.length}</div>
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700;margin-top:2px">الكل</div>
+          </div>
+          ${_JOURNEY.map((s, i) => {
+            const isOn = activeIdx === i;
+            const c = byStageCount[i] || 0;
+            return `<div onclick="window.__salesStageFilter=${i};window.showStatsDrawer('sales')"
+              style="background:${isOn ? s.col + '30' : 'var(--row-hover)'};border:1px solid ${isOn ? s.col : 'var(--line)'};border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;transition:.15s;opacity:${c === 0 ? '.45' : '1'}">
+              <div style="font-size:var(--fs-lg);margin-bottom:2px">${s.ico}</div>
+              <div style="font-size:var(--fs-xl);font-weight:900;color:${s.col};line-height:1">${c}</div>
+              <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700;margin-top:2px">${s.label}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+
+    const cards = ords.slice(0, 25).map(o => {
+      const paid    = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
+      const rem     = calcRem(o);
+      const sale    = parseFloat(o.salePrice) || 0;
+      const pct     = sale > 0 ? Math.min(100, paid / sale * 100) : 0;
+      const idx     = _stageIdx(o);
+      const cur     = _JOURNEY[idx];
+      const late    = _isLate(o);
+      const phone   = (o.clientPhone || '').replace(/^0/, '');
+      const product = o.product || (o.products || []).map(p => p.name).join(' + ') || '—';
+
+      return `<div style="background:var(--bg2);border:1px solid ${late ? 'rgba(255,61,110,.25)' : 'var(--hover)'};border-radius:14px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden">
+        ${late ? '<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,var(--r),transparent)"></div>' : ''}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:var(--fs-lg);font-weight:900;color:var(--snow);letter-spacing:-.2px">${o.clientName || '—'}</div>
+            <div style="font-size:var(--fs-sm);color:#a8b1cc;margin-top:2px">${product}</div>
+            <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:1px">${o.clientPhone || '—'} · ${o.createdDate || '—'}</div>
+          </div>
+          <div style="text-align:left;flex-shrink:0">
+            <div style="font-size:15px;font-weight:900;color:${cur.col}">${fn(sale)} ج</div>
+            ${rem > 0 ? `<div style="font-size:var(--fs-sm);color:var(--r);font-weight:800;margin-top:2px">باقي ${fn(rem)} ج</div>` : '<div style="font-size:var(--fs-sm);color:var(--g);font-weight:800;margin-top:2px">✓ مسدد</div>'}
+          </div>
+        </div>
+        ${_journeyHTML(o)}
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:4px">
+            <span>التحصيل</span>
+            <span>${Math.round(pct)}%</span>
+          </div>
+          <div style="height:5px;background:var(--hover);border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,${rem <= 0 ? '#10d27e' : '#3b82f6'},${rem <= 0 ? '#06b6d4' : cur.col});border-radius:99px;transition:width .4s"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="flex:1;min-width:80px;text-align:center;padding:7px 10px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico} افتح في ${cur.label}</a>
+          ${phone ? `<a href="https://wa.me/20${phone}" target="_blank" style="padding:7px 12px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:800;text-decoration:none">💬</a>` : ''}
+          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    return header + cards + (ords.length > 25 ? `<div style="text-align:center;color:var(--dim2);padding:14px;font-size:var(--fs-sm)">عرض 25 من إجمالي ${ords.length} أوردر</div>` : '');
+  }
+
+  if (type === 'rem') {
+    const allRem      = allOrders.filter(o => calcRem(o) > 0);
+    const activeStage = remStageFilter || 'all';
+    const stageCfg = [
+      { key: 'design',     label: 'تصميم',  ico: '✏️', col: '#7c5cff' },
+      { key: 'printing',   label: 'طباعة',  ico: '🖨️', col: '#fbbf24' },
+      { key: 'production', label: 'تنفيذ',  ico: '🏭', col: '#ff4d8d' },
+      { key: 'shipping',   label: 'شحن',    ico: '🚚', col: '#06b6d4' },
+    ];
+    const perStage = {};
+    stageCfg.forEach(s => {
+      const ords = allRem.filter(o => o.stage === s.key);
+      perStage[s.key] = { count: ords.length, total: ords.reduce((a, o) => a + calcRem(o), 0) };
+    });
+    const allCount = allRem.length;
+    const remOrds = (activeStage === 'all' ? allRem : allRem.filter(o => o.stage === activeStage))
+                    .sort((a, b) => calcRem(b) - calcRem(a));
+    const totRem    = remOrds.reduce((s, o) => s + calcRem(o), 0);
+    const lateRem   = remOrds.filter(o => _isLate(o)).reduce((s, o) => s + calcRem(o), 0);
+    const lateCount = remOrds.filter(o => _isLate(o)).length;
+    const allActive = activeStage === 'all';
+
+    const tabs = `
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;-ms-overflow-style:none;scrollbar-width:none">
+        <button onclick="window.__remStageFilter='all';window.showStatsDrawer('rem')"
+          style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${allActive ? 'var(--p)' : 'var(--line2)'};
+                 background:${allActive ? 'rgba(167,139,250,.2)' : 'var(--row-hover)'};
+                 color:${allActive ? 'var(--p)' : '#a8b1cc'};
+                 font-family:inherit;font-size:var(--fs-sm);font-weight:800;cursor:pointer;white-space:nowrap">
+          🌐 الكل · ${allCount}
+        </button>
+        ${stageCfg.map(s => {
+          const d = perStage[s.key];
+          const isOn = activeStage === s.key;
+          return `<button onclick="window.__remStageFilter='${s.key}';window.showStatsDrawer('rem')"
+            style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${isOn ? s.col : 'var(--line2)'};
+                   background:${isOn ? s.col + '30' : 'var(--row-hover)'};
+                   color:${isOn ? s.col : '#a8b1cc'};
+                   font-family:inherit;font-size:var(--fs-sm);font-weight:800;cursor:pointer;white-space:nowrap;
+                   opacity:${d.count === 0 ? '.4' : '1'}">
+            ${s.ico} ${s.label} · ${d.count}
+          </button>`;
+        }).join('')}
+      </div>`;
+
+    const headerLabel = allActive ? 'إجمالي باقي التحصيل' : `باقي التحصيل — مرحلة ${stageCfg.find(s => s.key === activeStage)?.label || activeStage}`;
+    const header = `
+      ${tabs}
+      <div style="background:linear-gradient(135deg,rgba(255,61,110,.1),rgba(251,191,36,.05));border:1px solid rgba(255,61,110,.25);border-radius:14px;padding:14px;margin-bottom:14px;text-align:center">
+        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:800;margin-bottom:4px">${headerLabel}</div>
+        <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,var(--r),#fbbf24);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(totRem)} ج</div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:var(--fs-sm);font-weight:800">
+          <span style="color:#a8b1cc">${remOrds.length} أوردر</span>
+          ${lateCount > 0 ? `<span style="color:var(--r)">⚠️ ${lateCount} متأخر · ${fn(lateRem)} ج</span>` : ''}
+        </div>
+      </div>`;
+
+    if (!remOrds.length) {
+      return header + '<div style="color:var(--g);text-align:center;padding:30px;font-weight:800;font-size:var(--fs-xl)">✅ كل الفواتير محصّلة</div>';
+    }
+
+    const cards = remOrds.slice(0, 25).map(o => {
+      const rem     = calcRem(o);
+      const sale    = parseFloat(o.salePrice) || 0;
+      const paid    = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
+      const pct     = sale > 0 ? Math.min(100, paid / sale * 100) : 0;
+      const idx     = _stageIdx(o);
+      const cur     = _JOURNEY[idx];
+      const late    = _isLate(o);
+      const phone   = (o.clientPhone || '').replace(/^0/, '');
+      const product = o.product || (o.products || []).map(p => p.name).join(' + ') || '—';
+
+      return `<div style="background:var(--bg2);border:1px solid ${late ? 'rgba(255,61,110,.35)' : 'var(--hover)'};border-radius:14px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden">
+        ${late ? '<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,var(--r),#fbbf24)"></div>' : ''}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:var(--fs-lg);font-weight:900;color:var(--snow)">${o.clientName || '—'}</div>
+            <div style="font-size:var(--fs-sm);color:#a8b1cc;margin-top:2px">${product}</div>
+            <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:1px">${o.clientPhone || '—'} · ${o.orderId || o._id.slice(-6)}</div>
+          </div>
+          <div style="text-align:left;flex-shrink:0">
+            <div style="font-size:var(--fs-2xl);font-weight:900;color:var(--r)">${fn(rem)} ج</div>
+            <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">من ${fn(sale)} ج</div>
+          </div>
+        </div>
+        ${_journeyHTML(o)}
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:4px">
+            <span>تم تحصيل ${fn(paid)} ج</span>
+            <span>${Math.round(pct)}%</span>
+          </div>
+          <div style="height:5px;background:var(--hover);border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#3b82f6,${cur.col});border-radius:99px"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          ${phone ? `<a href="https://wa.me/20${phone}?text=${encodeURIComponent(`السلام عليكم أ. ${o.clientName || ''}، تذكير ودي — رصيد متبقي ${fn(rem)} ج على طلب ${o.orderId || ''}. شكراً 🌹`)}" target="_blank" style="flex:1;text-align:center;padding:7px 10px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:800;text-decoration:none">💬 ذكّره بالباقي</a>` : ''}
+          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
+          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="padding:7px 12px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico}</a>
+        </div>
+      </div>`;
+    }).join('');
+
+    return header + cards + (remOrds.length > 25 ? `<div style="text-align:center;color:var(--dim2);padding:14px;font-size:var(--fs-sm)">عرض 25 من إجمالي ${remOrds.length}</div>` : '');
+  }
+
+  if (type === 'orders') {
+    const activeOrds = allOrders.filter(o => o.stage !== 'archived').sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    const stageMap = { design: '✏️ تصميم', printing: '🖨️ طباعة', production: '🏭 تنفيذ', shipping: '🚚 شحن' };
+    const byStage = {};
+    activeOrds.forEach(o => { if (!byStage[o.stage]) byStage[o.stage] = []; byStage[o.stage].push(o); });
+    return `<div style="text-align:center;padding:12px;color:var(--p);font-size:var(--fs-2xl);font-weight:900">${activeOrds.length} أوردر نشط</div>` +
+      Object.entries(byStage).map(([stage, ords]) => `
+        <div style="margin-bottom:12px">
+          <div style="font-size:var(--fs-base);font-weight:800;color:var(--dim2);padding:6px 10px;background:var(--bg2);border-radius:8px;margin-bottom:6px">${stageMap[stage] || stage} — ${ords.length} أوردر</div>
+          ${ords.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:var(--fs-md);font-weight:700">${o.clientName || '—'}</div>
+              <div style="font-size:var(--fs-sm);color:var(--dim2)">${o.product || (o.products || []).map(p => p.name).join('+') || '—'}</div>
+              ${o.deadline && new Date(o.deadline) < new Date() ? '<div style="font-size:var(--fs-xs);color:var(--r);font-weight:700">⚠️ متأخر</div>' : ''}
+            </div>
+            <span style="font-size:var(--fs-base);font-weight:800;color:var(--b);flex-shrink:0">${fn(parseFloat(o.salePrice) || 0)} ج</span>
+          </div>`).join('')}
+        </div>`).join('');
+  }
+
+  return '';
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -1161,5 +1534,7 @@ if (typeof window !== 'undefined') {
     controlGridStatsHTML,
     // PR-11:
     controlGridRowHTML,
+    // PR-12:
+    statsDrawerHTML, statsDrawerTitle,
   });
 }
