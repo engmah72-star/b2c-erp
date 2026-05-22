@@ -422,6 +422,7 @@ import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, s
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { clientActions } from "./client-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
@@ -782,16 +783,18 @@ function renderPanel(o){
 // Set Print Type
 window.setPrintType=async function(type){
   if(!activeId)return;
-  try{await updateDoc(doc(db,'orders',activeId),{printType:type,updatedAt:serverTimestamp()});toast('✅ نوع الطباعة: '+type,'ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.setPrintType({db,orderId:activeId,printType:type});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ نوع الطباعة: '+type,'ok');
 };
 
 // Save Notes
 window.savePrintNotes=async function(){
   if(!activeId)return;
   const notes=document.getElementById('print-notes-inp')?.value||'';
-  try{await updateDoc(doc(db,'orders',activeId),{printNotes:notes,updatedAt:serverTimestamp()});toast('✅ تم الحفظ','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await orderActions.savePrintNotes({db,orderId:activeId,notes});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحفظ','ok');
 };
 
 // Move to Production
@@ -801,16 +804,10 @@ window.pickupOrder=async function(orderId){
   if(!o)return;
   if(o.printerId)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
   if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
-  try{
-    const uid=auth?.currentUser?.uid||'';
-    await updateDoc(doc(db,'orders',orderId),{
-      printerId:uid,
-      printerName:userName,
-      timeline:[...(o.timeline||[]),{date:nowStr(),stage:o.stage,action:`📥 ${userName} التقط الأوردر`,by:userName,byId:uid,assigneeId:uid,assigneeName:userName}],
-      updatedAt:serverTimestamp()
-    });
-    toast('✅ تم الالتقاط','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const uid=auth?.currentUser?.uid||'';
+  const r=await orderActions.assignPrinter({db,orderId,printerId:uid,printerName:userName,userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الالتقاط','ok');
 };
 
 window.moveTo=function(_stage){
@@ -865,17 +862,8 @@ window.confirmMoveToProduction=async function(){
       }
     });
     if(imagesToSave.length){
-      try{
-        const cRef=doc(db,'clients',o.clientId);
-        const cSnap=await getDoc(cRef);
-        const existing=cSnap.exists()?(cSnap.data().gallery||[]):[];
-        const existingUrls=new Set(existing.map(x=>x?.url).filter(Boolean));
-        const fresh=imagesToSave.filter(x=>!existingUrls.has(x.url));
-        if(fresh.length){
-          await updateDoc(cRef,{gallery:[...existing,...fresh],updatedAt:serverTimestamp()});
-          savedCount=fresh.length;
-        }
-      }catch(_){/* صلاحية الكتابة على clients اختيارية */}
+      const gr=await clientActions.appendToClientGallery({db,clientId:o.clientId,images:imagesToSave});
+      savedCount=gr.ok?gr.count:0; // صلاحية الكتابة على clients اختيارية — لا نتعطل
     }
   }
   cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
@@ -909,32 +897,14 @@ window.confirmSplitOrder=async function(){
   const checks=document.querySelectorAll('.split-prod-chk:checked');
   const indices=[...checks].map(c=>parseInt(c.dataset.idx));
   if(!indices.length)return toast('⚠️ اختر منتجاً واحداً على الأقل','err');
-  const split=buildOrderSplit({
-    order:o, productIndices:indices, role:currentRole,
-    userId:auth?.currentUser?.uid||'', userName,
-    targetStage:'production'
-  });
-  if(!split.ok)return toast('⛔ '+split.errors.join(' · '),'err');
-  if(!confirm(`فصل ${split.splitCount} منتجات في أوردر فرعي ينتقل للتنفيذ؟`))return;
-  try{
-    const batch=writeBatch(db);
-    const childRef=doc(collection(db,'orders'));
-    batch.set(childRef,{
-      ...split.childOrderData,
-      parentOrderId:activeId,
-      createdAt:serverTimestamp(),
-      updatedAt:serverTimestamp(),
-    });
-    batch.update(doc(db,'orders',activeId),{
-      ...split.parentUpdate.fields,
-      childOrderIds:[...(o.childOrderIds||[]),childRef.id],
-      timeline:[...(o.timeline||[]),{...split.parentUpdate.timelineEntry,childOrderId:childRef.id}],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
-    cM('split-order');
-    toast(`✅ تم فصل ${split.splitCount} منتجات في أوردر فرعي`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // pre-flight للـ user confirm
+  const preview=buildOrderSplit({order:o,productIndices:indices,role:currentRole,userId:auth?.currentUser?.uid||'',userName,targetStage:'production'});
+  if(!preview.ok)return toast('⛔ '+(preview.errors||[]).join(' · '),'err');
+  if(!confirm(`فصل ${preview.splitCount} منتجات في أوردر فرعي ينتقل للتنفيذ؟`))return;
+  const r=await orderActions.splitPrintOrder({db,orderId:activeId,indices,role:currentRole,userId:auth?.currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('split-order');
+  toast(`✅ تم فصل ${r.splitCount} منتجات في أوردر فرعي`,'ok');
 };
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة

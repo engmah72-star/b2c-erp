@@ -645,6 +645,35 @@ export const clientActions = {
       }
     });
   },
+
+  /**
+   * إضافة صور إلى clients/{id}.gallery (idempotent — لا يدخل صور موجودة).
+   * يُستخدم لـ shareToProductGallery من print.html (side-effect بعد submit).
+   *
+   * @param {Array<{url, productName?, orderId?, orderRef?, savedAt?}>} images
+   * @returns {{ok, count, errors[]}}
+   */
+  async appendToClientGallery({ db = defaultDb, clientId, images = [] }) {
+    if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [], count: 0 };
+    if (!Array.isArray(images) || !images.length) {
+      return { ok: true, errors: [], warnings: [], count: 0 };
+    }
+    try {
+      const cRef = doc(db, 'clients', clientId);
+      const cSnap = await getDoc(cRef);
+      const existing = cSnap.exists() ? (cSnap.data().gallery || []) : [];
+      const existingUrls = new Set(existing.map(x => x?.url).filter(Boolean));
+      const fresh = images.filter(x => x?.url && !existingUrls.has(x.url));
+      if (!fresh.length) return { ok: true, errors: [], warnings: [], count: 0 };
+      await updateDoc(cRef, {
+        gallery: [...existing, ...fresh],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], count: fresh.length };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], count: 0 };
+    }
+  },
 };
 
 // ══════════════════════════════════════════

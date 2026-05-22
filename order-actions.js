@@ -2247,6 +2247,393 @@ export const orderActions = {
       return { ok: false, errors: [e.message || 'فشل الـ override'], warnings: [], orderId };
     }
   },
+
+  // ─── Printing Workflow Actions (P2.4) ─────
+
+  /** تحديث order.printType (single field). */
+  async setPrintType({ db = defaultDb, orderId, printType }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        printType,
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_print_type', printType };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /** تحديث order.printNotes (single field). */
+  async savePrintNotes({ db = defaultDb, orderId, notes }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        printNotes: notes || '',
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'save_print_notes' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * pickup أوردر طباعة بدون مالك — يعيّن printerId/printerName.
+   * الـ caller يتحقق إن `!order.printerId` قبل النداء.
+   */
+  async assignPrinter({
+    db = defaultDb, orderId,
+    printerId, printerName,
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!printerId) return { ok: false, errors: ['⚠️ printerId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.printerId) return { ok: false, errors: ['⚠️ هذا الأوردر له مالك بالفعل'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({
+        action: `📥 ${printerName} التقط الأوردر`,
+        userId, userName, kind: 'op',
+        meta: { printerId },
+      });
+      entry.stage = order.stage;
+      entry.assigneeId = printerId;
+      entry.assigneeName = printerName;
+      await updateDoc(order._ref, {
+        printerId,
+        printerName,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'assign_printer' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الالتقاط'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * شحن جزئي من printing → production (مماثل لـ splitDesignOrder).
+   */
+  async splitPrintOrder({
+    db = defaultDb, orderId, indices = [],
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!Array.isArray(indices) || !indices.length) {
+      return { ok: false, errors: ['⚠️ اختر منتجاً واحداً على الأقل'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const split = buildOrderSplit({
+      order, productIndices: indices, role, userId, userName, targetStage: 'production',
+    });
+    if (!split.ok) {
+      return { ok: false, errors: split.errors || [], warnings: split.warnings || [], orderId };
+    }
+    try {
+      const childRef = doc(collection(db, 'orders'));
+      const batch = writeBatch(db);
+      batch.set(childRef, {
+        ...split.childOrderData,
+        parentOrderId: orderId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(order._ref, {
+        ...split.parentUpdate.fields,
+        childOrderIds: [...(order.childOrderIds || []), childRef.id],
+        timeline: [...(order.timeline || []), { ...split.parentUpdate.timelineEntry, childOrderId: childRef.id }],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'split_print_order',
+        childOrderId: split.childOrderId,
+        childOrderDocId: childRef.id,
+        splitCount: split.splitCount,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التقسيم'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تطبيق patch على منتج بعينه داخل الأوردر (يستخدم لـ:
+   * applyBriefTemplate, updateProductBriefField debounced save).
+   *
+   * @param {Object} patch  — حقول لتطبيقها على product[idx]
+   * @param {string} [timelineAction]  — لو موجود، يُضاف entry للـ timeline
+   */
+  async applyProductBriefPatch({
+    db = defaultDb, orderId, prodIdx, patch,
+    timelineAction = '',
+    userId, userName,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!patch || typeof patch !== 'object') {
+      return { ok: false, errors: ['⚠️ patch مطلوب'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    prods[prodIdx] = { ...prods[prodIdx], ...patch };
+    try {
+      const upd = { products: prods, updatedAt: serverTimestamp() };
+      if (timelineAction && userId) {
+        const entry = auditEntry({
+          action: timelineAction, userId, userName, kind: 'op',
+          meta: { prodIdx, fields: Object.keys(patch) },
+        });
+        upd.timeline = [...(order.timeline || []), entry];
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'apply_product_brief_patch' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تسجيل إرسال brief المنتج للمطبعة — يكتب briefSentAt/By + timeline.
+   * (الـ caller هو اللي يفتح WhatsApp بعد النداء).
+   */
+  async markProductBriefSent({
+    db = defaultDb, orderId, prodIdx,
+    pressName = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const prods = [...(order.products || [])];
+    if (prodIdx < 0 || prodIdx >= prods.length) {
+      return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+    }
+    const p = prods[prodIdx];
+    prods[prodIdx] = { ...p, briefSentAt: nowStr(), briefSentBy: userId, briefSentByName: userName };
+    try {
+      const entry = auditEntry({
+        action: `📤 إرسال بيانات الإنتاج للمطبعة (${p.name || ''} → ${pressName || ''})`,
+        userId, userName, kind: 'op',
+        meta: { prodIdx, pressName },
+      });
+      await updateDoc(order._ref, {
+        products: prods,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_product_brief_sent' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * Reject من printing → design (stage revert) مع reason.
+   * يستخدم buildStageRevert المركزي.
+   */
+  async rejectFromPrinting({
+    db = defaultDb, orderId, reason,
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل سبب الإرجاع'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    // buildStageRevert pure helper — تُستورد محلياً
+    const { buildStageRevert } = await import('./orders.js');
+    const rev = buildStageRevert({
+      order, role, userId, userName,
+      targetStage: 'design', reason,
+      extraFields: { designStage: 'rejected', printRejectNote: reason },
+    });
+    if (!rev.ok) return { ok: false, errors: rev.errors || [], warnings: rev.warnings || [], orderId };
+    try {
+      await updateDoc(order._ref, {
+        ...rev.fields,
+        timeline: [...(order.timeline || []), rev.timelineEntry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'reject_from_printing' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الإرجاع'], warnings: [], orderId };
+    }
+  },
+
+  /** تعيين رابط الملف النهائي للطباعة (printFinalUrl + printFinalType). */
+  async setPrintFinalFile({
+    db = defaultDb, orderId, fileUrl, fileType = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!fileUrl) return { ok: false, errors: ['⚠️ fileUrl مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    try {
+      const entry = auditEntry({
+        action: '📁 رُفع الملف النهائي للمطبعة',
+        userId, userName, kind: 'op',
+      });
+      await updateDoc(order._ref, {
+        printFinalUrl: fileUrl,
+        printFinalType: fileType,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'set_print_final_file' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * تسجيل مقدم طباعة — financial atomic batch.
+   * يحدث order.printAdvance + paymentStatus + wallet + tx + ledger.
+   */
+  async recordPrintAdvance({
+    db = defaultDb, orderId,
+    amount, walletId, walletName,
+    note = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل مبلغاً'], warnings: [], orderId };
+    if (!walletId) return { ok: false, errors: ['⚠️ اختر المحفظة'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const sale = parseFloat(order.salePrice) || 0;
+    const discount = parseFloat(order.discount) || 0;
+    const net = Math.max(0, sale - discount);
+    const oldPaid = parseFloat(order.totalPaid) || 0;
+    const newPaid = oldPaid + amt;
+    const newRem = Math.max(0, net - newPaid);
+    if (amt > net - oldPaid + 0.01) {
+      return { ok: false, errors: [`⚠️ يتجاوز الباقي (${(net - oldPaid).toLocaleString('ar-EG')} ج)`], warnings: [], orderId };
+    }
+    const status = newRem <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
+    const newPrintAdvance = (parseFloat(order.printAdvance) || 0) + amt;
+    const label = note ? `مقدم طباعة — ${note}` : 'مقدم طباعة';
+    try {
+      const batch = writeBatch(db);
+      const tlEntry = auditEntry({
+        action: `💵 ${label} ${amt.toLocaleString('ar-EG')} ج عبر ${walletName}`,
+        userId, userName, kind: 'op',
+        meta: { amount: amt, walletId, walletName, note },
+      });
+      batch.update(order._ref, {
+        totalPaid: newPaid,
+        remaining: newRem,
+        paymentStatus: status,
+        printAdvance: newPrintAdvance,
+        timeline: [...(order.timeline || []), tlEntry],
+        updatedAt: serverTimestamp(),
+        ...(status === 'paid' ? { paidAt: serverTimestamp() } : {}),
+      });
+      batch.update(doc(db, 'wallets', walletId), { balance: increment(amt) });
+      batch.set(doc(collection(db, 'transactions_v2')), {
+        type: 'in',
+        category: 'print_advance',
+        amount: amt,
+        walletId, walletName,
+        orderId,
+        orderRef: order.orderId || orderId.slice(-6),
+        clientId: order.clientId || '',
+        clientName: order.clientName || '',
+        description: `${label} — ${order.clientName || ''}`,
+        note: `${label} — ${order.clientName || ''}`,
+        date: nowStr(),
+        createdBy: userId,
+        createdByName: userName || '',
+        by: userName || '',
+        createdAt: serverTimestamp(),
+        approvalStatus: 'pending',
+        confirmedBy: '', confirmedByName: '', confirmedAt: null,
+        approvedBy: '', approvedByName: '', approvedAt: null,
+        rejectedBy: '', rejectedByName: '', rejectedAt: null,
+        rejectReason: '', isLocked: false,
+      });
+      addLedgerToBatch(batch, db, FE.CUSTOMER_PAYMENT, {
+        amount: amt, walletId, walletName,
+        orderId,
+        clientId: order.clientId || '',
+        clientName: order.clientName || '',
+        notes: `${label} — ${order.clientName || ''}`,
+        userId, userName,
+      });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'record_print_advance',
+        amount: amt, newRem, newStatus: status, newPrintAdvance,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * حفظ مصفوفة المنتجات على الأوردر مع إعادة حساب مالية اختيارية.
+   * يُستخدم لـ saveEditProds + image uploads/deletes على products[].
+   *
+   * @param {Array} products  — الـ products array الكاملة
+   * @param {boolean} [recalcFinancials=false]  — لو true يحسب salePrice + remaining + paymentStatus
+   * @param {number} [overrideSalePrice]  — لو محدد، يستخدم بدل auto-sum
+   * @param {string} [timelineAction]  — لو موجود، يُضاف للـ timeline
+   */
+  async saveOrderProducts({
+    db = defaultDb, orderId, products,
+    recalcFinancials = false,
+    overrideSalePrice,
+    timelineAction = '',
+    userId, userName,
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!Array.isArray(products)) {
+      return { ok: false, errors: ['⚠️ products array مطلوب'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const upd = { products, updatedAt: serverTimestamp() };
+    if (recalcFinancials) {
+      const autoSum = products.reduce((s, p) => s + (parseFloat(p.unitPrice || p.price || 0)), 0);
+      const salePrice = (overrideSalePrice != null) ? parseFloat(overrideSalePrice) || autoSum : autoSum;
+      const productName = products.map(p => p.name).join(' + ');
+      const totalQty = products.reduce((s, p) => s + parseInt(p.qty || 1), 0);
+      const paid = parseFloat(order.totalPaid) || 0;
+      const discount = parseFloat(order.discount) || 0;
+      const rem = Math.max(0, salePrice - discount - paid);
+      const status = rem <= 0 && salePrice > 0 ? 'paid' : paid > 0 ? 'partial' : 'pending';
+      upd.product = productName;
+      upd.qty = totalQty;
+      upd.salePrice = salePrice;
+      upd.remaining = rem;
+      upd.paymentStatus = status;
+    }
+    if (timelineAction && userId) {
+      const entry = auditEntry({
+        action: timelineAction, userId, userName, kind: 'op',
+        meta: { productCount: products.length, recalc: recalcFinancials },
+      });
+      upd.timeline = [...(order.timeline || []), entry];
+    }
+    try {
+      await updateDoc(order._ref, upd);
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, action: 'save_order_products',
+        salePrice: upd.salePrice, remaining: upd.remaining,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
 };
 
 // ══════════════════════════════════════════
