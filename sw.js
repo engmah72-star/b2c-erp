@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v184';
+const CACHE = 'b2c-v185';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -32,6 +32,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/ai-engine.js',
   '/orders.js',
   '/order-actions.js',
+  '/client-actions.js',
   '/shipping-actions.js',
   '/shipping-service.js',
   '/shipping-pricing.js',
