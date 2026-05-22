@@ -1797,3 +1797,95 @@ Runtime hard-fail غير ممكن بدون refactor شامل للـ Firestore im
 - `.github/workflows/architecture-guard.yml`
 
 أي drift عن H2 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.
+
+---
+
+# RULE H3 — UNIVERSAL AUDIT INVARIANT (Post-P1.0.5)
+
+> **"مركزية التاريخ — كل حاجة لها date + مسؤول"**
+>
+> هذا invariant **يعلو** فوق أي rule أخرى. أي mutation بدون date + actor = violation.
+
+## H3.1 — Universal contract
+كل audit entry على أي entity (order.timeline، order.editHistory، order.auditLog،
+financial_ledger، action_telemetry، financial_operations، migration_logs،
+drift_reports) **يجب** أن يحتوي:
+
+```
+{
+  date:   <human-readable Arabic timestamp>
+  by:     <actor name>
+  byId:   <actor id>           ← required, لا يقبل null/empty
+  action: <human-readable text>
+  kind:   <op | edit | system | self-heal | reversal>
+}
+```
+
+## H3.2 — Source of truth: `core/audit.js`
+المصدر الوحيد لبناء audit entries هو:
+
+```js
+import { auditEntry, opEntry, systemEntry, healEntry, reversalEntry }
+  from './core/audit.js';
+
+// User-initiated:
+timeline: [...prev, auditEntry({
+  action: '🚚 تم الشحن',
+  userId: me.uid,
+  userName: me.displayName,
+  kind: 'op',
+})]
+
+// Cloud Function or scheduled:
+timeline: [...prev, systemEntry({
+  action: '🔧 self-heal: drift fixed',
+  source: 'dailyDriftScan',
+})]
+
+// Explicit reversal:
+timeline: [...prev, reversalEntry({
+  action: '↩️ إلغاء تسوية',
+  userId: me.uid, userName: me.displayName,
+  reversalOf: 'settlement-id-x',
+})]
+```
+
+## H3.3 — Throws on missing actor
+`auditEntry()` يـ throw إذا:
+- لا `action` ⇒ "action مطلوب"
+- لا `userId/byId` ⇒ "userId/byId مطلوب — كل mutation لازم لها مسؤول"
+- `kind` غير صالح ⇒ "kind '...' غير صالح"
+
+ممنوع تجاوز هذا — حتى system actions لازم تمرّر `source` يصير `userId='system:source'`.
+
+## H3.4 — Forbidden patterns
+**ممنوع** بناء timeline entry inline بدون `auditEntry()`:
+
+```js
+// ❌ ممنوع (لا enforcement)
+timeline: [...prev, { date: now, action: 'x', by: name }]
+
+// ❌ ممنوع (no byId — violates universal)
+timeline: [...prev, { date: now, action: 'x', by: name, byId: '' }]
+
+// ✅ مطلوب
+timeline: [...prev, auditEntry({ action: 'x', userId, userName })]
+```
+
+## H3.5 — Migration path للقديم
+الـ entries القديمة (pre-P1.0.5) قد تفتقد `byId` أو `kind`. **لا نعدّلها** —
+ledger/timeline append-only. الـ helper `auditTimelineHealth(timeline)` يعطي
+diagnostics لـ admin monitoring. أي entry جديد بعد P1.0.5 يستخدم `auditEntry()`.
+
+## H3.6 — Enforcement
+- **Action layer:** كل central action يستدعي `auditEntry()` لا inline
+- **Validators:** يفترضون `auditEntry` shape (kind valid، byId present)
+- **CI (مؤجل):** سيُضاف pattern detection لأي inline `timeline:` push بدون
+  استدعاء `auditEntry` (بعد ما الـ migration يغطي الـ pages الأساسية)
+
+## H3.7 — Stable Core (H3 addendum)
+إضافة على H1.8 / H2.7:
+- `core/audit.js` (الـ helper)
+- `tests/core-audit.test.mjs` (19 tests pass)
+
+أي drift عن H3 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.
