@@ -657,6 +657,239 @@ export function clientListRowHTML(client, idx, ctx = {}) {
     </div>`;
 }
 
+/**
+ * clientPanelHeaderHTML({client, color}) — يبني هيدر لوحة العميل
+ * (الصورة الأولية + الاسم + التليفون + المهنة).
+ */
+export function clientPanelHeaderHTML({ client, color } = {}) {
+  const c = client || {};
+  const canSee = (typeof window !== 'undefined' && window.canSee)
+    ? window.canSee : () => true;
+  return `
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:48px;height:48px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900">${(c.name || '?')[0]}</div>
+      <div>
+        <div style="font-size:var(--fs-xl);font-weight:800">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:800;margin-right:6px">📁 قديم</span>' : ''}</div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2)">${canSee('client_phone') ? (c.phone1 || '') : ''} ${c.job ? '· ' + c.job : ''}</div>
+      </div>
+    </div>`;
+}
+
+/**
+ * clientPanelBodyHTML(ctx) — يبني محتوى لوحة العميل بكامل التبويبات.
+ * pure function: ياخد الـ derived data + الـ sub-renderers via ctx.
+ *
+ * ctx = {
+ *   client, id,
+ *   cOrds, activeOrds, lateOrds,
+ *   tot, paid, rem, pct,
+ *   totalCost, totalProfit, profitPct,
+ *   memberDays, daysSince,
+ *   byWallet,            // {walletName: amount}
+ *   tags,
+ *   lastFuLine,          // pre-built HTML or ''
+ *   segments,            // Map<clientId, segment>
+ *   SEG_STYLE, FU_TYPES, FU_OUTCOMES, TAG_LABELS, TAG_COL,
+ *   // sub-renderers (already on window from prior PRs):
+ *   renderClientFollowups, renderPanelOrders, renderBizCardTab,
+ *   // pure helpers (already on window from PR-1):
+ *   fn, pRow, fmtOccasion,
+ * }
+ */
+export function clientPanelBodyHTML(ctx = {}) {
+  const {
+    client = {}, id,
+    cOrds = [], activeOrds = [], lateOrds = [],
+    tot = 0, paid = 0, rem = 0, pct = 0,
+    totalCost = 0, totalProfit = 0, profitPct = null,
+    memberDays = null, daysSince = null,
+    byWallet = {},
+    tags = [],
+    lastFuLine = '',
+    segments,
+    SEG_STYLE = {},
+    TAG_LABELS = {}, TAG_COL = {},
+    renderClientFollowups = () => '',
+    renderPanelOrders = () => '',
+    renderBizCardTab = () => '',
+    fn: fmtNum = (n) => String(parseFloat(n) || 0),
+    pRow: pRowHelper = (l, v) => `<div>${l}: ${v}</div>`,
+    fmtOccasion: fmtOcc = (s) => s,
+  } = ctx;
+  const c = client;
+  const canSee = (typeof window !== 'undefined' && window.canSee)
+    ? window.canSee : () => true;
+
+  // RFM segment block (IIFE preserved for behavior parity)
+  const segBlock = (() => {
+    const seg = segments?.get?.(c._id);
+    if (!seg) return '';
+    const st = SEG_STYLE[seg.segment] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
+    const allClvs = segments
+      ? Array.from(segments.values()).map(s => s.totalRevenue || 0).filter(v => v > 0).sort((a, b) => b - a)
+      : [];
+    const myClv = seg.totalRevenue || 0;
+    let pctRank = null;
+    if (myClv > 0 && allClvs.length > 0) {
+      const rank = allClvs.findIndex(v => v <= myClv);
+      pctRank = rank >= 0 ? Math.round((rank / allClvs.length) * 100) : 100;
+    }
+    const risk = seg.churnRisk || 0;
+    const rColor = risk >= 70 ? 'var(--r)' : risk >= 40 ? 'var(--y)' : 'var(--g)';
+    const rText  = risk >= 70 ? 'مرتفع 🚨' : risk >= 40 ? 'متوسط ⚠️' : 'منخفض ✓';
+    return `<div style="background:linear-gradient(135deg,${st.bg},var(--row-hover));border:1px solid ${st.fg}40;border-right:3px solid ${st.fg};border-radius:var(--rad);padding:12px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-size:var(--fs-md);font-weight:900;color:${st.fg}">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}</span>
+          <span style="font-size:var(--fs-xs);color:var(--dim2);font-family:monospace;background:var(--bg3);padding:3px 8px;border-radius:6px" title="RFM Code (Recency · Frequency · Monetary)">RFM: ${seg.rfmCode || '—'}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+          <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">آخر شراء</div>
+            <div style="font-size:var(--fs-md);font-weight:800;color:var(--snow)">${seg.recencyDays ?? '—'} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:600">يوم</span></div>
+          </div>
+          <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">عدد الأوردرات</div>
+            <div style="font-size:var(--fs-md);font-weight:800;color:var(--snow)">${seg.orderCount ?? '—'}</div>
+          </div>
+          <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">CLV</div>
+            <div style="font-size:var(--fs-md);font-weight:800;color:var(--g)">${fmtNum(myClv)} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:600">ج</span></div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-sm)">
+          ${pctRank !== null ? `<span style="color:var(--dim2)">🏆 ضمن أعلى <b style="color:${pctRank <= 10 ? 'var(--y)' : pctRank <= 25 ? 'var(--b)' : 'var(--snow)'}">${pctRank || 1}%</b> من العملاء</span>` : '<span></span>'}
+          <span style="color:var(--dim2)">احتمال الفقد: <b style="color:${rColor}">${rText}${risk ? ' ' + risk + '%' : ''}</b></span>
+        </div>
+      </div>`;
+  })();
+
+  return `
+    <!-- ── ملخص ── -->
+    <div id="ptab-pane-summary" style="display:block">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+        ${canSee('client_phone') ? `<a href="tel:${c.phone1}" class="qact">📞 اتصال</a>` : ''}
+        ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" class="qact">💬 واتساب</a>` : ''}
+        ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}?text=${encodeURIComponent('أهلاً ' + c.name + ' 👋، طلبك جاهز 🎉')}" target="_blank" class="qact">📨 رسالة</a>` : ''}
+        ${canSee('client_phone') && c.intlPhone ? `<a href="tel:${c.intlPhone}" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 اتصال دولي</a>` : ''}
+        ${canSee('client_phone') && c.intlPhone ? `<a href="https://wa.me/${c.intlPhone.replace(/[^\d]/g, '')}" target="_blank" class="qact" style="background:rgba(255,170,0,.12);color:var(--y);border-color:rgba(255,170,0,.3)">🌍 واتساب دولي</a>` : ''}
+        <a href="javascript:void(0)" class="qact" onclick="openFollowupModal('${id}')" style="background:rgba(167,139,250,.12);color:var(--p);border-color:rgba(167,139,250,.3)">📞 سجّل متابعة</a>
+        ${cOrds.length > 0 ? `<a href="javascript:void(0)" class="qact" onclick="reorderLastOrder('${id}')" style="background:rgba(0,217,126,.12);color:var(--g);border-color:rgba(0,217,126,.3)" title="نسخ المنتجات والكميات من آخر أوردر — التصميم يبدأ جديد">🔁 كرّر آخر أوردر</a>` : ''}
+      </div>
+      ${lastFuLine}
+      ${segBlock}
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+        <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
+          <div style="font-size:20px;font-weight:900;color:var(--b)">${cOrds.length}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">كل الأوردرات</div>
+        </div>
+        <div onclick="filterPanelOrders('active')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
+          <div style="font-size:20px;font-weight:900;color:var(--g)">${activeOrds.length}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">🔄 نشط</div>
+        </div>
+        <div onclick="filterPanelOrders('rem')" style="background:${rem > 0 ? 'rgba(255,61,110,.08)' : 'var(--bg2)'};border:1.5px solid ${rem > 0 ? 'rgba(255,61,110,.3)' : 'var(--line)'};border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
+          <div style="font-size:20px;font-weight:900;color:${rem > 0 ? 'var(--r)' : 'var(--g)'};">${rem > 0 ? fmtNum(rem) : '✅'}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">💰 باقي ج</div>
+        </div>
+        <div onclick="filterPanelOrders('late')" style="background:${lateOrds.length ? 'rgba(255,61,110,.08)' : 'var(--bg2)'};border:1.5px solid ${lateOrds.length ? 'rgba(255,61,110,.3)' : 'var(--line)'};border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
+          <div style="font-size:20px;font-weight:900;color:${lateOrds.length ? 'var(--r)' : 'var(--dim2)'};">${lateOrds.length || '—'}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">⚠️ متأخر</div>
+        </div>
+      </div>
+      ${tot > 0 ? `<div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:var(--fs-sm);color:var(--dim2);margin-bottom:4px">
+          <span>التحصيل</span><span>${Math.round(pct)}% — محصّل ${fmtNum(paid)} من ${fmtNum(tot)} ج</span>
+        </div>
+        <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${pct >= 100 ? 'var(--g)' : pct > 50 ? 'var(--b)' : 'var(--y)'};border-radius:4px;transition:width .4s"></div>
+        </div>
+      </div>` : ''}
+      ${(totalCost > 0 || Object.keys(byWallet).length > 0 || memberDays !== null) ? `
+      <div style="background:rgba(59,158,255,.04);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:12px">
+        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--b);margin-bottom:10px">💼 حياته في الشركة</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:${Object.keys(byWallet).length ? '10' : '0'}px">
+          ${memberDays !== null ? pRowHelper('📅 عميل منذ', memberDays + ' يوم') : ''}
+          ${pRowHelper('📦 إجمالي الأوردرات', cOrds.length + ' أوردر')}
+          ${pRowHelper('💵 إجمالي المبيعات', fmtNum(tot) + ' ج')}
+          ${totalCost > 0 ? pRowHelper('🔴 التكلفة الإجمالية', fmtNum(totalCost) + ' ج') : ''}
+          ${totalCost > 0 ? pRowHelper('🟢 إجمالي الربح', fmtNum(totalProfit) + ' ج' + (profitPct !== null ? ' (' + profitPct + '%)' : '')) : ''}
+        </div>
+        ${Object.keys(byWallet).length ? `
+        <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim2);margin-bottom:6px">💳 توزيع المدفوعات على المحافظ</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          ${Object.entries(byWallet).sort((a, b) => b[1] - a[1]).map(([wn, amt]) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bg3);border-radius:6px">
+            <span style="font-size:var(--fs-sm);color:var(--dim2)">${wn}</span>
+            <span style="font-size:var(--fs-base);font-weight:800;color:var(--g)">${fmtNum(amt)} ج</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>` : ''}
+    </div>
+
+    <!-- ── متابعات ── -->
+    <div id="ptab-pane-followups" class="hide">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:var(--fs-base);font-weight:800;color:var(--dim2)">📞 سجل المتابعة</div>
+        <button class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
+      </div>
+      <div id="panel-followups-list">${renderClientFollowups(id)}</div>
+    </div>
+
+    <!-- ── أوردرات ── -->
+    <div id="ptab-pane-orders" class="hide">
+      <div id="panel-orders-list">
+        ${renderPanelOrders(cOrds, 'all')}
+      </div>
+    </div>
+
+    <!-- ── 📇 بطاقة الأعمال ── -->
+    <div id="ptab-pane-bizcard" class="hide">
+      ${renderBizCardTab(c)}
+    </div>
+
+    <!-- ── بيانات ── -->
+    <div id="ptab-pane-data" class="hide">
+      <div style="margin-bottom:14px">
+        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">📋 بيانات العميل</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${canSee('client_phone') ? pRowHelper('📞 هاتف', c.phone1 || '—') : ''}
+          ${canSee('client_phone') && c.phone2 ? pRowHelper('📞 هاتف 2', c.phone2) : ''}
+          ${canSee('client_phone') && c.intlPhone ? pRowHelper('🌍 رقم دولي', c.intlPhone) : ''}
+          ${c.governorate ? pRowHelper('📍 العنوان', c.governorate + (c.city ? ' · ' + c.city : '')) : ''}
+          ${c.source ? pRowHelper('📣 المصدر', c.source) : ''}
+          ${c.job ? pRowHelper('💼 المهنة', c.job) : ''}
+          ${c.email ? pRowHelper('📧 إيميل', c.email) : ''}
+          ${c.birthday ? pRowHelper('🎂 الميلاد', fmtOcc(c.birthday)) : ''}
+          ${c.anniversary ? pRowHelper('🏢 تأسيس النشاط', fmtOcc(c.anniversary)) : ''}
+          ${daysSince !== null ? pRowHelper('🕐 آخر نشاط', 'منذ ' + daysSince + ' يوم') : ''}
+        </div>
+        ${tags.length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'}">${TAG_LABELS[t] || t}</span>`).join('')}</div>` : ''}
+        ${c.notes ? `<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.notes}</div>` : ''}
+        ${c.internalNotes ? `<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:var(--fs-base);color:var(--snow);line-height:1.7">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+            <span style="font-size:var(--fs-xs);font-weight:800;color:var(--r)">🔒 ملاحظات داخلية</span>
+            ${c.internalNotesLastEdit ? `<span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700">${c.internalNotesLastEdit.byName || ''}${c.internalNotesLastEdit.at?.toDate ? ' · ' + c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG') : ''}</span>` : ''}
+          </div>
+          <div style="white-space:pre-wrap">${c.internalNotes.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])}</div>
+        </div>` : ''}
+      </div>
+      ${c.status === 'legacy' ? `
+      <div style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:12px">
+        <div style="font-size:var(--fs-sm);font-weight:800;color:#aaa;margin-bottom:10px">📁 بيانات العميل القديم</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${c.totalSpentLegacy > 0 ? pRowHelper('💰 إجمالي الإنفاق', fmtNum(c.totalSpentLegacy) + ' ج') : ''}
+          ${c.lastOrderDateLegacy ? pRowHelper('📅 آخر طلب', c.lastOrderDateLegacy) : ''}
+          ${c.legacyProjects ? pRowHelper('📦 مشاريع سابقة', c.legacyProjects) : ''}
+        </div>
+        ${c.legacyNotes ? `<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.legacyNotes}</div>` : ''}
+      </div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)">
+        <button class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
+        ${c.status === 'legacy' ? `<button class="btn btn-g btn-sm" onclick="window.convertToActive('${id}')">🟢 تحويل لنشط</button>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
+      </div>
+    </div>`;
+}
+
 // ─── SIDE-EFFECT: expose to window for compat (clients.html) ─────────
 // clients.html is compat-style (no ES `import`). Module loads as
 // `<script type="module">` and attaches the helpers to `window` so the
@@ -676,5 +909,7 @@ if (typeof window !== 'undefined') {
     bizCardTabHTML,
     // PR-5:
     clientCardHTML, clientListRowHTML,
+    // PR-6:
+    clientPanelHeaderHTML, clientPanelBodyHTML,
   });
 }
