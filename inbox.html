@@ -581,8 +581,9 @@ body{background:var(--ws-bg);color:var(--ws-text)}
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, setDoc, query, where, orderBy, limit, serverTimestamp, deleteDoc, arrayUnion, arrayRemove, increment, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { inboxActions } from "./inbox-actions.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'#3b9eff',customer_service:'#22d3ee',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -651,20 +652,11 @@ function buildSidebar(){
 let heartbeatInt=null;
 async function setOnline(){
   if(!currentUid)return;
-  try{
-    await setDoc(doc(db,'presence',currentUid),{
-      online:true,lastSeen:serverTimestamp(),
-      name:currentUserName,role:currentRole,
-    },{merge:true});
-  }catch(_){}
+  try{ await inboxActions.setPresence({db,userId:currentUid,online:true,name:currentUserName,role:currentRole}); }catch(_){}
 }
 async function setOffline(){
   if(!currentUid)return;
-  try{
-    await setDoc(doc(db,'presence',currentUid),{
-      online:false,lastSeen:serverTimestamp(),typingIn:null,
-    },{merge:true});
-  }catch(_){}
+  try{ await inboxActions.setPresence({db,userId:currentUid,online:false,typingIn:null}); }catch(_){}
 }
 function startHeartbeat(){
   setOnline();
@@ -688,41 +680,25 @@ async function ensureChannels(){
   let okCount=0,failCount=0;
   // For each channel, ensure a conversation doc with stable id `channel_${key}` exists
   for(const ch of myChannels){
-    const convId='channel_'+ch.key;
-    const ref=doc(db,'conversations',convId);
     try{
-      const snap=await getDoc(ref);
-      if(!snap.exists()){
-        // create with all matching role users
+      // pre-compute participants only when we need to create the conversation —
+      // ensureChannelConversation does its own get first.
+      let participants=[];
+      if(ch.roles==='*'||ch.roles.length){
         const all=await getDocs(collection(db,'users'));
-        let members=all.docs.filter(d=>{
+        participants=all.docs.filter(d=>{
           const ud=d.data();if(!ud.isActive&&ud.isActive!==undefined)return false;
           if(ch.roles==='*')return true;
           return ch.roles.includes(ud.role);
         }).map(d=>d.id);
-        // ضمان أن currentUid في الـ members (rule يتطلب creator يكون participant)
-        if(!members.includes(currentUid))members.push(currentUid);
-        await setDoc(ref,{
-          type:'channel',channelKey:ch.key,name:ch.name,ico:ch.ico,
-          participants:members,
-          archivedBy:[],
-          createdAt:serverTimestamp(),
-          lastMessageAt:serverTimestamp(),
-          lastMessagePreview:'بدأت المحادثة',lastSenderName:'النظام',
-        });
-        okCount++;
-        console.log('[inbox]   ✓ created channel:',ch.key,'with',members.length,'members');
-      } else {
-        // make sure current user is a participant
-        const cur=snap.data();
-        if(!(cur.participants||[]).includes(currentUid)){
-          await updateDoc(ref,{participants:arrayUnion(currentUid)});
-          okCount++;
-          console.log('[inbox]   ✓ joined existing channel:',ch.key);
-        } else {
-          okCount++;
-        }
       }
+      const r=await inboxActions.ensureChannelConversation({
+        db,channelKey:ch.key,name:ch.name,ico:ch.ico,
+        participants,currentUserId:currentUid,
+      });
+      okCount++;
+      if(r.created)console.log('[inbox]   ✓ created channel:',ch.key,'with',participants.length,'members');
+      else if(r.joined)console.log('[inbox]   ✓ joined existing channel:',ch.key);
     }catch(e){
       failCount++;
       console.error('[inbox]   ❌ channel ensure failed:',ch.key,{code:e.code,msg:e.message,uid:currentUid,role});
@@ -909,7 +885,7 @@ window.openConv=async function(id){
   $('ib-wrap').classList.add('show-chat');
   // un-archive if was archived
   if((activeConv.archivedBy||[]).includes(currentUid)){
-    try{await updateDoc(doc(db,'conversations',id),{archivedBy:arrayRemove(currentUid)});}catch(_){}
+    try{await inboxActions.setConversationArchived({db,convId:id,userId:currentUid,archived:false});}catch(_){}
   }
   renderChat();
   updateMuteBtn();
@@ -1152,20 +1128,11 @@ async function maybeMarkRead(){
   const now=Date.now();if(now-lastReadUpdate<2000)return;
   lastReadUpdate=now;
   const unread=activeConv.unreadCount?.[currentUid]||0;
-  if(unread>0){
-    try{
-      await updateDoc(doc(db,'conversations',activeConvId),{[`unreadCount.${currentUid}`]:0});
-    }catch(_){}
-  }
-  // mark recent messages readBy[currentUid]
   const recent=messages.slice(-30).filter(m=>m.senderId!==currentUid&&!(m.readBy?.[currentUid]));
-  if(recent.length>0){
-    const batch=writeBatch(db);
-    recent.forEach(m=>{
-      batch.update(doc(db,'conversations',activeConvId,'messages',m._id),{[`readBy.${currentUid}`]:serverTimestamp()});
-    });
-    try{await batch.commit();}catch(_){}
-  }
+  if(unread===0&&!recent.length)return;
+  try{
+    await inboxActions.markConversationRead({db,convId:activeConvId,userId:currentUid,recentMessages:recent});
+  }catch(_){}
 }
 
 // ── Compose ──
@@ -1187,9 +1154,9 @@ window.onTyping=async function(el){
   // typing indicator
   if(typingTimer)clearTimeout(typingTimer);
   if(activeConvId){
-    try{await updateDoc(doc(db,'presence',currentUid),{typingIn:activeConvId,lastSeen:serverTimestamp()});}catch(_){}
+    try{await inboxActions.setPresence({db,userId:currentUid,typingIn:activeConvId});}catch(_){}
     typingTimer=setTimeout(async()=>{
-      try{await updateDoc(doc(db,'presence',currentUid),{typingIn:null});}catch(_){}
+      try{await inboxActions.setPresence({db,userId:currentUid,typingIn:null});}catch(_){}
     },3000);
   }
 };
@@ -1300,7 +1267,7 @@ window.sendText=async function(){
   // Edit path: if editingMsgId is set, update instead of sending new
   if(editingMsgId){
     try{
-      await updateDoc(doc(db,'conversations',activeConvId,'messages',editingMsgId),{text,mentions,editedAt:serverTimestamp()});
+      await inboxActions.editMessage({db,convId:activeConvId,messageId:editingMsgId,text,mentions});
       editingMsgId=null;
       cancelReply();
     }catch(e){toast('❌ '+e.message,'err');}
@@ -1320,38 +1287,12 @@ async function sendMessage(payload){
 // Generic sender — works for the active conv or any other (used by forward + share)
 async function sendMessageTo(convId,payload,convData){
   if(!convId)return;
-  const msg={
-    senderId:currentUid,
-    senderName:currentUserName,
-    createdAt:serverTimestamp(),
-    readBy:{[currentUid]:serverTimestamp()},
-    ...payload,
-  };
   try{
-    await addDoc(collection(db,'conversations',convId,'messages'),msg);
-    const preview=payload.type==='text'?payload.text
-      :payload.type==='image'?'📷 صورة'
-      :payload.type==='file'?'📄 '+(payload.attachments?.[0]?.name||'مرفق')
-      :payload.type==='voice'?'🎤 رسالة صوتية'
-      :payload.type==='order_share'?'📦 أوردر: '+(payload.orderRef?.clientName||'')
-      :'رسالة';
-    const upd={
-      lastMessageAt:serverTimestamp(),
-      lastMessagePreview:preview.slice(0,80),
-      lastSenderId:currentUid,
-      lastSenderName:currentUserName,
-      lastReadByAll:false,
-    };
-    let conv=convData||conversations.find(c=>c._id===convId);
-    if(!conv){
-      const snap=await getDoc(doc(db,'conversations',convId));
-      conv=snap.exists()?snap.data():{participants:[]};
-    }
-    (conv.participants||[]).forEach(uid=>{
-      if(uid!==currentUid)upd[`unreadCount.${uid}`]=increment(1);
+    await inboxActions.sendMessage({
+      db,convId,payload,
+      senderId:currentUid,senderName:currentUserName,
+      conv:convData||conversations.find(c=>c._id===convId),
     });
-    if((conv.archivedBy||[]).length>0){upd['archivedBy']=[];}
-    await updateDoc(doc(db,'conversations',convId),upd);
   }catch(e){toast('❌ '+e.message,'err');}
 }
 
@@ -1400,9 +1341,7 @@ window.toggleMute=async function(){
   if(!activeConvId||!activeConv)return;
   const muted=(activeConv.mutedBy||[]).includes(currentUid);
   try{
-    await updateDoc(doc(db,'conversations',activeConvId),{
-      mutedBy:muted?arrayRemove(currentUid):arrayUnion(currentUid),
-    });
+    await inboxActions.updateConversationUserFlag({db,convId:activeConvId,userId:currentUid,kind:muted?'unmute':'mute'});
     toast(muted?'🔔 أُلغي الكتم':'🔕 تم الكتم','ok');
     updateMuteBtn();
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1421,9 +1360,7 @@ window.clearChatForMe=async function(){
   if(!activeConvId)return;
   if(!confirm('مسح المحادثة من جهتك فقط؟ (الأطراف الأخرى لن تتأثر)'))return;
   try{
-    await updateDoc(doc(db,'conversations',activeConvId),{
-      [`clearedAt.${currentUid}`]:serverTimestamp(),
-    });
+    await inboxActions.updateConversationUserFlag({db,convId:activeConvId,userId:currentUid,kind:'clearForMe'});
     toast('🧹 تم المسح','ok');
     $('chat-menu')?.classList.remove('show');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1445,9 +1382,7 @@ window.openWallpaperPicker=function(){
 window.setWallpaper=async function(idx){
   if(!activeConvId)return;
   try{
-    await updateDoc(doc(db,'conversations',activeConvId),{
-      [`wallpaperBy.${currentUid}`]:idx,
-    });
+    await inboxActions.updateConversationUserFlag({db,convId:activeConvId,userId:currentUid,kind:'wallpaper',wallpaperIdx:idx});
     applyWallpaper(idx);
     document.querySelector('.ib-modal-ov.show')?.remove();
     toast('✅ تم تغيير الخلفية','ok');
@@ -1462,7 +1397,7 @@ function applyWallpaper(idx){
 window.archiveConv=async function(){
   if(!activeConvId)return;
   try{
-    await updateDoc(doc(db,'conversations',activeConvId),{archivedBy:arrayUnion(currentUid)});
+    await inboxActions.setConversationArchived({db,convId:activeConvId,userId:currentUid,archived:true});
     toast('📁 تم نقل المحادثة للأرشيف','ok');
     closeChat();
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1497,9 +1432,7 @@ window.toggleReact=async function(mid,emo){
   const cur=(m.reactions?.[emo])||[];
   const mine=cur.includes(currentUid);
   try{
-    await updateDoc(doc(db,'conversations',activeConvId,'messages',mid),{
-      [`reactions.${emo}`]:mine?arrayRemove(currentUid):arrayUnion(currentUid),
-    });
+    await inboxActions.toggleMessageReaction({db,convId:activeConvId,messageId:mid,userId:currentUid,emoji:emo,adding:!mine});
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -1564,13 +1497,8 @@ window.doForward=async function(kind,id,otherName){
       targetConvId=id;
     } else {
       // user → ensure DM exists
-      const ids=[currentUid,id].sort();
-      targetConvId='dm_'+ids.join('_');
-      const ref=doc(db,'conversations',targetConvId);
-      const snap=await getDoc(ref);
-      if(!snap.exists()){
-        await setDoc(ref,{type:'dm',participants:ids,dmNames:{[currentUid]:currentUserName,[id]:otherName},archivedBy:[],createdAt:serverTimestamp(),lastMessageAt:serverTimestamp(),lastMessagePreview:'بدأت المحادثة',unreadCount:{}});
-      }
+      const r=await inboxActions.ensureDM({db,currentUserId:currentUid,currentUserName,otherUserId:id,otherUserName:otherName});
+      targetConvId=r.convId;
     }
     // forward: clone payload but mark forwarded
     const src=activeMsgForAction.data;
@@ -1602,11 +1530,7 @@ window.actDelete=async()=>{
   if(m.senderId!==currentUid)return;
   if(!confirm('حذف الرسالة؟'))return;
   try{
-    await updateDoc(doc(db,'conversations',activeConvId,'messages',m._id),{
-      deletedAt:serverTimestamp(),
-      text:'',
-      attachments:[],
-    });
+    await inboxActions.softDeleteMessage({db,convId:activeConvId,messageId:m._id});
     toast('🗑 تم الحذف','ok');
   }catch(e){toast('❌ '+e.message,'err');}
   closeMsgActions();
@@ -1755,13 +1679,8 @@ window.doShareOrder=async function(kind,id,otherName){
   try{
     if(kind==='conv'){targetConvId=id;}
     else{
-      const ids=[currentUid,id].sort();
-      targetConvId='dm_'+ids.join('_');
-      const ref=doc(db,'conversations',targetConvId);
-      const snap=await getDoc(ref);
-      if(!snap.exists()){
-        await setDoc(ref,{type:'dm',participants:ids,dmNames:{[currentUid]:currentUserName,[id]:otherName},archivedBy:[],createdAt:serverTimestamp(),lastMessageAt:serverTimestamp(),lastMessagePreview:'بدأت المحادثة',unreadCount:{}});
-      }
+      const r=await inboxActions.ensureDM({db,currentUserId:currentUid,currentUserName,otherUserId:id,otherUserName:otherName});
+      targetConvId=r.convId;
     }
     await sendMessageTo(targetConvId,{type:'order_share',text:'📦 أوردر مشارَك',orderRef:sharePending});
     closeShareOrder();
@@ -1774,33 +1693,10 @@ window.doShareOrder=async function(kind,id,otherName){
 // Order comments thread — ensure conv exists then open
 window.openOrderComments=async function(order){
   // order = {orderId, orderCode, clientName, designerId, productionAgent, shippingOfficerId, ...}
-  const convId='order_'+order.orderId;
-  const ref=doc(db,'conversations',convId);
   try{
-    const snap=await getDoc(ref);
-    if(!snap.exists()){
-      // gather participants: admins + ops + all employees touching this order
-      const stake=[currentUid];
-      ['designerId','productionAgent','shippingOfficerId','createdBy'].forEach(k=>{if(order[k])stake.push(order[k]);});
-      // include admins + ops automatically
-      allUsers.filter(u=>['admin','operation_manager'].includes(u.role)).forEach(u=>stake.push(u._id));
-      const participants=[...new Set(stake)];
-      await setDoc(ref,{
-        type:'order_thread',
-        orderId:order.orderId,
-        name:'تعليقات #'+(order.orderCode||order.orderId.slice(-6))+' — '+(order.clientName||''),
-        participants,
-        archivedBy:[],
-        createdAt:serverTimestamp(),
-        lastMessageAt:serverTimestamp(),
-        lastMessagePreview:'بدء نقاش الأوردر',
-        unreadCount:{},
-        orderRef:order,
-      });
-    } else if(!(snap.data().participants||[]).includes(currentUid)){
-      await updateDoc(ref,{participants:arrayUnion(currentUid)});
-    }
-    openConv(convId);
+    const extra=allUsers.filter(u=>['admin','operation_manager'].includes(u.role)).map(u=>u._id);
+    const r=await inboxActions.ensureOrderThread({db,order,currentUserId:currentUid,extraParticipants:extra});
+    openConv(r.convId);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -1895,26 +1791,10 @@ function renderUserList(){
   }).join('');
 }
 window.startDM=async function(otherUid,otherName){
-  // stable id: sort uids
-  const ids=[currentUid,otherUid].sort();
-  const convId='dm_'+ids.join('_');
-  const ref=doc(db,'conversations',convId);
   try{
-    const snap=await getDoc(ref);
-    if(!snap.exists()){
-      await setDoc(ref,{
-        type:'dm',
-        participants:ids,
-        dmNames:{[currentUid]:currentUserName,[otherUid]:otherName},
-        archivedBy:[],
-        createdAt:serverTimestamp(),
-        lastMessageAt:serverTimestamp(),
-        lastMessagePreview:'بدأت المحادثة',
-        unreadCount:{},
-      });
-    }
+    const r=await inboxActions.ensureDM({db,currentUserId:currentUid,currentUserName,otherUserId:otherUid,otherUserName:otherName});
     closeNewChat();
-    openConv(convId);
+    openConv(r.convId);
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
@@ -1989,12 +1869,7 @@ window.actPin = async function(){
   const m = activeMsgForAction.data;
   const newState = !m.pinned;
   try {
-    await updateDoc(doc(db,'conversations',activeConvId,'messages',m._id), {
-      pinned: newState,
-      pinnedAt: newState ? serverTimestamp() : null,
-      pinnedBy: newState ? currentUid : null,
-      pinnedByName: newState ? (currentUserName||'') : null,
-    });
+    await inboxActions.setMessagePinned({db,convId:activeConvId,messageId:m._id,pinned:newState,userId:currentUid,userName:currentUserName||''});
     toast(newState?'📌 تم التثبيت':'تم إلغاء التثبيت','ok');
   } catch(e){
     toast('❌ '+e.message,'err');
@@ -2042,9 +1917,7 @@ window.openPinnedList = function(){
 window.closePinnedList = ()=>$('pinned-ov').classList.remove('show');
 window.unpinFromList = async function(mid){
   try {
-    await updateDoc(doc(db,'conversations',activeConvId,'messages',mid), {
-      pinned: false, pinnedAt: null, pinnedBy: null, pinnedByName: null,
-    });
+    await inboxActions.setMessagePinned({db,convId:activeConvId,messageId:mid,pinned:false});
     toast('تم إلغاء التثبيت','ok');
   } catch(e){ toast('❌ '+e.message,'err'); }
 };
@@ -2378,7 +2251,7 @@ function showCurrentStory() {
   // mark viewed
   if (s.userId !== currentUid && !viewedStoryIds.has(s._id) && !(s.viewers || []).includes(currentUid)) {
     viewedStoryIds.add(s._id);
-    updateDoc(doc(db, 'stories', s._id), { viewers: arrayUnion(currentUid) }).catch(_=>{});
+    inboxActions.recordStoryView({db,storyId:s._id,userId:currentUid}).catch(_=>{});
   }
 
   // animate progress
@@ -2415,7 +2288,7 @@ window.deleteCurrentStory = async function() {
   const s = group.stories[__sv.sIdx]; if (!s || s.userId !== currentUid) return;
   if (!confirm('حذف هذه اللحظة؟')) return;
   try {
-    await deleteDoc(doc(db, 'stories', s._id));
+    await inboxActions.deleteStory({db,storyId:s._id});
     toast('🗑 تم حذف اللحظة', 'ok');
     closeStoryViewer();
   } catch(e) { toast('❌ ' + e.message, 'err'); }
@@ -2466,16 +2339,11 @@ window.onAsFileSelected = function() {
 };
 
 async function postStory(data) {
-  const now = new Date();
-  const expires = new Date(now.getTime() + 24 * 3600 * 1000);
-  await addDoc(collection(db, 'stories'), {
-    ...data,
+  await inboxActions.postStory({
+    db, data,
     userId: currentUid,
     userName: currentUserName || 'موظف',
-    userColor: colorOf(currentRole) || '#00a884',
-    viewers: [],
-    createdAt: serverTimestamp(),
-    expiresAt: Timestamp.fromDate(expires),
+    color: colorOf(currentRole) || '#00a884',
   });
 }
 
