@@ -2054,6 +2054,9 @@ window.openDispatch = (orderId) => {
   $('m-dispatch').classList.add('on');
 };
 
+// PR-4A — Thin orchestration over orderActions.confirmShipped.
+// كل validation + atomic write + audit trail داخل الـ action.
+// الصفحة فقط: تجمع المدخلات → تنادي → تعرض النتيجة.
 async function confirmDispatch() {
   if (!pendingOrder) return;
   const companyId = $('m-dispatch-company').value;
@@ -2062,61 +2065,45 @@ async function confirmDispatch() {
   const walletId = $('m-dispatch-wallet').value;
   const note = $('m-dispatch-note').value.trim();
 
-  // RULE V1.3 — central validator (orders.js)
-  const v = validateDispatch({ order: pendingOrder, companyId, method, cost, walletId, role: myRole });
-  if (!v.ok) { toast(v.errors[0], 'err'); return; }
-
   const company = shippers.find(s => s._id === companyId);
+  const wallet = walletId ? wallets.find(w => w._id === walletId) : null;
   const btn = $('btn-dispatch-confirm');
+  const orderLabel = `#${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`;
+
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
-
-  // Build the order shipping update once — applied either atomically
-  // alongside the expense (when cost>0 + walletId) or standalone otherwise.
-  const orderFields = {
-    shipCompanyId: companyId,
-    shipCompanyName: company?.name || '',
-    shipMethod: method,
-    shippingCost: cost,
-    shipStage: method === 'pickup' ? 'ready' : 'wait_delivery',
-    // shippingStatus removed (Step 4.1): the 'dispatched' write was never
-    // read anywhere — pure drift. shipStage is the canonical source per
-    // RULE W1.1. See Step 4 in the Shipping Stabilization plan.
-    shipDispatchedAt: serverTimestamp(),
-  };
-
   try {
-    if (cost > 0 && walletId) {
-      // Atomic path: order update + wallet/tx/ledger all in the same FSE batch.
-      const wallet = wallets.find(w => w._id === walletId);
-      await dispatchFinancialEvent(db, FE.SHIPPING_EXPENSE, {
-        walletId, walletName: wallet?.name || '',
-        amount: cost,
-        description: `تكلفة شحن طلب #${pendingOrder.orderNumber || pendingOrder._id.slice(0,6)} — ${company?.name || ''}`,
-        note: note || '',
-        orderId: pendingOrder._id, orderNumber: pendingOrder.orderNumber || '',
-        vendorId: companyId, vendorName: company?.name || '',
-        userId: me.uid, userName: $('nav-name').textContent,
-        date: new Date().toLocaleDateString('ar-EG'),
-        orderUpdate: { orderId: pendingOrder._id, fields: orderFields },
-      });
-    } else {
-      // No expense to record — standalone updateDoc is already atomic by itself.
-      await updateDoc(doc(db, 'orders', pendingOrder._id), {
-        ...orderFields,
-        updatedAt: serverTimestamp(),
-      });
+    const r = await orderActions.confirmShipped({
+      db,
+      orderId: pendingOrder._id,
+      role: myRole,
+      userId: me.uid,
+      userName: $('nav-name').textContent,
+      shippingCost: cost,
+      walletId,
+      walletName: wallet?.name || '',
+      shipCompanyId: companyId,
+      shipCompanyName: company?.name || '',
+      shipMethod: method,
+      note,
+    });
+    if (!r.ok) {
+      const msg = (r.errors || ['خطأ في التسليم'])[0];
+      console.warn('[SHIPPING_ACTION] confirmShipped failed', r);
+      toast('❌ ' + msg, 'err');
+      showOpError(`فشل تسليم الطلب ${orderLabel}: ${msg}`, () => confirmDispatch());
+      recordOp('err', `تسليم ${orderLabel}`);
+      return;
     }
-
     toast('✅ تم تسليم الطلب لشركة الشحن');
     clearOpError();
-    recordOp('ok', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
+    recordOp('ok', `تسليم ${orderLabel}`);
     closeModal('m-dispatch');
   } catch (e) {
-    console.error(e);
+    console.warn('[SHIPPING_ACTION] confirmShipped exception', e);
     const msg = e.message || 'خطأ في التسليم';
     toast('❌ ' + msg, 'err');
-    showOpError(`فشل تسليم الطلب #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}: ${msg}`, () => confirmDispatch());
-    recordOp('err', `تسليم #${pendingOrder?.orderNumber || pendingOrder?._id?.slice(0,6) || ''}`);
+    showOpError(`فشل تسليم الطلب ${orderLabel}: ${msg}`, () => confirmDispatch());
+    recordOp('err', `تسليم ${orderLabel}`);
   } finally {
     btn.disabled = false; btn.textContent = '✅ تسليم';
   }
@@ -2124,47 +2111,38 @@ async function confirmDispatch() {
 window.confirmDispatch = confirmDispatch;
 
 // Quick Pickup Dispatch — one-click dispatch for "استلام من المطبعة" orders.
-// No modal, no form. Auto-fills:
-//   shipMethod = 'pickup'
-//   shippingCost = 0
-//   shipStage = 'ready' (unchanged — pickup waits for customer)
-//   shipDispatchedAt = serverTimestamp()
-//   shipCompanyId/Name = '' (no company involved)
-// Plus a timeline entry. After this, the row shows 💰 تحصيل button.
+// PR-4A: thin orchestration. كل المنطق داخل orderActions.confirmShipped(method='pickup'):
+// shipStage='delivered' shortcut + deliveredAt + zero cost + zero company.
 window.quickPickupDispatch = async (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
-  // Use central validator with method='pickup' for safety
-  const v = validateDispatch({ order: o, companyId: '', method: 'pickup', cost: 0, walletId: '', role: myRole });
-  if (!v.ok) { toast(v.errors[0], 'err'); return; }
-
   const label = `#${o.orderNumber || o._id.slice(0,6)} · ${o.clientName || ''}`;
   if (!confirm(`🏬 تسجيل ${label} كـ "استلام من المطبعة"؟\n\nبدون شركة شحن وبدون تكلفة. التحصيل يحصل عند استلام العميل.`)) return;
 
   markRowPending(orderId);
   try {
-    const ts = new Date().toLocaleDateString('ar-EG') + ' ' +
-               new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    const userDisplay = $('nav-name').textContent || '';
-    await updateDoc(doc(db, 'orders', orderId), {
-      shipCompanyId: '',
-      shipCompanyName: '',
+    const r = await orderActions.confirmShipped({
+      db,
+      orderId,
+      role: myRole,
+      userId: me.uid,
+      userName: $('nav-name').textContent || '',
       shipMethod: 'pickup',
       shippingCost: 0,
-      shipStage: 'ready',
-      shipDispatchedAt: serverTimestamp(),
-      timeline: [...(o.timeline || []), {
-        date: ts,
-        action: '🏬 جاهز للاستلام من المطبعة — بدون شركة شحن',
-        by: userDisplay,
-      }],
-      updatedAt: serverTimestamp(),
     });
+    if (!r.ok) {
+      console.warn('[SHIPPING_ACTION] quickPickupDispatch failed', r);
+      const msg = (r.errors || ['خطأ في التسجيل'])[0];
+      toast('❌ ' + msg, 'err');
+      showOpError(`فشل تسجيل ${label} للاستلام: ${msg}`, () => window.quickPickupDispatch(orderId));
+      recordOp('err', `استلام · ${label}`);
+      return;
+    }
     toast('✅ جاهز للاستلام من المطبعة');
     recordOp('ok', `استلام · ${label}`);
     clearOpError();
   } catch (e) {
-    console.error(e);
+    console.warn('[SHIPPING_ACTION] quickPickupDispatch exception', e);
     const msg = e.message || 'خطأ في التسجيل';
     toast('❌ ' + msg, 'err');
     showOpError(`فشل تسجيل ${label} للاستلام: ${msg}`, () => window.quickPickupDispatch(orderId));
