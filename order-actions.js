@@ -753,41 +753,75 @@ export const orderActions = {
 
   /**
    * إلغاء تسوية شحن سابقة → SHIPPING_SETTLEMENT_REVERSAL.
+   * يُحمِّل الأوردرات داخلياً ويحسب per-order reversal (totalPaid -= shipSettledAmount).
    *
-   * @param {Object} args.settlement — وثيقة shipping_settlements/{id} كاملة
-   * @param {Object[]} [args.orderUpdates] — overrides لبعض الحقول على الأوردرات
+   * @param {Object} [args.settlement] — وثيقة shipping_settlements/{id} كاملة (اختياري لو settlementId موجود)
+   * @param {string} [args.settlementId] — أو الـ id مباشرة (الـ action يحمّل الباقي)
    */
   async reverseSettlement({
-    db, settlement, role, userId, userName,
-    orderUpdates = [], note = '',
+    db, settlement, settlementId, role, userId, userName, note = '',
   }) {
-    if (!settlement || !settlement.id) {
+    // 1) حمّل التسوية لو لم تُمرَّر
+    let s = settlement;
+    const sid = (s && s.id) || settlementId;
+    if (!sid) {
       return { ok:false, errors:['⛔ التسوية غير محددة'], warnings:[] };
     }
+    if (!s) {
+      const snap = await getDoc(doc(db, 'shipping_settlements', sid));
+      if (!snap.exists()) {
+        return { ok:false, errors:['⛔ التسوية غير موجودة (محذوفة سابقاً؟)'], warnings:[] };
+      }
+      s = { id: sid, ...snap.data() };
+    } else if (!s.id) {
+      s = { ...s, id: sid };
+    }
 
-    // حمّل أول أوردر كـ context للـ validator
-    const firstOrderId = (settlement.orderIds || [])[0];
-    const ctxOrder = firstOrderId ? await _loadOrder(db, firstOrderId) : null;
-
-    const v = validateReverseSettle({ settlement, order: ctxOrder, role });
+    // 2) Validate (مع تحميل أول أوردر كـ context)
+    const orderIds = Array.isArray(s.orderIds) ? s.orderIds : [];
+    const firstOrder = orderIds[0] ? await _loadOrder(db, orderIds[0]) : null;
+    const v = validateReverseSettle({ settlement: s, order: firstOrder, role });
     if (!v.ok) return { ...v };
+
+    // 3) حمّل كل الأوردرات وابنِ orderUpdates (totalPaid -= shipSettledAmount)
+    const orderUpdates = [];
+    for (const oid of orderIds) {
+      const o = oid === orderIds[0] ? firstOrder : await _loadOrder(db, oid);
+      if (!o) continue;
+      const settled = parseFloat(o.shipSettledAmount) || 0;
+      const oldPaid = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
+      const newPaid = Math.max(0, oldPaid - settled);
+      const sale    = parseFloat(o.salePrice)        || 0;
+      const shipFee = o.priceIncludesShipping ? 0 : (parseFloat(o.customerShipFee) || 0);
+      const disc    = parseFloat(o.discount)         || 0;
+      const newRem  = Math.max(0, sale + shipFee - disc - newPaid);
+      orderUpdates.push({
+        orderId: oid,
+        totalPaid: newPaid,
+        remaining: newRem,
+        paymentStatus: newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
+      });
+    }
 
     try {
       const eventResult = await dispatchFinancialEvent(db, FE.SHIPPING_SETTLEMENT_REVERSAL, {
-        settlementId: settlement.id,
-        walletId: settlement.walletId,
-        walletName: settlement.walletName || '',
-        amount: parseFloat(settlement.amount) || 0,
-        companyName: settlement.companyName || '',
-        orderIds: settlement.orderIds || [],
+        settlementId: s.id,
+        walletId: s.walletId,
+        walletName: s.walletName || '',
+        amount: parseFloat(s.amount) || 0,
+        companyName: s.companyName || '',
+        orderIds,
         orderUpdates,
         note,
         userId: userId || '', userName: userName || '',
       });
       return {
         ok:true, errors:[], warnings:v.warnings,
-        settlementId: settlement.id,
-        action:'reverse_settlement', eventResult,
+        settlementId: s.id,
+        action:'reverse_settlement',
+        orderIds,
+        orderUpdates,
+        eventResult,
       };
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل إلغاء التسوية'], warnings:[] };
