@@ -600,9 +600,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
+import { walletActions } from "./wallet-actions.js";
+import { employeeActions } from "./employee-actions.js";
 const functions = getFunctions(app);
 
 // Phase A #3 — settings.html legacy permissions projection.
@@ -906,60 +908,43 @@ function fillManagerSelect() {
 // ✅ savePerms implementation inside module scope (has access to db, updateDoc, doc)
 window._savePermsImpl = async function() {
   if(!window.permUserId) return;
-  try {
-    await updateDoc(doc(db,'users',window.permUserId), {permissions: window.currentPerms});
-    cM('perms');
-    toast('✅ تم حفظ الصلاحيات','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  const r=await employeeActions.saveUserPermissions({db,authUid:window.permUserId,permissions:window.currentPerms});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('perms');
+  toast('✅ تم حفظ الصلاحيات','ok');
 };
 
 window.changeRole = async function(uid, role) {
-  try {
-    // Phase A #3 — projection from canonical في core/permissions-matrix.js
-    // يحافظ على نفس الـ schema/values القديمة (راجع SETTINGS_MIGRATION_REPORT.md)
-    const permissions = _legacySettingsPermissions(role);
-    const batch=writeBatch(db);
-    batch.update(doc(db,'users',uid),{role,permissions});
-    const empSnap=await getDocs(query(collection(db,'employees'),where('authUid','==',uid)));
-    if(!empSnap.empty) batch.update(empSnap.docs[0].ref,{role,updatedAt:serverTimestamp()});
-    await batch.commit();
-    toast('✅ تم تغيير الدور وتحديث الصلاحيات تلقائياً','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  // Phase A #3 — projection from canonical في core/permissions-matrix.js
+  const permissions = _legacySettingsPermissions(role);
+  const r=await employeeActions.changeUserRole({db,authUid:uid,newRole:role,newPermissions:permissions});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم تغيير الدور وتحديث الصلاحيات تلقائياً','ok');
 };
 
 window.deleteUser = async function(uid, name) {
   if(!confirm(`حذف مستخدم "${name}"؟`)) return;
-  try {
-    await deleteDoc(doc(db,'users',uid));
-    toast('✅ تم الحذف','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  const r=await employeeActions.deleteUserDoc({db,authUid:uid});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
 };
 
 // SAVE WALLET
 window.saveWallet = async function() {
   const name = gv('nw-name');
   if(!name) return toast('⚠️ أدخل اسم المحفظة','err');
-  try {
-    await addDoc(collection(db,'wallets'), {
-      name,
-      type:      gv('nw-type'),
-      balance:   parseFloat(gv('nw-bal'))||0,
-      managerId: gv('nw-manager'),
-      isActive:  true,
-      createdAt: serverTimestamp(),
-    });
-    cM('new-wallet');
-    clearF(['nw-name','nw-bal']);
-    toast('✅ تم إنشاء المحفظة','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  const r=await walletActions.createWallet({db,name,type:gv('nw-type'),provider:'',managerId:gv('nw-manager')||'',openingBalance:parseFloat(gv('nw-bal'))||0,userId:auth.currentUser?.uid||'',userName:document.getElementById('nav-name')?.textContent||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('new-wallet');
+  clearF(['nw-name','nw-bal']);
+  toast('✅ تم إنشاء المحفظة','ok');
 };
 
 window.deleteWallet = async function(id) {
   if(!confirm('حذف هذه المحفظة؟')) return;
-  try {
-    await deleteDoc(doc(db,'wallets',id));
-    toast('✅ تم الحذف','ok');
-  } catch(e) { toast('❌ '+e.message,'err'); }
+  const r=await walletActions.deleteWallet({db,walletId:id});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
 };
 
 window.logout = async function() {

@@ -677,9 +677,23 @@ export async function walletTransfer({
 // EXPORTS
 // ══════════════════════════════════════════
 
+/**
+ * حذف محفظة (admin-only). الـ caller يتحقق إن المحفظة فاضية + يأخذ confirm.
+ */
+export async function deleteWallet({ db = defaultDb, walletId }) {
+  if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
+  try {
+    await deleteDoc(doc(db, 'wallets', walletId));
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+  }
+}
+
 export const walletActions = {
   updateWalletProvider,
   createWallet,
+  deleteWallet,
   saveReconciliation,
   setOpeningBalance,
   deleteTransaction,
