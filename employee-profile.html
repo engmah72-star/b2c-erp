@@ -437,9 +437,10 @@ async function buildDynamicSidebar(uid, currentPage) {
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
+import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
@@ -1378,33 +1379,25 @@ window.saveIncident=async function(){
   const orderSel=document.getElementById('inc-order');
   const clientName=orderSel?.selectedOptions?.[0]?.dataset?.client||'';
   if(!title&&type==='other'){toast('⚠️ أدخل عنواناً','err');return;}
-  try{
-    await addDoc(collection(db,'employee_incidents'),{
-      employeeId:empId,
-      employeeName:emp?.name||'',
-      authUid:emp?.authUid||'',
-      date,
-      monthKey:date.slice(0,7),
-      type,severity,
-      title:title||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
-      description,
-      orderId:orderId||null,
-      clientName:clientName||null,
-      createdBy:currentUser.uid,
-      createdByName:adminName,
-      createdAt:serverTimestamp()
-    });
-    document.getElementById('ov-incident').classList.remove('open');
-    toast('✅ تم تسجيل الإخفاق','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.addIncident({
+    db,
+    employeeId:empId,employeeName:emp?.name||'',authUid:emp?.authUid||'',
+    date,type,severity,
+    title:title||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
+    description,
+    orderId:orderId||null,clientName:clientName||null,
+    userId:currentUser.uid,userName:adminName,
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-incident').classList.remove('open');
+  toast('✅ تم تسجيل الإخفاق','ok');
 };
 
 window.deleteIncident=async function(id){
   if(!confirm('حذف هذا الإخفاق؟'))return;
-  try{
-    await deleteDoc(doc(db,'employee_incidents',id));
-    toast('✅ تم الحذف','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.deleteIncident({db,incidentId:id});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
 };
 
 function renderSkillsAndProducts(){
@@ -1579,13 +1572,12 @@ window.addSkillFromSug=function(n){
 };
 window.removeSkill=function(i){editSkillsArr.splice(i,1);renderSkillsEdit();};
 window.saveSkills=async function(){
-  try{
-    await updateDoc(doc(db,'employees',empId),{skills:editSkillsArr});
-    emp.skills=editSkillsArr;
-    document.getElementById('ov-edit-skills').classList.remove('open');
-    renderSkillsAndProducts();
-    toast('✅ تم حفظ المهارات','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.updateEmployeeSkills({db,employeeId:empId,skills:editSkillsArr});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  emp.skills=editSkillsArr;
+  document.getElementById('ov-edit-skills').classList.remove('open');
+  renderSkillsAndProducts();
+  toast('✅ تم حفظ المهارات','ok');
 };
 
 // ══ HELPERS ══
@@ -1849,11 +1841,10 @@ window.saveEmpData=async function(){
   const baseSalary=parseFloat(document.getElementById('edit-base-salary').value)||0;
   const commissionPct=parseFloat(document.getElementById('edit-commission').value)||0;
   const status=document.getElementById('edit-status').value;
-  try{
-    await updateDoc(doc(db,'employees',empId),{baseSalary,commissionPct,status,updatedAt:serverTimestamp()});
-    document.getElementById('ov-edit-salary').classList.remove('open');
-    toast('✅ تم حفظ البيانات','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.updateEmployeeData({db,employeeId:empId,baseSalary,commissionPct,status});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-edit-salary').classList.remove('open');
+  toast('✅ تم حفظ البيانات','ok');
 };
 
 // Reset password — direct via Cloud Function (adminResetEmployeePassword).
@@ -2000,16 +1991,9 @@ window.saveEmployeePassword=async function(btn){
   }
 
   // 3) Auth is now actually updated — sync Firestore so admin sees the right value
-  try{
-    await updateDoc(doc(db,'users',emp.authUid),{
-      displayPassword:pw,
-      displayPasswordSetAt:serverTimestamp(),
-      displayPasswordSetBy:currentUser.uid,
-      displayPasswordSetByName:adminName||'',
-      mustChangePassword:true,
-    });
-  }catch(e){
-    console.warn('Firestore displayPassword sync failed (Auth was updated):',e);
+  const sr=await employeeActions.recordPasswordChange({db,authUid:emp.authUid,newPassword:pw,userId:currentUser.uid,userName:adminName||'',mustChangeOnNextLogin:true});
+  if(!sr.ok){
+    console.warn('Firestore displayPassword sync failed (Auth was updated):',sr.errors);
   }
 
   btn.disabled=false;btn.textContent=orig;
@@ -2104,41 +2088,21 @@ window.doRebuildEmployeeAuth=async function(btn){
     return;
   }
 
-  // الحساب الجديد اتعمل. دلوقتي نحدّث Firestore:
+  // الحساب الجديد اتعمل. دلوقتي نحدّث Firestore عبر employeeActions.linkRebuiltAuth:
   //   - employees.authUid = newAuthUid (+ email للتأكيد)
   //   - users/{newAuthUid} جديد بنفس الصلاحيات
   //   - users/{oldAuthUid} يتأرشف (بدل ما نحذفه — بنحافظ على audit trail)
   setMsg('<span style="color:var(--dim2)">⏳ ربط الحساب الجديد بالبيانات الموجودة…</span>');
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'employees',emp._id),{ authUid:newAuthUid, email });
-    batch.set(doc(db,'users',newAuthUid),{
-      name: emp.name||'',
-      role: emp.role||'customer_service',
-      email,
-      phone: emp.phone,
-      isActive: true,
-      mustChangePassword: false,
-      displayPassword: pw,
-      displayPasswordSetAt: serverTimestamp(),
-      displayPasswordSetBy: currentUser?.uid||'',
-      displayPasswordSetByName: adminName||'',
-      permissions: empUserDoc?.permissions || {},
-      rebuiltFrom: oldAuthUid,
-      rebuiltAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    });
-    if(oldAuthUid && oldAuthUid!==newAuthUid){
-      batch.update(doc(db,'users',oldAuthUid),{
-        isActive:false,
-        archivedAt: serverTimestamp(),
-        replacedBy: newAuthUid,
-      });
-    }
-    await batch.commit();
-  }catch(e){
+  const lr=await employeeActions.linkRebuiltAuth({
+    db,
+    employeeDocId:emp._id,newAuthUid,oldAuthUid,email,
+    employeeData:{name:emp.name||'',role:emp.role||'customer_service',phone:emp.phone},
+    newPassword:pw,userPermissions:empUserDoc?.permissions||{},
+    userId:currentUser?.uid||'',userName:adminName||'',
+  });
+  if(!lr.ok){
     btn.disabled=false;btn.textContent=orig;
-    setMsg(`<span style="color:var(--y)">⚠️ تم إنشاء الحساب لكن فشل ربطه: ${e?.code||e?.message||''}</span><br><span style="color:var(--dim2);font-size:var(--fs-xs)">الحساب الجديد شغّال لكن قد يحتاج لمس يدوي.</span>`);
+    setMsg(`<span style="color:var(--y)">⚠️ تم إنشاء الحساب لكن فشل ربطه: ${(lr.errors||[]).join(' · ')}</span><br><span style="color:var(--dim2);font-size:var(--fs-xs)">الحساب الجديد شغّال لكن قد يحتاج لمس يدوي.</span>`);
     return;
   }
 
@@ -2231,12 +2195,7 @@ window.sendEmpResetEmail=async function(){
     await sendPasswordResetEmail(auth,emp.email);
     // audit trail
     if(emp.authUid){
-      try{
-        await updateDoc(doc(db,'users',emp.authUid),{
-          passwordResetEmailSentAt:serverTimestamp(),
-          passwordResetEmailSentBy:currentUser.uid,
-        });
-      }catch(_){/* non-fatal */}
+      employeeActions.recordPasswordResetEmailSent({db,authUid:emp.authUid,userId:currentUser.uid}).catch(_=>{});
     }
     toast(`✅ تم إرسال رابط إلى ${emp.email}`,'ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -2279,31 +2238,19 @@ window.confirmDelete=async function(){
   if(!emp)return;
   if(!confirm(`حذف موظف "${emp.name}"؟
 لن يستطيع الدخول للنظام.`))return;
-  try{
-    // atomic: remove employee + lock user account together
-    const batch=writeBatch(db);
-    batch.delete(doc(db,'employees',empId));
-    if(emp.authUid){
-      // soft-delete: نحتفظ بـ users doc عشان نقدر نعيد الحساب بنفس الرقم لاحقاً
-      batch.update(doc(db,'users',emp.authUid),{isActive:false,deleted:true,deletedAt:serverTimestamp(),permissions:{pages:[]}});
-    }
-    await batch.commit();
-    toast('✅ تم حذف الموظف','ok');
-    setTimeout(()=>location.href='employees.html',1500);
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.softDeleteEmployee({db,employeeId:empId,authUid:emp.authUid||''});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم حذف الموظف','ok');
+  setTimeout(()=>location.href='employees.html',1500);
 };
 
 window.clearPermissions=async function(){
   if(!emp?.authUid)return toast('⚠️ الموظف مش عنده حساب دخول','err');
   if(!confirm(`مسح كل صلاحيات ${emp.name}؟\nلن يستطيع الدخول لأي صفحة.`))return;
-  try{
-    await updateDoc(doc(db,'users',emp.authUid),{
-      permissions:{pages:[],canSeePrices:false,canSeeAllOrders:false,canAddOrders:false,canAddClients:false,canAssignDesigner:false,canAssignTasks:false}
-    });
-    toast('✅ تم مسح الصلاحيات','ok');
-    // أعد رسم الصلاحيات
-    await renderPermissions();
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.clearUserPermissions({db,authUid:emp.authUid});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم مسح الصلاحيات','ok');
+  await renderPermissions();
 };
 
 window.savePermissions=async function(){
@@ -2319,10 +2266,9 @@ window.savePermissions=async function(){
   const pages=[...document.querySelectorAll('.perm-page:checked')].map(cb=>cb.value);
   const perms={pages};
   document.querySelectorAll('.perm-data').forEach(cb=>{perms[cb.value]=cb.checked;});
-  try{
-    await updateDoc(doc(db,'users',emp.authUid),{permissions:perms});
-    toast('✅ تم حفظ الصلاحيات','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.saveUserPermissions({db,authUid:emp.authUid,permissions:perms});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم حفظ الصلاحيات','ok');
 };
 
 // ══ TASKS ══
@@ -2395,16 +2341,16 @@ function renderTasks(){
 
 window.toggleTask=async function(id,status){
   const newStatus=status==='pending'?'done':'pending';
-  try{
-    await updateDoc(doc(db,'tasks',id),{status:newStatus,updatedAt:serverTimestamp()});
-    toast(newStatus==='done'?'✅ تم إنجاز المهمة':'↩️ تم إعادة فتح المهمة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.setTaskStatus({db,taskId:id,status:newStatus});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(newStatus==='done'?'✅ تم إنجاز المهمة':'↩️ تم إعادة فتح المهمة','ok');
 };
 
 window.deleteTask=async function(id){
   if(!confirm('حذف المهمة؟'))return;
-  try{await updateDoc(doc(db,'tasks',id),{status:'cancelled',updatedAt:serverTimestamp()});toast('✅ تم الحذف','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.setTaskStatus({db,taskId:id,status:'cancelled'});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
 };
 
 window.openAddTask=function(){
@@ -2420,22 +2366,16 @@ window.openAddTask=function(){
 };
 
 window.saveTask=async function(){
-  const title=gv('task-title').trim();
-  if(!title){toast('⚠️ أدخل عنوان المهمة','err');return;}
-  try{
-    await addDoc(collection(db,'tasks'),{
-      title, description:gv('task-desc'), priority:gv('task-pri'),
-      dueDate:gv('task-due')||'',
-      orderId:gv('task-order')||'',
-      assignedTo:emp.authUid||empId,
-      assignedToName:emp.name||'',
-      assignedBy:currentUser.uid, assignedByName:adminName,
-      status:'pending',
-      createdAt:serverTimestamp(), updatedAt:serverTimestamp()
-    });
-    document.getElementById('ov-task').classList.remove('open');
-    toast('✅ تمت إضافة المهمة لـ '+emp.name,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.addEmployeeTask({
+    db,
+    title:gv('task-title'),description:gv('task-desc'),priority:gv('task-pri'),
+    dueDate:gv('task-due')||'',orderId:gv('task-order')||'',
+    assignedToUid:emp.authUid||empId,assignedToName:emp.name||'',
+    userId:currentUser.uid,userName:adminName,
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-task').classList.remove('open');
+  toast('✅ تمت إضافة المهمة لـ '+emp.name,'ok');
 };
 
 // ══ ATTENDANCE ══
@@ -2531,13 +2471,12 @@ window.saveSchedule=async function(){
   if(!schedDays.length)return toast('⚠️ اختر يوم عمل واحد على الأقل','err');
   const startTime=document.getElementById('sched-start').value||'09:00';
   const endTime=document.getElementById('sched-end').value||'17:00';
-  try{
-    await updateDoc(doc(db,'employees',empId),{workSchedule:{days:schedDays,startTime,endTime},updatedAt:serverTimestamp()});
-    emp.workSchedule={days:schedDays,startTime,endTime};
-    document.getElementById('ov-schedule').classList.remove('open');
-    renderSchedule();renderAttendance();
-    toast('✅ تم حفظ جدول العمل','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.updateEmployeeSchedule({db,employeeId:empId,days:schedDays,startTime,endTime});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  emp.workSchedule={days:schedDays,startTime,endTime};
+  document.getElementById('ov-schedule').classList.remove('open');
+  renderSchedule();renderAttendance();
+  toast('✅ تم حفظ جدول العمل','ok');
 };
 
 // ══ LEAVES ══
@@ -2603,16 +2542,16 @@ window.saveLeave=async function(){
   let days=0;
   const cur=new Date(startDate);
   while(cur<=new Date(endDate)){if(isWorkDay(cur.toISOString().slice(0,10)))days++;cur.setDate(cur.getDate()+1);}
-  try{
-    await addDoc(collection(db,'employee_leaves'),{employeeId:empId,employeeName:emp.name||'',type,startDate,endDate,days,reason,createdAt:serverTimestamp(),createdBy:adminName});
-    document.getElementById('ov-leave').classList.remove('open');
-    toast('✅ تم تسجيل الإجازة','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.addEmployeeLeave({db,employeeId:empId,employeeName:emp.name||'',type,startDate,endDate,days,reason,userId:currentUser.uid,userName:adminName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-leave').classList.remove('open');
+  toast('✅ تم تسجيل الإجازة','ok');
 };
 window.deleteLeave=async function(id){
   if(!confirm('حذف هذه الإجازة؟'))return;
-  try{await deleteDoc(doc(db,'employee_leaves',id));toast('✅ تم الحذف','ok');}
-  catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.deleteEmployeeLeave({db,leaveId:id});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
 };
 
 // ══ SALARIES ══
@@ -2965,32 +2904,11 @@ window.recordAttendanceToday=async function(){
   const mKey=monthKey();
   const existing=empAttendance.find(a=>a.date===dateStr);
   if(existing){toast('⚠️ تم تسجيل حضور '+emp.name+' اليوم مسبقاً','err');return;}
-  try{
-    const nowD=new Date();
-    const lateMinutes=computeLateMinutes(nowD);
-    // doc id قطعي يمنع التكرار حتى لو تنافس tabs/users
-    const attId=`${empId}_${dateStr}`;
-    const attRef=doc(db,'attendance',attId);
-    await runTransaction(db,async tx=>{
-      const snap=await tx.get(attRef);
-      if(snap.exists())throw new Error('سُجِّل حضور مسبقاً');
-      tx.set(attRef,{
-        employeeUid:emp.authUid||empId,
-        employeeId:empId,
-        employeeName:emp.name||'',
-        date:dateStr,
-        monthKey:mKey,
-        checkIn:true,
-        checkInStr:nowD.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
-        lateMinutes,
-        recordedBy:currentUser.uid,
-        recordedByName:adminName,
-        createdAt:serverTimestamp()
-      });
-    });
-    if(lateMinutes>0)toast(`⚠️ حضور متأخر ${lateMinutes}د — ${emp.name}`,'err');
-    else toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const lateMinutes=computeLateMinutes(new Date());
+  const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:empId,employeeUid:emp.authUid||empId,employeeName:emp.name||'',date:dateStr,monthKey:mKey,lateMinutes,recordedBy:currentUser.uid,recordedByName:adminName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  if(r.lateMinutes>0)toast(`⚠️ حضور متأخر ${r.lateMinutes}د — ${emp.name}`,'err');
+  else toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');
 };
 
 window.recordCheckOutToday=async function(){
@@ -2999,13 +2917,9 @@ window.recordCheckOutToday=async function(){
   const existing=empAttendance.find(a=>a.date===dateStr);
   if(!existing){toast('⚠️ لم يُسجَّل حضور '+emp.name+' اليوم بعد','err');return;}
   if(existing.checkOut){toast('⚠️ تم تسجيل انصراف '+emp.name+' اليوم مسبقاً','err');return;}
-  try{
-    await updateDoc(doc(db,'attendance',existing._id),{
-      checkOut:true,
-      checkOutStr:new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}),
-    });
-    toast('✅ تم تسجيل انصراف '+emp.name,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:existing._id});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم تسجيل انصراف '+emp.name,'ok');
 };
 </script>
 <script src="sw-register.js"></script>
