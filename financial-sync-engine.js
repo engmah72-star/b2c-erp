@@ -629,7 +629,8 @@ async function handleShippingSettlement(db, p) {
 
 async function handleShippingSettlementReversal(db, p) {
   // p: { settlementId, walletId, walletName, amount, companyName, orderIds[],
-  //      orderUpdates: [{orderId, totalPaid, remaining, paymentStatus}], userId, userName, date? }
+  //      orderUpdates: [{orderId, totalPaid, remaining, paymentStatus}],
+  //      userId, userName, date?, reversalReason?, reversalOperationId? }
   if (!p.settlementId) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: settlementId مطلوب');
   if (!p.walletId) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: walletId مطلوب');
   if (!(p.amount > 0)) throw new Error('[FSE] SHIPPING_SETTLEMENT_REVERSAL: amount غير صالح');
@@ -652,7 +653,20 @@ async function handleShippingSettlementReversal(db, p) {
     ...approvalFields(),
   });
 
-  batch.delete(doc(db, 'shipping_settlements', p.settlementId));
+  // PR-7 G2 — Append-only: nu delete على history، نضع reversed flag بدلاً.
+  // الـ ledger يبقى المصدر الـ canonical للحركات؛ shipping_settlements يصبح
+  // historical record كامل مع reversal flags. queries المعتمدة (للـ active
+  // settlements) يجب أن تفلتر `where('reversed','==',false)` أو
+  // `where('reversed','!=',true)`.
+  batch.update(doc(db, 'shipping_settlements', p.settlementId), {
+    reversed: true,
+    reversedAt: serverTimestamp(),
+    reversedBy: p.userId || '',
+    reversedByName: p.userName || '',
+    reversalReason: p.reversalReason || '',
+    reversalOperationId: p.reversalOperationId || '',
+    reversalTxId: txRef.id,
+  });
 
   for (const u of (p.orderUpdates || [])) {
     if (!u.orderId) continue;

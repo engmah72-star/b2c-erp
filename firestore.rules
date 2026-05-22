@@ -654,9 +654,21 @@ service cloud.firestore {
       // shipping page perm يقدر يكتب — شركات الشحن تسوية يومية من shipping.html.
       // قبل: hasPage('shipping-accounts') فقط ➜ shipping_officer كان يحصل
       // permission-denied عند التسوية.
-      allow write: if isAuth() && (
+      // PR-7 G2 (append-only): الـ delete ممنوع — الـ reversal يكتب
+      // reversed:true بدل المسح. لا قاعدة allow delete = block delete by default.
+      allow create, update: if isAuth() && (
         isAdmin() || hasPage('shipping') || hasPage('shipping-accounts')
       );
+    }
+    // PR-7 G1: financial_operations — idempotency log
+    // كل actor يقدر يكتب/يقرأ سجلاته (operationId + actorId match). admin يقرأ الكل.
+    match /financial_operations/{opId} {
+      allow read: if isAuth() && (isAdmin() || resource.data.actorId == request.auth.uid);
+      allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
+      allow update: if isAuth() && (
+        isAdmin() || resource.data.actorId == request.auth.uid
+      );
+      // append-only: no delete (idempotency log is forever)
     }
     match /shipping_returns/{retId} {
       allow read: if isAuth() && (

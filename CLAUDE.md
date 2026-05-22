@@ -1643,3 +1643,92 @@ allow read: if isAuth() && inSameTenant(resource.data) && (...);
 - `AUDIT_REPORT_v2.md` (2026-05-19) — تشخيص محدَّث + scores
 - `STABILIZATION_PLAN.md` (2026-05-19) — Sprint 14 يوم للـ security/perf
 - `REGRESSION_PREVENTION.md` (2026-05-19) — Feature isolation + governance
+
+---
+
+# RULE H1 — POST-PR7 GOVERNANCE FREEZE (Architecture Hardening)
+
+> **بعد PR-7 (Platform Hardening Phase) — هذه القواعد إلزامية ومُفعَّلة على الـ CI.**
+
+## H1.1 — Zero Direct UI Writes
+**ممنوع بشكل قاطع** داخل أي ملف HTML أو في صفحات `pages/components`:
+```
+updateDoc(   setDoc(   addDoc(   deleteDoc(   writeBatch(   runTransaction(
+dispatchFinancialEvent(   addLedgerToBatch(
+```
+
+**Allowlist (المسموح لها بهذه الـ APIs):**
+- `orders.js` (helpers + builders + advanceOrderStageWithLock + heal helpers)
+- `order-actions.js` (central actions)
+- `financial-sync-engine.js` (FSE handlers)
+- `core/` (idempotency, invariants, storage-helpers, firebase-init)
+- `repositories/` (مستقبلاً)
+- `functions/` (Cloud Functions)
+- `tests/`
+
+**Enforcement:** `.github/workflows/architecture-guard.yml` يفحص كل PR.
+
+## H1.2 — Idempotency Required
+كل financial action في `order-actions.js` يجب يُلَفّ بـ `withIdempotency(...)` من `core/idempotency.js`.
+
+**Operations المغطَّاة (إلزامياً):**
+- `settleFromCompany` / `reverseSettlement`
+- `collectFromCustomer`
+- `markFullReturn` / `markPartialReturn`
+- `manualSettle`
+- `recordPayment` / `refundOrder`
+
+**Fingerprint inputs:** `{ actionType, entityId, actorId, payload, windowMs }`.
+**Window افتراضي:** 60 ثانية. لو نفس fingerprint خلال الـ window:
+- `completed` → ارجع cached result (no-op)
+- `pending` → ارفض
+- `failed` → اعد المحاولة
+
+## H1.3 — Append-Only Financial History
+الـ collections التالية **append-only**:
+- `financial_ledger` — never delete (موجود مسبقاً)
+- `transactions_v2` — never delete (موجود مسبقاً، الـ reversal = inverse tx جديد)
+- `shipping_settlements` — never delete (PR-7 G2: reversed:true flag بدلاً من delete)
+- `financial_operations` — never delete (idempotency log)
+
+**Queries على settlements للـ active view يجب أن تفلتر `where('reversed','!=',true)`.**
+
+## H1.4 — Drift Detection (Pre-Action Optional, Post-Action Always)
+- `core/financial-invariants.js` → `detectFinancialDrift(order)` يفحص 9 invariants
+- صفحات الشحن والحسابات يمكنها استدعاء `summarizeFinancialDrift(orders)` لـ banner
+- Cloud Function دورية (مستقبلاً) يجب أن تستدعيها على كل الأوردرات
+
+## H1.5 — Action Result Contract
+كل action تُرجع:
+```ts
+{
+  ok: boolean,
+  errors: string[],
+  warnings: string[],
+  operationId?: string,
+  idempotent?: boolean,    // true لو كان no-op من cache
+  pending?: boolean,       // true لو operation أخرى pending
+  ... domainSpecific,
+}
+```
+
+## H1.6 — Telemetry Required
+كل action على فشل يجب أن تستدعي `console.warn('[ACTION_NAME]', payload, result)`.
+صفحات الـ UI يجب أن تعرض persistent error (showOpError) + recordOp('err', ...).
+**ممنوع** silent failures.
+
+## H1.7 — God Page Budget
+ملف > 1500 سطر = CI warning. > 2500 = freeze حتى decomposition plan.
+الموجودين حالياً (clients/employee-profile/reports/inbox/etc) مُجمَّدون.
+
+## H1.8 — Architectural Files = Stable Core
+الـ files التالية تتطلب 2-reviewer + smoke tests قبل أي تعديل:
+- `firestore.rules`
+- `financial-sync-engine.js`
+- `order-actions.js`
+- `orders.js` (validators + builders + state machine)
+- `core/idempotency.js`
+- `core/firebase-init.js`
+- `core/permissions-matrix.js`
+
+أي drift عن H1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً.

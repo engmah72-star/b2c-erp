@@ -42,6 +42,7 @@ import {
   normalizeShipStage,
 } from './orders.js';
 import { dispatchFinancialEvent, FE, addLedgerToBatch, approvalFields } from './financial-sync-engine.js';
+import { withIdempotency } from './core/idempotency.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -578,6 +579,14 @@ export const orderActions = {
     db, orderId, amount, walletId, walletName = '',
     role, userId, userName, note = '',
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    // G1: idempotency — نفس orderId + walletId + amount خلال دقيقة = no-op
+    return withIdempotency(db, {
+      actionType: 'collect_from_customer',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0 },
+    }, async () => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -640,6 +649,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل التحصيل من العميل'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -665,7 +675,13 @@ export const orderActions = {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return { ok:false, errors:['⚠️ لم تحدد أوردرات للتسوية'], warnings:[] };
     }
-
+    // G1: idempotency guard — نفس orderIds + walletId + amount + prepaid + minute = no-op
+    return withIdempotency(db, {
+      actionType: 'settle_from_company',
+      entityId: [...orderIds].sort().join(','),
+      actorId: userId || '',
+      payload: { walletId, amount: Number(amount) || 0, prepaid: !!prepaid },
+    }, async () => {
     // 1) حمّل كل الأوردرات
     const loaded = [];
     for (const id of orderIds) {
@@ -749,6 +765,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تسوية الشركة'], warnings:[], orderIds };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -761,9 +778,20 @@ export const orderActions = {
   async reverseSettlement({
     db, settlement, settlementId, role, userId, userName, note = '',
   }) {
+    const sid0 = (settlement && settlement.id) || settlementId;
+    if (!sid0) {
+      return { ok:false, errors:['⛔ التسوية غير محددة'], warnings:[] };
+    }
+    // G1: idempotency — نفس settlementId + actor = no-op
+    return withIdempotency(db, {
+      actionType: 'reverse_settlement',
+      entityId: sid0,
+      actorId: userId || '',
+      payload: {},
+    }, async (operationId) => {
     // 1) حمّل التسوية لو لم تُمرَّر
     let s = settlement;
-    const sid = (s && s.id) || settlementId;
+    const sid = sid0;
     if (!sid) {
       return { ok:false, errors:['⛔ التسوية غير محددة'], warnings:[] };
     }
@@ -783,7 +811,12 @@ export const orderActions = {
     const v = validateReverseSettle({ settlement: s, order: firstOrder, role });
     if (!v.ok) return { ...v };
 
-    // 3) حمّل كل الأوردرات وابنِ orderUpdates (totalPaid -= shipSettledAmount)
+    // 3) idempotency check: لو settlement reversed بالفعل، ارفض
+    if (s.reversed === true) {
+      return { ok:false, errors:['⛔ التسوية ملغاة بالفعل'], warnings:[], settlementId: s.id };
+    }
+
+    // 4) حمّل كل الأوردرات وابنِ orderUpdates (totalPaid -= shipSettledAmount)
     const orderUpdates = [];
     for (const oid of orderIds) {
       const o = oid === orderIds[0] ? firstOrder : await _loadOrder(db, oid);
@@ -814,6 +847,8 @@ export const orderActions = {
         orderUpdates,
         note,
         userId: userId || '', userName: userName || '',
+        reversalReason: note || '',
+        reversalOperationId: operationId,  // PR-7 G2 audit
       });
       return {
         ok:true, errors:[], warnings:v.warnings,
@@ -826,6 +861,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل إلغاء التسوية'], warnings:[] };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -849,6 +885,14 @@ export const orderActions = {
     reason = '', reasonLabel = '', lossParty = '', cost = 0, note = '',
     companyName = '',
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    // G1: idempotency — full return لنفس orderId من نفس الـ actor خلال دقيقة = no-op
+    return withIdempotency(db, {
+      actionType: 'mark_full_return',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { reason, lossParty, cost: Number(cost) || 0 },
+    }, async () => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -1066,6 +1110,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تسجيل المرتجع الكامل'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -1094,6 +1139,18 @@ export const orderActions = {
     cost = 0, lossParty = '', reason = '', reasonLabel = '', note = '',
     companyName = '',
   }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    // G1: idempotency — نفس orderId + items + refund signature خلال دقيقة = no-op
+    return withIdempotency(db, {
+      actionType: 'mark_partial_return',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: {
+        items: (returnedItems || []).map(it => `${it.prodIdx ?? it.idx}:${it.returnedQty ?? it.qty}`).sort().join(','),
+        refundAmount: Number(refundAmount) || 0,
+        refundWalletId,
+      },
+    }, async () => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
 
@@ -1216,6 +1273,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل تسجيل المرتجع الجزئي'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -1226,6 +1284,14 @@ export const orderActions = {
    * Atomic single batch (RULE F3).
    */
   async manualSettle({ db, orderId, role, userId, userName, reason = '' }) {
+    if (!orderId) return { ok:false, errors:['⚠️ orderId مطلوب'], warnings:[] };
+    // G1: idempotency — نفس orderId + actor + reason-hash خلال دقيقة = no-op
+    return withIdempotency(db, {
+      actionType: 'manual_settle',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { reasonLen: (reason || '').length },
+    }, async () => {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok:false, errors:['الأوردر غير موجود'], warnings:[], orderId };
     if (order.stage === 'archived')  return { ok:false, errors:['⛔ الأوردر مؤرشف'], warnings:[], orderId };
@@ -1295,6 +1361,7 @@ export const orderActions = {
     } catch (e) {
       return { ok:false, errors:[e.message || 'فشل التسوية اليدوية'], warnings:[], orderId };
     }
+    }); // end withIdempotency
   },
 
   /**
