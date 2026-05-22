@@ -108,6 +108,54 @@ export async function updateEmployeeData({
   }
 }
 
+/**
+ * Atomic Firestore writes for new employee creation: employees doc + users doc.
+ * Firebase Auth creation happens in the caller (mixed-flow) — pass the resulting
+ * newAuthUid here. Same pattern as linkRebuiltAuth.
+ */
+export async function createEmployeeWithUser({
+  db = defaultDb,
+  newAuthUid, email,
+  employeeData, // full employees doc shape (already has email/authUid/permissions inserted)
+  userDocData,  // full users doc shape
+}) {
+  if (!newAuthUid) return { ok: false, errors: ['⚠️ newAuthUid مطلوب'], warnings: [] };
+  if (!employeeData) return { ok: false, errors: ['⚠️ employeeData مطلوب'], warnings: [] };
+  if (!userDocData) return { ok: false, errors: ['⚠️ userDocData مطلوب'], warnings: [] };
+  try {
+    const batch = writeBatch(db);
+    const empRef = doc(collection(db, 'employees'));
+    batch.set(empRef, employeeData);
+    batch.set(doc(db, 'users', newAuthUid), userDocData);
+    await batch.commit();
+    return { ok: true, errors: [], warnings: [], employeeId: empRef.id };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الإنشاء'], warnings: [] };
+  }
+}
+
+/**
+ * Full employee profile edit — accepts the entire form shape.
+ * Used by employees.html admin edit flow (covers name/phone/role/salary/etc).
+ */
+export async function updateEmployeeProfile({
+  db = defaultDb, employeeId, profileData,
+}) {
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!profileData || typeof profileData !== 'object') {
+    return { ok: false, errors: ['⚠️ profileData مطلوب'], warnings: [] };
+  }
+  try {
+    await updateDoc(doc(db, 'employees', employeeId), {
+      ...profileData,
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [] };
+  }
+}
+
 export async function updateEmployeeSchedule({
   db = defaultDb, employeeId, days, startTime, endTime,
 }) {
@@ -425,12 +473,123 @@ export async function recordAttendanceCheckOut({
 }
 
 // ══════════════════════════════════════════
+// ROLE CHANGE + USER DELETE (settings.html flows)
+// ══════════════════════════════════════════
+
+/**
+ * Atomic: تغيير role في users + employees (لو موجود) معاً.
+ */
+export async function changeUserRole({
+  db = defaultDb, authUid, newRole, newPermissions,
+}) {
+  if (!authUid) return { ok: false, errors: ['⚠️ authUid مطلوب'], warnings: [] };
+  if (!newRole) return { ok: false, errors: ['⚠️ newRole مطلوب'], warnings: [] };
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', authUid), {
+      role: newRole,
+      permissions: newPermissions || {},
+    });
+    // find matching employee doc (if any)
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const empSnap = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
+    if (!empSnap.empty) {
+      batch.update(empSnap.docs[0].ref, { role: newRole, updatedAt: serverTimestamp() });
+    }
+    await batch.commit();
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التغيير'], warnings: [] };
+  }
+}
+
+/**
+ * حذف users doc بشكل مباشر (لا cascade — softDeleteEmployee يفعل العكس).
+ * Admin tool فقط — احذر.
+ */
+export async function deleteUserDoc({ db = defaultDb, authUid }) {
+  if (!authUid) return { ok: false, errors: ['⚠️ authUid مطلوب'], warnings: [] };
+  try {
+    await deleteDoc(doc(db, 'users', authUid));
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
+// ACTIVE/INACTIVE STATUS
+// ══════════════════════════════════════════
+
+export async function setEmployeeStatus({ db = defaultDb, employeeId, status }) {
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!['active', 'inactive', 'suspended'].includes(status)) {
+    return { ok: false, errors: [`⚠️ status '${status}' غير صالح`], warnings: [] };
+  }
+  try {
+    await updateDoc(doc(db, 'employees', employeeId), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
+// KPI: GOALS + EVALUATIONS (upsert pattern)
+// ══════════════════════════════════════════
+
+/**
+ * Upsert employee goal — لو في existing record يحدّثه، وإلا يضيف جديد.
+ * يحتاج existing._id لو موجود (caller يلقطه من الـ snapshot).
+ */
+export async function upsertEmployeeGoal({
+  db = defaultDb, existingId = '', data,
+}) {
+  if (!data) return { ok: false, errors: ['⚠️ data مطلوب'], warnings: [] };
+  try {
+    if (existingId) {
+      await updateDoc(doc(db, 'employee_goals', existingId), data);
+      return { ok: true, errors: [], warnings: [], goalId: existingId, action: 'update' };
+    }
+    const ref = await addDoc(collection(db, 'employee_goals'), {
+      ...data,
+      createdAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [], goalId: ref.id, action: 'create' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [] };
+  }
+}
+
+export async function upsertEmployeeEvaluation({
+  db = defaultDb, existingId = '', data,
+}) {
+  if (!data) return { ok: false, errors: ['⚠️ data مطلوب'], warnings: [] };
+  try {
+    if (existingId) {
+      await updateDoc(doc(db, 'employee_evaluations', existingId), data);
+      return { ok: true, errors: [], warnings: [], evaluationId: existingId, action: 'update' };
+    }
+    const ref = await addDoc(collection(db, 'employee_evaluations'), data);
+    return { ok: true, errors: [], warnings: [], evaluationId: ref.id, action: 'create' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // EXPORTS
 // ══════════════════════════════════════════
 
 export const employeeActions = {
   addIncident, deleteIncident,
-  updateEmployeeSkills, updateEmployeeData, updateEmployeeSchedule,
+  updateEmployeeSkills, updateEmployeeData, updateEmployeeProfile, updateEmployeeSchedule,
+  createEmployeeWithUser,
+  changeUserRole, deleteUserDoc,
+  setEmployeeStatus,
   softDeleteEmployee,
   recordPasswordChange, recordPasswordResetEmailSent,
   linkRebuiltAuth,
@@ -438,6 +597,7 @@ export const employeeActions = {
   addEmployeeTask, setTaskStatus,
   addEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
+  upsertEmployeeGoal, upsertEmployeeEvaluation,
 };
 
 export default employeeActions;

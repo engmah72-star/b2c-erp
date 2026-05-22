@@ -449,10 +449,11 @@ import { app, auth, db, FB_CONFIG } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 import { dedupEmployees } from "./orders.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
+import { employeeActions } from "./employee-actions.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -684,10 +685,9 @@ window.openEditEmp=function(id){
 
 // ══ TOGGLE STATUS ══
 window.toggleEmpStatus=async function(id,newStatus){
-  try{
-    await updateDoc(doc(db,'employees',id),{status:newStatus,updatedAt:serverTimestamp()});
-    toast(newStatus==='active'?'✅ تم تفعيل الموظف':'⏸ تم إيقاف الموظف مؤقتاً','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.setEmployeeStatus({db,employeeId:id,status:newStatus});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(newStatus==='active'?'✅ تم تفعيل الموظف':'⏸ تم إيقاف الموظف مؤقتاً','ok');
 };
 
 // ══ KPI PANEL — نظام التقييم الكامل ══
@@ -795,8 +795,8 @@ window.saveEmpGoal=async function(empId,empName,month){
       targets:{attendanceDays:attDays,ordersTarget:ordersT,qualityPct:qualPct},
       updatedBy:currentUser?.uid||'',updatedByName:userName,updatedAt:serverTimestamp()
     };
-    if(existing){await updateDoc(doc(db,'employee_goals',existing._id),data);}
-    else{await addDoc(collection(db,'employee_goals'),{...data,createdAt:serverTimestamp()});}
+    const r=await employeeActions.upsertEmployeeGoal({db,existingId:existing?._id||'',data});
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');return;}
     toast('✅ تم حفظ الأهداف','ok');
   }catch(e){toast('❌ '+e.message,'err');}
 };
@@ -816,8 +816,8 @@ window.saveEmpEvaluation=async function(empId,empName,role,month,att,prod,qual,t
       attendanceDays:attDays,     attDays:attDays,
       savedBy:currentUser?.uid||'',savedByName:userName,savedAt:serverTimestamp()
     };
-    if(existing){await updateDoc(doc(db,'employee_evaluations',existing._id),data);}
-    else{await addDoc(collection(db,'employee_evaluations'),data);}
+    const r=await employeeActions.upsertEmployeeEvaluation({db,existingId:existing?._id||'',data});
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');return;}
     toast('✅ تم حفظ التقييم لـ '+empName,'ok');
     document.getElementById('panel-ov').classList.remove('open');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -1597,7 +1597,8 @@ window.saveEmp=async function(){
   const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role==='graphic_designer'||role==='design_operator')?commission:0,commissionPerOrder:commissionOrder,annualLeaveQuota:leaveQuota,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
   try{
     if(editingId){
-      await updateDoc(doc(db,'employees',editingId),empData);
+      const r=await employeeActions.updateEmployeeProfile({db,employeeId:editingId,profileData:empData});
+      if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');btn.disabled=false;btn.textContent='✓ حفظ';return;}
       toast('✅ تم تحديث بيانات الموظف','ok');
     } else {
       const email=phone+'@b2c.local';
@@ -1621,8 +1622,6 @@ window.saveEmp=async function(){
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;
       // Phase A #2: استخدم canonical من permissions-matrix (نفس الـ 9-field shape بالضبط)
-      // projection: نأخذ فقط الـ 9 fields التي كان employees.html يكتبها تاريخياً
-      // لا توسيع ولا تضييق — same behavior.
       const _f = getRoleDefaultPermissions(role);
       const _permissions = {
         pages: _f.pages,
@@ -1631,14 +1630,13 @@ window.saveEmp=async function(){
         canAssignDesigner: _f.canAssignDesigner, canAssignTasks: _f.canAssignTasks,
         canViewCosts: _f.canViewCosts,
       };
-      // atomic: create employees + users in one batch (both succeed or both fail)
-      const batch=writeBatch(db);
-      const empRef=doc(collection(db,'employees'));
-      batch.set(empRef,empData);
-      // displayPassword: نخزّن الكلمة المعروفة للأدمن — تُمسح تلقائياً عند
-      // أول تغيير كلمة سر يقوم به الموظف من change-password.html.
-      batch.set(doc(db,'users',authUid),{name,role,email,phone,isActive:true,mustChangePassword:true,displayPassword:'123456',permissions:_permissions,createdAt:serverTimestamp()});
-      await batch.commit();
+      // atomic Firestore writes — Auth account creation happens above
+      const r=await employeeActions.createEmployeeWithUser({
+        db,newAuthUid:authUid,email,
+        employeeData:empData,
+        userDocData:{name,role,email,phone,isActive:true,mustChangePassword:true,displayPassword:'123456',permissions:_permissions,createdAt:serverTimestamp()},
+      });
+      if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');btn.disabled=false;btn.textContent='✓ إضافة';return;}
       toast(`✅ تم إضافة ${name} · كلمة السر: 123456`,'ok');
     }
     document.getElementById('ov-emp').classList.remove('open');
