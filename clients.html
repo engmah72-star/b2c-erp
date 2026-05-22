@@ -4235,20 +4235,20 @@ window.cgridSaveField=async function(orderId,field,newVal,oldVal,extra){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
+// P1.6+P1.7 — Thin orchestration over window.orderActions.editOrderPayment.
+// Locked-tx prompt + edit reason stay in the page (UX behavior). The page
+// passes editReason to the action; action handles atomic batch + ledger.
 window.cgridSaveFinancial=async function(orderId,field,newVal,oldVal,walletId){
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
-  const diff=(parseFloat(newVal)||0)-(parseFloat(oldVal)||0);
   const FIELD_AR={salePrice:'السعر',totalPaid:'المدفوع',discount:'الخصم'};
   const fLabel=FIELD_AR[field]||field;
 
-  // ══ تنبيه قبل تعديل أوردر فيه عمليات معتمدة ══
-  // هذا الحقل يؤثر على الحسابات (تخصيصاً totalPaid)
+  // ══ Locked-tx warning + edit-reason prompt (UI behavior — stays here) ══
+  let editReason = '';
   if(field==='totalPaid' || field==='salePrice' || field==='discount'){
     try{
-      // فحص هل في tx معتمدة (isLocked) لهذا الأوردر
       const txSnap = await db.collection('transactions_v2')
-        .where('orderId','==',orderId)
-        .get();
+        .where('orderId','==',orderId).get();
       const lockedTxs = txSnap.docs.map(d=>({...d.data(),_id:d.id}))
         .filter(t => t.isLocked === true && !t.isReversal);
       if(lockedTxs.length > 0){
@@ -4257,68 +4257,43 @@ window.cgridSaveFinancial=async function(orderId,field,newVal,oldVal,walletId){
         const more = lockedTxs.length > 5 ? `\n• +${lockedTxs.length-5} حركات أخرى` : '';
         const warn = `⚠️ هذا الأوردر فيه ${lockedTxs.length} معاملات معتمدة ومقفولة!\n\nمجموع المعاملات: ${fn(totalLocked)} ج\n\n${txsList}${more}\n\nالتعديل المباشر على ${fLabel} قد يخلق فجوة بين الأوردر والـ tx.\n\n⛔ التعديل يجب أن يتم عبر:\n1. طلب استرداد (لو totalPaid)\n2. أو عبر tx جديدة\n\nاضغط OK للمتابعة (سيُسجَّل التعديل في timeline + قيد ledger).`;
         if(!confirm(warn)) return;
-        // طلب سبب
         const reason = prompt('سبب التعديل (إجباري — سيُحفظ في timeline والـ ledger):');
         if(!reason || !reason.trim()) return;
-        // حفظ السبب لاستخدامه لاحقاً
-        window.__editReason = reason.trim();
-      } else {
-        window.__editReason = '';
+        editReason = reason.trim();
       }
     }catch(e){
-      console.error('[cgridSaveFinancial] check locked tx error:', e);
+      console.warn('[cgridSaveFinancial] check locked tx error:', e?.message);
     }
   }
 
-  const newSale=field==='salePrice'?parseFloat(newVal)||0:(parseFloat(o.salePrice)||0);
-  const newPaid=field==='totalPaid'?parseFloat(newVal)||0:(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0);
-  const newDisc=field==='discount'?parseFloat(newVal)||0:(parseFloat(o.discount)||0);
-  const newCFee=parseFloat(o.customerShipFee)||0;
-  const newRem=Math.max(0,newSale+newCFee-newDisc-newPaid);
-  const newPayStatus=newRem<=0?'paid':newPaid>0?'partial':'pending';
-  const editReason = window.__editReason || '';
+  if(!window.orderActions){toast('⚠️ النظام يحمّل','err');return;}
+
+  const wEl=walletId?wallets.find(x=>x._id===walletId):null;
   const tlAction = editReason
     ? `💰 [أدمن] تعديل ${fLabel}: "${fn(oldVal)}" → "${fn(newVal)}" ج · سبب: ${editReason}`
     : `💰 [أدمن] تعديل ${fLabel}: "${fn(oldVal)}" → "${fn(newVal)}" ج`;
-  const tl=[...(o.timeline||[]),{date:nowStr(),action:tlAction,by:userName||'admin'}];
+
   try{
-    const batch=db.batch();
-    batch.update(db.collection('orders').doc(orderId),{
-      [field]:parseFloat(newVal)||0,remaining:newRem,paymentStatus:newPayStatus,timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),...(newPayStatus==='paid'?{paidAt:firebase.firestore.FieldValue.serverTimestamp()}:{})
+    const r = await window.orderActions.editOrderPayment({
+      orderId,
+      changes: { [field]: parseFloat(newVal)||0 },
+      walletId: walletId||'',
+      walletName: wEl?.name||'',
+      changesLabel: tlAction,
+      editReason,
+      userId: currentUser?.uid||'',
+      userName: userName||'admin',
     });
-    // Wallet sync for totalPaid changes only
-    if(field==='totalPaid'&&Math.abs(diff)>0.01&&walletId){
-      const w=wallets.find(x=>x._id===walletId);
-      batch.update(db.collection('wallets').doc(walletId),{balance:firebase.firestore.FieldValue.increment(diff)});
-      const isIn=diff>0;
-      batch.set(db.collection('transactions_v2').doc(),{
-        walletId,walletName:w?.name||'',type:isIn?'in':'out',amount:Math.abs(diff),
-        description:`تعديل أدمن — ${fLabel} — ${o.clientName||''}`,category:'admin_edit',
-        orderId,clientName:o.clientName||'',date:new Date().toLocaleDateString('ar-EG'),
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        approvalStatus:'pending',confirmedBy:'',confirmedByName:'',confirmedAt:null,
-        approvedBy:'',approvedByName:'',approvedAt:null,
-        rejectedBy:'',rejectedByName:'',rejectedAt:null,rejectReason:'',
-        isLocked:false
-      });
-      const ledgerNotes = editReason
-        ? `[أدمن] تعديل ${fLabel}: ${fn(oldVal)} → ${fn(newVal)} ج · سبب: ${editReason}`
-        : `[أدمن] تعديل ${fLabel}: ${fn(oldVal)} → ${fn(newVal)} ج`;
-      batch.set(db.collection('financial_ledger').doc(),{
-        eventType:isIn?'CUSTOMER_PAYMENT':'CUSTOMER_REFUND',type:isIn?'income':'expense',
-        direction:isIn?'in':'out',icon:isIn?'💰':'↩️',label:isIn?'دفعة (تعديل أدمن)':'استرداد (تعديل أدمن)',
-        amount:Math.abs(diff),orderId,clientId:o.clientId||null,clientName:o.clientName||null,
-        walletId,walletName:w?.name||'',
-        notes:ledgerNotes,
-        adminEditReason:editReason||'',
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
-      });
+    if(!r.ok){
+      console.warn('[orderActions] editOrderPayment failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');
+      return;
     }
-    await batch.commit();
-    window.__editReason = ''; // reset
     toast('✅ تم الحفظ وتحديث الحسابات','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }catch(e){
+    console.warn('[orderActions] editOrderPayment exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 };
 
 window.cgridSaveStatus=async function(orderId,newStatus,oldStatus){
@@ -4507,6 +4482,8 @@ window.cgridCancelEdit=function(orderId){
   renderControlGrid();
 };
 
+// P1.7 — Thin orchestration over window.orderActions.editOrderPayment.
+// Handles multi-field row edit including optional financial side-effect.
 window.cgridSaveRowEdit=async function(orderId){
   const row=document.querySelector(`tr[data-id="${orderId}"]`);if(!row)return;
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
@@ -4524,69 +4501,47 @@ window.cgridSaveRowEdit=async function(orderId){
   const oldEmpUid=o.assignedTo||o.designerId||o.productionAgent||'';
 
   const changes=[];
-  if(newName!==oldName) changes.push(`الاسم: "${oldName}"→"${newName}"`);
-  if(newBiz!==oldBiz) changes.push(`الشركة: "${oldBiz}"→"${newBiz}"`);
-  if(Math.abs(newSale-oldSale)>0.01) changes.push(`السعر: ${fn(oldSale)}→${fn(newSale)} ج`);
-  if(Math.abs(newPaid-oldPaid)>0.01) changes.push(`المدفوع: ${fn(oldPaid)}→${fn(newPaid)} ج`);
-  if(newEmpUid&&newEmpUid!==oldEmpUid) changes.push('تغيير الموظف');
-
-  if(!changes.length){cgridCancelEdit(orderId);return;}
-
-  const tl=[...(o.timeline||[]),{date:nowStr(),action:`✏️ [أدمن] ${changes.join(' | ')}`,by:userName||'admin'}];
-  const paidDiff=newPaid-oldPaid;
-  const newCFee=parseFloat(o.customerShipFee)||0;
-  const newDisc=parseFloat(o.discount)||0;
-  const newRem=Math.max(0,newSale+newCFee-newDisc-newPaid);
-  const newPayStatus=newRem<=0?'paid':newPaid>0?'partial':'pending';
+  const changeFields={};
+  if(newName!==oldName){ changes.push(`الاسم: "${oldName}"→"${newName}"`); changeFields.clientName=newName; }
+  if(newBiz!==oldBiz){   changes.push(`الشركة: "${oldBiz}"→"${newBiz}"`); changeFields.clientBusiness=newBiz; }
+  if(Math.abs(newSale-oldSale)>0.01){ changes.push(`السعر: ${fn(oldSale)}→${fn(newSale)} ج`); changeFields.salePrice=newSale; }
+  if(Math.abs(newPaid-oldPaid)>0.01){ changes.push(`المدفوع: ${fn(oldPaid)}→${fn(newPaid)} ج`); changeFields.totalPaid=newPaid; }
   const emp=designers.find(e=>e._id===newEmpUid||e.uid===newEmpUid);
-  const wId=o.depositWalletId||o.walletId||'';
-  const w=wallets.find(x=>x._id===wId);
-
-  const updates={
-    clientName:newName,clientBusiness:newBiz,
-    salePrice:newSale,totalPaid:newPaid,remaining:newRem,paymentStatus:newPayStatus,
-    timeline:tl,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),...(newPayStatus==='paid'?{paidAt:firebase.firestore.FieldValue.serverTimestamp()}:{})
-  };
   if(newEmpUid&&newEmpUid!==oldEmpUid&&emp){
-    updates.assignedTo=newEmpUid;
-    updates.csName=emp.name||emp.displayName||'';
+    changes.push('تغيير الموظف');
+    changeFields.assignedTo=newEmpUid;
+    changeFields.csName=emp.name||emp.displayName||'';
   }
 
+  if(!changes.length){cgridCancelEdit(orderId);return;}
+  if(!window.orderActions){toast('⚠️ النظام يحمّل','err');return;}
+
+  const paidDiff=newPaid-oldPaid;
+  const wId=o.depositWalletId||o.walletId||'';
+  const w=wId?wallets.find(x=>x._id===wId):null;
+  const tlLabel=`✏️ [أدمن] ${changes.join(' | ')}`;
+
   try{
-    if(Math.abs(paidDiff)>0.01&&wId){
-      const batch=db.batch();
-      batch.update(db.collection('orders').doc(orderId),updates);
-      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(paidDiff)});
-      const isIn=paidDiff>0;
-      batch.set(db.collection('transactions_v2').doc(),{
-        walletId:wId,walletName:w?.name||'',type:isIn?'in':'out',amount:Math.abs(paidDiff),
-        description:`تعديل أدمن — ${isIn?'دفعة':'استرداد'} — ${o.clientName||''}`,
-        category:'admin_edit',orderId,clientName:o.clientName||'',
-        date:new Date().toLocaleDateString('ar-EG'),
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        approvalStatus:'pending',confirmedBy:'',confirmedByName:'',confirmedAt:null,
-        approvedBy:'',approvedByName:'',approvedAt:null,
-        rejectedBy:'',rejectedByName:'',rejectedAt:null,rejectReason:'',
-        isLocked:false
-      });
-      batch.set(db.collection('financial_ledger').doc(),{
-        eventType:isIn?'CUSTOMER_PAYMENT':'CUSTOMER_REFUND',
-        type:isIn?'income':'expense',direction:isIn?'in':'out',
-        icon:isIn?'💰':'↩️',label:isIn?'دفعة (تعديل أدمن)':'استرداد (تعديل أدمن)',
-        amount:Math.abs(paidDiff),orderId,clientId:o.clientId||null,clientName:o.clientName||null,
-        walletId:wId,walletName:w?.name||'',
-        notes:`[أدمن] ${changes.join(' | ')}`,
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
-      });
-      await batch.commit();
-    } else {
-      await db.collection('orders').doc(orderId).update(updates);
+    const r=await window.orderActions.editOrderPayment({
+      orderId,
+      changes: changeFields,
+      walletId: Math.abs(paidDiff)>0.01 ? wId : '',
+      walletName: w?.name||'',
+      changesLabel: tlLabel,
+      userId: currentUser?.uid||'',
+      userName: userName||'admin',
+    });
+    if(!r.ok){
+      console.warn('[orderActions] cgridSaveRowEdit failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');
+      return;
     }
     __cgEditRows.delete(orderId);
     toast('✅ تم الحفظ','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  }catch(e){
+    console.warn('[orderActions] cgridSaveRowEdit exception', e);
+    toast('❌ '+(e?.message||'خطأ'),'err');
+  }
 };
 
 window.cgridDeleteOrder=async function(orderId){
