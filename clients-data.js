@@ -486,12 +486,18 @@ export function cgridFilter({
 }
 
 /**
- * cgridSort({data, sort, calcRem}) → sorted orders[] (non-mutating).
+ * cgridSortRows({data, sort, calcRem}) → sorted orders[] (non-mutating).
  *
  * sort = { field, dir }   dir: 1 asc, -1 desc
  * Supported fields: createdAt, rem, cost, profit, salePrice, paid, *.
+ *
+ * NOTE: renamed from `cgridSort` to avoid a window-namespace clash with
+ * the existing in-page `window.cgridSort=function(field){}` which is
+ * called by column-header onclick handlers (`onclick="cgridSort('paid')"`)
+ * and toggles the active sort field. That column-toggle is UI-state code
+ * and stays in clients.html.
  */
-export function cgridSort({
+export function cgridSortRows({
   data = [],
   sort = { field: 'createdAt', dir: -1 },
   calcRem = () => 0,
@@ -563,7 +569,8 @@ export function cgridExportCSV({
 if (typeof window !== 'undefined') {
   Object.assign(window, {
     computeClientStats, parseBizCardText, filterClientsForGrid,
-    // PR-14:
-    cgridGetDisplayStatus, cgridFilter, cgridSort, cgridExportCSV,
+    // PR-14 (PR-15 rename: cgridSort → cgridSortRows to avoid conflict
+    // with the in-page column-toggle window.cgridSort(field)):
+    cgridGetDisplayStatus, cgridFilter, cgridSortRows, cgridExportCSV,
   });
 }
