@@ -201,7 +201,8 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
 let allOrders=[],todayAtt=null,currentUser=null,userName='',uid='',activeTab='ready',myGoal=null,myLastEvalShip=null,myEmpIdShip='';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const calcRem=o=>{if(o.paymentStatus==='returned'||o.shipStage==='returned')return 0;const f=parseFloat(o.customerShipFee)||0;return Math.max(0,(parseFloat(o.salePrice)||0)+f-(parseFloat(o.discount)||0)-(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0));};
@@ -321,16 +322,17 @@ function renderAttBox(){
 window.doAtt=async function(){
   const today=new Date().toISOString().slice(0,10);
   const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    if(!todayAtt){
-      await addDoc(collection(db,'attendance'),{employeeUid:currentUser.uid,employeeName:userName,date:today,checkIn:serverTimestamp(),checkInStr:timeStr,checkOut:null,hoursWorked:0,createdAt:serverTimestamp()});
-      toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-    } else if(!todayAtt.checkOut){
-      const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
-      await updateDoc(doc(db,'attendance',todayAtt._id),{checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hours)});
-      toast('✅ تم الانصراف — '+hours+' ساعة','ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
+  const uid=currentUser.uid;
+  if(!todayAtt){
+    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,recordedBy:uid,recordedByName:userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
+  } else if(!todayAtt.checkOut){
+    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
+    toast('✅ تم الانصراف — '+hours+' ساعة','ok');
+  }
 };
 window.switchTab=function(tab){
   activeTab=tab;
