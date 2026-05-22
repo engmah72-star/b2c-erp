@@ -3110,3 +3110,263 @@ exports.cleanupDesignItemsOnOrderDelete = onDocumentDeleted(
   }
 );
 
+// ═══════════════════════════════════════════════════════════════════
+// PR-7-A.1 — Data Migration: Legacy shipStage values → new canonical
+// ═══════════════════════════════════════════════════════════════════
+// Callable Cloud Function. الـ shipStage الجديد (post-PR #632) يستخدم:
+//   ready / shipped / delivered / under_collection / collected /
+//   returned_full / returned_partial / closed
+// القيم القديمة المتبقية على الأوردرات الموجودة:
+//   wait_delivery, wait_collection, completed, returned
+// الـ normalizeShipStage(...) يحلّ المشكلة on-read، لكن البيانات نفسها قديمة.
+//
+// Usage:
+//   callable(migrateLegacyShipStages, { dryRun: true })   ← أول مرة
+//   callable(migrateLegacyShipStages, { dryRun: false })  ← بعد مراجعة الـ report
+//
+// Returns: { ok, processed, would_update, updated, byMap }
+// ═══════════════════════════════════════════════════════════════════
+const SHIP_STAGE_MIGRATIONS = {
+  wait_delivery:   'shipped',
+  wait_collection: 'delivered',
+  returned:        'returned_full',
+  completed:       'closed',
+};
+
+exports.migrateLegacyShipStages = onCall(
+  { ...CALL_OPTS, timeoutSeconds: 540 },
+  async (req) => {
+    // Admin only
+    if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
+    const userDoc = await db.collection('users').doc(req.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+      throw new HttpsError('permission-denied', 'admin only');
+    }
+
+    const dryRun = req.data?.dryRun !== false; // default true (safe)
+    const batchSize = Math.min(500, req.data?.batchSize || 100);
+
+    const result = {
+      dryRun,
+      processed: 0,
+      would_update: 0,
+      updated: 0,
+      byMap: { wait_delivery: 0, wait_collection: 0, returned: 0, completed: 0 },
+      sampleIds: [],
+      startedAt: new Date().toISOString(),
+    };
+
+    // نمسح الأوردرات بـ pagination
+    let lastDoc = null;
+    let totalIterations = 0;
+    const maxIterations = 50; // safety: max 50 * 500 = 25,000 orders
+
+    while (totalIterations++ < maxIterations) {
+      let q = db.collection('orders').orderBy('__name__').limit(batchSize);
+      if (lastDoc) q = q.startAfter(lastDoc);
+      const snap = await q.get();
+      if (snap.empty) break;
+
+      const writeBatch = db.batch();
+      let pendingWrites = 0;
+
+      for (const doc of snap.docs) {
+        result.processed++;
+        const data = doc.data();
+        const cur = data.shipStage;
+        const next = SHIP_STAGE_MIGRATIONS[cur];
+        if (!next) continue; // مش legacy value
+        result.byMap[cur] = (result.byMap[cur] || 0) + 1;
+        result.would_update++;
+        if (result.sampleIds.length < 10) {
+          result.sampleIds.push({ id: doc.id, from: cur, to: next });
+        }
+        if (!dryRun) {
+          writeBatch.update(doc.ref, {
+            shipStage: next,
+            timeline: FieldValue.arrayUnion({
+              date: new Date().toISOString(),
+              action: `🔧 migration: shipStage '${cur}' → '${next}' (post-PR #632)`,
+              by: 'system',
+              byId: 'cloud-function',
+            }),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          pendingWrites++;
+          result.updated++;
+        }
+      }
+
+      if (!dryRun && pendingWrites > 0) {
+        await writeBatch.commit();
+      }
+
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < batchSize) break;
+    }
+
+    result.completedAt = new Date().toISOString();
+    console.log('[migrateLegacyShipStages]', result);
+    // log to a dedicated collection للتدقيق
+    try {
+      await db.collection('migration_logs').add({
+        type: 'shipStage_legacy_normalize',
+        ...result,
+        executedBy: req.auth.uid,
+        executedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (e) { console.warn('failed to log migration', e.message); }
+    return result;
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// PR-7-A.2 — Periodic Projection-vs-Ledger Drift Detection
+// ═══════════════════════════════════════════════════════════════════
+// Scheduled function: يعيد بناء projection من ledger لكل order نشط
+// ويقارن بالـ projection المخزَّن. لو في drift، يكتب التقرير في
+// `drift_reports` collection للمراجعة.
+//
+// لا يعمل auto-repair — يكتب تنبيه فقط (per RULE H2.2).
+//
+// Schedule: daily 03:00 Africa/Cairo (وقت قليل النشاط)
+// ═══════════════════════════════════════════════════════════════════
+exports.dailyProjectionDriftScan = onSchedule(
+  { schedule: '0 3 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540 },
+  async () => {
+    const startedAt = Date.now();
+    const report = {
+      scannedAt: new Date().toISOString(),
+      ordersScanned: 0,
+      ordersWithDrift: 0,
+      criticalDrift: 0,
+      driftByCode: {},
+      samples: [],
+    };
+
+    // نمسح الـ active orders فقط (stage != archived, != cancelled)
+    // لتقليل تكلفة الـ Firestore reads
+    const ordersSnap = await db.collection('orders')
+      .where('stage', 'in', ['design', 'printing', 'production', 'shipping'])
+      .limit(2000) // max budget لكل run
+      .get();
+
+    for (const doc of ordersSnap.docs) {
+      report.ordersScanned++;
+      const order = { _id: doc.id, ...doc.data() };
+
+      // نقرأ الـ ledger entries لهذا الأوردر
+      let ledgerSnap;
+      try {
+        ledgerSnap = await db.collection('financial_ledger')
+          .where('orderId', '==', doc.id)
+          .get();
+      } catch (e) {
+        console.warn(`[driftScan] failed to read ledger for ${doc.id}:`, e.message);
+        continue;
+      }
+
+      // نحسب الـ derived projection (نفس منطق core/projection.js)
+      let derivedPaid = 0;
+      let totalSettled = 0;
+      let totalSettlementReversed = 0;
+      for (const ld of ledgerSnap.docs) {
+        const e = ld.data();
+        if (e.isDeleted === true) continue;
+        const amt = parseFloat(e.amount) || 0;
+        const evt = e.eventType || '';
+        switch (evt) {
+          case 'CUSTOMER_PAYMENT':              derivedPaid += amt; break;
+          case 'CUSTOMER_REFUND':               derivedPaid -= amt; break;
+          case 'SHIPPING_SETTLEMENT':           derivedPaid += amt; totalSettled += amt; break;
+          case 'SHIPPING_SETTLEMENT_REVERSAL':  derivedPaid -= amt; totalSettlementReversed += amt; break;
+        }
+      }
+      const round2 = n => Math.round((n || 0) * 100) / 100;
+      derivedPaid = round2(derivedPaid);
+      const storedPaid = round2(parseFloat(order.totalPaid) || 0);
+      const EPS = 0.02;
+
+      if (Math.abs(storedPaid - derivedPaid) > EPS) {
+        report.ordersWithDrift++;
+        const severity = Math.abs(storedPaid - derivedPaid) > 10 ? 'crit' : 'warn';
+        if (severity === 'crit') report.criticalDrift++;
+        const code = 'PROJECTION_DRIFT_TOTALPAID';
+        report.driftByCode[code] = (report.driftByCode[code] || 0) + 1;
+        if (report.samples.length < 50) {
+          report.samples.push({
+            orderId: doc.id,
+            orderNumber: order.orderNumber || '',
+            storedPaid,
+            derivedPaid,
+            delta: round2(storedPaid - derivedPaid),
+            severity,
+            ledgerEntries: ledgerSnap.size,
+          });
+        }
+      }
+    }
+
+    report.durationMs = Date.now() - startedAt;
+    console.log('[dailyProjectionDriftScan]', {
+      scanned: report.ordersScanned,
+      drift: report.ordersWithDrift,
+      crit: report.criticalDrift,
+      ms: report.durationMs,
+    });
+
+    try {
+      await db.collection('drift_reports').add({
+        type: 'projection_vs_ledger',
+        ...report,
+        scannedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('[driftScan] failed to write report:', e.message);
+    }
+  }
+);
+
+// On-demand version للـ admin manual triggers
+exports.runProjectionDriftScan = onCall(
+  { ...CALL_OPTS, timeoutSeconds: 540 },
+  async (req) => {
+    if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
+    const userDoc = await db.collection('users').doc(req.auth.uid).get();
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+      throw new HttpsError('permission-denied', 'admin only');
+    }
+    // إعادة استخدام نفس logic (نقل لـ helper لاحقاً)
+    // هنا scope محدود — orderId واحد أو limit صغير من admin panel
+    const orderId = req.data?.orderId;
+    if (!orderId) throw new HttpsError('invalid-argument', 'orderId required');
+    const orderDoc = await db.collection('orders').doc(orderId).get();
+    if (!orderDoc.exists) throw new HttpsError('not-found', 'order not found');
+    const order = { _id: orderDoc.id, ...orderDoc.data() };
+    const ledgerSnap = await db.collection('financial_ledger')
+      .where('orderId', '==', orderId).get();
+    let derivedPaid = 0;
+    for (const ld of ledgerSnap.docs) {
+      const e = ld.data();
+      if (e.isDeleted === true) continue;
+      const amt = parseFloat(e.amount) || 0;
+      switch (e.eventType) {
+        case 'CUSTOMER_PAYMENT':              derivedPaid += amt; break;
+        case 'CUSTOMER_REFUND':               derivedPaid -= amt; break;
+        case 'SHIPPING_SETTLEMENT':           derivedPaid += amt; break;
+        case 'SHIPPING_SETTLEMENT_REVERSAL':  derivedPaid -= amt; break;
+      }
+    }
+    derivedPaid = Math.round(derivedPaid * 100) / 100;
+    const storedPaid = Math.round((parseFloat(order.totalPaid) || 0) * 100) / 100;
+    const delta = Math.round((storedPaid - derivedPaid) * 100) / 100;
+    return {
+      orderId, orderNumber: order.orderNumber || '',
+      storedPaid, derivedPaid, delta,
+      drift: Math.abs(delta) > 0.02,
+      ledgerEntries: ledgerSnap.size,
+    };
+  }
+);
+
+
