@@ -188,6 +188,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      <div class="main"> on DOMContentLoaded. -->
 <script type="module" src="./clients-shell.js"></script>
 
+<!-- God-page decomp PR-19: design-file upload helpers (compressImage +
+     uploadDesignFiles). Side-effect import: clients-upload.js attaches
+     them to window. -->
+<script type="module" src="./clients-upload.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -1500,7 +1505,9 @@ function saveNewOrder(){
   const btn=document.getElementById('no-save-btn');btn.disabled=true;btn.textContent='جاري...';
   const designNote=gv('no-design-note');
 
-  // ─ File upload helper (compat Storage — stays in page, NOT in action) ─
+  // ─ File upload helper (compat Storage) — God-page decomp PR-19:
+  //   compressImage + uploadDesignFiles extracted to clients-upload.js.
+  //   This wrapper handles only the DOM progress UI + URL fallback.
   const uploadDesignFile=async()=>{
     const files=window.__noDesignFiles||[];
     const urlField=gv('no-design-url');
@@ -1512,41 +1519,12 @@ function saveNewOrder(){
     progWrap.style.display='block';
     progLbl.textContent=`رفع ${files.length} ملف...`;
     btn.textContent='جاري الرفع...';
-    const compressImg=f=>new Promise(res=>{
-      if(!f.type.startsWith('image/')){res(f);return;}
-      const img=new Image(),url=URL.createObjectURL(f);
-      img.onload=()=>{
-        URL.revokeObjectURL(url);
-        const canvas=document.createElement('canvas');
-        let {width:w,height:h}=img;
-        const MAX=800;
-        if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}
-        else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}
-        canvas.width=w;canvas.height=h;
-        canvas.getContext('2d').drawImage(img,0,0,w,h);
-        const fmt=canvas.toDataURL('image/webp',0.1).startsWith('data:image/webp')?'image/webp':'image/jpeg';
-        canvas.toBlob(blob=>res(new File([blob],f.name,{type:fmt})),fmt,0.65);
-      };
-      img.onerror=()=>res(f);
-      img.src=url;
+    const result=await uploadDesignFiles({
+      files, orderId,
+      onProgress:(pct)=>{progBar.style.width=pct+'%';progPct.textContent=pct+'%';},
     });
-    const progress=new Array(files.length).fill(0);
-    const updateProgress=()=>{
-      const avg=Math.round(progress.reduce((s,p)=>s+p,0)/files.length);
-      progBar.style.width=avg+'%';progPct.textContent=avg+'%';
-    };
-    const uploadOne=(f,i)=>compressImg(f).then(cf=>new Promise((res,rej)=>{
-      const sRef=firebase.storage().ref(`designs/order_${orderId}_${Date.now()}_${i}`);
-      const task=sRef.put(cf);
-      task.on('state_changed',
-        s=>{progress[i]=Math.round(s.bytesTransferred/s.totalBytes*100);updateProgress();},
-        rej,
-        ()=>sRef.getDownloadURL().then(url=>res({url,name:f.name,type:f.type})).catch(rej)
-      );
-    }));
-    const results=await Promise.all(files.map((f,i)=>uploadOne(f,i)));
     progWrap.style.display='none';
-    return{firstUrl:results[0]?.url||'',allFiles:results};
+    return result;
   };
 
   // ─ Upload first → call action with URLs ─
