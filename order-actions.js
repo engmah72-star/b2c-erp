@@ -359,6 +359,45 @@ export const orderActions = {
    * @param {string} args.changesLabel  — human-readable text للـ timeline
    *                                       (caller يبني الـ format)
    */
+
+  /**
+   * Generic single-field/multi-field order update with timeline entry.
+   * No financial semantics — for admin field edits, status flags, etc.
+   * For financial fields use editOrderPayment. For stage changes use moveStage.
+   *
+   * @param {Object} changes — fields to update (excluding timeline)
+   * @param {string} timelineAction — line to append to timeline
+   */
+  async updateOrderField({
+    db = defaultDb, orderId,
+    changes = {},
+    timelineAction = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!changes || typeof changes !== 'object' || !Object.keys(changes).length) {
+      return { ok: false, errors: ['⚠️ لا توجد تغييرات'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    try {
+      const upd = { ...changes, updatedAt: serverTimestamp() };
+      if (timelineAction) {
+        const entry = auditEntry({
+          action: timelineAction,
+          userId, userName, kind: 'edit',
+          meta: { fields: Object.keys(changes) },
+        });
+        upd.timeline = [...(order.timeline || []), entry];
+      }
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'update_order_field' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
   async editOrderPayment({
     db = defaultDb,
     orderId,
