@@ -39,6 +39,8 @@ import {
   validatePartialReturn, validateReverseSettle,
   // PR-1 helper:
   normalizeShipStage,
+  // Phase 2 / B6 — block reversal on archived orders:
+  ORDER_STAGES,
 } from './orders.js';
 import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
@@ -453,6 +455,27 @@ export const shippingActions = {
 
     // Load orders to compute reversal updates
     const orders = await Promise.all((orderIds || []).map(id => _loadOrder(db, id)));
+
+    // B6 (Phase 2): block reversal on archived orders.
+    // Per PHASE_2_DIAGNOSIS issue #6: reversing settlement on an archived
+    // order allows backward state-machine transitions (un-archives implicitly)
+    // and corrupts financial integrity. Hard block here — re-open the order
+    // first via a separate action if reversal is truly needed.
+    const archivedIds = orders
+      .filter(Boolean)
+      .filter(o => o.stage === ORDER_STAGES.ARCHIVED)
+      .map(o => o._id);
+    if (archivedIds.length > 0) {
+      return {
+        ok: false,
+        errors: [
+          `⛔ لا يمكن إلغاء التسوية — ${archivedIds.length} أوردر مؤرشف. ` +
+          `أعد فتحه أولاً قبل إلغاء التسوية. (${archivedIds.join(', ')})`,
+        ],
+        warnings: [],
+      };
+    }
+
     const orderUpdates = orders.filter(Boolean).map(o => {
       const settledAmt = parseFloat(o.shipSettledAmount) || 0;
       const paid = parseFloat(o.totalPaid) || 0;
