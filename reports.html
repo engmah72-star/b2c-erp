@@ -545,6 +545,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, addDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
+import { orderActions } from "./order-actions.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -2708,62 +2709,21 @@ window.confirmDeleteOrder=async function(){
   const note=document.getElementById('del-ord-note').value.trim();
   const btn=document.getElementById('del-ord-confirm-btn');
   btn.disabled=true;btn.textContent='جاري...';
-  try{
-    // 1) لو الأوردر مرتبط بتسويات شحن، نوقف ونوجّه المستخدم لإلغائها أولاً.
-    //    تسويات الشحن ليها flow عكسي خاص في صفحة حسابات الشحن، ومش من حق
-    //    صفحة التقارير تتجاوزه (RULE 4 — No module owns money).
-    const stSnap=await getDocs(query(collection(db,'shipping_settlements'),where('orderId','==',__delOrdId)));
-    if(!stSnap.empty){
-      throw new Error('الأوردر مرتبط بتسوية شحن — أَلغِ التسوية أولاً من صفحة حسابات الشحن');
-    }
-    // 2) اجمع كل المعاملات المرتبطة بالأوردر (دفعات عملاء + مصروفات + دفعات موردين)
-    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',__delOrdId)));
-    const batch=writeBatch(db);
-    const ledgerBase={
-      orderId:__delOrdId,clientName:__delOrdClient,
-      notes:`حذف أوردر [${reason}]${note?' — '+note:''}`,
-      userId:auth.currentUser?.uid||'',userName:userName||'',
-    };
-    let refunded=0,vendorReversed=0,generalReversed=0;
-    const walletNameOf=wid=>wallets.find(w=>w._id===wid)?.name||'';
-    for(const txDoc of txSnap.docs){
-      const tx=txDoc.data();
-      const amt=parseFloat(tx.amount)||0;
-      const wid=tx.walletId||'';
-      if(amt>0&&wid){
-        if(tx.type==='in'){
-          // دفعة عميل → ارجعها للمحفظة الأصلية مهما كانت
-          batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
-          addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||''});
-          refunded++;
-        } else if(tx.type==='out'){
-          // مصروف/دفعة مورد → ارجع المبلغ للمحفظة
-          batch.update(doc(db,'wallets',wid),{balance:increment(amt)});
-          if(tx.spId){
-            // مرتبط بـ supplier_payment → احذف الـ payment record + ledger reversal
-            batch.delete(doc(db,'supplier_payments',tx.spId));
-            addLedgerToBatch(batch,db,FE.VENDOR_PAYMENT_REVERSAL,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||'',vendorId:tx.supplierId||'',vendorName:tx.supplierName||''});
-            vendorReversed++;
-          } else {
-            // مصروف عام بدون مورد
-            addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE_REVERSAL,{...ledgerBase,amount:amt,walletId:wid,walletName:walletNameOf(wid)||tx.walletName||''});
-            generalReversed++;
-          }
-        }
-      }
-      batch.delete(txDoc.ref);
-    }
-    // 3) احذف الأوردر نفسه
-    batch.delete(doc(db,'orders',__delOrdId));
-    await batch.commit();
-    document.getElementById('ov-del-order').style.display='none';
-    let msg='✅ تم الحذف';
-    if(refunded)msg+=` · ${refunded} دفعة عميل مستردة`;
-    if(vendorReversed)msg+=` · ${vendorReversed} دفعة مورد ملغاة`;
-    if(generalReversed)msg+=` · ${generalReversed} مصروف ملغى`;
-    toast(msg,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // H1.1 fix: المرّر عبر orderActions.adminDeleteOrder (atomic + idempotent + central reversals)
+  const r=await orderActions.adminDeleteOrder({
+    orderId:__delOrdId, reason, note,
+    userId:auth.currentUser?.uid||'', userName:userName||'',
+    wallets,
+  });
   btn.disabled=false;btn.textContent='🗑 حذف نهائي';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-del-order').style.display='none';
+  let msg='✅ تم الحذف';
+  if(r.refunded)msg+=` · ${r.refunded} دفعة عميل مستردة`;
+  if(r.vendorReversed)msg+=` · ${r.vendorReversed} دفعة مورد ملغاة`;
+  if(r.generalReversed)msg+=` · ${r.generalReversed} مصروف ملغى`;
+  if(r.idempotent&&!r.pending)msg='ℹ️ الأوردر محذوف مسبقاً';
+  toast(msg,'ok');
 };
 
 // ══ تعديل الأوردر الكامل ══
@@ -2817,73 +2777,37 @@ window.calcEoRemaining=function(){
 window.saveEditOrder=async function(){
   const orderId=document.getElementById('edit-order-id').value;
   if(!orderId||!__editOrderData)return;
-  
+
   const newSale=parseFloat(document.getElementById('eo-sale').value)||0;
   const newDisc=parseFloat(document.getElementById('eo-discount').value)||0;
   const newPaid=parseFloat(document.getElementById('eo-paid').value)||0;
-  const newRem=Math.max(0,newSale-newDisc-newPaid);
   const newWalletId=document.getElementById('eo-wallet').value;
-  const o=__editOrderData;
 
-  // فرق المدفوع
-  const oldPaid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-  const paidDiff=newPaid-oldPaid;
-
-  try{
-    const batch=writeBatch(db);
-
-    // 1. تحديث المحفظة + ledger لو في فرق في المدفوع
-    if(Math.abs(paidDiff)>0.01&&newWalletId){
-      batch.update(doc(db,'wallets',newWalletId),{balance:increment(paidDiff)});
-      addLedgerToBatch(batch,db,paidDiff>0?FE.CUSTOMER_PAYMENT:FE.CUSTOMER_REFUND,{
-        orderId,clientName:document.getElementById('eo-client-name').value,
-        amount:Math.abs(paidDiff),walletId:newWalletId,
-        walletName:__wallets.find(w=>w._id===newWalletId)?.name||'',
-        notes:'تعديل دفعة من التقارير',
-        createdBy:auth.currentUser?.uid||'',createdByName:userName||'admin'
-      });
-    }
-
-    // 2. تحديث transactions لو في فرق
-    if(Math.abs(paidDiff)>0.01){
-      const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',orderId)));
-      if(!txSnap.empty){
-        const lastTx=txSnap.docs[txSnap.docs.length-1];
-        const oldAmount=parseFloat(lastTx.data().amount)||0;
-        batch.update(lastTx.ref,{amount:Math.max(0,oldAmount+paidDiff)});
-      } else if(paidDiff>0&&newWalletId){
-        const txRef=doc(collection(db,'transactions_v2'));
-        batch.set(txRef,{
-          walletId:newWalletId,type:'in',amount:paidDiff,
-          description:'تعديل دفعة — '+document.getElementById('eo-client-name').value,
-          category:'collection',orderId,
-          clientName:document.getElementById('eo-client-name').value,
-          date:new Date().toLocaleDateString('ar-EG'),
-          createdAt:serverTimestamp(), ...approvalFields()});
-      }
-    }
-
-    // 3. تحديث الأوردر
-    const prodText=document.getElementById('eo-product').value;
-    batch.update(doc(db,'orders',orderId),{
+  // H1.1 fix: المرّر عبر orderActions.editOrderPayment (atomic batch + idempotent + audit)
+  const r=await orderActions.editOrderPayment({
+    orderId,
+    changes:{
+      salePrice:newSale, discount:newDisc, totalPaid:newPaid,
       clientName:document.getElementById('eo-client-name').value,
       clientPhone:document.getElementById('eo-client-phone').value,
-      product:prodText,
+      product:document.getElementById('eo-product').value,
       deadline:document.getElementById('eo-deadline').value,
       stage:document.getElementById('eo-stage').value,
-      salePrice:newSale,discount:newDisc,
-      totalPaid:newPaid,
-      remaining:newRem,
-      depositWalletId:newWalletId,walletId:newWalletId,
-      paymentStatus:newRem<=0?'paid':newPaid>0?'partial':'pending',
       notes:document.getElementById('eo-notes').value,
-      updatedAt:serverTimestamp()
-    });
-
-    await batch.commit();
+      depositWalletId:newWalletId, walletId:newWalletId,
+    },
+    walletId:newWalletId,
+    walletName:__wallets.find(w=>w._id===newWalletId)?.name||'',
+    changesLabel:'تعديل أوردر من التقارير',
+    userId:auth.currentUser?.uid||'', userName:userName||'admin',
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  if(r.idempotent&&!r.pending){
     document.getElementById('ov-edit-order').classList.remove('open');
-    toast('✅ تم حفظ التعديلات في كل السيستم','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+    return toast('ℹ️ التعديل تم مسبقاً','ok');
+  }
+  document.getElementById('ov-edit-order').classList.remove('open');
+  toast('✅ تم حفظ التعديلات في كل السيستم','ok');
 };
 
 // ══ Drawer Cost Editing ══
@@ -2957,14 +2881,16 @@ window.rmDrawerCost=async function(idx){
   if(!confirm('حذف هذا البند؟'))return;
   const items=[...(o.costItems||[])];
   items.splice(idx,1);
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
-    await batch.commit();
-    o.costItems=items;
-    __renderDrawerCostList(o);
-    toast('✅ تم الحذف','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  // H1.1 fix: المرّر عبر orderActions.updateOrderField (modular SDK + audit trail)
+  const r=await orderActions.updateOrderField({
+    orderId:__dOrderId, changes:{costItems:items},
+    timelineAction:'🗑️ [تقارير] حذف بند تكلفة',
+    userId:auth.currentUser?.uid||'', userName:userName||'admin',
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  o.costItems=items;
+  __renderDrawerCostList(o);
+  toast('✅ تم الحذف','ok');
 };
 
 window.saveDrawerCost=async function(){
@@ -2987,16 +2913,18 @@ window.saveDrawerCost=async function(){
   }else{
     items.push({type,total,note,addedBy:who,addedAt:now});
   }
-  try{
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',__dOrderId),{costItems:items,updatedAt:serverTimestamp()});
-    await batch.commit();
-    o.costItems=items;
-    __renderDrawerCostList(o);
-    __drawerHideCostForm();
-    toast('✅ تم الحفظ','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-  finally{btn.disabled=false;btn.textContent=__dCostEditIdx>=0?'💾 حفظ التعديل':'＋ إضافة';}
+  // H1.1 fix: المرّر عبر orderActions.updateOrderField
+  const r=await orderActions.updateOrderField({
+    orderId:__dOrderId, changes:{costItems:items},
+    timelineAction:__dCostEditIdx>=0?'✏️ [تقارير] تعديل بند تكلفة':'＋ [تقارير] إضافة بند تكلفة',
+    userId:auth.currentUser?.uid||'', userName:userName||'admin',
+  });
+  btn.disabled=false;btn.textContent=__dCostEditIdx>=0?'💾 حفظ التعديل':'＋ إضافة';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  o.costItems=items;
+  __renderDrawerCostList(o);
+  __drawerHideCostForm();
+  toast('✅ تم الحفظ','ok');
 };
 
 window.exportExcel=function(){
