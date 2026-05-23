@@ -138,6 +138,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
   import { readBizCardFromForm, formatBizCardText } from './features/clients/bizcard-form.js';
   import { buildFollowupOrderOptions, buildFollowupPayload, getFollowupRatingLabel } from './features/clients/followup-form.js';
   import * as NewOrder from './features/clients/new-order-form.js';
+  import { validateIntlPhone, buildClientPayload } from './features/clients/client-form.js';
   window.buildArchiveSpec = buildArchiveSpec;
   window.__clientOrdersIndex = createClientOrdersIndexCache();
   Object.assign(window, {
@@ -153,6 +154,8 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
     __getOrderTypeCardClasses: NewOrder.getOrderTypeCardClasses,
     __validateNewOrderForm: NewOrder.validateNewOrderForm,
     __generateOrderId: NewOrder.generateOrderId,
+    __validateIntlPhone: validateIntlPhone,
+    __buildClientPayload: buildClientPayload,
   });
 </script>
 
@@ -1603,55 +1606,38 @@ function fillFilters(){
 // P1.2 — Thin orchestration. كل validation + dedup + writes + audit عبر
 // window.clientActions.addClient / editClient. الصفحة تجمع inputs فقط.
 async function saveClient(){
-  const name=gv('c-name').trim();
-  const phone1=gv('c-phone1').trim();
   const btn=document.getElementById('save-client-btn');
+  // Intl phone — pure validator في features/clients/client-form.js
+  const intlV=window.__validateIntlPhone?.(gv('c-intl-cc'), gv('c-intl-phone')||'')||{ok:true,intlPhone:''};
+  if(!intlV.ok){toast(intlV.errors[0],'err');return;}
 
-  // UI-only validations that affect form behavior (not duplicated by action)
-  // Intl phone validation produces composite intlPhone string from 2 fields.
-  const intlCC=gv('c-intl-cc').trim();
-  const intlPhoneRaw=(gv('c-intl-phone')||'').replace(/[^\d]/g,'');
-  let intlPhone='';
-  if(intlPhoneRaw||intlCC){
-    if(!intlCC){toast('⚠️ اختر دولة الرقم الدولي','err');return;}
-    if(!intlPhoneRaw){toast('⚠️ أدخل الرقم الدولي','err');return;}
-    if(intlCC==='+20'){toast('⚠️ +20 لمصر — استخدم خانة "هاتف 1"','err');return;}
-    if(intlPhoneRaw.length<6||intlPhoneRaw.length>15){toast('⚠️ الرقم الدولي غير صحيح','err');return;}
-    intlPhone=intlCC+intlPhoneRaw;
-  }
-
-  const tags=[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag);
   const isLegacy=window.__isLegacyMode||false;
-  const internalNotes=(gv('c-internal-notes')||'').trim();
   const prevClient=editId?clients.find(c=>c._id===editId):null;
+  const internalNotes=(gv('c-internal-notes')||'').trim();
   const internalChanged=(prevClient?.internalNotes||'')!==internalNotes;
+  const internalNotesLastEdit=internalChanged?{
+    by:currentUser?.uid||'',byName:userName||'',
+    at:firebase.firestore.FieldValue.serverTimestamp(),
+  }:null;
 
-  // Build payload — schema-faithful to action's expectations
-  const data={
-    name, phone1, phone2:gv('c-phone2')||'',
-    intlCountryCode:intlCC, intlPhone,
-    email:gv('c-email')||'',
-    job:gv('c-job')||'', notes:gv('c-notes')||'',
-    birthday:gv('c-birthday')||'',
-    anniversary:gv('c-anniversary')||'',
-    internalNotes,
-    ...(internalChanged?{
-      internalNotesLastEdit:{
-        by:currentUser?.uid||'',
-        byName:userName||'',
-        at:firebase.firestore.FieldValue.serverTimestamp(),
-      }
-    }:{}),
-    source:gv('c-source')||'', sector:gv('c-sector')||'',
-    governorate:gv('c-gov')||'', city:gv('c-city')||'', tags,
-    status: isLegacy ? 'legacy' : 'active',
-    ...(isLegacy ? {
-      legacyNotes: gv('c-legacy-notes')||'',
-      totalSpentLegacy: parseFloat(gv('c-legacy-spent'))||0,
-      lastOrderDateLegacy: gv('c-legacy-last-order')||'',
-      legacyProjects: gv('c-legacy-projects')||''
-    } : {}),
-  };
+  // Schema-faithful payload — pure builder
+  const data=window.__buildClientPayload({
+    form:{
+      name:gv('c-name'),phone1:gv('c-phone1'),phone2:gv('c-phone2'),
+      intlCountryCode:gv('c-intl-cc').trim(), intlPhone:intlV.intlPhone,
+      email:gv('c-email'),job:gv('c-job'),notes:gv('c-notes'),
+      birthday:gv('c-birthday'),anniversary:gv('c-anniversary'),
+      internalNotes,
+      source:gv('c-source'),sector:gv('c-sector'),
+      governorate:gv('c-gov'),city:gv('c-city'),
+      tags:[...document.querySelectorAll('.tag-btn.on')].map(b=>b.dataset.tag),
+      legacyNotes:gv('c-legacy-notes'),
+      legacySpent:gv('c-legacy-spent'),
+      legacyLastOrder:gv('c-legacy-last-order'),
+      legacyProjects:gv('c-legacy-projects'),
+    },
+    isLegacy,prevClient,internalNotesLastEdit,
+  });
 
   if(!window.clientActions){
     toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
