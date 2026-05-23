@@ -135,8 +135,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 <script type="module">
   import { buildArchiveSpec } from './orders.js';
   import { createClientOrdersIndexCache } from './core/client-orders-index.js';
+  import { readBizCardFromForm, formatBizCardText } from './features/clients/bizcard-form.js';
   window.buildArchiveSpec = buildArchiveSpec;
   window.__clientOrdersIndex = createClientOrdersIndexCache();
+  window.__readBizCardFromForm = readBizCardFromForm;
+  window.__formatBizCardText = formatBizCardText;
 </script>
 
 <!-- P1.2: clientActions module — exposes window.clientActions for compat consumers below.
@@ -881,96 +884,40 @@ window.bizCardSmartPaste = function(){
 // God-page decomp PR-9: parser extracted to clients-data.js
 // (window.parseBizCardText).
 
-// Save to Firestore
-// P1.3 — Thin orchestration over window.clientActions.saveBizCard.
+// Save bizcard — pure form-read + formatter في features/clients/bizcard-form.js
 window.saveBizCard = async function(){
   const cid = window._bizCardClientId;
   if(!cid){ alert('لم يُحدَّد عميل'); return; }
-  const fields = ['name-ar','name-en','prefix','nickname','job-ar','job-en','company-ar','company-en','biz-type','office-phone','mobile-phone','whatsapp','fax','email','email-2','website','address-ar','address-en','city','gov','country','maps-link','fb','ig','tw','linkedin','tiktok','yt','snap','telegram','hours-week','hours-weekend','closed-days','logo-url','color-1','color-2','color-3','fonts','founded','birthday','anniversary','style','avoid-colors','design-notes'];
-  const bc = {};
-  const camel = s => s.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
-  fields.forEach(f => {
-    const el = document.getElementById('bc-'+f);
-    if(el){
-      const v = el.value.trim();
-      const key = ({'name-ar':'nameAr','name-en':'nameEn','job-ar':'jobTitleAr','job-en':'jobTitleEn','company-ar':'companyAr','company-en':'companyEn','biz-type':'businessType','office-phone':'officePhone','mobile-phone':'mobilePhone','email-2':'email2','address-ar':'addressAr','address-en':'addressEn','maps-link':'mapsLink','fb':'facebook','ig':'instagram','tw':'twitter','yt':'youtube','snap':'snapchat','hours-week':'hoursWeek','hours-weekend':'hoursWeekend','closed-days':'closedDays','logo-url':'logoUrl','color-1':'color1','color-2':'color2','color-3':'color3','avoid-colors':'avoidColors','design-notes':'designNotes'})[f] || camel(f);
-      if(v) bc[key] = v;
-    }
-  });
-  if(!window.clientActions){
-    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');
-    return;
+  if(!window.clientActions || !window.__readBizCardFromForm){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;
   }
+  const bc = window.__readBizCardFromForm(f => document.getElementById('bc-' + f));
   try{
     const r = await window.clientActions.saveBizCard({
-      clientId: cid,
-      bizCard: bc,
-      userId: currentUser?.uid || '',
-      userName: userName || '',
+      clientId: cid, bizCard: bc,
+      userId: currentUser?.uid || '', userName: userName || '',
     });
-    if(!r.ok){
-      console.warn('[clientActions] saveBizCard failed', r);
-      toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');
-      return;
-    }
+    if(!r.ok){console.warn('[clientActions] saveBizCard failed', r);return toast('❌ '+(r.errors?.[0]||'فشل الحفظ'),'err');}
     toast('✓ تم حفظ بطاقة الأعمال','ok');
-  }catch(e){
-    console.warn('[clientActions] saveBizCard exception', e);
-    toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');
-  }
+  }catch(e){console.warn('[clientActions] saveBizCard exception', e);toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');}
 };
 
-// Export as text (for manual copy)
+// Export as text (clipboard copy)
 window.exportBizCardText = function(){
-  const cid = window._bizCardClientId;
-  if(!cid) return;
+  const cid = window._bizCardClientId;if(!cid) return;
   const c = clients.find(x=>x._id===cid);
-  const bc = c?.businessCard || {};
-  const lines = [];
-  if(bc.prefix||bc.nameAr) lines.push((bc.prefix||'')+' '+(bc.nameAr||''));
-  if(bc.nameEn) lines.push(bc.nameEn);
-  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
-  if(bc.jobTitleEn) lines.push(bc.jobTitleEn);
-  if(bc.companyAr) lines.push(bc.companyAr);
-  if(bc.companyEn) lines.push(bc.companyEn);
-  lines.push('');
-  if(bc.officePhone) lines.push('تليفون مكتب: '+bc.officePhone);
-  if(bc.mobilePhone) lines.push('موبايل/واتساب: '+bc.mobilePhone);
-  if(bc.email) lines.push('Email: '+bc.email);
-  if(bc.website) lines.push('Website: '+bc.website);
-  if(bc.addressAr) lines.push('العنوان: '+bc.addressAr);
-  if(bc.addressEn) lines.push('Address: '+bc.addressEn);
-  const social = [];
-  if(bc.facebook) social.push('FB: '+bc.facebook);
-  if(bc.instagram) social.push('IG: '+bc.instagram);
-  if(bc.linkedin) social.push('LinkedIn: '+bc.linkedin);
-  if(social.length) lines.push(social.join(' · '));
-  if(bc.designNotes) lines.push('\nملاحظات: '+bc.designNotes);
-  const text = lines.join('\n');
+  const text = window.__formatBizCardText?.({bc: c?.businessCard || {}, mode: 'export'}) || '';
   if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('✓ تم النسخ','ok'));
   else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('✓ تم النسخ','ok'); }
 };
 
-// Apply to new order — fills no-design-note from business card
+// Apply bizcard to new order — fills no-design-note + opens order modal
 window.applyBizCardToNewOrder = function(){
-  const cid = window._bizCardClientId;
-  if(!cid) return;
+  const cid = window._bizCardClientId;if(!cid) return;
   const c = clients.find(x=>x._id===cid);
   const bc = c?.businessCard || {};
   if(!Object.keys(bc).length){ alert('لم يتم حفظ بطاقة أعمال لهذا العميل بعد'); return; }
-  // Build formatted text
-  const lines = [];
-  if(bc.prefix||bc.nameAr) lines.push((bc.prefix||'')+' '+(bc.nameAr||''));
-  if(bc.nameEn) lines.push(bc.nameEn);
-  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
-  if(bc.companyAr) lines.push(bc.companyAr);
-  if(bc.companyEn) lines.push(bc.companyEn);
-  if(bc.officePhone) lines.push('تليفون: '+bc.officePhone);
-  if(bc.mobilePhone) lines.push('موبايل: '+bc.mobilePhone);
-  if(bc.email) lines.push(bc.email);
-  if(bc.addressAr) lines.push(bc.addressAr);
-  const text = lines.join('\n');
-  // Close client panel and open new order
+  const text = window.__formatBizCardText?.({bc, mode:'order-note'}) || '';
   closePanel();
   setTimeout(()=>{
     if(window.openAddOrderForClient) window.openAddOrderForClient(cid);
@@ -983,35 +930,15 @@ window.applyBizCardToNewOrder = function(){
   toast('✓ تم نقلك لإنشاء أوردر مع بيانات بطاقة الأعمال','ok');
 };
 
-// Used inside the new-order modal — fills design note from active client's business card
+// Used inside new-order modal — fills design note from active client's bizcard
 window.fillFromBizCard = function(){
   const cid = pendingClientId || activeId;
   if(!cid){ toast('⚠️ اختر عميل أولاً','err'); return; }
   const c = clients.find(x=>x._id===cid);
   const bc = c?.businessCard || {};
   if(!Object.keys(bc).length){ toast('لا توجد بطاقة أعمال محفوظة','err'); return; }
-  const lines = [];
-  if(bc.prefix||bc.nameAr) lines.push(((bc.prefix||'')+' '+(bc.nameAr||'')).trim());
-  if(bc.nameEn) lines.push(bc.nameEn);
-  if(bc.jobTitleAr) lines.push(bc.jobTitleAr);
-  if(bc.jobTitleEn) lines.push(bc.jobTitleEn);
-  if(bc.companyAr) lines.push(bc.companyAr);
-  if(bc.companyEn) lines.push(bc.companyEn);
-  lines.push('');
-  if(bc.officePhone) lines.push('تليفون مكتب: '+bc.officePhone);
-  if(bc.mobilePhone) lines.push('موبايل/واتساب: '+bc.mobilePhone);
-  if(bc.email) lines.push('Email: '+bc.email);
-  if(bc.website) lines.push('Website: '+bc.website);
-  if(bc.addressAr) lines.push(bc.addressAr);
-  if(bc.addressEn) lines.push(bc.addressEn);
-  const social = [];
-  if(bc.facebook) social.push('FB: '+bc.facebook);
-  if(bc.instagram) social.push('IG: '+bc.instagram);
-  if(bc.linkedin) social.push('LinkedIn: '+bc.linkedin);
-  if(social.length) lines.push(social.join(' · '));
-  if(bc.designNotes) lines.push('','ملاحظات: '+bc.designNotes);
   const noteEl = document.getElementById('no-design-note');
-  if(noteEl){ noteEl.value = lines.filter((_,i,a)=>!(a[i]===''&&a[i-1]==='')).join('\n').trim(); }
+  if(noteEl){ noteEl.value = window.__formatBizCardText?.({bc, mode:'export'}) || ''; }
   toast('✓ تم تعبئة البيانات من بطاقة الأعمال','ok');
 };
 
