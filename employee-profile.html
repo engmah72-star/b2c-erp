@@ -440,6 +440,7 @@ import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
+import { computeRoleKpis } from "./core/employee-kpis.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -700,90 +701,17 @@ function renderAll(){
   const monthly=ordersForProfPeriod();
   const pLblP=getProfPeriodLabel();
 
-  // حساب KPIs حسب الدور
-  let kpis=[], income={base:parseFloat(emp.baseSalary)||0, commission:0};
-
-  // ── أوردرات الموظف حسب دوره ──
-  const uid=emp.authUid||empId;
+  // KPIs + commission — pure logic مركزية في core/employee-kpis.js
   const myOrders=getEmpOrders(monthly);
-  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    const assigned=myOrders.length;
-    const printed=myOrders.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
-    const rejected=myOrders.filter(o=>o.designStatus==='rejected').length;
-    const rate=assigned>0?Math.round(printed/assigned*100):0;
-    kpis=[
-      {val:assigned,lbl:'كُلّفت',col:'var(--b)'},
-      {val:printed,lbl:'طباعة ✅',col:'var(--g)'},
-      {val:rejected,lbl:'مرفوض',col:'var(--r)'},
-      {val:rate+'%',lbl:'نسبة النجاح',col:'var(--y)'},
-    ];
-  } else if(emp.role==='customer_service'||emp.role==='operation_manager'){
-    const totalSales=myOrders.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-    const clients=new Set(myOrders.map(o=>o.clientId||o.clientPhone||o.clientName)).size;
-    const closed=myOrders.filter(o=>o.stage==='archived').length;
-    kpis=[
-      {val:myOrders.length,lbl:'أوردرات',col:'var(--b)'},
-      {val:clients,lbl:'عملاء',col:'var(--c)'},
-      {val:fn(totalSales),lbl:'مبيعات ج',col:'var(--g)'},
-      {val:myOrders.length>0?Math.round(closed/myOrders.length*100)+'%':'—',lbl:'إغلاق',col:'var(--y)'},
-    ];
-  } else if(emp.role==='production_agent'){
-    const done=myOrders.filter(o=>['shipping','archived'].includes(o.stage)).length;
-    const wip=myOrders.filter(o=>o.stage==='production').length;
-    const totalCost=myOrders.reduce((s,o)=>{
-      const empName=emp.name||'';
-      const costs=(o.costItems||[]).filter(c=>!empName||c.addedBy===empName||o.productionAgent===uid);
-      return s+costs.reduce((s2,c)=>s2+(parseFloat(c.total)||0),0);
-    },0);
-    kpis=[
-      {val:myOrders.length,lbl:'أوردرات تنفيذ',col:'var(--b)'},
-      {val:done,lbl:'مكتمل ✅',col:'var(--g)'},
-      {val:wip,lbl:'جاري 🏭',col:'var(--y)'},
-      {val:fn(totalCost),lbl:'تكلفة تنفيذ ج',col:'var(--r)'},
-    ];
-  } else if(emp.role==='shipping_officer'){
-    const shipped=myOrders.filter(o=>['shipping','archived'].includes(o.stage));
-    const collected=shipped.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||0),0);
-    const done=shipped.filter(o=>o.stage==='archived').length;
-    kpis=[
-      {val:shipped.length,lbl:'شحنات',col:'var(--c)'},
-      {val:fn(collected),lbl:'محصّل ج',col:'var(--g)'},
-      {val:done,lbl:'مكتمل',col:'var(--b)'},
-      {val:shipped.length>0?Math.round(done/shipped.length*100)+'%':'—',lbl:'نسبة الإتمام',col:'var(--y)'},
-    ];
-  } else {
-    kpis=[
-      {val:emp.baseSalary||0,lbl:'المرتب ج',col:'var(--g)'},
-      {val:emp.startDate||'—',lbl:'تاريخ التعيين',col:'var(--b)'},
-      {val:emp.status==='active'?'✅':'⏸️',lbl:'الحالة',col:'var(--y)'},
-      {val:myOrders.length||'—',lbl:'أوردرات',col:'var(--dim2)'},
-    ];
-  }
-
-  // حساب عمولة الشهر الحالي لجميع الأدوار على أساس التحصيل (paidAt)
-  {
-    const _mKeyI=monthKey();
-    const [_ys,_ms]=_mKeyI.split('-').map(Number);
-    const _paidM=allOrders.filter(o=>{
-      if(o.paymentStatus!=='paid')return false;
-      const pd=o.paidAt?.toDate?.();
-      if(pd)return pd.getMonth()===(_ms-1)&&pd.getFullYear()===_ys;
-      const cd=o.createdAt?.toDate?.();
-      return cd&&cd.getMonth()===(_ms-1)&&cd.getFullYear()===_ys;
-    });
-    if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-      income.commission=_paidM.filter(o=>o.designerId===uid||o.designerId===empId)
-        .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
-    } else if(emp.role==='production_agent'){
-      income.commission=_paidM.filter(o=>o.productionAgent===uid||o.productionAgent===empId).length*(parseFloat(emp.commissionPerOrder)||0);
-    } else if(emp.role==='shipping_officer'){
-      income.commission=_paidM.filter(o=>o.shippingOfficerId===uid||o.shippingOfficerId===empId).length*(parseFloat(emp.commissionPerOrder)||0);
-    } else if(emp.role==='customer_service'){
-      income.commission=_paidM.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-    }
-  }
-
-  const totalIncome=income.base+income.commission;
+  const {kpis,income}=computeRoleKpis({
+    employee:emp,
+    employeeId:empId,
+    myOrders,
+    allOrders,
+    mKey:monthKey(),
+    format:fn,
+  });
+  const totalIncome=income.total;
   const presentDays=empAttendance.filter(a=>a.date?.startsWith(monthKey())).length;
   const _mKey=monthKey();const _dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
   let workDaysStat=0;for(let d=1;d<=_dim;d++){const ds=_mKey+'-'+String(d).padStart(2,'0');if(isWorkDay(ds)&&!isLeaveDay(ds)&&ds<=todayStr())workDaysStat++;}
