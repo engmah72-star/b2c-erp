@@ -134,7 +134,9 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 <!-- Module bridge: expose centralized order functions on window for non-module main script (RULE C1.3) -->
 <script type="module">
   import { buildArchiveSpec } from './orders.js';
+  import { createClientOrdersIndexCache } from './core/client-orders-index.js';
   window.buildArchiveSpec = buildArchiveSpec;
+  window.__clientOrdersIndex = createClientOrdersIndexCache();
 </script>
 
 <!-- P1.2: clientActions module — exposes window.clientActions for compat consumers below.
@@ -702,36 +704,11 @@ function renderGrid(){
 }
 
 // ── Client→Orders Index (perf: avoid O(N*M) on each render) ──
-let _clientOrdersIndex=null; // Map<clientId, orders[]>
-let _indexBuiltKey='';       // cache invalidation key
-function buildClientOrdersIndex(){
-  const key=clients.length+'-'+allOrders.length;
-  if(key===_indexBuiltKey && _clientOrdersIndex) return _clientOrdersIndex;
-  const byId=new Map(), byPhone=new Map(), byName=new Map();
-  for(const c of clients){
-    byId.set(c._id,c);
-    if(c.phone1) byPhone.set(c.phone1,c);
-    if(c.name) byName.set(c.name,c);
-  }
-  const idx=new Map();
-  for(const c of clients) idx.set(c._id,[]);
-  for(const o of allOrders){
-    let target=null;
-    if(o.clientId && byId.has(o.clientId)) target=byId.get(o.clientId);
-    else if(o.clientPhone && byPhone.has(o.clientPhone)) target=byPhone.get(o.clientPhone);
-    else if(o.clientName && byName.has(o.clientName)) target=byName.get(o.clientName);
-    if(target) idx.get(target._id).push(o);
-  }
-  _clientOrdersIndex=idx;
-  _indexBuiltKey=key;
-  return idx;
-}
-function invalidateOrdersIndex(){_clientOrdersIndex=null;_indexBuiltKey='';}
-function getClientOrders(c){
-  if(!c) return [];
-  const idx=buildClientOrdersIndex();
-  return idx.get(c._id)||[];
-}
+// client→orders index — pure logic مُمَركَزة في core/client-orders-index.js
+// window.__clientOrdersIndex مُهيَّأة في module bridge أعلاه
+function buildClientOrdersIndex(){return window.__clientOrdersIndex?window.__clientOrdersIndex.get(clients,allOrders):new Map();}
+function invalidateOrdersIndex(){window.__clientOrdersIndex?.invalidate();}
+function getClientOrders(c){return window.__clientOrdersIndex?window.__clientOrdersIndex.getForClient(clients,allOrders,c):[];}
 
 // ── Debounce updateStats + renderGrid to avoid triple-execution on snapshots ──
 let _statsTimer=null, _gridTimer=null;
