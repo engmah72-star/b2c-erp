@@ -443,6 +443,7 @@ import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
+import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -2208,61 +2209,27 @@ function isLeaveDay(dateStr){
 function renderAttendance(){
   const cal=document.getElementById('att-cal');if(!cal)return;
   const vm=attViewMonth||monthKey();
-  const[vy,vm2]=vm.split('-').map(Number);
-  const isCurrentMonth=vm===monthKey();
-  const daysInMonth=new Date(vy,vm2,0).getDate();
-  const firstDay=new Date(vy,vm2-1,1).getDay();
-  const presentDays=empAttendance.filter(a=>a.date?.startsWith(vm)).length;
-  const today=todayStr();
-  let workDays=0;
-  for(let d=1;d<=daysInMonth;d++){
-    const ds=vm+'-'+String(d).padStart(2,'0');
-    if(isWorkDay(ds)&&!isLeaveDay(ds)&&ds<=today)workDays++;
-  }
-  setText('att-summary',`${presentDays} حضور | ${workDays} يوم عمل`);
+  const r=buildAttendanceCalendarHTML({
+    monthKey:vm,
+    currentMonthKey:monthKey(),
+    attendance:empAttendance,
+    leaves:empLeaves,
+    workSchedule:emp?.workSchedule,
+    today:todayStr(),
+  });
+  cal.innerHTML=r.html;
+  setText('att-summary',`${r.presentDays} حضور | ${r.workDays} يوم عمل`);
   const titleEl=document.getElementById('att-title');
-  if(titleEl)titleEl.textContent=`📅 حضور ${MONTHS[vm2-1]} ${vy}`;
+  if(titleEl)titleEl.textContent=r.monthTitle;
   const nextBtn=document.getElementById('att-next-btn');
-  if(nextBtn)nextBtn.disabled=isCurrentMonth;
-  let html='';
-  for(let i=0;i<firstDay;i++)html+='<div></div>';
-  for(let d=1;d<=daysInMonth;d++){
-    const dateStr=vm+'-'+String(d).padStart(2,'0');
-    const att=empAttendance.find(a=>a.date===dateStr);
-    const isOff=!isWorkDay(dateStr);
-    const isLeave=isLeaveDay(dateStr);
-    const isTodayDay=dateStr===today;
-    const isFuture=dateStr>today;
-    const lv=isLeave?empLeaves.find(lv=>dateStr>=(lv.startDate||'')&&dateStr<=(lv.endDate||lv.startDate||'')):null;
-    let cls='att-day ';
-    if(att)cls+='present';
-    else if(isLeave)cls+='leave';
-    else if(isOff||isFuture)cls+='off';
-    else cls+='absent';
-    const lateBadge=att&&(parseInt(att.lateMinutes)||0)>0?'⏰':'';
-    const tip=att?`${dateStr}\n${att.checkInStr||''}${att.checkOutStr?' → '+att.checkOutStr:''}${att.lateMinutes?'\nمتأخر '+att.lateMinutes+'د':''}`:isLeave?`${dateStr}\nإجازة${lv?.reason?' — '+lv.reason:''}`:`${dateStr}`;
-    html+=`<div class="${cls}${isTodayDay?' today':''}" title="${tip}" style="position:relative">${d}${lateBadge?`<span style="position:absolute;top:0;left:1px;font-size:var(--fs-tiny);line-height:1">${lateBadge}</span>`:''}</div>`;
-  }
-  cal.innerHTML=html;
+  if(nextBtn)nextBtn.disabled=r.isCurrentMonth;
 }
 
 // ══ SCHEDULE ══
-const DAY_NAMES_AR=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
-const LEAVE_TYPES={annual:{lbl:'إجازة سنوية',cls:'lv-annual',ico:'🌴'},sick:{lbl:'إجازة مرضية',cls:'lv-sick',ico:'🏥'},emergency:{lbl:'إجازة طارئة',cls:'lv-emergency',ico:'⚡'},official:{lbl:'إجازة رسمية',cls:'lv-official',ico:'📋'},unpaid:{lbl:'غياب بدون راتب',cls:'lv-unpaid',ico:'⚠️'}};
 
 function renderSchedule(){
   const el=document.getElementById('schedule-container');if(!el)return;
-  const ws=emp.workSchedule||{days:[0,1,2,3,4],startTime:'09:00',endTime:'17:00'};
-  const days=ws.days||[0,1,2,3,4];
-  el.innerHTML=`
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-      ${[0,1,2,3,4,5,6].map(d=>`<span class="day-pill${days.includes(d)?' on':''}">${DAY_NAMES_AR[d]}</span>`).join('')}
-    </div>
-    <div style="display:flex;gap:20px;font-size:var(--fs-base);color:var(--dim2)">
-      <span>⏰ بدء: <strong style="color:var(--snow)">${ws.startTime||'09:00'}</strong></span>
-      <span>🏁 نهاية: <strong style="color:var(--snow)">${ws.endTime||'17:00'}</strong></span>
-      <span>📅 <strong style="color:var(--b)">${days.length} أيام/أسبوع</strong></span>
-    </div>`;
+  el.innerHTML=buildScheduleHTML({workSchedule:emp.workSchedule});
 }
 
 let schedDays=[];
@@ -2299,33 +2266,10 @@ window.saveSchedule=async function(){
 // ══ LEAVES ══
 function renderLeaves(){
   const el=document.getElementById('leaves-container');if(!el)return;
-  const now2=new Date();
-  const upcoming=empLeaves.filter(lv=>lv.endDate>=now2.toISOString().slice(0,10)||lv.startDate>=now2.toISOString().slice(0,10));
-  const past=empLeaves.filter(lv=>lv.endDate<now2.toISOString().slice(0,10)&&lv.startDate<now2.toISOString().slice(0,10));
-  if(!empLeaves.length){el.innerHTML=`<div class="empty-cta">
-    <div class="empty-icon">🏖️</div>
-    <div class="empty-text">لا توجد إجازات مسجّلة</div>
-    <button class="btn btn-b btn-sm" onclick="openAddLeave()">＋ تسجيل إجازة</button>
-  </div>`;return;}
-  const render=arr=>arr.map(lv=>{
-    const t=LEAVE_TYPES[lv.type]||LEAVE_TYPES.annual;
-    const isCur=lv.startDate<=now2.toISOString().slice(0,10)&&lv.endDate>=now2.toISOString().slice(0,10);
-    return`<div class="leave-row"${isCur?' style="border-right:3px solid var(--y)"':''}>
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
-          <span class="lv-badge ${t.cls}">${t.ico} ${t.lbl}</span>
-          ${isCur?'<span style="font-size:var(--fs-tiny);background:rgba(255,170,0,.15);color:var(--y);padding:1px 6px;border-radius:8px;font-weight:700">جارية الآن</span>':''}
-          ${lv.reason?`<span style="font-size:var(--fs-sm);color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lv.reason}</span>`:''}
-        </div>
-        <div style="font-size:var(--fs-sm);color:var(--dim2)">${lv.startDate}${lv.endDate!==lv.startDate?' → '+lv.endDate:''} · <strong>${lv.days} يوم</strong></div>
-      </div>
-      <button onclick="deleteLeave('${lv._id}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55">✕</button>
-    </div>`;
-  }).join('');
-  let html='';
-  if(upcoming.length)html+=render(upcoming);
-  if(past.length)html+=`<div style="font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin:8px 0 5px;text-transform:uppercase;letter-spacing:.5px">السابقة</div>`+render(past);
-  el.innerHTML=html;
+  el.innerHTML=buildLeavesListHTML({
+    leaves:empLeaves,
+    todayIso:new Date().toISOString().slice(0,10),
+  });
 }
 
 window.openAddLeave=function(){
