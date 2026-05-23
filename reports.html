@@ -552,6 +552,7 @@ import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue,
 import { buildDesignerStats, buildShippingStats, buildClientActivityStats } from "./core/reports-tab-stats.js";
 import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 import { buildReturnsStats } from "./core/reports-returns-stats.js";
+import { buildCollectionStats, buildCollectionByClient } from "./core/reports-collection-stats.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -2010,54 +2011,16 @@ function renderReturns(filteredOrders, range){
 
 // ══ Tab 6: جرد التحصيل ══
 function renderCollection(f){
-  // كل الأوردرات اللي عندها salePrice > 0
-  let withSale=f.filter(o=>parseFloat(o.salePrice)>0);
-  // ترتيب حسب __sortKey/__sortDir
-  const dir=__sortDir==='asc'?1:-1;
-  const getPaid=o=>parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-  const sortFns={
-    date:(a,b)=>((a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))*dir,
-    client:(a,b)=>((a.clientName||'').localeCompare(b.clientName||'','ar'))*dir,
-    sale:(a,b)=>((parseFloat(a.salePrice)||0)-(parseFloat(b.salePrice)||0))*dir,
-    paid:(a,b)=>(getPaid(a)-getPaid(b))*dir,
-    rem:(a,b)=>(calcRem(a)-calcRem(b))*dir,
-  };
-  withSale.sort(sortFns[__sortKey]||sortFns.date);
-
-  if(!withSale.length) return`<div class="empty-pretty"><div class="ico">📋</div><div class="ttl">لا توجد أوردرات</div><div class="sub">جرّب تغيير فلتر التاريخ أو الفترة الزمنية</div></div>`;
-
-  const totSale=withSale.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-  const totPaid=withSale.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const totRem=withSale.reduce((s,o)=>s+calcRem(o),0);
-  const totCost=withSale.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c)=>cs+(parseFloat(c.total)||0),0),0);
-  const totProfit=totPaid-totCost;
-  const fullPaid=withSale.filter(o=>calcRem(o)<=0).length;
-  const partial=withSale.filter(o=>{const p=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;return p>0&&calcRem(o)>0;}).length;
-  const noPay=withSale.filter(o=>(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0)<=0).length;
-
-  // تصنيف بالمراحل (للفلتر)
-  const stageCounts={
-    design:withSale.filter(o=>o.stage==='design').length,
-    printing:withSale.filter(o=>o.stage==='printing').length,
-    production:withSale.filter(o=>o.stage==='production').length,
-    shipping:withSale.filter(o=>o.stage==='shipping').length,
-    archived:withSale.filter(o=>o.stage==='archived').length,
-  };
-  // الأوردرات الحرجة: العميل وافق على التصميم وداخل طباعة/تنفيذ/شحن وفيه باقي
-  const postDesignWithRem=withSale.filter(o=>['printing','production','shipping'].includes(o.stage)&&calcRem(o)>0);
-  const postDesignAmount=postDesignWithRem.reduce((s,o)=>s+calcRem(o),0);
-
-  // Aging buckets على الأوردرات اللي عليها باقي
-  const aging={'0-30':{n:0,a:0},'31-60':{n:0,a:0},'61-90':{n:0,a:0},'90+':{n:0,a:0}};
-  withSale.forEach(o=>{
-    const r=calcRem(o);if(r<=0)return;
-    const b=ageBucket(daysSince(o.createdAt));
-    aging[b].n++;aging[b].a+=r;
+  // pure aggregator في core/reports-collection-stats.js
+  const s = buildCollectionStats({
+    orders: f, calcRem, daysSince, isStaleOrder, isMissingCost,
+    sortKey: __sortKey, sortDir: __sortDir,
   });
-  const noCostCount=withSale.filter(isMissingCost).length;
-
-  const staleCount=withSale.filter(isStaleOrder).length;
-  // عدّاد الفلاتر المفعّلة
+  if (s.isEmpty) return`<div class="empty-pretty"><div class="ico">📋</div><div class="ttl">لا توجد أوردرات</div><div class="sub">جرّب تغيير فلتر التاريخ أو الفترة الزمنية</div></div>`;
+  const withSale = s.sorted;
+  const {totals, counts, stageCounts, postDesignWithRem, postDesignAmount, aging} = s;
+  const {sale: totSale, paid: totPaid, rem: totRem, cost: totCost, profit: totProfit} = totals;
+  const {fullPaid, partial, noPay, staleCount, noCostCount} = counts;
   const activeFilters=(__payFilter!=='all'?1:0)+(__stageFilter!=='all'?1:0)+(__flagFilter!=='all'?1:0);
 
   return`
@@ -2174,21 +2137,8 @@ function renderCollection(f){
 
 // ══ Per-customer rollup view ══
 function renderCollectionByClient(orders){
-  const map={};
-  orders.forEach(o=>{
-    const k=o.clientId||o.clientName||'—';
-    if(!map[k])map[k]={name:o.clientName||'—',phone:o.clientPhone||'',count:0,sale:0,paid:0,rem:0,lastTs:0,stale:0,noCost:0};
-    const r=map[k];
-    r.count++;
-    r.sale+=parseFloat(o.salePrice)||0;
-    r.paid+=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    r.rem+=calcRem(o);
-    const ts=o.updatedAt?.seconds||o.createdAt?.seconds||0;
-    if(ts>r.lastTs)r.lastTs=ts;
-    if(isStaleOrder(o))r.stale++;
-    if(isMissingCost(o))r.noCost++;
-  });
-  const list=Object.values(map).sort((a,b)=>b.rem-a.rem);
+  // pure aggregator في core/reports-collection-stats.js
+  const list = buildCollectionByClient({orders, calcRem, isStaleOrder, isMissingCost});
   if(!list.length)return`<div class="empty-pretty"><div class="ico">👤</div><div class="ttl">لا يوجد عملاء</div></div>`;
   const totRem=list.reduce((s,c)=>s+c.rem,0);
   return`
