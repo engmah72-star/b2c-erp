@@ -19,6 +19,12 @@
  *   I7: لو returned_full → totalPaid=0 + remaining=0 (state-machine consistency)
  *   I8: لو shipSettled=true → walletId محدد (إلا للـ manual settle)
  *   I9: لو paymentStatus='paid' → remaining <= ε
+ *   I10: refund <= paid (advanced — PR-7.5)
+ *   I11: shipSettled=false لكن shipSettledAmount!=0 → drift (PR-7.5)
+ *   I12-I14: returned_partial + closed→archived (PR-7.5)
+ *   I15: shipSettled=true + shipMethod=company → shipCollected > 0 (Phase 2 / B3)
+ *   I16: stage=archived → paymentStatus نهائي أو returned_full (Phase 2 / B3)
+ *   I17: stage=archived + shipMethod=company → shipSettled=true (Phase 2 / B3)
  *
  * كل invariant violation = { code, severity, message, fields }.
  *
@@ -138,6 +144,43 @@ export function detectFinancialDrift(order) {
     violations.push(v('CLOSED_NOT_ARCHIVED', 'warn',
       `shipStage='closed' لكن stage='${order.stage}' (ليس archived)`,
       ['shipStage', 'stage']));
+  }
+
+  // ─── Phase 2 / B3 — State machine integrity invariants ─────────────────
+  // PHASE_2_DIAGNOSIS section 4.4 — 3 critical gaps in financial state machine.
+
+  // I15: shipSettled=true + shipMethod=company → shipCollected > 0
+  // Settlement يعني "أخذنا فلوسنا من شركة الشحن"؛ ولا يصح بدون collection سابقة.
+  // exception: manual settle (shipSettledManual=true) — قد يكون refund/credit بدون cash.
+  if (order.shipSettled === true && order.shipMethod === 'company'
+      && !order.shipSettledManual && shipCollected <= EPS) {
+    violations.push(v('SETTLED_WITHOUT_COLLECTION', 'crit',
+      `shipSettled=true بشركة شحن لكن shipCollected=${shipCollected} — تسوية بدون تحصيل`,
+      ['shipSettled', 'shipCollected', 'shipMethod']));
+  }
+
+  // I16: stage=archived → paymentStatus نهائي أو returned_full
+  // الأرشيف terminal state؛ يجب أن يكون الأوردر منتهي مالياً بأحد المسارات:
+  // (paid / returned / refunded) أو returned_full في الشحن.
+  if (order.stage === 'archived') {
+    const TERMINAL_PAYMENT_STATUSES = ['paid', 'returned', 'refunded'];
+    const isPaymentTerminal = TERMINAL_PAYMENT_STATUSES.includes(paymentStatus);
+    const isShipReturnedFull = shipStage === 'returned_full';
+    if (!isPaymentTerminal && !isShipReturnedFull) {
+      violations.push(v('ARCHIVED_WITHOUT_TERMINAL_FINANCIAL', 'crit',
+        `archived order بحالة مالية غير نهائية: paymentStatus='${paymentStatus}', shipStage='${shipStage}'`,
+        ['stage', 'paymentStatus', 'shipStage']));
+    }
+  }
+
+  // I17: stage=archived + shipMethod=company → shipSettled=true
+  // يطابق ضمان buildArchiveSpec (لا يسمح بالأرشفة بدون تسوية للشركة).
+  // وجود الأوردر مؤرشف بدون تسوية = drift كَتب أحد المسارات يتجاوز الـ gate.
+  if (order.stage === 'archived' && order.shipMethod === 'company'
+      && order.shipSettled !== true) {
+    violations.push(v('ARCHIVED_COMPANY_NOT_SETTLED', 'crit',
+      `archived + shipMethod=company لكن shipSettled=${order.shipSettled} — تجاوز archive gate`,
+      ['stage', 'shipMethod', 'shipSettled']));
   }
 
   return violations;
