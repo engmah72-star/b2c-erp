@@ -139,6 +139,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
   import { buildFollowupOrderOptions, buildFollowupPayload, getFollowupRatingLabel } from './features/clients/followup-form.js';
   import * as NewOrder from './features/clients/new-order-form.js';
   import { validateIntlPhone, buildClientPayload } from './features/clients/client-form.js';
+  import * as CGrid from './features/clients/control-grid.js';
   window.buildArchiveSpec = buildArchiveSpec;
   window.__clientOrdersIndex = createClientOrdersIndexCache();
   Object.assign(window, {
@@ -156,6 +157,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
     __generateOrderId: NewOrder.generateOrderId,
     __validateIntlPhone: validateIntlPhone,
     __buildClientPayload: buildClientPayload,
+    __findClientForOrder: CGrid.findClientForOrder,
+    __buildBulkStagePrompt: CGrid.buildBulkStagePrompt,
+    __buildBulkAssignPrompt: CGrid.buildBulkAssignPrompt,
+    __findDesignerByName: CGrid.findDesignerByName,
+    __triggerCsvDownload: CGrid.triggerCsvDownload,
   });
 </script>
 
@@ -2232,8 +2238,7 @@ window.cgridBulkAction=async function(action){
   }
 
   if(action==='stage'){
-    const stagesAll=Object.keys(CGRID_STATUS_MAP).join(' | ');
-    const choice=prompt(`نقل ${ids.length} أوردر إلى:\n${stagesAll}`);
+    const choice=prompt(window.__buildBulkStagePrompt?.(CGRID_STATUS_MAP,ids.length)||'');
     if(!choice||!CGRID_STATUS_MAP[choice]){toast('الحالة غير صحيحة','err');return;}
     if(!confirm(`نقل ${ids.length} أوردر إلى "${choice}"؟`))return;
     const r=await window.orderActions.bulkStageMove({
@@ -2245,9 +2250,8 @@ window.cgridBulkAction=async function(action){
   }
 
   if(action==='assign'){
-    const names=designers.map(e=>e.name||e.displayName||'').filter(Boolean).join(' | ');
-    const nm=prompt(`اسم الموظف بالضبط:\n${names}`);
-    const emp=designers.find(e=>(e.name||e.displayName||'')===nm);
+    const nm=prompt(window.__buildBulkAssignPrompt?.(designers)||'');
+    const emp=window.__findDesignerByName?.(nm,designers);
     if(!emp){toast('الموظف غير موجود','err');return;}
     if(!confirm(`تعيين "${emp.name||emp.displayName}" على ${ids.length} أوردر؟`))return;
     const r=await window.orderActions.bulkAssign({
@@ -2261,27 +2265,18 @@ window.cgridBulkAction=async function(action){
   }
 };
 
-// God-page decomp PR-14: CSV generation extracted to clients-data.js
-// (window.cgridExportCSV). Wrapper does the DOM download + toast only.
+// CSV download — pure helper في features/clients/control-grid.js
 function cgridExportSelected(ords){
-  const csv=cgridExportCSV({orders:ords,calcRem});
-  const a=document.createElement('a');
-  a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
-  a.download='control-grid.csv';a.click();
+  window.__triggerCsvDownload?.(cgridExportCSV({orders:ords,calcRem}),'control-grid.csv');
   toast('✅ تم التصدير','ok');
 }
 
 window.cgridOpenClient=function(orderId){
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
-  // البحث: clientId أولاً (يشمل العملاء بدون تليفون) → هاتف → اسم
-  const c=clients.find(c=>c._id===o.clientId)
-    ||(o.clientPhone?clients.find(c=>c.phone1===o.clientPhone):null)
-    ||clients.find(c=>c.name&&c.name===o.clientName);
-  if(c){
-    openClient(c._id);
-  } else {
-    toast(`لم يُعثر على بطاقة "${o.clientName||'—'}" في قاعدة العملاء`,'err');
-  }
+  // البحث: clientId → clientPhone → clientName (pure lookup مُمَركَز)
+  const c=window.__findClientForOrder?.(o,clients);
+  if(c)openClient(c._id);
+  else toast(`لم يُعثر على بطاقة "${o.clientName||'—'}" في قاعدة العملاء`,'err');
 };
 
 window.cgridStartEdit=function(orderId){
