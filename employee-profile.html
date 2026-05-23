@@ -442,6 +442,7 @@ import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
+import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -725,93 +726,34 @@ function renderAll(){
   const ringDash=(201.06*sScore/100).toFixed(1);
   const tasksOpen=empTasks.filter(t=>t.status!=='done').length;
 
-  document.getElementById('main-content').innerHTML=`
-    <!-- Hero Cover -->
-    <div class="hero-cover">
-      <div class="hero-accent-bar" style="background:${r.col}"></div>
-      <div class="hero-body">
-        <div class="hero-av" style="background:${r.col}18;color:${r.col};box-shadow:0 0 0 3px var(--bg2),0 0 0 5.5px ${r.col}60">
-          ${(emp.name||'?')[0].toUpperCase()}
-          <span class="hero-dot ${emp.status==='active'?'dot-on':'dot-off'}"></span>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div class="hero-name">${emp.name||'—'}</div>
-          <div class="hero-role-lbl">${r.ico} ${r.label}${emp.status==='inactive'?` <span style="font-size:var(--fs-xs);background:rgba(255,61,110,.12);color:var(--r);padding:1px 7px;border-radius:8px;font-weight:700">غير نشط</span>`:''}</div>
-          <div class="hero-chips">
-            ${emp.phone?`<span class="hero-chip">📞 ${emp.phone}</span>`:''}
-            ${emp.email?`<span class="hero-chip">${emp.email}</span>`:''}
-            ${emp.startDate?`<span class="hero-chip">📅 ${emp.startDate}</span>`:''}
-            ${(emp.commissionPct||0)>0?`<span class="hero-chip hero-chip-accent">عمولة ${emp.commissionPct}%</span>`:''}
-          </div>
-        </div>
-        <div class="kpi-ring-lg" title="نقاط الأداء" style="cursor:pointer" onclick="setTab('overview');document.getElementById('score-container')?.scrollIntoView({behavior:'smooth',block:'center'})">
-          <svg width="80" height="80" viewBox="0 0 80 80">
-            <circle class="ring-bg" cx="40" cy="40" r="32"/>
-            <circle class="ring-fg" cx="40" cy="40" r="32" stroke="${sCol}" stroke-dasharray="201.06" stroke-dashoffset="${(201.06-ringDash).toFixed(1)}"/>
-          </svg>
-          <div class="ring-num" style="color:${sCol}">${sScore}</div>
-        </div>
-      </div>
-      <div class="hero-stats-row">
-        <div class="hstat">
-          <div class="hstat-val" style="color:${attColor}">${presentDays}<span style="font-size:var(--fs-base);font-weight:500;color:var(--dim2)">/${workDaysStat}</span></div>
-          <div class="hstat-lbl">الحضور</div>
-        </div>
-        <div class="hstat">
-          <div class="hstat-val" style="color:var(--g)">${fn(totalIncome)}</div>
-          <div class="hstat-lbl">دخل ${MONTHS[now.getMonth()]} ج</div>
-        </div>
-        <div class="hstat">
-          <div class="hstat-val" style="color:var(--y)">${tasksOpen}</div>
-          <div class="hstat-lbl">مهام مفتوحة</div>
-        </div>
-        <div class="hstat">
-          <div class="hstat-val" style="color:var(--b)">${totalEmpOrders}</div>
-          <div class="hstat-lbl">إجمالي الأوردرات</div>
-        </div>
-        <div class="hstat" style="border-left:none;border-top:1px solid var(--line)">
-          ${(()=>{
-            const quota=parseFloat(emp.annualLeaveQuota)||21;
-            const curYear=now.getFullYear()+'';
-            const usedDays=empLeaves.filter(lv=>lv.type==='annual'&&(lv.startDate||'').startsWith(curYear)).reduce((s,lv)=>s+(lv.days||0),0);
-            const remaining=Math.max(0,quota-usedDays);
-            const col=remaining>=10?'var(--g)':remaining>=5?'var(--y)':'var(--r)';
-            return`<div class="hstat-val" style="color:${col}">${remaining}<span style="font-size:var(--fs-base);font-weight:500;color:var(--dim2)">/${quota}</span></div>
-          <div class="hstat-lbl">إجازة سنوية</div>`;
-          })()}
-        </div>
-      </div>
-    </div>
+  // Annual leave for hero stats
+  const _alQuota=parseFloat(emp.annualLeaveQuota)||21;
+  const _alYear=now.getFullYear()+'';
+  const _alUsed=empLeaves.filter(lv=>lv.type==='annual'&&(lv.startDate||'').startsWith(_alYear)).reduce((s,lv)=>s+(lv.days||0),0);
+  const _alRemaining=Math.max(0,_alQuota-_alUsed);
+  const _alCol=_alRemaining>=10?'var(--g)':_alRemaining>=5?'var(--y)':'var(--r)';
 
-    <!-- Quick actions bar -->
-    <div class="quick-actions">
-      <button class="btn btn-g btn-sm qa" onclick="openSalary()" title="صرف مرتب (s)">💰 صرف مرتب</button>
-      <button class="btn btn-b btn-sm qa" onclick="openAddTask()" title="إضافة مهمة (t)">＋ مهمة</button>
-      <button class="btn btn-ghost btn-sm qa" onclick="recordAttendanceToday()">✓ حضور اليوم</button>
-      <button class="btn btn-ghost btn-sm qa" onclick="openEditSalary()" title="تعديل بيانات (e)">✏️ تعديل</button>
-      <button class="btn btn-ghost btn-sm qa" style="flex:0 0 auto;font-size:var(--fs-lg);min-width:42px" onclick="event.stopPropagation();toggleQAMenu()" aria-label="مزيد">⋯</button>
-      <div class="act-menu" id="qa-menu" onclick="event.stopPropagation()">
-        <button onclick="closeQAMenu();openAddLeave()">🏖️ إضافة إجازة</button>
-        <button onclick="closeQAMenu();openEditSchedule()">🕐 تعديل جدول العمل</button>
-        <button onclick="closeQAMenu();openEditSkills()">🏷️ تعديل المهارات</button>
-        ${emp.phone?`<a href="tel:${emp.phone}" onclick="closeQAMenu()">📞 اتصال (${emp.phone})</a>
-        <a href="https://wa.me/2${emp.phone.replace(/^0/,'')}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`:''}
-        <div class="act-sep"></div>
-        <button onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين فوري</button>
-        ${emp.email && !emp.email.endsWith('@b2c.local')
-          ? `<button onclick="closeQAMenu();sendEmpResetEmail()" style="color:var(--b)">✉️ إرسال رابط بالبريد</button>`
-          : ''}
-        <button onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
-      </div>
-    </div>
+  const heroHtml=buildHeroHTML({
+    employee:emp, roleMeta:r,
+    score:{value:sScore,color:sCol},
+    stats:{
+      presentDays, workDaysStat, attColor,
+      totalIncome, tasksOpen, totalEmpOrders,
+      monthLabel:MONTHS[now.getMonth()],
+      annualLeaveRemaining:_alRemaining, annualLeaveQuota:_alQuota, annualLeaveCol:_alCol,
+    },
+    format:fn,
+  });
+  const qaHtml=buildQuickActionsHTML({
+    employee:emp,
+    allowEmailReset:!!(emp.email&&!emp.email.endsWith('@b2c.local')),
+  });
+  const compactHtml=buildCompactHeroHTML({
+    employee:emp, roleMeta:r,
+    score:{value:sScore,color:sCol},
+  });
 
-    <!-- Compact sticky hero -->
-    <div class="hero-compact" id="hero-compact">
-      <div class="av" style="background:${r.col}18;color:${r.col}">${(emp.name||'?')[0].toUpperCase()}</div>
-      <div class="nm">${emp.name||'—'} <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:600">· ${r.label}</span></div>
-      <div class="sc" style="background:${sCol}1f;color:${sCol}">${sScore}</div>
-      <button class="btn btn-g btn-xs" onclick="openSalary()" style="font-size:var(--fs-sm)">💰</button>
-    </div>
+  document.getElementById('main-content').innerHTML=heroHtml+qaHtml+compactHtml+`
 
     <!-- Tabs nav -->
     <div class="profile-tabs" id="profile-tabs">
