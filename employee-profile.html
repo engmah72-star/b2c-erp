@@ -439,6 +439,7 @@ import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
+import { computeScore } from "./core/employee-scoring.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -1058,78 +1059,24 @@ function renderAll(){
 // ══ SCORE ══
 // Score for ANY month (current or past). Applies proration so that early-month
 // scoring isn't unfairly penalised when only a few days have elapsed.
+// Adapter — يجمع الـ closure state ويُمرّر pure inputs لـ computeScore.
+// المنطق نفسه في core/employee-scoring.js — هنا فقط wiring.
 function calcScoreFor(mKey){
   if(!emp||!mKey)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{},meta:{}};
   const[ys,ms]=mKey.split('-').map(Number);
-  const isCurMonth=mKey===monthKey();
-  const dim=new Date(ys,ms,0).getDate();
-  // For current month, consider only elapsed days; for past months, the full month.
-  const lastDay=isCurMonth?now.getDate():dim;
-
-  // ── 1. Attendance (35) ──
-  const attEntries=empAttendance.filter(a=>(a.date||'').startsWith(mKey));
-  const present=attEntries.length;
-  // Late minutes summed; threshold-based deductions
-  const lateMins=attEntries.reduce((s,a)=>s+(parseInt(a.lateMinutes)||0),0);
-  let workDays=0;
-  for(let d=1;d<=lastDay;d++){
-    const ds=mKey+'-'+String(d).padStart(2,'0');
-    if(isWorkDay(ds)&&!isLeaveDay(ds))workDays++;
-  }
-  const attPct=workDays>0?Math.min(1,present/workDays):0.5;
-  // Tardiness penalty: every 60 late-minutes = -1 point off attendance, capped at 7
-  const latePenalty=Math.min(7,Math.floor(lateMins/60));
-  const attScore=Math.max(0,Math.round(attPct*35)-latePenalty);
-
-  // ── 2. Productivity (40) — prorated ──
-  const mOrds=getEmpOrders(allOrders.filter(o=>{
+  const monthOrders=getEmpOrders(allOrders.filter(o=>{
     const d=o.createdAt?.toDate?.();
     return d&&d.getMonth()===(ms-1)&&d.getFullYear()===ys;
   }));
-  const curGoal=empGoals.find(g=>g.month===mKey);
-  const total=mOrds.length;
-  const done=mOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
-  let prodPct;
-  if(curGoal?.targetOrdersMonthly>0){
-    // Proration: expected = monthly target × (elapsed/total) for current month
-    const expected=isCurMonth?curGoal.targetOrdersMonthly*(lastDay/dim):curGoal.targetOrdersMonthly;
-    prodPct=expected>0?Math.min(1,total/expected):0.5;
-  } else {
-    // No goal set: use done/total ratio. Early month w/ 0 orders ≠ failure → 0.5 baseline
-    prodPct=total>0?done/total:(isCurMonth&&lastDay<=5?0.65:0.5);
-  }
-  const prodScore=Math.round(prodPct*40);
-
-  // ── 3. Quality (25) ──
-  let qualPct=0.8;
-  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    const rej=mOrds.filter(o=>o.designStatus==='rejected'||(o.timeline||[]).some(t=>(t.action||'').includes('رفض')||(t.action||'').includes('مراجعة'))).length;
-    qualPct=total>0?Math.max(0,1-(rej/total)):0.8;
-  }else if(emp.role==='customer_service'){
-    const arch=mOrds.filter(o=>o.stage==='archived').length;
-    qualPct=total>0?arch/total:0.5;
-  }else if(emp.role==='production_agent'){
-    const arch=mOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
-    qualPct=total>0?arch/total:0.5;
-  }
-  // Incidents penalty: each open incident reduces quality by 0.05
-  const monthIncidents=(typeof empIncidents!=='undefined'?empIncidents:[]).filter(i=>(i.date||'').startsWith(mKey));
-  const incidentPenalty=Math.min(0.6,monthIncidents.length*0.05);
-  qualPct=Math.max(0,qualPct-incidentPenalty);
-  const qualScore=Math.round(qualPct*25);
-
-  const score=Math.min(100,attScore+prodScore+qualScore);
-  const grade=score>=85?'ممتاز ⭐':score>=70?'جيد جداً':score>=50?'متوسط':'يحتاج تطوير';
-  const col=score>=85?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
-  return{
-    score,grade,col,
-    breakdown:{
-      att:{score:attScore,pct:Math.round(attPct*100),lateMins,latePenalty},
-      prod:{score:prodScore,pct:Math.round(prodPct*100),total,done,prorated:isCurMonth&&!!curGoal},
-      qual:{score:qualScore,pct:Math.round(qualPct*100),incidents:monthIncidents.length}
-    },
-    meta:{workDays,present,lastDay,daysInMonth:dim,isCurMonth}
-  };
+  return computeScore({
+    mKey, now,
+    employee:emp,
+    attendance:empAttendance,
+    leaves:empLeaves,
+    monthOrders,
+    goals:empGoals,
+    incidents:typeof empIncidents!=='undefined'?empIncidents:[],
+  });
 }
 
 // Backward compat: calcScore() returns current month
