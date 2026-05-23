@@ -379,6 +379,41 @@ auth.onAuthStateChanged(async u=>{
   const isAdmin=['admin','operation_manager'].includes(currentRole);
   if(isAdmin){const t=document.getElementById('stab-cgrid');if(t)t.style.display='inline-flex';}
 
+  // ── Stuck-spinner guards (page-loading-igbB5 fix) ──
+  // If neither clients nor orders has fired within 12s, replace the
+  // spinner with a diagnostic message so the user isn't left guessing.
+  // Cleared the moment any T1 listener succeeds.
+  let __clientsListenerFired = false;
+  let __ordersListenerFired = false;
+  const __clearSpinnerWith = (html)=>{
+    const el = document.getElementById('clients-grid');
+    if(!el) return;
+    el.style.display='grid';
+    el.innerHTML = html;
+  };
+  const __loadWatchdog = setTimeout(()=>{
+    if(__clientsListenerFired || __ordersListenerFired) return;
+    __clearSpinnerWith(
+      `<div class="empty" style="grid-column:1/-1">
+        <div class="empty-icon">⏳</div>
+        <div class="empty-text">التحميل بطيء جداً — تحقق من الاتصال</div>
+        <button class="btn btn-b btn-sm" onclick="location.reload()" style="margin-top:12px">🔄 إعادة المحاولة</button>
+      </div>`
+    );
+  }, 12000);
+  const __reportListenerError = (collName, err)=>{
+    const msg = err?.message || String(err);
+    console.error(`[clients] ${collName} listener failed:`, msg);
+    if(__clientsListenerFired || __ordersListenerFired) return;
+    __clearSpinnerWith(
+      `<div class="empty" style="grid-column:1/-1">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-text">فشل تحميل ${collName}: ${msg.includes('permission')?'صلاحيات غير كافية':msg.substring(0,140)}</div>
+        <button class="btn btn-b btn-sm" onclick="location.reload()" style="margin-top:12px">🔄 إعادة المحاولة</button>
+      </div>`
+    );
+  };
+
   // Listeners — Performance PR-26: tiered loading
   //   T1 (immediate): clients, orders, wallets, settings — needed for first paint
   //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
@@ -389,6 +424,8 @@ auth.onAuthStateChanged(async u=>{
   const TX_LIMIT      = 1500;    // was 3000
   const FU_LIMIT      = 800;     // was 1500
   db.collection('clients').orderBy('createdAt','desc').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
+    __clientsListenerFired = true;
+    clearTimeout(__loadWatchdog);
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     scheduleStatsAndGrid();
@@ -428,12 +465,14 @@ auth.onAuthStateChanged(async u=>{
         }
       }
     }
-  });
+  }, err=>__reportListenerError('العملاء', err));
   db.collection('orders').orderBy('createdAt','desc').limit(ORDERS_LIMIT).onSnapshot(snap=>{
+    __ordersListenerFired = true;
+    clearTimeout(__loadWatchdog);
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
-  });
+  }, err=>__reportListenerError('الأوردرات', err));
   // T1: wallets — needed for new-order modal (which can open early)
   db.collection('wallets').limit(100).onSnapshot(snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -598,44 +637,68 @@ window.setQuickFilter=function(filter,el){
 
 // ══ GRID ══
 function renderGrid(){
-  // God-page decomp PR-13: filter logic extracted to clients-data.js
-  // (window.filterClientsForGrid). Page collects criteria, delegates.
-  updateFilterBadge();
-  const data=filterClientsForGrid({
-    clients,
-    criteria:{
-      q: gv('q'),
-      tag: gv('f-tag'),
-      seg: gv('f-segment'),
-      gov: gv('f-gov'),
-      src: gv('f-src'),
-      isLegacyTab: window.__statusTab==='legacy',
-      periodFilter: window.__periodFilter,
-      quickFilter: window.__quickFilter,
-      clientFilter: window.__clientFilter,
-    },
-    getOrders: getClientOrders,
-    calcRem,
-    segments: clientSegments,
-  });
-  if(viewMode==='list'){renderListView(data);return;}
-  const el=document.getElementById('clients-grid');if(!el)return;
-  el.style.display='grid';
-  if(!data.length){
-    el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">${isLegacyTab?'📁':'👤'}</div><div class="empty-text">${isLegacyTab?'لا يوجد عملاء قدامى مسجلين':'لا نتائج للبحث'}</div><button class="btn btn-ghost btn-sm" onclick="${isLegacyTab?'openAddLegacy()':'openAddClient()'}" style="margin-top:12px">${isLegacyTab?'＋ سجّل عميل قديم':'＋ أضف عميل'}</button></div>`;
-    return;
+  const el=document.getElementById('clients-grid');
+  if(!el)return;
+  const isLegacyTab = window.__statusTab==='legacy';
+  // Stuck-spinner guard: any path out of renderGrid must replace the
+  // spinner. If filter/card construction throws, fall through to a
+  // visible error block instead of leaving the spinner forever.
+  try {
+    // God-page decomp PR-13: filter logic extracted to clients-data.js
+    // (window.filterClientsForGrid). Page collects criteria, delegates.
+    updateFilterBadge();
+    if(typeof filterClientsForGrid !== 'function'){
+      throw new Error('clients-data.js لم يحمّل بعد (filterClientsForGrid مفقود)');
+    }
+    const data=filterClientsForGrid({
+      clients,
+      criteria:{
+        q: gv('q'),
+        tag: gv('f-tag'),
+        seg: gv('f-segment'),
+        gov: gv('f-gov'),
+        src: gv('f-src'),
+        isLegacyTab,
+        periodFilter: window.__periodFilter,
+        quickFilter: window.__quickFilter,
+        clientFilter: window.__clientFilter,
+      },
+      getOrders: getClientOrders,
+      calcRem,
+      segments: clientSegments,
+    });
+    if(viewMode==='list'){renderListView(data);return;}
+    el.style.display='grid';
+    if(!data.length){
+      el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">${isLegacyTab?'📁':'👤'}</div><div class="empty-text">${isLegacyTab?'لا يوجد عملاء قدامى مسجلين':'لا نتائج للبحث'}</div><button class="btn btn-ghost btn-sm" onclick="${isLegacyTab?'openAddLegacy()':'openAddClient()'}" style="margin-top:12px">${isLegacyTab?'＋ سجّل عميل قديم':'＋ أضف عميل'}</button></div>`;
+      return;
+    }
+    // God-page decomp PR-5: per-card HTML moved to clients-render.js
+    // (window.clientCardHTML). Pre-compute time refs once, then map.
+    if(typeof clientCardHTML !== 'function'){
+      throw new Error('clients-render.js لم يحمّل بعد (clientCardHTML مفقود)');
+    }
+    const _nowMs=Date.now();
+    const _nowSec=_nowMs/1000;
+    const cardCtx={
+      getOrders: getClientOrders, calcRem, fn,
+      countOpenReminders, getSegment: (id)=>clientSegments.get(id),
+      SEG_STYLE, TAG_LABELS,
+      nowMs: _nowMs, nowSec: _nowSec,
+    };
+    el.innerHTML=data.map((c,i)=>{
+      try { return clientCardHTML(c,i,{...cardCtx,color:COLORS[i%COLORS.length]}); }
+      catch(cardErr){ console.warn('clientCardHTML failed for', c?._id, cardErr); return ''; }
+    }).join('');
+  } catch (e) {
+    console.error('renderGrid:', e);
+    el.style.display='grid';
+    el.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <div class="empty-icon">⚠️</div>
+      <div class="empty-text">تعذّر عرض القائمة: ${(e?.message||String(e)).substring(0,180)}</div>
+      <button class="btn btn-b btn-sm" onclick="location.reload()" style="margin-top:12px">🔄 إعادة المحاولة</button>
+    </div>`;
   }
-  // God-page decomp PR-5: per-card HTML moved to clients-render.js
-  // (window.clientCardHTML). Pre-compute time refs once, then map.
-  const _nowMs=Date.now();
-  const _nowSec=_nowMs/1000;
-  const cardCtx={
-    getOrders: getClientOrders, calcRem, fn,
-    countOpenReminders, getSegment: (id)=>clientSegments.get(id),
-    SEG_STYLE, TAG_LABELS,
-    nowMs: _nowMs, nowSec: _nowSec,
-  };
-  el.innerHTML=data.map((c,i)=>clientCardHTML(c,i,{...cardCtx,color:COLORS[i%COLORS.length]})).join('');
 }
 
 // ── Client→Orders Index (perf: avoid O(N*M) on each render) ──
