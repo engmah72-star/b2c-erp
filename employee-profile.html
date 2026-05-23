@@ -441,6 +441,7 @@ import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, li
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
+import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -2434,53 +2435,10 @@ const SAL_TYPE_COLS={salary:'var(--g)',advance:'var(--y)',bonus:'var(--p)',deduc
 
 function computeSuggestedForMonth(mKey){
   if(!emp)return 0;
-  const[ys,ms]=mKey.split('-').map(Number);
-  const mYear=ys,mMon=ms-1;
-  const dIM=new Date(mYear,mMon+1,0).getDate();
-  let wDays=0;
-  for(let d=1;d<=dIM;d++){const ds=mKey+'-'+String(d).padStart(2,'0');if(isWorkDay(ds)&&!isLeaveDay(ds))wDays++;}
-  if(wDays===0)wDays=26;
-  const base=parseFloat(emp.baseSalary)||0;
-  const mAtt=attendanceRecords.filter(a=>a.monthKey===mKey||(a.date&&a.date.startsWith(mKey)));
-  const daysPresent=mAtt.length;
-  const daysAbsent=Math.max(0,wDays-daysPresent);
-  const dailyRate=base/wDays;
-  const absenceDeduction=Math.round(dailyRate*daysAbsent);
-  // Tardiness deduction: each late record costs a fraction of a day:
-  //   ≤30 min  → 0 (within grace)
-  //   31-120 min → 1/4 day
-  //   121-240 min → 1/2 day
-  //   >240 min → full day
-  let tardinessDays=0;
-  mAtt.forEach(a=>{
-    const lm=parseInt(a.lateMinutes)||0;
-    if(lm>240)tardinessDays+=1;
-    else if(lm>120)tardinessDays+=0.5;
-    else if(lm>30)tardinessDays+=0.25;
-  });
-  const tardinessDeduction=Math.round(dailyRate*tardinessDays);
-  const attendanceBonus=(daysAbsent===0&&tardinessDays===0)?(parseFloat(emp.attendanceBonus)||0):0;
-  const uid=emp.authUid||empId;
-  let commission=0;
-  // العمولة على أساس تاريخ التحصيل (paidAt) لا الإنشاء (createdAt)
-  const mOrders=allOrders.filter(o=>{
-    if(o.paymentStatus!=='paid')return false;
-    const paidDate=o.paidAt?.toDate?.();
-    if(paidDate)return paidDate.getMonth()===mMon&&paidDate.getFullYear()===mYear;
-    const createdDate=o.createdAt?.toDate?.();
-    return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
-  });
-  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    commission=mOrders.filter(o=>(o.designerId===uid||o.designerId===empId))
-      .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
-  } else if(emp.role==='production_agent'){
-    commission=mOrders.filter(o=>o.productionAgent===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  } else if(emp.role==='shipping_officer'){
-    commission=mOrders.filter(o=>o.shippingOfficerId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  } else if(emp.role==='customer_service'){
-    commission=mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  }
-  return Math.max(0,base-absenceDeduction-tardinessDeduction+attendanceBonus+Math.round(commission));
+  return computeSalarySuggestion({
+    mKey, employee:emp, employeeId:empId,
+    attendance:attendanceRecords, leaves:empLeaves, allOrders,
+  }).suggested;
 }
 
 function renderSalaries(){
@@ -2597,58 +2555,17 @@ window.updateSalaryCalc=function(){
   if(!emp)return;
   const sel=document.getElementById('sal-month-sel');
   const mKey=sel?sel.value:monthKey();
-  const [yearStr,monStr]=mKey.split('-');
-  const mYear=parseInt(yearStr),mMon=parseInt(monStr)-1;
   const salType=document.getElementById('sal-type')?.value||'salary';
 
-  const base=parseFloat(emp.baseSalary)||0;
-  const uid=emp.authUid||empId;
-
-  // حضور
-  const mAtt=attendanceRecords.filter(a=>a.monthKey===mKey||(a.date&&a.date.startsWith(mKey)));
-  const daysInSelectedMonth=new Date(mYear,mMon+1,0).getDate();
-  let workDays=0;
-  for(let d=1;d<=daysInSelectedMonth;d++){const ds=mKey+'-'+String(d).padStart(2,'0');if(isWorkDay(ds)&&!isLeaveDay(ds))workDays++;}
-  if(workDays===0)workDays=26;
-  const daysPresent=mAtt.length;
-  const daysAbsent=Math.max(0,workDays-daysPresent);
-  const dailyRate=base/workDays;
-  const absenceDeduction=Math.round(dailyRate*daysAbsent);
-  // Tardiness ladder (same as computeSuggestedForMonth)
-  let tardinessDays=0,lateRecords=0;
-  mAtt.forEach(a=>{
-    const lm=parseInt(a.lateMinutes)||0;
-    if(lm>0)lateRecords++;
-    if(lm>240)tardinessDays+=1;
-    else if(lm>120)tardinessDays+=0.5;
-    else if(lm>30)tardinessDays+=0.25;
+  // الحساب pure في core/employee-salary-calc.js
+  const calc=computeSalarySuggestion({
+    mKey, employee:emp, employeeId:empId,
+    attendance:attendanceRecords, leaves:empLeaves, allOrders,
   });
-  const tardinessDeduction=Math.round(dailyRate*tardinessDays);
-  const attendanceBonus=(daysAbsent===0&&tardinessDays===0)?(parseFloat(emp.attendanceBonus)||0):0;
-
-  // عمولة
-  let commission=0;
-  // العمولة على أساس تاريخ التحصيل (paidAt) لا الإنشاء (createdAt)
-  const mOrders2=allOrders.filter(o=>{
-    if(o.paymentStatus!=='paid')return false;
-    const paidDate=o.paidAt?.toDate?.();
-    if(paidDate)return paidDate.getMonth()===mMon&&paidDate.getFullYear()===mYear;
-    const createdDate=o.createdAt?.toDate?.();
-    return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
-  });
-  if(emp.role==='graphic_designer'||emp.role==='design_operator'){
-    commission=mOrders2.filter(o=>(o.designerId===uid||o.designerId===empId))
-      .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(emp.commissionPct)||0)/100),0);
-  } else if(emp.role==='production_agent'){
-    commission=mOrders2.filter(o=>o.productionAgent===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  } else if(emp.role==='shipping_officer'){
-    commission=mOrders2.filter(o=>o.shippingOfficerId===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  } else if(emp.role==='customer_service'){
-    commission=mOrders2.filter(o=>o.createdBy===uid).length*(parseFloat(emp.commissionPerOrder)||0);
-  }
-
-  const suggested=Math.max(0,base-absenceDeduction-tardinessDeduction+attendanceBonus+Math.round(commission));
-  salaryData={base,commission:Math.round(commission),suggested,month:mKey,absenceDeduction,tardinessDeduction,attendanceBonus,daysPresent,daysAbsent,workDays,tardinessDays,lateRecords};
+  const {base,commission,suggested,absenceDeduction,tardinessDeduction,attendanceBonus,
+         daysPresent,daysAbsent,workDays,tardinessDays,lateRecords}=calc;
+  salaryData={base,commission,suggested,month:mKey,absenceDeduction,tardinessDeduction,
+              attendanceBonus,daysPresent,daysAbsent,workDays,tardinessDays,lateRecords};
 
   // الكالك بوكس: يظهر فقط لنوع مرتب
   const calcBox=document.getElementById('sal-calc-box');
