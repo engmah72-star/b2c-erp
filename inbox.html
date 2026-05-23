@@ -592,6 +592,8 @@ import {
   renderTextWithMentions as _renderTextWithMentions,
   groupStoriesByUser as _groupStoriesByUser,
 } from "./core/inbox-utils.js";
+import { buildConvListHTML } from "./features/inbox/views/conv-list-view.js";
+import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./features/inbox/views/chat-view.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'#3b9eff',customer_service:'#22d3ee',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -767,71 +769,15 @@ function subscribeOrders(){
 // ── Render conv list ──
 function renderConvList(){
   const list=$('ib-convs');if(!list)return;
-  const q=(searchQuery||'').toLowerCase();
-  let items=conversations.slice();
-  // sort by lastMessageAt desc
-  items.sort((a,b)=>(b.lastMessageAt?.seconds||0)-(a.lastMessageAt?.seconds||0));
-  // tab filter
-  if(listTab==='archived'){items=items.filter(c=>(c.archivedBy||[]).includes(currentUid));}
-  else {items=items.filter(c=>!(c.archivedBy||[]).includes(currentUid));}
-  // search filter
-  if(q){items=items.filter(c=>{
-    const n=convDisplayName(c).toLowerCase();
-    return n.includes(q)||(c.lastMessagePreview||'').toLowerCase().includes(q);
-  });}
-  // counts
-  $('cnt-all').textContent=conversations.filter(c=>!(c.archivedBy||[]).includes(currentUid)).length;
-  $('cnt-arc').textContent=conversations.filter(c=>(c.archivedBy||[]).includes(currentUid)).length;
-  if(!items.length){
-    if(searchQuery){
-      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md)">لا نتائج</div>`;
-    } else if(listTab==='archived'){
-      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md)">لا توجد محادثات مؤرشفة</div>`;
-    } else if(conversations.length===0){
-      // empty قبل أي تحميل أو بعد فشل ensureChannels — نعرض diagnostic
-      list.innerHTML=`<div style="padding:28px 20px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md);line-height:1.9">
-        <div style="font-size:42px;margin-bottom:10px;opacity:.5">💬</div>
-        <strong style="color:var(--ws-text)">لا توجد محادثات بعد</strong><br>
-        <span style="font-size:var(--fs-sm);color:var(--ws-text-dim)">role: ${currentRole||'غير محدد'} · uid: ${(currentUid||'').slice(0,6)}…</span><br>
-        <button onclick="retryEnsureChannels()" style="margin-top:12px;padding:8px 16px;border-radius:10px;border:1px solid var(--ws-border);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:700">🔄 إعادة الإعداد</button>
-        <button onclick="newDM()" style="margin-top:12px;margin-right:6px;padding:8px 16px;border-radius:10px;border:none;background:#00a884;color:#fff;cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:700">✏️ محادثة جديدة</button>
-        <div style="font-size:var(--fs-xs);margin-top:10px;color:var(--ws-text-dim);opacity:.7">افتح Console (F12) لتفاصيل التشخيص</div>
-      </div>`;
-    } else {
-      list.innerHTML=`<div style="padding:40px 20px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md)">ابدأ محادثة بالضغط على ✏️</div>`;
-    }
-    return;
-  }
-  list.innerHTML=items.map(c=>{
-    const isActive=c._id===activeConvId;
-    const name=convDisplayName(c);
-    const ico=convIcon(c);
-    const col=convColor(c);
-    const unread=(c.unreadCount?.[currentUid]||0);
-    const isDM=c.type==='dm';
-    const otherUid=isDM?(c.participants||[]).find(p=>p!==currentUid):null;
-    const otherPresence=otherUid?presenceMap.get(otherUid):null;
-    const isOnline=otherPresence&&isUserOnline(otherPresence);
-    const lastTime=fmtTime(c.lastMessageAt);
-    const lastSender=c.lastSenderId===currentUid?'أنت: ':(isDM?'':(c.lastSenderName?c.lastSenderName+': ':''));
-    const tick=c.lastSenderId===currentUid?(c.lastReadByAll?'✓✓':'✓'):'';
-    const tickClass=c.lastReadByAll?'read':'';
-    return `<div class="ib-conv ${isActive?'active':''} ${unread?'unread':''}" data-id="${c._id}" onclick="openConv('${c._id}')">
-      <div class="ib-conv-avatar" style="background:${col}">${ico}${isDM?`<span class="presence ${isOnline?'online':''}"></span>`:''}</div>
-      <div class="ib-conv-body">
-        <div class="ib-conv-top">
-          <div class="ib-conv-name">${esc(name)}</div>
-          <div class="ib-conv-time">${lastTime}</div>
-        </div>
-        <div class="ib-conv-bot">
-          <div class="ib-conv-last">${tick?`<span class="ib-conv-tick ${tickClass}">${tick}</span> `:''}${esc(lastSender+(c.lastMessagePreview||''))}</div>
-          <div class="ib-conv-meta">
-            ${unread>0?`<span class="ib-conv-unread">${unread>99?'99+':unread}</span>`:''}
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+  // pure view module: features/inbox/views/conv-list-view.js
+  const r=buildConvListHTML({
+    conversations, activeConvId, currentUid, currentRole,
+    allUsers, presenceMap, searchQuery, listTab,
+    roleColorMap:ROLE_COLOR,
+  });
+  list.innerHTML=r.html;
+  $('cnt-all').textContent=r.countAll;
+  $('cnt-arc').textContent=r.countArchived;
 }
 
 // Conversation meta + presence — pure logic مُمَركَزة في core/inbox-utils.js
@@ -896,68 +842,11 @@ window.closeChat=function(){
 
 function renderChat(){
   const wrap=$('ib-chat');if(!wrap||!activeConv)return;
-  wrap.innerHTML=`
-    <div class="ib-chat-hdr">
-      <button class="ib-chat-back" onclick="closeChat()">←</button>
-      <div class="ib-chat-hdr-info">
-        <div class="ib-conv-avatar" style="background:${convColor(activeConv)};width:40px;height:40px;font-size:15px">${convIcon(activeConv)}</div>
-        <div style="flex:1;min-width:0">
-          <div class="ib-chat-hdr-name" id="chat-hdr-name">${esc(convDisplayName(activeConv))}</div>
-          <div class="ib-chat-hdr-sub" id="chat-hdr-sub"></div>
-        </div>
-      </div>
-      <div class="ib-chat-hdr-actions" style="position:relative">
-        <button class="ib-iconbtn" onclick="toggleConvSearch()" title="بحث في المحادثة">🔍</button>
-        <button class="ib-iconbtn" onclick="openAIPanel()" title="مساعد AI">🤖</button>
-        <button class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
-        <button class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
-        <button class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
-        <div class="ib-chat-menu" id="chat-menu">
-          <button class="ib-cm-item" onclick="openPinnedList()">📌 الرسائل المثبتة</button>
-          <button class="ib-cm-item" onclick="clearChatForMe()">🧹 مسح المحادثة (لي فقط)</button>
-          <button class="ib-cm-item" onclick="openWallpaperPicker()">🎨 خلفية المحادثة</button>
-        </div>
-      </div>
-    </div>
-    <!-- Pinned messages strip (clickable) -->
-    <div class="ib-pin-strip" id="pin-strip" onclick="openPinnedList()">
-      <span class="ib-pin-ico">📌</span>
-      <div class="ib-pin-body">
-        <div class="ib-pin-label">رسالة مثبتة</div>
-        <div class="ib-pin-text" id="pin-strip-text"></div>
-      </div>
-      <span class="ib-pin-count" id="pin-strip-count">1</span>
-    </div>
-    <!-- In-conversation search bar -->
-    <div class="ib-csearch-bar" id="csearch-bar">
-      <input type="text" id="csearch-input" placeholder="🔍 ابحث في الرسائل…" oninput="onConvSearch()" onkeydown="onConvSearchKey(event)">
-      <div class="ib-csearch-nav">
-        <span id="csearch-info">—</span>
-        <button onclick="convSearchNav(-1)" title="السابق">↑</button>
-        <button onclick="convSearchNav(1)" title="التالي">↓</button>
-      </div>
-      <button class="ib-csearch-close" onclick="toggleConvSearch()" title="إغلاق">✕</button>
-    </div>
-    <div class="ib-msgs" id="ib-msgs"></div>
-    <div class="ib-reply-strip" id="reply-strip">
-      <div class="ib-reply-body">
-        <div class="ib-reply-name" id="reply-name"></div>
-        <div class="ib-reply-text" id="reply-text"></div>
-      </div>
-      <button class="ib-reply-close" onclick="cancelReply()">✕</button>
-    </div>
-    <div class="ib-composer" id="composer">
-      <button class="ib-iconbtn" onclick="toggleEmoji()" title="إيموجي">😀</button>
-      <button class="ib-iconbtn" onclick="pickFile()" title="مرفق">📎</button>
-      <button class="ib-iconbtn" onclick="openOrderPicker()" title="إرسال أوردر">📦</button>
-      <div class="ib-input-wrap">
-        <textarea class="ib-input" id="ib-input" rows="1" placeholder="اكتب رسالة…" oninput="onTyping(this)" onkeydown="onComposerKey(event)"></textarea>
-      </div>
-      <button class="ib-iconbtn" id="ib-mic" onmousedown="startVoice()" ontouchstart="startVoice()" onmouseup="stopVoice()" ontouchend="stopVoice()" title="رسالة صوتية">🎤</button>
-      <button class="ib-send hide" id="ib-send" onclick="sendText()">▶</button>
-      <div class="ib-emoji-panel" id="emoji-panel">${EMOJIS.map(e=>`<button class="ib-emoji-btn" onclick="insertEmoji('${e}')">${e}</button>`).join('')}</div>
-      <div class="ib-mention-pop" id="mention-pop"></div>
-    </div>`;
+  wrap.innerHTML=buildChatShellHTML({
+    activeConv,
+    ctx:{currentUid,allUsers,roleColorMap:ROLE_COLOR},
+    EMOJIS,
+  });
   renderMessages();
   renderChatHeader();
   $('ib-input')?.focus();
@@ -965,108 +854,20 @@ function renderChat(){
 
 function renderChatHeader(){
   const sub=$('chat-hdr-sub');if(!sub||!activeConv)return;
-  if(activeConv.type==='dm'){
-    const otherUid=(activeConv.participants||[]).find(p=>p!==currentUid);
-    const p=presenceMap.get(otherUid);
-    const typing=p?.typingIn===activeConvId;
-    if(typing){sub.textContent='يكتب الآن…';sub.className='ib-chat-hdr-sub online';}
-    else if(isUserOnline(p)){sub.textContent='متصل';sub.className='ib-chat-hdr-sub online';}
-    else if(p?.lastSeen){
-      const last=p.lastSeen.toDate?.();
-      sub.textContent='آخر ظهور '+(last?last.toLocaleString('ar-EG',{hour:'2-digit',minute:'2-digit'}):'—');
-      sub.className='ib-chat-hdr-sub';
-    } else { sub.textContent='—';sub.className='ib-chat-hdr-sub'; }
-  } else if(activeConv.type==='channel'){
-    const cnt=(activeConv.participants||[]).length;
-    const onlineCnt=(activeConv.participants||[]).filter(uid=>isUserOnline(presenceMap.get(uid))).length;
-    sub.textContent=`${cnt} عضو · ${onlineCnt} متصل`;
-    sub.className='ib-chat-hdr-sub';
-  }
+  const r=buildChatHeaderSub({activeConv,presenceMap,currentUid});
+  sub.textContent=r.text;
+  sub.className=r.className;
 }
 
 function renderMessages(){
   const wrap=$('ib-msgs');if(!wrap)return;
-  if(!messages.length){
-    wrap.innerHTML=`<div style="margin:auto;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md);padding:40px">ابدأ المحادثة برسالة 👋</div>`;
-    return;
-  }
-  let html='';let lastDate='';let lastSender='';
-  messages.forEach((m,i)=>{
-    const ts=m.createdAt?.toDate?.();const dateStr=ts?ts.toLocaleDateString('ar-EG',{day:'numeric',month:'long',year:'numeric'}):'';
-    if(dateStr!==lastDate){html+=`<div class="ib-date-sep">${dateStr}</div>`;lastDate=dateStr;lastSender='';}
-    if(m.type==='system'){html+=`<div class="ib-system-msg">${esc(m.text||'')}</div>`;return;}
-    if(m.deletedAt){
-      const isOut=m.senderId===currentUid;
-      html+=`<div class="ib-msg ${isOut?'out':'in'}"><div class="ib-bubble" style="opacity:.6;font-style:italic">🚫 رسالة محذوفة</div></div>`;
-      lastSender=m.senderId;return;
-    }
-    const isOut=m.senderId===currentUid;
-    const consec=lastSender===m.senderId&&i>0;
-    lastSender=m.senderId;
-    const time=ts?ts.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}):'';
-    const readByOther=isOut&&activeConv?.type==='dm'&&Object.keys(m.readBy||{}).filter(u=>u!==currentUid).length>0;
-    const tick=isOut?`<span class="ib-msg-tick ${readByOther?'read':''}">${readByOther?'✓✓':'✓'}</span>`:'';
-    // quote (reply-to preview)
-    let quote='';
-    if(m.replyTo){
-      quote=`<div class="ib-quote" onclick="jumpToMsg('${m.replyTo.msgId}')">
-        <div class="ib-quote-name">${esc(m.replyTo.senderName||'')}</div>
-        <div class="ib-quote-text">${esc(m.replyTo.preview||'')}</div>
-      </div>`;
-    }
-    // body by type
-    let body='';
-    if(m.type==='image'&&m.attachments?.[0]){
-      body=`<img class="ib-msg-img" src="${m.attachments[0].url}" onclick="openLb('${m.attachments[0].url}')" alt="" loading="lazy" decoding="async">`;
-    } else if(m.type==='file'&&m.attachments?.[0]){
-      const a=m.attachments[0];
-      body=`<a class="ib-msg-file" href="${a.url}" target="_blank" rel="noopener" download="${esc(a.name||'')}">
-        <span class="ib-msg-file-ico">📄</span>
-        <div class="ib-msg-file-info"><div class="ib-msg-file-name">${esc(a.name||'مستند')}</div><div class="ib-msg-file-size">${fmtBytes(a.size||0)}</div></div>
-      </a>`;
-    } else if(m.type==='voice'&&m.attachments?.[0]){
-      const v=m.attachments[0];
-      const dur=v.duration||0;
-      const durStr=Math.floor(dur/60)+':'+String(Math.floor(dur%60)).padStart(2,'0');
-      body=`<div class="ib-voice-bubble">
-        <button class="ib-voice-play" onclick="toggleVoice(this,'${v.url}')">▶</button>
-        <div class="ib-voice-progress" onclick="event.stopPropagation()"><div class="ib-voice-progress-fill"></div></div>
-        <div class="ib-voice-dur">${durStr}</div>
-      </div>`;
-    } else if(m.type==='order_share'&&m.orderRef){
-      const o=m.orderRef;
-      body=`<a class="ib-ordercard" href="design.html?order=${o.orderId}">
-        <div class="ib-ordercard-hdr">📦 أوردر</div>
-        <div class="ib-ordercard-client">${esc(o.clientName||'—')}</div>
-        <div class="ib-ordercard-id">#${esc(o.orderCode||o.orderId)}</div>
-        <div class="ib-ordercard-meta">
-          ${o.stage?`<span class="ib-ordercard-chip">${esc(o.stage)}</span>`:''}
-          ${o.salePrice?`<span class="ib-ordercard-chip">${esc(String(o.salePrice))} ج</span>`:''}
-          ${o.deadline?`<span class="ib-ordercard-chip">📅 ${esc(o.deadline)}</span>`:''}
-        </div>
-      </a>`;
-    }
-    const text=m.text?`<div class="ib-msg-text">${renderTextWithMentions(m.text)}${m.editedAt?'<span class="ib-msg-edited"> (مُعدّلة)</span>':''}</div>`:'';
-    const senderName=!isOut&&!consec&&activeConv?.type==='channel'?`<div class="sender">${esc(m.senderName||'')}</div>`:'';
-    // reactions chips
-    const rxs=Object.entries(m.reactions||{}).filter(([_,arr])=>(arr||[]).length>0);
-    const reactBlock=rxs.length?`<div class="ib-reactions">${rxs.map(([emo,uids])=>{
-      const mine=(uids||[]).includes(currentUid);
-      return `<button class="ib-react-chip ${mine?'mine':''}" onclick="toggleReact('${m._id}','${emo}')">${emo}<span class="cnt">${uids.length}</span></button>`;
-    }).join('')}</div>`:'';
-    const pinned=m.pinned?'pinned-msg':'';
-    html+=`<div class="ib-msg ${isOut?'out':'in'} ${consec?'consec':''} ${pinned}" data-mid="${m._id}" onclick="onMsgClick(event,'${m._id}')">
-      ${senderName}
-      <div class="ib-bubble">${quote}${body}${text}<span class="ib-msg-foot">${m.pinned?'<span title="مثبتة" style="margin-left:4px;color:#f59e0b">📌</span>':''}${time} ${tick}</span></div>
-      ${reactBlock}
-    </div>`;
-  });
-  wrap.innerHTML=html;
+  // pure view module: features/inbox/views/chat-view.js
+  wrap.innerHTML=buildMessagesHTML({messages,activeConv,currentUid,renderTextWithMentions});
   // attach long-press listeners
   wrap.querySelectorAll('.ib-msg').forEach(el=>attachLongPress(el));
   // scroll to bottom
   requestAnimationFrame(()=>{wrap.scrollTop=wrap.scrollHeight;});
-  // refresh pinned strip + restore search highlights (defined below)
+  // refresh pinned strip + restore search highlights
   if (typeof refreshPinStrip === 'function') refreshPinStrip();
   if (typeof __cSearchMatches !== 'undefined' && __cSearchMatches.length) {
     __cSearchMatches.forEach(mid => {
