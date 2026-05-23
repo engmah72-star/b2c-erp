@@ -137,13 +137,23 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
   import { createClientOrdersIndexCache } from './core/client-orders-index.js';
   import { readBizCardFromForm, formatBizCardText } from './features/clients/bizcard-form.js';
   import { buildFollowupOrderOptions, buildFollowupPayload, getFollowupRatingLabel } from './features/clients/followup-form.js';
+  import * as NewOrder from './features/clients/new-order-form.js';
   window.buildArchiveSpec = buildArchiveSpec;
   window.__clientOrdersIndex = createClientOrdersIndexCache();
-  window.__readBizCardFromForm = readBizCardFromForm;
-  window.__formatBizCardText = formatBizCardText;
-  window.__buildFollowupOrderOptions = buildFollowupOrderOptions;
-  window.__buildFollowupPayload = buildFollowupPayload;
-  window.__getFollowupRatingLabel = getFollowupRatingLabel;
+  Object.assign(window, {
+    __readBizCardFromForm: readBizCardFromForm,
+    __formatBizCardText: formatBizCardText,
+    __buildFollowupOrderOptions: buildFollowupOrderOptions,
+    __buildFollowupPayload: buildFollowupPayload,
+    __getFollowupRatingLabel: getFollowupRatingLabel,
+    __buildDesignerOptions: NewOrder.buildDesignerOptions,
+    __computeDesignerLoad: NewOrder.computeDesignerLoad,
+    __buildWalletOptionsHTML: NewOrder.buildWalletOptionsHTML,
+    __getOrderTypePriceHint: NewOrder.getOrderTypePriceHint,
+    __getOrderTypeCardClasses: NewOrder.getOrderTypeCardClasses,
+    __validateNewOrderForm: NewOrder.validateNewOrderForm,
+    __generateOrderId: NewOrder.generateOrderId,
+  });
 </script>
 
 <!-- P1.2: clientActions module — exposes window.clientActions for compat consumers below.
@@ -1259,20 +1269,13 @@ function openNewOrder(){
   const canAssign=['admin','operation_manager','customer_service','design_operator'].includes(currentRole);
   const desWrap=document.getElementById('designer-field-wrap');
   if(desWrap) desWrap.style.display=canAssign?'block':'none';
+  // Designer + wallet options — pure builders في features/clients/new-order-form.js
   const desSel=document.getElementById('no-designer');
   if(desSel){
-    const desLoad={};
-    allOrders.forEach(o=>{if(o.designerId&&o.stage==='design')desLoad[o.designerId]=(desLoad[o.designerId]||0)+1;});
-    const desOpts=designers.map(d=>{
-      const n=d.name||d.email||'—';
-      const load=desLoad[d._id]||0;
-      const ico=load===0?'🟢':load<=3?'🟡':'🔴';
-      return`<option value="${d._id}">${ico} ${n} — ${load} أوردر نشط</option>`;
-    }).join('');
-    desSel.innerHTML='<option value="">— بدون مصمم —</option>'+desOpts;
+    desSel.innerHTML=window.__buildDesignerOptions?.(designers,window.__computeDesignerLoad?.(allOrders)||{})||'';
   }
   const walSel=document.getElementById('no-wallet');
-  if(walSel)walSel.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
+  if(walSel)walSel.innerHTML=window.__buildWalletOptionsHTML?.(wallets,fn)||'';
   setText('order-modal-title','✏️ طلب جديد — '+cl.name);
   document.getElementById('ov-order').classList.add('open');
 }
@@ -1291,11 +1294,11 @@ window.calcNoRemaining=function(){
 };
 function selectOrderType(type){
   document.getElementById('no-stage').value=type;
-  document.getElementById('tc-design').className='type-card'+(type==='design'?' sel-design':'');
-  document.getElementById('tc-printing').className='type-card'+(type==='printing'?' sel-printing':'');
-  // hint جنب حقل السعر — اختياري للتصميم، إجباري للطباعة
+  const cls=window.__getOrderTypeCardClasses?.(type)||{design:'type-card',printing:'type-card'};
+  document.getElementById('tc-design').className=cls.design;
+  document.getElementById('tc-printing').className=cls.printing;
   const hint=document.getElementById('no-sale-price-hint');
-  if(hint)hint.textContent=type==='design'?'(اختياري — يمكن تحديده لاحقاً)':type==='printing'?'(إجباري)':'';
+  if(hint)hint.textContent=window.__getOrderTypePriceHint?.(type)||'';
 }
 window.__noDesignFiles=[];
 window.addDesignFiles=function(inp){
@@ -1348,9 +1351,8 @@ window.removeDesignFile=function(idx){
 // P1.4 + P1.5 — Thin orchestration over window.orderActions.createOrder.
 // File upload (Firebase Storage compat) stays in the page; action receives URLs.
 function saveNewOrder(){
-  // ─ Form collection + UI-only validation ─
+  // ─ Form collection ─
   const stage=gv('no-stage');
-  if(!stage){toast('⚠️ اختر نوع الأوردر','err');return;}
   const rows=document.querySelectorAll('#no-prod-rows .no-prod-row');
   const prods=[];
   for(const row of rows){
@@ -1359,22 +1361,28 @@ function saveNewOrder(){
     const opt=sel.options[sel.selectedIndex];
     prods.push({productId:sel.value,name:opt.dataset.name||opt.text,qty:parseInt(qty?.value)||1,unitPrice:parseFloat(opt.dataset.price)||0,addons:[],instructions:'',productStatus:stage==='printing'?'ready':'pending'});
   }
-  if(!prods.length){toast('⚠️ أضف منتجاً على الأقل','err');return;}
   const salePrice=parseFloat(gv('no-sale-price'))||0;
-  if(stage==='printing'&&salePrice<=0){toast('⚠️ يجب إدخال سعر الأوردر','err');document.getElementById('no-sale-price')?.focus();return;}
-  const cl=clients.find(x=>x._id===pendingClientId);if(!cl)return;
-  if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
   const dep=parseFloat(gv('no-deposit'))||0;
   const wId=gv('no-wallet');
+
+  // ─ Validation (centralized pure validator) ─
+  const v=window.__validateNewOrderForm?.({stage,products:prods,salePrice,deposit:dep,walletId:wId})||{ok:true};
+  if(!v.ok){
+    toast(v.errors[0],'err');
+    if(v.focusField)document.getElementById(v.focusField)?.focus();
+    return;
+  }
+
+  const cl=clients.find(x=>x._id===pendingClientId);if(!cl)return;
+  if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
   const wEl=document.getElementById('no-wallet');
   const wName=wEl?.options[wEl?.selectedIndex]?.text||'';
-  if(dep>0&&!wId){toast('⚠️ اختر المحفظة للعربون','err');return;}
   if(!window.orderActions){toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;}
 
   const desSel=document.getElementById('no-designer');
   const designerId=desSel?.value||'';
   const designerName=designerId?(desSel?.options[desSel?.selectedIndex]?.text||''):'';
-  const orderId='ORD-'+Date.now().toString().slice(-8);
+  const orderId=window.__generateOrderId?.()||('ORD-'+Date.now().toString().slice(-8));
   const productName=prods.map(p=>p.name).join(' + ');
   const btn=document.getElementById('no-save-btn');btn.disabled=true;btn.textContent='جاري...';
   const designNote=gv('no-design-note');
