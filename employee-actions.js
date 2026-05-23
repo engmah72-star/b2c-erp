@@ -11,8 +11,9 @@
  *   - الـ Firebase Auth operations (createUser/signIn/updatePassword) تبقى في
  *     الصفحة لأنها mixed flow — الـ caller يوفّر الـ Auth params الناتجة كـ
  *     newAuthUid مثلاً ويستدعي linkRebuiltAuth بعدها
- *   - SALARY_PAYMENT + REVERSAL يمران عبر `dispatchFinancialEvent` مباشرة في
- *     الصفحة لأن FSE هو الـ trust boundary — لا قيمة من wrapping إضافي
+ *   - SALARY_PAYMENT + REVERSAL يمرّان عبر `recordSalaryPayment` /
+ *     `reverseSalaryPayment` هنا (Phase-0 H1.1 fix) — الـ wrappers تضيف
+ *     `withIdempotency` على الكتابة المالية وتمنع double-submit
  *
  * كل action يُرجع: { ok, errors[], warnings[], ... }
  */
@@ -30,6 +31,8 @@ import {
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
+import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { withIdempotency } from './core/idempotency.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
@@ -581,6 +584,121 @@ export async function upsertEmployeeEvaluation({
 }
 
 // ══════════════════════════════════════════
+// SALARY PAYMENT (H1.1 fix · Phase-0 god-page decomp)
+// ══════════════════════════════════════════
+// تمرير SALARY_PAYMENT + REVERSAL عبر hier (بدل dispatchFinancialEvent المباشر
+// من الصفحة) يحقّق:
+//   - H1.1: لا direct financial dispatch من UI layer
+//   - H1.2: idempotency على salary actions (double-click، parallel tabs، retry)
+//   - Result contract موحَّد { ok, errors[], warnings[], operationId, idempotent }
+
+export async function recordSalaryPayment({
+  db = defaultDb,
+  employeeId, employeeName,
+  amount, salaryType = 'salary', isDeduction = false,
+  walletId, walletName = '',
+  note = '', month,
+  baseSalary = 0, commission = 0,
+  absenceDeduction = 0, tardinessDeduction = 0, attendanceBonus = 0,
+  daysPresent = null, daysAbsent = null,
+  tardinessDays = 0, lateRecords = 0,
+  date = '',
+  userId, userName = '',
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!walletId) return { ok: false, errors: ['⚠️ اختر المحفظة'], warnings: [] };
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل المبلغ'], warnings: [] };
+  if (!month) return { ok: false, errors: ['⚠️ month مطلوب'], warnings: [] };
+
+  return withIdempotency(db, {
+    actionType: 'salary_payment',
+    entityId: `${employeeId}|${month}`,
+    actorId: userId,
+    actorName: userName,
+    payload: { amount: amt, salaryType, isDeduction, walletId },
+  }, async () => {
+    try {
+      const eventResult = await dispatchFinancialEvent(db, FE.SALARY_PAYMENT, {
+        employeeId, employeeName: employeeName || '',
+        amount: amt, salaryType, isDeduction,
+        walletId, walletName,
+        note, month,
+        baseSalary, commission,
+        absenceDeduction, tardinessDeduction, attendanceBonus,
+        daysPresent, daysAbsent,
+        tardinessDays, lateRecords,
+        date: date || new Date().toLocaleDateString('ar-EG'),
+        userId, userName,
+      });
+      return {
+        ok: true,
+        errors: [],
+        warnings: [],
+        eventType: FE.SALARY_PAYMENT,
+        action: isDeduction ? 'salary_deduction' : 'salary_payment',
+        txId: eventResult?.txId,
+        epId: eventResult?.epId,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل تسجيل الدفعة'],
+        warnings: [],
+      };
+    }
+  });
+}
+
+export async function reverseSalaryPayment({
+  db = defaultDb,
+  txId, epId,
+  walletId, walletName = '',
+  amount, isDeduction = false,
+  employeeId, employeeName,
+  userId, userName = '',
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0) return { ok: false, errors: ['⚠️ amount مطلوب'], warnings: [] };
+
+  return withIdempotency(db, {
+    actionType: 'salary_payment_reversal',
+    entityId: txId || epId || `${employeeId}|reversal`,
+    actorId: userId,
+    actorName: userName,
+    payload: { amount: amt, isDeduction, walletId, txId, epId },
+  }, async () => {
+    try {
+      const eventResult = await dispatchFinancialEvent(db, FE.SALARY_PAYMENT_REVERSAL, {
+        txId, epId,
+        walletId, walletName,
+        amount: amt, isDeduction,
+        employeeId, employeeName: employeeName || '',
+        userId, userName,
+      });
+      return {
+        ok: true,
+        errors: [],
+        warnings: [],
+        eventType: FE.SALARY_PAYMENT_REVERSAL,
+        action: 'salary_reversal',
+        eventResult,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل حذف الدفعة'],
+        warnings: [],
+      };
+    }
+  });
+}
+
+// ══════════════════════════════════════════
 // EXPORTS
 // ══════════════════════════════════════════
 
@@ -598,6 +716,7 @@ export const employeeActions = {
   addEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
+  recordSalaryPayment, reverseSalaryPayment,
 };
 
 export default employeeActions;
