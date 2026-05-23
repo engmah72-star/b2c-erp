@@ -550,6 +550,7 @@ import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRan
 import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
 import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue, calcStageDistribution, calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount, calcMonthlyRevenueChart, diffHTML } from "./core/reports-financial-kpis.js";
 import { buildDesignerStats, buildShippingStats, buildClientActivityStats } from "./core/reports-tab-stats.js";
+import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -663,85 +664,13 @@ function telLink(p){return p?`tel:${String(p).replace(/[^0-9+]/g,'')}`:'';}
 
 // ══ Priority items (top 5 actionable issues) ══
 // scoring = urgency × amount → الأهم في الأعلى
+// pure aggregator في core/reports-priorities.js
 function buildPriorityItems(){
-  const items=[];
-  // 1) بعد التصميم بدون تحصيل — أعلى أولوية
-  orders.forEach(o=>{
-    if(!(parseFloat(o.salePrice)>0))return;
-    if(!['printing','production','shipping'].includes(o.stage))return;
-    const rem=calcRem(o);if(rem<=0)return;
-    const days=daysSince(o.updatedAt||o.createdAt);
-    items.push({
-      key:'pd_'+o._id,type:'post-design',score:5*rem,amount:rem,
-      icon:'🚨',color:'var(--r)',
-      title:o.clientName||'—',phone:o.clientPhone||'',
-      subtitle:`بعد التصميم · ${days} يوم`,
-      orderId:o._id,actions:['phone','wa','open'],
-    });
+  return _buildPriorityItems({
+    orders, suppliers, payments,
+    calcRem, daysSince, isMissingCost, isStaleOrder,
+    limit: 8,
   });
-  // 2) متأخر تسليم
-  orders.forEach(o=>{
-    if(!o.deadline||o.stage==='archived')return;
-    const d=new Date(o.deadline);if(isNaN(d)||d>=new Date())return;
-    const daysLate=Math.floor((Date.now()-d.getTime())/86400000);
-    if(daysLate<=0)return;
-    items.push({
-      key:'lt_'+o._id,type:'late',score:4*((parseFloat(o.salePrice)||1)+daysLate*100),amount:parseFloat(o.salePrice)||0,
-      icon:'⏰',color:'var(--y)',
-      title:o.clientName||'—',phone:o.clientPhone||'',
-      subtitle:`متأخر تسليم ${daysLate} يوم · ${({design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'})[o.stage]||o.stage||''}`,
-      orderId:o._id,actions:['phone','open'],
-    });
-  });
-  // 3) بدون تكلفة — سلامة بيانات
-  orders.forEach(o=>{
-    if(!isMissingCost(o))return;
-    items.push({
-      key:'nc_'+o._id,type:'no-cost',score:3*((parseFloat(o.salePrice)||1)),amount:parseFloat(o.salePrice)||0,
-      icon:'🚫',color:'var(--r)',
-      title:o.clientName||'—',phone:o.clientPhone||'',
-      subtitle:`تنفيذ بدون تكلفة مسجّلة`,
-      orderId:o._id,actions:['open'],
-    });
-  });
-  // 4) راكد + عليه باقي
-  orders.forEach(o=>{
-    if(!(parseFloat(o.salePrice)>0))return;
-    const rem=calcRem(o);if(rem<=0)return;
-    if(!isStaleOrder(o))return;
-    const days=daysSince(o.updatedAt||o.createdAt);
-    items.push({
-      key:'st_'+o._id,type:'stale',score:2*rem,amount:rem,
-      icon:'🐢',color:'var(--y)',
-      title:o.clientName||'—',phone:o.clientPhone||'',
-      subtitle:`راكد ${days} يوم · عليه باقي`,
-      orderId:o._id,actions:['phone','wa','open'],
-    });
-  });
-  // 5) مستحق للموردين (تجاوز 500)
-  suppliers.forEach(sup=>{
-    const paidSum=payments.filter(x=>x.supplierId===sup._id).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
-    const purSum=orders.reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===sup._id).reduce((cs,c)=>cs+(parseFloat(c.total)||0),0),0);
-    const due=purSum-paidSum;
-    if(due<=500)return;
-    items.push({
-      key:'sv_'+sup._id,type:'vendor',score:1.5*due,amount:due,
-      icon:'🏭',color:'var(--y)',
-      title:sup.name||'—',phone:sup.phone||'',
-      subtitle:`مستحق دفع للمورد`,
-      actions:sup.phone?['phone']:[],
-    });
-  });
-  items.sort((a,b)=>b.score-a.score);
-  // dedup بنفس الأوردر/العميل لو ظهر أكتر من مرة (مثلاً post-design + stale)
-  const seen=new Set();const out=[];
-  for(const it of items){
-    const sig=it.orderId||it.key;
-    if(seen.has(sig))continue;
-    seen.add(sig);out.push(it);
-    if(out.length>=8)break;
-  }
-  return out;
 }
 
 // ══ Filter presets (localStorage) ══
@@ -1686,39 +1615,24 @@ function renderClients(f){
 
 // ══ Tab 5: Sales ══
 function renderSales(f,prev){
-  const withPrice=f.filter(o=>parseFloat(o.salePrice)>0||parseFloat(o.totalPaid)>0);
-  const tot=withPrice.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const contractTot=withPrice.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
-  const costs=withPrice.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c)=>cs+(parseFloat(c.total)||0),0),0);
-  const profit=tot-costs;
-  const margin=tot>0?Math.round(profit/tot*100):0;
-
-  const pWithPrice=prev.filter(o=>parseFloat(o.salePrice)>0||parseFloat(o.totalPaid)>0);
-  const pTot=pWithPrice.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
-  const pCosts=pWithPrice.reduce((s,o)=>s+(o.costItems||[]).reduce((cs,c)=>cs+(parseFloat(c.total)||0),0),0);
-
-  // المنتجات
-  const prodMap={};
-  f.forEach(o=>(o.products||[]).forEach(p=>{if(!prodMap[p.name])prodMap[p.name]={count:0,qty:0,rev:0};prodMap[p.name].count++;prodMap[p.name].qty+=(parseFloat(p.qty)||0);prodMap[p.name].rev+=(parseFloat(p.salePrice)||parseFloat(o.salePrice)/Math.max((o.products||[]).length,1)||0);}));
-  const sortedProds=Object.entries(prodMap).sort((a,b)=>b[1].count-a[1].count);
-  const maxProd=Math.max(...sortedProds.map(([,v])=>v.count),1);
-
+  // pure aggregator في core/reports-priorities.js
+  const s = buildSalesTabStats(f, prev);
   return`
     <div class="kpi-grid">
-      ${kpi(fn(tot)+' ج','الإيرادات','var(--b)',pTot)}
-      ${kpi(fn(costs)+' ج','التكاليف','var(--r)',pCosts)}
-      ${kpi((profit>=0?'ربح ':'خسارة ')+fn(Math.abs(profit))+' ج',profit>=0?'الربح':'الخسارة',profit>=0?'var(--g)':'var(--r)',pTot-pCosts)}
-      ${kpi(margin+'%','هامش الربح',margin>=30?'var(--g)':'var(--y)')}
+      ${kpi(fn(s.tot)+' ج','الإيرادات','var(--b)',s.pTot)}
+      ${kpi(fn(s.costs)+' ج','التكاليف','var(--r)',s.pCosts)}
+      ${kpi((s.profit>=0?'ربح ':'خسارة ')+fn(Math.abs(s.profit))+' ج',s.profit>=0?'الربح':'الخسارة',s.profit>=0?'var(--g)':'var(--r)',s.pTot-s.pCosts)}
+      ${kpi(s.margin+'%','هامش الربح',s.margin>=30?'var(--g)':'var(--y)')}
     </div>
     <div class="chart-wrap">
       <div class="chart-title">📦 أكثر المنتجات مبيعاً</div>
-      ${sortedProds.slice(0,10).map(([name,v])=>bar(name,v.count,maxProd,'linear-gradient(90deg,var(--r),var(--p))',' أوردر')).join('')}
+      ${s.sortedProducts.slice(0,10).map(([name,v])=>bar(name,v.count,s.maxProductCount,'linear-gradient(90deg,var(--r),var(--p))',' أوردر')).join('')}
     </div>
     <div class="chart-wrap">
       <div class="chart-title">💰 مقارنة الإيرادات والتكاليف</div>
-      ${bar('إيرادات',tot,Math.max(tot,costs),'var(--b)',' ج')}
-      ${bar('تكاليف',costs,Math.max(tot,costs),'var(--r)',' ج')}
-      ${bar('ربح',Math.max(profit,0),Math.max(tot,costs),'var(--g)',' ج')}
+      ${bar('إيرادات',s.tot,Math.max(s.tot,s.costs),'var(--b)',' ج')}
+      ${bar('تكاليف',s.costs,Math.max(s.tot,s.costs),'var(--r)',' ج')}
+      ${bar('ربح',Math.max(s.profit,0),Math.max(s.tot,s.costs),'var(--g)',' ج')}
     </div>`;
 }
 
@@ -1730,23 +1644,10 @@ let __dOrderId='',__dCostEditIdx=-1;
 // ══ Expense drawer ══
 let __expData=[],__expFilter='all';
 window.openExpenseDrawer=function(){
-  const range=getRange(filterMode);
-  __expData=transactions.filter(t=>{
-    if(t.type!=='out')return false;
-    const sec=t.createdAt?.seconds||0;if(!sec)return false;
-    const d=new Date(sec*1000);return d>=range.from&&d<=range.to;
-  }).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  const tot=__expData.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  // breakdown by category
-  const buckets={vendor:0,shipper:0,salary:0,general:0,other:0};
-  __expData.forEach(t=>{
-    const c=t.category||'';
-    if(c==='printer_payment'||c==='supplier'||c==='vendor_payment')buckets.vendor+=parseFloat(t.amount)||0;
-    else if(c==='shipper_payment'||c==='shipping_settlement'||c==='shipping_expense')buckets.shipper+=parseFloat(t.amount)||0;
-    else if(c==='salary'||c==='salary_payment'||c==='payroll')buckets.salary+=parseFloat(t.amount)||0;
-    else if(c==='general_expense'||c==='expense'||!c)buckets.general+=parseFloat(t.amount)||0;
-    else buckets.other+=parseFloat(t.amount)||0;
-  });
+  // pure aggregator في core/reports-priorities.js
+  const exp = buildExpenseBreakdown(transactions, getRange(filterMode));
+  __expData = exp.data;
+  const {total:tot, avg, buckets} = exp;
   document.getElementById('exp-drawer-sub').textContent=`${__expData.length} حركة · إجمالي ${fn(tot)} ج`;
   document.getElementById('exp-summary').innerHTML=`
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
@@ -1755,7 +1656,7 @@ window.openExpenseDrawer=function(){
         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">إجمالي الفترة</div>
       </div>
       <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
-        <div style="font-size:var(--fs-2xl);font-weight:900;color:var(--y)">${fn(tot/Math.max(1,__expData.length))} ج</div>
+        <div style="font-size:var(--fs-2xl);font-weight:900;color:var(--y)">${fn(avg)} ج</div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">متوسط الحركة</div>
       </div>
     </div>
