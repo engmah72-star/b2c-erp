@@ -581,6 +581,14 @@ import {
   getDelayedOrders, getCompanyReconciliation, getShippingKPIs,
   shipStageBadgeHTML, fmtMoney, fmtDays, SHIP_STAGE_LABELS,
 } from './shipping-service.js';
+import {
+  getDeliveryAddress as _getDeliveryAddress,
+  isCreatedToday as _isCreatedToday,
+  getCustomerContext as _getCustomerContext,
+  isUrgentOrder as _isUrgentOrder,
+  renderSmartBadges as _renderSmartBadges,
+  fmtTimestamp as _fmtTimestamp,
+} from './core/shipping-utils.js';
 
 // ══════════════════════════════════════════
 // STATE
@@ -986,58 +994,12 @@ function getEmptyHint(tab) {
   })[tab] || '';
 }
 
-function getDeliveryAddress(o) {
-  // العنوان الرسمي يأتي من shipGov + shipAddress (fallback إلى clientGov لو غير مُسجَّل)
-  const gov = o.shipGov || o.clientGov || '';
-  const addr = o.shipAddress || '';
-  return { gov, addr, full: [gov, addr].filter(Boolean).join(' — ') };
-}
-
-// ── Smart context helpers ─────────────────────────────────────
-function isCreatedToday(ts) {
-  if (!ts) return false;
-  const d = ts.toDate?.() || (typeof ts === 'string' ? new Date(ts) : ts);
-  if (!(d instanceof Date) || isNaN(d.getTime())) return false;
-  const t = new Date();
-  return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
-}
-
-function getCustomerContext(o) {
-  if (!o.clientId) return { count: 1, isNew: true, isLoyal: false, activeCount: 0 };
-  const all = orders.filter(x => x.clientId === o.clientId);
-  const active = all.filter(x => x.stage !== 'archived' && x.stage !== 'cancelled');
-  return {
-    count: all.length,
-    isNew: all.length === 1,
-    isLoyal: all.length >= 5,
-    activeCount: active.length,
-    multipleActive: active.length >= 2,
-  };
-}
-
-function isUrgentOrder(o) {
-  // عاجل = متأخر بالفعل في حالة الشحن
-  if (o.stage !== 'shipping' || o.shipStage === 'returned') return false;
-  const ref = o.shipDispatchedAt || o.shipDate || o.updatedAt;
-  if (!ref) return false;
-  const d = ref.toDate?.() || new Date(ref);
-  if (isNaN(d.getTime())) return false;
-  const days = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
-  const ss = o.shipStage || 'ready';
-  const thr = { ready: 2, wait_delivery: 7, wait_collection: 3, collected: 5 }[ss];
-  return thr && days >= thr;
-}
-
-function renderSmartBadges(o) {
-  const ctx = getCustomerContext(o);
-  const out = [];
-  if (isCreatedToday(o.createdAt)) out.push('<span class="smart-bdg smart-bdg-today">📅 اليوم</span>');
-  if (ctx.isNew) out.push('<span class="smart-bdg smart-bdg-new">🆕 عميل جديد</span>');
-  else if (ctx.isLoyal) out.push(`<span class="smart-bdg smart-bdg-loyal">🔁 ${ctx.count} طلبات</span>`);
-  if (ctx.multipleActive) out.push(`<span class="smart-bdg smart-bdg-multi">⊞ ${ctx.activeCount} طلب نشط</span>`);
-  if (isUrgentOrder(o)) out.push('<span class="smart-bdg smart-bdg-urgent">⚡ عاجل</span>');
-  return out.join('');
-}
+// pure helpers مُمَركَزة في core/shipping-utils.js
+const getDeliveryAddress = _getDeliveryAddress;
+const isCreatedToday = _isCreatedToday;
+const getCustomerContext = (o) => _getCustomerContext(o, orders);
+const isUrgentOrder = _isUrgentOrder;
+const renderSmartBadges = (o) => _renderSmartBadges(o, { allOrders: orders });
 
 // ── Product images + thumbnails ───────────────────────────────
 // المصدر الكامل لصور الأوردر (يطابق archive.html / design.html / reports.html):
@@ -1311,12 +1273,7 @@ function shipMethodLabel(m) {
   return lbl.raw ? `${lbl.ico} ${lbl.text}` : '—';
 }
 
-function fmtTimestamp(ts) {
-  if (!ts) return '—';
-  const d = ts.toDate?.() || (typeof ts === 'string' ? new Date(ts) : ts);
-  if (!(d instanceof Date) || isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('ar-EG');
-}
+const fmtTimestamp = _fmtTimestamp;
 
 function rowActions(o, tab) {
   const actions = [];
