@@ -438,10 +438,9 @@ async function buildDynamicSidebar(uid, currentPage) {
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { employeeActions } from "./employee-actions.js";
-console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — financial-sync-engine active');
+console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
 let currentUser=null, adminRole='', adminName='';
@@ -2688,15 +2687,17 @@ window.closeSalModal=function(){
 
 window.deleteSalary=async function(txId,epId,walletId,amount,isDeduction,employeeName,walletName){
   if(!confirm(`حذف الدفعة؟ (${fn(amount)} ج — ${employeeName})`))return;
-  try{
-    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT_REVERSAL,{
-      txId,epId,walletId,walletName,amount,isDeduction,
-      employeeId:emp?._id||'',employeeName:emp?.name||employeeName,
-      userId:currentUser?.uid||'',
-      userName:document.getElementById('nav-name')?.textContent||'',
-    });
-    toast('✅ تم حذف الدفعة واسترجاع الرصيد','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.reverseSalaryPayment({
+    db,
+    txId,epId,walletId,walletName,amount,isDeduction,
+    employeeId:emp?._id||empId||'',
+    employeeName:emp?.name||employeeName,
+    userId:currentUser?.uid||'',
+    userName:document.getElementById('nav-name')?.textContent||'',
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  if(r.idempotent&&!r.pending)return toast('ℹ️ تم الحذف مسبقاً','ok');
+  toast('✅ تم حذف الدفعة واسترجاع الرصيد','ok');
 };
 
 window.openSalary=function(preMonth,preType){
@@ -2859,28 +2860,30 @@ window.confirmSalary=async function(){
   btn.disabled=true;btn.textContent='جاري...';
   const note=gv('sal-notes');
   console.log('[profile] 🖱️ button clicked: confirmSalary', { salType, amount, empId });
-  try{
-    console.log('[profile] 📤 event dispatched: SALARY_PAYMENT');
-    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT,{
-      employeeId:empId,employeeName:emp.name||'',
-      amount,salaryType:salType,isDeduction,
-      walletId:wId,walletName:w.name||'',
-      note,month:salaryData.month,
-      baseSalary:salaryData.base,commission:salaryData.commission,
-      absenceDeduction:salaryData.absenceDeduction||0,
-      tardinessDeduction:salaryData.tardinessDeduction||0,
-      attendanceBonus:salaryData.attendanceBonus||0,
-      daysPresent:salaryData.daysPresent??null,
-      daysAbsent:salaryData.daysAbsent??null,
-      tardinessDays:salaryData.tardinessDays??0,
-      lateRecords:salaryData.lateRecords??0,
-      date:todayStr(),userId:currentUser.uid,userName:adminName,
-    });
-    console.log('[profile] ✅ sync completed: SALARY_PAYMENT');
-    closeSalModal();
-    toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${emp.name}`,'ok');
-  }catch(e){toast('❌ '+e.message,'err');}
+  const r=await employeeActions.recordSalaryPayment({
+    db,
+    employeeId:empId,employeeName:emp.name||'',
+    amount,salaryType:salType,isDeduction,
+    walletId:wId,walletName:w.name||'',
+    note,month:salaryData.month,
+    baseSalary:salaryData.base,commission:salaryData.commission,
+    absenceDeduction:salaryData.absenceDeduction||0,
+    tardinessDeduction:salaryData.tardinessDeduction||0,
+    attendanceBonus:salaryData.attendanceBonus||0,
+    daysPresent:salaryData.daysPresent??null,
+    daysAbsent:salaryData.daysAbsent??null,
+    tardinessDays:salaryData.tardinessDays??0,
+    lateRecords:salaryData.lateRecords??0,
+    date:todayStr(),userId:currentUser.uid,userName:adminName,
+  });
   btn.disabled=false;btn.textContent='✓ تسجيل الدفع';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  if(r.idempotent&&!r.pending){
+    closeSalModal();
+    return toast(`ℹ️ الدفعة مسجَّلة مسبقاً (${fn(amount)} ج)`,'ok');
+  }
+  closeSalModal();
+  toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${emp.name}`,'ok');
 };
 
 // ══ ATTENDANCE RECORDING ══
