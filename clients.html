@@ -379,13 +379,15 @@ auth.onAuthStateChanged(async u=>{
   const isAdmin=['admin','operation_manager'].includes(currentRole);
   if(isAdmin){const t=document.getElementById('stab-cgrid');if(t)t.style.display='inline-flex';}
 
-  // Listeners
-  // Bounded snapshots — the daily workflow only needs recent activity.
-  // Older docs are still readable on-demand (e.g. opening an old client
-  // by deep-link triggers a direct doc fetch below).
-  const CLIENTS_LIMIT = 2000;
-  const ORDERS_LIMIT  = 3000;
-  const TX_LIMIT      = 3000;
+  // Listeners — Performance PR-26: tiered loading
+  //   T1 (immediate): clients, orders, wallets, settings — needed for first paint
+  //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
+  //   T3 (defer 1500ms): followups, segments, transactions_v2 — only used in panel/cgrid
+  // Limits reduced — old docs still readable on-demand via direct getDoc.
+  const CLIENTS_LIMIT = 800;     // was 2000
+  const ORDERS_LIMIT  = 1500;    // was 3000
+  const TX_LIMIT      = 1500;    // was 3000
+  const FU_LIMIT      = 800;     // was 1500
   db.collection('clients').orderBy('createdAt','desc').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
@@ -432,110 +434,113 @@ auth.onAuthStateChanged(async u=>{
     scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
   });
-  // G3: bounded listeners — products/wallets/employees/segments shouldn't
-  // stream entire collections on this page.
-  db.collection('products_v2').limit(500).onSnapshot(snap=>{
-    products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-  });
+  // T1: wallets — needed for new-order modal (which can open early)
   db.collection('wallets').limit(100).onSnapshot(snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
-  // ── المصممون: المصدر الوحيد هو `employees` ──
-  // قبل ده كنا نقرأ من users + employees مع dedup بـ name+phone، لكن لسه
-  // كان يحصل تكرار لما حد يكون عنده users doc بـ role designer بدون employee
-  // record (أو بمعلومات مختلفة). دلوقتي employees هي مصدر الحقيقة الوحيد
-  // (مطابق لـ design.html و designer-dashboard.html). أي مصمم لازم يكون عنده
-  // employee record عشان يظهر هنا.
-  db.collection('employees').limit(500).onSnapshot(snap=>{
-    const raw = snap.docs
-      .map(d=>({...d.data(),_id:d.id}))
-      .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
-      .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
-    // dedup متعدد المستويات: authUid → phone → name+phone (نفس منطق orders.js#dedupEmployees)
-    const normPhone=p=>(p||'').toString().replace(/\D/g,'');
-    const normName =n=>(n||'').toString().trim().toLowerCase();
-    const out=[];const byAuth=new Map(),byPhone=new Map(),byName=new Map();
-    raw.forEach(e=>{
-      const auth=e.authUid||'',phone=normPhone(e.phone),nameKey=normName(e.name)+'|'+phone;
-      let i=-1;
-      if(auth && byAuth.has(auth)) i=byAuth.get(auth);
-      if(i<0 && phone && byPhone.has(phone)) i=byPhone.get(phone);
-      if(i<0 && phone && byName.has(nameKey)) i=byName.get(nameKey);
-      if(i>=0){
-        const cur=out[i];
-        if(!cur.authUid && auth){ out[i]={...cur,...e}; byAuth.set(auth,i); }
-        return;
-      }
-      out.push(e); const idx=out.length-1;
-      if(auth) byAuth.set(auth,idx);
-      if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
-    });
-    designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-  });
+  // T1: settings — affects fillGovSelect (governorate dropdown)
   db.collection('settings').doc('main').onSnapshot(snap=>{
     if(snap.exists) settings=snap.data();
     fillGovSelect();
   });
-  // Admin override للتقسيم الإداري — لو الوثيقة موجودة في master_lists/egypt_admin
-  // تتطابق مع EGYPT_FALLBACK في الشكل (governorate → [cities]).
-  db.collection('master_lists').doc('egypt_admin').onSnapshot(snap=>{
-    if(snap.exists){
-      const data=snap.data();
-      const items=data?.items;
-      if(items && typeof items==='object' && Object.keys(items).length>0){
-        EGYPT=items;
+
+  // T2: secondary data (products + designers + master_lists) — defer 500ms
+  setTimeout(()=>{
+    db.collection('products_v2').limit(500).onSnapshot(snap=>{
+      products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    });
+    // ── المصممون: المصدر الوحيد هو `employees` ──
+    db.collection('employees').limit(500).onSnapshot(snap=>{
+      const raw = snap.docs
+        .map(d=>({...d.data(),_id:d.id}))
+        .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
+        .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
+      // dedup متعدد المستويات: authUid → phone → name+phone (نفس منطق orders.js#dedupEmployees)
+      const normPhone=p=>(p||'').toString().replace(/\D/g,'');
+      const normName =n=>(n||'').toString().trim().toLowerCase();
+      const out=[];const byAuth=new Map(),byPhone=new Map(),byName=new Map();
+      raw.forEach(e=>{
+        const auth=e.authUid||'',phone=normPhone(e.phone),nameKey=normName(e.name)+'|'+phone;
+        let i=-1;
+        if(auth && byAuth.has(auth)) i=byAuth.get(auth);
+        if(i<0 && phone && byPhone.has(phone)) i=byPhone.get(phone);
+        if(i<0 && phone && byName.has(nameKey)) i=byName.get(nameKey);
+        if(i>=0){
+          const cur=out[i];
+          if(!cur.authUid && auth){ out[i]={...cur,...e}; byAuth.set(auth,i); }
+          return;
+        }
+        out.push(e); const idx=out.length-1;
+        if(auth) byAuth.set(auth,idx);
+        if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
+      });
+      designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    });
+    // Admin override للتقسيم الإداري — لو الوثيقة موجودة في master_lists/egypt_admin
+    db.collection('master_lists').doc('egypt_admin').onSnapshot(snap=>{
+      if(snap.exists){
+        const data=snap.data();
+        const items=data?.items;
+        if(items && typeof items==='object' && Object.keys(items).length>0){
+          EGYPT=items;
+        }else{
+          EGYPT={...EGYPT_FALLBACK};
+        }
       }else{
         EGYPT={...EGYPT_FALLBACK};
       }
-    }else{
-      EGYPT={...EGYPT_FALLBACK};
-    }
-    fillGovSelect();
-    fillFilters();
-  },err=>{ console.warn('egypt_admin listener:',err?.message||err); });
-  db.collection('client_followups').orderBy('createdAt','desc').limit(1500).onSnapshot(snap=>{
-    allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
-    followupsByClient.clear();
-    allFollowups.forEach(f=>{
-      if(!f.clientId)return;
-      if(!followupsByClient.has(f.clientId))followupsByClient.set(f.clientId,[]);
-      followupsByClient.get(f.clientId).push(f);
-    });
-    // refresh open panel followups list
-    if(activeId){
-      const list=document.getElementById('panel-followups-list');
-      if(list)list.innerHTML=renderClientFollowups(activeId);
-      updateFollowupsBadge(activeId);
-    }
-  },err=>{
-    console.warn('followups listener:',err?.message||err);
-    window.__followupsListenerError=err?.message||String(err);
-    if(activeId){
-      const list=document.getElementById('panel-followups-list');
-      if(list)list.innerHTML=renderClientFollowups(activeId);
-    }
-  });
+      fillGovSelect();
+      fillFilters();
+    },err=>{ console.warn('egypt_admin listener:',err?.message||err); });
+  }, 500);
 
-  // RFM segments — written weekly by Cloud Function. Permission errors are
-  // silenced because non-CRM roles don't get read access.
-  db.collection('client_segments').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
-    clientSegments.clear();
-    snap.forEach(d=>clientSegments.set(d.id,d.data()));
-    scheduleStatsAndGrid();
-    if(!isClientModalOpen()) renderSegmentStrip();
-    if(activeId) renderPanel(activeId);
-  },err=>console.warn('client_segments listener:',err?.message||err));
-
-  db.collection('transactions_v2').orderBy('createdAt','desc').limit(TX_LIMIT).onSnapshot(snap=>{
-    allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    txByOrder.clear();
-    allTx.forEach(tx=>{
-      if(!tx.orderId)return;
-      if(!txByOrder.has(tx.orderId))txByOrder.set(tx.orderId,[]);
-      txByOrder.get(tx.orderId).push(tx);
+  // T3: tertiary data (followups + segments + transactions_v2) — defer 1500ms
+  // These only show in panel/cgrid; main grid render doesn't need them.
+  setTimeout(()=>{
+    db.collection('client_followups').orderBy('createdAt','desc').limit(FU_LIMIT).onSnapshot(snap=>{
+      allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
+      followupsByClient.clear();
+      allFollowups.forEach(f=>{
+        if(!f.clientId)return;
+        if(!followupsByClient.has(f.clientId))followupsByClient.set(f.clientId,[]);
+        followupsByClient.get(f.clientId).push(f);
+      });
+      // refresh open panel followups list
+      if(activeId){
+        const list=document.getElementById('panel-followups-list');
+        if(list)list.innerHTML=renderClientFollowups(activeId);
+        updateFollowupsBadge(activeId);
+      }
+    },err=>{
+      console.warn('followups listener:',err?.message||err);
+      window.__followupsListenerError=err?.message||String(err);
+      if(activeId){
+        const list=document.getElementById('panel-followups-list');
+        if(list)list.innerHTML=renderClientFollowups(activeId);
+      }
     });
-    if(window.__statusTab==='cgrid') renderControlGrid();
-  });
+
+    // RFM segments — written weekly by Cloud Function. Permission errors are
+    // silenced because non-CRM roles don't get read access.
+    db.collection('client_segments').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
+      clientSegments.clear();
+      snap.forEach(d=>clientSegments.set(d.id,d.data()));
+      scheduleStatsAndGrid();
+      if(!isClientModalOpen()) renderSegmentStrip();
+      if(activeId) renderPanel(activeId);
+    },err=>console.warn('client_segments listener:',err?.message||err));
+
+    db.collection('transactions_v2').orderBy('createdAt','desc').limit(TX_LIMIT).onSnapshot(snap=>{
+      allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
+      txByOrder.clear();
+      allTx.forEach(tx=>{
+        if(!tx.orderId)return;
+        if(!txByOrder.has(tx.orderId))txByOrder.set(tx.orderId,[]);
+        txByOrder.get(tx.orderId).push(tx);
+      });
+      if(window.__statusTab==='cgrid') renderControlGrid();
+    });
+  }, 1500);
 });
 
 // ══ STATS ══
