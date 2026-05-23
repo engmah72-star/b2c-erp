@@ -390,6 +390,7 @@ import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, 
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { productionActions } from "./production-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
 
@@ -504,51 +505,19 @@ window.deleteOrderFull=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع.`))return;
   if(!confirm('تأكيد الحذف النهائي؟'))return;
-  try{
-    // pre-fetch قبل الـ batch
-    const txSnap=await getDocs(query(collection(db,'transactions_v2'),where('orderId','==',activeId)));
-    const batch=writeBatch(db);
-    // عكس أثر كل الـ tx على المحفظة + قيد عكسي في الدفتر — RULE 3 + RULE 5
-    for(const txDoc of txSnap.docs){
-      const d=txDoc.data();
-      const amt=parseFloat(d.amount)||0;
-      const wid=d.walletId;
-      if(amt>0&&wid){
-        if(d.type==='in')      batch.update(doc(db,'wallets',wid),{balance:increment(-amt)});
-        else if(d.type==='out')batch.update(doc(db,'wallets',wid),{balance:increment( amt)});
-        const wName=(wallets.find(x=>x._id===wid)||{}).name||d.walletName||'';
-        const isReversingIn=d.type==='in';
-        const revRef=doc(collection(db,'transactions_v2'));
-        batch.set(revRef,{
-          walletId:wid,walletName:wName,
-          type:isReversingIn?'out':'in',amount:amt,fees:0,
-          description:`عكس ${d.description||d.category||''} — حذف أوردر — ${o.clientName||''}`,
-          category:isReversingIn?'refund':'expense_reversal',
-          orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-          isReversal:true,reversesTxId:txDoc.id,
-          date:new Date().toLocaleDateString('ar-EG'),
-          createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-          createdAt:serverTimestamp(),
-          ...approvalFields()
-        });
-        const evt=isReversingIn?FE.CUSTOMER_REFUND:FE.GENERAL_EXPENSE_REVERSAL;
-        addLedgerToBatch(batch,db,evt,{
-          amount:amt,walletId:wid,walletName:wName,
-          orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-          notes:`حذف أوردر — عكس ${d.description||''}`,
-          userId:currentUser?.uid||'',userName:userName||'admin'
-        });
-      }
-      batch.delete(txDoc.ref);
-    }
-    batch.delete(doc(db,'orders',activeId));
-    await batch.commit();
-    closePanel();
-    toast('✅ تم الحذف النهائي','ok');
-  }catch(e){
-    const handled=window.financialGuard?.(e,{operation:'حذف أوردر إنتاج',clientName:o.clientName,orderId:activeId});
-    if(!handled)toast('❌ '+e.message,'err');
+  // H1.1 fix: orderActions.adminDeleteOrder
+  const r=await orderActions.adminDeleteOrder({
+    orderId:activeId,reason:'حذف من شاشة الإنتاج',
+    userId:currentUser?.uid||'',userName:userName||'admin',
+    wallets,
+  });
+  if(!r.ok){
+    const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل الحذف'),{operation:'حذف أوردر إنتاج',clientName:o.clientName,orderId:activeId});
+    if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return;
   }
+  closePanel();
+  toast(r.idempotent&&!r.pending?'ℹ️ تم الحذف مسبقاً':'✅ تم الحذف النهائي','ok');
 };
 // ════════════════════════
 
@@ -1688,54 +1657,19 @@ window.rmProduct=async function(prodIdx){
 window.requestPaymentForCostItem=async function(idx){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const item=(o.costItems||[])[idx];if(!item)return;
-  if(item.paid){toast('⛔ هذا البند مدفوع بالفعل','err');return;}
-  if(item.paymentRequestId){toast('⛔ يوجد طلب دفع مُرسَل بالفعل لهذا البند','err');return;}
-  if(!item.supplierId){toast('⚠️ لا يمكن طلب دفع لبند بدون مورد محدد','err');return;}
-  const allowed=['admin','operation_manager','production_agent'];
-  if(!allowed.includes(currentRole)){toast('⛔ ليس لديك صلاحية إنشاء طلب دفع','err');return;}
   const amount=parseFloat(item.total)||0;
-  if(!(amount>0)){toast('⚠️ قيمة البند غير صالحة','err');return;}
-  const ok=confirm(`💸 طلب دفع للمورد\n\nالبند: ${item.type||'—'}\nالمورد: ${item.supplierName||'—'}\nالمبلغ: ${fn(amount)} ج\nالأوردر: ${o.orderId||activeId.slice(-8)} — ${o.clientName||''}\n\nسيُرسَل الطلب لصفحة الاعتمادات للتنفيذ والتأكيد والاعتماد.\n\nمتابعة؟`);
-  if(!ok)return;
-  try{
-    const reqRef=doc(collection(db,'payment_requests'));
-    const reqData={
-      type:'supplier_payment',
-      status:'requested',
-      amount,
-      reason:`سداد بند تكلفة: ${item.type||'—'}${item.note?' — '+item.note:''} · ${o.clientName||''}`,
-      supplierId:item.supplierId,
-      supplierName:item.supplierName||'',
-      orderId:activeId,
-      orderRefId:o.orderId||'',
-      clientId:o.clientId||'',
-      clientName:o.clientName||'',
-      orderStage:o.stage||'',
-      orderProducts:(o.products||[]).map(p=>({name:p.name||'',qty:p.qty||1})),
-      orderCostItems:(o.costItems||[]).map(c=>({type:c.type||'',total:parseFloat(c.total)||0,supplierName:c.supplierName||''})),
-      orderTotalCost:(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0),
-      costItemIndex:idx,
-      requestedBy:currentUser?.uid||'',
-      requestedByName:userName,
-      requesterRole:currentRole,
-      requestedAt:serverTimestamp(),
-      source:'production_quick_request',
-    };
-    const batch=writeBatch(db);
-    batch.set(reqRef,reqData);
-    const ci=[...(o.costItems||[])];
-    ci[idx]={...ci[idx],pendingPaymentRequestId:reqRef.id,pendingRequestedAt:nowStr(),pendingRequestedBy:userName};
-    batch.update(doc(db,'orders',activeId),{
-      costItems:ci,
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:`💸 طلب دفع: ${item.type||''} — ${fn(amount)} ج → ${item.supplierName||''}`,by:userName}],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
-    toast('✅ تم إرسال الطلب — تابعه في صفحة الاعتمادات','ok');
-  }catch(e){
-    const handled=window.financialGuard?.(e,{operation:'طلب دفع بند تكلفة',amount});
-    if(!handled)toast('❌ '+e.message,'err');
+  if(!confirm(`💸 طلب دفع للمورد\n\nالبند: ${item.type||'—'}\nالمورد: ${item.supplierName||'—'}\nالمبلغ: ${fn(amount)} ج\nالأوردر: ${o.orderId||activeId.slice(-8)} — ${o.clientName||''}\n\nسيُرسَل الطلب لصفحة الاعتمادات للتنفيذ والتأكيد والاعتماد.\n\nمتابعة؟`))return;
+  // H1.1 fix: productionActions.requestSupplierPayment
+  const r=await productionActions.requestSupplierPayment({
+    orderId:activeId, costItemIdx:idx, order:o,
+    role:currentRole, userId:currentUser?.uid||'', userName,
+  });
+  if(!r.ok){
+    const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل الإرسال'),{operation:'طلب دفع بند تكلفة',amount});
+    if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return;
   }
+  toast('✅ تم إرسال الطلب — تابعه في صفحة الاعتمادات','ok');
 };
 
 window.rmCost=async function(idx){
@@ -1746,129 +1680,21 @@ window.rmCost=async function(idx){
 
   // قفل: البند المدفوع لا يُحذَف إلا للأدمن (مع إشعار المندوب والمورد)
   if(item.paid){
-    if(!isAdm){
-      toast('⛔ هذا البند مدفوع بالفعل — أدمن فقط يقدر يحذف/يعدل','err');
+    if(!isAdm){toast('⛔ هذا البند مدفوع بالفعل — أدمن فقط يقدر يحذف/يعدل','err');return;}
+    if(!confirm(`⚠️ هذا البند مدفوع بالفعل!\n\nالبند: ${item.type||''} — ${fn(item.total||0)} ج\nالمورد: ${item.supplierName||'—'}\nرقم التحويل: ${item.paidTransferRef||'—'}\n\nسيتم:\n• حذف البند من الأوردر\n• إنشاء tx عكسية + قيد ledger reversal\n• علم المدفوعات المرتبطة كـ voided\n• إشعار المندوب الذي طلب + المورد\n\nمتابعة؟`))return;
+    const reason=prompt('سبب الحذف (إجباري — سيظهر في الإشعار):');
+    if(!reason||!reason.trim())return;
+    // H1.1 fix: productionActions.adminDeletePaidCostItem
+    const r=await productionActions.adminDeletePaidCostItem({
+      orderId:activeId, costItemIdx:idx, order:o, reason,
+      role:currentRole, userId:currentUser?.uid||'', userName:userName||document.getElementById('nav-name')?.textContent||'',
+    });
+    if(!r.ok){
+      const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل الحذف'),{operation:'حذف بند تكلفة مدفوع',amount:item.total});
+      if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
       return;
     }
-    if(!confirm(`⚠️ هذا البند مدفوع بالفعل!\n\nالبند: ${item.type||''} — ${fn(item.total||0)} ج\nالمورد: ${item.supplierName||'—'}\nرقم التحويل: ${item.paidTransferRef||'—'}\n\nسيتم:\n• حذف البند من الأوردر\n• إنشاء tx عكسية + قيد ledger reversal\n• علم المدفوعات المرتبطة كـ voided\n• إشعار المندوب الذي طلب + المورد\n\nمتابعة؟`)) return;
-    const reason = prompt('سبب الحذف (إجباري — سيظهر في الإشعار):');
-    if(!reason || !reason.trim()) return;
-
-    try{
-      const batch=writeBatch(db);
-      const ci=[...(o.costItems||[])]; ci.splice(idx,1);
-      batch.update(doc(db,'orders',activeId),{costItems:ci,updatedAt:serverTimestamp()});
-
-      // إنشاء tx عكسية بدل حذف الأصلية (الـ tx الأصلية الآن مغلقة isLocked)
-      if(item.paidTxId && item.walletId){
-        batch.update(doc(db,'wallets',item.walletId),{balance:increment(parseFloat(item.total)||0)});
-        const revRef=doc(collection(db,'transactions_v2'));
-        batch.set(revRef,{
-          walletId:item.walletId, walletName:item.walletName||'',
-          type:'in', amount:parseFloat(item.total)||0, fees:0,
-          description:`🔄 إلغاء بند تكلفة (admin) — ${item.type||''}${item.supplierName?' — '+item.supplierName:''}`,
-          category:'expense_reversal',
-          orderId:activeId, supplierId:item.supplierId||null, supplierName:item.supplierName||null,
-          isReversal:true, reversesTxId:item.paidTxId,
-          reversedBy:currentUser?.uid||'', reversedByName:document.getElementById('nav-name')?.textContent||'',
-          reversedReason:reason.trim(),
-          date:new Date().toLocaleDateString('ar-EG'),
-          createdBy:currentUser?.uid||'',createdByName:document.getElementById('nav-name')?.textContent||'',
-          createdAt:serverTimestamp(),
-          // العكس مُعتمد تلقائياً (admin action)
-          approvalStatus:'approved', isLocked:true,
-          approvedBy:currentUser?.uid||'', approvedByName:document.getElementById('nav-name')?.textContent||'',
-          approvedAt:serverTimestamp(),
-          confirmedBy:'', confirmedByName:'', confirmedAt:null,
-          rejectedBy:'', rejectedByName:'', rejectedAt:null, rejectReason:'',
-        });
-        addLedgerToBatch(batch,db,FE.GENERAL_EXPENSE_REVERSAL,{
-          amount:parseFloat(item.total)||0,
-          walletId:item.walletId, walletName:item.walletName||'',
-          orderId:activeId, vendorId:item.supplierId, vendorName:item.supplierName,
-          notes:`إلغاء بند تكلفة (admin): ${reason.trim()}`,
-          refId:item.paidTxId,
-          userId:currentUser?.uid||'', userName:document.getElementById('nav-name')?.textContent||'',
-        });
-      }
-      // علم supplier_payments محذوف
-      if(item.paidSpId){
-        batch.update(doc(db,'supplier_payments',item.paidSpId),{
-          isVoided:true, voidedAt:serverTimestamp(), voidedBy:currentUser?.uid||'',
-          voidReason:`حذف بند تكلفة: ${reason.trim()}`,
-        });
-      }
-      // علم supplier_orders محذوف
-      if(item.supplierOrderId){
-        batch.update(doc(db,'supplier_orders',item.supplierOrderId),{isDeleted:true,voidedAt:serverTimestamp(),voidedBy:currentUser?.uid||'',voidReason:`حذف بند (admin): ${reason.trim()}`});
-      }
-      // علم payment_request محذوف
-      if(item.paymentRequestId){
-        batch.update(doc(db,'payment_requests',item.paymentRequestId),{
-          status:'rejected', isReversed:true,
-          rejectedBy:currentUser?.uid||'', rejectedByName:document.getElementById('nav-name')?.textContent||'',
-          rejectedAt:serverTimestamp(),
-          rejectReason:`حذف بند تكلفة (admin): ${reason.trim()}`,
-        });
-      }
-      // إشعار المندوب الذي طلب الدفعة
-      if(item.paymentRequestId || item.paidByName){
-        // نحاول إيجاد uid الطالب من الـrequest
-        let toUid = null, toName = null;
-        if(item.paymentRequestId){
-          try{
-            const rSnap = await getDoc(doc(db,'payment_requests',item.paymentRequestId));
-            if(rSnap.exists()){
-              toUid = rSnap.data().requestedBy;
-              toName = rSnap.data().requestedByName;
-            }
-          }catch(_){}
-        }
-        if(toUid){
-          const notRef=doc(collection(db,'notifications'));
-          batch.set(notRef,{
-            toUid, toName,
-            type:'cost_item_deleted_paid',
-            severity:'high',
-            title:'⚠️ حُذف بند تكلفة كنت قد طلبت دفعه',
-            message:`${item.type||'بند'} — ${fn(item.total||0)} ج — المورد: ${item.supplierName||'—'}\nالأوردر: ${o.orderId||activeId.slice(-8)}\nالسبب: ${reason.trim()}`,
-            refOrderId:activeId, refOrderRefId:o.orderId||'',
-            refSupplierId:item.supplierId||null, refSupplierName:item.supplierName||null,
-            refPaymentRequestId:item.paymentRequestId||null,
-            createdBy:currentUser?.uid||'', createdByName:document.getElementById('nav-name')?.textContent||'',
-            createdAt:serverTimestamp(),
-            seenAt:null,
-          });
-        }
-      }
-      // إشعار للمورد (لو له authUid مرتبط)
-      if(item.supplierId){
-        try{
-          const sSnap = await getDoc(doc(db,'suppliers_v2',item.supplierId));
-          const sData = sSnap.exists() ? sSnap.data() : null;
-          if(sData?.authUid){
-            const notRef2=doc(collection(db,'notifications'));
-            batch.set(notRef2,{
-              toUid:sData.authUid, toName:sData.name,
-              type:'cost_item_deleted_paid_supplier',
-              severity:'high',
-              title:'⚠️ أُلغيَت دفعة كانت لك',
-              message:`${item.type||'بند'} — ${fn(item.total||0)} ج\nالأوردر: ${o.orderId||activeId.slice(-8)}\nالسبب: ${reason.trim()}\nيرجى التواصل مع الإدارة.`,
-              refOrderId:activeId, refOrderRefId:o.orderId||'',
-              refSupplierId:item.supplierId, refSupplierName:item.supplierName,
-              createdBy:currentUser?.uid||'', createdByName:document.getElementById('nav-name')?.textContent||'',
-              createdAt:serverTimestamp(),
-              seenAt:null,
-            });
-          }
-        }catch(_){}
-      }
-      await batch.commit();
-      toast(`✅ حُذف البند المدفوع + رُجِّع ${fn(item.total||0)} ج للمحفظة + إشعارات أُرسلت`,'ok');
-    }catch(e){
-      const handled=window.financialGuard?.(e,{operation:'حذف بند تكلفة مدفوع',amount:item.total});
-      if(!handled)toast('❌ '+e.message,'err');
-    }
+    toast(r.idempotent&&!r.pending?'ℹ️ تم الحذف مسبقاً':`✅ حُذف البند المدفوع + رُجِّع ${fn(r.refundedAmount||item.total||0)} ج للمحفظة + إشعارات أُرسلت`,'ok');
     return;
   }
 
