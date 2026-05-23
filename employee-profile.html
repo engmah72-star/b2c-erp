@@ -448,6 +448,7 @@ import { buildSalariesHTML } from "./features/employee-profile/views/render-sala
 import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
 import { buildTasksHTML, buildIncidentsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
 import { computeProductStats, buildGoalsHTML, buildEvaluationsHTML, buildSkillsAndProductsHTML, buildSkillEditTagsHTML, buildBehaviorHTML, buildInsightsHTML } from "./features/employee-profile/views/render-overview-tab.js";
+import { TAB_KEYS, setupStickyHero, setupKeyboardShortcuts, setupQAMenuOutsideClick, toggleQAMenu, closeQAMenu } from "./features/employee-profile/views/tab-router.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -515,7 +516,7 @@ window.setProfilePeriod=function(p){
 
 // ── Tabs ──
 window.setTab=function(t){
-  if(!['overview','attendance','salaries','tasks','admin'].includes(t))return;
+  if(!TAB_KEYS.includes(t))return;
   activeTab=t;
   history.replaceState(null,'','#'+t);
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
@@ -526,57 +527,20 @@ window.setTab=function(t){
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
   else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
-  // scroll to top of content when switching tabs
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
 
-// ── Quick Action overflow menu ──
-window.toggleQAMenu=function(){
-  const m=document.getElementById('qa-menu');if(!m)return;
-  m.classList.toggle('open');
-};
-window.closeQAMenu=function(){document.getElementById('qa-menu')?.classList.remove('open');};
-document.addEventListener('click',e=>{
-  if(!e.target.closest('#qa-menu')&&!e.target.closest('[onclick*="toggleQAMenu"]'))closeQAMenu();
-});
-
-// ── Sticky compact hero on scroll ──
-let __scrollTicking=false;
-window.addEventListener('scroll',()=>{
-  if(__scrollTicking)return;
-  __scrollTicking=true;
-  requestAnimationFrame(()=>{
-    const compact=document.getElementById('hero-compact');
-    const cover=document.querySelector('.hero-cover');
-    if(compact&&cover){
-      const r=cover.getBoundingClientRect();
-      compact.classList.toggle('show',r.bottom<60);
-    }
-    __scrollTicking=false;
-  });
-},{passive:true});
-
-// ── Keyboard shortcuts ──
-document.addEventListener('keydown',e=>{
-  const tag=(e.target?.tagName||'').toUpperCase();
-  const isTyping=tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT';
-  if(e.key==='Escape'){
-    closeQAMenu();
-    document.querySelectorAll('.overlay.open').forEach(o=>o.classList.remove('open'));
-    return;
-  }
-  if(isTyping||e.ctrlKey||e.metaKey||e.altKey)return;
-  if(!emp)return;
-  // tab shortcuts 1-5
-  if(['1','2','3','4','5'].includes(e.key)){
-    e.preventDefault();
-    setTab(['overview','attendance','salaries','tasks','admin'][+e.key-1]);
-    return;
-  }
-  // s = salary, t = task, e = edit
-  if(e.key==='s'||e.key==='S'){e.preventDefault();window.openSalary?.();}
-  else if(e.key==='t'||e.key==='T'){e.preventDefault();window.openAddTask?.();}
-  else if(e.key==='e'||e.key==='E'){e.preventDefault();window.openEditSalary?.();}
+// QA menu + sticky hero + keyboard shortcuts — wiring مُمَركَز في tab-router.js
+window.toggleQAMenu=toggleQAMenu;
+window.closeQAMenu=closeQAMenu;
+setupQAMenuOutsideClick();
+setupStickyHero();
+setupKeyboardShortcuts({
+  isReady: ()=>!!emp,
+  onSwitchTab: (key)=>window.setTab(key),
+  onSalary: ()=>window.openSalary?.(),
+  onTask:   ()=>window.openAddTask?.(),
+  onEdit:   ()=>window.openEditSalary?.(),
 });
 window.navigateAttMonth=function(dir){
   if(!attViewMonth)attViewMonth=monthKey();
