@@ -549,6 +549,7 @@ import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
 import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
 import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue, calcStageDistribution, calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount, calcMonthlyRevenueChart, diffHTML } from "./core/reports-financial-kpis.js";
+import { buildDesignerStats, buildShippingStats, buildClientActivityStats } from "./core/reports-tab-stats.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -1610,29 +1611,9 @@ function renderOverviewDetailed(f,prev){
 
 // ══ Tab 2: Designers ══
 function renderDesigners(f){
-  const dOrds=f.filter(o=>o.designStage||o.stage==='design'||o.designerId);
-  // المصدر الوحيد للمصممين = `employees` — أي أوردر مش مرتبط بمصمم موجود فيها يُستبعد
-  const buckets=new Map(); // key → { name, orders: [...] }
-  dOrds.forEach(o=>{
-    const can=resolveDesigner(employees,o.designerId,o.designerName);
-    if(!can)return; // المصمم مش في employees → استبعد
-    const key=can.authUid||can._id;
-    if(!buckets.has(key)) buckets.set(key,{name:can.name||'—',orders:[],emp:can});
-    buckets.get(key).orders.push(o);
-  });
-  if(!buckets.size)return`<div class="empty-pretty"><div class="ico">🎨</div><div class="ttl">لا توجد بيانات مصممين</div><div class="sub">جرّب توسيع الفترة الزمنية أو تأكد إن المصممين معيّنين على الأوردرات وموجودين في صفحة الموظفين</div></div>`;
-
-  // احسب metric لكل مصمم وحدّد الأفضل (done + completion rate)
-  const stats=[...buckets.values()].map(b=>{
-    const done=b.orders.filter(o=>o.stage!=='design').length;
-    const pending=b.orders.filter(o=>o.stage==='design').length;
-    const avgDays=b.orders.filter(o=>o.designDays).reduce((s,o)=>s+(parseFloat(o.designDays)||0),0)/Math.max(b.orders.filter(o=>o.designDays).length,1);
-    const pct=b.orders.length?Math.round(done/b.orders.length*100):0;
-    // معيار التميّز: عدد المنجز × نسبة الإنجاز
-    const score=done*(pct/100);
-    return{...b,done,pending,avgDays,pct,score};
-  }).sort((a,b)=>b.score-a.score);
-  const topId=stats[0]?.emp?._id||stats[0]?.emp?.authUid||null;
+  // pure aggregator في core/reports-tab-stats.js
+  const {stats, topId} = buildDesignerStats(f, employees, resolveDesigner);
+  if(!stats.length)return`<div class="empty-pretty"><div class="ico">🎨</div><div class="ttl">لا توجد بيانات مصممين</div><div class="sub">جرّب توسيع الفترة الزمنية أو تأكد إن المصممين معيّنين على الأوردرات وموجودين في صفحة الموظفين</div></div>`;
 
   return stats.map(s=>{
     const isTop=topId&&(s.emp._id===topId||s.emp.authUid===topId)&&s.done>0;
@@ -1654,69 +1635,45 @@ function renderDesigners(f){
 
 // ══ Tab 3: Shipping ══
 function renderShipping(f,prev){
-  const shipOrds=f.filter(o=>['shipping','archived'].includes(o.stage)||o.shipCompanyName);
-  const companies=[...new Set(shipOrds.map(o=>o.shipCompanyName||o.shippingCompany).filter(Boolean)),...shippers.map(s=>s.name)].filter((v,i,a)=>v&&a.indexOf(v)===i);
-
-  if(!companies.length)return`<div class="empty-pretty"><div class="ico">🚚</div><div class="ttl">لا توجد بيانات شحن</div><div class="sub">الأوردرات اللي وصلت مرحلة الشحن أو بعدها هتظهر هنا</div></div>`;
-
-  const totShip=shipOrds.length;
-  const delivered=shipOrds.filter(isDelivered).length;
-  const returned=shipOrds.filter(o=>o.shipStage==='returned').length;
-  const pTot=prev.filter(o=>['shipping','archived'].includes(o.stage)||o.shipCompanyName).length;
-
+  // pure aggregator في core/reports-tab-stats.js
+  const s = buildShippingStats(f, prev, shippers, isDelivered);
+  if(!s.companies.length)return`<div class="empty-pretty"><div class="ico">🚚</div><div class="ttl">لا توجد بيانات شحن</div><div class="sub">الأوردرات اللي وصلت مرحلة الشحن أو بعدها هتظهر هنا</div></div>`;
   return`
     <div class="kpi-grid">
-      ${kpi(totShip,'إجمالي الشحن','var(--b)',pTot)}
-      ${kpi(totShip?Math.round(delivered/totShip*100)+'%':'—','نسبة التسليم','var(--g)')}
-      ${kpi(returned,'مرتجعات','var(--r)')}
-      ${kpi(fn(shipOrds.reduce((s,o)=>s+(parseFloat(o.shippingCost)||0),0))+' ج','تكلفة الشحن','var(--y)')}
+      ${kpi(s.totShip,'إجمالي الشحن','var(--b)',s.pTot)}
+      ${kpi(s.totShip?Math.round(s.delivered/s.totShip*100)+'%':'—','نسبة التسليم','var(--g)')}
+      ${kpi(s.returned,'مرتجعات','var(--r)')}
+      ${kpi(fn(s.totShipCost)+' ج','تكلفة الشحن','var(--y)')}
     </div>
-    ${companies.map(co=>{
-      const coOrds=shipOrds.filter(o=>(o.shipCompanyName||o.shippingCompany)===co);
-      const del=coOrds.filter(isDelivered).length;
-      const ret=coOrds.filter(o=>o.shipStage==='returned').length;
-      const rate=coOrds.length?Math.round(del/coOrds.length*100):0;
-      const shipper=shippers.find(s=>s.name===co)||{};
-      return`<div class="rep-card">
+    ${s.perCompany.map(c=>`<div class="rep-card">
         <div class="rep-card-head">
-          <div><div class="rep-name">🚚 ${co}</div><div class="rep-sub">${shipper.phone||''}</div></div>
-          <div style="font-size:var(--fs-sm);padding:4px 10px;border-radius:20px;background:${rate>=80?'rgba(0,217,126,.12)':'rgba(255,170,0,.12)'};color:${rate>=80?'var(--g)':'var(--y)'};font-weight:800">${rate}% تسليم</div>
+          <div><div class="rep-name">🚚 ${c.name}</div><div class="rep-sub">${c.shipper.phone||''}</div></div>
+          <div style="font-size:var(--fs-sm);padding:4px 10px;border-radius:20px;background:${c.rate>=80?'rgba(0,217,126,.12)':'rgba(255,170,0,.12)'};color:${c.rate>=80?'var(--g)':'var(--y)'};font-weight:800">${c.rate}% تسليم</div>
         </div>
         <div class="rep-stats">
-          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--b)">${coOrds.length}</div><div class="rep-stat-lbl">أوردر</div></div>
-          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${del}</div><div class="rep-stat-lbl">تسليم</div></div>
-          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--r)">${ret}</div><div class="rep-stat-lbl">مرتجع</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--b)">${c.count}</div><div class="rep-stat-lbl">أوردر</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${c.delivered}</div><div class="rep-stat-lbl">تسليم</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--r)">${c.returned}</div><div class="rep-stat-lbl">مرتجع</div></div>
         </div>
-      </div>`;
-    }).join('')}`;
+      </div>`).join('')}`;
 }
 
 // ══ Tab 4: Clients ══
 function renderClients(f){
-  const clientMap={};
-  f.forEach(o=>{
-    const k=o.clientId||o.clientName;if(!k)return;
-    if(!clientMap[k])clientMap[k]={name:o.clientName||'—',phone:o.clientPhone||'',count:0,total:0,paid:0};
-    clientMap[k].count++;
-    clientMap[k].total+=(parseFloat(o.salePrice)||0);
-    clientMap[k].paid+=(parseFloat(o.totalPaid)||parseFloat(o.paid)||0);
-  });
-  const sorted=Object.values(clientMap).sort((a,b)=>b.total-a.total);
-  const newC=f.filter(o=>{const c=clients.find(x=>x._id===o.clientId);return c&&c.createdAt?.seconds&&new Date(c.createdAt.seconds*1000)>=getRange(filterMode).from;}).length;
-  const maxTot=Math.max(...sorted.map(c=>c.total),1);
-
+  // pure aggregator في core/reports-tab-stats.js
+  const s = buildClientActivityStats(f, clients, getRange(filterMode));
   return`
     <div class="kpi-grid">
-      ${kpi(sorted.length,'عملاء نشطين','var(--b)')}
-      ${kpi(newC,'عملاء جدد','var(--g)')}
-      ${kpi(sorted.length?Math.round(sorted.reduce((s,c)=>s+c.total,0)/sorted.length)+'ج':'—','متوسط الأوردر','var(--y)')}
-      ${kpi(sorted.filter(c=>c.count>1).length,'عملاء مكررين','var(--p)')}
+      ${kpi(s.activeCount,'عملاء نشطين','var(--b)')}
+      ${kpi(s.newCount,'عملاء جدد','var(--g)')}
+      ${kpi(s.avgOrder?s.avgOrder+'ج':'—','متوسط الأوردر','var(--y)')}
+      ${kpi(s.repeatCount,'عملاء مكررين','var(--p)')}
     </div>
     <div class="chart-wrap">
       <div class="chart-title">👥 أكثر العملاء شراءً</div>
-      ${sorted.slice(0,10).map(c=>bar(c.name,c.total,maxTot,'linear-gradient(90deg,var(--b),var(--p))',' ج')).join('')}
+      ${s.sorted.slice(0,10).map(c=>bar(c.name,c.total,s.maxTotal,'linear-gradient(90deg,var(--b),var(--p))',' ج')).join('')}
     </div>
-    ${sorted.slice(0,20).map(c=>`<div class="rep-card" style="padding:12px 16px">
+    ${s.sorted.slice(0,20).map(c=>`<div class="rep-card" style="padding:12px 16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><div style="font-size:var(--fs-md);font-weight:800">${c.name}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c.phone} · ${c.count} أوردر</div></div>
         <div style="text-align:left">
