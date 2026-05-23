@@ -595,6 +595,7 @@ import {
 import { buildConvListHTML } from "./features/inbox/views/conv-list-view.js";
 import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./features/inbox/views/chat-view.js";
 import { buildForwardListHTML, buildShareListHTML, buildUserListHTML, buildOrderPickerHTML } from "./features/inbox/views/picker-views.js";
+import { groupStoriesByUserUid, buildStoriesRowHTML, getCurrentStoryViewInfo } from "./features/inbox/views/stories-view.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'#3b9eff',customer_service:'#22d3ee',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -1797,74 +1798,16 @@ function subscribeStories() {
 }
 
 // Group stories by user
-function groupStoriesByUser() {
-  const map = new Map();
-  allStories.forEach(s => {
-    if (!map.has(s.userId)) map.set(s.userId, []);
-    map.get(s.userId).push(s);
-  });
-  // sort each user's stories oldest-first (for viewing order)
-  map.forEach(arr => arr.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)));
-  // Put "my own" first, then others (most recent activity first)
-  const arr = [...map.entries()].map(([uid, stories]) => ({ uid, stories }));
-  arr.sort((a, b) => {
-    if (a.uid === currentUid) return -1;
-    if (b.uid === currentUid) return 1;
-    const aLast = Math.max(...a.stories.map(s => s.createdAt?.seconds || 0));
-    const bLast = Math.max(...b.stories.map(s => s.createdAt?.seconds || 0));
-    return bLast - aLast;
-  });
-  return arr;
-}
+// Stories aggregation + row HTML — pure logic في features/inbox/views/stories-view.js
+const groupStoriesByUser = () => groupStoriesByUserUid(allStories, currentUid);
 
 function renderStoriesRow() {
   const row = $('stories-row'); if (!row) return;
-  const groups = groupStoriesByUser();
-  const myGroup = groups.find(g => g.uid === currentUid);
-  const myStories = myGroup ? myGroup.stories : [];
-  // "Add my story" slot (always first)
-  const myInitial = (currentUserName || '?').charAt(0).toUpperCase();
-  const myColor = colorOf(currentRole) || '#00a884';
-  let html = '';
-  if (myStories.length) {
-    const allViewed = myStories.every(s => (s.viewers || []).includes(currentUid));
-    html += `<div class="ib-story" onclick="openStoryViewer('${currentUid}')">
-      <div class="ib-story-ring ${allViewed?'mine':'unviewed'}">
-        <div class="ib-story-inner">
-          <div class="ib-story-av" style="background:${myColor}">${myInitial}</div>
-        </div>
-        <span class="ib-story-add-badge" onclick="event.stopPropagation();openAddStory()">+</span>
-      </div>
-      <div class="ib-story-name">لحظتي</div>
-    </div>`;
-  } else {
-    html += `<div class="ib-story" onclick="openAddStory()">
-      <div class="ib-story-ring mine">
-        <div class="ib-story-inner">
-          <div class="ib-story-av" style="background:${myColor}">${myInitial}</div>
-        </div>
-        <span class="ib-story-add-badge">+</span>
-      </div>
-      <div class="ib-story-name">أضف لحظة</div>
-    </div>`;
-  }
-  // Others
-  groups.filter(g => g.uid !== currentUid).forEach(g => {
-    const user = allUsers.find(u => u._id === g.uid);
-    const name = g.stories[0]?.userName || user?.name || 'موظف';
-    const col = g.stories[0]?.userColor || colorOf(user?.role) || '#00a884';
-    const initial = (name || '?').charAt(0).toUpperCase();
-    const allViewed = g.stories.every(s => (s.viewers || []).includes(currentUid));
-    html += `<div class="ib-story" onclick="openStoryViewer('${g.uid}')">
-      <div class="ib-story-ring ${allViewed?'mine':'unviewed'}">
-        <div class="ib-story-inner">
-          <div class="ib-story-av" style="background:${col}">${initial}</div>
-        </div>
-      </div>
-      <div class="ib-story-name">${esc(name)}</div>
-    </div>`;
+  row.innerHTML = buildStoriesRowHTML({
+    groups: groupStoriesByUser(),
+    currentUid, currentUserName, currentRole,
+    allUsers, roleColorMap: ROLE_COLOR,
   });
-  row.innerHTML = html;
 }
 
 // ── Story viewer ──
@@ -1890,27 +1833,21 @@ window.closeStoryViewer = function() {
 
 function showCurrentStory() {
   if (__sv.timer) { clearInterval(__sv.timer); __sv.timer = null; }
-  const group = __sv.groups[__sv.gIdx];
-  if (!group) { closeStoryViewer(); return; }
-  const s = group.stories[__sv.sIdx];
-  if (!s) { closeStoryViewer(); return; }
-
-  // header
-  const name = s.userName || (allUsers.find(u => u._id === group.uid)?.name || 'موظف');
-  const col = s.userColor || colorOf(allUsers.find(u => u._id === group.uid)?.role) || '#00a884';
+  // pure helper في features/inbox/views/stories-view.js
+  const info = getCurrentStoryViewInfo({
+    group: __sv.groups[__sv.gIdx], sIdx: __sv.sIdx,
+    currentUid, allUsers, roleColorMap: ROLE_COLOR,
+  });
+  if (!info) { closeStoryViewer(); return; }
+  const {story:s, name, color:col, createdAtLabel, barsHTML, viewersCount, canDelete} = info;
   $('sv-hdr-av').textContent = name.charAt(0).toUpperCase();
   $('sv-hdr-av').style.background = col;
   $('sv-hdr-name').textContent = name;
-  const created = s.createdAt?.toDate?.();
-  $('sv-hdr-time').textContent = created ? created.toLocaleString('ar-EG', {hour:'2-digit',minute:'2-digit'}) : '';
-
-  // progress bars
-  const bars = $('sv-bars');
-  bars.innerHTML = group.stories.map((_, i) => `<div class="ib-sv-bar ${i<__sv.sIdx?'done':''}"><div class="ib-sv-bar-fill" id="sv-fill-${i}"></div></div>`).join('');
+  $('sv-hdr-time').textContent = createdAtLabel;
+  $('sv-bars').innerHTML = barsHTML;
 
   // stage
   const stage = $('sv-stage');
-  // keep nav zones
   const navL = stage.querySelector('.ib-sv-nav-l'); const navR = stage.querySelector('.ib-sv-nav-r');
   stage.innerHTML = '';
   if (s.type === 'image' && s.mediaUrl) {
@@ -1932,12 +1869,11 @@ function showCurrentStory() {
   }
   stage.appendChild(navL); stage.appendChild(navR);
 
-  // viewers count + delete button (only for own)
-  $('sv-viewers-count').textContent = (s.viewers || []).filter(u => u !== currentUid).length;
-  $('sv-del-btn').style.display = s.userId === currentUid ? '' : 'none';
+  $('sv-viewers-count').textContent = viewersCount;
+  $('sv-del-btn').style.display = canDelete ? '' : 'none';
 
   // mark viewed
-  if (s.userId !== currentUid && !viewedStoryIds.has(s._id) && !(s.viewers || []).includes(currentUid)) {
+  if (!canDelete && !viewedStoryIds.has(s._id) && !(s.viewers || []).includes(currentUid)) {
     viewedStoryIds.add(s._id);
     inboxActions.recordStoryView({db,storyId:s._id,userId:currentUid}).catch(_=>{});
   }
