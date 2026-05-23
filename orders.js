@@ -729,6 +729,26 @@ export function validateStageRequirements(order, fromStage) {
   }
   else if (stage === 'production') {
     if (!(order.costItems || []).length) warnings.push('لم تُسجَّل تكاليف الأوردر — يفضّل تسجيلها قبل التحويل للشحن');
+
+    // B4 (Phase 2): يسد فجوة G2 من PHASE_2_DIAGNOSIS.
+    // المنتجات في حالة pending/in_progress كانت تصل لمرحلة الشحن بسبب غياب
+    // فحص productStatus في الـ gate. هنا نمنع الانتقال صلباً، ونحذّر للـ on_hold.
+    const products = order.products || [];
+    if (products.length > 0) {
+      const stuck = products.filter(p => {
+        const ps = p.productStatus || PRODUCT_STATUSES.PENDING;
+        return ps === PRODUCT_STATUSES.PENDING || ps === PRODUCT_STATUSES.IN_PROGRESS;
+      });
+      if (stuck.length > 0) {
+        errors.push(
+          `⛔ ${stuck.length} منتج لم يكتمل تصميمه/طباعته بعد — لا يمكن التحويل للشحن`
+        );
+      }
+      const onHold = products.filter(p => (p.productStatus || '') === PRODUCT_STATUSES.ON_HOLD);
+      if (onHold.length > 0) {
+        warnings.push(`⏸ ${onHold.length} منتج مؤجَّل — راجع حالته قبل الشحن`);
+      }
+    }
   }
   else if (stage === 'shipping') {
     // شحن → أرشيف
