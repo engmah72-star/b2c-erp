@@ -546,6 +546,8 @@ import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, add
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
+import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -639,27 +641,9 @@ function applyCounters(root){
 }
 
 // ══ Sparkline ══
-function sparkline(values,color='var(--r)'){
-  if(!values||!values.length)return'';
-  const max=Math.max(...values,1);
-  return`<div class="sparkline">${values.map(v=>`<span style="height:${Math.max(2,(v/max)*100)}%;background:${color}"></span>`).join('')}</div>`;
-}
-
-// آخر N يوم — يرجع array بطول N، مفهرس بالـ day index (0 = من N يوم، N-1 = اليوم)
-function dailySeries(days,filterFn,valueFn){
-  const buckets=new Array(days).fill(0);
-  const now=new Date();now.setHours(23,59,59,999);
-  const end=now.getTime();
-  transactions.forEach(t=>{
-    if(!filterFn(t))return;
-    const sec=t.createdAt?.seconds||0;if(!sec)return;
-    const ms=sec*1000;
-    const ageDays=Math.floor((end-ms)/86400000);
-    if(ageDays<0||ageDays>=days)return;
-    buckets[days-1-ageDays]+=valueFn(t);
-  });
-  return buckets;
-}
+// pure logic مُمَركَزة في core/reports-timeseries.js
+const sparkline=_sparklineHTML;
+const dailySeries=(days,filterFn,valueFn)=>_dailySeries({items:transactions,days,filterFn,valueFn});
 
 // ══ Communication helpers ══
 // تنظيف رقم تليفون مصري وتحويله لصيغة WhatsApp الدولية
@@ -816,26 +800,10 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
 // ══ Date Filter ══
-function getRange(mode){
-  const now=new Date();const y=now.getFullYear(),m=now.getMonth(),d=now.getDate();
-  if(mode==='today') return{from:new Date(y,m,d),to:new Date(y,m,d,23,59,59)};
-  if(mode==='week'){const dow=now.getDay();const mon=new Date(y,m,d-((dow+6)%7));return{from:mon,to:new Date(mon.getTime()+6*86400000+86399999)};}
-  if(mode==='month') return{from:new Date(y,m,1),to:new Date(y,m+1,0,23,59,59)};
-  if(mode==='last3') return{from:new Date(y,m-3,1),to:new Date(y,m+1,0,23,59,59)};
-  if(mode==='year') return{from:new Date(y,0,1),to:new Date(y,11,31,23,59,59)};
-  if(mode==='custom'&&dateFrom&&dateTo) return{from:new Date(dateFrom),to:new Date(dateTo+'T23:59:59')};
-  return{from:new Date(y,m,1),to:new Date(y,m+1,0,23,59,59)};
-}
-function getPrevRange(mode){
-  const now=new Date();const y=now.getFullYear(),m=now.getMonth();
-  if(mode==='month') return{from:new Date(y,m-1,1),to:new Date(y,m,0,23,59,59)};
-  if(mode==='year') return{from:new Date(y-1,0,1),to:new Date(y-1,11,31,23,59,59)};
-  const r=getRange(mode);const diff=r.to-r.from;return{from:new Date(r.from-diff),to:new Date(r.from-1)};
-}
-function inRange(o,range){
-  const sec=o.createdAt?.seconds||0;if(!sec)return false;
-  const d=new Date(sec*1000);return d>=range.from&&d<=range.to;
-}
+// Date filters — pure logic مُمَركَزة في core/reports-date-filters.js
+const getRange=(mode)=>_getRange(mode,{customFrom:dateFrom,customTo:dateTo});
+const getPrevRange=(mode)=>_getPrevRange(mode,{customFrom:dateFrom,customTo:dateTo});
+const inRange=_inRange;
 
 window.setFilter=function(mode,btn){
   if(mode==='custom'){dateFrom=document.getElementById('date-from').value;dateTo=document.getElementById('date-to').value;if(!dateFrom||!dateTo)return toast('⚠️ اختر التواريخ','err');}
