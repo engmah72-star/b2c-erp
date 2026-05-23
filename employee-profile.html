@@ -445,6 +445,7 @@ import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
 import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
+import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
 import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
@@ -1535,36 +1536,7 @@ function renderInsights(){
 }
 
 // ══ PERMISSIONS ══
-const ALL_PAGES=[
-  {key:'clients',label:'👤 العملاء'},
-  {key:'design',label:'✏️ التصميم'},
-  {key:'print',label:'🖨️ الطباعة'},
-  {key:'production',label:'🏭 التنفيذ'},
-  {key:'shipping',label:'🚚 الشحن'},
-  {key:'shipping-accounts',label:'📦 حسابات الشحن'},
-  {key:'archive',label:'📁 الأرشيف'},
-  {key:'accounts',label:'💰 الحسابات'},
-  {key:'reports',label:'📊 التقارير'},
-  {key:'suppliers',label:'▣ الموردين'},
-  {key:'products',label:'◈ المنتجات'},
-  {key:'gallery',label:'🖼️ المعرض'},
-  {key:'design-workspace',label:'🖥️ مساحة التصميم'},
-  {key:'settings',label:'⚙️ الإعدادات'},
-  {key:'employees',label:'👥 الموظفين'},
-];
-const ALL_PERMS=[
-  {key:'canSeePrices',label:'💰 يشوف الأسعار'},
-  {key:'canSeeAllOrders',label:'📋 يشوف أوردرات الكل'},
-  {key:'canAddOrders',label:'➕ يضيف أوردرات'},
-  {key:'canViewClients',label:'👁️ يفتح/يشوف العملاء'},
-  {key:'canAddClients',label:'👤 يضيف عملاء'},
-  {key:'canFollowUpClients',label:'📞 يتابع العملاء'},
-  {key:'canArchiveClients',label:'📁 يأرشف العملاء'},
-  {key:'canAddSuppliers',label:'▣ يضيف/يعدّل موردين'},
-  {key:'canAssignDesigner',label:'🎨 يعين المصمم'},
-  {key:'canAssignTasks',label:'✅ يضيف مهام للموظفين'},
-  {key:'canViewCosts',label:'🏭 يشوف التكاليف والأرباح'},
-];
+// ALL_PAGES + ALL_PERMS تُستورد من features/employee-profile/views/render-permissions.js
 // Phase A #2: استخدم canonical من permissions-matrix (بدل ROLE_DEFAULTS_PROFILE المحلية)
 // projection: نأخذ فقط الـ 9 fields التي كانت تُكتب تاريخياً.
 // admin يُعالج بشكل منفصل (early return) — لا يصل لهذا الـ projection.
@@ -1581,70 +1553,25 @@ function _legacyProfilePermissions(role){
 
 async function renderPermissions(){
   const el=document.getElementById('permissions-container');if(!el||!emp)return;
-  // Admin only: locked إلى صلاحيات كاملة. operation_manager: نعرض الـ checkboxes
-  // عشان مدير العمليات يكون له صلاحيات قابلة للتعديل تفصيلياً.
-  if(emp.role==='admin'){
-    el.innerHTML='<div style="font-size:var(--fs-base);color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة (محمية)</div>';
-    return;
-  }
+  if(emp.role==='admin'){el.innerHTML=buildAdminLockedHTML();return;}
   const defaults=_legacyProfilePermissions(emp.role);
   let current={...defaults};
   try{
-    // ابحث عن الـ user document
     let userDoc=null;
     if(emp.authUid){
       const snap=await getDoc(doc(db,'users',emp.authUid));
-      if(snap.exists()) userDoc=snap.data();
+      if(snap.exists())userDoc=snap.data();
     }
     if(!userDoc){
-      // ابحث بالـ email
       const email=emp.email||(emp.phone||'')+'@b2c.local';
       if(email){
         const q=await getDocs(query(collection(db,'users'),where('email','==',email)));
-        if(!q.empty){
-          const d=q.docs[0];
-          emp.authUid=d.id; // احفظه
-          userDoc=d.data();
-        }
+        if(!q.empty){const d=q.docs[0];emp.authUid=d.id;userDoc=d.data();}
       }
     }
-    if(userDoc?.permissions){
-      current={...defaults,...userDoc.permissions};
-    }
-  }catch(e){
-    console.log('permissions fetch:',e.message);
-  }
-  renderPermsUI(current);
-}
-
-function renderPermsUI(current){
-  const el=document.getElementById('permissions-container');if(!el)return;
-  const currentPages=current.pages||[];
-  const isAllPages=currentPages.includes('*');
-  el.innerHTML=`
-    <div style="margin-bottom:14px">
-      <div style="font-size:var(--fs-sm);font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📄 الصفحات المتاحة</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        ${ALL_PAGES.map(p=>{
-          const isChecked=isAllPages||currentPages.includes(p.key);
-          return`<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
-            <input type="checkbox" class="perm-page" value="${p.key}" ${isChecked?'checked':''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
-            <span style="font-size:var(--fs-base);font-weight:600">${p.label}</span>
-          </label>`;
-        }).join('')}
-      </div>
-    </div>
-    <div>
-      <div style="font-size:var(--fs-sm);font-weight:700;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🔐 صلاحيات البيانات</div>
-      <div style="display:grid;gap:6px">
-        ${ALL_PERMS.map(p=>
-          `<label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
-            <input type="checkbox" class="perm-data" value="${p.key}" ${current[p.key]?'checked':''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
-            <span style="font-size:var(--fs-md);font-weight:600">${p.label}</span>
-          </label>`
-        ).join('')}
-      </div>
-    </div>`;
+    if(userDoc?.permissions)current={...defaults,...userDoc.permissions};
+  }catch(e){console.log('permissions fetch:',e.message);}
+  el.innerHTML=buildPermsUI({current});
 }
 
 // ══ تعديل بيانات الموظف ══
