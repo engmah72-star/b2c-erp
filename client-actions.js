@@ -674,6 +674,41 @@ export const clientActions = {
       return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], count: 0 };
     }
   },
+
+  // ──────────────────────────────────────────
+  // AUDIT LOG (public wrapper — H1.1 fix)
+  // ──────────────────────────────────────────
+
+  /**
+   * يكتب دخول في audit_logs. wrapper public لاستخدام الصفحات بدل الكتابة المباشرة.
+   * Non-blocking: لو فشل (rules/network)، يسجّل warning ولا يرمي exception.
+   *
+   * @param {Object} args
+   * @param {Object} [args.db=defaultDb]
+   * @param {string} args.action          — اسم العملية (e.g. 'cgrid_bulk_archive')
+   * @param {Object} [args.details={}]    — payload إضافي
+   * @param {string} args.userId
+   * @param {string} [args.userName]
+   * @param {string} [args.userRole]
+   * @param {string} [args.url]           — pathname للـ context
+   */
+  async logAudit({ db = defaultDb, action, details = {}, userId, userName = '', userRole = '', url = '' }) {
+    try {
+      await addDoc(collection(db, 'audit_logs'), {
+        action,
+        details: details || {},
+        userId: userId || '',
+        userName: userName || '',
+        userRole: userRole || '',
+        timestamp: serverTimestamp(),
+        url: url || (typeof location !== 'undefined' ? location.pathname : ''),
+      });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      console.warn('[clientActions.logAudit] failed (non-blocking):', action, e?.message);
+      return { ok: false, errors: [e?.message || 'audit log failed'], warnings: [] };
+    }
+  },
 };
 
 // ══════════════════════════════════════════
