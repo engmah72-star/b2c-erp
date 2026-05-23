@@ -262,6 +262,11 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, getDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { approvalActions } from "./approval-actions.js";
+import {
+  computeWalletState as _computeWalletState,
+  detectRisks as _detectRisks,
+  computeSupplierDues as _computeSupplierDues,
+} from "./core/approvals-utils.js";
 import { maskPhone, canSee } from "./shared.js";
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
@@ -452,43 +457,8 @@ function startListeners(){
 // هذه الطريقة تتعامل بشكل صحيح مع:
 //   • المحافظ التي بدأت برصيد افتتاحي بدون tx مسجلة
 //   • أي drift بين الرصيد المحفوظ ومجموع الـ tx (يظهر في النتيجة)
-function computeWalletState(t){
-  if(t.balanceBefore != null && t.balanceAfter != null){
-    return { before: parseFloat(t.balanceBefore)||0, after: parseFloat(t.balanceAfter)||0, walletCurrent: null };
-  }
-  if(!t.walletId) return null;
-  // الرصيد الحالي للمحفظة (المرجع)
-  const wallet = walletsArr.find(w => w._id === t.walletId);
-  const walletCurrent = wallet ? (parseFloat(wallet.balance)||0) : 0;
-  // ابدأ من الرصيد الحالي، اعكس كل tx بعد الحالية للوصول لرصيد لحظة الحالية
-  let afterCurrent = walletCurrent;
-  let foundCurrent = false;
-  for(let i = allTxs.length - 1; i >= 0; i--){
-    const x = allTxs[i];
-    if(x.walletId !== t.walletId) continue;
-    if(x._id === t._id){ foundCurrent = true; break; }
-    const amt = (parseFloat(x.amount)||0);
-    const reverseSign = (x.type === 'in' ? -1 : 1);
-    afterCurrent += reverseSign * amt;
-  }
-  if(!foundCurrent){
-    // الـ tx غير موجودة في allTxs — نستخدم fallback (السلوك القديم)
-    let after = 0;
-    for(const x of allTxs){
-      if(x.walletId !== t.walletId) continue;
-      const amt = (parseFloat(x.amount)||0);
-      const sign = (x.type === 'in' ? 1 : -1);
-      after += sign * amt;
-      if(x._id === t._id) break;
-    }
-    const sign = (t.type === 'in' ? 1 : -1);
-    return { before: after - sign * (parseFloat(t.amount)||0), after, walletCurrent };
-  }
-  const after = afterCurrent;
-  const sign = (t.type === 'in' ? 1 : -1);
-  const before = after - sign * (parseFloat(t.amount)||0);
-  return { before, after, walletCurrent };
-}
+// pure logic مُمَركَزة في core/approvals-utils.js
+const computeWalletState = (t) => _computeWalletState(t,{wallets:walletsArr,transactions:allTxs});
 
 function updateCounts(){
   // counts للـ requests
@@ -779,40 +749,8 @@ function entityHistory(r){
 }
 
 // ══ رصد المخاطر — تنبيهات للأدمن قبل الاعتماد ══
-function detectRisks(r){
-  const risks = [];
-  // مبلغ كبير
-  if(r.amount > 10000) risks.push({lvl:'high', txt:`💰 مبلغ كبير: ${fn(r.amount)} ج (> 10,000)`});
-  else if(r.amount > 5000) risks.push({lvl:'med', txt:`⚠️ مبلغ متوسط: ${fn(r.amount)} ج (> 5,000)`});
-  // طلبات مكررة بنفس المبلغ + المورد + اليوم
-  const today = new Date().toDateString();
-  const dupes = requests.filter(x => x._id !== r._id
-    && x.amount === r.amount
-    && x.supplierId === r.supplierId
-    && x.employeeId === r.employeeId
-    && x.requestedAt?.seconds && new Date(x.requestedAt.seconds*1000).toDateString() === today
-    && !['rejected'].includes(x.status));
-  if(dupes.length) risks.push({lvl:'high', txt:`🔁 طلب مماثل في نفس اليوم (×${dupes.length}) — تحقق من التكرار`});
-  // المورد رُفض له طلب مؤخراً
-  if(r.supplierId){
-    const recentRej = requests.filter(x => x.supplierId === r.supplierId && x.status === 'rejected'
-      && x.rejectedAt?.seconds && (Date.now() - x.rejectedAt.seconds*1000) < 7*24*60*60*1000);
-    if(recentRej.length) risks.push({lvl:'med', txt:`⚠️ هذا المورد رُفض له طلب آخر خلال 7 أيام`});
-  }
-  // الأوردر مؤرشف
-  if(r.orderId){
-    const o = ordersMap.get(r.orderId);
-    if(o && ['archived','cancelled'].includes(o.stage)) risks.push({lvl:'high', txt:`🚫 الأوردر ${o.stage==='archived'?'مؤرشَف':'ملغي'} — تحقق من السبب`});
-  }
-  // بند التكلفة مدفوع مسبقاً
-  if(r.type === 'supplier_payment' && r.costItemIndex !== undefined && r.orderId){
-    const o = ordersMap.get(r.orderId);
-    if(o?.costItems?.[r.costItemIndex]?.paid){
-      risks.push({lvl:'high', txt:`🔴 بند التكلفة المرتبط مدفوع بالفعل (paidTxId: ${o.costItems[r.costItemIndex].paidTxId?.slice(-8)||'—'})`});
-    }
-  }
-  return risks;
-}
+// pure logic مُمَركَزة في core/approvals-utils.js
+const detectRisks = (r) => _detectRisks(r,{allRequests:requests,ordersMap,format:fn});
 
 function renderRequestCard(r){
   const typeLbl = REQ_TYPE_LBL[r.type] || r.type;
@@ -971,49 +909,8 @@ function renderRequestCard(r){
 // ═══════════════════ Suppliers Due (أرصدة الموردين) ═══════════════════
 // يحسب لكل مورد إجمالي البنود غير المدفوعة عبر كل الأوردرات النشطة
 // + يستثني البنود اللي عليها طلب قائم (pendingPaymentRequestId)
-function computeSupplierDues(){
-  const map = new Map(); // supplierId → { name, type, totalUnpaid, totalPending, items:[] }
-  for(const o of ordersMap.values()){
-    if(['archived','cancelled'].includes(o.stage)) continue;
-    const items = o.costItems || [];
-    items.forEach((c, idx)=>{
-      if(c.paid) return;
-      if(!c.supplierId) return;
-      const amt = parseFloat(c.total)||0;
-      if(amt <= 0) return;
-      if(!map.has(c.supplierId)){
-        map.set(c.supplierId, {
-          id: c.supplierId,
-          name: c.supplierName || '—',
-          type: c.supplierType || '',
-          totalUnpaid: 0,
-          totalPending: 0,
-          items: [],
-        });
-      }
-      const row = map.get(c.supplierId);
-      if(c.pendingPaymentRequestId){
-        row.totalPending += amt;
-      } else {
-        row.totalUnpaid += amt;
-      }
-      row.items.push({
-        orderId: o._id,
-        orderRefId: o.orderId || o._id.slice(-6),
-        clientName: o.clientName || '—',
-        costItemIndex: idx,
-        type: c.type || '',
-        amount: amt,
-        note: c.note || '',
-        pendingReqId: c.pendingPaymentRequestId || null,
-        pendingRequestedBy: c.pendingRequestedBy || '',
-        orderStage: o.stage || '',
-      });
-    });
-  }
-  // ترتيب: الأعلى مديونية أولاً
-  return [...map.values()].sort((a,b)=>(b.totalUnpaid+b.totalPending) - (a.totalUnpaid+a.totalPending));
-}
+// pure logic مُمَركَزة في core/approvals-utils.js
+const computeSupplierDues = () => _computeSupplierDues({ordersMap});
 
 function renderSuppliersDue(){
   const rows = computeSupplierDues();
