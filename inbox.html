@@ -594,6 +594,7 @@ import {
 } from "./core/inbox-utils.js";
 import { buildConvListHTML } from "./features/inbox/views/conv-list-view.js";
 import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./features/inbox/views/chat-view.js";
+import { buildForwardListHTML, buildShareListHTML, buildUserListHTML, buildOrderPickerHTML } from "./features/inbox/views/picker-views.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'#3b9eff',customer_service:'#22d3ee',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -1208,24 +1209,11 @@ window.actForward=()=>{
 window.closeForward=()=>$('fwd-ov').classList.remove('show');
 function renderForwardList(){
   const body=$('fwd-list');if(!body)return;
-  const q=($('fwd-search')?.value||'').toLowerCase();
-  const items=[];
-  // existing conversations (non-archived)
-  conversations.filter(c=>!(c.archivedBy||[]).includes(currentUid)).forEach(c=>{
-    const n=convDisplayName(c);
-    if(!q||n.toLowerCase().includes(q))items.push({kind:'conv',_id:c._id,name:n,ico:convIcon(c),col:convColor(c),sub:c.type==='dm'?'محادثة مباشرة':'قناة'});
+  body.innerHTML=buildForwardListHTML({
+    conversations,allUsers,
+    searchQuery:$('fwd-search')?.value||'',
+    currentUid,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,
   });
-  // other users not yet in a DM
-  const existingDmUids=new Set();
-  conversations.filter(c=>c.type==='dm').forEach(c=>(c.participants||[]).forEach(u=>{if(u!==currentUid)existingDmUids.add(u);}));
-  allUsers.filter(u=>!existingDmUids.has(u._id)).forEach(u=>{
-    if(!q||(u.name||'').toLowerCase().includes(q))items.push({kind:'user',_id:u._id,name:u.name||'موظف',ico:initAvatar(u.name),col:colorOf(u.role),sub:ROLE_LABEL[u.role]||'',role:u.role});
-  });
-  if(!items.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--ws-text-dim)">لا نتائج</div>';return;}
-  body.innerHTML=items.slice(0,40).map(it=>`<div class="ib-user-row" onclick="doForward('${it.kind}','${it._id}','${esc((it.name||'').replace(/'/g,''))}')">
-    <div class="ib-user-avatar" style="background:${it.col}">${it.ico}</div>
-    <div class="ib-user-info"><div class="ib-user-name">${esc(it.name)}</div><div class="ib-user-role">${esc(it.sub)}</div></div>
-  </div>`).join('');
 }
 window.doForward=async function(kind,id,otherName){
   if(!activeMsgForAction)return;
@@ -1395,21 +1383,11 @@ window.openShareOrder=function(order){
 window.closeShareOrder=()=>{$('share-ov').classList.remove('show');sharePending=null;};
 function renderShareList(){
   const body=$('share-list');if(!body)return;
-  const q=($('share-search')?.value||'').toLowerCase();
-  const items=[];
-  conversations.filter(c=>!(c.archivedBy||[]).includes(currentUid)).forEach(c=>{
-    const n=convDisplayName(c);if(!q||n.toLowerCase().includes(q))items.push({kind:'conv',_id:c._id,name:n,ico:convIcon(c),col:convColor(c),sub:c.type==='dm'?'محادثة مباشرة':'قناة'});
+  body.innerHTML=buildShareListHTML({
+    conversations,allUsers,
+    searchQuery:$('share-search')?.value||'',
+    currentUid,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,
   });
-  const existingDmUids=new Set();
-  conversations.filter(c=>c.type==='dm').forEach(c=>(c.participants||[]).forEach(u=>{if(u!==currentUid)existingDmUids.add(u);}));
-  allUsers.filter(u=>!existingDmUids.has(u._id)).forEach(u=>{
-    if(!q||(u.name||'').toLowerCase().includes(q))items.push({kind:'user',_id:u._id,name:u.name||'موظف',ico:initAvatar(u.name),col:colorOf(u.role),sub:ROLE_LABEL[u.role]||''});
-  });
-  if(!items.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--ws-text-dim)">لا نتائج</div>';return;}
-  body.innerHTML=items.slice(0,40).map(it=>`<div class="ib-user-row" onclick="doShareOrder('${it.kind}','${it._id}','${esc((it.name||'').replace(/'/g,''))}')">
-    <div class="ib-user-avatar" style="background:${it.col}">${it.ico}</div>
-    <div class="ib-user-info"><div class="ib-user-name">${esc(it.name)}</div><div class="ib-user-role">${esc(it.sub)}</div></div>
-  </div>`).join('');
 }
 window.doShareOrder=async function(kind,id,otherName){
   if(!sharePending)return;
@@ -1453,29 +1431,11 @@ window.openOrderPicker=function(){
 window.closeOrderPicker=()=>$('ord-pick-ov').classList.remove('show');
 function renderOrderPickerList(){
   const body=$('ord-pick-list');if(!body)return;
-  const q=($('ord-pick-search')?.value||'').toLowerCase().trim();
-  let list=allOrders;
-  if(q){
-    list=list.filter(o=>{
-      const code=(o.orderId||o._id||'').toLowerCase();
-      const name=(o.clientName||'').toLowerCase();
-      const prod=(o.product||(o.products||[]).map(p=>p.name).join(' ')||'').toLowerCase();
-      return code.includes(q)||name.includes(q)||prod.includes(q);
-    });
-  }
-  list=list.slice(0,50);
-  if(!list.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md)">لا أوردرات نشطة</div>';return;}
-  body.innerHTML=list.map(o=>{
-    const prods=o.product||(o.products||[]).map(p=>p.name).join('، ')||'—';
-    const code=esc(o.orderId||o._id.slice(-6));
-    return `<div class="ib-user-row" onclick="pickOrderForChat('${o._id}')">
-      <div class="ib-user-avatar" style="background:#00a884">📦</div>
-      <div class="ib-user-info">
-        <div class="ib-user-name">${esc(o.clientName||'—')}</div>
-        <div class="ib-user-role">#${code} · ${esc(prods)} · ${STAGE_AR[o.stage]||o.stage||''}${o.deadline?' · '+esc(o.deadline):''}</div>
-      </div>
-    </div>`;
-  }).join('');
+  body.innerHTML=buildOrderPickerHTML({
+    orders:allOrders,
+    searchQuery:$('ord-pick-search')?.value||'',
+    stageAr:STAGE_AR,
+  });
 }
 window.pickOrderForChat=async function(orderDocId){
   const o=allOrders.find(x=>x._id===orderDocId);if(!o||!activeConvId)return;
@@ -1512,21 +1472,11 @@ window.openNewChat=function(){
 window.closeNewChat=()=>$('new-chat-ov').classList.remove('show');
 function renderUserList(){
   const body=$('user-list-body');if(!body)return;
-  const q=($('user-search')?.value||'').toLowerCase();
-  let list=allUsers.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-  if(q)list=list.filter(u=>(u.name||'').toLowerCase().includes(q)||(ROLE_LABEL[u.role]||'').toLowerCase().includes(q));
-  if(!list.length){body.innerHTML='<div style="padding:30px;text-align:center;color:var(--ws-text-dim);font-size:var(--fs-md)">لا نتائج</div>';return;}
-  body.innerHTML=list.map(u=>{
-    const p=presenceMap.get(u._id);
-    const online=isUserOnline(p);
-    return `<div class="ib-user-row" onclick="startDM('${u._id}','${esc((u.name||'').replace(/'/g,''))}')">
-      <div class="ib-user-avatar" style="background:${colorOf(u.role)};position:relative">${initAvatar(u.name)}<span class="presence ${online?'online':''}" style="position:absolute;bottom:0;left:0;width:11px;height:11px;border-radius:50%;background:${online?'#25d366':'var(--ws-text-dim)'};border:2px solid var(--ws-panel)"></span></div>
-      <div class="ib-user-info">
-        <div class="ib-user-name">${esc(u.name||'موظف')}</div>
-        <div class="ib-user-role">${ROLE_LABEL[u.role]||u.role||''} ${online?'· متصل':''}</div>
-      </div>
-    </div>`;
-  }).join('');
+  body.innerHTML=buildUserListHTML({
+    allUsers,presenceMap,
+    searchQuery:$('user-search')?.value||'',
+    roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,
+  });
 }
 window.startDM=async function(otherUid,otherName){
   try{
