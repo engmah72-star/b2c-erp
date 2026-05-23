@@ -1,0 +1,229 @@
+/**
+ * Business2Card ERP — features/employee-profile/views/render-admin-tab.js
+ *
+ * ━━━ ADMIN TAB + TASKS VIEWS (Phase-2E1 · god-page decomp) ━━━
+ *
+ * Pure HTML builders for:
+ *   - buildTasksHTML        (Tasks tab — open + done tasks + live workload)
+ *   - buildIncidentsHTML    (Admin tab — incidents log)
+ *   - buildClientsHTML      (Admin tab — linked clients aggregated)
+ *
+ * Plus constants:
+ *   - INCIDENT_TYPES / INCIDENT_SEVERITY  (re-imported in page for modal)
+ *   - TASK_PRIORITIES                     (priority badges)
+ *   - LIVE_STAGE_MAP                      (live workload stage icons)
+ *
+ * Pure: no DOM, no Firestore, no globals.
+ */
+
+export const INCIDENT_TYPES = {
+  design_rejected:    { lbl: 'تصميم مرفوض',   ico: '🎨', col: 'var(--p)' },
+  order_late:         { lbl: 'أوردر متأخر',    ico: '⏰', col: 'var(--y)' },
+  customer_complaint: { lbl: 'شكوى عميل',     ico: '📢', col: 'var(--r)' },
+  attendance:         { lbl: 'مخالفة حضور',   ico: '💤', col: 'var(--dim2)' },
+  quality:            { lbl: 'مشكلة جودة',    ico: '⚠️', col: 'var(--y)' },
+  other:              { lbl: 'أخرى',          ico: '📌', col: 'var(--dim2)' },
+};
+
+export const INCIDENT_SEVERITY = {
+  low:    { lbl: 'منخفض',  col: 'var(--dim2)', bg: 'rgba(78,86,114,.15)' },
+  medium: { lbl: 'متوسط',  col: 'var(--y)',    bg: 'rgba(255,170,0,.15)' },
+  high:   { lbl: 'مرتفع',  col: 'var(--r)',    bg: 'rgba(255,61,110,.15)' },
+};
+
+const TASK_PRIORITIES = {
+  urgent: { lbl: '⚡ عاجل',  cls: 'pri-urgent' },
+  normal: { lbl: '📌 عادي',  cls: 'pri-normal' },
+  low:    { lbl: '📎 منخفض', cls: 'pri-low' },
+};
+
+const LIVE_STAGE_MAP = {
+  design_pending:  { ico: '✏️',  lbl: 'تصميم',  col: '#a78bfa' },
+  design_approved: { ico: '✅',  lbl: 'اعتمد',   col: '#a78bfa' },
+  production:      { ico: '🏭',  lbl: 'تنفيذ',  col: '#ff3d6e' },
+  printing:        { ico: '🖨️', lbl: 'طباعة',  col: '#ffaa00' },
+  ready:           { ico: '📦',  lbl: 'جاهز',    col: '#3b9eff' },
+  shipped:         { ico: '🚚',  lbl: 'شحن',    col: '#22d3ee' },
+};
+
+const defaultFormat = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');
+
+function escAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── TASKS + LIVE WORKLOAD ───────────────────────────────────────────
+
+/**
+ * Build the Tasks tab content (live workload card + tasks list).
+ *
+ * @param {Object} args
+ * @param {Array}  args.tasks     — [{ _id, title, description?, dueDate?, priority?, status }]
+ * @param {Array}  args.liveOrders — pre-filtered active orders for this employee
+ * @param {string} args.today
+ *
+ * @returns {{ html: string, openCount: number }}
+ */
+export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
+  const open = tasks.filter(t => t.status === 'pending');
+  const done = tasks.filter(t => t.status === 'done').slice(0, 3);
+
+  // Live workload card
+  const liveHtml = liveOrders.length
+    ? `<div style="background:rgba(124,92,255,.05);border:1px solid rgba(124,92,255,.2);border-radius:10px;padding:10px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:var(--fs-base);font-weight:800;color:var(--p)">🏃 الأوردرات الحية (${liveOrders.length})</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px">
+      ${liveOrders.slice(0, 12).map(o => {
+        const s = LIVE_STAGE_MAP[o.stage] || { ico: '•', lbl: o.stage, col: '#888' };
+        const upd = o.updatedAt?.toDate?.() || o.createdAt?.toDate?.();
+        const ageH = upd ? Math.max(0, Math.floor((Date.now() - upd.getTime()) / 3600000)) : 0;
+        const ageCol = ageH >= 48 ? 'var(--r)' : ageH >= 24 ? 'var(--y)' : 'var(--g)';
+        const ageLbl = ageH < 1 ? 'الآن' : ageH < 24 ? ageH + 'س' : Math.round(ageH / 24) + ' يوم';
+        return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${s.col};border-radius:8px;padding:8px 10px">
+          <div style="font-size:var(--fs-base);font-weight:700">${escAttr(o.clientName) || '—'}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
+            <span style="font-size:var(--fs-xs);color:${s.col};font-weight:700">${s.ico} ${s.lbl}</span>
+            <span style="font-size:var(--fs-xs);color:${ageCol};font-weight:700">⏱ ${ageLbl}</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${liveOrders.length > 12 ? `<div style="text-align:center;font-size:var(--fs-xs);color:var(--dim2);margin-top:6px">+ ${liveOrders.length - 12} أوردر آخر</div>` : ''}
+  </div>`
+    : `<div style="background:var(--bg2);border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;margin-bottom:14px"><div style="font-size:var(--fs-sm);color:var(--dim2)">💤 لا توجد أوردرات نشطة في إيد الموظف حالياً</div></div>`;
+
+  const allTasks = [...open, ...done];
+  const tasksHtml = allTasks.length
+    ? allTasks.map(t => {
+        const p = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
+        const isDone = t.status === 'done';
+        const isLate = t.dueDate && t.dueDate < today && !isDone;
+        return `<div class="task-item${isDone ? ' done-task' : ''}">
+      <div class="task-check${isDone ? ' checked' : ''}" onclick="toggleTask('${escAttr(t._id)}','${escAttr(t.status)}')">${isDone ? '✓' : ''}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:var(--fs-md);font-weight:700;${isDone ? 'text-decoration:line-through' : ''}">${escAttr(t.title)}</div>
+        ${t.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${escAttr(t.description)}</div>` : ''}
+        ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
+      </div>
+      <span class="pri-badge ${p.cls}">${p.lbl}</span>
+      ${!isDone ? `<button onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:2px">🗑</button>` : ''}
+    </div>`;
+      }).join('')
+    : `<div class="empty-cta">
+    <div class="empty-icon">✅</div>
+    <div class="empty-text">لا توجد مهام مسجّلة</div>
+    <button class="btn btn-b btn-sm" onclick="openAddTask()">＋ إضافة أول مهمة</button>
+  </div>`;
+
+  return {
+    html: liveHtml + tasksHtml,
+    openCount: open.length,
+  };
+}
+
+// ── INCIDENTS ───────────────────────────────────────────────────────
+
+/**
+ * Build the incidents list (admin tab).
+ *
+ * @param {Object} args
+ * @param {Array} args.incidents — [{ _id, type, severity, title, description, date, orderId, clientName, createdByName }]
+ * @returns {{ html: string, count: number }}
+ */
+export function buildIncidentsHTML({ incidents = [] }) {
+  if (!incidents.length) {
+    return {
+      html: '<div class="empty-cta"><div class="empty-icon">✨</div><div class="empty-text">لا توجد إخفاقات مسجّلة</div></div>',
+      count: 0,
+    };
+  }
+  const html = incidents.slice(0, 20).map(i => {
+    const t = INCIDENT_TYPES[i.type] || INCIDENT_TYPES.other;
+    const s = INCIDENT_SEVERITY[i.severity] || INCIDENT_SEVERITY.low;
+    return `<div style="background:var(--bg3);border:1px solid var(--line);border-right:3px solid ${t.col};border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">
+      <span style="font-size:var(--fs-2xl);flex-shrink:0">${t.ico}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+          <span style="font-size:var(--fs-md);font-weight:800">${escAttr(i.title) || t.lbl}</span>
+          <span style="font-size:var(--fs-tiny);font-weight:800;padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.col}">${s.lbl}</span>
+        </div>
+        ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:1.5">${escAttr(i.description)}</div>` : ''}
+        ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
+      </div>
+      <button onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:4px" title="حذف">🗑</button>
+    </div>`;
+  }).join('');
+  return { html, count: incidents.length };
+}
+
+// ── CLIENTS (admin tab) ─────────────────────────────────────────────
+
+/**
+ * Build the linked-clients list (aggregated from employee orders).
+ *
+ * @param {Object} args
+ * @param {Array}  args.orders   — employee orders for the period
+ * @param {Function} [args.format]
+ * @returns {{ html: string, count: number }}
+ */
+export function buildClientsHTML({ orders = [], format = defaultFormat }) {
+  if (!orders.length) {
+    return {
+      html: '<div class="empty-cta"><div class="empty-icon">👤</div><div class="empty-text">لا يوجد عملاء مرتبطون بعد</div></div>',
+      count: 0,
+    };
+  }
+  const map = {};
+  for (const o of orders) {
+    const key = o.clientPhone || o.clientId || o.clientName || '?';
+    if (!map[key]) map[key] = { name: o.clientName || '—', phone: o.clientPhone || '', orders: [], revenue: 0, lastDate: null };
+    map[key].orders.push(o);
+    map[key].revenue += parseFloat(o.salePrice) || 0;
+    const d = o.createdAt?.toDate?.();
+    if (d && (!map[key].lastDate || d > map[key].lastDate)) map[key].lastDate = d;
+  }
+  const clients = Object.values(map).sort((a, b) => b.revenue - a.revenue);
+
+  const html = clients.map((c, i) => {
+    const archived = c.orders.filter(o => o.stage === 'archived').length;
+    const rate = c.orders.length > 0 ? Math.round(archived / c.orders.length * 100) : 0;
+    const rateCol = rate >= 70 ? 'var(--g)' : rate >= 40 ? 'var(--y)' : 'var(--r)';
+    const lastStr = c.lastDate ? c.lastDate.toLocaleDateString('ar-EG') : '—';
+    const waHref = c.phone ? `https://wa.me/2${c.phone.replace(/^0/, '')}` : '';
+    const isTop = i === 0 && clients.length > 1;
+    const isRepeat = c.orders.length > 1;
+    return `<div style="display:flex;gap:12px;align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop ? 'box-shadow:0 2px 8px rgba(0,217,126,.12)' : ''}">
+      <div style="width:38px;height:38px;border-radius:50%;background:${isTop ? 'rgba(0,217,126,.15)' : 'var(--bg2)'};color:${isTop ? 'var(--g)' : 'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;flex-shrink:0">${(c.name || '?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:var(--fs-md);font-weight:800;margin-bottom:3px;display:flex;gap:6px;align-items:center">
+          ${escAttr(c.name)}
+          ${isTop ? '<span style="font-size:var(--fs-tiny);background:rgba(0,217,126,.15);color:var(--g);padding:1px 6px;border-radius:8px;font-weight:700">★ الأعلى</span>' : ''}
+          ${isRepeat ? '<span style="font-size:var(--fs-tiny);background:rgba(59,158,255,.12);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:700">↩ متكرر</span>' : ''}
+        </div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2)">${escAttr(c.phone) || '—'} · آخر أوردر: ${lastStr}</div>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center;flex-shrink:0">
+        <div style="text-align:center">
+          <div style="font-size:var(--fs-lg);font-weight:900">${c.orders.length}</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">أوردر</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:var(--fs-lg);font-weight:900;color:var(--g)">${format(c.revenue)}</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">ج</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:var(--fs-lg);font-weight:900;color:${rateCol}">${rate}%</div>
+          <div style="font-size:var(--fs-tiny);color:var(--dim2)">مكتمل</div>
+        </div>
+        ${waHref ? `<a href="${waHref}" target="_blank" style="font-size:var(--fs-2xl);text-decoration:none;opacity:.8" onclick="event.stopPropagation()">💬</a>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  return { html, count: clients.length };
+}
