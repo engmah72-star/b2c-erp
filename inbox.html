@@ -584,6 +584,14 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { inboxActions } from "./inbox-actions.js";
+import {
+  fmtTime as _fmtTime, fmtBytes as _fmtBytes, escapeHtml as _esc, initAvatar as _initAvatar,
+  convDisplayName as _convDisplayName, convIcon as _convIcon, convColor as _convColor,
+  isUserOnline as _isUserOnline,
+  getMentionableUsers as _getMentionableUsers, extractMentions as _extractMentions,
+  renderTextWithMentions as _renderTextWithMentions,
+  groupStoriesByUser as _groupStoriesByUser,
+} from "./core/inbox-utils.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'#3b9eff',customer_service:'#22d3ee',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -624,18 +632,11 @@ const REACTION_EMOJIS=['👍','❤️','😂','😮','😢','🙏'];
 const WALLPAPERS=['','#0b141a','#1a3a2e','#1e1a3d','#3d1a2e','#2e1a3d','#3d2e1a'];
 
 const $=id=>document.getElementById(id);
-const fmtTime=ts=>{
-  if(!ts?.toDate)return'';
-  const d=ts.toDate();const now=new Date();
-  const isToday=d.toDateString()===now.toDateString();
-  if(isToday)return d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  const y=new Date();y.setDate(y.getDate()-1);
-  if(d.toDateString()===y.toDateString())return'أمس';
-  return d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit'});
-};
-const fmtBytes=n=>{if(n<1024)return n+' B';if(n<1024*1024)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB';};
-const esc=s=>(s||'').replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;"}[c]));
-const initAvatar=name=>(name||'?').trim()[0]?.toUpperCase()||'?';
+// pure helpers — core/inbox-utils.js
+const fmtTime=_fmtTime;
+const fmtBytes=_fmtBytes;
+const esc=_esc;
+const initAvatar=_initAvatar;
 const colorOf=role=>ROLE_COLOR[role]||'#4e5672';
 const toast=(msg,t='')=>{const c=$('toasts');if(!c)return;const e=document.createElement('div');e.className='toast '+t;e.textContent=msg;c.appendChild(e);setTimeout(()=>e.remove(),3200);};
 
@@ -833,39 +834,11 @@ function renderConvList(){
   }).join('');
 }
 
-function convDisplayName(c){
-  if(c.type==='channel')return c.name||'#قناة';
-  if(c.type==='dm'){
-    const otherUid=(c.participants||[]).find(p=>p!==currentUid);
-    if(!otherUid)return 'محادثة';
-    const u=allUsers.find(x=>x._id===otherUid);
-    return u?.name||c.dmNames?.[otherUid]||'موظف';
-  }
-  return c.name||'محادثة';
-}
-function convIcon(c){
-  if(c.type==='channel')return c.ico||'#';
-  if(c.type==='dm'){
-    const otherUid=(c.participants||[]).find(p=>p!==currentUid);
-    const u=allUsers.find(x=>x._id===otherUid);
-    return initAvatar(u?.name||c.dmNames?.[otherUid]||'?');
-  }
-  return c.name?.[0]||'?';
-}
-function convColor(c){
-  if(c.type==='channel')return '#3b9eff';
-  if(c.type==='dm'){
-    const otherUid=(c.participants||[]).find(p=>p!==currentUid);
-    const u=allUsers.find(x=>x._id===otherUid);
-    return colorOf(u?.role);
-  }
-  return '#4e5672';
-}
-function isUserOnline(p){
-  if(!p?.online)return false;
-  const last=p.lastSeen?.seconds*1000||0;
-  return (Date.now()-last)<90000;  // 90s threshold
-}
+// Conversation meta + presence — pure logic مُمَركَزة في core/inbox-utils.js
+const convDisplayName=c=>_convDisplayName(c,{currentUid,allUsers});
+const convIcon=c=>_convIcon(c,{currentUid,allUsers});
+const convColor=c=>_convColor(c,{currentUid,allUsers,roleColorMap:ROLE_COLOR});
+const isUserOnline=_isUserOnline;
 
 // ── Open conversation ──
 window.openConv=async function(id){
@@ -1169,15 +1142,8 @@ window.onTyping=async function(el){
 // `pendingMentions` so we can persist `mentions: [uid…]` on send.
 let pendingMentions=[];
 
-function getMentionableUsers(){
-  if(!activeConv)return[];
-  const list=[];
-  (activeConv.participants||[]).filter(u=>u!==currentUid).forEach(uid=>{
-    const u=allUsers.find(x=>x._id===uid)||{_id:uid,name:'موظف',role:''};
-    list.push({uid,name:u.name||'موظف',role:u.role||''});
-  });
-  return list;
-}
+// pure logic مُمَركَزة في core/inbox-utils.js
+const getMentionableUsers=()=>_getMentionableUsers({activeConv,allUsers,currentUid});
 
 function detectMention(inp){
   // find an unfinished @… token before caret
@@ -1224,38 +1190,9 @@ window.pickMention=function(el){
 };
 
 // Parse final text for @mentions and resolve UIDs from participant names
-function extractMentions(text){
-  if(!text)return[];
-  const mentioned=new Set();
-  const candidates=getMentionableUsers();
-  // first include any uids picked from the dropdown
-  pendingMentions.forEach(u=>mentioned.add(u));
-  // also scan text for "@Name" patterns matching participants by exact name match
-  candidates.forEach(u=>{
-    const re=new RegExp('@'+(u.name||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?=\\s|$)');
-    if(re.test(text))mentioned.add(u.uid);
-  });
-  return [...mentioned];
-}
-
-// Render text with @mentions highlighted (you-highlighted if it's me)
-function renderTextWithMentions(text){
-  if(!text)return'';
-  let html=esc(text);
-  // highlight any "@Name" sequence that matches a known participant
-  const cands=getMentionableUsers();
-  cands.push({uid:currentUid,name:currentUserName,role:currentRole});
-  cands.forEach(u=>{
-    if(!u.name)return;
-    const escName=u.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    const re=new RegExp('@'+escName+'(?=\\s|$|[،,.!?])','g');
-    html=html.replace(re,m=>{
-      const isMe=u.uid===currentUid;
-      return `<span class="ib-mention ${isMe?'you':''}">${esc(m)}</span>`;
-    });
-  });
-  return html;
-}
+// Mention parsing/rendering — pure في core/inbox-utils.js
+const extractMentions=text=>_extractMentions(text,{candidates:getMentionableUsers(),pendingMentions});
+const renderTextWithMentions=text=>_renderTextWithMentions(text,{candidates:getMentionableUsers(),currentUid,currentUserName,currentRole});
 
 window.sendText=async function(){
   const inp=$('ib-input');if(!inp||!activeConvId)return;
