@@ -1840,18 +1840,16 @@ async function deleteClient(id){
 
 // ── Audit helper (inline) ──
 // يكتب في audit_logs collection لأي admin override. silent on failure.
+// H1.1 fix: المرّر عبر clientActions.logAudit (يكتب على modular SDK تحت الـ hood)
 window.logAudit=function(action,details){
-  try{
-    return db.collection('audit_logs').add({
-      action,
-      details:details||{},
-      userId:currentUser?.uid||'',
-      userName:userName||'',
-      userRole:(window.__currentRole||''),
-      timestamp:firebase.firestore.FieldValue.serverTimestamp(),
-      url:location.pathname,
-    });
-  }catch(e){console.warn('[audit] failed:',action,e?.code||e?.message);}
+  return window.clientActions?.logAudit({
+    action,
+    details:details||{},
+    userId:currentUser?.uid||'',
+    userName:userName||'',
+    userRole:(window.__currentRole||''),
+    url:location.pathname,
+  });
 };
 
 // ══ VIEW ══
@@ -2489,43 +2487,19 @@ window.cgridDeleteOrder=async function(orderId){
   const o=allOrders.find(x=>x._id===orderId);if(!o)return;
   if(!confirm(`⚠️ حذف أوردر "${o.clientName||''}" نهائياً؟\nسيُحذف من كل السجلات ولا يمكن التراجع.`))return;
   if(!confirm('تأكيد الحذف النهائي؟'))return;
-  try{
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
-    const wId=o.depositWalletId||o.walletId||'';
-    const w=wallets.find(x=>x._id===wId);
-    const batch=db.batch();
-    if(paid>0&&wId){
-      batch.update(db.collection('wallets').doc(wId),{balance:firebase.firestore.FieldValue.increment(-paid)});
-      // tx عكسية بدلاً من حذف الأصلية — للحفاظ على السجل التاريخي
-      batch.set(db.collection('transactions_v2').doc(),{
-        walletId:wId,walletName:w?.name||'',type:'out',amount:paid,fees:0,
-        description:`استرداد — حذف أوردر — ${o.clientName||''}`,
-        category:'refund',orderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        isReversal:true,
-        date:new Date().toLocaleDateString('ar-EG'),
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-        approvalStatus:'pending',confirmedBy:'',confirmedByName:'',confirmedAt:null,
-        approvedBy:'',approvedByName:'',approvedAt:null,
-        rejectedBy:'',rejectedByName:'',rejectedAt:null,rejectReason:'',
-        isLocked:false
-      });
-      batch.set(db.collection('financial_ledger').doc(),{
-        eventType:'CUSTOMER_REFUND',type:'expense',direction:'out',icon:'↩️',label:'استرداد (حذف أوردر)',
-        amount:paid,orderId,clientId:o.clientId||null,clientName:o.clientName||null,
-        walletId:wId,walletName:w?.name||'',
-        notes:`[أدمن] حذف أوردر نهائي — استرداد ${fn(paid)} ج`,
-        createdBy:currentUser?.uid||'',createdByName:userName||'admin',
-        createdAt:firebase.firestore.FieldValue.serverTimestamp(),isDeleted:false,editHistory:[]
-      });
-    }
-    batch.delete(db.collection('orders').doc(orderId));
-    await batch.commit();
-    toast('✅ تم الحذف النهائي','ok');
-  }catch(e){
-    const handled=window.financialGuard?.(e,{operation:'حذف أوردر مع استرداد',amount:paid,walletName:w?.name||'',clientName:o.clientName,orderId});
-    if(!handled)toast('❌ '+e.message,'err');
+  // H1.1 fix: المرّر عبر orderActions.deleteOrderWithRefund (atomic + idempotent + FSE ledger)
+  const r=await window.orderActions.deleteOrderWithRefund({
+    orderId,
+    userId:currentUser?.uid||'',
+    userName:userName||'admin',
+  });
+  if(!r.ok){
+    const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل الحذف'),{operation:'حذف أوردر مع استرداد',clientName:o.clientName,orderId});
+    if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return;
   }
+  if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
+  toast(`✅ تم الحذف النهائي${r.refundedAmount>0?` — استرداد ${fn(r.refundedAmount)} ج`:''}`,'ok');
 };
 
 // ── setStatusTab — handles normal, legacy, and cgrid tabs ──

@@ -1067,6 +1067,99 @@ export const orderActions = {
    * @param {number} [args.editIdx=-1]        — index في order.costItems للتعديل
    * @returns {{ ok, errors, warnings, orderId, costItemId, eventType, action }}
    */
+  /**
+   * Admin-only: حذف أوردر نهائي مع استرداد المبلغ المدفوع للمحفظة.
+   * يُستخدم من cgridDeleteOrder في clients.html (force-delete).
+   *
+   * Flow (atomic writeBatch + idempotency):
+   *   1. حساب paid (totalPaid/paid/deposit fallback) + identify wallet
+   *   2. لو paid > 0 + wallet موجود:
+   *      a) wallet.balance -= paid
+   *      b) transactions_v2 reversal (type=out, isReversal=true, approvalStatus=pending)
+   *      c) financial_ledger entry (FE.CUSTOMER_REFUND) عبر addLedgerToBatch
+   *   3. orders/{orderId}.delete()
+   *
+   * @param {Object} args
+   * @param {Object} args.db
+   * @param {string} args.orderId
+   * @param {string} args.userId
+   * @param {string} args.userName
+   * @returns {{ ok, errors, warnings, orderId, refundedAmount, walletId, walletName }}
+   */
+  async deleteOrderWithRefund({ db = defaultDb, orderId, userId, userName = '' }) {
+    if (!orderId) return { ok: false, errors: ['orderId مطلوب'], warnings: [] };
+    if (!userId)  return { ok: false, errors: ['userId مطلوب'],  warnings: [] };
+
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    const paid =
+      parseFloat(order.totalPaid) ||
+      parseFloat(order.paid) ||
+      parseFloat(order.deposit) || 0;
+    const wId = order.depositWalletId || order.walletId || '';
+
+    return withIdempotency(db, {
+      actionType: 'delete_order_with_refund',
+      entityId: orderId,
+      actorId: userId,
+      payload: { orderId, refund: paid, walletId: wId },
+    }, async () => {
+      let walletName = '';
+      if (wId) {
+        const wSnap = await getDoc(doc(db, 'wallets', wId));
+        if (wSnap.exists()) walletName = wSnap.data().name || '';
+      }
+
+      const batch = writeBatch(db);
+
+      if (paid > 0 && wId) {
+        batch.update(doc(db, 'wallets', wId), { balance: increment(-paid) });
+
+        const txRef = doc(collection(db, 'transactions_v2'));
+        batch.set(txRef, {
+          walletId: wId, walletName,
+          type: 'out', amount: paid, fees: 0,
+          description: `استرداد — حذف أوردر — ${order.clientName || ''}`,
+          category: 'refund',
+          orderId, clientId: order.clientId || '', clientName: order.clientName || '',
+          isReversal: true,
+          date: new Date().toLocaleDateString('ar-EG'),
+          createdBy: userId, createdByName: userName || 'admin',
+          createdAt: serverTimestamp(),
+          approvalStatus: 'pending', confirmedBy: '', confirmedByName: '', confirmedAt: null,
+          approvedBy: '', approvedByName: '', approvedAt: null,
+          rejectedBy: '', rejectedByName: '', rejectedAt: null, rejectReason: '',
+          isLocked: false,
+        });
+
+        addLedgerToBatch(batch, db, FE.CUSTOMER_REFUND, {
+          amount: paid,
+          orderId,
+          clientId: order.clientId || null,
+          clientName: order.clientName || null,
+          walletId: wId, walletName,
+          notes: `[أدمن] حذف أوردر نهائي — استرداد ${paid} ج`,
+          createdBy: userId, createdByName: userName || 'admin',
+          label: 'استرداد (حذف أوردر)',
+          icon: '↩️',
+        });
+      }
+
+      batch.delete(doc(db, 'orders', orderId));
+      await batch.commit();
+
+      return {
+        ok: true,
+        errors: [], warnings: [],
+        orderId,
+        refundedAmount: paid,
+        walletId: wId,
+        walletName,
+      };
+    });
+  },
+
   async recordCostItem({
     db, orderId, prodIdx,
     payload,
