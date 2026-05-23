@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, addDoc }
+import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, addDoc, getDocs, query, where }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -1156,6 +1156,131 @@ export const orderActions = {
         refundedAmount: paid,
         walletId: wId,
         walletName,
+      };
+    });
+  },
+
+  /**
+   * Admin-only: حذف أوردر نهائي من صفحة التقارير. يتعامل مع كل أنواع المعاملات
+   * المرتبطة (دفعات عملاء + مصروفات + دفعات موردين) وtxs supplier_payments.
+   *
+   * Flow:
+   *   0. تحقق من عدم وجود shipping_settlements للأوردر (block إذا وُجدت)
+   *   1. اقرأ كل transactions_v2 للأوردر
+   *   2. لكل tx:
+   *      - type='in', amount>0, walletId → wallet.balance -= amt + ledger CUSTOMER_REFUND
+   *      - type='out', amount>0, walletId, مع spId → wallet+= + delete supplier_payment + ledger VENDOR_PAYMENT_REVERSAL
+   *      - type='out', amount>0, walletId, بدون spId → wallet+= + ledger GENERAL_EXPENSE_REVERSAL
+   *      - حذف الـ tx نفسه
+   *   3. حذف الأوردر
+   *
+   * @param {Object} args
+   * @param {Object} [args.db=defaultDb]
+   * @param {string} args.orderId
+   * @param {string} args.reason         — سبب الحذف (مطلوب)
+   * @param {string} [args.note]         — ملاحظة إضافية
+   * @param {string} args.userId
+   * @param {string} [args.userName]
+   * @param {Array}  [args.wallets=[]]   — قائمة محافظ لاسمائها (اختياري)
+   *
+   * @returns {{ok, errors, warnings, orderId, refunded, vendorReversed, generalReversed, operationId, idempotent}}
+   */
+  async adminDeleteOrder({
+    db = defaultDb,
+    orderId, reason, note = '',
+    userId, userName = '',
+    wallets = [],
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!userId)  return { ok: false, errors: ['⚠️ userId مطلوب'],  warnings: [] };
+    if (!reason)  return { ok: false, errors: ['⚠️ اختر سبب الحذف أولاً'], warnings: [] };
+
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    return withIdempotency(db, {
+      actionType: 'admin_delete_order',
+      entityId: orderId,
+      actorId: userId,
+      payload: { orderId, reason },
+    }, async () => {
+      // 0) shipping_settlements guard (RULE 4 — لا تتجاوز flow الشحن)
+      const stSnap = await getDocs(query(
+        collection(db, 'shipping_settlements'),
+        where('orderId', '==', orderId)
+      ));
+      if (!stSnap.empty) {
+        return {
+          ok: false,
+          errors: ['الأوردر مرتبط بتسوية شحن — أَلغِ التسوية أولاً من صفحة حسابات الشحن'],
+          warnings: [], orderId,
+        };
+      }
+
+      // 1) اجمع كل المعاملات المرتبطة
+      const txSnap = await getDocs(query(
+        collection(db, 'transactions_v2'),
+        where('orderId', '==', orderId)
+      ));
+
+      const batch = writeBatch(db);
+      const ledgerBase = {
+        orderId, clientName: order.clientName || '',
+        notes: `حذف أوردر [${reason}]${note ? ' — ' + note : ''}`,
+        userId, userName: userName || 'admin',
+        createdBy: userId, createdByName: userName || 'admin',
+      };
+      const walletNameOf = (wid) => wallets.find(w => w._id === wid)?.name || '';
+
+      let refunded = 0, vendorReversed = 0, generalReversed = 0;
+      for (const txDoc of txSnap.docs) {
+        const tx = txDoc.data();
+        const amt = parseFloat(tx.amount) || 0;
+        const wid = tx.walletId || '';
+        if (amt > 0 && wid) {
+          if (tx.type === 'in') {
+            // دفعة عميل → استرداد للمحفظة الأصلية
+            batch.update(doc(db, 'wallets', wid), { balance: increment(-amt) });
+            addLedgerToBatch(batch, db, FE.CUSTOMER_REFUND, {
+              ...ledgerBase,
+              amount: amt, walletId: wid,
+              walletName: walletNameOf(wid) || tx.walletName || '',
+            });
+            refunded++;
+          } else if (tx.type === 'out') {
+            batch.update(doc(db, 'wallets', wid), { balance: increment(amt) });
+            if (tx.spId) {
+              // دفعة مورد → احذف payment record + ledger reversal
+              batch.delete(doc(db, 'supplier_payments', tx.spId));
+              addLedgerToBatch(batch, db, FE.VENDOR_PAYMENT_REVERSAL, {
+                ...ledgerBase,
+                amount: amt, walletId: wid,
+                walletName: walletNameOf(wid) || tx.walletName || '',
+                vendorId:   tx.supplierId   || '',
+                vendorName: tx.supplierName || '',
+              });
+              vendorReversed++;
+            } else {
+              // مصروف عام بدون مورد
+              addLedgerToBatch(batch, db, FE.GENERAL_EXPENSE_REVERSAL, {
+                ...ledgerBase,
+                amount: amt, walletId: wid,
+                walletName: walletNameOf(wid) || tx.walletName || '',
+              });
+              generalReversed++;
+            }
+          }
+        }
+        batch.delete(txDoc.ref);
+      }
+
+      // 2) حذف الأوردر
+      batch.delete(doc(db, 'orders', orderId));
+      await batch.commit();
+
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId, refunded, vendorReversed, generalReversed,
       };
     });
   },
