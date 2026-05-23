@@ -30,6 +30,7 @@ import {
   validateCostItem,
   advanceOrderStageWithLock,
   nowStr,
+  ORDER_DESIGN_STAGES,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -246,7 +247,7 @@ export const orderActions = {
       const orderData = {
         orderId,
         stage,
-        designStage: stage === 'design' ? 'pending' : '',
+        designStage: stage === 'design' ? ORDER_DESIGN_STAGES.PENDING : '',
         clientId, clientName, clientPhone,
         products,
         product: productName,
@@ -1969,7 +1970,7 @@ export const orderActions = {
     if (!fileUrl) return { ok: false, errors: ['⚠️ fileUrl مطلوب'], warnings: [], orderId };
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
-    const wasInWip = order.designStage === 'wip';
+    const wasInWip = order.designStage === ORDER_DESIGN_STAGES.WIP;
     const willTransition = autoTransitionFromWip && wasInWip;
     try {
       const tl = [...(order.timeline || []), auditEntry({
@@ -1983,7 +1984,7 @@ export const orderActions = {
         updatedAt: serverTimestamp(),
       };
       if (willTransition) {
-        updates.designStage = 'awaiting_payment';
+        updates.designStage = ORDER_DESIGN_STAGES.AWAITING_PAYMENT;
         updates.designFinishedAt = nowStr();
         updates.timeline = [...tl, auditEntry({
           action: '📤 المصمم خلّص — في انتظار تحويل العميل',
@@ -2113,7 +2114,7 @@ export const orderActions = {
         userId, userName, kind: 'op',
       });
       await updateDoc(order._ref, {
-        designStage: 'wip',
+        designStage: ORDER_DESIGN_STAGES.WIP,
         designStartedAt: nowStr(),
         timeline: [...(order.timeline || []), entry],
         updatedAt: serverTimestamp(),
@@ -2139,7 +2140,7 @@ export const orderActions = {
     userId, userName,
   }) {
     if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
-    const valid = ['pending', 'wip', 'awaiting_payment', 'rejected', 'approved'];
+    const valid = Object.values(ORDER_DESIGN_STAGES);
     if (!valid.includes(stage)) {
       return { ok: false, errors: [`⚠️ designStage '${stage}' غير صالح`], warnings: [], orderId };
     }
@@ -2287,7 +2288,7 @@ export const orderActions = {
       entry.overrideReason = overrideReason;
       const upd = {
         stage: 'printing',
-        designStage: 'approved',
+        designStage: ORDER_DESIGN_STAGES.APPROVED,
         approvedAt: nowStr(),
         approvedBy: userName,
         timeline: [...(order.timeline || []), entry],
@@ -2507,7 +2508,7 @@ export const orderActions = {
     const rev = buildStageRevert({
       order, role, userId, userName,
       targetStage: 'design', reason,
-      extraFields: { designStage: 'rejected', printRejectNote: reason },
+      extraFields: { designStage: ORDER_DESIGN_STAGES.REJECTED, printRejectNote: reason },
     });
     if (!rev.ok) return { ok: false, errors: rev.errors || [], warnings: rev.warnings || [], orderId };
     try {

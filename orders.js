@@ -245,6 +245,21 @@ export const PAYMENT_STATUSES = Object.freeze({
   RETURNED: 'returned',
 });
 
+// ORDER_DESIGN_STAGES — قيم order.designStage (sub-state داخل مرحلة design)
+// المصدر الوحيد للحالات الفرعية للتصميم (RULE C2 — Phase 2 / B2).
+// التدفق المتوقع:
+//   pending → wip → awaiting_payment → approved
+//                ↘ rejected (يحتاج معالجة CS)
+// كل الـ comparisons في orders.js / order-actions.js يجب أن تستخدم هذا الـ enum
+// بدلاً من magic strings. الـ UI يهاجر تدريجياً (RULE G9).
+export const ORDER_DESIGN_STAGES = Object.freeze({
+  PENDING:          'pending',           // الافتراضي عند الإنشاء
+  WIP:              'wip',                // المصمم بدأ العمل
+  AWAITING_PAYMENT: 'awaiting_payment',   // ينتظر دفع العميل قبل المتابعة
+  APPROVED:         'approved',           // معتمد — جاهز للانتقال لـ printing
+  REJECTED:         'rejected',           // مرفوض — يحتاج CS
+});
+
 // ROLE GROUPINGS — مجموعات الأدوار المتكررة (مكتشَف في 15+ ملف)
 export const ADMIN_ROLES            = Object.freeze(['admin', 'operation_manager']);
 export const PAYMENT_ROLES_REFUND   = Object.freeze(['admin', 'operation_manager', 'wallet_manager']);
@@ -600,7 +615,7 @@ export function createOrderData(data, userId, userName) {
 
     // المرحلة الحالية — مصدر الحقيقة الوحيد
     stage: 'design',
-    designStage: 'pending',
+    designStage: ORDER_DESIGN_STAGES.PENDING,
 
     // أصحاب المراحل — يُعيَّن مالك المرحلة عند دخول الأوردر إليها
     designerId:   data.designerId   || '',
@@ -691,7 +706,7 @@ export function validateStageRequirements(order, fromStage) {
     if (!hasFiles) warnings.push('لم يُرفع ملف التصميم — يفضّل رفعه قبل الانتقال للطباعة');
     // 🔒 W1: لو CS علّم الأوردر "بانتظار التحويل" والباقي > 0 → بلوك صلب
     // (مُمَركَز هنا بدل تكرار الفحص في design.html — RULE V1.5)
-    if (order.designStage === 'awaiting_payment') {
+    if (order.designStage === ORDER_DESIGN_STAGES.AWAITING_PAYMENT) {
       const sale = parseFloat(order.salePrice) || 0;
       const paid = parseFloat(order.totalPaid) || 0;
       const rem  = Math.max(0, sale - paid);
