@@ -393,10 +393,12 @@
     closePop();
     const c = ctx();
     const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
-    const filtered = suppliers
-      .filter(s => (s.name||'').toLowerCase().includes((query||'').toLowerCase()))
-      .slice(0, 8);
-    if(!filtered.length) return;
+    // PR-852: لو الـ query فارغ، نعرض كل الموردين — قبلاً كان يـ return early
+    // فالـ field يبدو مكسور لو المستخدم بس click من غير ما يكتب.
+    const q = (query || '').toLowerCase().trim();
+    const filtered = q
+      ? suppliers.filter(s => (s.name||'').toLowerCase().includes(q)).slice(0, 10)
+      : suppliers.slice(0, 10);
     const pop = document.createElement('div');
     pop.className = 'cid-pop';
     const rect = anchor.getBoundingClientRect();
@@ -405,14 +407,18 @@
     pop.style.minWidth = `${rect.width}px`;
     pop.style.maxHeight = '240px';
     pop.style.overflowY = 'auto';
-    pop.innerHTML = `
-      <div class="cid-pop-section">موردون مقترحون</div>
-      ${filtered.map(s => `
-        <div class="cid-pop-item" data-action="pick-supplier" data-id="${escapeHtml(s._id)}" data-name="${escapeHtml(s.name)}">
-          🏭 <span>${escapeHtml(s.name)}</span>
-        </div>
-      `).join('')}
-    `;
+    if(!filtered.length){
+      pop.innerHTML = `<div class="cid-pop-empty">${q ? 'لا موردين بهذا الاسم' : 'لا موردين مسجلين'}</div>`;
+    } else {
+      pop.innerHTML = `
+        <div class="cid-pop-section">${q ? 'موردون مطابقون' : 'الموردون'} (${filtered.length})</div>
+        ${filtered.map(s => `
+          <div class="cid-pop-item" data-action="pick-supplier" data-id="${escapeHtml(s._id)}" data-name="${escapeHtml(s.name)}">
+            🏭 <span>${escapeHtml(s.name)}</span>
+          </div>
+        `).join('')}
+      `;
+    }
     document.body.appendChild(pop);
     _pop = pop;
     pop.addEventListener('click', onPopClick);
@@ -481,19 +487,19 @@
     _drawer.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', cancelEdit);
 
     // supplier input — autocomplete on focus/type
+    // PR-852: نشيل قيد _draft.mode === 'ext' — الـ popup يفتح بـ focus أو typing
+    // بغض النظر عن mode. المستخدم لو اختار supplier من الـ popup، الـ
+    // pick-supplier handler هيـ auto-set mode إلى 'ext'. قبلاً كان مفيش طريقة
+    // للمستخدم يشوف قائمة الموردين لو الـ default 'int' (الـ home icon).
     const supInput = _drawer.querySelector('[data-action="supplier-input"]');
     if(supInput){
       supInput.addEventListener('input', (e) => {
         _draft.supplierName = e.target.value;
         _draft.supplierId = ''; // typing → clear ID until pick from pop
-        if(e.target.value.length >= 1 && _draft.mode === 'ext'){
-          openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
-        } else {
-          closePop();
-        }
+        openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
       });
       supInput.addEventListener('focus', (e) => {
-        if(_draft.mode === 'ext') openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
+        openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
       });
     }
 
