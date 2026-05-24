@@ -24,12 +24,19 @@
   const LS_COMPACT   = 'sb_compact_v1';
   const LS_HIDDEN    = 'sb_hidden_v1';
 
+  // ── One-time migration: مسح أي compact/hidden state محفوظ من نسخة قديمة ──
+  // الـ toggles دي اتشالت بناءً على feedback (الـ sidebar كان بيلاقي نفسه stuck في
+  // icons-only mode أو مخفي بالكامل). كل مستخدم بيفتح الصفحة بعد التحديث ده
+  // بيتم clear للـ keys مرة واحدة فيرجع للـ default full-width.
+  try { localStorage.removeItem(LS_COMPACT); } catch(_) {}
+  try { localStorage.removeItem(LS_HIDDEN); }  catch(_) {}
+
   const getFavs   = () => { try { return JSON.parse(localStorage.getItem(LS_FAVORITES) || '[]'); } catch(_) { return []; } };
   const setFavs   = (a) => { try { localStorage.setItem(LS_FAVORITES, JSON.stringify(a)); } catch(_) {} };
   const getUsage  = () => { try { return JSON.parse(localStorage.getItem(LS_USAGE) || '{}'); } catch(_) { return {}; } };
   const setUsage  = (o) => { try { localStorage.setItem(LS_USAGE, JSON.stringify(o)); } catch(_) {} };
-  const isCompact = () => localStorage.getItem(LS_COMPACT) === '1';
-  const isHidden  = () => localStorage.getItem(LS_HIDDEN) === '1';
+  const isCompact = () => false;  // disabled — compact toggle removed
+  const isHidden  = () => false;  // disabled — hide toggle removed
 
   function pageKey(href) {
     return (href || '').split('/').pop().split('?')[0].split('#')[0].toLowerCase();
@@ -216,9 +223,7 @@
       +   '<input type="text" placeholder="ابحث في القائمة..." aria-label="بحث">'
       + '</div>'
       + '<div class="sb-tools-btns">'
-      +   '<button class="sb-tool-btn sb-compact-toggle" type="button" title="وضع مضغوط">📌 مضغوط</button>'
-      +   '<button class="sb-tool-btn sb-hide-toggle" type="button" title="إخفاء القائمة">👁️ إخفاء</button>'
-      +   '<button class="sb-tool-btn sb-reset-favs" type="button" title="مسح المفضلة">⭐ مسح</button>'
+      +   '<button class="sb-tool-btn sb-reset-favs" type="button" title="مسح المفضلة">⭐ مسح المفضلة</button>'
       + '</div>';
     // Insert before .nav-scroll (so it stays even if nav-scroll is rebuilt)
     sidenav.insertBefore(tools, navScroll);
@@ -228,26 +233,6 @@
     input.addEventListener('input', () => filterLinks(navScroll, input.value.trim().toLowerCase()));
     input.addEventListener('keydown', e => {
       if (e.key === 'Escape') { input.value = ''; filterLinks(navScroll, ''); }
-    });
-
-    // Compact toggle
-    const compactBtn = tools.querySelector('.sb-compact-toggle');
-    applyCompact(sidenav, isCompact());
-    compactBtn.addEventListener('click', () => {
-      const next = !isCompact();
-      try { localStorage.setItem(LS_COMPACT, next ? '1' : '0'); } catch(_) {}
-      applyCompact(sidenav, next);
-    });
-
-    // Hide toggle (desktop full-hide; hover-peek + floating ☰ reveal it)
-    const hideBtn = tools.querySelector('.sb-hide-toggle');
-    applyHidden(sidenav, isHidden());
-    hideBtn.addEventListener('click', () => {
-      const next = !isHidden();
-      try { localStorage.setItem(LS_HIDDEN, next ? '1' : '0'); } catch(_) {}
-      // Reset peek state so the hide/show transition is clean
-      document.body.classList.remove('sb-peek');
-      applyHidden(sidenav, next);
     });
 
     // Reset favorites
