@@ -402,7 +402,7 @@ export const CLIENTS_MODALS_HTML = `
     </div>
     <div class="modal-body">
       <div id="dup-scan-summary" style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:10px"></div>
-      <div id="dup-scan-body" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+      <div id="dup-scan-body" style="display:flex;flex-direction:column;gap:10px"></div>
     </div>
   </div>
 </div>`;
