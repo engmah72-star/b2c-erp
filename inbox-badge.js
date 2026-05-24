@@ -42,7 +42,7 @@ function ensureStyle(){
     #${FAB_ID}:hover{transform:scale(1.08);box-shadow:0 6px 22px rgba(124,92,255,.55);}
     #${FAB_ID}:active{transform:scale(.96);}
     #${BADGE_ID}{position:absolute;top:-3px;right:-3px;background:var(--r);color:#fff;
-      font-size:var(--fs-sm);font-weight:800;border-radius:11px;padding:2px 6px;min-width:20px;
+      font-size:var(--fs-sm);font-weight:var(--fw-extra);border-radius:11px;padding:2px 6px;min-width:20px;
       text-align:center;border:2px solid #07080f;
       box-shadow:0 0 0 1px rgba(255,61,110,.4);line-height:1;}
     #${BADGE_ID}.hidden{display:none;}

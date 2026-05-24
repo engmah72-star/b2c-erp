@@ -24,7 +24,7 @@ export function buildSetPasswordModalHTML({ employeeName }) {
   return `
     <div class="modal" style="max-width:380px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:var(--fs-lg);font-weight:800">🔑 تعيين كلمة سر لـ ${employeeName || 'الموظف'}</span>
+        <span style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">🔑 تعيين كلمة سر لـ ${employeeName || 'الموظف'}</span>
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
@@ -34,7 +34,7 @@ export function buildSetPasswordModalHTML({ employeeName }) {
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">ستظهر هنا للأدمن — أبلغ الموظف بها ليدخل ويغيّرها</div>
         </div>
         <div class="fg" style="margin-bottom:12px">
-          <label style="display:flex;align-items:center;gap:6px">كلمة السر الحالية <span style="color:var(--dim2);font-weight:400;font-size:var(--fs-xs)">(اختياري — لو الموظف غيّرها)</span></label>
+          <label style="display:flex;align-items:center;gap:6px">كلمة السر الحالية <span style="color:var(--dim2);font-weight:var(--fw-normal);font-size:var(--fs-xs)">(اختياري — لو الموظف غيّرها)</span></label>
           <input class="inp" id="current-emp-pw" type="text" dir="ltr" placeholder="اتركها فارغة لو الأدمن لم يغيّرها">
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">إن كان الموظف غيّر كلمة السر بنفسه، اكتب الكلمة الحالية هنا (إن عرفتها) ليتم التطبيق فوراً.</div>
         </div>
@@ -55,7 +55,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
   return `
     <div class="modal" style="max-width:440px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:var(--fs-lg);font-weight:800">🔄 إعادة إنشاء حساب دخول لـ ${employeeName || 'الموظف'}</span>
+        <span style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">🔄 إعادة إنشاء حساب دخول لـ ${employeeName || 'الموظف'}</span>
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
@@ -80,11 +80,11 @@ export function buildPasswordCardHTML({ displayPassword, setByName, setAtStr }) 
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="flex-shrink:0;width:42px;height:42px;border-radius:50%;background:rgba(255,170,0,.12);display:flex;align-items:center;justify-content:center;font-size:20px">🔑</div>
       <div style="flex:1;min-width:160px">
-        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:700;margin-bottom:3px">كلمة سر الدخول</div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:3px">كلمة سر الدخول</div>
         ${dp
-          ? `<div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:900;letter-spacing:1px;user-select:all;cursor:pointer;color:var(--snow)" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" title="اضغط للنسخ">${dp}</div>
+          ? `<div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:var(--fw-heavy);letter-spacing:1px;user-select:all;cursor:pointer;color:var(--snow)" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" title="اضغط للنسخ">${dp}</div>
              ${setAtStr ? `<div style="font-size:var(--fs-xs);color:var(--dim);margin-top:3px">عُيّنت بواسطة ${setByName || 'النظام'} · ${setAtStr}</div>` : ''}`
-          : `<div style="font-size:var(--fs-base);color:var(--y);font-weight:700">🔒 سر شخصي — غيّرها الموظف بنفسه</div>
+          : `<div style="font-size:var(--fs-base);color:var(--y);font-weight:var(--fw-bold)">🔒 سر شخصي — غيّرها الموظف بنفسه</div>
              <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">اضغط "تعيين" لكلمة جديدة يعرفها الأدمن</div>`}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">

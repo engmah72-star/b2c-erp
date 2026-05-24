@@ -32,7 +32,7 @@ export function buildShippingTabHTML({ stats, kpi, format = defaultFormat }) {
     ${s.perCompany.map(c => `<div class="rep-card">
         <div class="rep-card-head">
           <div><div class="rep-name">🚚 ${c.name}</div><div class="rep-sub">${c.shipper.phone || ''}</div></div>
-          <div style="font-size:var(--fs-sm);padding:4px 10px;border-radius:20px;background:${c.rate >= 80 ? 'rgba(0,217,126,.12)' : 'rgba(255,170,0,.12)'};color:${c.rate >= 80 ? 'var(--g)' : 'var(--y)'};font-weight:800">${c.rate}% تسليم</div>
+          <div style="font-size:var(--fs-sm);padding:4px 10px;border-radius:20px;background:${c.rate >= 80 ? 'rgba(0,217,126,.12)' : 'rgba(255,170,0,.12)'};color:${c.rate >= 80 ? 'var(--g)' : 'var(--y)'};font-weight:var(--fw-extra)">${c.rate}% تسليم</div>
         </div>
         <div class="rep-stats">
           <div class="rep-stat"><div class="rep-stat-val" style="color:var(--b)">${c.count}</div><div class="rep-stat-lbl">أوردر</div></div>
@@ -66,9 +66,9 @@ export function buildClientsTabHTML({ stats, kpi, bar, format = defaultFormat })
     </div>
     ${s.sorted.slice(0, 20).map(c => `<div class="rep-card" style="padding:12px 16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><div style="font-size:var(--fs-md);font-weight:800">${c.name}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c.phone} · ${c.count} أوردر</div></div>
+        <div><div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c.name}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c.phone} · ${c.count} أوردر</div></div>
         <div style="text-align:left">
-          <div style="font-size:15px;font-weight:900;color:var(--b)">${format(c.total)} ج</div>
+          <div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--b)">${format(c.total)} ج</div>
           <div style="font-size:var(--fs-xs);color:${c.paid >= c.total ? 'var(--g)' : 'var(--r)'}">${format(c.paid)} محصّل</div>
         </div>
       </div>

@@ -18,7 +18,7 @@
 const VIEWER_HTML = `
 <div id="img-viewer" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)" onclick="if(event.target===this)window.closeImageViewer()">
   <div style="position:absolute;top:16px;right:16px;left:16px;display:flex;justify-content:space-between;align-items:center;z-index:2">
-    <span id="iv-counter" style="color:#fff;font-size:var(--fs-md);font-weight:800;background:rgba(0,0,0,.4);padding:8px 14px;border-radius:99px">1 / 1</span>
+    <span id="iv-counter" style="color:#fff;font-size:var(--fs-md);font-weight:var(--fw-extra);background:rgba(0,0,0,.4);padding:8px 14px;border-radius:99px">1 / 1</span>
     <div style="display:flex;gap:8px">
       <a id="iv-download" href="#" target="_blank" title="فتح في تبويب جديد" style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--fs-2xl);text-decoration:none;backdrop-filter:blur(10px)">↗</a>
       <button onclick="window.closeImageViewer()" title="إغلاق" style="width:42px;height:42px;border-radius:50%;background:rgba(255,61,110,.2);border:1px solid rgba(255,61,110,.4);color:#fff;font-size:var(--fs-2xl);cursor:pointer;backdrop-filter:blur(10px)">✕</button>

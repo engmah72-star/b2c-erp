@@ -70,7 +70,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
           ${s.blameSorted.map(([b, c]) => {
             const pct = Math.round(c / s.totalReturns * 100);
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
-                <span style="font-size:var(--fs-base);font-weight:700">${RETURNS_BLAME_LABEL[b] || b}</span>
+                <span style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${RETURNS_BLAME_LABEL[b] || b}</span>
                 <span style="font-size:var(--fs-sm);color:var(--dim2)"><b style="color:var(--snow);font-size:var(--fs-md)">${c}</b> · ${pct}%</span>
               </div>`;
           }).join('')}
@@ -81,7 +81,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
         <div class="rep-card-head"><div class="rep-name">👤 أكثر العملاء مرتجعاً</div></div>
         <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
           ${s.topClients.length ? s.topClients.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
-              <span style="font-size:var(--fs-base);font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.name || '').slice(0, 30)}</span>
+              <span style="font-size:var(--fs-base);font-weight:var(--fw-bold);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.name || '').slice(0, 30)}</span>
               <span style="font-size:var(--fs-sm)"><b style="color:var(--y)">${c.count}</b> <span style="color:var(--dim2)">| ${format(c.amount)} ج</span></span>
             </div>`).join('') : '<div style="color:var(--dim2);font-size:var(--fs-sm);text-align:center;padding:20px">لا توجد بيانات</div>'}
         </div>
@@ -92,14 +92,14 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
       <div class="rep-card-head"><div class="rep-name">📋 آخر 10 tickets</div></div>
       <div style="margin-top:10px;font-size:var(--fs-sm)">
         ${s.recent.map(t => {
-          const stPill = `<span style="padding:2px 8px;border-radius:10px;font-size:var(--fs-tiny);font-weight:800;background:rgba(167,139,250,.15);color:var(--p)">${t.status}</span>`;
+          const stPill = `<span style="padding:2px 8px;border-radius:10px;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:rgba(167,139,250,.15);color:var(--p)">${t.status}</span>`;
           const slaBadge = t.slaBreached ? ' <span style="font-size:var(--fs-tiny);color:var(--r)">⚠️ SLA</span>' : '';
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
               <div style="flex:1;min-width:0">
                 <div><b style="font-family:monospace">${(t.ticketNo || t._id.slice(-6))}</b> · ${(t.clientName || '—').slice(0, 30)} ${slaBadge}</div>
                 <div style="color:var(--dim2);font-size:var(--fs-xs);margin-top:2px">${RETURNS_REASON_LABEL[t.reason] || t.reason || ''} · ${stPill}</div>
               </div>
-              <div style="font-weight:800;color:var(--r);text-align:left;white-space:nowrap">${t.refundAmount > 0 ? format(t.refundAmount) + ' ج' : '—'}</div>
+              <div style="font-weight:var(--fw-extra);color:var(--r);text-align:left;white-space:nowrap">${t.refundAmount > 0 ? format(t.refundAmount) + ' ج' : '—'}</div>
             </div>`;
         }).join('') || '<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد tickets</div>'}
       </div>

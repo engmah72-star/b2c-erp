@@ -110,24 +110,24 @@ export function escapeHtml(s) {
 
 /** صف key/value داخل لوحة عميل (label + value). */
 export function pRow(l, v) {
-  return `<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:var(--fs-tiny);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div style="font-size:var(--fs-base);font-weight:700">${v}</div></div>`;
+  return `<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:var(--fs-tiny);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${v}</div></div>`;
 }
 
 /** input داخل تبويب البطاقة الشخصية. */
 export function bcInput(id, label, ph, val, type) {
   type = type || 'text';
-  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><input type="${type}" id="bc-${id}" placeholder="${ph || ''}" value="${(val || '').toString().replace(/"/g, '&quot;')}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none"></div>`;
+  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:3px">${label}</label><input type="${type}" id="bc-${id}" placeholder="${ph || ''}" value="${(val || '').toString().replace(/"/g, '&quot;')}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none"></div>`;
 }
 
 /** textarea داخل تبويب البطاقة الشخصية. */
 export function bcTextarea(id, label, ph, val) {
-  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">${label}</label><textarea id="bc-${id}" placeholder="${ph || ''}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:60px;resize:vertical">${(val || '').toString().replace(/</g, '&lt;')}</textarea></div>`;
+  return `<div style="margin-bottom:8px"><label style="display:block;font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:3px">${label}</label><textarea id="bc-${id}" placeholder="${ph || ''}" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:60px;resize:vertical">${(val || '').toString().replace(/</g, '&lt;')}</textarea></div>`;
 }
 
 /** قسم داخل تبويب البطاقة (title + body). */
 export function bcSection(title, body) {
   return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
-    <div style="font-size:var(--fs-base);font-weight:800;color:var(--snow);margin-bottom:10px;display:flex;align-items:center;gap:6px">${title}</div>
+    <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow);margin-bottom:10px;display:flex;align-items:center;gap:6px">${title}</div>
     ${body}
   </div>`;
 }
@@ -154,37 +154,37 @@ export function aiAnalysisHTML(d) {
   const priorityIco = { high: '🔥', medium: '⚡', low: '🌱' };
   const actions = (d.recommendedActions || []).map(a => `
     <div style="background:var(--bg3);border-right:3px solid ${priorityCol[a.priority] || 'var(--dim)'};border-radius:8px;padding:10px 12px;margin-bottom:6px">
-      <div style="font-weight:700;color:var(--snow);font-size:var(--fs-md);margin-bottom:4px">${priorityIco[a.priority] || '•'} ${escapeHtml(a.action || '')}</div>
+      <div style="font-weight:var(--fw-bold);color:var(--snow);font-size:var(--fs-md);margin-bottom:4px">${priorityIco[a.priority] || '•'} ${escapeHtml(a.action || '')}</div>
       <div style="font-size:var(--fs-sm);color:var(--dim);line-height:1.6">${escapeHtml(a.reason || '')}</div>
     </div>`).join('');
   const opps = (d.opportunities || []).map(o => `<li style="margin-bottom:4px">${escapeHtml(o)}</li>`).join('');
 
   return `
     <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--ai,#10b981);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
+      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--ai,#10b981);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
       <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.summary || '')}</div>
     </div>
 
     <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
+      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
       <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.churnRiskAssessment || '')}</div>
     </div>
 
     ${d.predictedNextProduct ? `
     <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--pu,var(--p));text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🔮 المنتج المتوقع للطلب القادم</div>
-      <div style="color:var(--snow);font-size:var(--fs-lg);font-weight:700">${escapeHtml(d.predictedNextProduct)}</div>
+      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--pu,var(--p));text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🔮 المنتج المتوقع للطلب القادم</div>
+      <div style="color:var(--snow);font-size:var(--fs-lg);font-weight:var(--fw-bold)">${escapeHtml(d.predictedNextProduct)}</div>
     </div>` : ''}
 
     ${opps ? `
     <div style="background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💡 فرص</div>
+      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💡 فرص</div>
       <ul style="margin:0;padding-right:18px;color:var(--snow);font-size:var(--fs-md)">${opps}</ul>
     </div>` : ''}
 
     ${actions ? `
     <div>
-      <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📋 الإجراءات المقترحة</div>
+      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📋 الإجراءات المقترحة</div>
       ${actions}
     </div>` : ''}
 
@@ -230,11 +230,11 @@ export function clientFollowupsHTML({
     return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${col};border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
         <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-          <span style="font-size:var(--fs-sm);font-weight:800;color:${col}">${typeLbl}</span>
-          ${outLbl ? `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:700">${outLbl}</span>` : ''}
-          ${overdue ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.15);color:var(--r);font-weight:800">⚠️ متأخر</span>' : ''}
-          ${upcoming ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.15);color:var(--b);font-weight:800">⏰ قادم</span>' : ''}
-          ${f.nextActionDone ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:800">✅ تم</span>' : ''}
+          <span style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${col}">${typeLbl}</span>
+          ${outLbl ? `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:var(--fw-bold)">${outLbl}</span>` : ''}
+          ${overdue ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(255,61,110,.15);color:var(--r);font-weight:var(--fw-extra)">⚠️ متأخر</span>' : ''}
+          ${upcoming ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.15);color:var(--b);font-weight:var(--fw-extra)">⏰ قادم</span>' : ''}
+          ${f.nextActionDone ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:var(--fw-extra)">✅ تم</span>' : ''}
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0">
           ${!f.nextActionDone && f.nextActionDate ? `<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="markFollowupDone('${f._id}')">✓ تم</button>` : ''}
@@ -251,12 +251,12 @@ export function clientFollowupsHTML({
           const pn   = f.productName || o?.product ||
                        (o?.products || []).map(p => p.name + '×' + p.qty).join(' + ') || '';
           const href = o ? (STAGE_HREF[o.stage] || 'index') + '.html' : '#';
-          return `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:700">${code}${pn ? ' · ' + escapeHtml(pn) : ''}</a></div>`;
+          return `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:var(--fw-bold)">${code}${pn ? ' · ' + escapeHtml(pn) : ''}</a></div>`;
         })() : ''}
         ${f.productRating > 0 ? `<div style="font-size:var(--fs-md);color:var(--y);letter-spacing:2px;margin-bottom:${f.productReview ? '4' : '0'}px">${'★'.repeat(f.productRating)}<span style="color:var(--line2)">${'★'.repeat(5 - f.productRating)}</span></div>` : ''}
         ${f.productReview ? `<div style="font-size:var(--fs-sm);color:var(--snow);line-height:1.5;font-style:italic">"${escapeHtml(f.productReview)}"</div>` : ''}
       </div>` : ''}
-      ${f.nextActionDate ? `<div style="margin-top:6px;font-size:var(--fs-xs);color:${overdue ? 'var(--r)' : 'var(--dim2)'};font-weight:700">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>` : ''}
+      ${f.nextActionDate ? `<div style="margin-top:6px;font-size:var(--fs-xs);color:${overdue ? 'var(--r)' : 'var(--dim2)'};font-weight:var(--fw-bold)">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>` : ''}
       <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:var(--fs-tiny);color:var(--dim2)">
         <span>👤 ${f.createdByName || '—'}</span>
         <span>${fuTimeAgo(f.createdAt)}</span>
@@ -317,28 +317,28 @@ export function panelOrdersHTML({
         <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-              <span style="font-size:var(--fs-xs);font-weight:700;padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage] || o.stage}</span>
-              ${isLate ? '<span style="font-size:var(--fs-xs);color:var(--r);font-weight:800">⚠️ متأخر</span>' : ''}
+              <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage] || o.stage}</span>
+              ${isLate ? '<span style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-extra)">⚠️ متأخر</span>' : ''}
             </div>
-            <div style="font-size:var(--fs-md);font-weight:800">${nm}</div>
+            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${nm}</div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${o.orderId || o._id.slice(-6)} · ${o.createdDate || '—'}</div>
             ${o.deadline ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:1px">📅 ${o.deadline}</div>` : ''}
           </div>
           <div style="text-align:left;margin-right:8px;flex-shrink:0">
-            ${canSee('price_sale') && parseFloat(o.salePrice) > 0 ? `<div style="font-size:var(--fs-lg);font-weight:900;color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>` : ''}
-            ${canSee('price_paid') && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:700">محصّل: ${fn(paid2)} ج</div>` : ''}
-            ${canSee('price_remaining') && rem2 > 0 ? `<div style="font-size:var(--fs-base);color:var(--r);font-weight:900">باقي: ${fn(rem2)} ج</div>` : ''}
-            ${canSee('price_remaining') && rem2 <= 0 && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:800">✅ مكتمل</div>` : ''}
+            ${canSee('price_sale') && parseFloat(o.salePrice) > 0 ? `<div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>` : ''}
+            ${canSee('price_paid') && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">محصّل: ${fn(paid2)} ج</div>` : ''}
+            ${canSee('price_remaining') && rem2 > 0 ? `<div style="font-size:var(--fs-base);color:var(--r);font-weight:var(--fw-heavy)">باقي: ${fn(rem2)} ج</div>` : ''}
+            ${canSee('price_remaining') && rem2 <= 0 && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</div>` : ''}
           </div>
         </div>
         ${canSee('price_sale') && parseFloat(o.salePrice) > 0 ? `<div style="height:4px;background:var(--bg3);margin-top:-1px"><div style="height:100%;width:${Math.min(100, paid2 / parseFloat(o.salePrice) * 100)}%;background:${rem2 <= 0 ? 'var(--g)' : paid2 > 0 ? 'var(--b)' : 'var(--line)'}"></div></div>` : ''}
       </div>
       <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;flex-wrap:wrap">
-        <a href="waybill.html?id=${o._id}" target="_blank" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-xs);font-weight:800;text-decoration:none">🧾 البوليصة</a>
-        <button onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:#00c87a;font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit">📤 إرسال</button>
-        <button onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit">💬 تعليقات</button>
-        ${['shipping', 'archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:800;text-decoration:none">↩️ مرتجع</a>` : ''}
-        ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:800;text-decoration:none">↩️ له مرتجع</a>` : ''}
+        <a href="waybill.html?id=${o._id}" target="_blank" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">🧾 البوليصة</a>
+        <button onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:#00c87a;font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال</button>
+        <button onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات</button>
+        ${['shipping', 'archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ مرتجع</a>` : ''}
+        ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ له مرتجع</a>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -365,7 +365,7 @@ export function bizCardTabHTML(client) {
   return `
     <!-- Smart Paste -->
     <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(6,182,212,.05));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:12px;margin-bottom:14px">
-      <div style="font-size:var(--fs-base);font-weight:900;color:#a855f7;margin-bottom:6px">🧠 لزق ذكي — Smart Paste</div>
+      <div style="font-size:var(--fs-base);font-weight:var(--fw-heavy);color:#a855f7;margin-bottom:6px">🧠 لزق ذكي — Smart Paste</div>
       <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;line-height:1.5">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
       <textarea id="bc-paste-area" placeholder="مثال: ايمن شوق المشد&#10;المستشار&#10;للمحاماة والاستشارات القانونية&#10;Ayman Shawky Al-Mashad&#10;Law Firm and Legal Consultations&#10;01022662220&#10;Aymanshawkylawfirm@gmail.com&#10;كمبوند فاليو 2 - القاهرة الجديدة" style="width:100%;background:var(--bg3);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:90px;resize:vertical"></textarea>
       <div style="display:flex;gap:6px;margin-top:8px">
@@ -463,7 +463,7 @@ export function bizCardTabHTML(client) {
 
     ${bcSection('🎯 تفضيلات التصميم',
       `<div style="margin-bottom:8px">
-        <label style="display:block;font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin-bottom:3px">الأسلوب المفضل</label>
+        <label style="display:block;font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:3px">الأسلوب المفضل</label>
         <select id="bc-style" style="width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none">
           <option value="">— اختر —</option>
           <option value="classic" ${bc.style==='classic'?'selected':''}>كلاسيكي</option>
@@ -559,7 +559,7 @@ export function clientCardHTML(client, idx, ctx = {}) {
   if (seg && seg.segment && seg.segment !== 'normal') {
     const st = SEG_STYLE[seg.segment] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
     const riskTxt = (seg.churnRisk >= 60) ? ` · ${seg.churnRisk}%` : '';
-    pills.push(`<span title="RFM: ${seg.rfmCode || ''} · ${seg.recencyDays}d منذ آخر طلب" style="font-size:10.5px;padding:4px 10px;border-radius:99px;background:${st.bg};color:${st.fg};font-weight:800;border:1px solid ${st.fg}30">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}${riskTxt}</span>`);
+    pills.push(`<span title="RFM: ${seg.rfmCode || ''} · ${seg.recencyDays}d منذ آخر طلب" style="font-size:10.5px;padding:4px 10px;border-radius:99px;background:${st.bg};color:${st.fg};font-weight:var(--fw-extra);border:1px solid ${st.fg}30">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}${riskTxt}</span>`);
   }
   if (tags.length && pills.length === 0) pills.push(`<span class="cs-pill info">${TAG_LABELS[tags[0]] || tags[0]}</span>`);
 
@@ -633,7 +633,7 @@ export function clientListRowHTML(client, idx, ctx = {}) {
   return `<div class="list-row" onclick="openClient('${c._id}')">
       <div class="list-av" style="background:${color}18;color:${color}">${(c.name || '?')[0].toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:var(--fs-lg);font-weight:800">${c.name || '—'}
+        <div style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">${c.name || '—'}
           ${c.intlPhone && canSee('client_phone') ? `<span title="${c.intlPhone}" style="font-size:var(--fs-sm);color:var(--y);margin-right:4px">🌍</span>` : ''}
           ${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'};font-size:var(--fs-tiny)">${TAG_LABELS[t] || t}</span>`).join('')}
         </div>
@@ -641,15 +641,15 @@ export function clientListRowHTML(client, idx, ctx = {}) {
       </div>
       <div style="display:flex;gap:16px;align-items:center;flex-shrink:0">
         <div style="text-align:center">
-          <div style="font-size:var(--fs-md);font-weight:800;color:var(--b)">${active}</div>
+          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--b)">${active}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">نشط</div>
         </div>
         ${canSee('price_sale') ? `<div style="text-align:center">
-          <div style="font-size:var(--fs-md);font-weight:800;color:var(--g)">${fn(tot)}</div>
+          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--g)">${fn(tot)}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">مبيعات ج</div>
         </div>` : ''}
         ${canSee('price_remaining') ? `<div style="text-align:center;min-width:60px">
-          <div style="font-size:var(--fs-md);font-weight:800;color:${rem > 0 ? 'var(--r)' : 'var(--g)'}">${rem > 0 ? fn(rem) : '✅'}</div>
+          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:${rem > 0 ? 'var(--r)' : 'var(--g)'}">${rem > 0 ? fn(rem) : '✅'}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">${rem > 0 ? 'باقي ج' : 'محصّل'}</div>
         </div>` : ''}
         ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
@@ -667,9 +667,9 @@ export function clientPanelHeaderHTML({ client, color } = {}) {
     ? window.canSee : () => true;
   return `
     <div style="display:flex;align-items:center;gap:12px">
-      <div style="width:48px;height:48px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900">${(c.name || '?')[0]}</div>
+      <div style="width:48px;height:48px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:var(--fw-heavy)">${(c.name || '?')[0]}</div>
       <div>
-        <div style="font-size:var(--fs-xl);font-weight:800">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:800;margin-right:6px">📁 قديم</span>' : ''}</div>
+        <div style="font-size:var(--fs-xl);font-weight:var(--fw-extra)">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:var(--fw-extra);margin-right:6px">📁 قديم</span>' : ''}</div>
         <div style="font-size:var(--fs-sm);color:var(--dim2)">${canSee('client_phone') ? (c.phone1 || '') : ''} ${c.job ? '· ' + c.job : ''}</div>
       </div>
     </div>`;
@@ -739,21 +739,21 @@ export function clientPanelBodyHTML(ctx = {}) {
     const rText  = risk >= 70 ? 'مرتفع 🚨' : risk >= 40 ? 'متوسط ⚠️' : 'منخفض ✓';
     return `<div style="background:linear-gradient(135deg,${st.bg},var(--row-hover));border:1px solid ${st.fg}40;border-right:3px solid ${st.fg};border-radius:var(--rad);padding:12px;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <span style="font-size:var(--fs-md);font-weight:900;color:${st.fg}">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}</span>
+          <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:${st.fg}">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}</span>
           <span style="font-size:var(--fs-xs);color:var(--dim2);font-family:monospace;background:var(--bg3);padding:3px 8px;border-radius:6px" title="RFM Code (Recency · Frequency · Monetary)">RFM: ${seg.rfmCode || '—'}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
           <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
             <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">آخر شراء</div>
-            <div style="font-size:var(--fs-md);font-weight:800;color:var(--snow)">${seg.recencyDays ?? '—'} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:600">يوم</span></div>
+            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--snow)">${seg.recencyDays ?? '—'} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يوم</span></div>
           </div>
           <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
             <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">عدد الأوردرات</div>
-            <div style="font-size:var(--fs-md);font-weight:800;color:var(--snow)">${seg.orderCount ?? '—'}</div>
+            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--snow)">${seg.orderCount ?? '—'}</div>
           </div>
           <div style="background:var(--bg3);border-radius:6px;padding:6px 8px;text-align:center">
             <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-bottom:2px">CLV</div>
-            <div style="font-size:var(--fs-md);font-weight:800;color:var(--g)">${fmtNum(myClv)} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:600">ج</span></div>
+            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--g)">${fmtNum(myClv)} <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">ج</span></div>
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-sm)">
@@ -779,20 +779,20 @@ export function clientPanelBodyHTML(ctx = {}) {
       ${segBlock}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
         <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
-          <div style="font-size:20px;font-weight:900;color:var(--b)">${cOrds.length}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">كل الأوردرات</div>
+          <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${cOrds.length}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">كل الأوردرات</div>
         </div>
         <div onclick="filterPanelOrders('active')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
-          <div style="font-size:20px;font-weight:900;color:var(--g)">${activeOrds.length}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">🔄 نشط</div>
+          <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--g)">${activeOrds.length}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">🔄 نشط</div>
         </div>
         <div onclick="filterPanelOrders('rem')" style="background:${rem > 0 ? 'rgba(255,61,110,.08)' : 'var(--bg2)'};border:1.5px solid ${rem > 0 ? 'rgba(255,61,110,.3)' : 'var(--line)'};border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
-          <div style="font-size:20px;font-weight:900;color:${rem > 0 ? 'var(--r)' : 'var(--g)'};">${rem > 0 ? fmtNum(rem) : '✅'}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">💰 باقي ج</div>
+          <div style="font-size:20px;font-weight:var(--fw-heavy);color:${rem > 0 ? 'var(--r)' : 'var(--g)'};">${rem > 0 ? fmtNum(rem) : '✅'}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">💰 باقي ج</div>
         </div>
         <div onclick="filterPanelOrders('late')" style="background:${lateOrds.length ? 'rgba(255,61,110,.08)' : 'var(--bg2)'};border:1.5px solid ${lateOrds.length ? 'rgba(255,61,110,.3)' : 'var(--line)'};border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
-          <div style="font-size:20px;font-weight:900;color:${lateOrds.length ? 'var(--r)' : 'var(--dim2)'};">${lateOrds.length || '—'}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">⚠️ متأخر</div>
+          <div style="font-size:20px;font-weight:var(--fw-heavy);color:${lateOrds.length ? 'var(--r)' : 'var(--dim2)'};">${lateOrds.length || '—'}</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">⚠️ متأخر</div>
         </div>
       </div>
       ${tot > 0 ? `<div style="margin-bottom:16px">
@@ -805,7 +805,7 @@ export function clientPanelBodyHTML(ctx = {}) {
       </div>` : ''}
       ${(totalCost > 0 || Object.keys(byWallet).length > 0 || memberDays !== null) ? `
       <div style="background:rgba(59,158,255,.04);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:12px">
-        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--b);margin-bottom:10px">💼 حياته في الشركة</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--b);margin-bottom:10px">💼 حياته في الشركة</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:${Object.keys(byWallet).length ? '10' : '0'}px">
           ${memberDays !== null ? pRowHelper('📅 عميل منذ', memberDays + ' يوم') : ''}
           ${pRowHelper('📦 إجمالي الأوردرات', cOrds.length + ' أوردر')}
@@ -814,12 +814,12 @@ export function clientPanelBodyHTML(ctx = {}) {
           ${totalCost > 0 ? pRowHelper('🟢 إجمالي الربح', fmtNum(totalProfit) + ' ج' + (profitPct !== null ? ' (' + profitPct + '%)' : '')) : ''}
         </div>
         ${Object.keys(byWallet).length ? `
-        <div style="font-size:var(--fs-xs);font-weight:800;color:var(--dim2);margin-bottom:6px">💳 توزيع المدفوعات على المحافظ</div>
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">💳 توزيع المدفوعات على المحافظ</div>
         <div style="display:flex;flex-direction:column;gap:4px">
           ${Object.entries(byWallet).sort((a, b) => b[1] - a[1]).map(([wn, amt]) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bg3);border-radius:6px">
             <span style="font-size:var(--fs-sm);color:var(--dim2)">${wn}</span>
-            <span style="font-size:var(--fs-base);font-weight:800;color:var(--g)">${fmtNum(amt)} ج</span>
+            <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--g)">${fmtNum(amt)} ج</span>
           </div>`).join('')}
         </div>` : ''}
       </div>` : ''}
@@ -828,7 +828,7 @@ export function clientPanelBodyHTML(ctx = {}) {
     <!-- ── متابعات ── -->
     <div id="ptab-pane-followups" class="hide">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-size:var(--fs-base);font-weight:800;color:var(--dim2)">📞 سجل المتابعة</div>
+        <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2)">📞 سجل المتابعة</div>
         <button class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
       </div>
       <div id="panel-followups-list">${renderClientFollowups(id)}</div>
@@ -849,7 +849,7 @@ export function clientPanelBodyHTML(ctx = {}) {
     <!-- ── بيانات ── -->
     <div id="ptab-pane-data" class="hide">
       <div style="margin-bottom:14px">
-        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">📋 بيانات العميل</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">📋 بيانات العميل</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           ${canSee('client_phone') ? pRowHelper('📞 هاتف', c.phone1 || '—') : ''}
           ${canSee('client_phone') && c.phone2 ? pRowHelper('📞 هاتف 2', c.phone2) : ''}
@@ -866,15 +866,15 @@ export function clientPanelBodyHTML(ctx = {}) {
         ${c.notes ? `<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.notes}</div>` : ''}
         ${c.internalNotes ? `<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:var(--fs-base);color:var(--snow);line-height:1.7">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
-            <span style="font-size:var(--fs-xs);font-weight:800;color:var(--r)">🔒 ملاحظات داخلية</span>
-            ${c.internalNotesLastEdit ? `<span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700">${c.internalNotesLastEdit.byName || ''}${c.internalNotesLastEdit.at?.toDate ? ' · ' + c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG') : ''}</span>` : ''}
+            <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--r)">🔒 ملاحظات داخلية</span>
+            ${c.internalNotesLastEdit ? `<span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${c.internalNotesLastEdit.byName || ''}${c.internalNotesLastEdit.at?.toDate ? ' · ' + c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG') : ''}</span>` : ''}
           </div>
           <div style="white-space:pre-wrap">${c.internalNotes.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])}</div>
         </div>` : ''}
       </div>
       ${c.status === 'legacy' ? `
       <div style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:12px">
-        <div style="font-size:var(--fs-sm);font-weight:800;color:#aaa;margin-bottom:10px">📁 بيانات العميل القديم</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:#aaa;margin-bottom:10px">📁 بيانات العميل القديم</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           ${c.totalSpentLegacy > 0 ? pRowHelper('💰 إجمالي الإنفاق', fmtNum(c.totalSpentLegacy) + ' ج') : ''}
           ${c.lastOrderDateLegacy ? pRowHelper('📅 آخر طلب', c.lastOrderDateLegacy) : ''}
@@ -931,16 +931,16 @@ export function segmentStripHTML({
   return `
     <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad2);padding:10px 12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px">
-        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
         <div style="font-size:var(--fs-sm);color:var(--dim2)">إجمالي CLV: <b style="color:var(--g)">${fmtNum(totalClv)} ج</b></div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:5px">
         ${visible.map(s => {
           const st = SEG_STYLE[s] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
           const active = currentSeg === s;
-          return `<button onclick="filterBySegment('${active ? '' : s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active ? st.fg : st.fg + '40'};background:${active ? st.fg + '25' : st.bg};color:${st.fg};font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s] || s} <span style="background:${active ? 'var(--bg1)' : st.fg + '18'};padding:1px 6px;border-radius:10px;margin-right:3px">${counts[s]}</span></button>`;
+          return `<button onclick="filterBySegment('${active ? '' : s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active ? st.fg : st.fg + '40'};background:${active ? st.fg + '25' : st.bg};color:${st.fg};font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s] || s} <span style="background:${active ? 'var(--bg1)' : st.fg + '18'};padding:1px 6px;border-radius:10px;margin-right:3px">${counts[s]}</span></button>`;
         }).join('')}
-        ${currentSeg ? `<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-xs);font-weight:700;cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>` : ''}
+        ${currentSeg ? `<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>` : ''}
       </div>
     </div>`;
 }
@@ -1076,7 +1076,7 @@ export function controlGridRowHTML(order, ctx = {}) {
 
   const clientNameCell = isEdit
     ? `<td><input class="cg-inp" data-field="clientName" value="${safeClientName}" style="width:110px"></td>`
-    : `<td onclick="cgridOpenClient('${o._id}')" style="cursor:pointer" title="عرض بطاقة العميل"><span style="font-weight:700;color:var(--b);text-decoration:underline dotted">${o.clientName || '—'}</span></td>`;
+    : `<td onclick="cgridOpenClient('${o._id}')" style="cursor:pointer" title="عرض بطاقة العميل"><span style="font-weight:var(--fw-bold);color:var(--b);text-decoration:underline dotted">${o.clientName || '—'}</span></td>`;
   const bizCell = isEdit
     ? `<td><input class="cg-inp" data-field="clientBusiness" value="${safeBiz}" style="width:100px"></td>`
     : `<td><span style="color:var(--dim2);font-size:var(--fs-xs)">${o.clientBusiness || o.job || '—'}</span></td>`;
@@ -1085,10 +1085,10 @@ export function controlGridRowHTML(order, ctx = {}) {
     : `<td><span style="font-size:var(--fs-xs)">${empName}</span></td>`;
   const salePriceCell = isEdit
     ? `<td><input class="cg-inp" data-field="salePrice" type="number" value="${parseFloat(o.salePrice) || 0}" style="width:80px"></td>`
-    : `<td><span style="font-weight:800;color:var(--b)">${fmtNum(sale)} ج</span></td>`;
+    : `<td><span style="font-weight:var(--fw-extra);color:var(--b)">${fmtNum(sale)} ج</span></td>`;
   const paidCell = isEdit
     ? `<td><input class="cg-inp" data-field="totalPaid" type="number" value="${paid}" style="width:80px"></td>`
-    : `<td><span style="color:var(--g);font-weight:700">${fmtNum(paid)} ج</span></td>`;
+    : `<td><span style="color:var(--g);font-weight:var(--fw-bold)">${fmtNum(paid)} ج</span></td>`;
   const editBtnCell = isEdit
     ? `<td style="text-align:center;white-space:nowrap">
          <button class="cg-edit-btn saving" onclick="cgridSaveRowEdit('${o._id}')">✅ حفظ</button>
@@ -1100,7 +1100,7 @@ export function controlGridRowHTML(order, ctx = {}) {
 
   return `<tr class="${isSel ? 'sel-row' : ''}${isEdit ? ' edit-mode' : ''}" data-id="${o._id}">
       <td style="text-align:center"><input type="checkbox" ${isSel ? 'checked' : ''} onchange="cgridToggleSel('${o._id}',this.checked)" style="accent-color:var(--p)"></td>
-      <td style="font-weight:700;color:var(--dim2);font-size:var(--fs-xs)">${o.orderId || o._id.slice(-6)}</td>
+      <td style="font-weight:var(--fw-bold);color:var(--dim2);font-size:var(--fs-xs)">${o.orderId || o._id.slice(-6)}</td>
       ${clientNameCell}
       <td style="color:var(--dim2)">${o.clientPhone || '—'}</td>
       ${bizCell}
@@ -1122,14 +1122,14 @@ export function controlGridRowHTML(order, ctx = {}) {
       <td style="font-size:var(--fs-xs);color:var(--dim2)">${fmtDate(o.createdAt)}</td>
       <td style="font-size:var(--fs-xs);color:var(--dim2)">${fmtDate(o.updatedAt)}</td>
       <td>
-        <button onclick="cgridToggleProblem('${o._id}',${!isProb})" style="padding:2px 8px;border-radius:20px;border:none;cursor:pointer;font-size:var(--fs-tiny);font-weight:800;background:${isProb ? 'rgba(255,61,110,.15)' : 'var(--hover)'};color:${isProb ? 'var(--r)' : 'var(--dim2)'}">
+        <button onclick="cgridToggleProblem('${o._id}',${!isProb})" style="padding:2px 8px;border-radius:20px;border:none;cursor:pointer;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:${isProb ? 'rgba(255,61,110,.15)' : 'var(--hover)'};color:${isProb ? 'var(--r)' : 'var(--dim2)'}">
           ${isProb ? '⚠️ نعم' : 'لا'}
         </button>
       </td>
       <td style="text-align:center">${isRet ? '<span style="color:var(--r);font-size:var(--fs-sm)">↩️ نعم</span>' : '<span style="color:var(--dim2);font-size:var(--fs-xs)">لا</span>'}</td>
       ${editBtnCell}
       <td style="text-align:center">
-        <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:800;cursor:pointer" title="حذف نهائي">🗑</button>
+        <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer" title="حذف نهائي">🗑</button>
       </td>
     </tr>`;
 }
@@ -1163,14 +1163,14 @@ export function occasionsBannerHTML(clients = []) {
     return encodeURIComponent(t === 'birthday' ? baseB : baseA);
   };
   const waNum = (c) => (c.phone1 || '').replace(/^0/, '');
-  const chip = (item, isToday) => `<a href="https://wa.me/20${waNum(item.c)}?text=${waMsg(item.c, item.type)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:${isToday ? 'rgba(255,170,0,.15)' : 'rgba(59,158,255,.1)'};border:1px solid ${isToday ? 'rgba(255,170,0,.35)' : 'rgba(59,158,255,.25)'};color:${isToday ? 'var(--y)' : 'var(--b)'};font-size:var(--fs-sm);font-weight:800;text-decoration:none;margin:2px 0;cursor:pointer" title="فتح واتساب لإرسال تهنئة">
+  const chip = (item, isToday) => `<a href="https://wa.me/20${waNum(item.c)}?text=${waMsg(item.c, item.type)}" target="_blank" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:${isToday ? 'rgba(255,170,0,.15)' : 'rgba(59,158,255,.1)'};border:1px solid ${isToday ? 'rgba(255,170,0,.35)' : 'rgba(59,158,255,.25)'};color:${isToday ? 'var(--y)' : 'var(--b)'};font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none;margin:2px 0;cursor:pointer" title="فتح واتساب لإرسال تهنئة">
     ${ico(item.type)} ${item.c.name} ${isToday ? '' : '· ' + fmtOccasion(item.type === 'birthday' ? item.c.birthday : item.c.anniversary).replace(/[^()]*\(/, '(')}
   </a>`;
 
   return `
     <div style="background:linear-gradient(90deg,rgba(255,170,0,.08),rgba(167,139,250,.06));border:1px solid rgba(255,170,0,.25);border-radius:var(--rad2);padding:12px 14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:${today.length || soon.length ? '8' : '0'}px">
-        <div style="font-size:var(--fs-base);font-weight:800;color:var(--y)">${today.length ? `🎉 اليوم: ${today.length} مناسبة` : '📅 مناسبات قريبة'}${soon.length && today.length ? ` · ${soon.length} خلال 7 أيام` : soon.length ? `${soon.length} خلال 7 أيام` : ''}</div>
+        <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--y)">${today.length ? `🎉 اليوم: ${today.length} مناسبة` : '📅 مناسبات قريبة'}${soon.length && today.length ? ` · ${soon.length} خلال 7 أيام` : soon.length ? `${soon.length} خلال 7 أيام` : ''}</div>
         <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:var(--fs-lg);cursor:pointer">✕</button>
       </div>
       ${today.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:${soon.length ? '8' : '0'}px">${today.map(it => chip(it, true)).join('')}</div>` : ''}
@@ -1235,7 +1235,7 @@ function _journeyHTML(o) {
     const txt    = done ? '#fff'    : active ? '#fff' : 'var(--dim)';
     const ring   = active ? `box-shadow:0 0 0 3px ${s.col}30;` : '';
     const pulse  = active ? 'animation:journeyPulse 2s infinite;' : '';
-    return `<div title="${s.label}" style="width:28px;height:28px;border-radius:50%;background:${bg};color:${txt};display:flex;align-items:center;justify-content:center;font-size:var(--fs-md);font-weight:900;flex-shrink:0;${ring}${pulse}">${done ? '✓' : s.ico}</div>`;
+    return `<div title="${s.label}" style="width:28px;height:28px;border-radius:50%;background:${bg};color:${txt};display:flex;align-items:center;justify-content:center;font-size:var(--fs-md);font-weight:var(--fw-heavy);flex-shrink:0;${ring}${pulse}">${done ? '✓' : s.ico}</div>`;
   });
   const lines = _JOURNEY.slice(0, -1).map((_, i) => {
     const done = i < idx;
@@ -1247,12 +1247,12 @@ function _journeyHTML(o) {
     if (i < lines.length) merged.push(lines[i]);
   }
 
-  const lateBadge = late ? `<span style="font-size:var(--fs-xs);font-weight:900;color:var(--r);background:rgba(255,61,110,.12);padding:3px 9px;border-radius:99px;border:1px solid rgba(255,61,110,.3)">⚠️ متأخر ${_lateDays(o)}ي</span>` : '';
-  const daysBadge = days !== null ? `<span style="font-size:var(--fs-xs);font-weight:700;color:var(--dim2)">في ${cur.label} منذ ${days === 0 ? 'اليوم' : days + ' يوم'}</span>` : '';
+  const lateBadge = late ? `<span style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--r);background:rgba(255,61,110,.12);padding:3px 9px;border-radius:99px;border:1px solid rgba(255,61,110,.3)">⚠️ متأخر ${_lateDays(o)}ي</span>` : '';
+  const daysBadge = days !== null ? `<span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2)">في ${cur.label} منذ ${days === 0 ? 'اليوم' : days + ' يوم'}</span>` : '';
   return `<div style="margin:10px 0 6px">
       <div style="display:flex;align-items:center;gap:0;padding:0 4px">${merged.join('')}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:800;color:${cur.col}">
+        <div style="display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${cur.col}">
           ${cur.ico} ${cur.label}
         </div>
         ${daysBadge}
@@ -1292,9 +1292,9 @@ export function statsDrawerHTML({
   const fn = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');
 
   if (type === 'total') {
-    return `<div style="text-align:center;padding:12px;color:var(--dim2);font-size:var(--fs-xl);font-weight:800">${clients.length} عميل</div>` +
+    return `<div style="text-align:center;padding:12px;color:var(--dim2);font-size:var(--fs-xl);font-weight:var(--fw-extra)">${clients.length} عميل</div>` +
       clients.slice(0, 30).map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><div style="font-size:var(--fs-md);font-weight:800">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div></div>
+        <div><div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
       </div>`).join('');
   }
@@ -1305,9 +1305,9 @@ export function statsDrawerHTML({
       const d = c2.createdAt?.seconds ? new Date(c2.createdAt.seconds * 1000) : null;
       return d && d >= today;
     });
-    return `<div style="text-align:center;padding:12px;color:var(--b);font-size:var(--fs-2xl);font-weight:900">${todayC.length} عميل اليوم</div>` +
+    return `<div style="text-align:center;padding:12px;color:var(--b);font-size:var(--fs-2xl);font-weight:var(--fw-heavy)">${todayC.length} عميل اليوم</div>` +
       (todayC.length ? todayC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><div style="font-size:var(--fs-lg);font-weight:900">${c2.name || '—'}</div>
+        <div><div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy)">${c2.name || '—'}</div>
         <div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div>
         <div style="font-size:var(--fs-xs);color:var(--dim2)">${c2.source || ''}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="font-size:var(--fs-3xl);text-decoration:none">💬</a>
@@ -1319,9 +1319,9 @@ export function statsDrawerHTML({
       const d = c2.createdAt?.seconds ? new Date(c2.createdAt.seconds * 1000) : null;
       return d && d.getFullYear() === y && d.getMonth() === m;
     });
-    return `<div style="text-align:center;padding:12px;color:var(--g);font-size:var(--fs-2xl);font-weight:900">${monthC.length} عميل جديد</div>` +
+    return `<div style="text-align:center;padding:12px;color:var(--g);font-size:var(--fs-2xl);font-weight:var(--fw-heavy)">${monthC.length} عميل جديد</div>` +
       (monthC.length ? monthC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><div style="font-size:var(--fs-md);font-weight:800">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'}</div></div>
+        <div><div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
       </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:20px">لا يوجد عملاء جدد</div>');
   }
@@ -1349,21 +1349,21 @@ export function statsDrawerHTML({
     const header = `
       <div style="background:linear-gradient(135deg,rgba(124,92,255,.1),rgba(6,182,212,.05));border:1px solid rgba(124,92,255,.2);border-radius:14px;padding:14px;margin-bottom:14px">
         <div style="text-align:center;margin-bottom:12px">
-          <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:800;margin-bottom:4px">${titleLabel}</div>
-          <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,#10d27e,#06b6d4);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(tot)} ج</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra);margin-bottom:4px">${titleLabel}</div>
+          <div style="font-size:26px;font-weight:var(--fw-heavy);background:linear-gradient(135deg,#10d27e,#06b6d4);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(tot)} ج</div>
           <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:var(--fs-sm);flex-wrap:wrap">
-            <span style="color:var(--g);font-weight:800">✓ تم: ${fn(totPaid)} ج</span>
-            ${totRem > 0 ? `<span style="color:var(--r);font-weight:800">⏳ باقي: ${fn(totRem)} ج</span>` : ''}
-            ${lateCount > 0 ? `<span style="color:#fbbf24;font-weight:800">⚠️ ${lateCount} متأخر</span>` : ''}
-            <span style="color:#a8b1cc;font-weight:800">${ords.length} أوردر</span>
+            <span style="color:var(--g);font-weight:var(--fw-extra)">✓ تم: ${fn(totPaid)} ج</span>
+            ${totRem > 0 ? `<span style="color:var(--r);font-weight:var(--fw-extra)">⏳ باقي: ${fn(totRem)} ج</span>` : ''}
+            ${lateCount > 0 ? `<span style="color:#fbbf24;font-weight:var(--fw-extra)">⚠️ ${lateCount} متأخر</span>` : ''}
+            <span style="color:#a8b1cc;font-weight:var(--fw-extra)">${ords.length} أوردر</span>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
           <div onclick="window.__salesStageFilter=-1;window.showStatsDrawer('sales')"
             style="background:${activeIdx === -1 ? 'rgba(167,139,250,.2)' : 'var(--row-hover)'};border:1px solid ${activeIdx === -1 ? 'var(--p)' : 'var(--line)'};border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;transition:.15s">
             <div style="font-size:var(--fs-lg);margin-bottom:2px">🌐</div>
-            <div style="font-size:var(--fs-xl);font-weight:900;color:${activeIdx === -1 ? 'var(--p)' : '#a8b1cc'};line-height:1">${allSales.length}</div>
-            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700;margin-top:2px">الكل</div>
+            <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${activeIdx === -1 ? 'var(--p)' : '#a8b1cc'};line-height:1">${allSales.length}</div>
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">الكل</div>
           </div>
           ${_JOURNEY.map((s, i) => {
             const isOn = activeIdx === i;
@@ -1371,8 +1371,8 @@ export function statsDrawerHTML({
             return `<div onclick="window.__salesStageFilter=${i};window.showStatsDrawer('sales')"
               style="background:${isOn ? s.col + '30' : 'var(--row-hover)'};border:1px solid ${isOn ? s.col : 'var(--line)'};border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;transition:.15s;opacity:${c === 0 ? '.45' : '1'}">
               <div style="font-size:var(--fs-lg);margin-bottom:2px">${s.ico}</div>
-              <div style="font-size:var(--fs-xl);font-weight:900;color:${s.col};line-height:1">${c}</div>
-              <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700;margin-top:2px">${s.label}</div>
+              <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${s.col};line-height:1">${c}</div>
+              <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">${s.label}</div>
             </div>`;
           }).join('')}
         </div>
@@ -1393,18 +1393,18 @@ export function statsDrawerHTML({
         ${late ? '<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,var(--r),transparent)"></div>' : ''}
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
           <div style="flex:1;min-width:0">
-            <div style="font-size:var(--fs-lg);font-weight:900;color:var(--snow);letter-spacing:-.2px">${o.clientName || '—'}</div>
+            <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);letter-spacing:-.2px">${o.clientName || '—'}</div>
             <div style="font-size:var(--fs-sm);color:#a8b1cc;margin-top:2px">${product}</div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:1px">${o.clientPhone || '—'} · ${o.createdDate || '—'}</div>
           </div>
           <div style="text-align:left;flex-shrink:0">
-            <div style="font-size:15px;font-weight:900;color:${cur.col}">${fn(sale)} ج</div>
-            ${rem > 0 ? `<div style="font-size:var(--fs-sm);color:var(--r);font-weight:800;margin-top:2px">باقي ${fn(rem)} ج</div>` : '<div style="font-size:var(--fs-sm);color:var(--g);font-weight:800;margin-top:2px">✓ مسدد</div>'}
+            <div style="font-size:15px;font-weight:var(--fw-heavy);color:${cur.col}">${fn(sale)} ج</div>
+            ${rem > 0 ? `<div style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-extra);margin-top:2px">باقي ${fn(rem)} ج</div>` : '<div style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-extra);margin-top:2px">✓ مسدد</div>'}
           </div>
         </div>
         ${_journeyHTML(o)}
         <div style="margin-top:10px">
-          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:4px">
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">
             <span>التحصيل</span>
             <span>${Math.round(pct)}%</span>
           </div>
@@ -1413,9 +1413,9 @@ export function statsDrawerHTML({
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="flex:1;min-width:80px;text-align:center;padding:7px 10px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico} افتح في ${cur.label}</a>
-          ${phone ? `<a href="https://wa.me/20${phone}" target="_blank" style="padding:7px 12px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:800;text-decoration:none">💬</a>` : ''}
-          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
+          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="flex:1;min-width:80px;text-align:center;padding:7px 10px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none;border:1px solid ${cur.col}40">${cur.ico} افتح في ${cur.label}</a>
+          ${phone ? `<a href="https://wa.me/20${phone}" target="_blank" style="padding:7px 12px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none">💬</a>` : ''}
+          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -1451,7 +1451,7 @@ export function statsDrawerHTML({
           style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${allActive ? 'var(--p)' : 'var(--line2)'};
                  background:${allActive ? 'rgba(167,139,250,.2)' : 'var(--row-hover)'};
                  color:${allActive ? 'var(--p)' : '#a8b1cc'};
-                 font-family:inherit;font-size:var(--fs-sm);font-weight:800;cursor:pointer;white-space:nowrap">
+                 font-family:inherit;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;white-space:nowrap">
           🌐 الكل · ${allCount}
         </button>
         ${stageCfg.map(s => {
@@ -1461,7 +1461,7 @@ export function statsDrawerHTML({
             style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${isOn ? s.col : 'var(--line2)'};
                    background:${isOn ? s.col + '30' : 'var(--row-hover)'};
                    color:${isOn ? s.col : '#a8b1cc'};
-                   font-family:inherit;font-size:var(--fs-sm);font-weight:800;cursor:pointer;white-space:nowrap;
+                   font-family:inherit;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;white-space:nowrap;
                    opacity:${d.count === 0 ? '.4' : '1'}">
             ${s.ico} ${s.label} · ${d.count}
           </button>`;
@@ -1472,16 +1472,16 @@ export function statsDrawerHTML({
     const header = `
       ${tabs}
       <div style="background:linear-gradient(135deg,rgba(255,61,110,.1),rgba(251,191,36,.05));border:1px solid rgba(255,61,110,.25);border-radius:14px;padding:14px;margin-bottom:14px;text-align:center">
-        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:800;margin-bottom:4px">${headerLabel}</div>
-        <div style="font-size:26px;font-weight:900;background:linear-gradient(135deg,var(--r),#fbbf24);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(totRem)} ج</div>
-        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:var(--fs-sm);font-weight:800">
+        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra);margin-bottom:4px">${headerLabel}</div>
+        <div style="font-size:26px;font-weight:var(--fw-heavy);background:linear-gradient(135deg,var(--r),#fbbf24);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">${fn(totRem)} ج</div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:var(--fs-sm);font-weight:var(--fw-extra)">
           <span style="color:#a8b1cc">${remOrds.length} أوردر</span>
           ${lateCount > 0 ? `<span style="color:var(--r)">⚠️ ${lateCount} متأخر · ${fn(lateRem)} ج</span>` : ''}
         </div>
       </div>`;
 
     if (!remOrds.length) {
-      return header + '<div style="color:var(--g);text-align:center;padding:30px;font-weight:800;font-size:var(--fs-xl)">✅ كل الفواتير محصّلة</div>';
+      return header + '<div style="color:var(--g);text-align:center;padding:30px;font-weight:var(--fw-extra);font-size:var(--fs-xl)">✅ كل الفواتير محصّلة</div>';
     }
 
     const cards = remOrds.slice(0, 25).map(o => {
@@ -1499,18 +1499,18 @@ export function statsDrawerHTML({
         ${late ? '<div style="position:absolute;top:0;right:0;left:0;height:2px;background:linear-gradient(90deg,var(--r),#fbbf24)"></div>' : ''}
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">
           <div style="flex:1;min-width:0">
-            <div style="font-size:var(--fs-lg);font-weight:900;color:var(--snow)">${o.clientName || '—'}</div>
+            <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow)">${o.clientName || '—'}</div>
             <div style="font-size:var(--fs-sm);color:#a8b1cc;margin-top:2px">${product}</div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:1px">${o.clientPhone || '—'} · ${o.orderId || o._id.slice(-6)}</div>
           </div>
           <div style="text-align:left;flex-shrink:0">
-            <div style="font-size:var(--fs-2xl);font-weight:900;color:var(--r)">${fn(rem)} ج</div>
-            <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-top:2px">من ${fn(sale)} ج</div>
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--r)">${fn(rem)} ج</div>
+            <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">من ${fn(sale)} ج</div>
           </div>
         </div>
         ${_journeyHTML(o)}
         <div style="margin-top:10px">
-          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:4px">
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">
             <span>تم تحصيل ${fn(paid)} ج</span>
             <span>${Math.round(pct)}%</span>
           </div>
@@ -1519,9 +1519,9 @@ export function statsDrawerHTML({
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-          ${phone ? `<a href="https://wa.me/20${phone}?text=${encodeURIComponent(`السلام عليكم أ. ${o.clientName || ''}، تذكير ودي — رصيد متبقي ${fn(rem)} ج على طلب ${o.orderId || ''}. شكراً 🌹`)}" target="_blank" style="flex:1;text-align:center;padding:7px 10px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:800;text-decoration:none">💬 ذكّره بالباقي</a>` : ''}
-          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
-          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="padding:7px 12px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:800;text-decoration:none;border:1px solid ${cur.col}40">${cur.ico}</a>
+          ${phone ? `<a href="https://wa.me/20${phone}?text=${encodeURIComponent(`السلام عليكم أ. ${o.clientName || ''}، تذكير ودي — رصيد متبقي ${fn(rem)} ج على طلب ${o.orderId || ''}. شكراً 🌹`)}" target="_blank" style="flex:1;text-align:center;padding:7px 10px;border-radius:10px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none">💬 ذكّره بالباقي</a>` : ''}
+          ${phone ? `<a href="tel:${o.clientPhone}" style="padding:7px 12px;border-radius:10px;background:var(--row-hover);color:#a8b1cc;font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none;border:1px solid var(--line)">📞</a>` : ''}
+          <a href="${cur.page}?orderId=${encodeURIComponent(o._id)}" style="padding:7px 12px;border-radius:10px;background:${cur.col}18;color:${cur.col};font-size:var(--fs-sm);font-weight:var(--fw-extra);text-decoration:none;border:1px solid ${cur.col}40">${cur.ico}</a>
         </div>
       </div>`;
     }).join('');
@@ -1534,17 +1534,17 @@ export function statsDrawerHTML({
     const stageMap = { design: '✏️ تصميم', printing: '🖨️ طباعة', production: '🏭 تنفيذ', shipping: '🚚 شحن' };
     const byStage = {};
     activeOrds.forEach(o => { if (!byStage[o.stage]) byStage[o.stage] = []; byStage[o.stage].push(o); });
-    return `<div style="text-align:center;padding:12px;color:var(--p);font-size:var(--fs-2xl);font-weight:900">${activeOrds.length} أوردر نشط</div>` +
+    return `<div style="text-align:center;padding:12px;color:var(--p);font-size:var(--fs-2xl);font-weight:var(--fw-heavy)">${activeOrds.length} أوردر نشط</div>` +
       Object.entries(byStage).map(([stage, ords]) => `
         <div style="margin-bottom:12px">
-          <div style="font-size:var(--fs-base);font-weight:800;color:var(--dim2);padding:6px 10px;background:var(--bg2);border-radius:8px;margin-bottom:6px">${stageMap[stage] || stage} — ${ords.length} أوردر</div>
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2);padding:6px 10px;background:var(--bg2);border-radius:8px;margin-bottom:6px">${stageMap[stage] || stage} — ${ords.length} أوردر</div>
           ${ords.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
             <div style="flex:1;min-width:0">
-              <div style="font-size:var(--fs-md);font-weight:700">${o.clientName || '—'}</div>
+              <div style="font-size:var(--fs-md);font-weight:var(--fw-bold)">${o.clientName || '—'}</div>
               <div style="font-size:var(--fs-sm);color:var(--dim2)">${o.product || (o.products || []).map(p => p.name).join('+') || '—'}</div>
-              ${o.deadline && new Date(o.deadline) < new Date() ? '<div style="font-size:var(--fs-xs);color:var(--r);font-weight:700">⚠️ متأخر</div>' : ''}
+              ${o.deadline && new Date(o.deadline) < new Date() ? '<div style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)">⚠️ متأخر</div>' : ''}
             </div>
-            <span style="font-size:var(--fs-base);font-weight:800;color:var(--b);flex-shrink:0">${fn(parseFloat(o.salePrice) || 0)} ج</span>
+            <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--b);flex-shrink:0">${fn(parseFloat(o.salePrice) || 0)} ج</span>
           </div>`).join('')}
         </div>`).join('');
   }

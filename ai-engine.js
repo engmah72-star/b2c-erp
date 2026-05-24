@@ -148,13 +148,13 @@ async function callModel(key, model, prompt, options) {
 
 export function friendlyError(status, apiMsg, model) {
   const raw = `\n\n<span style="font-size:var(--fs-sm);color:#5c6878;direction:ltr;display:block">[HTTP ${status}] ${apiMsg}</span>`;
-  const newKeyLink = `<a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f8ef7;font-weight:700">→ مفتاح جديد من AI Studio</a>`;
+  const newKeyLink = `<a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f8ef7;font-weight:var(--fw-bold)">→ مفتاح جديد من AI Studio</a>`;
   if (status === 400 && /API_KEY|invalid/i.test(apiMsg))
     return `🔑 المفتاح غير صحيح — تأكد من نسخه كاملاً.<br>${newKeyLink}${raw}`;
   if (status === 403)
     return `🚫 المفتاح مرفوض — تأكد أن Generative Language API مفعّل، أو أنشئ مفتاحاً جديداً:<br>${newKeyLink}${raw}`;
   if (status === 429 && /prepay|credit|billing|depleted|exhausted/i.test(apiMsg))
-    return `💳 <strong>رصيد المفتاح نفد.</strong> أضف رصيد من <a href="https://aistudio.google.com/billing" target="_blank" style="color:#4f8ef7;font-weight:700">صفحة الفوترة</a> أو أنشئ مفتاحاً جديداً.${raw}`;
+    return `💳 <strong>رصيد المفتاح نفد.</strong> أضف رصيد من <a href="https://aistudio.google.com/billing" target="_blank" style="color:#4f8ef7;font-weight:var(--fw-bold)">صفحة الفوترة</a> أو أنشئ مفتاحاً جديداً.${raw}`;
   if (status === 429)
     return `⏱️ تجاوزت الحد المسموح للموديل (${model}) — انتظر دقيقة أو اختر موديل مختلف.${raw}`;
   if (status === 503 || status === 500)

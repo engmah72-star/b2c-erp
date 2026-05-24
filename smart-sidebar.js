@@ -54,7 +54,7 @@
       + '.sb-tools-btns{display:flex;gap:4px;align-items:center;}'
       + '.sb-tool-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);'
       + 'color:rgba(255,255,255,.55);font-size:var(--fs-xs);padding:4px 8px;border-radius:6px;cursor:pointer;'
-      + 'font-family:inherit;font-weight:600;transition:all .15s;flex:1;line-height:1.3;}'
+      + 'font-family:inherit;font-weight:var(--fw-semi);transition:all .15s;flex:1;line-height:1.3;}'
       + '.sb-tool-btn:hover{color:#fff;border-color:rgba(167,139,250,.4);}'
       + '.sb-tool-btn.on{background:rgba(167,139,250,.18);color:var(--p);border-color:rgba(167,139,250,.45);}'
       // Star (favorite) — appearance only when nav-link has class

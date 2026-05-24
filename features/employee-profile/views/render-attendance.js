@@ -152,7 +152,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
           <span class="lv-badge ${t.cls}">${t.ico} ${t.lbl}</span>
-          ${isCur ? '<span style="font-size:var(--fs-tiny);background:rgba(255,170,0,.15);color:var(--y);padding:1px 6px;border-radius:8px;font-weight:700">جارية الآن</span>' : ''}
+          ${isCur ? '<span style="font-size:var(--fs-tiny);background:rgba(255,170,0,.15);color:var(--y);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">جارية الآن</span>' : ''}
           ${lv.reason ? `<span style="font-size:var(--fs-sm);color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escAttr(lv.reason)}</span>` : ''}
         </div>
         <div style="font-size:var(--fs-sm);color:var(--dim2)">${lv.startDate}${lv.endDate !== lv.startDate ? ' → ' + lv.endDate : ''} · <strong>${lv.days} يوم</strong></div>
@@ -164,7 +164,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
   let html = '';
   if (upcoming.length) html += renderRows(upcoming);
   if (past.length) {
-    html += `<div style="font-size:var(--fs-xs);font-weight:700;color:var(--dim2);margin:8px 0 5px;text-transform:uppercase;letter-spacing:.5px">السابقة</div>` + renderRows(past);
+    html += `<div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin:8px 0 5px;text-transform:uppercase;letter-spacing:.5px">السابقة</div>` + renderRows(past);
   }
   return html;
 }

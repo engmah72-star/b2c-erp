@@ -86,7 +86,7 @@ export const CLIENTS_SHELL_HTML = `
 
     <!-- Quick Status Chips — حالة العملاء -->
     <div class="chip-row">
-      <span style="font-size:var(--fs-xs);font-weight:800;color:var(--dim2);letter-spacing:.5px;margin-left:4px">عرض:</span>
+      <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);letter-spacing:.5px;margin-left:4px">عرض:</span>
       <button class="f-chip on" onclick="setQuickFilter('all',this)">
         <span>👥</span><span>الكل</span><span id="qf-all-n" style="color:#a8b1cc"></span>
       </button>
@@ -160,7 +160,7 @@ export const CLIENTS_SHELL_HTML = `
 
       <!-- Preset Quick Filters -->
       <div class="cg-preset-bar">
-        <span style="font-size:var(--fs-xs);font-weight:800;color:var(--dim2);white-space:nowrap">جرد:</span>
+        <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);white-space:nowrap">جرد:</span>
         <button class="cg-preset active" id="cgp-all"      onclick="cgridPreset('all',this)">📋 الكل</button>
         <button class="cg-preset" id="cgp-rem"      onclick="cgridPreset('rem',this)">💰 متبقي</button>
         <button class="cg-preset" id="cgp-prob"     onclick="cgridPreset('prob',this)">⚠️ مشاكل</button>
@@ -212,7 +212,7 @@ export const CLIENTS_SHELL_HTML = `
 
       <!-- Bulk Action Bar -->
       <div id="cg-bulk-bar" class="cg-bulk-bar hide">
-        <span id="cg-sel-count" style="font-size:var(--fs-sm);font-weight:800;color:var(--b);min-width:70px">0 محدد</span>
+        <span id="cg-sel-count" style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--b);min-width:70px">0 محدد</span>
         <button class="cg-bulk-btn" onclick="cgridBulkAction('stage')">🔄 نقل مرحلة</button>
         <button class="cg-bulk-btn" onclick="cgridBulkAction('archive')">📁 أرشفة</button>
         <button class="cg-bulk-btn" onclick="cgridBulkAction('reopen')">↩️ إعادة فتح</button>

@@ -49,7 +49,7 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
 
   const firstChar = (e.name || '?')[0].toUpperCase();
   const statusInactive = e.status === 'inactive'
-    ? ` <span style="font-size:var(--fs-xs);background:rgba(255,61,110,.12);color:var(--r);padding:1px 7px;border-radius:8px;font-weight:700">غير نشط</span>`
+    ? ` <span style="font-size:var(--fs-xs);background:rgba(255,61,110,.12);color:var(--r);padding:1px 7px;border-radius:8px;font-weight:var(--fw-bold)">غير نشط</span>`
     : '';
   const chipPhone     = e.phone     ? `<span class="hero-chip">📞 ${escAttr(e.phone)}</span>`        : '';
   const chipEmail     = e.email     ? `<span class="hero-chip">${escAttr(e.email)}</span>`           : '';
@@ -81,7 +81,7 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
       </div>
       <div class="hero-stats-row">
         <div class="hstat">
-          <div class="hstat-val" style="color:${stats.attColor}">${stats.presentDays}<span style="font-size:var(--fs-base);font-weight:500;color:var(--dim2)">/${stats.workDaysStat}</span></div>
+          <div class="hstat-val" style="color:${stats.attColor}">${stats.presentDays}<span style="font-size:var(--fs-base);font-weight:var(--fw-medium);color:var(--dim2)">/${stats.workDaysStat}</span></div>
           <div class="hstat-lbl">الحضور</div>
         </div>
         <div class="hstat">
@@ -97,7 +97,7 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
           <div class="hstat-lbl">إجمالي الأوردرات</div>
         </div>
         <div class="hstat" style="border-left:none;border-top:1px solid var(--line)">
-          <div class="hstat-val" style="color:${stats.annualLeaveCol}">${stats.annualLeaveRemaining}<span style="font-size:var(--fs-base);font-weight:500;color:var(--dim2)">/${stats.annualLeaveQuota}</span></div>
+          <div class="hstat-val" style="color:${stats.annualLeaveCol}">${stats.annualLeaveRemaining}<span style="font-size:var(--fs-base);font-weight:var(--fw-medium);color:var(--dim2)">/${stats.annualLeaveQuota}</span></div>
           <div class="hstat-lbl">إجازة سنوية</div>
         </div>
       </div>
@@ -161,7 +161,7 @@ export function buildCompactHeroHTML({ employee, roleMeta, score }) {
     <!-- Compact sticky hero -->
     <div class="hero-compact" id="hero-compact">
       <div class="av" style="background:${r.col}18;color:${r.col}">${firstChar}</div>
-      <div class="nm">${escAttr(e.name) || '—'} <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:600">· ${r.label}</span></div>
+      <div class="nm">${escAttr(e.name) || '—'} <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-semi)">· ${r.label}</span></div>
       <div class="sc" style="background:${sCol}1f;color:${sCol}">${sScore}</div>
       <button class="btn btn-g btn-xs" onclick="openSalary()" style="font-size:var(--fs-sm)">💰</button>
     </div>`;
