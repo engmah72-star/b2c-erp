@@ -128,7 +128,7 @@ export function buildSalariesHTML({
           <div>
             <div style="display:flex;align-items:center;gap:6px">
               <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${typeCol}18;color:${typeCol}">${typeLabel}</span>
-              <span style="font-size:var(--fs-sm);color:var(--dim2)">${escAttr(s.walletName) || '—'}</span>
+              <span class="txt-meta-sm">${escAttr(s.walletName) || '—'}</span>
             </div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${escAttr(s.note || s.date) || '—'}</div>
           </div>

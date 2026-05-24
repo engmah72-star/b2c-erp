@@ -131,7 +131,7 @@ export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {
       </svg>
       <div style="position:absolute;width:44px;text-align:center;font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${col};margin-right:0;line-height:44px">${score}</div>
       <div style="flex:1">
-        <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${lbl} <span style="font-size:var(--fs-sm);font-weight:var(--fw-medium);color:${col}">— ${grade}</span></div>
+        <div class="txt-bold-md">${lbl} <span style="font-size:var(--fs-sm);font-weight:var(--fw-medium);color:${col}">— ${grade}</span></div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">
           حضور ${ev.attScore || 0}/35 · إنتاجية ${ev.prodScore || 0}/40 · جودة ${ev.qualScore || 0}/25
           ${ev.attDays !== undefined ? ` · ${ev.attDays} يوم حضور` : ''}
@@ -165,7 +165,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
       );
       return `<div style="margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
-          <span style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
+          <span class="txt-strong-base">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
           <div style="display:flex;gap:var(--space-md);font-size:var(--fs-sm)">
             <span style="color:var(--dim2)">${p.total} أوردر</span>
             <span style="font-weight:var(--fw-extra);color:${rateCol}">${p.rate}%</span>
@@ -186,7 +186,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
 export function buildSkillEditTagsHTML({ skills = [] }) {
   return skills.length
     ? skills.map((s, i) => `<span class="skill-tag">🏷️ ${escAttr(s)}<span class="rm" onclick="removeSkill(${i})">✕</span></span>`).join('')
-    : '<span style="color:var(--dim2);font-size:var(--fs-sm)">لا توجد مهارات بعد</span>';
+    : '<span class="txt-meta-sm">لا توجد مهارات بعد</span>';
 }
 
 // ── BEHAVIOR ANALYSIS ──────────────────────────────────────────────
@@ -374,6 +374,6 @@ export function buildInsightsHTML({
   return `<div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">${insights.map(i => `
     <div style="flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${i.col};border-radius:var(--rad2);padding:10px 14px">
       <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px">${i.ico} ${escAttr(i.title)}</div>
-      <div style="font-size:var(--fs-sm);color:var(--dim2)">${escAttr(i.sub)}</div>
+      <div class="txt-meta-sm">${escAttr(i.sub)}</div>
     </div>`).join('')}</div>`;
 }

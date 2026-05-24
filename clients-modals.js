@@ -179,7 +179,7 @@ export const CLIENTS_MODALS_HTML = `
         <div>
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:2px">العميل</div>
           <div style="font-size:15px;font-weight:var(--fw-extra)" id="no-client-name">—</div>
-          <div style="font-size:var(--fs-sm);color:var(--dim2)" id="no-client-job"></div>
+          <div class="txt-meta-sm" id="no-client-job"></div>
         </div>
         <div style="text-align:left">
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:2px">الهاتف</div>
@@ -222,7 +222,7 @@ export const CLIENTS_MODALS_HTML = `
       <div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:var(--space-md);margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--g)">💰 المالية</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2)">المقدم اختياري — يمكن تركه فارغاً</div>
+          <div class="txt-meta-xs">المقدم اختياري — يمكن تركه فارغاً</div>
         </div>
         <div class="fg" style="margin-bottom:10px">
           <label>السعر الكلي (ج) <span id="no-sale-price-hint" style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-semi)"></span></label>
@@ -280,7 +280,7 @@ export const CLIENTS_MODALS_HTML = `
     <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
       <span style="font-size:var(--fs-2xl)">🤖</span>
       <div style="flex:1">
-        <div style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">تحليل ذكي بـ AI</div>
+        <div class="txt-bold-lg">تحليل ذكي بـ AI</div>
         <div id="ai-subtitle" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-semi)">—</div>
       </div>
       <button class="modal-x" onclick="closeAiAnalysis()">✕</button>
@@ -361,7 +361,7 @@ export const CLIENTS_MODALS_HTML = `
         <input type="checkbox" id="fu-done" style="width:16px;height:16px;cursor:pointer">
         <label for="fu-done" style="font-size:var(--fs-base);color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
       </div>
-      <div style="display:flex;gap:var(--space-sm)">
+      <div class="row-gap-sm">
         <button class="btn btn-b" id="save-followup-btn" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
         <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
       </div>

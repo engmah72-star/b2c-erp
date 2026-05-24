@@ -24,7 +24,7 @@ export function buildSetPasswordModalHTML({ employeeName }) {
   return `
     <div class="modal" style="max-width:380px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">🔑 تعيين كلمة سر لـ ${employeeName || 'الموظف'}</span>
+        <span class="txt-bold-lg">🔑 تعيين كلمة سر لـ ${employeeName || 'الموظف'}</span>
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
@@ -55,7 +55,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
   return `
     <div class="modal" style="max-width:440px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">🔄 إعادة إنشاء حساب دخول لـ ${employeeName || 'الموظف'}</span>
+        <span class="txt-bold-lg">🔄 إعادة إنشاء حساب دخول لـ ${employeeName || 'الموظف'}</span>
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
