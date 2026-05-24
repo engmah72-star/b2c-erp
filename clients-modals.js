@@ -139,7 +139,7 @@ export const CLIENTS_MODALS_HTML = `
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="c-notes" placeholder="أي تفاصيل إضافية..." style="min-height:70px"></textarea></div>
 
       <!-- ══ ملاحظات داخلية خاصة بالموظفين فقط ══ -->
-      <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:12px;margin-bottom:14px">
+      <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:var(--space-md);margin-bottom:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
           <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
           <span id="c-internal-meta" style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)"></span>
@@ -219,7 +219,7 @@ export const CLIENTS_MODALS_HTML = `
       </div>
 
       <!-- المالية -->
-      <div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
+      <div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:var(--space-md);margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--g)">💰 المالية</div>
           <div style="font-size:var(--fs-xs);color:var(--dim2)">المقدم اختياري — يمكن تركه فارغاً</div>
@@ -242,9 +242,9 @@ export const CLIENTS_MODALS_HTML = `
       <div class="fg"><label>📝 تعليمات العميل</label><textarea class="inp" id="no-notes" style="min-height:65px" placeholder="النص / الألوان / التفاصيل..."></textarea></div>
 
       <!-- ملفات التصميم -->
-      <div style="border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-top:2px">
+      <div style="border:1px solid var(--line);border-radius:var(--rad);padding:var(--space-md);margin-top:2px">
         <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:10px">🖼️ ملفات التصميم (اختياري)</div>
-        <div onclick="document.getElementById('no-design-img-inp').click()" style="border:2px dashed var(--line);border-radius:var(--rad);padding:12px;text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .2s;color:var(--dim2);font-size:var(--fs-md)" onmouseover="this.style.borderColor='var(--b)'" onmouseout="this.style.borderColor='var(--line)'">
+        <div onclick="document.getElementById('no-design-img-inp').click()" style="border:2px dashed var(--line);border-radius:var(--rad);padding:var(--space-md);text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .2s;color:var(--dim2);font-size:var(--fs-md)" onmouseover="this.style.borderColor='var(--b)'" onmouseout="this.style.borderColor='var(--line)'">
           ＋ إضافة صور أو PDF
         </div>
         <input type="file" id="no-design-img-inp" accept="image/*,application/pdf" multiple class="hide" onchange="addDesignFiles(this)">
@@ -329,7 +329,7 @@ export const CLIENTS_MODALS_HTML = `
       </div>
 
       <!-- ══ مراجعة المنتج ورأي العميل (اختياري) ══ -->
-      <div style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:12px;margin-bottom:14px">
+      <div style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:var(--space-md);margin-bottom:14px">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);margin-bottom:10px">⭐ مراجعة المنتج ورأي العميل (اختياري)</div>
         <div class="fg" style="margin-bottom:10px"><label>الأوردر / المنتج المُراجَع</label>
           <select class="inp" id="fu-order">

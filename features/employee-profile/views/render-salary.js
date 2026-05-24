@@ -93,7 +93,7 @@ export function buildSalariesHTML({
 
   if (!salaries.length) {
     return reminder + quickBtns +
-      '<div style="font-size:var(--fs-base);color:var(--dim2);text-align:center;padding:12px">لا توجد سجلات بعد</div>';
+      '<div style="font-size:var(--fs-base);color:var(--dim2);text-align:center;padding:var(--space-md)">لا توجد سجلات بعد</div>';
   }
 
   // ── grouped by month (last 4 months) ────────────────────────────

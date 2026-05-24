@@ -54,7 +54,7 @@ function escAttr(s) {
  * Locked admin card — shown when employee has role 'admin'.
  */
 export function buildAdminLockedHTML() {
-  return '<div style="font-size:var(--fs-base);color:var(--g);text-align:center;padding:12px">✅ Admin — صلاحيات كاملة (محمية)</div>';
+  return '<div style="font-size:var(--fs-base);color:var(--g);text-align:center;padding:var(--space-md)">✅ Admin — صلاحيات كاملة (محمية)</div>';
 }
 
 /**

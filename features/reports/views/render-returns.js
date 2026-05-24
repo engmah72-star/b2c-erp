@@ -60,7 +60,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
                 <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
                   <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--p),var(--b));border-radius:4px"></div>
                 </div></div>`;
-          }).join('') : '<div style="color:var(--dim2);font-size:var(--fs-sm);text-align:center;padding:20px">لا توجد بيانات</div>'}
+          }).join('') : '<div style="color:var(--dim2);font-size:var(--fs-sm);text-align:center;padding:var(--space-xl)">لا توجد بيانات</div>'}
         </div>
       </div>
 
@@ -83,7 +83,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
           ${s.topClients.length ? s.topClients.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
               <span style="font-size:var(--fs-base);font-weight:var(--fw-bold);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.name || '').slice(0, 30)}</span>
               <span style="font-size:var(--fs-sm)"><b style="color:var(--y)">${c.count}</b> <span style="color:var(--dim2)">| ${format(c.amount)} ج</span></span>
-            </div>`).join('') : '<div style="color:var(--dim2);font-size:var(--fs-sm);text-align:center;padding:20px">لا توجد بيانات</div>'}
+            </div>`).join('') : '<div style="color:var(--dim2);font-size:var(--fs-sm);text-align:center;padding:var(--space-xl)">لا توجد بيانات</div>'}
         </div>
       </div>
     </div>
@@ -92,7 +92,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
       <div class="rep-card-head"><div class="rep-name">📋 آخر 10 tickets</div></div>
       <div style="margin-top:10px;font-size:var(--fs-sm)">
         ${s.recent.map(t => {
-          const stPill = `<span style="padding:2px 8px;border-radius:10px;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:rgba(167,139,250,.15);color:var(--p)">${t.status}</span>`;
+          const stPill = `<span style="padding:2px 8px;border-radius:var(--rad);font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:rgba(167,139,250,.15);color:var(--p)">${t.status}</span>`;
           const slaBadge = t.slaBreached ? ' <span style="font-size:var(--fs-tiny);color:var(--r)">⚠️ SLA</span>' : '';
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
               <div style="flex:1;min-width:0">
@@ -101,7 +101,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
               </div>
               <div style="font-weight:var(--fw-extra);color:var(--r);text-align:left;white-space:nowrap">${t.refundAmount > 0 ? format(t.refundAmount) + ' ج' : '—'}</div>
             </div>`;
-        }).join('') || '<div style="color:var(--dim2);text-align:center;padding:20px">لا توجد tickets</div>'}
+        }).join('') || '<div style="color:var(--dim2);text-align:center;padding:var(--space-xl)">لا توجد tickets</div>'}
       </div>
       <div style="text-align:center;margin-top:12px">
         <a href="returns.html" style="font-size:var(--fs-base);color:var(--b);text-decoration:none">عرض الكل في returns.html ↗</a>

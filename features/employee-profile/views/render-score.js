@@ -30,7 +30,7 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
   const proratedNote = breakdown.prod.prorated
     ? `<span style="color:var(--dim2);font-size:var(--fs-tiny)">(متوقع لـ${meta.lastDay}/${meta.daysInMonth} يوم)</span>`
     : '';
-  return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:16px;display:flex;gap:20px;align-items:center">
+  return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:var(--space-lg);display:flex;gap:20px;align-items:center">
     <div class="score-gauge">
       <svg width="80" height="80" viewBox="0 0 80 80">
         <circle cx="40" cy="40" r="32" fill="none" stroke="var(--bg3)" stroke-width="7"/>
@@ -42,7 +42,7 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
     <div style="flex:1">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
         <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${col}">${grade}</div>
-        <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:10px" title="مقارنة بالشهر السابق (${previous.score}/100)">${dLbl}</span>
+        <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:var(--rad)" title="مقارنة بالشهر السابق (${previous.score}/100)">${dLbl}</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:5px">
         <div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm)">

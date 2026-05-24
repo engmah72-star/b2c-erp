@@ -72,7 +72,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
 
   // Live workload card
   const liveHtml = liveOrders.length
-    ? `<div style="background:rgba(124,92,255,.05);border:1px solid rgba(124,92,255,.2);border-radius:10px;padding:10px;margin-bottom:14px">
+    ? `<div style="background:rgba(124,92,255,.05);border:1px solid rgba(124,92,255,.2);border-radius:var(--rad);padding:10px;margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--p)">🏃 الأوردرات الحية (${liveOrders.length})</div>
     </div>
@@ -94,7 +94,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
     </div>
     ${liveOrders.length > 12 ? `<div style="text-align:center;font-size:var(--fs-xs);color:var(--dim2);margin-top:6px">+ ${liveOrders.length - 12} أوردر آخر</div>` : ''}
   </div>`
-    : `<div style="background:var(--bg2);border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;margin-bottom:14px"><div style="font-size:var(--fs-sm);color:var(--dim2)">💤 لا توجد أوردرات نشطة في إيد الموظف حالياً</div></div>`;
+    : `<div style="background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad);padding:14px;text-align:center;margin-bottom:14px"><div style="font-size:var(--fs-sm);color:var(--dim2)">💤 لا توجد أوردرات نشطة في إيد الموظف حالياً</div></div>`;
 
   const allTasks = [...open, ...done];
   const tasksHtml = allTasks.length
@@ -110,7 +110,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
         ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
       </div>
       <span class="pri-badge ${p.cls}">${p.lbl}</span>
-      ${!isDone ? `<button onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:2px">🗑</button>` : ''}
+      ${!isDone ? `<button onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-2xs)">🗑</button>` : ''}
     </div>`;
       }).join('')
     : `<div class="empty-cta">
@@ -149,13 +149,13 @@ export function buildIncidentsHTML({ incidents = [] }) {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
           <span style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${escAttr(i.title) || t.lbl}</span>
-          <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.col}">${s.lbl}</span>
+          <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${s.bg};color:${s.col}">${s.lbl}</span>
         </div>
         ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:1.5">${escAttr(i.description)}</div>` : ''}
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
       </div>
-      <button onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:4px" title="حذف">🗑</button>
+      <button onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-xs)" title="حذف">🗑</button>
     </div>`;
   }).join('');
   return { html, count: incidents.length };

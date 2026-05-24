@@ -91,9 +91,9 @@
   // ── render: header + body + footer (re-renders on every state change) ───
   function render(){
     const c = ctx();
-    if(!c){ _drawer.innerHTML = '<div style="padding:20px;color:var(--ink-3)">⏳ تجهيز السياق...</div>'; return; }
+    if(!c){ _drawer.innerHTML = '<div style="padding:var(--space-xl);color:var(--ink-3)">⏳ تجهيز السياق...</div>'; return; }
     const o = c.getOrder(_orderId);
-    if(!o){ _drawer.innerHTML = '<div style="padding:20px;color:var(--danger)">⚠️ الأوردر غير موجود</div>'; return; }
+    if(!o){ _drawer.innerHTML = '<div style="padding:var(--space-xl);color:var(--danger)">⚠️ الأوردر غير موجود</div>'; return; }
     const prods = o.products || [];
     const prod = _prodIdx >= 0 ? prods[_prodIdx] : null;
     const prodName = prod?.name || prods[0]?.name || 'عام';
