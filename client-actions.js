@@ -166,72 +166,66 @@ export const clientActions = {
   async addClient({ db = defaultDb, data, userId, userName }) {
     if (!data) return { ok: false, errors: ['⚠️ data مطلوبة'], warnings: [] };
 
-    return withIdempotency(db, {
-      actionType: 'add_client',
-      entityId: 'new',
-      actorId: userId || '',
-      payload: { phone1: data.phone1, name: data.name },
-    }, async (operationId) => {
+    // Clients ليست financial operation (مش في قائمة H1.2 الإلزامية).
+    // نتخطى withIdempotency overhead (4-5 sequential network round-trips → 2).
+    // Double-save protection: btn.disabled في saveClient wrapper + addDoc atomicity.
 
-      const v = validateClientPayload(data);
-      if (!v.ok) return { ...v, operationId };
+    const v = validateClientPayload(data);
+    if (!v.ok) return v;
 
-      // Phone-based dedup
-      const dup = await _findDuplicate(db, {
-        phone1: data.phone1,
-        phone2: data.phone2,
-        email: (data.email || '').toLowerCase(),
-      });
-      if (dup) {
-        return {
-          ok: false,
-          errors: ['🔁 عميل موجود بنفس الرقم/البريد'],
-          warnings: [],
-          duplicate: dup,
-          operationId,
-        };
-      }
-
-      // Build doc
-      const isLegacy = data.status === 'legacy';
-      const docData = {
-        ...data,
-        email: (data.email || '').toLowerCase().trim(),
-        phone1: (data.phone1 || '').trim(),
-        phone2: (data.phone2 || '').trim(),
-        name: (data.name || '').trim(),
-        status: isLegacy ? 'legacy' : 'active',
-        isDeleted: false,
-        createdBy: userId || '',
-        createdByName: userName || '',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      try {
-        const ref = await addDoc(collection(db, 'clients'), docData);
-        // Audit log entry (universal invariant H3)
-        await _logAudit(db, {
-          action: 'client.add',
-          details: { clientId: ref.id, clientName: docData.name, phone1: docData.phone1 },
-          userId, userName,
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, clientId: ref.id,
-          action: 'add_client',
-        };
-      } catch (e) {
-        return {
-          ok: false,
-          errors: [e.code === 'permission-denied'
-            ? '🔒 ليس لديك صلاحية إضافة عملاء'
-            : (e.message || 'فشل إضافة العميل')],
-          warnings: [],
-          operationId,
-        };
-      }
+    // Phone-based dedup
+    const dup = await _findDuplicate(db, {
+      phone1: data.phone1,
+      phone2: data.phone2,
+      email: (data.email || '').toLowerCase(),
     });
+    if (dup) {
+      return {
+        ok: false,
+        errors: ['🔁 عميل موجود بنفس الرقم/البريد'],
+        warnings: [],
+        duplicate: dup,
+      };
+    }
+
+    // Build doc
+    const isLegacy = data.status === 'legacy';
+    const docData = {
+      ...data,
+      email: (data.email || '').toLowerCase().trim(),
+      phone1: (data.phone1 || '').trim(),
+      phone2: (data.phone2 || '').trim(),
+      name: (data.name || '').trim(),
+      status: isLegacy ? 'legacy' : 'active',
+      isDeleted: false,
+      createdBy: userId || '',
+      createdByName: userName || '',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      const ref = await addDoc(collection(db, 'clients'), docData);
+      // Audit log (fire-and-forget، الـ helper بيـ swallow errors)
+      _logAudit(db, {
+        action: 'client.add',
+        details: { clientId: ref.id, clientName: docData.name, phone1: docData.phone1 },
+        userId, userName,
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId: ref.id,
+        action: 'add_client',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية إضافة عملاء'
+          : (e.message || 'فشل إضافة العميل')],
+        warnings: [],
+      };
+    }
   },
 
   /**
@@ -243,84 +237,77 @@ export const clientActions = {
       return { ok: false, errors: ['⚠️ changes مطلوبة'], warnings: [] };
     }
 
-    return withIdempotency(db, {
-      actionType: 'edit_client',
-      entityId: clientId,
-      actorId: userId || '',
-      payload: { ...changes },
-    }, async (operationId) => {
+    // Clients ليست financial operation — نتخطى withIdempotency overhead
+    // (3-4 round-trips → 1-2). نفس justification بتاع addClient.
 
-      const current = await _loadClient(db, clientId);
-      if (!current) {
-        return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [], operationId };
-      }
-      if (current.isDeleted) {
-        return { ok: false, errors: ['⛔ العميل محذوف'], warnings: [], operationId };
-      }
+    const current = await _loadClient(db, clientId);
+    if (!current) {
+      return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [] };
+    }
+    if (current.isDeleted) {
+      return { ok: false, errors: ['⛔ العميل محذوف'], warnings: [] };
+    }
 
-      // If phone/email changed, run dedup
-      const phone1Changed = changes.phone1 && changes.phone1 !== current.phone1;
-      const phone2Changed = changes.phone2 && changes.phone2 !== current.phone2;
-      const emailChanged  = changes.email  && (changes.email || '').toLowerCase() !==
-                                              (current.email  || '').toLowerCase();
-      if (phone1Changed || phone2Changed || emailChanged) {
-        const dup = await _findDuplicate(db, {
-          phone1: changes.phone1 || '',
-          phone2: changes.phone2 || '',
-          email: emailChanged ? (changes.email || '').toLowerCase() : '',
-          excludeId: clientId,
-        });
-        if (dup) {
-          return {
-            ok: false,
-            errors: ['🔁 عميل آخر بنفس الرقم/البريد'],
-            warnings: [], duplicate: dup,
-            operationId,
-          };
-        }
-      }
-
-      // Validate the merged result
-      const merged = { ...current, ...changes };
-      const v = validateClientPayload(merged);
-      if (!v.ok) return { ...v, operationId };
-
-      // Build edit-history entry via universal audit
-      const editEntry = auditEntry({
-        action: 'تعديل بيانات العميل',
-        userId, userName,
-        kind: 'edit',
-        meta: { changedKeys: Object.keys(changes) },
+    // If phone/email changed, run dedup
+    const phone1Changed = changes.phone1 && changes.phone1 !== current.phone1;
+    const phone2Changed = changes.phone2 && changes.phone2 !== current.phone2;
+    const emailChanged  = changes.email  && (changes.email || '').toLowerCase() !==
+                                            (current.email  || '').toLowerCase();
+    if (phone1Changed || phone2Changed || emailChanged) {
+      const dup = await _findDuplicate(db, {
+        phone1: changes.phone1 || '',
+        phone2: changes.phone2 || '',
+        email: emailChanged ? (changes.email || '').toLowerCase() : '',
+        excludeId: clientId,
       });
-
-      // Normalize phone/email on write so future dedup queries hit cleanly.
-      const normalized = { ...changes };
-      if (typeof normalized.phone1 === 'string') normalized.phone1 = normalized.phone1.trim();
-      if (typeof normalized.phone2 === 'string') normalized.phone2 = normalized.phone2.trim();
-      if (typeof normalized.email  === 'string') normalized.email  = normalized.email.toLowerCase().trim();
-      if (typeof normalized.name   === 'string') normalized.name   = normalized.name.trim();
-
-      try {
-        await updateDoc(current._ref, {
-          ...normalized,
-          editHistory: [...(current.editHistory || []), editEntry],
-          updatedAt: serverTimestamp(),
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, clientId, action: 'edit_client',
-        };
-      } catch (e) {
+      if (dup) {
         return {
           ok: false,
-          errors: [e.code === 'permission-denied'
-            ? '🔒 ليس لديك صلاحية تعديل العملاء'
-            : (e.message || 'فشل تحديث العميل')],
-          warnings: [],
-          operationId,
+          errors: ['🔁 عميل آخر بنفس الرقم/البريد'],
+          warnings: [], duplicate: dup,
         };
       }
+    }
+
+    // Validate the merged result
+    const merged = { ...current, ...changes };
+    const v = validateClientPayload(merged);
+    if (!v.ok) return v;
+
+    // Build edit-history entry via universal audit
+    const editEntry = auditEntry({
+      action: 'تعديل بيانات العميل',
+      userId, userName,
+      kind: 'edit',
+      meta: { changedKeys: Object.keys(changes) },
     });
+
+    // Normalize phone/email on write so future dedup queries hit cleanly.
+    const normalized = { ...changes };
+    if (typeof normalized.phone1 === 'string') normalized.phone1 = normalized.phone1.trim();
+    if (typeof normalized.phone2 === 'string') normalized.phone2 = normalized.phone2.trim();
+    if (typeof normalized.email  === 'string') normalized.email  = normalized.email.toLowerCase().trim();
+    if (typeof normalized.name   === 'string') normalized.name   = normalized.name.trim();
+
+    try {
+      await updateDoc(current._ref, {
+        ...normalized,
+        editHistory: [...(current.editHistory || []), editEntry],
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId, action: 'edit_client',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية تعديل العملاء'
+          : (e.message || 'فشل تحديث العميل')],
+        warnings: [],
+      };
+    }
   },
 
   /**
