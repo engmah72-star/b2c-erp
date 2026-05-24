@@ -226,10 +226,24 @@ body{font-family:'IBM Plex Sans Arabic',sans-serif;background:var(--bg);color:va
 a{text-decoration:none;color:inherit;}
 button,input,textarea,select{font-family:inherit;}
 
-/* ── LAYOUT ── */
-.app-shell{display:flex;min-height:100vh;min-height:100dvh;}
-/* ── SIDENAV ── */
-.sidenav{width:var(--nav-w);background:var(--bg2);border-left:1px solid var(--line);display:flex;flex-direction:column;position:fixed;top:0;right:0;bottom:0;z-index:100;transition:var(--trans);overflow:hidden;}
+/* ── LAYOUT ──
+   PR-839 (sidebar-layout-isolation): switched from flex+position:fixed+margin-right
+   to CSS Grid + position:sticky. السبب: الـ flex+fixed كانت تعتمد على margin-right
+   كـ "حجز مساحة" — أي drift في الـ classes (body.sb-hidden، compact mode) أو content
+   wider than column كان يخلي الـ sidebar تطفو فوق الـ content. بـ Grid، عمود الـ sidebar
+   مخصص بحجم ثابت من الـ browser نفسه → مستحيل overlap هندسياً.
+
+   ملاحظة RTL: الـ direction:rtl على body بيخلي column-1 يظهر بصرياً على اليمين.
+   ترتيب الـ DOM (sidenav أولاً ثم main) + grid-template (sidenav-w أولاً) →
+   sidenav في column-1 (يمين بصرياً) و main في column-2 (يسار بصرياً). */
+.app-shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh;min-height:100dvh;}
+/* ── SIDENAV ──
+   • grid-column:1 → العمود الأول، اللي بيظهر على اليمين بصرياً في RTL.
+   • position:sticky + top:0 + height:100vh + align-self:start → يفضل ثابت
+     في مكانه أثناء scroll الصفحة بدل ما يـ scroll مع الـ content.
+   • contain:layout style → عزل: تغييرات داخل الـ sidebar (re-render من JS،
+     toolbar injection من smart-sidebar.js...) لا تتسبب في reflow للـ main. */
+.sidenav{width:var(--nav-w);background:var(--bg2);border-left:1px solid var(--line);display:flex;flex-direction:column;grid-column:1;grid-row:1;position:sticky;top:0;align-self:start;height:100vh;height:100dvh;z-index:100;transition:var(--trans);overflow:hidden;contain:layout style;}
 .nav-brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid var(--line);flex-shrink:0;}
 .nav-logo{width:36px;height:36px;background:linear-gradient(135deg,#4a8ef5,#10c4de);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
 .nav-brand-name{font-size:13px;font-weight:800;}
@@ -255,10 +269,10 @@ button,input,textarea,select{font-family:inherit;}
 .nav-user-role{font-size:10px;color:var(--dim2);}
 
 /* ── MAIN ──
-   Defensive layout: flex:1 + min-width:0 (يمنع flex item من overflow بسبب content)
-   + max-width calc (safety net لو الـ margin مش بيتطبق صح من flex container)
-   + overflow-x:hidden (يـ clip أي overflow أفقي داخلي من children). */
-.main{flex:1;min-width:0;margin-right:var(--nav-w);max-width:calc(100% - var(--nav-w));display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;overflow-x:hidden;}
+   grid-column:2 → العمود الثاني، اللي بيظهر على اليسار بصرياً في RTL (المحتوى الأوسع).
+   min-width:0 + overflow-x:hidden → defensive ضد content أوسع من العمود.
+   لا margin-right ولا max-width:calc — الـ Grid بيحجز العمود من نفسه. */
+.main{grid-column:2;grid-row:1;min-width:0;display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;overflow-x:hidden;}
 .topbar{background:var(--bg2);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:50;}
 .topbar-left{display:flex;align-items:center;gap:12px;}
 .topbar-left h1{font-size:18px;font-weight:800;}
@@ -498,9 +512,13 @@ textarea.inp{min-height:80px;resize:vertical;}
 
 /* MOBILE */
 @media(max-width:768px){
-  .sidenav{transform:translateX(100%);box-shadow:none;}
+  /* Mobile: sidebar overlay (slide-off pattern). Override desktop grid+sticky:
+     • position:fixed بدل sticky → يطفو فوق الـ content مش بياخد column
+     • height:100% بدل 100vh عشان يـ stretch لكامل viewport بدون gap
+     • app-shell يرجع block layout */
+  .sidenav{position:fixed;top:0;right:0;bottom:0;height:100%;transform:translateX(100%);box-shadow:none;}
   .sidenav.mob-open{transform:translateX(0);box-shadow:-20px 0 60px rgba(0,0,0,.6);}
-  .app-shell{display:block;}
+  .app-shell{display:block;grid-template-columns:none;}
   .main{margin-right:0!important;max-width:100%!important;padding-bottom:var(--mob-nav-h);min-height:100vh;min-height:100dvh;}
   .mob-nav{display:flex;}
   .mob-menu-btn{display:flex!important;}
@@ -546,7 +564,10 @@ textarea.inp{min-height:80px;resize:vertical;}
 /* PRINT */
 @media print{
   .sidenav,.topbar,.mob-nav,.fab,.filters,.btn{display:none!important;}
-  .main{margin:0;}
+  /* PR-839: مع الـ grid layout، لو الـ sidenav اتخفت بـ display:none الـ column-1
+     لسه محجوزة (var(--nav-w) فاضي). إعادة تعريف الـ template يخلي main يفرد بالكامل. */
+  .app-shell{grid-template-columns:1fr;}
+  .main{grid-column:1;margin:0;}
   .content{padding:0;}
   body{background:#fff;color:#000;}
 }
@@ -1020,34 +1041,13 @@ textarea.inp{min-height:80px;resize:vertical;}
 .status-archived{ color:var(--dim2); background:rgba(100,114,152,.12); }
 
 /* ════════════════════════════════════════
-   Sidebar Hide + Hover-Peek (Desktop) — RULE U1
+   Sidebar Slide Transition — RULE U1
    ────────────────────────────────────────
-   States (managed in smart-sidebar.js):
-   • body.sb-hidden            → persistent: sidebar hidden, main full-width
-   • body.sb-peek              → temporary: sidebar revealed as overlay on hover
-   • .sb-hot-zone (div)        → invisible 14px strip at right edge that
-                                 triggers peek-in on mouseenter
-   • .sb-show-btn (button)     → floating reveal (click = un-hide permanently)
-
-   Behavior:
-   1. Click "إخفاء" → body.sb-hidden + .sidenav.sb-hidden → sidebar slides off
-   2. Mouse approaches right edge → body.sb-peek added → sidebar slides back
-      as overlay (does NOT push main margin — floats above content)
-   3. Mouse leaves sidebar (200ms delay) → body.sb-peek removed → sidebar
-      hides again. Persistent state unchanged.
-   4. Click ☰ floating → full un-hide (removes body.sb-hidden entirely)
-
-   Persisted key: sb_hidden_v1. Mobile uses its own .mob-open pattern.
+   PR-819: شِيلَت toggles الـ hide/compact كلها (الـ sidebar دائماً ظاهرة على desktop).
+   PR-839: التحول لـ CSS Grid + sticky (لا margin-right hack).
+   الـ transform transition يفضل موجود علشان slide-in/out على mobile (.mob-open).
    ════════════════════════════════════════ */
 .sidenav{transition:transform .25s cubic-bezier(.4,0,.2,1), var(--trans);}
-.main{transition:margin-right .25s cubic-bezier(.4,0,.2,1);}
-/* Hide/peek behavior مُعطَّل بعد PR #819 (إزالة الـ toggles). الـ rules دي اتشالت
-   لمنع stale body classes من خلق overlap بين الـ sidebar و الـ content. */
-/* @media(min-width:769px){
-  .sidenav.sb-hidden{transform:translateX(100%);box-shadow:none;}
-  body.sb-hidden .main{margin-right:0;}
-  body.sb-peek .sidenav.sb-hidden{transform:translateX(0);box-shadow:-12px 0 40px rgba(0,0,0,.35);}
-} */
 /* Hot zone — invisible strip at right edge that captures mouseenter */
 .sb-hot-zone{
   position:fixed;top:0;right:0;width:14px;bottom:0;z-index:98;
