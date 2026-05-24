@@ -3,7 +3,7 @@
  *
  * Run: node tests/features-clients-duplicate-scan.test.mjs
  */
-import { findDuplicatePhones } from '../features/clients/duplicate-scan.js';
+import { findDuplicatePhones, planClientMerge } from '../features/clients/duplicate-scan.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -152,6 +152,101 @@ test('self-dup client + another client with same phone → 1 group of 2', () => 
   ]);
   assertEq(r.length, 1);
   assertEq(r[0].clients.length, 2);
+});
+
+// ── planClientMerge tests ──
+const P = { _id: 'p1', name: 'Primary', gallery: [{ url: 'a.jpg' }] };
+const D = { _id: 'd1', name: 'Dup', gallery: [{ url: 'b.jpg' }] };
+
+test('plan: rejects empty input', () => {
+  assertEq(planClientMerge({}).ok, false);
+});
+
+test('plan: rejects missing primary', () => {
+  const r = planClientMerge({ duplicates: [D] });
+  assertEq(r.ok, false);
+});
+
+test('plan: rejects empty duplicates', () => {
+  const r = planClientMerge({ primary: P, duplicates: [] });
+  assertEq(r.ok, false);
+});
+
+test('plan: rejects primary inside duplicates', () => {
+  const r = planClientMerge({ primary: P, duplicates: [P] });
+  assertEq(r.ok, false);
+});
+
+test('plan: rejects deleted primary', () => {
+  const r = planClientMerge({ primary: { ...P, isDeleted: true }, duplicates: [D] });
+  assertEq(r.ok, false);
+});
+
+test('plan: rejects deleted duplicate', () => {
+  const r = planClientMerge({ primary: P, duplicates: [{ ...D, isDeleted: true }] });
+  assertEq(r.ok, false);
+});
+
+test('plan: rejects when dup has non-zero wallet balance', () => {
+  const r = planClientMerge({
+    primary: P, duplicates: [D],
+    dupWallets: [{ _id: 'd1', balance: 50 }],
+  });
+  assertEq(r.ok, false);
+});
+
+test('plan: accepts when dup wallet balance is zero', () => {
+  const r = planClientMerge({
+    primary: P, duplicates: [D],
+    dupWallets: [{ _id: 'd1', balance: 0 }],
+  });
+  assertEq(r.ok, true);
+});
+
+test('plan: rejects over maxOps', () => {
+  const r = planClientMerge({
+    primary: P, duplicates: [D],
+    counts: { orders: 500 },
+    maxOps: 400,
+  });
+  assertEq(r.ok, false);
+});
+
+test('plan: counts ops correctly', () => {
+  const r = planClientMerge({
+    primary: P, duplicates: [D],
+    counts: { orders: 10, transactions: 5, followups: 3, designItems: 2, returnsTickets: 1 },
+  });
+  assertEq(r.ok, true);
+  // 10+5+3+2+1 + 1 dup + 1 primary + 1 audit = 24
+  assertEq(r.totalOps, 24);
+});
+
+test('plan: merges galleries deduped by URL', () => {
+  const r = planClientMerge({
+    primary: { _id: 'p', gallery: [{ url: 'a.jpg' }, { url: 'b.jpg' }] },
+    duplicates: [{ _id: 'd', gallery: [{ url: 'b.jpg' }, { url: 'c.jpg' }] }],
+  });
+  assertEq(r.ok, true);
+  assertEq(r.mergedGallery.length, 3);
+  assertEq(r.mergedGallery.map(g => g.url), ['a.jpg', 'b.jpg', 'c.jpg']);
+});
+
+test('plan: primary gallery items come first in merged result', () => {
+  const r = planClientMerge({
+    primary: { _id: 'p', gallery: [{ url: 'first.jpg' }] },
+    duplicates: [{ _id: 'd', gallery: [{ url: 'dup.jpg' }] }],
+  });
+  assertEq(r.mergedGallery[0].url, 'first.jpg');
+});
+
+test('plan: handles missing gallery fields', () => {
+  const r = planClientMerge({
+    primary: { _id: 'p' },
+    duplicates: [{ _id: 'd' }],
+  });
+  assertEq(r.ok, true);
+  assertEq(r.mergedGallery, []);
 });
 
 console.log(`\n${passed}/${passed + failed} tests passed`);

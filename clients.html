@@ -1786,7 +1786,8 @@ function dupAddOrder(){
 }
 
 // ══ DUPLICATE-PHONE SCAN (admin tool) ══
-// Pure logic in features/clients/duplicate-scan.js (window.__findDuplicatePhones).
+// Pure logic in features/clients/duplicate-scan.js
+//   (window.__findDuplicatePhones / clientActions.mergeDuplicates).
 window.openDupScan=function(){
   const modal=document.getElementById('ov-dup-scan');
   const body=document.getElementById('dup-scan-body');
@@ -1799,24 +1800,34 @@ window.openDupScan=function(){
     body.innerHTML='<div class="empty" style="padding:30px 16px"><div class="empty-icon">✅</div><div class="empty-text">مفيش عملاء بنفس رقم تليفون</div></div>';
   } else {
     summary.innerHTML=`<strong>${groups.length}</strong> رقم تليفون مكرر · <strong>${dupClientCount}</strong> عميل متأثر`;
-    body.innerHTML=groups.map(g=>`
-      <div style="border:1px solid var(--line);border-radius:var(--rad);overflow:hidden">
+    body.innerHTML=groups.map((g,gIdx)=>{
+      const groupName=`merge-group-${gIdx}`;
+      return `
+      <div class="dup-group" data-merge-group="${gIdx}" style="border:1px solid var(--line);border-radius:var(--rad);overflow:hidden">
         <div style="background:rgba(255,170,0,.08);padding:10px 12px;font-weight:var(--fw-bold);font-size:var(--fs-md);border-bottom:1px solid var(--line)">
           📞 ${escapeHtml(g.phone)} <span style="color:var(--dim2);font-weight:normal">— ${g.clients.length} عملاء</span>
         </div>
-        ${g.clients.map(c=>`
-          <div onclick="openClientFromDupScan('${escapeHtml(c._id)}')" style="padding:10px 12px;border-top:1px solid var(--line);cursor:pointer;display:flex;flex-direction:column;gap:3px" onmouseover="this.style.background='var(--row-hover)'" onmouseout="this.style.background=''">
-            <div style="font-weight:var(--fw-bold);font-size:var(--fs-md)">${escapeHtml(c.name||'(بدون اسم)')}</div>
-            <div style="font-size:var(--fs-xs);color:var(--dim2)">
-              ${c.phone1?'📱 '+escapeHtml(c.phone1):''}
-              ${c.phone2?' · 📱 '+escapeHtml(c.phone2):''}
-              ${c.status==='legacy'?' · 📁 قديم':''}
-              ${c.governorate?' · '+escapeHtml(c.governorate):''}
+        ${g.clients.map((c,cIdx)=>`
+          <label style="padding:10px 12px;border-top:1px solid var(--line);cursor:pointer;display:flex;align-items:center;gap:10px" onmouseover="this.style.background='var(--row-hover)'" onmouseout="this.style.background=''">
+            <input type="radio" name="${groupName}" value="${escapeHtml(c._id)}" ${cIdx===0?'checked':''} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--g)">
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px;min-width:0">
+              <div style="font-weight:var(--fw-bold);font-size:var(--fs-md)">${escapeHtml(c.name||'(بدون اسم)')}</div>
+              <div style="font-size:var(--fs-xs);color:var(--dim2)">
+                ${c.phone1?'📱 '+escapeHtml(c.phone1):''}
+                ${c.phone2?' · 📱 '+escapeHtml(c.phone2):''}
+                ${c.status==='legacy'?' · 📁 قديم':''}
+                ${c.governorate?' · '+escapeHtml(c.governorate):''}
+              </div>
             </div>
-          </div>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="event.preventDefault();event.stopPropagation();openClientFromDupScan('${escapeHtml(c._id)}')" style="flex-shrink:0">👤</button>
+          </label>
         `).join('')}
-      </div>
-    `).join('');
+        <div style="padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--bg2)">
+          <div style="flex:1;font-size:var(--fs-xs);color:var(--dim2);align-self:center">اختار العميل الأساسي ثم اضغط دمج — هينتقل كل الأوردرات/المدفوعات للأساسي و يتحذف الباقي</div>
+          <button type="button" class="btn btn-b btn-sm btn-merge" onclick="runMergeDuplicates(${gIdx})">🔀 ادمج</button>
+        </div>
+      </div>`;
+    }).join('');
   }
   modal.classList.add('open');
 };
@@ -1826,6 +1837,53 @@ window.closeDupScan=function(){
 window.openClientFromDupScan=function(id){
   window.closeDupScan();
   if(typeof openClient==='function')openClient(id);
+};
+window.runMergeDuplicates=async function(gIdx){
+  const groupEl=document.querySelector(`[data-merge-group="${gIdx}"]`);
+  if(!groupEl)return;
+  const checked=groupEl.querySelector('input[type=radio]:checked');
+  if(!checked){toast('⚠️ اختار العميل الأساسي','err');return;}
+  const primaryId=checked.value;
+  const allInputs=[...groupEl.querySelectorAll('input[type=radio]')];
+  const duplicateIds=allInputs.map(i=>i.value).filter(id=>id!==primaryId);
+  if(!duplicateIds.length){toast('⚠️ لا يوجد عملاء للدمج','err');return;}
+
+  const primary=clients.find(c=>c._id===primaryId);
+  const dupNames=duplicateIds.map(id=>clients.find(c=>c._id===id)?.name||'(؟)').join(' · ');
+  if(!confirm(`دمج ${duplicateIds.length} عميل (${dupNames}) في "${primary?.name||primaryId}"؟\n\nسيتم نقل كل الأوردرات والمدفوعات والمتابعات للأساسي، ثم حذف المكررين (soft delete).`))return;
+
+  if(!window.clientActions?.mergeDuplicates){
+    toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;
+  }
+  const btn=groupEl.querySelector('.btn-merge');
+  if(btn){btn.disabled=true;btn.textContent='جاري الدمج...';}
+  try{
+    const r=await window.clientActions.mergeDuplicates({
+      primaryId, duplicateIds,
+      userId: currentUser?.uid||'',
+      userName: userName||'',
+    });
+    if(!r.ok){
+      console.warn('[mergeDuplicates] failed', r);
+      toast('❌ '+(r.errors?.[0]||'فشل الدمج'),'err');
+      if(btn){btn.disabled=false;btn.textContent='🔀 ادمج';}
+      return;
+    }
+    const mc=r.movedCounts||{};
+    const parts=[];
+    if(mc.orders)         parts.push(`${mc.orders} أوردر`);
+    if(mc.transactions)   parts.push(`${mc.transactions} مدفوعة`);
+    if(mc.followups)      parts.push(`${mc.followups} متابعة`);
+    if(mc.designItems)    parts.push(`${mc.designItems} تصميم`);
+    if(mc.returnsTickets) parts.push(`${mc.returnsTickets} مرتجع`);
+    toast(`✅ تم الدمج · نُقل ${parts.join(' · ')||'لا شيء'}`,'ok');
+    // Refresh scan after Firestore listener catches up
+    setTimeout(()=>{if(document.getElementById('ov-dup-scan')?.classList.contains('open'))window.openDupScan();},800);
+  }catch(e){
+    console.warn('[mergeDuplicates] exception', e);
+    toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');
+    if(btn){btn.disabled=false;btn.textContent='🔀 ادمج';}
+  }
 };
 
 // ══ EXPORT ══
