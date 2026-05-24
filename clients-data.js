@@ -51,8 +51,28 @@ export function computeClientStats({
   const sumPaid = (arr) =>
     arr.reduce((s, o) =>
       s + (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0), 0);
+  const sumSalePrice = (arr) =>
+    arr.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
   const sales = sumPaid(myOrders);
+  const salesGross = sumSalePrice(myOrders);
   const rem   = myOrders.reduce((s, o) => s + calcRem(o), 0);
+
+  // ── Operational metrics (Runtime KPI strip) ──
+  const nowTs = Date.now();
+  const openOrders = myOrders.filter(o => o.stage !== 'archived' && o.stage !== 'cancelled');
+  const lateOrders = openOrders.filter(o => o.deadline && new Date(o.deadline).getTime() < nowTs);
+  // متوسط مدة التنفيذ — للأوردرات المؤرشفة فقط (دورة كاملة)
+  const archivedOrders = myOrders.filter(o => o.stage === 'archived');
+  let avgExecutionDays = 0;
+  if (archivedOrders.length > 0) {
+    const totalDays = archivedOrders.reduce((s, o) => {
+      const createdSec = o.createdAt?.seconds || 0;
+      const archivedSec = o.archivedAt?.seconds || o.updatedAt?.seconds || 0;
+      if (!createdSec || !archivedSec || archivedSec <= createdSec) return s;
+      return s + (archivedSec - createdSec) / 86400;
+    }, 0);
+    avgExecutionDays = +(totalDays / archivedOrders.length).toFixed(1);
+  }
 
   // ── Time-period boundaries ──
   const now             = new Date();
@@ -117,7 +137,16 @@ export function computeClientStats({
   }
 
   return {
-    totals: { sales, rem, clientCount: clients.length },
+    totals: {
+      sales,
+      salesGross,
+      rem,
+      clientCount: clients.length,
+      activeClientCount: nActive,
+      openOrdersCount: openOrders.length,
+      lateOrdersCount: lateOrders.length,
+      avgExecutionDays,
+    },
     periods,
     monthDelta,
     quickFilters: {

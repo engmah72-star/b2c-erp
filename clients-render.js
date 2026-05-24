@@ -525,12 +525,15 @@ export function clientCardHTML(client, idx, ctx = {}) {
     ? window.canSee : () => true;
 
   const cOrds = getOrders(c);
-  let rem = 0, active = 0, hasLate = false, lastTs = 0;
+  let rem = 0, active = 0, late = 0, hasLate = false, lastTs = 0;
   for (const o of cOrds) {
     rem += calcRem(o);
     if (o.stage !== 'archived') {
       active++;
-      if (o.deadline && new Date(o.deadline).getTime() < nowMs) hasLate = true;
+      if (o.deadline && new Date(o.deadline).getTime() < nowMs) {
+        hasLate = true;
+        late++;
+      }
     }
     const t = o.createdAt?.seconds || 0;
     if (t > lastTs) lastTs = t;
@@ -584,23 +587,27 @@ export function clientCardHTML(client, idx, ctx = {}) {
         ${canSee('client_phone') && c.phone1 ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
       </div>
       ${pills.length ? `<div style="margin-bottom:10px;display:flex;gap:5px;flex-wrap:wrap">${pills.join('')}</div>` : ''}
-      <div style="display:grid;grid-template-columns:${canSee('price_remaining') ? '1fr 1fr 1fr' : '1fr 1fr'};gap:6px">
-        <div class="cc-stat">
-          <div class="cc-stat-val" style="color:#3b82f6">${active || '—'}</div>
-          <div class="cc-stat-lbl">نشط</div>
+      <div class="cc-mini">
+        <div class="cc-mini-cell">
+          <div class="cc-mini-ico" aria-hidden="true">📦</div>
+          <div class="cc-mini-val">${cOrds.length}</div>
+          <div class="cc-mini-lbl">الطلبات</div>
         </div>
-        <div class="cc-stat">
-          <div class="cc-stat-val" style="color:var(--o-purple)">${cOrds.length}</div>
-          <div class="cc-stat-lbl">إجمالي</div>
+        <div class="cc-mini-cell">
+          <div class="cc-mini-ico" aria-hidden="true">🔄</div>
+          <div class="cc-mini-val" style="color:${active > 0 ? '#06b6d4' : 'var(--dim2)'}">${active}</div>
+          <div class="cc-mini-lbl">المفتوحة</div>
         </div>
-        ${canSee('price_remaining') ? `<div class="cc-stat">
-          <div class="cc-stat-val" style="color:${rem > 0 ? 'var(--r)' : '#10d27e'};font-size:${rem > 0 && rem >= 10000 ? '12px' : rem > 0 ? '14px' : '18px'}">${rem > 0 ? fn(rem) : '✓'}</div>
-          <div class="cc-stat-lbl">${rem > 0 ? 'باقي' : 'مسدد'}</div>
-        </div>` : ''}
+        <div class="cc-mini-cell ${late > 0 ? 'cc-mini-alert' : ''}">
+          <div class="cc-mini-ico" aria-hidden="true">${late > 0 ? '⚠️' : '✓'}</div>
+          <div class="cc-mini-val" style="color:${late > 0 ? 'var(--r)' : 'var(--g)'}">${late}</div>
+          <div class="cc-mini-lbl">المتأخرة</div>
+        </div>
       </div>
-      <div class="cc-health">
+      <div class="cc-foot">
         <span class="cc-health-dot ${health.dot}"></span>
-        <span>${health.txt}</span>
+        <span>${daysSince === null ? 'لم يطلب بعد' : daysSince === 0 ? 'آخر طلب: اليوم' : `آخر طلب: منذ ${daysSince} ${daysSince === 1 ? 'يوم' : daysSince === 2 ? 'يومين' : 'أيام'}`}</span>
+        ${canSee('price_remaining') && rem > 0 ? `<span class="cc-foot-rem">· باقي ${fn(rem)} ج</span>` : ''}
       </div>
     </div>`;
 }
