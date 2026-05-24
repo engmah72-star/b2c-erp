@@ -114,6 +114,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/error-reporter.js',
   '/error-reporter-init.js',
   '/bug-reporter.js',
+  '/core/report-actions.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.

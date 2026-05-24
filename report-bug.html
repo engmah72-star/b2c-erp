@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
+<script src="viewas.js?v=1" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <style>
   .er-toolbar{display:flex;gap:var(--space-sm);flex-wrap:wrap;align-items:center;
@@ -117,8 +118,9 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, orderBy, limit, updateDoc, deleteDoc, serverTimestamp }
+import { collection, doc, onSnapshot, getDoc, query, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { reportActions } from "./core/report-actions.js";
 
 let allReports = [];
 let activeTab = 'new';
@@ -136,26 +138,16 @@ window.setTab = (status, btn) => {
 };
 
 window.updateStatus = async (id, newStatus) => {
-  try {
-    await updateDoc(doc(db, 'error_reports', id), {
-      status: newStatus,
-      resolvedAt: newStatus === 'resolved' || newStatus === 'wontfix' ? serverTimestamp() : null,
-      resolvedBy: currentUid,
-    });
-    toast('✅ تم تحديث الحالة', 'ok');
-  } catch (e) {
-    toast('❌ ' + (e.message || 'فشل التحديث'), 'err');
-  }
+  const r = await reportActions.updateReportStatus({ db, reportId: id, status: newStatus, userId: currentUid });
+  if (r.ok) toast('✅ تم تحديث الحالة', 'ok');
+  else toast('❌ ' + (r.errors?.[0] || 'فشل التحديث'), 'err');
 };
 
 window.deleteReport = async (id) => {
   if (!confirm('حذف هذا التقرير؟ (لن يكون قابل للاسترداد)')) return;
-  try {
-    await deleteDoc(doc(db, 'error_reports', id));
-    toast('✅ تم الحذف', 'ok');
-  } catch (e) {
-    toast('❌ ' + (e.message || 'فشل الحذف'), 'err');
-  }
+  const r = await reportActions.deleteReport({ db, reportId: id });
+  if (r.ok) toast('✅ تم الحذف', 'ok');
+  else toast('❌ ' + (r.errors?.[0] || 'فشل الحذف'), 'err');
 };
 
 function fmtDate(ts) {
