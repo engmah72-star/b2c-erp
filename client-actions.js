@@ -476,13 +476,18 @@ export const clientActions = {
       if (!primary) return { ok: false, errors: ['⚠️ العميل الأساسي غير موجود'], warnings: [], operationId };
       if (primary.isDeleted) return { ok: false, errors: ['⛔ العميل الأساسي محذوف'], warnings: [], operationId };
 
+      // Load all duplicates in parallel (was serial — slow on 20+ dups).
+      console.log('[mergeDuplicates] loading', duplicateIds.length, 'duplicates...');
+      const loadedDups = await Promise.all(duplicateIds.map((id) => _loadClient(db, id)));
       const dups = [];
-      for (const dupId of duplicateIds) {
-        const d = await _loadClient(db, dupId);
-        if (!d) return { ok: false, errors: [`⚠️ العميل ${dupId} غير موجود`], warnings: [], operationId };
-        if (d.isDeleted) return { ok: false, errors: [`⛔ العميل "${d.name || dupId}" محذوف بالفعل`], warnings: [], operationId };
+      for (let i = 0; i < duplicateIds.length; i++) {
+        const d = loadedDups[i];
+        const id = duplicateIds[i];
+        if (!d) return { ok: false, errors: [`⚠️ العميل ${id} غير موجود`], warnings: [], operationId };
+        if (d.isDeleted) return { ok: false, errors: [`⛔ العميل "${d.name || id}" محذوف بالفعل`], warnings: [], operationId };
         dups.push(d);
       }
+      console.log('[mergeDuplicates] loaded', dups.length, 'dups; querying related docs...');
 
       // Collect related docs across all dups (parallel queries per dup).
       // transactions_v2 is append-only (H1.3) AND linked to orders via orderId
@@ -517,10 +522,13 @@ export const clientActions = {
       const dupWallets = relatedByDup.map(r => r.wallet);
 
       // Pure planner validates + computes merged gallery + total ops
+      console.log('[mergeDuplicates] related counts:', counts);
       const plan = planClientMerge({ primary, duplicates: dups, counts, dupWallets });
       if (!plan.ok) {
+        console.warn('[mergeDuplicates] plan rejected:', plan.errors);
         return { ok: false, errors: plan.errors, warnings: plan.warnings, operationId };
       }
+      console.log('[mergeDuplicates] plan ok — totalOps:', plan.totalOps, '— building batch...');
 
       // Build atomic batch
       const batch = writeBatch(db);
@@ -599,7 +607,9 @@ export const clientActions = {
       });
 
       try {
+        console.log('[mergeDuplicates] committing batch...');
         await batch.commit();
+        console.log('[mergeDuplicates] ✅ done');
         return {
           ok: true, errors: [], warnings: [],
           operationId,
