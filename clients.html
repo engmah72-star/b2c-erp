@@ -140,6 +140,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
   import * as NewOrder from './features/clients/new-order-form.js';
   import { validateIntlPhone, buildClientPayload } from './features/clients/client-form.js';
   import * as CGrid from './features/clients/control-grid.js';
+  import { findDuplicatePhones } from './features/clients/duplicate-scan.js';
   window.buildArchiveSpec = buildArchiveSpec;
   window.__clientOrdersIndex = createClientOrdersIndexCache();
   Object.assign(window, {
@@ -162,6 +163,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
     __buildBulkAssignPrompt: CGrid.buildBulkAssignPrompt,
     __findDesignerByName: CGrid.findDesignerByName,
     __triggerCsvDownload: CGrid.triggerCsvDownload,
+    __findDuplicatePhones: findDuplicatePhones,
   });
 </script>
 
@@ -407,7 +409,10 @@ auth.onAuthStateChanged(async u=>{
     document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;
   }
   const isAdmin=['admin','operation_manager'].includes(currentRole);
-  if(isAdmin){const t=document.getElementById('stab-cgrid');if(t)t.style.display='inline-flex';}
+  if(isAdmin){
+    const t=document.getElementById('stab-cgrid');if(t)t.style.display='inline-flex';
+    const dupBtn=document.getElementById('dup-scan-btn');if(dupBtn)dupBtn.classList.remove('hide');
+  }
 
   // ── Stuck-spinner guards (page-loading-igbB5 fix) ──
   // If neither clients nor orders has fired within 12s, replace the
@@ -1779,6 +1784,49 @@ function dupAddOrder(){
   activeId=dupClientId;
   openNewOrder();
 }
+
+// ══ DUPLICATE-PHONE SCAN (admin tool) ══
+// Pure logic in features/clients/duplicate-scan.js (window.__findDuplicatePhones).
+window.openDupScan=function(){
+  const modal=document.getElementById('ov-dup-scan');
+  const body=document.getElementById('dup-scan-body');
+  const summary=document.getElementById('dup-scan-summary');
+  if(!modal||!body)return;
+  const groups=(window.__findDuplicatePhones||(()=>[]))(clients||[]);
+  const dupClientCount=groups.reduce((n,g)=>n+g.clients.length,0);
+  if(!groups.length){
+    summary.textContent='';
+    body.innerHTML='<div class="empty" style="padding:30px 16px"><div class="empty-icon">✅</div><div class="empty-text">مفيش عملاء بنفس رقم تليفون</div></div>';
+  } else {
+    summary.innerHTML=`<strong>${groups.length}</strong> رقم تليفون مكرر · <strong>${dupClientCount}</strong> عميل متأثر`;
+    body.innerHTML=groups.map(g=>`
+      <div style="border:1px solid var(--line);border-radius:var(--rad);overflow:hidden">
+        <div style="background:rgba(255,170,0,.08);padding:10px 12px;font-weight:var(--fw-bold);font-size:var(--fs-md);border-bottom:1px solid var(--line)">
+          📞 ${escapeHtml(g.phone)} <span style="color:var(--dim2);font-weight:normal">— ${g.clients.length} عملاء</span>
+        </div>
+        ${g.clients.map(c=>`
+          <div onclick="openClientFromDupScan('${escapeHtml(c._id)}')" style="padding:10px 12px;border-top:1px solid var(--line);cursor:pointer;display:flex;flex-direction:column;gap:3px" onmouseover="this.style.background='var(--row-hover)'" onmouseout="this.style.background=''">
+            <div style="font-weight:var(--fw-bold);font-size:var(--fs-md)">${escapeHtml(c.name||'(بدون اسم)')}</div>
+            <div style="font-size:var(--fs-xs);color:var(--dim2)">
+              ${c.phone1?'📱 '+escapeHtml(c.phone1):''}
+              ${c.phone2?' · 📱 '+escapeHtml(c.phone2):''}
+              ${c.status==='legacy'?' · 📁 قديم':''}
+              ${c.governorate?' · '+escapeHtml(c.governorate):''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+  modal.classList.add('open');
+};
+window.closeDupScan=function(){
+  const m=document.getElementById('ov-dup-scan');if(m)m.classList.remove('open');
+};
+window.openClientFromDupScan=function(id){
+  window.closeDupScan();
+  if(typeof openClient==='function')openClient(id);
+};
 
 // ══ EXPORT ══
 function exportCSV(){
