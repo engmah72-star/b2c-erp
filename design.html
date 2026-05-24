@@ -1367,7 +1367,9 @@ window.saveOrder=async function(){
   const desSel=document.getElementById('np-des');
   const desOpt=desSel?.options[desSel.selectedIndex];
   const orderId='ORD-'+Date.now().toString().slice(-8);
-  const r=await orderActions.createOrder({
+  // PR-846: 15s timeout safety net — نفس pattern saveClient/saveNewOrder.
+  // الـ idempotency layer بتمنع double-write لو المستخدم retried بعد الـ timeout.
+  const actionPromise=orderActions.createOrder({
     db,orderId,stage:'design',
     clientId:selClient._id,clientName:selClient.name,clientPhone:selClient.phone,
     products:prods,salePrice:0,deposit:dep,
@@ -1376,6 +1378,10 @@ window.saveOrder=async function(){
     deadline:gv('np-dl'),notes:gv('np-notes'),
     userId:currentUser.uid,userName,
   });
+  const timeoutPromise=new Promise((_,rej)=>setTimeout(()=>rej(new Error('انتهت مهلة الحفظ (15ث) — الأوردر قد يكون تسجّل بالفعل. أعد تحميل الصفحة للتأكد.')),15000));
+  let r;
+  try{ r=await Promise.race([actionPromise,timeoutPromise]); }
+  catch(e){ return toast('❌ '+(e?.message||'خطأ في الحفظ'),'err'); }
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   closeNewOrder();
   // رفع الملف المرجعي لو موجود — يحدّث الـ doc عبر setRefFileUrl

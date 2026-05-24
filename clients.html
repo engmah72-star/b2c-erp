@@ -1469,7 +1469,11 @@ function saveNewOrder(){
 
   // ─ Upload first → call action with URLs ─
   uploadDesignFile().then(async ({firstUrl:designFileUrl,allFiles:designFiles})=>{
-    const r=await window.orderActions.createOrder({
+    // PR-846: 15s timeout safety net — نفس pattern PR #825/#827.
+    // المستخدم كان شايف "جاري..." stuck حتى لما الأوردر اتسجّل فعلاً
+    // (الـ batch.commit نجح، بس withIdempotency updateDoc علّق على flaky network).
+    // الـ idempotency layer بتمنع double-write لو المستخدم retried.
+    const actionPromise = window.orderActions.createOrder({
       clientId: pendingClientId,
       clientName: cl.name||'',
       clientPhone: cl.phone1||'',
@@ -1489,6 +1493,10 @@ function saveNewOrder(){
       userId: currentUser.uid,
       userName: userName||'',
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(()=>reject(new Error('انتهت مهلة الحفظ (15ث) — الأوردر قد يكون تسجّل بالفعل. أعد تحميل الصفحة للتأكد.')), 15000)
+    );
+    const r = await Promise.race([actionPromise, timeoutPromise]);
     if(!r.ok){
       console.warn('[orderActions] createOrder failed', r);
       const errMsg=r.errors?.[0]||'فشل إنشاء الأوردر';
