@@ -53,7 +53,16 @@
   let _open = false;
   let _orderId = null;
   let _prodIdx = -1;
-  let _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+  // PR-854: شِيل `mode` (داخلي/خارجي) — كل بند لازم له مورد.
+  // أضفت `supplierSpecialties` لـ filter قائمة الأنواع حسب المورد المختار.
+  // أضفت `paperMeta` لحاسبة الورق.
+  let _draft = {
+    supplierId:'', supplierName:'', supplierSpecialties:[],
+    type:'',
+    total:'',
+    note:'',
+    paperMeta:null,
+  };
   let _editIdx = -1; // -1 = creating; >=0 = editing item at this index in order.costItems
   let _pop = null; // current popover element (auto-close on outside click)
 
@@ -203,10 +212,9 @@
 
           <div class="cid-tbl">
             <div class="cid-tbl-head">
+              <div>المورد</div>
               <div>نوع البند</div>
-              <div>المورد / الوصف</div>
               <div>المبلغ</div>
-              <div>تنفيذ</div>
               <div></div>
             </div>
             ${renderDraftRow()}
@@ -214,9 +222,12 @@
               <div class="cid-tot-lbl">الإجمالي بعد الإضافة</div>
               <div class="cid-tot-ct">${ci.length + (_draft.total ? 1 : 0)} ${ci.length + (_draft.total ? 1 : 0) === 1 ? 'بند' : 'بنود'}</div>
               <div class="cid-tot-sum">${fn(total + (parseFloat(_draft.total)||0))}<small>ج</small></div>
-              <div></div><div></div>
+              <div></div>
             </div>
           </div>
+
+          ${renderPaperCalc()}
+          ${renderNoteInput()}
 
           ${(cmp || (total > 0 && qty > 0)) ? `
           <div class="cid-meter">
@@ -238,7 +249,8 @@
             </div>
           </div>` : ''}
 
-          ${renderWalletSection()}
+          <!-- PR-854: حذف renderWalletSection — التكلفة بترصد دين على الشركة
+               في supplier_orders، الدفع الفعلي بيتم لاحقاً عبر approval flow -->
         </section>
 
         <div class="cid-kbd-foot">
@@ -292,38 +304,83 @@
   }
 
   function renderDraftRow(){
-    const c = ctx();
-    const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
-    const isExternal = _draft.mode === 'ext';
-    // Pick icon + color for the chosen type
-    const typeLabel = _draft.type || '— اختر —';
+    // PR-854: المورد بقى أول حقل (والـ source).
+    // النوع بقى filtered حسب specialties المورد لو اتحدد.
+    // الـ mode toggle (داخلي/خارجي) اتشال — كل بند لازم له مورد.
+    const supLabel = _draft.supplierName || '— اختر المورد —';
+    const typeLabel = _draft.type || (_draft.supplierId ? '— اختر النوع —' : '— اختر المورد أولاً —');
+    const typeDisabled = !_draft.supplierId;
     return `
       <div class="cid-tbl-row is-draft">
         <div class="cid-cell" data-cid-pop-anchor>
-          <button class="cid-ttag" type="button" data-action="open-type-pop"
-                  style="color:var(--info); border-color:var(--info-line); background:var(--info-soft);">
+          <button class="cid-ttag" type="button" data-action="open-supplier-pop"
+                  style="color:var(--warning); border-color:var(--warning-line); background:var(--warning-soft);">
+            <span class="cid-ttag-ico">🏭</span>
+            <span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(supLabel)}</span>
+            <span class="cid-ttag-chev">▾</span>
+          </button>
+        </div>
+        <div class="cid-cell" data-cid-pop-anchor>
+          <button class="cid-ttag" type="button" data-action="open-type-pop" ${typeDisabled ? 'disabled' : ''}
+                  style="color:var(--info); border-color:var(--info-line); background:var(--info-soft);${typeDisabled ? 'opacity:.5;cursor:not-allowed;' : ''}">
             <span class="cid-ttag-ico">${getCostIco(_draft.type)}</span>
             <span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(typeLabel)}</span>
             <span class="cid-ttag-chev">▾</span>
           </button>
         </div>
-        <div class="cid-cell" data-cid-pop-anchor style="position:relative">
-          <input type="text" placeholder="اسم المورد أو وصف..." value="${escapeHtml(_draft.supplierName)}"
-                 data-cid-field="supplierName" data-action="supplier-input"/>
-        </div>
         <div class="cid-cell cid-amt-cell">
           <input type="number" placeholder="0" value="${escapeHtml(String(_draft.total))}"
                  data-cid-field="total" inputmode="numeric" min="0"/>
         </div>
-        <div class="cid-cell" style="display:flex;justify-content:center">
-          <button class="cid-mode-btn ${isExternal ? 'cid-mode-ext' : 'cid-mode-int'}" type="button"
-                  data-action="toggle-mode">
-            ${isExternal ? '🏭 خارجي' : '🏠 داخلي'}
-          </button>
-        </div>
         <div style="display:flex;justify-content:center">
           <button class="cid-row-x cid-add" type="button" data-action="submit-draft" aria-label="${_editIdx >= 0 ? 'حفظ التعديل' : 'إضافة'}">${_editIdx >= 0 ? '💾' : '＋'}</button>
         </div>
+      </div>
+    `;
+  }
+
+  // PR-854: حاسبة الورق — تظهر تلقائياً لو النوع يحتوي "ورق" أو "كرتون".
+  // الإجمالي = sheets × pricePerSheet → يـ fill حقل المبلغ تلقائياً.
+  // الـ paperMeta كله يـ store في الـ costItem (نفس schema exec-cost-entry).
+  function renderPaperCalc(){
+    const t = (_draft.type || '').toLowerCase();
+    const showCalc = t.includes('ورق') || t.includes('كرتون');
+    if(!showCalc) return '';
+    const m = _draft.paperMeta || {};
+    return `
+      <div class="cid-paper-calc">
+        <div class="cid-paper-head">📄 حاسبة الورق</div>
+        <div class="cid-paper-grid">
+          <label>نوع الورق
+            <input type="text" placeholder="كوشيه / بريستول..." value="${escapeHtml(m.paperType||'')}"
+                   data-cid-paper="paperType"/>
+          </label>
+          <label>الوزن (جم)
+            <input type="number" placeholder="300" value="${escapeHtml(String(m.paperWeight||''))}"
+                   data-cid-paper="paperWeight" inputmode="numeric"/>
+          </label>
+          <label>الأفرخ
+            <input type="number" placeholder="0" value="${escapeHtml(String(m.sheets||''))}"
+                   data-cid-paper="sheets" inputmode="numeric"/>
+          </label>
+          <label>سعر الفرخة (ج)
+            <input type="number" step="0.01" placeholder="0.00" value="${escapeHtml(String(m.pricePerSheet||''))}"
+                   data-cid-paper="pricePerSheet" inputmode="decimal"/>
+          </label>
+        </div>
+        <div class="cid-paper-hint">↕️ اكتب الأفرخ × السعر، الإجمالي بيتحسب تلقائياً</div>
+      </div>
+    `;
+  }
+
+  // PR-854: حقل ملاحظة اختياري (موجود في exec-cost-entry — نقلناه للـ drawer)
+  function renderNoteInput(){
+    return `
+      <div class="cid-note-row">
+        <label class="cid-note-label">📝 ملاحظة (اختياري)
+          <input type="text" placeholder="مثال: دفعة جزئية، طلب خاص..."
+                 value="${escapeHtml(_draft.note||'')}" data-cid-field="note"/>
+        </label>
       </div>
     `;
   }
@@ -364,10 +421,20 @@
   // ── popover (type chooser) ────────────────────────────────
   function openTypePop(anchor){
     closePop();
+    if(!_draft.supplierId){
+      toast('⚠️ اختر المورد أولاً', 'err');
+      return;
+    }
     const c = ctx();
     const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
+    // PR-854: لو فيه supplier specialties، نـ filter الـ types عليهم.
+    // لو الـ supplier ما عنده specialties، نظهر كل الـ types (fallback).
+    const specs = _draft.supplierSpecialties || [];
+    const filtered = specs.length
+      ? masterCats.filter(cat => specs.includes(cat.label))
+      : masterCats;
     const groups = {};
-    masterCats.forEach(cat => { const g = cat.group || 'أخرى'; if(!groups[g]) groups[g] = []; groups[g].push(cat.label); });
+    filtered.forEach(cat => { const g = cat.group || 'أخرى'; if(!groups[g]) groups[g] = []; groups[g].push(cat.label); });
     const pop = document.createElement('div');
     pop.className = 'cid-pop';
     const rect = anchor.getBoundingClientRect();
@@ -431,13 +498,29 @@
     const action = el.dataset.action;
     if(action === 'pick-type'){
       _draft.type = el.dataset.val;
-      _draft.supplierName = ''; // reset supplier when type changes
+      // PR-854: ما نـ reset supplier هنا — الـ supplier هو الـ source.
+      // النوع follows من الـ supplier specialties.
       closePop();
       render();
     } else if(action === 'pick-supplier'){
+      // PR-854: المورد بقى الـ source. نخزن الـ specialties لـ filter قائمة الأنواع.
+      // لو المستخدم غيّر المورد، نـ reset النوع لو مش في specialties الجديدة.
+      const c = ctx();
+      const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+      const sup = suppliers.find(s => s._id === el.dataset.id);
+      const specs = sup
+        ? (Array.isArray(sup.specialties) && sup.specialties.length
+            ? sup.specialties
+            : (sup.printType ? [sup.printType] : []))
+        : [];
       _draft.supplierId = el.dataset.id;
       _draft.supplierName = el.dataset.name;
-      _draft.mode = 'ext';
+      _draft.supplierSpecialties = specs;
+      // لو النوع الحالي مش في specialties الجديدة، reset
+      if(_draft.type && specs.length && !specs.includes(_draft.type)){
+        _draft.type = '';
+        _draft.paperMeta = null;
+      }
       closePop();
       render();
     }
@@ -467,13 +550,14 @@
     });
 
     // draft row actions
-    _drawer.querySelector('[data-action="open-type-pop"]')?.addEventListener('click', (e) => {
-      openTypePop(e.currentTarget);
+    // PR-854: المورد بقى popup-based (button). شيلنا الـ text input handler
+    // و شيلنا toggle-mode (الـ mode toggle مالوش معنى — كل بند له مورد).
+    _drawer.querySelector('[data-action="open-supplier-pop"]')?.addEventListener('click', (e) => {
+      openSupplierPop(e.currentTarget, '');
     });
-    _drawer.querySelector('[data-action="toggle-mode"]')?.addEventListener('click', () => {
-      _draft.mode = _draft.mode === 'ext' ? 'int' : 'ext';
-      if(_draft.mode === 'int'){ _draft.supplierId = ''; _draft.supplierName = ''; }
-      render();
+    _drawer.querySelector('[data-action="open-type-pop"]')?.addEventListener('click', (e) => {
+      if(e.currentTarget.hasAttribute('disabled')) return;
+      openTypePop(e.currentTarget);
     });
     _drawer.querySelector('[data-action="submit-draft"]')?.addEventListener('click', submitDraft);
 
@@ -486,23 +570,6 @@
     });
     _drawer.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', cancelEdit);
 
-    // supplier input — autocomplete on focus/type
-    // PR-852: نشيل قيد _draft.mode === 'ext' — الـ popup يفتح بـ focus أو typing
-    // بغض النظر عن mode. المستخدم لو اختار supplier من الـ popup، الـ
-    // pick-supplier handler هيـ auto-set mode إلى 'ext'. قبلاً كان مفيش طريقة
-    // للمستخدم يشوف قائمة الموردين لو الـ default 'int' (الـ home icon).
-    const supInput = _drawer.querySelector('[data-action="supplier-input"]');
-    if(supInput){
-      supInput.addEventListener('input', (e) => {
-        _draft.supplierName = e.target.value;
-        _draft.supplierId = ''; // typing → clear ID until pick from pop
-        openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
-      });
-      supInput.addEventListener('focus', (e) => {
-        openSupplierPop(e.target.closest('.cid-cell'), e.target.value);
-      });
-    }
-
     // total input — Enter submits
     const totalInput = _drawer.querySelector('[data-cid-field="total"]');
     if(totalInput){
@@ -512,14 +579,33 @@
       });
     }
 
-    // wallet selector
-    _drawer.querySelectorAll('[data-action="wallet"]').forEach(el => {
-      el.addEventListener('click', () => { _draft.walletId = el.dataset.id || ''; render(); });
+    // PR-854: note input — يـ store على blur (مش بـ render في كل keystroke)
+    const noteInput = _drawer.querySelector('[data-cid-field="note"]');
+    if(noteInput){
+      noteInput.addEventListener('input', (e) => { _draft.note = e.target.value; });
+    }
+
+    // PR-854: paper calc inputs — يـ update الـ paperMeta و يحسب الإجمالي تلقائياً
+    _drawer.querySelectorAll('[data-cid-paper]').forEach(el => {
+      el.addEventListener('input', (e) => {
+        if(!_draft.paperMeta) _draft.paperMeta = {};
+        const field = el.dataset.cidPaper;
+        const v = el.value;
+        _draft.paperMeta[field] = (field === 'paperType') ? v : (parseFloat(v) || 0);
+        // Auto-calc total = sheets × pricePerSheet
+        const sheets = parseFloat(_draft.paperMeta.sheets) || 0;
+        const price = parseFloat(_draft.paperMeta.pricePerSheet) || 0;
+        if(sheets > 0 && price > 0){
+          _draft.total = String(Math.round(sheets * price * 100) / 100);
+          const totalInputEl = _drawer.querySelector('[data-cid-field="total"]');
+          if(totalInputEl) totalInputEl.value = _draft.total;
+          updateTotalsPreview();
+        }
+      });
     });
-    _drawer.querySelector('[data-action="wallet-select"]')?.addEventListener('change', (e) => {
-      _draft.walletId = e.target.value;
-      render();
-    });
+
+    // (wallet selector removed in PR-854 — التكلفة بترصد دين على الشركة في
+    //  supplier_orders، الدفع الفعلي بيتم لاحقاً عبر approval flow)
   }
 
   function updateTotalsPreview(){
@@ -566,11 +652,26 @@
   }
 
   function applySuggestion(sug){
+    // PR-854: نـ resolve specialties من suppliers collection (الـ catalog history
+    // مش بيخزن specialties مع الـ supplier reference).
+    const c = ctx();
+    const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+    const sup = suppliers.find(s =>
+      (sug.supplierId && s._id === sug.supplierId) ||
+      (sug.supplierName && (s.name||'').trim() === (sug.supplierName||'').trim())
+    );
+    const specs = sup
+      ? (Array.isArray(sup.specialties) && sup.specialties.length
+          ? sup.specialties
+          : (sup.printType ? [sup.printType] : []))
+      : [];
+    _draft.supplierId = sup?._id || sug.supplierId || '';
+    _draft.supplierName = sup?.name || sug.supplierName || '';
+    _draft.supplierSpecialties = specs;
     _draft.type = sug.type || '';
-    _draft.supplierId = sug.supplierId || '';
-    _draft.supplierName = sug.supplierName || '';
     _draft.total = String(sug.total || '');
-    _draft.mode = sug.supplierId || sug.supplierName ? 'ext' : 'int';
+    _draft.note = '';
+    _draft.paperMeta = null;
     _editIdx = -1; // suggestions always create new
     render();
     // focus the total field for quick confirm
@@ -587,15 +688,23 @@
       toast('⛔ البند مدفوع — التعديل من اللوحة القديمة فقط (admin only)', 'warn');
       return;
     }
+    // PR-854: نعيد populate supplierSpecialties من الـ suppliers collection
+    const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+    const sup = suppliers.find(s => s._id === item.supplierId);
+    const specs = sup
+      ? (Array.isArray(sup.specialties) && sup.specialties.length
+          ? sup.specialties
+          : (sup.printType ? [sup.printType] : []))
+      : [];
     _editIdx = gi;
     _draft = {
-      type: item.type || '',
       supplierId: item.supplierId || '',
       supplierName: item.supplierName || '',
+      supplierSpecialties: specs,
+      type: item.type || '',
       total: String(item.total || ''),
-      mode: item.supplierId ? 'ext' : 'int',
       note: item.note || '',
-      walletId: '', // wallet deduction does NOT re-trigger on edit (RULE 6 — preserve existing flow)
+      paperMeta: item.paperMeta || null,
     };
     render();
     setTimeout(() => _drawer.querySelector('[data-cid-field="total"]')?.focus(), 50);
@@ -603,7 +712,10 @@
 
   function cancelEdit(){
     _editIdx = -1;
-    _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+    _draft = {
+      supplierId:'', supplierName:'', supplierSpecialties:[],
+      type:'', total:'', note:'', paperMeta:null,
+    };
     render();
   }
 
@@ -637,6 +749,8 @@
   // Calls orderActions.recordCostItem (RULE A1 central action) — single
   // source of truth for cost-item writes. No more DOM bridging.
   async function submitDraft(){
+    // PR-854: المورد مطلوب — مفيش "داخلي" بعد دلوقتي.
+    if(!_draft.supplierId){ toast('⚠️ اختر المورد أولاً', 'err'); return; }
     if(!_draft.type){ toast('⚠️ اختر نوع البند', 'err'); return; }
     const total = parseFloat(_draft.total) || 0;
     if(total <= 0){ toast('⚠️ أدخل التكلفة', 'err'); return; }
@@ -675,17 +789,19 @@
 
     const wallets = c.getWallets ? c.getWallets() : [];
     const isEdit = _editIdx >= 0;
+    // PR-854: walletId دايماً '' (مفيش خصم فوري). paperMeta من الـ draft.
+    // isExternal دايماً true (المورد مطلوب).
     const result = await actions.recordCostItem({
       db, orderId: _orderId, prodIdx: _prodIdx,
       payload: {
         type: _draft.type,
         total,
-        supplierId: _draft.supplierId || '',
-        supplierName: _draft.supplierName || '',
+        supplierId: _draft.supplierId,
+        supplierName: _draft.supplierName,
         note: _draft.note || '',
-        walletId: _draft.walletId || '',
-        paperMeta: {},
-        isExternal: _draft.mode === 'ext',
+        walletId: '',
+        paperMeta: _draft.paperMeta || {},
+        isExternal: true,
       },
       role: c.getCurrentRole ? c.getCurrentRole() : '',
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid) || '',
@@ -701,13 +817,14 @@
     }
     toast(isEdit
       ? `✅ تم التعديل — ${fn(total)} ج`
-      : (_draft.supplierName
-          ? `✅ تم — ${_draft.supplierName} · ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`
-          : `✅ تم — ${fn(total)} ج${_draft.walletId ? ' · خُصم من المحفظة' : ''}`),
+      : `✅ تم — ${_draft.supplierName} · ${fn(total)} ج`,
       'ok');
     // Clear draft + exit edit mode; onSnapshot will refresh the order soon
     _editIdx = -1;
-    _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
+    _draft = {
+      supplierId:'', supplierName:'', supplierSpecialties:[],
+      type:'', total:'', note:'', paperMeta:null,
+    };
     render();
   }
 
