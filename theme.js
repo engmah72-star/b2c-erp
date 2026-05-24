@@ -14,7 +14,7 @@
 
   const KEY = 'b2c-theme';
   const VALID = ['dark', 'light', 'auto'];
-  const DEFAULT = 'dark'; // الافتراضي = dark (الـ navy chrome من PR #811 يفضل ثابت في الـ themes الاتنين)
+  const DEFAULT = 'dark'; // الافتراضي = dark، الفاتح opt-in
 
   // ── قراءة التفضيل المحفوظ ──
   function getStored(){
@@ -42,8 +42,7 @@
     // تحديث ميتا اللون لشريط الموبايل
     const eff = effective(t);
     const meta = document.querySelector('meta[name="theme-color"]');
-    // كلا الـ themes يستخدمان نفس الـ topbar navy → لون شريط الموبايل ثابت
-    if (meta) meta.setAttribute('content', '#0E2848');
+    if (meta) meta.setAttribute('content', eff === 'light' ? '#FFFFFF' : '#0d0f1b');
     // بثّ event للصفحات لو محتاجة تتفاعل
     try {
       window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: t, effective: eff } }));
