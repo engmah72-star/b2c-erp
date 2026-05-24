@@ -22,7 +22,7 @@ const HTML = `
     <button type="button" class="dh-lb-close" onclick="window._dhCloseLightbox()" aria-label="إغلاق">×</button>
     <button type="button" class="dh-lb-nav prev" onclick="window._dhNavLightbox(-1)" aria-label="السابق">‹</button>
     <button type="button" class="dh-lb-nav next" onclick="window._dhNavLightbox(1)" aria-label="التالي">›</button>
-    <img class="dh-lb-img" id="dh-lb-img" alt="">
+    <img class="dh-lb-img" id="dh-lb-img" alt="" loading="lazy">
     <div class="dh-lb-info">
       <div class="dh-lb-title" id="dh-lb-title"></div>
       <div class="dh-lb-meta" id="dh-lb-meta"></div>
