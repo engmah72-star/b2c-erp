@@ -392,6 +392,19 @@ export const CLIENTS_MODALS_HTML = `
       </div>
     </div>
   </div>
+</div>
+
+<div class="overlay" id="ov-dup-scan">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <span class="modal-title">🔁 العملاء المكررين برقم تليفون</span>
+      <button type="button" class="modal-x" onclick="document.getElementById('ov-dup-scan').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="dup-scan-summary" style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:10px"></div>
+      <div id="dup-scan-body" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>
+    </div>
+  </div>
 </div>`;
 
 function mount() {

@@ -141,6 +141,7 @@ export const CLIENTS_SHELL_HTML = `
       <select class="inp" id="f-gov" onchange="renderGrid()" style="max-width:130px"><option value="">كل المحافظات</option></select>
       <select class="inp hide" id="f-src" onchange="renderGrid()"><option value="">كل المصادر</option></select>
       <button type="button" class="btn btn-ghost btn-sm hide" id="add-legacy-btn" onclick="openAddLegacy()">＋ عميل قديم</button>
+      <button type="button" class="btn btn-ghost btn-sm hide" id="dup-scan-btn" onclick="openDupScan()" title="رصد العملاء اللي عندهم نفس رقم التليفون">🔁 مكررات</button>
       <button type="button" id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
     </div>
 
