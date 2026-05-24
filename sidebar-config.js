@@ -47,6 +47,7 @@
     { file:'reports.html',           label:'التقارير',         ico:'📊', group:'admin',  perm:'reports' },
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
+    { file:'report-bug.html',        label:'تقارير الأخطاء',   ico:'🐛', group:'admin',  adminOnly:true },
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
   ];
 

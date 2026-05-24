@@ -995,6 +995,25 @@ service cloud.firestore {
       allow delete: if isAdminOnly();
     }
 
+    // ══ Error Reports — auto-captured errors + manual user bug reports ══
+    // Phase-7: انضم أي مستخدم مسجَّل يقدر يكتب تقرير (السطر الواحد لازم يكون
+    // باسمه — userId = auth.uid). الأدمن + ops_manager يقرأ + يحدّث status.
+    match /error_reports/{reportId} {
+      allow read: if isAuth() && (isAdmin() || isOpsManager());
+      allow create: if isAuth()
+                    && request.resource.data.userId == request.auth.uid;
+      // Update فقط لـ status/fields-معالجة + counter increment من الـ
+      // dedup logic في الـ reporter
+      allow update: if isAuth() && (
+        isAdmin() || isOpsManager() ||
+        // Self-update: dedup increment + lastSeenAt — أي مستخدم على تقريره
+        (resource.data.userId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['count','lastSeenAt']))
+      );
+      allow delete: if isAdmin();
+    }
+
     // ══ Archived Orders — أوردرات نُقلت تلقائيًا (>6 شهور + مدفوعة) ══
     // الكتابة من Cloud Functions فقط. القراءة: نفس صلاحيات orders.
     match /archived_orders/{orderId} {
