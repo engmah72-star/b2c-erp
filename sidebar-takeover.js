@@ -369,28 +369,25 @@
     return !!host && !host.hidden;
   }
 
+  // M2: re-paint active على nav-link (sidebar) و mob-nav-item (bottom-tab) معاً.
   function repaintActive(file) {
-    const links = document.querySelectorAll('.nav-link');
+    const links = document.querySelectorAll('.nav-link, .mob-nav-item');
+    const fallback = (location.pathname.split('/').pop() || '').replace(/\?.*/, '');
+    const target = file || fallback;
     links.forEach(a => {
-      if (!file) {
-        // عند الإغلاق، رجّع الـ active على أساس الـ pathname الحالي
-        const cur = (location.pathname.split('/').pop() || '').replace(/\?.*/, '');
-        const href = (a.getAttribute('href') || '').split('?')[0].split('#')[0];
-        a.classList.toggle('active', href === cur);
-      } else {
-        const href = (a.getAttribute('href') || '').split('?')[0].split('#')[0];
-        a.classList.toggle('active', href === file);
-      }
+      const href = (a.getAttribute('href') || '').split('?')[0].split('#')[0];
+      a.classList.toggle('active', href === target);
     });
   }
 
   // ── Click interception (delegated على document — يصمد لـ re-renders) ──
+  // M2: يلتقط nav-link (sidebar) و mob-nav-item (bottom-tab) معاً.
   function onDocClick(e) {
     if (!window.B2C_TAKEOVER_ENABLED) return;
     // ignore middle-click / cmd-click / ctrl-click → بيفتح في tab جديد
     if (e.button !== 0) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    const a = e.target.closest && e.target.closest('a.nav-link');
+    const a = e.target.closest && e.target.closest('a.nav-link, a.mob-nav-item');
     if (!a) return;
     const href = a.getAttribute('href') || '';
     const file = href.split('?')[0].split('#')[0];
