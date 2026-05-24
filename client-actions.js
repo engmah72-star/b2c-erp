@@ -36,12 +36,13 @@
  */
 
 import {
-  doc, collection, getDoc, getDocs, addDoc, updateDoc,
+  doc, collection, getDoc, getDocs, addDoc, updateDoc, writeBatch,
   query, where, limit, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry } from './core/audit.js';
+import { planClientMerge } from './features/clients/duplicate-scan.js';
 
 // P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
 // modular `db` instance. When called from compat consumers, the `db`
@@ -421,6 +422,201 @@ export const clientActions = {
         };
       } catch (e) {
         return { ok: false, errors: [e.message || 'فشل التحويل'], warnings: [], operationId };
+      }
+    });
+  },
+
+  /**
+   * Merge duplicate clients into a primary. Reassigns related docs
+   * (orders, client_followups, design_items, returns_tickets) from each
+   * duplicate → primary in a single atomic batch, then soft-deletes the
+   * duplicates with `mergedInto=primaryId`.
+   *
+   * Append-only / FSE-managed collections are NOT modified:
+   *   - financial_ledger (RULE H1.3)
+   *   - transactions_v2  (RULE H1.3) — linked to orders via `orderId`, so
+   *     they implicitly follow when orders move; no clientId redirect needed
+   *
+   * Refuses if any duplicate has a non-zero customer_wallets balance —
+   * user must refund/transfer manually first (RULE G6 — engine writes only).
+   *
+   * @returns {{ ok, errors, warnings, operationId, primaryId?, merged?, movedCounts? }}
+   */
+  async mergeDuplicates({ db = defaultDb, primaryId, duplicateIds = [], userId, userName }) {
+    if (!primaryId) return { ok: false, errors: ['⚠️ primaryId مطلوب'], warnings: [] };
+    if (!Array.isArray(duplicateIds) || !duplicateIds.length) {
+      return { ok: false, errors: ['⚠️ duplicateIds مطلوبة'], warnings: [] };
+    }
+    if (duplicateIds.includes(primaryId)) {
+      return { ok: false, errors: ['⚠️ primaryId مش ممكن يكون ضمن duplicateIds'], warnings: [] };
+    }
+
+    return withIdempotency(db, {
+      actionType: 'merge_clients',
+      entityId: primaryId,
+      actorId: userId || '',
+      payload: { duplicateIds: [...duplicateIds].sort() },
+      windowMs: 30000,
+    }, async (operationId) => {
+
+      // Defense: restrict to admin / operation_manager (Firestore rules allow
+      // CS reps with canFollowUpClients to update clients — too broad for merge).
+      try {
+        const uSnap = await getDoc(doc(db, 'users', userId || ''));
+        const role = uSnap.exists() ? (uSnap.data().role || '') : '';
+        if (!['admin', 'operation_manager'].includes(role)) {
+          return { ok: false, errors: ['🔒 ليس لديك صلاحية الدمج (admin / operation_manager فقط)'], warnings: [], operationId };
+        }
+      } catch (e) {
+        return { ok: false, errors: ['🔒 فشل التحقق من الصلاحية: ' + (e.message || e)], warnings: [], operationId };
+      }
+
+      // Load primary + each duplicate
+      const primary = await _loadClient(db, primaryId);
+      if (!primary) return { ok: false, errors: ['⚠️ العميل الأساسي غير موجود'], warnings: [], operationId };
+      if (primary.isDeleted) return { ok: false, errors: ['⛔ العميل الأساسي محذوف'], warnings: [], operationId };
+
+      const dups = [];
+      for (const dupId of duplicateIds) {
+        const d = await _loadClient(db, dupId);
+        if (!d) return { ok: false, errors: [`⚠️ العميل ${dupId} غير موجود`], warnings: [], operationId };
+        if (d.isDeleted) return { ok: false, errors: [`⛔ العميل "${d.name || dupId}" محذوف بالفعل`], warnings: [], operationId };
+        dups.push(d);
+      }
+
+      // Collect related docs across all dups (parallel queries per dup).
+      // transactions_v2 is append-only (H1.3) AND linked to orders via orderId
+      // — when orders move to primary, txs follow implicitly. No redirect here.
+      const relatedByDup = await Promise.all(dups.map(async (d) => {
+        const [oSnap, fSnap, diSnap, rtSnap, cwSnap] = await Promise.all([
+          getDocs(query(collection(db, 'orders'),           where('clientId', '==', d._id), limit(500))),
+          getDocs(query(collection(db, 'client_followups'), where('clientId', '==', d._id), limit(500))),
+          getDocs(query(collection(db, 'design_items'),     where('clientId', '==', d._id), limit(500))),
+          getDocs(query(collection(db, 'returns_tickets'),  where('clientId', '==', d._id), limit(500))),
+          getDoc(doc(db, 'customer_wallets', d._id)),
+        ]);
+        return {
+          dup: d,
+          orders:    oSnap.docs.map(x => ({ ref: x.ref, id: x.id })),
+          followups: fSnap.docs.map(x => ({ ref: x.ref, id: x.id })),
+          design:    diSnap.docs.map(x => ({ ref: x.ref, id: x.id })),
+          returns:   rtSnap.docs.map(x => ({ ref: x.ref, id: x.id })),
+          wallet:    cwSnap.exists() ? { _id: d._id, ...cwSnap.data() } : { _id: d._id, balance: 0 },
+        };
+      }));
+
+      // Tally counts for planner — transactions intentionally excluded
+      const counts = relatedByDup.reduce((acc, r) => ({
+        orders:         acc.orders         + r.orders.length,
+        transactions:   0, // not redirected — implicit follow via orderId
+        followups:      acc.followups      + r.followups.length,
+        designItems:    acc.designItems    + r.design.length,
+        returnsTickets: acc.returnsTickets + r.returns.length,
+      }), { orders: 0, transactions: 0, followups: 0, designItems: 0, returnsTickets: 0 });
+
+      const dupWallets = relatedByDup.map(r => r.wallet);
+
+      // Pure planner validates + computes merged gallery + total ops
+      const plan = planClientMerge({ primary, duplicates: dups, counts, dupWallets });
+      if (!plan.ok) {
+        return { ok: false, errors: plan.errors, warnings: plan.warnings, operationId };
+      }
+
+      // Build atomic batch
+      const batch = writeBatch(db);
+      const movedAt = serverTimestamp();
+      const primaryName = primary.name || '';
+
+      const reassign = (ref, dupId) => batch.update(ref, {
+        clientId: primaryId,
+        clientName: primaryName,
+        mergedFromClientId: dupId,
+        mergedAt: movedAt,
+      });
+
+      for (const r of relatedByDup) {
+        r.orders   .forEach(x => reassign(x.ref, r.dup._id));
+        r.followups.forEach(x => batch.update(x.ref, {
+          clientId: primaryId, mergedFromClientId: r.dup._id, mergedAt: movedAt,
+        }));
+        r.design   .forEach(x => reassign(x.ref, r.dup._id));
+        r.returns  .forEach(x => reassign(x.ref, r.dup._id));
+
+        // Soft-delete the duplicate
+        const dupEntry = auditEntry({
+          action: `🔀 تم دمج هذا العميل في "${primaryName}"`,
+          userId, userName, kind: 'op',
+          meta: { mergedInto: primaryId, operationId },
+        });
+        batch.update(r.dup._ref, {
+          isDeleted:      true,
+          deletedAt:      movedAt,
+          deletedBy:      userId || '',
+          deletedByName:  userName || '',
+          mergedInto:     primaryId,
+          mergedAt:       movedAt,
+          editHistory:    [...(r.dup.editHistory || []), dupEntry],
+          updatedAt:      movedAt,
+        });
+      }
+
+      // Update primary: merged gallery + audit entry + mergedFromClientIds
+      const primaryEntry = auditEntry({
+        action: `🔀 دمج ${duplicateIds.length} عميل في الحساب`,
+        userId, userName, kind: 'op',
+        meta: {
+          mergedFromClientIds: duplicateIds,
+          movedOrders:         counts.orders,
+          movedFollowups:      counts.followups,
+          movedDesignItems:    counts.designItems,
+          movedReturnsTickets: counts.returnsTickets,
+          operationId,
+        },
+      });
+      batch.update(primary._ref, {
+        gallery:             plan.mergedGallery,
+        mergedFromClientIds: [...(primary.mergedFromClientIds || []), ...duplicateIds],
+        editHistory:         [...(primary.editHistory || []), primaryEntry],
+        updatedAt:           movedAt,
+      });
+
+      // audit_logs entry (set inside same batch — atomic)
+      const auditRef = doc(collection(db, 'audit_logs'));
+      batch.set(auditRef, {
+        action:  'client.merge',
+        details: {
+          primaryId,
+          primaryName,
+          duplicateIds,
+          duplicateNames: dups.map(d => d.name || ''),
+          counts,
+          operationId,
+        },
+        userId:    userId   || '',
+        userName:  userName || '',
+        timestamp: serverTimestamp(),
+        url:       typeof location !== 'undefined' ? location.pathname : '',
+      });
+
+      try {
+        await batch.commit();
+        return {
+          ok: true, errors: [], warnings: [],
+          operationId,
+          primaryId,
+          merged: duplicateIds,
+          movedCounts: counts,
+          action: 'merge_clients',
+        };
+      } catch (e) {
+        console.warn('[clientActions.mergeDuplicates] batch failed', e);
+        return {
+          ok: false,
+          errors: [e.code === 'permission-denied'
+            ? '🔒 ليس لديك صلاحية الدمج'
+            : (e.message || 'فشل الدمج')],
+          warnings: [], operationId,
+        };
       }
     });
   },
