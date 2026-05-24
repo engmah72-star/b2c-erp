@@ -14,7 +14,7 @@
 
   const KEY = 'b2c-theme';
   const VALID = ['dark', 'light', 'auto'];
-  const DEFAULT = 'dark'; // الافتراضي = نفس التجربة الحالية، الفاتح Opt-in
+  const DEFAULT = 'light'; // الافتراضي = light ليطابق unified ERP layout (sidebar/topbar navy + content فاتح)
 
   // ── قراءة التفضيل المحفوظ ──
   function getStored(){
@@ -42,7 +42,8 @@
     // تحديث ميتا اللون لشريط الموبايل
     const eff = effective(t);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', eff === 'light' ? '#FFFFFF' : '#0d0f1b');
+    // كلا الـ themes يستخدمان نفس الـ topbar navy → لون شريط الموبايل ثابت
+    if (meta) meta.setAttribute('content', '#0E2848');
     // بثّ event للصفحات لو محتاجة تتفاعل
     try {
       window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: t, effective: eff } }));
