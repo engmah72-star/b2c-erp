@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Business2Card — التنفيذ</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="shared.css?v=11">
+<link rel="stylesheet" href="shared.css?v=13">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <link rel="stylesheet" href="features/cost-items/drawer.css?v=2">
 <script src="sidebar-config.js"></script>
@@ -408,17 +408,6 @@ window.deleteOrderFull=async function(){
 let __listenersStarted=false; // منع التكرار
 // عرض skeleton فوراً قبل البيانات
 {const __l=document.getElementById('list');if(__l)__l.innerHTML=skeletonCards(4);}
-
-// ── Move #panel-ov into .sidenav (Option 3: panel renders inside sidebar) ──
-// shared.css بياخد care of styling لما .panel-ov بقت child لـ .sidenav.
-// لا تأثير على الـ existing openOrder/closePanel JS — مجرد DOM location.
-(function movePanelToSidebar(){
-  try {
-    const pov = document.getElementById('panel-ov');
-    const sn  = document.querySelector('.sidenav');
-    if (pov && sn && pov.parentElement !== sn) sn.appendChild(pov);
-  } catch(_) {}
-})();
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
@@ -1199,13 +1188,18 @@ function _maskPhone(p){
 }
 
 window.openOrder=function(id){
+  // ── Standalone page navigation (PR: order-standalone-page) ──
+  // بدل ما يفتح panel-ov كـ modal فوق الصفحة، يـ navigate لـ order.html?id=X
+  // الـ browser back يرجع للقائمة طبيعي.
+  if (id) {
+    window.location.href = 'order.html?id=' + encodeURIComponent(id);
+    return;
+  }
+};
+// Legacy panel-ov code kept for backward compat (URL ?id=X auto-open path):
+window.__legacyOpenOrder=function(id){
   activeId=id;const o=orders.find(x=>x._id===id);if(!o)return;
   window.AppState?.setOpenEntity?.('order', id, o);
-  // ── Panel-ov inline in sidebar (Option 3 — no modal over page) ──
-  // open the sidenav + add body class so panel-ov renders inside sidebar
-  document.body.classList.add('b2c-order-panel-open');
-  const sn = document.querySelector('.sidenav');
-  if (sn) sn.classList.add('mob-open');
   setText('pn-name',o.clientName||'—');
   setText('pn-sub',(o.orderId||id.slice(-6))+' · '+_maskPhone(o.clientPhone));
   const specEl=document.getElementById('pn-specs');
@@ -1219,10 +1213,6 @@ window.closePanel=function(){
   const pov=document.getElementById('panel-ov');pov.classList.remove('open');
   setTimeout(()=>pov.style.display='none',200);activeId=null;
   window.AppState?.clearOpenEntity?.();
-  // ── Panel-ov inline (Option 3): close sidebar back to nav ──
-  document.body.classList.remove('b2c-order-panel-open');
-  const sn = document.querySelector('.sidenav');
-  if (sn) sn.classList.remove('mob-open');
 };
 
 function renderPanel(o){
