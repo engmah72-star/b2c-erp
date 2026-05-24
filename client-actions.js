@@ -316,56 +316,53 @@ export const clientActions = {
   async deleteClient({ db = defaultDb, clientId, userId, userName, reason = '' }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
 
-    return withIdempotency(db, {
-      actionType: 'delete_client',
-      entityId: clientId,
-      actorId: userId || '',
-      payload: {},
-    }, async (operationId) => {
+    // Soft-delete مش financial operation (مش في قائمة H1.2 الإلزامية).
+    // نتخطى withIdempotency overhead (3-4 sequential network round-trips → 1-2).
+    // Double-submit protection: btn.disabled في deleteClient wrapper + confirm() dialog.
 
-      const current = await _loadClient(db, clientId);
-      if (!current) {
-        return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [], operationId };
-      }
-      if (current.isDeleted) {
-        return {
-          ok: true, errors: [], warnings: ['ℹ️ محذوف بالفعل'],
-          operationId, clientId, action: 'delete_client', idempotent: true,
-        };
-      }
+    const current = await _loadClient(db, clientId);
+    if (!current) {
+      return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [] };
+    }
+    if (current.isDeleted) {
+      return {
+        ok: true, errors: [], warnings: ['ℹ️ محذوف بالفعل'],
+        clientId, action: 'delete_client', idempotent: true,
+      };
+    }
 
-      const deleteAudit = auditEntry({
-        action: 'حذف العميل (soft)',
-        userId, userName, kind: 'op',
-        meta: { reason },
-      });
-
-      try {
-        await updateDoc(current._ref, {
-          isDeleted: true,
-          deletedAt: serverTimestamp(),
-          deletedBy: userId || '',
-          deletedByName: userName || '',
-          editHistory: [...(current.editHistory || []), deleteAudit],
-          updatedAt: serverTimestamp(),
-        });
-        await _logAudit(db, {
-          action: 'client.soft_delete',
-          details: { clientId, clientName: current.name || '', reason },
-          userId, userName,
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, clientId, action: 'delete_client',
-        };
-      } catch (e) {
-        return {
-          ok: false,
-          errors: [e.message || 'فشل حذف العميل'],
-          warnings: [], operationId,
-        };
-      }
+    const deleteAudit = auditEntry({
+      action: 'حذف العميل (soft)',
+      userId, userName, kind: 'op',
+      meta: { reason },
     });
+
+    try {
+      await updateDoc(current._ref, {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: userId || '',
+        deletedByName: userName || '',
+        editHistory: [...(current.editHistory || []), deleteAudit],
+        updatedAt: serverTimestamp(),
+      });
+      // Audit log fire-and-forget
+      _logAudit(db, {
+        action: 'client.soft_delete',
+        details: { clientId, clientName: current.name || '', reason },
+        userId, userName,
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId, action: 'delete_client',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل حذف العميل'],
+        warnings: [],
+      };
+    }
   },
 
   /**
@@ -374,43 +371,38 @@ export const clientActions = {
   async convertToActive({ db = defaultDb, clientId, userId, userName }) {
     if (!clientId) return { ok: false, errors: ['⚠️ clientId مطلوب'], warnings: [] };
 
-    return withIdempotency(db, {
-      actionType: 'convert_to_active',
-      entityId: clientId,
-      actorId: userId || '',
-      payload: {},
-    }, async (operationId) => {
+    // Convert مش financial operation — نتخطى withIdempotency overhead.
+    // Idempotent بطبيعتها (status check يمنع double-execute).
 
-      const current = await _loadClient(db, clientId);
-      if (!current) {
-        return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [], operationId };
-      }
-      if (current.status !== 'legacy') {
-        return { ok: false, errors: ['⛔ العميل ليس في حالة legacy'], warnings: [], operationId };
-      }
+    const current = await _loadClient(db, clientId);
+    if (!current) {
+      return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [] };
+    }
+    if (current.status !== 'legacy') {
+      return { ok: false, errors: ['⛔ العميل ليس في حالة legacy'], warnings: [] };
+    }
 
-      const entry = auditEntry({
-        action: 'تحويل من legacy → active',
-        userId, userName, kind: 'op',
-      });
-
-      try {
-        await updateDoc(current._ref, {
-          status: 'active',
-          convertedAt: serverTimestamp(),
-          convertedBy: userId || '',
-          convertedByName: userName || '',
-          editHistory: [...(current.editHistory || []), entry],
-          updatedAt: serverTimestamp(),
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, clientId, action: 'convert_to_active',
-        };
-      } catch (e) {
-        return { ok: false, errors: [e.message || 'فشل التحويل'], warnings: [], operationId };
-      }
+    const entry = auditEntry({
+      action: 'تحويل من legacy → active',
+      userId, userName, kind: 'op',
     });
+
+    try {
+      await updateDoc(current._ref, {
+        status: 'active',
+        convertedAt: serverTimestamp(),
+        convertedBy: userId || '',
+        convertedByName: userName || '',
+        editHistory: [...(current.editHistory || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId, action: 'convert_to_active',
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحويل'], warnings: [] };
+    }
   },
 
   /**
@@ -633,46 +625,41 @@ export const clientActions = {
       return { ok: false, errors: ['⚠️ bizCard data مطلوبة'], warnings: [] };
     }
 
-    return withIdempotency(db, {
-      actionType: 'save_bizcard',
-      entityId: clientId,
-      actorId: userId || '',
-      payload: { fields: Object.keys(bizCard).sort().join(',') },
-    }, async (operationId) => {
+    // BizCard مش financial operation — نتخطى withIdempotency overhead.
+    // Double-submit protection: btn.disabled في caller.
 
-      const current = await _loadClient(db, clientId);
-      if (!current) {
-        return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [], operationId };
-      }
+    const current = await _loadClient(db, clientId);
+    if (!current) {
+      return { ok: false, errors: ['⚠️ العميل غير موجود'], warnings: [] };
+    }
 
-      // Stamp metadata on the bizCard object (schema-faithful to existing readers).
-      const payload = {
-        ...bizCard,
-        updatedAt: serverTimestamp(),
-        updatedBy: userId || '',
-      };
+    // Stamp metadata on the bizCard object (schema-faithful to existing readers).
+    const payload = {
+      ...bizCard,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId || '',
+    };
 
-      const entry = auditEntry({
-        action: '📇 تحديث بطاقة الأعمال',
-        userId, userName, kind: 'edit',
-        meta: { fieldCount: Object.keys(bizCard).length },
-      });
-
-      try {
-        await updateDoc(current._ref, {
-          businessCard: { ...(current.businessCard || {}), ...payload },
-          lastUpdate: serverTimestamp(),
-          editHistory: [...(current.editHistory || []), entry],
-          updatedAt: serverTimestamp(),
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, clientId, action: 'save_bizcard',
-        };
-      } catch (e) {
-        return { ok: false, errors: [e.message || 'فشل حفظ البطاقة'], warnings: [], operationId };
-      }
+    const entry = auditEntry({
+      action: '📇 تحديث بطاقة الأعمال',
+      userId, userName, kind: 'edit',
+      meta: { fieldCount: Object.keys(bizCard).length },
     });
+
+    try {
+      await updateDoc(current._ref, {
+        businessCard: { ...(current.businessCard || {}), ...payload },
+        lastUpdate: serverTimestamp(),
+        editHistory: [...(current.editHistory || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId, action: 'save_bizcard',
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل حفظ البطاقة'], warnings: [] };
+    }
   },
 
   // ════════════════════════════════════════
@@ -769,45 +756,40 @@ export const clientActions = {
   async markFollowupDone({ db = defaultDb, fId, done = true, userId, userName }) {
     if (!fId) return { ok: false, errors: ['⚠️ fId مطلوب'], warnings: [] };
 
-    return withIdempotency(db, {
-      actionType: 'mark_followup_done',
-      entityId: fId,
-      actorId: userId || '',
-      payload: { done },
-    }, async (operationId) => {
+    // Toggle done مش financial operation — نتخطى withIdempotency overhead.
+    // Idempotent بطبيعتها (set boolean — double-execute = same state).
 
-      const ref = doc(db, 'client_followups', fId);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [], operationId };
-      }
-      const cur = snap.data();
-      if (cur.isDeleted) {
-        return { ok: false, errors: ['⛔ متابعة محذوفة'], warnings: [], operationId };
-      }
+    const ref = doc(db, 'client_followups', fId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [] };
+    }
+    const cur = snap.data();
+    if (cur.isDeleted) {
+      return { ok: false, errors: ['⛔ متابعة محذوفة'], warnings: [] };
+    }
 
-      const entry = auditEntry({
-        action: done ? 'تم تنفيذ المتابعة' : 'إلغاء تنفيذ المتابعة',
-        userId, userName, kind: 'op',
-      });
-
-      try {
-        await updateDoc(ref, {
-          nextActionDone: !!done,
-          doneAt: done ? serverTimestamp() : null,
-          doneBy: done ? (userId || '') : '',
-          doneByName: done ? (userName || '') : '',
-          editHistory: [...(cur.editHistory || []), entry],
-          updatedAt: serverTimestamp(),
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, fId, action: 'mark_followup_done', done,
-        };
-      } catch (e) {
-        return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [], operationId };
-      }
+    const entry = auditEntry({
+      action: done ? 'تم تنفيذ المتابعة' : 'إلغاء تنفيذ المتابعة',
+      userId, userName, kind: 'op',
     });
+
+    try {
+      await updateDoc(ref, {
+        nextActionDone: !!done,
+        doneAt: done ? serverTimestamp() : null,
+        doneBy: done ? (userId || '') : '',
+        doneByName: done ? (userName || '') : '',
+        editHistory: [...(cur.editHistory || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        fId, action: 'mark_followup_done', done,
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+    }
   },
 
   /**
@@ -816,49 +798,44 @@ export const clientActions = {
   async deleteFollowup({ db = defaultDb, fId, userId, userName, reason = '' }) {
     if (!fId) return { ok: false, errors: ['⚠️ fId مطلوب'], warnings: [] };
 
-    return withIdempotency(db, {
-      actionType: 'delete_followup',
-      entityId: fId,
-      actorId: userId || '',
-      payload: {},
-    }, async (operationId) => {
+    // Delete followup مش financial operation — نتخطى withIdempotency overhead.
+    // Idempotent بطبيعتها (isDeleted check يمنع double-execute).
 
-      const ref = doc(db, 'client_followups', fId);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [], operationId };
-      }
-      const cur = snap.data();
-      if (cur.isDeleted) {
-        return {
-          ok: true, errors: [], warnings: ['ℹ️ محذوفة بالفعل'],
-          operationId, fId, action: 'delete_followup', idempotent: true,
-        };
-      }
+    const ref = doc(db, 'client_followups', fId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [] };
+    }
+    const cur = snap.data();
+    if (cur.isDeleted) {
+      return {
+        ok: true, errors: [], warnings: ['ℹ️ محذوفة بالفعل'],
+        fId, action: 'delete_followup', idempotent: true,
+      };
+    }
 
-      const entry = auditEntry({
-        action: 'حذف متابعة',
-        userId, userName, kind: 'op',
-        meta: { reason },
-      });
-
-      try {
-        await updateDoc(ref, {
-          isDeleted: true,
-          deletedAt: serverTimestamp(),
-          deletedBy: userId || '',
-          deletedByName: userName || '',
-          editHistory: [...(cur.editHistory || []), entry],
-          updatedAt: serverTimestamp(),
-        });
-        return {
-          ok: true, errors: [], warnings: [],
-          operationId, fId, action: 'delete_followup',
-        };
-      } catch (e) {
-        return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [], operationId };
-      }
+    const entry = auditEntry({
+      action: 'حذف متابعة',
+      userId, userName, kind: 'op',
+      meta: { reason },
     });
+
+    try {
+      await updateDoc(ref, {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: userId || '',
+        deletedByName: userName || '',
+        editHistory: [...(cur.editHistory || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        fId, action: 'delete_followup',
+      };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+    }
   },
 
   /**
