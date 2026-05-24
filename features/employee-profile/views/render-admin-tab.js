@@ -38,10 +38,10 @@ const TASK_PRIORITIES = {
 };
 
 const LIVE_STAGE_MAP = {
-  design_pending:  { ico: '✏️',  lbl: 'تصميم',  col: '#a78bfa' },
-  design_approved: { ico: '✅',  lbl: 'اعتمد',   col: '#a78bfa' },
-  production:      { ico: '🏭',  lbl: 'تنفيذ',  col: '#ff3d6e' },
-  printing:        { ico: '🖨️', lbl: 'طباعة',  col: '#ffaa00' },
+  design_pending:  { ico: '✏️',  lbl: 'تصميم',  col: 'var(--p)' },
+  design_approved: { ico: '✅',  lbl: 'اعتمد',   col: 'var(--p)' },
+  production:      { ico: '🏭',  lbl: 'تنفيذ',  col: 'var(--r)' },
+  printing:        { ico: '🖨️', lbl: 'طباعة',  col: 'var(--y)' },
   ready:           { ico: '📦',  lbl: 'جاهز',    col: '#3b9eff' },
   shipped:         { ico: '🚚',  lbl: 'شحن',    col: '#22d3ee' },
 };
