@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v241';
+const CACHE = 'b2c-v242';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -63,6 +63,53 @@ const NETWORK_FIRST_SUFFIXES = [
   '/design-render.js',
   '/design.css',
   '/clients.css',
+  // ── Page CSS files extracted in Phase-2D (PRs #771-#777) ──
+  '/inbox.css',
+  '/reports.css',
+  '/shipping.css',
+  '/approvals.css',
+  '/employees.css',
+  '/employee-profile.css',
+  '/production.css',
+  '/print.css',
+  '/cs-dashboard.css',
+  '/exec-dashboard.css',
+  '/designer-dashboard.css',
+  '/production-dashboard.css',
+  '/shipping-accounts.css',
+  '/suppliers.css',
+  '/products.css',
+  '/settings.css',
+  '/my-profile.css',
+  // ── features/* view modules (Phase-1 extracts) — change with deploys ──
+  '/features/clients/bizcard-form.js',
+  '/features/clients/client-form.js',
+  '/features/clients/control-grid.js',
+  '/features/clients/followup-form.js',
+  '/features/clients/new-order-form.js',
+  '/features/cost-items/drawer.js',
+  '/features/employee-profile/views/render-admin-tab.js',
+  '/features/employee-profile/views/render-attendance.js',
+  '/features/employee-profile/views/render-hero.js',
+  '/features/employee-profile/views/render-overview-tab.js',
+  '/features/employee-profile/views/render-password-card.js',
+  '/features/employee-profile/views/render-permissions.js',
+  '/features/employee-profile/views/render-salary.js',
+  '/features/employee-profile/views/render-score.js',
+  '/features/employee-profile/views/tab-router.js',
+  '/features/inbox/views/chat-view.js',
+  '/features/inbox/views/conv-list-view.js',
+  '/features/inbox/views/picker-views.js',
+  '/features/inbox/views/stories-view.js',
+  '/features/reports/views/render-designers-sales.js',
+  '/features/reports/views/render-overview-detailed.js',
+  '/features/reports/views/render-returns.js',
+  '/features/reports/views/render-shipping-clients.js',
+  // ── core/* helpers (Phase-2 extracts) — change with deploys ──
+  '/core/dom-utils.js',
+  '/core/order-math.js',
+  '/core/shared-constants.js',
+  '/clients-bridge.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
@@ -76,11 +123,17 @@ const PRECACHE = [
   './shared.js',
   './theme.js',
   './financial-sync-engine.js',
+  // Role-landing dashboards (HTML)
   './cs-dashboard.html',
   './ops-dashboard.html',
   './designer-dashboard.html',
   './production-dashboard.html',
   './shipping-dashboard.html',
+  // Their dedicated CSS (Phase-2D extracts) — so the role-landing page
+  // renders styled on offline first-launch, not just unstyled HTML.
+  './cs-dashboard.css',
+  './designer-dashboard.css',
+  './production-dashboard.css',
 ];
 
 // Third-party hosts that serve immutable / near-immutable assets.
