@@ -14,7 +14,7 @@
 
   const KEY = 'b2c-theme';
   const VALID = ['dark', 'light', 'auto'];
-  const DEFAULT = 'light'; // الافتراضي = light ليطابق unified ERP layout (sidebar/topbar navy + content فاتح)
+  const DEFAULT = 'dark'; // الافتراضي = dark (الـ navy chrome من PR #811 يفضل ثابت في الـ themes الاتنين)
 
   // ── قراءة التفضيل المحفوظ ──
   function getStored(){
