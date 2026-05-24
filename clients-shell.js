@@ -152,7 +152,7 @@ export const CLIENTS_SHELL_HTML = `
     <div id="segment-strip" style="display:none;margin-bottom:14px"></div>
 
     <!-- GRID -->
-    <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-md)">
+    <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--space-lg)">
       <div class="loader"><div class="spinner"></div></div>
     </div>
 
