@@ -39,11 +39,16 @@ const RE_EG_PHONE = /^01[0125][0-9]{8}$/;
 
 function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
   const errors = [];
+  const p1 = (phone1 || '').trim();
+  const p2 = (phone2 || '').trim();
   if (!name || !name.trim()) errors.push('⚠️ اسم العميل مطلوب');
-  if (!phone1 || !phone1.trim()) errors.push('⚠️ الهاتف الأساسي مطلوب');
-  else if (!RE_EG_PHONE.test(phone1.trim())) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
-  if (phone2 && phone2.trim() && !RE_EG_PHONE.test(phone2.trim())) {
+  if (!p1) errors.push('⚠️ الهاتف الأساسي مطلوب');
+  else if (!RE_EG_PHONE.test(p1)) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
+  if (p2 && !RE_EG_PHONE.test(p2)) {
     errors.push('⚠️ رقم الهاتف الثاني غير صحيح');
+  }
+  if (p1 && p2 && p1 === p2) {
+    errors.push('⚠️ الهاتف الأساسي والثاني لا يصح أن يكونا متطابقين');
   }
   if (email && email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
     errors.push('⚠️ البريد الإلكتروني غير صحيح');
@@ -122,6 +127,35 @@ test('phone variants — 015 valid', () => {
 });
 test('phone variants — 013 invalid', () => {
   assertEq(validateClientPayload({ name: 'X', phone1: '01312345678' }).ok, false);
+});
+
+// ── Self-duplicate (phone1 === phone2) tests ──
+test('phone1 === phone2 (same number) → reject', () => {
+  const r = validateClientPayload({
+    name: 'X', phone1: '01012345678', phone2: '01012345678',
+  });
+  assertEq(r.ok, false);
+});
+
+test('phone1 === phone2 with whitespace → still reject (trimmed equal)', () => {
+  const r = validateClientPayload({
+    name: 'X', phone1: '01012345678', phone2: ' 01012345678 ',
+  });
+  assertEq(r.ok, false);
+});
+
+test('phone1 different from phone2 → accept', () => {
+  const r = validateClientPayload({
+    name: 'X', phone1: '01012345678', phone2: '01198765432',
+  });
+  assertEq(r.ok, true);
+});
+
+test('phone1 set, phone2 empty → accept (no self-dup check on empty)', () => {
+  const r = validateClientPayload({
+    name: 'X', phone1: '01012345678', phone2: '',
+  });
+  assertEq(r.ok, true);
 });
 
 // ── Followup validator tests ──
