@@ -305,8 +305,8 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         const safe=(c.name||'').replace(/'/g,"\\'");
         return`<div onclick="focusClient('${safe}');setTimeout(()=>switchTab('collection'),60)" style="display:flex;justify-content:space-between;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line);cursor:pointer" title="اضغط لعرض أوردراته">
           <div>
-            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c.name}</div>
-            <div style="font-size:var(--fs-xs);color:var(--dim2)">${c.phone||'—'} · ${c.count} أوردر</div>
+            <div class="txt-bold-md">${c.name}</div>
+            <div class="txt-meta-xs">${c.phone||'—'} · ${c.count} أوردر</div>
           </div>
           <div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--r);white-space:nowrap">${fn(c.rem)} ج</div>
         </div>`;
@@ -337,7 +337,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
           const isWorst=bottleneck&&bottleneck[0]===s;
           const cl=avg>=5?'var(--r)':avg>=3?'var(--y)':'var(--g)';
           return`<div class="compare-row">
-            <span>${stageLabel[s]||s}${isWorst?' 🚦':''} <span style="color:var(--dim2);font-size:var(--fs-sm)">(${cnt} أوردر)</span></span>
+            <span>${stageLabel[s]||s}${isWorst?' 🚦':''} <span class="txt-meta-sm">(${cnt} أوردر)</span></span>
             <span style="color:${cl};font-weight:var(--fw-heavy)">${avg.toFixed(1)} يوم</span>
           </div>`;
         }).join('')||'<div style="text-align:center;padding:14px;color:var(--dim2);font-size:var(--fs-base)">مفيش بيانات كفاية</div>'}
@@ -399,7 +399,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <!-- Filter presets -->
       <div class="chart-wrap" style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
         <span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra)">⭐ اختصاراتي:</span>
-        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:var(--space-xs)"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span style="font-size:var(--fs-sm);color:var(--dim2)">مفيش اختصارات محفوظة بعد</span>'}
+        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:var(--space-xs)"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span class="txt-meta-sm">مفيش اختصارات محفوظة بعد</span>'}
         <button class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)">💾 احفظ الحالة الحالية</button>
       </div>
     </details>`;

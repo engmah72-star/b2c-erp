@@ -155,7 +155,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
           ${isCur ? '<span style="font-size:var(--fs-tiny);background:rgba(255,170,0,.15);color:var(--y);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">جارية الآن</span>' : ''}
           ${lv.reason ? `<span style="font-size:var(--fs-sm);color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escAttr(lv.reason)}</span>` : ''}
         </div>
-        <div style="font-size:var(--fs-sm);color:var(--dim2)">${lv.startDate}${lv.endDate !== lv.startDate ? ' → ' + lv.endDate : ''} · <strong>${lv.days} يوم</strong></div>
+        <div class="txt-meta-sm">${lv.startDate}${lv.endDate !== lv.startDate ? ' → ' + lv.endDate : ''} · <strong>${lv.days} يوم</strong></div>
       </div>
       <button onclick="deleteLeave('${escAttr(lv._id)}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55">✕</button>
     </div>`;

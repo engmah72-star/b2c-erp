@@ -110,7 +110,7 @@ export function escapeHtml(s) {
 
 /** صف key/value داخل لوحة عميل (label + value). */
 export function pRow(l, v) {
-  return `<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:var(--fs-tiny);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${v}</div></div>`;
+  return `<div style="background:var(--bg3);border-radius:8px;padding:8px 10px"><div style="font-size:var(--fs-tiny);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${l}</div><div class="txt-strong-base">${v}</div></div>`;
 }
 
 /** input داخل تبويب البطاقة الشخصية. */
@@ -320,7 +320,7 @@ export function panelOrdersHTML({
               <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage] || o.stage}</span>
               ${isLate ? '<span style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-extra)">⚠️ متأخر</span>' : ''}
             </div>
-            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${nm}</div>
+            <div class="txt-bold-md">${nm}</div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${o.orderId || o._id.slice(-6)} · ${o.createdDate || '—'}</div>
             ${o.deadline ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:1px">📅 ${o.deadline}</div>` : ''}
           </div>
@@ -633,7 +633,7 @@ export function clientListRowHTML(client, idx, ctx = {}) {
   return `<div class="list-row" onclick="openClient('${c._id}')">
       <div class="list-av" style="background:${color}18;color:${color}">${(c.name || '?')[0].toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">${c.name || '—'}
+        <div class="txt-bold-lg">${c.name || '—'}
           ${c.intlPhone && canSee('client_phone') ? `<span title="${c.intlPhone}" style="font-size:var(--fs-sm);color:var(--y);margin-right:4px">🌍</span>` : ''}
           ${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'};font-size:var(--fs-tiny)">${TAG_LABELS[t] || t}</span>`).join('')}
         </div>
@@ -642,15 +642,15 @@ export function clientListRowHTML(client, idx, ctx = {}) {
       <div style="display:flex;gap:var(--space-lg);align-items:center;flex-shrink:0">
         <div style="text-align:center">
           <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--b)">${active}</div>
-          <div style="font-size:var(--fs-tiny);color:var(--dim2)">نشط</div>
+          <div class="txt-meta-tiny">نشط</div>
         </div>
         ${canSee('price_sale') ? `<div style="text-align:center">
           <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--g)">${fn(tot)}</div>
-          <div style="font-size:var(--fs-tiny);color:var(--dim2)">مبيعات ج</div>
+          <div class="txt-meta-tiny">مبيعات ج</div>
         </div>` : ''}
         ${canSee('price_remaining') ? `<div style="text-align:center;min-width:60px">
           <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:${rem > 0 ? 'var(--r)' : 'var(--g)'}">${rem > 0 ? fn(rem) : '✅'}</div>
-          <div style="font-size:var(--fs-tiny);color:var(--dim2)">${rem > 0 ? 'باقي ج' : 'محصّل'}</div>
+          <div class="txt-meta-tiny">${rem > 0 ? 'باقي ج' : 'محصّل'}</div>
         </div>` : ''}
         ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
       </div>
@@ -670,7 +670,7 @@ export function clientPanelHeaderHTML({ client, color } = {}) {
       <div style="width:48px;height:48px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:var(--fw-heavy)">${(c.name || '?')[0]}</div>
       <div>
         <div style="font-size:var(--fs-xl);font-weight:var(--fw-extra)">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:var(--fw-extra);margin-right:6px">📁 قديم</span>' : ''}</div>
-        <div style="font-size:var(--fs-sm);color:var(--dim2)">${canSee('client_phone') ? (c.phone1 || '') : ''} ${c.job ? '· ' + c.job : ''}</div>
+        <div class="txt-meta-sm">${canSee('client_phone') ? (c.phone1 || '') : ''} ${c.job ? '· ' + c.job : ''}</div>
       </div>
     </div>`;
 }
@@ -818,7 +818,7 @@ export function clientPanelBodyHTML(ctx = {}) {
         <div style="display:flex;flex-direction:column;gap:var(--space-xs)">
           ${Object.entries(byWallet).sort((a, b) => b[1] - a[1]).map(([wn, amt]) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bg3);border-radius:6px">
-            <span style="font-size:var(--fs-sm);color:var(--dim2)">${wn}</span>
+            <span class="txt-meta-sm">${wn}</span>
             <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--g)">${fmtNum(amt)} ج</span>
           </div>`).join('')}
         </div>` : ''}
@@ -932,7 +932,7 @@ export function segmentStripHTML({
     <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad2);padding:10px 12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--p)">📊 توزيع العملاء حسب الشريحة (RFM)</div>
-        <div style="font-size:var(--fs-sm);color:var(--dim2)">إجمالي CLV: <b style="color:var(--g)">${fmtNum(totalClv)} ج</b></div>
+        <div class="txt-meta-sm">إجمالي CLV: <b style="color:var(--g)">${fmtNum(totalClv)} ج</b></div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:5px">
         ${visible.map(s => {
@@ -1068,7 +1068,7 @@ export function controlGridRowHTML(order, ctx = {}) {
 
   const txHtml = txList.length
     ? `<div class="cg-tx-list">${txList.map(tx => `<div class="cg-tx-item"><b>${fmtNum(tx.amount)} ج</b> ← ${tx.walletName || '—'}</div>`).join('')}</div>`
-    : `<span style="color:var(--dim2);font-size:var(--fs-xs)">—</span>`;
+    : `<span class="txt-meta-xs">—</span>`;
 
   const empOptions = designers.map(e =>
     `<option value="${e._id || e.uid || ''}"${(e._id === empUid || e.uid === empUid) ? ' selected' : ''}>${e.name || e.displayName || ''}</option>`
@@ -1079,7 +1079,7 @@ export function controlGridRowHTML(order, ctx = {}) {
     : `<td onclick="cgridOpenClient('${o._id}')" style="cursor:pointer" title="عرض بطاقة العميل"><span style="font-weight:var(--fw-bold);color:var(--b);text-decoration:underline dotted">${o.clientName || '—'}</span></td>`;
   const bizCell = isEdit
     ? `<td><input class="cg-inp" data-field="clientBusiness" value="${safeBiz}" style="width:100px"></td>`
-    : `<td><span style="color:var(--dim2);font-size:var(--fs-xs)">${o.clientBusiness || o.job || '—'}</span></td>`;
+    : `<td><span class="txt-meta-xs">${o.clientBusiness || o.job || '—'}</span></td>`;
   const empCell = isEdit
     ? `<td><select class="cg-sel" data-field="assignedTo" style="width:90px"><option value="">— بدون —</option>${empOptions}</select></td>`
     : `<td><span style="font-size:var(--fs-xs)">${empName}</span></td>`;
@@ -1119,14 +1119,14 @@ export function controlGridRowHTML(order, ctx = {}) {
           ${Object.keys(CGRID_STATUS_MAP).map(s => `<option value="${s}"${s === status ? ' selected' : ''}>${s}</option>`).join('')}
         </select>
       </td>
-      <td style="font-size:var(--fs-xs);color:var(--dim2)">${fmtDate(o.createdAt)}</td>
-      <td style="font-size:var(--fs-xs);color:var(--dim2)">${fmtDate(o.updatedAt)}</td>
+      <td class="txt-meta-xs">${fmtDate(o.createdAt)}</td>
+      <td class="txt-meta-xs">${fmtDate(o.updatedAt)}</td>
       <td>
         <button onclick="cgridToggleProblem('${o._id}',${!isProb})" style="padding:2px 8px;border-radius:20px;border:none;cursor:pointer;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:${isProb ? 'rgba(255,61,110,.15)' : 'var(--hover)'};color:${isProb ? 'var(--r)' : 'var(--dim2)'}">
           ${isProb ? '⚠️ نعم' : 'لا'}
         </button>
       </td>
-      <td style="text-align:center">${isRet ? '<span style="color:var(--r);font-size:var(--fs-sm)">↩️ نعم</span>' : '<span style="color:var(--dim2);font-size:var(--fs-xs)">لا</span>'}</td>
+      <td style="text-align:center">${isRet ? '<span style="color:var(--r);font-size:var(--fs-sm)">↩️ نعم</span>' : '<span class="txt-meta-xs">لا</span>'}</td>
       ${editBtnCell}
       <td style="text-align:center">
         <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer" title="حذف نهائي">🗑</button>
@@ -1294,7 +1294,7 @@ export function statsDrawerHTML({
   if (type === 'total') {
     return `<div style="text-align:center;padding:var(--space-md);color:var(--dim2);font-size:var(--fs-xl);font-weight:var(--fw-extra)">${clients.length} عميل</div>` +
       clients.slice(0, 30).map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div></div>
+        <div><div class="txt-bold-md">${c2.name || '—'}</div><div class="txt-meta-sm">${c2.phone1 || '—'} · ${c2.job || '—'}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
       </div>`).join('');
   }
@@ -1308,8 +1308,8 @@ export function statsDrawerHTML({
     return `<div style="text-align:center;padding:var(--space-md);color:var(--b);font-size:var(--fs-2xl);font-weight:var(--fw-heavy)">${todayC.length} عميل اليوم</div>` +
       (todayC.length ? todayC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
         <div><div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy)">${c2.name || '—'}</div>
-        <div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'} · ${c2.job || '—'}</div>
-        <div style="font-size:var(--fs-xs);color:var(--dim2)">${c2.source || ''}</div></div>
+        <div class="txt-meta-sm">${c2.phone1 || '—'} · ${c2.job || '—'}</div>
+        <div class="txt-meta-xs">${c2.source || ''}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="font-size:var(--fs-3xl);text-decoration:none">💬</a>
       </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:30px;font-size:var(--fs-lg)">لا يوجد عملاء اليوم</div>');
   }
@@ -1321,7 +1321,7 @@ export function statsDrawerHTML({
     });
     return `<div style="text-align:center;padding:var(--space-md);color:var(--g);font-size:var(--fs-2xl);font-weight:var(--fw-heavy)">${monthC.length} عميل جديد</div>` +
       (monthC.length ? monthC.map(c2 => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c2.name || '—'}</div><div style="font-size:var(--fs-sm);color:var(--dim2)">${c2.phone1 || '—'}</div></div>
+        <div><div class="txt-bold-md">${c2.name || '—'}</div><div class="txt-meta-sm">${c2.phone1 || '—'}</div></div>
         <a href="https://wa.me/20${(c2.phone1 || '').replace(/^0/, '')}" target="_blank" style="color:var(--g);font-size:20px">💬</a>
       </div>`).join('') : '<div style="color:var(--dim2);text-align:center;padding:var(--space-xl)">لا يوجد عملاء جدد</div>');
   }
@@ -1541,7 +1541,7 @@ export function statsDrawerHTML({
           ${ords.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
             <div style="flex:1;min-width:0">
               <div style="font-size:var(--fs-md);font-weight:var(--fw-bold)">${o.clientName || '—'}</div>
-              <div style="font-size:var(--fs-sm);color:var(--dim2)">${o.product || (o.products || []).map(p => p.name).join('+') || '—'}</div>
+              <div class="txt-meta-sm">${o.product || (o.products || []).map(p => p.name).join('+') || '—'}</div>
               ${o.deadline && new Date(o.deadline) < new Date() ? '<div style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)">⚠️ متأخر</div>' : ''}
             </div>
             <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--b);flex-shrink:0">${fn(parseFloat(o.salePrice) || 0)} ج</span>

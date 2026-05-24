@@ -70,8 +70,8 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
           ${s.blameSorted.map(([b, c]) => {
             const pct = Math.round(c / s.totalReturns * 100);
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">
-                <span style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${RETURNS_BLAME_LABEL[b] || b}</span>
-                <span style="font-size:var(--fs-sm);color:var(--dim2)"><b style="color:var(--snow);font-size:var(--fs-md)">${c}</b> · ${pct}%</span>
+                <span class="txt-strong-base">${RETURNS_BLAME_LABEL[b] || b}</span>
+                <span class="txt-meta-sm"><b style="color:var(--snow);font-size:var(--fs-md)">${c}</b> · ${pct}%</span>
               </div>`;
           }).join('')}
         </div>
@@ -96,7 +96,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
           const slaBadge = t.slaBreached ? ' <span style="font-size:var(--fs-tiny);color:var(--r)">⚠️ SLA</span>' : '';
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
               <div style="flex:1;min-width:0">
-                <div><b style="font-family:monospace">${(t.ticketNo || t._id.slice(-6))}</b> · ${(t.clientName || '—').slice(0, 30)} ${slaBadge}</div>
+                <div><b class="mono">${(t.ticketNo || t._id.slice(-6))}</b> · ${(t.clientName || '—').slice(0, 30)} ${slaBadge}</div>
                 <div style="color:var(--dim2);font-size:var(--fs-xs);margin-top:2px">${RETURNS_REASON_LABEL[t.reason] || t.reason || ''} · ${stPill}</div>
               </div>
               <div style="font-weight:var(--fw-extra);color:var(--r);text-align:left;white-space:nowrap">${t.refundAmount > 0 ? format(t.refundAmount) + ' ج' : '—'}</div>

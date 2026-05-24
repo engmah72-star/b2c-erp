@@ -28,7 +28,7 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
     ? `<span style="color:var(--r);font-weight:var(--fw-bold)"> · ${breakdown.qual.incidents} إخفاق</span>`
     : '';
   const proratedNote = breakdown.prod.prorated
-    ? `<span style="color:var(--dim2);font-size:var(--fs-tiny)">(متوقع لـ${meta.lastDay}/${meta.daysInMonth} يوم)</span>`
+    ? `<span class="txt-meta-tiny">(متوقع لـ${meta.lastDay}/${meta.daysInMonth} يوم)</span>`
     : '';
   return `<div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:var(--space-lg);display:flex;gap:var(--space-xl);align-items:center">
     <div class="score-gauge">
