@@ -28,6 +28,10 @@
       document.body && document.body.classList.remove('sb-takeover');
       document.documentElement.classList.remove('embed-mode');
       document.querySelectorAll('.sb-panel-host').forEach(el => el.remove());
+      // ارفع أي inline display:none اللي OLD JS أضافها على nav-scroll / sb-tools
+      document.querySelectorAll('.nav-scroll, .sb-tools').forEach(el => {
+        if (el.style && el.style.display === 'none') el.style.display = '';
+      });
       // Disable any cached takeover API
       if (window.B2CSidebar) {
         try { delete window.B2CSidebar.openPanel; } catch(_) { window.B2CSidebar.openPanel = null; }
