@@ -18,6 +18,37 @@
 //   - adminOnly  true → admin/operation_manager فقط
 //   - public     true → كل الأدوار تشوفها
 
+// ── Stale Takeover Cleanup (defensive) ──
+// لو OLD sidebar-takeover.js cached وبيشتغل في الخلفية، يقدر يضيف
+// body.sb-takeover class أو يبني .sb-panel-host. ندرّب re-cleanup
+// كل ما الـ class تظهر — يضمن إن الـ stale code ما يكسرش الـ UI.
+(function cleanupStaleTakeover(){
+  try {
+    const purge = () => {
+      document.body && document.body.classList.remove('sb-takeover');
+      document.documentElement.classList.remove('embed-mode');
+      document.querySelectorAll('.sb-panel-host').forEach(el => el.remove());
+      // Disable any cached takeover API
+      if (window.B2CSidebar) {
+        try { delete window.B2CSidebar.openPanel; } catch(_) { window.B2CSidebar.openPanel = null; }
+        try { delete window.B2CSidebar.closePanel; } catch(_) { window.B2CSidebar.closePanel = null; }
+        try { delete window.B2CSidebar.isOpen; } catch(_) { window.B2CSidebar.isOpen = null; }
+      }
+      window.B2C_TAKEOVER_ENABLED = false;
+    };
+    purge();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', purge, { once: true });
+    }
+    // إعادة المراقبة كل ثانية لمدة 5 ثواني (defensive ضد late-running OLD script)
+    let n = 0;
+    const iv = setInterval(() => {
+      purge();
+      if (++n >= 5) clearInterval(iv);
+    }, 1000);
+  } catch(_) {}
+})();
+
 (function() {
   'use strict';
 
