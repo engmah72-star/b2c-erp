@@ -18,13 +18,23 @@
 //   - adminOnly  true → admin/operation_manager فقط
 //   - public     true → كل الأدوار تشوفها
 
+// ── Embed Mode Detection (Phase 1) ──
+// لو الصفحة محمَّلة كـ iframe في sidebar takeover (?embed=1)، علّم الـ HTML element
+// مبكراً (synchronously في الـ head) عشان shared.css يخفي الـ topbar/sidenav/mob-nav
+// المكررة قبل أي paint. منع flash of duplicate chrome.
+try {
+  if (location.search && location.search.indexOf('embed=1') >= 0) {
+    document.documentElement.classList.add('embed-mode');
+  }
+} catch(_) {}
+
 (function() {
   'use strict';
 
   const SIDEBAR_PAGES = [
     // ─── الرئيسية (main) ───
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
-    { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true, takeover:true },
+    { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
     { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
@@ -76,11 +86,15 @@
   window.ROLE_HOME     = ROLE_HOME;
   window.GROUP_LABELS  = GROUP_LABELS;
 
-  // ── Sidebar Takeover (Phase 0) ──
-  // Feature flag مفعّل عالمياً، لكن الـ takeover يحصل فقط للصفحات بـ takeover:true.
-  // Phase 0 pilot: my-profile.html فقط. باقي الـ links تتنقّل عادي بـ <a href>.
-  // Phase 1 سيقلب الـ default ويحوّل لـ deny-list.
+  // ── Sidebar Takeover (Phase 1) ──
+  // Feature flag مفعّل عالمياً. الـ default الآن = takeover ON لكل nav links،
+  // إلا الصفحات في TAKEOVER_SKIP (login/portal/print/...) أو cfg.takeover === false.
+  // الـ skip list يطابق smart-sidebar.js:18 (نفس الفلسفة).
   window.B2C_TAKEOVER_ENABLED = true;
+  window.B2C_TAKEOVER_SKIP = [
+    'login.html', 'client-login.html', 'client-portal.html',
+    'waybill.html', 'chat.html', 'order-tracking.html', '',
+  ];
 
   // ── Auto-load Sidebar Takeover (CSS + JS) ──
   // Self-contained — لا تأثير على الصفحات اللي مش معلّمة takeover:true.

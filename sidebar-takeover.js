@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════
-// Business2Card ERP — Sidebar Takeover (Phase 0)
+// Business2Card ERP — Sidebar Takeover (Phase 1)
 // ════════════════════════════════════════════════════════════════════
 //
 // تحويل الـ sidebar إلى shell يحوي محتوى الصفحات داخلياً (slide takeover)
@@ -8,11 +8,15 @@
 //
 // API: window.B2CSidebar.openPanel(file) / .closePanel() / .isOpen()
 //
-// Feature flag: window.B2C_TAKEOVER_ENABLED + per-item cfg.takeover:true
-// Hash sync:   #p=<file> ↔ history.pushState/popstate
+// Feature flag: window.B2C_TAKEOVER_ENABLED
+// Deny-list:    window.B2C_TAKEOVER_SKIP (login/portal/print/...)
+// Hash sync:    #p=<file> ↔ history.pushState/popstate
 //
-// Phase 0: pilot على my-profile.html فقط (cfg.takeover:true). باقي الـ links
-//          تتنقّل عادي. LRU=3 + Esc-to-close + focus trap basic + ARIA.
+// Phase 1: كل nav links مفعّلة افتراضياً، إلا اللي في TAKEOVER_SKIP أو
+//          cfg.takeover === false. iframes تُحمَّل بـ ?embed=1 → CSS rules
+//          في shared.css تخفي الـ topbar/sidenav/mob-nav المكررة جوّاها.
+//          + Loading skeleton + Error UI (open in new tab fallback) +
+//          Page title extraction من iframe (same-origin).
 // ════════════════════════════════════════════════════════════════════
 
 (function() {
@@ -35,9 +39,12 @@
   let head = null;          // .sb-panel-head element
   let titleEl = null;       // .sb-panel-title element
   let framesWrap = null;    // .sb-panel-frames element
+  let skeletonEl = null;    // .sb-panel-skeleton (loading hint)
+  let errorEl = null;       // .sb-panel-error (fallback on load failure)
+  let skeletonTimer = 0;    // setTimeout id للـ delay-reveal
   let currentFile = '';     // file currently shown
   let lastFocusEl = null;   // element focused before open (restore on close)
-  const cache = new Map();  // file → { iframe, lastUsed }
+  const cache = new Map();  // file → { iframe, lastUsed, loaded, errored }
 
   // ── Helpers ──
   function pageLabel(file) {
@@ -46,12 +53,17 @@
     return cfg ? cfg.label : file;
   }
 
+  // Phase 1: deny-list — كل الـ nav items مفعّلة، إلا اللي في SKIP أو takeover:false
   function isTakeoverFile(file) {
     if (!window.B2C_TAKEOVER_ENABLED) return false;
+    if (!file) return false;
+    const skip = window.B2C_TAKEOVER_SKIP || [];
+    if (skip.indexOf(file) >= 0) return false;
     const list = window.SIDEBAR_PAGES || [];
     const cfg = list.find(p => p.file === file);
-    if (!cfg) return false;
-    return cfg.takeover === true;
+    if (!cfg) return false;                   // الـ takeover للـ nav items فقط
+    if (cfg.takeover === false) return false; // explicit opt-out
+    return true;
   }
 
   function hashFile() {
@@ -92,6 +104,21 @@
     framesWrap = document.createElement('div');
     framesWrap.className = 'sb-panel-frames';
 
+    // Loading skeleton + Error — overlay فوق الـ frames (position:relative parent)
+    skeletonEl = document.createElement('div');
+    skeletonEl.className = 'sb-panel-skeleton';
+    skeletonEl.hidden = true;
+    skeletonEl.innerHTML = '<div class="sb-skel-bar"></div>' +
+                           '<div class="sb-skel-bar"></div>' +
+                           '<div class="sb-skel-bar"></div>';
+
+    errorEl = document.createElement('div');
+    errorEl.className = 'sb-panel-error';
+    errorEl.hidden = true;
+
+    framesWrap.appendChild(skeletonEl);
+    framesWrap.appendChild(errorEl);
+
     host.appendChild(head);
     host.appendChild(framesWrap);
 
@@ -110,22 +137,54 @@
     let entry = cache.get(file);
     if (entry) {
       entry.lastUsed = Date.now();
-      return entry.iframe;
+      return entry;
     }
 
     const iframe = document.createElement('iframe');
     iframe.className = 'sb-panel-frame';
     iframe.setAttribute('title', pageLabel(file));
     iframe.setAttribute('loading', 'lazy');
-    // ?embed=1 → body.embed-mode rules تخفي الـ topbar/sidenav الداخلي (Phase 1).
-    // في Phase 0 الـ rules لسه ما اتضافتش، فالـ pilot ممكن يبان فيه topbar مكرر — مقبول.
+    // ?embed=1 → html.embed-mode rules تخفي الـ topbar/sidenav الداخلي (sidebar-config.js)
     const sep = file.includes('?') ? '&' : '?';
-    iframe.src = file + sep + 'embed=1';
+    const src = file + sep + 'embed=1';
+    iframe.src = src;
+    iframe.dataset.sbFile = file;
     framesWrap.appendChild(iframe);
-    cache.set(file, { iframe, lastUsed: Date.now() });
+
+    const e = { iframe, lastUsed: Date.now(), loaded: false, errored: false };
+    cache.set(file, e);
+
+    iframe.addEventListener('load', () => onFrameLoad(file, iframe), { once: false });
+    iframe.addEventListener('error', () => onFrameError(file), { once: false });
 
     evictIfNeeded();
-    return iframe;
+    return e;
+  }
+
+  function onFrameLoad(file, iframe) {
+    const e = cache.get(file);
+    if (!e) return;
+    e.loaded = true;
+    e.errored = false;
+    // اخفي skeleton لو الـ file ده هو الـ active
+    if (file === currentFile) hideSkeleton();
+    // استخرج الـ title الحقيقي من الـ iframe (same-origin)
+    try {
+      const doc = iframe.contentDocument;
+      const t = doc && doc.title ? doc.title.trim() : '';
+      if (t && file === currentFile && titleEl) {
+        // النص بصيغة "Business2Card — X" → خد X بس لو موجود
+        const clean = t.split('—').slice(-1)[0].trim() || t;
+        titleEl.textContent = clean || pageLabel(file);
+      }
+    } catch(_) {}
+  }
+
+  function onFrameError(file) {
+    const e = cache.get(file);
+    if (!e) return;
+    e.errored = true;
+    if (file === currentFile) showError(file);
   }
 
   function evictIfNeeded() {
@@ -148,6 +207,41 @@
     for (const [k, v] of cache) {
       v.iframe.style.display = (k === file) ? 'block' : 'none';
     }
+  }
+
+  // ── Skeleton (delay-reveal 120ms) ──
+  function scheduleSkeleton() {
+    if (skeletonTimer) { clearTimeout(skeletonTimer); skeletonTimer = 0; }
+    skeletonTimer = setTimeout(() => {
+      if (skeletonEl) skeletonEl.hidden = false;
+      skeletonTimer = 0;
+    }, 120);
+  }
+  function hideSkeleton() {
+    if (skeletonTimer) { clearTimeout(skeletonTimer); skeletonTimer = 0; }
+    if (skeletonEl) skeletonEl.hidden = true;
+  }
+
+  // ── Error UI ──
+  function showError(file) {
+    hideSkeleton();
+    if (!errorEl) return;
+    errorEl.innerHTML = '';
+    const msg = document.createElement('div');
+    msg.className = 'sb-err-msg';
+    msg.textContent = '⚠ فشل تحميل ' + pageLabel(file);
+    const link = document.createElement('a');
+    link.className = 'sb-err-link';
+    link.href = file;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'فتح في tab جديد';
+    errorEl.appendChild(msg);
+    errorEl.appendChild(link);
+    errorEl.hidden = false;
+  }
+  function hideError() {
+    if (errorEl) errorEl.hidden = true;
   }
 
   // ── Public API ──
@@ -186,13 +280,23 @@
     if (!isOpen()) lastFocusEl = document.activeElement;
 
     currentFile = file;
-    getOrCreateFrame(file);
+    const entry = getOrCreateFrame(file);
     showFrame(file);
 
     titleEl.textContent = pageLabel(file);
     host.hidden = false;
     host.setAttribute('aria-hidden', 'false');
     document.body.classList.add('sb-takeover');
+
+    // Skeleton / Error state
+    hideError();
+    if (entry.errored) {
+      showError(file);
+    } else if (entry.loaded) {
+      hideSkeleton();
+    } else {
+      scheduleSkeleton();
+    }
 
     // Re-paint active state على nav-links
     repaintActive(file);
@@ -215,6 +319,8 @@
   function closePanel() {
     if (!isOpen()) return false;
 
+    hideSkeleton();
+    hideError();
     host.hidden = true;
     host.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('sb-takeover');
