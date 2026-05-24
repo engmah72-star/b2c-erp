@@ -826,7 +826,7 @@ export function clientPanelBodyHTML(ctx = {}) {
     </div>
 
     <!-- ── متابعات ── -->
-    <div id="ptab-pane-followups" class="hide">
+    <div id="ptab-pane-followups" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2)">📞 سجل المتابعة</div>
         <button type="button" class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
@@ -835,19 +835,19 @@ export function clientPanelBodyHTML(ctx = {}) {
     </div>
 
     <!-- ── أوردرات ── -->
-    <div id="ptab-pane-orders" class="hide">
+    <div id="ptab-pane-orders" style="display:none">
       <div id="panel-orders-list">
         ${renderPanelOrders(cOrds, 'all')}
       </div>
     </div>
 
     <!-- ── 📇 بطاقة الأعمال ── -->
-    <div id="ptab-pane-bizcard" class="hide">
+    <div id="ptab-pane-bizcard" style="display:none">
       ${renderBizCardTab(c)}
     </div>
 
     <!-- ── بيانات ── -->
-    <div id="ptab-pane-data" class="hide">
+    <div id="ptab-pane-data" style="display:none">
       <div style="margin-bottom:14px">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">📋 بيانات العميل</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
