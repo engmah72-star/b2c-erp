@@ -140,7 +140,7 @@ export const CLIENTS_MODALS_HTML = `
 
       <!-- ══ ملاحظات داخلية خاصة بالموظفين فقط ══ -->
       <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:var(--space-md);margin-bottom:14px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:var(--space-sm)">
           <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
           <span id="c-internal-meta" style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)"></span>
         </div>
@@ -285,7 +285,7 @@ export const CLIENTS_MODALS_HTML = `
       </div>
       <button class="modal-x" onclick="closeAiAnalysis()">✕</button>
     </div>
-    <div id="ai-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-size:var(--fs-md);line-height:1.7"></div>
+    <div id="ai-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-size:var(--fs-md);line-height:var(--lh-relaxed)"></div>
   </div>
 </div>
 
@@ -357,11 +357,11 @@ export const CLIENTS_MODALS_HTML = `
       <div class="fg"><label>📅 موعد المتابعة القادمة (اختياري — يولّد تذكير)</label>
         <input type="datetime-local" class="inp" id="fu-next-date">
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:14px">
         <input type="checkbox" id="fu-done" style="width:16px;height:16px;cursor:pointer">
         <label for="fu-done" style="font-size:var(--fs-base);color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:var(--space-sm)">
         <button class="btn btn-b" id="save-followup-btn" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
         <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
       </div>
@@ -385,7 +385,7 @@ export const CLIENTS_MODALS_HTML = `
       <p style="font-size:var(--fs-md);color:var(--dim2);margin-bottom:14px">
         هل تريد إضافة أوردر تصميم جديد لهذا العميل؟
       </p>
-      <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;flex-direction:column;gap:var(--space-sm)">
         <button class="btn btn-p" onclick="dupAddOrder()">✏️ إضافة أوردر تصميم</button>
         <button class="btn btn-b btn-sm" onclick="dupViewClient()">👤 عرض بيانات العميل</button>
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('ov-dup').classList.remove('open')">إلغاء</button>

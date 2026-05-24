@@ -132,7 +132,7 @@ export function buildSalariesHTML({
             </div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${escAttr(s.note || s.date) || '—'}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:var(--space-sm)">
             <span style="font-size:15px;font-weight:var(--fw-heavy);color:${isDeduct ? 'var(--r)' : 'var(--g)'}">${isDeduct ? '-' : ''}${format(amt)} ج</span>
             <button onclick="deleteSalary('${escJs(s.txId || '')}','${escJs(s._id)}','${escJs(s.walletId || '')}',${amt},${!!isDeduct},'${escJs(s.employeeName || '')}','${escJs(s.walletName || '')}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:var(--fs-base);line-height:1">✕</button>
           </div>

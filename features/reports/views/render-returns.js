@@ -50,7 +50,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px">
       <div class="rep-card">
         <div class="rep-card-head"><div class="rep-name">📊 أسباب المرتجعات</div></div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+        <div style="display:flex;flex-direction:column;gap:var(--space-sm);margin-top:10px">
           ${s.reasonsSorted.length ? s.reasonsSorted.map(([r, c]) => {
             const pct = Math.round(c / s.maxReasonCount * 100);
             return `<div>
@@ -66,7 +66,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
 
       <div class="rep-card">
         <div class="rep-card-head"><div class="rep-name">🎯 الطرف المسؤول</div></div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+        <div style="display:flex;flex-direction:column;gap:var(--space-sm);margin-top:10px">
           ${s.blameSorted.map(([b, c]) => {
             const pct = Math.round(c / s.totalReturns * 100);
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border-radius:6px">

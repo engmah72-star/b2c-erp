@@ -123,7 +123,7 @@ export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {
     const col = score >= 85 ? 'var(--g)' : score >= 70 ? 'var(--b)' : score >= 50 ? 'var(--y)' : 'var(--r)';
     const circ = Math.round(2 * Math.PI * 18);
     const fill = Math.round(score / 100 * circ);
-    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px">
+    return `<div style="display:flex;align-items:center;gap:var(--space-md);padding:10px 12px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px">
       <svg width="44" height="44" viewBox="0 0 44 44" style="transform:rotate(-90deg);flex-shrink:0">
         <circle cx="22" cy="22" r="18" fill="none" stroke="var(--bg2)" stroke-width="4"/>
         <circle cx="22" cy="22" r="18" fill="none" stroke="${col}" stroke-width="4"
@@ -166,7 +166,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
       return `<div style="margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
           <span style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
-          <div style="display:flex;gap:12px;font-size:var(--fs-sm)">
+          <div style="display:flex;gap:var(--space-md);font-size:var(--fs-sm)">
             <span style="color:var(--dim2)">${p.total} أوردر</span>
             <span style="font-weight:var(--fw-extra);color:${rateCol}">${p.rate}%</span>
             <span style="color:var(--g);font-weight:var(--fw-bold)">${format(p.revenue)} ج</span>
@@ -271,7 +271,7 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
     <div>
       <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:10px">📅 توزيع الحضور بالأيام</div>
-      <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
+      <div style="display:flex;gap:var(--space-xs);align-items:flex-end;height:70px">
         ${dayCounts.map((c, i) => {
           const h = maxDay > 0 ? Math.max(4, Math.round(c / maxDay * 100)) : 4;
           const col = i === bestDayIdx ? 'var(--g)' : (i === 5 || i === 6 ? 'var(--bg3)' : 'var(--b)');
@@ -285,7 +285,7 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
     </div>
     <div>
       <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:10px">📊 إنتاج آخر 6 أشهر</div>
-      <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
+      <div style="display:flex;gap:var(--space-xs);align-items:flex-end;height:70px">
         ${trend.map((t, i) => {
           const h = maxTrend > 0 ? Math.max(4, Math.round(t.cnt / maxTrend * 100)) : 4;
           const isNow = i === 5;
@@ -371,7 +371,7 @@ export function buildInsightsHTML({
     });
   }
   if (!insights.length) return '';
-  return `<div style="display:flex;gap:8px;flex-wrap:wrap">${insights.map(i => `
+  return `<div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">${insights.map(i => `
     <div style="flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${i.col};border-radius:var(--rad2);padding:10px 14px">
       <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px">${i.ico} ${escAttr(i.title)}</div>
       <div style="font-size:var(--fs-sm);color:var(--dim2)">${escAttr(i.sub)}</div>

@@ -51,10 +51,10 @@
       + 'font-family:inherit;font-size:var(--fs-base);min-width:0;padding:2px 0;}'
       + '.sb-search-row input::placeholder{color:rgba(255,255,255,.35);}'
       + '.sb-search-ico{font-size:var(--fs-sm);opacity:.55;flex-shrink:0;}'
-      + '.sb-tools-btns{display:flex;gap:4px;align-items:center;}'
+      + '.sb-tools-btns{display:flex;gap:var(--space-xs);align-items:center;}'
       + '.sb-tool-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);'
       + 'color:rgba(255,255,255,.55);font-size:var(--fs-xs);padding:4px 8px;border-radius:6px;cursor:pointer;'
-      + 'font-family:inherit;font-weight:var(--fw-semi);transition:all .15s;flex:1;line-height:1.3;}'
+      + 'font-family:inherit;font-weight:var(--fw-semi);transition:all .15s;flex:1;line-height:var(--lh-snug);}'
       + '.sb-tool-btn:hover{color:#fff;border-color:rgba(167,139,250,.4);}'
       + '.sb-tool-btn.on{background:rgba(167,139,250,.18);color:var(--p);border-color:rgba(167,139,250,.45);}'
       // Star (favorite) — appearance only when nav-link has class
@@ -99,7 +99,7 @@
       + '.nav-link.active{background:linear-gradient(135deg,rgba(167,139,250,.16),rgba(74,142,245,.08));}'
       // Mobile compact toolbar (يوفر مساحة عمودية للعناصر)
       + '@media (max-width:768px){'
-      +   '.sb-tools{padding:6px 8px;gap:4px;}'
+      +   '.sb-tools{padding:6px 8px;gap:var(--space-xs);}'
       +   '.sb-search-row{padding:4px 7px;}'
       +   '.sb-search-row input{font-size:var(--fs-md);}'
       +   '.sb-tool-btn{padding:5px 6px;font-size:var(--fs-xs);}'

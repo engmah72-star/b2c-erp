@@ -174,7 +174,7 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
         width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;
         animation:ai-slide .25s ease-out;font-family:system-ui,sans-serif;direction:rtl}
       @keyframes ai-slide{from{transform:translateY(100%)}to{transform:translateY(0)}}
-      #ai-head{padding:14px 18px;border-bottom:1px solid #2a3348;display:flex;align-items:center;gap:8px;font-weight:var(--fw-bold);font-size:var(--fs-lg)}
+      #ai-head{padding:14px 18px;border-bottom:1px solid #2a3348;display:flex;align-items:center;gap:var(--space-sm);font-weight:var(--fw-bold);font-size:var(--fs-lg)}
       #ai-head .dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981}
       #ai-head .x{margin-right:auto;background:#1e2535;border:1px solid #2a3348;color:#8892a4;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:var(--fs-lg);display:flex;align-items:center;justify-content:center}
       #ai-msgs{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:9px;min-height:120px}
@@ -192,7 +192,7 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
       #ai-keysave{padding:8px 12px;background:#10b981;color:#fff;border:none;border-radius:8px;font-size:var(--fs-base);cursor:pointer;font-weight:var(--fw-bold);font-family:inherit}
       #ai-keyhint{font-size:var(--fs-xs);color:#5c6878;padding:4px 16px 0}
       #ai-keyhint a{color:#4f8ef7}
-      #ai-input-row{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #2a3348;background:#161b27}
+      #ai-input-row{display:flex;gap:var(--space-sm);padding:12px 16px;border-top:1px solid #2a3348;background:#161b27}
       #ai-input{flex:1;background:#1e2535;border:1px solid #2a3348;border-radius:var(--rad);padding:9px 12px;font-size:var(--fs-md);color:#e8eaf0;outline:none;resize:none;font-family:inherit;direction:rtl}
       #ai-input:focus{border-color:#10b981}
       #ai-send{width:38px;height:38px;background:#10b981;border:none;border-radius:var(--rad);color:#fff;font-size:var(--fs-xl);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:inherit}

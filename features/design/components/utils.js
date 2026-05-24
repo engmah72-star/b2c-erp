@@ -33,7 +33,7 @@ export function toast(msg, kind = '') {
 function _ensureToastsContainer() {
   const c = document.createElement('div');
   c.id = 'toasts';
-  c.style.cssText = 'position:fixed;top:80px;left:20px;z-index:9999;display:flex;flex-direction:column;gap:8px';
+  c.style.cssText = 'position:fixed;top:80px;left:20px;z-index:9999;display:flex;flex-direction:column;gap:var(--space-sm)';
   document.body.appendChild(c);
   return c;
 }

@@ -59,7 +59,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
-        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;font-size:var(--fs-base);color:var(--y);line-height:1.7;margin-bottom:14px">
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;font-size:var(--fs-base);color:var(--y);line-height:var(--lh-relaxed);margin-bottom:14px">
           ⚠️ هذا الإجراء آخر حل لما تكون كلمة السر القديمة غير معروفة أو تعذّر تطبيقها.
           سيتم إنشاء حساب دخول جديد بنفس رقم الموبايل وكلمة سر تختارها.
           الموظف يدخل فوراً بـ <strong>${employeePhone}</strong> + كلمة السر الجديدة.
@@ -69,7 +69,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
           <input class="inp" id="rb-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
         </div>
         <button class="btn btn-g" id="rb-save" style="width:100%" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
-        <div id="rb-msg" style="font-size:var(--fs-sm);margin-top:10px;color:var(--dim2);line-height:1.7"></div>
+        <div id="rb-msg" style="font-size:var(--fs-sm);margin-top:10px;color:var(--dim2);line-height:var(--lh-relaxed)"></div>
       </div>
     </div>`;
 }
@@ -77,7 +77,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
 export function buildPasswordCardHTML({ displayPassword, setByName, setAtStr }) {
   const dp = displayPassword;
   return `
-    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px 16px;display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap">
       <div style="flex-shrink:0;width:42px;height:42px;border-radius:50%;background:rgba(255,170,0,.12);display:flex;align-items:center;justify-content:center;font-size:20px">🔑</div>
       <div style="flex:1;min-width:160px">
         <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:3px">كلمة سر الدخول</div>

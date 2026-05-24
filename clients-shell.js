@@ -31,7 +31,7 @@ export const CLIENTS_SHELL_HTML = `
     </div>
     <div class="topbar-right">
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ CSV</button>
-      <div style="display:flex;gap:4px;background:var(--bg3);border-radius:var(--rad);padding:3px">
+      <div style="display:flex;gap:var(--space-xs);background:var(--bg3);border-radius:var(--rad);padding:3px">
         <button id="view-grid" class="btn btn-ghost btn-sm on-view" onclick="setView('grid')" title="كروت" style="padding:6px 10px">⊞</button>
         <button id="view-list" class="btn btn-ghost btn-sm" onclick="setView('list')" title="قائمة" style="padding:6px 10px">≡</button>
       </div>
@@ -111,7 +111,7 @@ export const CLIENTS_SHELL_HTML = `
     </div>
 
     <!-- UNIFIED FILTER BAR -->
-    <div id="filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+    <div id="filter-bar" style="display:flex;gap:var(--space-sm);margin-bottom:14px;flex-wrap:wrap;align-items:center">
       <div class="sw" style="flex:1;min-width:180px"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="scheduleStatsAndGrid()"></div>
       <div style="display:flex;gap:3px;flex-shrink:0">
         <button class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
@@ -151,7 +151,7 @@ export const CLIENTS_SHELL_HTML = `
     <div id="segment-strip" style="display:none;margin-bottom:14px"></div>
 
     <!-- GRID -->
-    <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+    <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-md)">
       <div class="loader"><div class="spinner"></div></div>
     </div>
 
