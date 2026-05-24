@@ -231,16 +231,6 @@
   function navigate(file) {
     if (!file) return;
     close();
-    // Phase 1: route عبر sidebar takeover لو الـ file مفعّل، fallback لـ full reload
-    try {
-      const sb = window.B2CSidebar;
-      if (sb && typeof sb.openPanel === 'function' && window.B2C_TAKEOVER_ENABLED) {
-        const skip = window.B2C_TAKEOVER_SKIP || [];
-        if (skip.indexOf(file) < 0) {
-          if (sb.openPanel(file)) return;
-        }
-      }
-    } catch(_) {}
     window.location.href = file;
   }
 

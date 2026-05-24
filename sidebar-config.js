@@ -18,16 +18,6 @@
 //   - adminOnly  true → admin/operation_manager فقط
 //   - public     true → كل الأدوار تشوفها
 
-// ── Embed Mode Detection (Phase 1) ──
-// لو الصفحة محمَّلة كـ iframe في sidebar takeover (?embed=1)، علّم الـ HTML element
-// مبكراً (synchronously في الـ head) عشان shared.css يخفي الـ topbar/sidenav/mob-nav
-// المكررة قبل أي paint. منع flash of duplicate chrome.
-try {
-  if (location.search && location.search.indexOf('embed=1') >= 0) {
-    document.documentElement.classList.add('embed-mode');
-  }
-} catch(_) {}
-
 (function() {
   'use strict';
 
@@ -86,29 +76,28 @@ try {
   window.ROLE_HOME     = ROLE_HOME;
   window.GROUP_LABELS  = GROUP_LABELS;
 
-  // ── Sidebar Takeover (Phase 1) ──
-  // Feature flag مفعّل عالمياً. الـ default الآن = takeover ON لكل nav links،
-  // إلا الصفحات في TAKEOVER_SKIP (login/portal/print/...) أو cfg.takeover === false.
-  // الـ skip list يطابق smart-sidebar.js:18 (نفس الفلسفة).
-  window.B2C_TAKEOVER_ENABLED = true;
-  window.B2C_TAKEOVER_SKIP = [
-    'login.html', 'client-login.html', 'client-portal.html',
-    'waybill.html', 'chat.html', 'order-tracking.html', '',
-  ];
-
-  // ── Auto-load Sidebar Takeover (CSS + JS) ──
-  // Self-contained — لا تأثير على الصفحات اللي مش معلّمة takeover:true.
-  if (!document.getElementById('sb-takeover-css')) {
+  // ── Sidebar Context Drawer (auto-load) ──
+  // Pub/sub context bus + sidebar drawer renderer. لما الصفحة تنشر context
+  // (B2CContext.set), الـ sidebar تعرض تفاصيل الـ entity بدل nav-links.
+  // الـ takeover القديم (M0-M2) اتشال؛ النموذج الجديد = master/context.
+  if (!document.getElementById('sb-ctx-bus')) {
+    const s = document.createElement('script');
+    s.id = 'sb-ctx-bus';
+    s.src = 'core/sidebar-context.js?v=1';
+    s.defer = false;  // sync — لازم يحمّل قبل أي page-level setup
+    document.head.appendChild(s);
+  }
+  if (!document.getElementById('sb-ctx-css')) {
     const l = document.createElement('link');
-    l.id = 'sb-takeover-css';
+    l.id = 'sb-ctx-css';
     l.rel = 'stylesheet';
-    l.href = 'sidebar-takeover.css?v=2';
+    l.href = 'sidebar-context-drawer.css?v=1';
     document.head.appendChild(l);
   }
-  if (!document.getElementById('sb-takeover-js')) {
+  if (!document.getElementById('sb-ctx-drawer')) {
     const s = document.createElement('script');
-    s.id = 'sb-takeover-js';
-    s.src = 'sidebar-takeover.js?v=2';
+    s.id = 'sb-ctx-drawer';
+    s.src = 'sidebar-context-drawer.js?v=1';
     s.defer = true;
     document.head.appendChild(s);
   }
