@@ -40,18 +40,62 @@ export const CLIENTS_SHELL_HTML = `
   </div>
 
   <div class="content">
-    <!-- HERO STATS (المبيعات + الباقي) -->
-    <div class="hs-grid">
-      <div class="hs-card sales" onclick="window.showStatsDrawer('sales')">
-        <div class="hs-lbl">💰 المبيعات</div>
-        <div class="hs-val sales" id="s-sales">—</div>
-        <div class="hs-sub">اضغط للتفاصيل ›</div>
+    <!-- KPI STRIP — 6 operational metrics (Runtime-first redesign) -->
+    <div class="kpi-strip">
+      <div class="kpi-tile kpi-clients" onclick="window.showStatsDrawer?.('clients')">
+        <div class="kpi-body">
+          <div class="kpi-lbl">إجمالي العملاء</div>
+          <div class="kpi-val" id="kpi-total-clients">—</div>
+          <div class="kpi-sub" id="kpi-clients-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">👥</div>
       </div>
-      <div class="hs-card rem" onclick="window.showStatsDrawer('rem')">
-        <div class="hs-lbl">💳 باقي التحصيل</div>
-        <div class="hs-val rem" id="s-rem">—</div>
-        <div class="hs-sub">اضغط للتفاصيل ›</div>
+      <div class="kpi-tile kpi-active" onclick="setQuickFilter?.('active',document.querySelector('.f-chip[onclick*=active]'))">
+        <div class="kpi-body">
+          <div class="kpi-lbl">عملاء نشطون</div>
+          <div class="kpi-val" id="kpi-active-clients">—</div>
+          <div class="kpi-sub" id="kpi-active-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">💓</div>
       </div>
+      <div class="kpi-tile kpi-open" onclick="location.href='index.html'">
+        <div class="kpi-body">
+          <div class="kpi-lbl">الطلبات المفتوحة</div>
+          <div class="kpi-val" id="kpi-open-orders">—</div>
+          <div class="kpi-sub" id="kpi-open-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">📄</div>
+      </div>
+      <div class="kpi-tile kpi-sales" onclick="window.showStatsDrawer?.('sales')">
+        <div class="kpi-body">
+          <div class="kpi-lbl">قيمة المبيعات</div>
+          <div class="kpi-val" id="kpi-sales-amount">—</div>
+          <div class="kpi-sub" id="kpi-sales-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">💰</div>
+      </div>
+      <div class="kpi-tile kpi-execution">
+        <div class="kpi-body">
+          <div class="kpi-lbl">متوسط مدة التنفيذ</div>
+          <div class="kpi-val" id="kpi-avg-exec">— <span class="kpi-unit">يوم</span></div>
+          <div class="kpi-sub" id="kpi-exec-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">⏱</div>
+      </div>
+      <div class="kpi-tile kpi-late" onclick="location.href='index.html?filter=late'">
+        <div class="kpi-body">
+          <div class="kpi-lbl">طلبات متأخرة</div>
+          <div class="kpi-val" id="kpi-late-orders">—</div>
+          <div class="kpi-sub" id="kpi-late-delta"></div>
+        </div>
+        <div class="kpi-ico" aria-hidden="true">⚠️</div>
+      </div>
+    </div>
+
+    <!-- Legacy quick-totals (مخفية — البيانات اتنقلت للـ KPI strip فوق) -->
+    <div class="hs-grid hide" aria-hidden="true">
+      <div class="hs-card sales"><div class="hs-val" id="s-sales">—</div></div>
+      <div class="hs-card rem"><div class="hs-val" id="s-rem">—</div></div>
     </div>
 
     <!-- TIME PERIOD STRIP — اليوم · أمس · الأسبوع · الشهر · الشهر السابق -->

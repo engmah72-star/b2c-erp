@@ -624,9 +624,45 @@ function updateStats(){
   const stats=computeClientStats({
     clients, orders:allOrders, calcRem, ordersIndex:buildClientOrdersIndex(),
   });
+  // Legacy (hidden) — keep populated for any drawer/code still reading these IDs
   setText('s-sales',fn(stats.totals.sales)+' ج');
   setText('s-rem',fn(stats.totals.rem)+' ج');
   setText('sub',stats.totals.clientCount+' عميل');
+
+  // ── New runtime KPI strip ─────────────────────────────────────
+  const T=stats.totals;
+  // Compact money formatter: 2.45M / 350K / 1,247
+  const fmtMoney=(n)=>{
+    const v=Math.abs(parseFloat(n)||0);
+    if(v>=1e6) return (v/1e6).toFixed(2).replace(/\.0+$/,'')+'M';
+    if(v>=1e3) return (v/1e3).toFixed(0)+'K';
+    return fn(v);
+  };
+  const fmtInt=(n)=>fn(Math.round(parseFloat(n)||0));
+  setText('kpi-total-clients',fmtInt(T.clientCount));
+  setText('kpi-active-clients',fmtInt(T.activeClientCount));
+  setText('kpi-open-orders',fmtInt(T.openOrdersCount));
+  // قيمة المبيعات → نعرض الـ sales (المحصّل فعلياً) بنفس الـ ID القديم
+  const salesEl=document.getElementById('kpi-sales-amount');
+  if(salesEl) salesEl.innerHTML=fmtMoney(T.sales)+' <span class="kpi-unit">ج</span>';
+  // متوسط مدة التنفيذ
+  const execEl=document.getElementById('kpi-avg-exec');
+  if(execEl) execEl.innerHTML=(T.avgExecutionDays || '—')+' <span class="kpi-unit">يوم</span>';
+  setText('kpi-late-orders',fmtInt(T.lateOrdersCount));
+  // MoM delta على إجمالي العملاء (نفس الـ monthDelta المحسوبة)
+  const deltaEl=document.getElementById('kpi-clients-delta');
+  if(deltaEl){
+    const {pct,direction}=stats.monthDelta;
+    if(pct===null){ deltaEl.textContent=''; }
+    else{
+      const arrow=direction==='up'?'↗':'↘';
+      const sign=pct>=0?'+':'';
+      deltaEl.textContent=`${arrow} ${sign}${pct}% عن الشهر الماضي`;
+      deltaEl.className='kpi-sub '+(pct>=0?'kpi-delta-up':'kpi-delta-down');
+    }
+  }
+  // ──────────────────────────────────────────────────────────────
+
   const P=stats.periods;
   setText('tp-today-n',P.today.n);     setText('tp-today-r',fn(P.today.r)+' ج');
   setText('tp-yest-n',P.yesterday.n);  setText('tp-yest-r',fn(P.yesterday.r)+' ج');
