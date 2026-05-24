@@ -33,6 +33,19 @@ const NETWORK_FIRST_SUFFIXES = [
   '/orders.js',
   '/order-actions.js',
   '/client-actions.js',
+  // ── Clients page modules — frequently updated, must stay fresh ──
+  // (السبب: PR #821 fix كان stale-while-revalidate فضّل cache يخدم نسخة قديمة
+  //  حتى مع hard refresh. الـ modules دي بتتعدل كتير، فنطلب network-first.)
+  '/clients-render.js',
+  '/clients-data.js',
+  '/clients-modals.js',
+  '/clients-shell.js',
+  '/clients-upload.js',
+  '/clients-image-viewer.js',
+  '/clients-ai-search.js',
+  '/clients-constants.js',
+  '/clients-sidebar.js',
+  '/clients-bridge.js',
   '/shipping-actions.js',
   '/inbox-actions.js',
   '/employee-actions.js',
