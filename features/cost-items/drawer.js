@@ -443,11 +443,15 @@
     _drawer.querySelector('.cid-close')?.addEventListener('click', close);
 
     // suggestions
+    // PR-850: ضغط الـ chip بيـ auto-submit (نفس slogan الـ hint:
+    // "اضغط على بند لإضافة صف جديد بقيمه"). قبلاً كان بـ pre-fill بس
+    // و المستخدم لازم يضغط "+" تاني — مربك.
     _drawer.querySelectorAll('[data-action="apply-sugg"]').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', async () => {
         const sug = getSuggestions()[parseInt(el.dataset.i, 10)];
         if(!sug) return;
         applySuggestion(sug);
+        await submitDraft();
       });
     });
     _drawer.querySelector('[data-action="apply-all-sugg"]')?.addEventListener('click', () => {
