@@ -59,11 +59,17 @@ const RE_EG_PHONE = /^01[0125][0-9]{8}$/;
 
 function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
   const errors = [];
+  const p1 = (phone1 || '').trim();
+  const p2 = (phone2 || '').trim();
   if (!name || !name.trim()) errors.push('⚠️ اسم العميل مطلوب');
-  if (!phone1 || !phone1.trim()) errors.push('⚠️ الهاتف الأساسي مطلوب');
-  else if (!RE_EG_PHONE.test(phone1.trim())) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
-  if (phone2 && phone2.trim() && !RE_EG_PHONE.test(phone2.trim())) {
+  if (!p1) errors.push('⚠️ الهاتف الأساسي مطلوب');
+  else if (!RE_EG_PHONE.test(p1)) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
+  if (p2 && !RE_EG_PHONE.test(p2)) {
     errors.push('⚠️ رقم الهاتف الثاني غير صحيح');
+  }
+  // Self-duplicate: same number entered in both fields on same client
+  if (p1 && p2 && p1 === p2) {
+    errors.push('⚠️ الهاتف الأساسي والثاني لا يصح أن يكونا متطابقين');
   }
   if (email && email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
     errors.push('⚠️ البريد الإلكتروني غير صحيح');
@@ -94,16 +100,28 @@ async function _loadClient(db, clientId) {
   return { ...data, _id: clientId, _ref: snap.ref };
 }
 
-/** Phone-based dedup against Firestore. Returns first matching client or null. */
+/**
+ * Phone-based dedup against Firestore. Returns first matching client or null.
+ *
+ * Each candidate phone (p1, p2) is checked against BOTH phone1 and phone2
+ * columns — symmetric coverage. Inputs are trimmed defensively so a value
+ * like '010X ' (trailing space) still matches existing '010X' in storage.
+ */
 async function _findDuplicate(db, { phone1, phone2 = '', email = '', excludeId = '' }) {
+  const p1 = (phone1 || '').trim();
+  const p2 = (phone2 || '').trim();
+  const em = (email || '').toLowerCase().trim();
   const col = collection(db, 'clients');
   const queries = [];
-  if (phone1) queries.push(getDocs(query(col, where('phone1', '==', phone1), limit(2))));
-  if (phone2) {
-    queries.push(getDocs(query(col, where('phone1', '==', phone2), limit(2))));
-    queries.push(getDocs(query(col, where('phone2', '==', phone2), limit(2))));
+  if (p1) {
+    queries.push(getDocs(query(col, where('phone1', '==', p1), limit(2))));
+    queries.push(getDocs(query(col, where('phone2', '==', p1), limit(2))));
   }
-  if (email) queries.push(getDocs(query(col, where('email', '==', email.toLowerCase()), limit(2))));
+  if (p2) {
+    queries.push(getDocs(query(col, where('phone1', '==', p2), limit(2))));
+    queries.push(getDocs(query(col, where('phone2', '==', p2), limit(2))));
+  }
+  if (em) queries.push(getDocs(query(col, where('email', '==', em), limit(2))));
 
   const results = await Promise.all(queries);
   for (const snap of results) {
@@ -274,9 +292,16 @@ export const clientActions = {
         meta: { changedKeys: Object.keys(changes) },
       });
 
+      // Normalize phone/email on write so future dedup queries hit cleanly.
+      const normalized = { ...changes };
+      if (typeof normalized.phone1 === 'string') normalized.phone1 = normalized.phone1.trim();
+      if (typeof normalized.phone2 === 'string') normalized.phone2 = normalized.phone2.trim();
+      if (typeof normalized.email  === 'string') normalized.email  = normalized.email.toLowerCase().trim();
+      if (typeof normalized.name   === 'string') normalized.name   = normalized.name.trim();
+
       try {
         await updateDoc(current._ref, {
-          ...changes,
+          ...normalized,
           editHistory: [...(current.editHistory || []), editEntry],
           updatedAt: serverTimestamp(),
         });
