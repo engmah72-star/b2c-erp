@@ -277,20 +277,20 @@ export function getShippingKPIs(orders) {
 // renders with the canonical label. Direct lookup by canonical key works
 // for new data without normalization overhead.
 export const SHIP_STAGE_LABELS = {
-  '': { label: 'جديد', col: '#4e5672', ico: '🆕' },
-  ready: { label: 'جاهز للشحن', col: '#22d3ee', ico: '📦' },
+  '': { label: 'جديد', col: 'var(--dim-arch)', ico: '🆕' },
+  ready: { label: 'جاهز للشحن', col: 'var(--c-bright)', ico: '📦' },
   // Canonical (post-PR-1):
   shipped:          { label: 'تم الشحن',         col: '#ffaa00', ico: '🚚' },
   delivered:        { label: 'تم التسليم',       col: '#00d97e', ico: '✅' },
   under_collection: { label: 'تحت التحصيل',      col: '#a78bfa', ico: '⏳' },
   collected:        { label: 'مُحصَّل',           col: '#00d97e', ico: '💰' },
   returned_full:    { label: 'مرتجع كامل',       col: '#ff3d6e', ico: '↩️' },
-  returned_partial: { label: 'مرتجع جزئي',       col: '#f0a020', ico: '↪️' },
-  closed:           { label: 'مغلق',              col: '#4e5672', ico: '🗄️' },
+  returned_partial: { label: 'مرتجع جزئي',       col: 'var(--y-gold)', ico: '↪️' },
+  closed:           { label: 'مغلق',              col: 'var(--dim-arch)', ico: '🗄️' },
   // Legacy (kept as fallback so direct lookup still works on old data):
   wait_delivery:    { label: 'جاري التوصيل',     col: '#ffaa00', ico: '🚚' },
   wait_collection:  { label: 'بانتظار التحصيل',   col: '#a78bfa', ico: '🏠' },
-  completed:        { label: 'مكتمل',             col: '#4e5672', ico: '✓'  },
+  completed:        { label: 'مكتمل',             col: 'var(--dim-arch)', ico: '✓'  },
   returned:         { label: 'مرتجع',             col: '#ff3d6e', ico: '↩️' },
 };
 

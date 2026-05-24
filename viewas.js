@@ -91,7 +91,7 @@
     css.id = 'b2c-va-style';
     css.textContent = `
       #b2c-va-banner{position:fixed;top:0;left:0;right:0;z-index:99999;
-        background:linear-gradient(90deg,var(--r),var(--p),#22d3ee);
+        background:linear-gradient(90deg,var(--r),var(--p),var(--c-bright));
         color:#fff;padding:9px 16px;direction:rtl;
         font-family:'IBM Plex Sans Arabic',system-ui,sans-serif;font-size:var(--fs-md);
         font-weight:var(--fw-extra);display:flex;justify-content:space-between;align-items:center;
@@ -127,7 +127,7 @@
     b.id = 'b2c-va-banner';
     if (isDeep) {
       // Deep mode → different gradient + countdown
-      b.style.background = 'linear-gradient(90deg,var(--g),#22d3ee,#3b9eff)';
+      b.style.background = 'linear-gradient(90deg,var(--g),var(--c-bright),var(--b-bright))';
     }
     b.innerHTML = `
       <div class="va-msg">

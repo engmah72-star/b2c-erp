@@ -33,7 +33,7 @@ function ensureStyle(){
   const s=document.createElement('style');s.id=STYLE_ID;
   s.textContent=`
     #${FAB_ID}{position:fixed;bottom:22px;left:22px;z-index:9998;width:54px;height:54px;
-      border-radius:50%;background:linear-gradient(135deg,var(--b),#7c5cff);color:#fff;
+      border-radius:50%;background:linear-gradient(135deg,var(--b),var(--o-purple));color:#fff;
       font-size:24px;text-align:center;border:none;cursor:pointer;padding:0;
       box-shadow:0 4px 16px rgba(74,142,245,.42);
       transition:transform .15s ease,box-shadow .15s ease;

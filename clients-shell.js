@@ -66,7 +66,7 @@ export const CLIENTS_SHELL_HTML = `
         <div class="tp-num" id="tp-yest-n">—</div>
         <div class="tp-rev" id="tp-yest-r">— ج</div>
       </div>
-      <div class="tp-tile" data-period="week" style="--tpc:#7c5cff" onclick="setPeriodFilter('week',this)">
+      <div class="tp-tile" data-period="week" style="--tpc:var(--o-purple)" onclick="setPeriodFilter('week',this)">
         <div class="tp-lbl">🗓 الأسبوع</div>
         <div class="tp-num" id="tp-week-n">—</div>
         <div class="tp-rev" id="tp-week-r">— ج</div>
@@ -76,7 +76,7 @@ export const CLIENTS_SHELL_HTML = `
         <div class="tp-num" id="tp-month-n">—</div>
         <div class="tp-rev" id="tp-month-r">— ج</div>
       </div>
-      <div class="tp-tile" data-period="lastmonth" style="--tpc:#fbbf24" onclick="setPeriodFilter('lastmonth',this)">
+      <div class="tp-tile" data-period="lastmonth" style="--tpc:var(--y-amber)" onclick="setPeriodFilter('lastmonth',this)">
         <div class="tp-lbl">📆 الشهر السابق</div>
         <div class="tp-num" id="tp-lm-n">—</div>
         <div class="tp-rev" id="tp-lm-r">— ج</div>
@@ -88,25 +88,25 @@ export const CLIENTS_SHELL_HTML = `
     <div class="chip-row">
       <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);letter-spacing:.5px;margin-left:4px">عرض:</span>
       <button class="f-chip on" onclick="setQuickFilter('all',this)">
-        <span>👥</span><span>الكل</span><span id="qf-all-n" style="color:#a8b1cc"></span>
+        <span>👥</span><span>الكل</span><span id="qf-all-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('vip',this)">
-        <span>⭐</span><span>VIP</span><span id="qf-vip-n" style="color:#a8b1cc"></span>
+        <span>⭐</span><span>VIP</span><span id="qf-vip-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('active',this)">
-        <span style="color:var(--g)">●</span><span>نشط</span><span id="qf-active-n" style="color:#a8b1cc"></span>
+        <span style="color:var(--g)">●</span><span>نشط</span><span id="qf-active-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('rem',this)">
-        <span>💰</span><span>عليه فلوس</span><span id="qf-rem-n" style="color:#a8b1cc"></span>
+        <span>💰</span><span>عليه فلوس</span><span id="qf-rem-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('atrisk',this)">
-        <span>⚠️</span><span>محتاج اهتمام</span><span id="qf-risk-n" style="color:#a8b1cc"></span>
+        <span>⚠️</span><span>محتاج اهتمام</span><span id="qf-risk-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('new',this)">
-        <span>🌱</span><span>جديد</span><span id="qf-new-n" style="color:#a8b1cc"></span>
+        <span>🌱</span><span>جديد</span><span id="qf-new-n" style="color:var(--snow-soft)"></span>
       </button>
       <button class="f-chip" onclick="setQuickFilter('sleeping',this)">
-        <span>😴</span><span>نايم</span><span id="qf-sleep-n" style="color:#a8b1cc"></span>
+        <span>😴</span><span>نايم</span><span id="qf-sleep-n" style="color:var(--snow-soft)"></span>
       </button>
     </div>
 
