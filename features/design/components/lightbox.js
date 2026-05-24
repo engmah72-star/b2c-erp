@@ -33,7 +33,7 @@ const HTML = `
 </div>`;
 
 const CSS = `
-.dh-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:10000;padding:20px;backdrop-filter:blur(8px)}
+.dh-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:10000;padding:var(--space-xl);backdrop-filter:blur(8px)}
 .dh-lightbox.open{display:flex}
 .dh-lb-inner{position:relative;max-width:1200px;width:100%;max-height:90vh;display:flex;flex-direction:column;align-items:center;gap:14px}
 .dh-lb-img{max-width:100%;max-height:75vh;border-radius:8px;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,.5)}

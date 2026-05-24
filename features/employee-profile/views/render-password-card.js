@@ -59,7 +59,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
         <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
-        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;font-size:var(--fs-base);color:var(--y);line-height:1.7;margin-bottom:14px">
+        <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;font-size:var(--fs-base);color:var(--y);line-height:1.7;margin-bottom:14px">
           ⚠️ هذا الإجراء آخر حل لما تكون كلمة السر القديمة غير معروفة أو تعذّر تطبيقها.
           سيتم إنشاء حساب دخول جديد بنفس رقم الموبايل وكلمة سر تختارها.
           الموظف يدخل فوراً بـ <strong>${employeePhone}</strong> + كلمة السر الجديدة.

@@ -69,8 +69,8 @@ export function buildConvListHTML({
         <div style="font-size:42px;margin-bottom:10px;opacity:.5">💬</div>
         <strong style="color:var(--ws-text)">لا توجد محادثات بعد</strong><br>
         <span style="font-size:var(--fs-sm);color:var(--ws-text-dim)">role: ${currentRole || 'غير محدد'} · uid: ${(currentUid || '').slice(0, 6)}…</span><br>
-        <button onclick="retryEnsureChannels()" style="margin-top:12px;padding:8px 16px;border-radius:10px;border:1px solid var(--ws-border);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:var(--fw-bold)">🔄 إعادة الإعداد</button>
-        <button onclick="newDM()" style="margin-top:12px;margin-right:6px;padding:8px 16px;border-radius:10px;border:none;background:#00a884;color:#fff;cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:var(--fw-bold)">✏️ محادثة جديدة</button>
+        <button onclick="retryEnsureChannels()" style="margin-top:12px;padding:8px 16px;border-radius:var(--rad);border:1px solid var(--ws-border);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:var(--fw-bold)">🔄 إعادة الإعداد</button>
+        <button onclick="newDM()" style="margin-top:12px;margin-right:6px;padding:8px 16px;border-radius:var(--rad);border:none;background:#00a884;color:#fff;cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:var(--fw-bold)">✏️ محادثة جديدة</button>
         <div style="font-size:var(--fs-xs);margin-top:10px;color:var(--ws-text-dim);opacity:.7">افتح Console (F12) لتفاصيل التشخيص</div>
       </div>`;
     } else {

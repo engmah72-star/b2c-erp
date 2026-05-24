@@ -94,7 +94,7 @@
       + '.sidenav.sb-compact .nav-user-name,'
       + '.sidenav.sb-compact .nav-user-role{display:none;}'
       + '.sidenav.sb-compact .sb-flame{display:none;}'
-      + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:2px;}'
+      + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:var(--space-2xs);}'
       // Active link polish — no !important (let page styles take precedence if needed)
       + '.nav-link.active{background:linear-gradient(135deg,rgba(167,139,250,.16),rgba(74,142,245,.08));}'
       // Mobile compact toolbar (يوفر مساحة عمودية للعناصر)

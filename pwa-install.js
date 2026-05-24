@@ -51,7 +51,7 @@
     style.textContent = ''
       + '#pwa-install-banner{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(110%);'
       + 'z-index:9990;background:linear-gradient(135deg,#1e2536,#161b27);border:1px solid rgba(167,139,250,.35);'
-      + 'border-radius:16px;padding:14px 16px;color:#e8eaf0;font-family:IBM Plex Sans Arabic,Arial,sans-serif;'
+      + 'border-radius:var(--rad2);padding:14px 16px;color:#e8eaf0;font-family:IBM Plex Sans Arabic,Arial,sans-serif;'
       + 'direction:rtl;display:flex;align-items:center;gap:12px;max-width:92vw;width:380px;'
       + 'box-shadow:0 12px 32px rgba(0,0,0,.5),0 0 0 1px rgba(167,139,250,.1);'
       + 'transition:transform .4s cubic-bezier(.4,0,.2,1);}'

@@ -197,7 +197,7 @@ export const CLIENTS_SHELL_HTML = `
       </div>
 
       <!-- Filter Bar — Advanced (collapsible) -->
-      <div id="cg-adv-filters" class="cg-filter-bar" style="display:none;margin-bottom:10px;padding:8px;background:var(--row-hover);border-radius:8px;border:1px solid var(--line)">
+      <div id="cg-adv-filters" class="cg-filter-bar" style="display:none;margin-bottom:10px;padding:var(--space-sm);background:var(--row-hover);border-radius:8px;border:1px solid var(--line)">
         <select id="cg-f-emp" onchange="renderControlGrid()"><option value="">كل الموظفين</option></select>
         <select id="cg-f-gov" onchange="renderControlGrid()"><option value="">كل المحافظات</option></select>
         <select id="cg-f-prob" onchange="renderControlGrid()">

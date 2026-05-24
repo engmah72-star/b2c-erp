@@ -136,12 +136,12 @@ export function renderPanelHTML(o, ctx = {}) {
             ${mkBtn('pending', '↩ إعادة', '#647298')}
           </div>
         </div>`;
-      }).join('') : `<div style="font-size:var(--fs-md);padding:8px;background:var(--bg3);border-radius:var(--rad)">${o.product || '—'}</div>`}
+      }).join('') : `<div style="font-size:var(--fs-md);padding:var(--space-sm);background:var(--bg3);border-radius:var(--rad)">${o.product || '—'}</div>`}
       ${(() => {
         const hasReady = prods.some(p => (p.productStatus || 'pending') === 'ready');
         const hasNotReady = prods.some(p => { const s = p.productStatus || 'pending'; return s !== 'ready' && s !== 'printed' && s !== 'done'; });
         if (hasReady && hasNotReady) {
-          return `<button onclick="openSplitOrder()" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px dashed var(--p);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✂️ افصل المنتجات الجاهزة وأرسلها للطباعة</button>`;
+          return `<button onclick="openSplitOrder()" style="width:100%;margin-top:8px;padding:10px;border-radius:var(--rad);border:1px dashed var(--p);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✂️ افصل المنتجات الجاهزة وأرسلها للطباعة</button>`;
         }
         return '';
       })()}
@@ -158,7 +158,7 @@ export function renderPanelHTML(o, ctx = {}) {
           <div style="margin-bottom:10px">
             ${imgs.length > 1 ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px;font-weight:var(--fw-bold)">📦 ${img.name}</div>` : ''}
             <img src="${img.url}" loading="lazy" decoding="async" onclick="window.open('${img.url}','_blank')"
-              style="width:100%;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;max-height:220px;object-fit:contain;background:var(--bg3);display:block">
+              style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:220px;object-fit:contain;background:var(--bg3);display:block">
           </div>`).join('')}
       </div>`;
     })()}
@@ -176,9 +176,9 @@ export function renderPanelHTML(o, ctx = {}) {
           const isPdf = f.type === 'application/pdf' || f.url?.includes('.pdf') || f.name?.endsWith('.pdf');
           const isImg = !isPdf && (f.type?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(f.url || f.name || ''));
           const preview = isImg
-            ? `<div onclick="event.preventDefault();event.stopPropagation();window.openImageViewer&&window.openImageViewer(${i},${JSON.stringify(fileUrls).replace(/"/g, '&quot;')})" style="width:64px;height:64px;border-radius:10px;flex-shrink:0;background:var(--bg2) url('${f.url}') center/cover no-repeat;cursor:zoom-in;border:1px solid rgba(59,158,255,.2);position:relative;overflow:hidden"><span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.6);color:#fff;font-size:var(--fs-tiny);padding:1px 5px;border-radius:5px">🔍</span></div>`
-            : `<div style="width:64px;height:64px;border-radius:10px;flex-shrink:0;background:rgba(59,158,255,.08);display:flex;align-items:center;justify-content:center;font-size:var(--fs-4xl);border:1px solid rgba(59,158,255,.2)">${isPdf ? '📄' : '📎'}</div>`;
-          return `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(59,158,255,.05);border:1px solid rgba(59,158,255,.15);border-radius:12px;margin-bottom:8px">
+            ? `<div onclick="event.preventDefault();event.stopPropagation();window.openImageViewer&&window.openImageViewer(${i},${JSON.stringify(fileUrls).replace(/"/g, '&quot;')})" style="width:64px;height:64px;border-radius:var(--rad);flex-shrink:0;background:var(--bg2) url('${f.url}') center/cover no-repeat;cursor:zoom-in;border:1px solid rgba(59,158,255,.2);position:relative;overflow:hidden"><span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.6);color:#fff;font-size:var(--fs-tiny);padding:1px 5px;border-radius:5px">🔍</span></div>`
+            : `<div style="width:64px;height:64px;border-radius:var(--rad);flex-shrink:0;background:rgba(59,158,255,.08);display:flex;align-items:center;justify-content:center;font-size:var(--fs-4xl);border:1px solid rgba(59,158,255,.2)">${isPdf ? '📄' : '📎'}</div>`;
+          return `<div style="display:flex;align-items:center;gap:10px;padding:var(--space-sm);background:rgba(59,158,255,.05);border:1px solid rgba(59,158,255,.15);border-radius:12px;margin-bottom:8px">
             ${preview}
             <div style="flex:1;min-width:0">
               <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--snow);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:right">${f.name || 'ملف'}</div>

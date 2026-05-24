@@ -113,7 +113,7 @@
         .sidenav{top:60px !important;height:calc(100vh - 60px) !important}
       }
       .va-write-blocked-toast{position:fixed;bottom:24px;right:24px;z-index:99998;
-        background:var(--r);color:#fff;padding:12px 18px;border-radius:10px;
+        background:var(--r);color:#fff;padding:12px 18px;border-radius:var(--rad);
         font-family:inherit;font-weight:var(--fw-extra);font-size:var(--fs-md);
         box-shadow:0 8px 22px rgba(255,61,110,.4);animation:vaToast .25s ease-out;
         max-width:320px;direction:rtl}

@@ -39,11 +39,11 @@
     s.id = 'fg-styles';
     s.textContent = `
       #fg-overlay { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:99999;
-        display:none; align-items:center; justify-content:center; padding:20px;
+        display:none; align-items:center; justify-content:center; padding:var(--space-xl);
         font-family:Arial,sans-serif; direction:rtl; backdrop-filter:blur(4px); }
       #fg-overlay.show { display:flex; }
-      #fg-modal { background:#1a1d2e; border:2px solid var(--r); border-radius:16px;
-        max-width:560px; width:100%; padding:24px; box-shadow:0 20px 60px rgba(255,61,110,.3); }
+      #fg-modal { background:#1a1d2e; border:2px solid var(--r); border-radius:var(--rad2);
+        max-width:560px; width:100%; padding:var(--space-2xl); box-shadow:0 20px 60px rgba(255,61,110,.3); }
       #fg-modal h2 { color:var(--r); margin:0 0 14px; font-size:20px; display:flex; align-items:center; gap:10px; }
       #fg-modal .fg-warn { background:rgba(255,170,0,.12); border:1px solid rgba(255,170,0,.4);
         color:var(--y); padding:12px 14px; border-radius:8px; font-size:var(--fs-md); margin-bottom:14px; line-height:1.7; }
