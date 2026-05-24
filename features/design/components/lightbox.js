@@ -19,9 +19,9 @@ let _mounted = false;
 const HTML = `
 <div class="dh-lightbox" id="dh-lightbox" onclick="if(event.target===this)window._dhCloseLightbox()">
   <div class="dh-lb-inner">
-    <button class="dh-lb-close" onclick="window._dhCloseLightbox()" aria-label="إغلاق">×</button>
-    <button class="dh-lb-nav prev" onclick="window._dhNavLightbox(-1)" aria-label="السابق">‹</button>
-    <button class="dh-lb-nav next" onclick="window._dhNavLightbox(1)" aria-label="التالي">›</button>
+    <button type="button" class="dh-lb-close" onclick="window._dhCloseLightbox()" aria-label="إغلاق">×</button>
+    <button type="button" class="dh-lb-nav prev" onclick="window._dhNavLightbox(-1)" aria-label="السابق">‹</button>
+    <button type="button" class="dh-lb-nav next" onclick="window._dhNavLightbox(1)" aria-label="التالي">›</button>
     <img class="dh-lb-img" id="dh-lb-img" alt="">
     <div class="dh-lb-info">
       <div class="dh-lb-title" id="dh-lb-title"></div>

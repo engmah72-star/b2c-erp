@@ -136,7 +136,7 @@
         <span class="va-tag">${escHtml(va.role||'')}</span>
         ${isDeep ? `<span class="va-tag" id="va-countdown" style="background:rgba(255,255,255,.2);font-weight:var(--fw-extra)">⏱ —</span>` : `<span style="font-size:var(--fs-sm);opacity:.85">· الكتابة مُعطّلة</span>`}
       </div>
-      <button onclick="window.__b2cViewAs.clear()">✕ ${isDeep ? 'إنهاء وتسجيل دخول كأدمن' : 'خروج من المعاينة'}</button>
+      <button type="button" onclick="window.__b2cViewAs.clear()">✕ ${isDeep ? 'إنهاء وتسجيل دخول كأدمن' : 'خروج من المعاينة'}</button>
     `;
     if (document.body) document.body.prepend(b);
     else document.addEventListener('DOMContentLoaded', () => document.body.prepend(b));

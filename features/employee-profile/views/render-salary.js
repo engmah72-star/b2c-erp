@@ -72,12 +72,12 @@ export function buildSalariesHTML({
   if (curMonthPays.length === 0) {
     reminder = `<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:var(--fs-base);color:var(--y)">⚠️ لم يُصرف مرتب ${curMonthLabel} بعد</span>
-      <button class="btn btn-g btn-xs" onclick="openSalary()">صرف الآن</button>
+      <button type="button" class="btn btn-g btn-xs" onclick="openSalary()">صرف الآن</button>
     </div>`;
   } else if (remaining > 0) {
     reminder = `<div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:var(--fs-base);color:var(--b)">💸 مدفوع ${format(curMonthTotal)} ج · متبقي <strong>${format(remaining)} ج</strong></span>
-      <button class="btn btn-b btn-xs" onclick="openSalary()">＋ دفعة</button>
+      <button type="button" class="btn btn-b btn-xs" onclick="openSalary()">＋ دفعة</button>
     </div>`;
   } else {
     reminder = `<div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:8px 14px;margin-bottom:10px;font-size:var(--fs-base);color:var(--g);font-weight:var(--fw-bold)">✅ ${curMonthLabel} مكتمل — ${format(curMonthTotal)} ج</div>`;
@@ -85,10 +85,10 @@ export function buildSalariesHTML({
 
   // ── quick action buttons ───────────────────────────────────────
   const quickBtns = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-    <button class="btn btn-ghost btn-xs" onclick="openSalary(null,'salary')">💰 مرتب</button>
-    <button class="btn btn-ghost btn-xs" onclick="openSalary(null,'advance')">💸 سلفة</button>
-    <button class="btn btn-ghost btn-xs" onclick="openSalary(null,'bonus')">🎁 مكافأة</button>
-    <button class="btn btn-ghost btn-xs" style="color:var(--r);border-color:rgba(255,61,110,.3)" onclick="openSalary(null,'deduction')">⚠️ خصم</button>
+    <button type="button" class="btn btn-ghost btn-xs" onclick="openSalary(null,'salary')">💰 مرتب</button>
+    <button type="button" class="btn btn-ghost btn-xs" onclick="openSalary(null,'advance')">💸 سلفة</button>
+    <button type="button" class="btn btn-ghost btn-xs" onclick="openSalary(null,'bonus')">🎁 مكافأة</button>
+    <button type="button" class="btn btn-ghost btn-xs" style="color:var(--r);border-color:rgba(255,61,110,.3)" onclick="openSalary(null,'deduction')">⚠️ خصم</button>
   </div>`;
 
   if (!salaries.length) {
@@ -134,7 +134,7 @@ export function buildSalariesHTML({
           </div>
           <div style="display:flex;align-items:center;gap:var(--space-sm)">
             <span style="font-size:15px;font-weight:var(--fw-heavy);color:${isDeduct ? 'var(--r)' : 'var(--g)'}">${isDeduct ? '-' : ''}${format(amt)} ج</span>
-            <button onclick="deleteSalary('${escJs(s.txId || '')}','${escJs(s._id)}','${escJs(s.walletId || '')}',${amt},${!!isDeduct},'${escJs(s.employeeName || '')}','${escJs(s.walletName || '')}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:var(--fs-base);line-height:1">✕</button>
+            <button type="button" onclick="deleteSalary('${escJs(s.txId || '')}','${escJs(s._id)}','${escJs(s.walletId || '')}',${amt},${!!isDeduct},'${escJs(s.employeeName || '')}','${escJs(s.walletName || '')}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:var(--fs-base);line-height:1">✕</button>
           </div>
         </div>`;
       }).join('')}

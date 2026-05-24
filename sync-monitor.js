@@ -14,7 +14,7 @@
     `;
     syncBanner.innerHTML = `
       ⚠️ انقطع الاتصال — البيانات قد لا تكون محدّثة
-      <button onclick="location.reload()" style="margin-right:12px;padding:4px 12px;border:none;border-radius:6px;background:#fff;color:var(--r);cursor:pointer;font-weight:var(--fw-bold)">🔄 تحديث</button>
+      <button type="button" onclick="location.reload()" style="margin-right:12px;padding:4px 12px;border:none;border-radius:6px;background:#fff;color:var(--r);cursor:pointer;font-weight:var(--fw-bold)">🔄 تحديث</button>
     `;
     document.body.prepend(syncBanner);
   }

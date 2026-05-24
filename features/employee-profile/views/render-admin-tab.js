@@ -110,13 +110,13 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
         ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
       </div>
       <span class="pri-badge ${p.cls}">${p.lbl}</span>
-      ${!isDone ? `<button onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-2xs)">🗑</button>` : ''}
+      ${!isDone ? `<button type="button" onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-2xs)">🗑</button>` : ''}
     </div>`;
       }).join('')
     : `<div class="empty-cta">
     <div class="empty-icon">✅</div>
     <div class="empty-text">لا توجد مهام مسجّلة</div>
-    <button class="btn btn-b btn-sm" onclick="openAddTask()">＋ إضافة أول مهمة</button>
+    <button type="button" class="btn btn-b btn-sm" onclick="openAddTask()">＋ إضافة أول مهمة</button>
   </div>`;
 
   return {
@@ -155,7 +155,7 @@ export function buildIncidentsHTML({ incidents = [] }) {
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
       </div>
-      <button onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-xs)" title="حذف">🗑</button>
+      <button type="button" onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-xs)" title="حذف">🗑</button>
     </div>`;
   }).join('');
   return { html, count: incidents.length };

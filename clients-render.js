@@ -237,9 +237,9 @@ export function clientFollowupsHTML({
           ${f.nextActionDone ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:var(--fw-extra)">✅ تم</span>' : ''}
         </div>
         <div style="display:flex;gap:var(--space-xs);flex-shrink:0">
-          ${!f.nextActionDone && f.nextActionDate ? `<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="markFollowupDone('${f._id}')">✓ تم</button>` : ''}
-          <button class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="editFollowup('${f._id}')">✏️</button>
-          <button class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="deleteFollowup('${f._id}')">🗑</button>
+          ${!f.nextActionDone && f.nextActionDate ? `<button type="button" class="btn btn-g btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="markFollowupDone('${f._id}')">✓ تم</button>` : ''}
+          <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="editFollowup('${f._id}')">✏️</button>
+          <button type="button" class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="deleteFollowup('${f._id}')">🗑</button>
         </div>
       </div>
       ${f.note ? `<div style="font-size:var(--fs-base);color:var(--snow);line-height:1.6;white-space:pre-wrap">${escapeHtml(f.note)}</div>` : ''}
@@ -335,8 +335,8 @@ export function panelOrdersHTML({
       </div>
       <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;flex-wrap:wrap">
         <a href="waybill.html?id=${o._id}" target="_blank" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">🧾 البوليصة</a>
-        <button onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال</button>
-        <button onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات</button>
+        <button type="button" onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال</button>
+        <button type="button" onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات</button>
         ${['shipping', 'archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ مرتجع</a>` : ''}
         ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ له مرتجع</a>` : ''}
       </div>
@@ -369,8 +369,8 @@ export function bizCardTabHTML(client) {
       <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;line-height:var(--lh-base)">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
       <textarea id="bc-paste-area" placeholder="مثال: ايمن شوق المشد&#10;المستشار&#10;للمحاماة والاستشارات القانونية&#10;Ayman Shawky Al-Mashad&#10;Law Firm and Legal Consultations&#10;01022662220&#10;Aymanshawkylawfirm@gmail.com&#10;كمبوند فاليو 2 - القاهرة الجديدة" style="width:100%;background:var(--bg3);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:90px;resize:vertical"></textarea>
       <div style="display:flex;gap:6px;margin-top:8px">
-        <button class="btn btn-p btn-sm" onclick="window.bizCardSmartPaste()" style="flex:1">🧠 استخرج البيانات</button>
-        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bc-paste-area').value=''" title="مسح">✕</button>
+        <button type="button" class="btn btn-p btn-sm" onclick="window.bizCardSmartPaste()" style="flex:1">🧠 استخرج البيانات</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('bc-paste-area').value=''" title="مسح">✕</button>
       </div>
       <div id="bc-paste-result" style="font-size:var(--fs-xs);color:var(--g);margin-top:6px;min-height:14px"></div>
     </div>
@@ -480,9 +480,9 @@ export function bizCardTabHTML(client) {
 
     <!-- Actions -->
     <div style="display:flex;gap:6px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);position:sticky;bottom:0;background:var(--bg);padding-bottom:10px">
-      <button class="btn btn-g" onclick="window.saveBizCard()" style="flex:1">💾 حفظ</button>
-      <button class="btn btn-b" onclick="window.applyBizCardToNewOrder()">🚀 طبّق على أوردر جديد</button>
-      <button class="btn btn-ghost" onclick="window.exportBizCardText()" title="تصدير نص">📋</button>
+      <button type="button" class="btn btn-g" onclick="window.saveBizCard()" style="flex:1">💾 حفظ</button>
+      <button type="button" class="btn btn-b" onclick="window.applyBizCardToNewOrder()">🚀 طبّق على أوردر جديد</button>
+      <button type="button" class="btn btn-ghost" onclick="window.exportBizCardText()" title="تصدير نص">📋</button>
     </div>
     ${updatedTxt ? `<div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;margin-top:6px">آخر تحديث: ${updatedTxt}</div>` : ''}
   `;
@@ -829,7 +829,7 @@ export function clientPanelBodyHTML(ctx = {}) {
     <div id="ptab-pane-followups" class="hide">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2)">📞 سجل المتابعة</div>
-        <button class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
+        <button type="button" class="btn btn-b btn-sm" onclick="openFollowupModal('${id}')">＋ متابعة جديدة</button>
       </div>
       <div id="panel-followups-list">${renderClientFollowups(id)}</div>
     </div>
@@ -883,9 +883,9 @@ export function clientPanelBodyHTML(ctx = {}) {
         ${c.legacyNotes ? `<div style="margin-top:8px;padding:var(--space-sm);background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.legacyNotes}</div>` : ''}
       </div>` : ''}
       <div style="display:flex;gap:var(--space-sm);flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)">
-        <button class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
-        ${c.status === 'legacy' ? `<button class="btn btn-g btn-sm" onclick="window.convertToActive('${id}')">🟢 تحويل لنشط</button>` : ''}
-        <button class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
+        ${c.status === 'legacy' ? `<button type="button" class="btn btn-g btn-sm" onclick="window.convertToActive('${id}')">🟢 تحويل لنشط</button>` : ''}
+        <button type="button" class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
       </div>
     </div>`;
 }
@@ -938,9 +938,9 @@ export function segmentStripHTML({
         ${visible.map(s => {
           const st = SEG_STYLE[s] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
           const active = currentSeg === s;
-          return `<button onclick="filterBySegment('${active ? '' : s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active ? st.fg : st.fg + '40'};background:${active ? st.fg + '25' : st.bg};color:${st.fg};font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s] || s} <span style="background:${active ? 'var(--bg1)' : st.fg + '18'};padding:1px 6px;border-radius:var(--rad);margin-right:3px">${counts[s]}</span></button>`;
+          return `<button type="button" onclick="filterBySegment('${active ? '' : s}')" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active ? st.fg : st.fg + '40'};background:${active ? st.fg + '25' : st.bg};color:${st.fg};font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;transition:var(--trans)">${labels[s] || s} <span style="background:${active ? 'var(--bg1)' : st.fg + '18'};padding:1px 6px;border-radius:var(--rad);margin-right:3px">${counts[s]}</span></button>`;
         }).join('')}
-        ${currentSeg ? `<button onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>` : ''}
+        ${currentSeg ? `<button type="button" onclick="filterBySegment('')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✕ مسح الفلتر</button>` : ''}
       </div>
     </div>`;
 }
@@ -1091,11 +1091,11 @@ export function controlGridRowHTML(order, ctx = {}) {
     : `<td><span style="color:var(--g);font-weight:var(--fw-bold)">${fmtNum(paid)} ج</span></td>`;
   const editBtnCell = isEdit
     ? `<td style="text-align:center;white-space:nowrap">
-         <button class="cg-edit-btn saving" onclick="cgridSaveRowEdit('${o._id}')">✅ حفظ</button>
-         <button class="cg-cancel-btn" onclick="cgridCancelEdit('${o._id}')" style="margin-right:4px">✕</button>
+         <button type="button" class="cg-edit-btn saving" onclick="cgridSaveRowEdit('${o._id}')">✅ حفظ</button>
+         <button type="button" class="cg-cancel-btn" onclick="cgridCancelEdit('${o._id}')" style="margin-right:4px">✕</button>
        </td>`
     : `<td style="text-align:center">
-         <button class="cg-edit-btn" onclick="cgridStartEdit('${o._id}')">✏️ تعديل</button>
+         <button type="button" class="cg-edit-btn" onclick="cgridStartEdit('${o._id}')">✏️ تعديل</button>
        </td>`;
 
   return `<tr class="${isSel ? 'sel-row' : ''}${isEdit ? ' edit-mode' : ''}" data-id="${o._id}">
@@ -1122,14 +1122,14 @@ export function controlGridRowHTML(order, ctx = {}) {
       <td class="txt-meta-xs">${fmtDate(o.createdAt)}</td>
       <td class="txt-meta-xs">${fmtDate(o.updatedAt)}</td>
       <td>
-        <button onclick="cgridToggleProblem('${o._id}',${!isProb})" style="padding:2px 8px;border-radius:20px;border:none;cursor:pointer;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:${isProb ? 'rgba(255,61,110,.15)' : 'var(--hover)'};color:${isProb ? 'var(--r)' : 'var(--dim2)'}">
+        <button type="button" onclick="cgridToggleProblem('${o._id}',${!isProb})" style="padding:2px 8px;border-radius:20px;border:none;cursor:pointer;font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:${isProb ? 'rgba(255,61,110,.15)' : 'var(--hover)'};color:${isProb ? 'var(--r)' : 'var(--dim2)'}">
           ${isProb ? '⚠️ نعم' : 'لا'}
         </button>
       </td>
       <td style="text-align:center">${isRet ? '<span style="color:var(--r);font-size:var(--fs-sm)">↩️ نعم</span>' : '<span class="txt-meta-xs">لا</span>'}</td>
       ${editBtnCell}
       <td style="text-align:center">
-        <button onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer" title="حذف نهائي">🗑</button>
+        <button type="button" onclick="cgridDeleteOrder('${o._id}')" style="padding:3px 9px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer" title="حذف نهائي">🗑</button>
       </td>
     </tr>`;
 }
@@ -1171,7 +1171,7 @@ export function occasionsBannerHTML(clients = []) {
     <div style="background:linear-gradient(90deg,rgba(255,170,0,.08),rgba(167,139,250,.06));border:1px solid rgba(255,170,0,.25);border-radius:var(--rad2);padding:12px 14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:${today.length || soon.length ? '8' : '0'}px">
         <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--y)">${today.length ? `🎉 اليوم: ${today.length} مناسبة` : '📅 مناسبات قريبة'}${soon.length && today.length ? ` · ${soon.length} خلال 7 أيام` : soon.length ? `${soon.length} خلال 7 أيام` : ''}</div>
-        <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:var(--fs-lg);cursor:pointer">✕</button>
+        <button type="button" onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:var(--fs-lg);cursor:pointer">✕</button>
       </div>
       ${today.length ? `<div style="display:flex;flex-wrap:wrap;gap:var(--space-xs);margin-bottom:${soon.length ? '8' : '0'}px">${today.map(it => chip(it, true)).join('')}</div>` : ''}
       ${soon.length ? `<div style="display:flex;flex-wrap:wrap;gap:var(--space-xs)">${soon.map(it => chip(it, false)).join('')}</div>` : ''}
@@ -1447,7 +1447,7 @@ export function statsDrawerHTML({
 
     const tabs = `
       <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;-ms-overflow-style:none;scrollbar-width:none">
-        <button onclick="window.__remStageFilter='all';window.showStatsDrawer('rem')"
+        <button type="button" onclick="window.__remStageFilter='all';window.showStatsDrawer('rem')"
           style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${allActive ? 'var(--p)' : 'var(--line2)'};
                  background:${allActive ? 'rgba(167,139,250,.2)' : 'var(--row-hover)'};
                  color:${allActive ? 'var(--p)' : 'var(--snow-soft)'};
@@ -1457,7 +1457,7 @@ export function statsDrawerHTML({
         ${stageCfg.map(s => {
           const d = perStage[s.key];
           const isOn = activeStage === s.key;
-          return `<button onclick="window.__remStageFilter='${s.key}';window.showStatsDrawer('rem')"
+          return `<button type="button" onclick="window.__remStageFilter='${s.key}';window.showStatsDrawer('rem')"
             style="flex-shrink:0;padding:7px 13px;border-radius:20px;border:1px solid ${isOn ? s.col : 'var(--line2)'};
                    background:${isOn ? s.col + '30' : 'var(--row-hover)'};
                    color:${isOn ? s.col : 'var(--snow-soft)'};

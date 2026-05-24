@@ -152,7 +152,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
       ${skills.map(s => `<span class="skill-tag">🏷️ ${escAttr(s)}</span>`).join('')}
     </div>`;
   } else {
-    html += '<div style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:12px">لا توجد مهارات مُضافة بعد — <button class="btn btn-ghost btn-xs" onclick="openEditSkills()">أضف الآن</button></div>';
+    html += '<div style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:12px">لا توجد مهارات مُضافة بعد — <button type="button" class="btn btn-ghost btn-xs" onclick="openEditSkills()">أضف الآن</button></div>';
   }
   if (products.length) {
     const maxTotal = products[0].total || 1;

@@ -25,7 +25,7 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
   if (!activeConv) return '';
   return `
     <div class="ib-chat-hdr">
-      <button class="ib-chat-back" onclick="closeChat()">←</button>
+      <button type="button" class="ib-chat-back" onclick="closeChat()">←</button>
       <div class="ib-chat-hdr-info">
         <div class="ib-conv-avatar" style="background:${convColor(activeConv, ctx)};width:40px;height:40px;font-size:15px">${convIcon(activeConv, ctx)}</div>
         <div style="flex:1;min-width:0">
@@ -34,15 +34,15 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
         </div>
       </div>
       <div class="ib-chat-hdr-actions" style="position:relative">
-        <button class="ib-iconbtn" onclick="toggleConvSearch()" title="بحث في المحادثة">🔍</button>
-        <button class="ib-iconbtn" onclick="openAIPanel()" title="مساعد AI">🤖</button>
-        <button class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
-        <button class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
-        <button class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
+        <button type="button" class="ib-iconbtn" onclick="toggleConvSearch()" title="بحث في المحادثة">🔍</button>
+        <button type="button" class="ib-iconbtn" onclick="openAIPanel()" title="مساعد AI">🤖</button>
+        <button type="button" class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
+        <button type="button" class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
+        <button type="button" class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
         <div class="ib-chat-menu" id="chat-menu">
-          <button class="ib-cm-item" onclick="openPinnedList()">📌 الرسائل المثبتة</button>
-          <button class="ib-cm-item" onclick="clearChatForMe()">🧹 مسح المحادثة (لي فقط)</button>
-          <button class="ib-cm-item" onclick="openWallpaperPicker()">🎨 خلفية المحادثة</button>
+          <button type="button" class="ib-cm-item" onclick="openPinnedList()">📌 الرسائل المثبتة</button>
+          <button type="button" class="ib-cm-item" onclick="clearChatForMe()">🧹 مسح المحادثة (لي فقط)</button>
+          <button type="button" class="ib-cm-item" onclick="openWallpaperPicker()">🎨 خلفية المحادثة</button>
         </div>
       </div>
     </div>
@@ -58,10 +58,10 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
       <input type="text" id="csearch-input" placeholder="🔍 ابحث في الرسائل…" oninput="onConvSearch()" onkeydown="onConvSearchKey(event)">
       <div class="ib-csearch-nav">
         <span id="csearch-info">—</span>
-        <button onclick="convSearchNav(-1)" title="السابق">↑</button>
-        <button onclick="convSearchNav(1)" title="التالي">↓</button>
+        <button type="button" onclick="convSearchNav(-1)" title="السابق">↑</button>
+        <button type="button" onclick="convSearchNav(1)" title="التالي">↓</button>
       </div>
-      <button class="ib-csearch-close" onclick="toggleConvSearch()" title="إغلاق">✕</button>
+      <button type="button" class="ib-csearch-close" onclick="toggleConvSearch()" title="إغلاق">✕</button>
     </div>
     <div class="ib-msgs" id="ib-msgs"></div>
     <div class="ib-reply-strip" id="reply-strip">
@@ -69,18 +69,18 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
         <div class="ib-reply-name" id="reply-name"></div>
         <div class="ib-reply-text" id="reply-text"></div>
       </div>
-      <button class="ib-reply-close" onclick="cancelReply()">✕</button>
+      <button type="button" class="ib-reply-close" onclick="cancelReply()">✕</button>
     </div>
     <div class="ib-composer" id="composer">
-      <button class="ib-iconbtn" onclick="toggleEmoji()" title="إيموجي">😀</button>
-      <button class="ib-iconbtn" onclick="pickFile()" title="مرفق">📎</button>
-      <button class="ib-iconbtn" onclick="openOrderPicker()" title="إرسال أوردر">📦</button>
+      <button type="button" class="ib-iconbtn" onclick="toggleEmoji()" title="إيموجي">😀</button>
+      <button type="button" class="ib-iconbtn" onclick="pickFile()" title="مرفق">📎</button>
+      <button type="button" class="ib-iconbtn" onclick="openOrderPicker()" title="إرسال أوردر">📦</button>
       <div class="ib-input-wrap">
         <textarea class="ib-input" id="ib-input" rows="1" placeholder="اكتب رسالة…" oninput="onTyping(this)" onkeydown="onComposerKey(event)"></textarea>
       </div>
       <button class="ib-iconbtn" id="ib-mic" onmousedown="startVoice()" ontouchstart="startVoice()" onmouseup="stopVoice()" ontouchend="stopVoice()" title="رسالة صوتية">🎤</button>
-      <button class="ib-send hide" id="ib-send" onclick="sendText()">▶</button>
-      <div class="ib-emoji-panel" id="emoji-panel">${EMOJIS.map(e => `<button class="ib-emoji-btn" onclick="insertEmoji('${e}')">${e}</button>`).join('')}</div>
+      <button type="button" class="ib-send hide" id="ib-send" onclick="sendText()">▶</button>
+      <div class="ib-emoji-panel" id="emoji-panel">${EMOJIS.map(e => `<button type="button" class="ib-emoji-btn" onclick="insertEmoji('${e}')">${e}</button>`).join('')}</div>
       <div class="ib-mention-pop" id="mention-pop"></div>
     </div>`;
 }
@@ -141,7 +141,7 @@ export function buildMessagesHTML({ messages = [], activeConv, currentUid, rende
       const dur = v.duration || 0;
       const durStr = Math.floor(dur / 60) + ':' + String(Math.floor(dur % 60)).padStart(2, '0');
       body = `<div class="ib-voice-bubble">
-        <button class="ib-voice-play" onclick="toggleVoice(this,'${v.url}')">▶</button>
+        <button type="button" class="ib-voice-play" onclick="toggleVoice(this,'${v.url}')">▶</button>
         <div class="ib-voice-progress" onclick="event.stopPropagation()"><div class="ib-voice-progress-fill"></div></div>
         <div class="ib-voice-dur">${durStr}</div>
       </div>`;
@@ -163,7 +163,7 @@ export function buildMessagesHTML({ messages = [], activeConv, currentUid, rende
     const rxs = Object.entries(m.reactions || {}).filter(([_, arr]) => (arr || []).length > 0);
     const reactBlock = rxs.length ? `<div class="ib-reactions">${rxs.map(([emo, uids]) => {
       const mine = (uids || []).includes(currentUid);
-      return `<button class="ib-react-chip ${mine ? 'mine' : ''}" onclick="toggleReact('${m._id}','${emo}')">${emo}<span class="cnt">${uids.length}</span></button>`;
+      return `<button type="button" class="ib-react-chip ${mine ? 'mine' : ''}" onclick="toggleReact('${m._id}','${emo}')">${emo}<span class="cnt">${uids.length}</span></button>`;
     }).join('')}</div>` : '';
     const pinned = m.pinned ? 'pinned-msg' : '';
     html += `<div class="ib-msg ${isOut ? 'out' : 'in'} ${consec ? 'consec' : ''} ${pinned}" data-mid="${m._id}" onclick="onMsgClick(event,'${m._id}')">

@@ -558,7 +558,7 @@ export function emptyState(opts = {}) {
   const ctaHtml = cta
     ? (cta.href
         ? `<a class="empty-state-btn" href="${cta.href}">${cta.label}</a>`
-        : `<button class="empty-state-btn" onclick="${cta.onclick}">${cta.label}</button>`)
+        : `<button type="button" class="empty-state-btn" onclick="${cta.onclick}">${cta.label}</button>`)
     : '';
   return `
     <div class="empty-state">
