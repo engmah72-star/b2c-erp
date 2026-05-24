@@ -547,37 +547,66 @@ export function clientCardHTML(client, idx, ctx = {}) {
                      (c.createdAt?.seconds && (Date.now() / 1000 - c.createdAt.seconds) < 7 * 86400);
   const openReminders = countOpenReminders(c._id);
 
-  // Status pills
-  const pills = [];
-  if (openReminders > 0) pills.push(`<span class="cs-pill purple">⏰ ${openReminders} متابعة</span>`);
-  if (hasLate) pills.push(`<span class="cs-pill danger">⚠️ متأخر</span>`);
-  if (rem > 0) pills.push(`<span class="cs-pill danger">💰 ${fn(rem)} ج</span>`);
-  if (isVip && !hasLate && rem <= 0) pills.push(`<span class="cs-pill gold">⭐ VIP</span>`);
-  if (atRisk) pills.push(`<span class="cs-pill warning">⚠️ يحتاج اهتمام</span>`);
-  if (isInactive) pills.push(`<span class="cs-pill grey">😴 نايم ${daysSince}ي</span>`);
-  if (isNew && !isVip && !atRisk && !isInactive) pills.push(`<span class="cs-pill success">🌱 جديد</span>`);
-
-  // RFM segment chip
-  const seg = getSegment(c._id);
-  if (seg && seg.segment && seg.segment !== 'normal') {
-    const st = SEG_STYLE[seg.segment] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
-    const riskTxt = (seg.churnRisk >= 60) ? ` · ${seg.churnRisk}%` : '';
-    pills.push(`<span title="RFM: ${seg.rfmCode || ''} · ${seg.recencyDays}d منذ آخر طلب" style="font-size:10.5px;padding:4px 10px;border-radius:99px;background:${st.bg};color:${st.fg};font-weight:var(--fw-extra);border:1px solid ${st.fg}30">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}${riskTxt}</span>`);
+  // ── Priority resolution — pill واحد + لون border واحد بناءً على أعلى أولوية ──
+  // الترتيب: late → followups (open reminders) → remaining → at-risk → inactive → vip → new → segment → idle
+  let priority = 'idle';
+  let priorityPill = '';
+  if (hasLate) {
+    priority = 'late';
+    priorityPill = `<span class="cs-pill danger">⚠️ متأخر</span>`;
+  } else if (openReminders > 0) {
+    priority = 'reminders';
+    priorityPill = `<span class="cs-pill purple">⏰ ${openReminders} متابعة</span>`;
+  } else if (rem > 0) {
+    priority = 'rem';
+    priorityPill = `<span class="cs-pill warning">💰 ${fn(rem)} ج</span>`;
+  } else if (atRisk) {
+    priority = 'atrisk';
+    priorityPill = `<span class="cs-pill warning">⚠️ يحتاج اهتمام</span>`;
+  } else if (isInactive) {
+    priority = 'inactive';
+    priorityPill = `<span class="cs-pill grey">😴 نايم ${daysSince}ي</span>`;
+  } else if (isVip) {
+    priority = 'vip';
+    priorityPill = `<span class="cs-pill gold">⭐ VIP</span>`;
+  } else if (isNew) {
+    priority = 'new';
+    priorityPill = `<span class="cs-pill success">🌱 جديد</span>`;
   }
-  if (tags.length && pills.length === 0) pills.push(`<span class="cs-pill info">${TAG_LABELS[tags[0]] || tags[0]}</span>`);
 
-  // Customer Health Score
-  let health = { dot: 'green', txt: 'نشط جداً' };
-  if (hasLate || rem > 1000)                  health = { dot: 'red',    txt: 'يحتاج تدخل' };
-  else if (atRisk)                            health = { dot: 'yellow', txt: `آخر طلب قبل ${daysSince}ي` };
-  else if (isInactive)                        health = { dot: 'grey',   txt: `بدون نشاط ${daysSince}ي` };
-  else if (isVip)                             health = { dot: 'green',  txt: '⭐ من المميزين' };
-  else if (daysSince !== null && daysSince < 7) health = { dot: 'green',txt: 'تواصل حديث' };
-  else if (daysSince !== null)                health = { dot: 'green',  txt: `نشط · قبل ${daysSince}ي` };
-  else                                        health = { dot: 'grey',   txt: 'لا توجد طلبات' };
+  // RFM segment chip — sidecar (مش بديل، بيوضح فقط أبطال/مهدّدون/إلخ لو خرجوا من النمط أعلاه)
+  let segPill = '';
+  const seg = getSegment(c._id);
+  if (seg && seg.segment && seg.segment !== 'normal' && !['atrisk','inactive','rem','late'].includes(priority)) {
+    const st = SEG_STYLE[seg.segment] || SEG_STYLE.normal || { bg: 'var(--bg3)', fg: 'var(--dim2)' };
+    segPill = `<span title="RFM: ${seg.rfmCode || ''} · ${seg.recencyDays}d" style="font-size:10.5px;padding:4px 10px;border-radius:99px;background:${st.bg};color:${st.fg};font-weight:var(--fw-extra);border:1px solid ${st.fg}30">${seg.segmentIco || '•'} ${seg.segmentLabel || seg.segment}</span>`;
+  }
+  // Fallback: لو مفيش priority + مفيش segment، اظهر أول tag للسياق
+  if (!priorityPill && !segPill && tags.length) {
+    priorityPill = `<span class="cs-pill info">${TAG_LABELS[tags[0]] || tags[0]}</span>`;
+  }
+  const pills = [priorityPill, segPill].filter(Boolean);
+
+  // Priority border color (يحل محل --cc العشوائي + يلغي الحاجة لـ health dot منفصل)
+  const priorityColor = {
+    late:      '#ef4444',
+    reminders: '#a78bfa',
+    rem:       '#f59e0b',
+    atrisk:    '#f59e0b',
+    inactive:  '#6b7280',
+    vip:       '#fbbf24',
+    new:       '#10b981',
+    idle:      'transparent',
+  }[priority] || 'transparent';
+
+  // Last-activity text (سطر الـ footer بدل dot + text)
+  const lastActivityTxt =
+    daysSince === null ? 'لم يطلب بعد'
+    : daysSince === 0  ? 'آخر طلب: اليوم'
+    : `آخر طلب: منذ ${daysSince} ${daysSince === 1 ? 'يوم' : daysSince === 2 ? 'يومين' : 'أيام'}`;
 
   const avBg = `linear-gradient(135deg,${color},${color}99)`;
-  return `<div class="cc" style="--cc:${color}" onclick="openClient('${c._id}')">
+  return `<div class="cc cc-prio-${priority}" style="--cc:${priorityColor}" onclick="openClient('${c._id}')">
       <div style="display:flex;gap:11px;align-items:center;margin-bottom:${pills.length ? '10' : '12'}px">
         <div class="cc-av" style="background:${avBg}">${(c.name || '?')[0].toUpperCase()}</div>
         <div style="flex:1;min-width:0">
@@ -586,7 +615,7 @@ export function clientCardHTML(client, idx, ctx = {}) {
         </div>
         ${canSee('client_phone') && c.phone1 ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" onclick="event.stopPropagation()" class="wa-btn">💬</a>` : ''}
       </div>
-      ${pills.length ? `<div style="margin-bottom:10px;display:flex;gap:5px;flex-wrap:wrap">${pills.join('')}</div>` : ''}
+      ${pills.length ? `<div class="cc-pills">${pills.join('')}</div>` : ''}
       <div class="cc-mini">
         <div class="cc-mini-cell">
           <div class="cc-mini-ico" aria-hidden="true">📦</div>
@@ -604,11 +633,7 @@ export function clientCardHTML(client, idx, ctx = {}) {
           <div class="cc-mini-lbl">المتأخرة</div>
         </div>
       </div>
-      <div class="cc-foot">
-        <span class="cc-health-dot ${health.dot}"></span>
-        <span>${daysSince === null ? 'لم يطلب بعد' : daysSince === 0 ? 'آخر طلب: اليوم' : `آخر طلب: منذ ${daysSince} ${daysSince === 1 ? 'يوم' : daysSince === 2 ? 'يومين' : 'أيام'}`}</span>
-        ${canSee('price_remaining') && rem > 0 ? `<span class="cc-foot-rem">· باقي ${fn(rem)} ج</span>` : ''}
-      </div>
+      <div class="cc-foot">${lastActivityTxt}</div>
     </div>`;
 }
 
