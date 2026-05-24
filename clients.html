@@ -1665,21 +1665,23 @@ async function saveClient(){
 
   btn.disabled=true; btn.textContent='جاري...';
   try{
-    let r;
-    if(editId){
-      r=await window.clientActions.editClient({
-        clientId: editId,
-        changes: data,
-        userId: currentUser?.uid||'',
-        userName: userName||'',
-      });
-    } else {
-      r=await window.clientActions.addClient({
-        data,
-        userId: currentUser?.uid||'',
-        userName: userName||'',
-      });
-    }
+    // Safety net: 15s timeout ضد أي hang (نفس pattern PR #825 للـ followup)
+    const actionPromise = editId
+      ? window.clientActions.editClient({
+          clientId: editId,
+          changes: data,
+          userId: currentUser?.uid||'',
+          userName: userName||'',
+        })
+      : window.clientActions.addClient({
+          data,
+          userId: currentUser?.uid||'',
+          userName: userName||'',
+        });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(()=>reject(new Error('انتهت مهلة الحفظ (15ث) — تحقق من الإنترنت وأعد المحاولة')), 15000)
+    );
+    const r = await Promise.race([actionPromise, timeoutPromise]);
 
     if(!r.ok){
       // Dedup path — action returns { ok:false, duplicate:{...} }
