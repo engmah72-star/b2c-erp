@@ -53,7 +53,7 @@
       #fg-modal .fg-val { color:#fff; word-break:break-word; flex:1; }
       #fg-modal .fg-actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
       #fg-modal button { padding:11px 20px; border-radius:8px; border:none; cursor:pointer;
-        font-weight:700; font-size:var(--fs-lg); font-family:inherit; }
+        font-weight:var(--fw-bold); font-size:var(--fs-lg); font-family:inherit; }
       #fg-modal .fg-copy { background:rgba(59,158,255,.2); color:#3b9eff; border:1px solid rgba(59,158,255,.4); }
       #fg-modal .fg-close { background:rgba(255,61,110,.2); color:var(--r); border:1px solid rgba(255,61,110,.4); flex:1; }
       #fg-modal .fg-tech { background:#0a0c1a; border-radius:6px; padding:8px 10px; font-family:monospace;

@@ -97,13 +97,13 @@ export function buildGoalsHTML({ goal, actualOrders = 0, actualDone = 0, present
   return `<div style="background:var(--bg3);border-radius:var(--rad2);padding:14px">
     ${rows.map(r => `<div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;font-size:var(--fs-base)">
-        <span style="font-weight:700">${r.lbl}</span>
+        <span style="font-weight:var(--fw-bold)">${r.lbl}</span>
         <span style="color:var(--dim2)">${r.actual} <span style="opacity:.5">/ ${r.target}</span></span>
       </div>
       <div class="prod-bar-wrap">
         <div class="prod-bar-fill" style="width:${r.pct}%;background:${r.col}"></div>
       </div>
-      <div style="font-size:var(--fs-xs);color:${r.col};font-weight:700;margin-top:3px;text-align:left">${r.pct}%</div>
+      <div style="font-size:var(--fs-xs);color:${r.col};font-weight:var(--fw-bold);margin-top:3px;text-align:left">${r.pct}%</div>
     </div>`).join('')}
     ${goal.notes ? `<div style="font-size:var(--fs-sm);color:var(--dim2);border-top:1px solid var(--line);padding-top:8px;margin-top:4px">💬 ${escAttr(goal.notes)}</div>` : ''}
   </div>`;
@@ -129,9 +129,9 @@ export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {
         <circle cx="22" cy="22" r="18" fill="none" stroke="${col}" stroke-width="4"
           stroke-dasharray="${fill} ${circ}" stroke-linecap="round"/>
       </svg>
-      <div style="position:absolute;width:44px;text-align:center;font-size:var(--fs-sm);font-weight:900;color:${col};margin-right:0;line-height:44px">${score}</div>
+      <div style="position:absolute;width:44px;text-align:center;font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${col};margin-right:0;line-height:44px">${score}</div>
       <div style="flex:1">
-        <div style="font-size:var(--fs-md);font-weight:800">${lbl} <span style="font-size:var(--fs-sm);font-weight:500;color:${col}">— ${grade}</span></div>
+        <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${lbl} <span style="font-size:var(--fs-sm);font-weight:var(--fw-medium);color:${col}">— ${grade}</span></div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">
           حضور ${ev.attScore || 0}/35 · إنتاجية ${ev.prodScore || 0}/40 · جودة ${ev.qualScore || 0}/25
           ${ev.attDays !== undefined ? ` · ${ev.attDays} يوم حضور` : ''}
@@ -156,7 +156,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
   }
   if (products.length) {
     const maxTotal = products[0].total || 1;
-    html += `<div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">المنتجات حسب الأداء — إجمالي ${totalOrders} أوردر</div>`;
+    html += `<div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">المنتجات حسب الأداء — إجمالي ${totalOrders} أوردر</div>`;
     html += products.map(p => {
       const rateCol = p.rate >= 80 ? 'var(--g)' : p.rate >= 50 ? 'var(--y)' : 'var(--r)';
       const isTopSkill = skills.some(s =>
@@ -165,11 +165,11 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
       );
       return `<div style="margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
-          <span style="font-size:var(--fs-base);font-weight:700">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
+          <span style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
           <div style="display:flex;gap:12px;font-size:var(--fs-sm)">
             <span style="color:var(--dim2)">${p.total} أوردر</span>
-            <span style="font-weight:800;color:${rateCol}">${p.rate}%</span>
-            <span style="color:var(--g);font-weight:700">${format(p.revenue)} ج</span>
+            <span style="font-weight:var(--fw-extra);color:${rateCol}">${p.rate}%</span>
+            <span style="color:var(--g);font-weight:var(--fw-bold)">${format(p.revenue)} ج</span>
           </div>
         </div>
         <div class="prod-bar-wrap">
@@ -266,17 +266,17 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
 
   return `
   ${patterns.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
-    ${patterns.map(p => `<div style="background:var(--bg3);border-right:3px solid ${p.col};border-radius:var(--rad);padding:7px 12px;font-size:var(--fs-base);font-weight:700">${p.ico} ${p.txt}</div>`).join('')}
+    ${patterns.map(p => `<div style="background:var(--bg3);border-right:3px solid ${p.col};border-radius:var(--rad);padding:7px 12px;font-size:var(--fs-base);font-weight:var(--fw-bold)">${p.ico} ${p.txt}</div>`).join('')}
   </div>` : ''}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
     <div>
-      <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:10px">📅 توزيع الحضور بالأيام</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:10px">📅 توزيع الحضور بالأيام</div>
       <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
         ${dayCounts.map((c, i) => {
           const h = maxDay > 0 ? Math.max(4, Math.round(c / maxDay * 100)) : 4;
           const col = i === bestDayIdx ? 'var(--g)' : (i === 5 || i === 6 ? 'var(--bg3)' : 'var(--b)');
           return `<div class="day-bar">
-            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700">${c || ''}</div>
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${c || ''}</div>
             <div class="day-bar-inner" style="height:${h}%;background:${col}"></div>
             <div style="font-size:8px;color:var(--dim2)">${DAYS_AR[i].slice(0, 3)}</div>
           </div>`;
@@ -284,13 +284,13 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
       </div>
     </div>
     <div>
-      <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700;margin-bottom:10px">📊 إنتاج آخر 6 أشهر</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:10px">📊 إنتاج آخر 6 أشهر</div>
       <div style="display:flex;gap:4px;align-items:flex-end;height:70px">
         ${trend.map((t, i) => {
           const h = maxTrend > 0 ? Math.max(4, Math.round(t.cnt / maxTrend * 100)) : 4;
           const isNow = i === 5;
           return `<div class="day-bar">
-            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700">${t.cnt || ''}</div>
+            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${t.cnt || ''}</div>
             <div class="day-bar-inner" style="height:${h}%;background:${isNow ? 'var(--p)' : 'var(--b)'}"></div>
             <div style="font-size:8px;color:${isNow ? 'var(--p)' : 'var(--dim2)'};font-weight:${isNow ? '800' : '400'}">${t.lbl}</div>
           </div>`;
@@ -373,7 +373,7 @@ export function buildInsightsHTML({
   if (!insights.length) return '';
   return `<div style="display:flex;gap:8px;flex-wrap:wrap">${insights.map(i => `
     <div style="flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${i.col};border-radius:var(--rad2);padding:10px 14px">
-      <div style="font-size:var(--fs-md);font-weight:800;margin-bottom:3px">${i.ico} ${escAttr(i.title)}</div>
+      <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px">${i.ico} ${escAttr(i.title)}</div>
       <div style="font-size:var(--fs-sm);color:var(--dim2)">${escAttr(i.sub)}</div>
     </div>`).join('')}</div>`;
 }

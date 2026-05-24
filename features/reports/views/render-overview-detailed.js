@@ -256,7 +256,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <div class="kpi-box" title="إجمالي رصيد المحافظ الآن">
         <div class="kpi-val" style="color:var(--p)"><span data-counter="${cashOnHand}" data-suffix=" ج">${fn(cashOnHand)} ج</span></div>
         <div class="kpi-lbl">💼 الكاش في الخزينة</div>
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px;font-weight:700">${wallets.length} محفظة</div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px;font-weight:var(--fw-bold)">${wallets.length} محفظة</div>
       </div>
       <div onclick="openRevDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل الإيرادات">
         <div class="kpi-box clickable">
@@ -270,7 +270,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         <div class="kpi-box clickable">
           <div class="kpi-val" style="color:var(--y)"><span data-counter="${rem}" data-suffix=" ج">${fn(rem)} ج</span></div>
           <div class="kpi-lbl">⏳ باقي التحصيل</div>
-          ${remCritical>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-xs);font-weight:800"><span style="color:var(--r)">⚠️ <span data-counter="${remCritical}" data-suffix=" ج">${fn(remCritical)} ج</span></span><span style="color:var(--dim2)">بعد التصميم</span></div>`:''}
+          ${remCritical>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-xs);font-weight:var(--fw-extra)"><span style="color:var(--r)">⚠️ <span data-counter="${remCritical}" data-suffix=" ج">${fn(remCritical)} ج</span></span><span style="color:var(--dim2)">بعد التصميم</span></div>`:''}
         </div>
       </div>
       <div onclick="openExpenseDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل المصروفات">
@@ -305,10 +305,10 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         const safe=(c.name||'').replace(/'/g,"\\'");
         return`<div onclick="focusClient('${safe}');setTimeout(()=>switchTab('collection'),60)" style="display:flex;justify-content:space-between;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line);cursor:pointer" title="اضغط لعرض أوردراته">
           <div>
-            <div style="font-size:var(--fs-md);font-weight:800">${c.name}</div>
+            <div style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${c.name}</div>
             <div style="font-size:var(--fs-xs);color:var(--dim2)">${c.phone||'—'} · ${c.count} أوردر</div>
           </div>
-          <div style="font-size:15px;font-weight:900;color:var(--r);white-space:nowrap">${fn(c.rem)} ج</div>
+          <div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--r);white-space:nowrap">${fn(c.rem)} ج</div>
         </div>`;
       }).join('')}
     </div>`:''}
@@ -338,7 +338,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
           const cl=avg>=5?'var(--r)':avg>=3?'var(--y)':'var(--g)';
           return`<div class="compare-row">
             <span>${stageLabel[s]||s}${isWorst?' 🚦':''} <span style="color:var(--dim2);font-size:var(--fs-sm)">(${cnt} أوردر)</span></span>
-            <span style="color:${cl};font-weight:900">${avg.toFixed(1)} يوم</span>
+            <span style="color:${cl};font-weight:var(--fw-heavy)">${avg.toFixed(1)} يوم</span>
           </div>`;
         }).join('')||'<div style="text-align:center;padding:14px;color:var(--dim2);font-size:var(--fs-base)">مفيش بيانات كفاية</div>'}
       </div>
@@ -349,15 +349,15 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <!-- مقارنة تفصيلية -->
       <div class="chart-wrap">
         <div class="chart-title">📊 مقارنة بالفترة السابقة</div>
-        <div class="compare-row"><span>محصّل فعلاً</span><div style="display:flex;gap:12px"><span style="color:var(--g);font-weight:800">${fn(tot)} ج</span><span style="color:var(--dim2)">${fn(pTot)} ج</span></div></div>
-        <div class="compare-row"><span>قيمة الأوردرات</span><div style="display:flex;gap:12px"><span style="color:var(--b);font-weight:800">${fn(ordersTotal)} ج</span><span style="color:var(--dim2)">—</span></div></div>
-        <div class="compare-row"><span>المصروفات الفعلية</span><div style="display:flex;gap:12px"><span style="color:var(--r);font-weight:800">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
-        <div class="compare-row"><span>${profit>=0?'الربح':'الخسارة'}</span><div style="display:flex;gap:12px"><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:800">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span><span style="color:var(--dim2)">${pProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(pProfit))} ج</span></div></div>
+        <div class="compare-row"><span>محصّل فعلاً</span><div style="display:flex;gap:12px"><span style="color:var(--g);font-weight:var(--fw-extra)">${fn(tot)} ج</span><span style="color:var(--dim2)">${fn(pTot)} ج</span></div></div>
+        <div class="compare-row"><span>قيمة الأوردرات</span><div style="display:flex;gap:12px"><span style="color:var(--b);font-weight:var(--fw-extra)">${fn(ordersTotal)} ج</span><span style="color:var(--dim2)">—</span></div></div>
+        <div class="compare-row"><span>المصروفات الفعلية</span><div style="display:flex;gap:12px"><span style="color:var(--r);font-weight:var(--fw-extra)">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
+        <div class="compare-row"><span>${profit>=0?'الربح':'الخسارة'}</span><div style="display:flex;gap:12px"><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:var(--fw-extra)">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span><span style="color:var(--dim2)">${pProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(pProfit))} ج</span></div></div>
       </div>
 
       <!-- Heatmap: نشاط الأوردرات آخر 60 يوم -->
       <div class="chart-wrap">
-        <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>🗓️ نشاط الأوردرات — آخر 60 يوم</span><span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:700">من الأقدم → الأحدث</span></div>
+        <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>🗓️ نشاط الأوردرات — آخر 60 يوم</span><span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">من الأقدم → الأحدث</span></div>
         <div class="hm-grid">
           ${hm.map((v,i)=>{
             const d=new Date();d.setDate(d.getDate()-(hmDays-1-i));
@@ -384,11 +384,11 @@ export function renderOverviewDetailedView(f, prev, ctx) {
             const d=dailyByWallet[w._id];if(!d||(d.inSum===0&&d.outSum===0))return'';
             const net=d.inSum-d.outSum;
             return`<tr>
-              <td style="text-align:right;font-weight:800">${w.name}</td>
+              <td style="text-align:right;font-weight:var(--fw-extra)">${w.name}</td>
               ${d.inDays.map((v,i)=>{const o=d.outDays[i];const n=v-o;const cl=n>0?'var(--g)':n<0?'var(--r)':'var(--dim2)';return `<td style="color:${cl}">${n===0?'·':fn(n)}</td>`;}).join('')}
-              <td style="color:var(--g);font-weight:800">${fn(d.inSum)}</td>
-              <td style="color:var(--r);font-weight:800">${fn(d.outSum)}</td>
-              <td style="color:${net>=0?'var(--g)':'var(--r)'};font-weight:900">${fn(net)}</td>
+              <td style="color:var(--g);font-weight:var(--fw-extra)">${fn(d.inSum)}</td>
+              <td style="color:var(--r);font-weight:var(--fw-extra)">${fn(d.outSum)}</td>
+              <td style="color:${net>=0?'var(--g)':'var(--r)'};font-weight:var(--fw-heavy)">${fn(net)}</td>
             </tr>`;
           }).join('')||`<tr><td colspan="11" style="text-align:center;color:var(--dim2);padding:14px">لا توجد حركة في آخر 7 أيام</td></tr>`}
           </tbody>
@@ -398,7 +398,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
 
       <!-- Filter presets -->
       <div class="chart-wrap" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:800">⭐ اختصاراتي:</span>
+        <span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra)">⭐ اختصاراتي:</span>
         ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:4px"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span style="font-size:var(--fs-sm);color:var(--dim2)">مفيش اختصارات محفوظة بعد</span>'}
         <button class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)">💾 احفظ الحالة الحالية</button>
       </div>

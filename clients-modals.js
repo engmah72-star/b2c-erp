@@ -141,8 +141,8 @@ export const CLIENTS_MODALS_HTML = `
       <!-- ══ ملاحظات داخلية خاصة بالموظفين فقط ══ -->
       <div style="background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.18);border-radius:var(--rad);padding:12px;margin-bottom:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
-          <div style="font-size:var(--fs-sm);font-weight:800;color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
-          <span id="c-internal-meta" style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:700"></span>
+          <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--r);display:flex;align-items:center;gap:6px">🔒 ملاحظات داخلية — لا تظهر للعميل</div>
+          <span id="c-internal-meta" style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)"></span>
         </div>
         <textarea class="inp" id="c-internal-notes" placeholder="ملاحظات خاصة بالموظفين فقط&#10;مثال: العميل صعب الإرضاء — يحتاج صبر / يدفع متأخر / صديق المدير / يفضّل الاتصال صباحاً..." style="min-height:70px;background:rgba(255,61,110,.03)"></textarea>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px;line-height:1.6">💡 المعرفة هنا تنتقل بين الموظفين — لا تُعرض في بوابة العميل أو الرسائل التلقائية</div>
@@ -178,18 +178,18 @@ export const CLIENTS_MODALS_HTML = `
       <div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
         <div>
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:2px">العميل</div>
-          <div style="font-size:15px;font-weight:800" id="no-client-name">—</div>
+          <div style="font-size:15px;font-weight:var(--fw-extra)" id="no-client-name">—</div>
           <div style="font-size:var(--fs-sm);color:var(--dim2)" id="no-client-job"></div>
         </div>
         <div style="text-align:left">
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:2px">الهاتف</div>
-          <a id="no-client-phone-link" href="#" style="font-size:var(--fs-md);font-weight:700;color:var(--b);text-decoration:none">—</a>
+          <a id="no-client-phone-link" href="#" style="font-size:var(--fs-md);font-weight:var(--fw-bold);color:var(--b);text-decoration:none">—</a>
         </div>
       </div>
 
       <!-- نوع الأوردر -->
       <div style="margin-bottom:14px">
-        <div style="font-size:var(--fs-sm);font-weight:700;color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">نوع الأوردر *</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">نوع الأوردر *</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div class="type-card" id="tc-design" onclick="selectOrderType('design')">
             <div class="type-card-ico">✏️</div>
@@ -207,7 +207,7 @@ export const CLIENTS_MODALS_HTML = `
 
       <!-- المنتجات — نفس design.html -->
       <div class="fg">
-        <label>📦 المنتجات * <span style="color:var(--dim2);font-weight:400;font-size:var(--fs-sm)">(ممكن أكثر من منتج)</span></label>
+        <label>📦 المنتجات * <span style="color:var(--dim2);font-weight:var(--fw-normal);font-size:var(--fs-sm)">(ممكن أكثر من منتج)</span></label>
         <div id="no-prod-rows"></div>
         <button type="button" class="btn btn-ghost btn-xs" onclick="addNoProdRow()" style="margin-top:6px">＋ إضافة منتج</button>
       </div>
@@ -221,20 +221,20 @@ export const CLIENTS_MODALS_HTML = `
       <!-- المالية -->
       <div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:12px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div style="font-size:var(--fs-base);font-weight:700;color:var(--g)">💰 المالية</div>
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--g)">💰 المالية</div>
           <div style="font-size:var(--fs-xs);color:var(--dim2)">المقدم اختياري — يمكن تركه فارغاً</div>
         </div>
         <div class="fg" style="margin-bottom:10px">
-          <label>السعر الكلي (ج) <span id="no-sale-price-hint" style="font-size:var(--fs-xs);color:var(--dim2);font-weight:600"></span></label>
+          <label>السعر الكلي (ج) <span id="no-sale-price-hint" style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-semi)"></span></label>
           <input class="inp" id="no-sale-price" type="number" placeholder="0" value="0" oninput="calcNoRemaining()">
         </div>
         <div class="g2">
-          <div class="fg" style="margin:0"><label>العربون / المقدم (ج) <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:500">— اختياري</span></label><input class="inp" id="no-deposit" type="number" placeholder="0 — اتركه فارغاً لو بدون مقدم" value="0" oninput="calcNoRemaining()"></div>
-          <div class="fg" style="margin:0"><label>المحفظة <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:500">— لو يوجد مقدم</span></label><select class="inp" id="no-wallet"><option value="">— لا يلزم بدون مقدم —</option></select></div>
+          <div class="fg" style="margin:0"><label>العربون / المقدم (ج) <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-medium)">— اختياري</span></label><input class="inp" id="no-deposit" type="number" placeholder="0 — اتركه فارغاً لو بدون مقدم" value="0" oninput="calcNoRemaining()"></div>
+          <div class="fg" style="margin:0"><label>المحفظة <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-medium)">— لو يوجد مقدم</span></label><select class="inp" id="no-wallet"><option value="">— لا يلزم بدون مقدم —</option></select></div>
         </div>
         <div id="no-remaining-preview" style="display:flex;justify-content:space-between;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,.1);border-radius:8px;font-size:var(--fs-base);display:none">
           <span style="color:var(--dim2)">الباقي على العميل</span>
-          <span id="no-rem-val" style="font-weight:900;color:var(--r)">0 ج</span>
+          <span id="no-rem-val" style="font-weight:var(--fw-heavy);color:var(--r)">0 ج</span>
         </div>
       </div>
 
@@ -243,7 +243,7 @@ export const CLIENTS_MODALS_HTML = `
 
       <!-- ملفات التصميم -->
       <div style="border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-top:2px">
-        <div style="font-size:var(--fs-base);font-weight:700;color:var(--dim2);margin-bottom:10px">🖼️ ملفات التصميم (اختياري)</div>
+        <div style="font-size:var(--fs-base);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:10px">🖼️ ملفات التصميم (اختياري)</div>
         <div onclick="document.getElementById('no-design-img-inp').click()" style="border:2px dashed var(--line);border-radius:var(--rad);padding:12px;text-align:center;cursor:pointer;margin-bottom:8px;transition:border-color .2s;color:var(--dim2);font-size:var(--fs-md)" onmouseover="this.style.borderColor='var(--b)'" onmouseout="this.style.borderColor='var(--line)'">
           ＋ إضافة صور أو PDF
         </div>
@@ -261,7 +261,7 @@ export const CLIENTS_MODALS_HTML = `
         <div class="fg" style="margin:0">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
             <label style="font-size:var(--fs-sm)">📋 بيانات التصميم / ملاحظة</label>
-            <button type="button" id="bc-fill-btn" onclick="window.fillFromBizCard()" style="display:none;padding:4px 10px;border-radius:8px;border:1px solid rgba(168,85,247,.3);background:rgba(168,85,247,.1);color:#a855f7;font-size:var(--fs-xs);font-weight:800;cursor:pointer;font-family:inherit">📇 تعبئة من بطاقة العميل</button>
+            <button type="button" id="bc-fill-btn" onclick="window.fillFromBizCard()" style="display:none;padding:4px 10px;border-radius:8px;border:1px solid rgba(168,85,247,.3);background:rgba(168,85,247,.1);color:#a855f7;font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📇 تعبئة من بطاقة العميل</button>
           </div>
           <textarea class="inp" id="no-design-note" placeholder="وصف التصميم أو بيانات الكارت..." style="min-height:60px;resize:vertical;font-family:inherit"></textarea>
         </div>
@@ -280,8 +280,8 @@ export const CLIENTS_MODALS_HTML = `
     <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
       <span style="font-size:var(--fs-2xl)">🤖</span>
       <div style="flex:1">
-        <div style="font-size:var(--fs-lg);font-weight:800">تحليل ذكي بـ AI</div>
-        <div id="ai-subtitle" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:600">—</div>
+        <div style="font-size:var(--fs-lg);font-weight:var(--fw-extra)">تحليل ذكي بـ AI</div>
+        <div id="ai-subtitle" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-semi)">—</div>
       </div>
       <button class="modal-x" onclick="closeAiAnalysis()">✕</button>
     </div>
@@ -299,7 +299,7 @@ export const CLIENTS_MODALS_HTML = `
       <input type="hidden" id="fu-client-id">
       <input type="hidden" id="fu-id">
       <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:8px 12px;margin-bottom:14px;font-size:var(--fs-base);color:var(--dim2)">
-        👤 العميل: <span id="fu-client-name" style="color:var(--snow);font-weight:800">—</span>
+        👤 العميل: <span id="fu-client-name" style="color:var(--snow);font-weight:var(--fw-extra)">—</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
         <div class="fg"><label>نوع المتابعة *</label>
@@ -330,7 +330,7 @@ export const CLIENTS_MODALS_HTML = `
 
       <!-- ══ مراجعة المنتج ورأي العميل (اختياري) ══ -->
       <div style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:12px;margin-bottom:14px">
-        <div style="font-size:var(--fs-sm);font-weight:800;color:var(--y);margin-bottom:10px">⭐ مراجعة المنتج ورأي العميل (اختياري)</div>
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);margin-bottom:10px">⭐ مراجعة المنتج ورأي العميل (اختياري)</div>
         <div class="fg" style="margin-bottom:10px"><label>الأوردر / المنتج المُراجَع</label>
           <select class="inp" id="fu-order">
             <option value="">— لا يخص أوردر معيّن —</option>
@@ -344,7 +344,7 @@ export const CLIENTS_MODALS_HTML = `
             <span class="fu-star" data-val="3" onclick="setFuRating(3)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
             <span class="fu-star" data-val="4" onclick="setFuRating(4)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
             <span class="fu-star" data-val="5" onclick="setFuRating(5)" style="font-size:24px;cursor:pointer;color:var(--line2);transition:var(--trans)">★</span>
-            <span id="fu-rating-label" style="margin-right:auto;font-size:var(--fs-sm);color:var(--dim2);font-weight:700">— غير مُقيَّم —</span>
+            <span id="fu-rating-label" style="margin-right:auto;font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold)">— غير مُقيَّم —</span>
             <button type="button" onclick="setFuRating(0)" style="background:none;border:none;color:var(--dim2);font-size:var(--fs-sm);cursor:pointer;text-decoration:underline">مسح</button>
           </div>
           <input type="hidden" id="fu-rating" value="0">
@@ -378,7 +378,7 @@ export const CLIENTS_MODALS_HTML = `
     <div class="modal-body">
       <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:14px;margin-bottom:14px">
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">العميل الموجود</div>
-        <div style="font-size:var(--fs-2xl);font-weight:800" id="dup-name">—</div>
+        <div style="font-size:var(--fs-2xl);font-weight:var(--fw-extra)" id="dup-name">—</div>
         <div style="font-size:var(--fs-md);color:var(--b)" id="dup-phone">—</div>
         <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px" id="dup-orders">—</div>
       </div>

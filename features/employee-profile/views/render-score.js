@@ -22,10 +22,10 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
   const circ = Math.round(2 * Math.PI * 32);
   const fill = Math.round(score / 100 * circ);
   const lateInfo = breakdown.att.lateMins > 0
-    ? `<span style="color:var(--y);font-weight:700"> · تأخير ${breakdown.att.lateMins}د (-${breakdown.att.latePenalty})</span>`
+    ? `<span style="color:var(--y);font-weight:var(--fw-bold)"> · تأخير ${breakdown.att.lateMins}د (-${breakdown.att.latePenalty})</span>`
     : '';
   const incidentInfo = breakdown.qual.incidents > 0
-    ? `<span style="color:var(--r);font-weight:700"> · ${breakdown.qual.incidents} إخفاق</span>`
+    ? `<span style="color:var(--r);font-weight:var(--fw-bold)"> · ${breakdown.qual.incidents} إخفاق</span>`
     : '';
   const proratedNote = breakdown.prod.prorated
     ? `<span style="color:var(--dim2);font-size:var(--fs-tiny)">(متوقع لـ${meta.lastDay}/${meta.daysInMonth} يوم)</span>`
@@ -41,26 +41,26 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
     </div>
     <div style="flex:1">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-        <div style="font-size:var(--fs-xl);font-weight:900;color:${col}">${grade}</div>
-        <span style="font-size:var(--fs-xs);font-weight:800;color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:10px" title="مقارنة بالشهر السابق (${previous.score}/100)">${dLbl}</span>
+        <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${col}">${grade}</div>
+        <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:10px" title="مقارنة بالشهر السابق (${previous.score}/100)">${dLbl}</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:5px">
         <div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm)">
           <span style="width:60px;color:var(--dim2)">حضور</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.att.pct}%;background:var(--g)"></div></div>
-          <span style="font-weight:700;width:30px;text-align:left">${breakdown.att.score}/35</span>
+          <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.att.score}/35</span>
         </div>
         ${lateInfo ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${lateInfo}</div>` : ''}
         <div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm)">
           <span style="width:60px;color:var(--dim2)">إنتاجية</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.prod.pct}%;background:var(--b)"></div></div>
-          <span style="font-weight:700;width:30px;text-align:left">${breakdown.prod.score}/40</span>
+          <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.prod.score}/40</span>
         </div>
         ${proratedNote ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${proratedNote}</div>` : ''}
         <div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm)">
           <span style="width:60px;color:var(--dim2)">جودة</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.qual.pct}%;background:var(--p)"></div></div>
-          <span style="font-weight:700;width:30px;text-align:left">${breakdown.qual.score}/25</span>
+          <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.qual.score}/25</span>
         </div>
         ${incidentInfo ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${incidentInfo}</div>` : ''}
       </div>

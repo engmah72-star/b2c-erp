@@ -80,7 +80,7 @@ export function buildSalariesHTML({
       <button class="btn btn-b btn-xs" onclick="openSalary()">＋ دفعة</button>
     </div>`;
   } else {
-    reminder = `<div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:8px 14px;margin-bottom:10px;font-size:var(--fs-base);color:var(--g);font-weight:700">✅ ${curMonthLabel} مكتمل — ${format(curMonthTotal)} ج</div>`;
+    reminder = `<div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:8px 14px;margin-bottom:10px;font-size:var(--fs-base);color:var(--g);font-weight:var(--fw-bold)">✅ ${curMonthLabel} مكتمل — ${format(curMonthTotal)} ج</div>`;
   }
 
   // ── quick action buttons ───────────────────────────────────────
@@ -115,8 +115,8 @@ export function buildSalariesHTML({
       const lbl = (MONTHS[parseInt(mo) - 1] || mo) + ' ' + yr;
       return `<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;padding:0 2px">
-        <span style="font-size:var(--fs-base);font-weight:800;color:var(--dim2)">${lbl}</span>
-        <span style="font-size:var(--fs-md);font-weight:900;color:var(--g)">${format(total)} ج</span>
+        <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2)">${lbl}</span>
+        <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:var(--g)">${format(total)} ج</span>
       </div>
       ${pays.map(s => {
         const typeKey = s.salaryType || 'salary';
@@ -127,13 +127,13 @@ export function buildSalariesHTML({
         return `<div class="salary-row" style="padding:8px 12px;margin-bottom:4px">
           <div>
             <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:var(--fs-sm);font-weight:700;padding:2px 8px;border-radius:12px;background:${typeCol}18;color:${typeCol}">${typeLabel}</span>
+              <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${typeCol}18;color:${typeCol}">${typeLabel}</span>
               <span style="font-size:var(--fs-sm);color:var(--dim2)">${escAttr(s.walletName) || '—'}</span>
             </div>
             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${escAttr(s.note || s.date) || '—'}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:15px;font-weight:900;color:${isDeduct ? 'var(--r)' : 'var(--g)'}">${isDeduct ? '-' : ''}${format(amt)} ج</span>
+            <span style="font-size:15px;font-weight:var(--fw-heavy);color:${isDeduct ? 'var(--r)' : 'var(--g)'}">${isDeduct ? '-' : ''}${format(amt)} ج</span>
             <button onclick="deleteSalary('${escJs(s.txId || '')}','${escJs(s._id)}','${escJs(s.walletId || '')}',${amt},${!!isDeduct},'${escJs(s.employeeName || '')}','${escJs(s.walletName || '')}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(240,54,96,.3);background:rgba(240,54,96,.08);color:var(--r);cursor:pointer;font-size:var(--fs-base);line-height:1">✕</button>
           </div>
         </div>`;

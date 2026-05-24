@@ -223,7 +223,7 @@
             <div class="cid-meter-card is-good">
               <div>
                 <div class="cid-meter-k">تكلفة الوحدة</div>
-                <div class="cid-meter-v cid-good">${unit.toFixed(2)} <small style="font-size:var(--fs-2xs);font-weight:600;color:var(--ink-3)">ج/قطعة</small></div>
+                <div class="cid-meter-v cid-good">${unit.toFixed(2)} <small style="font-size:var(--fs-2xs);font-weight:var(--fw-semi);color:var(--ink-3)">ج/قطعة</small></div>
               </div>
               <div class="cid-meter-ic">💰</div>
             </div>

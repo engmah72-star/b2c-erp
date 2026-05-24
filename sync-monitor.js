@@ -9,12 +9,12 @@
     syncBanner.style.cssText = `
       position:fixed;top:0;left:0;right:0;z-index:9999;
       background:var(--r);color:#fff;text-align:center;
-      padding:10px;font-size:var(--fs-md);font-weight:700;
+      padding:10px;font-size:var(--fs-md);font-weight:var(--fw-bold);
       font-family:IBM Plex Sans Arabic,sans-serif;
     `;
     syncBanner.innerHTML = `
       ⚠️ انقطع الاتصال — البيانات قد لا تكون محدّثة
-      <button onclick="location.reload()" style="margin-right:12px;padding:4px 12px;border:none;border-radius:6px;background:#fff;color:var(--r);cursor:pointer;font-weight:700">🔄 تحديث</button>
+      <button onclick="location.reload()" style="margin-right:12px;padding:4px 12px;border:none;border-radius:6px;background:#fff;color:var(--r);cursor:pointer;font-weight:var(--fw-bold)">🔄 تحديث</button>
     `;
     document.body.prepend(syncBanner);
   }

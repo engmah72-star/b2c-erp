@@ -74,7 +74,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
   const liveHtml = liveOrders.length
     ? `<div style="background:rgba(124,92,255,.05);border:1px solid rgba(124,92,255,.2);border-radius:10px;padding:10px;margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:var(--fs-base);font-weight:800;color:var(--p)">🏃 الأوردرات الحية (${liveOrders.length})</div>
+      <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--p)">🏃 الأوردرات الحية (${liveOrders.length})</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px">
       ${liveOrders.slice(0, 12).map(o => {
@@ -84,10 +84,10 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
         const ageCol = ageH >= 48 ? 'var(--r)' : ageH >= 24 ? 'var(--y)' : 'var(--g)';
         const ageLbl = ageH < 1 ? 'الآن' : ageH < 24 ? ageH + 'س' : Math.round(ageH / 24) + ' يوم';
         return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${s.col};border-radius:8px;padding:8px 10px">
-          <div style="font-size:var(--fs-base);font-weight:700">${escAttr(o.clientName) || '—'}</div>
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${escAttr(o.clientName) || '—'}</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
-            <span style="font-size:var(--fs-xs);color:${s.col};font-weight:700">${s.ico} ${s.lbl}</span>
-            <span style="font-size:var(--fs-xs);color:${ageCol};font-weight:700">⏱ ${ageLbl}</span>
+            <span style="font-size:var(--fs-xs);color:${s.col};font-weight:var(--fw-bold)">${s.ico} ${s.lbl}</span>
+            <span style="font-size:var(--fs-xs);color:${ageCol};font-weight:var(--fw-bold)">⏱ ${ageLbl}</span>
           </div>
         </div>`;
       }).join('')}
@@ -105,7 +105,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
         return `<div class="task-item${isDone ? ' done-task' : ''}">
       <div class="task-check${isDone ? ' checked' : ''}" onclick="toggleTask('${escAttr(t._id)}','${escAttr(t.status)}')">${isDone ? '✓' : ''}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:var(--fs-md);font-weight:700;${isDone ? 'text-decoration:line-through' : ''}">${escAttr(t.title)}</div>
+        <div style="font-size:var(--fs-md);font-weight:var(--fw-bold);${isDone ? 'text-decoration:line-through' : ''}">${escAttr(t.title)}</div>
         ${t.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${escAttr(t.description)}</div>` : ''}
         ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
       </div>
@@ -148,8 +148,8 @@ export function buildIncidentsHTML({ incidents = [] }) {
       <span style="font-size:var(--fs-2xl);flex-shrink:0">${t.ico}</span>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
-          <span style="font-size:var(--fs-md);font-weight:800">${escAttr(i.title) || t.lbl}</span>
-          <span style="font-size:var(--fs-tiny);font-weight:800;padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.col}">${s.lbl}</span>
+          <span style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${escAttr(i.title) || t.lbl}</span>
+          <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.col}">${s.lbl}</span>
         </div>
         ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:1.5">${escAttr(i.description)}</div>` : ''}
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
@@ -198,26 +198,26 @@ export function buildClientsHTML({ orders = [], format = defaultFormat }) {
     const isTop = i === 0 && clients.length > 1;
     const isRepeat = c.orders.length > 1;
     return `<div style="display:flex;gap:12px;align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop ? 'box-shadow:0 2px 8px rgba(0,217,126,.12)' : ''}">
-      <div style="width:38px;height:38px;border-radius:50%;background:${isTop ? 'rgba(0,217,126,.15)' : 'var(--bg2)'};color:${isTop ? 'var(--g)' : 'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;flex-shrink:0">${(c.name || '?')[0].toUpperCase()}</div>
+      <div style="width:38px;height:38px;border-radius:50%;background:${isTop ? 'rgba(0,217,126,.15)' : 'var(--bg2)'};color:${isTop ? 'var(--g)' : 'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:var(--fw-heavy);flex-shrink:0">${(c.name || '?')[0].toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:var(--fs-md);font-weight:800;margin-bottom:3px;display:flex;gap:6px;align-items:center">
+        <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px;display:flex;gap:6px;align-items:center">
           ${escAttr(c.name)}
-          ${isTop ? '<span style="font-size:var(--fs-tiny);background:rgba(0,217,126,.15);color:var(--g);padding:1px 6px;border-radius:8px;font-weight:700">★ الأعلى</span>' : ''}
-          ${isRepeat ? '<span style="font-size:var(--fs-tiny);background:rgba(59,158,255,.12);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:700">↩ متكرر</span>' : ''}
+          ${isTop ? '<span style="font-size:var(--fs-tiny);background:rgba(0,217,126,.15);color:var(--g);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">★ الأعلى</span>' : ''}
+          ${isRepeat ? '<span style="font-size:var(--fs-tiny);background:rgba(59,158,255,.12);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">↩ متكرر</span>' : ''}
         </div>
         <div style="font-size:var(--fs-xs);color:var(--dim2)">${escAttr(c.phone) || '—'} · آخر أوردر: ${lastStr}</div>
       </div>
       <div style="display:flex;gap:14px;align-items:center;flex-shrink:0">
         <div style="text-align:center">
-          <div style="font-size:var(--fs-lg);font-weight:900">${c.orders.length}</div>
+          <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy)">${c.orders.length}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">أوردر</div>
         </div>
         <div style="text-align:center">
-          <div style="font-size:var(--fs-lg);font-weight:900;color:var(--g)">${format(c.revenue)}</div>
+          <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--g)">${format(c.revenue)}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">ج</div>
         </div>
         <div style="text-align:center">
-          <div style="font-size:var(--fs-lg);font-weight:900;color:${rateCol}">${rate}%</div>
+          <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:${rateCol}">${rate}%</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">مكتمل</div>
         </div>
         ${waHref ? `<a href="${waHref}" target="_blank" style="font-size:var(--fs-2xl);text-decoration:none;opacity:.8" onclick="event.stopPropagation()">💬</a>` : ''}
