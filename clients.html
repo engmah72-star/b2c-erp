@@ -1808,8 +1808,9 @@ window.openDupScan=function(){
           📞 ${escapeHtml(g.phone)} <span style="color:var(--dim2);font-weight:normal">— ${g.clients.length} عملاء</span>
         </div>
         ${g.clients.map((c,cIdx)=>`
-          <label style="padding:10px 12px;border-top:1px solid var(--line);cursor:pointer;display:flex;align-items:center;gap:10px" onmouseover="this.style.background='var(--row-hover)'" onmouseout="this.style.background=''">
-            <input type="radio" name="${groupName}" value="${escapeHtml(c._id)}" ${cIdx===0?'checked':''} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--g)">
+          <div class="dup-row" style="padding:10px 12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px">
+            <input type="radio" name="${groupName}" value="${escapeHtml(c._id)}" ${cIdx===0?'checked':''} title="خلّيه الأساسي" style="width:18px;height:18px;flex-shrink:0;accent-color:var(--g);cursor:pointer">
+            <input type="checkbox" class="dup-pick" data-cid="${escapeHtml(c._id)}" ${cIdx===0?'':'checked'} title="ضمّه للدمج" style="width:18px;height:18px;flex-shrink:0;accent-color:var(--b);cursor:pointer">
             <div style="flex:1;display:flex;flex-direction:column;gap:3px;min-width:0">
               <div style="font-weight:var(--fw-bold);font-size:var(--fs-md)">${escapeHtml(c.name||'(بدون اسم)')}</div>
               <div style="font-size:var(--fs-xs);color:var(--dim2)">
@@ -1819,12 +1820,12 @@ window.openDupScan=function(){
                 ${c.governorate?' · '+escapeHtml(c.governorate):''}
               </div>
             </div>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="event.preventDefault();event.stopPropagation();openClientFromDupScan('${escapeHtml(c._id)}')" style="flex-shrink:0">👤</button>
-          </label>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openClientFromDupScan('${escapeHtml(c._id)}')" style="flex-shrink:0">👤</button>
+          </div>
         `).join('')}
-        <div style="padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--bg2)">
-          <div style="flex:1;font-size:var(--fs-xs);color:var(--dim2);align-self:center">اختار العميل الأساسي ثم اضغط دمج — هينتقل كل الأوردرات/المدفوعات للأساسي و يتحذف الباقي</div>
-          <button type="button" class="btn btn-b btn-sm btn-merge" onclick="runMergeDuplicates(${gIdx})">🔀 ادمج</button>
+        <div style="padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--bg2);flex-wrap:wrap">
+          <div style="flex:1;font-size:var(--fs-xs);color:var(--dim2);align-self:center;min-width:160px">⚪ الأساسي · ☑️ يتدمج · ابدأ بـ 5-10 عميل في المرة الواحدة (المجموعات الكبيرة بتعدّى الـ batch limit)</div>
+          <button type="button" class="btn btn-b btn-sm btn-merge" onclick="runMergeDuplicates(${gIdx})">🔀 ادمج المحدّدين</button>
         </div>
       </div>`;
     }).join('');
@@ -1844,29 +1845,34 @@ window.runMergeDuplicates=async function(gIdx){
   const checked=groupEl.querySelector('input[type=radio]:checked');
   if(!checked){toast('⚠️ اختار العميل الأساسي','err');return;}
   const primaryId=checked.value;
-  const allInputs=[...groupEl.querySelectorAll('input[type=radio]')];
-  const duplicateIds=allInputs.map(i=>i.value).filter(id=>id!==primaryId);
-  if(!duplicateIds.length){toast('⚠️ لا يوجد عملاء للدمج','err');return;}
+  // Picked dups = checked checkboxes (excluding the primary if accidentally checked)
+  const pickedBoxes=[...groupEl.querySelectorAll('.dup-pick:checked')];
+  const duplicateIds=pickedBoxes.map(b=>b.dataset.cid).filter(id=>id&&id!==primaryId);
+  if(!duplicateIds.length){toast('⚠️ علّم عملاء بـ☑️ للدمج','err');return;}
 
   const primary=clients.find(c=>c._id===primaryId);
-  const dupNames=duplicateIds.map(id=>clients.find(c=>c._id===id)?.name||'(؟)').join(' · ');
-  if(!confirm(`دمج ${duplicateIds.length} عميل (${dupNames}) في "${primary?.name||primaryId}"؟\n\nسيتم نقل كل الأوردرات والمدفوعات والمتابعات للأساسي، ثم حذف المكررين (soft delete).`))return;
+  const dupNames=duplicateIds.slice(0,3).map(id=>clients.find(c=>c._id===id)?.name||'(؟)').join(' · ');
+  const more=duplicateIds.length>3?` +${duplicateIds.length-3} غيره`:'';
+  if(!confirm(`دمج ${duplicateIds.length} عميل (${dupNames}${more}) في "${primary?.name||primaryId}"؟\n\nسيتم نقل كل الأوردرات والمتابعات والتصاميم والمرتجعات للأساسي، ثم حذف المحدّدين (soft delete).\n\nملاحظة: لو batch تخطّى 400 عملية، هترفض ولازم تقسّم.`))return;
 
   if(!window.clientActions?.mergeDuplicates){
     toast('⚠️ النظام يحمّل — حاول بعد لحظات','err');return;
   }
   const btn=groupEl.querySelector('.btn-merge');
-  if(btn){btn.disabled=true;btn.textContent='جاري الدمج...';}
+  const origBtnText=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent=`جاري الدمج (${duplicateIds.length})...`;}
+  console.log('[runMergeDuplicates] starting', { primaryId, duplicateIds });
   try{
     const r=await window.clientActions.mergeDuplicates({
       primaryId, duplicateIds,
       userId: currentUser?.uid||'',
       userName: userName||'',
     });
+    console.log('[runMergeDuplicates] result', r);
     if(!r.ok){
       console.warn('[mergeDuplicates] failed', r);
       toast('❌ '+(r.errors?.[0]||'فشل الدمج'),'err');
-      if(btn){btn.disabled=false;btn.textContent='🔀 ادمج';}
+      if(btn){btn.disabled=false;btn.textContent=origBtnText||'🔀 ادمج المحدّدين';}
       return;
     }
     const mc=r.movedCounts||{};
@@ -1882,7 +1888,7 @@ window.runMergeDuplicates=async function(gIdx){
   }catch(e){
     console.warn('[mergeDuplicates] exception', e);
     toast('❌ '+(e?.message||'خطأ غير متوقع'),'err');
-    if(btn){btn.disabled=false;btn.textContent='🔀 ادمج';}
+    if(btn){btn.disabled=false;btn.textContent=origBtnText||'🔀 ادمج المحدّدين';}
   }
 };
 
