@@ -31,6 +31,23 @@
   try { localStorage.removeItem(LS_COMPACT); } catch(_) {}
   try { localStorage.removeItem(LS_HIDDEN); }  catch(_) {}
 
+  // ── Defensive cleanup: force-remove أي sb-hidden/sb-peek classes متعلقة في الـ
+  // DOM من قبل (لو الـ user كان عنده cached state من نسخة قديمة). الـ classes دي
+  // كانت بتخلي .main {margin-right:0} يفعّل فالـ sidebar كانت بتطفو فوق الـ content.
+  function clearStaleSidebarClasses() {
+    try {
+      document.documentElement.classList.remove('sb-hidden', 'sb-peek');
+      if (document.body) document.body.classList.remove('sb-hidden', 'sb-peek');
+      document.querySelectorAll('.sidenav.sb-hidden, .sidenav.sb-compact').forEach(el => {
+        el.classList.remove('sb-hidden', 'sb-compact');
+      });
+    } catch(_) {}
+  }
+  clearStaleSidebarClasses();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', clearStaleSidebarClasses);
+  }
+
   const getFavs   = () => { try { return JSON.parse(localStorage.getItem(LS_FAVORITES) || '[]'); } catch(_) { return []; } };
   const setFavs   = (a) => { try { localStorage.setItem(LS_FAVORITES, JSON.stringify(a)); } catch(_) {} };
   const getUsage  = () => { try { return JSON.parse(localStorage.getItem(LS_USAGE) || '{}'); } catch(_) { return {}; } };
@@ -395,11 +412,11 @@
     // 1) Toolbar — outside .nav-scroll so it survives innerHTML rebuilds
     buildToolbar(sidenav, navScroll);
 
-    // 1b) Floating reveal button on document.body (needed while sidebar hidden)
-    ensureShowButton(sidenav);
-
-    // 1c) Hover-peek — sidebar reveals as overlay when mouse hits right edge
-    setupHoverPeek(sidenav);
+    // 1b/1c) Floating ☰ + hover-peek مُعطَّلَيْن — الـ sidebar مش بتختفي خالص بعد
+    //  PR #819 (إزالة hide/compact toggles)، فالـ overlay machinery مش محتاجة و
+    //  بتخلق احتمال overlap (body.sb-peek يخلي main margin-right:0).
+    // ensureShowButton(sidenav);
+    // setupHoverPeek(sidenav);
 
     // 2) First enhancement
     enhanceLinks(navScroll);
