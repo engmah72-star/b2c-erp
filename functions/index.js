@@ -42,6 +42,28 @@ const CORS_ALLOWED = [
 ];
 const CALL_OPTS = { cors: CORS_ALLOWED };
 
+// ════════════════════════════════════════════════════════════
+// ROLE CONSTANTS (RULE C2 — Cloud Functions parity with client)
+// ────────────────────────────────────────────────────────────
+// Mirrors USER_ROLES from orders.js. Adding/renaming a role goes here.
+// The two helper predicates below cover the two role-gating patterns
+// used across all CF auth checks. Use these instead of inline
+// admin-or-ops array .includes() or === 'admin' comparisons.
+// ════════════════════════════════════════════════════════════
+const ROLES = Object.freeze({
+  ADMIN:            'admin',
+  OPS_MGR:          'operation_manager',
+  WALLET_MGR:       'wallet_manager',
+  CS:               'customer_service',
+  GRAPHIC_DESIGNER: 'graphic_designer',
+  DESIGN_OPERATOR:  'design_operator',
+  PRODUCTION_AGENT: 'production_agent',
+  SHIPPING_OFFICER: 'shipping_officer',
+});
+const ADMIN_OR_OPS = [ROLES.ADMIN, ROLES.OPS_MGR];
+const isAdminOrOps = (role) => ADMIN_OR_OPS.includes(role);
+const isStrictAdmin = (role) => role === ROLES.ADMIN;
+
 const WHATSAPP_TOKEN = defineSecret('WHATSAPP_TOKEN');
 const GITHUB_PAT     = defineSecret('GITHUB_PAT');
 
@@ -315,7 +337,7 @@ exports.sendWhatsAppTest = onCall(
     if (!req.auth) throw new HttpsError('unauthenticated', 'لازم تسجل دخول');
     const userSnap = await db.doc(`users/${req.auth.uid}`).get();
     const role = userSnap.exists ? userSnap.data().role : '';
-    if (!['admin', 'operation_manager'].includes(role)) {
+    if (!isAdminOrOps(role)) {
       throw new HttpsError('permission-denied', 'للأدمن فقط');
     }
     const { to, event } = req.data || {};
@@ -382,7 +404,7 @@ exports.adminResetEmployeePassword = onCall(CALL_OPTS, async (req) => {
     }
     const callerData = callerSnap.data() || {};
     const callerRole = callerData.role;
-    if (!['admin', 'operation_manager'].includes(callerRole)) {
+    if (!isAdminOrOps(callerRole)) {
       throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط — دورك: ' + (callerRole || '—'));
     }
 
@@ -446,7 +468,7 @@ exports.adminSetEmployeePassword = onCall(CALL_OPTS, async (req) => {
     if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
 
     const callerData = callerSnap.data() || {};
-    if (!['admin', 'operation_manager'].includes(callerData.role)) {
+    if (!isAdminOrOps(callerData.role)) {
       throw new HttpsError('permission-denied', 'هذه العملية للأدمن فقط');
     }
 
@@ -522,7 +544,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
     }
     const callerData = callerSnap.data() || {};
-    if (callerData.role !== 'admin') {
+    if (callerData.!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'الـ Deep View-As للأدمن فقط (دورك: ' + (callerData.role || '—') + ')');
     }
 
@@ -541,7 +563,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('not-found', 'الموظف غير موجود في users');
     }
     const targetData = targetSnap.data() || {};
-    if (targetData.role === 'admin') {
+    if (targetData.isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
     }
     try {
@@ -820,14 +842,14 @@ exports.onOrderStagePushedToClient = onDocumentUpdated('orders/{orderId}', async
 // Both end here; we de-dup by entity id in the notification doc.
 
 async function notifyAdminsOfPendingApproval({ entityType, entityId, title, body, link }) {
-  const tokens = await getRoleTokens(['admin', 'operation_manager']);
+  const tokens = await getRoleTokens(ADMIN_OR_OPS);
   await sendPush({
     tokens, title, body,
     data: { type: 'approval_pending', entityType, entityId },
     link,
   });
   // In-app for each admin/ops user
-  const usersSnap = await db.collection('users').where('role', 'in', ['admin', 'operation_manager']).get();
+  const usersSnap = await db.collection('users').where('role', 'in', ADMIN_OR_OPS).get();
   const wb = db.batch();
   usersSnap.docs.forEach(u => {
     const ref = db.collection('notifications').doc();
@@ -932,7 +954,7 @@ exports.onCriticalFinancialEntry = onDocumentCreated('financial_ledger/{entryId}
   };
   await db.collection('admin_alerts').add(alertDoc);
 
-  const tokens = await getRoleTokens(['admin', 'operation_manager']);
+  const tokens = await getRoleTokens(ADMIN_OR_OPS);
   const titleIco = severity === 'high' ? '🚨' : '⚠️';
   const title = `${titleIco} حركة مالية حرجة`;
   const body  = `${reasons.join(' · ')} — ${entry.eventType || ''}`;
@@ -1726,7 +1748,7 @@ exports.analyzeClientWithAI = onCall(
     const callerRole = callerSnap.data().role || '';
     const callerPerms = callerSnap.data().permissions || {};
     const pages = callerPerms.pages || [];
-    const isAdmin = ['admin', 'operation_manager'].includes(callerRole);
+    const isAdmin = isAdminOrOps(callerRole);
     const canView = isAdmin || pages.includes('clients') || pages.includes('*');
     if (!canView) throw new HttpsError('permission-denied', 'صلاحية قراءة العملاء مطلوبة');
 
@@ -1776,7 +1798,7 @@ exports.analyzeSuggestionWithAI = onCall(
     const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
     if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
     const callerRole = callerSnap.data().role || '';
-    const isAdmin = ['admin', 'operation_manager'].includes(callerRole);
+    const isAdmin = isAdminOrOps(callerRole);
     const isOwner = suggestion.submittedBy === req.auth.uid;
     if (!isAdmin && !isOwner) {
       throw new HttpsError('permission-denied', 'صلاحية مراجعة الاقتراح غير متاحة');
@@ -1948,7 +1970,7 @@ exports.scanReturnsSla = onSchedule(
       // إشعار لكل ops_manager + admins
       try {
         const opsSnap = await db.collection('users')
-          .where('role', 'in', ['admin', 'operation_manager'])
+          .where('role', 'in', ADMIN_OR_OPS)
           .get();
         const notifBatch = db.batch();
         for (const u of opsSnap.docs) {
@@ -2353,7 +2375,7 @@ exports.backfillTenantId = onCall(
     // تحقق من admin role من الـ users doc
     const userSnap = await db.collection('users').doc(request.auth.uid).get();
     const userRole = userSnap.exists ? userSnap.data().role : null;
-    if (userRole !== 'admin') throw new HttpsError('permission-denied', 'admin only');
+    if (!isStrictAdmin(userRole)) throw new HttpsError('permission-denied', 'admin only');
 
     const target = String(request.data?.collection || '');
     if (!BACKFILL_COLLECTIONS.includes(target)) {
@@ -2545,7 +2567,7 @@ exports.createSuggestionIssue = onCall(
     const callerSnap = await db.doc(`users/${req.auth.uid}`).get();
     if (!callerSnap.exists) throw new HttpsError('permission-denied', 'حساب غير مسجل');
     const callerRole = callerSnap.data().role || '';
-    if (!['admin', 'operation_manager'].includes(callerRole)) {
+    if (!isAdminOrOps(callerRole)) {
       throw new HttpsError('permission-denied', 'صلاحية الأدمن فقط');
     }
 
@@ -2780,7 +2802,7 @@ async function enforcePortalRateLimit(collectionName, doc, e) {
 
   // إرسال push للـ admin
   try {
-    const tokens = await getRoleTokens(['admin', 'operation_manager']);
+    const tokens = await getRoleTokens(ADMIN_OR_OPS);
     await sendPush({
       tokens,
       title: '🚨 محاولة إغراق من client portal',
@@ -2889,7 +2911,7 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
 
   const callerSnap = await db.collection('users').doc(req.auth.uid).get();
-  if (!callerSnap.exists || callerSnap.data().role !== 'admin') {
+  if (!callerSnap.exists || callerSnap.data().!isStrictAdmin(role)) {
     throw new HttpsError('permission-denied', 'admin only');
   }
 
@@ -3140,7 +3162,7 @@ exports.migrateLegacyShipStages = onCall(
     // Admin only
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
 
@@ -3334,7 +3356,7 @@ exports.runProjectionDriftScan = onCall(
   async (req) => {
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
     // إعادة استخدام نفس logic (نقل لـ helper لاحقاً)
