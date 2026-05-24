@@ -16,8 +16,8 @@ const total = o => parseFloat(o.totalPrice) || parseFloat(o.price) || 0;
 
 export const SEVERITY = {
   high:   { label: 'عالٍ',   color: '#f87171', ico: '🔴' },
-  medium: { label: 'متوسط', color: '#fbbf24', ico: '🟡' },
-  low:    { label: 'منخفض', color: '#10b981', ico: '🟢' },
+  medium: { label: 'متوسط', color: 'var(--y-amber)', ico: '🟡' },
+  low:    { label: 'منخفض', color: 'var(--g-emerald)', ico: '🟢' },
   info:   { label: 'معلومة', color: '#4f8ef7', ico: 'ℹ️' },
 };
 

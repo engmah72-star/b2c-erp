@@ -77,7 +77,7 @@ export function renderPanelHTML(o, ctx = {}) {
       ${stageProgressBar(o)}
       <a href="order-tracking.html?id=${o._id}" class="chip-track">📋 تتبع كامل للأوردر</a>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-        <button onclick="shareOrderToInbox('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:#00c87a;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال لموظف</button>
+        <button onclick="shareOrderToInbox('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال لموظف</button>
         <button onclick="openOrderCommentsFromHere('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات الأوردر</button>
       </div>
     </div>
@@ -131,8 +131,8 @@ export function renderPanelHTML(o, ctx = {}) {
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${mkBtn('in_progress', '✏️ جاري', '#4a8ef5')}
-            ${mkBtn('ready', '✅ جاهز للطباعة', '#00c87a')}
-            ${mkBtn('on_hold', '⏸ مؤجَّل', '#f0a020')}
+            ${mkBtn('ready', '✅ جاهز للطباعة', 'var(--g-mint)')}
+            ${mkBtn('on_hold', '⏸ مؤجَّل', 'var(--y-gold)')}
             ${mkBtn('pending', '↩ إعادة', '#647298')}
           </div>
         </div>`;

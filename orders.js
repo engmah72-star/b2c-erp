@@ -28,9 +28,9 @@ export const STAGES = {
   design:     { label:'تصميم', ico:'✏️', col:'#a78bfa', next:'printing',   prev:null,         page:'design.html'     },
   printing:   { label:'طباعة', ico:'🖨️', col:'#ffaa00', next:'production', prev:'design',     page:'print.html'      },
   production: { label:'تنفيذ', ico:'🏭', col:'#ff3d6e', next:'shipping',   prev:'printing',   page:'production.html' },
-  shipping:   { label:'شحن',   ico:'🚚', col:'#22d3ee', next:'archived',   prev:'production', page:'shipping.html'   },
-  archived:   { label:'أرشيف', ico:'📁', col:'#4e5672', next:null,         prev:'shipping',   page:'archive.html'    },
-  cancelled:  { label:'ملغي',  ico:'✕',  col:'#4e5672', next:null,         prev:null,         page:'archive.html'    },
+  shipping:   { label:'شحن',   ico:'🚚', col:'var(--c-bright)', next:'archived',   prev:'production', page:'shipping.html'   },
+  archived:   { label:'أرشيف', ico:'📁', col:'var(--dim-arch)', next:null,         prev:'shipping',   page:'archive.html'    },
+  cancelled:  { label:'ملغي',  ico:'✕',  col:'var(--dim-arch)', next:null,         prev:null,         page:'archive.html'    },
 };
 
 // من له صلاحية تقديم الأوردر **من** هذه المرحلة للتالية
@@ -289,10 +289,10 @@ export function isValidConstant(enumObj, value) {
 export const PRODUCT_STATUS = {
   pending:     { label:'في الانتظار',     ico:'⏳', col:'#647298', sort:0 },
   in_progress: { label:'جاري التصميم',    ico:'✏️', col:'#4a8ef5', sort:1 },
-  ready:       { label:'جاهز للطباعة',    ico:'✅', col:'#00c87a', sort:2 },
+  ready:       { label:'جاهز للطباعة',    ico:'✅', col:'var(--g-mint)', sort:2 },
   printed:     { label:'مطبوع',            ico:'🖨️', col:'#a78bfa', sort:3 },
-  done:        { label:'منتهي',            ico:'✓',  col:'#00c87a', sort:4 },
-  on_hold:     { label:'مؤجَّل',           ico:'⏸',  col:'#f0a020', sort:-1 },
+  done:        { label:'منتهي',            ico:'✓',  col:'var(--g-mint)', sort:4 },
+  on_hold:     { label:'مؤجَّل',           ico:'⏸',  col:'var(--y-gold)', sort:-1 },
 };
 
 /** badge HTML لحالة المنتج */
@@ -590,12 +590,12 @@ function parseArDate(str) {
 // ══════════════════════════════════════════
 export const ROLES = {
   admin:            { label:'Admin',             ico:'👑', col:'#a78bfa' },
-  operation_manager:{ label:'Ops Manager',       ico:'📋', col:'#3b9eff' },
-  customer_service: { label:'Cust. Service',     ico:'💬', col:'#22d3ee' },
+  operation_manager:{ label:'Ops Manager',       ico:'📋', col:'var(--b-bright)' },
+  customer_service: { label:'Cust. Service',     ico:'💬', col:'var(--c-bright)' },
   graphic_designer: { label:'Designer',          ico:'✏️', col:'#a78bfa' },
   design_operator:  { label:'Design Supervisor', ico:'⚙️', col:'#ffaa00' },
   production_agent: { label:'Production',        ico:'🏭', col:'#ff3d6e' },
-  shipping_officer: { label:'Shipping',          ico:'🚚', col:'#22d3ee' },
+  shipping_officer: { label:'Shipping',          ico:'🚚', col:'var(--c-bright)' },
   wallet_manager:   { label:'Wallet Mgr',        ico:'💰', col:'#00d97e' },
 };
 

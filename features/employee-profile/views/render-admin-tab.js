@@ -42,8 +42,8 @@ const LIVE_STAGE_MAP = {
   design_approved: { ico: '✅',  lbl: 'اعتمد',   col: 'var(--p)' },
   production:      { ico: '🏭',  lbl: 'تنفيذ',  col: 'var(--r)' },
   printing:        { ico: '🖨️', lbl: 'طباعة',  col: 'var(--y)' },
-  ready:           { ico: '📦',  lbl: 'جاهز',    col: '#3b9eff' },
-  shipped:         { ico: '🚚',  lbl: 'شحن',    col: '#22d3ee' },
+  ready:           { ico: '📦',  lbl: 'جاهز',    col: 'var(--b-bright)' },
+  shipped:         { ico: '🚚',  lbl: 'شحن',    col: 'var(--c-bright)' },
 };
 
 const defaultFormat = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');

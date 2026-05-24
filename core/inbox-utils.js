@@ -41,7 +41,7 @@ export function initAvatar(name) {
 }
 
 /** Lookup role color, fallback to default. */
-export function colorOfRole(role, roleColorMap = {}, fallback = '#4e5672') {
+export function colorOfRole(role, roleColorMap = {}, fallback = 'var(--dim-arch)') {
   return roleColorMap[role] || fallback;
 }
 
@@ -74,14 +74,14 @@ export function convIcon(conv, { currentUid, allUsers = [] } = {}) {
 
 /** Role-based color for a conversation (DMs reflect other-user role). */
 export function convColor(conv, { currentUid, allUsers = [], roleColorMap = {} } = {}) {
-  if (!conv) return '#4e5672';
-  if (conv.type === 'channel') return '#3b9eff';
+  if (!conv) return 'var(--dim-arch)';
+  if (conv.type === 'channel') return 'var(--b-bright)';
   if (conv.type === 'dm') {
     const otherUid = (conv.participants || []).find(p => p !== currentUid);
     const u = allUsers.find(x => x._id === otherUid);
     return colorOfRole(u?.role, roleColorMap);
   }
-  return '#4e5672';
+  return 'var(--dim-arch)';
 }
 
 /**

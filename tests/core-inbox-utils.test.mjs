@@ -55,7 +55,7 @@ test('initAvatar: first letter uppercase', () => {
 
 test('colorOfRole: lookup + fallback', () => {
   assertEq(colorOfRole('admin', { admin: '#f00' }), '#f00');
-  assertEq(colorOfRole('unknown', { admin: '#f00' }), '#4e5672');
+  assertEq(colorOfRole('unknown', { admin: '#f00' }), 'var(--dim-arch)');
 });
 
 // ── Conversation helpers ────────────────────────────────────────────
@@ -83,7 +83,7 @@ test('convIcon: DM returns initial of other user', () => {
 });
 
 test('convColor: channel returns blue', () => {
-  assertEq(convColor({ type: 'channel' }), '#3b9eff');
+  assertEq(convColor({ type: 'channel' }), 'var(--b-bright)');
 });
 test('convColor: DM returns role color', () => {
   const conv = { type: 'dm', participants: ['me', 'other'] };

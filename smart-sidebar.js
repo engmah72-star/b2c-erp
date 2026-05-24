@@ -64,7 +64,7 @@
       + '.nav-link{position:relative;}'
       + '.nav-link:hover .sb-star{opacity:.65;}'
       + '.sb-star:hover{opacity:1!important;background:rgba(167,139,250,.18);color:#fff;}'
-      + '.sb-star.on{opacity:1;color:#fbbf24;}'
+      + '.sb-star.on{opacity:1;color:var(--y-amber);}'
       // Usage flame badge
       + '.sb-flame{margin-inline-start:6px;font-size:var(--fs-xs);opacity:.85;}'
       // Search-hidden
@@ -74,7 +74,7 @@
       + 'text-align:center;font-style:italic;}'
       // Favorites section
       + '.sb-favs-section{padding:4px 0 6px;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:4px;}'
-      + '.nav-group.sb-favs-label{color:#fbbf24!important;opacity:.85;}'
+      + '.nav-group.sb-favs-label{color:var(--y-amber)!important;opacity:.85;}'
       // Collapsible groups
       + '.nav-group{cursor:pointer;user-select:none;}'
       + '.nav-group:hover{opacity:.75;}'
