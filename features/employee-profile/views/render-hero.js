@@ -119,25 +119,25 @@ export function buildQuickActionsHTML({ employee, allowEmailReset = false }) {
        <a href="https://wa.me/2${escAttr(e.phone.replace(/^0/, ''))}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`
     : '';
   const emailReset = allowEmailReset
-    ? `<button onclick="closeQAMenu();sendEmpResetEmail()" style="color:var(--b)">✉️ إرسال رابط بالبريد</button>`
+    ? `<button type="button" onclick="closeQAMenu();sendEmpResetEmail()" style="color:var(--b)">✉️ إرسال رابط بالبريد</button>`
     : '';
   return `
     <!-- Quick actions bar -->
     <div class="quick-actions">
-      <button class="btn btn-g btn-sm qa" onclick="openSalary()" title="صرف مرتب (s)">💰 صرف مرتب</button>
-      <button class="btn btn-b btn-sm qa" onclick="openAddTask()" title="إضافة مهمة (t)">＋ مهمة</button>
-      <button class="btn btn-ghost btn-sm qa" onclick="recordAttendanceToday()">✓ حضور اليوم</button>
-      <button class="btn btn-ghost btn-sm qa" onclick="openEditSalary()" title="تعديل بيانات (e)">✏️ تعديل</button>
-      <button class="btn btn-ghost btn-sm qa" style="flex:0 0 auto;font-size:var(--fs-lg);min-width:42px" onclick="event.stopPropagation();toggleQAMenu()" aria-label="مزيد">⋯</button>
+      <button type="button" class="btn btn-g btn-sm qa" onclick="openSalary()" title="صرف مرتب (s)">💰 صرف مرتب</button>
+      <button type="button" class="btn btn-b btn-sm qa" onclick="openAddTask()" title="إضافة مهمة (t)">＋ مهمة</button>
+      <button type="button" class="btn btn-ghost btn-sm qa" onclick="recordAttendanceToday()">✓ حضور اليوم</button>
+      <button type="button" class="btn btn-ghost btn-sm qa" onclick="openEditSalary()" title="تعديل بيانات (e)">✏️ تعديل</button>
+      <button type="button" class="btn btn-ghost btn-sm qa" style="flex:0 0 auto;font-size:var(--fs-lg);min-width:42px" onclick="event.stopPropagation();toggleQAMenu()" aria-label="مزيد">⋯</button>
       <div class="act-menu" id="qa-menu" onclick="event.stopPropagation()">
-        <button onclick="closeQAMenu();openAddLeave()">🏖️ إضافة إجازة</button>
-        <button onclick="closeQAMenu();openEditSchedule()">🕐 تعديل جدول العمل</button>
-        <button onclick="closeQAMenu();openEditSkills()">🏷️ تعديل المهارات</button>
+        <button type="button" onclick="closeQAMenu();openAddLeave()">🏖️ إضافة إجازة</button>
+        <button type="button" onclick="closeQAMenu();openEditSchedule()">🕐 تعديل جدول العمل</button>
+        <button type="button" onclick="closeQAMenu();openEditSkills()">🏷️ تعديل المهارات</button>
         ${phoneItems}
         <div class="act-sep"></div>
-        <button onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين فوري</button>
+        <button type="button" onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين فوري</button>
         ${emailReset}
-        <button onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
+        <button type="button" onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
       </div>
     </div>`;
 }
@@ -163,6 +163,6 @@ export function buildCompactHeroHTML({ employee, roleMeta, score }) {
       <div class="av" style="background:${r.col}18;color:${r.col}">${firstChar}</div>
       <div class="nm">${escAttr(e.name) || '—'} <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-semi)">· ${r.label}</span></div>
       <div class="sc" style="background:${sCol}1f;color:${sCol}">${sScore}</div>
-      <button class="btn btn-g btn-xs" onclick="openSalary()" style="font-size:var(--fs-sm)">💰</button>
+      <button type="button" class="btn btn-g btn-xs" onclick="openSalary()" style="font-size:var(--fs-sm)">💰</button>
     </div>`;
 }

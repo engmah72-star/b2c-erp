@@ -464,7 +464,7 @@ export function renderTopbar(title, subtitle, actions = '') {
   if (!el) return;
   el.innerHTML = `
     <div class="topbar-left">
-      <button class="mob-menu-btn" onclick="toggleMobMenu()">☰</button>
+      <button type="button" class="mob-menu-btn" onclick="toggleMobMenu()">☰</button>
       <div>
         <h1>${title}</h1>
         ${subtitle ? `<p>${subtitle}</p>` : ''}

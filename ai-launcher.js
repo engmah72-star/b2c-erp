@@ -217,7 +217,7 @@ import { collection, getDocs, getDoc, doc, query, where, limit } from "https://w
         <div id="ai-head">
           <span class="dot"></span>
           <span>اسأل AI</span>
-          <button class="x" onclick="window.b2cAI.close()">✕</button>
+          <button type="button" class="x" onclick="window.b2cAI.close()">✕</button>
         </div>
         <div id="ai-msgs"></div>
         <div id="ai-hints"></div>

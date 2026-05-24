@@ -21,12 +21,12 @@ const VIEWER_HTML = `
     <span id="iv-counter" style="color:#fff;font-size:var(--fs-md);font-weight:var(--fw-extra);background:rgba(0,0,0,.4);padding:8px 14px;border-radius:99px">1 / 1</span>
     <div class="row-gap-sm">
       <a id="iv-download" href="#" target="_blank" title="فتح في تبويب جديد" style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--fs-2xl);text-decoration:none;backdrop-filter:blur(10px)">↗</a>
-      <button onclick="window.closeImageViewer()" title="إغلاق" style="width:42px;height:42px;border-radius:50%;background:rgba(255,61,110,.2);border:1px solid rgba(255,61,110,.4);color:#fff;font-size:var(--fs-2xl);cursor:pointer;backdrop-filter:blur(10px)">✕</button>
+      <button type="button" onclick="window.closeImageViewer()" title="إغلاق" style="width:42px;height:42px;border-radius:50%;background:rgba(255,61,110,.2);border:1px solid rgba(255,61,110,.4);color:#fff;font-size:var(--fs-2xl);cursor:pointer;backdrop-filter:blur(10px)">✕</button>
     </div>
   </div>
-  <img id="iv-img" src="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:92vw;max-height:82vh;border-radius:12px;box-shadow:0 20px 80px rgba(0,0,0,.6);user-select:none;-webkit-user-drag:none">
-  <button id="iv-prev" onclick="window.imgViewerNav(-1)" style="position:absolute;top:50%;right:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">›</button>
-  <button id="iv-next" onclick="window.imgViewerNav(1)" style="position:absolute;top:50%;left:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">‹</button>
+  <img id="iv-img" src="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:92vw;max-height:82vh;border-radius:12px;box-shadow:0 20px 80px rgba(0,0,0,.6);user-select:none;-webkit-user-drag:none" alt="">
+  <button type="button" id="iv-prev" onclick="window.imgViewerNav(-1)" style="position:absolute;top:50%;right:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">›</button>
+  <button type="button" id="iv-next" onclick="window.imgViewerNav(1)" style="position:absolute;top:50%;left:16px;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(10px);font-weight:300">‹</button>
 </div>
 `;
 

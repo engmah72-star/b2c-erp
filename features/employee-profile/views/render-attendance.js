@@ -139,7 +139,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
     return `<div class="empty-cta">
     <div class="empty-icon">🏖️</div>
     <div class="empty-text">لا توجد إجازات مسجّلة</div>
-    <button class="btn btn-b btn-sm" onclick="openAddLeave()">＋ تسجيل إجازة</button>
+    <button type="button" class="btn btn-b btn-sm" onclick="openAddLeave()">＋ تسجيل إجازة</button>
   </div>`;
   }
   const upcoming = leaves.filter(lv => lv.endDate >= todayIso || lv.startDate >= todayIso);
@@ -157,7 +157,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
         </div>
         <div class="txt-meta-sm">${lv.startDate}${lv.endDate !== lv.startDate ? ' → ' + lv.endDate : ''} · <strong>${lv.days} يوم</strong></div>
       </div>
-      <button onclick="deleteLeave('${escAttr(lv._id)}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55">✕</button>
+      <button type="button" onclick="deleteLeave('${escAttr(lv._id)}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55">✕</button>
     </div>`;
   }).join('');
 

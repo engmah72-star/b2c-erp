@@ -26,16 +26,16 @@
 export const CLIENTS_SHELL_HTML = `
   <div class="topbar">
     <div class="topbar-left">
-      <button class="mob-menu-btn" onclick="toggleNav()">☰</button>
+      <button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button>
       <div><h1>👤 العملاء</h1><p id="sub">جاري التحميل...</p></div>
     </div>
     <div class="topbar-right">
-      <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ CSV</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ CSV</button>
       <div style="display:flex;gap:var(--space-xs);background:var(--bg3);border-radius:var(--rad);padding:3px">
-        <button id="view-grid" class="btn btn-ghost btn-sm on-view" onclick="setView('grid')" title="كروت" style="padding:6px 10px">⊞</button>
-        <button id="view-list" class="btn btn-ghost btn-sm" onclick="setView('list')" title="قائمة" style="padding:6px 10px">≡</button>
+        <button type="button" id="view-grid" class="btn btn-ghost btn-sm on-view" onclick="setView('grid')" title="كروت" style="padding:6px 10px">⊞</button>
+        <button type="button" id="view-list" class="btn btn-ghost btn-sm" onclick="setView('list')" title="قائمة" style="padding:6px 10px">≡</button>
       </div>
-      <button class="btn btn-b" onclick="openAddClient()">＋ عميل جديد</button>
+      <button type="button" class="btn btn-b" onclick="openAddClient()">＋ عميل جديد</button>
     </div>
   </div>
 
@@ -87,25 +87,25 @@ export const CLIENTS_SHELL_HTML = `
     <!-- Quick Status Chips — حالة العملاء -->
     <div class="chip-row">
       <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);letter-spacing:.5px;margin-left:4px">عرض:</span>
-      <button class="f-chip on" onclick="setQuickFilter('all',this)">
+      <button type="button" class="f-chip on" onclick="setQuickFilter('all',this)">
         <span>👥</span><span>الكل</span><span id="qf-all-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('vip',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('vip',this)">
         <span>⭐</span><span>VIP</span><span id="qf-vip-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('active',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('active',this)">
         <span style="color:var(--g)">●</span><span>نشط</span><span id="qf-active-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('rem',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('rem',this)">
         <span>💰</span><span>عليه فلوس</span><span id="qf-rem-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('atrisk',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('atrisk',this)">
         <span>⚠️</span><span>محتاج اهتمام</span><span id="qf-risk-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('new',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('new',this)">
         <span>🌱</span><span>جديد</span><span id="qf-new-n" style="color:var(--snow-soft)"></span>
       </button>
-      <button class="f-chip" onclick="setQuickFilter('sleeping',this)">
+      <button type="button" class="f-chip" onclick="setQuickFilter('sleeping',this)">
         <span>😴</span><span>نايم</span><span id="qf-sleep-n" style="color:var(--snow-soft)"></span>
       </button>
     </div>
@@ -114,9 +114,9 @@ export const CLIENTS_SHELL_HTML = `
     <div id="filter-bar" style="display:flex;gap:var(--space-sm);margin-bottom:14px;flex-wrap:wrap;align-items:center">
       <div class="sw" style="flex:1;min-width:180px"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="scheduleStatsAndGrid()"></div>
       <div style="display:flex;gap:3px;flex-shrink:0">
-        <button class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
-        <button class="stab stab-legacy" id="stab-legacy" onclick="setStatusTab('legacy',this)">📁 قديم</button>
-        <button class="stab hide" id="stab-cgrid" onclick="setStatusTab('cgrid',this)">📊 متابعة</button>
+        <button type="button" class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
+        <button type="button" class="stab stab-legacy" id="stab-legacy" onclick="setStatusTab('legacy',this)">📁 قديم</button>
+        <button type="button" class="stab hide" id="stab-cgrid" onclick="setStatusTab('cgrid',this)">📊 متابعة</button>
       </div>
       <select class="inp" id="flt-select" onchange="window.setClientFilter(this.value)" style="max-width:130px">
         <option value="all">📋 الكل</option>
@@ -140,8 +140,8 @@ export const CLIENTS_SHELL_HTML = `
       </select>
       <select class="inp" id="f-gov" onchange="renderGrid()" style="max-width:130px"><option value="">كل المحافظات</option></select>
       <select class="inp hide" id="f-src" onchange="renderGrid()"><option value="">كل المصادر</option></select>
-      <button class="btn btn-ghost btn-sm hide" id="add-legacy-btn" onclick="openAddLegacy()">＋ عميل قديم</button>
-      <button id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
+      <button type="button" class="btn btn-ghost btn-sm hide" id="add-legacy-btn" onclick="openAddLegacy()">＋ عميل قديم</button>
+      <button type="button" id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
     </div>
 
     <!-- OCCASIONS BANNER (🎂/🏢 — auto-shown when there are today's/upcoming occasions) -->
@@ -161,14 +161,14 @@ export const CLIENTS_SHELL_HTML = `
       <!-- Preset Quick Filters -->
       <div class="cg-preset-bar">
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);white-space:nowrap">جرد:</span>
-        <button class="cg-preset active" id="cgp-all"      onclick="cgridPreset('all',this)">📋 الكل</button>
-        <button class="cg-preset" id="cgp-rem"      onclick="cgridPreset('rem',this)">💰 متبقي</button>
-        <button class="cg-preset" id="cgp-prob"     onclick="cgridPreset('prob',this)">⚠️ مشاكل</button>
-        <button class="cg-preset" id="cgp-today"    onclick="cgridPreset('today',this)">📅 اليوم</button>
-        <button class="cg-preset" id="cgp-week"     onclick="cgridPreset('week',this)">🗓 الأسبوع</button>
-        <button class="cg-preset" id="cgp-design"   onclick="cgridPreset('design',this)">✏️ تصميم</button>
-        <button class="cg-preset" id="cgp-shipping" onclick="cgridPreset('shipping',this)">🚚 شحن</button>
-        <button class="cg-preset" id="cgp-collect"  onclick="cgridPreset('collect',this)">💳 تحصيل</button>
+        <button type="button" class="cg-preset active" id="cgp-all"      onclick="cgridPreset('all',this)">📋 الكل</button>
+        <button type="button" class="cg-preset" id="cgp-rem"      onclick="cgridPreset('rem',this)">💰 متبقي</button>
+        <button type="button" class="cg-preset" id="cgp-prob"     onclick="cgridPreset('prob',this)">⚠️ مشاكل</button>
+        <button type="button" class="cg-preset" id="cgp-today"    onclick="cgridPreset('today',this)">📅 اليوم</button>
+        <button type="button" class="cg-preset" id="cgp-week"     onclick="cgridPreset('week',this)">🗓 الأسبوع</button>
+        <button type="button" class="cg-preset" id="cgp-design"   onclick="cgridPreset('design',this)">✏️ تصميم</button>
+        <button type="button" class="cg-preset" id="cgp-shipping" onclick="cgridPreset('shipping',this)">🚚 شحن</button>
+        <button type="button" class="cg-preset" id="cgp-collect"  onclick="cgridPreset('collect',this)">💳 تحصيل</button>
       </div>
 
       <!-- Filter Bar — Primary Row -->
@@ -192,8 +192,8 @@ export const CLIENTS_SHELL_HTML = `
           <option value="has_rem">يوجد متبقي</option>
           <option value="no_rem">مسدد كاملاً</option>
         </select>
-        <button id="cg-adv-btn" class="cg-adv-toggle" onclick="cgridToggleAdv(this)">⚙ تفصيل</button>
-        <button onclick="cgridResetFilters()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;font-size:var(--fs-sm);cursor:pointer;white-space:nowrap">↺ إعادة</button>
+        <button type="button" id="cg-adv-btn" class="cg-adv-toggle" onclick="cgridToggleAdv(this)">⚙ تفصيل</button>
+        <button type="button" onclick="cgridResetFilters()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;font-size:var(--fs-sm);cursor:pointer;white-space:nowrap">↺ إعادة</button>
       </div>
 
       <!-- Filter Bar — Advanced (collapsible) -->
@@ -213,12 +213,12 @@ export const CLIENTS_SHELL_HTML = `
       <!-- Bulk Action Bar -->
       <div id="cg-bulk-bar" class="cg-bulk-bar hide">
         <span id="cg-sel-count" style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--b);min-width:70px">0 محدد</span>
-        <button class="cg-bulk-btn" onclick="cgridBulkAction('stage')">🔄 نقل مرحلة</button>
-        <button class="cg-bulk-btn" onclick="cgridBulkAction('archive')">📁 أرشفة</button>
-        <button class="cg-bulk-btn" onclick="cgridBulkAction('reopen')">↩️ إعادة فتح</button>
-        <button class="cg-bulk-btn" onclick="cgridBulkAction('assign')">👤 تعيين موظف</button>
-        <button class="cg-bulk-btn" onclick="cgridBulkAction('export')">⬇️ تصدير CSV</button>
-        <button class="cg-bulk-btn danger" onclick="cgridSelNone()">✕ إلغاء التحديد</button>
+        <button type="button" class="cg-bulk-btn" onclick="cgridBulkAction('stage')">🔄 نقل مرحلة</button>
+        <button type="button" class="cg-bulk-btn" onclick="cgridBulkAction('archive')">📁 أرشفة</button>
+        <button type="button" class="cg-bulk-btn" onclick="cgridBulkAction('reopen')">↩️ إعادة فتح</button>
+        <button type="button" class="cg-bulk-btn" onclick="cgridBulkAction('assign')">👤 تعيين موظف</button>
+        <button type="button" class="cg-bulk-btn" onclick="cgridBulkAction('export')">⬇️ تصدير CSV</button>
+        <button type="button" class="cg-bulk-btn danger" onclick="cgridSelNone()">✕ إلغاء التحديد</button>
       </div>
 
       <!-- Table -->

@@ -77,8 +77,8 @@ export function renderPanelHTML(o, ctx = {}) {
       ${stageProgressBar(o)}
       <a href="order-tracking.html?id=${o._id}" class="chip-track">📋 تتبع كامل للأوردر</a>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-        <button onclick="shareOrderToInbox('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال لموظف</button>
-        <button onclick="openOrderCommentsFromHere('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات الأوردر</button>
+        <button type="button" onclick="shareOrderToInbox('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال لموظف</button>
+        <button type="button" onclick="openOrderCommentsFromHere('${o._id}')" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات الأوردر</button>
       </div>
     </div>
     <!-- بيانات العميل والأوردر -->
@@ -101,7 +101,7 @@ export function renderPanelHTML(o, ctx = {}) {
               <span style="font-size:var(--fs-base);color:var(--dim2);font-weight:var(--fw-bold)">المصمم</span>
               <div style="display:flex;align-items:center;gap:var(--space-sm)">
                 <span style="font-size:var(--fs-md);font-weight:var(--fw-bold);color:${_nm ? 'var(--snow)' : 'var(--r)'}">${_nm || '⚠️ لم يُعيَّن'}</span>
-                <button onclick="openAssignDesigner()" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">تعيين ✏️</button>
+                <button type="button" onclick="openAssignDesigner()" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">تعيين ✏️</button>
               </div>
             </div>`;
           }
@@ -122,7 +122,7 @@ export function renderPanelHTML(o, ctx = {}) {
           const baseStyle = `padding:7px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid ${col};transition:all .15s`;
           const activeStyle = `background:${col};color:#fff;box-shadow:0 2px 8px ${col}66`;
           const inactiveStyle = `background:transparent;color:${col};opacity:.55`;
-          return `<button onclick="setProductStatus(${idx},'${s}')" style="${baseStyle};${active ? activeStyle : inactiveStyle}">${active ? '✓ ' : ''}${lbl}</button>`;
+          return `<button type="button" onclick="setProductStatus(${idx},'${s}')" style="${baseStyle};${active ? activeStyle : inactiveStyle}">${active ? '✓ ' : ''}${lbl}</button>`;
         };
         return `<div style="padding:10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:6px;border:1px solid var(--line);border-left:3px solid ${sConf.col}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -141,7 +141,7 @@ export function renderPanelHTML(o, ctx = {}) {
         const hasReady = prods.some(p => (p.productStatus || 'pending') === 'ready');
         const hasNotReady = prods.some(p => { const s = p.productStatus || 'pending'; return s !== 'ready' && s !== 'printed' && s !== 'done'; });
         if (hasReady && hasNotReady) {
-          return `<button onclick="openSplitOrder()" style="width:100%;margin-top:8px;padding:10px;border-radius:var(--rad);border:1px dashed var(--p);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✂️ افصل المنتجات الجاهزة وأرسلها للطباعة</button>`;
+          return `<button type="button" onclick="openSplitOrder()" style="width:100%;margin-top:8px;padding:10px;border-radius:var(--rad);border:1px dashed var(--p);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✂️ افصل المنتجات الجاهزة وأرسلها للطباعة</button>`;
         }
         return '';
       })()}
@@ -158,7 +158,7 @@ export function renderPanelHTML(o, ctx = {}) {
           <div style="margin-bottom:10px">
             ${imgs.length > 1 ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px;font-weight:var(--fw-bold)">📦 ${img.name}</div>` : ''}
             <img src="${img.url}" loading="lazy" decoding="async" onclick="window.open('${img.url}','_blank')"
-              style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:220px;object-fit:contain;background:var(--bg3);display:block">
+              style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:220px;object-fit:contain;background:var(--bg3);display:block" alt="">
           </div>`).join('')}
       </div>`;
     })()}
@@ -169,7 +169,7 @@ export function renderPanelHTML(o, ctx = {}) {
       ${(() => {
         const files = o.designFiles && o.designFiles.length ? o.designFiles
           : (o.designFileUrl ? [{ url: o.designFileUrl, name: 'ملف التصميم', type: '' }] : []);
-        if (!files.length) return `<button class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع ملف التصميم</button>
+        if (!files.length) return `<button type="button" class="btn btn-b btn-sm" onclick="openUpload()">📎 رفع ملف التصميم</button>
           <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:6px">لم يُرفع ملف التصميم بعد</div>`;
         const fileUrls = files.map(f => f.url);
         return files.map((f, i) => {
@@ -187,7 +187,7 @@ export function renderPanelHTML(o, ctx = {}) {
           </div>`;
         }).join('')
           + (o.designFileNote ? `<div style="font-size:var(--fs-sm);color:var(--y);margin-top:4px;margin-bottom:8px">📝 ${o.designFileNote}</div>` : '')
-          + `<button class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل</button>`;
+          + `<button type="button" class="btn btn-ghost btn-sm" onclick="openUpload()">✏️ تعديل</button>`;
       })()}
     </div>
 
@@ -199,7 +199,7 @@ export function renderPanelHTML(o, ctx = {}) {
           <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--p)">🖼️ المعرض العام</div>
           <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">انشر الموك أب ليراه الجميع</div>
         </div>
-        <button class="btn btn-p btn-sm" onclick="openGallery()">＋ نشر موك أب</button>
+        <button type="button" class="btn btn-p btn-sm" onclick="openGallery()">＋ نشر موك أب</button>
       </div>
     </div>` : ''}
 
@@ -219,7 +219,7 @@ export function renderPanelHTML(o, ctx = {}) {
       return `<div class="section" id="sec-design-notes" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:var(--space-sm)">
           <div class="section-title" style="color:var(--y);margin:0">📋 بيانات التصميم</div>
-          ${canEditNotes ? `<button id="btn-edit-notes" onclick="toggleEditNotes('${o._id}')" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️ ${o.notes ? 'تعديل' : 'إضافة'}</button>` : ''}
+          ${canEditNotes ? `<button type="button" id="btn-edit-notes" onclick="toggleEditNotes('${o._id}')" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️ ${o.notes ? 'تعديل' : 'إضافة'}</button>` : ''}
         </div>
         <div id="design-notes-view">
           ${o.notes ? `<div style="font-size:var(--fs-md);line-height:1.9;white-space:pre-wrap;margin-bottom:${o.refFileUrl ? '10px' : '0'}">${escapeNotes(o.notes)}</div>` : (canEditNotes ? `<div style="font-size:var(--fs-base);color:var(--dim2);font-style:italic;margin-bottom:${o.refFileUrl ? '10px' : '0'}">لم تُضَف بيانات بعد — اضغط ✏️ لإضافتها</div>` : '')}
@@ -228,8 +228,8 @@ export function renderPanelHTML(o, ctx = {}) {
         <div id="design-notes-edit" class="hide">
           <textarea id="design-notes-input" class="inp" style="min-height:120px;font-family:inherit;line-height:1.8" placeholder="اكتب بيانات التصميم...">${o.notes || ''}</textarea>
           <div style="display:flex;gap:var(--space-sm);margin-top:8px">
-            <button id="btn-save-notes" class="btn btn-g btn-sm" onclick="saveDesignNotes('${o._id}')">💾 حفظ</button>
-            <button class="btn btn-ghost btn-sm" onclick="toggleEditNotes('${o._id}',true)">إلغاء</button>
+            <button type="button" id="btn-save-notes" class="btn btn-g btn-sm" onclick="saveDesignNotes('${o._id}')">💾 حفظ</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleEditNotes('${o._id}',true)">إلغاء</button>
           </div>
         </div>
       </div>`;
@@ -240,7 +240,7 @@ export function renderPanelHTML(o, ctx = {}) {
     <div class="section" style="background:rgba(240,160,32,.08);border:1px dashed var(--y)">
       <div class="section-title" style="color:var(--y);margin-bottom:8px">⏳ بانتظار تأكيد استلام الأوردر</div>
       <div style="font-size:var(--fs-base);color:var(--dim2);margin-bottom:10px">تم تعيين هذا الأوردر لك. أكّد استلامه قبل بدء العمل.</div>
-      <button class="btn btn-y btn-sm" style="font-weight:var(--fw-extra)" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر — ابدأ العمل</button>
+      <button type="button" class="btn btn-y btn-sm" style="font-weight:var(--fw-extra)" onclick="acceptOrder('${o._id}')">✓ استلمت الأوردر — ابدأ العمل</button>
     </div>` : ''}
 
     ${(o.designerAcceptedAt && ['admin', 'operation_manager', 'customer_service', 'design_operator'].includes(currentRole)) ? `
@@ -252,9 +252,9 @@ export function renderPanelHTML(o, ctx = {}) {
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">🔄 حالة التصميم</div>
       <div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">
-        <button class="btn btn-sm ${o.designStage === 'pending' ? 'btn-y' : 'btn-ghost'}" onclick="setDS('pending')">⏳ انتظار</button>
-        <button class="btn btn-sm ${o.designStage === 'wip' ? 'btn-b' : 'btn-ghost'}" onclick="setDS('wip')">🎨 جاري التصميم</button>
-        <button class="btn btn-sm ${o.designStage === 'awaiting_payment' ? 'btn-ghost' : 'btn-ghost'}" style="${o.designStage === 'awaiting_payment' ? 'background:rgba(255,153,51,.18);color:#ff9933;border-color:#ff9933' : ''}" onclick="setDS('awaiting_payment')">📤 انتظار التحويل</button>
+        <button type="button" class="btn btn-sm ${o.designStage === 'pending' ? 'btn-y' : 'btn-ghost'}" onclick="setDS('pending')">⏳ انتظار</button>
+        <button type="button" class="btn btn-sm ${o.designStage === 'wip' ? 'btn-b' : 'btn-ghost'}" onclick="setDS('wip')">🎨 جاري التصميم</button>
+        <button type="button" class="btn btn-sm ${o.designStage === 'awaiting_payment' ? 'btn-ghost' : 'btn-ghost'}" style="${o.designStage === 'awaiting_payment' ? 'background:rgba(255,153,51,.18);color:#ff9933;border-color:#ff9933' : ''}" onclick="setDS('awaiting_payment')">📤 انتظار التحويل</button>
       </div>
     </div>
 
@@ -269,11 +269,11 @@ export function renderPanelHTML(o, ctx = {}) {
       <div style="margin-bottom:10px">
         <div style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:6px;font-weight:var(--fw-bold)">🔄 نقل لمرحلة أخرى</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button onclick="moveStage('design')"   style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️ تصميم</button>
-          <button onclick="moveStage('printing')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🖨️ طباعة</button>
-          <button onclick="moveStage('production')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🏭 تنفيذ</button>
-          <button onclick="moveStage('shipping')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🚚 شحن</button>
-          <button onclick="moveStage('archived')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">📁 أرشيف</button>
+          <button type="button" onclick="moveStage('design')"   style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️ تصميم</button>
+          <button type="button" onclick="moveStage('printing')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🖨️ طباعة</button>
+          <button type="button" onclick="moveStage('production')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🏭 تنفيذ</button>
+          <button type="button" onclick="moveStage('shipping')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🚚 شحن</button>
+          <button type="button" onclick="moveStage('archived')"  style="padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">📁 أرشيف</button>
         </div>
       </div>
 
@@ -295,11 +295,11 @@ export function renderPanelHTML(o, ctx = {}) {
           <input id="adm-discount" type="number" style="width:100%;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--snow);font-size:var(--fs-md);font-family:inherit" placeholder="0" oninput="calcAdmRemaining()">
         </div>
         <div id="adm-remaining-preview" style="font-size:var(--fs-base);color:var(--dim2);margin-bottom:8px"></div>
-        <button onclick="saveAdminFinance()" style="width:100%;padding:9px;background:rgba(0,217,126,.12);border:1px solid rgba(0,217,126,.3);border-radius:8px;color:var(--g);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✓ حفظ التعديل المالي</button>
+        <button type="button" onclick="saveAdminFinance()" style="width:100%;padding:9px;background:rgba(0,217,126,.12);border:1px solid rgba(0,217,126,.3);border-radius:8px;color:var(--g);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✓ حفظ التعديل المالي</button>
       </div>
 
       <!-- حذف نهائي -->
-      <button onclick="deleteOrderFull()" style="width:100%;padding:10px;background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.3);border-radius:8px;color:var(--r);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🗑 حذف الأوردر نهائياً</button>
+      <button type="button" onclick="deleteOrderFull()" style="width:100%;padding:10px;background:rgba(255,61,110,.1);border:1px solid rgba(255,61,110,.3);border-radius:8px;color:var(--r);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🗑 حذف الأوردر نهائياً</button>
     </div>
   `;
 }

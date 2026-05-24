@@ -233,7 +233,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         ${insights.map(i=>`<div class="insight-row ${i.lvl}">
           <span class="ico">${i.ic}</span>
           <div class="txt">${i.txt}</div>
-          ${i.act?`<button class="act" onclick="${i.act.fn}">${i.act.label} ←</button>`:''}
+          ${i.act?`<button type="button" class="act" onclick="${i.act.fn}">${i.act.label} ←</button>`:''}
         </div>`).join('')}
       </div>
       <div class="mini-stats">
@@ -245,9 +245,9 @@ export function renderOverviewDetailedView(f, prev, ctx) {
 
     <!-- Risk strip — سطر واحد لكل التنبيهات -->
     ${totalRisks?`<div class="risk-strip">
-      ${late.length?`<button class="risk-chip" onclick="goCollectionPostDesign()" title="${late.length} أوردر متأخر عن موعد التسليم"><span class="ic">🚨</span><b>${late.length}</b><span>متأخر</span></button>`:''}
-      ${staleWithRem.length?`<button class="risk-chip warn" onclick="goCollectionFlag('stale')" title="بدون حركة > 14 يوم وعليه باقي · ${fn(staleWithRem.reduce((s,o)=>s+calcRem(o),0))} ج"><span class="ic">⏰</span><b>${staleWithRem.length}</b><span>راكد</span></button>`:''}
-      ${noCostOrders.length?`<button class="risk-chip danger" onclick="goCollectionFlag('no-cost')" title="مرحلة متقدمة بدون تكلفة مسجّلة"><span class="ic">🚫</span><b>${noCostOrders.length}</b><span>بدون تكلفة</span></button>`:''}
+      ${late.length?`<button type="button" class="risk-chip" onclick="goCollectionPostDesign()" title="${late.length} أوردر متأخر عن موعد التسليم"><span class="ic">🚨</span><b>${late.length}</b><span>متأخر</span></button>`:''}
+      ${staleWithRem.length?`<button type="button" class="risk-chip warn" onclick="goCollectionFlag('stale')" title="بدون حركة > 14 يوم وعليه باقي · ${fn(staleWithRem.reduce((s,o)=>s+calcRem(o),0))} ج"><span class="ic">⏰</span><b>${staleWithRem.length}</b><span>راكد</span></button>`:''}
+      ${noCostOrders.length?`<button type="button" class="risk-chip danger" onclick="goCollectionFlag('no-cost')" title="مرحلة متقدمة بدون تكلفة مسجّلة"><span class="ic">🚫</span><b>${noCostOrders.length}</b><span>بدون تكلفة</span></button>`:''}
       ${supDue>0?`<button class="risk-chip warn" title="مستحق للموردين"><span class="ic">🏭</span><b>${fn(supDue)}</b><span>للموردين</span></button>`:''}
     </div>`:''}
 
@@ -300,7 +300,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
 
     <!-- Top 5 debtors — قرار يومي للمدير -->
     ${topDebtors.length?`<div class="chart-wrap">
-      <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>🔝 أكبر 5 عملاء عليهم باقي</span><button class="d-btn" style="font-size:var(--fs-sm);padding:4px 10px" onclick="switchTab('collection')">عرض الكل ←</button></div>
+      <div class="chart-title" style="display:flex;justify-content:space-between;align-items:center"><span>🔝 أكبر 5 عملاء عليهم باقي</span><button type="button" class="d-btn" style="font-size:var(--fs-sm);padding:4px 10px" onclick="switchTab('collection')">عرض الكل ←</button></div>
       ${topDebtors.map(c=>{
         const safe=(c.name||'').replace(/'/g,"\\'");
         return`<div onclick="focusClient('${safe}');setTimeout(()=>switchTab('collection'),60)" style="display:flex;justify-content:space-between;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line);cursor:pointer" title="اضغط لعرض أوردراته">
@@ -399,8 +399,8 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <!-- Filter presets -->
       <div class="chart-wrap" style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
         <span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra)">⭐ اختصاراتي:</span>
-        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:var(--space-xs)"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span class="txt-meta-sm">مفيش اختصارات محفوظة بعد</span>'}
-        <button class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)">💾 احفظ الحالة الحالية</button>
+        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:var(--space-xs)"><button type="button" class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button type="button" onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span class="txt-meta-sm">مفيش اختصارات محفوظة بعد</span>'}
+        <button type="button" class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)">💾 احفظ الحالة الحالية</button>
       </div>
     </details>`;
 }

@@ -25,7 +25,7 @@ export function buildSetPasswordModalHTML({ employeeName }) {
     <div class="modal" style="max-width:380px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
         <span class="txt-bold-lg">🔑 تعيين كلمة سر لـ ${employeeName || 'الموظف'}</span>
-        <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
+        <button type="button" class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
         <div class="fg" style="margin-bottom:12px">
@@ -38,7 +38,7 @@ export function buildSetPasswordModalHTML({ employeeName }) {
           <input class="inp" id="current-emp-pw" type="text" dir="ltr" placeholder="اتركها فارغة لو الأدمن لم يغيّرها">
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">إن كان الموظف غيّر كلمة السر بنفسه، اكتب الكلمة الحالية هنا (إن عرفتها) ليتم التطبيق فوراً.</div>
         </div>
-        <button class="btn btn-g" id="sp-save" style="width:100%" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
+        <button type="button" class="btn btn-g" id="sp-save" style="width:100%" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
         <div id="sp-msg" style="font-size:var(--fs-sm);margin-top:8px;color:var(--dim2);line-height:1.6"></div>
       </div>
     </div>`;
@@ -56,7 +56,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
     <div class="modal" style="max-width:440px;width:100%">
       <div class="modal-head" style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
         <span class="txt-bold-lg">🔄 إعادة إنشاء حساب دخول لـ ${employeeName || 'الموظف'}</span>
-        <button class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
+        <button type="button" class="modal-x" onclick="this.closest('.overlay').remove()">✕</button>
       </div>
       <div style="padding:18px 20px">
         <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:var(--rad);padding:10px 14px;font-size:var(--fs-base);color:var(--y);line-height:var(--lh-relaxed);margin-bottom:14px">
@@ -68,7 +68,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
           <label>كلمة السر الجديدة</label>
           <input class="inp" id="rb-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
         </div>
-        <button class="btn btn-g" id="rb-save" style="width:100%" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
+        <button type="button" class="btn btn-g" id="rb-save" style="width:100%" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
         <div id="rb-msg" style="font-size:var(--fs-sm);margin-top:10px;color:var(--dim2);line-height:var(--lh-relaxed)"></div>
       </div>
     </div>`;
@@ -88,9 +88,9 @@ export function buildPasswordCardHTML({ displayPassword, setByName, setAtStr }) 
              <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">اضغط "تعيين" لكلمة جديدة يعرفها الأدمن</div>`}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${dp ? `<button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" style="font-size:var(--fs-sm)">📋 نسخ</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="openSetPasswordModal()" style="font-size:var(--fs-sm);color:var(--b)">✏️ تعيين كلمة جديدة</button>
-        <button class="btn btn-ghost btn-sm" onclick="openRebuildAuthModal()" style="font-size:var(--fs-sm);color:var(--y)" title="إذا تعذّر تطبيق كلمة سر جديدة بأي طريقة، استخدم هذا الزر لإنشاء حساب دخول من الصفر">🔄 إعادة إنشاء حساب الدخول</button>
+        ${dp ? `<button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" style="font-size:var(--fs-sm)">📋 نسخ</button>` : ''}
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openSetPasswordModal()" style="font-size:var(--fs-sm);color:var(--b)">✏️ تعيين كلمة جديدة</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openRebuildAuthModal()" style="font-size:var(--fs-sm);color:var(--y)" title="إذا تعذّر تطبيق كلمة سر جديدة بأي طريقة، استخدم هذا الزر لإنشاء حساب دخول من الصفر">🔄 إعادة إنشاء حساب الدخول</button>
       </div>
     </div>`;
 }

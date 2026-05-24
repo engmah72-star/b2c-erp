@@ -29,7 +29,7 @@ export const CLIENTS_MODALS_HTML = `
   <div class="modal" style="max-width:560px">
     <div class="modal-head">
       <span class="modal-title" id="client-title">＋ عميل جديد</span>
-      <button class="modal-x" onclick="closeClientModal()">✕</button>
+      <button type="button" class="modal-x" onclick="closeClientModal()">✕</button>
     </div>
     <div class="modal-body">
       <div class="divider"><div class="div-line"></div><div class="div-text">البيانات الأساسية</div><div class="div-line"></div></div>
@@ -160,8 +160,8 @@ export const CLIENTS_MODALS_HTML = `
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeClientModal()">إلغاء</button>
-      <button class="btn btn-b" id="save-client-btn" onclick="saveClient()">✓ حفظ العميل</button>
+      <button type="button" class="btn btn-ghost" onclick="closeClientModal()">إلغاء</button>
+      <button type="button" class="btn btn-b" id="save-client-btn" onclick="saveClient()">✓ حفظ العميل</button>
     </div>
   </div>
 </div>
@@ -170,7 +170,7 @@ export const CLIENTS_MODALS_HTML = `
   <div class="modal" style="max-width:600px">
     <div class="modal-head">
       <span class="modal-title" id="order-modal-title">✏️ طلب جديد</span>
-      <button class="modal-x" onclick="closeOrderModal()">✕</button>
+      <button type="button" class="modal-x" onclick="closeOrderModal()">✕</button>
     </div>
     <div class="modal-body">
 
@@ -269,8 +269,8 @@ export const CLIENTS_MODALS_HTML = `
 
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeOrderModal()">إلغاء</button>
-      <button class="btn btn-p" id="no-save-btn" onclick="saveNewOrder()">✓ إنشاء الطلب</button>
+      <button type="button" class="btn btn-ghost" onclick="closeOrderModal()">إلغاء</button>
+      <button type="button" class="btn btn-p" id="no-save-btn" onclick="saveNewOrder()">✓ إنشاء الطلب</button>
     </div>
   </div>
 </div>
@@ -283,7 +283,7 @@ export const CLIENTS_MODALS_HTML = `
         <div class="txt-bold-lg">تحليل ذكي بـ AI</div>
         <div id="ai-subtitle" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-semi)">—</div>
       </div>
-      <button class="modal-x" onclick="closeAiAnalysis()">✕</button>
+      <button type="button" class="modal-x" onclick="closeAiAnalysis()">✕</button>
     </div>
     <div id="ai-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-size:var(--fs-md);line-height:var(--lh-relaxed)"></div>
   </div>
@@ -293,7 +293,7 @@ export const CLIENTS_MODALS_HTML = `
   <div class="modal" style="max-width:480px">
     <div class="modal-head">
       <span class="modal-title" id="fu-title">＋ متابعة جديدة</span>
-      <button class="modal-x" onclick="closeFollowupModal()">✕</button>
+      <button type="button" class="modal-x" onclick="closeFollowupModal()">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="fu-client-id">
@@ -362,8 +362,8 @@ export const CLIENTS_MODALS_HTML = `
         <label for="fu-done" style="font-size:var(--fs-base);color:var(--dim2);cursor:pointer">✅ التذكير منفّذ بالفعل</label>
       </div>
       <div class="row-gap-sm">
-        <button class="btn btn-b" id="save-followup-btn" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
-        <button class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
+        <button type="button" class="btn btn-b" id="save-followup-btn" onclick="saveFollowup()" style="flex:1">💾 حفظ</button>
+        <button type="button" class="btn btn-ghost" onclick="closeFollowupModal()">إلغاء</button>
       </div>
     </div>
   </div>
@@ -373,7 +373,7 @@ export const CLIENTS_MODALS_HTML = `
   <div class="modal" style="max-width:400px">
     <div class="modal-head">
       <span class="modal-title">⚠️ رقم الهاتف موجود بالفعل</span>
-      <button class="modal-x" onclick="document.getElementById('ov-dup').classList.remove('open')">✕</button>
+      <button type="button" class="modal-x" onclick="document.getElementById('ov-dup').classList.remove('open')">✕</button>
     </div>
     <div class="modal-body">
       <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:14px;margin-bottom:14px">
@@ -386,9 +386,9 @@ export const CLIENTS_MODALS_HTML = `
         هل تريد إضافة أوردر تصميم جديد لهذا العميل؟
       </p>
       <div style="display:flex;flex-direction:column;gap:var(--space-sm)">
-        <button class="btn btn-p" onclick="dupAddOrder()">✏️ إضافة أوردر تصميم</button>
-        <button class="btn btn-b btn-sm" onclick="dupViewClient()">👤 عرض بيانات العميل</button>
-        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('ov-dup').classList.remove('open')">إلغاء</button>
+        <button type="button" class="btn btn-p" onclick="dupAddOrder()">✏️ إضافة أوردر تصميم</button>
+        <button type="button" class="btn btn-b btn-sm" onclick="dupViewClient()">👤 عرض بيانات العميل</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('ov-dup').classList.remove('open')">إلغاء</button>
       </div>
     </div>
   </div>
