@@ -73,7 +73,7 @@ export function buildPermsUI({ current }) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
         ${ALL_PAGES.map(p => {
           const isChecked = isAllPages || currentPages.includes(p.key);
-          return `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
+          return `<label style="display:flex;align-items:center;gap:var(--space-sm);padding:8px 10px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
             <input type="checkbox" class="perm-page" value="${escAttr(p.key)}" ${isChecked ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
             <span style="font-size:var(--fs-base);font-weight:var(--fw-semi)">${p.label}</span>
           </label>`;
@@ -84,7 +84,7 @@ export function buildPermsUI({ current }) {
       <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🔐 صلاحيات البيانات</div>
       <div style="display:grid;gap:6px">
         ${ALL_PERMS.map(p =>
-          `<label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
+          `<label style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
             <input type="checkbox" class="perm-data" value="${escAttr(p.key)}" ${current?.[p.key] ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
             <span style="font-size:var(--fs-md);font-weight:var(--fw-semi)">${p.label}</span>
           </label>`

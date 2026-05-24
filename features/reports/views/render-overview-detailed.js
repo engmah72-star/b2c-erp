@@ -349,10 +349,10 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <!-- مقارنة تفصيلية -->
       <div class="chart-wrap">
         <div class="chart-title">📊 مقارنة بالفترة السابقة</div>
-        <div class="compare-row"><span>محصّل فعلاً</span><div style="display:flex;gap:12px"><span style="color:var(--g);font-weight:var(--fw-extra)">${fn(tot)} ج</span><span style="color:var(--dim2)">${fn(pTot)} ج</span></div></div>
-        <div class="compare-row"><span>قيمة الأوردرات</span><div style="display:flex;gap:12px"><span style="color:var(--b);font-weight:var(--fw-extra)">${fn(ordersTotal)} ج</span><span style="color:var(--dim2)">—</span></div></div>
-        <div class="compare-row"><span>المصروفات الفعلية</span><div style="display:flex;gap:12px"><span style="color:var(--r);font-weight:var(--fw-extra)">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
-        <div class="compare-row"><span>${profit>=0?'الربح':'الخسارة'}</span><div style="display:flex;gap:12px"><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:var(--fw-extra)">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span><span style="color:var(--dim2)">${pProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(pProfit))} ج</span></div></div>
+        <div class="compare-row"><span>محصّل فعلاً</span><div style="display:flex;gap:var(--space-md)"><span style="color:var(--g);font-weight:var(--fw-extra)">${fn(tot)} ج</span><span style="color:var(--dim2)">${fn(pTot)} ج</span></div></div>
+        <div class="compare-row"><span>قيمة الأوردرات</span><div style="display:flex;gap:var(--space-md)"><span style="color:var(--b);font-weight:var(--fw-extra)">${fn(ordersTotal)} ج</span><span style="color:var(--dim2)">—</span></div></div>
+        <div class="compare-row"><span>المصروفات الفعلية</span><div style="display:flex;gap:var(--space-md)"><span style="color:var(--r);font-weight:var(--fw-extra)">${fn(costs)} ج</span><span style="color:var(--dim2)">${fn(pCosts)} ج</span></div></div>
+        <div class="compare-row"><span>${profit>=0?'الربح':'الخسارة'}</span><div style="display:flex;gap:var(--space-md)"><span style="color:${profit>=0?'var(--g)':'var(--r)'};font-weight:var(--fw-extra)">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span><span style="color:var(--dim2)">${pProfit>=0?'ربح ':'خسارة '}${fn(Math.abs(pProfit))} ج</span></div></div>
       </div>
 
       <!-- Heatmap: نشاط الأوردرات آخر 60 يوم -->
@@ -397,9 +397,9 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       </div>`:''}
 
       <!-- Filter presets -->
-      <div class="chart-wrap" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="chart-wrap" style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
         <span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra)">⭐ اختصاراتي:</span>
-        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:4px"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span style="font-size:var(--fs-sm);color:var(--dim2)">مفيش اختصارات محفوظة بعد</span>'}
+        ${presets.length?presets.map((p,i)=>`<div style="display:inline-flex;align-items:center;gap:var(--space-xs)"><button class="d-btn" onclick="applyPreset(${i})">${p.name}</button><button onclick="deletePreset(${i})" style="border:none;background:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:0 2px" title="حذف">✕</button></div>`).join(''):'<span style="font-size:var(--fs-sm);color:var(--dim2)">مفيش اختصارات محفوظة بعد</span>'}
         <button class="d-btn" onclick="savePresetPrompt()" style="border-color:rgba(0,217,126,.4);color:var(--g);background:rgba(0,217,126,.06)">💾 احفظ الحالة الحالية</button>
       </div>
     </details>`;

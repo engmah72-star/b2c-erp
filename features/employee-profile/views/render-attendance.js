@@ -119,7 +119,7 @@ export function buildScheduleHTML({ workSchedule }) {
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
       ${[0,1,2,3,4,5,6].map(d => `<span class="day-pill${days.includes(d) ? ' on' : ''}">${DAY_NAMES_AR[d]}</span>`).join('')}
     </div>
-    <div style="display:flex;gap:20px;font-size:var(--fs-base);color:var(--dim2)">
+    <div style="display:flex;gap:var(--space-xl);font-size:var(--fs-base);color:var(--dim2)">
       <span>⏰ بدء: <strong style="color:var(--snow)">${escAttr(ws.startTime) || '09:00'}</strong></span>
       <span>🏁 نهاية: <strong style="color:var(--snow)">${escAttr(ws.endTime) || '17:00'}</strong></span>
       <span>📅 <strong style="color:var(--b)">${days.length} أيام/أسبوع</strong></span>

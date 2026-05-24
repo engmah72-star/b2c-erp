@@ -84,7 +84,7 @@ export function renderPanelHTML(o, ctx = {}) {
     <!-- بيانات العميل والأوردر -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">👤 العميل والطلب</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
         ${iRow('العميل', o.clientName || '—')}
         ${canSeePhone()
           ? iRow('الهاتف', `<a href="tel:${o.clientPhone}" style="color:var(--b);text-decoration:none">${o.clientPhone || '—'}</a>`)
@@ -99,7 +99,7 @@ export function renderPanelHTML(o, ctx = {}) {
           if (canAssign) {
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--bg3);border-radius:var(--rad);margin-bottom:4px">
               <span style="font-size:var(--fs-base);color:var(--dim2);font-weight:var(--fw-bold)">المصمم</span>
-              <div style="display:flex;align-items:center;gap:8px">
+              <div style="display:flex;align-items:center;gap:var(--space-sm)">
                 <span style="font-size:var(--fs-md);font-weight:var(--fw-bold);color:${_nm ? 'var(--snow)' : 'var(--r)'}">${_nm || '⚠️ لم يُعيَّن'}</span>
                 <button onclick="openAssignDesigner()" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">تعيين ✏️</button>
               </div>
@@ -206,7 +206,7 @@ export function renderPanelHTML(o, ctx = {}) {
     <!-- العربون — للإدارة وخدمة العملاء فقط -->
     ${(dep > 0 && ['admin', 'operation_manager', 'customer_service'].includes(currentRole)) ? `<div class="section" style="background:rgba(0,217,126,.04);border:1px solid rgba(0,217,126,.15)">
       <div class="section-title" style="color:var(--g);margin-bottom:8px">💰 العربون المدفوع</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-sm)">
         <div class="fin-box"><div class="fin-box-lbl">العربون</div><div class="fin-box-val" style="color:var(--g)">${fn(dep)} ج</div></div>
         <div class="fin-box"><div class="fin-box-lbl">المحفظة</div><div class="fin-box-val" style="font-size:var(--fs-base)">${o.depositWallet || '—'}</div></div>
       </div>
@@ -217,7 +217,7 @@ export function renderPanelHTML(o, ctx = {}) {
       const hasContent = o.notes || o.refFileUrl;
       if (!hasContent && !canEditNotes) return '';
       return `<div class="section" id="sec-design-notes" style="background:rgba(255,170,0,.05);border:1px solid rgba(255,170,0,.15)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:var(--space-sm)">
           <div class="section-title" style="color:var(--y);margin:0">📋 بيانات التصميم</div>
           ${canEditNotes ? `<button id="btn-edit-notes" onclick="toggleEditNotes('${o._id}')" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.4);background:rgba(255,170,0,.1);color:var(--y);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️ ${o.notes ? 'تعديل' : 'إضافة'}</button>` : ''}
         </div>
@@ -227,7 +227,7 @@ export function renderPanelHTML(o, ctx = {}) {
         </div>
         <div id="design-notes-edit" class="hide">
           <textarea id="design-notes-input" class="inp" style="min-height:120px;font-family:inherit;line-height:1.8" placeholder="اكتب بيانات التصميم...">${o.notes || ''}</textarea>
-          <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="display:flex;gap:var(--space-sm);margin-top:8px">
             <button id="btn-save-notes" class="btn btn-g btn-sm" onclick="saveDesignNotes('${o._id}')">💾 حفظ</button>
             <button class="btn btn-ghost btn-sm" onclick="toggleEditNotes('${o._id}',true)">إلغاء</button>
           </div>
@@ -251,7 +251,7 @@ export function renderPanelHTML(o, ctx = {}) {
     <!-- حالة التصميم -->
     <div class="section">
       <div class="section-title" style="margin-bottom:10px">🔄 حالة التصميم</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">
         <button class="btn btn-sm ${o.designStage === 'pending' ? 'btn-y' : 'btn-ghost'}" onclick="setDS('pending')">⏳ انتظار</button>
         <button class="btn btn-sm ${o.designStage === 'wip' ? 'btn-b' : 'btn-ghost'}" onclick="setDS('wip')">🎨 جاري التصميم</button>
         <button class="btn btn-sm ${o.designStage === 'awaiting_payment' ? 'btn-ghost' : 'btn-ghost'}" style="${o.designStage === 'awaiting_payment' ? 'background:rgba(255,153,51,.18);color:#ff9933;border-color:#ff9933' : ''}" onclick="setDS('awaiting_payment')">📤 انتظار التحويل</button>

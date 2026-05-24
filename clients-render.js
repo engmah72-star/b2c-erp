@@ -162,12 +162,12 @@ export function aiAnalysisHTML(d) {
   return `
     <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
       <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--ai,#10b981);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
-      <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.summary || '')}</div>
+      <div style="color:var(--snow);font-size:var(--fs-md);line-height:var(--lh-relaxed)">${escapeHtml(d.summary || '')}</div>
     </div>
 
     <div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
       <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
-      <div style="color:var(--snow);font-size:var(--fs-md);line-height:1.7">${escapeHtml(d.churnRiskAssessment || '')}</div>
+      <div style="color:var(--snow);font-size:var(--fs-md);line-height:var(--lh-relaxed)">${escapeHtml(d.churnRiskAssessment || '')}</div>
     </div>
 
     ${d.predictedNextProduct ? `
@@ -228,7 +228,7 @@ export function clientFollowupsHTML({
     const upcoming = !f.nextActionDone && f.nextActionDate &&
                      new Date(f.nextActionDate).getTime() >= Date.now();
     return `<div style="background:var(--bg2);border:1px solid var(--line);border-right:3px solid ${col};border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-sm);margin-bottom:6px">
         <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
           <span style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${col}">${typeLbl}</span>
           ${outLbl ? `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:var(--bg3);color:var(--dim2);font-weight:var(--fw-bold)">${outLbl}</span>` : ''}
@@ -236,7 +236,7 @@ export function clientFollowupsHTML({
           ${upcoming ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(59,158,255,.15);color:var(--b);font-weight:var(--fw-extra)">⏰ قادم</span>' : ''}
           ${f.nextActionDone ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(0,217,126,.15);color:var(--g);font-weight:var(--fw-extra)">✅ تم</span>' : ''}
         </div>
-        <div style="display:flex;gap:4px;flex-shrink:0">
+        <div style="display:flex;gap:var(--space-xs);flex-shrink:0">
           ${!f.nextActionDone && f.nextActionDate ? `<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="markFollowupDone('${f._id}')">✓ تم</button>` : ''}
           <button class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="editFollowup('${f._id}')">✏️</button>
           <button class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:var(--fs-xs)" onclick="deleteFollowup('${f._id}')">🗑</button>
@@ -254,7 +254,7 @@ export function clientFollowupsHTML({
           return `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:var(--fw-bold)">${code}${pn ? ' · ' + escapeHtml(pn) : ''}</a></div>`;
         })() : ''}
         ${f.productRating > 0 ? `<div style="font-size:var(--fs-md);color:var(--y);letter-spacing:2px;margin-bottom:${f.productReview ? '4' : '0'}px">${'★'.repeat(f.productRating)}<span style="color:var(--line2)">${'★'.repeat(5 - f.productRating)}</span></div>` : ''}
-        ${f.productReview ? `<div style="font-size:var(--fs-sm);color:var(--snow);line-height:1.5;font-style:italic">"${escapeHtml(f.productReview)}"</div>` : ''}
+        ${f.productReview ? `<div style="font-size:var(--fs-sm);color:var(--snow);line-height:var(--lh-base);font-style:italic">"${escapeHtml(f.productReview)}"</div>` : ''}
       </div>` : ''}
       ${f.nextActionDate ? `<div style="margin-top:6px;font-size:var(--fs-xs);color:${overdue ? 'var(--r)' : 'var(--dim2)'};font-weight:var(--fw-bold)">📅 المتابعة القادمة: ${fuFmtDate(f.nextActionDate)}</div>` : ''}
       <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:var(--fs-tiny);color:var(--dim2)">
@@ -366,7 +366,7 @@ export function bizCardTabHTML(client) {
     <!-- Smart Paste -->
     <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(6,182,212,.05));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:var(--space-md);margin-bottom:14px">
       <div style="font-size:var(--fs-base);font-weight:var(--fw-heavy);color:#a855f7;margin-bottom:6px">🧠 لزق ذكي — Smart Paste</div>
-      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;line-height:1.5">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;line-height:var(--lh-base)">الصق هنا أي نص فيه بيانات العميل (من واتساب، إيميل، نص حر) وضغطة "استخرج" تملأ كل الحقول تلقائياً.</div>
       <textarea id="bc-paste-area" placeholder="مثال: ايمن شوق المشد&#10;المستشار&#10;للمحاماة والاستشارات القانونية&#10;Ayman Shawky Al-Mashad&#10;Law Firm and Legal Consultations&#10;01022662220&#10;Aymanshawkylawfirm@gmail.com&#10;كمبوند فاليو 2 - القاهرة الجديدة" style="width:100%;background:var(--bg3);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px;color:var(--snow);font-family:inherit;font-size:var(--fs-base);outline:none;min-height:90px;resize:vertical"></textarea>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn btn-p btn-sm" onclick="window.bizCardSmartPaste()" style="flex:1">🧠 استخرج البيانات</button>
@@ -639,7 +639,7 @@ export function clientListRowHTML(client, idx, ctx = {}) {
         </div>
         <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${canSee('client_phone') ? `📞 ${c.phone1 || '—'} ` : ''}${c.intlPhone && canSee('client_phone') ? `· 🌍 ${c.intlPhone} ` : ''}${c.job ? '· 💼 ' + c.job : ''} ${c.governorate ? '· 📍 ' + c.governorate : ''}</div>
       </div>
-      <div style="display:flex;gap:16px;align-items:center;flex-shrink:0">
+      <div style="display:flex;gap:var(--space-lg);align-items:center;flex-shrink:0">
         <div style="text-align:center">
           <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--b)">${active}</div>
           <div style="font-size:var(--fs-tiny);color:var(--dim2)">نشط</div>
@@ -666,7 +666,7 @@ export function clientPanelHeaderHTML({ client, color } = {}) {
   const canSee = (typeof window !== 'undefined' && window.canSee)
     ? window.canSee : () => true;
   return `
-    <div style="display:flex;align-items:center;gap:12px">
+    <div style="display:flex;align-items:center;gap:var(--space-md)">
       <div style="width:48px;height:48px;border-radius:50%;background:${color}18;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:var(--fw-heavy)">${(c.name || '?')[0]}</div>
       <div>
         <div style="font-size:var(--fs-xl);font-weight:var(--fw-extra)">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:var(--fw-extra);margin-right:6px">📁 قديم</span>' : ''}</div>
@@ -766,7 +766,7 @@ export function clientPanelBodyHTML(ctx = {}) {
   return `
     <!-- ── ملخص ── -->
     <div id="ptab-pane-summary" style="display:block">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <div style="display:flex;gap:var(--space-sm);flex-wrap:wrap;margin-bottom:16px">
         ${canSee('client_phone') ? `<a href="tel:${c.phone1}" class="qact">📞 اتصال</a>` : ''}
         ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}" target="_blank" class="qact">💬 واتساب</a>` : ''}
         ${canSee('client_phone') ? `<a href="https://wa.me/20${(c.phone1 || '').replace(/^0/, '')}?text=${encodeURIComponent('أهلاً ' + c.name + ' 👋، طلبك جاهز 🎉')}" target="_blank" class="qact">📨 رسالة</a>` : ''}
@@ -777,7 +777,7 @@ export function clientPanelBodyHTML(ctx = {}) {
       </div>
       ${lastFuLine}
       ${segBlock}
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-sm);margin-bottom:16px">
         <div onclick="filterPanelOrders('all')" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;transition:var(--trans)">
           <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${cOrds.length}</div>
           <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">كل الأوردرات</div>
@@ -806,7 +806,7 @@ export function clientPanelBodyHTML(ctx = {}) {
       ${(totalCost > 0 || Object.keys(byWallet).length > 0 || memberDays !== null) ? `
       <div style="background:rgba(59,158,255,.04);border:1px solid rgba(59,158,255,.15);border-radius:var(--rad);padding:var(--space-md)">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--b);margin-bottom:10px">💼 حياته في الشركة</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:${Object.keys(byWallet).length ? '10' : '0'}px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);margin-bottom:${Object.keys(byWallet).length ? '10' : '0'}px">
           ${memberDays !== null ? pRowHelper('📅 عميل منذ', memberDays + ' يوم') : ''}
           ${pRowHelper('📦 إجمالي الأوردرات', cOrds.length + ' أوردر')}
           ${pRowHelper('💵 إجمالي المبيعات', fmtNum(tot) + ' ج')}
@@ -815,7 +815,7 @@ export function clientPanelBodyHTML(ctx = {}) {
         </div>
         ${Object.keys(byWallet).length ? `
         <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">💳 توزيع المدفوعات على المحافظ</div>
-        <div style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;flex-direction:column;gap:var(--space-xs)">
           ${Object.entries(byWallet).sort((a, b) => b[1] - a[1]).map(([wn, amt]) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bg3);border-radius:6px">
             <span style="font-size:var(--fs-sm);color:var(--dim2)">${wn}</span>
@@ -850,7 +850,7 @@ export function clientPanelBodyHTML(ctx = {}) {
     <div id="ptab-pane-data" class="hide">
       <div style="margin-bottom:14px">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">📋 بيانات العميل</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
           ${canSee('client_phone') ? pRowHelper('📞 هاتف', c.phone1 || '—') : ''}
           ${canSee('client_phone') && c.phone2 ? pRowHelper('📞 هاتف 2', c.phone2) : ''}
           ${canSee('client_phone') && c.intlPhone ? pRowHelper('🌍 رقم دولي', c.intlPhone) : ''}
@@ -862,10 +862,10 @@ export function clientPanelBodyHTML(ctx = {}) {
           ${c.anniversary ? pRowHelper('🏢 تأسيس النشاط', fmtOcc(c.anniversary)) : ''}
           ${daysSince !== null ? pRowHelper('🕐 آخر نشاط', 'منذ ' + daysSince + ' يوم') : ''}
         </div>
-        ${tags.length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'}">${TAG_LABELS[t] || t}</span>`).join('')}</div>` : ''}
+        ${tags.length ? `<div style="margin-top:8px;display:flex;gap:var(--space-xs);flex-wrap:wrap">${tags.map(t => `<span class="tag" style="background:${TAG_COL[t] || 'var(--hover)'}">${TAG_LABELS[t] || t}</span>`).join('')}</div>` : ''}
         ${c.notes ? `<div style="margin-top:8px;padding:var(--space-sm);background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.notes}</div>` : ''}
-        ${c.internalNotes ? `<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:var(--fs-base);color:var(--snow);line-height:1.7">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+        ${c.internalNotes ? `<div style="margin-top:8px;padding:10px 12px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-right:3px solid var(--r);border-radius:var(--rad);font-size:var(--fs-base);color:var(--snow);line-height:var(--lh-relaxed)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:var(--space-sm)">
             <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--r)">🔒 ملاحظات داخلية</span>
             ${c.internalNotesLastEdit ? `<span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${c.internalNotesLastEdit.byName || ''}${c.internalNotesLastEdit.at?.toDate ? ' · ' + c.internalNotesLastEdit.at.toDate().toLocaleDateString('ar-EG') : ''}</span>` : ''}
           </div>
@@ -875,14 +875,14 @@ export function clientPanelBodyHTML(ctx = {}) {
       ${c.status === 'legacy' ? `
       <div style="margin-bottom:14px;background:rgba(150,150,170,.06);border:1px solid rgba(150,150,170,.2);border-radius:var(--rad);padding:var(--space-md)">
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:#aaa;margin-bottom:10px">📁 بيانات العميل القديم</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
           ${c.totalSpentLegacy > 0 ? pRowHelper('💰 إجمالي الإنفاق', fmtNum(c.totalSpentLegacy) + ' ج') : ''}
           ${c.lastOrderDateLegacy ? pRowHelper('📅 آخر طلب', c.lastOrderDateLegacy) : ''}
           ${c.legacyProjects ? pRowHelper('📦 مشاريع سابقة', c.legacyProjects) : ''}
         </div>
         ${c.legacyNotes ? `<div style="margin-top:8px;padding:var(--space-sm);background:var(--bg3);border-radius:var(--rad);font-size:var(--fs-base);color:var(--dim2)">📝 ${c.legacyNotes}</div>` : ''}
       </div>` : ''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)">
+      <div style="display:flex;gap:var(--space-sm);flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)">
         <button class="btn btn-ghost btn-sm" onclick="editClient('${id}')">✏️ تعديل</button>
         ${c.status === 'legacy' ? `<button class="btn btn-g btn-sm" onclick="window.convertToActive('${id}')">🟢 تحويل لنشط</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="deleteClient('${id}')" style="margin-right:auto">🗑 حذف</button>
@@ -1173,8 +1173,8 @@ export function occasionsBannerHTML(clients = []) {
         <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--y)">${today.length ? `🎉 اليوم: ${today.length} مناسبة` : '📅 مناسبات قريبة'}${soon.length && today.length ? ` · ${soon.length} خلال 7 أيام` : soon.length ? `${soon.length} خلال 7 أيام` : ''}</div>
         <button onclick="this.parentElement.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--dim2);font-size:var(--fs-lg);cursor:pointer">✕</button>
       </div>
-      ${today.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:${soon.length ? '8' : '0'}px">${today.map(it => chip(it, true)).join('')}</div>` : ''}
-      ${soon.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${soon.map(it => chip(it, false)).join('')}</div>` : ''}
+      ${today.length ? `<div style="display:flex;flex-wrap:wrap;gap:var(--space-xs);margin-bottom:${soon.length ? '8' : '0'}px">${today.map(it => chip(it, true)).join('')}</div>` : ''}
+      ${soon.length ? `<div style="display:flex;flex-wrap:wrap;gap:var(--space-xs)">${soon.map(it => chip(it, false)).join('')}</div>` : ''}
       <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px">💡 اضغط على أي عميل لفتح واتساب برسالة تهنئة جاهزة</div>
     </div>`;
 }

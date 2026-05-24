@@ -151,7 +151,7 @@ export function buildIncidentsHTML({ incidents = [] }) {
           <span style="font-size:var(--fs-md);font-weight:var(--fw-extra)">${escAttr(i.title) || t.lbl}</span>
           <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${s.bg};color:${s.col}">${s.lbl}</span>
         </div>
-        ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:1.5">${escAttr(i.description)}</div>` : ''}
+        ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:var(--lh-base)">${escAttr(i.description)}</div>` : ''}
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
       </div>
@@ -197,7 +197,7 @@ export function buildClientsHTML({ orders = [], format = defaultFormat }) {
     const waHref = c.phone ? `https://wa.me/2${c.phone.replace(/^0/, '')}` : '';
     const isTop = i === 0 && clients.length > 1;
     const isRepeat = c.orders.length > 1;
-    return `<div style="display:flex;gap:12px;align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop ? 'box-shadow:0 2px 8px rgba(0,217,126,.12)' : ''}">
+    return `<div style="display:flex;gap:var(--space-md);align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop ? 'box-shadow:0 2px 8px rgba(0,217,126,.12)' : ''}">
       <div style="width:38px;height:38px;border-radius:50%;background:${isTop ? 'rgba(0,217,126,.15)' : 'var(--bg2)'};color:${isTop ? 'var(--g)' : 'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:var(--fw-heavy);flex-shrink:0">${(c.name || '?')[0].toUpperCase()}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px;display:flex;gap:6px;align-items:center">

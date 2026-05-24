@@ -46,8 +46,8 @@
         max-width:560px; width:100%; padding:var(--space-2xl); box-shadow:0 20px 60px rgba(255,61,110,.3); }
       #fg-modal h2 { color:var(--r); margin:0 0 14px; font-size:20px; display:flex; align-items:center; gap:10px; }
       #fg-modal .fg-warn { background:rgba(255,170,0,.12); border:1px solid rgba(255,170,0,.4);
-        color:var(--y); padding:12px 14px; border-radius:8px; font-size:var(--fs-md); margin-bottom:14px; line-height:1.7; }
-      #fg-modal .fg-row { display:flex; gap:8px; padding:8px 0; border-bottom:1px solid #2a2d3e; font-size:var(--fs-md); }
+        color:var(--y); padding:12px 14px; border-radius:8px; font-size:var(--fs-md); margin-bottom:14px; line-height:var(--lh-relaxed); }
+      #fg-modal .fg-row { display:flex; gap:var(--space-sm); padding:8px 0; border-bottom:1px solid #2a2d3e; font-size:var(--fs-md); }
       #fg-modal .fg-row:last-child { border-bottom:none; }
       #fg-modal .fg-lbl { color:#888; min-width:100px; }
       #fg-modal .fg-val { color:#fff; word-break:break-word; flex:1; }
