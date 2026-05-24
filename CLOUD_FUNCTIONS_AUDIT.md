@@ -120,12 +120,15 @@ Sample of these looks OK — explicit constants like `ARCHIVE_BATCH_LIMIT` show 
 
 ## 6) Dead code candidates
 
-### Suspect: `genkit-flows.js` (248 lines)
-- Imports referenced ONLY from `genkit-flows.js` itself + 1 doc
-- Not exported via `functions/index.js`
-- Uses GoogleAI/Genkit SDK (heavy dependency)
+### ~~Suspect: `genkit-flows.js`~~ — **CORRECTION (after PR-5B sweep):**
+On closer inspection, `genkit-flows.js` IS used: `functions/index.js:1731` does
+`const { analyzeClient, analyzeSuggestion } = require('./genkit-flows');`
+and these are wired into `exports.analyzeClientWithAI` and
+`exports.analyzeSuggestionWithAI` Cloud Function callables.
 
-**Recommendation:** Verify deployment status before deletion. If unused in production, archive.
+**NOT a dead-code candidate.** Original audit grep missed the require() because
+it searched for `genkit-flows` as a literal but `require()` resolves the bare
+path. Keep `genkit-flows.js` + its `genkit`/`@genkit-ai/*` package.json deps.
 
 ### Suspect: tenant-related code (e.g., `tenants` collection write)
 `functions/index.js` line ~1614 writes to `'tenants'` collection. But multi-tenant rollout was paused (per DEAD_CODE_AUDIT findings). **Verify** this CF code path isn't wired to a deprecated trigger.
@@ -134,14 +137,14 @@ Sample of these looks OK — explicit constants like `ARCHIVE_BATCH_LIMIT` show 
 
 ## 7) Phase-5 sub-PR plan
 
-| PR | Scope | Risk |
+| PR | Scope | Status |
 |---|---|---|
-| **5A (this)** | Audit doc | none |
-| **5B** | Add role constants + 17 hardcoded role checks → helpers (C2 fix) | low |
-| **5C** | (optional) Archive `genkit-flows.js` if unused in production | low — gated on confirmation |
-| **5D** | (deferred) Apply `core/idempotency.js`-style guards to scheduled bulk jobs | medium — needs careful design |
+| **5A** | Audit doc | ✅ merged (#791) |
+| **5B** | Add role constants + 19 hardcoded role checks → helpers (C2 fix) | ✅ merged (#793) |
+| ~~5C~~ | ~~Archive `genkit-flows.js`~~ | ❌ cancelled — file is in use (see §6) |
+| **5D** | (deferred) Apply `core/idempotency.js`-style guards to scheduled bulk jobs | not started — medium-risk, needs careful design |
 
-PR-5B is the most concrete win: 17 small mechanical swaps, zero behavior change, makes future role changes a 1-line edit.
+Phase-5 wraps with 2 PRs merged. The biggest concrete win was PR-5B: 19 small mechanical role-check swaps, zero behavior change, makes future role changes a 1-line edit.
 
 ---
 
