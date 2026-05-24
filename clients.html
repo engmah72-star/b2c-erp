@@ -1127,12 +1127,18 @@ window.saveFollowup=async function(){
       assignedToName:userName||'',
     });
 
-    const r=await window.clientActions.saveFollowup({
+    // Safety net: لو الـ network/Firestore هنغ لأي سبب، نوقف بعد 15s ونعطي
+    // المستخدم رسالة واضحة بدل ما الزرار يفضل '⏳ جاري...' للأبد.
+    const savePromise = window.clientActions.saveFollowup({
       fId: fId || '',
       data,
       userId: currentUser?.uid||'',
       userName: userName||'',
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(()=>reject(new Error('انتهت مهلة الحفظ (15ث) — تحقق من الإنترنت وأعد المحاولة')), 15000)
+    );
+    const r = await Promise.race([savePromise, timeoutPromise]);
     if(!r.ok){
       console.warn('[clientActions] saveFollowup failed', r);
       const msg=(r.errors?.[0]||'فشل الحفظ');

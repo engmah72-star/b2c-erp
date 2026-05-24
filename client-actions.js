@@ -712,71 +712,68 @@ export const clientActions = {
     });
     if (!v.ok) return { ...v };
 
-    return withIdempotency(db, {
-      actionType: fId ? 'edit_followup' : 'add_followup',
-      entityId: fId || `new:${data.clientId}`,
-      actorId: userId || '',
-      payload: { type: data.type, nextActionDate: data.nextActionDate },
-    }, async (operationId) => {
-
-      try {
-        if (fId) {
-          // Edit existing
-          const ref = doc(db, 'client_followups', fId);
-          const snap = await getDoc(ref);
-          if (!snap.exists()) {
-            return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [], operationId };
-          }
-          const cur = snap.data();
-          if (cur.isDeleted) {
-            return { ok: false, errors: ['⛔ متابعة محذوفة'], warnings: [], operationId };
-          }
-          const entry = auditEntry({
-            action: 'تعديل متابعة',
-            userId, userName, kind: 'edit',
-          });
-          await updateDoc(ref, {
-            ...data,
-            updatedAt: serverTimestamp(),
-            updatedBy: userId || '',
-            updatedByName: userName || '',
-            editHistory: [...(cur.editHistory || []), entry],
-          });
-          return {
-            ok: true, errors: [], warnings: [],
-            operationId, fId, action: 'edit_followup',
-          };
+    // Followups ليست financial operation (مش في قائمة H1.2 الإلزامية)
+    // فبنتخطى withIdempotency overhead (4-5 network round-trips → 1-2).
+    // Double-save protection يجي من:
+    //   1. UI: btn.disabled = true في saveFollowup wrapper
+    //   2. addDoc atomicity (إما الـ doc اتعمل أو لا)
+    try {
+      if (fId) {
+        // Edit existing
+        const ref = doc(db, 'client_followups', fId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+          return { ok: false, errors: ['⚠️ المتابعة غير موجودة'], warnings: [] };
         }
-        // Add new
+        const cur = snap.data();
+        if (cur.isDeleted) {
+          return { ok: false, errors: ['⛔ متابعة محذوفة'], warnings: [] };
+        }
         const entry = auditEntry({
-          action: 'إضافة متابعة',
-          userId, userName, kind: 'op',
+          action: 'تعديل متابعة',
+          userId, userName, kind: 'edit',
         });
-        const ref = await addDoc(collection(db, 'client_followups'), {
+        await updateDoc(ref, {
           ...data,
-          isDeleted: false,
-          createdAt: serverTimestamp(),
-          createdBy: userId || '',
-          createdByName: userName || '',
           updatedAt: serverTimestamp(),
           updatedBy: userId || '',
           updatedByName: userName || '',
-          editHistory: [entry],
+          editHistory: [...(cur.editHistory || []), entry],
         });
         return {
           ok: true, errors: [], warnings: [],
-          operationId, fId: ref.id, action: 'add_followup',
-        };
-      } catch (e) {
-        return {
-          ok: false,
-          errors: [e.code === 'permission-denied'
-            ? '🔒 ليس لديك صلاحية'
-            : (e.message || 'فشل حفظ المتابعة')],
-          warnings: [], operationId,
+          fId, action: 'edit_followup',
         };
       }
-    });
+      // Add new
+      const entry = auditEntry({
+        action: 'إضافة متابعة',
+        userId, userName, kind: 'op',
+      });
+      const ref = await addDoc(collection(db, 'client_followups'), {
+        ...data,
+        isDeleted: false,
+        createdAt: serverTimestamp(),
+        createdBy: userId || '',
+        createdByName: userName || '',
+        updatedAt: serverTimestamp(),
+        updatedBy: userId || '',
+        updatedByName: userName || '',
+        editHistory: [entry],
+      });
+      return {
+        ok: true, errors: [], warnings: [],
+        fId: ref.id, action: 'add_followup',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 ليس لديك صلاحية'
+          : (e.message || 'فشل حفظ المتابعة')],
+        warnings: [],
+      };
+    }
   },
 
   /**
