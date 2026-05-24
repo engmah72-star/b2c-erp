@@ -24,7 +24,7 @@
   const SIDEBAR_PAGES = [
     // ─── الرئيسية (main) ───
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
-    { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
+    { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true, takeover:true },
     { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
@@ -75,6 +75,29 @@
   window.SIDEBAR_PAGES = SIDEBAR_PAGES;
   window.ROLE_HOME     = ROLE_HOME;
   window.GROUP_LABELS  = GROUP_LABELS;
+
+  // ── Sidebar Takeover (Phase 0) ──
+  // Feature flag مفعّل عالمياً، لكن الـ takeover يحصل فقط للصفحات بـ takeover:true.
+  // Phase 0 pilot: my-profile.html فقط. باقي الـ links تتنقّل عادي بـ <a href>.
+  // Phase 1 سيقلب الـ default ويحوّل لـ deny-list.
+  window.B2C_TAKEOVER_ENABLED = true;
+
+  // ── Auto-load Sidebar Takeover (CSS + JS) ──
+  // Self-contained — لا تأثير على الصفحات اللي مش معلّمة takeover:true.
+  if (!document.getElementById('sb-takeover-css')) {
+    const l = document.createElement('link');
+    l.id = 'sb-takeover-css';
+    l.rel = 'stylesheet';
+    l.href = 'sidebar-takeover.css?v=1';
+    document.head.appendChild(l);
+  }
+  if (!document.getElementById('sb-takeover-js')) {
+    const s = document.createElement('script');
+    s.id = 'sb-takeover-js';
+    s.src = 'sidebar-takeover.js?v=1';
+    s.defer = true;
+    document.head.appendChild(s);
+  }
 
   // ── Auto-load Command Palette (Ctrl+K / Cmd+K) ──
   // ينشر التنقّل السريع على كل صفحة تحمّل sidebar-config.js.
