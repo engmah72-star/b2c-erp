@@ -28,9 +28,18 @@
   try { if (window.self !== window.top) return; } catch(_) { return; }
 
   // ── Config ──
+  // Mobile detection: LRU=1 على mobile لتوفير الـ RAM (memory constraint).
+  // Override: localStorage.B2C_PANEL_CACHE_MAX يفوز على الـ defaults.
+  const IS_MOBILE = (() => {
+    try { return window.matchMedia && window.matchMedia('(max-width:768px)').matches; }
+    catch(_) { return false; }
+  })();
   const MAX_CACHE = (() => {
-    try { return parseInt(localStorage.B2C_PANEL_CACHE_MAX, 10) || 3; }
-    catch(_) { return 3; }
+    try {
+      const ov = parseInt(localStorage.B2C_PANEL_CACHE_MAX, 10);
+      if (ov > 0) return ov;
+    } catch(_) {}
+    return IS_MOBILE ? 1 : 3;
   })();
   const HASH_PREFIX = '#p=';
 
