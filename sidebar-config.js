@@ -102,13 +102,13 @@ try {
     const l = document.createElement('link');
     l.id = 'sb-takeover-css';
     l.rel = 'stylesheet';
-    l.href = 'sidebar-takeover.css?v=1';
+    l.href = 'sidebar-takeover.css?v=2';
     document.head.appendChild(l);
   }
   if (!document.getElementById('sb-takeover-js')) {
     const s = document.createElement('script');
     s.id = 'sb-takeover-js';
-    s.src = 'sidebar-takeover.js?v=1';
+    s.src = 'sidebar-takeover.js?v=2';
     s.defer = true;
     document.head.appendChild(s);
   }
