@@ -86,15 +86,19 @@ export function buildSidebar({ container, domain, config = {} }) {
     html +=   '<header class="rt-ctx-section-h">تنبيهات</header>';
     for (const s of signalsList) {
       const cls = s.kind === 'warn' ? 'warn' : (s.kind === 'crit' ? 'crit' : '');
-      // الـ count من الـ store (key = s.signalKey أو s.id)
       const key = s.signalKey || s.id;
       const initialCount = key ? signalStore.getMetric(domain.id, key) : 0;
       const displayCount = initialCount > 0 ? initialCount : (s.count != null ? s.count : '—');
-      html += '<div class="rt-ctx-item rt-ctx-signal" data-signal-key="' + _esc(key || '') + '" aria-disabled="true" style="cursor:default">';
+      const isActionable = !!s.target;
+      const dataTarget = isActionable ? ' data-signal-target="' + _esc(s.target) + '"' : '';
+      const role = isActionable ? 'button' : '';
+      const tabIdx = isActionable ? 'tabindex="0"' : 'aria-disabled="true"';
+      const styleAttr = isActionable ? '' : ' style="cursor:default"';
+      html += '<button type="button" class="rt-ctx-item rt-ctx-signal" data-signal-key="' + _esc(key || '') + '"' + dataTarget + ' ' + tabIdx + styleAttr + '>';
       html +=   '<span class="rt-ctx-item-ico" aria-hidden="true">' + (s.ico || 'ℹ') + '</span>';
       html +=   '<span class="rt-ctx-item-lbl">' + _esc(s.label) + '</span>';
       html +=   '<span class="rt-ctx-item-cnt ' + cls + '">' + _esc(displayCount) + '</span>';
-      html += '</div>';
+      html += '</button>';
     }
     html += '</section>';
   }
@@ -116,14 +120,30 @@ export function buildSidebar({ container, domain, config = {} }) {
       e.preventDefault();
       container.querySelectorAll('[data-deep-link]').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
-      const shell = (window.top && window.top.B2CShell) || window.B2CShell;
-      if (shell && typeof shell.openInWorkspace === 'function') {
-        shell.openInWorkspace(url);
-      } else {
-        location.href = url;
-      }
+      _navigate(url);
     });
   });
+
+  // ── Wire signal clicks → navigate to filtered view (smart signals) ──
+  container.querySelectorAll('[data-signal-target]').forEach(sig => {
+    sig.addEventListener('click', (e) => {
+      e.preventDefault();
+      const url = sig.dataset.signalTarget;
+      if (!url) return;
+      _navigate(url);
+    });
+  });
+
+  function _navigate(url) {
+    const shell = (window.top && window.top.B2CShell) || window.B2CShell;
+    if (shell && typeof shell.openInWorkspace === 'function') {
+      shell.openInWorkspace(url);
+      // close mobile drawer after navigation
+      if (typeof shell.closeSidebar === 'function') shell.closeSidebar();
+    } else {
+      location.href = url;
+    }
+  }
 
   // ── Wire quick-action buttons (Phase 3 placeholders) ──
   container.querySelectorAll('[data-handler]').forEach(btn => {
