@@ -20,9 +20,9 @@ const CONFIG = {
     { id: 'assign',  ico: '👷', label: 'تعيين مصمم',    handler: 'openAssignDesigner' },
   ],
   signals: [
-    { kind: 'warn', ico: '⏰', label: 'تصاميم متأخرة' },
-    { kind: 'info', ico: '👀', label: 'تحت المراجعة' },
-    { kind: 'crit', ico: '⚠', label: 'مشاكل تصميم' },
+    { kind: 'warn', ico: '⏰', label: 'تصاميم متأخرة', target: 'design.html?filter=late' },
+    { kind: 'info', ico: '👀', label: 'تحت المراجعة', target: 'design.html?filter=review' },
+    { kind: 'crit', ico: '⚠', label: 'مشاكل تصميم', target: 'design.html?filter=problem' },
   ],
 };
 

@@ -23,9 +23,9 @@ const CONFIG = {
     { id: 'note',       ico: '📝', label: 'ملاحظة سريعة',  handler: 'openNote' },
   ],
   signals: [
-    { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed' },
-    { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة' },
-    { kind: 'info', ico: '💰', label: 'تحصيلات معلقة' },
+    { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed', target: 'clients.html?filter=delayed' },
+    { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة', target: 'clients.html?filter=problem' },
+    { kind: 'info', ico: '💰', label: 'تحصيلات معلقة', target: 'clients.html?filter=balance' },
   ],
 };
 

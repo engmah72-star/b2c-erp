@@ -21,9 +21,9 @@ const CONFIG = {
     { id: 'report',   ico: '📊', label: 'تقرير سريع',      handler: 'openQuickReport' },
   ],
   signals: [
-    { kind: 'warn', ico: '⚠', label: 'موافقات معلقة',     signalKey: 'pending-approvals' },
-    { kind: 'warn', ico: '⚠', label: 'كاش منخفض' },
-    { kind: 'info', ico: 'ℹ', label: 'تسويات قيد الانتظار' },
+    { kind: 'warn', ico: '⚠', label: 'موافقات معلقة', signalKey: 'pending-approvals', target: 'approvals.html' },
+    { kind: 'warn', ico: '⚠', label: 'كاش منخفض', target: 'accounts.html#wallets' },
+    { kind: 'info', ico: 'ℹ', label: 'تسويات قيد الانتظار', target: 'shipping-accounts.html' },
   ],
 };
 

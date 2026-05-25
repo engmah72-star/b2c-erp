@@ -23,9 +23,9 @@ const CONFIG = {
     { id: 'mark-done',  ico: '✅', label: 'تحديث الحالة',    handler: 'openMarkStatus' },
   ],
   signals: [
-    { kind: 'crit', ico: '⏰', label: 'طلبات متأخرة', signalKey: 'late' },
-    { kind: 'warn', ico: '🟡', label: 'بدون مورد',    signalKey: 'no-supplier' },
-    { kind: 'warn', ico: '⚠', label: 'فيها مشكلة',    signalKey: 'problem' },
+    { kind: 'crit', ico: '⏰', label: 'طلبات متأخرة', signalKey: 'late',        target: 'production.html?filter=late' },
+    { kind: 'warn', ico: '🟡', label: 'بدون مورد',    signalKey: 'no-supplier', target: 'production.html?filter=no-supplier' },
+    { kind: 'warn', ico: '⚠', label: 'فيها مشكلة',    signalKey: 'problem',     target: 'production.html?filter=problem' },
   ],
 };
 

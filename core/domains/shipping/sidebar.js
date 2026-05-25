@@ -22,9 +22,9 @@ const CONFIG = {
     { id: 'track',     ico: '📍', label: 'تتبع رقم',            handler: 'openTrackByNumber' },
   ],
   signals: [
-    { kind: 'crit', ico: '⏰', label: 'شحنات متأخرة', signalKey: 'late' },
-    { kind: 'warn', ico: '🚛', label: 'مشاكل شركات' },
-    { kind: 'info', ico: '💰', label: 'تسويات معلقة' },
+    { kind: 'crit', ico: '⏰', label: 'شحنات متأخرة', signalKey: 'late', target: 'shipping.html?filter=late' },
+    { kind: 'warn', ico: '🚛', label: 'مشاكل شركات', target: 'shipping.html?filter=problem' },
+    { kind: 'info', ico: '💰', label: 'تسويات معلقة', target: 'shipping-accounts.html' },
   ],
 };
 

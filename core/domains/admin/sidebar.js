@@ -21,9 +21,9 @@ const CONFIG = {
     { id: 'add-supplier', ico: '🏭', label: 'إضافة مورد',  handler: 'openAddSupplier' },
   ],
   signals: [
-    { kind: 'crit', ico: '🚨', label: 'تنبيهات نظام' },
-    { kind: 'warn', ico: '🐛', label: 'أخطاء جديدة' },
-    { kind: 'info', ico: '⚙', label: 'تحديثات معلقة' },
+    { kind: 'crit', ico: '🚨', label: 'تنبيهات نظام', target: 'settings.html' },
+    { kind: 'warn', ico: '🐛', label: 'أخطاء جديدة', target: 'report-bug.html' },
+    { kind: 'info', ico: '⚙', label: 'تحديثات معلقة', target: 'settings.html' },
   ],
 };
 

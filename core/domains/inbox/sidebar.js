@@ -18,8 +18,8 @@ const CONFIG = {
     { id: 'mark-read',ico: '✅', label: 'تعيين كمقروءة',  handler: 'markAllRead' },
   ],
   signals: [
-    { kind: 'crit', ico: '🔵', label: 'رسائل غير مقروءة', signalKey: 'unread' },
-    { kind: 'warn', ico: '🔥', label: 'محادثات عاجلة' },
+    { kind: 'crit', ico: '🔵', label: 'رسائل غير مقروءة', signalKey: 'unread', target: 'inbox.html?filter=unread' },
+    { kind: 'warn', ico: '🔥', label: 'محادثات عاجلة', target: 'inbox.html?filter=urgent' },
   ],
 };
 
