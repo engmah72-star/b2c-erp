@@ -343,7 +343,10 @@ export function initNotifications(app, currentUser) {
       if (!item) return;
       const idx = parseInt(item.dataset.idx, 10);
       const n = allNotifs[idx];
-      if (n?.link) window.location.href = n.link;
+      if (n?.link) {
+        if (typeof window.navigatePage === 'function') window.navigatePage(n.link);
+        else window.location.href = n.link;
+      }
     });
     document.body.appendChild(panel);
   }
