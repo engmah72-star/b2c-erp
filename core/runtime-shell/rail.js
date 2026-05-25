@@ -20,17 +20,36 @@ import { DOMAINS } from './domain-registry.js';
 let _container = null;
 let _onSelect = null;
 let _activeId = null;
+let _allowedDomains = null;  // null = all domains visible (default)
 
-export function init({ container, onSelect }) {
+export function init({ container, onSelect, allowedDomains }) {
   if (!container) throw new Error('[rt-rail] container required');
   _container = container;
   _onSelect = typeof onSelect === 'function' ? onSelect : () => {};
+  _allowedDomains = Array.isArray(allowedDomains) ? allowedDomains.slice() : null;
   _render();
+}
+
+/**
+ * Set the list of domains the user is allowed to see.
+ * Pass null to show all domains (default).
+ * Re-renders the rail.
+ */
+export function setAllowedDomains(allowedDomains) {
+  _allowedDomains = Array.isArray(allowedDomains) ? allowedDomains.slice() : null;
+  _render();
+  // restore active state after re-render
+  if (_activeId) setActive(_activeId);
+}
+
+function _isAllowed(domainId) {
+  return _allowedDomains == null || _allowedDomains.includes(domainId);
 }
 
 function _render() {
   let html = '<nav class="rt-rail" role="tablist" aria-label="Domain navigation">';
   for (const d of DOMAINS) {
+    if (!_isAllowed(d.id)) continue;
     html += '<button type="button" class="rt-rail-btn" '
       + 'role="tab" '
       + 'data-domain="' + d.id + '" '
