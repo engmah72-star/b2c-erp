@@ -51,9 +51,9 @@ export function init({ container }) {
   _container = container;
   _btn = document.createElement('button');
   _btn.type = 'button';
-  _btn.className = 'rt-fab';
-  _btn.hidden = true;
+  _btn.className = 'rt-fab';   // class-based visibility (no hidden attr)
   _btn.setAttribute('aria-label', '');
+  _btn.style.display = 'none';  // explicit initial hidden
   _btn.addEventListener('click', _onClick);
   _container.appendChild(_btn);
 }
@@ -82,15 +82,16 @@ export function show(config) {
   if (!config || !config.icon) { hide(); return; }
   _currentConfig = config;
   const cls = config.kind === 'primary' ? '' : (config.kind ? ' rt-fab-' + config.kind : '');
-  _btn.className = 'rt-fab' + cls;
+  _btn.className = 'rt-fab rt-fab-visible' + cls;
   _btn.innerHTML = '<span class="rt-fab-ico" aria-hidden="true">' + (config.icon || '+') + '</span>';
   _btn.setAttribute('aria-label', _esc(config.label || 'إجراء'));
   _btn.setAttribute('title', _esc(config.label || ''));
-  _btn.hidden = false;
+  _btn.style.display = '';  // let CSS take over
 }
 
 export function hide() {
   if (!_btn) return;
-  _btn.hidden = true;
+  _btn.classList.remove('rt-fab-visible');
+  _btn.style.display = 'none';
   _currentConfig = null;
 }
