@@ -90,6 +90,21 @@ export function getCurrentDomain() {
   return _currentDomain;
 }
 
+/**
+ * Navigate the active workspace iframe to a different URL within the same domain
+ * (e.g., accounts.html#wallets, or a related page treated as a sub-view).
+ * Used by domain sidebar renderers to deep-link views inside the workspace.
+ */
+export function navigate(url) {
+  if (!_currentDomain || !url) return false;
+  const entry = _cache.get(_currentDomain);
+  if (!entry) return false;
+  _onLoadStart(_currentDomain);
+  entry.loaded = false;
+  entry.iframe.src = url;
+  return true;
+}
+
 function _createFrame(domain) {
   const iframe = document.createElement('iframe');
   iframe.className = 'rt-workspace-frame';
