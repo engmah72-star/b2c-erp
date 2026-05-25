@@ -48,17 +48,25 @@
 
 ### Phase 2 — Safety net plumbing
 
-| Item | Source audit | Risk | Reversible? |
-|---|---|---|---|
-| Create `core/shell-navigate.js` with `navigatePage()` helper | SIDEBAR §A | None | Trivial |
-| Document embed-mode contract in `CLAUDE.md` | SIDEBAR §A, §7 | None | Trivial |
-| Document `#ctx=` hash reservation in `CLAUDE.md` | SIDEBAR §3 | None | Trivial |
-| Delete `sidebar-context-drawer.js` (0 references confirmed) | DEAD §RISKY, SIDEBAR §4 | Low — verify `B2CContext` has no other consumer | Easy revert |
-| Delete `sidebar-context-drawer.css` (paired) | CSS §4 | Low | Easy revert |
+| Item | Source audit | Risk | Reversible? | Status |
+|---|---|---|---|---|
+| Create `core/shell-navigate.js` with `navigatePage()` helper | SIDEBAR §A | None | Trivial | ✅ **Done** |
+| Auto-load helper via `sidebar-config.js` (sync, before any onclick) | — | None | Trivial | ✅ **Done** |
+| Document embed-mode contract in `CLAUDE.md` (RULE N1.2) | SIDEBAR §A, §7 | None | Trivial | ✅ **Done** |
+| Document `#ctx=` hash reservation in `CLAUDE.md` (RULE N1.3) | SIDEBAR §3 | None | Trivial | ✅ **Done** |
+| Delete `sidebar-context-drawer.js` + remove loader block in `sidebar-config.js` | DEAD §RISKY, SIDEBAR §4 | None — verified 0 publishers to `B2CContext.set()` | Easy revert | ✅ **Done** |
+| Delete `sidebar-context-drawer.css` | CSS §4 | None | Easy revert | ✅ **Done** |
+| Delete `core/sidebar-context.js` (the pub/sub bus — 0 publishers) | DEAD §NEEDS-VERIFICATION | None — verified | Easy revert | ✅ **Done** |
+| Delete `core/context-renderers/order-renderer.js` (only consumed by deleted drawer) | DEAD §NEEDS-VERIFICATION | None | Easy revert | ✅ **Done** |
+| Bonus: removed loader block (lines 118-142) from `sidebar-config.js` | — | None | Easy revert | ✅ **Done** |
 
-**Goal:** Establish migration plumbing + remove confirmed-orphan files.
-**Verification:** `grep -rn "sidebar-context-drawer\|B2CContext" .` shows only the deleted files.
-**Time:** 1 PR, 1 hour.
+**Goal achieved:** Established migration plumbing + removed 4 orphan files + documented runtime navigation contracts. ~580 lines deleted, ~40 lines added (helper + RULE N1 docs). Net cleanup ~540 lines.
+
+**Verification done:**
+- `grep -rn "sidebar-context-drawer\|B2CContext\|context-renderers" .` → 0 results
+- `grep -rn "B2CContext\.set\|B2CContextDrawer" .` → 0 publishers found before deletion
+
+**Net effect:** Foundation laid for Phases 4-6 (command-palette, notifications, dashboards all become shell-aware via `navigatePage()`).
 
 ---
 
