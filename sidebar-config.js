@@ -28,21 +28,20 @@ try {
   }
 } catch (_) {}
 
-// ── Stale Takeover Cleanup (defensive) ──
-// لو OLD sidebar-takeover.js cached وبيشتغل في الخلفية، يقدر يضيف
-// body.sb-takeover class أو يبني .sb-panel-host. ندرّب re-cleanup
-// كل ما الـ class تظهر — يضمن إن الـ stale code ما يكسرش الـ UI.
+// ── Stale Takeover Cleanup (defensive — runs once only) ──
+// لو OLD sidebar-takeover.js cached وبيشتغل، نشيل أي .sb-panel-host
+// + inline display:none من nav-scroll/sb-tools. مرة واحدة لما الـ DOM
+// يكون ready — مش interval (الـ interval كان بيمسح embed-mode الـ
+// runtime shell بيضيفه فيـ break الـ iframes).
 (function cleanupStaleTakeover(){
   try {
     const purge = () => {
       document.body && document.body.classList.remove('sb-takeover');
-      document.documentElement.classList.remove('embed-mode');
+      // NOTE: ما نمسحش embed-mode — runtime shell بيضيفه بـ ?embed=1
       document.querySelectorAll('.sb-panel-host').forEach(el => el.remove());
-      // ارفع أي inline display:none اللي OLD JS أضافها على nav-scroll / sb-tools
       document.querySelectorAll('.nav-scroll, .sb-tools').forEach(el => {
         if (el.style && el.style.display === 'none') el.style.display = '';
       });
-      // Disable any cached takeover API
       if (window.B2CSidebar) {
         try { delete window.B2CSidebar.openPanel; } catch(_) { window.B2CSidebar.openPanel = null; }
         try { delete window.B2CSidebar.closePanel; } catch(_) { window.B2CSidebar.closePanel = null; }
@@ -50,16 +49,11 @@ try {
       }
       window.B2C_TAKEOVER_ENABLED = false;
     };
-    purge();
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', purge, { once: true });
-    }
-    // إعادة المراقبة كل ثانية لمدة 5 ثواني (defensive ضد late-running OLD script)
-    let n = 0;
-    const iv = setInterval(() => {
+    } else {
       purge();
-      if (++n >= 5) clearInterval(iv);
-    }, 1000);
+    }
   } catch(_) {}
 })();
 
