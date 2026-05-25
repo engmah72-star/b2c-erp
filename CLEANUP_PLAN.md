@@ -125,20 +125,25 @@ All 5 dashboards already load `sidebar-config.js` which auto-loads `core/shell-n
 
 ### Phase 6 — Workflow page redirects
 
-Replace post-action `location.href=...` in workflow pages with `navigatePage()`. Similar mechanical.
+Bundled into 1 PR (same concern, mechanical).
 
-| Page | Sites |
-|---|---|
-| `design.html` | 2 |
-| `clients.html` | 3 |
-| `archive.html` | 1 |
-| `shipping-accounts.html` | 2 |
-| `financial-dashboard.html` | 1 |
-| `settings.html` | 1 |
-| `employee-profile.html` | 3 |
+| Page | Sites updated | Status |
+|---|---|---|
+| `design.html` | 2 (post-share inbox redirects) | ✅ **Done** |
+| `clients.html` | 3 (2 inbox + 1 conditional stage redirect) | ✅ **Done** |
+| `archive.html` | 1 (post-delete redirect) | ✅ **Done** |
+| `shipping-accounts.html` | 2 (conditional followup redirects) | ✅ **Done** |
+| `financial-dashboard.html` | 1 (post-save redirect) | ✅ **Done** |
+| `settings.html` | 1 (post-setting-change redirect) | ✅ **Done** |
+| `employee-profile.html` | 2 (back button + post-action) | ✅ **Done** |
 
-**Goal:** 13 more sites cleaned.
-**Time:** 2-3 PRs.
+**Total: 12 sites** (audit said 13 — overcounted `employee-profile.html` by 1; the missing site is a role-deny redirect at line 441 which is correctly preserved as hard nav).
+
+JS-context sites wrapped with the defensive expression `(typeof navigatePage==='function'?navigatePage:url=>location.href=url)(url)` — these run inside function bodies/setTimeout where the helper may not yet be loaded.
+
+The HTML-attribute site (`employee-profile.html:462` back button) uses the simpler `onclick="navigatePage('employees.html')"` — sidebar-config.js sync-loads the helper before onclick can fire.
+
+**Deliberately preserved as hard nav:** login redirects (`window.location.href='login.html'`), role redirects (`RDASH[role]`, `RMAP_A`), and role-deny redirects (e.g. `employee-profile.html:441`). All security boundaries — must escape the shell.
 
 ---
 
