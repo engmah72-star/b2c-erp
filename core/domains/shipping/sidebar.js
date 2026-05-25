@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'شحنة جديدة',
+  primaryAction: { icon: '➕', label: 'شحنة جديدة', handler: 'openNewShipment' },
   views: [
     { id: 'all',       ico: '📦', label: 'الشحنات الحالية',   deepLink: 'shipping.html' },
     { id: 'late',      ico: '⏰', label: 'المتأخرة',           deepLink: 'shipping.html?filter=late' },

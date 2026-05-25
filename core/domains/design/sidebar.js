@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'طلب تصميم جديد',
+  primaryAction: { icon: '📤', label: 'رفع تصميم', handler: 'openUploadDesign' },
   views: [
     { id: 'all',    ico: '🎨', label: 'طلبات التصميم',  deepLink: 'design.html' },
     { id: 'wip',    ico: '⏳', label: 'قيد التنفيذ',     deepLink: 'design.html?filter=wip' },

@@ -11,6 +11,7 @@
 
 import * as signalStore from './signals.js';
 import * as memory from './runtime-memory.js';
+import * as fab from './fab.js';
 
 const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -139,6 +140,13 @@ export function buildSidebar({ container, domain, config = {} }) {
   container.querySelector('[data-rt-add]')?.addEventListener('click', () => {
     _toast((config.addLabel || 'إضافة') + ' — Phase 3');
   });
+
+  // ── Sync FAB with this domain's primary action (Phase 7) ──
+  if (config.primaryAction && config.primaryAction.icon) {
+    fab.show(config.primaryAction);
+  } else {
+    fab.hide();
+  }
 
   // ── Subscribe to signal changes (Phase 4: reactive counts) ──
   const unsubSignals = signalStore.onChange((emittedDomain, key, count) => {

@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'إضافة عميل',
+  primaryAction: { icon: '➕', label: 'عميل جديد', handler: 'openAddClient' },
   views: [
     { id: 'all',      ico: '📊', label: 'كل العملاء',   deepLink: 'clients.html' },
     { id: 'active',   ico: '🟢', label: 'النشطين',      deepLink: 'clients.html?filter=active' },
