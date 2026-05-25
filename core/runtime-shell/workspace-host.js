@@ -101,14 +101,29 @@ export function navigate(url) {
   if (!entry) return false;
   _onLoadStart(_currentDomain);
   entry.loaded = false;
-  entry.iframe.src = url;
+  entry.iframe.src = _withEmbed(url);
   return true;
+}
+
+/**
+ * Append ?embed=1 to a URL (or replace if already present).
+ * shared.css picks up html.embed-mode + hides internal chrome.
+ */
+function _withEmbed(url) {
+  if (!url) return url;
+  if (url.startsWith('about:') || url.startsWith('blob:') || url.startsWith('data:')) return url;
+  const hashIdx = url.indexOf('#');
+  const hash = hashIdx >= 0 ? url.slice(hashIdx) : '';
+  let base = hashIdx >= 0 ? url.slice(0, hashIdx) : url;
+  if (base.indexOf('embed=1') >= 0) return base + hash;
+  const sep = base.indexOf('?') >= 0 ? '&' : '?';
+  return base + sep + 'embed=1' + hash;
 }
 
 function _createFrame(domain) {
   const iframe = document.createElement('iframe');
   iframe.className = 'rt-workspace-frame';
-  iframe.src = domain.workspace;
+  iframe.src = _withEmbed(domain.workspace);
   iframe.setAttribute('title', domain.title);
   iframe.setAttribute('loading', 'lazy');
   // referrer-policy = same-origin (default) — keeps cookies/auth
