@@ -113,8 +113,20 @@ const INC_SEV={low:{lbl:'منخفض',col:'var(--dim2)'},medium:{lbl:'متوسط'
 // ── State ──
 let me=null, myEmpId='', myAuthUid='';
 let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[];
-let activeTab=(location.hash||'#overview').slice(1);
-if(!['overview','attendance','salary','feedback'].includes(activeTab))activeTab='overview';
+// RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
+// Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
+const TAB_KEYS_MP=['overview','attendance','salary','feedback'];
+let activeTab=(function(){
+  const qp=new URLSearchParams(location.search).get('tab');
+  if(qp&&TAB_KEYS_MP.includes(qp))return qp;
+  const h=(location.hash||'').slice(1);
+  if(h&&TAB_KEYS_MP.includes(h)){
+    const u=new URL(location.href);u.searchParams.set('tab',h);u.hash='';
+    history.replaceState(null,'',u.toString());
+    return h;
+  }
+  return 'overview';
+})();
 const now=new Date();
 
 const fn=n=>(n||0).toLocaleString('en-US');
@@ -127,9 +139,10 @@ window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-o
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 
 window.setTab=function(t){
-  if(!['overview','attendance','salary','feedback'].includes(t))return;
+  if(!TAB_KEYS_MP.includes(t))return;
   activeTab=t;
-  history.replaceState(null,'','#'+t);
+  const u=new URL(location.href);u.searchParams.set('tab',t);u.hash='';
+  history.replaceState(null,'',u.toString());
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
