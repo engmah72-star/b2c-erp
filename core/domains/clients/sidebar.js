@@ -22,7 +22,7 @@ const CONFIG = {
     { id: 'note',       ico: '📝', label: 'ملاحظة سريعة',  handler: 'openNote' },
   ],
   signals: [
-    { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين' },
+    { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed' },
     { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة' },
     { kind: 'info', ico: '💰', label: 'تحصيلات معلقة' },
   ],

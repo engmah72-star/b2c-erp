@@ -5,21 +5,11 @@
 // Helper مشترك للـ domain modules. يأخذ config declarative ويبني الـ
 // sidebar HTML + wiring (clicks، toasts، deep-link navigation).
 //
-// Domains تكتفي بـ config object — لا تكرار للـ HTML/event code.
-//
-// Usage:
-//   import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
-//   buildSidebar({ container, domain, config: { views, actions, signals } });
-//
-// Config shape:
-//   {
-//     views?:  [{ id, ico, label, deepLink }],
-//     actions?: [{ id, ico, label, handler }],   // handler = string id (Phase 3 wires it)
-//     signals?: [{ kind, ico, label, count }],   // kind: 'warn' | 'crit' | 'info'
-//     addLabel?: string,                          // tooltip for (+) button
-//     emptyRecent?: string,
-//   }
+// Phase 4: signals reactive — subscribes to signals.onChange ويحدّث
+// الـ count DOM لكل signal item.
 // ════════════════════════════════════════════════════════════════════
+
+import * as signalStore from './signals.js';
 
 const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -49,7 +39,6 @@ export function buildSidebar({ container, domain, config = {} }) {
   if (!container || !domain) return { dispose: () => {} };
   const views   = Array.isArray(config.views)   ? config.views   : [];
   const actions = Array.isArray(config.actions) ? config.actions : [];
-  const signals = Array.isArray(config.signals) ? config.signals : [];
 
   let html = '';
 
@@ -88,16 +77,21 @@ export function buildSidebar({ container, domain, config = {} }) {
     html += '</section>';
   }
 
-  // ── Signals (placeholder display) ──
-  if (signals.length) {
+  // ── Signals (live, reactive to signal store) ──
+  const signalsList = Array.isArray(config.signals) ? config.signals : [];
+  if (signalsList.length) {
     html += '<section class="rt-ctx-section" aria-label="تنبيهات">';
     html +=   '<header class="rt-ctx-section-h">تنبيهات</header>';
-    for (const s of signals) {
+    for (const s of signalsList) {
       const cls = s.kind === 'warn' ? 'warn' : (s.kind === 'crit' ? 'crit' : '');
-      html += '<div class="rt-ctx-item" aria-disabled="true" style="cursor:default">';
+      // الـ count من الـ store (key = s.signalKey أو s.id)
+      const key = s.signalKey || s.id;
+      const initialCount = key ? signalStore.getMetric(domain.id, key) : 0;
+      const displayCount = initialCount > 0 ? initialCount : (s.count != null ? s.count : '—');
+      html += '<div class="rt-ctx-item rt-ctx-signal" data-signal-key="' + _esc(key || '') + '" aria-disabled="true" style="cursor:default">';
       html +=   '<span class="rt-ctx-item-ico" aria-hidden="true">' + (s.ico || 'ℹ') + '</span>';
       html +=   '<span class="rt-ctx-item-lbl">' + _esc(s.label) + '</span>';
-      html +=   '<span class="rt-ctx-item-cnt ' + cls + '">' + _esc(s.count != null ? s.count : '—') + '</span>';
+      html +=   '<span class="rt-ctx-item-cnt ' + cls + '">' + _esc(displayCount) + '</span>';
       html += '</div>';
     }
     html += '</section>';
@@ -145,5 +139,16 @@ export function buildSidebar({ container, domain, config = {} }) {
     _toast((config.addLabel || 'إضافة') + ' — Phase 3');
   });
 
-  return { dispose: () => {} };
+  // ── Subscribe to signal changes (Phase 4: reactive counts) ──
+  const unsubSignals = signalStore.onChange((emittedDomain, key, count) => {
+    if (emittedDomain !== domain.id) return;
+    const item = container.querySelector('.rt-ctx-signal[data-signal-key="' + key + '"] .rt-ctx-item-cnt');
+    if (item) item.textContent = count > 0 ? String(count) : '—';
+  });
+
+  return {
+    dispose: () => {
+      try { unsubSignals(); } catch (_) {}
+    }
+  };
 }
