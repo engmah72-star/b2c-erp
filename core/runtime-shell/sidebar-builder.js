@@ -10,6 +10,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import * as signalStore from './signals.js';
+import * as memory from './runtime-memory.js';
 
 const _esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -97,10 +98,10 @@ export function buildSidebar({ container, domain, config = {} }) {
     html += '</section>';
   }
 
-  // ── Recent (placeholder) ──
-  html += '<section class="rt-ctx-section" aria-label="الأخيرة">';
+  // ── Recent (Phase 6: persistent + reactive) ──
+  html += '<section class="rt-ctx-section rt-ctx-recent-section" aria-label="الأخيرة">';
   html +=   '<header class="rt-ctx-section-h">الأخيرة</header>';
-  html +=   '<div class="rt-ctx-placeholder">' + _esc(config.emptyRecent || 'يُملأ تلقائياً من نشاطك (قريباً)') + '</div>';
+  html +=   '<div class="rt-ctx-recent-list" data-rt-recent></div>';
   html += '</section>';
 
   container.innerHTML = html;
@@ -146,9 +147,53 @@ export function buildSidebar({ container, domain, config = {} }) {
     if (item) item.textContent = count > 0 ? String(count) : '—';
   });
 
+  // ── Render + subscribe to recent (Phase 6) ──
+  const recentHost = container.querySelector('[data-rt-recent]');
+  function renderRecent() {
+    if (!recentHost) return;
+    const items = memory.getRecent(domain.id, 5);
+    if (!items.length) {
+      recentHost.innerHTML = '<div class="rt-ctx-placeholder">' + _esc(config.emptyRecent || 'يُملأ تلقائياً من نشاطك') + '</div>';
+      return;
+    }
+    let h = '';
+    for (const it of items) {
+      const ago = _timeAgo(it.ts);
+      h += '<button type="button" class="rt-ctx-item rt-ctx-recent-item" data-recent-url="' + _esc(it.url) + '" title="' + _esc(it.label) + '">';
+      h +=   '<span class="rt-ctx-item-ico" aria-hidden="true">⏱</span>';
+      h +=   '<span class="rt-ctx-item-lbl">' + _esc(it.label) + '</span>';
+      h +=   '<span class="rt-ctx-item-cnt" style="background:transparent;color:var(--rt-dim,#647298);font-weight:400">' + _esc(ago) + '</span>';
+      h += '</button>';
+    }
+    recentHost.innerHTML = h;
+    recentHost.querySelectorAll('[data-recent-url]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const url = btn.dataset.recentUrl;
+        if (!url) return;
+        const shell = (window.top && window.top.B2CShell) || window.B2CShell;
+        if (shell && typeof shell.openInWorkspace === 'function') shell.openInWorkspace(url);
+      });
+    });
+  }
+  renderRecent();
+  const unsubRecent = memory.onRecentChange((emittedDomain) => {
+    if (emittedDomain === domain.id) renderRecent();
+  });
+
   return {
     dispose: () => {
       try { unsubSignals(); } catch (_) {}
+      try { unsubRecent(); }  catch (_) {}
     }
   };
+}
+
+function _timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'الآن';
+  if (diff < 3600_000) return Math.floor(diff/60_000) + 'د';
+  if (diff < 86400_000) return Math.floor(diff/3600_000) + 'س';
+  return Math.floor(diff/86400_000) + 'ي';
 }

@@ -17,6 +17,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { getDomain } from './domain-registry.js';
+import { trackIframeLoad } from './entity-tracker.js';
 
 const DEFAULT_MAX_CACHE = 3;
 
@@ -134,6 +135,8 @@ function _createFrame(domain) {
   iframe.addEventListener('load', () => {
     entry.loaded = true;
     _onLoadEnd(domain.id);
+    // Track entity for Recent (Phase 6) — defer a tick so title is settled
+    setTimeout(() => trackIframeLoad(domain.id, iframe), 100);
   });
   iframe.addEventListener('error', () => {
     console.warn('[rt-workspace] iframe error', domain.id);
