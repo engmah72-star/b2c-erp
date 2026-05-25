@@ -18,6 +18,16 @@
 //   - adminOnly  true → admin/operation_manager فقط
 //   - public     true → كل الأدوار تشوفها
 
+// ── Embed Mode Detection (Runtime Shell Phase 5) ──
+// لو الصفحة محمَّلة كـ iframe في runtime shell (?embed=1)، علّم الـ HTML
+// element مبكراً (sync في الـ head) عشان shared.css يخفي الـ chrome
+// المكرّر (topbar/sidenav/mob-nav) قبل أي paint = no flash.
+try {
+  if (location.search && location.search.indexOf('embed=1') >= 0) {
+    document.documentElement.classList.add('embed-mode');
+  }
+} catch (_) {}
+
 // ── Stale Takeover Cleanup (defensive) ──
 // لو OLD sidebar-takeover.js cached وبيشتغل في الخلفية، يقدر يضيف
 // body.sb-takeover class أو يبني .sb-panel-host. ندرّب re-cleanup
