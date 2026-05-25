@@ -34,16 +34,15 @@
 
 ### Phase 1 — Pure-dead cleanup (Quick win)
 
-| Item | Source audit | Risk | Reversible? |
-|---|---|---|---|
-| Delete `chat.html`, `gallery.html`, `client-design-library.html` (3 redirect stubs) | DEAD §SAFE | None | Trivial |
-| Delete `ai-context.js` (398 lines, 0 references) | DEAD §SAFE | None | Trivial |
-| Delete `@keyframes journeyPulse` from `clients.css:18` | CSS §6 | None | Trivial |
-| Delete unused tokens `--ring-r`, `--tint-o-soft`, `--tint-o-med`, `--tint-o-line` from `shared.css` | CSS §5 | None | Trivial |
+| Item | Source audit | Risk | Reversible? | Status |
+|---|---|---|---|---|
+| Delete `ai-context.js` (398 lines, 0 references) | DEAD §SAFE | None | Trivial | ✅ **Done** |
+| ~~Delete `chat.html`, `gallery.html`, `client-design-library.html`~~ | DEAD §SAFE | — | — | ❌ **Reverted** — still referenced as nav links in 10+ sidebars; redirect stubs serve real purpose (graceful migration for old bookmarks). Need coordinated nav-link removal first. |
+| ~~Delete `@keyframes journeyPulse` from `clients.css:18`~~ | CSS §6 | — | — | ❌ **Reverted** — actively used in `clients-render.js:1269` as inline `animation:journeyPulse`. Audit missed JS template-string usage. |
+| ~~Delete unused tokens `--ring-r`, `--tint-o-soft`, `--tint-o-med`, `--tint-o-line`~~ | CSS §5 | — | — | ⏸ **Deferred** — also defined in `design-system/tokens.css:324-325` (parallel system). Touch both or neither. Defer to a focused token-system PR. |
 
-**Goal:** Remove ~420 lines + 4 unused tokens. Zero behavior change.
-**Verification:** Build + load shell.html + load 3 random god pages.
-**Time:** 1 PR, 30 min.
+**Actual scope:** 1 file deleted, 398 lines removed. Zero behavior change.
+**Audit correction:** 3 of 4 original items were overconfident. Verification (grep against `.js` AND `.html` AND template-string usage) caught them before deletion. **Lesson:** before any future Phase delete, run the verification commands in §Verification (bottom of this doc) on full reference patterns, not just `import` statements.
 
 ---
 
