@@ -37,7 +37,8 @@ import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase
 import * as rail from './core/runtime-shell/rail.js?v=2';
 import * as ctx  from './core/runtime-shell/context-sidebar.js?v=1';
 import * as ws   from './core/runtime-shell/workspace-host.js?v=1';
-import * as signals from './core/runtime-shell/signals.js?v=1';
+import * as signals from './core/runtime-shell/signals.js?v=2';
+import * as aggregator from './core/runtime-shell/signals-aggregator.js?v=1';
 import { DOMAINS, isValidDomain } from './core/runtime-shell/domain-registry.js?v=1';
 import { getAllowedDomains, canSeeDomain, getDefaultDomain } from './core/runtime-shell/domain-permissions.js?v=1';
 
@@ -105,7 +106,8 @@ ws.init({
 });
 
 // ── Signals → Rail notification dots ──
-signals.onChange((domainId, count) => rail.setSignalCount(domainId, count));
+// Listen to domain totals (sum of all signals per domain)
+signals.onDomainChange((domainId, total) => rail.setSignalCount(domainId, total));
 
 // ── Public API ──
 window.B2CShell = {
@@ -164,6 +166,14 @@ onAuthStateChanged(auth, async (user) => {
   const initialDomain = getDomainFromUrl();
   setDomainInUrl(initialDomain, true);
   activate(initialDomain, false);
+
+  // Start signal aggregator (Phase 4 — live Firestore counts)
+  try { aggregator.start(); }
+  catch (e) { console.warn('[shell] aggregator start failed', e); }
+});
+
+window.addEventListener('beforeunload', () => {
+  try { aggregator.stop(); } catch (_) {}
 });
 </script>
 </body>

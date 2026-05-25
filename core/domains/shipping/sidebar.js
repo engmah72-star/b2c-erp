@@ -21,7 +21,7 @@ const CONFIG = {
     { id: 'track',     ico: '📍', label: 'تتبع رقم',            handler: 'openTrackByNumber' },
   ],
   signals: [
-    { kind: 'crit', ico: '⏰', label: 'شحنات متأخرة' },
+    { kind: 'crit', ico: '⏰', label: 'شحنات متأخرة', signalKey: 'late' },
     { kind: 'warn', ico: '🚛', label: 'مشاكل شركات' },
     { kind: 'info', ico: '💰', label: 'تسويات معلقة' },
   ],

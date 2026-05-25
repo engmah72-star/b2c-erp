@@ -20,7 +20,7 @@ const CONFIG = {
     { id: 'report',   ico: '📊', label: 'تقرير سريع',      handler: 'openQuickReport' },
   ],
   signals: [
-    { kind: 'warn', ico: '⚠', label: 'موافقات معلقة' },
+    { kind: 'warn', ico: '⚠', label: 'موافقات معلقة',     signalKey: 'pending-approvals' },
     { kind: 'warn', ico: '⚠', label: 'كاش منخفض' },
     { kind: 'info', ico: 'ℹ', label: 'تسويات قيد الانتظار' },
   ],

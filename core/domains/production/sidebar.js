@@ -22,9 +22,9 @@ const CONFIG = {
     { id: 'mark-done',  ico: '✅', label: 'تحديث الحالة',    handler: 'openMarkStatus' },
   ],
   signals: [
-    { kind: 'crit', ico: '⏰', label: 'طلبات متأخرة' },
-    { kind: 'warn', ico: '🟡', label: 'بدون مورد' },
-    { kind: 'warn', ico: '⚠', label: 'فيها مشكلة' },
+    { kind: 'crit', ico: '⏰', label: 'طلبات متأخرة', signalKey: 'late' },
+    { kind: 'warn', ico: '🟡', label: 'بدون مورد',    signalKey: 'no-supplier' },
+    { kind: 'warn', ico: '⚠', label: 'فيها مشكلة',    signalKey: 'problem' },
   ],
 };
 
