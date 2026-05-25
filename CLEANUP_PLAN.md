@@ -99,21 +99,27 @@ Both call sites check `typeof window.navigatePage === 'function'` and fall back 
 
 ---
 
-### Phase 5 — Dashboard navigation refactor (per-page)
+### Phase 5 — Dashboard navigation refactor
 
-5 dashboards × 1 PR each. Mechanical replacement.
+Bundled into 1 PR (all 5 dashboards = single concern, mechanical, easy revert).
 
-| Page | Sites | Source |
+| Page | Sites updated | Status |
 |---|---|---|
-| `designer-dashboard.html` | 3 | SIDEBAR §1 |
-| `cs-dashboard.html` | 4 | SIDEBAR §1 |
-| `exec-dashboard.html` | 6 | SIDEBAR §1 |
-| `ops-dashboard.html` | 5 | SIDEBAR §1 |
-| `shipping-dashboard.html` | 2 | SIDEBAR §1 |
+| `designer-dashboard.html` | 3 | ✅ **Done** |
+| `cs-dashboard.html` | 4 (3 onclick + 1 function body `openAddOrder`) | ✅ **Done** |
+| `exec-dashboard.html` | 7 (audit said 6 — missed `:511` alert-row click) | ✅ **Done** |
+| `ops-dashboard.html` | 5 | ✅ **Done** |
+| `shipping-dashboard.html` | 2 | ✅ **Done** |
 
-**Goal:** 20 hardcoded `location.href` → `navigatePage()`.
-**Risk:** Low per page. Reversible per PR.
-**Time:** 5 PRs, 1 hour each.
+**Total: 21 sites** (audit estimate: 20 — off by 1).
+
+All `onclick="location.href='X'"` patterns → `onclick="navigatePage('X')"`. Auth redirects (`window.location.href='login.html'`, role redirects to `RDASH[role]`) deliberately preserved — they need hard navigation to escape the shell if needed.
+
+`window.openAddOrder` in `cs-dashboard.html` wrapped with defensive fallback: `(typeof navigatePage==='function'?navigatePage:url=>location.href=url)('clients.html')`.
+
+All 5 dashboards already load `sidebar-config.js` which auto-loads `core/shell-navigate.js` (sync). `window.navigatePage` is guaranteed available before any onclick can fire.
+
+**Audit correction:** SIDEBAR audit estimate was 20 — actual was 21. Off-by-one (missed `exec-dashboard.html:511` alert-row click). Close enough this time.
 
 ---
 
