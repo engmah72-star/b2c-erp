@@ -1,0 +1,135 @@
+// ════════════════════════════════════════════════════════════════════
+// Business2Card Runtime Shell — Workspace Host (Layer 3)
+// ════════════════════════════════════════════════════════════════════
+//
+// iframe-based workspace loader. الـ god pages الموجودة تـ load كما هي
+// بدون أي تعديل (RULE H1.1: no DOM injection — iframe isolation فقط).
+//
+// LRU cache: يحتفظ بـ 3 iframes (last-3-used). الـ active visible،
+// الباقي display:none للحفاظ على state (scroll, filters, listeners).
+// عند تجاوز الـ LRU → أقدم غير-active يُحذف (about:blank + remove).
+//
+// API:
+//   init({ container, titleElement?, onLoadStart?, onLoadEnd? })
+//   showDomain(domainId)                → activate (load if not cached)
+//   reload(domainId?)                   → force reload (defaults to active)
+//   clearCache()                        → tear down all iframes
+// ════════════════════════════════════════════════════════════════════
+
+import { getDomain } from './domain-registry.js';
+
+const DEFAULT_MAX_CACHE = 3;
+
+let _hostEl = null;
+let _titleEl = null;
+let _onLoadStart = () => {};
+let _onLoadEnd = () => {};
+let _maxCache = DEFAULT_MAX_CACHE;
+let _currentDomain = null;
+const _cache = new Map(); // domainId → { iframe, lastUsed, loaded }
+
+export function init({ container, titleElement, onLoadStart, onLoadEnd, maxCache }) {
+  if (!container) throw new Error('[rt-workspace] container required');
+  _hostEl = container;
+  _titleEl = titleElement || null;
+  if (typeof onLoadStart === 'function') _onLoadStart = onLoadStart;
+  if (typeof onLoadEnd === 'function') _onLoadEnd = onLoadEnd;
+  if (maxCache > 0) _maxCache = maxCache;
+
+  // Auto-detect mobile to reduce cache size
+  try {
+    if (window.matchMedia('(max-width: 768px)').matches) _maxCache = 1;
+  } catch (_) {}
+}
+
+export function showDomain(domainId) {
+  if (!_hostEl) return false;
+  const domain = getDomain(domainId);
+  if (!domain || !domain.workspace) { _showError(domainId); return false; }
+
+  if (_titleEl) _titleEl.textContent = domain.title;
+  _currentDomain = domainId;
+
+  let entry = _cache.get(domainId);
+  if (!entry) {
+    entry = _createFrame(domain);
+    _cache.set(domainId, entry);
+    _evictIfNeeded();
+  } else {
+    entry.lastUsed = Date.now();
+  }
+
+  // Show active، hide others
+  for (const [k, v] of _cache) {
+    v.iframe.style.display = (k === domainId) ? 'block' : 'none';
+  }
+  return true;
+}
+
+export function reload(domainId) {
+  const id = domainId || _currentDomain;
+  if (!id) return;
+  const entry = _cache.get(id);
+  if (!entry) return;
+  const domain = getDomain(id);
+  if (!domain) return;
+  _onLoadStart(id);
+  entry.loaded = false;
+  entry.iframe.src = domain.workspace;
+}
+
+export function clearCache() {
+  for (const [, v] of _cache) {
+    try { v.iframe.src = 'about:blank'; } catch (_) {}
+    if (v.iframe.parentNode) v.iframe.parentNode.removeChild(v.iframe);
+  }
+  _cache.clear();
+}
+
+export function getCurrentDomain() {
+  return _currentDomain;
+}
+
+function _createFrame(domain) {
+  const iframe = document.createElement('iframe');
+  iframe.className = 'rt-workspace-frame';
+  iframe.src = domain.workspace;
+  iframe.setAttribute('title', domain.title);
+  iframe.setAttribute('loading', 'lazy');
+  // referrer-policy = same-origin (default) — keeps cookies/auth
+  // sandbox: NOT set — we trust same-origin and need full functionality
+
+  const entry = { iframe, lastUsed: Date.now(), loaded: false };
+
+  iframe.addEventListener('load', () => {
+    entry.loaded = true;
+    _onLoadEnd(domain.id);
+  });
+  iframe.addEventListener('error', () => {
+    console.warn('[rt-workspace] iframe error', domain.id);
+    _onLoadEnd(domain.id);
+  });
+
+  _onLoadStart(domain.id);
+  _hostEl.appendChild(iframe);
+  return entry;
+}
+
+function _evictIfNeeded() {
+  if (_cache.size <= _maxCache) return;
+  let oldestKey = null;
+  let oldestTime = Infinity;
+  for (const [k, v] of _cache) {
+    if (k === _currentDomain) continue;
+    if (v.lastUsed < oldestTime) { oldestTime = v.lastUsed; oldestKey = k; }
+  }
+  if (!oldestKey) return;
+  const e = _cache.get(oldestKey);
+  try { e.iframe.src = 'about:blank'; } catch (_) {}
+  if (e.iframe.parentNode) e.iframe.parentNode.removeChild(e.iframe);
+  _cache.delete(oldestKey);
+}
+
+function _showError(domainId) {
+  _hostEl.innerHTML = '<div class="rt-workspace-error">⚠ Domain غير معروف: ' + String(domainId) + '</div>';
+}

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d0f1b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Business2Card — Runtime</title>
+<link rel="stylesheet" href="runtime-shell.css?v=1">
+<script src="theme.js?v=4"></script>
+</head>
+<body class="rt-body">
+<div class="rt-shell">
+  <!-- ── Layer 1: Global Rail (56px desktop / bottom on mobile) ── -->
+  <aside id="rt-rail-host" class="rt-rail-host"></aside>
+
+  <!-- ── Layer 2: Context Sidebar (260px / fullscreen sheet on mobile) ── -->
+  <aside id="rt-ctx-host" class="rt-ctx-host" aria-label="Domain context"></aside>
+
+  <!-- ── Layer 3: Active Workspace ── -->
+  <main class="rt-workspace" aria-label="Workspace">
+    <header class="rt-topbar">
+      <button type="button" class="rt-mob-toggle" aria-label="فتح القائمة"
+              onclick="window.B2CShell&&window.B2CShell.toggleSidebar()">☰</button>
+      <h1 class="rt-workspace-title" id="rt-workspace-title">Runtime</h1>
+    </header>
+    <div id="rt-workspace-host" class="rt-workspace-host"></div>
+  </main>
+</div>
+
+<script type="module">
+import * as rail from './core/runtime-shell/rail.js?v=1';
+import * as ctx  from './core/runtime-shell/context-sidebar.js?v=1';
+import * as ws   from './core/runtime-shell/workspace-host.js?v=1';
+import * as signals from './core/runtime-shell/signals.js?v=1';
+import { DOMAINS, isValidDomain } from './core/runtime-shell/domain-registry.js?v=1';
+
+const DEFAULT_DOMAIN = 'accounts';
+
+const railHost = document.getElementById('rt-rail-host');
+const ctxHost  = document.getElementById('rt-ctx-host');
+const wsHost   = document.getElementById('rt-workspace-host');
+const titleEl  = document.getElementById('rt-workspace-title');
+
+// ── URL routing helpers ──
+function getDomainFromUrl() {
+  const id = new URLSearchParams(location.search).get('d') || '';
+  return isValidDomain(id) ? id : DEFAULT_DOMAIN;
+}
+
+function setDomainInUrl(domainId, replace = false) {
+  const url = new URL(location.href);
+  url.searchParams.set('d', domainId);
+  const stateObj = { domain: domainId };
+  if (replace) history.replaceState(stateObj, '', url.toString());
+  else         history.pushState(stateObj,    '', url.toString());
+}
+
+// ── Activate a domain (atomic switch) ──
+function activate(domainId, pushHistory = true) {
+  if (!isValidDomain(domainId)) domainId = DEFAULT_DOMAIN;
+  rail.setActive(domainId);
+  ctx.showDomain(domainId);
+  ws.showDomain(domainId);
+  // Close mobile sidebar after switch
+  document.body.classList.remove('rt-mob-open');
+  if (pushHistory) setDomainInUrl(domainId, false);
+}
+
+// ── Initialize layers ──
+rail.init({
+  container: railHost,
+  onSelect: (id) => activate(id, true),
+});
+
+ctx.init({ container: ctxHost });
+
+ws.init({
+  container: wsHost,
+  titleElement: titleEl,
+});
+
+// ── Signals → Rail notification dots ──
+signals.onChange((domainId, count) => rail.setSignalCount(domainId, count));
+
+// ── Public API (for mobile sidebar toggle from topbar button + future) ──
+window.B2CShell = {
+  activate,
+  toggleSidebar: () => document.body.classList.toggle('rt-mob-open'),
+  closeSidebar:  () => document.body.classList.remove('rt-mob-open'),
+  signals,
+  // expose for domain modules to register their renderers later:
+  registerDomain: async (domainId, renderer) => {
+    const reg = await import('./core/runtime-shell/domain-registry.js?v=1');
+    return reg.register(domainId, renderer);
+  },
+};
+
+// ── Browser back/forward (popstate) ──
+window.addEventListener('popstate', () => activate(getDomainFromUrl(), false));
+
+// ── Boot: activate initial domain from URL (no extra history entry) ──
+const initialDomain = getDomainFromUrl();
+setDomainInUrl(initialDomain, true);   // replaceState (clean URL)
+activate(initialDomain, false);
+
+// ── Tap on workspace area while sidebar open on mobile → close sidebar ──
+wsHost.addEventListener('click', () => {
+  if (document.body.classList.contains('rt-mob-open')) {
+    document.body.classList.remove('rt-mob-open');
+  }
+}, true);
+</script>
+</body>
+</html>
