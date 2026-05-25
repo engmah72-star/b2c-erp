@@ -88,14 +88,12 @@
 
 ### Phase 4 — Navigation: shell-aware command palette + notifications
 
-| Item | Source audit | Risk | Reversible? |
-|---|---|---|---|
-| `command-palette.js:234` — route via `navigatePage()` | SIDEBAR §5 | Low — fallback preserved | Easy |
-| `notifications.js:346` — route via `navigatePage()` | SIDEBAR §6 | Low — fallback preserved | Easy |
+| Item | Source audit | Risk | Reversible? | Status |
+|---|---|---|---|---|
+| `command-palette.js:234` — route via `navigatePage()` | SIDEBAR §5 | Low — fallback preserved | Easy | ✅ **Done** |
+| `notifications.js:346` — route via `navigatePage()` | SIDEBAR §6 | Low — fallback preserved | Easy | ✅ **Done** |
 
-**Goal:** Stop full reloads on Ctrl+K and notification clicks inside shell.
-**Verification:** Open shell, press Ctrl+K, navigate — workspace iframe updates without page reload.
-**Time:** 1 PR, 30 min.
+Both call sites check `typeof window.navigatePage === 'function'` and fall back to `location.href` if the helper isn't loaded (defensive — works on legacy pages that don't load `sidebar-config.js`).
 
 ---
 

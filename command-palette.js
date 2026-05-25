@@ -231,7 +231,11 @@
   function navigate(file) {
     if (!file) return;
     close();
-    window.location.href = file;
+    if (typeof window.navigatePage === 'function') {
+      window.navigatePage(file);
+    } else {
+      window.location.href = file;
+    }
   }
 
   // ── Global keyboard handler ──
