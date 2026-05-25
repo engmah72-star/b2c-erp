@@ -72,17 +72,19 @@
 
 ### Phase 3 — CSS hygiene (no visual change)
 
-| Item | Source audit | Risk | Reversible? |
-|---|---|---|---|
-| Remove duplicate `.panel-ov` from `production.css:35` + `production-dashboard.css:34` | CSS §1 | Low — duplicates of `shared.css:383` | Easy |
-| Remove `.modal` override from `shipping.css:118` (the `z-index:9999` anomaly) | CSS §1 | Low — re-validate shipping modal stacking | Easy |
-| Remove duplicate `.overlay` from `exec-cost-entry.css:98` | CSS §1 | Low | Easy |
-| Extract inline `<style>` blocks from `report-bug.html`, `validate-financial.html`, `supplier-requests.html` to dedicated CSS files | CSS §7 | None | Trivial |
-| Fix the 4 `!important` rules in `runtime-shell.css` (new file shouldn't need overrides) | CSS §3 | Low | Easy |
+| Item | Source audit | Risk | Reversible? | Status |
+|---|---|---|---|---|
+| Extract inline `<style>` blocks from `report-bug.html`, `validate-financial.html`, `supplier-requests.html` → dedicated CSS files | CSS §7 | None | Trivial | ✅ **Done** |
+| ~~Remove duplicate `.panel-ov` from `production.css:35` + `production-dashboard.css:34`~~ | CSS §1 | — | — | ❌ **Reverted** — NOT duplicates. `shared.css:383` is a left-sliding side panel (`top:0;left:0;transform:translateX(-100%)`); production/production-dashboard define a BOTTOM-SHEET panel (`align-items:flex-end`, slide-up) sharing the class name. Deleting would break production order detail. |
+| ~~Remove `.modal` override from `shipping.css:118`~~ | CSS §1 | — | — | ❌ **Reverted** — shipping uses a different API (`.modal.on` toggle, modal IS the overlay). `shared.css:396` uses `.overlay.open .modal` parent/child pattern. Removing breaks shipping modals. |
+| ~~Remove duplicate `.overlay` from `exec-cost-entry.css:98`~~ | CSS §1 | — | — | ❌ **Reverted** — exec-cost-entry uses display:none/flex toggle. `shared.css:394` uses opacity-based. Different mechanics. |
+| ~~Fix the 4 `!important` rules in `runtime-shell.css`~~ | CSS §3 | — | — | ❌ **Reverted** — all 4 are legitimate: 2× `@media (min-width: 769px)` desktop visibility overrides, 1× class-based visibility flag (override of default `display:none`), 1× `prefers-reduced-motion` a11y. Removing breaks responsive layout + a11y. |
 
-**Goal:** Remove ~150 CSS lines + clean up new code first.
-**Verification:** Visual diff on affected pages (shipping modals, exec-cost-entry overlays, production panels).
-**Time:** 1-2 PRs, 2 hours.
+**Actual scope:** 3 HTML inline `<style>` blocks extracted to 3 new CSS files. ~111 lines net relocation (no behavior change). Pages now load `<link rel="stylesheet" href="*.css?v=1">` instead of inline `<style>`.
+
+**Audit correction:** 4 of 5 original items were overconfident — same pattern as Phases 1 + 2. The CSS agent treated same-named classes across files as duplicates without checking the actual rules (different positioning, different APIs). The 4 `!important` rules in the new `runtime-shell.css` are all defensive/responsive/a11y — not cascade fights.
+
+**Lesson:** before any future CSS "duplicate" removal, diff the actual rule bodies — not just class names.
 
 ---
 
