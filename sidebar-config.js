@@ -115,29 +115,15 @@ try {
   window.ROLE_HOME     = ROLE_HOME;
   window.GROUP_LABELS  = GROUP_LABELS;
 
-  // ── Sidebar Context Drawer (auto-load) ──
-  // Pub/sub context bus + sidebar drawer renderer. لما الصفحة تنشر context
-  // (B2CContext.set), الـ sidebar تعرض تفاصيل الـ entity بدل nav-links.
-  // الـ takeover القديم (M0-M2) اتشال؛ النموذج الجديد = master/context.
-  if (!document.getElementById('sb-ctx-bus')) {
+  // ── Auto-load Shell-Aware Navigation Helper ──
+  // Exposes window.navigatePage(url) — routes via B2CShell.openInWorkspace
+  // when inside the Runtime Shell iframe، else falls back to location.href.
+  // Used by command-palette، notifications، dashboards (Phase 2+).
+  if (!document.getElementById('shell-nav-loader')) {
     const s = document.createElement('script');
-    s.id = 'sb-ctx-bus';
-    s.src = 'core/sidebar-context.js?v=1';
-    s.defer = false;  // sync — لازم يحمّل قبل أي page-level setup
-    document.head.appendChild(s);
-  }
-  if (!document.getElementById('sb-ctx-css')) {
-    const l = document.createElement('link');
-    l.id = 'sb-ctx-css';
-    l.rel = 'stylesheet';
-    l.href = 'sidebar-context-drawer.css?v=1';
-    document.head.appendChild(l);
-  }
-  if (!document.getElementById('sb-ctx-drawer')) {
-    const s = document.createElement('script');
-    s.id = 'sb-ctx-drawer';
-    s.src = 'sidebar-context-drawer.js?v=1';
-    s.defer = true;
+    s.id = 'shell-nav-loader';
+    s.src = 'core/shell-navigate.js?v=1';
+    s.defer = false;  // sync — لازم يكون window.navigatePage جاهز قبل أي onclick
     document.head.appendChild(s);
   }
 
