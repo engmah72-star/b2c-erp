@@ -212,14 +212,18 @@ For each of 11 pages with `panel-ov`:
 
 ### Phase 9 — Hash routing separation
 
-| Page | Migration |
-|---|---|
-| `my-profile.html` | tabs `#overview` → `?tab=overview` |
-| `employee-profile.html` | same |
-| `reports.html` | hash filters → query string |
-| `order.html:292` | `#client=X` link → shell context |
+| Page | Migration | Status |
+|---|---|---|
+| `my-profile.html` | tabs `#overview` → `?tab=overview` + read-time legacy hash migration | ✅ **Done** |
+| `employee-profile.html` | same pattern, uses imported `TAB_KEYS` from tab-router | ✅ **Done** |
+| `reports.html` | 9 state keys (tab/range/q/pay/stage/flag/view/sort/dir) migrated from hash → query string; `hashchange` listener → `popstate` | ✅ **Done** |
+| `order.html:292` | `#client=X` → `?openClient=X` (the only consumer is `clients.html:476` which already reads `openClient` query param — the original `#client=X` had **no consumer**, it was broken) | ✅ **Done** |
 
-**Effort:** 1-2 PRs.
+**Backward compatibility:** all 3 stateful pages (my-profile, employee-profile, reports) read legacy `#hash` on first load and migrate it to `?query=` via `history.replaceState`. Old bookmarks keep working — just get rewritten to new URL form silently.
+
+**Net effect:** `location.hash` is now reserved for shell context navigation (`#ctx=...`). Page-internal state lives in query string only. No collision risk when shell's context-sidebar starts dispatching `#ctx=order:X` etc.
+
+**Bonus fix discovered:** `order.html:292` "View client profile" link was sending `clients.html#client=X` but no code in `clients.html` consumed the `#client=` hash. The fix routes through the existing working `?openClient=X` deep-link consumer at `clients.html:476`. Broken deep-link → working deep-link.
 
 ---
 

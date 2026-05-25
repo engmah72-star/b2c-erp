@@ -266,22 +266,37 @@ const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
 // ══ URL state (tab + filters) ══
+// RULE N1.3 — state lives in ?query=, not in location.hash (shell reserves #ctx=).
+// Backward-compat: also accept legacy #hash and migrate to ?query= on first read.
 function readUrlState(){
   try{
-    const h=new URLSearchParams(location.hash.slice(1));
-    if(h.get('tab'))currentTab=h.get('tab');
-    if(h.get('range'))filterMode=h.get('range');
-    if(h.get('q'))__search=h.get('q');
-    if(h.get('pay'))__payFilter=h.get('pay');
-    if(h.get('stage'))__stageFilter=h.get('stage');
-    if(h.get('flag'))__flagFilter=h.get('flag');
-    if(h.get('view'))__viewMode=h.get('view');
-    if(h.get('sort'))__sortKey=h.get('sort');
-    if(h.get('dir'))__sortDir=h.get('dir');
+    let p=new URLSearchParams(location.search);
+    // Legacy: if no relevant query params but hash has state, hydrate from hash + migrate.
+    const KEYS=['tab','range','q','pay','stage','flag','view','sort','dir'];
+    const hasQuery=KEYS.some(k=>p.has(k));
+    if(!hasQuery&&location.hash.length>1){
+      const h=new URLSearchParams(location.hash.slice(1));
+      if(KEYS.some(k=>h.has(k))){
+        KEYS.forEach(k=>{if(h.has(k))p.set(k,h.get(k));});
+        const u=new URL(location.href);u.search=p.toString();u.hash='';
+        history.replaceState(null,'',u.toString());
+      }
+    }
+    if(p.get('tab'))currentTab=p.get('tab');
+    if(p.get('range'))filterMode=p.get('range');
+    if(p.get('q'))__search=p.get('q');
+    if(p.get('pay'))__payFilter=p.get('pay');
+    if(p.get('stage'))__stageFilter=p.get('stage');
+    if(p.get('flag'))__flagFilter=p.get('flag');
+    if(p.get('view'))__viewMode=p.get('view');
+    if(p.get('sort'))__sortKey=p.get('sort');
+    if(p.get('dir'))__sortDir=p.get('dir');
   }catch(e){}
 }
 function writeUrlState(){
-  const p=new URLSearchParams();
+  const p=new URLSearchParams(location.search);
+  // Strip all state keys first, then re-add non-defaults — preserves other query params if any.
+  ['tab','range','q','pay','stage','flag','view','sort','dir'].forEach(k=>p.delete(k));
   if(currentTab&&currentTab!=='overview')p.set('tab',currentTab);
   if(filterMode&&filterMode!=='month')p.set('range',filterMode);
   if(__search)p.set('q',__search);
@@ -292,7 +307,8 @@ function writeUrlState(){
   if(__sortKey&&__sortKey!=='date')p.set('sort',__sortKey);
   if(__sortDir&&__sortDir!=='desc')p.set('dir',__sortDir);
   const s=p.toString();
-  history.replaceState(null,'',s?'#'+s:location.pathname+location.search);
+  const u=new URL(location.href);u.search=s;u.hash='';
+  history.replaceState(null,'',u.toString());
 }
 
 // ══ Counter animation ══
@@ -529,8 +545,9 @@ window.addEventListener('keydown',e=>{
   }
 });
 
-// ══ Hashchange (back/forward navigation) ══
-window.addEventListener('hashchange',()=>{
+// ══ Popstate (back/forward navigation) ══
+// RULE N1.3 — state moved from hash to query string, so listen to popstate not hashchange.
+window.addEventListener('popstate',()=>{
   readUrlState();
   document.querySelectorAll('.rep-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===currentTab));
   document.querySelectorAll('.date-bar .d-btn').forEach(b=>{
