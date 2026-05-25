@@ -44,8 +44,9 @@ export function buildSidebar({ container, domain, config = {} }) {
 
   let html = '';
 
-  // ── Header ──
+  // ── Header (with explicit close button — always visible on mobile) ──
   html += '<div class="rt-ctx-header">';
+  html +=   '<button type="button" class="rt-ctx-h-close" data-rt-close aria-label="إغلاق القائمة" title="إغلاق">✕</button>';
   html +=   '<span class="rt-ctx-h-ico" aria-hidden="true">' + domain.icon + '</span>';
   html +=   '<span class="rt-ctx-h-title">' + _esc(domain.title) + '</span>';
   html +=   '<button type="button" class="rt-ctx-h-add" data-rt-add aria-label="' + _esc(config.addLabel || 'إضافة') + '" title="' + _esc(config.addLabel || 'إضافة') + '">+</button>';
@@ -159,6 +160,14 @@ export function buildSidebar({ container, domain, config = {} }) {
   // ── Add button (placeholder) ──
   container.querySelector('[data-rt-add]')?.addEventListener('click', () => {
     _toast((config.addLabel || 'إضافة') + ' — Phase 3');
+  });
+
+  // ── Close button (explicit) — closes mobile drawer ──
+  container.querySelector('[data-rt-close]')?.addEventListener('click', () => {
+    const shell = (window.top && window.top.B2CShell) || window.B2CShell;
+    if (shell && typeof shell.closeSidebar === 'function') {
+      shell.closeSidebar();
+    }
   });
 
   // ── Sync FAB with this domain's primary action (Phase 7) ──
