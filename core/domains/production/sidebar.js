@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'إجراء سريع',
+  primaryAction: { icon: '✅', label: 'تحديث الحالة', handler: 'openMarkStatus' },
   views: [
     { id: 'all',          ico: '📋', label: 'كل الطلبات',       deepLink: 'production.html' },
     { id: 'mine',         ico: '👷', label: 'موكلة لي',          deepLink: 'production.html?filter=mine' },

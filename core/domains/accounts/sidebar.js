@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'إضافة عملية مالية',
+  primaryAction: { icon: '💸', label: 'تسجيل مصروف', handler: 'openExpenseDialog' },
   views: [
     { id: 'wallets',   ico: '💼', label: 'المحافظ',    deepLink: 'accounts.html#wallets' },
     { id: 'safe',      ico: '🏦', label: 'الخزنة',      deepLink: 'accounts.html#safe' },

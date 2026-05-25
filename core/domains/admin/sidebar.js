@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'إضافة',
+  primaryAction: { icon: '➕', label: 'إضافة موظف', handler: 'openAddEmployee' },
   views: [
     { id: 'settings',  ico: '⚙', label: 'الإعدادات',         deepLink: 'settings.html' },
     { id: 'employees', ico: '👥', label: 'الموظفين',          deepLink: 'employees.html' },

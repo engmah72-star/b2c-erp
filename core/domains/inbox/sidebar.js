@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'رسالة جديدة',
+  primaryAction: { icon: '✏', label: 'رسالة جديدة', handler: 'openNewMessage' },
   views: [
     { id: 'all',     ico: '💬', label: 'كل المحادثات',  deepLink: 'inbox.html' },
     { id: 'unread',  ico: '🔵', label: 'غير مقروءة',     deepLink: 'inbox.html?filter=unread' },

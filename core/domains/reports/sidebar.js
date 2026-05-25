@@ -4,6 +4,7 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 
 const CONFIG = {
   addLabel: 'تقرير مخصص',
+  primaryAction: { icon: '📥', label: 'تقرير مخصص', handler: 'openCustomReport' },
   views: [
     { id: 'main',      ico: '📊', label: 'لوحة التقارير',      deepLink: 'reports.html' },
     { id: 'financial', ico: '💰', label: 'تقارير مالية',        deepLink: 'reports.html?cat=financial' },
