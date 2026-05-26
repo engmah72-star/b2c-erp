@@ -64,8 +64,6 @@
     <div class="topbar-left"><button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button><div><h1>✏️ التصميم</h1><p id="sub">جاري التحميل...</p></div></div>
     <div class="topbar-right"><button type="button" class="btn btn-p" onclick="openNewOrder()">＋ طلب جديد</button></div>
   </div>
-  <!-- DEBUG STRIP (temporary — remove after fix verified) -->
-  <div id="dbg-strip" style="margin:6px 12px;padding:8px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:11px;font-family:ui-monospace,monospace;color:#7dd3fc;direction:ltr;text-align:left;white-space:pre-wrap;line-height:1.5;max-height:140px;overflow-y:auto"></div>
   <div class="content">
     <!-- داشبورد التصميم -->
     <div id="design-dashboard" class="design-dash"></div>
@@ -365,92 +363,10 @@
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div class="toasts" id="toasts"></div>
 
-<!-- DBG BOOTSTRAP — runs as plain JS (NOT module) so any import error in the
-     module script below is captured into #dbg-strip. The previous version
-     installed __dbg + error handlers INSIDE the module, which meant import
-     failures fired before the handlers existed → empty strip + blank page. -->
-<script>
-(function(){
-  function paint(msg){
-    try{
-      var el = document.getElementById('dbg-strip');
-      if(!el) return;
-      var t = new Date().toISOString().slice(11,19);
-      el.textContent += '['+t+'] '+msg+'\n';
-      el.scrollTop = el.scrollHeight;
-    }catch(_){}
-  }
-  window.__dbg = paint;
-  // capture:true → catches resource load errors (script 404 / MIME mismatch)
-  // which DON'T bubble — they only fire in the capture phase on window.
-  window.addEventListener('error', function(e){
-    var where = (e.filename||'') + (e.lineno?(':'+e.lineno):'');
-    var src = e.target && e.target.src ? ' src=' + e.target.src : '';
-    paint('JS ERROR: ' + (e.message||e.type||e) + (where?(' @ '+where):'') + src);
-  }, true);
-  window.addEventListener('unhandledrejection', function(e){
-    var r = e.reason;
-    paint('PROMISE REJ: ' + ((r && r.message) || r || e));
-  });
-  paint('bootstrap OK (plain script) — loading module...');
-  // Sanity timeout: surface if the module never starts (likely import error).
-  setTimeout(function(){
-    if(!window.__moduleBooted){
-      paint('⚠️ MODULE NEVER BOOTED after 8s — check errors above');
-    }
-  }, 8000);
-
-  // ── SEQUENTIAL IMPORT PROBE ──
-  // Mirrors the exact import list of the main module. Each is dynamically
-  // imported with a 6s timeout so a hanging one is pinpointed by name.
-  // (Modules are cached after first eval — this doesn't double-fetch.)
-  (async function probeImports(){
-    var modules = [
-      './core/firebase-init.js',
-      './core/dom-utils.js',
-      'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js',
-      './notifications.js',
-      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js',
-      './financial-sync-engine.js',
-      './orders.js',
-      './order-actions.js',
-      'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js',
-      './design-render.js',
-    ];
-    for (var i = 0; i < modules.length; i++) {
-      var m = modules[i];
-      var t0 = performance.now();
-      paint('→ ' + m);
-      try {
-        await Promise.race([
-          import(m),
-          new Promise(function(_, rej){
-            setTimeout(function(){ rej(new Error('TIMEOUT 6s')); }, 6000);
-          })
-        ]);
-        paint('✓ ' + m + ' (' + (performance.now()-t0).toFixed(0) + 'ms)');
-      } catch(e) {
-        paint('✗ ' + m + ' — ' + (e.message||e) +
-              ' (' + (performance.now()-t0).toFixed(0) + 'ms)');
-        return; // stop on first fail
-      }
-    }
-    paint('all probes OK');
-  })();
-})();
-</script>
-
 <script type="module">
 
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { setText, gv } from "./core/dom-utils.js";
-
-// ══ DEBUG STRIP ══
-// __dbg + global error handlers are installed by the plain-JS bootstrap above
-// (before this module runs) so that import failures here are visible in the
-// strip. If we reach this line, all top-level imports succeeded.
-window.__moduleBooted = true;
-window.__dbg('module imports OK — top-of-module reached');
 
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
@@ -738,23 +654,14 @@ window.deleteOrderFull=async function(){
 
 let __listenersStarted=false;
 onAuthStateChanged(auth,async u=>{
-  window.__dbg('onAuthStateChanged fired, user=' + (u?u.uid.slice(-6):'NULL'));
   if(!u){window.location.href='login.html';return;}
-  if(__listenersStarted){window.__dbg('already started, skip');return;}
+  if(__listenersStarted)return;
   __listenersStarted=true;
   currentUser=u;
-  let snap;
-  try {
-    snap=await getDoc(doc(db,'users',u.uid));
-    window.__dbg('users/' + u.uid.slice(-6) + ' exists=' + snap.exists());
-  } catch(e) {
-    window.__dbg('getDoc(users) FAILED: ' + (e?.message||e));
-    return;
-  }
+  const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
     const d=snap.data();
-    window.__dbg('role=' + (d.role||'(none)'));
-    try { buildDynamicSidebar(u.uid, 'design.html'); } catch(e){ window.__dbg('buildDynamicSidebar threw: ' + e.message); }
+    buildDynamicSidebar(u.uid, 'design.html');
     const r=ROLES[d.role||'admin']||ROLES.admin;
     currentRole=d.role||'admin';
     userName=d.name||u.email;
@@ -764,12 +671,11 @@ onAuthStateChanged(auth,async u=>{
     document.getElementById('role-badge').textContent=r.label;
     document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;
 
-    try { buildSidebar(d,'design.html'); } catch(e){ window.__dbg('buildSidebar threw: ' + e.message); }
-    try { buildMobNav(currentRole,'design.html'); } catch(e){ window.__dbg('buildMobNav threw: ' + e.message); }
-    try { initNotifications(app, u); } catch(e){ window.__dbg('initNotifications threw: ' + e.message); }
-    window.__dbg('calling startListeners()...');
-    try { startListeners(); window.__dbg('startListeners() returned'); } catch(e){ window.__dbg('startListeners THREW: ' + e.message); }
-    try { initAttendance(); } catch(e){ window.__dbg('initAttendance threw: ' + e.message); }
+    buildSidebar(d,'design.html');
+    buildMobNav(currentRole,'design.html');
+    initNotifications(app, u);
+    startListeners();
+    initAttendance();
     setTimeout(updateDesignerUI,100);
     window.__myEmpId='';
     // جيب بيانات الموظف مرة واحدة (مش onSnapshot)
@@ -939,34 +845,22 @@ function startListeners(){
   const isCS=['customer_service','design_operator'].includes(currentRole);
   const currentUid=auth.currentUser?.uid;
 
-  window.__dbg('startListeners: role=' + currentRole + ' isAdmin2=' + isAdmin2 + ' isCS=' + isCS);
   if(isAdmin2){
-    window.__dbg('attaching ADMIN listener (stage==design, limit 500)');
     // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
     // a healthy design pipeline rarely exceeds 100 active orders).
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
-      window.__dbg('ADMIN listener FIRED: ' + snap.size + ' docs');
-      try {
-        orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
-          .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-        window.__dbg('orders array built: length=' + orders.length);
-        try { renderKanban(); window.__dbg('renderKanban OK'); }
-        catch(e){ window.__dbg('renderKanban THREW: ' + e.message + ' @ ' + (e.stack||'').split('\n')[1]); }
-        window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-        setText('sub',orders.length+' طلب تصميم');
-        setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-        setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-        setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
-        setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-        setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-        try { renderDesignDashboard(); window.__dbg('renderDesignDashboard OK'); }
-        catch(e){ window.__dbg('renderDesignDashboard THREW: ' + e.message); }
-        if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
-        window.__dbg('admin callback complete');
-      } catch(e) {
-        window.__dbg('ADMIN callback FATAL: ' + e.message + ' @ ' + (e.stack||'').split('\n')[1]);
-      }
-    }, err=>{ window.__dbg('ADMIN listener ERROR: ' + (err?.code||err?.message||err)); });
+      orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+      setText('sub',orders.length+' طلب تصميم');
+      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
+      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+      renderDesignDashboard();
+      if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+    });
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
