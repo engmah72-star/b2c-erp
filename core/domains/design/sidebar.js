@@ -5,17 +5,17 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'طلب تصميم جديد',
   primaryAction: { icon: '📤', label: 'رفع تصميم', handler: 'openUploadDesign' },
-  // UX Phase A: primary = 5 daily-operational views.
+  // Phase 1e (design page review):
+  // design.html is a Kanban board (always shows all stages in columns).
+  // "wip/review/all/done" were broken filter views — they navigated but
+  // the page never filtered. Now removed. The 5 stat cards at the top
+  // of the Kanban act as in-page column-focus instead.
+  // The sidebar keeps only cross-page navigation here.
   views: [
-    { id: 'wip',    ico: '⏳', label: 'قيد التنفيذ',     deepLink: 'design.html?filter=wip' },
-    { id: 'review', ico: '👀', label: 'تحت المراجعة',    deepLink: 'design.html?filter=review' },
-    { id: 'all',    ico: '🎨', label: 'طلبات التصميم',  deepLink: 'design.html' },
-    { id: 'done',   ico: '✅', label: 'منتهية',           deepLink: 'design.html?filter=done' },
-    { id: 'hub',    ico: '🖥️', label: 'مساحة التصميم',  deepLink: 'designer-hub.html' },
-  ],
-  secondaryViews: [
+    { id: 'hub',     ico: '🖥️', label: 'مساحة التصميم', deepLink: 'designer-hub.html' },
     { id: 'gallery', ico: '🖼️', label: 'المعرض',         deepLink: 'gallery.html' },
   ],
+  secondaryViews: [],
   actions: [
     { id: 'upload',  ico: '📤', label: 'رفع تصميم',    handler: 'openUploadDesign' },
     { id: 'approve', ico: '✅', label: 'اعتماد تصميم',  handler: 'openApproveDesign' },
