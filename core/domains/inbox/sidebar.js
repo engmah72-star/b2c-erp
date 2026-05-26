@@ -5,13 +5,16 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'رسالة جديدة',
   primaryAction: { icon: '✏', label: 'رسالة جديدة', handler: 'openNewMessage' },
+  // UX Phase A: primary = 5 daily-operational views.
   views: [
-    { id: 'all',     ico: '💬', label: 'كل المحادثات',  deepLink: 'inbox.html' },
     { id: 'unread',  ico: '🔵', label: 'غير مقروءة',     deepLink: 'inbox.html?filter=unread' },
     { id: 'urgent',  ico: '🔥', label: 'عاجلة',           deepLink: 'inbox.html?filter=urgent' },
+    { id: 'all',     ico: '💬', label: 'كل المحادثات',  deepLink: 'inbox.html' },
     { id: 'pinned',  ico: '📌', label: 'مثبَّتة',           deepLink: 'inbox.html?filter=pinned' },
-    { id: 'archived',ico: '📁', label: 'مؤرشفة',          deepLink: 'inbox.html?filter=archived' },
     { id: 'requests',ico: '📋', label: 'طلباتي',          deepLink: 'my-requests.html' },
+  ],
+  secondaryViews: [
+    { id: 'archived',ico: '📁', label: 'مؤرشفة',          deepLink: 'inbox.html?filter=archived' },
   ],
   actions: [
     { id: 'new-msg',  ico: '✏', label: 'رسالة جديدة',    handler: 'openNewMessage' },

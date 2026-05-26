@@ -5,15 +5,19 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إضافة عميل',
   primaryAction: { icon: '➕', label: 'عميل جديد', handler: 'openAddClient' },
+  // UX Phase A: primary = 5 daily-operational filters (most-used).
   views: [
-    { id: 'all',      ico: '📊', label: 'كل العملاء',   deepLink: 'clients.html' },
-    { id: 'active',   ico: '🟢', label: 'النشطين',      deepLink: 'clients.html?filter=active' },
-    { id: 'new',      ico: '🆕', label: 'الجدد',         deepLink: 'clients.html?filter=new' },
-    { id: 'delayed',  ico: '⏰', label: 'المتأخرين',    deepLink: 'clients.html?filter=delayed' },
-    { id: 'balance',  ico: '💰', label: 'عليه فلوس',    deepLink: 'clients.html?filter=balance' },
-    { id: 'vip',      ico: '⭐', label: 'VIP',          deepLink: 'clients.html?filter=vip' },
-    { id: 'sleep',    ico: '😴', label: 'نايم',          deepLink: 'clients.html?filter=sleep' },
-    { id: 'problem',  ico: '🚫', label: 'مشاكل',         deepLink: 'clients.html?filter=problem' },
+    { id: 'active',   ico: '🟢', label: 'النشطين',     deepLink: 'clients.html?filter=active' },
+    { id: 'balance',  ico: '💰', label: 'عليه فلوس',   deepLink: 'clients.html?filter=balance' },
+    { id: 'delayed',  ico: '⏰', label: 'المتأخرين',   deepLink: 'clients.html?filter=delayed' },
+    { id: 'new',      ico: '🆕', label: 'الجدد',        deepLink: 'clients.html?filter=new' },
+    { id: 'problem',  ico: '🚫', label: 'مشاكل',        deepLink: 'clients.html?filter=problem' },
+  ],
+  // Secondary (collapsible under "المزيد"): reference + admin.
+  secondaryViews: [
+    { id: 'all',      ico: '📊', label: 'كل العملاء',    deepLink: 'clients.html' },
+    { id: 'vip',      ico: '⭐', label: 'VIP',           deepLink: 'clients.html?filter=vip' },
+    { id: 'sleep',    ico: '😴', label: 'نايم',           deepLink: 'clients.html?filter=sleep' },
     { id: 'import',   ico: '📥', label: 'استيراد بيانات', deepLink: 'import-data.html' },
   ],
   actions: [
@@ -22,7 +26,6 @@ const CONFIG = {
     { id: 'log-pay',    ico: '💰', label: 'تسجيل تحصيل',   handler: 'openLogPayment' },
     { id: 'note',       ico: '📝', label: 'ملاحظة سريعة',  handler: 'openNote' },
   ],
-  // UX audit Phase 2: info-only signal removed (already a view in the views section).
   signals: [
     { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed', target: 'clients.html?filter=delayed' },
     { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة', target: 'clients.html?filter=problem' },

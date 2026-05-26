@@ -37,10 +37,23 @@ function _toast(msg) {
   } catch (_) {}
 }
 
+// Render a single view item (used for primary + secondary lists).
+function _renderViewItem(v) {
+  const cnt = v.count != null
+    ? '<span class="rt-ctx-item-cnt ' + _esc(v.countKind || '') + '">' + _esc(v.count) + '</span>'
+    : '';
+  return '<a class="rt-ctx-item" data-view="' + _esc(v.id) + '" href="' + _esc(v.deepLink || '#') + '" data-deep-link="' + _esc(v.deepLink || '') + '">'
+       +   '<span class="rt-ctx-item-ico" aria-hidden="true">' + (v.ico || '•') + '</span>'
+       +   '<span class="rt-ctx-item-lbl">' + _esc(v.label) + '</span>'
+       +   cnt
+       + '</a>';
+}
+
 export function buildSidebar({ container, domain, config = {} }) {
   if (!container || !domain) return { dispose: () => {} };
-  const views   = Array.isArray(config.views)   ? config.views   : [];
-  const actions = Array.isArray(config.actions) ? config.actions : [];
+  const views          = Array.isArray(config.views)          ? config.views          : [];
+  const secondaryViews = Array.isArray(config.secondaryViews) ? config.secondaryViews : [];
+  const actions        = Array.isArray(config.actions)        ? config.actions        : [];
 
   let html = '';
 
@@ -53,16 +66,20 @@ export function buildSidebar({ container, domain, config = {} }) {
   html += '</div>';
 
   // ── Views ──
+  // UX Phase A: cap primary views at 5 — overflow → secondaryViews (collapsible).
   if (views.length) {
     html += '<section class="rt-ctx-section" aria-label="العرض">';
     html +=   '<header class="rt-ctx-section-h">العرض</header>';
-    for (const v of views) {
-      const cnt = v.count != null ? '<span class="rt-ctx-item-cnt ' + _esc(v.countKind || '') + '">' + _esc(v.count) + '</span>' : '';
-      html += '<a class="rt-ctx-item" data-view="' + _esc(v.id) + '" href="' + _esc(v.deepLink || '#') + '" data-deep-link="' + _esc(v.deepLink || '') + '">';
-      html +=   '<span class="rt-ctx-item-ico" aria-hidden="true">' + (v.ico || '•') + '</span>';
-      html +=   '<span class="rt-ctx-item-lbl">' + _esc(v.label) + '</span>';
-      html +=   cnt;
-      html += '</a>';
+    for (const v of views) html += _renderViewItem(v);
+
+    if (secondaryViews.length) {
+      html += '<div class="rt-ctx-more" data-more-content hidden>';
+      for (const v of secondaryViews) html += _renderViewItem(v);
+      html += '</div>';
+      html += '<button type="button" class="rt-ctx-more-toggle" data-more-toggle aria-expanded="false">';
+      html +=   '<span class="rt-ctx-more-chev" aria-hidden="true">▾</span>';
+      html +=   '<span class="rt-ctx-more-lbl">المزيد (' + secondaryViews.length + ')</span>';
+      html += '</button>';
     }
     html += '</section>';
   }
@@ -118,7 +135,22 @@ export function buildSidebar({ container, domain, config = {} }) {
   const _lastViewId = memory.getLastView(domain.id);
   if (_lastViewId) {
     const lastLink = container.querySelector('[data-view="' + _lastViewId + '"]');
-    if (lastLink) lastLink.classList.add('active');
+    if (lastLink) {
+      lastLink.classList.add('active');
+      // UX Phase A: if the active view lives under "المزيد", auto-expand
+      // so the active highlight is visible without an extra tap.
+      const moreHost = lastLink.closest('[data-more-content]');
+      if (moreHost) {
+        moreHost.removeAttribute('hidden');
+        const btn = container.querySelector('[data-more-toggle]');
+        if (btn) {
+          btn.setAttribute('aria-expanded', 'true');
+          btn.classList.add('open');
+          const lbl = btn.querySelector('.rt-ctx-more-lbl');
+          if (lbl) lbl.textContent = 'أقل';
+        }
+      }
+    }
   }
 
   // ── Wire view clicks → navigate workspace iframe ──
@@ -172,6 +204,31 @@ export function buildSidebar({ container, domain, config = {} }) {
   // ── Add button (placeholder) ──
   container.querySelector('[data-rt-add]')?.addEventListener('click', () => {
     _toast((config.addLabel || 'إضافة') + ' — Phase 3');
+  });
+
+  // ── "المزيد" toggle (Phase A: progressive disclosure for secondary views) ──
+  container.querySelector('[data-more-toggle]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const btn = e.currentTarget;
+    const content = container.querySelector('[data-more-content]');
+    if (!content) return;
+    const open = content.hasAttribute('hidden');
+    if (open) {
+      content.removeAttribute('hidden');
+      btn.setAttribute('aria-expanded', 'true');
+      btn.classList.add('open');
+      const lbl = btn.querySelector('.rt-ctx-more-lbl');
+      if (lbl) lbl.textContent = 'أقل';
+    } else {
+      content.setAttribute('hidden', '');
+      btn.setAttribute('aria-expanded', 'false');
+      btn.classList.remove('open');
+      const lbl = btn.querySelector('.rt-ctx-more-lbl');
+      if (lbl) {
+        const n = container.querySelectorAll('[data-more-content] .rt-ctx-item').length;
+        lbl.textContent = 'المزيد (' + n + ')';
+      }
+    }
   });
 
   // ── Close button (explicit) — closes mobile drawer ──
