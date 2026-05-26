@@ -158,7 +158,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, query, where, onSnapshot, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle, buildSettlementUpdates, getShipMethodLabel } from "./orders.js";
+import { isShipReadyToClose, isShipPendingSettle, isShipTerminal, validateCollect, validateSettle, buildSettlementUpdates, getShipMethodLabel, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { canDo } from "./core/permissions-matrix.js";
 import { orderActions } from "./order-actions.js";
 import { shippingActions } from "./shipping-actions.js";
@@ -217,7 +217,7 @@ function isReadyToClose(o){
   return isShipReadyToClose(o);
 }
 function isLate(o){
-  if(o.shipStage==='returned'||o.stage==='archived')return false;
+  if(o.shipStage==='returned'||o.stage===ORDER_STAGES.ARCHIVED)return false;
   if(getDeliveryStatus(o).key==='delivered' && getCollectionStatus(o).key==='paid')return false;
   const ts=(o.createdAt?.seconds||o.updatedAt?.seconds||0)*1000;
   return ts>0 && (Date.now()-ts) > 5*86400000;
@@ -305,7 +305,7 @@ function fillCompanies(){
 // "بحاجة لمتابعة" = ليست جاهزة للأرشفة + ليست مرتجع + ليست مؤرشف
 function isActiveFollowup(o){
   if(o.shipStage==='returned')return false;
-  if(o.stage==='archived')return false;
+  if(o.stage===ORDER_STAGES.ARCHIVED)return false;
   if(isReadyToClose(o))return false;
   return true;
 }
@@ -586,7 +586,7 @@ window.markDelivered=async function(orderId){
 window.openCollectFl=function(orderId){
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
-  if(o.stage==='archived')return toast('⛔ مؤرشف','err');
+  if(o.stage===ORDER_STAGES.ARCHIVED)return toast('⛔ مؤرشف','err');
   if(o.shipStage==='returned')return toast('⛔ مرتجع','err');
   if(o.shipSettled)return toast('⛔ مسوّى مع شركة الشحن — ألغي التسوية أولاً','err');
   // INVARIANT: شحنات الشركات تُسوَّى عبر "حسابات الشحن" فقط
@@ -676,7 +676,7 @@ window.saveCollectFl=async function(){
 window.openSettleFromCo=function(orderId){
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
-  if(o.stage==='archived')return toast('⛔ مؤرشف','err');
+  if(o.stage===ORDER_STAGES.ARCHIVED)return toast('⛔ مؤرشف','err');
   if(o.shipStage==='returned')return toast('⛔ مرتجع','err');
   if(o.shipMethod!=='company')return toast('⛔ هذا الزر مخصّص لشحن الشركات فقط','err');
   if(o.shipSettled)return toast('✅ مسوّى بالفعل','ok');
