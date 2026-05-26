@@ -39,98 +39,35 @@ export const CLIENTS_SHELL_HTML = `
     </div>
   </div>
 
-  <div class="content">
-    <!-- KPI STRIP — 6 operational metrics (Runtime-first redesign) -->
-    <div class="kpi-strip">
-      <div class="kpi-tile kpi-clients" onclick="window.showStatsDrawer?.('clients')">
-        <div class="kpi-body">
-          <div class="kpi-lbl">إجمالي العملاء</div>
-          <div class="kpi-val" id="kpi-total-clients">—</div>
-          <div class="kpi-sub" id="kpi-clients-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">👥</div>
+  <div class="content clients-page-v2">
+    <!-- ════════════════════════════════════════════════════════════
+         PRIMARY BAR — دايماً ظاهر (بحث + tabs + toggles)
+         ════════════════════════════════════════════════════════════ -->
+    <div class="cl-primary-bar">
+      <div class="sw cl-primary-search">
+        <span class="sw-ico">🔍</span>
+        <input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="scheduleStatsAndGrid()">
       </div>
-      <div class="kpi-tile kpi-active" onclick="setQuickFilter?.('active',document.querySelector('.f-chip[onclick*=active]'))">
-        <div class="kpi-body">
-          <div class="kpi-lbl">عملاء نشطون</div>
-          <div class="kpi-val" id="kpi-active-clients">—</div>
-          <div class="kpi-sub" id="kpi-active-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">💓</div>
+      <div class="cl-primary-tabs">
+        <button type="button" class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
+        <button type="button" class="stab stab-legacy" id="stab-legacy" onclick="setStatusTab('legacy',this)">📁 قديم</button>
+        <button type="button" class="stab hide" id="stab-cgrid" onclick="setStatusTab('cgrid',this)">📊 متابعة</button>
       </div>
-      <div class="kpi-tile kpi-open" onclick="location.href='index.html'">
-        <div class="kpi-body">
-          <div class="kpi-lbl">الطلبات المفتوحة</div>
-          <div class="kpi-val" id="kpi-open-orders">—</div>
-          <div class="kpi-sub" id="kpi-open-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">📄</div>
-      </div>
-      <div class="kpi-tile kpi-sales" onclick="window.showStatsDrawer?.('sales')">
-        <div class="kpi-body">
-          <div class="kpi-lbl">قيمة المبيعات</div>
-          <div class="kpi-val" id="kpi-sales-amount">—</div>
-          <div class="kpi-sub" id="kpi-sales-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">💰</div>
-      </div>
-      <div class="kpi-tile kpi-execution">
-        <div class="kpi-body">
-          <div class="kpi-lbl">متوسط مدة التنفيذ</div>
-          <div class="kpi-val" id="kpi-avg-exec">— <span class="kpi-unit">يوم</span></div>
-          <div class="kpi-sub" id="kpi-exec-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">⏱</div>
-      </div>
-      <div class="kpi-tile kpi-late" onclick="location.href='index.html?filter=late'">
-        <div class="kpi-body">
-          <div class="kpi-lbl">طلبات متأخرة</div>
-          <div class="kpi-val" id="kpi-late-orders">—</div>
-          <div class="kpi-sub" id="kpi-late-delta"></div>
-        </div>
-        <div class="kpi-ico" aria-hidden="true">⚠️</div>
-      </div>
+      <button type="button" class="cl-toggle-btn" data-toggle-panel="stats" onclick="window.toggleClientsPanel?.('stats',this)" title="إحصائيات وتحليلات">
+        <span>📊</span><span class="cl-toggle-lbl">إحصائيات</span>
+      </button>
+      <button type="button" class="cl-toggle-btn" data-toggle-panel="filters" onclick="window.toggleClientsPanel?.('filters',this)" title="فلاتر متقدمة">
+        <span>⚙</span><span class="cl-toggle-lbl">فلاتر</span>
+        <span class="cl-toggle-badge hide" id="cl-filters-active-count"></span>
+      </button>
+      <button type="button" id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
     </div>
 
-    <!-- Legacy quick-totals (مخفية — البيانات اتنقلت للـ KPI strip فوق) -->
-    <div class="hs-grid hide" aria-hidden="true">
-      <div class="hs-card sales"><div class="hs-val" id="s-sales">—</div></div>
-      <div class="hs-card rem"><div class="hs-val" id="s-rem">—</div></div>
-    </div>
-
-    <!-- TIME PERIOD STRIP — اليوم · أمس · الأسبوع · الشهر · الشهر السابق -->
-    <div class="tp-strip" id="tp-strip">
-      <div class="tp-tile" data-period="today" style="--tpc:#3b82f6" onclick="setPeriodFilter('today',this)">
-        <div class="tp-lbl">📅 اليوم</div>
-        <div class="tp-num" id="tp-today-n">—</div>
-        <div class="tp-rev" id="tp-today-r">— ج</div>
-      </div>
-      <div class="tp-tile" data-period="yesterday" style="--tpc:#06b6d4" onclick="setPeriodFilter('yesterday',this)">
-        <div class="tp-lbl">⌛ أمس</div>
-        <div class="tp-num" id="tp-yest-n">—</div>
-        <div class="tp-rev" id="tp-yest-r">— ج</div>
-      </div>
-      <div class="tp-tile" data-period="week" style="--tpc:var(--o-purple)" onclick="setPeriodFilter('week',this)">
-        <div class="tp-lbl">🗓 الأسبوع</div>
-        <div class="tp-num" id="tp-week-n">—</div>
-        <div class="tp-rev" id="tp-week-r">— ج</div>
-      </div>
-      <div class="tp-tile" data-period="month" style="--tpc:#10d27e" onclick="setPeriodFilter('month',this)">
-        <div class="tp-lbl">📊 الشهر الحالي</div>
-        <div class="tp-num" id="tp-month-n">—</div>
-        <div class="tp-rev" id="tp-month-r">— ج</div>
-      </div>
-      <div class="tp-tile" data-period="lastmonth" style="--tpc:var(--y-amber)" onclick="setPeriodFilter('lastmonth',this)">
-        <div class="tp-lbl">📆 الشهر السابق</div>
-        <div class="tp-num" id="tp-lm-n">—</div>
-        <div class="tp-rev" id="tp-lm-r">— ج</div>
-        <div class="tp-comp" id="tp-lm-c"></div>
-      </div>
-    </div>
-
-    <!-- Quick Status Chips — حالة العملاء -->
-    <div class="chip-row">
-      <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);letter-spacing:.5px;margin-left:4px">عرض:</span>
+    <!-- ════════════════════════════════════════════════════════════
+         QUICK CHIPS — أهم الفلاتر اليومية (دايماً ظاهرة)
+         ════════════════════════════════════════════════════════════ -->
+    <div class="chip-row cl-chip-row">
+      <span class="cl-chip-row-lbl">عرض:</span>
       <button type="button" class="f-chip on" onclick="setQuickFilter('all',this)">
         <span>👥</span><span>الكل</span><span id="qf-all-n" style="color:var(--snow-soft)"></span>
       </button>
@@ -154,46 +91,138 @@ export const CLIENTS_SHELL_HTML = `
       </button>
     </div>
 
-    <!-- UNIFIED FILTER BAR -->
-    <div id="filter-bar" style="display:flex;gap:var(--space-sm);margin-bottom:14px;flex-wrap:wrap;align-items:center">
-      <div class="sw" style="flex:1;min-width:180px"><span class="sw-ico">🔍</span><input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="scheduleStatsAndGrid()"></div>
-      <div style="display:flex;gap:3px;flex-shrink:0">
-        <button type="button" class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
-        <button type="button" class="stab stab-legacy" id="stab-legacy" onclick="setStatusTab('legacy',this)">📁 قديم</button>
-        <button type="button" class="stab hide" id="stab-cgrid" onclick="setStatusTab('cgrid',this)">📊 متابعة</button>
+    <!-- ════════════════════════════════════════════════════════════
+         STATS PANEL — collapsible على الموبايل / مفتوح على الكمبيوتر
+         ════════════════════════════════════════════════════════════ -->
+    <section class="cl-panel" id="cl-stats-panel" data-panel="stats">
+      <div class="cl-panel-body">
+        <!-- KPI STRIP — 6 operational metrics -->
+        <div class="kpi-strip">
+          <div class="kpi-tile kpi-clients" onclick="window.showStatsDrawer?.('clients')">
+            <div class="kpi-body">
+              <div class="kpi-lbl">إجمالي العملاء</div>
+              <div class="kpi-val" id="kpi-total-clients">—</div>
+              <div class="kpi-sub" id="kpi-clients-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">👥</div>
+          </div>
+          <div class="kpi-tile kpi-active" onclick="setQuickFilter?.('active',document.querySelector('.f-chip[onclick*=active]'))">
+            <div class="kpi-body">
+              <div class="kpi-lbl">عملاء نشطون</div>
+              <div class="kpi-val" id="kpi-active-clients">—</div>
+              <div class="kpi-sub" id="kpi-active-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">💓</div>
+          </div>
+          <div class="kpi-tile kpi-open" onclick="location.href='index.html'">
+            <div class="kpi-body">
+              <div class="kpi-lbl">الطلبات المفتوحة</div>
+              <div class="kpi-val" id="kpi-open-orders">—</div>
+              <div class="kpi-sub" id="kpi-open-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">📄</div>
+          </div>
+          <div class="kpi-tile kpi-sales" onclick="window.showStatsDrawer?.('sales')">
+            <div class="kpi-body">
+              <div class="kpi-lbl">قيمة المبيعات</div>
+              <div class="kpi-val" id="kpi-sales-amount">—</div>
+              <div class="kpi-sub" id="kpi-sales-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">💰</div>
+          </div>
+          <div class="kpi-tile kpi-execution">
+            <div class="kpi-body">
+              <div class="kpi-lbl">متوسط مدة التنفيذ</div>
+              <div class="kpi-val" id="kpi-avg-exec">— <span class="kpi-unit">يوم</span></div>
+              <div class="kpi-sub" id="kpi-exec-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">⏱</div>
+          </div>
+          <div class="kpi-tile kpi-late" onclick="location.href='index.html?filter=late'">
+            <div class="kpi-body">
+              <div class="kpi-lbl">طلبات متأخرة</div>
+              <div class="kpi-val" id="kpi-late-orders">—</div>
+              <div class="kpi-sub" id="kpi-late-delta"></div>
+            </div>
+            <div class="kpi-ico" aria-hidden="true">⚠️</div>
+          </div>
+        </div>
+
+        <!-- Legacy quick-totals (مخفية — البيانات اتنقلت للـ KPI strip فوق) -->
+        <div class="hs-grid hide" aria-hidden="true">
+          <div class="hs-card sales"><div class="hs-val" id="s-sales">—</div></div>
+          <div class="hs-card rem"><div class="hs-val" id="s-rem">—</div></div>
+        </div>
+
+        <!-- TIME PERIOD STRIP — اليوم · أمس · الأسبوع · الشهر · الشهر السابق -->
+        <div class="tp-strip" id="tp-strip">
+          <div class="tp-tile" data-period="today" style="--tpc:#3b82f6" onclick="setPeriodFilter('today',this)">
+            <div class="tp-lbl">📅 اليوم</div>
+            <div class="tp-num" id="tp-today-n">—</div>
+            <div class="tp-rev" id="tp-today-r">— ج</div>
+          </div>
+          <div class="tp-tile" data-period="yesterday" style="--tpc:#06b6d4" onclick="setPeriodFilter('yesterday',this)">
+            <div class="tp-lbl">⌛ أمس</div>
+            <div class="tp-num" id="tp-yest-n">—</div>
+            <div class="tp-rev" id="tp-yest-r">— ج</div>
+          </div>
+          <div class="tp-tile" data-period="week" style="--tpc:var(--o-purple)" onclick="setPeriodFilter('week',this)">
+            <div class="tp-lbl">🗓 الأسبوع</div>
+            <div class="tp-num" id="tp-week-n">—</div>
+            <div class="tp-rev" id="tp-week-r">— ج</div>
+          </div>
+          <div class="tp-tile" data-period="month" style="--tpc:#10d27e" onclick="setPeriodFilter('month',this)">
+            <div class="tp-lbl">📊 الشهر الحالي</div>
+            <div class="tp-num" id="tp-month-n">—</div>
+            <div class="tp-rev" id="tp-month-r">— ج</div>
+          </div>
+          <div class="tp-tile" data-period="lastmonth" style="--tpc:var(--y-amber)" onclick="setPeriodFilter('lastmonth',this)">
+            <div class="tp-lbl">📆 الشهر السابق</div>
+            <div class="tp-num" id="tp-lm-n">—</div>
+            <div class="tp-rev" id="tp-lm-r">— ج</div>
+            <div class="tp-comp" id="tp-lm-c"></div>
+          </div>
+        </div>
+
+        <!-- SEGMENT STRIP (RFM distribution — clickable filters) -->
+        <div id="segment-strip" style="display:none"></div>
       </div>
-      <select class="inp" id="flt-select" onchange="window.setClientFilter(this.value)" style="max-width:130px">
-        <option value="all">📋 الكل</option>
-        <option value="today">📅 اليوم</option>
-        <option value="rem">💰 متبقي</option>
-        <option value="active">🔄 نشط</option>
-        <option value="inactive">😴 غير نشط</option>
-        <option value="vip">⭐ VIP</option>
-      </select>
-      <select class="inp" id="f-tag" onchange="renderGrid()" style="max-width:130px"><option value="">كل التصنيفات</option><option value="vip">⭐ VIP</option><option value="regular">🔄 دوري</option><option value="new">🆕 جديد</option><option value="wholesale">📦 جملة</option><option value="delayed">⏳ آجل</option></select>
-      <select class="inp" id="f-segment" onchange="renderGrid()" title="فلتر حسب شريحة RFM" style="max-width:140px">
-        <option value="">كل الشرائح (RFM)</option>
-        <option value="champion">🏆 أبطال</option>
-        <option value="loyal">💎 عملاء أوفياء</option>
-        <option value="new">🌱 جدد/واعدين</option>
-        <option value="needs_attention">👀 يحتاج اهتمام</option>
-        <option value="at_risk">⚠️ مهدّدون بالفقد</option>
-        <option value="cant_lose">🚨 لا يجب فقدهم</option>
-        <option value="about_to_sleep">😴 على وشك الفقد</option>
-        <option value="lost">💤 فُقدوا</option>
-      </select>
-      <select class="inp" id="f-gov" onchange="renderGrid()" style="max-width:130px"><option value="">كل المحافظات</option></select>
-      <select class="inp hide" id="f-src" onchange="renderGrid()"><option value="">كل المصادر</option></select>
-      <button type="button" class="btn btn-ghost btn-sm hide" id="add-legacy-btn" onclick="openAddLegacy()">＋ عميل قديم</button>
-      <button type="button" class="btn btn-ghost btn-sm hide" id="dup-scan-btn" onclick="openDupScan()" title="رصد العملاء اللي عندهم نفس رقم التليفون">🔁 مكررات</button>
-      <button type="button" id="filter-active-pill" onclick="clearAllFilters()" title="مسح الفلتر">🔵 فلتر نشط <span id="filter-active-count"></span> ✕</button>
-    </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════
+         EXTRA FILTERS — collapsible (بـ id=filter-bar للـ AI search)
+         ════════════════════════════════════════════════════════════ -->
+    <section class="cl-panel" id="cl-extra-filters-panel" data-panel="filters">
+      <div class="cl-panel-body cl-extra-filters" id="filter-bar">
+        <select class="inp" id="flt-select" onchange="window.setClientFilter(this.value)">
+          <option value="all">📋 الكل</option>
+          <option value="today">📅 اليوم</option>
+          <option value="rem">💰 متبقي</option>
+          <option value="active">🔄 نشط</option>
+          <option value="inactive">😴 غير نشط</option>
+          <option value="vip">⭐ VIP</option>
+        </select>
+        <select class="inp" id="f-tag" onchange="renderGrid()"><option value="">كل التصنيفات</option><option value="vip">⭐ VIP</option><option value="regular">🔄 دوري</option><option value="new">🆕 جديد</option><option value="wholesale">📦 جملة</option><option value="delayed">⏳ آجل</option></select>
+        <select class="inp" id="f-segment" onchange="renderGrid()" title="فلتر حسب شريحة RFM">
+          <option value="">كل الشرائح (RFM)</option>
+          <option value="champion">🏆 أبطال</option>
+          <option value="loyal">💎 عملاء أوفياء</option>
+          <option value="new">🌱 جدد/واعدين</option>
+          <option value="needs_attention">👀 يحتاج اهتمام</option>
+          <option value="at_risk">⚠️ مهدّدون بالفقد</option>
+          <option value="cant_lose">🚨 لا يجب فقدهم</option>
+          <option value="about_to_sleep">😴 على وشك الفقد</option>
+          <option value="lost">💤 فُقدوا</option>
+        </select>
+        <select class="inp" id="f-gov" onchange="renderGrid()"><option value="">كل المحافظات</option></select>
+        <select class="inp hide" id="f-src" onchange="renderGrid()"><option value="">كل المصادر</option></select>
+        <button type="button" class="btn btn-ghost btn-sm hide" id="add-legacy-btn" onclick="openAddLegacy()">＋ عميل قديم</button>
+        <button type="button" class="btn btn-ghost btn-sm hide" id="dup-scan-btn" onclick="openDupScan()" title="رصد العملاء اللي عندهم نفس رقم التليفون">🔁 مكررات</button>
+      </div>
+    </section>
 
     <!-- OCCASIONS BANNER (🎂/🏢 — auto-shown when there are today's/upcoming occasions) -->
     <div id="occasions-banner" style="display:none;margin-bottom:14px"></div>
-
-    <!-- SEGMENT STRIP (RFM distribution — clickable filters) -->
-    <div id="segment-strip" style="display:none;margin-bottom:14px"></div>
 
     <!-- GRID -->
     <div id="clients-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--space-lg)">
@@ -309,7 +338,60 @@ function mount() {
   if (!host || host.dataset.shellMounted === '1') return;
   host.innerHTML = CLIENTS_SHELL_HTML;
   host.dataset.shellMounted = '1';
+  initPanels();
 }
+
+// ── COLLAPSIBLE PANELS (mobile-only) ──
+// Desktop: panels always expanded (CSS overrides hide the toggle buttons).
+// Mobile: panels collapsed by default, toggle button shows/hides them.
+const PANEL_STATE_KEY = 'clients_panels_v1';
+function readPanelState() {
+  try { return JSON.parse(localStorage.getItem(PANEL_STATE_KEY) || '{}'); }
+  catch { return {}; }
+}
+function writePanelState(state) {
+  try { localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(state)); } catch {}
+}
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches;
+}
+function applyPanelState() {
+  const state = readPanelState();
+  document.querySelectorAll('.cl-panel').forEach(p => {
+    const key = p.getAttribute('data-panel');
+    const open = state[key] === true;
+    p.classList.toggle('cl-panel-open', open);
+    const btn = document.querySelector(`.cl-toggle-btn[data-toggle-panel="${key}"]`);
+    if (btn) btn.classList.toggle('on', open);
+  });
+}
+function initPanels() {
+  // Default state: collapsed on mobile, expanded on desktop (handled via CSS).
+  // We only persist explicit user toggles via localStorage on mobile.
+  if (isMobileViewport()) {
+    applyPanelState();
+  }
+  // Re-apply on resize crossings.
+  let lastMobile = isMobileViewport();
+  window.addEventListener('resize', () => {
+    const nowMobile = isMobileViewport();
+    if (nowMobile !== lastMobile) {
+      lastMobile = nowMobile;
+      if (nowMobile) applyPanelState();
+      else document.querySelectorAll('.cl-panel').forEach(p => p.classList.remove('cl-panel-open'));
+    }
+  }, { passive: true });
+}
+
+window.toggleClientsPanel = function(key, btn) {
+  const panel = document.querySelector(`.cl-panel[data-panel="${key}"]`);
+  if (!panel) return;
+  const open = panel.classList.toggle('cl-panel-open');
+  if (btn) btn.classList.toggle('on', open);
+  const state = readPanelState();
+  state[key] = open;
+  writePanelState(state);
+};
 
 // Mount immediately if DOM is ready, else wait.
 if (typeof document !== 'undefined') {
