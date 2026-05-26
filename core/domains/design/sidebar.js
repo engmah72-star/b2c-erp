@@ -5,13 +5,16 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'طلب تصميم جديد',
   primaryAction: { icon: '📤', label: 'رفع تصميم', handler: 'openUploadDesign' },
+  // UX Phase A: primary = 5 daily-operational views.
   views: [
-    { id: 'all',    ico: '🎨', label: 'طلبات التصميم',  deepLink: 'design.html' },
     { id: 'wip',    ico: '⏳', label: 'قيد التنفيذ',     deepLink: 'design.html?filter=wip' },
     { id: 'review', ico: '👀', label: 'تحت المراجعة',    deepLink: 'design.html?filter=review' },
+    { id: 'all',    ico: '🎨', label: 'طلبات التصميم',  deepLink: 'design.html' },
     { id: 'done',   ico: '✅', label: 'منتهية',           deepLink: 'design.html?filter=done' },
     { id: 'hub',    ico: '🖥️', label: 'مساحة التصميم',  deepLink: 'designer-hub.html' },
-    { id: 'gallery',ico: '🖼️', label: 'المعرض',          deepLink: 'gallery.html' },
+  ],
+  secondaryViews: [
+    { id: 'gallery', ico: '🖼️', label: 'المعرض',         deepLink: 'gallery.html' },
   ],
   actions: [
     { id: 'upload',  ico: '📤', label: 'رفع تصميم',    handler: 'openUploadDesign' },

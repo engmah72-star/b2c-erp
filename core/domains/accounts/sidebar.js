@@ -5,14 +5,17 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إضافة عملية مالية',
   primaryAction: { icon: '💸', label: 'تسجيل مصروف', handler: 'openExpenseDialog' },
+  // UX Phase A: primary = 5 most-used financial views.
   views: [
-    { id: 'wallets',   ico: '💼', label: 'المحافظ',    deepLink: 'accounts.html#wallets' },
-    { id: 'safe',      ico: '🏦', label: 'الخزنة',      deepLink: 'accounts.html#safe' },
-    { id: 'approvals', ico: '🔐', label: 'الموافقات',   deepLink: 'approvals.html' },
-    { id: 'income',    ico: '📥', label: 'التحصيلات',   deepLink: 'accounts.html#income' },
-    { id: 'expenses',  ico: '📤', label: 'المصروفات',   deepLink: 'accounts.html#expenses' },
+    { id: 'wallets',   ico: '💼', label: 'المحافظ',     deepLink: 'accounts.html#wallets' },
+    { id: 'approvals', ico: '🔐', label: 'الموافقات',    deepLink: 'approvals.html' },
+    { id: 'income',    ico: '📥', label: 'التحصيلات',    deepLink: 'accounts.html#income' },
+    { id: 'expenses',  ico: '📤', label: 'المصروفات',    deepLink: 'accounts.html#expenses' },
     { id: 'settle',    ico: '🤝', label: 'تسويات الشحن', deepLink: 'shipping-accounts.html' },
-    { id: 'ledger',    ico: '📚', label: 'دفتر الحركات', deepLink: 'ledger.html' },
+  ],
+  secondaryViews: [
+    { id: 'safe',      ico: '🏦', label: 'الخزنة',        deepLink: 'accounts.html#safe' },
+    { id: 'ledger',    ico: '📚', label: 'دفتر الحركات',  deepLink: 'ledger.html' },
   ],
   actions: [
     { id: 'transfer', ico: '🔄', label: 'تحويل بين محافظ', handler: 'openTransferDialog' },

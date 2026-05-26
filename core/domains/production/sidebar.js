@@ -5,12 +5,15 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إجراء سريع',
   primaryAction: { icon: '✅', label: 'تحديث الحالة', handler: 'openMarkStatus' },
+  // UX Phase A: primary = 5 daily-operational views.
   views: [
-    { id: 'all',          ico: '📋', label: 'كل الطلبات',       deepLink: 'production.html' },
     { id: 'mine',         ico: '👷', label: 'موكلة لي',          deepLink: 'production.html?filter=mine' },
     { id: 'late',         ico: '⏰', label: 'متأخرة',            deepLink: 'production.html?filter=late' },
     { id: 'no-supplier',  ico: '🟡', label: 'بدون مورد',         deepLink: 'production.html?filter=no-supplier' },
     { id: 'problem',      ico: '⚠', label: 'مشكلة',              deepLink: 'production.html?filter=problem' },
+    { id: 'all',          ico: '📋', label: 'كل الطلبات',       deepLink: 'production.html' },
+  ],
+  secondaryViews: [
     { id: 'done',         ico: '✅', label: 'خلصت اليوم',         deepLink: 'production.html?filter=done-today' },
     { id: 'print',        ico: '🖨️', label: 'الطباعة',           deepLink: 'print.html' },
     { id: 'supplier-req', ico: '🏭', label: 'طلبات الموردين',    deepLink: 'supplier-requests.html' },

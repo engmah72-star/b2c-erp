@@ -5,12 +5,15 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'تقرير مخصص',
   primaryAction: { icon: '📥', label: 'تقرير مخصص', handler: 'openCustomReport' },
+  // UX Phase A: primary = 5 most-used reports.
   views: [
     { id: 'main',      ico: '📊', label: 'لوحة التقارير',      deepLink: 'reports.html' },
     { id: 'financial', ico: '💰', label: 'تقارير مالية',        deepLink: 'reports.html?cat=financial' },
     { id: 'prod',      ico: '📦', label: 'تقارير الإنتاج',      deepLink: 'reports.html?cat=production' },
     { id: 'ship',      ico: '🚚', label: 'تقارير الشحن',        deepLink: 'reports.html?cat=shipping' },
     { id: 'clients',   ico: '👤', label: 'تقارير العملاء',      deepLink: 'reports.html?cat=clients' },
+  ],
+  secondaryViews: [
     { id: 'design',    ico: '🎨', label: 'تقارير التصميم',      deepLink: 'reports.html?cat=design' },
     { id: 'dash-fin',  ico: '📈', label: 'لوحة مالية تفصيلية', deepLink: 'financial-dashboard.html' },
     { id: 'dash-exec', ico: '⚙', label: 'لوحة التنفيذ',         deepLink: 'exec-dashboard.html' },

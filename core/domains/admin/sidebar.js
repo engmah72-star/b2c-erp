@@ -5,13 +5,16 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إضافة',
   primaryAction: { icon: '➕', label: 'إضافة موظف', handler: 'openAddEmployee' },
+  // UX Phase A: primary = 5 core admin entry points.
   views: [
     { id: 'settings',  ico: '⚙', label: 'الإعدادات',         deepLink: 'settings.html' },
     { id: 'employees', ico: '👥', label: 'الموظفين',          deepLink: 'employees.html' },
-    { id: 'role-view', ico: '🔍', label: 'معاينة الأدوار',    deepLink: 'role-viewer.html' },
     { id: 'suppliers', ico: '🏭', label: 'الموردين',          deepLink: 'suppliers.html' },
     { id: 'products',  ico: '◈', label: 'المنتجات',           deepLink: 'products.html' },
     { id: 'archive',   ico: '📁', label: 'الأرشيف',           deepLink: 'archive.html' },
+  ],
+  secondaryViews: [
+    { id: 'role-view', ico: '🔍', label: 'معاينة الأدوار',    deepLink: 'role-viewer.html' },
     { id: 'bugs',      ico: '🐛', label: 'تقارير الأخطاء',    deepLink: 'report-bug.html' },
     { id: 'profile',   ico: '👤', label: 'ملفي',              deepLink: 'my-profile.html' },
   ],
