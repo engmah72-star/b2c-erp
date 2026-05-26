@@ -365,24 +365,51 @@
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
 <div class="toasts" id="toasts"></div>
 
+<!-- DBG BOOTSTRAP — runs as plain JS (NOT module) so any import error in the
+     module script below is captured into #dbg-strip. The previous version
+     installed __dbg + error handlers INSIDE the module, which meant import
+     failures fired before the handlers existed → empty strip + blank page. -->
+<script>
+(function(){
+  function paint(msg){
+    try{
+      var el = document.getElementById('dbg-strip');
+      if(!el) return;
+      var t = new Date().toISOString().slice(11,19);
+      el.textContent += '['+t+'] '+msg+'\n';
+      el.scrollTop = el.scrollHeight;
+    }catch(_){}
+  }
+  window.__dbg = paint;
+  window.addEventListener('error', function(e){
+    var where = (e.filename||'') + (e.lineno?(':'+e.lineno):'');
+    paint('JS ERROR: ' + (e.message||e) + (where?(' @ '+where):''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason;
+    paint('PROMISE REJ: ' + ((r && r.message) || r || e));
+  });
+  paint('bootstrap OK (plain script) — loading module...');
+  // Sanity timeout: surface if the module never starts (likely import error).
+  setTimeout(function(){
+    if(!window.__moduleBooted){
+      paint('⚠️ MODULE NEVER BOOTED after 8s — check errors above');
+    }
+  }, 8000);
+})();
+</script>
+
 <script type="module">
 
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { setText, gv } from "./core/dom-utils.js";
 
-// ══ DEBUG STRIP — temporary; helps diagnose why design.html shows 0 orders ══
-window.__dbg = (msg) => {
-  try {
-    const el = document.getElementById('dbg-strip');
-    if (!el) return;
-    const t = new Date().toISOString().slice(11,19);
-    el.textContent += `[${t}] ${msg}\n`;
-    el.scrollTop = el.scrollHeight;
-  } catch(_) {}
-};
-window.addEventListener('error', e => window.__dbg('JS ERROR: ' + (e.message||e)));
-window.addEventListener('unhandledrejection', e => window.__dbg('PROMISE REJ: ' + (e.reason?.message||e.reason||e)));
-window.__dbg('boot: module loaded');
+// ══ DEBUG STRIP ══
+// __dbg + global error handlers are installed by the plain-JS bootstrap above
+// (before this module runs) so that import failures here are visible in the
+// strip. If we reach this line, all top-level imports succeeded.
+window.__moduleBooted = true;
+window.__dbg('module imports OK — top-of-module reached');
 
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
