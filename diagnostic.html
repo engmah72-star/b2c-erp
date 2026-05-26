@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تشخيص — Firestore Diagnostic</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0b0f17;color:#e6edf3;margin:0;padding:14px;line-height:1.6}
+  h1{font-size:18px;color:#7dd3fc;margin:0 0 12px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;padding:4px 0;font-size:14px;border-bottom:1px dashed #30363d}
+  .row:last-child{border-bottom:none}
+  .row b{color:#9ca3af}
+  .ok{color:#34d399;font-weight:bold}
+  .err{color:#f87171;font-weight:bold}
+  .warn{color:#fbbf24;font-weight:bold}
+  pre{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+  .btn{display:inline-block;padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-weight:bold;cursor:pointer;font-size:14px;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>🔍 Firestore Diagnostic</h1>
+
+<div class="card">
+  <h2 style="font-size:14px;color:#9ca3af;margin:0 0 8px">حالة الـ Auth</h2>
+  <div class="row"><b>signed in:</b> <span id="d-auth">⏳</span></div>
+  <div class="row"><b>uid:</b> <span id="d-uid">—</span></div>
+  <div class="row"><b>email:</b> <span id="d-email">—</span></div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:14px;color:#9ca3af;margin:0 0 8px">user doc في Firestore</h2>
+  <div class="row"><b>user doc exists:</b> <span id="d-user-exists">⏳</span></div>
+  <div class="row"><b>role:</b> <span id="d-role">—</span></div>
+  <div class="row"><b>name:</b> <span id="d-name">—</span></div>
+  <div class="row"><b>permissions.pages:</b> <span id="d-pages">—</span></div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:14px;color:#9ca3af;margin:0 0 8px">عدّ orders بكل stage</h2>
+  <div class="row"><b>إجمالي:</b> <span id="d-total">⏳</span></div>
+  <div class="row"><b>design:</b> <span id="d-design">⏳</span></div>
+  <div class="row"><b>printing:</b> <span id="d-printing">⏳</span></div>
+  <div class="row"><b>production:</b> <span id="d-production">⏳</span></div>
+  <div class="row"><b>shipping:</b> <span id="d-shipping">⏳</span></div>
+  <div class="row"><b>archived:</b> <span id="d-archived">⏳</span></div>
+  <div class="row"><b>cancelled:</b> <span id="d-cancelled">⏳</span></div>
+  <div class="row"><b>أخرى:</b> <span id="d-other">⏳</span></div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:14px;color:#9ca3af;margin:0 0 8px">آخر 5 orders (أي stage)</h2>
+  <pre id="d-sample">⏳ جاري الجلب…</pre>
+</div>
+
+<div class="card">
+  <h2 style="font-size:14px;color:#9ca3af;margin:0 0 8px">errors</h2>
+  <pre id="d-errors">—</pre>
+</div>
+
+<button type="button" class="btn" onclick="location.href='login.html'">رجوع للـ login</button>
+
+<script type="module">
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { collection, doc, getDoc, getDocs, query, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const set = (id, val, cls) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = String(val);
+  if (cls) el.className = cls;
+};
+
+const errors = [];
+const logError = (where, e) => {
+  errors.push(`[${where}] ${e?.message || e}`);
+  document.getElementById('d-errors').textContent = errors.join('\n');
+};
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    set('d-auth', '❌ NOT signed in', 'err');
+    return;
+  }
+  set('d-auth', '✅ signed in', 'ok');
+  set('d-uid', user.uid);
+  set('d-email', user.email || '—');
+
+  // Read user doc
+  try {
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    if (snap.exists()) {
+      set('d-user-exists', '✅ EXISTS', 'ok');
+      const d = snap.data();
+      set('d-role', d.role || '(empty)', d.role ? 'ok' : 'warn');
+      set('d-name', d.name || '(no name)');
+      const pages = d.permissions?.pages;
+      set('d-pages', pages ? JSON.stringify(pages) : '(none)');
+    } else {
+      set('d-user-exists', '❌ NOT FOUND', 'err');
+    }
+  } catch (e) { logError('users/getDoc', e); }
+
+  // Count orders by stage (admin-readable per rules)
+  try {
+    const snap = await getDocs(query(collection(db, 'orders'), limit(2000)));
+    const counts = { design:0, printing:0, production:0, shipping:0, archived:0, cancelled:0, other:0 };
+    const otherStages = new Set();
+    snap.forEach(doc => {
+      const stage = doc.data().stage || '(no-stage)';
+      if (counts[stage] != null) counts[stage]++;
+      else { counts.other++; otherStages.add(stage); }
+    });
+    set('d-total', snap.size, snap.size > 0 ? 'ok' : 'err');
+    set('d-design', counts.design, counts.design > 0 ? 'ok' : 'warn');
+    set('d-printing', counts.printing, counts.printing > 0 ? 'ok' : 'warn');
+    set('d-production', counts.production, counts.production > 0 ? 'ok' : 'warn');
+    set('d-shipping', counts.shipping, counts.shipping > 0 ? 'ok' : 'warn');
+    set('d-archived', counts.archived);
+    set('d-cancelled', counts.cancelled);
+    set('d-other', counts.other + (otherStages.size > 0 ? ' [' + [...otherStages].join(', ') + ']' : ''));
+
+    // Sample first 5 orders
+    const sample = snap.docs.slice(0, 5).map(d => {
+      const o = d.data();
+      return `${d.id.slice(-6)} | stage: "${o.stage || '?'}" | client: ${(o.clientName||'?').slice(0,15)} | createdAt: ${o.createdAt?.toDate?.()?.toISOString?.()?.slice(0,10) || '?'}`;
+    });
+    document.getElementById('d-sample').textContent = sample.length ? sample.join('\n') : '(no orders found)';
+  } catch (e) {
+    logError('orders/getDocs', e);
+    set('d-total', 'ERROR', 'err');
+  }
+});
+</script>
+</body>
+</html>
