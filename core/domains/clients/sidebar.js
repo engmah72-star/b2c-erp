@@ -5,21 +5,19 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إضافة عميل',
   primaryAction: { icon: '➕', label: 'عميل جديد', handler: 'openAddClient' },
-  // UX Phase A.1: filter IDs match the actual chip values in clients.html
-  // (window.setQuickFilter accepts: all, vip, active, rem, atrisk, new, sleeping).
-  // Each deepLink is parsed by clients.html's URL-filter bootstrap and routed
-  // to setQuickFilter, so navigation = filter applied without a full UI re-pick.
+  // Phase 1 (UX_OWNERSHIP_AUDIT): views now dispatch runtime-state events
+  // — clients.html subscribes and applies the filter without an iframe reload.
+  // `deepLink` is kept as a fallback for direct URL access / refresh.
   views: [
-    { id: 'active',  ico: '🟢', label: 'النشطين',      deepLink: 'clients.html?filter=active' },
-    { id: 'rem',     ico: '💰', label: 'عليه فلوس',    deepLink: 'clients.html?filter=rem' },
-    { id: 'atrisk',  ico: '⚠',  label: 'محتاج اهتمام', deepLink: 'clients.html?filter=atrisk' },
-    { id: 'new',     ico: '🆕', label: 'جدد',           deepLink: 'clients.html?filter=new' },
-    { id: 'vip',     ico: '⭐', label: 'VIP',           deepLink: 'clients.html?filter=vip' },
+    { id: 'active',  ico: '🟢', label: 'النشطين',      state: { view: 'active' },  deepLink: 'clients.html?filter=active' },
+    { id: 'rem',     ico: '💰', label: 'عليه فلوس',    state: { view: 'rem' },     deepLink: 'clients.html?filter=rem' },
+    { id: 'atrisk',  ico: '⚠',  label: 'محتاج اهتمام', state: { view: 'atrisk' },  deepLink: 'clients.html?filter=atrisk' },
+    { id: 'new',     ico: '🆕', label: 'جدد',           state: { view: 'new' },     deepLink: 'clients.html?filter=new' },
+    { id: 'vip',     ico: '⭐', label: 'VIP',           state: { view: 'vip' },     deepLink: 'clients.html?filter=vip' },
   ],
-  // Secondary (collapsible under "المزيد"): reference + admin.
   secondaryViews: [
-    { id: 'all',      ico: '📊', label: 'كل العملاء',     deepLink: 'clients.html' },
-    { id: 'sleeping', ico: '😴', label: 'نايم',            deepLink: 'clients.html?filter=sleeping' },
+    { id: 'all',      ico: '📊', label: 'كل العملاء',     state: { view: 'all' },      deepLink: 'clients.html' },
+    { id: 'sleeping', ico: '😴', label: 'نايم',            state: { view: 'sleeping' }, deepLink: 'clients.html?filter=sleeping' },
     { id: 'import',   ico: '📥', label: 'استيراد بيانات',  deepLink: 'import-data.html' },
   ],
   actions: [

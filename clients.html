@@ -706,28 +706,56 @@ window.setQuickFilter=function(filter,el){
   renderGrid();
 };
 
-// ── Runtime-shell deep-link → filter (PR-1029) ──
-// The runtime context sidebar opens us with ?filter=<chipId>. Map that
-// URL param to a chip click on first paint so the operator lands on the
-// filtered view they asked for, instead of "كل العملاء".
-(function applyUrlFilterOnLoad(){
+// ── Runtime-shell view dispatcher (PR-1029 + Phase 1) ──
+// Two entry points:
+//   1. URL param ?filter=<chipId>     — direct/refresh navigation
+//   2. postMessage 'b2c:runtime-state' — sidebar click (no reload)
+// Both funnel into the same applyViewFilter() — no duplicated logic.
+(function wireRuntimeView(){
   const VALID = new Set(['all','vip','active','rem','atrisk','new','sleeping']);
-  function apply(){
+
+  function applyViewFilter(view){
+    if (!view || !VALID.has(view) || typeof window.setQuickFilter !== 'function') return false;
+    const chip = document.querySelector(`.f-chip[onclick*="setQuickFilter('${view}'"]`);
+    if (!chip && view !== 'all') return false;  // chips not mounted yet — let caller retry
+    window.setQuickFilter(view, chip);
+    return true;
+  }
+
+  // Entry 1 — URL param on first paint (kept as fallback for direct URL access).
+  function applyUrl(){
     const f = new URLSearchParams(location.search).get('filter');
-    if (!f || !VALID.has(f) || typeof window.setQuickFilter !== 'function') return;
-    const chip = document.querySelector(`.f-chip[onclick*="setQuickFilter('${f}'"]`);
-    if (!chip && f !== 'all') {
-      // chips not yet mounted (clients-shell.js may run after this script)
-      // — retry once a tick later.
-      setTimeout(apply, 80);
-      return;
-    }
-    window.setQuickFilter(f, chip);
+    if (!f) return;
+    if (!applyViewFilter(f)) setTimeout(applyUrl, 80);
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', apply, { once: true });
+    document.addEventListener('DOMContentLoaded', applyUrl, { once: true });
   } else {
-    apply();
+    applyUrl();
+  }
+
+  // Entry 2 — runtime-state events from the shell (sidebar clicks).
+  window.addEventListener('message', (e) => {
+    const data = e?.data;
+    if (!data || data.type !== 'b2c:runtime-state') return;
+    const state = data.state || {};
+    if (state.domain && state.domain !== 'clients') return;  // not our domain
+    const view = state.view;
+    if (!view) return;
+    if (!applyViewFilter(view)) setTimeout(() => applyViewFilter(view), 80);
+  });
+
+  // Announce readiness so the shell replays current state.
+  function announceReady(){
+    if (window.parent && window.parent !== window) {
+      try { window.parent.postMessage({ type: 'b2c:runtime-ready', domain: 'clients' }, '*'); }
+      catch (_) { /* not embedded — fine */ }
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', announceReady, { once: true });
+  } else {
+    announceReady();
   }
 })();
 

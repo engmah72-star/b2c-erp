@@ -46,11 +46,12 @@ import * as ws   from './core/runtime-shell/workspace-host.js?v=10';
 import * as signals from './core/runtime-shell/signals.js?v=11';
 import * as aggregator from './core/runtime-shell/signals-aggregator.js?v=10';
 import * as fab from './core/runtime-shell/fab.js?v=10';
+import * as runtime from './core/runtime-shell/runtime-state.js?v=1';
 import { DOMAINS, isValidDomain } from './core/runtime-shell/domain-registry.js?v=10';
 import { getAllowedDomains, canSeeDomain, getDefaultDomain } from './core/runtime-shell/domain-permissions.js?v=10';
 
 // ── Domain modules (auto-register on import) ──
-import './core/domains/clients/sidebar.js?v=10';
+import './core/domains/clients/sidebar.js?v=11';
 import './core/domains/design/sidebar.js?v=10';
 import './core/domains/production/sidebar.js?v=10';
 import './core/domains/shipping/sidebar.js?v=10';
@@ -98,7 +99,13 @@ function activate(domainId, pushHistory = true) {
   ws.showDomain(domainId);
   document.body.classList.remove('rt-mob-open');
   if (pushHistory) setDomainInUrl(domainId, false);
+  // Phase 1: announce domain change via runtime-state (subscribers
+  // inside the iframe will react without a reload).
+  runtime.setView({ domain: domainId });
 }
+
+// Phase 1: wire postMessage bridge so iframe pages can subscribe.
+runtime.init();
 
 // ── Boot layers (rail will be configured after auth) ──
 rail.init({
@@ -136,6 +143,14 @@ window.B2CShell = {
     const reg = await import('./core/runtime-shell/domain-registry.js?v=10');
     return reg.register(domainId, renderer);
   },
+};
+
+// Phase 1: dedicated runtime-state namespace (also reachable via
+// B2CShell.runtime, but the shorter alias mirrors the audit doc).
+window.B2CRuntime = {
+  setView:   runtime.setView,
+  getState:  runtime.getState,
+  subscribe: runtime.subscribe,
 };
 
 // ── Browser back/forward ──

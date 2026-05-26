@@ -38,11 +38,18 @@ function _toast(msg) {
 }
 
 // Render a single view item (used for primary + secondary lists).
+// Phase 1: views may have either:
+//   - state: { view, filters, mode }  → runtime state event (no reload)
+//   - deepLink: 'foo.html?...'        → iframe URL navigation (legacy)
+//   - both                            → state event wins; deepLink ignored
 function _renderViewItem(v) {
   const cnt = v.count != null
     ? '<span class="rt-ctx-item-cnt ' + _esc(v.countKind || '') + '">' + _esc(v.count) + '</span>'
     : '';
-  return '<a class="rt-ctx-item" data-view="' + _esc(v.id) + '" href="' + _esc(v.deepLink || '#') + '" data-deep-link="' + _esc(v.deepLink || '') + '">'
+  const stateAttr = v.state
+    ? ' data-rt-state="' + _esc(JSON.stringify(v.state)) + '"'
+    : '';
+  return '<a class="rt-ctx-item" data-view="' + _esc(v.id) + '" href="' + _esc(v.deepLink || '#') + '" data-deep-link="' + _esc(v.deepLink || '') + '"' + stateAttr + '>'
        +   '<span class="rt-ctx-item-ico" aria-hidden="true">' + (v.ico || '•') + '</span>'
        +   '<span class="rt-ctx-item-lbl">' + _esc(v.label) + '</span>'
        +   cnt
@@ -153,18 +160,37 @@ export function buildSidebar({ container, domain, config = {} }) {
     }
   }
 
-  // ── Wire view clicks → navigate workspace iframe ──
-  container.querySelectorAll('[data-deep-link]').forEach(link => {
+  // ── Wire view clicks ──
+  // Phase 1: items with data-rt-state dispatch a runtime-state event
+  // (no iframe reload). Items with only data-deep-link keep legacy
+  // iframe navigation. Both update the active visual state + memory.
+  container.querySelectorAll('[data-deep-link],[data-rt-state]').forEach(link => {
     link.addEventListener('click', (e) => {
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const url = link.dataset.deepLink;
-      if (!url) return;
       e.preventDefault();
-      container.querySelectorAll('[data-deep-link]').forEach(l => l.classList.remove('active'));
+      container.querySelectorAll('[data-deep-link],[data-rt-state]').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
-      // Phase 3: remember this view as last-active for this domain
       const viewId = link.dataset.view;
       if (viewId) memory.setLastView(domain.id, viewId);
+
+      // Prefer runtime-state dispatch over iframe navigation.
+      const stateRaw = link.dataset.rtState;
+      if (stateRaw) {
+        let state = null;
+        try { state = JSON.parse(stateRaw); } catch (_) { state = null; }
+        const runtime = (window.top && window.top.B2CRuntime) || window.B2CRuntime;
+        if (state && runtime && typeof runtime.setView === 'function') {
+          runtime.setView({ domain: domain.id, ...state });
+          // Close mobile drawer (we still want the gesture to feel like a tap-and-go).
+          const shell = (window.top && window.top.B2CShell) || window.B2CShell;
+          if (shell && typeof shell.closeSidebar === 'function') shell.closeSidebar();
+          return;
+        }
+      }
+
+      // Legacy navigation path.
+      const url = link.dataset.deepLink;
+      if (!url) return;
       _navigate(url);
     });
   });
