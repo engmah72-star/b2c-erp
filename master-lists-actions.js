@@ -46,6 +46,109 @@ export async function saveSupplierCategories({ db = defaultDb, items }) {
 }
 
 // ══════════════════════════════════════════
+// PRODUCTION SERVICES — Unified source (RULE M1 + C1.5)
+// ══════════════════════════════════════════
+//
+// `master_lists/supplier_categories` extended schema:
+//   {
+//     id?, label, group,
+//     printTypes: ['digital','offset']?,  // أنواع الطباعة اللي يظهر فيها كبند تكلفة
+//     isCostItem: bool,                    // يظهر في بنود تكلفة print.html
+//     isSupplierService: bool,             // يظهر في تخصصات الموردين
+//     isActive: bool, order: number
+//   }
+//
+// قبل الـ migration: items.length=N, كلها isSupplierService=true (implicit), بدون cost flags.
+// بعد الـ migration: نفس الـ items مع flags كاملة + بنود مدموجة من costTypesDigital/Offset.
+
+function _norm(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+/**
+ * Migration idempotent: يقرأ من 3 مصادر (costTypesDigital + costTypesOffset + supplier_categories)
+ * ويدمج كلها في master_lists/supplier_categories.items مع flags كاملة.
+ * يضع marker `_schemaVersion: 2` لمنع إعادة التشغيل.
+ */
+export async function migrateProductionServices({ db = defaultDb } = {}) {
+  try {
+    const catRef = doc(db, 'master_lists', 'supplier_categories');
+    const setRef = doc(db, 'settings', 'main');
+    const [catSnap, setSnap] = await Promise.all([getDoc(catRef), getDoc(setRef)]);
+
+    const catData = catSnap.exists() ? catSnap.data() : {};
+    if (catData._schemaVersion >= 2) {
+      return { ok: true, errors: [], warnings: [], skipped: true, reason: 'already migrated' };
+    }
+
+    const existingItems = Array.isArray(catData.items) ? catData.items.slice() : [];
+    const settings = setSnap.exists() ? setSnap.data() : {};
+    const digital = Array.isArray(settings.costTypesDigital) ? settings.costTypesDigital : [];
+    const offset = Array.isArray(settings.costTypesOffset) ? settings.costTypesOffset : [];
+
+    // Map existing items by normalized label
+    const byLabel = new Map();
+    existingItems.forEach((it, i) => {
+      const lbl = it && it.label;
+      if (!lbl) return;
+      const key = _norm(lbl);
+      byLabel.set(key, {
+        ...it,
+        label: lbl,
+        group: it.group || '🔧 أخرى',
+        printTypes: Array.isArray(it.printTypes) ? it.printTypes.slice() : [],
+        isCostItem: it.isCostItem === true,
+        isSupplierService: it.isSupplierService !== false, // default true for legacy
+        isActive: it.isActive !== false,
+        order: typeof it.order === 'number' ? it.order : i,
+      });
+    });
+
+    const upsertCost = (label, printType, defaultGroup) => {
+      const key = _norm(label);
+      if (!key) return;
+      const cur = byLabel.get(key);
+      if (cur) {
+        cur.isCostItem = true;
+        if (!cur.printTypes.includes(printType)) cur.printTypes.push(printType);
+      } else {
+        byLabel.set(key, {
+          label: String(label).trim(),
+          group: defaultGroup,
+          printTypes: [printType],
+          isCostItem: true,
+          isSupplierService: false,
+          isActive: true,
+          order: byLabel.size,
+        });
+      }
+    };
+
+    digital.forEach(s => upsertCost(s, 'digital', '💻 بنود ديجيتال'));
+    offset.forEach(s => upsertCost(s, 'offset', '🖨️ بنود أوفست'));
+
+    const items = Array.from(byLabel.values())
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .map((it, i) => ({ ...it, order: i }));
+
+    await setDoc(catRef, {
+      items,
+      _schemaVersion: 2,
+      _migratedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      errors: [],
+      warnings: [],
+      migrated: true,
+      counts: { total: items.length, costDigital: digital.length, costOffset: offset.length, existing: existingItems.length },
+    };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الـ migration'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // PRINT BRIEF TEMPLATES (master_lists/print_brief_templates)
 // ══════════════════════════════════════════
 
@@ -141,6 +244,7 @@ export const masterListsActions = {
   saveAppSettings,
   saveWhatsAppSettings,
   markSupplierOrderReceived,
+  migrateProductionServices,
 };
 
 export default masterListsActions;
