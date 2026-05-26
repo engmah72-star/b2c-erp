@@ -19,9 +19,9 @@ const CONFIG = {
     { id: 'problem', ico: '⚠', label: 'تسجيل مشكلة',   handler: 'openReportProblem' },
     { id: 'assign',  ico: '👷', label: 'تعيين مصمم',    handler: 'openAssignDesigner' },
   ],
+  // UX audit Phase 2: info-only signal removed (already a view in the views section).
   signals: [
     { kind: 'warn', ico: '⏰', label: 'تصاميم متأخرة', target: 'design.html?filter=late' },
-    { kind: 'info', ico: '👀', label: 'تحت المراجعة', target: 'design.html?filter=review' },
     { kind: 'crit', ico: '⚠', label: 'مشاكل تصميم', target: 'design.html?filter=problem' },
   ],
 };

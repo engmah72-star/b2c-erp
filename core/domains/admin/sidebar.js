@@ -20,10 +20,10 @@ const CONFIG = {
     { id: 'add-product',  ico: '📦', label: 'إضافة منتج',  handler: 'openAddProduct' },
     { id: 'add-supplier', ico: '🏭', label: 'إضافة مورد',  handler: 'openAddSupplier' },
   ],
+  // UX audit Phase 2: info-only signal removed (alert fatigue).
   signals: [
     { kind: 'crit', ico: '🚨', label: 'تنبيهات نظام', target: 'settings.html' },
     { kind: 'warn', ico: '🐛', label: 'أخطاء جديدة', target: 'report-bug.html' },
-    { kind: 'info', ico: '⚙', label: 'تحديثات معلقة', target: 'settings.html' },
   ],
 };
 

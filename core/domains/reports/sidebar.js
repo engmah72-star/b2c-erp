@@ -20,10 +20,9 @@ const CONFIG = {
     { id: 'export', ico: '📤', label: 'تصدير CSV',   handler: 'openExportCsv' },
     { id: 'print',  ico: '🖨️', label: 'طباعة',       handler: 'printReport' },
   ],
-  signals: [
-    { kind: 'info', ico: 'ℹ', label: 'تقارير محفوظة' },
-    { kind: 'info', ico: '📊', label: 'تقارير دورية' },
-  ],
+  // UX audit Phase 2: signals removed — Reports is reference-only, no actionable alerts.
+  // Future: replace with "scheduled reports" or "saved reports" as views or a section.
+  signals: [],
 };
 
 register('reports', ({ container, domain }) => buildSidebar({ container, domain, config: CONFIG }));
