@@ -64,6 +64,8 @@
     <div class="topbar-left"><button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button><div><h1>✏️ التصميم</h1><p id="sub">جاري التحميل...</p></div></div>
     <div class="topbar-right"><button type="button" class="btn btn-p" onclick="openNewOrder()">＋ طلب جديد</button></div>
   </div>
+  <!-- DEBUG STRIP (temporary — remove after fix verified) -->
+  <div id="dbg-strip" style="margin:6px 12px;padding:8px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;font-size:11px;font-family:ui-monospace,monospace;color:#7dd3fc;direction:ltr;text-align:left;white-space:pre-wrap;line-height:1.5;max-height:140px;overflow-y:auto"></div>
   <div class="content">
     <!-- داشبورد التصميم -->
     <div id="design-dashboard" class="design-dash"></div>
@@ -367,6 +369,21 @@
 
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { setText, gv } from "./core/dom-utils.js";
+
+// ══ DEBUG STRIP — temporary; helps diagnose why design.html shows 0 orders ══
+window.__dbg = (msg) => {
+  try {
+    const el = document.getElementById('dbg-strip');
+    if (!el) return;
+    const t = new Date().toISOString().slice(11,19);
+    el.textContent += `[${t}] ${msg}\n`;
+    el.scrollTop = el.scrollHeight;
+  } catch(_) {}
+};
+window.addEventListener('error', e => window.__dbg('JS ERROR: ' + (e.message||e)));
+window.addEventListener('unhandledrejection', e => window.__dbg('PROMISE REJ: ' + (e.reason?.message||e.reason||e)));
+window.__dbg('boot: module loaded');
+
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
   const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
@@ -653,14 +670,24 @@ window.deleteOrderFull=async function(){
 
 let __listenersStarted=false;
 onAuthStateChanged(auth,async u=>{
+  window.__dbg('onAuthStateChanged fired, user=' + (u?u.uid.slice(-6):'NULL'));
   if(!u){window.location.href='login.html';return;}
-  if(__listenersStarted)return;
+  if(__listenersStarted){window.__dbg('already started, skip');return;}
   __listenersStarted=true;
   currentUser=u;
-  const snap=await getDoc(doc(db,'users',u.uid));
+  let snap;
+  try {
+    snap=await getDoc(doc(db,'users',u.uid));
+    window.__dbg('users/' + u.uid.slice(-6) + ' exists=' + snap.exists());
+  } catch(e) {
+    window.__dbg('getDoc(users) FAILED: ' + (e?.message||e));
+    return;
+  }
   if(snap.exists()){
     const d=snap.data();
-    buildDynamicSidebar(u.uid, 'design.html');const r=ROLES[d.role||'admin']||ROLES.admin;
+    window.__dbg('role=' + (d.role||'(none)'));
+    try { buildDynamicSidebar(u.uid, 'design.html'); } catch(e){ window.__dbg('buildDynamicSidebar threw: ' + e.message); }
+    const r=ROLES[d.role||'admin']||ROLES.admin;
     currentRole=d.role||'admin';
     userName=d.name||u.email;
     setText('nav-name',userName);
@@ -669,11 +696,12 @@ onAuthStateChanged(auth,async u=>{
     document.getElementById('role-badge').textContent=r.label;
     document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;
 
-    buildSidebar(d,'design.html');
-    buildMobNav(currentRole,'design.html');
-    initNotifications(app, u);
-    startListeners();
-    initAttendance();
+    try { buildSidebar(d,'design.html'); } catch(e){ window.__dbg('buildSidebar threw: ' + e.message); }
+    try { buildMobNav(currentRole,'design.html'); } catch(e){ window.__dbg('buildMobNav threw: ' + e.message); }
+    try { initNotifications(app, u); } catch(e){ window.__dbg('initNotifications threw: ' + e.message); }
+    window.__dbg('calling startListeners()...');
+    try { startListeners(); window.__dbg('startListeners() returned'); } catch(e){ window.__dbg('startListeners THREW: ' + e.message); }
+    try { initAttendance(); } catch(e){ window.__dbg('initAttendance threw: ' + e.message); }
     setTimeout(updateDesignerUI,100);
     window.__myEmpId='';
     // جيب بيانات الموظف مرة واحدة (مش onSnapshot)
@@ -843,22 +871,34 @@ function startListeners(){
   const isCS=['customer_service','design_operator'].includes(currentRole);
   const currentUid=auth.currentUser?.uid;
 
+  window.__dbg('startListeners: role=' + currentRole + ' isAdmin2=' + isAdmin2 + ' isCS=' + isCS);
   if(isAdmin2){
+    window.__dbg('attaching ADMIN listener (stage==design, limit 500)');
     // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
     // a healthy design pipeline rarely exceeds 100 active orders).
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
-      orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
-        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-      setText('sub',orders.length+' طلب تصميم');
-      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
-      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-      renderDesignDashboard();
-      if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
-    });
+      window.__dbg('ADMIN listener FIRED: ' + snap.size + ' docs');
+      try {
+        orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
+          .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+        window.__dbg('orders array built: length=' + orders.length);
+        try { renderKanban(); window.__dbg('renderKanban OK'); }
+        catch(e){ window.__dbg('renderKanban THREW: ' + e.message + ' @ ' + (e.stack||'').split('\n')[1]); }
+        window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+        setText('sub',orders.length+' طلب تصميم');
+        setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+        setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+        setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
+        setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+        setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+        try { renderDesignDashboard(); window.__dbg('renderDesignDashboard OK'); }
+        catch(e){ window.__dbg('renderDesignDashboard THREW: ' + e.message); }
+        if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+        window.__dbg('admin callback complete');
+      } catch(e) {
+        window.__dbg('ADMIN callback FATAL: ' + e.message + ' @ ' + (e.stack||'').split('\n')[1]);
+      }
+    }, err=>{ window.__dbg('ADMIN listener ERROR: ' + (err?.code||err?.message||err)); });
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
