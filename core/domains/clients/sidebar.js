@@ -5,20 +5,22 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إضافة عميل',
   primaryAction: { icon: '➕', label: 'عميل جديد', handler: 'openAddClient' },
-  // UX Phase A: primary = 5 daily-operational filters (most-used).
+  // UX Phase A.1: filter IDs match the actual chip values in clients.html
+  // (window.setQuickFilter accepts: all, vip, active, rem, atrisk, new, sleeping).
+  // Each deepLink is parsed by clients.html's URL-filter bootstrap and routed
+  // to setQuickFilter, so navigation = filter applied without a full UI re-pick.
   views: [
-    { id: 'active',   ico: '🟢', label: 'النشطين',     deepLink: 'clients.html?filter=active' },
-    { id: 'balance',  ico: '💰', label: 'عليه فلوس',   deepLink: 'clients.html?filter=balance' },
-    { id: 'delayed',  ico: '⏰', label: 'المتأخرين',   deepLink: 'clients.html?filter=delayed' },
-    { id: 'new',      ico: '🆕', label: 'الجدد',        deepLink: 'clients.html?filter=new' },
-    { id: 'problem',  ico: '🚫', label: 'مشاكل',        deepLink: 'clients.html?filter=problem' },
+    { id: 'active',  ico: '🟢', label: 'النشطين',      deepLink: 'clients.html?filter=active' },
+    { id: 'rem',     ico: '💰', label: 'عليه فلوس',    deepLink: 'clients.html?filter=rem' },
+    { id: 'atrisk',  ico: '⚠',  label: 'محتاج اهتمام', deepLink: 'clients.html?filter=atrisk' },
+    { id: 'new',     ico: '🆕', label: 'جدد',           deepLink: 'clients.html?filter=new' },
+    { id: 'vip',     ico: '⭐', label: 'VIP',           deepLink: 'clients.html?filter=vip' },
   ],
   // Secondary (collapsible under "المزيد"): reference + admin.
   secondaryViews: [
-    { id: 'all',      ico: '📊', label: 'كل العملاء',    deepLink: 'clients.html' },
-    { id: 'vip',      ico: '⭐', label: 'VIP',           deepLink: 'clients.html?filter=vip' },
-    { id: 'sleep',    ico: '😴', label: 'نايم',           deepLink: 'clients.html?filter=sleep' },
-    { id: 'import',   ico: '📥', label: 'استيراد بيانات', deepLink: 'import-data.html' },
+    { id: 'all',      ico: '📊', label: 'كل العملاء',     deepLink: 'clients.html' },
+    { id: 'sleeping', ico: '😴', label: 'نايم',            deepLink: 'clients.html?filter=sleeping' },
+    { id: 'import',   ico: '📥', label: 'استيراد بيانات',  deepLink: 'import-data.html' },
   ],
   actions: [
     { id: 'add-client', ico: '➕', label: 'عميل جديد',     handler: 'openAddClient' },
@@ -27,8 +29,7 @@ const CONFIG = {
     { id: 'note',       ico: '📝', label: 'ملاحظة سريعة',  handler: 'openNote' },
   ],
   signals: [
-    { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed', target: 'clients.html?filter=delayed' },
-    { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة', target: 'clients.html?filter=problem' },
+    { kind: 'warn', ico: '⚠', label: 'محتاج اهتمام', signalKey: 'delayed', target: 'clients.html?filter=atrisk' },
   ],
 };
 
