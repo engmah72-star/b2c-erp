@@ -132,6 +132,40 @@ export function getLastFilter(domainId, viewId) {
   return _filters.get(domainId + ':' + viewId) || null;
 }
 
+// ── Last View per Domain (Phase 3 — persistent across reloads) ──
+// Tracks the last clicked view per domain so the sidebar can highlight
+// "where you left off" when the operator switches back to this domain.
+// Persisted via localStorage so it survives PWA reopen.
+const LAST_VIEW_KEY = 'b2c_runtime_last_view_v1';
+let _lastView = {};  // domainId → viewId
+try {
+  const raw = localStorage.getItem(LAST_VIEW_KEY);
+  if (raw) _lastView = JSON.parse(raw) || {};
+} catch (_) { _lastView = {}; }
+
+function _persistLastView() {
+  try { localStorage.setItem(LAST_VIEW_KEY, JSON.stringify(_lastView)); }
+  catch (_) {}
+}
+
+export function setLastView(domainId, viewId) {
+  if (!domainId || !viewId) return;
+  if (_lastView[domainId] === viewId) return;  // no-op if same
+  _lastView[domainId] = viewId;
+  _persistLastView();
+}
+
+export function getLastView(domainId) {
+  if (!domainId) return null;
+  return _lastView[domainId] || null;
+}
+
+export function clearLastView(domainId) {
+  if (domainId) delete _lastView[domainId];
+  else _lastView = {};
+  _persistLastView();
+}
+
 // Test/reset utility
 export function _reset() {
   _recent = {};

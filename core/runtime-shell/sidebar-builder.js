@@ -112,6 +112,15 @@ export function buildSidebar({ container, domain, config = {} }) {
 
   container.innerHTML = html;
 
+  // ── Restore last-view highlight on render (Phase 3) ──
+  // When the operator returns to this domain, the previously-clicked view
+  // is marked active so they can pick up where they left off visually.
+  const _lastViewId = memory.getLastView(domain.id);
+  if (_lastViewId) {
+    const lastLink = container.querySelector('[data-view="' + _lastViewId + '"]');
+    if (lastLink) lastLink.classList.add('active');
+  }
+
   // ── Wire view clicks → navigate workspace iframe ──
   container.querySelectorAll('[data-deep-link]').forEach(link => {
     link.addEventListener('click', (e) => {
@@ -121,6 +130,9 @@ export function buildSidebar({ container, domain, config = {} }) {
       e.preventDefault();
       container.querySelectorAll('[data-deep-link]').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
+      // Phase 3: remember this view as last-active for this domain
+      const viewId = link.dataset.view;
+      if (viewId) memory.setLastView(domain.id, viewId);
       _navigate(url);
     });
   });
