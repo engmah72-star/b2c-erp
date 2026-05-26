@@ -351,7 +351,7 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n.style.display='block';}
 
 // State
-let orders=[],wallets=[],appSettings={},activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
+let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 
 // RULE 8.1 — رقم تليفون العميل: CS + Admin + Ops + Shipping فقط.
 // Production يرى الملف النهائي للطباعة لكن لا يرى رقم العميل.
@@ -395,6 +395,10 @@ function startListeners(){
   });
   onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
   onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
+  // Unified production services (RULE M1 + C1.5) — مصدر بنود التكلفة بدل costTypesDigital/Offset
+  onSnapshot(doc(db,'master_lists','supplier_categories'),snap=>{
+    productionServices=snap.exists()?(snap.data()?.items||[]).filter(s=>s.isActive!==false):[];
+  });
   // المنفّذين (production_agent) لـ pick-prod modal — مع dedup
   onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -1479,7 +1483,11 @@ function renderEditProdsList() {
       </div>
       <!-- الإضافات حسب نوع الطباعة -->
       ${(()=>{
-        const extrasList=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+        // Unified source: master_lists/supplier_categories (filter by isCostItem + printTypes).
+        // Fallback: legacy settings.costTypesDigital/Offset لو الـ migration لسه ما اشتغلت.
+        const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
+        const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+        const extrasList=_unified.length?_unified:_legacy;
         if(!extrasList.length)return'';
         const sel=p.extras||[];
         return`<div style="margin-bottom:10px">
