@@ -381,10 +381,13 @@
     }catch(_){}
   }
   window.__dbg = paint;
+  // capture:true → catches resource load errors (script 404 / MIME mismatch)
+  // which DON'T bubble — they only fire in the capture phase on window.
   window.addEventListener('error', function(e){
     var where = (e.filename||'') + (e.lineno?(':'+e.lineno):'');
-    paint('JS ERROR: ' + (e.message||e) + (where?(' @ '+where):''));
-  });
+    var src = e.target && e.target.src ? ' src=' + e.target.src : '';
+    paint('JS ERROR: ' + (e.message||e.type||e) + (where?(' @ '+where):'') + src);
+  }, true);
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason;
     paint('PROMISE REJ: ' + ((r && r.message) || r || e));
@@ -396,6 +399,44 @@
       paint('⚠️ MODULE NEVER BOOTED after 8s — check errors above');
     }
   }, 8000);
+
+  // ── SEQUENTIAL IMPORT PROBE ──
+  // Mirrors the exact import list of the main module. Each is dynamically
+  // imported with a 6s timeout so a hanging one is pinpointed by name.
+  // (Modules are cached after first eval — this doesn't double-fetch.)
+  (async function probeImports(){
+    var modules = [
+      './core/firebase-init.js',
+      './core/dom-utils.js',
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js',
+      './notifications.js',
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js',
+      './financial-sync-engine.js',
+      './orders.js',
+      './order-actions.js',
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js',
+      './design-render.js',
+    ];
+    for (var i = 0; i < modules.length; i++) {
+      var m = modules[i];
+      var t0 = performance.now();
+      paint('→ ' + m);
+      try {
+        await Promise.race([
+          import(m),
+          new Promise(function(_, rej){
+            setTimeout(function(){ rej(new Error('TIMEOUT 6s')); }, 6000);
+          })
+        ]);
+        paint('✓ ' + m + ' (' + (performance.now()-t0).toFixed(0) + 'ms)');
+      } catch(e) {
+        paint('✗ ' + m + ' — ' + (e.message||e) +
+              ' (' + (performance.now()-t0).toFixed(0) + 'ms)');
+        return; // stop on first fail
+      }
+    }
+    paint('all probes OK');
+  })();
 })();
 </script>
 
