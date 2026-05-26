@@ -5,13 +5,17 @@ import { buildSidebar } from '../../runtime-shell/sidebar-builder.js';
 const CONFIG = {
   addLabel: 'إجراء سريع',
   primaryAction: { icon: '✅', label: 'تحديث الحالة', handler: 'openMarkStatus' },
-  // UX Phase A: primary = 5 daily-operational views.
+  // Phase 1c: production.html has in-page filter chips (الكل/بدون تكلفة/انتظار/
+  // جاري/خلصت/مشكلة) — so 'all' and 'problem' were duplicates in the sidebar.
+  // Removed. The 3 remaining primary views are *only* in the sidebar (the page
+  // chips don't expose them):
+  //   - "موكلة لي"   : filter by current operator
+  //   - "متأخرة"     : SLA-overdue subset
+  //   - "بدون مورد"  : missing supplier assignment (≠ "بدون تكلفة")
   views: [
     { id: 'mine',         ico: '👷', label: 'موكلة لي',          deepLink: 'production.html?filter=mine' },
     { id: 'late',         ico: '⏰', label: 'متأخرة',            deepLink: 'production.html?filter=late' },
     { id: 'no-supplier',  ico: '🟡', label: 'بدون مورد',         deepLink: 'production.html?filter=no-supplier' },
-    { id: 'problem',      ico: '⚠', label: 'مشكلة',              deepLink: 'production.html?filter=problem' },
-    { id: 'all',          ico: '📋', label: 'كل الطلبات',       deepLink: 'production.html' },
   ],
   secondaryViews: [
     { id: 'done',         ico: '✅', label: 'خلصت اليوم',         deepLink: 'production.html?filter=done-today' },
