@@ -329,6 +329,7 @@ import { orderActions } from "./order-actions.js";
 import { clientActions } from "./client-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { uploadOrderFile, ORDER_FILE_KINDS } from "./core/storage-helpers.js";
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
 
@@ -1293,25 +1294,23 @@ async function _uploadFile(file){
         img.onerror=()=>res(file);img.src=url;
       });
     }
-    const sRef=ref(storage,`print-finals/${activeId}_${Date.now()}`);
-    const task=uploadBytesResumable(sRef,upload);
-    await new Promise((res,rej)=>{
-      task.on('state_changed',
-        s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);if(pb)pb.style.width=p+'%';if(pt)pt.textContent=p+'%';},
-        rej,
-        async()=>{
-          const url=await getDownloadURL(task.snapshot.ref);
-          const sf=await orderActions.setPrintFinalFile({db,orderId:activeId,fileUrl:url,fileType:file.type,userId:auth?.currentUser?.uid||'',userName});
-          if(pw)pw.style.display='none';
-          if(!sf.ok){toast('❌ '+(sf.errors||[]).join(' · '),'err');return rej(new Error((sf.errors||[])[0]||'فشل الحفظ'));}
-          const updated=orders.find(x=>x._id===activeId);
-          if(updated)renderPanel({...updated,printFinalUrl:url,printFinalType:file.type});
-          const prodBtn=document.getElementById('pn-prod-btn');
-          if(prodBtn){prodBtn.disabled=false;prodBtn.style.opacity='1';}
-          toast('✅ تم رفع الملف','ok');res();
-        }
-      );
+    // RULE S1.3: uploads go through core/storage-helpers
+    // Path becomes structured: /orders/{activeId}/print-final/{ts}_{name}
+    const uploadResult = await uploadOrderFile({
+      orderId: activeId,
+      file: upload,
+      kind: ORDER_FILE_KINDS.PRINT_FINAL,
+      onProgress: (p) => { if(pb)pb.style.width=p+'%'; if(pt)pt.textContent=p+'%'; },
     });
+    const url = uploadResult.url;
+    const sf = await orderActions.setPrintFinalFile({db,orderId:activeId,fileUrl:url,fileType:file.type,userId:auth?.currentUser?.uid||'',userName});
+    if(pw)pw.style.display='none';
+    if(!sf.ok){toast('❌ '+(sf.errors||[]).join(' · '),'err');throw new Error((sf.errors||[])[0]||'فشل الحفظ');}
+    const updated=orders.find(x=>x._id===activeId);
+    if(updated)renderPanel({...updated,printFinalUrl:url,printFinalType:file.type});
+    const prodBtn=document.getElementById('pn-prod-btn');
+    if(prodBtn){prodBtn.disabled=false;prodBtn.style.opacity='1';}
+    toast('✅ تم رفع الملف','ok');
   }catch(e){if(pw)pw.style.display='none';toast('❌ '+e.message,'err');}
 }
 
