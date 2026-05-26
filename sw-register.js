@@ -1,24 +1,45 @@
-// Centralized Service Worker registration with safe auto-reload.
+// ════════════════════════════════════════════════════════════════════
+// Service Worker Registration — Aggressive Auto-Update
+// ════════════════════════════════════════════════════════════════════
 //
-// Why: when a new sw.js is deployed, the new SW installs in the background
-// but does NOT control existing pages until they're reloaded. We listen for
-// `controllerchange` (fired when clients.claim() takes effect) and reload
-// once so the user immediately sees the new version.
+// The mobile PWA cache was causing repeated user frustration: even after
+// deploying fixes, updates wouldn't propagate without manual reset.
 //
-// Loop protection: a 10-second sessionStorage timestamp guards against
-// pathological cases where controllerchange fires on every load — without
-// this, the page could reload infinitely.
+// This implementation:
+//
+// 1. controllerchange → auto-reload (one-shot, loop-guarded)
+//    Fires when sw.js calls clients.claim() during activate. The new SW
+//    is now controlling the page → reload to apply fresh assets.
+//
+// 2. registration.update() on every visibility change
+//    When user switches back to the PWA (app-switcher resume), force a
+//    fresh sw.js fetch. Handles the case where PWA was backgrounded
+//    while a new version deployed.
+//
+// 3. registration.update() every 5 min while page is visible
+//    Catches deploys that happen while the user has the page open.
+//
+// 4. registration.update() once on initial load
+//    Standard check.
+//
+// 5. updateViaCache: 'none'
+//    Tells browser to NEVER http-cache sw.js itself. Critical — without
+//    this, the browser could serve stale sw.js for up to 24h and the
+//    above checks would never see the new version.
+//
+// Combined with sw.js's skipWaiting() + clients.claim(), new versions
+// reach the user within seconds of detection (vs hours/days previously).
 
 if ('serviceWorker' in navigator) {
   const RELOAD_KEY = '__b2c_sw_last_reload';
   const LOOP_WINDOW_MS = 10000;
+  const PERIODIC_UPDATE_MS = 300000; // 5 min
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     let last = 0;
     try { last = +sessionStorage.getItem(RELOAD_KEY) || 0; } catch (_) {}
     const now = Date.now();
     if (now - last < LOOP_WINDOW_MS) {
-      // Reloaded less than 10s ago — refuse to reload again to avoid a loop.
       try { console.warn('[sw-register] suppressing reload loop'); } catch (_) {}
       return;
     }
@@ -26,8 +47,25 @@ if ('serviceWorker' in navigator) {
     window.location.reload();
   });
 
-  // updateViaCache: 'none' tells the browser NOT to cache sw.js itself —
-  // ensures we always pick up new SW versions on next page load.
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then(reg => {
+      // Initial update check on page load
+      reg.update().catch(() => {});
+
+      // Update check whenever user comes back to the PWA
+      // (handles app-switcher resume on mobile)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          reg.update().catch(() => {});
+        }
+      });
+
+      // Periodic check while page is visible — catches deploys mid-session
+      setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          reg.update().catch(() => {});
+        }
+      }, PERIODIC_UPDATE_MS);
+    })
     .catch(() => {});
 }
