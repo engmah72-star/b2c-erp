@@ -97,7 +97,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { signInWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { signInWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 /* ROLE → REDIRECT MAP */
 const ROLE_PAGES = {
@@ -139,11 +139,25 @@ function toLoginEmail(input){
   return norm;
 }
 
+/* FORCE LOGOUT — لو /login.html?logout=1، فك تسجيل الدخول وامسح الـ auth state.
+   مفيد لما المستخدم محتاج refresh لـ token (مثلاً auth-token expired أو role changed). */
+const __forceLogout = new URLSearchParams(location.search).get('logout') === '1';
+if (__forceLogout) {
+  try { signOut(auth).catch(()=>{}); } catch(_){}
+  // Clean URL after handling (preserves user-friendly /login.html)
+  try { history.replaceState(null, '', location.pathname); } catch(_){}
+}
+
 /* CHECK IF ALREADY LOGGED IN — single fetch, no redirect race */
 let authChecked = false;
 onAuthStateChanged(auth, async user => {
   if(authChecked) return;        // أول استدعاء فقط — تجنّب التكرار بعد signIn
   authChecked = true;
+  if (__forceLogout && user) {
+    // Still logged in moment after signOut started — wait for it to complete + re-fire
+    authChecked = false;
+    return;
+  }
   if(!user) {
     document.getElementById('loading').classList.add('hide');
     setTimeout(()=>document.getElementById('email')?.focus(), 250);
