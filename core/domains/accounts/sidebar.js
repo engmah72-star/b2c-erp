@@ -20,10 +20,11 @@ const CONFIG = {
     { id: 'approve',  ico: '✅', label: 'مراجعة الموافقات', handler: 'goToApprovals' },
     { id: 'report',   ico: '📊', label: 'تقرير سريع',      handler: 'openQuickReport' },
   ],
+  // UX audit Phase 2: info-only signals removed (alert fatigue).
+  // "تسويات قيد الانتظار" was reference, not actionable — accessible via Shipping domain.
   signals: [
     { kind: 'warn', ico: '⚠', label: 'موافقات معلقة', signalKey: 'pending-approvals', target: 'approvals.html' },
     { kind: 'warn', ico: '⚠', label: 'كاش منخفض', target: 'accounts.html#wallets' },
-    { kind: 'info', ico: 'ℹ', label: 'تسويات قيد الانتظار', target: 'shipping-accounts.html' },
   ],
 };
 

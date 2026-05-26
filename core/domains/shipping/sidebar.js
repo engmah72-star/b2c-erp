@@ -21,10 +21,10 @@ const CONFIG = {
     { id: 'return',    ico: '↩', label: 'تسجيل مرتجع',         handler: 'openLogReturn' },
     { id: 'track',     ico: '📍', label: 'تتبع رقم',            handler: 'openTrackByNumber' },
   ],
+  // UX audit Phase 2: info-only signal removed (accessible via "حسابات الشحن" view).
   signals: [
     { kind: 'crit', ico: '⏰', label: 'شحنات متأخرة', signalKey: 'late', target: 'shipping.html?filter=late' },
     { kind: 'warn', ico: '🚛', label: 'مشاكل شركات', target: 'shipping.html?filter=problem' },
-    { kind: 'info', ico: '💰', label: 'تسويات معلقة', target: 'shipping-accounts.html' },
   ],
 };
 

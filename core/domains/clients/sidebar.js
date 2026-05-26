@@ -22,10 +22,10 @@ const CONFIG = {
     { id: 'log-pay',    ico: '💰', label: 'تسجيل تحصيل',   handler: 'openLogPayment' },
     { id: 'note',       ico: '📝', label: 'ملاحظة سريعة',  handler: 'openNote' },
   ],
+  // UX audit Phase 2: info-only signal removed (already a view in the views section).
   signals: [
     { kind: 'warn', ico: '⏰', label: 'عملاء متأخرين', signalKey: 'delayed', target: 'clients.html?filter=delayed' },
     { kind: 'crit', ico: '🚫', label: 'شكاوى جديدة', target: 'clients.html?filter=problem' },
-    { kind: 'info', ico: '💰', label: 'تحصيلات معلقة', target: 'clients.html?filter=balance' },
   ],
 };
 
