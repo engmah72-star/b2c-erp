@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v272';
+const CACHE = 'b2c-v273';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -128,10 +128,6 @@ const NETWORK_FIRST_SUFFIXES = [
   '/error-reporter-init.js',
   '/bug-reporter.js',
   '/core/report-actions.js',
-  // ── Runtime Shell (Phase 2 of cleanup) — every god page loads through this ──
-  // CRITICAL: must stay fresh or mobile rail won't appear after CSS updates.
-  '/runtime-shell.css',
-  '/core/shell-navigate.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
@@ -217,15 +213,9 @@ self.addEventListener('fetch', e => {
 
   const isNavigation = req.mode === 'navigate' ||
     (req.headers.get('accept') || '').includes('text/html');
-  // Runtime Shell modules — must stay fresh across deploys (mobile rail / sidebar
-  // depend on these and stale cache visibly breaks the layout).
-  const isRuntimeShellAsset =
-    url.pathname.startsWith('/core/runtime-shell/') ||
-    url.pathname.startsWith('/core/domains/');
 
   const isNetworkFirst = sameOrigin && (
     isNavigation ||
-    isRuntimeShellAsset ||
     NETWORK_FIRST_SUFFIXES.some(s => url.pathname.endsWith(s))
   );
 
