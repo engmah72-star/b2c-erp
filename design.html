@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Business2Card — التصميم</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="shared.css?v=34">
+<link rel="stylesheet" href="shared.css?v=35">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
@@ -469,7 +469,6 @@ import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js
 import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { uploadOrderFile, ORDER_FILE_KINDS } from "./core/storage-helpers.js";
 // God-page decomp PR-2 (design): renderPanel HTML extracted.
 import { renderPanelHTML } from "./design-render.js";
 let orders=[],clients=[],products=[],designers=[],wallets=[];
@@ -1208,13 +1207,13 @@ window.saveDesignFile=async function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const imgInp=document.getElementById('design-img-inp');
   let finalUrl=gv('design-url');
-  // رفع الصورة لو في ملف — RULE S1.3 عبر core/storage-helpers
-  // Path becomes structured: /orders/{activeId}/design/{ts}_{name}
+  // رفع الصورة لو في ملف
   if(imgInp.files[0]){
     toast('جاري رفع الصورة...','');
     try{
-      const r2=await uploadOrderFile({orderId:activeId,file:imgInp.files[0],kind:ORDER_FILE_KINDS.DESIGN});
-      finalUrl=r2.url;
+      const storageRef=ref(storage,`designs/final_${activeId}_${Date.now()}`);
+      await uploadBytes(storageRef,imgInp.files[0]);
+      finalUrl=await getDownloadURL(storageRef);
     }catch(e){toast('❌ فشل رفع الصورة: '+e.message,'err');return;}
   }
   if(!finalUrl)return toast('⚠️ ارفع صورة أو أدخل رابط','err');
@@ -1398,16 +1397,21 @@ window.saveOrder=async function(){
     fn2.textContent=window.__refFile.name||'جاري الرفع...';
     ov.style.display='flex';
     try{
-      // RULE S1.3: reference file upload عبر core/storage-helpers
-      // Path: /orders/{orderDocId}/reference/{ts}_{name}
-      const r2=await uploadOrderFile({
-        orderId:r.orderDocId,
-        file:window.__refFile,
-        kind:ORDER_FILE_KINDS.REFERENCE,
-        onProgress:(p)=>{bar.style.width=p+'%';pct.textContent=p+'%';},
+      const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+      const storage2=getStorage();
+      const sRefPath=sRef(storage2,`design-refs/${r.orderDocId}_${Date.now()}`);
+      const task=uploadBytesResumable(sRefPath,window.__refFile);
+      await new Promise((res,rej)=>{
+        task.on('state_changed',
+          s=>{const p=Math.round(s.bytesTransferred/s.totalBytes*100);bar.style.width=p+'%';pct.textContent=p+'%';},
+          rej,
+          async()=>{
+            const url=await getDownloadURL(task.snapshot.ref);
+            await orderActions.setRefFileUrl({db,orderId:r.orderDocId,url,mimeType:window.__refFile.type});
+            window.__refFile=null;res();
+          }
+        );
       });
-      await orderActions.setRefFileUrl({db,orderId:r.orderDocId,url:r2.url,mimeType:window.__refFile.type});
-      window.__refFile=null;
       ov.style.display='none';
       toast('✅ تم إنشاء الطلب ورفع الملف','ok');
     }catch(e){
