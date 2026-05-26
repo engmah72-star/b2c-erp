@@ -75,11 +75,11 @@
       <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--dim2);font-size:var(--fs-lg)">🔍</span>
     </div>
     <div class="stats" style="margin-bottom:18px">
-      <div class="stat" style="--sc:var(--y)"><div class="stat-icon">⏳</div><div class="stat-val" id="s-pending">0</div><div class="stat-lbl">انتظار</div></div>
-      <div class="stat" style="--sc:var(--b)"><div class="stat-icon">🎨</div><div class="stat-val" id="s-wip">0</div><div class="stat-lbl">جاري</div></div>
-      <div class="stat" style="--sc:#ff9933"><div class="stat-icon">📤</div><div class="stat-val" id="s-awaiting">0</div><div class="stat-lbl">انتظار التحويل</div></div>
-      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">⚠️</div><div class="stat-val" id="s-late">0</div><div class="stat-lbl">متأخر</div></div>
-      <div class="stat" style="--sc:var(--r)"><div class="stat-icon">✕</div><div class="stat-val" id="s-rejected">0</div><div class="stat-lbl">مرفوض</div></div>
+      <div class="stat design-stat-clickable" data-focus="pending"   style="--sc:var(--y)"     onclick="designFocus('pending',this)"   role="button" tabindex="0"><div class="stat-icon">⏳</div><div class="stat-val" id="s-pending">0</div><div class="stat-lbl">انتظار</div></div>
+      <div class="stat design-stat-clickable" data-focus="wip"       style="--sc:var(--b)"     onclick="designFocus('wip',this)"       role="button" tabindex="0"><div class="stat-icon">🎨</div><div class="stat-val" id="s-wip">0</div><div class="stat-lbl">جاري</div></div>
+      <div class="stat design-stat-clickable" data-focus="awaiting"  style="--sc:#ff9933"      onclick="designFocus('awaiting',this)"  role="button" tabindex="0"><div class="stat-icon">📤</div><div class="stat-val" id="s-awaiting">0</div><div class="stat-lbl">انتظار التحويل</div></div>
+      <div class="stat design-stat-clickable" data-focus="late"      style="--sc:var(--r)"     onclick="designFocus('late',this)"      role="button" tabindex="0"><div class="stat-icon">⚠️</div><div class="stat-val" id="s-late">0</div><div class="stat-lbl">متأخر</div></div>
+      <div class="stat design-stat-clickable" data-focus="rejected"  style="--sc:var(--r)"     onclick="designFocus('rejected',this)"  role="button" tabindex="0"><div class="stat-icon">✕</div><div class="stat-val" id="s-rejected">0</div><div class="stat-lbl">مرفوض</div></div>
     </div>
     <div class="kanban">
       <div class="kb-col">
@@ -959,6 +959,56 @@ window.filterKanban=function(q){
   });
 };
 
+// ── Stat-card → Kanban column focus (Phase 1e) ──
+// The 5 stat cards above the Kanban become tap targets that scroll to +
+// highlight the matching column (or, for "late", filter cards inline).
+// Single-source: this is the in-page filter; the runtime sidebar no
+// longer mirrors these views.
+const __DESIGN_COLMAP = {
+  pending:  'col-pending',
+  wip:      'col-wip',
+  awaiting: 'col-awaiting_payment',
+  rejected: 'col-rejected',
+  // 'late' = cross-cutting; handled separately via body class.
+};
+window.__designFocus = null;
+window.designFocus = function(target, btn){
+  // Toggle: clicking the same stat clears focus.
+  const toggle = (window.__designFocus === target);
+  // Reset all visual state first.
+  document.querySelectorAll('.design-stat-clickable').forEach(s => s.classList.remove('focused'));
+  document.querySelectorAll('.kb-col').forEach(c => c.classList.remove('focused','dimmed'));
+  document.body.classList.remove('design-late-focus');
+  if (toggle) { window.__designFocus = null; return; }
+
+  window.__designFocus = target;
+  if (btn) btn.classList.add('focused');
+
+  if (target === 'late') {
+    document.body.classList.add('design-late-focus');
+    // scroll to first visible late card
+    requestAnimationFrame(() => {
+      const firstLate = document.querySelector('.ko:not([style*="display:none"]) .time-badge.late');
+      firstLate?.closest('.ko')?.scrollIntoView({ behavior:'smooth', block:'center' });
+    });
+    return;
+  }
+
+  const colId = __DESIGN_COLMAP[target];
+  if (!colId) return;
+  const colEl = document.getElementById(colId)?.closest('.kb-col');
+  if (!colEl) return;
+  document.querySelectorAll('.kb-col').forEach(c => {
+    if (c === colEl) c.classList.add('focused');
+    else            c.classList.add('dimmed');
+  });
+  colEl.scrollIntoView({ behavior:'smooth', block:'start', inline:'center' });
+};
+// ESC clears focus
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && window.__designFocus) window.designFocus(window.__designFocus, document.querySelector(`.design-stat-clickable[data-focus="${window.__designFocus}"]`));
+});
+
 function renderKanban(){
   const cols={pending:[],wip:[],awaiting_payment:[],rejected:[]};
   orders.forEach(o=>{const k=o.designStage||'pending';if(cols[k])cols[k].push(o);});
@@ -1093,26 +1143,20 @@ function renderDesignDashboard(){
     </div>`;
   }).join('');
 
+  // Phase 1e fix: "جاري التصميم الآن" + "الطلبات المتأخرة" removed —
+  // both are duplicated by the clickable stat cards under the search bar
+  // (s-wip / s-late). The 3 remaining cards show unique insights that
+  // the stats row does NOT cover.
   el.innerHTML=`
     <div class="dd-card" style="border-right:3px solid var(--p)">
       <div class="dd-card-ico">🏆</div>
       <div class="dd-card-val" style="color:var(--p);font-size:var(--fs-lg)" title="${topName}">${topName}</div>
       <div class="dd-card-lbl">أعلى إنتاج · ${topCnt} طلب</div>
     </div>
-    <div class="dd-card" style="border-right:3px solid var(--b)">
-      <div class="dd-card-ico">🎨</div>
-      <div class="dd-card-val" style="color:var(--b)">${orders.filter(o=>o.designStage==='wip').length}</div>
-      <div class="dd-card-lbl">جاري التصميم الآن</div>
-    </div>
     <div class="dd-card" style="border-right:3px solid var(--y)">
       <div class="dd-card-ico">⚠️</div>
       <div class="dd-card-val" style="color:var(--y)">${atRisk}</div>
       <div class="dd-card-lbl">طلبات في خطر ≤ ٢ يوم</div>
-    </div>
-    <div class="dd-card" style="border-right:3px solid var(--r)">
-      <div class="dd-card-ico">🔴</div>
-      <div class="dd-card-val" style="color:var(--r)">${late}</div>
-      <div class="dd-card-lbl">الطلبات المتأخرة</div>
     </div>
     <div class="dd-card" style="border-right:3px solid var(--y)">
       <div class="dd-card-ico">⏳</div>
