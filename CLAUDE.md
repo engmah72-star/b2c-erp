@@ -1967,3 +1967,144 @@ let activeTab = new URLSearchParams(location.search).get('tab') || 'overview';
 أي تعديل عليهم يحتاج 2-reviewer + smoke test.
 
 أي drift عن N1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
+
+---
+
+# RULE E1 — RUNTIME EVOLUTION SAFETY (الميثاق الأعلى للتطوير القادم)
+
+> **القاعدة الذهبية:** كل التطويرات القادمة يجب أن تعمل **فوق** النظام الحالي، **لا ضده**.
+>
+> هذه القاعدة **تعلو فوق** أي قرار تطويري آخر — قبل أي PR، قبل أي refactor، قبل أي runtime evolution.
+>
+> **الفلسفة النهائية:** *Evolve the Runtime, Do Not Disrupt the Business.*
+>
+> النظام الحالي **Production System** — وليس Sandbox للتجارب.
+
+## E1.1 — الممنوعات المطلقة (Hard Forbidden)
+**ممنوع تماماً** في أي PR أو session تطوير:
+- ❌ إعادة بناء النظام (rebuild)
+- ❌ كسر الـ workflows الحالية
+- ❌ تغيير طريقة التشغيل الحالية فجأة (no sudden UX shift)
+- ❌ فرض Runtime جديدة بالقوة على المستخدمين
+- ❌ حذف legacy code ما زالت **load-bearing**
+- ❌ تعديل business logic مستقرة بدون مبرر تشغيلي
+- ❌ تغيير Firestore schema جذرياً
+- ❌ تغيير ownership الحالية دفعة واحدة
+- ❌ Big-bang migrations / massive rewrites
+- ❌ استبدال operational flows بالكامل
+- ❌ إزالة Runtime قديمة قبل استقرار الجديدة
+
+## E1.2 — المطلوبات الإلزامية (Hard Required)
+كل تطوير جديد **يجب** أن يكون:
+
+| المعيار | الوصف |
+|---------|------|
+| **Incremental** | يتقدم تدريجياً، خطوة واحدة كل PR |
+| **Backward Compatible** | الـ legacy paths تبقى تعمل |
+| **Runtime Safe** | لا drift, لا state corruption, لا regressions |
+| **Production Safe** | يمكن نشره دون توقف الموقع |
+| **Feature-Flagged** | يمكن تعطيله فوراً عبر flag (بدون redeploy لو ممكن) |
+| **Reversible** | rollback بـ PR revert واحد ينجح |
+| **Layered** | يبني فوق الموجود، لا يستبدله |
+| **Optional** | يمكن تعطيله بدون كسر التشغيل |
+| **Non-destructive** | لا يهدم النظام الحالي |
+| **Progressive** | يتوسع تدريجياً بناءً على usage validation |
+
+## E1.3 — Runtime Evolution Strategy (المسار المعتمد)
+المسار الوحيد المسموح لأي runtime / shell / UX evolution:
+```
+Existing Stable System
+        ↓
+New Runtime Layer (alongside, optional)
+        ↓
+Gradual Adoption (page-by-page, role-by-role)
+        ↓
+Usage Validation (real users, real flows)
+        ↓
+Governance Stabilization (rules + tests + docs)
+        ↓
+Safe Migration (legacy → new, reversible)
+        ↓
+Legacy Retirement (only after full coverage)
+```
+
+**ممنوع:** `Delete old → rewrite → chaos` — هذا anti-pattern يُرفض مباشرة.
+
+## E1.4 — مثال صحيح vs خاطئ
+✅ **صحيح:**
+```
+Old page still works
+        +
+Runtime shell enhances it (opt-in via flag)
+```
+
+❌ **خاطئ:**
+```
+Delete old flow
+→ force new runtime
+→ break production
+```
+
+## E1.5 — أسئلة قبول الـ PR (الإلزامية)
+قبل أي PR، يجب الإجابة على هذه الأسئلة بالقيم المطلوبة:
+
+| السؤال | الإجابة المطلوبة |
+|--------|------------------|
+| هل هذا يكسر التشغيل الحالي؟ | ❌ لا |
+| هل هذا يغير workflow مستقرة؟ | ❌ لا |
+| هل يمكن rollback بسهولة؟ | ✅ نعم |
+| هل يوجد feature flag؟ | ✅ نعم (للـ features الجديدة) |
+| هل legacy ما زالت تعمل؟ | ✅ نعم |
+| هل الـ users الحاليون سيتأثرون سلباً؟ | ❌ لا |
+| هل هذا incremental؟ | ✅ نعم |
+
+**أي إجابة خاطئة على أي سؤال → الـ PR يُرفض ويُعاد تصميمه.**
+
+## E1.6 — حالات الـ Runtime Evolution الجارية
+الـ runtime layers الجارية حالياً (يجب التعامل معها وفق E1):
+- **Runtime Shell** (`core/runtime-shell/*`, `shell.html`) → layer فوقي، الـ god pages تعمل standalone كما هي
+- **Sidebar Evolution** (`core/domains/*/sidebar.js`) → opt-in عبر `shell.html`، الـ legacy sidebar في كل صفحة يبقى
+- **Runtime State Controller** (`core/runtime-state/*`) → mounted alongside، الصفحات اللي ما تستخدمهش تبقى تعمل
+- **Signals / Intelligence** (Phase 2+) → يجب أن تُبنى كـ observers، لا يجب أن تُجبر الصفحات على integration
+
+أي evolution جديد يتبع نفس النمط: **alongside, not instead-of**.
+
+## E1.7 — العلاقة مع الـ Rules الأخرى
+RULE E1 **يعزّز** ولا يعارض:
+- **RULE 6 (Backward Compatibility)** — E1 يوسّعها لتشمل الـ runtime layers، لا الـ data layer فقط
+- **RULE G9 (Incremental Migration)** — E1 يجعلها **mandatory** لكل runtime work
+- **RULE C1 (Centralization)** — المركزية تتحقق تدريجياً، لا بـ big-bang
+- **RULE N1 (Shell Navigation Contract)** — تطبيق صريح لـ E1 على طبقة الـ shell
+
+## E1.8 — الـ Features الجديدة + Feature Flags
+كل feature جديدة (UX، Runtime، Sidebar، Shell، Signals، Intelligence، Mobile) **يجب**:
+1. تُبنى خلف feature flag (افتراضي `false` للـ rollout التدريجي)
+2. تحترم الـ workflows الحالية (لا تعدّل `order.stage` ولا الـ central actions)
+3. تعيد استخدام الـ actions الموجودة (`orderActions.*`, `dispatchFinancialEvent`)
+4. تحافظ على الـ role system الحالي (`canDo`, `canSee`, `hasPage`)
+5. تحافظ على الـ data contracts الحالية (لا تغيير schema)
+6. قابلة للإيقاف فوراً بدون redeploy (flag toggle في settings/config)
+7. لها rollback plan موثَّق في الـ PR description
+
+## E1.9 — Operational Stability قبل المعمارية
+الأولوية الأبدية (تعزيز W1.5):
+1. **استقرار التشغيل** — الموظف يفتح الصفحة، يشتغل، ينجز
+2. **سرعة الـ rollback** — أي مشكلة، نرجع في دقائق
+3. **قابلية القياس** — كل feature جديدة لها metrics واضحة
+4. **التدرج** — كل خطوة محدودة الأثر، قابلة للتراجع
+
+**ممنوع** أي تطوير يضحي باستقرار التشغيل من أجل "نظافة معمارية" أو "modernization".
+
+## 🚫 القاعدة النهائية (الرفض المباشر)
+**أي PR يفعل أياً مما يلي = مخالفة مباشرة لـ E1 ويُرفض فوراً:**
+- يحذف legacy load-bearing بدون replacement مستقر ومُختبَر
+- يفرض runtime جديد على المستخدمين بدون flag
+- يكسر workflow حالي حتى لو "كان فيه bug صغير" (افتح PR منفصل للـ fix)
+- يغير UX التشغيلية دفعة واحدة
+- يستبدل عدة layers في PR واحد (Big-bang)
+- ينقل ownership دفعة واحدة بدون migration plan
+
+**الهدف النهائي:** الوصول إلى **Intelligent Runtime Platform** —
+لكن **بدون** كسر النظام، **بدون** إعادة بناء، **بدون** chaos، **بدون** production regressions.
+
+أي drift عن E1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج فوراً (priority أعلى من باقي drifts).
