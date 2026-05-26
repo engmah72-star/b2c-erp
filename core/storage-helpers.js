@@ -36,6 +36,7 @@ export const ORDER_FILE_KINDS = Object.freeze({
   PRINT_FINAL:  'print-final',  // الملف النهائي للطباعة
   PRODUCTION:   'production',   // صور أو ملفات التنفيذ
   PROOF:        'proof',        // proof من المطبعة
+  REFERENCE:    'reference',    // ملف مرجعي من العميل عند إنشاء الأوردر
 });
 
 export const CLIENT_FILE_KINDS = Object.freeze({
