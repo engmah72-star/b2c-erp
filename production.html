@@ -23,6 +23,14 @@
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
+<script type="module">
+  // Phase 1d: connect this page to the runtime-shell's state bus.
+  import { installPageBridge } from './core/runtime-shell/page-bridge.js?v=1';
+  installPageBridge({
+    domain: 'production',
+    applyView: (v) => window.__applyProductionView?.(v),
+  });
+</script>
 <script src="theme.js?v=4"></script>
 </head>
 <body>
@@ -1065,6 +1073,40 @@ window.setMineFilter=function(val,btn){
   renderList();
 };
 
+// ── Runtime-shell view dispatcher (Phase 1d) ──
+// Routes ?filter=X (URL) and 'b2c:runtime-state' (postMessage) to the
+// page's filter handlers. Identical contract to clients.html.
+window.__applyProductionView=function(view){
+  if(!view)return false;
+  // 'mine' lives on the mineOnly axis (independent of currentFilter).
+  if(view==='mine'){
+    if(typeof window.setMineFilter!=='function')return false;
+    const btn=document.querySelector('#mine-filter-bar .ftab[onclick*="setMineFilter(true"]');
+    window.setMineFilter(true, btn);
+    return true;
+  }
+  // 'all' from sidebar acts as a clean preset — clear mineOnly and pick the
+  // status-bar's "الكل" chip.
+  if(view==='all'){
+    if(typeof window.setMineFilter==='function'){
+      const allMineBtn=document.querySelector('#mine-filter-bar .ftab[onclick*="setMineFilter(false"]');
+      window.setMineFilter(false, allMineBtn);
+    }
+    if(typeof window.setFilter!=='function')return false;
+    const btn=document.querySelector('#status-filter-bar .ftab[onclick*="setFilter(\'all\'"]');
+    window.setFilter('all', btn);
+    return true;
+  }
+  // Everything else maps to setFilter.
+  const STATUS=new Set(['nocost','pending','wip','done','problem','late','no-supplier','done-today']);
+  if(!STATUS.has(view))return false;
+  if(typeof window.setFilter!=='function')return false;
+  const btn=document.querySelector(`#status-filter-bar .ftab[onclick*="setFilter('${view}'"]`)
+        || document.getElementById('ftab-'+view);
+  window.setFilter(view, btn);
+  return true;
+};
+
 function applyMineFilter(arr){
   const isAdm=['admin','operation_manager'].includes(currentRole);
   if(!mineOnly)return arr;
@@ -1094,6 +1136,25 @@ window.renderList=function(resetPage=true){
   else if(currentFilter==='wip')data=prodAll.filter(o=>['wip','received'].includes(o.prodStatus));
   else if(currentFilter==='done')data=prodAll.filter(o=>o.prodStatus==='done');
   else if(currentFilter==='problem')data=prodAll.filter(o=>o.prodStatus==='problem');
+  // Phase 1d additions: sidebar-driven views.
+  else if(currentFilter==='late')data=prodAll.filter(o=>{
+    if(o.prodStatus==='done')return false;
+    const sec=o.createdAt?.seconds||0;
+    if(!sec)return false;
+    return (Date.now()/1000-sec)/86400 > 3;
+  });
+  else if(currentFilter==='no-supplier')data=prodAll.filter(o=>{
+    const prods=o.products||[];
+    if(!prods.length)return !o.supplierId;
+    return !prods.some(p=>p.supplierId);
+  });
+  else if(currentFilter==='done-today')data=prodAll.filter(o=>{
+    if(o.prodStatus!=='done')return false;
+    const sec=o.prodCompletedAt?.seconds||o.updatedAt?.seconds||0;
+    if(!sec)return false;
+    const t=new Date();t.setHours(0,0,0,0);
+    return sec*1000 >= t.getTime();
+  });
   else data=[...prodAll,...shipNoCost]; // 'all': production + shipping without cost
   if(currentSupFilter)data=data.filter(o=>o.supplierId===currentSupFilter||(o.products||[]).some(p=>p.supplierId===currentSupFilter));
   data=applyMineFilter(data);
