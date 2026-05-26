@@ -272,7 +272,7 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'production.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, serverTimestamp, writeBatch, increment, deleteDoc, addDoc, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
+import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { productionActions } from "./production-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -413,7 +413,7 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole==='production_agent'){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole===USER_ROLES.PRODUCTION_AGENT){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
   // حمّل تخصصات الموردين
   getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
     if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false);
@@ -439,7 +439,7 @@ onAuthStateChanged(auth,async u=>{
     const changed = hash !== __lastOrderHash;
     __lastOrderHash = hash;
 
-    const prodOrders=orders.filter(o=>o.stage==='production');
+    const prodOrders=orders.filter(o=>o.stage===ORDER_STAGES.PRODUCTION);
     let cP=0,cW=0,cD=0;
     prodOrders.forEach(o=>{
       const prods=o.products||[];
@@ -459,7 +459,7 @@ onAuthStateChanged(auth,async u=>{
     setText('s-pending',cP);
     setText('s-wip',cW);
     setText('s-done',cD);
-    const shipMissing=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length).length;
+    const shipMissing=orders.filter(o=>o.stage===ORDER_STAGES.SHIPPING&&!(o.costItems||[]).length).length;
     setText('sub',prodOrders.length+' تنفيذ'+(shipMissing?` · ${shipMissing} شحن بدون تكلفة`:''));
 
     if(changed){renderList();}
@@ -704,7 +704,7 @@ window.renderCostPanel=function(o,prodIdx){
 
   // ── البنود الحالية — مجموعة بالتاريخ ──
   const itemsEl=document.getElementById('cpanel-items');
-  const isAdminView=['admin','operation_manager'].includes(currentRole);
+  const isAdminView=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
   function _fmtDate(d){if(!d)return'—';try{return new Date(d).toLocaleDateString('ar-EG',{day:'numeric',month:'long'});}catch{return d;}}
   if(!prodCi.length){
     itemsEl.innerHTML=`<div style="padding:14px 16px;display:flex;align-items:center;gap:10px;background:var(--row-hover);border-radius:var(--rad);margin:8px 16px;border:1px dashed var(--line)">
@@ -1066,7 +1066,7 @@ window.setMineFilter=function(val,btn){
 };
 
 function applyMineFilter(arr){
-  const isAdm=['admin','operation_manager'].includes(currentRole);
+  const isAdm=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
   if(!mineOnly)return arr;
   const uid=currentUser?.uid;
   if(!uid)return arr;
@@ -1077,12 +1077,12 @@ let __pageSize=20,__currentPage=1;
 window.renderList=function(resetPage=true){
   if(resetPage)__currentPage=1;
   let data=orders;
-  const prodAll=orders.filter(o=>o.stage==='production');
+  const prodAll=orders.filter(o=>o.stage===ORDER_STAGES.PRODUCTION);
   const noCostAll=orders.filter(o=>!(o.costItems||[]).length);
-  const shipNoCost=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length);
+  const shipNoCost=orders.filter(o=>o.stage===ORDER_STAGES.SHIPPING&&!(o.costItems||[]).length);
   // عدّاد فلتر "موكلة لي / الكل"
   const uid=currentUser?.uid||'';
-  const isAdm2=['admin','operation_manager'].includes(currentRole);
+  const isAdm2=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
   const mineCnt=prodAll.filter(o=>o.productionAgent===uid||(!o.productionAgent&&!isAdm2)).length;
   const mineEl=document.getElementById('qf-mine-cnt');if(mineEl)mineEl.textContent=`(${mineCnt})`;
   const allEl=document.getElementById('qf-all-cnt');if(allEl)allEl.textContent=`(${prodAll.length})`;
@@ -1108,7 +1108,7 @@ window.renderList=function(resetPage=true){
   data=data.slice(0,__currentPage*__pageSize);
   const SM={pending:{cls:'sp-pending',lbl:'⏳ انتظار',cc:''},received:{cls:'sp-wip',lbl:'📥 استلمت',cc:'card-wip'},wip:{cls:'sp-wip',lbl:'🔄 جاري',cc:'card-wip'},done:{cls:'sp-done',lbl:'✅ خلصت',cc:'card-done'},problem:{cls:'sp-prob',lbl:'⚠️ مشكلة',cc:'card-prob'}};
   el.innerHTML=data.map(o=>{
-    const isShipping=o.stage==='shipping';
+    const isShipping=o.stage===ORDER_STAGES.SHIPPING;
     const ps=o.prodStatus||'pending';const st=SM[ps]||SM.pending;
     const prods=o.products||[];
     const firstImg=prods.find(p=>p.designImageUrl)?.designImageUrl||o.designImageUrl||o.printFinalUrl||'';
@@ -1181,7 +1181,7 @@ window.renderList=function(resetPage=true){
 // RULE 8 — رقم العميل لا يظهر لـ production_agent
 function _maskPhone(p){
   if(!p) return '';
-  const canSee=['admin','operation_manager','customer_service','shipping_officer'].includes(currentRole);
+  const canSee=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER,USER_ROLES.CUSTOMER_SERVICE,USER_ROLES.SHIPPING_OFFICER].includes(currentRole);
   if(canSee) return p;
   const s=String(p).replace(/\D/g,'');
   return s.length>=6 ? s.slice(0,3)+'****'+s.slice(-3) : '****';
@@ -1570,7 +1570,7 @@ window.rmCost=async function(idx){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const item=(o.costItems||[])[idx];
   if(!item)return;
-  const isAdm=['admin','operation_manager'].includes(currentRole);
+  const isAdm=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
 
   // قفل: البند المدفوع لا يُحذَف إلا للأدمن (مع إشعار المندوب والمورد)
   if(item.paid){
@@ -1602,7 +1602,7 @@ window.rmCost=async function(idx){
 // ══ مندوب التنفيذ ══
 function renderProductionAgent(o){
   const el=document.getElementById('prod-agent-wrap');if(!el)return;
-  const isAdmin=['admin','operation_manager'].includes(currentRole);
+  const isAdmin=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
   const agents=window.__productionAgents||[];
   if(o.productionAgent){
     const initials=(o.productionAgentName||'م')[0]?.toUpperCase();
@@ -1631,7 +1631,7 @@ function renderProductionAgent(o){
       <div style="text-align:center;padding:14px;color:var(--dim2);font-size:var(--fs-base);background:var(--bg3);border-radius:12px;border:1px solid var(--line)">
         <div style="font-size:24px;opacity:.4;margin-bottom:6px">👷</div>
         <div style="font-weight:var(--fw-bold);margin-bottom:8px">لم يُعيَّن مندوب بعد</div>
-        ${currentRole==='production_agent'?`<button type="button" onclick="pickupOrder('${o._id}')" class="btn btn-b btn-sm" style="width:100%">📥 التقط هذا الأوردر</button>`:''}
+        ${currentRole===USER_ROLES.PRODUCTION_AGENT?`<button type="button" onclick="pickupOrder('${o._id}')" class="btn btn-b btn-sm" style="width:100%">📥 التقط هذا الأوردر</button>`:''}
       </div>`;
   }
 }
