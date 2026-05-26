@@ -320,7 +320,7 @@ import { initNotifications } from "./notifications.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
-import { dedupEmployees } from "./orders.js";
+import { dedupEmployees, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { employeeActions } from "./employee-actions.js";
 
@@ -441,38 +441,38 @@ function calcKpiBreakdown(e,uid,mKey){
   // 2. الإنتاجية (40) — حسب الدور
   let productivity=20;
   const mStart=mKey+'-01';
-  if(e.role==='graphic_designer'||e.role==='design_operator'){
+  if(e.role===USER_ROLES.GRAPHIC_DESIGNER||e.role===USER_ROLES.DESIGN_OPERATOR){
     const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
     const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage));
     productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
-  } else if(e.role==='customer_service'){
+  } else if(e.role===USER_ROLES.CUSTOMER_SERVICE){
     const mine=allOrders.filter(o=>o.createdBy===uid&&(o.createdAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
     productivity=Math.min(40,mine.length*4);
-  } else if(e.role==='production_agent'){
+  } else if(e.role===USER_ROLES.PRODUCTION_AGENT){
     const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
     const done=mine.filter(o=>['shipping','archived'].includes(o.stage));
     productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
-  } else if(e.role==='shipping_officer'){
+  } else if(e.role===USER_ROLES.SHIPPING_OFFICER){
     const mine=allOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&['shipping','archived'].includes(o.stage)&&(o.updatedAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
     productivity=Math.min(40,mine.length*5);
   } else { productivity=25; }
   // 3. الجودة (25) — نسبة الإتمام بدون إعادة عمل
   let quality=12;
-  if(e.role==='graphic_designer'||e.role==='design_operator'){
+  if(e.role===USER_ROLES.GRAPHIC_DESIGNER||e.role===USER_ROLES.DESIGN_OPERATOR){
     const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
     const good=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)&&!(o.timeline||[]).some(t=>t.action?.includes('مراجعة')||t.action?.includes('رفض')));
     quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
-  } else if(e.role==='customer_service'){
+  } else if(e.role===USER_ROLES.CUSTOMER_SERVICE){
     const mine=allOrders.filter(o=>o.createdBy===uid);
-    const archived=mine.filter(o=>o.stage==='archived');
+    const archived=mine.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
     quality=mine.length?Math.min(25,Math.round(archived.length/mine.length*25)):12;
-  } else if(e.role==='production_agent'){
+  } else if(e.role===USER_ROLES.PRODUCTION_AGENT){
     const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
     const good=mine.filter(o=>['shipping','archived'].includes(o.stage));
     quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
-  } else if(e.role==='shipping_officer'){
+  } else if(e.role===USER_ROLES.SHIPPING_OFFICER){
     const mine=allOrders.filter(o=>o.shippingOfficerId===uid||o.shippingOfficerId===e._id);
-    const done=mine.filter(o=>o.stage==='archived');
+    const done=mine.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
     quality=mine.length?Math.min(25,Math.round(done.length/mine.length*25)):12;
   } else { quality=15; }
   const total=Math.min(100,attendance+productivity+quality);
@@ -578,7 +578,7 @@ window.openKpiPanel=function(empId,authUid,empName){
     if(!t)return best;
     return(!best||t.date>best.date)?{...t,clientName:o.clientName}:best;
   },null);
-  const isAdmin=['admin','operation_manager'].includes(currentRole);
+  const isAdmin=[USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(currentRole);
   hdr.innerHTML=`<div>
     <div style="font-size:15px;font-weight:var(--fw-extra)">📊 تقييم — ${empName}</div>
     <div class="txt-meta-sm">${ROLES[e.role]?.label||e.role} · ${mKey}</div>
@@ -835,7 +835,7 @@ function updateStats(){
   const active=employees.filter(e=>e.status==='active');
   animateCount('s-total',employees.length,n=>String(n));
   setText('s-active',active.length);
-  setText('s-design',employees.filter(e=>e.role==='graphic_designer').length);
+  setText('s-design',employees.filter(e=>e.role===USER_ROLES.GRAPHIC_DESIGNER).length);
   // Team status stats (derived from attendance + orders)
   const today=todayStr();
   const todayAtts=attendanceRecords.filter(a=>a.date===today);
@@ -1079,7 +1079,7 @@ window.renderList=function(){
     // أداء حسب الدور
     const myOrders=periodOrders;
     let perfHtml='';
-    if(e.role==='graphic_designer'||e.role==='design_operator'){
+    if(e.role===USER_ROLES.GRAPHIC_DESIGNER||e.role===USER_ROLES.DESIGN_OPERATOR){
       const mine=myOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
       const printed=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
       const commission=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage))
@@ -1092,7 +1092,7 @@ window.renderList=function(){
         <span class="txt-meta-sm">💸 عمولة</span>
         <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--p)">${fn(Math.round(commission))} ج</span>
       </div>`:''}`;
-    } else if(e.role==='customer_service'){
+    } else if(e.role===USER_ROLES.CUSTOMER_SERVICE){
       const mine=myOrders.filter(o=>o.createdBy===uid);
       const sales=mine.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
       const allMine=allOrders.filter(o=>o.createdBy===uid);
@@ -1105,14 +1105,14 @@ window.renderList=function(){
         <span class="txt-meta-sm">👤 عملاء (إجمالي)</span>
         <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--c)">${uClients} عميل</span>
       </div>`;
-    } else if(e.role==='production_agent'){
+    } else if(e.role===USER_ROLES.PRODUCTION_AGENT){
       const mine=myOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
       const done=mine.filter(o=>['shipping','archived'].includes(o.stage)).length;
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
         <span class="txt-meta-sm">🏭 تنفيذ</span>
         <span class="txt-bold-base">${mine.length} أوردر · ${done} مكتمل</span>
       </div>`;
-    } else if(e.role==='shipping_officer'){
+    } else if(e.role===USER_ROLES.SHIPPING_OFFICER){
       const mine=myOrders.filter(o=>['shipping','archived'].includes(o.stage)&&(o.shippingOfficerId===uid||o.shippingOfficerId===e._id));
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
         <span class="txt-meta-sm">🚚 شحنات</span>
@@ -1425,7 +1425,7 @@ document.addEventListener('keydown',e=>{
   }
   // n opens new employee modal (admin only)
   if(e.key==='n'||e.key==='N'){
-    if(currentRole==='admin'||currentRole==='operation_manager'){
+    if(currentRole===USER_ROLES.ADMIN||currentRole===USER_ROLES.OPERATION_MANAGER){
       e.preventDefault();
       openAddEmp();
     }
@@ -1444,7 +1444,7 @@ window.openAddEmp=function(){
   document.getElementById('e-phone').addEventListener('input',updatePreview,{once:true});
 };
 window.updateSalaryUI=function(){
-  const role=gv('e-role');const isD=role==='graphic_designer'||role==='design_operator';
+  const role=gv('e-role');const isD=role===USER_ROLES.GRAPHIC_DESIGNER||role===USER_ROLES.DESIGN_OPERATOR;
   document.getElementById('e-commission-row').style.display=isD?'':'none';
   document.getElementById('e-commission-info').style.display=isD?'block':'none';
 };
@@ -1461,7 +1461,7 @@ window.saveEmp=async function(){
   const btn=document.getElementById('save-btn');btn.disabled=true;btn.textContent='جاري...';
   const leaveQuota=parseInt(gv('e-leave-quota'))||21;
   const commissionOrder=parseFloat(gv('e-commission-order'))||0;
-  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role==='graphic_designer'||role==='design_operator')?commission:0,commissionPerOrder:commissionOrder,annualLeaveQuota:leaveQuota,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
+  const empData={name,phone,role,nationalId:gv('e-nid'),baseSalary:salary,commissionPct:(role===USER_ROLES.GRAPHIC_DESIGNER||role===USER_ROLES.DESIGN_OPERATOR)?commission:0,commissionPerOrder:commissionOrder,annualLeaveQuota:leaveQuota,startDate:gv('e-start')||new Date().toISOString().slice(0,10),status:gv('e-status'),updatedAt:serverTimestamp()};
   try{
     if(editingId){
       const r=await employeeActions.updateEmployeeProfile({db,employeeId:editingId,profileData:empData});
@@ -1671,17 +1671,17 @@ function calcEmpCommission(e){
     const createdDate=o.createdAt?.toDate?.();
     return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
   });
-  if(e.role==='graphic_designer'||e.role==='design_operator'){
+  if(e.role===USER_ROLES.GRAPHIC_DESIGNER||e.role===USER_ROLES.DESIGN_OPERATOR){
     return mOrders.filter(o=>(o.designerId===uid||o.designerId===e._id)&&['printing','production','shipping','archived'].includes(o.stage))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(e.commissionPct)||0)/100),0);
   }
-  if(e.role==='production_agent'){
+  if(e.role===USER_ROLES.PRODUCTION_AGENT){
     return mOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id).length*(parseFloat(e.commissionPerOrder)||0);
   }
-  if(e.role==='shipping_officer'){
+  if(e.role===USER_ROLES.SHIPPING_OFFICER){
     return mOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&['shipping','archived'].includes(o.stage)).length*(parseFloat(e.commissionPerOrder)||0);
   }
-  if(e.role==='customer_service'){
+  if(e.role===USER_ROLES.CUSTOMER_SERVICE){
     return mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(e.commissionPerOrder)||0);
   }
   return 0;
@@ -1704,7 +1704,7 @@ window.openPayOne=function(empId,preType){
       <strong style="color:var(--b)">${fn(base)} ج</strong>
     </div>
     ${commission>0?`<div style="display:flex;justify-content:space-between;margin-bottom:5px">
-      <span class="txt-meta-sm">${(e.role==='graphic_designer'||e.role==='design_operator')?'عمولة '+( e.commissionPct||0)+'%':'عمولة لكل أوردر'}</span>
+      <span class="txt-meta-sm">${(e.role===USER_ROLES.GRAPHIC_DESIGNER||e.role===USER_ROLES.DESIGN_OPERATOR)?'عمولة '+( e.commissionPct||0)+'%':'عمولة لكل أوردر'}</span>
       <strong style="color:var(--p)">${fn(commission)} ج</strong>
     </div>`:''}
     <div style="border-top:1px solid var(--line);padding-top:7px;margin-top:3px;display:flex;justify-content:space-between">
