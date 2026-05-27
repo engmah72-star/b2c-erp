@@ -957,12 +957,19 @@ export const orderActions = {
     db, orderId, amount, walletId, walletName = '',
     role, userId, userName,
     note = '', source = 'customer',
+    receiptUrl = '',
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
     const v = validatePayment({ order, amount, source, role });
     if (!v.ok) return { ...v, orderId };
+
+    // 📷 Receipt إجباري للدفعات الواردة (مش للـ refund).
+    const amt = parseFloat(amount) || 0;
+    if (source !== 'refund' && amt > 0 && !receiptUrl) {
+      return { ok: false, errors: ['⚠️ صورة الإيصال مطلوبة لكل دفعة فلوس'], warnings: [], orderId };
+    }
 
     const eventType = source === 'refund' ? FE.CUSTOMER_REFUND : FE.CUSTOMER_PAYMENT;
 
@@ -975,6 +982,7 @@ export const orderActions = {
         walletName,
         amount:     parseFloat(amount) || 0,
         note,
+        receiptUrl,
         createdBy:     userId   || '',
         createdByName: userName || '',
       });
@@ -2841,12 +2849,15 @@ export const orderActions = {
     db = defaultDb, orderId,
     amount, walletId, walletName,
     note = '',
+    receiptUrl = '',
     userId, userName,
   }) {
     if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
     const amt = parseFloat(amount) || 0;
     if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل مبلغاً'], warnings: [], orderId };
     if (!walletId) return { ok: false, errors: ['⚠️ اختر المحفظة'], warnings: [], orderId };
+    // 📷 Receipt إجباري لتسجيل أي مقدم
+    if (!receiptUrl) return { ok: false, errors: ['⚠️ صورة الإيصال مطلوبة'], warnings: [], orderId };
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
     const sale = parseFloat(order.salePrice) || 0;
@@ -2889,6 +2900,7 @@ export const orderActions = {
         clientName: order.clientName || '',
         description: `${label} — ${order.clientName || ''}`,
         note: `${label} — ${order.clientName || ''}`,
+        receiptUrl,
         date: nowStr(),
         createdBy: userId,
         createdByName: userName || '',

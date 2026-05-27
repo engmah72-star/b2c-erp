@@ -548,6 +548,7 @@ async function handleCustomerPayment(db, p) {
     category: p.txCategory || (isRefund ? 'refund' : 'client_payment'),
     orderId: p.orderId || null, clientId: p.clientId || null, clientName: p.clientName || '',
     note: p.note || '',
+    receiptUrl: p.receiptUrl || '',
     date: p.date || new Date().toLocaleDateString('ar-EG'),
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
