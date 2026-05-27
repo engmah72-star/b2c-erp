@@ -774,7 +774,13 @@ export function validateStageRequirements(order, fromStage) {
     }
   }
   else if (stage === 'production') {
-    if (!(order.costItems || []).length) warnings.push('لم تُسجَّل تكاليف الأوردر — يفضّل تسجيلها قبل التحويل للشحن');
+    // 🛡 Phase 4 Operational Guard: cost items إلزامية قبل التحويل للشحن.
+    // كان warning قابل للتجاوز — الموظف تحت ضغط يضغط "نعم" → أوردر يطلع للشحن
+    // بدون أي تكلفة مسجَّلة → خسارة فينانس + audit ناقص.
+    // الـ admin override يمر عبر adminOverrideToShipping (مع reason إلزامي).
+    if (!(order.costItems || []).length) {
+      errors.push('⛔ يجب تسجيل بند تكلفة واحد على الأقل قبل التحويل للشحن');
+    }
 
     // B4 (Phase 2): يسد فجوة G2 من PHASE_2_DIAGNOSIS.
     // المنتجات في حالة pending/in_progress كانت تصل لمرحلة الشحن بسبب غياب

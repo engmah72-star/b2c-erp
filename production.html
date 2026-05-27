@@ -1245,6 +1245,13 @@ window.renderList=function(resetPage=true){
           ${sumExec.total?`<span style="font-size:var(--fs-xs);background:var(--bg3);color:var(--snow);border:1px solid var(--line);border-radius:20px;padding:3px 8px;font-weight:var(--fw-extra)">${sumExec.done}/${sumExec.total} ✅</span>`:''}
           ${tc>0?`<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">💰 ${fn(tc)} ج</span>`:''}
           ${ci.length===0?`<span style="font-size:var(--fs-xs);background:rgba(255,61,110,.15);color:var(--r);border:1px solid rgba(255,61,110,.3);border-radius:20px;padding:3px 8px;font-weight:var(--fw-extra)">⚠️ بدون تكلفة</span>`:''}
+          ${(()=>{
+            // 🎯 Phase C: Production Ready Score — جاهزية الأوردر للتحويل للشحن.
+            const rs = computeProductionReadyScore(o);
+            const col = rs.score >= 90 ? 'var(--g)' : rs.score >= 60 ? 'var(--y)' : 'var(--r)';
+            const ico = rs.score >= 90 ? '✅' : rs.score >= 60 ? '🟡' : '🔴';
+            return `<span style="font-size:var(--fs-xs);background:${col}18;color:${col};border:1px solid ${col}44;border-radius:20px;padding:3px 8px;font-weight:var(--fw-extra);white-space:nowrap" title="${rs.missing.length?'ناقص: '+rs.missing.join(' · '):'جاهز للشحن'}">${ico} ${rs.score}%</span>`;
+          })()}
         </div>
       </div>
       ${firstImg?`<div style="border-top:1px solid var(--line);background:var(--bg3);overflow:hidden">
@@ -1283,6 +1290,48 @@ function _maskPhone(p){
   if(!p) return '';
   const canSee = canSeeField('client_phone', currentRole, currentUserPerms);
   return _centralMaskPhone(p, canSee);
+}
+
+// Phase C: Production Ready Score — جاهزية الأوردر للتحويل للشحن.
+// مبني على execSummary + cost items + موردين + صورة نهائية.
+function computeProductionReadyScore(o){
+  const prods = o.products || [];
+  const ci = o.costItems || [];
+  const summary = execSummary(o);
+  const missing = [];
+
+  // Per-product execStatus
+  let prodScore = 0;
+  if (summary.total > 0) {
+    prodScore = Math.round((summary.done / summary.total) * 50); // up to 50 points
+    if (summary.done < summary.total) missing.push(`${summary.total - summary.done} منتج لم يخلص`);
+  } else if (!prods.length) {
+    // No products defined — give partial credit
+    prodScore = 25;
+  } else {
+    missing.push('حالات المنتجات');
+  }
+
+  // Cost items (25 points)
+  let costScore = 0;
+  if (ci.length > 0) costScore = 25;
+  else missing.push('بنود تكلفة');
+
+  // Supplier per product (15 points)
+  let supScore = 0;
+  if (prods.length === 0) supScore = 15; // no products → no supplier needed
+  else {
+    const withSup = prods.filter(p => p.supplierId || p.supplierName).length;
+    supScore = Math.round((withSup / prods.length) * 15);
+    if (withSup < prods.length) missing.push(`${prods.length - withSup} منتج بدون مورد`);
+  }
+
+  // Final product image (10 points — bonus)
+  let imgScore = o.finalImageUrl ? 10 : 0;
+  if (!o.finalImageUrl) missing.push('صورة المنتج النهائي');
+
+  const score = Math.min(100, prodScore + costScore + supScore + imgScore);
+  return { score, missing: missing.slice(0, 4) };
 }
 
 window.openOrder=function(id){
@@ -1953,9 +2002,39 @@ window.confirmMoveToShipping=async function(){
     if(r.needsConfirmation){
       if(!confirm('⚠️ '+(r.warnings||[]).join(' · ')+'\n\nالمتابعة؟'))return;
       r=await orderActions.submitProductionToShipping({db,orderId:activeId,shipId,shipName,catalogUpdates,role:currentRole,userId:currentUser?.uid||'',userName,bypassWarnings:true});
-      if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+      if(!r.ok){
+        // Phase A: errors تبلوك. admin/ops يقدر يـ override بسبب صريح.
+        const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
+        if(!isAdmin) return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+        const errsBlock = '⛔ مشاكل في الأوردر:\n• ' + r.errors.join('\n• ');
+        if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل للشحن رغم ذلك؟ (admin override)')) return;
+        const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
+        if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+        const or = await orderActions.adminOverrideToShipping({
+          db, orderId: activeId, role: currentRole,
+          userId: currentUser?.uid||'', userName,
+          nextAssigneeId: shipId, nextAssigneeName: shipName,
+          overrideReason: reason.trim(),
+        });
+        if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+        r = or;
+      }
     } else {
-      return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+      // errors بدون warnings — نفس الـ admin override path
+      const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
+      if(!isAdmin) return toast('⛔ '+(r.errors||[]).join(' · '),'err');
+      const errsBlock = '⛔ مشاكل في الأوردر:\n• ' + r.errors.join('\n• ');
+      if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل للشحن رغم ذلك؟ (admin override)')) return;
+      const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
+      if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+      const or = await orderActions.adminOverrideToShipping({
+        db, orderId: activeId, role: currentRole,
+        userId: currentUser?.uid||'', userName,
+        nextAssigneeId: shipId, nextAssigneeName: shipName,
+        overrideReason: reason.trim(),
+      });
+      if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+      r = or;
     }
   }
   document.getElementById('ov-pick-ship').classList.remove('open');
