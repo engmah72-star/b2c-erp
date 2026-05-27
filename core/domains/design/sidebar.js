@@ -13,6 +13,7 @@ const CONFIG = {
   // The sidebar keeps only cross-page navigation here.
   views: [
     { id: 'hub',     ico: '🖥️', label: 'مساحة التصميم', deepLink: 'designer-hub.html' },
+    { id: 'print',   ico: '🖨️', label: 'الطباعة',        deepLink: 'print.html' },
     { id: 'gallery', ico: '🖼️', label: 'المعرض',         deepLink: 'gallery.html' },
   ],
   secondaryViews: [],
