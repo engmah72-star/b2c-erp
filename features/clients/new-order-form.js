@@ -105,14 +105,32 @@ export function getOrderTypeCardClasses(stage) {
  *
  * @returns {{ ok: boolean, errors: string[], focusField?: string }}
  */
-export function validateNewOrderForm({ stage, products = [], salePrice = 0, deposit = 0, walletId = '' }) {
+export function validateNewOrderForm({
+  stage,
+  products = [],
+  salePrice = 0,
+  deposit = 0,
+  walletId = '',
+  deadline = '',
+  receiptCount = 0,
+} = {}) {
   if (!stage) return { ok: false, errors: ['⚠️ اختر نوع الأوردر'] };
   if (!products.length) return { ok: false, errors: ['⚠️ أضف منتجاً على الأقل'] };
   if (stage === 'printing' && parseFloat(salePrice) <= 0) {
     return { ok: false, errors: ['⚠️ يجب إدخال سعر الأوردر'], focusField: 'no-sale-price' };
   }
+  if (!deadline) {
+    return { ok: false, errors: ['⚠️ موعد التسليم مطلوب'], focusField: 'no-deadline' };
+  }
   if (parseFloat(deposit) > 0 && !walletId) {
     return { ok: false, errors: ['⚠️ اختر المحفظة للعربون'] };
+  }
+  if (parseFloat(deposit) > 0 && parseInt(receiptCount) <= 0) {
+    return {
+      ok: false,
+      errors: ['⚠️ ارفع صورة التحويل/الإيصال للعربون'],
+      focusField: 'no-receipt-zone',
+    };
   }
   return { ok: true, errors: [] };
 }

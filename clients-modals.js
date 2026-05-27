@@ -214,7 +214,7 @@ export const CLIENTS_MODALS_HTML = `
 
       <!-- الموعد والمصمم -->
       <div class="g2">
-        <div class="fg"><label>📅 موعد التسليم</label><input class="inp" id="no-deadline" type="date"></div>
+        <div class="fg"><label>📅 موعد التسليم <span style="color:var(--r);font-weight:var(--fw-extra)">*</span></label><input class="inp" id="no-deadline" type="date" required></div>
         <div class="fg" id="designer-field-wrap"><label>🎨 المصمم</label><select class="inp" id="no-designer"><option value="">— بدون مصمم —</option></select></div>
       </div>
 
@@ -235,6 +235,19 @@ export const CLIENTS_MODALS_HTML = `
         <div id="no-remaining-preview" style="display:flex;justify-content:space-between;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,.1);border-radius:8px;font-size:var(--fs-base);display:none">
           <span style="color:var(--dim2)">الباقي على العميل</span>
           <span id="no-rem-val" style="font-weight:var(--fw-heavy);color:var(--r)">0 ج</span>
+        </div>
+
+        <!-- صورة التحويل / الإيصال — تظهر فقط عند وجود مقدم -->
+        <div id="no-receipt-wrap" style="display:none;margin-top:10px;padding:10px;background:rgba(245,158,11,.08);border:1px dashed rgba(245,158,11,.45);border-radius:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);margin:0">📷 صورة التحويل / الإيصال <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+            <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">إجباري لتأكيد العربون</span>
+          </div>
+          <div id="no-receipt-zone" onclick="document.getElementById('no-receipt-inp').click()" style="border:2px dashed rgba(245,158,11,.45);border-radius:10px;padding:14px;text-align:center;cursor:pointer;color:var(--y-amber);font-size:var(--fs-sm);font-weight:var(--fw-bold);background:rgba(0,0,0,.15)">
+            📸 اضغط لتصوير الإيصال أو رفع صورة
+          </div>
+          <input type="file" id="no-receipt-inp" accept="image/*,application/pdf" multiple capture="environment" class="hide" onchange="addReceiptFiles(this)">
+          <div id="no-receipt-list" style="margin-top:8px"></div>
         </div>
       </div>
 

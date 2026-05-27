@@ -643,3 +643,8 @@ function ensureStylesInjected() {
   style.textContent = css;
   document.head.appendChild(style);
 }
+
+// ─── SIDE-EFFECT: expose to window for non-module callers ────────────
+if (typeof window !== 'undefined') {
+  window.makeSearchable = makeSearchable;
+}

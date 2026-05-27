@@ -74,6 +74,7 @@ export function uploadDesignFiles({
   files = [],
   orderId = '',
   onProgress = () => {},
+  pathPrefix = 'designs/order_',
 } = {}) {
   if (!files.length) {
     return Promise.resolve({ firstUrl: '', allFiles: [] });
@@ -87,7 +88,7 @@ export function uploadDesignFiles({
     onProgress(avg);
   };
   const uploadOne = (f, i) => compressImage(f).then(cf => new Promise((res, rej) => {
-    const sRef = window.firebase.storage().ref(`designs/order_${orderId}_${Date.now()}_${i}`);
+    const sRef = window.firebase.storage().ref(`${pathPrefix}${orderId}_${Date.now()}_${i}`);
     const task = sRef.put(cf);
     task.on(
       'state_changed',
