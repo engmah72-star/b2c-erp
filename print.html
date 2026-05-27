@@ -16,7 +16,7 @@
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
 <script src="finance-core.js"></script>
-<link rel="stylesheet" href="print.css?v=1">
+<link rel="stylesheet" href="print.css?v=2">
 <!-- Print Control Center (Phase 2): 3-tab body. Default ON.
      Opt-out: localStorage.setItem('feat.print.controlCenter','0') -->
 <link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
@@ -502,14 +502,52 @@ function renderList(){
         </div>
       </div>`:''}
       <div class="ocard-footer">
-        <div style="display:flex;gap:var(--space-sm);align-items:center">
+        <div style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
           ${hasFinal?'<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">📁 ملف ✅</span>':'<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">📁 لا يوجد ملف</span>'}
           ${(()=>{const tq=(o.products||[]).reduce((s,p)=>s+(parseInt(p.qty)||1),0)||o.qty||0;return tq?`<span class="txt-meta-xs">📦${tq}ق</span>`:'';})()}
+          ${(()=>{
+            // 🎯 Phase 3: Ready Score badge — يعرض جاهزية الأوردر للتحويل
+            // بدون فتح الـ panel. الـ score مبني على computeProductReadiness
+            // (الموجود) + توفر صورة التصميم.
+            const rs = computeOrderReadyScore(o);
+            const col = rs.score >= 90 ? 'var(--g)' : rs.score >= 60 ? 'var(--y)' : 'var(--r)';
+            const ico = rs.score >= 90 ? '✅' : rs.score >= 60 ? '🟡' : '🔴';
+            return `<span class="rs-badge" style="background:${col}18;color:${col};border-color:${col}44" title="${rs.missing.length?'ناقص: '+rs.missing.join(' · '):'جاهز للتنفيذ'}">${ico} ${rs.score}%</span>`;
+          })()}
         </div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
     </div>`;
   }).join('');
+}
+
+// Phase 3: Order-level Ready Score (للـ Kanban card badge).
+// يجمع readiness كل المنتجات + توفّر صورة التصميم في الأوردر.
+function computeOrderReadyScore(o){
+  const products = o.products || [];
+  const hasOrderImg = !!(o.designImageUrl || o.printFinalUrl
+                      || (o.designFiles && o.designFiles.length));
+  if (!products.length) {
+    return { score: hasOrderImg ? 40 : 10, missing: hasOrderImg ? ['منتجات'] : ['منتجات', 'ملف تصميم'] };
+  }
+  let totalPct = 0;
+  const missingSet = new Set();
+  products.forEach(p => {
+    const r = computeProductReadiness(o, p);
+    totalPct += r.pct;
+    r.critical.forEach(c => { if (!c.ok) missingSet.add(c.label); });
+  });
+  let avg = Math.round(totalPct / products.length);
+  // bonus للـ design image على مستوى الأوردر (لو مفيش product-level images)
+  const productHasImg = products.some(p =>
+    !!p.designImageUrl ||
+    (Array.isArray(p.designImages) && p.designImages.length)
+  );
+  if (!productHasImg && !hasOrderImg) {
+    avg = Math.max(0, avg - 15);
+    missingSet.add('ملف تصميم');
+  }
+  return { score: Math.min(100, avg), missing: Array.from(missingSet).slice(0, 4) };
 }
 
 // Open Order
