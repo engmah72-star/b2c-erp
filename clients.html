@@ -21,6 +21,11 @@
 <script type="module" src="inbox-badge.js"></script>
 <!-- God-page decomp PR-16: inline <style> extracted to clients.css. -->
 <link rel="stylesheet" href="./clients.css">
+<!-- Control Center mode (gated by `clients.controlCenter` feature flag).
+     Loaded unconditionally — classes are namespaced (.cc-*) so they cause
+     no visual change unless the CC DOM is rendered. -->
+<link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
+<link rel="stylesheet" href="./clients-control-center.css">
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -209,6 +214,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      attaches them all to window. -->
 <script type="module" src="./clients-constants.js"></script>
 <script type="module" src="./clients-bridge.js"></script>
+
+<!-- Phase 2 — Client Operations Control Center.
+     OFF by default; flip with: localStorage.setItem('feat.clients.controlCenter','1')
+     or URL: ?feat.clients.controlCenter=1 -->
+<script type="module" src="./clients-control-center.js"></script>
 
 <script>
 
@@ -773,6 +783,13 @@ window.setQuickFilter=function(filter,el){
 function renderGrid(){
   const el=document.getElementById('clients-grid');
   if(!el)return;
+  // Attach long-press handlers once when CC mode is on. Safe to call
+  // repeatedly — the helper short-circuits on already-bound roots.
+  try {
+    if (window.isControlCenterOn && window.isControlCenterOn() && window.attachLongPressHandlers) {
+      window.attachLongPressHandlers(el);
+    }
+  } catch (_) { /* CC optional */ }
   const isLegacyTab = window.__statusTab==='legacy';
   // Stuck-spinner guard: any path out of renderGrid must replace the
   // spinner. If filter/card construction throws, fall through to a
@@ -945,6 +962,59 @@ function renderPanel(id){
     client:c, orders:getClientOrders(c), txByOrder, calcRem,
   });
 
+  const _fus=getClientFollowups(id);
+  const lastFu=_fus[0];
+
+  // ── Control Center mode (feature-flagged) ──
+  // If the flag is on, swap in the sticky header + 3-tab body. On any
+  // error fall back to the legacy renderer so the page never breaks.
+  const ccOn = (typeof window.isControlCenterOn === 'function') && window.isControlCenterOn();
+  if (ccOn && window.clientPanelHeaderCCHTML && window.clientPanelBodyCCHTML) {
+    try {
+      // 0) Hide the legacy "+ أوردر" button (the CC header already exposes
+      //    it among its 4 actions). Keep AI-analyze and close visible.
+      const legacyOrderBtn = document.querySelector('#panel-ov .panel-head .row-gap-xs .btn-g');
+      if (legacyOrderBtn) legacyOrderBtn.style.display = 'none';
+      // 1) Sticky header with critical info + 4 actions.
+      document.getElementById('pn-hdr').innerHTML = window.clientPanelHeaderCCHTML({
+        client: c, color: col,
+        cOrds: d.cOrds, activeOrds: d.activeOrds, lateOrds: d.lateOrds,
+        tot: d.tot, paid: d.paid, rem: d.rem, pct: d.pct,
+        daysSince: d.daysSince,
+        lastFu,
+        segments: clientSegments,
+      });
+      // 2) Hide the legacy 5-tab bar — the CC layout owns its own tabs.
+      const pnTabsLegacy = document.getElementById('pn-tabs');
+      if (pnTabsLegacy) pnTabsLegacy.style.display = 'none';
+      // 3) Build the unified timeline events from followups + orders + payments.
+      const events = window.buildClientTimeline
+        ? window.buildClientTimeline({ followups: _fus, orders: d.cOrds, txByOrder })
+        : [];
+      // 4) 3-tab body (Timeline / Orders / More).
+      //    renderBizCardTab in this page expects a client arg, so we curry
+      //    it here so the CC module can call it with zero args.
+      document.getElementById('panel-body').innerHTML = window.clientPanelBodyCCHTML({
+        client: c, id, events,
+        cOrds: d.cOrds, activeOrds: d.activeOrds, lateOrds: d.lateOrds,
+        tot: d.tot, paid: d.paid, rem: d.rem,
+        daysSince: d.daysSince, memberDays: d.memberDays,
+        tags: d.tags || [],
+        renderPanelOrders,
+        renderBizCardTab: () => renderBizCardTab(c),
+        TAG_LABELS, TAG_COL,
+        pRow, fmtOccasion,
+      });
+      window.__panelOrds = d.cOrds;
+      updateFollowupsBadge(id);
+      return;
+    } catch (err) {
+      console.warn('[renderPanel] Control Center mode failed, falling back to legacy:', err);
+      // fall through to legacy path
+    }
+  }
+
+  // ── Legacy mode (default) ──
   document.getElementById('pn-hdr').innerHTML=clientPanelHeaderHTML({client:c,color:col});
 
   const pnTabs=document.getElementById('pn-tabs');
@@ -954,8 +1024,6 @@ function renderPanel(id){
   if(summaryBtn)summaryBtn.classList.add('on');
   updateFollowupsBadge(id);
 
-  const _fus=getClientFollowups(id);
-  const lastFu=_fus[0];
   const lastFuLine=lastFu?`<div style="margin-bottom:14px;background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:10px 12px;cursor:pointer" onclick="window.switchPanelTab('followups',document.getElementById('ptab-followups'))">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <span style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--p)">📞 آخر متابعة</span>
