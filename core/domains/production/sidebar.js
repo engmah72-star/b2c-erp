@@ -16,10 +16,10 @@ const CONFIG = {
     { id: 'mine',         ico: '👷', label: 'موكلة لي',  state: { view: 'mine' },         deepLink: 'production.html?filter=mine' },
     { id: 'late',         ico: '⏰', label: 'متأخرة',     state: { view: 'late' },         deepLink: 'production.html?filter=late' },
     { id: 'no-supplier',  ico: '🟡', label: 'بدون مورد',  state: { view: 'no-supplier' },  deepLink: 'production.html?filter=no-supplier' },
+    { id: 'print',        ico: '🖨️', label: 'الطباعة',                                    deepLink: 'print.html' },
   ],
   secondaryViews: [
     { id: 'done',         ico: '✅', label: 'خلصت اليوم',  state: { view: 'done-today' },   deepLink: 'production.html?filter=done-today' },
-    { id: 'print',        ico: '🖨️', label: 'الطباعة',                                    deepLink: 'print.html' },
     { id: 'supplier-req', ico: '🏭', label: 'طلبات الموردين',                              deepLink: 'supplier-requests.html' },
     { id: 'costs',        ico: '💰', label: 'بنود التكلفة',                                 deepLink: 'exec-cost-entry.html' },
   ],
