@@ -220,6 +220,9 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
      or URL: ?feat.clients.controlCenter=1 -->
 <script type="module" src="./clients-control-center.js"></script>
 
+<!-- Searchable select primitive (used by product dropdown in order modal) -->
+<script type="module" src="./core/searchable-select.js"></script>
+
 <script>
 
 // ══ Global Error Handler ══
@@ -1427,8 +1430,21 @@ window.reorderLastOrder=function(clientId){
 };
 function addNoProdRow(){
   const div=document.createElement('div');div.className='no-prod-row';
-  div.innerHTML=`<select onchange="this.closest('.no-prod-row').querySelector('input[type=number]').value=this.options[this.selectedIndex].dataset.price||0">${prodOptsHtml()}</select><input type="number" value="1" min="1" placeholder="كمية"><button type="button" onclick="this.closest('.no-prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:6px 10px;cursor:pointer">✕</button>`;
+  div.innerHTML=`<select onchange="this.closest('.no-prod-row').querySelector('input[type=number]').value=this.options[this.selectedIndex].dataset.price||0">${prodOptsHtml()}</select><input type="number" inputmode="numeric" value="1" min="1" placeholder="كمية"><button type="button" onclick="this.closest('.no-prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:6px 10px;cursor:pointer">✕</button>`;
   document.getElementById('no-prod-rows').appendChild(div);
+  // Enhance the product <select> with searchable combobox (typing filters
+  // the list, recent picks bubble to top). Fails silently if the module
+  // hasn't loaded yet (rare — modules load before user opens the modal).
+  try {
+    const sel = div.querySelector('select');
+    if (sel && window.makeSearchable) {
+      window.makeSearchable(sel, {
+        placeholder: 'ابحث عن منتج...',
+        emptyText: 'لا يوجد منتج بهذا الاسم',
+        recentKey: 'order-product',
+      });
+    }
+  } catch (e) { console.warn('[addNoProdRow] makeSearchable failed:', e); }
 }
 function openNewOrder(){
   if(!activeId){toast('⚠️ اختر عميل أولاً','err');return;}
@@ -1450,6 +1466,9 @@ function openNewOrder(){
     bcFillBtn.style.display = hasBC ? 'inline-block' : 'none';
   }
   window.__noDesignFiles=[];
+  window.__noReceiptFiles=[];
+  const receiptListEl=document.getElementById('no-receipt-list');if(receiptListEl)receiptListEl.innerHTML='';
+  const receiptWrapEl=document.getElementById('no-receipt-wrap');if(receiptWrapEl)receiptWrapEl.style.display='none';
   const noImgInp=document.getElementById('no-design-img-inp');if(noImgInp)noImgInp.value='';
   const noFilesList=document.getElementById('no-design-files-list');if(noFilesList)noFilesList.innerHTML='';
   const noProgWrap=document.getElementById('no-upload-progress');if(noProgWrap)noProgWrap.style.display='none';
@@ -1480,6 +1499,41 @@ window.calcNoRemaining=function(){
     preview.style.display=sale>0?'flex':'none';
     remVal.textContent=fn(rem)+' ج';
   }
+  // Receipt section: required when deposit > 0
+  const receiptWrap=document.getElementById('no-receipt-wrap');
+  if(receiptWrap){
+    receiptWrap.style.display = dep>0 ? 'block' : 'none';
+  }
+};
+
+// Receipt files state + handler — mirrors __noDesignFiles pattern.
+window.__noReceiptFiles = window.__noReceiptFiles || [];
+window.addReceiptFiles = function(inp){
+  const files = Array.from(inp.files || []);
+  files.forEach(f => {
+    if (!window.__noReceiptFiles.some(x => x.name===f.name && x.size===f.size)) {
+      window.__noReceiptFiles.push(f);
+    }
+  });
+  inp.value = '';
+  renderReceiptList();
+};
+function renderReceiptList(){
+  const el = document.getElementById('no-receipt-list');
+  if (!el) return;
+  if (!window.__noReceiptFiles.length) { el.innerHTML=''; return; }
+  el.innerHTML = window.__noReceiptFiles.map((f,i) => {
+    const sizeKb = Math.round(f.size/1024);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(0,0,0,.2);border:1px solid var(--line);border-radius:8px;margin-top:4px;font-size:var(--fs-xs)">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${f.name}</span>
+      <span style="color:var(--dim2);margin:0 8px">${sizeKb} KB</span>
+      <button type="button" onclick="removeReceiptFile(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:var(--fw-bold)">✕</button>
+    </div>`;
+  }).join('');
+}
+window.removeReceiptFile = function(idx){
+  window.__noReceiptFiles.splice(idx, 1);
+  renderReceiptList();
 };
 function selectOrderType(type){
   document.getElementById('no-stage').value=type;
@@ -1553,9 +1607,11 @@ function saveNewOrder(){
   const salePrice=parseFloat(gv('no-sale-price'))||0;
   const dep=parseFloat(gv('no-deposit'))||0;
   const wId=gv('no-wallet');
+  const deadline=gv('no-deadline');
+  const receiptCount=(window.__noReceiptFiles||[]).length;
 
   // ─ Validation (centralized pure validator) ─
-  const v=window.__validateNewOrderForm?.({stage,products:prods,salePrice,deposit:dep,walletId:wId})||{ok:true};
+  const v=window.__validateNewOrderForm?.({stage,products:prods,salePrice,deposit:dep,walletId:wId,deadline,receiptCount})||{ok:true};
   if(!v.ok){
     toast(v.errors[0],'err');
     if(v.focusField)document.getElementById(v.focusField)?.focus();
@@ -1598,8 +1654,32 @@ function saveNewOrder(){
     return result;
   };
 
+  // ─ Receipt upload helper (when deposit > 0) ─
+  //   Uses same uploadDesignFiles but stores under receipts/ prefix so
+  //   payment proofs are kept separate from design files in Storage.
+  const uploadReceipts=async()=>{
+    const files=window.__noReceiptFiles||[];
+    if(!files.length || dep<=0) return {firstUrl:'', allFiles:[]};
+    const progWrap=document.getElementById('no-upload-progress');
+    const progBar=document.getElementById('no-upload-bar');
+    const progPct=document.getElementById('no-upload-pct');
+    const progLbl=document.getElementById('no-upload-lbl');
+    progWrap.style.display='block';
+    progLbl.textContent=`رفع ${files.length} إيصال...`;
+    btn.textContent='جاري رفع الإيصال...';
+    const result=await uploadDesignFiles({
+      files, orderId, pathPrefix:'receipts/order_',
+      onProgress:(pct)=>{progBar.style.width=pct+'%';progPct.textContent=pct+'%';},
+    });
+    progWrap.style.display='none';
+    return result;
+  };
+
   // ─ Upload first → call action with URLs ─
-  uploadDesignFile().then(async ({firstUrl:designFileUrl,allFiles:designFiles})=>{
+  Promise.all([uploadDesignFile(), uploadReceipts()]).then(async ([
+    {firstUrl:designFileUrl,allFiles:designFiles},
+    {firstUrl:depositReceiptUrl,allFiles:depositReceiptFiles},
+  ])=>{
     // PR-846: 15s timeout safety net — نفس pattern PR #825/#827.
     // المستخدم كان شايف "جاري..." stuck حتى لما الأوردر اتسجّل فعلاً
     // (الـ batch.commit نجح، بس withIdempotency updateDoc علّق على flaky network).
@@ -1620,6 +1700,8 @@ function saveNewOrder(){
       designNote,
       designFileUrl,
       designFiles,
+      depositReceiptUrl,
+      depositReceiptFiles,
       orderId,
       userId: currentUser.uid,
       userName: userName||'',
