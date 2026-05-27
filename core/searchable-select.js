@@ -96,7 +96,7 @@ export function makeSearchable(selectEl, opts = {}) {
 
   const pop = document.createElement('div');
   pop.className = 'ss-pop';
-  pop.hidden = true;
+  // Visibility: class-based (not `hidden` attribute — design-system CSS may override it).
   pop.setAttribute('role', 'listbox');
 
   const search = document.createElement('input');
@@ -297,12 +297,13 @@ export function makeSearchable(selectEl, opts = {}) {
     }
   }
 
+  function isOpen() { return wrap.classList.contains('ss-open'); }
+
   function open(prefill = '') {
-    if (!pop.hidden) {
+    if (isOpen()) {
       if (prefill) { search.value = prefill; renderList(prefill); }
       return;
     }
-    pop.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
     wrap.classList.add('ss-open');
     search.value = prefill || '';
@@ -313,8 +314,7 @@ export function makeSearchable(selectEl, opts = {}) {
   }
 
   function close() {
-    if (pop.hidden) return;
-    pop.hidden = true;
+    if (!isOpen()) return;
     trigger.setAttribute('aria-expanded', 'false');
     wrap.classList.remove('ss-open');
     document.removeEventListener('mousedown', onDocDown, true);
@@ -343,17 +343,17 @@ export function makeSearchable(selectEl, opts = {}) {
   // ── Events ───────────────────────────────────────────────
   function onTriggerClick(e) {
     e.preventDefault();
-    if (pop.hidden) open(); else close();
+    if (isOpen()) close(); else open();
   }
 
   function onTriggerKeydown(e) {
     // Type-ahead: any printable char while focused → open + prefill
-    if (pop.hidden && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (!isOpen() && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       open(e.key);
       return;
     }
-    if (pop.hidden && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) {
+    if (!isOpen() && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       open();
     }
@@ -413,7 +413,7 @@ export function makeSearchable(selectEl, opts = {}) {
   const instance = {
     refresh() {
       renderTrigger();
-      if (!pop.hidden) renderList(search.value);
+      if (isOpen()) renderList(search.value);
     },
     destroy() {
       trigger.removeEventListener('click', onTriggerClick);
@@ -521,9 +521,13 @@ function ensureStylesInjected() {
   box-shadow:0 8px 32px rgba(0,0,0,.5);
   z-index:1000;
   max-height:min(60vh, 380px);
-  display:flex;
+  /* visibility controlled by parent .ss-wrap.ss-open — fail-closed default */
+  display:none;
   flex-direction:column;
   overflow:hidden;
+}
+.ss-wrap.ss-open > .ss-pop{
+  display:flex;
   animation:ssFadeIn .14s ease-out;
 }
 @keyframes ssFadeIn{
