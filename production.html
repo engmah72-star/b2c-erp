@@ -58,12 +58,27 @@
     </div>
   </div>
   <div class="content">
+    <!-- Phase-0 — بانر تنبيهات صحة الإنتاج: يظهر فقط عند وجود مشكلة فعلية، يدعم النقر للفلترة -->
+    <div id="prod-health-banner" style="display:none;margin-bottom:10px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.3);border-radius:12px;padding:10px 14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:var(--fs-xl)">⚠️</span>
+        <div style="flex:1;min-width:160px">
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--r);margin-bottom:2px">انتباه — أوردرات تحتاج معالجة فورية</div>
+          <div id="prod-health-detail" class="txt-meta-sm"></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" id="prod-health-nosup" onclick="setFilter('nosup',document.getElementById('ftab-nosup'))" style="display:none;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.12);color:var(--r);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap"></button>
+          <button type="button" id="prod-health-nocost" onclick="setFilter('nocost',document.getElementById('ftab-nocost'))" style="display:none;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.12);color:var(--y);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap"></button>
+        </div>
+      </div>
+    </div>
     <div class="filter-bar" id="mine-filter-bar" style="margin-bottom:8px">
       <button type="button" id="qf-mine" class="ftab active" onclick="setMineFilter(true,this)">👤 موكلة لي <span id="qf-mine-cnt" style="opacity:.6">(—)</span></button>
       <button type="button" id="qf-all" class="ftab" onclick="setMineFilter(false,this)">📋 الكل <span id="qf-all-cnt" style="opacity:.6">(—)</span></button>
     </div>
     <div class="filter-bar" id="status-filter-bar">
       <button type="button" class="ftab active" onclick="setFilter('all',this)">الكل</button>
+      <button type="button" class="ftab" onclick="setFilter('nosup',this)" id="ftab-nosup">⚠️ بدون مورد</button>
       <button type="button" class="ftab" onclick="setFilter('nocost',this)" id="ftab-nocost">⚠️ بدون تكلفة</button>
       <button type="button" class="ftab" onclick="setFilter('pending',this)">⏳ انتظار</button>
       <button type="button" class="ftab" onclick="setFilter('wip',this)">🔄 جاري</button>
@@ -283,8 +298,9 @@ import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js
 import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { productionActions } from "./production-actions.js";
+import { canSeeField, maskPhone as _centralMaskPhone } from "./core/permissions-matrix.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
+let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',currentUserPerms=null,activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
 
 // Bridge for features/cost-items/drawer.js — exposes module-scoped state read-only.
 // The drawer uses this to render UI; it still calls window.addCostFromPanel for the
@@ -421,7 +437,7 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole==='production_agent'){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';currentUserPerms=d.permissions||null;const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole==='production_agent'){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
   // حمّل تخصصات الموردين
   getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
     if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false && c.isSupplierService!==false);
@@ -1131,7 +1147,35 @@ window.renderList=function(resetPage=true){
   // بادج على تاب "بدون تكلفة"
   const noCostTab=document.getElementById('ftab-nocost');
   if(noCostTab)noCostTab.textContent=`⚠️ بدون تكلفة${noCostAll.length?' ('+noCostAll.length+')':''}`;
+  // بادج على تاب "بدون مورد" (Phase-0)
+  const noSupAll=prodAll.filter(o=>{const prods=o.products||[];if(!prods.length)return !o.supplierId;return !prods.some(p=>p.supplierId);});
+  const noSupTab=document.getElementById('ftab-nosup');
+  if(noSupTab)noSupTab.textContent=`⚠️ بدون مورد${noSupAll.length?' ('+noSupAll.length+')':''}`;
+  // تحديث بانر صحة الإنتاج (Phase-0): يظهر فقط عند وجود مشكلة فعلية + يدعم الفلترة
+  const healthEl=document.getElementById('prod-health-banner');
+  if(healthEl){
+    const hasIssue=noSupAll.length>0||noCostAll.length>0;
+    healthEl.style.display=hasIssue?'block':'none';
+    const detail=document.getElementById('prod-health-detail');
+    if(detail){
+      const parts=[];
+      if(noSupAll.length)parts.push(`${noSupAll.length} بدون مورد`);
+      if(noCostAll.length)parts.push(`${noCostAll.length} بدون تكلفة`);
+      detail.textContent=parts.join(' · ');
+    }
+    const nsupBtn=document.getElementById('prod-health-nosup');
+    if(nsupBtn){
+      nsupBtn.style.display=noSupAll.length?'inline-block':'none';
+      nsupBtn.textContent=`عرض بدون مورد (${noSupAll.length})`;
+    }
+    const ncostBtn=document.getElementById('prod-health-nocost');
+    if(ncostBtn){
+      ncostBtn.style.display=noCostAll.length?'inline-block':'none';
+      ncostBtn.textContent=`عرض بدون تكلفة (${noCostAll.length})`;
+    }
+  }
   if(currentFilter==='nocost')data=noCostAll;
+  else if(currentFilter==='nosup'||currentFilter==='no-supplier')data=noSupAll;
   else if(currentFilter==='pending')data=prodAll.filter(o=>!o.prodStatus||o.prodStatus==='pending');
   else if(currentFilter==='wip')data=prodAll.filter(o=>['wip','received'].includes(o.prodStatus));
   else if(currentFilter==='done')data=prodAll.filter(o=>o.prodStatus==='done');
@@ -1142,11 +1186,6 @@ window.renderList=function(resetPage=true){
     const sec=o.createdAt?.seconds||0;
     if(!sec)return false;
     return (Date.now()/1000-sec)/86400 > 3;
-  });
-  else if(currentFilter==='no-supplier')data=prodAll.filter(o=>{
-    const prods=o.products||[];
-    if(!prods.length)return !o.supplierId;
-    return !prods.some(p=>p.supplierId);
   });
   else if(currentFilter==='done-today')data=prodAll.filter(o=>{
     if(o.prodStatus!=='done')return false;
@@ -1239,13 +1278,11 @@ window.renderList=function(resetPage=true){
     </button>` : '');
 };
 
-// RULE 8 — رقم العميل لا يظهر لـ production_agent
+// RULE 8 / C2 — استخدم central canSeeField + maskPhone بدلاً من hardcoded role list
 function _maskPhone(p){
   if(!p) return '';
-  const canSee=['admin','operation_manager','customer_service','shipping_officer'].includes(currentRole);
-  if(canSee) return p;
-  const s=String(p).replace(/\D/g,'');
-  return s.length>=6 ? s.slice(0,3)+'****'+s.slice(-3) : '****';
+  const canSee = canSeeField('client_phone', currentRole, currentUserPerms);
+  return _centralMaskPhone(p, canSee);
 }
 
 window.openOrder=function(id){
