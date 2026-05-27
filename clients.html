@@ -454,11 +454,21 @@ auth.onAuthStateChanged(async u=>{
   //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
   //   T3 (defer 1500ms): followups, segments, transactions_v2 — only used in panel/cgrid
   // Limits reduced — old docs still readable on-demand via direct getDoc.
-  const CLIENTS_LIMIT = 800;     // was 2000
+  const CLIENTS_LIMIT = 800;     // safety cap on top of the 14-day window
   const ORDERS_LIMIT  = 1500;    // was 3000
   const TX_LIMIT      = 1500;    // was 3000
   const FU_LIMIT      = 800;     // was 1500
-  db.collection('clients').orderBy('createdAt','desc').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
+  // العملاء: نحمل فقط آخر 14 يوم كحد أقصى. أي عميل أقدم يُجلب على الطلب
+  // عبر deep-link (openClient) أو من خلال البحث/الفتح المباشر.
+  const CLIENTS_WINDOW_DAYS = 14;
+  const __clientsCutoff = firebase.firestore.Timestamp.fromMillis(
+    Date.now() - CLIENTS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+  db.collection('clients')
+    .where('createdAt','>=',__clientsCutoff)
+    .orderBy('createdAt','desc')
+    .limit(CLIENTS_LIMIT)
+    .onSnapshot(snap=>{
     __clientsListenerFired = true;
     clearTimeout(__loadWatchdog);
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
