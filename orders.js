@@ -726,14 +726,46 @@ export function validateStageRequirements(order, fromStage) {
     if (!productHasImg && !orderHasImg) {
       errors.push('يجب رفع صورة واحدة على الأقل قبل التحويل للتنفيذ');
     }
-    // Phase-0 — تنبيه (warning قابل للتجاوز) عند نقل أوردر للإنتاج بدون مورد محدد.
-    // التكلفة تُسجَّل أثناء الإنتاج لذلك لا نحجب عليها. المورد مرغوب فيه قبل البدء
-    // لكن غير إلزامي (قد يُحدَّد لاحقاً عند تسجيل أول بند تكلفة).
+
+    // 🛡 Phase 4 Operational Guards — RULE: مواصفات إلزامية لكل منتج قبل
+    // التحويل للتنفيذ. تم نقل الفحوصات من warnings (قابلة للتجاوز) إلى
+    // errors صلبة لمنع الكوارث التشغيلية (طباعة بدون مقاس/ورق/مورد).
+    // الـ admin override المستقبلي يمر عبر forceAdvance flag في الـ action
+    // (مش في الـ validator النقي).
     const products = order.products || [];
     if (products.length > 0) {
-      const noSup = products.filter(p => !p.supplierId).length;
+      products.forEach((p, idx) => {
+        const name = p.name || `منتج ${idx + 1}`;
+        const isOffset = (p.printType || '').toString().toLowerCase().includes('offset');
+        const qty = parseFloat(p.qty) || 0;
+        const size = p.printSize || p.size || '';
+        const paper = p.paper || '';
+
+        if (qty <= 0) {
+          errors.push(`${name}: الكمية ناقصة`);
+        }
+        if (!size) {
+          errors.push(`${name}: مقاس الطباعة ناقص`);
+        }
+        if (!paper) {
+          errors.push(`${name}: نوع الورق ناقص`);
+        }
+
+        if (isOffset) {
+          if (!p.zinkType) errors.push(`${name} (أوفست): نوع الزنكات ناقص`);
+          const sheets = parseFloat(p.paperSheets) || 0;
+          if (sheets <= 0) errors.push(`${name} (أوفست): عدد الفروخ ناقص`);
+          if (!p.pressId)  errors.push(`${name} (أوفست): المطبعة غير محددة`);
+        }
+      });
+    }
+
+    // المورد العام للأوردر — لو مفيش أي منتج محدد له مورد، يبقى warning
+    // (admin يقدر يحدد مورد للأوردر كله بدل لكل منتج).
+    if (products.length > 0) {
+      const noSup = products.filter(p => !p.supplierId && !p.pressId).length;
       if (!order.supplierId && noSup === products.length) {
-        warnings.push('لم يُحدَّد مورد لأي منتج — يفضّل تحديد المورد قبل بدء التنفيذ');
+        warnings.push('لم يُحدَّد مورد للأوردر — يفضّل تحديد المورد قبل بدء التنفيذ');
       } else if (noSup > 0 && noSup < products.length) {
         warnings.push(`${noSup} منتج بدون مورد — يفضّل تحديد المورد لكل المنتجات`);
       }

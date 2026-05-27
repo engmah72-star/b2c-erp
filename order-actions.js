@@ -2530,6 +2530,65 @@ export const orderActions = {
     }
   },
 
+  /**
+   * Admin override للتحويل من printing → production مع تجاوز صلب الـ
+   * validators (مواصفات الطباعة الناقصة). يُسجَّل سبب صريح في الـ timeline.
+   *
+   * Phase 4 Operational Guards: نفس فلسفة adminOverrideToPrinting.
+   * RULE H3 — audit kind:'op' + override flag + reason.
+   */
+  async adminOverrideToProduction({
+    db = defaultDb, orderId,
+    nextAssigneeId = '', nextAssigneeName = '',
+    overrideReason = '',
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!['admin', 'operation_manager'].includes(role)) {
+      return { ok: false, errors: ['⛔ صلاحية أدمن فقط'], warnings: [], orderId };
+    }
+    if (!overrideReason || !overrideReason.trim()) {
+      return { ok: false, errors: ['⛔ سبب الـ override مطلوب'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.stage !== 'printing') {
+      return { ok: false, errors: [`الأوردر في مرحلة ${order.stage}، لا يمكن التحويل من الـ override`], warnings: [], orderId };
+    }
+    try {
+      const entry = auditEntry({
+        action: '⚠️ تحويل للتنفيذ بـ admin override — ' + overrideReason.trim(),
+        userId, userName, kind: 'op',
+        meta: { override: true, overrideReason: overrideReason.trim() },
+      });
+      entry.stage = 'production';
+      entry.override = true;
+      entry.overrideReason = overrideReason.trim();
+      if (nextAssigneeId) {
+        entry.assigneeId = nextAssigneeId;
+        entry.assigneeName = nextAssigneeName || '';
+      }
+      const upd = {
+        stage: 'production',
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (nextAssigneeId) {
+        upd.productionAgent = nextAssigneeId;
+        upd.productionAgentName = nextAssigneeName || '';
+      }
+      // Track stage entry timestamp (matches normal advance path)
+      const stageEnteredAt = order.stageEnteredAt || {};
+      stageEnteredAt.production = new Date().toISOString();
+      upd.stageEnteredAt = stageEnteredAt;
+
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'admin_override_to_production' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الـ override'], warnings: [], orderId };
+    }
+  },
+
   // ─── Printing Workflow Actions (P2.4) ─────
 
   /** تحديث order.printType (single field). */

@@ -757,7 +757,24 @@ window.confirmMoveToProduction=async function(){
     if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
     r=await orderActions.submitToProduction({...baseArgs,bypassWarnings:true});
   }
-  if(!r.ok)return toast('⛔ '+r.errors.join(' · '),'err');
+  if(!r.ok){
+    // 🛡 Phase 4: errors تبلوك الجميع. admin/operation_manager يقدر يـ override
+    // مع تسجيل سبب صريح في الـ timeline.
+    const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
+    if(!isAdmin) return toast('⛔ '+r.errors.join(' · '),'err');
+    const errsBlock = '⛔ مواصفات ناقصة:\n• ' + r.errors.join('\n• ');
+    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')) return;
+    const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
+    if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+    const or = await orderActions.adminOverrideToProduction({
+      db, orderId: activeId, role: currentRole,
+      userId: auth?.currentUser?.uid||'', userName,
+      nextAssigneeId: prodId, nextAssigneeName: prodName,
+      overrideReason: reason.trim(),
+    });
+    if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+    r = or;
+  }
   // ـ Best-effort: حفظ صور التصميم في معرض العميل بعد نجاح التقديم ـ
   // (side-effect منفصل عن stage transition — يفشل بصمت لو ما في صلاحية)
   let savedCount=0;
