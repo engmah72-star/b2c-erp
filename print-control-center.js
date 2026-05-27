@@ -36,6 +36,17 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function fmtNum(n) {
+  const v = parseFloat(n);
+  if (!isFinite(v)) return '0';
+  return v.toLocaleString('en-US');
+}
+
+function daysOverDeadline(deadline) {
+  if (!deadline) return 0;
+  return Math.max(0, Math.floor((Date.now() - new Date(deadline).getTime()) / 86400000));
+}
+
 function tsSeconds(t) {
   if (!t) return 0;
   if (typeof t === 'number') return t > 1e12 ? t / 1000 : t;
@@ -201,6 +212,164 @@ function printMoreTabHTML(order = {}) {
     </div>`;
 }
 
+// ─── STICKY CC HEADER ──────────────────────────────────────────────
+/**
+ * renderPrintCCHeader(o, ctx) — builds the new sticky panel header.
+ * Replaces the legacy inline header (#pn-id / #pn-name / #pn-phone +
+ * call/wa/reject/close + 4 quick-action buttons) with a compact
+ * critical-info strip + 4 primary actions.
+ *
+ * ctx = { canSeePhone, currentRole, getRem, getNet, getPaid, readyScore }
+ */
+export function renderPrintCCHeader(o = {}, ctx = {}) {
+  const canSeePhone = typeof ctx.canSeePhone === 'function' ? ctx.canSeePhone() : false;
+  const role = ctx.currentRole || '';
+  const sale = typeof ctx.getNet === 'function' ? ctx.getNet(o) : (parseFloat(o.salePrice) || 0);
+  const paid = typeof ctx.getPaid === 'function' ? ctx.getPaid(o) : (parseFloat(o.totalPaid) || 0);
+  const rem = typeof ctx.getRem === 'function' ? ctx.getRem(o) : Math.max(0, sale - paid);
+  const dLate = daysOverDeadline(o.deadline);
+  const isAdmin = role === 'admin' || role === 'operation_manager' || role === 'customer_service';
+  const products = o.products || [];
+  const totalCount = products.length;
+  const readyCount = products.filter(p => (p.productStatus || 'pending') === 'ready' || p.productStatus === 'printed' || p.productStatus === 'done').length;
+  const printedCount = products.filter(p => p.productStatus === 'printed' || p.productStatus === 'done').length;
+  const hasFinal = !!(o.printFinalUrl || (o.products || []).some(p => p.designImageUrl));
+  // Ready Score: prefer global helper if exposed (print.html → computeOrderReadyScore)
+  const rs = (typeof window.computeOrderReadyScore === 'function')
+    ? window.computeOrderReadyScore(o)
+    : { score: 0, missing: [] };
+  const rsCol = rs.score >= 90 ? 'var(--g)' : rs.score >= 60 ? 'var(--y)' : 'var(--r)';
+  const rsIco = rs.score >= 90 ? '✅' : rs.score >= 60 ? '🟡' : '🔴';
+  const phMasked = (typeof window.showPhone === 'function') ? window.showPhone(o.clientPhone) : (o.clientPhone || '');
+
+  return `
+    <div class="pcc-hdr">
+      <div class="pcc-hdr-top">
+        <div class="pcc-hdr-id">🖨️ ${escHtml(o.orderId || (o._id || '').slice(-6))} · <span class="pcc-hdr-stage">طباعة</span></div>
+        <div class="pcc-hdr-name">${escHtml(o.clientName || '—')}</div>
+        <div class="pcc-hdr-meta">
+          ${canSeePhone && o.clientPhone
+            ? `<a href="tel:${escHtml(o.clientPhone)}" class="pcc-hdr-phone">📞 ${escHtml(o.clientPhone)}</a>`
+            : (o.clientPhone ? `<span class="pcc-hdr-phone-masked">📞 ${escHtml(phMasked)}</span>` : '')}
+        </div>
+      </div>
+
+      <div class="pcc-hdr-stats">
+        <span class="pcc-hdr-stat" style="background:${rsCol}18;color:${rsCol};border-color:${rsCol}44" title="${escHtml(rs.missing.length ? 'ناقص: '+rs.missing.join(' · ') : 'جاهز للتنفيذ')}">${rsIco} ${rs.score}%</span>
+        <span class="pcc-hdr-stat ${hasFinal ? 'pcc-hdr-stat-ok' : 'pcc-hdr-stat-bad'}">📁 ${hasFinal ? 'ملف ✓' : 'بدون ملف'}</span>
+        ${totalCount > 0 ? `<span class="pcc-hdr-stat">📦 ${totalCount} منتج${printedCount ? ` · ${printedCount} مطبوع` : (readyCount ? ` · ${readyCount} جاهز` : '')}</span>` : ''}
+        ${o.deadline ? `<span class="pcc-hdr-stat ${dLate > 0 ? 'pcc-hdr-stat-bad' : ''}">📅 ${escHtml(o.deadline)}${dLate > 0 ? ` · متأخر ${dLate}ي` : ''}</span>` : ''}
+        ${sale > 0 ? `<span class="pcc-hdr-stat ${rem > 0 ? 'pcc-hdr-stat-warn' : 'pcc-hdr-stat-ok'}">💰 ${rem > 0 ? `باقي ${fmtNum(rem)}ج` : 'مكتمل'}</span>` : ''}
+      </div>
+
+      <div class="pcc-hdr-actions">
+        ${canSeePhone && o.clientPhone
+          ? `<button type="button" class="pcc-hdr-btn pcc-hdr-btn-primary" onclick="openPrintOrderContactSheet('${escHtml(o._id)}')"><span class="pcc-hdr-btn-ico">📞</span><span class="pcc-hdr-btn-lbl">تواصل</span></button>`
+          : ''}
+        <button type="button" class="pcc-hdr-btn pcc-hdr-btn-success" onclick="moveTo('production')"><span class="pcc-hdr-btn-ico">🏭</span><span class="pcc-hdr-btn-lbl">تحويل</span></button>
+        <button type="button" class="pcc-hdr-btn" onclick="openPrintOrderActionSheet('${escHtml(o._id)}')"><span class="pcc-hdr-btn-ico">⋯</span><span class="pcc-hdr-btn-lbl">المزيد</span></button>
+        <button type="button" class="pcc-hdr-btn pcc-hdr-btn-close" onclick="closePanel()" title="إغلاق"><span class="pcc-hdr-btn-ico">✕</span></button>
+      </div>
+    </div>`;
+}
+
+/**
+ * openPrintOrderActionSheet(orderId) — bottom sheet للأكشن الإدارية اللي
+ * كانت في الـ legacy header (تعديل المنتجات / البوليصة / مقدم / تحصيل / رفض).
+ */
+export function openPrintOrderActionSheet(orderId) {
+  const o = window.activeOrder
+    || (window.orders || []).find(x => x._id === orderId);
+  if (!o) return;
+  const role = window.currentRole || '';
+  const canRejectRole = ['admin', 'operation_manager', 'customer_service'].includes(role);
+  const sale = (typeof window.getNet === 'function') ? window.getNet(o) : (parseFloat(o.salePrice) || 0);
+  const rem = (typeof window.getRem === 'function') ? window.getRem(o) : 0;
+  const hasFinance = sale > 0 && rem > 0;
+
+  const items = [
+    {
+      icon: '📦', label: 'تعديل المنتجات', variant: 'primary',
+      onClick: () => { try { window.openEditProds?.(); } catch (_) {} },
+    },
+    {
+      icon: '🧾', label: 'البوليصة',
+      onClick: () => { try { window.openWaybill?.(); } catch (_) {} },
+    },
+    hasFinance && {
+      icon: '💵', label: 'تسجيل مقدم', variant: 'success',
+      onClick: () => { try { window.openPrintAdvance?.(); } catch (_) {} },
+    },
+    hasFinance && {
+      icon: '💰', label: 'تحصيل', variant: 'success',
+      onClick: () => { try { window.openCollect?.(); } catch (_) {} },
+    },
+    canRejectRole && {
+      section: '⚠️ خطر',
+      icon: '↩️', label: 'رفض الأوردر', variant: 'danger',
+      onClick: () => { try { window.openReject?.(); } catch (_) {} },
+    },
+  ].filter(Boolean);
+
+  // section markers cleanup (drop if no following item)
+  const cleaned = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.section && !it.label) {
+      if (items[i + 1] && !items[i + 1].section) cleaned.push(it);
+    } else {
+      cleaned.push(it);
+    }
+  }
+
+  openBottomSheet({
+    title: `الأوردر ${o.orderId || ''}`,
+    subtitle: o.clientName || '',
+    items: cleaned,
+    cancelLabel: 'إلغاء',
+  });
+}
+
+/**
+ * applyPrintCCHeader(o, ctx) — renders the CC header into the panel and
+ * hides the legacy inline header (lines 72-93 in print.html).
+ * Idempotent — safe to call on every openOrder.
+ */
+export function applyPrintCCHeader(o, ctx) {
+  if (!o) return false;
+  try {
+    const panelEl = document.querySelector('#panel-ov .panel');
+    if (!panelEl) return false;
+
+    // Find or create the CC header container at the top of the panel
+    // (after .panel-drag, before the legacy sticky header).
+    let ccContainer = document.getElementById('pcc-cc-header');
+    if (!ccContainer) {
+      ccContainer = document.createElement('div');
+      ccContainer.id = 'pcc-cc-header';
+      const drag = panelEl.querySelector('.panel-drag');
+      if (drag && drag.nextSibling) {
+        panelEl.insertBefore(ccContainer, drag.nextSibling);
+      } else {
+        panelEl.insertBefore(ccContainer, panelEl.firstChild);
+      }
+    }
+
+    ccContainer.innerHTML = renderPrintCCHeader(o, ctx);
+
+    // Hide the legacy sticky header. It's the first <div> sibling after
+    // .panel-drag that has the inline `position:sticky;top:0` style.
+    const legacyHeader = panelEl.querySelector(':scope > div[style*="position:sticky"][style*="top:0"]');
+    if (legacyHeader && legacyHeader !== ccContainer) {
+      legacyHeader.style.display = 'none';
+    }
+    return true;
+  } catch (e) {
+    console.warn('[applyPrintCCHeader] failed:', e);
+    return false;
+  }
+}
+
 // ─── TAB SHELL — wraps existing panel body content ─────────────────
 /**
  * wrapPrintPanelInTabs(order, productionBodyHTML)
@@ -295,6 +464,9 @@ if (typeof window !== 'undefined') {
     switchPrintPanelTab,
     pccToggleAccordion,
     openPrintOrderContactSheet,
+    openPrintOrderActionSheet,
+    renderPrintCCHeader,
+    applyPrintCCHeader,
     buildPrintTimeline,
     printTimelineHTML,
     togglePrintControlCenter,
