@@ -250,7 +250,9 @@ export function clientFollowupsHTML({
           const code = f.orderCode || o?.orderId || (o?._id || '').slice(-6);
           const pn   = f.productName || o?.product ||
                        (o?.products || []).map(p => p.name + '×' + p.qty).join(' + ') || '';
-          const href = o ? (STAGE_HREF[o.stage] || 'index') + '.html' : '#';
+          // Deep-link to the specific order's panel via ?orderId=…
+          // (design/print/production/shipping all support this).
+          const href = o ? (STAGE_HREF[o.stage] || 'index') + '.html?orderId=' + encodeURIComponent(o._id) : '#';
           return `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">🔗 <a href="${href}" style="color:var(--b);text-decoration:none;font-weight:var(--fw-bold)">${code}${pn ? ' · ' + escapeHtml(pn) : ''}</a></div>`;
         })() : ''}
         ${f.productRating > 0 ? `<div style="font-size:var(--fs-md);color:var(--y);letter-spacing:2px;margin-bottom:${f.productReview ? '4' : '0'}px">${'★'.repeat(f.productRating)}<span style="color:var(--line2)">${'★'.repeat(5 - f.productRating)}</span></div>` : ''}
@@ -307,7 +309,9 @@ export function panelOrdersHTML({
 
   return data.map(o => {
     const sc    = STAGE_COL[o.stage] || 'var(--dim2)';
-    const href  = (STAGE_HREF[o.stage] || 'index') + '.html';
+    // Deep-link to the specific order — design/print/production/shipping
+    // each handle ?orderId=… by auto-opening that order's panel after load.
+    const href  = (STAGE_HREF[o.stage] || 'index') + '.html?orderId=' + encodeURIComponent(o._id);
     const rem2  = calcRem(o);
     const paid2 = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
     const nm    = o.product || (o.products || []).map(p => p.name + '×' + p.qty).join(' + ') || '—';
