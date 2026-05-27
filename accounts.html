@@ -453,6 +453,15 @@ import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, getDoc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { calcOrderPayment } from "./financial-sync-engine.js";
 import { walletActions } from "./wallet-actions.js";
+import { ORDER_STAGES, USER_ROLES } from "./orders.js";
+import {
+  TX_CATEGORIES as TXC,
+  TX_CAT_META,
+  txCatLabel,
+  ACCOUNT_SECTIONS as SEC,
+  TX_TYPES as TT,
+  RECONCILIATION_TYPES,
+} from "./accounts-constants.js";
 // ── State ──
 let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[], shippingSettlements=[], shippingReturns=[];
 let currentUser=null, currentRole='admin', currentSection='wallets';
@@ -464,7 +473,9 @@ const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops 
 const WICO={wallet:'💳',cash:'💵',bank:'🏦'};
 const WNAME={wallet:'محفظة إلكترونية',cash:'كاش',bank:'بنك'};
 const WCOLS=['var(--g)','var(--b)','var(--p)','var(--c)','var(--y)','var(--r)','var(--o)'];
-const CAT={collection:'💰 تحصيل',advance:'💵 مقدم',print_advance:'💵 مقدم طباعة',client_payment:'💰 دفعة عميل',printer_payment:'🏭 مورد طباعة',supplier:'🏭 مورد',salary:'👤 مرتب',designer_fee:'🎨 أتعاب مصمم',shipping_cost:'🚚 تكلفة شحن',marketing:'📣 تسويق',rent:'🏢 إيجار',delivery:'🚚 شحن',refund:'↩️ استرداد',admin_edit:'✏️ تعديل أدمن',expense_reversal:'🔁 عكس مصروف',other:'📦 أخرى',adjustment:'🔄 تسوية',opening_balance:'📅 رصيد افتتاحي',transfer:'🔄 تحويل'};
+// CAT — backward-compat object (legacy callers expect `CAT[cat]` string lookup).
+// Source of truth: TX_CAT_META in accounts-constants.js. Built once from the central meta.
+const CAT=Object.freeze(Object.fromEntries(Object.entries(TX_CAT_META).map(([k,v])=>[k,`${v.ico} ${v.label}`])));
 const SPCOL={ورق:'var(--b)',زنكات:'var(--p)',طباعة:'var(--y)',قص:'var(--r)',سلفنة:'var(--g)',شحن:'var(--c)'};
 
 // ── Utils ──
@@ -683,8 +694,8 @@ function updateKPIs(){
   const pEl=document.getElementById('kpi-profit');
   if(pEl){pEl.textContent=(flow.profit>=0?'+':'-')+fn(Math.abs(flow.profit))+' ج';pEl.style.color=flow.profit>=0?'var(--g)':'var(--r)';}
 
-  const activeOrders=allOrders.filter(o=>o.stage!=='archived');
-  const archivedOrders=allOrders.filter(o=>o.stage==='archived');
+  const activeOrders=allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED);
+  const archivedOrders=allOrders.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
   const pend=calcPendingRevenue(activeOrders,calcRem);
   const earn=calcEarnedRevenue(archivedOrders,calcRem);
   const remTotal=pend.remTotal+earn.archivedRemTotal;
@@ -1041,17 +1052,17 @@ function renderWallets(){
     </div>
     <!-- ملخص الأوردرات السريع -->
     ${(()=>{
-      const active=allOrders.filter(o=>o.stage!=='archived');
+      const active=allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED);
       const totalRem=active.reduce((s,o)=>s+calcRem(o),0);
-      const stages={design:0,printing:0,production:0,shipping:0};
+      const stages={[ORDER_STAGES.DESIGN]:0,[ORDER_STAGES.PRINTING]:0,[ORDER_STAGES.PRODUCTION]:0,[ORDER_STAGES.SHIPPING]:0};
       active.forEach(o=>{if(stages[o.stage]!==undefined)stages[o.stage]++;});
       return totalRem>0?`<div style="background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.15);border-radius:var(--rad2);padding:var(--space-md);margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
         <div class="txt-meta-base">💳 باقي التحصيل من <strong style="color:var(--snow)">${active.length} أوردر نشط</strong></div>
         <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--r)">${fn(totalRem)} ج</div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px">
-        ${[['✏️','تصميم','design','var(--p)'],['🖨️','طباعة','printing','var(--b)'],['🏭','تنفيذ','production','var(--r)'],['🚚','شحن','shipping','var(--c)']].map(([ico,lbl,st,col])=>
-          `<a href="${st==='printing'?'print':st==='production'?'production':st}.html" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:var(--space-sm);text-align:center;text-decoration:none;display:block;transition:var(--trans)" onmouseover="this.style.borderColor='${col}'" onmouseout="this.style.borderColor='var(--line)'">
+        ${[['✏️','تصميم',ORDER_STAGES.DESIGN,'var(--p)'],['🖨️','طباعة',ORDER_STAGES.PRINTING,'var(--b)'],['🏭','تنفيذ',ORDER_STAGES.PRODUCTION,'var(--r)'],['🚚','شحن',ORDER_STAGES.SHIPPING,'var(--c)']].map(([ico,lbl,st,col])=>
+          `<a href="${st===ORDER_STAGES.PRINTING?'print':st===ORDER_STAGES.PRODUCTION?'production':st}.html" style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:var(--space-sm);text-align:center;text-decoration:none;display:block;transition:var(--trans)" onmouseover="this.style.borderColor='${col}'" onmouseout="this.style.borderColor='var(--line)'">
             <div style="font-size:var(--fs-xl)">${ico}</div>
             <div class="txt-meta-sm">${lbl}</div>
             <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${col}">${stages[st]}</div>
@@ -1069,7 +1080,7 @@ function renderWallets(){
 function renderPending(){
   const el=document.getElementById('section-content');if(!el)return;
   // ── ملخص شركات الشحن ──
-  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&['shipping','archived'].includes(o.stage)&&!o.shipSettled);
+  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&!o.shipSettled);
   const shipCos={};
   shipOrders.forEach(o=>{
     if(!shipCos[o.shipCompanyName])shipCos[o.shipCompanyName]={count:0,total:0};
@@ -1097,13 +1108,13 @@ function renderPending(){
 
   // أوردرات نشطة عندها باقي
   const active=allOrders.filter(o=>{
-    if(o.stage==='archived')return false;
+    if(o.stage===ORDER_STAGES.ARCHIVED)return false;
     return calcRem(o)>0;
   });
   // ديون مؤجلة في الأرشيف
-  const deferred=transactions.filter(t=>t.category==='deferred_collection'||t.category==='shipping_company_debt');
+  const deferred=transactions.filter(t=>t.category===TXC.DEFERRED_COLLECTION||t.category===TXC.SHIPPING_COMPANY_DEBT);
   // شركات الشحن المديونة
-  const shipDebts=transactions.filter(t=>t.category==='shipping_company_debt');
+  const shipDebts=transactions.filter(t=>t.category===TXC.SHIPPING_COMPANY_DEBT);
 
   if(!active.length&&!deferred.length){
     el.innerHTML=shipSummaryHtml+`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مبالغ معلقة</div></div>`;
@@ -1121,7 +1132,7 @@ function renderPending(){
       const sale_=parseFloat(o.salePrice)||0;
       const rem=calcRem(o);
       const pct=sale_>0?Math.min(paid_/sale_*100,100):0;
-      const stageAr={design:'تصميم',printing:'طباعة',production:'تنفيذ',shipping:'شحن'}[o.stage]||o.stage;
+      const stageAr={[ORDER_STAGES.DESIGN]:'تصميم',[ORDER_STAGES.PRINTING]:'طباعة',[ORDER_STAGES.PRODUCTION]:'تنفيذ',[ORDER_STAGES.SHIPPING]:'شحن'}[o.stage]||o.stage;
       return`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div style="flex:1">
@@ -1149,7 +1160,7 @@ function renderShippingDebts(){
   const el=document.getElementById('section-content');if(!el)return;
 
   // مستحق من شركات الشحن (أوردرات غير مسوّاة)
-  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&['shipping','archived'].includes(o.stage)&&!o.shipSettled&&o.shipMethod!=='pickup');
+  const shipOrders=allOrders.filter(o=>o.shipCompanyName&&[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&!o.shipSettled&&o.shipMethod!=='pickup');
   const coMap={};
   shipOrders.forEach(o=>{
     const co=o.shipCompanyName;
@@ -1169,7 +1180,7 @@ function renderShippingDebts(){
   const recentReturns=shippingReturns.slice(0,5);
 
   // ديون العملاء (مؤجّل)
-  const clientDebts=transactions.filter(t=>t.category==='deferred_collection');
+  const clientDebts=transactions.filter(t=>t.category===TXC.DEFERRED_COLLECTION);
   const totalClient=clientDebts.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
 
   el.innerHTML=`
@@ -1526,7 +1537,7 @@ function renderReconciliation(){
           const wn=wallets.find(x=>x._id===r.walletId)?.name||r.walletName||'—';
           const diffVal=parseFloat(r.diff)||0;
           const col=diffVal>0?'var(--g)':diffVal<0?'var(--r)':'var(--dim2)';
-          const lbl=r.type==='opening_balance'?'📅 رصيد افتتاحي':diffVal===0?'✓ مطابق':diffVal>0?'زيادة':'عجز';
+          const lbl=r.type===RECONCILIATION_TYPES.OPENING_BALANCE?'📅 رصيد افتتاحي':diffVal===0?'✓ مطابق':diffVal>0?'زيادة':'عجز';
           return`<div style="display:flex;align-items:center;gap:var(--space-md);padding:10px 0;border-bottom:1px solid rgba(255,255,255,.03)">
             <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
             <div style="flex:1">
@@ -1698,21 +1709,21 @@ window.updateTxRelated=function(){
   if(!sec)return;
   // إخفاء كل الـ rows
   [clientRow,supplierRow,employeeRow].forEach(r=>{if(r)r.style.display='none';});
-  if(['collection','advance'].includes(cat)){
+  if([TXC.COLLECTION,TXC.ADVANCE].includes(cat)){
     sec.style.display='block';clientRow.style.display='block';
     // ملء الأوردرات المعلقة
     const sel=document.getElementById('tx-order-sel');
     if(sel){
-      const pending=allOrders.filter(o=>calcRem(o)>0&&o.stage!=='archived');
+      const pending=allOrders.filter(o=>calcRem(o)>0&&o.stage!==ORDER_STAGES.ARCHIVED);
       sel.innerHTML='<option value="">— اختر الأوردر (اختياري) —</option>'+
         pending.map(o=>`<option value="${o._id}">${o.clientName||'—'} — ${o.orderId||o._id.slice(-6)} — باقي: ${fn(calcRem(o))} ج</option>`).join('');
     }
-  } else if(['supplier','printer_payment','shipper_payment','shipping_cost'].includes(cat)){
+  } else if([TXC.SUPPLIER,TXC.PRINTER_PAYMENT,TXC.SHIPPER_PAYMENT,TXC.SHIPPING_COST].includes(cat)){
     sec.style.display='block';supplierRow.style.display='block';
     // ملء الموردين
     const sel=document.getElementById('tx-supplier-sel');
     if(sel)sel.innerHTML='<option value="">— اختر المورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${s.name}">${s.name}</option>`).join('');
-  } else if(['salary','designer_fee'].includes(cat)){
+  } else if([TXC.SALARY,TXC.DESIGNER_FEE].includes(cat)){
     sec.style.display='block';employeeRow.style.display='block';
     const sel=document.getElementById('tx-employee-sel');
     if(sel)sel.innerHTML='<option value="">— اختر —</option>'+(employees.length?employees:users).map(u=>`<option value="${u._id}">${u.name||u.email}</option>`).join('');
@@ -1949,7 +1960,7 @@ function auditBalances(){
     const computed=wTx.reduce((s,t)=>s+(t.type==='in'?1:-1)*(parseFloat(t.amount)||0),0);
     const stored=parseFloat(w.balance)||0;
     const drift=stored-computed;
-    const hasOpening=wTx.some(t=>t.category==='opening_balance');
+    const hasOpening=wTx.some(t=>t.category===TXC.OPENING_BALANCE);
     const isLegacy=!hasOpening && Math.abs(drift)>1; // محفظة قديمة بدون رصيد افتتاحي مسجّل
     return{...w,computed,drift,ok:Math.abs(drift)<1,isLegacy,hasOpening};
   });
