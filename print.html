@@ -1427,15 +1427,19 @@ async function _uploadFile(file){
   const pw=document.getElementById('prog-wrap'),pb=document.getElementById('prog-fill'),pt=document.getElementById('prog-txt');
   if(pw)pw.style.display='block';
   try{
-    let upload=file;
-    if(file.type.startsWith('image/')){
-      upload=await new Promise(res=>{
-        const img=new Image(),url=URL.createObjectURL(file);
-        img.onload=()=>{URL.revokeObjectURL(url);const c=document.createElement('canvas');let{width:w,height:h}=img;const MAX=800;if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);const fmt=c.toDataURL('image/webp',0.1).startsWith('data:image/webp')?'image/webp':'image/jpeg';c.toBlob(b=>res(new File([b],file.name,{type:fmt})),fmt,.65);};
-        img.onerror=()=>res(file);img.src=url;
-      });
+    // 🚨 CRITICAL FIX: لا compression للملف النهائي للطباعة.
+    // قبل ده كنا نـ resize لـ 800px max + JPEG quality 0.65 →
+    // كارثة جودة طباعة (الـ press يخرج blurry). الملف النهائي للمطبعة
+    // يجب يكون بـ FULL resolution + FULL quality.
+    // Limit: 50MB (Firestore Storage max للـ single file).
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    if (file.size > MAX_FILE_SIZE) {
+      if(pw)pw.style.display='none';
+      toast(`❌ الملف ${(file.size/1024/1024).toFixed(1)}MB أكبر من المسموح (50MB)`,'err');
+      return;
     }
-    const sRef=ref(storage,`print-finals/${activeId}_${Date.now()}`);
+    const upload = file; // NO compression — preserve original quality for press
+    const sRef=ref(storage,`print-finals/${activeId}_${Date.now()}_${file.name.replace(/[^\w.\-]+/g,'_')}`);
     const task=uploadBytesResumable(sRef,upload);
     await new Promise((res,rej)=>{
       task.on('state_changed',
