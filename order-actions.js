@@ -1658,6 +1658,13 @@ export const orderActions = {
   /**
    * تحديث execStatus لمنتج بعينه داخل الأوردر (toggle).
    * يُمرَّر `derivedProdStatus` من الـ caller (الـ derive يحتاج EXEC_STATUS labels من الصفحة).
+   *
+   * 🔄 productStatus / execStatus sync (post-PR fix-exec-product-status-sync):
+   *   - execStatus = 'done'  → productStatus = 'done' (مكتمل تماماً)
+   *   - execStatus يعود من 'done' → productStatus = 'printed' (لازالت تستطيع
+   *     الانتقال للشحن لكن مش "مكتملة")
+   *   - execStatus = 'wip'/'pending'/'problem' (من غير 'done') → productStatus
+   *     يفضّل كما هو (الـ catalog status لا يتأثر بالـ exec details)
    */
   async setProductExecStatus({
     db = defaultDb, orderId, prodIdx, execStatus,
@@ -1671,16 +1678,29 @@ export const orderActions = {
     if (prodIdx < 0 || prodIdx >= prods.length) {
       return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
     }
+    const prevProduct = prods[prodIdx] || {};
+    const prevExec = prevProduct.execStatus || 'pending';
+    const prevProdStatus = prevProduct.productStatus || '';
+    // Sync productStatus بحسب الانتقال:
+    let productStatusUpdate = {};
+    if (execStatus === 'done') {
+      productStatusUpdate = { productStatus: 'done' };
+    } else if (prevExec === 'done' && prevProdStatus === 'done') {
+      // الـ user revertedh من done → نرجّع productStatus لـ printed
+      // (مفترض إنه طُبع قبل ما يدخل التنفيذ — صالح للـ stage transition)
+      productStatusUpdate = { productStatus: 'printed' };
+    }
     prods[prodIdx] = {
-      ...prods[prodIdx],
+      ...prevProduct,
       execStatus,
-      ...(execStatus === 'done' ? { execDoneAt: nowStr(), execDoneBy: userName, productStatus: 'done' } : {}),
+      ...(execStatus === 'done' ? { execDoneAt: nowStr(), execDoneBy: userName } : {}),
+      ...productStatusUpdate,
     };
     try {
       const entry = auditEntry({
         action: `${statusLabel || execStatus} — ${prods[prodIdx].name || 'منتج'}`,
         userId, userName, kind: 'op',
-        meta: { prodIdx, execStatus },
+        meta: { prodIdx, execStatus, prevExec, productStatusChange: productStatusUpdate.productStatus || '' },
       });
       const upd = {
         products: prods,
