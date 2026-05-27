@@ -376,10 +376,24 @@ export function dccToggleAccordion(id) {
 }
 
 // ─── BOTTOM SHEETS ──────────────────────────────────────────────────
+// Look up the active order. Prefers the cache populated by
+// renderDesignPanelDCC (since `orders`/`currentRole` are module-scoped
+// in design.html). Falls back to window.orders if exposed.
+function _getActiveOrder(orderId) {
+  if (window.__dccActiveOrder && (!orderId || window.__dccActiveOrder._id === orderId)) {
+    return window.__dccActiveOrder;
+  }
+  const list = (typeof window.orders !== 'undefined') ? window.orders : [];
+  return list.find(x => x._id === orderId) || null;
+}
+
 export function openDesignOrderContactSheet(orderId) {
-  const orders = (typeof window.orders !== 'undefined') ? window.orders : [];
-  const o = orders.find(x => x._id === orderId);
-  if (!o) return;
+  const o = _getActiveOrder(orderId);
+  if (!o) {
+    console.warn('[openDesignOrderContactSheet] no active order');
+    if (window.toast) window.toast('تعذّر تحميل بيانات الطلب', 'err');
+    return;
+  }
   const canSeePhone = (typeof window.canSeePhone === 'function') ? window.canSeePhone() : false;
   if (!canSeePhone || !o.clientPhone) {
     if (window.toast) window.toast('رقم العميل محجوب — تواصل عبر خدمة العملاء', 'warn');
@@ -407,14 +421,20 @@ export function openDesignOrderContactSheet(orderId) {
 }
 
 export function openDesignOrderActionSheet(orderId) {
-  const orders = (typeof window.orders !== 'undefined') ? window.orders : [];
-  const o = orders.find(x => x._id === orderId);
-  if (!o) return;
-  const role = window.currentRole || '';
+  const o = _getActiveOrder(orderId);
+  if (!o) {
+    console.warn('[openDesignOrderActionSheet] no active order');
+    if (window.toast) window.toast('تعذّر تحميل بيانات الطلب', 'err');
+    return;
+  }
+  // Role comes from the cached ctx (populated by renderDesignPanelDCC).
+  // `currentRole` in design.html is module-scoped.
+  const role = (window.__dccActiveCtx && window.__dccActiveCtx.currentRole) || window.currentRole || '';
+  const currentUid = (window.__dccActiveCtx && window.__dccActiveCtx.currentUserUid) || '';
   const canAssign = ['admin','operation_manager','customer_service'].includes(role);
   const canCreateOrderForClient = ['admin','operation_manager','customer_service'].includes(role);
   const isDesigner = (role === 'graphic_designer' || role === 'design_operator');
-  const assignedToMe = isDesigner && (o.designerId === window.auth?.currentUser?.uid);
+  const assignedToMe = isDesigner && (o.designerId === currentUid);
   const notRejected = o.designStage !== 'rejected';
   const items = [
     canCreateOrderForClient && o.clientId && {
@@ -506,6 +526,12 @@ export function renderDesignPanelDCC(order, ctx = {}) {
     const hdr = document.getElementById('pn-hdr');
     const body = document.getElementById('panel-body');
     if (!hdr || !body) return false;
+
+    // Cache the active order + ctx so bottom-sheet readers can access them.
+    // `orders`, `currentRole`, `auth` in design.html are ES-module-scoped
+    // (not on window). Caching here gives the sheets a stable reference
+    // without forcing design.html to expose internal state globally.
+    try { window.__dccActiveOrder = order; window.__dccActiveCtx = ctx; } catch (_) {}
 
     hdr.innerHTML = designPanelHeaderDCC(order, ctx);
 
