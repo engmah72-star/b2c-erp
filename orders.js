@@ -726,6 +726,20 @@ export function validateStageRequirements(order, fromStage) {
     if (!productHasImg && !orderHasImg) {
       errors.push('يجب رفع صورة واحدة على الأقل قبل التحويل للتنفيذ');
     }
+    // Phase-0 — تنبيه (warning قابل للتجاوز) عند نقل أوردر للإنتاج بدون مورد محدد.
+    // التكلفة تُسجَّل أثناء الإنتاج لذلك لا نحجب عليها. المورد مرغوب فيه قبل البدء
+    // لكن غير إلزامي (قد يُحدَّد لاحقاً عند تسجيل أول بند تكلفة).
+    const products = order.products || [];
+    if (products.length > 0) {
+      const noSup = products.filter(p => !p.supplierId).length;
+      if (!order.supplierId && noSup === products.length) {
+        warnings.push('لم يُحدَّد مورد لأي منتج — يفضّل تحديد المورد قبل بدء التنفيذ');
+      } else if (noSup > 0 && noSup < products.length) {
+        warnings.push(`${noSup} منتج بدون مورد — يفضّل تحديد المورد لكل المنتجات`);
+      }
+    } else if (!order.supplierId) {
+      warnings.push('لم يُحدَّد مورد للأوردر — يفضّل تحديد المورد قبل بدء التنفيذ');
+    }
   }
   else if (stage === 'production') {
     if (!(order.costItems || []).length) warnings.push('لم تُسجَّل تكاليف الأوردر — يفضّل تسجيلها قبل التحويل للشحن');
