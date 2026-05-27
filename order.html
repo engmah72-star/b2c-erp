@@ -330,6 +330,7 @@ import { doc, onSnapshot, getDoc, collection, query, limit } from "https://www.g
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
 import { PRODUCT_STATUS } from "./orders.js";
+import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
 const orderId = new URLSearchParams(location.search).get('id');
@@ -344,6 +345,9 @@ let suppliers = [];
 let costCategoriesList = [];
 let historicalCostItems = []; // recent cost items from last N orders (for suggestions)
 let activeProdIdxForCost = -1;
+// Searchable-select instances (refresh after repopulating options)
+let __ssType = null;
+let __ssSupplier = null;
 
 // ── Utils ──
 const $ = (id) => document.getElementById(id);
@@ -873,6 +877,7 @@ function repopulateCostModalLists() {
       // restore previous selection if still valid
       if (cur && costCategoriesList.includes(cur)) tSel.value = cur;
     }
+    if (__ssType) __ssType.refresh();
   }
   // Supplier — يتفلتر حسب النوع المختار
   refilterSuppliersByType();
@@ -902,6 +907,7 @@ function refilterSuppliersByType() {
   if (cur && filtered.some(s => s._id === cur)) supSel.value = cur;
   // empty hint
   if (supEmpty) supEmpty.style.display = (t && filtered.length === 0) ? 'block' : 'none';
+  if (__ssSupplier) __ssSupplier.refresh();
 }
 
 // اقتراح بنود سابقة مشابهة (filter by type/supplier — top 5 most recent)
@@ -955,10 +961,7 @@ window.applyHistoricalSuggestion = function(idx) {
   const tSel = $('cm-type');
   if (tSel && c.type && [...tSel.options].some(o => o.value === c.type)) {
     tSel.value = c.type;
-    document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => {
-      b.classList.toggle('active', b.textContent === c.type);
-    });
-    refilterSuppliersByType(); // مهم: يُعيد بناء قائمة الموردين قبل تعبئة المورد
+    tSel.dispatchEvent(new Event('change', { bubbles: true })); // يحدث الـ searchable + يفلتر الموردين
   }
   $('cm-total').value = c.total || '';
   if (c.note) $('cm-note').value = c.note;
@@ -971,8 +974,10 @@ window.applyHistoricalSuggestion = function(idx) {
       opt.textContent = c.supplierName || 'مورد';
       opt.dataset.name = c.supplierName || '';
       supSel.appendChild(opt);
+      if (__ssSupplier) __ssSupplier.refresh();
     }
     supSel.value = c.supplierId;
+    supSel.dispatchEvent(new Event('change', { bubbles: true })); // يحدث الـ searchable trigger
   }
   // re-filter suggestions based on new selections
   renderHistoricalSuggestions(c.type, c.supplierId);
@@ -996,8 +1001,8 @@ window.selectCostTypeChip = function(btn, type) {
     // إذا النوع موجود في القائمة — اختاره. إذا غير موجود (الأدمن لسه ما أضافه) — تجاهل.
     if ([...tSel.options].some(o => o.value === type)) {
       tSel.value = type;
-      refilterSuppliersByType();
-      renderHistoricalSuggestions(type, $('cm-supplier')?.value || '');
+      // dispatch change → يحدث الـ searchable trigger + يطلق bindCostModalListeners (filter + history)
+      tSel.dispatchEvent(new Event('change', { bubbles: true }));
     }
   }
 };
@@ -1022,6 +1027,11 @@ window.openCostModal = function(prodIdx) {
   $('cm-type').value = '';
   $('cm-supplier').value = '';
   refilterSuppliersByType();
+  // فعّل searchable selects (idempotent — يرجّع نفس الـ instance إذا اتعمل قبل كده)
+  if (!__ssType) __ssType = makeSearchable($('cm-type'), { placeholder: 'ابحث عن نوع البند...' });
+  else __ssType.refresh();
+  if (!__ssSupplier) __ssSupplier = makeSearchable($('cm-supplier'), { placeholder: 'ابحث عن مورد...' });
+  else __ssSupplier.refresh();
   // اقتراحات أولية: لو المنتج له بنود سابقة بنفس النوع، أعرضها
   // (نستخدم product name كـ hint مبدئي — لكن في الغالب الـ list هتفضل مخفية حتى المستخدم يكتب)
   renderHistoricalSuggestions('', '');
