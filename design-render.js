@@ -303,3 +303,12 @@ export function renderPanelHTML(o, ctx = {}) {
     </div>
   `;
 }
+
+// ─── SIDE-EFFECT: expose to window for non-module callers ────────────
+// (Design Control Center reads it via window.renderPanelHTML.)
+if (typeof window !== 'undefined') {
+  Object.assign(window, {
+    renderPanelHTML,
+    iRow, tlHtml, fn, delay, escapeNotes,
+  });
+}
