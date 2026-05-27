@@ -2597,6 +2597,65 @@ export const orderActions = {
     }
   },
 
+  /**
+   * Admin override للتحويل من production → shipping مع تجاوز صلب الـ
+   * validators (cost items مفقودة، منتجات بـ status pending/in_progress).
+   * يُسجَّل سبب صريح في الـ timeline.
+   *
+   * Phase A Production Guards: نفس فلسفة adminOverrideToProduction.
+   * RULE H3 — audit kind:'op' + override flag + reason.
+   */
+  async adminOverrideToShipping({
+    db = defaultDb, orderId,
+    nextAssigneeId = '', nextAssigneeName = '',
+    overrideReason = '',
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!['admin', 'operation_manager'].includes(role)) {
+      return { ok: false, errors: ['⛔ صلاحية أدمن فقط'], warnings: [], orderId };
+    }
+    if (!overrideReason || !overrideReason.trim()) {
+      return { ok: false, errors: ['⛔ سبب الـ override مطلوب'], warnings: [], orderId };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.stage !== 'production') {
+      return { ok: false, errors: [`الأوردر في مرحلة ${order.stage}، لا يمكن التحويل من الـ override`], warnings: [], orderId };
+    }
+    try {
+      const entry = auditEntry({
+        action: '⚠️ تحويل للشحن بـ admin override — ' + overrideReason.trim(),
+        userId, userName, kind: 'op',
+        meta: { override: true, overrideReason: overrideReason.trim() },
+      });
+      entry.stage = 'shipping';
+      entry.override = true;
+      entry.overrideReason = overrideReason.trim();
+      if (nextAssigneeId) {
+        entry.assigneeId = nextAssigneeId;
+        entry.assigneeName = nextAssigneeName || '';
+      }
+      const upd = {
+        stage: 'shipping',
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      };
+      if (nextAssigneeId) {
+        upd.shippingAgent = nextAssigneeId;
+        upd.shippingAgentName = nextAssigneeName || '';
+      }
+      const stageEnteredAt = order.stageEnteredAt || {};
+      stageEnteredAt.shipping = new Date().toISOString();
+      upd.stageEnteredAt = stageEnteredAt;
+
+      await updateDoc(order._ref, upd);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'admin_override_to_shipping' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الـ override'], warnings: [], orderId };
+    }
+  },
+
   // ─── Printing Workflow Actions (P2.4) ─────
 
   /** تحديث order.printType (single field). */
