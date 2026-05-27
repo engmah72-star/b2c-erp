@@ -118,6 +118,9 @@
   .cm-foot .cm-save{background:var(--g);color:#fff;border-color:var(--g);}
   .cm-foot .cm-save:disabled{opacity:.5;cursor:not-allowed;}
   .cm-foot .cm-cancel{background:var(--bg3);color:var(--snow);}
+  /* Historical cost suggestions */
+  .cm-hist-item:hover{background:var(--hover)!important;border-color:var(--line2)!important;}
+  .cm-hist-item:active{transform:scale(.98);}
   /* Timeline */
   .order-timeline{display:flex;flex-direction:column;gap:8px;}
   .order-timeline-item{padding:8px 12px;background:var(--bg3);border-right:3px solid var(--p);border-radius:var(--rad);}
@@ -125,12 +128,16 @@
   .order-timeline-meta{font-size:11px;color:var(--dim2);}
   /* Quick status buttons */
   .qs-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
-  .qs-actions button{flex:1;min-width:90px;padding:9px 10px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:var(--trans);touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+  .qs-actions button{flex:1;min-width:90px;padding:9px 10px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:var(--trans);touch-action:manipulation;-webkit-tap-highlight-color:transparent;position:relative;}
   .qs-actions button:hover{background:var(--bg3);}
-  .qs-actions button.act{background:var(--b);color:#fff;border-color:var(--b);}
-  .qs-actions button.act.problem{background:var(--r);border-color:var(--r);}
+  /* Active state — visual feedback أقوى مع checkmark indicator */
+  .qs-actions button.act{color:#fff;font-weight:900;box-shadow:0 0 0 2px var(--bg1), 0 0 0 4px currentColor;transform:scale(1.02);}
+  .qs-actions button.act::after{content:'●';position:absolute;top:3px;inset-inline-end:6px;font-size:8px;color:#fff;opacity:.9;}
+  .qs-actions button.act.received{background:var(--b);border-color:var(--b);}
+  .qs-actions button.act.wip{background:var(--y);border-color:var(--y);color:#1a1a1a;}
+  .qs-actions button.act.wip::after{color:#1a1a1a;}
   .qs-actions button.act.done{background:var(--g);border-color:var(--g);}
-  .qs-actions button.act.wip{background:var(--y);border-color:var(--y);}
+  .qs-actions button.act.problem{background:var(--r);border-color:var(--r);}
   /* Empty / loading / error states */
   .order-empty{padding:40px 20px;text-align:center;color:var(--dim2);font-size:13px;}
   .order-loading{padding:40px 20px;text-align:center;color:var(--dim2);}
@@ -297,9 +304,10 @@
         <label>المورد (اختياري)</label>
         <select id="cm-supplier"><option value="">— بدون —</option></select>
       </div>
-      <div class="cm-field">
-        <label>الدفع من محفظة الآن؟ (اختياري)</label>
-        <select id="cm-wallet"><option value="">— لا أدفع الآن —</option></select>
+      <!-- بنود سابقة مشابهة (Phase 0.6) -->
+      <div class="cm-field" id="cm-history-wrap" style="display:none">
+        <label>📚 بنود سابقة مشابهة <span style="font-weight:600;color:var(--dim2)">(اضغط لاستخدام)</span></label>
+        <div id="cm-history-list" style="display:flex;flex-direction:column;gap:5px;max-height:160px;overflow-y:auto"></div>
       </div>
       <div class="cm-field">
         <label>ملاحظة (اختياري)</label>
@@ -332,8 +340,8 @@ let currentOrder = null;
 let unsubscribe = null;
 // Cost-entry deps (loaded once after auth)
 let suppliers = [];
-let wallets = [];
 let costCategoriesList = [];
+let historicalCostItems = []; // recent cost items from last N orders (for suggestions)
 let activeProdIdxForCost = -1;
 
 // ── Utils ──
@@ -442,7 +450,9 @@ function renderOrder(o) {
   if (Array.isArray(o.designFiles)) for (const f of o.designFiles) if (f && (f.url||f.fileUrl) && !designFiles.find(d=>d.url===(f.url||f.fileUrl))) designFiles.push({url:f.url||f.fileUrl, name:f.name||f.fileName||'ملف'});
 
   const timeline = Array.isArray(o.timeline) ? o.timeline : [];
-  const psStatus = o.productionStatus || 'pending';
+  // prodStatus هو الحقل الذي يكتبه setProductionStatus action.
+  // productionStatus يبقى كـ fallback للأوردرات القديمة (RULE 6).
+  const psStatus = o.prodStatus || o.productionStatus || 'pending';
 
   let html = '';
 
@@ -778,16 +788,39 @@ onAuthStateChanged(auth, async u => {
         suppliers = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
         repopulateCostModalLists();
       });
-      onSnapshot(query(collection(db,'wallets'), limit(100)), snap => {
-        wallets = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-        repopulateCostModalLists();
-      });
       getDoc(doc(db,'master_lists','supplier_categories')).then(s => {
         if (s.exists()) {
           const items = (s.data().items || []).filter(c => c.isActive !== false && c.isSupplierService !== false);
           costCategoriesList = items.map(c => c.name || c.label || '').filter(Boolean);
         }
       }).catch(()=>{});
+      // Historical cost items من آخر 100 أوردر (RULE G3 — bounded query)
+      // لاقتراح بنود مشابهة عند تسجيل بند جديد.
+      try {
+        const { orderBy, getDocs } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+        const recentSnap = await getDocs(query(
+          collection(db,'orders'),
+          orderBy('updatedAt','desc'),
+          limit(100)
+        ));
+        const items = [];
+        recentSnap.forEach(d => {
+          const data = d.data() || {};
+          const ci = Array.isArray(data.costItems) ? data.costItems : [];
+          for (const c of ci) {
+            if (!c || !c.type || !(parseFloat(c.total) > 0)) continue;
+            items.push({
+              type: c.type || '',
+              total: parseFloat(c.total) || 0,
+              supplierId: c.supplierId || '',
+              supplierName: c.supplierName || '',
+              note: c.note || '',
+              date: c.date || '',
+            });
+          }
+        });
+        historicalCostItems = items;
+      } catch (e) { console.warn('historical cost load skipped', e?.message); }
     } catch (e) {
       console.warn('cost-deps load error', e);
     }
@@ -830,14 +863,6 @@ function repopulateCostModalLists() {
       suppliers.map(s => '<option value="'+esc(s._id)+'" data-name="'+esc(s.name||'')+'">'+esc(s.name||'مورد')+'</option>').join('');
     if (cur) supSel.value = cur;
   }
-  // Wallets
-  const wSel = $('cm-wallet');
-  if (wSel) {
-    const cur = wSel.value;
-    wSel.innerHTML = '<option value="">— لا أدفع الآن —</option>' +
-      wallets.map(w => '<option value="'+esc(w._id)+'">'+esc(w.name||'محفظة')+' ('+(parseFloat(w.balance)||0).toLocaleString('ar-EG')+' ج)</option>').join('');
-    if (cur) wSel.value = cur;
-  }
   // Type datalist (master list categories + defaults — dedup)
   const dl = $('cm-type-list');
   if (dl) {
@@ -845,6 +870,72 @@ function repopulateCostModalLists() {
     dl.innerHTML = all.map(t => '<option value="'+esc(t)+'">').join('');
   }
 }
+
+// اقتراح بنود سابقة مشابهة (filter by type/supplier — top 5 most recent)
+function renderHistoricalSuggestions(typeQuery, supplierIdQuery) {
+  const wrap = $('cm-history-wrap');
+  const list = $('cm-history-list');
+  if (!wrap || !list) return;
+  const t = (typeQuery || '').trim();
+  const sid = supplierIdQuery || '';
+  // Filter: match type (substring) OR match supplier
+  let items = historicalCostItems;
+  if (t) {
+    items = items.filter(c => c.type && c.type.toLowerCase().includes(t.toLowerCase()));
+  } else if (sid) {
+    items = items.filter(c => c.supplierId === sid);
+  } else {
+    // no query → hide
+    wrap.style.display = 'none';
+    return;
+  }
+  // dedup by (type|supplierId|total|note) signature, then take top 5
+  const seen = new Set();
+  const uniq = [];
+  for (const c of items) {
+    const sig = (c.type||'') + '|' + (c.supplierId||'') + '|' + c.total + '|' + (c.note||'');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    uniq.push(c);
+    if (uniq.length >= 5) break;
+  }
+  if (!uniq.length) { wrap.style.display = 'none'; return; }
+  list.innerHTML = uniq.map((c, i) =>
+    '<button type="button" class="cm-hist-item" onclick="applyHistoricalSuggestion(' + i + ')" '
+    + 'style="text-align:right;background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:8px 10px;cursor:pointer;font-family:inherit;color:var(--snow);font-size:12px;font-weight:600;display:flex;justify-content:space-between;gap:8px;align-items:center">'
+    + '<div style="flex:1;min-width:0"><div style="color:var(--snow)">' + esc(c.type) + (c.supplierName ? ' · <span style="color:var(--dim2);font-weight:600">🏭 ' + esc(c.supplierName) + '</span>' : '') + '</div>'
+    + (c.note ? '<div style="color:var(--dim2);font-size:11px;margin-top:2px;font-weight:500">' + esc(c.note) + '</div>' : '')
+    + '</div>'
+    + '<span style="color:var(--g);font-weight:800;white-space:nowrap">' + (c.total||0).toLocaleString('ar-EG') + ' ج</span>'
+    + '</button>'
+  ).join('');
+  // stash for click handler
+  window.__cmHistFiltered = uniq;
+  wrap.style.display = 'block';
+}
+
+window.applyHistoricalSuggestion = function(idx) {
+  const items = window.__cmHistFiltered || [];
+  const c = items[idx];
+  if (!c) return;
+  $('cm-type').value = c.type || '';
+  $('cm-total').value = c.total || '';
+  if (c.note) $('cm-note').value = c.note;
+  if (c.supplierId) {
+    const supSel = $('cm-supplier');
+    // ensure option exists; if not, add it (covers case where supplier was deleted)
+    if (![...supSel.options].some(o => o.value === c.supplierId)) {
+      const opt = document.createElement('option');
+      opt.value = c.supplierId;
+      opt.textContent = c.supplierName || 'مورد';
+      opt.dataset.name = c.supplierName || '';
+      supSel.appendChild(opt);
+    }
+    supSel.value = c.supplierId;
+  }
+  // re-filter suggestions based on new type
+  renderHistoricalSuggestions(c.type, c.supplierId);
+};
 
 function renderCostTypeChips() {
   const wrap = $('cm-type-chips');
@@ -875,14 +966,33 @@ window.openCostModal = function(prodIdx) {
   $('cm-type').value = '';
   $('cm-total').value = '';
   $('cm-supplier').value = '';
-  $('cm-wallet').value = '';
   $('cm-note').value = '';
   document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => b.classList.remove('active'));
   repopulateCostModalLists();
   renderCostTypeChips();
+  // اقتراحات أولية: لو المنتج له بنود سابقة بنفس النوع، أعرضها
+  // (نستخدم product name كـ hint مبدئي — لكن في الغالب الـ list هتفضل مخفية حتى المستخدم يكتب)
+  renderHistoricalSuggestions('', '');
+  // إعادة ربط الـ events (idempotent)
+  bindCostModalListeners();
   $('cm-overlay').classList.add('open');
   setTimeout(() => $('cm-total')?.focus(), 100);
 };
+
+// ربط event listeners على الـ type input + supplier select لتحديث الاقتراحات
+let __cmListenersBound = false;
+function bindCostModalListeners() {
+  if (__cmListenersBound) return;
+  __cmListenersBound = true;
+  const tInp = $('cm-type');
+  if (tInp) tInp.addEventListener('input', () => {
+    renderHistoricalSuggestions(tInp.value, $('cm-supplier').value);
+  });
+  const supSel = $('cm-supplier');
+  if (supSel) supSel.addEventListener('change', () => {
+    renderHistoricalSuggestions($('cm-type').value, supSel.value);
+  });
+}
 
 window.closeCostModal = function() {
   $('cm-overlay').classList.remove('open');
@@ -899,18 +1009,19 @@ window.saveCostItem = async function() {
     const supId = $('cm-supplier').value || '';
     const supOpt = $('cm-supplier').options[$('cm-supplier').selectedIndex];
     const supName = (supOpt?.dataset?.name) || '';
-    const walletId = $('cm-wallet').value || '';
     const note = ($('cm-note').value || '').trim();
 
     if (!type) { toast('اختر/اكتب نوع البند', 'err'); return; }
     if (!(total > 0)) { toast('أدخل مبلغ صحيح', 'err'); return; }
 
+    // ملاحظة: تم إلغاء حقل المحفظة. البند يُسجَّل بدون خصم فوري؛
+    // الدفع للمورد يتم لاحقاً عبر شاشة طلبات الدفع (payment_requests).
     const r = await orderActions.recordCostItem({
       db, orderId: currentOrder._id,
       prodIdx: activeProdIdxForCost,
-      payload: { type, total, supplierId: supId, supplierName: supName, walletId, note, isExternal: !!supId },
+      payload: { type, total, supplierId: supId, supplierName: supName, note, isExternal: !!supId },
       role: currentRole, userId: currentUser?.uid || '', userName,
-      wallets,
+      wallets: [],
     });
     if (!r.ok) {
       toast('❌ ' + (r.errors || ['فشل الحفظ']).join(' · '), 'err');
