@@ -462,9 +462,10 @@ import {
   TX_TYPES as TT,
   RECONCILIATION_TYPES,
 } from "./accounts-constants.js";
+import { canSeeField, maskPhone, canDo } from "./core/permissions-matrix.js";
 // ── State ──
 let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[], shippingSettlements=[], shippingReturns=[];
-let currentUser=null, currentRole='admin', currentSection='wallets';
+let currentUser=null, currentRole='admin', currentUserPerms=null, currentSection='wallets';
 let activeWalletId=null;
 let editTxId=null, editTxData=null;
 
@@ -572,6 +573,7 @@ onAuthStateChanged(auth, async u=>{
       const d=snap.data();
       buildDynamicSidebar(u.uid, 'accounts.html');
       currentRole=d.role||'admin';
+      currentUserPerms=d.permissions||null;
       const acPages=(d.permissions?.pages)||[];
       const acIsAdm=['admin','operation_manager'].includes(currentRole);
       if(!acIsAdm&&!acPages.includes('*')&&!acPages.includes('accounts')){window.location.href=ROLE_HOME_MAP[currentRole]||'login.html';return;}
@@ -1431,10 +1433,13 @@ function renderSuppliers(){
       const totalCost=allOrders.flatMap(o=>o.costItems||[]).filter(ci=>ci.supplierId===s._id).reduce((sum,ci)=>sum+(parseFloat(ci.total)||0),0);
       const totalPaid=supplierPays.filter(p=>p.supplierId===s._id).reduce((sum,p)=>sum+(parseFloat(p.amount)||0),0);
       const due=Math.max(0,totalCost-totalPaid);
+      // RULE 8: mask supplier phone for roles without 'supplier_phone' permission.
+      const showPhone=canSeeField('supplier_phone',currentRole,currentUserPerms);
+      const phoneDisp=s.phone?maskPhone(s.phone,showPhone):'';
       return`<div class="sac">
         <div class="sac-head">
           <div class="sac-av" style="background:${col}18;color:${col}">${(s.name||'?')[0]}</div>
-          <div><div class="txt-bold-lg">${s.name}</div><div style="font-size:var(--fs-sm);color:${col}">${s.specialty||'—'} ${s.phone?'· '+s.phone:''}</div></div>
+          <div><div class="txt-bold-lg">${s.name}</div><div style="font-size:var(--fs-sm);color:${col}">${s.specialty||'—'}${phoneDisp?' · '+phoneDisp:''}</div></div>
             <div style="display:flex;align-items:center;gap:var(--space-sm);margin-right:auto">
             ${due>0?`<span class="badge bg-r">مستحق: ${fn(due)} ج</span><button type="button" onclick="quickPaySup('${s._id}','${(s.name||'').replace(/'/g,"\\'")}',${due})" style="padding:4px 10px;border-radius:6px;border:none;background:var(--r);color:#fff;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer">💸 دفع</button>`:'<span class="badge bg-g">✅ مسدد</span>'}
           </div>

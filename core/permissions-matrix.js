@@ -23,56 +23,56 @@ export const DEFAULT_PERMISSIONS = {
   admin: {
     price_sale:true, price_paid:true, price_remaining:true, price_cost:true, price_margin:true,
     client_phone:true, design_data:true,
-    supplier_name:true, supplier_cost:true,
+    supplier_name:true, supplier_cost:true, supplier_phone:true,
     reports_sales:true, reports_perf:true, kpi_revenue:true,
     ship_cost:true, ship_company:true
   },
   operation_manager: {
     price_sale:true, price_paid:true, price_remaining:true, price_cost:true, price_margin:true,
     client_phone:true, design_data:false,
-    supplier_name:true, supplier_cost:true,
+    supplier_name:true, supplier_cost:true, supplier_phone:true,
     reports_sales:true, reports_perf:true, kpi_revenue:true,
     ship_cost:true, ship_company:true
   },
   customer_service: {
     price_sale:true, price_paid:true, price_remaining:true, price_cost:false, price_margin:false,
     client_phone:true, design_data:true,
-    supplier_name:false, supplier_cost:false,
+    supplier_name:false, supplier_cost:false, supplier_phone:false,
     reports_sales:false, reports_perf:false, kpi_revenue:false,
     ship_cost:false, ship_company:true
   },
   graphic_designer: {
     price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false,
     client_phone:false, design_data:true,
-    supplier_name:false, supplier_cost:false,
+    supplier_name:false, supplier_cost:false, supplier_phone:false,
     reports_sales:false, reports_perf:false, kpi_revenue:false,
     ship_cost:false, ship_company:false
   },
   design_operator: {
     price_sale:false, price_paid:false, price_remaining:false, price_cost:false, price_margin:false,
     client_phone:false, design_data:true,
-    supplier_name:true, supplier_cost:false,
+    supplier_name:true, supplier_cost:false, supplier_phone:false,
     reports_sales:false, reports_perf:true, kpi_revenue:false,
     ship_cost:false, ship_company:false
   },
   production_agent: {
     price_sale:false, price_paid:false, price_remaining:false, price_cost:true, price_margin:false,
     client_phone:false, design_data:true,
-    supplier_name:true, supplier_cost:true,
+    supplier_name:true, supplier_cost:true, supplier_phone:true,
     reports_sales:false, reports_perf:false, kpi_revenue:false,
     ship_cost:false, ship_company:false
   },
   shipping_officer: {
     price_sale:false, price_paid:false, price_remaining:true, price_cost:false, price_margin:false,
     client_phone:true, design_data:false,
-    supplier_name:false, supplier_cost:false,
+    supplier_name:false, supplier_cost:false, supplier_phone:false,
     reports_sales:false, reports_perf:false, kpi_revenue:false,
     ship_cost:true, ship_company:true
   },
   wallet_manager: {
     price_sale:true, price_paid:true, price_remaining:true, price_cost:true, price_margin:true,
     client_phone:false, design_data:false,
-    supplier_name:true, supplier_cost:true,
+    supplier_name:true, supplier_cost:true, supplier_phone:true,
     reports_sales:true, reports_perf:false, kpi_revenue:true,
     ship_cost:true, ship_company:true
   },
@@ -83,6 +83,7 @@ export const SENSITIVE_FIELDS = new Set([
   'client_phone',
   'design_data',
   'supplier_cost',
+  'supplier_phone',
   'price_cost',
   'price_margin',
 ]);
