@@ -29,7 +29,11 @@ import { isFeatureEnabled, setFeatureFlag } from './core/feature-flags.js';
 import { openBottomSheet, closeBottomSheet } from './core/bottom-sheet.js';
 
 const CC_FLAG = 'clients.controlCenter';
-export function isControlCenterOn() { return isFeatureEnabled(CC_FLAG, false); }
+// Default: ON for all users. Users can still opt-out via:
+//   localStorage.setItem('feat.clients.controlCenter','0')
+//   or ?feat.clients.controlCenter=0
+// Kill-switch: ship a one-line PR flipping the default back to `false`.
+export function isControlCenterOn() { return isFeatureEnabled(CC_FLAG, true); }
 
 // ─── HELPERS ────────────────────────────────────────────────────────
 
