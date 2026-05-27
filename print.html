@@ -116,12 +116,15 @@
         <div id="col-wallets" style="display:flex;gap:var(--space-sm);flex-wrap:wrap"></div>
         <input type="hidden" id="col-wid"><input type="hidden" id="col-wname">
       </div>
-      <div id="col-transfer-row" class="fg hide">
-        <label>إيصال التحويل</label>
-        <div class="upload-zone" onclick="document.getElementById('col-img-inp').click()">
-          <div style="font-size:var(--fs-3xl)">📸</div><div class="txt-meta-sm">ارفع الإيصال</div>
+      <!-- 📷 إيصال الدفع — إجباري لأي تحصيل -->
+      <div class="fg">
+        <label>📷 إيصال الدفع / التحويل <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+        <div class="upload-zone" id="col-receipt-zone" onclick="document.getElementById('col-img-inp').click()" style="cursor:pointer">
+          <div style="font-size:var(--fs-3xl)">📸</div>
+          <div class="txt-meta-sm">اضغط لتصوير الإيصال أو رفع صورة</div>
         </div>
-        <input type="file" id="col-img-inp" accept="image/*" class="hide">
+        <input type="file" id="col-img-inp" accept="image/*,application/pdf" capture="environment" class="hide" onchange="onPaymentReceiptPick(this,'col')">
+        <div id="col-receipt-preview" style="margin-top:6px"></div>
       </div>
     </div>
     <div class="modal-foot">
@@ -147,12 +150,15 @@
         <div id="pa-wallets" style="display:flex;gap:var(--space-sm);flex-wrap:wrap"></div>
         <input type="hidden" id="pa-wid"><input type="hidden" id="pa-wname">
       </div>
-      <div id="pa-transfer-row" class="fg hide">
-        <label>إيصال التحويل (اختياري)</label>
-        <div class="upload-zone" onclick="document.getElementById('pa-img-inp').click()">
-          <div style="font-size:var(--fs-3xl)">📸</div><div class="txt-meta-sm">ارفع الإيصال</div>
+      <!-- 📷 إيصال الدفع — إجباري لأي دفعة فلوس -->
+      <div class="fg">
+        <label>📷 إيصال الدفع / التحويل <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+        <div class="upload-zone" id="pa-receipt-zone" onclick="document.getElementById('pa-img-inp').click()" style="cursor:pointer">
+          <div style="font-size:var(--fs-3xl)">📸</div>
+          <div class="txt-meta-sm">اضغط لتصوير الإيصال أو رفع صورة</div>
         </div>
-        <input type="file" id="pa-img-inp" accept="image/*" class="hide">
+        <input type="file" id="pa-img-inp" accept="image/*,application/pdf" capture="environment" class="hide" onchange="onPaymentReceiptPick(this,'pa')">
+        <div id="pa-receipt-preview" style="margin-top:6px"></div>
       </div>
       <div class="fg">
         <label>ملاحظة (اختياري)</label>
@@ -1342,6 +1348,11 @@ window.openCollect=function(){
   const inp=document.getElementById('col-amount');if(inp){inp.max=rem;inp.value='';inp.placeholder=fn(rem)+' ج';}
   const hint=document.getElementById('col-hint');if(hint)hint.textContent=`الحد الأقصى: ${fn(rem)} ج`;
   renderWallets();
+  // Reset receipt state when reopening
+  window.__colReceiptFile = null;
+  const colPrev = document.getElementById('col-receipt-preview'); if(colPrev) colPrev.innerHTML = '';
+  const colInp = document.getElementById('col-img-inp'); if(colInp) colInp.value = '';
+  const colZone = document.getElementById('col-receipt-zone'); if(colZone) colZone.style.borderColor = '';
   document.getElementById('ov-collect')?.classList.add('open');
 };
 
@@ -1379,9 +1390,28 @@ window.saveCollect=async function(){
   if(!wid){toast('⚠️ اختر طريقة الدفع','err');return;}
   const rem=getRem(o);
   if(amt>rem+0.01){toast(`⚠️ يتجاوز الباقي (${fn(rem)} ج)`,'err');return;}
-  const r=await orderActions.recordPayment({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,role:currentRole,userId:auth?.currentUser?.uid||'',userName,source:'customer',note:`تحصيل — ${o.clientName||'—'}`});
+  // 📷 إجباري: إيصال الدفع
+  if(!window.__colReceiptFile){
+    toast('⚠️ ارفع صورة الإيصال أو خد لقطة منها','err');
+    document.getElementById('col-img-inp')?.click();
+    return;
+  }
+  let receiptUrl='';
+  try {
+    const btn=document.querySelector('#ov-collect .btn-g');
+    if(btn){btn.disabled=true;btn.textContent='جاري رفع الإيصال...';}
+    receiptUrl=await uploadPaymentReceipt(window.__colReceiptFile,'collect');
+    if(btn){btn.disabled=false;btn.textContent='✓ تأكيد';}
+  } catch(e){
+    toast('❌ فشل رفع الإيصال — حاول ثاني','err');
+    const btn=document.querySelector('#ov-collect .btn-g');
+    if(btn){btn.disabled=false;btn.textContent='✓ تأكيد';}
+    return;
+  }
+  const r=await orderActions.recordPayment({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,role:currentRole,userId:auth?.currentUser?.uid||'',userName,source:'customer',note:`تحصيل — ${o.clientName||'—'}`, receiptUrl});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   window.cM('collect');toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');
+  window.__colReceiptFile=null;
 };
 
 // Upload
@@ -1449,6 +1479,11 @@ window.openPrintAdvance=function(){
   const paNote=document.getElementById('pa-note');if(paNote)paNote.value='';
   const paTr=document.getElementById('pa-transfer-row');if(paTr)paTr.style.display='none';
   renderPaWallets();
+  // Reset receipt state when reopening
+  window.__paReceiptFile = null;
+  const paPrev = document.getElementById('pa-receipt-preview'); if(paPrev) paPrev.innerHTML = '';
+  const paInp = document.getElementById('pa-img-inp'); if(paInp) paInp.value = '';
+  const paZone = document.getElementById('pa-receipt-zone'); if(paZone) paZone.style.borderColor = '';
   document.getElementById('ov-print-advance')?.classList.add('open');
 };
 
@@ -1484,11 +1519,90 @@ window.savePrintAdvance=async function(){
   const wid=document.getElementById('pa-wid')?.value;
   const wname=document.getElementById('pa-wname')?.value;
   const note=document.getElementById('pa-note')?.value||'';
-  const r=await orderActions.recordPrintAdvance({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,note,userId:auth?.currentUser?.uid||'',userName});
+  if(!amt||amt<=0){toast('⚠️ أدخل مبلغاً','err');return;}
+  if(!wid){toast('⚠️ اختر طريقة الدفع','err');return;}
+  // 📷 إجباري: إيصال الدفع
+  if(!window.__paReceiptFile){
+    toast('⚠️ ارفع صورة الإيصال أو خد لقطة منها','err');
+    document.getElementById('pa-img-inp')?.click();
+    return;
+  }
+  let receiptUrl='';
+  try {
+    const btn=document.querySelector('#ov-print-advance .btn-g');
+    if(btn){btn.disabled=true;btn.textContent='جاري رفع الإيصال...';}
+    receiptUrl=await uploadPaymentReceipt(window.__paReceiptFile,'pa');
+    if(btn){btn.disabled=false;btn.textContent='✓ تسجيل المقدم';}
+  } catch(e){
+    toast('❌ فشل رفع الإيصال — حاول ثاني','err');
+    const btn=document.querySelector('#ov-print-advance .btn-g');
+    if(btn){btn.disabled=false;btn.textContent='✓ تسجيل المقدم';}
+    return;
+  }
+  const r=await orderActions.recordPrintAdvance({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,note,userId:auth?.currentUser?.uid||'',userName, receiptUrl});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   window.cM('print-advance');
   toast(`✅ تم تسجيل مقدم ${fn(amt)} ج`,'ok');
+  window.__paReceiptFile=null;
 };
+
+// ════════════════════════════════════════
+// PAYMENT RECEIPT HELPERS (مشترك بين collect/advance)
+// ════════════════════════════════════════
+window.__paReceiptFile = null;
+window.__colReceiptFile = null;
+
+window.onPaymentReceiptPick = function(input, kind){
+  const f = input?.files?.[0];
+  if (!f) return;
+  const slot = kind === 'pa' ? '__paReceiptFile' : '__colReceiptFile';
+  window[slot] = f;
+  const previewId = kind === 'pa' ? 'pa-receipt-preview' : 'col-receipt-preview';
+  const zoneId = kind === 'pa' ? 'pa-receipt-zone' : 'col-receipt-zone';
+  const el = document.getElementById(previewId);
+  if (el) {
+    const sizeKb = Math.round(f.size/1024);
+    el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(0,217,126,.1);border:1px solid rgba(0,217,126,.3);border-radius:8px;font-size:var(--fs-sm)">
+      <span>✅ ${f.name} (${sizeKb}KB)</span>
+      <button type="button" onclick="window.__${kind==='pa'?'pa':'col'}ReceiptFile=null;document.getElementById('${previewId}').innerHTML='';document.getElementById('${input.id}').value='';" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:var(--fw-bold)">✕</button>
+    </div>`;
+  }
+  const zone = document.getElementById(zoneId);
+  if (zone) zone.style.borderColor = 'var(--g)';
+};
+
+/** uploadPaymentReceipt — يرفع الإيصال لـ Storage مع image compression. */
+async function uploadPaymentReceipt(file, kind){
+  if(!file) return '';
+  let upload = file;
+  if(file.type && file.type.startsWith('image/')){
+    upload = await new Promise(res=>{
+      const img=new Image(),url=URL.createObjectURL(file);
+      img.onload=()=>{
+        URL.revokeObjectURL(url);
+        const c=document.createElement('canvas');
+        let{width:w,height:h}=img;
+        const MAX=1200;
+        if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}
+        c.width=w;c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        c.toBlob(b=>res(new File([b],file.name,{type:'image/jpeg'})),'image/jpeg',.85);
+      };
+      img.onerror=()=>res(file);
+      img.src=url;
+    });
+  }
+  const sRef = ref(storage, `receipts/${activeId}_${Date.now()}_${kind}`);
+  const task = uploadBytesResumable(sRef, upload);
+  return new Promise((resolve, reject) => {
+    task.on('state_changed', null, reject, async () => {
+      try {
+        const url = await getDownloadURL(sRef);
+        resolve(url);
+      } catch(e) { reject(e); }
+    });
+  });
+}
 
 // ════════════════════════════════════════
 // EDIT PRODUCTS MODAL
