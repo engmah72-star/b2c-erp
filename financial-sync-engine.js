@@ -615,6 +615,7 @@ async function handleShippingSettlement(db, p) {
     diffReasonLabel: p.diffReasonLabel || '', diffNote: p.diffNote || '',
     walletId: p.walletId, walletName: p.walletName || '',
     note: p.note || '', date: dateStr, txId: txRef.id,
+    receiptUrl: p.receiptUrl || '',
     createdBy: p.userId || '', createdByName: p.userName || '',
     createdAt: serverTimestamp(),
   });
