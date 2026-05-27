@@ -195,17 +195,11 @@ function printMoreTabHTML(order = {}) {
   // Order tracking link
   const trackHTML = `<a href="order-tracking.html?id=${escHtml(o._id || '')}" class="pcc-link" target="_blank" rel="noopener">📋 فتح التتبع الكامل ↗</a>`;
 
-  // Quick actions also accessible via header — duplicated here for discoverability
-  const actionsHTML = `<div class="pcc-actions-grid">
-    <button type="button" class="pcc-action-btn" onclick="openEditProds()">📦 تعديل المنتجات</button>
-    <button type="button" class="pcc-action-btn" onclick="openWaybill()">🧾 البوليصة</button>
-    <button type="button" class="pcc-action-btn" onclick="openPrintAdvance()">💵 سداد مقدم</button>
-    <button type="button" class="pcc-action-btn" onclick="openCollect()">💰 تحصيل</button>
-  </div>`;
-
+  // Print notes + Reference files + Tracking link — كلهم في tab "المزيد".
+  // ملحوظة: إجراءات الـ admin (تعديل/بوليصة/مقدم/تحصيل/رفض) موجودة في
+  // الـ "⋯ المزيد" sheet في الـ Sticky CC Header — مش بنكررها هنا.
   return `
     <div class="pcc-more">
-      ${section('actions', '⚡', 'إجراءات سريعة', actionsHTML, true)}
       ${section('notes', '📝', 'تعليمات الطباعة', notesHTML, false)}
       ${section('ref', '📎', 'ملفات مرجعية', refHTML, false)}
       ${section('track', '📋', 'التتبع الكامل', trackHTML, false)}
@@ -362,6 +356,13 @@ export function applyPrintCCHeader(o, ctx) {
     const legacyHeader = panelEl.querySelector(':scope > div[style*="position:sticky"][style*="top:0"]');
     if (legacyHeader && legacyHeader !== ccContainer) {
       legacyHeader.style.display = 'none';
+    }
+
+    // Hide the legacy sticky footer (تحويل للتنفيذ) — الـ CC header فيه
+    // الزر دلوقتي. الـ footer كان بـ bottom:0 + flex-shrink:0.
+    const legacyFooter = panelEl.querySelector(':scope > div[style*="position:sticky"][style*="bottom:0"]');
+    if (legacyFooter) {
+      legacyFooter.style.display = 'none';
     }
     return true;
   } catch (e) {
