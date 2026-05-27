@@ -222,6 +222,27 @@ function render(){
   const rev=monthly.reduce((s,o)=>s+(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0),0);
   const totRem=allOrders.reduce((s,o)=>s+calcRem(o),0);
 
+  // 🚨 STUCK ORDERS: orders that have been sitting in the SAME stage for > N days.
+  // مختلف عن "متأخر" (deadline-based) — ده مؤشر workflow bottleneck:
+  // الموظف نسى الأوردر / مفيش supplier محدد / إلخ.
+  // Thresholds per stage (مرنة بحسب طبيعة المرحلة):
+  const STUCK_DAYS = { design:2, printing:1, production:3, shipping:2 };
+  const STAGE_AR_MAP = { design:'تصميم', printing:'طباعة', production:'تنفيذ', shipping:'شحن' };
+  const _daysInStage = (o) => {
+    const enteredAt = o.stageEnteredAt && o.stageEnteredAt[o.stage];
+    if (!enteredAt) return null;
+    const t = (typeof enteredAt === 'string') ? Date.parse(enteredAt) : (enteredAt?.toDate?.()?.getTime() || enteredAt?.seconds * 1000);
+    if (!isFinite(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  };
+  const stuckOrds = active.filter(o => {
+    const d = _daysInStage(o);
+    const threshold = STUCK_DAYS[o.stage];
+    return d !== null && threshold !== undefined && d >= threshold;
+  }).sort((a, b) => (_daysInStage(b) || 0) - (_daysInStage(a) || 0));
+  const stuckByStage = { design: [], printing: [], production: [], shipping: [] };
+  stuckOrds.forEach(o => { if (stuckByStage[o.stage]) stuckByStage[o.stage].push(o); });
+
   // Pipeline
   const pipe={design:0,printing:0,production:0,shipping:0};
   const pLate={design:0,printing:0,production:0,shipping:0};
@@ -307,6 +328,35 @@ function render(){
         <div class="kpi-box" style="--kc:var(--g)"><div class="kpi-val">${fn(rev)}</div><div class="kpi-lbl">إيرادات ج</div></div>
         <div class="kpi-box" style="--kc:var(--y)"><div class="kpi-val">${fn(totRem)}</div><div class="kpi-lbl">باقي تحصيل ج</div></div>
       </div>
+
+      <!-- 🚨 Stuck Orders / Bottleneck Section -->
+      ${stuckOrds.length ? `
+      <div style="margin-top:16px;background:rgba(255,61,110,.04);border:1px solid rgba(255,61,110,.25);border-radius:14px;padding:14px 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-heavy);color:var(--r)">🚨 أوردرات عالقة في نفس المرحلة (${stuckOrds.length})</div>
+          <span style="font-size:var(--fs-xs);color:var(--dim2)">حد التنبيه: ${Object.entries(STUCK_DAYS).map(([s,d])=>STAGE_AR_MAP[s]+'≥'+d+'ي').join(' · ')}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+          ${Object.entries(stuckByStage).filter(([,arr])=>arr.length).map(([st, arr]) => {
+            const STAGE_ICONS = { design:'✏️', printing:'🖨️', production:'🏭', shipping:'🚚' };
+            const STAGE_HREF = { design:'design.html', printing:'print.html', production:'production.html', shipping:'shipping.html' };
+            return `<div style="background:var(--bg3);border:1px solid var(--line);border-radius:12px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra)">${STAGE_ICONS[st]} ${STAGE_AR_MAP[st]||st} — ${arr.length}</div>
+                <a href="${STAGE_HREF[st]}" onclick="navigatePage('${STAGE_HREF[st]}');return false" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none;font-weight:var(--fw-bold)">فتح ←</a>
+              </div>
+              ${arr.slice(0,5).map(o => {
+                const d = _daysInStage(o);
+                return `<div onclick="navigatePage('${STAGE_HREF[st]}?orderId=${o._id}')" style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin-bottom:3px;background:var(--bg4);border-radius:8px;cursor:pointer;font-size:var(--fs-xs)">
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.clientName||'—'} · ${o.orderId||(o._id||'').slice(-6)}</span>
+                  <span style="color:var(--r);font-weight:var(--fw-bold);flex-shrink:0;margin-right:6px">${d}ي</span>
+                </div>`;
+              }).join('')}
+              ${arr.length > 5 ? `<div style="font-size:var(--fs-tiny);color:var(--dim2);text-align:center;margin-top:4px">+${arr.length-5} أوردر</div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
 
       <!-- Pipeline -->
       <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);margin-bottom:8px">🔄 البايبلاين</div>
