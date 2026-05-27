@@ -778,7 +778,8 @@ export function validateStageRequirements(order, fromStage) {
     // كان warning قابل للتجاوز — الموظف تحت ضغط يضغط "نعم" → أوردر يطلع للشحن
     // بدون أي تكلفة مسجَّلة → خسارة فينانس + audit ناقص.
     // الـ admin override يمر عبر adminOverrideToShipping (مع reason إلزامي).
-    if (!(order.costItems || []).length) {
+    const costItems = order.costItems || [];
+    if (!costItems.length) {
       errors.push('⛔ يجب تسجيل بند تكلفة واحد على الأقل قبل التحويل للشحن');
     }
 
@@ -800,6 +801,32 @@ export function validateStageRequirements(order, fromStage) {
       if (onHold.length > 0) {
         warnings.push(`⏸ ${onHold.length} منتج مؤجَّل — راجع حالته قبل الشحن`);
       }
+
+      // 🛡 Phase D: per-product cost completeness.
+      // لو في منتج اعتبروه done/printed/ready بس مفيش بند تكلفة مربوط بيه
+      // (prodIdx===pi) ولا global (prodIdx==null) → warning. الـ done بـ "0 ج
+      // تكلفة" نادر لكن ممكن (تشطيب داخلي/هدية) — يستحق تأكيد بدل block.
+      const isReadyStatus = (ps) => ps === PRODUCT_STATUSES.READY
+                                 || ps === PRODUCT_STATUSES.PRINTED
+                                 || ps === PRODUCT_STATUSES.DONE;
+      const hasGlobalCost = costItems.some(ci => ci && (ci.prodIdx == null));
+      const productsMissingCost = [];
+      products.forEach((p, pi) => {
+        if (!isReadyStatus(p.productStatus)) return;
+        const linked = costItems.some(ci => ci && Number(ci.prodIdx) === pi);
+        if (!linked && !hasGlobalCost) productsMissingCost.push(p.name || `منتج ${pi + 1}`);
+      });
+      if (productsMissingCost.length) {
+        warnings.push(`💰 ${productsMissingCost.length} منتج خلص بدون بند تكلفة مربوط بيه: ${productsMissingCost.slice(0, 3).join(' · ')}${productsMissingCost.length > 3 ? ' …' : ''}`);
+      }
+    }
+
+    // 🛡 Phase D: external cost items بدون supplier — warning.
+    // cost item external = isExternal!==false، يعني المفروض ليه مورد. لو
+    // مفيش supplierId → فقد سلسلة الـ audit. warning يحفّز التصحيح.
+    const orphanExternal = costItems.filter(ci => ci && ci.isExternal !== false && !ci.supplierId).length;
+    if (orphanExternal > 0) {
+      warnings.push(`🏭 ${orphanExternal} بند تكلفة خارجي بدون مورد محدد — حدّد المورد قبل الشحن`);
     }
   }
   else if (stage === 'shipping') {
