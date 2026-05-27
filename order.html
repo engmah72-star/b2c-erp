@@ -291,18 +291,19 @@
     </div>
     <div class="cm-body">
       <div class="cm-field">
-        <label>نوع البند *</label>
+        <label>نوع البند * <span style="font-weight:600;color:var(--dim2);font-size:11px">(من الإعدادات)</span></label>
         <div class="cm-chips" id="cm-type-chips"></div>
-        <input type="text" id="cm-type" placeholder="أو اكتب نوعاً مخصصاً..." style="margin-top:6px" list="cm-type-list">
-        <datalist id="cm-type-list"></datalist>
+        <select id="cm-type"><option value="">— اختر نوع البند —</option></select>
+        <div id="cm-type-empty" style="display:none;margin-top:6px;font-size:12px;color:var(--y)">⚠️ لا توجد بنود مُعرَّفة. يمكن للأدمن إضافتها من <a href="settings.html" style="color:var(--b)">الإعدادات</a>.</div>
       </div>
       <div class="cm-field">
         <label>المبلغ (ج) *</label>
         <input type="number" id="cm-total" inputmode="decimal" min="0" step="0.01" placeholder="مثلاً 408.5">
       </div>
       <div class="cm-field">
-        <label>المورد (اختياري)</label>
+        <label>المورد <span id="cm-sup-hint" style="font-weight:600;color:var(--dim2);font-size:11px">(اختياري)</span></label>
         <select id="cm-supplier"><option value="">— بدون —</option></select>
+        <div id="cm-sup-empty" style="display:none;margin-top:6px;font-size:12px;color:var(--y)">⚠️ لا يوجد موردون لهذا النوع.</div>
       </div>
       <!-- بنود سابقة مشابهة (Phase 0.6) -->
       <div class="cm-field" id="cm-history-wrap" style="display:none">
@@ -852,23 +853,55 @@ window.addEventListener('beforeunload', () => {
 //   - On save → routes through orderActions.recordCostItem (RULE A1 central action)
 //   - Suppliers/wallets/categories loaded once after auth (when canRecordCost)
 
-const COST_TYPES_DEFAULT = ['ورق','طباعة','تشطيب','تصميم','نقل','تجليد','أخرى'];
+// النوع master = single source of truth من master_lists/supplier_categories.
+// Suppliers يتفلتروا حسب specialties[].includes(selectedType).
+// (RULE M1 — Materials & Finishings Principle + RULE C2 — Central Constants)
 
 function repopulateCostModalLists() {
-  // Suppliers
+  // Type select — مصدر واحد من master_lists (لا free-text، لا defaults)
+  const tSel = $('cm-type');
+  const tEmpty = $('cm-type-empty');
+  if (tSel) {
+    const cur = tSel.value;
+    if (!costCategoriesList.length) {
+      tSel.innerHTML = '<option value="">— لا توجد بنود مُعرَّفة —</option>';
+      if (tEmpty) tEmpty.style.display = 'block';
+    } else {
+      tSel.innerHTML = '<option value="">— اختر نوع البند —</option>' +
+        costCategoriesList.map(t => '<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+      if (tEmpty) tEmpty.style.display = 'none';
+      // restore previous selection if still valid
+      if (cur && costCategoriesList.includes(cur)) tSel.value = cur;
+    }
+  }
+  // Supplier — يتفلتر حسب النوع المختار
+  refilterSuppliersByType();
+}
+
+// إعادة تعبئة الـ supplier select حسب نوع البند المختار (specialties match)
+function refilterSuppliersByType() {
+  const tSel = $('cm-type');
   const supSel = $('cm-supplier');
-  if (supSel) {
-    const cur = supSel.value;
-    supSel.innerHTML = '<option value="">— بدون —</option>' +
-      suppliers.map(s => '<option value="'+esc(s._id)+'" data-name="'+esc(s.name||'')+'">'+esc(s.name||'مورد')+'</option>').join('');
-    if (cur) supSel.value = cur;
+  const supEmpty = $('cm-sup-empty');
+  if (!supSel) return;
+  const t = tSel?.value || '';
+  const cur = supSel.value;
+  let filtered;
+  if (!t) {
+    // ما اختار نوع لسه → اظهر كل الموردين (الأقل تقييداً)
+    filtered = suppliers;
+  } else {
+    filtered = suppliers.filter(s => {
+      const specs = Array.isArray(s.specialties) ? s.specialties : (s.printType ? [s.printType] : []);
+      return specs.includes(t);
+    });
   }
-  // Type datalist (master list categories + defaults — dedup)
-  const dl = $('cm-type-list');
-  if (dl) {
-    const all = Array.from(new Set([...costCategoriesList, ...COST_TYPES_DEFAULT])).filter(Boolean);
-    dl.innerHTML = all.map(t => '<option value="'+esc(t)+'">').join('');
-  }
+  supSel.innerHTML = '<option value="">— بدون مورد —</option>' +
+    filtered.map(s => '<option value="'+esc(s._id)+'" data-name="'+esc(s.name||'')+'">'+esc(s.name||'مورد')+'</option>').join('');
+  // restore selection if the previously chosen supplier is still in the filtered list
+  if (cur && filtered.some(s => s._id === cur)) supSel.value = cur;
+  // empty hint
+  if (supEmpty) supEmpty.style.display = (t && filtered.length === 0) ? 'block' : 'none';
 }
 
 // اقتراح بنود سابقة مشابهة (filter by type/supplier — top 5 most recent)
@@ -918,12 +951,20 @@ window.applyHistoricalSuggestion = function(idx) {
   const items = window.__cmHistFiltered || [];
   const c = items[idx];
   if (!c) return;
-  $('cm-type').value = c.type || '';
+  // النوع: select فقط — لو موجود في القائمة. لو غير موجود (deprecated category)، نتجاهل
+  const tSel = $('cm-type');
+  if (tSel && c.type && [...tSel.options].some(o => o.value === c.type)) {
+    tSel.value = c.type;
+    document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => {
+      b.classList.toggle('active', b.textContent === c.type);
+    });
+    refilterSuppliersByType(); // مهم: يُعيد بناء قائمة الموردين قبل تعبئة المورد
+  }
   $('cm-total').value = c.total || '';
   if (c.note) $('cm-note').value = c.note;
   if (c.supplierId) {
     const supSel = $('cm-supplier');
-    // ensure option exists; if not, add it (covers case where supplier was deleted)
+    // ensure option exists (case: supplier no longer matches the type filter)
     if (![...supSel.options].some(o => o.value === c.supplierId)) {
       const opt = document.createElement('option');
       opt.value = c.supplierId;
@@ -933,14 +974,15 @@ window.applyHistoricalSuggestion = function(idx) {
     }
     supSel.value = c.supplierId;
   }
-  // re-filter suggestions based on new type
+  // re-filter suggestions based on new selections
   renderHistoricalSuggestions(c.type, c.supplierId);
 };
 
 function renderCostTypeChips() {
   const wrap = $('cm-type-chips');
   if (!wrap) return;
-  const all = Array.from(new Set([...costCategoriesList, ...COST_TYPES_DEFAULT])).filter(Boolean).slice(0, 8);
+  // المصدر الوحيد للأنواع = master_lists/supplier_categories (لا defaults، لا free-text).
+  const all = costCategoriesList.slice(0, 8);
   wrap.innerHTML = all.map(t =>
     '<button type="button" class="cm-chip" onclick="selectCostTypeChip(this,\''+esc(t).replace(/\\/g,'\\\\').replace(/\'/g,"\\'")+'\')">'+esc(t)+'</button>'
   ).join('');
@@ -949,7 +991,15 @@ function renderCostTypeChips() {
 window.selectCostTypeChip = function(btn, type) {
   document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  $('cm-type').value = type;
+  const tSel = $('cm-type');
+  if (tSel) {
+    // إذا النوع موجود في القائمة — اختاره. إذا غير موجود (الأدمن لسه ما أضافه) — تجاهل.
+    if ([...tSel.options].some(o => o.value === type)) {
+      tSel.value = type;
+      refilterSuppliersByType();
+      renderHistoricalSuggestions(type, $('cm-supplier')?.value || '');
+    }
+  }
 };
 
 window.openCostModal = function(prodIdx) {
@@ -962,14 +1012,16 @@ window.openCostModal = function(prodIdx) {
   const p = products[prodIdx] || {};
   const pname = p.productName || p.name || p.title || 'منتج';
   $('cm-prod-name').textContent = (currentOrder.orderId || currentOrder._id.slice(-6)) + ' · ' + pname + ' × ' + (p.quantity||p.qty||0);
-  // reset form
-  $('cm-type').value = '';
+  // reset form (لازم نعمل reset قبل repopulate عشان الـ select يبدأ نظيف)
   $('cm-total').value = '';
-  $('cm-supplier').value = '';
   $('cm-note').value = '';
   document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => b.classList.remove('active'));
   repopulateCostModalLists();
   renderCostTypeChips();
+  // بعد التعبئة، تأكد إن الـ selects على القيمة الافتراضية
+  $('cm-type').value = '';
+  $('cm-supplier').value = '';
+  refilterSuppliersByType();
   // اقتراحات أولية: لو المنتج له بنود سابقة بنفس النوع، أعرضها
   // (نستخدم product name كـ hint مبدئي — لكن في الغالب الـ list هتفضل مخفية حتى المستخدم يكتب)
   renderHistoricalSuggestions('', '');
@@ -979,18 +1031,25 @@ window.openCostModal = function(prodIdx) {
   setTimeout(() => $('cm-total')?.focus(), 100);
 };
 
-// ربط event listeners على الـ type input + supplier select لتحديث الاقتراحات
+// ربط event listeners على select النوع + select المورد لتحديث الاقتراحات والـ filter
 let __cmListenersBound = false;
 function bindCostModalListeners() {
   if (__cmListenersBound) return;
   __cmListenersBound = true;
-  const tInp = $('cm-type');
-  if (tInp) tInp.addEventListener('input', () => {
-    renderHistoricalSuggestions(tInp.value, $('cm-supplier').value);
+  const tSel = $('cm-type');
+  if (tSel) tSel.addEventListener('change', () => {
+    // sync chips: highlight اللي matches الـ select
+    document.querySelectorAll('#cm-type-chips .cm-chip').forEach(b => {
+      b.classList.toggle('active', b.textContent === tSel.value);
+    });
+    // فلتر الموردين حسب النوع
+    refilterSuppliersByType();
+    // اقتراحات بنود سابقة لنفس النوع
+    renderHistoricalSuggestions(tSel.value, $('cm-supplier')?.value || '');
   });
   const supSel = $('cm-supplier');
   if (supSel) supSel.addEventListener('change', () => {
-    renderHistoricalSuggestions($('cm-type').value, supSel.value);
+    renderHistoricalSuggestions($('cm-type')?.value || '', supSel.value);
   });
 }
 
