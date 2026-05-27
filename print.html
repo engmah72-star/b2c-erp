@@ -555,6 +555,17 @@ window.openOrder=function(id){
   activeId=id;activeOrder=orders.find(x=>x._id===id);if(!activeOrder)return;
   const o=activeOrder;
   window.AppState?.setOpenEntity?.('order', id, o);
+  // Expose helpers on window so PCC sheets (contact/action) can read them.
+  // canSeePhone/showPhone/getRem/getNet/getPaid are module-scoped, hence
+  // bridge them here once-per-open. activeOrder is already on window.
+  window.activeOrder = o;
+  window.canSeePhone = canSeePhone;
+  window.showPhone = showPhone;
+  window.getRem = getRem;
+  window.getNet = getNet;
+  window.getPaid = getPaid;
+  window.currentRole = currentRole;
+
   set('pn-id',o.orderId||id.slice(-6));set('pn-name',o.clientName||'—');set('pn-phone',showPhone(o.clientPhone));
   const wa=document.getElementById('pn-wa');
   const callBtn=document.getElementById('pn-call');
@@ -582,6 +593,28 @@ window.openOrder=function(id){
     prodBtn.title=!hasDesignImg?'⚠️ يجب رفع صورة أو ملف التصميم أولاً':'';
   }
   document.getElementById('panel-ov').classList.add('open');
+
+  // Print CC sticky header (Phase 2 completion). Replaces the legacy
+  // inline header with a compact critical-info + 4 actions header.
+  // Idempotent — safe to call on every openOrder. Falls back silently
+  // if PCC module hasn't loaded.
+  try {
+    const pccOn = (typeof window.isPrintControlCenterOn === 'function')
+      && window.isPrintControlCenterOn();
+    if (pccOn && typeof window.applyPrintCCHeader === 'function') {
+      window.applyPrintCCHeader(o, {
+        currentRole, canSeePhone, getRem, getNet, getPaid,
+      });
+    } else {
+      // CC OFF — make sure legacy header is visible (in case it was hidden previously)
+      const panelEl = document.querySelector('#panel-ov .panel');
+      const legacyHeader = panelEl?.querySelector(':scope > div[style*="position:sticky"][style*="top:0"]');
+      if (legacyHeader) legacyHeader.style.display = '';
+      const ccContainer = document.getElementById('pcc-cc-header');
+      if (ccContainer) ccContainer.innerHTML = '';
+    }
+  } catch (e) { console.warn('[openOrder] CC header apply failed:', e); }
+
   renderPanel(o);
 };
 
