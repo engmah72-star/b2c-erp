@@ -412,10 +412,19 @@ export function openDesignOrderActionSheet(orderId) {
   if (!o) return;
   const role = window.currentRole || '';
   const canAssign = ['admin','operation_manager','customer_service'].includes(role);
+  const canCreateOrderForClient = ['admin','operation_manager','customer_service'].includes(role);
   const isDesigner = (role === 'graphic_designer' || role === 'design_operator');
   const assignedToMe = isDesigner && (o.designerId === window.auth?.currentUser?.uid);
   const notRejected = o.designStage !== 'rejected';
   const items = [
+    canCreateOrderForClient && o.clientId && {
+      icon: '＋', label: `أوردر جديد لـ ${o.clientName || 'العميل'}`,
+      hint: 'يفتح طلب جديد لنفس العميل (مع الحفاظ على الـ flow المركزي)',
+      variant: 'success',
+      // Navigate to clients.html with deep-link: opens client panel + auto-fires new-order modal.
+      // Centralized — reuses openNewOrder() flow (RULE A1). No duplicate logic in design page.
+      href: `clients.html?openClient=${encodeURIComponent(o.clientId)}&newOrder=1`,
+    },
     canAssign && {
       icon: '👤', label: o.designerId ? 'تغيير المصمم' : 'تعيين مصمم', variant: 'primary',
       onClick: () => { try { window.openAssignDesigner?.(); } catch (_) {} },
