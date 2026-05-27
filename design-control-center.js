@@ -27,7 +27,11 @@ import { isFeatureEnabled, setFeatureFlag } from './core/feature-flags.js';
 import { openBottomSheet } from './core/bottom-sheet.js';
 
 const DCC_FLAG = 'design.controlCenter';
-export function isDesignControlCenterOn() { return isFeatureEnabled(DCC_FLAG, false); }
+// Default: ON for all users. Opt-out:
+//   localStorage.setItem('feat.design.controlCenter','0')
+//   or ?feat.design.controlCenter=0
+// Kill-switch: ship a one-line PR flipping the default back to `false`.
+export function isDesignControlCenterOn() { return isFeatureEnabled(DCC_FLAG, true); }
 
 // ─── HELPERS ────────────────────────────────────────────────────────
 
