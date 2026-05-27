@@ -15,6 +15,13 @@
 <script type="module" src="inbox-badge.js"></script>
 <!-- God-page decomp PR-1 (design): inline <style> extracted to design.css. -->
 <link rel="stylesheet" href="./design.css">
+<!-- Design Control Center (gated by `design.controlCenter` feature flag).
+     Default OFF — opt-in via localStorage or ?feat.design.controlCenter=1
+     The .dcc-* classes are namespaced so they cause no visual change unless
+     the DCC DOM is rendered by renderDesignPanelDCC. -->
+<link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
+<link rel="stylesheet" href="./design-control-center.css">
+<script type="module" src="./design-control-center.js"></script>
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -1176,6 +1183,24 @@ window.openOrder=function(id){
   activeId=id;
   const o=orders.find(x=>x._id===id);if(!o)return;
   window.AppState?.setOpenEntity?.('order', id, o);
+
+  // ── Design Control Center mode (feature-flagged) ──
+  // If the flag is on AND the DCC module loaded, render the new layout.
+  // On any failure, fall through to the legacy renderer below.
+  const dccOn = (typeof window.isDesignControlCenterOn === 'function') && window.isDesignControlCenterOn();
+  if (dccOn && typeof window.renderDesignPanelDCC === 'function') {
+    const ok = window.renderDesignPanelDCC(o, {
+      currentRole, currentUserUid: auth.currentUser?.uid || '',
+      designers, canSeePhone, showPhone,
+    });
+    if (ok) {
+      document.getElementById('panel-ov').classList.add('open');
+      showAdminSection(o, ['admin','operation_manager'].includes(currentRole));
+      return;
+    }
+    // ok=false → fall through to legacy
+  }
+
   const notRej=o.designStage!=='rejected';
   document.getElementById('pn-hdr').innerHTML=`
     <div>
@@ -1189,6 +1214,9 @@ window.openOrder=function(id){
   // الـ Fix: toggle الـ class مباشرة بدل manipulation للـ inline style.
   document.getElementById('pn-approve').classList.toggle('hide',!notRej);
   document.getElementById('pn-reject').classList.toggle('hide',!notRej);
+  // Ensure legacy buttons are visible (in case DCC was just toggled off)
+  document.getElementById('pn-approve').style.display = '';
+  document.getElementById('pn-reject').style.display = '';
   document.getElementById('panel-ov').classList.add('open');
   renderPanel(o);
 };
