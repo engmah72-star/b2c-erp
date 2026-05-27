@@ -339,11 +339,16 @@ export const shippingActions = {
   async settleWithCompany({
     db, orderIds, amount, walletId, walletName = '',
     companyName = '', diffReason = '', diffReasonLabel = '', diffNote = '', note = '',
+    receiptUrl = '',
     role, userId, userName,
     bypassWarnings = false,
   }) {
     if (!Array.isArray(orderIds) || !orderIds.length) {
       return { ok: false, errors: ['اختر أوردر واحد على الأقل'], warnings: [] };
+    }
+    // 📷 Receipt إجباري — أكبر تحويل مالي في الـ flow بدون proof = خطر audit.
+    if (!receiptUrl) {
+      return { ok: false, errors: ['⚠️ صورة إيصال إيداع الفلوس مطلوبة لكل تسوية'], warnings: [] };
     }
     // PR-7-salvage G1: idempotency — settle-fingerprint = orderIds + walletId + amount
     return withIdempotency(db, {
@@ -389,6 +394,7 @@ export const shippingActions = {
         difference: spec.summary.diff,
         diffReason, diffReasonLabel, diffNote,
         note: note || '',
+        receiptUrl,
         date: new Date().toLocaleDateString('ar-EG'),
         userId: userId || '', userName: userName || '',
         operationId, // CHAOS HOTFIX T8: forensic linkage to op

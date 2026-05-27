@@ -172,6 +172,14 @@
       </select>
     </div>
     <div class="row">
+      <label>📷 إيصال التسوية / إيداع الفلوس <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+      <div id="m-settle-receipt-zone" onclick="document.getElementById('m-settle-receipt-inp').click()" style="border:2px dashed rgba(245,158,11,.45);border-radius:10px;padding:14px;text-align:center;cursor:pointer;color:var(--y-amber);font-size:var(--fs-sm);font-weight:var(--fw-bold);background:rgba(0,0,0,.15)">
+        📸 اضغط لتصوير الإيصال أو رفع صورة
+      </div>
+      <input type="file" id="m-settle-receipt-inp" accept="image/*,application/pdf" capture="environment" class="hide" onchange="onSettleReceiptPick(this)">
+      <div id="m-settle-receipt-preview" style="margin-top:6px"></div>
+    </div>
+    <div class="row">
       <label>ملاحظات</label>
       <textarea id="m-settle-note" rows="2"></textarea>
     </div>
@@ -252,6 +260,8 @@ import {
 import {
   onSnapshot, query, collection, where, orderBy, limit, doc, getDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { ref as _stRef, uploadBytesResumable as _stUploadResumable, getDownloadURL as _stGetURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { storage as _storage } from "./core/firebase-init.js";
 import { shippingActions } from './shipping-actions.js';
 // PR-1 helpers (scalable-drifting-ember): central method/stage labels.
 import { getShipMethodLabel, getShipStageLabel, normalizeShipStage } from "./orders.js";
@@ -504,6 +514,7 @@ function renderCard(o, tab) {
   const stage = SHIP_STAGE_LABELS[o.shipStage || ''] || SHIP_STAGE_LABELS[''];
   const isUrgent = isUrgentOrder(o);
   const badges = renderSmartBadges(o);
+  const readyScore = computeShippingReadyScore(o);
 
   // Primary action per tab
   const primaryAction = ({
@@ -542,6 +553,12 @@ function renderCard(o, tab) {
           <span class="card-price-lbl">${rem > 0 ? 'المتبقي' : 'الإجمالي'}</span>
           <span class="card-price-val ${rem > 0 ? 'money-neg' : 'money-pos'}">${rem > 0 ? fmtMoney(rem) : fmtMoney(total)} ج</span>
         </div>
+        ${(() => {
+          // Phase C: Shipping Ready Score
+          const col = readyScore.score >= 90 ? 'var(--g)' : readyScore.score >= 60 ? 'var(--y)' : 'var(--r)';
+          const ico = readyScore.score >= 90 ? '✅' : readyScore.score >= 60 ? '🟡' : '🔴';
+          return `<div style="display:flex;justify-content:flex-start;margin-top:6px"><span style="font-size:var(--fs-xs);background:${col}18;color:${col};border:1px solid ${col}44;border-radius:20px;padding:3px 10px;font-weight:var(--fw-extra)" title="${readyScore.missing.length ? 'ناقص: ' + readyScore.missing.join(' · ') : 'جاهز للمرحلة التالية'}">${ico} جاهزية ${readyScore.score}%</span></div>`;
+        })()}
       </div>
       <div class="card-actions" onclick="event.stopPropagation()">
         ${primaryAction ? `<button type="button" class="btn ${primaryAction.cls}" onclick="window.${primaryAction.fn}('${id}')">${primaryAction.lbl}</button>` : ''}
@@ -1498,17 +1515,36 @@ window.confirmSettle = async () => {
   const note = $('m-settle-note').value.trim();
   const companyName = pendingOrders[0]?.shipCompanyName || '';
 
+  // 📷 إيصال إجباري: لازم يُرفع صورة إيداع الفلوس من شركة الشحن
+  if (!window.__settleReceiptFile) {
+    toast('⚠️ ارفع صورة إيصال إيداع الفلوس', 'err');
+    document.getElementById('m-settle-receipt-inp')?.click();
+    return;
+  }
+
   const DIFF_LABELS = { weight: 'فرق وزن', city: 'فرق مدينة', undelivered: 'شحنة لم تُسلَّم', discount: 'خصم/عمولة', other: 'أخرى' };
 
   const btn = $('btn-settle-confirm');
-  btn.disabled = true; btn.textContent = '⏳ جارٍ...';
+  btn.disabled = true; btn.textContent = '⏳ جاري رفع الإيصال...';
+
+  // ─ رفع الإيصال لـ Storage قبل ما نسجل التسوية ─
+  let receiptUrl = '';
+  try {
+    receiptUrl = await uploadSettleReceipt(window.__settleReceiptFile);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '✅ تأكيد التسوية';
+    toast('❌ فشل رفع الإيصال — حاول ثاني', 'err');
+    return;
+  }
+
+  btn.textContent = '⏳ جارٍ التسوية...';
 
   let result = await shippingActions.settleFromCompany({
     db, orderIds: pendingOrders.map(o => o._id),
     amount, walletId, walletName: wallet?.name || '',
     companyName,
     diffReason, diffReasonLabel: DIFF_LABELS[diffReason] || '',
-    diffNote: note, note,
+    diffNote: note, note, receiptUrl,
     role: myRole, userId: me.uid, userName: myUserName,
     bypassWarnings: false,
   });
@@ -1520,7 +1556,7 @@ window.confirmSettle = async () => {
         amount, walletId, walletName: wallet?.name || '',
         companyName,
         diffReason, diffReasonLabel: DIFF_LABELS[diffReason] || '',
-        diffNote: note, note,
+        diffNote: note, note, receiptUrl,
         role: myRole, userId: me.uid, userName: myUserName,
         bypassWarnings: true,
       });
@@ -1536,6 +1572,7 @@ window.confirmSettle = async () => {
   toast(`✅ تمت التسوية — ${pendingOrders.length} طلب${archivedCount ? ` · نُقلوا للأرشيف` : ''}`);
   closeMod('m-settle');
   pendingOrders = [];
+  window.__settleReceiptFile = null;
 };
 
 // ══════════════════════════════════════════
@@ -1600,6 +1637,126 @@ document.addEventListener('keydown', e => {
 
 // Expose for debugging
 window.__shippingDebug = { orders, shippers, wallets, shippingActions };
+
+// ══════════════════════════════════════════
+// 🎯 Phase C: Shipping Ready Score
+// ══════════════════════════════════════════
+function computeShippingReadyScore(o) {
+  const missing = [];
+  let score = 0;
+  const stage = normalizeShipStage(o.shipStage || '');
+  const method = o.shipMethod || '';
+  const hasCompany = method === 'company' ? !!o.shipCompanyId : true;
+  const hasAddr = !!(o.deliveryAddress?.gov || o.shipAddress || o.clientAddress);
+  const totalDue = (parseFloat(o.salePrice) || 0) + (parseFloat(o.customerShipFee) || 0) - (parseFloat(o.discount) || 0);
+  const paid = parseFloat(o.totalPaid) || 0;
+  const rem = Math.max(0, totalDue - paid);
+
+  // Stage progression (50 pts)
+  const STAGE_SCORE = {
+    '': 10, ready: 30, shipped: 50, wait_delivery: 50,
+    delivered: 70, wait_collection: 70,
+    collected: 90, returned_full: 50, returned_partial: 50, closed: 100,
+  };
+  score += Math.min(50, STAGE_SCORE[stage] || 10) * 0.5;
+
+  // Method + company (15 pts)
+  if (method) score += 8; else missing.push('طريقة الشحن');
+  if (hasCompany) score += 7; else missing.push('شركة الشحن');
+
+  // Address (10 pts)
+  if (hasAddr) score += 10; else missing.push('عنوان التوصيل');
+
+  // Payment (15 pts) — للـ pickup/courier فقط
+  if (method !== 'company' && totalDue > 0) {
+    if (rem <= 0) score += 15;
+    else { score += Math.round((paid / totalDue) * 15); missing.push(`باقي ${rem.toFixed(0)} ج`); }
+  } else {
+    score += 15; // company → الـ settlement يتولاها
+  }
+
+  // Settlement (10 pts) — للـ company فقط
+  if (method === 'company') {
+    if (o.shipSettled) score += 10;
+    else if (stage === 'collected') missing.push('تسوية مع الشركة');
+  } else {
+    score += 10;
+  }
+
+  return { score: Math.min(100, Math.round(score)), missing: missing.slice(0, 4) };
+}
+
+// ══════════════════════════════════════════
+// 📷 SETTLEMENT RECEIPT — إيصال إيداع فلوس شركة الشحن (إجباري)
+// ══════════════════════════════════════════
+window.__settleReceiptFile = null;
+
+window.onSettleReceiptPick = function(input){
+  const f = input?.files?.[0];
+  if (!f) return;
+  window.__settleReceiptFile = f;
+  const el = document.getElementById('m-settle-receipt-preview');
+  if (el) {
+    const sizeKb = Math.round(f.size/1024);
+    el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(0,217,126,.1);border:1px solid rgba(0,217,126,.3);border-radius:8px;font-size:var(--fs-sm)">
+      <span>✅ ${f.name} (${sizeKb}KB)</span>
+      <button type="button" onclick="window.__settleReceiptFile=null;document.getElementById('m-settle-receipt-preview').innerHTML='';document.getElementById('m-settle-receipt-inp').value='';" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:var(--fw-bold)">✕</button>
+    </div>`;
+  }
+  const zone = document.getElementById('m-settle-receipt-zone');
+  if (zone) zone.style.borderColor = 'var(--g)';
+};
+
+/** uploadSettleReceipt — يرفع الإيصال لـ Storage مع image compression. */
+async function uploadSettleReceipt(file){
+  if (!file) return '';
+  let upload = file;
+  if (file.type && file.type.startsWith('image/')){
+    upload = await new Promise(res => {
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const c = document.createElement('canvas');
+        let { width:w, height:h } = img;
+        const MAX = 1200;
+        if (w > h) { if (w > MAX){ h = Math.round(h * MAX / w); w = MAX; } }
+        else { if (h > MAX){ w = Math.round(w * MAX / h); h = MAX; } }
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        c.toBlob(b => res(new File([b], file.name, { type: 'image/jpeg' })), 'image/jpeg', .85);
+      };
+      img.onerror = () => res(file);
+      img.src = url;
+    });
+  }
+  const stamp = Date.now();
+  const sRef = _stRef(_storage, `receipts/settle_${stamp}_${(pendingOrders[0]?._id||'bulk').slice(-6)}`);
+  const task = _stUploadResumable(sRef, upload);
+  return new Promise((resolve, reject) => {
+    task.on('state_changed', null, reject, async () => {
+      try { resolve(await _stGetURL(sRef)); }
+      catch(e) { reject(e); }
+    });
+  });
+}
+
+// Reset receipt when opening settle modal
+const _origOpenSettleSingle = window.openSettleSingle;
+const _origOpenSettleByCompany = window.openSettleByCompany;
+window.openSettleSingle = function(id){
+  window.__settleReceiptFile = null;
+  const prev = document.getElementById('m-settle-receipt-preview'); if (prev) prev.innerHTML = '';
+  const inp = document.getElementById('m-settle-receipt-inp'); if (inp) inp.value = '';
+  const zone = document.getElementById('m-settle-receipt-zone'); if (zone) zone.style.borderColor = '';
+  if (typeof _origOpenSettleSingle === 'function') return _origOpenSettleSingle(id);
+};
+window.openSettleByCompany = function(cid){
+  window.__settleReceiptFile = null;
+  const prev = document.getElementById('m-settle-receipt-preview'); if (prev) prev.innerHTML = '';
+  const inp = document.getElementById('m-settle-receipt-inp'); if (inp) inp.value = '';
+  const zone = document.getElementById('m-settle-receipt-zone'); if (zone) zone.style.borderColor = '';
+  if (typeof _origOpenSettleByCompany === 'function') return _origOpenSettleByCompany(cid);
+};
 
 </script>
 </body>
