@@ -123,6 +123,39 @@
 
   window.B2CSidebar = { init, build, guard };
 
+  // ── Central mobile nav toggle (Single Source of Truth) ──────────────
+  // النمط الموحّد للموبايل: .sidenav.mob-open + .nav-overlay.show.
+  // كان متكرراً inline في ~25 صفحة، وناقصاً في صفحات أخرى (فالزر ☰ ما كانش
+  // بيفتح). هنا نعرّفه مركزياً ومرناً: ينشئ الـ overlay لو غير موجود، فيشتغل
+  // على أي صفحة حتى بدون <div id="nav-ov">. الصفحات اللي لسه عندها نسخة inline
+  // تكتب window.toggleNav بعد تحميل sidebar.js (بترتيب الـ load) فتفوز — صفر
+  // regression. حذف النسخ المحلية يتم تدريجياً لاحقاً (RULE G9).
+  function ensureNavOverlay() {
+    let ov = document.getElementById('nav-ov') || document.querySelector('.nav-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'nav-overlay';
+      ov.id = 'nav-ov';
+      ov.addEventListener('click', closeNav);
+      document.body.appendChild(ov);
+    }
+    return ov;
+  }
+  function toggleNav() {
+    const sn = document.querySelector('.sidenav');
+    if (!sn) return;
+    const open = sn.classList.toggle('mob-open');
+    ensureNavOverlay().classList.toggle('show', open);
+  }
+  function closeNav() {
+    const sn = document.querySelector('.sidenav');
+    if (sn) sn.classList.remove('mob-open');
+    const ov = document.getElementById('nav-ov') || document.querySelector('.nav-overlay');
+    if (ov) ov.classList.remove('show');
+  }
+  window.toggleNav = toggleNav;
+  window.closeNav  = closeNav;
+
   // ── Legacy globals (backward compat للصفحات اللي اتهاجرت بحذف الـ inline) ──
   // الصفحات اللي لسه عندها `function buildSidebar` inline → الـ function declaration
   // عندها أولوية (hoisting)، فالـ window assignments دي ما بتعمل clash.
