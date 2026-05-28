@@ -119,6 +119,11 @@ try {
     if (_ec === '1') {
       SIDEBAR_PAGES.push({ file: 'employee-control.html', label: 'لوحة الموظفين', ico: '🎛️', group: 'admin', adminOnly: true });
     }
+    // My Home (صفحتي): personal landing — visible to every role when enabled.
+    const _mh = _qs.get('feat.myHome') || localStorage.getItem('feat.myHome');
+    if (_mh === '1') {
+      SIDEBAR_PAGES.unshift({ file: 'my-home.html', label: 'صفحتي', ico: '🏠', group: 'main', public: true });
+    }
   } catch (_) { /* SSR/test envs */ }
 
   // Expose on window so module scripts can read without `import`.
