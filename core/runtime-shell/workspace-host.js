@@ -60,9 +60,18 @@ export function showDomain(domainId) {
     entry.lastUsed = Date.now();
   }
 
-  // Show active، hide others
+  // Show active، hide others.
+  // الـ iframes مخزّنة (LRU) للحفاظ على scroll/filters/listeners. لكن أي
+  // modal مفتوح كان يفضل عالقاً ويظهر تاني عند الرجوع للتبويب. نُبلّغ الـ
+  // iframe اللي بيتخفي عشان يقفل أي modal مفتوح → الرجوع للتبويب نظيف.
   for (const [k, v] of _cache) {
-    v.iframe.style.display = (k === domainId) ? 'block' : 'none';
+    const active = (k === domainId);
+    if (!active && v.iframe.style.display !== 'none') {
+      try {
+        v.iframe.contentWindow?.postMessage({ __b2cShell: 'domain-hidden' }, location.origin);
+      } catch (_) {}
+    }
+    v.iframe.style.display = active ? 'block' : 'none';
   }
   return true;
 }
