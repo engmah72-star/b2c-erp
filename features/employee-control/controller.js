@@ -8,9 +8,10 @@
 
 import { auth, db } from '../../core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { collection, doc, getDoc, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { collection, doc, getDoc, onSnapshot, query, where, limit, orderBy } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { canDo } from '../../core/permissions-matrix.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
+import { summarizeCompletion, formatDuration } from '../../core/order-leadtime.js';
 import { renderKpiBar, renderGroups } from './render.js';
 import { openQuickAction } from './quick-actions.js';
 
@@ -32,7 +33,7 @@ const state = {
   me: { uid: '', name: '' },
   role: '',
   caps: { manageEmployees: false, finance: false, perms: false },
-  employees: [], attToday: [], incidents: [], tasks: [], wallets: [],
+  employees: [], attToday: [], incidents: [], tasks: [], wallets: [], orders: [],
   filter: { q: '', status: 'all', flagged: false },
 };
 
@@ -69,6 +70,7 @@ function render() {
     incidents: state.incidents.length,
     openTasks: state.tasks.length,
     disabled: state.employees.length - active.length,
+    completion: (() => { const s = summarizeCompletion(state.orders); return s.count ? formatDuration(s.avgHours) : null; })(),
   };
   root.innerHTML =
     renderKpiBar(kpis) +
@@ -135,6 +137,11 @@ function startListeners() {
   });
   onSnapshot(query(collection(db, 'tasks'), where('status', '==', 'pending'), limit(2000)), snap => {
     state.tasks = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    if (state.employees.length) render();
+  });
+  // recent orders → company Average Order Completion Time KPI (read-only)
+  onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(300)), snap => {
+    state.orders = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     if (state.employees.length) render();
   });
   // wallets for the finance quick-action (read-only — RULE 4)

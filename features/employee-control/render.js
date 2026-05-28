@@ -47,6 +47,7 @@ export function renderKpiBar(k) {
     ${cell('👥', k.total,        'إجمالي الموظفين')}
     ${cell('✅', k.active,       'حساب نشط')}
     ${cell('🟢', k.presentToday, 'حاضر اليوم')}
+    ${cell('⏱️', k.completion ?? '—', 'متوسط الإنجاز', k.completion ? 'info' : '')}
     ${cell('⚠️', k.incidents,    'إخفاقات الشهر', k.incidents ? 'warn' : '')}
     ${cell('📋', k.openTasks,    'مهام مفتوحة')}
     ${cell('🔒', k.disabled,     'حسابات معطّلة', k.disabled ? 'crit' : '')}
