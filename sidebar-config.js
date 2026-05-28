@@ -109,19 +109,19 @@ try {
     admin:  'الإدارة',
   };
 
-  // ── Flag-gated entries (RULE E1.8 — opt-in, default OFF) ──
-  // Employee Control Center: shown in the admin sidebar only when the
-  // `employeeControl` feature flag is enabled (URL ?feat.employeeControl=1
-  // or localStorage feat.employeeControl=1). Instant kill switch.
+  // ── Flag-gated entries (RULE E1.9 — enabled by default, kill switch retained) ──
+  // Both entries show unless explicitly disabled via feat.<name>=0
+  // (URL ?feat.<name>=0 or localStorage feat.<name>="0"). Instant kill switch.
   try {
     const _qs = new URLSearchParams(location.search);
+    // Employee Control Center — admin sidebar.
     const _ec = _qs.get('feat.employeeControl') || localStorage.getItem('feat.employeeControl');
-    if (_ec === '1') {
+    if (_ec !== '0') {
       SIDEBAR_PAGES.push({ file: 'employee-control.html', label: 'لوحة الموظفين', ico: '🎛️', group: 'admin', adminOnly: true });
     }
-    // My Home (صفحتي): personal landing — visible to every role when enabled.
+    // My Home (صفحتي): personal landing — visible to every role.
     const _mh = _qs.get('feat.myHome') || localStorage.getItem('feat.myHome');
-    if (_mh === '1') {
+    if (_mh !== '0') {
       SIDEBAR_PAGES.unshift({ file: 'my-home.html', label: 'صفحتي', ico: '🏠', group: 'main', public: true });
     }
   } catch (_) { /* SSR/test envs */ }
