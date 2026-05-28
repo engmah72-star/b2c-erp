@@ -135,8 +135,9 @@ export function initMyHome() {
     const na = document.getElementById('nav-av'); if (na) na.textContent = (S.me.name || 'U').slice(0, 1);
     const rb = document.getElementById('role-badge'); if (rb) rb.textContent = S.role || 'ERP';
 
-    if (!isFeatureEnabled('myHome', false)) {
-      notice('🧪 صفحتي الشخصية قيد التشغيل التجريبي.<br>لتفعيلها: افتح الرابط بـ <code>?feat.myHome=1</code> أو نفّذ في الـ console: <code>localStorage["feat.myHome"]="1"</code> ثم أعد التحميل.');
+    // feature flag (E1.8/E1.9) — enabled by default, instant kill switch retained
+    if (!isFeatureEnabled('myHome', true)) {
+      notice('⏸️ صفحتي معطّلة عبر flag.<br>لإعادة التفعيل: احذف <code>feat.myHome=0</code> من الرابط/الـ localStorage ثم أعد التحميل.');
       return;
     }
 

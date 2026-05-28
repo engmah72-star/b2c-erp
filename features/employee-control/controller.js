@@ -173,9 +173,9 @@ export function initEmployeeControl() {
       notice('🚫 ليس لديك صلاحية إدارة الموظفين.');
       return;
     }
-    // feature flag (E1.8) — instant kill switch, default OFF
-    if (!isFeatureEnabled('employeeControl', false)) {
-      notice('🧪 لوحة تحكم الموظفين قيد التشغيل التجريبي.<br>لتفعيلها: افتح الرابط بـ <code>?feat.employeeControl=1</code> أو نفّذ في الـ console: <code>localStorage["feat.employeeControl"]="1"</code> ثم أعد التحميل.');
+    // feature flag (E1.8/E1.9) — enabled by default, instant kill switch retained
+    if (!isFeatureEnabled('employeeControl', true)) {
+      notice('⏸️ لوحة تحكم الموظفين معطّلة عبر flag.<br>لإعادة التفعيل: احذف <code>feat.employeeControl=0</code> من الرابط/الـ localStorage ثم أعد التحميل.');
       return;
     }
 
