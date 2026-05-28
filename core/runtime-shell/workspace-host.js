@@ -73,6 +73,14 @@ export function showDomain(domainId) {
     }
     v.iframe.style.display = active ? 'block' : 'none';
   }
+
+  // Also tell the (re-)shown iframe to dismiss any modal that's still open —
+  // covers state stuck from before this fix existed (e.g. a modal left open
+  // in a cached iframe from a previous visit). Entering a domain = clean view.
+  try {
+    entry.iframe.contentWindow?.postMessage({ __b2cShell: 'domain-shown' }, location.origin);
+  } catch (_) {}
+
   return true;
 }
 
