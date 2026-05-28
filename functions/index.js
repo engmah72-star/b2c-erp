@@ -544,7 +544,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
     }
     const callerData = callerSnap.data() || {};
-    if (callerData.!isStrictAdmin(role)) {
+    if (!isStrictAdmin(callerData.role)) {
       throw new HttpsError('permission-denied', 'الـ Deep View-As للأدمن فقط (دورك: ' + (callerData.role || '—') + ')');
     }
 
@@ -563,7 +563,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('not-found', 'الموظف غير موجود في users');
     }
     const targetData = targetSnap.data() || {};
-    if (targetData.isStrictAdmin(role)) {
+    if (isStrictAdmin(targetData.role)) {
       throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
     }
     try {
@@ -2911,7 +2911,7 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
 
   const callerSnap = await db.collection('users').doc(req.auth.uid).get();
-  if (!callerSnap.exists || callerSnap.data().!isStrictAdmin(role)) {
+  if (!callerSnap.exists || !isStrictAdmin(callerSnap.data().role)) {
     throw new HttpsError('permission-denied', 'admin only');
   }
 
@@ -3162,7 +3162,7 @@ exports.migrateLegacyShipStages = onCall(
     // Admin only
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
+    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
 
@@ -3356,7 +3356,7 @@ exports.runProjectionDriftScan = onCall(
   async (req) => {
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
+    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
     // إعادة استخدام نفس logic (نقل لـ helper لاحقاً)
