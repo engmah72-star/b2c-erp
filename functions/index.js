@@ -25,6 +25,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
+const { buildIncidentNotification, buildLedgerNotification } = require('./lib/employee-notify');
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -963,6 +964,41 @@ exports.onCriticalFinancialEntry = onDocumentCreated('financial_ledger/{entryId}
     data: { type: 'financial_alert', severity, entryId: e.params.entryId },
     link: '/financial-dashboard.html',
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//   EMPLOYEE SELF-NOTIFICATIONS — incidents + financial penalties/bonuses
+// ════════════════════════════════════════════════════════════════════════════
+// لمّا يُسجَّل إخفاق أو خصم/مكافأة على موظف، يصله إشعار داخل التطبيق (الجرس 🔔)
+// تلقائياً. يعيد استخدام createInAppNotification + collection notifications (لا
+// collection جديد). القناة: in-app فقط. المستهدف هو الموظف نفسه (person-scoped).
+// منطق "ماذا يُرسَل" نقي في functions/lib/employee-notify.js (مُختبَر — G8).
+
+async function resolveEmployeeUid({ authUid, employeeId }) {
+  if (authUid) return authUid;
+  if (!employeeId) return '';
+  try {
+    const snap = await db.doc(`employees/${employeeId}`).get();
+    return snap.exists ? (snap.data().authUid || '') : '';
+  } catch (_) { return ''; }
+}
+
+exports.onEmployeeIncidentLogged = onDocumentCreated('employee_incidents/{incId}', async (e) => {
+  const inc = e.data?.data();
+  const payload = buildIncidentNotification(inc);
+  if (!payload) return;
+  const uid = await resolveEmployeeUid({ authUid: inc.authUid, employeeId: inc.employeeId });
+  if (!uid) return;
+  await createInAppNotification({ toUid: uid, ...payload, entityId: e.params.incId });
+});
+
+exports.onEmployeeFinancialEntry = onDocumentCreated('financial_ledger/{entryId}', async (e) => {
+  const entry = e.data?.data();
+  const payload = buildLedgerNotification(entry);
+  if (!payload) return;
+  const uid = await resolveEmployeeUid({ authUid: entry.authUid, employeeId: entry.employeeId });
+  if (!uid) return;
+  await createInAppNotification({ toUid: uid, ...payload, entityId: e.params.entryId });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
