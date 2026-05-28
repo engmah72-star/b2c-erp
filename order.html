@@ -321,15 +321,38 @@
     </div>
   </div>
 </div>
+
+<!-- Ship-to-shipping picker (production → shipping) -->
+<div class="cm-overlay" id="ship-overlay" onclick="if(event.target===this)closeShipPicker()">
+  <div class="cm-card">
+    <div class="cm-head">
+      <div>
+        <h3>🚚 تحويل للشحن</h3>
+        <div class="cm-sub" id="ship-sub">—</div>
+      </div>
+      <button type="button" class="cm-close" onclick="closeShipPicker()" aria-label="إغلاق">✕</button>
+    </div>
+    <div class="cm-body">
+      <div class="cm-field">
+        <label>موظف الشحن <span style="font-weight:600;color:var(--dim2);font-size:11px">(اختياري — يمكن تعيينه لاحقاً)</span></label>
+        <select id="ship-officer-sel"><option value="">— بدون تعيين —</option></select>
+      </div>
+    </div>
+    <div class="cm-foot">
+      <button type="button" class="cm-cancel" onclick="closeShipPicker()">إلغاء</button>
+      <button type="button" class="cm-save" id="ship-confirm-btn" onclick="confirmShip()">🚚 تحويل + تسليم</button>
+    </div>
+  </div>
+</div>
 </div>
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, onSnapshot, getDoc, collection, query, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -345,6 +368,7 @@ let suppliers = [];
 let costCategoriesList = [];
 let historicalCostItems = []; // recent cost items from last N orders (for suggestions)
 let activeProdIdxForCost = -1;
+let shipOfficers = []; // shipping_officer employees for the ship-to-shipping picker
 // Searchable-select instances (refresh after repopulating options)
 let __ssType = null;
 let __ssSupplier = null;
@@ -395,7 +419,15 @@ function renderToolbar(o) {
   const id = encodeURIComponent(o._id);
   const oidParam = encodeURIComponent(o.orderId || o._id);
   let html = '<div class="order-toolbar">';
-  html += '<a class="order-tb-btn primary" href="waybill.html?id=' + id + '" target="_blank" rel="noopener" title="البوليصة">🧾 <span class="lbl">البوليصة</span></a>';
+  // 🚚 Primary workflow action — تحويل للشحن (production → shipping).
+  // كان مفقوداً بعد migration الإنتاج لـ order.html → الـ workflow كان مكسوراً
+  // (مفيش أي زر يشحن من الواجهة). الـ action المركزي يتحقق من الشروط (done +
+  // بنود تكلفة) ويتعامل مع التحذيرات و admin override.
+  const canShip = (STAGE_PERMISSIONS.production || []).includes(currentRole);
+  if (o.stage === 'production' && canShip) {
+    html += '<button type="button" class="order-tb-btn primary" onclick="openShipPicker()" title="تحويل للشحن">🚚 <span class="lbl">تحويل للشحن</span></button>';
+  }
+  html += '<a class="order-tb-btn" href="waybill.html?id=' + id + '" target="_blank" rel="noopener" title="البوليصة">🧾 <span class="lbl">البوليصة</span></a>';
   html += '<a class="order-tb-btn" href="order-tracking.html?id=' + oidParam + '" target="_blank" rel="noopener" title="تتبع كامل">📋 <span class="lbl">تتبع</span></a>';
   html += '<a class="order-tb-btn" href="exec-cost-entry.html?id=' + id + '" title="بنود التكلفة">💰 <span class="lbl">التكلفة</span></a>';
   html += '<a class="order-tb-btn" href="production.html?orderId=' + id + '" title="تعديل البيانات (في صفحة التنفيذ)">✏️ <span class="lbl">تعديل</span></a>';
@@ -730,6 +762,61 @@ window.archiveOrder = async function() {
   }
 };
 
+// ── Ship to shipping (production → shipping) ──
+window.openShipPicker = function() {
+  if (!currentOrder) return;
+  $('ship-sub').textContent = (currentOrder.orderId || currentOrder._id) + ' · ' + (currentOrder.clientName || '');
+  const sel = $('ship-officer-sel');
+  if (sel) {
+    sel.innerHTML = '<option value="">— بدون تعيين —</option>'
+      + shipOfficers.map(e => '<option value="' + esc(e._id) + '">' + esc(e.name || e.email || 'موظف') + '</option>').join('');
+    sel.value = '';
+  }
+  $('ship-overlay').classList.add('open');
+};
+window.closeShipPicker = function() { $('ship-overlay')?.classList.remove('open'); };
+
+window.confirmShip = async function() {
+  if (!currentOrder) return;
+  const sel = $('ship-officer-sel');
+  const shipId = sel?.value || '';
+  const shipName = shipId ? (sel.options[sel.selectedIndex]?.text || '') : '';
+  const btn = $('ship-confirm-btn');
+  if (btn) btn.disabled = true;
+  const base = { db, orderId: currentOrder._id, shipId, shipName, role: currentRole, userId: currentUser?.uid || '', userName };
+  try {
+    let r = await orderActions.submitProductionToShipping(base);
+    // warnings (قابلة للتجاوز) → تأكيد + إعادة بـ bypass
+    if (!r.ok && (r.needsConfirmation || (r.warnings?.length && !r.errors?.length))) {
+      if (!confirm('⚠️ ملاحظات قبل التحويل:\n• ' + (r.warnings || []).join('\n• ') + '\n\nمتابعة؟')) { if (btn) btn.disabled = false; return; }
+      r = await orderActions.submitProductionToShipping({ ...base, bypassWarnings: true });
+    }
+    // errors → admin override فقط (مع سبب إلزامي)
+    if (!r.ok) {
+      const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
+      if (!isAdmin || !r.errors?.length) { if (btn) btn.disabled = false; return toast('⛔ ' + (r.errors || []).join(' · '), 'err'); }
+      if (!confirm('⛔ مشاكل تمنع التحويل:\n• ' + r.errors.join('\n• ') + '\n\nتحويل رغم ذلك؟ (admin override)')) { if (btn) btn.disabled = false; return; }
+      const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
+      if (!reason || !reason.trim()) { if (btn) btn.disabled = false; return toast('❌ سبب الـ override مطلوب', 'err'); }
+      const or = await orderActions.adminOverrideToShipping({
+        db, orderId: currentOrder._id, role: currentRole,
+        userId: currentUser?.uid || '', userName,
+        nextAssigneeId: shipId, nextAssigneeName: shipName,
+        overrideReason: reason.trim(),
+      });
+      if (!or.ok) { if (btn) btn.disabled = false; return toast('⛔ ' + (or.errors || []).join(' · '), 'err'); }
+    }
+    closeShipPicker();
+    toast('🚚 تم التحويل للشحن', 'ok');
+    setTimeout(() => goBack(), 700);
+  } catch (e) {
+    console.error('[confirmShip]', e);
+    toast('❌ خطأ: ' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
 // ── Actions ──
 window.setStatus = async function(status) {
   if (!currentOrder) return;
@@ -792,6 +879,18 @@ onAuthStateChanged(auth, async u => {
   if (!orderId) {
     renderError('لا يوجد معرف أوردر في الـ URL');
     return;
+  }
+
+  // Load shipping officers for the ship picker — only for roles that can advance
+  // production → shipping (RULE C2: central STAGE_PERMISSIONS, no hardcoded list).
+  if ((STAGE_PERMISSIONS.production || []).includes(currentRole)) {
+    try {
+      onSnapshot(query(collection(db,'employees'), where('role','==','shipping_officer'), limit(100)), snap => {
+        const seen = new Set();
+        shipOfficers = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
+          .filter(e => { if (seen.has(e._id)) return false; seen.add(e._id); return true; });
+      }, err => console.warn('ship officers load skipped', err?.message));
+    } catch (e) { console.warn('ship officers load error', e?.message); }
   }
 
   // Load deps for inline cost entry — only for roles that can record cost (RULE 8 / P1.2)
