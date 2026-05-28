@@ -109,6 +109,18 @@ try {
     admin:  'الإدارة',
   };
 
+  // ── Flag-gated entries (RULE E1.8 — opt-in, default OFF) ──
+  // Employee Control Center: shown in the admin sidebar only when the
+  // `employeeControl` feature flag is enabled (URL ?feat.employeeControl=1
+  // or localStorage feat.employeeControl=1). Instant kill switch.
+  try {
+    const _qs = new URLSearchParams(location.search);
+    const _ec = _qs.get('feat.employeeControl') || localStorage.getItem('feat.employeeControl');
+    if (_ec === '1') {
+      SIDEBAR_PAGES.push({ file: 'employee-control.html', label: 'لوحة الموظفين', ico: '🎛️', group: 'admin', adminOnly: true });
+    }
+  } catch (_) { /* SSR/test envs */ }
+
   // Expose on window so module scripts can read without `import`.
   // Module pages: `const SIDEBAR_PAGES = window.SIDEBAR_PAGES;` (one-liner).
   window.SIDEBAR_PAGES = SIDEBAR_PAGES;

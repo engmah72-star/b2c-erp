@@ -1,0 +1,124 @@
+// ════════════════════════════════════════════════════════════════════
+// features/employee-control/render.js
+// Pure render layer for the Employee Control Center.
+// View only — no Firestore, no globals, no business logic (RULE L1.3 + PC1.5).
+// Receives prepared data, returns HTML strings.
+// ════════════════════════════════════════════════════════════════════
+
+export const ROLE_LABELS = {
+  admin:             'مدير النظام',
+  operation_manager: 'مدير العمليات',
+  customer_service:  'خدمة العملاء',
+  graphic_designer:  'مصمم جرافيك',
+  design_operator:   'مشغّل تصميم',
+  production_agent:  'مسؤول إنتاج',
+  shipping_officer:  'مسؤول شحن',
+  wallet_manager:    'محاسب',
+};
+
+// Organized by department (PC3 — grouped view reflects the operational workflow).
+export const DEPARTMENTS = [
+  { id: 'management', label: 'الإدارة',          ico: '👔', roles: ['admin', 'operation_manager'] },
+  { id: 'cs',         label: 'خدمة العملاء',     ico: '🎧', roles: ['customer_service'] },
+  { id: 'design',     label: 'التصميم',          ico: '🎨', roles: ['graphic_designer', 'design_operator'] },
+  { id: 'production', label: 'الإنتاج والطباعة', ico: '🏭', roles: ['production_agent'] },
+  { id: 'shipping',   label: 'الشحن',            ico: '🚚', roles: ['shipping_officer'] },
+  { id: 'accounts',   label: 'المحاسبة',         ico: '💰', roles: ['wallet_manager'] },
+  { id: 'other',      label: 'أخرى',             ico: '📌', roles: [] },
+];
+
+export function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function deptOf(role) {
+  const d = DEPARTMENTS.find(x => x.roles.includes(role));
+  return d ? d.id : 'other';
+}
+
+// ── KPI bar (org-level) ──────────────────────────────────────────────
+export function renderKpiBar(k) {
+  const cell = (ico, val, lbl, cls = '') =>
+    `<div class="ec-kpi ${cls}"><div class="ec-kpi-ico">${ico}</div>` +
+    `<div class="ec-kpi-val">${val}</div><div class="ec-kpi-lbl">${esc(lbl)}</div></div>`;
+  return `<div class="ec-kpis">
+    ${cell('👥', k.total,        'إجمالي الموظفين')}
+    ${cell('✅', k.active,       'حساب نشط')}
+    ${cell('🟢', k.presentToday, 'حاضر اليوم')}
+    ${cell('⚠️', k.incidents,    'إخفاقات الشهر', k.incidents ? 'warn' : '')}
+    ${cell('📋', k.openTasks,    'مهام مفتوحة')}
+    ${cell('🔒', k.disabled,     'حسابات معطّلة', k.disabled ? 'crit' : '')}
+  </div>`;
+}
+
+// ── One employee row ─────────────────────────────────────────────────
+function renderRow(emp, m, caps) {
+  const id = esc(emp._id);
+  const name = esc(emp.name || 'بدون اسم');
+  const roleLbl = esc(ROLE_LABELS[emp.role] || emp.role || '—');
+  const isActive = (emp.status || 'active') === 'active';
+
+  // Signals (attention markers)
+  const sig = [];
+  if (m.incidents >= 2) sig.push('<span class="ec-sig crit" title="إخفاقات متعددة هذا الشهر">🔴</span>');
+  if (m.lateTasks > 0)  sig.push(`<span class="ec-sig warn" title="${m.lateTasks} مهمة متأخرة">⏰</span>`);
+  if (!isActive)        sig.push('<span class="ec-sig crit" title="الحساب معطّل">🔒</span>');
+
+  const present = m.present
+    ? '<span class="ec-dot on" title="حاضر اليوم">🟢</span>'
+    : '<span class="ec-dot off" title="غير مسجّل اليوم">⚪</span>';
+
+  const chip = (n, cls, title) =>
+    `<span class="ec-chip ${n ? cls : 'zero'}" title="${esc(title)}">${n}</span>`;
+
+  // Quick action buttons — each fires a central action (PC2 / A1).
+  const btn = (act, ico, label) =>
+    `<button type="button" class="ec-act" data-act="${act}" data-emp="${id}" title="${esc(label)}">${ico}</button>`;
+  const acts = [
+    btn('task',     '📋', 'إسناد مهمة'),
+    btn('incident', '⚠️', 'تسجيل إخفاق'),
+    caps.finance ? btn('finance', '💰', 'خصم / مكافأة') : '',
+    caps.perms   ? btn('perms',   '🔐', 'صلاحيات / تفعيل') : '',
+    btn('profile',  '👤', 'فتح البروفايل'),
+  ].join('');
+
+  return `<tr class="ec-row${isActive ? '' : ' inactive'}" data-emp="${id}">
+    <td class="ec-c-name"><div class="ec-name">${name}</div><div class="ec-role">${roleLbl}</div></td>
+    <td class="ec-c-present">${present}</td>
+    <td class="ec-c-num">${chip(m.openTasks, 'info', 'مهام مفتوحة')}</td>
+    <td class="ec-c-num">${chip(m.incidents, 'warn', 'إخفاقات الشهر')}</td>
+    <td class="ec-c-sig">${sig.join('') || '<span class="ec-ok">✓</span>'}</td>
+    <td class="ec-c-acts">${acts}</td>
+  </tr>`;
+}
+
+// ── Grouped table (by department) ────────────────────────────────────
+export function renderGroups({ employees, metrics, caps, filter }) {
+  const q = (filter?.q || '').trim();
+  let list = employees.slice();
+  if (q) list = list.filter(e => (e.name || '').includes(q) || (e.phone || '').includes(q));
+  if (filter?.status === 'active')   list = list.filter(e => (e.status || 'active') === 'active');
+  if (filter?.status === 'inactive') list = list.filter(e => (e.status || 'active') !== 'active');
+  if (filter?.flagged)               list = list.filter(e => { const m = metrics.get(e._id) || {}; return (m.incidents >= 2) || (m.lateTasks > 0); });
+
+  if (!list.length) return '<div class="ec-empty">لا يوجد موظفون مطابقون.</div>';
+
+  const head = `<thead><tr>
+    <th>الموظف</th><th>حضور</th><th>مهام</th><th>إخفاقات</th><th>إشارات</th><th>إجراءات</th>
+  </tr></thead>`;
+
+  return DEPARTMENTS.map(dept => {
+    const inDept = list.filter(e => deptOf(e.role) === dept.id);
+    if (!inDept.length) return '';
+    const rows = inDept
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'))
+      .map(e => renderRow(e, metrics.get(e._id) || { present: false, openTasks: 0, lateTasks: 0, incidents: 0 }, caps))
+      .join('');
+    return `<section class="ec-group">
+      <h3 class="ec-group-h">${dept.ico} ${esc(dept.label)} <span class="ec-group-n">${inDept.length}</span></h3>
+      <div class="tbl-wrap"><table class="tbl ec-tbl">${head}<tbody>${rows}</tbody></table></div>
+    </section>`;
+  }).join('');
+}
