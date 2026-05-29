@@ -30,6 +30,26 @@
 // Combined with sw.js's skipWaiting() + clients.claim(), new versions
 // reach the user within seconds of detection (vs hours/days previously).
 
+// ════════════════════════════════════════════════════════════════════
+// Legacy host redirect — GitHub Pages (.io) → Firebase (.app)
+// ════════════════════════════════════════════════════════════════════
+// الإنتاج الرسمي على business2card-c041b.web.app (Firebase) — اللي بيتحدّث
+// أوتوماتيك مع كل deploy. الـ GitHub Pages mirror (engmah72-star.github.io)
+// مش متربوط بأي نشر تلقائي فبيتجمّد على نسخة قديمة. أي حد يفتح القديم
+// نحوّله فوراً للرسمي. مشروط بالـ hostname → الـ .app مايتأثرش (لا loop).
+(function () {
+  try {
+    var h = location.hostname;
+    if (h.indexOf('github.io') !== -1) {
+      var target = 'https://business2card-c041b.web.app'
+                 + location.pathname.replace(/^\/b2c-erp/, '')
+                 + location.search + location.hash;
+      location.replace(target);
+      return; // أوقف باقي السكريبت — إحنا بنغادر الصفحة
+    }
+  } catch (_) {}
+})();
+
 if ('serviceWorker' in navigator) {
   const RELOAD_KEY = '__b2c_sw_last_reload';
   const LOOP_WINDOW_MS = 10000;
