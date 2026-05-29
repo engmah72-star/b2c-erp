@@ -147,6 +147,7 @@ Each sub-PR is small (one file or one concern), CI-gated, and visually behavior-
 | Date | PR / Branch | Scope (one concern) | Hex removed | Visual change |
 |------|-------------|---------------------|------------:|---------------|
 | 2026-05-29 | `claude/ui-color-tokens-2b1` | **`design-control-center.css`** — strip dead `var(--token, #hex)` color fallbacks → `var(--token)`. All 13 referenced tokens verified defined in `shared.css`, so every fallback was inert (some were *wrong*, e.g. `var(--r, #ef4444)` while `--r` is `#ff3d6e`) — removal is byte-identical at runtime and deletes misleading dead values. | **55 → 0** | **none** (tokens always resolve) |
+| 2026-05-29 | `claude/ui-color-tokens-clients` | **`clients-control-center.css`** — same method: strip dead `var(--token, #hex)` color fallbacks. All 14 referenced tokens defined in `shared.css` → every fallback inert. 2 raw direct hexes left (`#fff`, `#aaa` — not token-equal, out of safe scope). | **56 → 2** | **none** |
 
 **Method (safe, repeatable for the next files):**
 1. List `var(--X, #hex)` occurrences in the target file.
