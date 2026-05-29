@@ -21,12 +21,11 @@
  */
 
 import {
-  doc, collection, writeBatch,
+  doc, getDoc, addDoc, updateDoc, deleteDoc, collection,
   query, where, getDocs, limit, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
-import { auditEntry } from './core/audit.js';
 
 // ══════════════════════════════════════════
 // CONSTANTS
@@ -100,62 +99,6 @@ function _checkPaymentPermission(role, userPerms) {
 }
 
 // ══════════════════════════════════════════
-// CENTRALIZATION HELPERS (Supplier Charter)
-// ══════════════════════════════════════════
-
-/**
- * مفتاح موحَّد لكشف التكرار (Charter 4 + 7): trim + توحيد المسافات + lowercase.
- * يُخزَّن على المورد (nameKey) ليُستعلَم عنه server-side (Firestore لا يدعم
- * case-insensitive query، فنخزّن النسخة الموحَّدة).
- */
-function _nameKey(name) {
-  return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-/**
- * Duplicate guard (Charter principles 4 + 7): يمنع إنشاء ملف مورد مكرر.
- * يطابق على nameKey ثم phone داخل نفس الـ collection. السجلات القديمة
- * بدون nameKey ما زالت تُلتقَط عبر phone.
- * @returns {Promise<null | {id, by, name}>}
- */
-async function _findDuplicate(db, col, { nameKey, phone, excludeId = null }) {
-  const firstOther = (snap) => snap.docs.find(d => d.id !== excludeId) || null;
-  if (nameKey) {
-    const snap = await getDocs(query(
-      collection(db, col), where('nameKey', '==', nameKey), limit(2)
-    ));
-    const hit = firstOther(snap);
-    if (hit) return { id: hit.id, by: 'name', name: hit.data()?.name || '' };
-  }
-  const ph = phone && String(phone).trim();
-  if (ph) {
-    const snap = await getDocs(query(
-      collection(db, col), where('phone', '==', ph), limit(2)
-    ));
-    const hit = firstOther(snap);
-    if (hit) return { id: hit.id, by: 'phone', name: hit.data()?.name || '' };
-  }
-  return null;
-}
-
-/**
- * Central activity log (Charter principles 9 + 14; RULE H3).
- * يضيف entry واحد append-only إلى `supplier_activity` داخل نفس الـ batch —
- * المصدر الوحيد لأحداث دورة حياة المورد، قابل للاستعلام بـ supplierId لعرض
- * التاريخ الكامل. النشاط المالي يبقى في financial_ledger (لا تكرار — principle 13).
- */
-function _logActivity(batch, db, { supplierId, supType, action, kind = 'op', userId, userName, meta }) {
-  const ref = doc(collection(db, 'supplier_activity'));
-  batch.set(ref, {
-    supplierId: supplierId || '',
-    supType: supType || '',
-    ...auditEntry({ action, userId, userName, kind, meta }),
-    createdAt: serverTimestamp(),
-  });
-  return ref.id;
-}
-
-// ══════════════════════════════════════════
 // PUBLIC API — CRUD ACTIONS
 // ══════════════════════════════════════════
 
@@ -165,7 +108,7 @@ export const supplierActions = {
    * إنشاء مورد جديد (printer أو shipper).
    * @returns { ok, errors, warnings, supplierId, supType }
    */
-  async create({ db, data, role, userId, userName, userPerms, allowDuplicate = false }) {
+  async create({ db, data, role, userId, userName, userPerms }) {
     const permErr = _checkManagePermission(role, userPerms);
     if (permErr) return { ok: false, errors: [permErr], warnings: [] };
 
@@ -173,37 +116,13 @@ export const supplierActions = {
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: v.warnings };
 
     const col = _collectionFor(data.supType);
-    const nameKey = _nameKey(data.name);
     try {
-      // Duplicate guard (Charter 4 + 7) — ملف واحد فقط لكل مورد
-      if (!allowDuplicate) {
-        const dup = await _findDuplicate(db, col, { nameKey, phone: data.phone });
-        if (dup) {
-          return {
-            ok: false,
-            errors: [`مورد بنفس ${dup.by === 'phone' ? 'رقم الهاتف' : 'الاسم'} موجود بالفعل ("${dup.name}") — استخدم الملف الحالي بدل إنشاء ملف مكرر`],
-            warnings: [],
-            duplicate: dup,
-          };
-        }
-      }
-
-      const batch = writeBatch(db);
-      const ref = doc(collection(db, col));
-      batch.set(ref, {
+      const ref = await addDoc(collection(db, col), {
         ...data,
-        nameKey,
         createdAt: serverTimestamp(),
         createdBy: userId || '',
         createdByName: userName || '',
       });
-      _logActivity(batch, db, {
-        supplierId: ref.id, supType: data.supType,
-        action: `🆕 إنشاء ملف مورد: ${data.name}`,
-        kind: 'op', userId, userName,
-        meta: { duplicateOverride: !!allowDuplicate },
-      });
-      await batch.commit();
       return {
         ok: true, errors: [], warnings: v.warnings,
         supplierId: ref.id, supType: data.supType, collection: col,
@@ -230,22 +149,12 @@ export const supplierActions = {
 
     const col = _collectionFor(supType);
     try {
-      const batch = writeBatch(db);
-      const patch = {
+      await updateDoc(doc(db, col, supplierId), {
         ...data,
         updatedAt: serverTimestamp(),
         updatedBy: userId || '',
         updatedByName: userName || '',
-      };
-      // keep nameKey in sync عند تعديل الاسم (حتى يبقى dedup دقيقاً)
-      if (data.name !== undefined) patch.nameKey = _nameKey(data.name);
-      batch.update(doc(db, col, supplierId), patch);
-      _logActivity(batch, db, {
-        supplierId, supType,
-        action: `✏️ تعديل ملف مورد${data.name ? ': ' + data.name : ''}`,
-        kind: 'edit', userId, userName,
       });
-      await batch.commit();
       return {
         ok: true, errors: [], warnings: v.warnings,
         supplierId, supType, action: 'update',
@@ -345,15 +254,7 @@ export const supplierActions = {
 
     const col = _collectionFor(supType);
     try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, col, supplierId));
-      _logActivity(batch, db, {
-        supplierId, supType,
-        action: '🗑️ حذف ملف مورد',
-        kind: 'op', userId, userName,
-        meta: { forced: !!force, references: refs?.breakdown || {} },
-      });
-      await batch.commit();
+      await deleteDoc(doc(db, col, supplierId));
       return {
         ok: true, errors: [], warnings: [],
         supplierId, supType, action: 'delete',
@@ -376,8 +277,7 @@ export const supplierActions = {
 
     const col = _collectionFor(supType);
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, col, supplierId), {
+      await updateDoc(doc(db, col, supplierId), {
         isArchived: true,
         status: 'archived',
         archivedAt: serverTimestamp(),
@@ -386,12 +286,6 @@ export const supplierActions = {
         archiveReason: reason || '',
         updatedAt: serverTimestamp(),
       });
-      _logActivity(batch, db, {
-        supplierId, supType,
-        action: `📁 أرشفة مورد${reason ? ': ' + reason : ''}`,
-        kind: 'op', userId, userName,
-      });
-      await batch.commit();
       return {
         ok: true, errors: [], warnings: [],
         supplierId, supType, action: 'archive',
@@ -414,21 +308,13 @@ export const supplierActions = {
 
     const col = _collectionFor(supType);
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, col, supplierId), {
+      await updateDoc(doc(db, col, supplierId), {
         isArchived: false,
         status: 'active',
         unarchivedAt: serverTimestamp(),
         unarchivedBy: userId || '',
-        unarchivedByName: userName || '',
         updatedAt: serverTimestamp(),
       });
-      _logActivity(batch, db, {
-        supplierId, supType,
-        action: '♻️ استعادة مورد من الأرشيف',
-        kind: 'op', userId, userName,
-      });
-      await batch.commit();
       return { ok: true, errors: [], warnings: [], supplierId, action: 'unarchive' };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل الاستعادة'], warnings: [] };

@@ -25,7 +25,6 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
-const { buildIncidentNotification, buildLedgerNotification } = require('./lib/employee-notify');
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -545,7 +544,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
     }
     const callerData = callerSnap.data() || {};
-    if (!isStrictAdmin(callerData.role)) {
+    if (callerData.!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'الـ Deep View-As للأدمن فقط (دورك: ' + (callerData.role || '—') + ')');
     }
 
@@ -564,7 +563,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('not-found', 'الموظف غير موجود في users');
     }
     const targetData = targetSnap.data() || {};
-    if (isStrictAdmin(targetData.role)) {
+    if (targetData.isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
     }
     try {
@@ -964,41 +963,6 @@ exports.onCriticalFinancialEntry = onDocumentCreated('financial_ledger/{entryId}
     data: { type: 'financial_alert', severity, entryId: e.params.entryId },
     link: '/financial-dashboard.html',
   });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-//   EMPLOYEE SELF-NOTIFICATIONS — incidents + financial penalties/bonuses
-// ════════════════════════════════════════════════════════════════════════════
-// لمّا يُسجَّل إخفاق أو خصم/مكافأة على موظف، يصله إشعار داخل التطبيق (الجرس 🔔)
-// تلقائياً. يعيد استخدام createInAppNotification + collection notifications (لا
-// collection جديد). القناة: in-app فقط. المستهدف هو الموظف نفسه (person-scoped).
-// منطق "ماذا يُرسَل" نقي في functions/lib/employee-notify.js (مُختبَر — G8).
-
-async function resolveEmployeeUid({ authUid, employeeId }) {
-  if (authUid) return authUid;
-  if (!employeeId) return '';
-  try {
-    const snap = await db.doc(`employees/${employeeId}`).get();
-    return snap.exists ? (snap.data().authUid || '') : '';
-  } catch (_) { return ''; }
-}
-
-exports.onEmployeeIncidentLogged = onDocumentCreated('employee_incidents/{incId}', async (e) => {
-  const inc = e.data?.data();
-  const payload = buildIncidentNotification(inc);
-  if (!payload) return;
-  const uid = await resolveEmployeeUid({ authUid: inc.authUid, employeeId: inc.employeeId });
-  if (!uid) return;
-  await createInAppNotification({ toUid: uid, ...payload, entityId: e.params.incId });
-});
-
-exports.onEmployeeFinancialEntry = onDocumentCreated('financial_ledger/{entryId}', async (e) => {
-  const entry = e.data?.data();
-  const payload = buildLedgerNotification(entry);
-  if (!payload) return;
-  const uid = await resolveEmployeeUid({ authUid: entry.authUid, employeeId: entry.employeeId });
-  if (!uid) return;
-  await createInAppNotification({ toUid: uid, ...payload, entityId: e.params.entryId });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2947,7 +2911,7 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
 
   const callerSnap = await db.collection('users').doc(req.auth.uid).get();
-  if (!callerSnap.exists || !isStrictAdmin(callerSnap.data().role)) {
+  if (!callerSnap.exists || callerSnap.data().!isStrictAdmin(role)) {
     throw new HttpsError('permission-denied', 'admin only');
   }
 
@@ -3198,7 +3162,7 @@ exports.migrateLegacyShipStages = onCall(
     // Admin only
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
+    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
 
@@ -3392,7 +3356,7 @@ exports.runProjectionDriftScan = onCall(
   async (req) => {
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
+    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
     // إعادة استخدام نفس logic (نقل لـ helper لاحقاً)

@@ -320,7 +320,7 @@ import { initNotifications } from "./notifications.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
-import { dedupEmployees, ORDER_STAGES } from "./orders.js";
+import { dedupEmployees } from "./orders.js";
 import { getRoleDefaultPermissions, canDo } from "./core/permissions-matrix.js";
 import { employeeActions } from "./employee-actions.js";
 
@@ -443,36 +443,36 @@ function calcKpiBreakdown(e,uid,mKey){
   const mStart=mKey+'-01';
   if(e.role==='graphic_designer'||e.role==='design_operator'){
     const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-    const done=mine.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage));
+    const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage));
     productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
   } else if(e.role==='customer_service'){
     const mine=allOrders.filter(o=>o.createdBy===uid&&(o.createdAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
     productivity=Math.min(40,mine.length*4);
   } else if(e.role==='production_agent'){
     const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-    const done=mine.filter(o=>[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage));
+    const done=mine.filter(o=>['shipping','archived'].includes(o.stage));
     productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
   } else if(e.role==='shipping_officer'){
-    const mine=allOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&(o.updatedAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
+    const mine=allOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&['shipping','archived'].includes(o.stage)&&(o.updatedAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
     productivity=Math.min(40,mine.length*5);
   } else { productivity=25; }
   // 3. الجودة (25) — نسبة الإتمام بدون إعادة عمل
   let quality=12;
   if(e.role==='graphic_designer'||e.role==='design_operator'){
     const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-    const good=mine.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&!(o.timeline||[]).some(t=>t.action?.includes('مراجعة')||t.action?.includes('رفض')));
+    const good=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)&&!(o.timeline||[]).some(t=>t.action?.includes('مراجعة')||t.action?.includes('رفض')));
     quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
   } else if(e.role==='customer_service'){
     const mine=allOrders.filter(o=>o.createdBy===uid);
-    const archived=mine.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
+    const archived=mine.filter(o=>o.stage==='archived');
     quality=mine.length?Math.min(25,Math.round(archived.length/mine.length*25)):12;
   } else if(e.role==='production_agent'){
     const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-    const good=mine.filter(o=>[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage));
+    const good=mine.filter(o=>['shipping','archived'].includes(o.stage));
     quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
   } else if(e.role==='shipping_officer'){
     const mine=allOrders.filter(o=>o.shippingOfficerId===uid||o.shippingOfficerId===e._id);
-    const done=mine.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
+    const done=mine.filter(o=>o.stage==='archived');
     quality=mine.length?Math.min(25,Math.round(done.length/mine.length*25)):12;
   } else { quality=15; }
   const total=Math.min(100,attendance+productivity+quality);
@@ -497,7 +497,7 @@ function renderAlerts(){
   const el=document.getElementById('emp-alerts');if(!el)return;
   const today=todayStr();
   const todayAtts=attendanceRecords.filter(a=>a.date===today);
-  const activeOrders=allOrders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
+  const activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   const alerts=[];
   employees.filter(e=>e.status==='active').forEach(e=>{
     const uid=e.authUid||e._id;
@@ -845,7 +845,7 @@ function updateStats(){
     return !todayAtts.some(a=>a.employeeUid===uid||a.employeeId===e._id);
   }).length;
   // High pressure: checked in + 4+ active orders assigned
-  const activeOrders=allOrders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
+  const activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   let highPressure=0;
   active.forEach(e=>{
     const uid=e.authUid||e._id;
@@ -967,7 +967,7 @@ window.renderList=function(){
   const fr=gv('f-role');
   // pre-compute helpers used by stat filter + sort
   const todayAttsAll=attendanceRecords.filter(a=>a.date===today);
-  const activeOrdsForStat=allOrders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
+  const activeOrdsForStat=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   let data=employees.filter(e=>{
     if(q&&!(e.name||'').toLowerCase().includes(q)&&!(e.phone||'').includes(q))return false;
     if(fr&&e.role!==fr)return false;
@@ -1057,7 +1057,7 @@ window.renderList=function(){
     __lastActivityMap=lastActivityMap;
     __lastActivityVer=__ordersVer;
   }
-  const activeOrdsAll=allOrders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
+  const activeOrdsAll=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   const periodOrders=ordersInPeriod();
   const pLbl=getPeriodLabel();
   el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:var(--space-md)">${pageData.map(e=>{
@@ -1081,8 +1081,8 @@ window.renderList=function(){
     let perfHtml='';
     if(e.role==='graphic_designer'||e.role==='design_operator'){
       const mine=myOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-      const printed=mine.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)).length;
-      const commission=mine.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage))
+      const printed=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
+      const commission=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage))
         .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(e.commissionPct)||0)/100),0);
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
         <span class="txt-meta-sm">🎨 ${pLbl}</span>
@@ -1107,13 +1107,13 @@ window.renderList=function(){
       </div>`;
     } else if(e.role==='production_agent'){
       const mine=myOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-      const done=mine.filter(o=>[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)).length;
+      const done=mine.filter(o=>['shipping','archived'].includes(o.stage)).length;
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
         <span class="txt-meta-sm">🏭 تنفيذ</span>
         <span class="txt-bold-base">${mine.length} أوردر · ${done} مكتمل</span>
       </div>`;
     } else if(e.role==='shipping_officer'){
-      const mine=myOrders.filter(o=>[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&(o.shippingOfficerId===uid||o.shippingOfficerId===e._id));
+      const mine=myOrders.filter(o=>['shipping','archived'].includes(o.stage)&&(o.shippingOfficerId===uid||o.shippingOfficerId===e._id));
       perfHtml=`<div class="emp-metric" style="margin-bottom:6px">
         <span class="txt-meta-sm">🚚 شحنات</span>
         <span class="txt-bold-base">${mine.length}</span>
@@ -1672,14 +1672,14 @@ function calcEmpCommission(e){
     return createdDate&&createdDate.getMonth()===mMon&&createdDate.getFullYear()===mYear;
   });
   if(e.role==='graphic_designer'||e.role==='design_operator'){
-    return mOrders.filter(o=>(o.designerId===uid||o.designerId===e._id)&&[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage))
+    return mOrders.filter(o=>(o.designerId===uid||o.designerId===e._id)&&['printing','production','shipping','archived'].includes(o.stage))
       .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(e.commissionPct)||0)/100),0);
   }
   if(e.role==='production_agent'){
     return mOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id).length*(parseFloat(e.commissionPerOrder)||0);
   }
   if(e.role==='shipping_officer'){
-    return mOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&[ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)).length*(parseFloat(e.commissionPerOrder)||0);
+    return mOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&['shipping','archived'].includes(o.stage)).length*(parseFloat(e.commissionPerOrder)||0);
   }
   if(e.role==='customer_service'){
     return mOrders.filter(o=>o.createdBy===uid).length*(parseFloat(e.commissionPerOrder)||0);
