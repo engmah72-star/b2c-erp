@@ -14,7 +14,7 @@
  *   - toggleQAMenu / closeQAMenu     — DOM-side helpers (id-based)
  */
 
-export const TAB_KEYS = ['overview', 'attendance', 'salaries', 'tasks', 'admin'];
+export const TAB_KEYS = ['overview', 'attendance', 'salaries', 'tasks', 'performance', 'admin'];
 
 // ── QA overflow menu ───────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ export function setupKeyboardShortcuts(handlers = {}) {
     if (handlers.isReady && !handlers.isReady()) return;
 
     // tab shortcuts 1-N
-    if (['1', '2', '3', '4', '5'].includes(e.key)) {
+    if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
       e.preventDefault();
       const idx = +e.key - 1;
       const key = tabKeys[idx];
