@@ -46,3 +46,25 @@ export function buildPipelineModel(order) {
 
   return { cancelled, currentKey: current, anchorIndex, steps };
 }
+
+// ── Next-action descriptors (pure) ──────────────────────────────────────
+// Maps the current stage to the SINGLE central orderActions method that
+// advances it. The stepper renders one button that calls this method; it
+// never contains transition logic itself (RULE A1 / PC1.4). `archived` and
+// `cancelled` are terminal → no next action.
+export const STAGE_NEXT_ACTION = Object.freeze({
+  design:     { method: 'submitToPrinting',   label: 'تسليم للطباعة', target: 'printing'   },
+  printing:   { method: 'submitToProduction', label: 'تسليم للتنفيذ', target: 'production' },
+  production: { method: 'submitToShipping',   label: 'تسليم للشحن',   target: 'shipping'   },
+  shipping:   { method: 'archiveOrder',       label: 'أرشفة الأوردر', target: 'archived'   },
+});
+
+/**
+ * Returns the next-action descriptor for an order's current stage, or null
+ * if terminal (archived/cancelled) or unknown. Pure — no I/O, no permissions.
+ * @returns {{ method:string, label:string, target:string }|null}
+ */
+export function getNextAction(order) {
+  const stage = order && order.stage;
+  return STAGE_NEXT_ACTION[stage] || null;
+}

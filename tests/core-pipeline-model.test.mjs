@@ -7,7 +7,8 @@
  * and derives state purely from order.stage (RULE W1.1 / L1.2).
  */
 import {
-  buildPipelineModel, PIPELINE_ORDER, STEP_STATE,
+  buildPipelineModel, getNextAction, STAGE_NEXT_ACTION,
+  PIPELINE_ORDER, STEP_STATE,
 } from '../core/process-pipeline/pipeline-model.js';
 
 let passed = 0, failed = 0;
@@ -88,6 +89,42 @@ test('steps keys/indices align with PIPELINE_ORDER', () => {
     assertEq(s.key, PIPELINE_ORDER[i]);
     assertEq(s.index, i);
   });
+});
+
+// ── getNextAction: maps each stage to the central orderActions method ──
+test('design → submitToPrinting', () => {
+  assertEq(getNextAction({ stage: 'design' }).method, 'submitToPrinting');
+});
+test('printing → submitToProduction', () => {
+  assertEq(getNextAction({ stage: 'printing' }).method, 'submitToProduction');
+});
+test('production → submitToShipping', () => {
+  assertEq(getNextAction({ stage: 'production' }).method, 'submitToShipping');
+});
+test('shipping → archiveOrder', () => {
+  assertEq(getNextAction({ stage: 'shipping' }).method, 'archiveOrder');
+});
+test('archived → no next action (terminal)', () => {
+  assertEq(getNextAction({ stage: 'archived' }), null);
+});
+test('cancelled → no next action (terminal)', () => {
+  assertEq(getNextAction({ stage: 'cancelled' }), null);
+});
+test('unknown/missing stage → null', () => {
+  assertEq(getNextAction({ stage: 'weird' }), null);
+  assertEq(getNextAction({}), null);
+  assertEq(getNextAction(undefined), null);
+});
+test('every next-action target is the immediate next stage in PIPELINE_ORDER', () => {
+  for (const [stage, d] of Object.entries(STAGE_NEXT_ACTION)) {
+    const i = PIPELINE_ORDER.indexOf(stage);
+    assertEq(d.target, PIPELINE_ORDER[i + 1], `for ${stage}`);
+  }
+});
+test('every descriptor has a non-empty Arabic label', () => {
+  for (const d of Object.values(STAGE_NEXT_ACTION)) {
+    if (!d.label || typeof d.label !== 'string') throw new Error('missing label');
+  }
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

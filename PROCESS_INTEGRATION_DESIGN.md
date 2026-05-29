@@ -173,8 +173,16 @@ Phase 1 — Pipeline Stepper component (view-only, flagged)   ✅ مُنفَّذ
           • tests/core-pipeline-model.test.mjs (10 passing)
           التفعيل: ?feat.process.pipelineView=1 أو localStorage feat.process.pipelineView=1
         ↓
-Phase 2 — توحيد زر "الفعل التالي" عبر orderActions.* داخل الـ stepper
+Phase 2 — توحيد زر "الفعل التالي" عبر orderActions.* داخل الـ stepper   ✅ مُنفَّذ
           (يستبدل أزرار submit المبعثرة تدريجياً — page-by-page)
+          • pipeline-model.js: getNextAction() + STAGE_NEXT_ACTION (pure map)
+            design→submitToPrinting · printing→submitToProduction ·
+            production→submitToShipping · shipping→archiveOrder
+          • pipeline-stepper.js: زر واحد يمرّ عبر orderActions.* فقط
+            (errors تمنع · warnings تؤكّد · gated بـ STAGE_PERMISSIONS — P1.5)
+          • order.html: ctx { db, role, userId, userName, toast, onChanged }
+          • tests: 19 passing (تشمل mapping + terminal stages)
+          ملاحظة: أزرار التولبار legacy تبقى تعمل alongside (E1) خلف نفس الـ flag
         ↓
 Phase 3 — شريط الحالة المالية في الرأس (read-only من FSE projection)
         ↓
