@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=38">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<link rel="stylesheet" href="core/process-pipeline/pipeline-stepper.css?v=1">
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -354,6 +355,7 @@ import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
 import { PRODUCT_STATUS, STAGE_PERMISSIONS } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
+import { mountPipelineStepper } from "./core/process-pipeline/pipeline-stepper.js";
 
 // ── State ──
 const orderId = new URLSearchParams(location.search).get('id');
@@ -500,6 +502,11 @@ function renderOrder(o) {
   if (phone) html += '<div class="order-id" style="direction:ltr">' + esc(phone) + '</div>';
   html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span></div>';
   html += '</div>';
+
+  // Process Integration Phase 1 — pipeline stepper mount (view-only, flag-gated).
+  // Placeholder is always rendered; mountPipelineStepper() is a no-op when the
+  // flag is off, so default behavior is unchanged (RULE E1.8).
+  html += '<div id="pipeline-stepper-mount"></div>';
 
   // (Quick actions moved to sticky toolbar — see renderToolbar)
 
@@ -716,6 +723,22 @@ function renderOrder(o) {
 
   $('order-detail').className = '';
   $('order-detail').innerHTML = html;
+
+  // Mount pipeline stepper (no-op unless feat.process.pipelineView is enabled).
+  // Phase 2: ctx wires the single next-action button through orderActions.*.
+  // The button only renders if the role may advance from the current stage.
+  try {
+    mountPipelineStepper({
+      container: $('pipeline-stepper-mount'),
+      order: o,
+      ctx: {
+        db, role: currentRole, perms: currentUserPerms,
+        userId: currentUser?.uid || '', userName,
+        toast,
+        onChanged: () => { /* onSnapshot re-renders automatically */ },
+      },
+    });
+  } catch (_) {}
 }
 
 // ── Toolbar menu (⋯ المزيد) ──
