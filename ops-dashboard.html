@@ -68,7 +68,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { setText } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { dedupEmployees } from "./orders.js";
+import { dedupEmployees, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { employeeActions } from "./employee-actions.js";
 import { calcRem } from "./core/order-math.js";
 let allOrders=[],myTasks=[],myAttendance=[],todayAtt=null;
@@ -114,7 +114,7 @@ onAuthStateChanged(auth,async u=>{
     const snap=await getDoc(doc(db,'users',u.uid));
     if(!snap.exists()){window.location.href='login.html';return;}
     const d=snap.data();
-    if(!['admin','operation_manager'].includes(d.role)){window.location.href='login.html';return;}
+    if(![USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(d.role)){window.location.href='login.html';return;}
     userName=d.name||u.email;
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=userName[0].toUpperCase();
@@ -138,7 +138,7 @@ function startListeners(){
   onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     scheduleRender();
-    setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
+    setText('sub',allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED).length+' أوردر نشط');
   });
   onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid),limit(100)),snap=>{
     myTasks=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(t=>t.status==='pending')
@@ -180,7 +180,7 @@ function startListeners(){
 
 function render(){
   const el=document.getElementById('main-content');if(!el)return;
-  const active=allOrders.filter(o=>o.stage!=='archived');
+  const active=allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED);
   const monthly=allOrders.filter(o=>isThisMonth(o.createdAt));
   const lateOrds=active.filter(o=>o.deadline&&delay(o.deadline)>0).sort((a,b)=>delay(b.deadline)-delay(a.deadline));
   const remOrds=active.filter(o=>calcRem(o)>0).sort((a,b)=>calcRem(b)-calcRem(a));
@@ -430,7 +430,7 @@ function renderOrds(data){
 
 window.switchTab=function(t){
   activeTab=t;
-  const active=allOrders.filter(o=>o.stage!=='archived');
+  const active=allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED);
   const lateOrds=active.filter(o=>o.deadline&&delay(o.deadline)>0);
   const remOrds=active.filter(o=>calcRem(o)>0);
   const data=t==='late'?lateOrds:t==='rem'?remOrds:active.slice(0,20);
