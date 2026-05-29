@@ -139,7 +139,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 import { mountPipelineStepper } from "./core/process-pipeline/pipeline-stepper.js";
 
@@ -212,7 +212,7 @@ function renderToolbar(o) {
   // (مفيش أي زر يشحن من الواجهة). الـ action المركزي يتحقق من الشروط (done +
   // بنود تكلفة) ويتعامل مع التحذيرات و admin override.
   const canShip = (STAGE_PERMISSIONS.production || []).includes(currentRole);
-  if (o.stage === 'production' && canShip) {
+  if (o.stage === ORDER_STAGES.PRODUCTION && canShip) {
     html += '<button type="button" class="order-tb-btn primary" onclick="openShipPicker()" title="تحويل للشحن">🚚 <span class="lbl">تحويل للشحن</span></button>';
   }
   html += '<a class="order-tb-btn" href="waybill.html?id=' + id + '" target="_blank" rel="noopener" title="البوليصة">🧾 <span class="lbl">البوليصة</span></a>';
@@ -232,7 +232,7 @@ function renderToolbar(o) {
     html += '<a class="order-tb-menu-item" href="clients.html?openClient=' + encodeURIComponent(o.clientId) + '">👤 ملف العميل</a>';
   }
   html += '<div class="order-tb-menu-divider"></div>';
-  if (o.stage !== 'archived') {
+  if (o.stage !== ORDER_STAGES.ARCHIVED) {
     html += '<button type="button" class="order-tb-menu-item danger" onclick="archiveOrder()">📁 أرشفة الأوردر</button>';
   }
   html += '</div>';  // .order-tb-menu
@@ -297,7 +297,7 @@ function renderOrder(o) {
   // (Quick actions moved to sticky toolbar — see renderToolbar)
 
   // ── Status quick buttons (production) ──
-  if (o.stage === 'production' || o.stage === 'printing') {
+  if (o.stage === ORDER_STAGES.PRODUCTION || o.stage === ORDER_STAGES.PRINTING) {
     html += '<div class="order-section">';
     html += '<div class="order-section-head">🚦 حالة التنفيذ <span style="font-size:11px;color:var(--dim2);font-weight:600">اضغط للتغيير</span></div>';
     html += '<div class="order-section-body">';
@@ -339,7 +339,7 @@ function renderOrder(o) {
     return k;
   };
   const canSeeCostNow = ROLE_CAN_SEE_COST.has(currentRole);
-  const canRecordCostNow = ['admin','operation_manager','production_agent'].includes(currentRole);
+  const canRecordCostNow = [USER_ROLES.ADMIN, USER_ROLES.OPERATION_MANAGER, USER_ROLES.PRODUCTION_AGENT].includes(currentRole);
   // helper: get product images (array)
   const _prodImgs = (p) => {
     const a = Array.isArray(p?.designImages) ? p.designImages.filter(Boolean) : [];
@@ -429,7 +429,7 @@ function renderOrder(o) {
             html += '</div>';
           }
         }
-        if (canRecordCostNow && o.stage !== 'cancelled' && o.stage !== 'archived') {
+        if (canRecordCostNow && o.stage !== ORDER_STAGES.CANCELLED && o.stage !== ORDER_STAGES.ARCHIVED) {
           html += '<button type="button" class="prod-add-cost-btn" onclick="openCostModal(' + pi + ')">＋ سجّل بند تكلفة لهذا المنتج</button>';
         }
         html += '</div>';
@@ -602,7 +602,7 @@ window.confirmShip = async function() {
     }
     // errors → admin override فقط (مع سبب إلزامي)
     if (!r.ok) {
-      const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
+      const isAdmin = currentRole === USER_ROLES.ADMIN || currentRole === USER_ROLES.OPERATION_MANAGER;
       if (!isAdmin || !r.errors?.length) { if (btn) btn.disabled = false; return toast('⛔ ' + (r.errors || []).join(' · '), 'err'); }
       if (!confirm('⛔ مشاكل تمنع التحويل:\n• ' + r.errors.join('\n• ') + '\n\nتحويل رغم ذلك؟ (admin override)')) { if (btn) btn.disabled = false; return; }
       const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
@@ -704,7 +704,7 @@ onAuthStateChanged(auth, async u => {
 
   // Load deps for inline cost entry — only for roles that can record cost (RULE 8 / P1.2)
   // production_agent + admin + operation_manager.
-  const canRecordCost = ['admin','operation_manager','production_agent'].includes(currentRole);
+  const canRecordCost = [USER_ROLES.ADMIN, USER_ROLES.OPERATION_MANAGER, USER_ROLES.PRODUCTION_AGENT].includes(currentRole);
   if (canRecordCost) {
     try {
       onSnapshot(query(collection(db,'suppliers_v2'), limit(500)), snap => {
@@ -931,7 +931,7 @@ window.selectCostTypeChip = function(btn, type) {
 
 window.openCostModal = function(prodIdx) {
   if (!currentOrder) return;
-  if (!['admin','operation_manager','production_agent'].includes(currentRole)) {
+  if (![USER_ROLES.ADMIN, USER_ROLES.OPERATION_MANAGER, USER_ROLES.PRODUCTION_AGENT].includes(currentRole)) {
     return toast('ليس لديك صلاحية تسجيل بنود تكلفة', 'err');
   }
   activeProdIdxForCost = prodIdx;
