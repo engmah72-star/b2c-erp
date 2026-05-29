@@ -178,6 +178,10 @@ replaces the `<style>` at the same position, after the page's other stylesheets)
 | 2026-05-29 | `claude/extract-order-style` | `order.html` | → new `order.css` | **213** (block of 215 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
 | 2026-05-29 | `claude/extract-accounts-style` | `accounts.html` | → new `accounts.css` | **56** (block of 58 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
 | 2026-05-29 | `claude/extract-myrequests-style` | `my-requests.html` | → new `my-requests.css` | **40** (block of 42 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
+| 2026-05-29 | `claude/extract-opsdash-style` | `ops-dashboard.html` | → new `ops-dashboard.css` | **34** | **none** |
+| 2026-05-29 | `claude/extract-findash-style` | `financial-dashboard.html` | → new `financial-dashboard.css` (anti-FOUC `auth-gate` style kept inline by design) | **33** | **none** |
+| 2026-05-29 | `claude/extract-ledger-style` | `ledger.html` | → new `ledger.css` | **32** | **none** |
+| 2026-05-29 | `claude/extract-archive-style` | `archive.html` | → new `archive.css` | **25** | **none** |
 
 **Method (safe, repeatable):**
 1. Confirm a single contiguous `<style>` block of **static** CSS (no templated runtime values).
