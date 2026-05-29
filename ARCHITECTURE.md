@@ -328,13 +328,18 @@ Existing system (engine solid; tokens/theme partial)
 6. New-module template + CI guards for the forbidden edges        → lock the architecture
 ```
 
-> **Step 3 status (2026-05-29):** the cascade is **live** for the 7 brand accent
-> colors in `shared.css`: `palette (--red-500 … --orange-500, per-theme)` →
-> `BRAND (--brand-danger/primary/…, global)` → legacy aliases (`--r … --o`).
-> All 43 pages were untouched and resolve byte-identically. White-label is proven
-> by `themes/example-tenant.css` (override palette/brand under `[data-tenant]`).
-> *Next:* extend the cascade to `--bg*/--line/--snow/--st-*`, then the
-> `data-tenant` loader (step 4) + `tenant_branding` doc (step 5).
+> **Step 3 status (2026-05-29):** the cascade is **live** for both brand accents
+> **and neutrals** in `shared.css`:
+> - **Brand accents:** `palette (--red-500 … --orange-500, per-theme)` →
+>   `BRAND (--brand-danger/primary/…, global)` → aliases (`--r … --o`).
+> - **Neutrals:** themed semantic `--surface-* / --border-* / --text-*` (per-theme)
+>   → aliases (`--bg/--bg2…/--line/--line2/--snow/--dim/--dim2`).
+>
+> All 43 pages untouched; every chain verified byte-identical in dark/light/auto.
+> White-label proven by `themes/example-tenant.css` (override palette/brand/surface
+> under `[data-tenant]`). Remaining literals: `--st-*` (already global+semantic) and
+> derived helpers (`--hover`, shadows, rings) — optional later.
+> *Next:* the `data-tenant` loader (step 4) + `tenant_branding` doc (step 5).
 
 **Never:** delete a load-bearing layer before its replacement is proven (E1.1).
 **Always:** the operational engine keeps running, untouched, through every step.
