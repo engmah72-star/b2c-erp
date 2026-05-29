@@ -474,7 +474,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
+import { ORDER_STAGES, buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // God-page decomp PR-2 (design): renderPanel HTML extracted.
@@ -855,7 +855,7 @@ function startListeners(){
   if(isAdmin2){
     // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
     // a healthy design pipeline rarely exceeds 100 active orders).
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    onSnapshot(query(collection(db,'orders'),where('stage','==',ORDER_STAGES.DESIGN),limit(500)),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
@@ -870,7 +870,7 @@ function startListeners(){
     });
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    onSnapshot(query(collection(db,'orders'),where('stage','==',ORDER_STAGES.DESIGN),limit(500)),snap=>{
       window.markSynced&&window.markSynced();
       const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
       // CS تشوف اللي عملتها + اللي مش مكلّف
@@ -888,7 +888,7 @@ function startListeners(){
     });
   } else {
     // المصمم — أوردراته المكلّف بيها (limit 200 — per-designer cap)
-    onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design'),limit(200)),snap=>{
+    onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==',ORDER_STAGES.DESIGN),limit(200)),snap=>{
       const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
       window.__assignedDesign=assigned;
       const unassigned=(window.__unassignedDesign||[]);
@@ -906,7 +906,7 @@ function startListeners(){
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
     });
     // أوردرات التصميم بدون مصمم (للسحب) — cap matches admin/CS view
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    onSnapshot(query(collection(db,'orders'),where('stage','==',ORDER_STAGES.DESIGN),limit(500)),snap=>{
       window.__unassignedDesign=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(o=>!o.designerId);
       const assigned=(window.__assignedDesign||[]);
       const unassigned=window.__unassignedDesign;
@@ -1452,7 +1452,7 @@ window.saveOrder=async function(){
   // PR-846: 15s timeout safety net — نفس pattern saveClient/saveNewOrder.
   // الـ idempotency layer بتمنع double-write لو المستخدم retried بعد الـ timeout.
   const actionPromise=orderActions.createOrder({
-    db,orderId,stage:'design',
+    db,orderId,stage:ORDER_STAGES.DESIGN,
     clientId:selClient._id,clientName:selClient.name,clientPhone:selClient.phone,
     products:prods,salePrice:0,deposit:dep,
     walletId:dep>0?wId:'',walletName:dep>0?wName:'',
@@ -1516,7 +1516,7 @@ window.openAssignDesigner=async function(){
 
     // احسب حمل العمل لكل مصمم
     const workload={};
-    orders.filter(o=>o.stage==='design'&&o._id!==activeId).forEach(o=>{
+    orders.filter(o=>o.stage===ORDER_STAGES.DESIGN&&o._id!==activeId).forEach(o=>{
       if(o.designerId)workload[o.designerId]=(workload[o.designerId]||0)+1;
     });
 
@@ -1623,7 +1623,7 @@ window.confirmSplitOrder=async function(){
   if(!indices.length)return toast('⚠️ اختر منتجاً واحداً على الأقل','err');
   // pre-flight via buildOrderSplit (read-only) للتأكيد قبل العمل الفعلي
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const preview=buildOrderSplit({order:o,productIndices:indices,role:currentRole,userId:currentUser?.uid||'',userName,targetStage:'printing'});
+  const preview=buildOrderSplit({order:o,productIndices:indices,role:currentRole,userId:currentUser?.uid||'',userName,targetStage:ORDER_STAGES.PRINTING});
   if(!preview.ok)return toast('⛔ '+(preview.errors||[]).join(' · '),'err');
   if(!confirm(`فصل ${preview.splitCount} منتجات في أوردر فرعي ينتقل للطباعة؟`))return;
   const r=await orderActions.splitDesignOrder({db,orderId:activeId,indices,role:currentRole,userId:currentUser?.uid||'',userName});
