@@ -138,7 +138,54 @@
     else if (mq.addListener) mq.addListener(handler); // Safari قديم
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // WHITE-LABEL TENANT LOADER (static CSS, no backend) — ARCHITECTURE.md §6
+  // ────────────────────────────────────────────────────────────────
+  // No-op unless a tenant is resolved → default deployments are unaffected.
+  // Resolution order (first wins), then persisted:
+  //   1. ?tenant=<id>   2. localStorage b2c-tenant
+  //   3. existing <html data-tenant>   4. HOST_TENANTS[hostname]
+  // Loads themes/tenants/<id>.css which overrides palette/brand/surface tokens
+  // under :root[data-tenant="<id>"] — re-skins the whole product with ZERO
+  // changes to any page, component, or the business engine.
+  // ════════════════════════════════════════════════════════════════
+  const TENANT_KEY = 'b2c-tenant';
+  // Map deployment hostnames → tenant id for SaaS white-label (optional):
+  const HOST_TENANTS = { /* 'acme.example.com': 'acme' */ };
+
+  function sanitizeTenant(t){
+    return String(t || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+  }
+  function resolveTenant(){
+    try {
+      const u = new URLSearchParams(window.location.search).get('tenant');
+      if (u){ try { localStorage.setItem(TENANT_KEY, u); } catch(_){} return u; }
+    } catch(_){}
+    try { const ls = localStorage.getItem(TENANT_KEY); if (ls) return ls; } catch(_){}
+    const attr = document.documentElement.getAttribute('data-tenant');
+    if (attr) return attr;
+    try { const h = HOST_TENANTS[window.location.hostname]; if (h) return h; } catch(_){}
+    return '';
+  }
+  function applyTenant(){
+    const t = sanitizeTenant(resolveTenant());
+    if (!t) return;                                  // default deployment → no-op
+    document.documentElement.setAttribute('data-tenant', t);
+    if (document.querySelector('link[data-tenant-css]')) return; // already injected
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.setAttribute('data-tenant-css', t);
+    link.href = 'themes/tenants/' + t + '.css';
+    // If the tenant sheet is missing, fall back cleanly to the default identity.
+    link.onerror = () => {
+      try { link.remove(); } catch(_){}
+      document.documentElement.removeAttribute('data-tenant');
+    };
+    (document.head || document.documentElement).appendChild(link);
+  }
+
   // ── INIT — يجري فورًا قبل أي شيء ──
+  applyTenant();
   apply(getStored());
   watchSystem();
 
@@ -193,6 +240,18 @@
     effective: () => effective(getStored()),
     cycle,
     toggle: () => setTheme(effective(getStored()) === 'dark' ? 'light' : 'dark'),
+    // White-label tenant (static loader)
+    getTenant: () => { try { return localStorage.getItem(TENANT_KEY) || document.documentElement.getAttribute('data-tenant') || ''; } catch(_) { return document.documentElement.getAttribute('data-tenant') || ''; } },
+    setTenant: (t) => {
+      const v = sanitizeTenant(t);
+      try { v ? localStorage.setItem(TENANT_KEY, v) : localStorage.removeItem(TENANT_KEY); } catch(_){}
+      // remove any previously injected sheet, then re-apply
+      const prev = document.querySelector('link[data-tenant-css]');
+      if (prev) { try { prev.remove(); } catch(_){} }
+      document.documentElement.removeAttribute('data-tenant');
+      applyTenant();
+      return v;
+    },
   };
   window.B2CTheme = API;
 
