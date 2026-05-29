@@ -322,11 +322,19 @@ Existing system (engine solid; tokens/theme partial)
    ↓  each step = one PR, one concern, reversible, flag-guarded where user-facing
 1. Tokenize remaining raw colors/sizes  → L6 single source        (UI_DEBT.md plan, in progress)
 2. Extract inline <style> → component CSS → L5 consolidation
-3. Introduce 3-tier token cascade (palette→brand→component)       → enables theming
-4. themes/ folder + data-theme/tenant loader extension            → L7 unlimited themes
+3. Introduce 3-tier token cascade (palette→brand→component)       ✅ DONE (brand accent colors)
+4. themes/ folder + data-theme/tenant loader extension            → L7 unlimited themes  (themes/ created)
 5. tenant_branding doc + override CSS                             → L8 white-label
 6. New-module template + CI guards for the forbidden edges        → lock the architecture
 ```
+
+> **Step 3 status (2026-05-29):** the cascade is **live** for the 7 brand accent
+> colors in `shared.css`: `palette (--red-500 … --orange-500, per-theme)` →
+> `BRAND (--brand-danger/primary/…, global)` → legacy aliases (`--r … --o`).
+> All 43 pages were untouched and resolve byte-identically. White-label is proven
+> by `themes/example-tenant.css` (override palette/brand under `[data-tenant]`).
+> *Next:* extend the cascade to `--bg*/--line/--snow/--st-*`, then the
+> `data-tenant` loader (step 4) + `tenant_branding` doc (step 5).
 
 **Never:** delete a load-bearing layer before its replacement is proven (E1.1).
 **Always:** the operational engine keeps running, untouched, through every step.
