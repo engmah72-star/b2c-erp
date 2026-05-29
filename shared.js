@@ -40,8 +40,8 @@ export { ROLES };
 // Which pages each role can access
 // ملاحظة: 'approvals' مفتوح للجميع — فيها إنشاء الطلبات + تأكيد الاستلام
 export const ROLE_PAGES = {
-  admin:            ['clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','role-viewer','suggestions-admin','settings','returns','marketplace'],
-  operation_manager:['clients','design','production','print','shipping','approvals','suppliers','reports','employees','role-viewer','suggestions-admin','returns','marketplace'],
+  admin:            ['clients','design','production','print','shipping','accounts','approvals','products','suppliers','reports','employees','role-viewer','settings','returns'],
+  operation_manager:['clients','design','production','print','shipping','approvals','suppliers','reports','employees','role-viewer','returns'],
   customer_service: ['clients','design','approvals','returns'],
   graphic_designer: ['design','approvals'],
   design_operator:  ['design','approvals','suppliers'],
@@ -409,13 +409,11 @@ export function renderSidebar(activePage) {
     { key:'accounts',   ico:'💰', label:'الحسابات' },
     { key:'approvals',  ico:'🔐', label:'الاعتمادات' },
     { key:'returns',    ico:'↩️',  label:'المرتجعات' },
-    { key:'marketplace',ico:'🏛️', label:'المنصة (Marketplace)' },
     { key:'products',   ico:'◈',  label:'المنتجات' },
     { key:'suppliers',  ico:'▣',  label:'الموردين' },
     { key:'employees',  ico:'👥', label:'الموظفين' },
     { key:'role-viewer', ico:'🔍', label:'معاينة الأدوار' },
     { key:'reports',    ico:'📊', label:'التقارير' },
-    { key:'suggestions-admin', ico:'💡', label:'اقتراحات الموظفين' },
     { key:'settings',   ico:'⚙️', label:'الإعدادات' },
   ];
 
