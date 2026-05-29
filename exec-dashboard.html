@@ -127,7 +127,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
+import { dedupEmployees, resolveDesigner, isDelivered, ORDER_STAGES, USER_ROLES } from "./orders.js";
 import { mountDateRangePicker } from "./date-range-picker.js";
 import { calcRem } from "./core/order-math.js";
 
@@ -175,7 +175,7 @@ onAuthStateChanged(auth,async u=>{
     const snap=await getDoc(doc(db,'users',u.uid));
     const ud=snap.data()||{};
     const role=ud.role||'';
-    if(!['admin','operation_manager'].includes(role)){
+    if(![USER_ROLES.ADMIN,USER_ROLES.OPERATION_MANAGER].includes(role)){
       const RDASH={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
       location.href=RDASH[role]||'login.html';return;
     }
@@ -280,12 +280,12 @@ function renderAll(){
 //  1 — OPERATIONS KPIs
 // ═══════════════════════════════════════
 function renderOps(){
-  const active=orders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const active=orders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
   const late=active.filter(o=>o.deadline&&delayDays(o.deadline)>0);
-  const design=active.filter(o=>o.stage==='design');
-  const printing=active.filter(o=>o.stage==='printing');
-  const production=active.filter(o=>o.stage==='production');
-  const shipping=active.filter(o=>o.stage==='shipping');
+  const design=active.filter(o=>o.stage===ORDER_STAGES.DESIGN);
+  const printing=active.filter(o=>o.stage===ORDER_STAGES.PRINTING);
+  const production=active.filter(o=>o.stage===ORDER_STAGES.PRODUCTION);
+  const shipping=active.filter(o=>o.stage===ORDER_STAGES.SHIPPING);
 
   const lateDesign=design.filter(o=>delayDays(o.deadline)>0).length;
   const latePrint=printing.filter(o=>delayDays(o.deadline)>0).length;
@@ -332,7 +332,7 @@ function renderFin(){
   const rangeNet=rangeIn-rangeOut;
 
   // Total remaining is global (not period-bound)
-  const totalRem=orders.filter(o=>!['archived'].includes(o.stage)).reduce((s,o)=>s+calcRem(o),0);
+  const totalRem=orders.filter(o=>![ORDER_STAGES.ARCHIVED].includes(o.stage)).reduce((s,o)=>s+calcRem(o),0);
 
   const fCard=(ico,lbl,val,col,sub)=>`
     <div class="fkpi" onclick="navigatePage('accounts.html')">
@@ -433,7 +433,7 @@ function renderNetwork(){
 //  3 — CRITICAL ALERTS
 // ═══════════════════════════════════════
 function renderAlerts(){
-  const active=orders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const active=orders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
   const alerts=[];
 
   // متأخرة
@@ -449,7 +449,7 @@ function renderAlerts(){
     }));
 
   // بدون بنود تكلفة بعد التصميم
-  active.filter(o=>['production','shipping'].includes(o.stage)&&!(o.costItems||[]).length)
+  active.filter(o=>[ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(o.stage)&&!(o.costItems||[]).length)
     .forEach(o=>alerts.push({
       sev:'r',i:'💸',
       t:`بدون تكلفة — ${o.clientName||'—'}`,
@@ -459,7 +459,7 @@ function renderAlerts(){
     }));
 
   // بدون ملف تصميم بعد مرحلة التصميم
-  active.filter(o=>['printing','production','shipping'].includes(o.stage))
+  active.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(o.stage))
     .filter(o=>!(o.products||[]).some(p=>p.designImageUrl))
     .forEach(o=>alerts.push({
       sev:'y',i:'🖼️',
@@ -470,7 +470,7 @@ function renderAlerts(){
     }));
 
   // شحنات لم تُسجَّل (stage=shipping ولم تتحول لـ delivered)
-  active.filter(o=>o.stage==='shipping'&&isDelivered(o))
+  active.filter(o=>o.stage===ORDER_STAGES.SHIPPING&&isDelivered(o))
     .forEach(o=>alerts.push({
       sev:'y',i:'📦',
       t:`شحنة غير مسجّلة — ${o.clientName||'—'}`,
@@ -480,7 +480,7 @@ function renderAlerts(){
     }));
 
   // تحصيل متأخر — أوردرات منجزة عليها مستحقات
-  orders.filter(o=>['delivered','archived'].includes(o.stage)&&calcRem(o)>0)
+  orders.filter(o=>['delivered',ORDER_STAGES.ARCHIVED].includes(o.stage)&&calcRem(o)>0)
     .sort((a,b)=>calcRem(b)-calcRem(a))
     .slice(0,4)
     .forEach(o=>alerts.push({
@@ -530,7 +530,7 @@ function renderHealth(){
   const {startMs,endMs,label:rangeLabel}=CURRENT_RANGE;
   const inRange=(ts)=>ts>=startMs && ts<=endMs;
 
-  const active=orders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const active=orders.filter(o=>![ORDER_STAGES.ARCHIVED,'delivered'].includes(o.stage));
   const late=active.filter(o=>o.deadline&&delayDays(o.deadline)>0);
 
   // Period-bound order value and cash movement
@@ -541,9 +541,9 @@ function renderHealth(){
   const mOut=mTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
 
   // Alerts count
-  const noCost=active.filter(o=>['production','shipping'].includes(o.stage)&&!(o.costItems||[]).length).length;
-  const noDesign=active.filter(o=>['printing','production','shipping'].includes(o.stage)&&!(o.products||[]).some(p=>p.designImageUrl)).length;
-  const overdueCollect=orders.filter(o=>['delivered','archived'].includes(o.stage)&&calcRem(o)>0).length;
+  const noCost=active.filter(o=>[ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(o.stage)&&!(o.costItems||[]).length).length;
+  const noDesign=active.filter(o=>[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(o.stage)&&!(o.products||[]).some(p=>p.designImageUrl)).length;
+  const overdueCollect=orders.filter(o=>['delivered',ORDER_STAGES.ARCHIVED].includes(o.stage)&&calcRem(o)>0).length;
   const totalAlerts=late.length+noCost+noDesign+overdueCollect;
 
   // Sub-scores (0–25 each)
@@ -625,7 +625,7 @@ function renderEmployees(){
     if(!designerMap[key])designerMap[key]={id:key,name,total:0,rejected:0,done:0};
     designerMap[key].total++;
     if(o.designStatus==='rejected')designerMap[key].rejected++;
-    if(['delivered','archived'].includes(o.stage))designerMap[key].done++;
+    if(['delivered',ORDER_STAGES.ARCHIVED].includes(o.stage))designerMap[key].done++;
   });
 
   // Count timeline actions per user name
@@ -854,7 +854,7 @@ function renderProducts(){
       }
 
       // Completion time for delivered orders
-      if(['delivered','archived'].includes(o.stage)&&o.createdAt?.seconds){
+      if(['delivered',ORDER_STAGES.ARCHIVED].includes(o.stage)&&o.createdAt?.seconds){
         const created=o.createdAt.seconds*1000;
         const dStr=o.deliveredDate||o.updatedAt;
         let delivered=0;
