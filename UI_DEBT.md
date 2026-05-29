@@ -176,6 +176,7 @@ replaces the `<style>` at the same position, after the page's other stylesheets)
 | Date | PR / Branch | Page | Inline `<style>` → file | Lines moved | Visual change |
 |------|-------------|------|--------------------------|------------:|---------------|
 | 2026-05-29 | `claude/extract-order-style` | `order.html` | → new `order.css` | **213** (block of 215 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
+| 2026-05-29 | `claude/extract-accounts-style` | `accounts.html` | → new `accounts.css` | **56** (block of 58 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
 
 **Method (safe, repeatable):**
 1. Confirm a single contiguous `<style>` block of **static** CSS (no templated runtime values).
