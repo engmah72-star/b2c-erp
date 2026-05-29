@@ -164,3 +164,25 @@ non-identical change → belongs to 2B-2/2C, not the safe byte-equal subset.
 
 **Next candidates (same method):** `clients.css`, `clients-control-center.css`
 (`runtime-shell.css` is Stable Core N1.4 → needs 2-reviewer, defer).
+
+---
+
+## 8) Execution log — `<style>` extraction (2D · RULE U1.6)
+
+Move large inline `<style>` blocks out of HTML pages into companion `*.css`
+files, **verbatim** (byte-identical), preserving cascade order (the new `<link>`
+replaces the `<style>` at the same position, after the page's other stylesheets).
+
+| Date | PR / Branch | Page | Inline `<style>` → file | Lines moved | Visual change |
+|------|-------------|------|--------------------------|------------:|---------------|
+| 2026-05-29 | `claude/extract-order-style` | `order.html` | → new `order.css` | **213** (block of 215 → 1 `<link>`) | **none** (verbatim move, same cascade position) |
+
+**Method (safe, repeatable):**
+1. Confirm a single contiguous `<style>` block of **static** CSS (no templated runtime values).
+2. Extract its inner content verbatim into the companion `*.css` (create if absent).
+3. Replace the whole `<style>…</style>` with one `<link>` at the **same source position** (preserves cascade).
+4. Verify: 0 `<style>` left · brace balance · transition to `</head>` intact.
+
+**Remaining `<style>` hotspots (by content size):** `accounts.html`, `my-requests.html`,
+`ops-dashboard.html`, `financial-dashboard.html`, `ledger.html`, `archive.html`
+(most other god pages were already extracted to companion `*.css`).
