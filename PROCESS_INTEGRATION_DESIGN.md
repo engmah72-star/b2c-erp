@@ -184,7 +184,12 @@ Phase 2 — توحيد زر "الفعل التالي" عبر orderActions.* دا
           • tests: 19 passing (تشمل mapping + terminal stages)
           ملاحظة: أزرار التولبار legacy تبقى تعمل alongside (E1) خلف نفس الـ flag
         ↓
-Phase 3 — شريط الحالة المالية في الرأس (read-only من FSE projection)
+Phase 3 — شريط الحالة المالية في الرأس (read-only من FSE projection)   ✅ مُنفَّذ
+          • pipeline-model.js: buildFinancialSummary() (pure) — يقرأ حقول
+            الأوردر المُدارة بـ FSE، الرقم المشتق الوحيد = calcRem المركزي (RULE 1)
+          • شريط: حالة الدفع + الإجمالي + المدفوع + المتبقّي + تسوية الشحن
+          • gated بـ canSeeField('price_sale', role) — RULE 8 (لا يظهر للمصمم/الشحن)
+          • tests: 27 passing (تشمل partial/paid/returned/settlement)
         ↓
 Phase 4 — اعتماد role-based default domain في shell.html (E1.5)
         ↓

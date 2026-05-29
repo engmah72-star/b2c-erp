@@ -8,6 +8,7 @@
  */
 import {
   buildPipelineModel, getNextAction, STAGE_NEXT_ACTION,
+  buildFinancialSummary, PAY_STATUS,
   PIPELINE_ORDER, STEP_STATE,
 } from '../core/process-pipeline/pipeline-model.js';
 
@@ -125,6 +126,46 @@ test('every descriptor has a non-empty Arabic label', () => {
   for (const d of Object.values(STAGE_NEXT_ACTION)) {
     if (!d.label || typeof d.label !== 'string') throw new Error('missing label');
   }
+});
+
+// ── buildFinancialSummary: read-only money projection ──
+test('finance: unpaid order', () => {
+  const f = buildFinancialSummary({ salePrice: 100 });
+  assertEq(f.sale, 100); assertEq(f.paid, 0); assertEq(f.remaining, 100);
+  assertEq(f.status, PAY_STATUS.UNPAID);
+});
+test('finance: partial payment', () => {
+  const f = buildFinancialSummary({ salePrice: 100, totalPaid: 40 });
+  assertEq(f.paid, 40); assertEq(f.remaining, 60); assertEq(f.status, PAY_STATUS.PARTIAL);
+});
+test('finance: fully paid', () => {
+  const f = buildFinancialSummary({ salePrice: 100, totalPaid: 100 });
+  assertEq(f.remaining, 0); assertEq(f.status, PAY_STATUS.PAID);
+});
+test('finance: sale includes shipFee minus discount', () => {
+  const f = buildFinancialSummary({ salePrice: 100, customerShipFee: 30, discount: 10 });
+  assertEq(f.sale, 120); assertEq(f.remaining, 120);
+});
+test('finance: returned order → remaining 0, status returned', () => {
+  const f = buildFinancialSummary({ salePrice: 100, totalPaid: 40, paymentStatus: 'returned' });
+  assertEq(f.remaining, 0); assertEq(f.returned, true); assertEq(f.status, PAY_STATUS.RETURNED);
+});
+test('finance: company shipping settlement relevance', () => {
+  const a = buildFinancialSummary({ salePrice: 100, shipMethod: 'company', shipSettled: false });
+  assertEq(a.settlementRelevant, true); assertEq(a.settled, false);
+  const b = buildFinancialSummary({ salePrice: 100, shipMethod: 'company', shipSettled: true });
+  assertEq(b.settled, true);
+  const c = buildFinancialSummary({ salePrice: 100, shipMethod: 'pickup' });
+  assertEq(c.settlementRelevant, false);
+});
+test('finance: empty/undefined order is safe', () => {
+  const f = buildFinancialSummary(undefined);
+  assertEq(f.sale, 0); assertEq(f.paid, 0); assertEq(f.remaining, 0); assertEq(f.status, PAY_STATUS.UNPAID);
+});
+test('finance: does not mutate input', () => {
+  const o = Object.freeze({ salePrice: 100, totalPaid: 50 });
+  const f = buildFinancialSummary(o);
+  assertEq(f.remaining, 50); assertEq(o.salePrice, 100);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

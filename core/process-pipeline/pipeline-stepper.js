@@ -22,13 +22,18 @@
 
 import { STAGES, STAGE_PERMISSIONS } from '../../orders.js';
 import { orderActions } from '../../order-actions.js';
+import { canSeeField } from '../permissions-matrix.js';
 import { isFeatureEnabled } from '../feature-flags.js';
 import {
   buildPipelineModel, getNextAction, STAGE_NEXT_ACTION,
+  buildFinancialSummary, PAY_STATUS,
   PIPELINE_ORDER, STEP_STATE,
 } from './pipeline-model.js';
 
-export { PIPELINE_ORDER, STEP_STATE, buildPipelineModel, getNextAction, STAGE_NEXT_ACTION };
+export {
+  PIPELINE_ORDER, STEP_STATE, buildPipelineModel, getNextAction,
+  STAGE_NEXT_ACTION, buildFinancialSummary, PAY_STATUS,
+};
 
 /** Feature flag name (RULE E1.8) — toggle via `?feat.process.pipelineView=1` or localStorage. */
 export const PIPELINE_FLAG = 'process.pipelineView';
@@ -37,6 +42,30 @@ function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Matches the project-wide money format (order.html:381).
+function fmtMoney(n) { return (Number(n) || 0).toLocaleString('ar-EG') + ' ج'; }
+
+const PAY_LABEL = {
+  paid: 'مدفوع', partial: 'مدفوع جزئياً', unpaid: 'غير مدفوع', returned: 'مرتجع',
+};
+
+/** Builds the read-only financial strip HTML from an order (pure). */
+function renderFinanceStripHTML(order) {
+  const f = buildFinancialSummary(order);
+  let html = '<div class="pl-finance" dir="rtl">';
+  html += '<span class="pl-fin pl-fin-status pl-pay-' + esc(f.status) + '">'
+    + esc(PAY_LABEL[f.status] || f.status) + '</span>';
+  html += '<span class="pl-fin"><i>الإجمالي</i> ' + esc(fmtMoney(f.sale)) + '</span>';
+  if (f.paid > 0) html += '<span class="pl-fin pl-fin-paid"><i>مدفوع</i> ' + esc(fmtMoney(f.paid)) + '</span>';
+  if (f.remaining > 0) html += '<span class="pl-fin pl-fin-rem"><i>متبقٍّ</i> ' + esc(fmtMoney(f.remaining)) + '</span>';
+  if (f.settlementRelevant) {
+    html += '<span class="pl-fin pl-fin-settle ' + (f.settled ? 'pl-settled' : 'pl-unsettled') + '">'
+      + (f.settled ? '✓ تمت تسوية الشحن' : '⏳ تسوية الشحن معلّقة') + '</span>';
+  }
+  html += '</div>';
+  return html;
 }
 
 /** Decorates the pure model with central STAGES metadata (label/ico/col). */
@@ -62,7 +91,11 @@ function decorate(model) {
 export function renderPipelineStepperHTML(order, opts = {}) {
   const model = buildPipelineModel(order);
   const steps = decorate(model);
-  let html = '<nav class="pl-stepper" aria-label="مراحل الأوردر" dir="rtl">';
+  let html = '';
+  // Phase 3 — financial strip (read-only). Rendered only when the host opts in
+  // (after a canSeeField('price_sale') check — RULE 8).
+  if (opts.showFinance) html += renderFinanceStripHTML(order);
+  html += '<nav class="pl-stepper" aria-label="مراحل الأوردر" dir="rtl">';
   if (model.cancelled) html += '<div class="pl-cancelled">✕ ملغي</div>';
   steps.forEach((s, i) => {
     if (i > 0) html += '<span class="pl-link pl-link-' + esc(steps[i - 1].state) + '" aria-hidden="true"></span>';
@@ -144,7 +177,11 @@ export function mountPipelineStepper({ container, order, ctx = null }) {
     && (STAGE_PERMISSIONS[order.stage] || []).includes(ctx.role));
   if (canAct) actionLabel = descriptor.label;
 
-  container.innerHTML = renderPipelineStepperHTML(order, { actionLabel });
+  // Finance strip visibility — RULE 8: only roles allowed to see sale price.
+  const showFinance = !!(ctx && ctx.role
+    && canSeeField('price_sale', ctx.role, ctx.perms || null));
+
+  container.innerHTML = renderPipelineStepperHTML(order, { actionLabel, showFinance });
   container.setAttribute('data-pipeline-mounted', '1');
 
   if (canAct) {
