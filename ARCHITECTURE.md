@@ -323,8 +323,8 @@ Existing system (engine solid; tokens/theme partial)
 1. Tokenize remaining raw colors/sizes  → L6 single source        (UI_DEBT.md plan, in progress)
 2. Extract inline <style> → component CSS → L5 consolidation
 3. Introduce 3-tier token cascade (palette→brand→component)       ✅ DONE (brand accent colors)
-4. themes/ folder + data-theme/tenant loader extension            → L7 unlimited themes  (themes/ created)
-5. tenant_branding doc + override CSS                             → L8 white-label
+4. themes/ folder + data-theme/tenant loader extension            ✅ DONE (static loader, no backend)
+5. tenant_branding doc + override CSS                             → L8 white-label (Firestore-driven; needs G10 module def)
 6. New-module template + CI guards for the forbidden edges        → lock the architecture
 ```
 
@@ -339,7 +339,16 @@ Existing system (engine solid; tokens/theme partial)
 > White-label proven by `themes/example-tenant.css` (override palette/brand/surface
 > under `[data-tenant]`). Remaining literals: `--st-*` (already global+semantic) and
 > derived helpers (`--hover`, shadows, rings) — optional later.
-> *Next:* the `data-tenant` loader (step 4) + `tenant_branding` doc (step 5).
+>
+> **Step 4 status (2026-05-29):** `theme.js` now has a **static white-label loader**
+> — no-op by default; resolves a tenant from `?tenant=` / `localStorage b2c-tenant`
+> / `<html data-tenant>` / `HOST_TENANTS[hostname]`, then injects
+> `themes/tenants/<id>.css` and sets `[data-tenant]`. Tenant id is sanitized
+> (`[a-z0-9_-]`, no path traversal); missing sheet falls back cleanly. Concrete
+> instance: `themes/tenants/acme.css`; template: `themes/example-tenant.css`.
+> API: `B2CTheme.getTenant()/setTenant(id)`.
+> *Next (step 5):* drive tenant identity from a `tenant_branding/{tenantId}`
+> Firestore doc — requires the RULE G10 module definition + rules first.
 
 **Never:** delete a load-bearing layer before its replacement is proven (E1.1).
 **Always:** the operational engine keeps running, untouched, through every step.
