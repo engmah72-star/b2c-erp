@@ -164,8 +164,14 @@
         ↓
 Phase 0 — هذه الوثيقة (تعريف + موافقة)            ← G10 / RULE 7
         ↓
-Phase 1 — Pipeline Stepper component (view-only, flagged)
+Phase 1 — Pipeline Stepper component (view-only, flagged)   ✅ مُنفَّذ
           يقرأ order.stage فقط، يُحمَّل في workspace
+          • core/process-pipeline/pipeline-model.js   (pure, Node-testable)
+          • core/process-pipeline/pipeline-stepper.js (render + mount, flag-gated)
+          • core/process-pipeline/pipeline-stepper.css (tokens فقط)
+          • mounted في order.html خلف flag process.pipelineView (default off)
+          • tests/core-pipeline-model.test.mjs (10 passing)
+          التفعيل: ?feat.process.pipelineView=1 أو localStorage feat.process.pipelineView=1
         ↓
 Phase 2 — توحيد زر "الفعل التالي" عبر orderActions.* داخل الـ stepper
           (يستبدل أزرار submit المبعثرة تدريجياً — page-by-page)
