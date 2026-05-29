@@ -114,9 +114,14 @@
       <div class="psec-body"><div id="pn-perf"></div></div>
     </div>
     <!-- سجل المدفوعات -->
-    <div class="psec collapsed" style="border-bottom:none">
+    <div class="psec collapsed">
       <div class="psec-title" onclick="togglePSec(this)">📋 سجل المدفوعات</div>
       <div class="psec-body"><div id="pn-payments"></div></div>
+    </div>
+    <!-- سجل النشاط (Supplier Charter — principles 9 + 14) -->
+    <div class="psec collapsed" id="pn-activity-sec" style="border-bottom:none">
+      <div class="psec-title" onclick="togglePSec(this)">🗂️ سجل النشاط</div>
+      <div class="psec-body"><div id="pn-activity"><div class="txt-meta-base">جاري التحميل...</div></div></div>
     </div>
   </div>
 </div>
@@ -320,7 +325,7 @@ const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clie
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'suppliers.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js?v=2";
 import { isDelivered } from "./orders.js";
@@ -725,6 +730,42 @@ function renderPanelContent(sup){
     </div>`).join('')||'<div class="txt-meta-base">لا توجد مدفوعات</div>';
   loadSupplierOrders(sup._id);
   renderSupPerformance(sup._id);
+  loadSupplierActivity(sup._id);
+}
+
+// سجل النشاط المركزي (Supplier Charter — principles 9 + 14; RULE H3)
+// يقرأ من supplier_activity (المصدر الوحيد لأحداث دورة حياة المورد) — read-only.
+const ACTIVITY_KIND_BDG={
+  op:'background:rgba(59,158,255,.12);color:var(--b)',
+  edit:'background:rgba(255,170,0,.12);color:var(--y)',
+  reversal:'background:rgba(255,61,110,.12);color:var(--r)',
+  system:'background:rgba(160,160,160,.12);color:var(--dim2)',
+  'self-heal':'background:rgba(0,217,126,.12);color:var(--g)',
+};
+async function loadSupplierActivity(supId){
+  const el=document.getElementById('pn-activity');if(!el)return;
+  try{
+    const q=query(
+      collection(db,'supplier_activity'),
+      where('supplierId','==',supId),
+      orderBy('createdAt','desc'),
+      limit(50)
+    );
+    const snap=await getDocs(q);
+    const items=[];snap.forEach(d=>items.push({_id:d.id,...d.data()}));
+    if(!items.length){el.innerHTML='<div class="txt-meta-base">لا يوجد نشاط مسجَّل بعد</div>';return;}
+    el.innerHTML=items.map(a=>`
+      <div class="tx-row" style="align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+            <span style="font-size:var(--fs-xs);padding:2px 7px;border-radius:20px;font-weight:var(--fw-extra);${ACTIVITY_KIND_BDG[a.kind]||ACTIVITY_KIND_BDG.op}">${a.kind||'op'}</span>
+            <span class="txt-meta-xs">${a.date||'—'}</span>
+          </div>
+          <div class="txt-bold-md">${a.action||'—'}</div>
+          ${a.by?`<div class="txt-meta-xs" style="margin-top:1px">👤 ${a.by}</div>`:''}
+        </div>
+      </div>`).join('');
+  }catch(e){el.innerHTML=`<div style="font-size:var(--fs-base);color:var(--r)">❌ ${e.message}</div>`;}
 }
 
 function renderSupPerformance(supId){
