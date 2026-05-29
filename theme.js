@@ -138,84 +138,7 @@
     else if (mq.addListener) mq.addListener(handler); // Safari قديم
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // WHITE-LABEL TENANT LOADER (static CSS, no backend) — ARCHITECTURE.md §6
-  // ────────────────────────────────────────────────────────────────
-  // No-op unless a tenant is resolved → default deployments are unaffected.
-  // Resolution order (first wins), then persisted:
-  //   1. ?tenant=<id>   2. localStorage b2c-tenant
-  //   3. existing <html data-tenant>   4. HOST_TENANTS[hostname]
-  // Loads themes/tenants/<id>.css which overrides palette/brand/surface tokens
-  // under :root[data-tenant="<id>"] — re-skins the whole product with ZERO
-  // changes to any page, component, or the business engine.
-  // ════════════════════════════════════════════════════════════════
-  const TENANT_KEY = 'b2c-tenant';
-  // Map deployment hostnames → tenant id for SaaS white-label (optional):
-  const HOST_TENANTS = { /* 'acme.example.com': 'acme' */ };
-
-  function sanitizeTenant(t){
-    return String(t || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
-  }
-  function resolveTenant(){
-    try {
-      const u = new URLSearchParams(window.location.search).get('tenant');
-      if (u){ try { localStorage.setItem(TENANT_KEY, u); } catch(_){} return u; }
-    } catch(_){}
-    try { const ls = localStorage.getItem(TENANT_KEY); if (ls) return ls; } catch(_){}
-    const attr = document.documentElement.getAttribute('data-tenant');
-    if (attr) return attr;
-    try { const h = HOST_TENANTS[window.location.hostname]; if (h) return h; } catch(_){}
-    return '';
-  }
-  function applyTenant(){
-    const t = sanitizeTenant(resolveTenant());
-    if (!t) return;                                  // default deployment → no-op
-    document.documentElement.setAttribute('data-tenant', t);
-    if (document.querySelector('link[data-tenant-css]')) return; // already injected
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.setAttribute('data-tenant-css', t);
-    link.href = 'themes/tenants/' + t + '.css';
-    // If the tenant sheet is missing, fall back cleanly to the default identity.
-    link.onerror = () => {
-      try { link.remove(); } catch(_){}
-      document.documentElement.removeAttribute('data-tenant');
-    };
-    (document.head || document.documentElement).appendChild(link);
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // SOFT DARK SKIN (opt-in preview, default OFF) — themes/dark-soft.css
-  // ────────────────────────────────────────────────────────────────
-  // تفعيل: ?soft=1 (يُحفظ) · إيقاف: ?soft=0 · أو localStorage b2c-soft.
-  // يضبط <html data-soft="1"> ويحقن themes/dark-soft.css الذي يعيد تعريف
-  // طبقة الـ palette الغامقة (أنعم + تباين أوضح) — لا يمسّ light/auto.
-  // ════════════════════════════════════════════════════════════════
-  const SOFT_KEY = 'b2c-soft';
-  function softEnabled(){
-    try {
-      const u = new URLSearchParams(window.location.search).get('soft');
-      if (u === '1'){ try { localStorage.setItem(SOFT_KEY, '1'); } catch(_){} return true; }
-      if (u === '0'){ try { localStorage.setItem(SOFT_KEY, '0'); } catch(_){} return false; }
-    } catch(_){}
-    try { return localStorage.getItem(SOFT_KEY) === '1'; } catch(_){ return false; }
-  }
-  function applySoftSkin(){
-    if (!softEnabled()) { document.documentElement.removeAttribute('data-soft'); return; }
-    document.documentElement.setAttribute('data-soft', '1');
-    if (document.querySelector('link[data-soft-css]')) return;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.setAttribute('data-soft-css', '1');
-    link.href = 'themes/dark-soft.css';
-    (document.head || document.documentElement).appendChild(link);
-  }
-
   // ── INIT — يجري فورًا قبل أي شيء ──
-  // محمّلات اختيارية مغلَّفة دفاعيًا: أي فشل يجب ألّا يمنع تطبيق الثيم الأساسي
-  // (apply) — استقرار التشغيل أولًا (RULE E1.9).
-  try { applyTenant(); } catch(_){}
-  try { applySoftSkin(); } catch(_){}
   apply(getStored());
   watchSystem();
 
@@ -270,27 +193,6 @@
     effective: () => effective(getStored()),
     cycle,
     toggle: () => setTheme(effective(getStored()) === 'dark' ? 'light' : 'dark'),
-    // White-label tenant (static loader)
-    getTenant: () => { try { return localStorage.getItem(TENANT_KEY) || document.documentElement.getAttribute('data-tenant') || ''; } catch(_) { return document.documentElement.getAttribute('data-tenant') || ''; } },
-    // Soft-dark skin toggle (opt-in preview)
-    setSoft: (on) => {
-      try { localStorage.setItem(SOFT_KEY, on ? '1' : '0'); } catch(_){}
-      const prev = document.querySelector('link[data-soft-css]');
-      if (prev) { try { prev.remove(); } catch(_){} }
-      document.documentElement.removeAttribute('data-soft');
-      applySoftSkin();
-      return !!on;
-    },
-    setTenant: (t) => {
-      const v = sanitizeTenant(t);
-      try { v ? localStorage.setItem(TENANT_KEY, v) : localStorage.removeItem(TENANT_KEY); } catch(_){}
-      // remove any previously injected sheet, then re-apply
-      const prev = document.querySelector('link[data-tenant-css]');
-      if (prev) { try { prev.remove(); } catch(_){} }
-      document.documentElement.removeAttribute('data-tenant');
-      applyTenant();
-      return v;
-    },
   };
   window.B2CTheme = API;
 

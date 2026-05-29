@@ -215,7 +215,7 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'reports.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, addDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
-import { dedupEmployees, resolveDesigner, isDelivered, ORDER_STAGES } from "./orders.js";
+import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
 import { calcRem } from "./core/order-math.js";
 import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
@@ -408,14 +408,14 @@ const daysSince=ts=>{const s=ts?.seconds||0;if(!s)return 0;return Math.max(0,Mat
 const ageBucket=days=>days<=30?'0-30':days<=60?'31-60':days<=90?'61-90':'90+';
 // "stale" = آخر تحديث فات عليه > 14 يوم والأوردر مش مؤرشف ولا في الشحن
 const isStaleOrder=o=>{
-  if([ORDER_STAGES.ARCHIVED,ORDER_STAGES.SHIPPING].includes(o.stage))return false;
+  if(['archived','shipping'].includes(o.stage))return false;
   const ts=o.updatedAt?.seconds||o.createdAt?.seconds||0;
   if(!ts)return false;
   return (Date.now()-ts*1000)>14*86400000;
 };
 const orderHasCost=o=>(o.costItems||[]).some(c=>(parseFloat(c.total)||0)>0);
 const orderTotalCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-const isMissingCost=o=>parseFloat(o.salePrice)>0&&[ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING,ORDER_STAGES.ARCHIVED].includes(o.stage)&&!orderHasCost(o);
+const isMissingCost=o=>parseFloat(o.salePrice)>0&&['production','shipping','archived'].includes(o.stage)&&!orderHasCost(o);
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -460,13 +460,13 @@ function updateTabBadges(){
     else el.style.display='none';
   };
   // collection: critical post-design count
-  const critical=filtered.filter(o=>parseFloat(o.salePrice)>0&&[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(o.stage)&&calcRem(o)>0).length;
+  const critical=filtered.filter(o=>parseFloat(o.salePrice)>0&&['printing','production','shipping'].includes(o.stage)&&calcRem(o)>0).length;
   set('collection',critical);
   // shipping: returned count
   const returned=filtered.filter(o=>o.shipStage==='returned').length;
   set('shipping',returned);
   // overview: late count (global, not date-filtered)
-  const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&![ORDER_STAGES.ARCHIVED,ORDER_STAGES.SHIPPING].includes(o.stage)).length;
+  const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage)).length;
   set('overview',late);
   // returns: SLA breaches (global — للتنبيه على الـ tickets العالقة)
   const slaCnt = returns.filter(t=>t.slaBreached===true && !['cancelled','closed'].includes(t.status)).length;
@@ -655,7 +655,7 @@ function renderExec(f, prev, range){
     { key:'shipping',   label:'شحن',    ico:'🚚', col:'var(--c-bright)' },
     { key:'archived',   label:'مكتمل',  ico:'✅', col:'#00d97e' },
   ];
-  const totActive = activeOrders.length + orders.filter(o => o.stage === ORDER_STAGES.ARCHIVED).length || 1;
+  const totActive = activeOrders.length + orders.filter(o => o.stage === 'archived').length || 1;
   const pipeline = `
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
       <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
@@ -1412,7 +1412,7 @@ function applyCollectionFilters(){
     const noCost=r.dataset.nocost==='1';
     const payOk=__payFilter==='all'||(__payFilter==='rem'&&rem>0)||(__payFilter==='paid'&&rem<=0);
     const stageOk=__stageFilter==='all'
-      ||(__stageFilter==='post-design'&&[ORDER_STAGES.PRINTING,ORDER_STAGES.PRODUCTION,ORDER_STAGES.SHIPPING].includes(stage)&&rem>0)
+      ||(__stageFilter==='post-design'&&['printing','production','shipping'].includes(stage)&&rem>0)
       ||stage===__stageFilter;
     const flagOk=__flagFilter==='all'
       ||(__flagFilter==='stale'&&stale)
