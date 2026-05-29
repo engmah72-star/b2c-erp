@@ -87,6 +87,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
 const ROLES={
   admin:{label:'Admin',col:'var(--r)',ico:'👑'},
   operation_manager:{label:'مدير عمليات',col:'var(--b-bright)',ico:'📋'},
@@ -112,10 +113,10 @@ const INC_SEV={low:{lbl:'منخفض',col:'var(--dim2)'},medium:{lbl:'متوسط'
 
 // ── State ──
 let me=null, myEmpId='', myAuthUid='';
-let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[];
+let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[], myTasks=[];
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
 // Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
-const TAB_KEYS_MP=['overview','attendance','salary','feedback'];
+const TAB_KEYS_MP=['work','overview','attendance','salary','feedback'];
 let activeTab=(function(){
   const qp=new URLSearchParams(location.search).get('tab');
   if(qp&&TAB_KEYS_MP.includes(qp))return qp;
@@ -125,7 +126,7 @@ let activeTab=(function(){
     history.replaceState(null,'',u.toString());
     return h;
   }
-  return 'overview';
+  return 'work';
 })();
 const now=new Date();
 
@@ -138,6 +139,36 @@ window.doLogout=async()=>{await signOut(auth);location.href='login.html';};
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 
+const toast=(msg,type='ok')=>{
+  const box=document.getElementById('toasts');if(!box)return alert(msg);
+  const t=document.createElement('div');t.className='toast '+(type==='err'?'err':'ok');t.textContent=msg;
+  box.appendChild(t);setTimeout(()=>t.remove(),3200);
+};
+const todayAtt=()=>myAttendance.find(a=>a.date===todayStr());
+
+// تسجيل حضور/انصراف — عبر central actions (PC1/A1/H1.1)
+window.doCheckIn=async function(btn){
+  if(!me)return; if(btn)btn.disabled=true;
+  const r=await employeeActions.recordAttendanceCheckIn({
+    db, employeeId:myEmpId, employeeUid:myAuthUid, employeeName:me.name||'',
+    date:todayStr(), monthKey:monthKey(), recordedBy:myAuthUid, recordedByName:me.name||'',
+  });
+  toast(r.ok===false?(r.errors?.[0]||'فشل'):'🟢 تم تسجيل حضورك',r.ok===false?'err':'ok');
+};
+window.doCheckOut=async function(btn){
+  if(btn)btn.disabled=true;
+  const att=todayAtt();
+  if(!att?._id)return toast('لا يوجد تسجيل حضور اليوم','err');
+  const r=await employeeActions.recordAttendanceCheckOut({db, attendanceId:att._id});
+  toast(r.ok===false?(r.errors?.[0]||'فشل'):'✅ تم تسجيل انصرافك',r.ok===false?'err':'ok');
+};
+// إنجاز مهمة — central action
+window.doTaskDone=async function(taskId,btn){
+  if(btn)btn.disabled=true;
+  const r=await employeeActions.setTaskStatus({db, taskId, status:'done'});
+  toast(r.ok===false?(r.errors?.[0]||'فشل'):'✅ تم إنجاز المهمة',r.ok===false?'err':'ok');
+};
+
 window.setTab=function(t){
   if(!TAB_KEYS_MP.includes(t))return;
   activeTab=t;
@@ -145,6 +176,11 @@ window.setTab=function(t){
   history.replaceState(null,'',u.toString());
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
+  // (re)render the active tab's dynamic section
+  if(t==='work')renderWorkTab();
+  else if(t==='attendance')renderAttendanceTab();
+  else if(t==='salary')renderSalaryTab();
+  else if(t==='feedback')renderFeedbackTab();
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
 
@@ -152,9 +188,9 @@ document.addEventListener('keydown',e=>{
   const tag=(e.target?.tagName||'').toUpperCase();
   if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
   if(e.key==='Escape')document.querySelectorAll('.overlay.open').forEach(o=>o.classList.remove('open'));
-  if(['1','2','3','4'].includes(e.key)){
+  if(['1','2','3','4','5'].includes(e.key)){
     e.preventDefault();
-    setTab(['overview','attendance','salary','feedback'][+e.key-1]);
+    setTab(['work','overview','attendance','salary','feedback'][+e.key-1]);
   }
 });
 
@@ -266,6 +302,8 @@ function renderAll(){
 
   // Open incidents this month
   const monthInc=myIncidents.filter(i=>(i.date||'').startsWith(monthKey())).length;
+  const att=todayAtt();
+  const openTasksCount=myTasks.filter(t=>t.status==='pending').length;
 
   document.getElementById('main-content').innerHTML=`
     <!-- HERO -->
@@ -288,6 +326,13 @@ function renderAll(){
       <div style="margin-top:12px;display:flex;align-items:center;gap:var(--space-sm);flex-wrap:wrap">
         <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:${cur.col}">${cur.grade}</span>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${dCol};background:${dCol}1f;padding:3px 10px;border-radius:var(--rad)">${dLbl}</span>
+      </div>
+      <div class="hero-att">
+        ${att&&att.checkIn&&!att.checkOut
+          ?`<span class="att-chip in">🟢 حاضر ${att.checkInStr||''}</span><button type="button" class="btn-att" onclick="doCheckOut(this)">تسجيل انصراف</button>`
+          :att&&att.checkOut
+          ?`<span class="att-chip done">✅ سُجّل اليوم · ${att.checkInStr||''} → ${att.checkOutStr||''}</span>`
+          :`<span class="att-chip off">⚪ لم تسجّل حضورك اليوم</span><button type="button" class="btn-att go" onclick="doCheckIn(this)">تسجيل حضور</button>`}
       </div>
     </div>
 
@@ -313,10 +358,16 @@ function renderAll(){
 
     <!-- TABS -->
     <div class="tabs">
+      <button type="button" class="tab${activeTab==='work'?' active':''}" data-tab="work" onclick="setTab('work')">🎯 شغلي${openTasksCount?` <span class="badge-c">${openTasksCount}</span>`:''}</button>
       <button type="button" class="tab${activeTab==='overview'?' active':''}" data-tab="overview" onclick="setTab('overview')">📊 نظرة عامة</button>
       <button type="button" class="tab${activeTab==='attendance'?' active':''}" data-tab="attendance" onclick="setTab('attendance')">📅 حضوري</button>
       <button type="button" class="tab${activeTab==='salary'?' active':''}" data-tab="salary" onclick="setTab('salary')">💰 مرتباتي</button>
       <button type="button" class="tab${activeTab==='feedback'?' active':''}" data-tab="feedback" onclick="setTab('feedback')">💬 ملاحظات${monthInc?` <span class="badge-c">${monthInc}</span>`:''}</button>
+    </div>
+
+    <!-- TAB: Work (شغلي — مهامي + أوردراتي) -->
+    <div class="tab-pane" id="tab-work" style="${activeTab==='work'?'':'display:none'}">
+      <div id="work-section"></div>
     </div>
 
     <!-- TAB: Overview -->
@@ -386,9 +437,63 @@ function renderAll(){
       <div id="fb-section"></div>
     </div>`;
 
-  if(activeTab==='attendance')renderAttendanceTab();
+  if(activeTab==='work')renderWorkTab();
+  else if(activeTab==='attendance')renderAttendanceTab();
   else if(activeTab==='salary')renderSalaryTab();
   else if(activeTab==='feedback')renderFeedbackTab();
+}
+
+// ── Work tab: my open tasks + my active orders (the daily work cockpit) ──
+const STAGE_LBL={design:'🎨 تصميم',design_approved:'✅ اعتمد',printing:'🖨️ طباعة',production:'🏭 تنفيذ',shipping:'🚚 شحن',ready:'📦 جاهز',archived:'📁 مؤرشف',cancelled:'❌ ملغي'};
+function renderWorkTab(){
+  const el=document.getElementById('work-section');if(!el)return;
+  const today=todayStr();
+  const pending=myTasks.filter(t=>t.status==='pending')
+    .sort((a,b)=>(a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  const activeOrders=myOrders.filter(o=>o.stage&&!['archived','cancelled'].includes(o.stage))
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,30);
+
+  const tasksHtml=pending.length?pending.map(t=>{
+    const late=t.dueDate&&t.dueDate<today;
+    const pri=t.priority==='urgent'?'⚡':t.priority==='low'?'📎':'📌';
+    return`<div class="list-row${late?' warning':''}">
+      <div class="bd-icon" style="--bdc:${late?'var(--y)':'var(--b)'}">${pri}</div>
+      <div style="flex:1;min-width:0">
+        <div class="txt-strong-base">${t.title||'مهمة'}</div>
+        ${t.description?`<div class="txt-meta-sm">${t.description}</div>`:''}
+        ${t.dueDate?`<div style="font-size:var(--fs-tiny);color:${late?'var(--y)':'var(--dim)'};margin-top:2px">${late?'⏰ متأخرة · ':''}${t.dueDate}</div>`:''}
+      </div>
+      <button type="button" class="btn-att go" onclick="doTaskDone('${t._id}',this)">✓ تم</button>
+    </div>`;
+  }).join(''):`<div class="empty"><div class="empty-i">🎉</div><div class="empty-t">لا مهام مفتوحة</div><div class="empty-h">كل مهامك منجزة — أداء رائع</div></div>`;
+
+  const ordersHtml=activeOrders.length?activeOrders.map(o=>`
+    <a class="list-row" href="order.html?id=${o._id}" style="text-decoration:none;color:inherit">
+      <div class="bd-icon" style="--bdc:var(--c-bright)">📦</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <span class="txt-strong-base">#${o.orderNumber||o._id.slice(0,6)}</span>
+          <span class="txt-meta-xs">${STAGE_LBL[o.stage]||o.stage||''}</span>
+        </div>
+        <div class="txt-meta-sm">${o.clientName||o.customerName||'—'}</div>
+      </div>
+    </a>`).join(''):`<div class="empty"><div class="empty-i">📭</div><div class="empty-t">لا أوردرات مُسنَدة لك حالياً</div></div>`;
+
+  el.innerHTML=`
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-head" style="margin-bottom:10px">
+        <div class="section-title">📋 مهامي</div>
+        <span class="txt-meta-xs">${pending.length} مفتوحة</span>
+      </div>
+      ${tasksHtml}
+    </div>
+    <div class="section">
+      <div class="section-head" style="margin-bottom:10px">
+        <div class="section-title">📦 أوردراتي الحالية</div>
+        <span class="txt-meta-xs">${activeOrders.length}</span>
+      </div>
+      ${ordersHtml}
+    </div>`;
 }
 
 function renderAttendanceTab(){
@@ -687,6 +792,12 @@ onAuthStateChanged(auth,async u=>{
     myOrders=all.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficerId===uid||o.createdBy===uid||o.designerId===myEmpId||o.productionAgent===myEmpId||o.shippingOfficerId===myEmpId);
     renderAll();
   },err=>console.warn('orders:',err.message));
+
+  // My tasks (work layer) — bounded, person-scoped (RULE G3 + RULE 8)
+  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',myAuthUid),limit(100)),s=>{
+    myTasks=s.docs.map(d=>({...d.data(),_id:d.id}));
+    renderAll();
+  },err=>console.warn('tasks:',err.message));
 });
 </script>
 <script src="sw-register.js"></script>
