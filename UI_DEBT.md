@@ -139,3 +139,25 @@ Each sub-PR is small (one file or one concern), CI-gated, and visually behavior-
 - Performance (lazy load, virtualization — separate phase)
 - Per-page redesigns (separate phase: UX)
 - `order-handoff-mockup.html` (clearly a mockup, can be archived or excluded from cleanup)
+
+---
+
+## 7) Execution log (incremental — RULE G9 / E1)
+
+| Date | PR / Branch | Scope (one concern) | Hex removed | Visual change |
+|------|-------------|---------------------|------------:|---------------|
+| 2026-05-29 | `claude/ui-color-tokens-2b1` | **`design-control-center.css`** — strip dead `var(--token, #hex)` color fallbacks → `var(--token)`. All 13 referenced tokens verified defined in `shared.css`, so every fallback was inert (some were *wrong*, e.g. `var(--r, #ef4444)` while `--r` is `#ff3d6e`) — removal is byte-identical at runtime and deletes misleading dead values. | **55 → 0** | **none** (tokens always resolve) |
+
+**Method (safe, repeatable for the next files):**
+1. List `var(--X, #hex)` occurrences in the target file.
+2. Verify each `--X` is defined in `shared.css` (both/all theme blocks) — if undefined, the fallback is load-bearing → **keep**.
+3. Strip only the **color** fallback (`#hex`); leave non-color fallbacks (`12px`, `600`) for the typography concern (2C-2).
+4. Confirm `var()` integrity + brace balance + zero raw hex remaining.
+
+**Deferred for this file (separate, riskier PR):** raw `rgba(r,g,b,a)` tint literals
+(e.g. `rgba(239,68,68,.12)`) — these are not byte-equal to a token and need
+`color-mix(in srgb, var(--token) N%, transparent)`, a visual-equivalent but
+non-identical change → belongs to 2B-2/2C, not the safe byte-equal subset.
+
+**Next candidates (same method):** `clients.css`, `clients-control-center.css`
+(`runtime-shell.css` is Stable Core N1.4 → needs 2-reviewer, defer).
