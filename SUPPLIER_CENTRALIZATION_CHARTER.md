@@ -100,13 +100,16 @@ append-only بطبيعتها، والاسم المخزَّن فيها historical
 
 ---
 
-## متابعات مقترحة (لاحقة، تدريجية — لا تكسر التشغيل)
+## متابعات
 
-- **UI:** عرض تبويب "سجل النشاط" في `suppliers.html` يقرأ `supplier_activity`
-  بـ `where('supplierId','==',id) orderBy('createdAt','desc') limit(...)`.
-- **Migration:** backfill `nameKey` على السجلات القديمة (script في `tests/` بـ dry-run)
-  لتقوية كشف التكرار على الموردين السابقين.
-- **اعتماد الموردين (approval):** ربط مسار اعتماد المورد بنفس `_logActivity(kind:'op')`
-  عند تفعيله.
+- ✅ **UI — تبويب "سجل النشاط":** مُنفَّذ في `suppliers.html` (`loadSupplierActivity`)
+  يقرأ `supplier_activity` بـ `where('supplierId','==',id) orderBy('createdAt','desc') limit(50)`
+  (read-only — تطبيق L1). يظهر `kind + date + action + by` لكل حدث.
+- ✅ **Migration — backfill `nameKey`:** `scripts/backfill-supplier-nameKey.js`
+  (dry-run افتراضياً، idempotent، يغطّي `suppliers_v2` + `shippers_v2`) +
+  اختبار `tests/backfill-supplier-nameKey.test.mjs` (3/3). يقوّي كشف التكرار
+  على الموردين السابقين.
+- ⏳ **اعتماد الموردين (approval):** ربط مسار اعتماد المورد بنفس `_logActivity(kind:'op')`
+  عند تفعيله (لاحقاً).
 
 أي drift عن SUP1 يُسجَّل في `GOVERNANCE_AUDIT.md` ويُعالَج تدريجياً (RULE G9).
