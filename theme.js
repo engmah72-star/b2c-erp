@@ -184,10 +184,38 @@
     (document.head || document.documentElement).appendChild(link);
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // SOFT DARK SKIN (opt-in preview, default OFF) — themes/dark-soft.css
+  // ────────────────────────────────────────────────────────────────
+  // تفعيل: ?soft=1 (يُحفظ) · إيقاف: ?soft=0 · أو localStorage b2c-soft.
+  // يضبط <html data-soft="1"> ويحقن themes/dark-soft.css الذي يعيد تعريف
+  // طبقة الـ palette الغامقة (أنعم + تباين أوضح) — لا يمسّ light/auto.
+  // ════════════════════════════════════════════════════════════════
+  const SOFT_KEY = 'b2c-soft';
+  function softEnabled(){
+    try {
+      const u = new URLSearchParams(window.location.search).get('soft');
+      if (u === '1'){ try { localStorage.setItem(SOFT_KEY, '1'); } catch(_){} return true; }
+      if (u === '0'){ try { localStorage.setItem(SOFT_KEY, '0'); } catch(_){} return false; }
+    } catch(_){}
+    try { return localStorage.getItem(SOFT_KEY) === '1'; } catch(_){ return false; }
+  }
+  function applySoftSkin(){
+    if (!softEnabled()) { document.documentElement.removeAttribute('data-soft'); return; }
+    document.documentElement.setAttribute('data-soft', '1');
+    if (document.querySelector('link[data-soft-css]')) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.setAttribute('data-soft-css', '1');
+    link.href = 'themes/dark-soft.css';
+    (document.head || document.documentElement).appendChild(link);
+  }
+
   // ── INIT — يجري فورًا قبل أي شيء ──
-  // applyTenant مغلَّف دفاعيًا: أي فشل في محمّل الـ tenant يجب ألّا يمنع
-  // تطبيق الثيم الأساسي (apply) — استقرار التشغيل أولًا (RULE E1.9).
+  // محمّلات اختيارية مغلَّفة دفاعيًا: أي فشل يجب ألّا يمنع تطبيق الثيم الأساسي
+  // (apply) — استقرار التشغيل أولًا (RULE E1.9).
   try { applyTenant(); } catch(_){}
+  try { applySoftSkin(); } catch(_){}
   apply(getStored());
   watchSystem();
 
@@ -244,6 +272,15 @@
     toggle: () => setTheme(effective(getStored()) === 'dark' ? 'light' : 'dark'),
     // White-label tenant (static loader)
     getTenant: () => { try { return localStorage.getItem(TENANT_KEY) || document.documentElement.getAttribute('data-tenant') || ''; } catch(_) { return document.documentElement.getAttribute('data-tenant') || ''; } },
+    // Soft-dark skin toggle (opt-in preview)
+    setSoft: (on) => {
+      try { localStorage.setItem(SOFT_KEY, on ? '1' : '0'); } catch(_){}
+      const prev = document.querySelector('link[data-soft-css]');
+      if (prev) { try { prev.remove(); } catch(_){} }
+      document.documentElement.removeAttribute('data-soft');
+      applySoftSkin();
+      return !!on;
+    },
     setTenant: (t) => {
       const v = sanitizeTenant(t);
       try { v ? localStorage.setItem(TENANT_KEY, v) : localStorage.removeItem(TENANT_KEY); } catch(_){}
