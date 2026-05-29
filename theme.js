@@ -185,7 +185,9 @@
   }
 
   // ── INIT — يجري فورًا قبل أي شيء ──
-  applyTenant();
+  // applyTenant مغلَّف دفاعيًا: أي فشل في محمّل الـ tenant يجب ألّا يمنع
+  // تطبيق الثيم الأساسي (apply) — استقرار التشغيل أولًا (RULE E1.9).
+  try { applyTenant(); } catch(_){}
   apply(getStored());
   watchSystem();
 
