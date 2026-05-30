@@ -39,6 +39,23 @@ test('getDeliveryAddress: falls back to clientGov', () => {
   assertEq(r.full, 'الجيزة');
 });
 
+test('getDeliveryAddress: prefers deliveryAddress object (print operator)', () => {
+  const r = getDeliveryAddress({
+    deliveryAddress: { gov: 'القاهرة', city: 'مدينة نصر', street: '5 ش كذا' },
+    shipGov: 'الإسكندرية', shipAddress: 'عنوان قديم',
+  });
+  assertEq(r.gov, 'القاهرة');
+  assertEq(r.addr, 'مدينة نصر، 5 ش كذا');
+});
+
+test('getDeliveryAddress: deliveryAddress.gov only → falls back for addr', () => {
+  const r = getDeliveryAddress({
+    deliveryAddress: { gov: 'القاهرة' }, shipAddress: 'عنوان قديم',
+  });
+  assertEq(r.gov, 'القاهرة');
+  assertEq(r.addr, 'عنوان قديم');
+});
+
 // ── isCreatedToday ─────────────────────────────────────────────────
 test('isCreatedToday: today → true', () => {
   assertEq(isCreatedToday(ts(new Date(2026, 4, 15, 8, 0)), NOW), true);
