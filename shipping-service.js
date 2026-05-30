@@ -135,6 +135,9 @@ export function getDelayedOrders(orders, thresholds = DELAY_THRESHOLDS) {
   const delays = [];
   for (const o of (orders || [])) {
     if (!o || o.stage !== 'shipping' || isShipTerminal(o)) continue;
+    // الأوردر الجاهز للإغلاق (مدفوع بالكامل أو مسوّى) خلص تشغيلياً — مش متأخر،
+    // حتى لو shipStage لسه 'collected'. (نفس منطق استبعاده من التسوية — #1348.)
+    if (isShipReadyToClose(o)) continue;
     const ss = o.shipStage || 'ready';
     const threshold = thresholds[ss];
     if (typeof threshold !== 'number') continue;
