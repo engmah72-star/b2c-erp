@@ -1,0 +1,67 @@
+// ════════════════════════════════════════════════════════════════════
+// core/sidebar-mount.js — CENTRAL SIDEBAR (مصدر واحد لكل الصفحات)
+// ════════════════════════════════════════════════════════════════════
+// يبني الـ sidebar الكامل (brand + أقسام مجمّعة + footer) على أي صفحة فيها
+// <aside class="sidenav">، من المصدر المركزي:
+//   - window.SIDEBAR_PAGES  (sidebar-config.js)
+//   - window.B2CSidebar.build (sidebar.js) → الأقسام المجمّعة في #nav-links
+//
+// يلغي الحاجة لأي باني sidebar محلي مكرّر في الصفحات (buildDynamicSidebar...).
+//
+// التحميل (بعد sidebar-config.js + sidebar.js):
+//   <script type="module" src="core/sidebar-mount.js?v=1"></script>
+// ════════════════════════════════════════════════════════════════════
+import { auth, db } from './firebase-init.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const CUR = (location.pathname.split('/').pop() || '').toLowerCase();
+const SKIP = ['login.html', 'client-login.html', 'client-portal.html', 'waybill.html',
+  'order-tracking.html', 'chat.html', '404.html', 'offline.html', ''];
+
+const ROLE_LABELS = {
+  admin: 'مدير عام', operation_manager: 'مدير تشغيل', customer_service: 'خدمة عملاء',
+  graphic_designer: 'مصمم', design_operator: 'منفّذ تصميم', production_agent: 'إنتاج',
+  shipping_officer: 'شحن', wallet_manager: 'محاسب',
+};
+
+// logout مركزي — أي footer يستخدمه
+window.appLogout = () => { try { signOut(auth); } finally { location.href = 'login.html'; } };
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function mount(ud) {
+  const aside = document.querySelector('.sidenav');
+  if (!aside) return;
+  const name = ud.name || '';
+  const initial = (name.trim().charAt(0) || 'U').toUpperCase();
+  const roleLabel = ROLE_LABELS[ud.role] || ud.role || '';
+  aside.innerHTML =
+    '<div class="nav-brand"><div class="nav-logo">🎨</div><div>'
+    + '<div class="nav-brand-name">Business2Card</div>'
+    + '<div class="nav-brand-role" id="role-badge">' + esc(roleLabel) + '</div></div></div>'
+    + '<div class="nav-scroll" id="nav-links"></div>'
+    + '<div class="nav-foot"><div class="nav-user" onclick="appLogout()">'
+    + '<div class="nav-avatar" id="nav-av">' + esc(initial) + '</div>'
+    + '<div><div class="nav-user-name" id="nav-name">' + esc(name) + '</div>'
+    + '<div class="nav-user-role">تسجيل خروج</div></div></div></div>';
+  // الأقسام المجمّعة (الرئيسية/الأوردرات/الإدارة) عبر الباني المركزي
+  try {
+    if (window.B2CSidebar && typeof window.B2CSidebar.build === 'function') {
+      window.B2CSidebar.build(ud, CUR);
+    }
+  } catch (e) { try { console.warn('[sidebar-mount] build failed', e); } catch (_) {} }
+}
+
+if (!SKIP.includes(CUR)) {
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
+    let d = {};
+    try {
+      const s = await getDoc(doc(db, 'users', user.uid));
+      d = s.exists() ? s.data() : {};
+    } catch (_) {}
+    mount({ role: d.role || 'customer_service', permissions: d.permissions || {}, name: d.name || user.email });
+  });
+}
