@@ -92,7 +92,25 @@ export function renderSmartBadges(order, { allOrders = [], now = new Date() } = 
   else if (ctx.isLoyal) out.push(`<span class="smart-bdg smart-bdg-loyal">🔁 ${ctx.count} طلبات</span>`);
   if (ctx.multipleActive) out.push(`<span class="smart-bdg smart-bdg-multi">⊞ ${ctx.activeCount} طلب نشط</span>`);
   if (isUrgentOrder(order, now.getTime())) out.push('<span class="smart-bdg smart-bdg-urgent">⚡ عاجل</span>');
+  if (isMissingShippingData(order)) out.push('<span class="smart-bdg smart-bdg-missing">⚠️ بيانات الشحن ناقصة</span>');
   return out.join('');
+}
+
+/**
+ * Does an order in the shipping stage lack the shipping data the print operator
+ * should have entered (method + delivery address for non-pickup)? Surfaces a
+ * badge prompting manual entry on legacy orders that reached shipping before the
+ * data-entry feature existed. Reads address via getDeliveryAddress so legacy
+ * shipGov counts as present. pickup needs no address.
+ *
+ * @returns {boolean}
+ */
+export function isMissingShippingData(order) {
+  if (!order || order.stage !== 'shipping') return false;
+  if (!order.shipMethod) return true;
+  if (order.shipMethod === 'pickup') return false;
+  const { gov } = getDeliveryAddress(order);
+  return !gov;
 }
 
 /**
