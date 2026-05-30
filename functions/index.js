@@ -544,7 +544,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('permission-denied', 'حساب المستخدم غير موجود');
     }
     const callerData = callerSnap.data() || {};
-    if (callerData.!isStrictAdmin(role)) {
+    if (!isStrictAdmin(callerData.role)) {
       throw new HttpsError('permission-denied', 'الـ Deep View-As للأدمن فقط (دورك: ' + (callerData.role || '—') + ')');
     }
 
@@ -797,6 +797,63 @@ exports.onOrderAssigned = onDocumentUpdated('orders/{orderId}', async (e) => {
       ]);
     }
   }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//   PUSH: Order entered SHIPPING stage — broadcast to ALL shipping officers
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The print operator enters all shipping details (address / delivery phone /
+// price-includes-shipping / fee) back in print.html. When the order finally
+// advances into the `shipping` stage, every shipping_officer should be alerted
+// so any of them can pick it up — this is a broadcast, NOT a single-assignee
+// notification (that one lives in onOrderAssigned, keyed on shippingOfficerId).
+//
+// Guard: fires exactly once on the design/printing/production → shipping edge
+// (before.stage !== 'shipping' && after.stage === 'shipping'), so re-saves
+// while already in shipping never re-notify.
+
+exports.onOrderReadyForShipping = onDocumentUpdated('orders/{orderId}', async (e) => {
+  const before = e.data?.before?.data() || {};
+  const after  = e.data?.after?.data()  || {};
+  // Only the transition INTO shipping.
+  if (after.stage !== 'shipping' || before.stage === 'shipping') return;
+
+  const orderId  = e.params.orderId;
+  const orderNum = after.orderNumber || after.serial || orderId.slice(0, 6);
+  const clientName = after.clientName || '';
+  const incl = after.priceIncludesShipping === true;
+  const addr = after.deliveryAddress || {};
+  const gov  = addr.gov || addr.governorate || '';
+
+  const title = '🚚 أوردر جاهز للشحن';
+  const inclTxt = incl ? 'شامل الشحن' : 'الشحن على العميل';
+  const body  = `${clientName} — #${orderNum}${gov ? ' • ' + gov : ''} • ${inclTxt}`;
+  const link  = `/shipping.html?id=${orderId}`;
+
+  // Broadcast push to all shipping officers.
+  const tokens = await getRoleTokens([ROLES.SHIPPING_OFFICER]);
+  const pushP = sendPush({
+    tokens, title, body,
+    data: { type: 'order_ready_shipping', orderId },
+    link,
+  });
+
+  // In-app bell for each shipping officer.
+  const usersSnap = await db.collection('users').where('role', '==', ROLES.SHIPPING_OFFICER).get();
+  const wb = db.batch();
+  usersSnap.docs.forEach(u => {
+    const ref = db.collection('notifications').doc();
+    wb.set(ref, {
+      toUid: u.id,
+      title, desc: body, ico: '🚚',
+      link, type: 'order_ready_shipping', entityId: orderId,
+      read: false, createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  const inAppP = wb.commit().catch(err => console.warn('ready-for-shipping in-app batch failed', err.message));
+
+  await Promise.all([pushP, inAppP]);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2911,7 +2968,7 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'auth required');
 
   const callerSnap = await db.collection('users').doc(req.auth.uid).get();
-  if (!callerSnap.exists || callerSnap.data().!isStrictAdmin(role)) {
+  if (!callerSnap.exists || !isStrictAdmin(callerSnap.data().role)) {
     throw new HttpsError('permission-denied', 'admin only');
   }
 
@@ -3162,7 +3219,7 @@ exports.migrateLegacyShipStages = onCall(
     // Admin only
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
+    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
 
@@ -3356,7 +3413,7 @@ exports.runProjectionDriftScan = onCall(
   async (req) => {
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'sign-in required');
     const userDoc = await db.collection('users').doc(req.auth.uid).get();
-    if (!userDoc.exists || userDoc.data().!isStrictAdmin(role)) {
+    if (!userDoc.exists || !isStrictAdmin(userDoc.data().role)) {
       throw new HttpsError('permission-denied', 'admin only');
     }
     // إعادة استخدام نفس logic (نقل لـ helper لاحقاً)
