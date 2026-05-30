@@ -24,7 +24,7 @@ export { FB_CONFIG } from './core/firebase-init.js';
 // Pure money helpers — Single Source of Truth في core/order-math.js (L1.5).
 // expectedFromCompany/orderGrossTotal منقولان من هنا (كانا _expectedFromCompany
 // و_orderGrossTotal محليين) عشان يتغطّوا بـ smoke tests نقية (G8).
-import { expectedFromCompany as _expectedFromCompany, orderGrossTotal as _orderGrossTotal } from './core/order-math.js';
+import { expectedFromCompany as _expectedFromCompany, orderGrossTotal as _orderGrossTotal, isFullyPaid as _isFullyPaid } from './core/order-math.js';
 
 // ══════════════════════════════════════════
 // STAGES — تعريف المراحل وترتيبها (يطابق الواقع)
@@ -2028,8 +2028,11 @@ export function isShipReadyToClose(order) {
   if (ss !== 'collected') return false;
   // pickup/courier: محصّل = جاهز
   if (order.shipMethod !== 'company') return true;
-  // company: محتاج تسوية مع الشركة
-  return order.shipSettled === true;
+  // company: محتاج تسوية مع الشركة...
+  if (order.shipSettled === true) return true;
+  // ...إلا لو الفلوس دخلت محفظتنا بالفعل (مدفوع بالكامل) — مفيش تسوية مطلوبة،
+  // فالأوردر جاهز للإغلاق مباشرة (يطابق استبعاده من isShipPendingSettle).
+  return _isFullyPaid(order);
 }
 
 /** هل الأوردر "وصل للعميل"؟ (Step 4.2 — استبدال shippingStatus==='delivered' الميت)
@@ -2065,7 +2068,12 @@ export function isShipPendingSettle(order) {
   if (isShipTerminal(order)) return false;
   if (order.shipMethod !== 'company') return false;
   if (order.shipSettled === true) return false;
-  return (order.shipStage || 'ready') === 'collected';
+  if ((order.shipStage || 'ready') !== 'collected') return false;
+  // الفلوس دخلت محفظتنا بالفعل (totalPaid يغطّي الإجمالي والمتبقي صفر) → مفيش
+  // فلوس عند الشركة محتاجة تسوية. التسوية هنا تضيف للمحفظة مرة تانية = تكرار.
+  // (يحدث لو الأوردر اتدفع عبر تحصيل مباشر أو دفعة يدوية بدل مسار الشركة.)
+  if (_isFullyPaid(order)) return false;
+  return true;
 }
 
 /** هل الأوردر "نشط" يحتاج عمل من فريق الشحن؟

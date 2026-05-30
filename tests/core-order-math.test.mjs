@@ -2,7 +2,7 @@
  * Tests for core/order-math.js
  * Run: node tests/core-order-math.test.mjs
  */
-import { calcRem, orderGrossTotal, expectedFromCompany } from '../core/order-math.js';
+import { calcRem, orderGrossTotal, expectedFromCompany, isFullyPaid } from '../core/order-math.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -126,6 +126,31 @@ test('expectedFromCompany: clamps at 0 when cost exceeds collected', () => {
 });
 test('expectedFromCompany: empty order → 0', () => {
   assertEq(expectedFromCompany({}), 0);
+});
+
+// ── isFullyPaid ────────────────────────────────────────────────────
+// يحرس bug «التسوية تطلع صفر / إضافة مكررة للمحفظة»: أوردر مدفوع بالكامل
+// عبر المحفظة لا يدخل التسوية (لا فلوس عند الشركة).
+test('isFullyPaid: paid covers gross → true', () => {
+  assertEq(isFullyPaid({ salePrice: 2850, totalPaid: 2850 }), true);
+});
+test('isFullyPaid: partial payment → false', () => {
+  assertEq(isFullyPaid({ salePrice: 2850, totalPaid: 1000 }), false);
+});
+test('isFullyPaid: nothing paid → false', () => {
+  assertEq(isFullyPaid({ salePrice: 2850, totalPaid: 0 }), false);
+});
+test('isFullyPaid: zero gross → false (nothing to pay)', () => {
+  assertEq(isFullyPaid({ salePrice: 0, totalPaid: 0 }), false);
+});
+test('isFullyPaid: deposit fallback when no totalPaid', () => {
+  assertEq(isFullyPaid({ salePrice: 500, deposit: 500 }), true);
+});
+test('isFullyPaid: respects discount in gross', () => {
+  assertEq(isFullyPaid({ salePrice: 1000, discount: 200, totalPaid: 800 }), true);
+});
+test('isFullyPaid: tiny rounding tolerance', () => {
+  assertEq(isFullyPaid({ salePrice: 1000, totalPaid: 999.995 }), true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

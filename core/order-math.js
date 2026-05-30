@@ -48,6 +48,25 @@ export const orderGrossTotal = (o) => {
 };
 
 /**
+ * Has the customer fully paid this order (money already in our wallet)?
+ *   totalPaid (or deposit fallback) covers the gross total.
+ *
+ * Used to exclude company-shipping orders from settlement: if the customer
+ * already paid us in full, there's no money sitting at the shipping company
+ * to settle — re-settling would double-credit the wallet. (Guards the bug
+ * where an order paid via direct-collect still showed in the settle tab.)
+ *
+ * @param {object} o — order document
+ * @returns {boolean} false when gross is 0 (nothing to pay)
+ */
+export const isFullyPaid = (o) => {
+  const gross = orderGrossTotal(o);
+  if (gross <= 0) return false;
+  const paid = parseFloat(o?.totalPaid) || parseFloat(o?.deposit) || 0;
+  return paid >= gross - 0.01;
+};
+
+/**
  * Net amount the shipping company owes us for this order = collected − cost.
  *
  *   collected = shipCollected, OR — if the "confirm collection" step was
