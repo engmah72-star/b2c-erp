@@ -21,6 +21,11 @@
 // للتوافق مع أي مستهلك قديم. الصفحات الجديدة يجب تستورد من core مباشرة.
 export { FB_CONFIG } from './core/firebase-init.js';
 
+// Pure money helpers — Single Source of Truth في core/order-math.js (L1.5).
+// expectedFromCompany/orderGrossTotal منقولان من هنا (كانا _expectedFromCompany
+// و_orderGrossTotal محليين) عشان يتغطّوا بـ smoke tests نقية (G8).
+import { expectedFromCompany as _expectedFromCompany, orderGrossTotal as _orderGrossTotal } from './core/order-math.js';
+
 // ══════════════════════════════════════════
 // STAGES — تعريف المراحل وترتيبها (يطابق الواقع)
 // ══════════════════════════════════════════
@@ -2112,30 +2117,9 @@ export function isShipActive(order) {
 //
 // ═══════════════════════════════════════════════════════════════════
 
-/** صافي ما تدين به الشركة لنا لهذا الأوردر = shipCollected − shippingCost */
-function _expectedFromCompany(order) {
-  let collected = parseFloat(order?.shipCollected) || 0;
-  // Fallback: لو خطوة "تأكيد التحصيل" اتفوّتت (shipCollected=0) بينما العميل
-  // عليه متبقّي، الشركة بتحصّل المتبقي. نستخدمه بدل صفر عشان التسوية ما تطلعش
-  // صفر وتقفل الأوردر صح. (نفس صيغة getExpectedCollection)
-  if (collected <= 0) {
-    const sale = parseFloat(order?.salePrice) || 0;
-    const cust = parseFloat(order?.customerShipFee) || 0;
-    const disc = parseFloat(order?.discount) || 0;
-    const paid = parseFloat(order?.totalPaid) || parseFloat(order?.deposit) || 0;
-    collected = Math.max(0, sale + cust - disc - paid);
-  }
-  const cost = parseFloat(order?.shippingCost) || 0;
-  return Math.max(0, collected - cost);
-}
-
-/** المجموع الكلي للأوردر بعد customer ship fee و discount */
-function _orderGrossTotal(order) {
-  const sale     = parseFloat(order?.salePrice) || 0;
-  const custShip = parseFloat(order?.customerShipFee) || 0;
-  const disc     = parseFloat(order?.discount) || 0;
-  return Math.max(0, sale + custShip - disc);
-}
+// _expectedFromCompany و _orderGrossTotal منقولان إلى core/order-math.js
+// (expectedFromCompany / orderGrossTotal) ومستوردان أعلى الملف — Single
+// Source of Truth + مغطّيان بـ tests/core-order-math.test.mjs (G8).
 
 /**
  * buildSettlementUpdates — pure function. Returns the per-order updates

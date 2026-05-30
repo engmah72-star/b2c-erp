@@ -32,3 +32,44 @@ export const calcRem = (o) => {
       - (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0),
   );
 };
+
+/**
+ * Gross order total = salePrice + customerShipFee − discount (clamp ≥ 0).
+ * The total the customer owes before any payment.
+ *
+ * @param {object} o — order document
+ * @returns {number}
+ */
+export const orderGrossTotal = (o) => {
+  const sale     = parseFloat(o?.salePrice)       || 0;
+  const custShip = parseFloat(o?.customerShipFee) || 0;
+  const disc     = parseFloat(o?.discount)        || 0;
+  return Math.max(0, sale + custShip - disc);
+};
+
+/**
+ * Net amount the shipping company owes us for this order = collected − cost.
+ *
+ *   collected = shipCollected, OR — if the "confirm collection" step was
+ *   skipped (shipCollected = 0) while the customer still owes a balance —
+ *   the company collects the customer's remaining (sale + ship − disc − paid).
+ *   This fallback prevents settlement from computing 0 and failing to close
+ *   the order. (Mirrors calcRem's customer-remaining formula.)
+ *
+ *   cost = shippingCost (what we pay the company).
+ *
+ * @param {object} o — order document
+ * @returns {number} clamp ≥ 0
+ */
+export const expectedFromCompany = (o) => {
+  let collected = parseFloat(o?.shipCollected) || 0;
+  if (collected <= 0) {
+    const sale = parseFloat(o?.salePrice)       || 0;
+    const cust = parseFloat(o?.customerShipFee) || 0;
+    const disc = parseFloat(o?.discount)        || 0;
+    const paid = parseFloat(o?.totalPaid) || parseFloat(o?.deposit) || 0;
+    collected = Math.max(0, sale + cust - disc - paid);
+  }
+  const cost = parseFloat(o?.shippingCost) || 0;
+  return Math.max(0, collected - cost);
+};
