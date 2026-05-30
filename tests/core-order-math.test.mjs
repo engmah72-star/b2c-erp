@@ -72,5 +72,17 @@ test('calcRem: NaN values treat as 0', () => {
   assertEq(calcRem({ salePrice: 'abc', totalPaid: 'def' }), 0);
 });
 
+// ── Step 3: courierDirectFee must NOT enter the customer receivable ──
+// "غير شامل الشحن" = العميل يدفع للمندوب مباشرة؛ الرسوم خارج حسابات الشركة.
+// prepareForShipping يكتب customerShipFee=0 + courierDirectFee=fee، فيجب أن
+// لا يتأثر المتبقي بـ courierDirectFee إطلاقاً.
+test('calcRem: courierDirectFee is ignored (outside company accounts)', () => {
+  assertEq(calcRem({ salePrice: 1000, courierDirectFee: 65, totalPaid: 300 }), 700);
+});
+
+test('calcRem: courierDirectFee + customerShipFee=0 → only sale counts', () => {
+  assertEq(calcRem({ salePrice: 500, customerShipFee: 0, courierDirectFee: 50, totalPaid: 200 }), 300);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

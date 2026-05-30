@@ -659,6 +659,7 @@ export function createOrderData(data, userId, userName) {
     // الشحن — PR-1 (scalable-drifting-ember) — additive defaults، لم يُستخدم بعد
     priceIncludesShipping: false,         // هل salePrice يشمل الشحن؟
     deliveryAddress:       null,          // {gov, city, area, street, landmark, notes}
+    courierDirectFee:      0,             // غير شامل: رسوم الشحن يدفعها العميل للمندوب مباشرة — معلوماتي فقط، خارج حسابات الشركة (لا wallet/ledger/remaining)
     customerPhoneShip:     '',            // رقم تواصل التسليم (يفول back على clientPhone)
     shipPrepaid:           false,         // الشركة دفعتنا قبل التسليم
     returnedItems:         [],            // Array<{idx, qty, reason}> — partial returns
@@ -1526,10 +1527,12 @@ export function validatePrepareShipping({
     }
   }
 
+  // رسم الشحن هنا = رسوم يدفعها العميل للمندوب مباشرة (courierDirectFee) —
+  // معلوماتي فقط، خارج حسابات الشركة. لو السعر شامل الشحن فلا يوجد رسم منفصل.
   const fee = parseFloat(customerShipFee) || 0;
   if (fee < 0) errors.push('⚠️ رسم الشحن غير صالح');
   if (priceIncludesShipping === true && fee > 0) {
-    errors.push('⛔ السعر شامل الشحن — لا يجوز customerShipFee > 0');
+    errors.push('⛔ السعر شامل الشحن — لا رسوم شحن منفصلة على العميل');
   }
 
   if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) {

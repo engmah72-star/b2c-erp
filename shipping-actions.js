@@ -601,8 +601,12 @@ export const shippingActions = {
 
   /**
    * prepareForShipping — تجهيز الأوردر للشحن قبل confirmShipped.
-   * يكتب: shipMethod, shipCompanyId/Name, deliveryAddress, customerShipFee,
+   * يكتب: shipMethod, shipCompanyId/Name, deliveryAddress, courierDirectFee,
    * priceIncludesShipping, customerPhoneShip. لا حدث مالي.
+   *
+   * ملاحظة مالية (RULE 4): رسوم الشحن في حالة «غير شامل» = يدفعها العميل
+   * للمندوب مباشرة. تُخزَّن في courierDirectFee (معلوماتي فقط) ولا تدخل
+   * حسابات الشركة. customerShipFee (الذي يُضاف لمطلوب التحصيل) يبقى 0 دائماً.
    */
   async prepareForShipping({
     db, orderId,
@@ -625,17 +629,24 @@ export const shippingActions = {
     if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings, orderId };
 
     const fee = parseFloat(customerShipFee) || 0;
+    // غير شامل → courierDirectFee (معلوماتي، خارج الحسابات). شامل → لا رسوم منفصلة.
+    const courierFee = priceIncludesShipping ? 0 : fee;
+    const feeNote = !priceIncludesShipping && courierFee > 0
+      ? ` — الشحن على العميل: ${courierFee} ج للمندوب مباشرة`
+      : (priceIncludesShipping ? ' — السعر شامل الشحن' : '');
     const fields = {
       shipMethod,
       shipCompanyId: shipMethod === 'company' ? (shipCompanyId || '') : '',
       shipCompanyName: shipMethod === 'company' ? (shipCompanyName || '') : '',
       deliveryAddress: shipMethod === 'pickup' ? null : (deliveryAddress || null),
-      customerShipFee: priceIncludesShipping ? 0 : fee,
+      // RULE 4: رسوم الشحن المباشرة لا تدخل حسابات الشركة — customerShipFee يبقى 0.
+      customerShipFee: 0,
+      courierDirectFee: courierFee,
       priceIncludesShipping: !!priceIncludesShipping,
       customerPhoneShip: customerPhoneShip || order.customerPhoneShip || order.clientPhone || '',
       shipStage: order.shipStage || 'ready',
       timeline: [...(order.timeline || []), _tlEntry(
-        `📋 تجهيز للشحن — ${shipMethod}${shipMethod === 'company' && shipCompanyName ? ' (' + shipCompanyName + ')' : ''}`,
+        `📋 تجهيز للشحن — ${shipMethod}${shipMethod === 'company' && shipCompanyName ? ' (' + shipCompanyName + ')' : ''}${feeNote}`,
         userName, userId
       )],
       updatedAt: serverTimestamp(),
