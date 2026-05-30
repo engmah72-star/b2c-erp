@@ -28,7 +28,11 @@
         <p id="user-info" style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px"></p>
       </div>
     </div>
-    <div class="topbar-right">
+    <div class="topbar-right" style="display:flex;align-items:center;gap:10px">
+      <div id="att-box" style="display:none;text-align:left">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">⏰ <span id="att-status">—</span></div>
+      </div>
+      <button type="button" id="att-btn" class="btn btn-g btn-sm" style="display:none" onclick="doAtt()">✅ تسجيل حضور</button>
       <span id="nav-name" class="hide"></span>
     </div>
   </header>
@@ -298,6 +302,7 @@ import {
 import { ref as _stRef, uploadBytesResumable as _stUploadResumable, getDownloadURL as _stGetURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { storage as _storage } from "./core/firebase-init.js";
 import { shippingActions } from './shipping-actions.js';
+import { employeeActions } from './employee-actions.js';
 // PR-1 helpers (scalable-drifting-ember): central method/stage labels.
 import { getShipMethodLabel, getShipStageLabel, normalizeShipStage, getExpectedCollection } from "./orders.js";
 import {
@@ -320,6 +325,7 @@ import {
 // ══════════════════════════════════════════
 let me = null, myRole = '', myUserName = '';
 let orders = [], shippers = [], wallets = [];
+let todayAtt = null;       // attendance record اليوم (الحضور — منقول من الداشبورد)
 let currentTab = 'ready';
 let pendingOrder = null;   // for modals
 let pendingOrders = [];    // for bulk settle
@@ -372,7 +378,52 @@ initAuth(async (state) => {
     query(collection(db, 'shipping_settlements'), orderBy('createdAt', 'desc'), limit(50)),
     (snap) => { settlements = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(s => s.reversed !== true); }
   );
+
+  // ⏰ الحضور — منقول من shipping-dashboard ليصبح مركز الشحن مدخلاً واحداً
+  // كاملاً (عمليات + حضور). نفس الـ action المركزي employeeActions.
+  const _today = new Date().toISOString().slice(0, 10);
+  onSnapshot(
+    query(collection(db, 'attendance'), where('employeeUid', '==', me.uid), limit(365)),
+    (snap) => {
+      const recs = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      todayAtt = recs.find(r => r.date === _today) || null;
+      renderAttBox();
+    }
+  );
 }, () => { window.location.href = 'login.html'; });
+
+// ⏰ ATTENDANCE — render + check-in/out (نفس منطق الداشبورد، action مركزي)
+function renderAttBox() {
+  const box = $('att-box'), btn = $('att-btn'), statusEl = $('att-status');
+  if (!box || !btn) return;
+  box.style.display = ''; btn.style.display = '';
+  if (!todayAtt) {
+    statusEl.textContent = 'لم يُسجَّل بعد';
+    btn.textContent = '✅ تسجيل حضور'; btn.className = 'btn btn-g btn-sm'; btn.disabled = false;
+  } else if (!todayAtt.checkOut) {
+    statusEl.textContent = 'حاضر منذ ' + (todayAtt.checkInStr || '');
+    btn.textContent = '🔚 انصراف'; btn.className = 'btn btn-b btn-sm'; btn.disabled = false;
+  } else {
+    statusEl.textContent = (todayAtt.checkInStr || '') + ' → ' + (todayAtt.checkOutStr || '');
+    btn.textContent = '✓ تم'; btn.className = 'btn btn-ghost btn-sm'; btn.disabled = true;
+  }
+}
+window.doAtt = async function () {
+  const today = new Date().toISOString().slice(0, 10);
+  const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  if (!todayAtt) {
+    const r = await employeeActions.recordAttendanceCheckIn({
+      db, employeeId: me.uid, employeeUid: me.uid, employeeName: myUserName,
+      date: today, lateMinutes: 0, recordedBy: me.uid, recordedByName: myUserName,
+    });
+    if (!r.ok) return toast('❌ ' + (r.errors || []).join(' · '), 'err');
+    toast('✅ تم تسجيل الحضور — ' + timeStr, 'ok');
+  } else if (!todayAtt.checkOut) {
+    const r = await employeeActions.recordAttendanceCheckOut({ db, attendanceId: todayAtt._id });
+    if (!r.ok) return toast('❌ ' + (r.errors || []).join(' · '), 'err');
+    toast('✅ تم الانصراف', 'ok');
+  }
+};
 
 // ══════════════════════════════════════════
 // DROPDOWNS
