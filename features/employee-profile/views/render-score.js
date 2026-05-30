@@ -50,19 +50,19 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.att.pct}%;background:var(--g)"></div></div>
           <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.att.score}/35</span>
         </div>
-        ${lateInfo ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${lateInfo}</div>` : ''}
+        ${lateInfo ? `<div class="txt-meta-xs" style="margin-right:68px">${lateInfo}</div>` : ''}
         <div style="display:flex;align-items:center;gap:var(--space-sm);font-size:var(--fs-sm)">
           <span style="width:60px;color:var(--dim2)">إنتاجية</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.prod.pct}%;background:var(--b)"></div></div>
           <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.prod.score}/40</span>
         </div>
-        ${proratedNote ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${proratedNote}</div>` : ''}
+        ${proratedNote ? `<div class="txt-meta-xs" style="margin-right:68px">${proratedNote}</div>` : ''}
         <div style="display:flex;align-items:center;gap:var(--space-sm);font-size:var(--fs-sm)">
           <span style="width:60px;color:var(--dim2)">جودة</span>
           <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${breakdown.qual.pct}%;background:var(--p)"></div></div>
           <span style="font-weight:var(--fw-bold);width:30px;text-align:left">${breakdown.qual.score}/25</span>
         </div>
-        ${incidentInfo ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-right:68px">${incidentInfo}</div>` : ''}
+        ${incidentInfo ? `<div class="txt-meta-xs" style="margin-right:68px">${incidentInfo}</div>` : ''}
       </div>
     </div>
   </div>`;

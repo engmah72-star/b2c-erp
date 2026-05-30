@@ -66,7 +66,7 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
           ${firstChar}
           <span class="hero-dot ${e.status === 'active' ? 'dot-on' : 'dot-off'}"></span>
         </div>
-        <div style="flex:1;min-width:0">
+        <div class="flex-1 min-w-0">
           <div class="hero-name">${escAttr(e.name) || '—'}</div>
           <div class="hero-role-lbl">${r.ico} ${r.label}${statusInactive}</div>
           <div class="hero-chips">${chipPhone}${chipEmail}${chipStartDate}${chipCommission}</div>
@@ -81,23 +81,23 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
       </div>
       <div class="hero-stats-row">
         <div class="hstat">
-          <div class="hstat-val" style="color:${stats.attColor}">${stats.presentDays}<span style="font-size:var(--fs-base);font-weight:var(--fw-medium);color:var(--dim2)">/${stats.workDaysStat}</span></div>
+          <div class="hstat-val" style="color:${stats.attColor}">${stats.presentDays}<span class="txt-meta-base" style="font-weight:var(--fw-medium)">/${stats.workDaysStat}</span></div>
           <div class="hstat-lbl">الحضور</div>
         </div>
         <div class="hstat">
-          <div class="hstat-val" style="color:var(--g)">${format(stats.totalIncome)}</div>
+          <div class="hstat-val text-g">${format(stats.totalIncome)}</div>
           <div class="hstat-lbl">دخل ${stats.monthLabel} ج</div>
         </div>
         <div class="hstat">
-          <div class="hstat-val" style="color:var(--y)">${stats.tasksOpen}</div>
+          <div class="hstat-val text-y">${stats.tasksOpen}</div>
           <div class="hstat-lbl">مهام مفتوحة</div>
         </div>
         <div class="hstat">
-          <div class="hstat-val" style="color:var(--b)">${stats.totalEmpOrders}</div>
+          <div class="hstat-val text-b">${stats.totalEmpOrders}</div>
           <div class="hstat-lbl">إجمالي الأوردرات</div>
         </div>
         <div class="hstat" style="border-left:none;border-top:1px solid var(--line)">
-          <div class="hstat-val" style="color:${stats.annualLeaveCol}">${stats.annualLeaveRemaining}<span style="font-size:var(--fs-base);font-weight:var(--fw-medium);color:var(--dim2)">/${stats.annualLeaveQuota}</span></div>
+          <div class="hstat-val" style="color:${stats.annualLeaveCol}">${stats.annualLeaveRemaining}<span class="txt-meta-base" style="font-weight:var(--fw-medium)">/${stats.annualLeaveQuota}</span></div>
           <div class="hstat-lbl">إجازة سنوية</div>
         </div>
       </div>
@@ -119,7 +119,7 @@ export function buildQuickActionsHTML({ employee, allowEmailReset = false }) {
        <a href="https://wa.me/2${escAttr(e.phone.replace(/^0/, ''))}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`
     : '';
   const emailReset = allowEmailReset
-    ? `<button type="button" onclick="closeQAMenu();sendEmpResetEmail()" style="color:var(--b)">✉️ إرسال رابط بالبريد</button>`
+    ? `<button class="text-b" type="button" onclick="closeQAMenu();sendEmpResetEmail()">✉️ إرسال رابط بالبريد</button>`
     : '';
   return `
     <!-- Quick actions bar -->
@@ -135,9 +135,9 @@ export function buildQuickActionsHTML({ employee, allowEmailReset = false }) {
         <button type="button" onclick="closeQAMenu();openEditSkills()">🏷️ تعديل المهارات</button>
         ${phoneItems}
         <div class="act-sep"></div>
-        <button type="button" onclick="closeQAMenu();resetEmployeePassword()" style="color:var(--y)">🔑 إعادة تعيين فوري</button>
+        <button class="text-y" type="button" onclick="closeQAMenu();resetEmployeePassword()">🔑 إعادة تعيين فوري</button>
         ${emailReset}
-        <button type="button" onclick="closeQAMenu();confirmDelete()" style="color:var(--r)">🗑 حذف الموظف</button>
+        <button class="text-r" type="button" onclick="closeQAMenu();confirmDelete()">🗑 حذف الموظف</button>
       </div>
     </div>`;
 }
