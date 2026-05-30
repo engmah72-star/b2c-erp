@@ -202,8 +202,8 @@ export function buildClientsHTML({ orders = [], format = defaultFormat }) {
       <div style="flex:1;min-width:0">
         <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px;display:flex;gap:6px;align-items:center">
           ${escAttr(c.name)}
-          ${isTop ? '<span style="font-size:var(--fs-tiny);background:rgba(0,217,126,.15);color:var(--g);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">★ الأعلى</span>' : ''}
-          ${isRepeat ? '<span style="font-size:var(--fs-tiny);background:rgba(59,158,255,.12);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">↩ متكرر</span>' : ''}
+          ${isTop ? '<span class="bdg-mini bdg-mini-g">★ الأعلى</span>' : ''}
+          ${isRepeat ? '<span class="bdg-mini bdg-mini-b">↩ متكرر</span>' : ''}
         </div>
         <div class="txt-meta-xs">${escAttr(c.phone) || '—'} · آخر أوردر: ${lastStr}</div>
       </div>
