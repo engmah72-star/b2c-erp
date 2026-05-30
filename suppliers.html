@@ -857,24 +857,21 @@ const _SEED_CAT=[
 const _norm=s=>s.trim().toLowerCase().replace(/\s+/g,' ');
 
 async function loadMasterLists(){
+  // RULE M1 + المصدر الوحيد: نقرأ التخصصات من الإعدادات فقط
+  // (master_lists/supplier_categories). مفيش دمج/فرض للبذور فوق قرارات الأدمن —
+  // البذور (_SEED_CAT) تُستخدم مرة واحدة فقط لو الـ collection فاضية تماماً
+  // (أول تشغيل)، ومن بعدها الإعدادات هي صاحبة القرار الوحيدة.
   try{
     const catSnap=await getDoc(doc(db,'master_lists','supplier_categories'));
-    if(!catSnap.exists()){
-      const seedItems=_SEED_CAT.map((c,i)=>({...c,isActive:true,order:i}));
-      await masterListsActions.saveSupplierCategories({db,items:seedItems});
+    const existing=catSnap.exists()?(catSnap.data()?.items||[]):[];
+    if(!existing.length){
+      // seed لمرة واحدة فقط (collection فاضية)
+      const seedItems=_SEED_CAT.map((c,i)=>({...c,isActive:true,isSupplierService:true,order:i}));
+      try{ await masterListsActions.saveSupplierCategories({db,items:seedItems}); }catch(_){}
       masterCategories=seedItems;
     }else{
-      const existing=catSnap.data()?.items||[];
-      const existNorm=new Set(existing.map(c=>_norm(c.label)));
-      const toAdd=_SEED_CAT.filter(c=>!existNorm.has(_norm(c.label))).map((c,i)=>({...c,isActive:true,order:existing.length+i}));
-      if(toAdd.length){
-        const merged=[...existing,...toAdd];
-        await masterListsActions.saveSupplierCategories({db,items:merged});
-        // RULE M1: filter out cost-only items (isSupplierService===false explicitly).
-        masterCategories=merged.filter(c=>c.isActive!==false && c.isSupplierService!==false);
-      }else{
-        masterCategories=existing.filter(c=>c.isActive!==false && c.isSupplierService!==false);
-      }
+      // قراءة فقط — الإعدادات هي المصدر (RULE M1: نستثني بنود التكلفة فقط)
+      masterCategories=existing.filter(c=>c.isActive!==false && c.isSupplierService!==false);
     }
   }catch(e){
     console.warn('Master Lists fetch error — using seed fallback:',e.message);
