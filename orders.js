@@ -1208,7 +1208,7 @@ export function validateRefund({ order, amount, role }) {
 // are intended to replace the inline checks currently duplicated across
 // shipping.html, shipping-followup.html, and shipping-accounts.html.
 
-const SHIPPING_DISPATCH_ROLES = ['admin', 'operation_manager', 'shipping_officer'];
+export const SHIPPING_DISPATCH_ROLES = ['admin', 'operation_manager', 'shipping_officer'];
 const SHIPPING_COLLECT_ROLES  = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
 const SHIPPING_SETTLE_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
 const SHIPPING_RETURN_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
