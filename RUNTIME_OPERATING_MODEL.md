@@ -58,7 +58,9 @@
 
 **Contract:** الـ shell يحدد الـ default domain من `users/{uid}.role` عند أول تحميل. الـ user يقدر يغيّر default من Profile (مستقبلاً — Phase 2 من Runtime Memory).
 
-**التطبيق الحالي:** `shell.html:73` بيستخدم `accounts` افتراضياً للجميع — يحتاج role-based mapping (Phase B من E1.5 incremental).
+**التطبيق الحالي:** ✅ **مُطبَّق بالكامل.** `core/runtime-shell/domain-permissions.js:36-45` يعرّف `ROLE_DEFAULT_DOMAIN` mapping. `shell.html:218` يستدعي `getDefaultDomain(userData.role)` بعد auth. `shell.html:78-81` يحترم `?d=` override للـ deep-links. الـ `shell.html:73` (`let defaultDomain = 'accounts'`) هو initial state قبل auth فقط — يتـ override من line 218.
+
+**Future enhancement (Phase 2):** per-user default override من Profile (يحفظ في `users/{uid}.preferences.defaultDomain`) — additive، flag-gated، لا يكسر الـ role mapping.
 
 ## 1.2 — Operational Startup Flow
 
