@@ -120,9 +120,9 @@ export function buildScheduleHTML({ workSchedule }) {
       ${[0,1,2,3,4,5,6].map(d => `<span class="day-pill${days.includes(d) ? ' on' : ''}">${DAY_NAMES_AR[d]}</span>`).join('')}
     </div>
     <div style="display:flex;gap:var(--space-xl);font-size:var(--fs-base);color:var(--dim2)">
-      <span>⏰ بدء: <strong style="color:var(--snow)">${escAttr(ws.startTime) || '09:00'}</strong></span>
-      <span>🏁 نهاية: <strong style="color:var(--snow)">${escAttr(ws.endTime) || '17:00'}</strong></span>
-      <span>📅 <strong style="color:var(--b)">${days.length} أيام/أسبوع</strong></span>
+      <span>⏰ بدء: <strong class="text-snow">${escAttr(ws.startTime) || '09:00'}</strong></span>
+      <span>🏁 نهاية: <strong class="text-snow">${escAttr(ws.endTime) || '17:00'}</strong></span>
+      <span>📅 <strong class="text-b">${days.length} أيام/أسبوع</strong></span>
     </div>`;
 }
 
@@ -149,7 +149,7 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
     const t = LEAVE_TYPES[lv.type] || LEAVE_TYPES.annual;
     const isCur = lv.startDate <= todayIso && lv.endDate >= todayIso;
     return `<div class="leave-row"${isCur ? ' style="border-right:3px solid var(--y)"' : ''}>
-      <div style="flex:1;min-width:0">
+      <div class="flex-1 min-w-0">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
           <span class="lv-badge ${t.cls}">${t.ico} ${t.lbl}</span>
           ${isCur ? '<span class="bdg-mini bdg-mini-y">جارية الآن</span>' : ''}

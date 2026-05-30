@@ -98,7 +98,7 @@ export function buildGoalsHTML({ goal, actualOrders = 0, actualDone = 0, present
     ${rows.map(r => `<div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;font-size:var(--fs-base)">
         <span style="font-weight:var(--fw-bold)">${r.lbl}</span>
-        <span style="color:var(--dim2)">${r.actual} <span style="opacity:.5">/ ${r.target}</span></span>
+        <span class="text-muted">${r.actual} <span style="opacity:.5">/ ${r.target}</span></span>
       </div>
       <div class="prod-bar-wrap">
         <div class="prod-bar-fill" style="width:${r.pct}%;background:${r.col}"></div>
@@ -132,12 +132,12 @@ export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {
       <div style="position:absolute;width:44px;text-align:center;font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${col};margin-right:0;line-height:44px">${score}</div>
       <div class="flex-1">
         <div class="txt-bold-md">${lbl} <span style="font-size:var(--fs-sm);font-weight:var(--fw-medium);color:${col}">— ${grade}</span></div>
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">
+        <div class="txt-meta-xs" style="margin-top:3px">
           حضور ${ev.attScore || 0}/35 · إنتاجية ${ev.prodScore || 0}/40 · جودة ${ev.qualScore || 0}/25
           ${ev.attDays !== undefined ? ` · ${ev.attDays} يوم حضور` : ''}
           ${ev.rating ? ` · ⭐ ${ev.rating}/5` : ''}
         </div>
-        ${ev.notes ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">💬 ${escAttr(ev.notes)}</div>` : ''}
+        ${ev.notes ? `<div class="txt-meta-xs" style="margin-top:2px">💬 ${escAttr(ev.notes)}</div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -167,7 +167,7 @@ export function buildSkillsAndProductsHTML({ skills = [], products = [], totalOr
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
           <span class="txt-strong-base">${isTopSkill ? '⭐ ' : ''}${escAttr(p.name)}</span>
           <div style="display:flex;gap:var(--space-md);font-size:var(--fs-sm)">
-            <span style="color:var(--dim2)">${p.total} أوردر</span>
+            <span class="text-muted">${p.total} أوردر</span>
             <span style="font-weight:var(--fw-extra);color:${rateCol}">${p.rate}%</span>
             <span style="color:var(--g);font-weight:var(--fw-bold)">${format(p.revenue)} ج</span>
           </div>
@@ -276,7 +276,7 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
           const h = maxDay > 0 ? Math.max(4, Math.round(c / maxDay * 100)) : 4;
           const col = i === bestDayIdx ? 'var(--g)' : (i === 5 || i === 6 ? 'var(--bg3)' : 'var(--b)');
           return `<div class="day-bar">
-            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${c || ''}</div>
+            <div class="txt-meta-tiny" style="font-weight:var(--fw-bold)">${c || ''}</div>
             <div class="day-bar-inner" style="height:${h}%;background:${col}"></div>
             <div style="font-size:8px;color:var(--dim2)">${DAYS_AR[i].slice(0, 3)}</div>
           </div>`;
@@ -290,7 +290,7 @@ export function buildBehaviorHTML({ attendance = [], empOrders = [], now }) {
           const h = maxTrend > 0 ? Math.max(4, Math.round(t.cnt / maxTrend * 100)) : 4;
           const isNow = i === 5;
           return `<div class="day-bar">
-            <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold)">${t.cnt || ''}</div>
+            <div class="txt-meta-tiny" style="font-weight:var(--fw-bold)">${t.cnt || ''}</div>
             <div class="day-bar-inner" style="height:${h}%;background:${isNow ? 'var(--p)' : 'var(--b)'}"></div>
             <div style="font-size:8px;color:${isNow ? 'var(--p)' : 'var(--dim2)'};font-weight:${isNow ? '800' : '400'}">${t.lbl}</div>
           </div>`;

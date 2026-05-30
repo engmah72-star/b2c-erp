@@ -104,7 +104,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
         const isLate = t.dueDate && t.dueDate < today && !isDone;
         return `<div class="task-item${isDone ? ' done-task' : ''}">
       <div class="task-check${isDone ? ' checked' : ''}" onclick="toggleTask('${escAttr(t._id)}','${escAttr(t.status)}')">${isDone ? '✓' : ''}</div>
-      <div style="flex:1;min-width:0">
+      <div class="flex-1 min-w-0">
         <div style="font-size:var(--fs-md);font-weight:var(--fw-bold);${isDone ? 'text-decoration:line-through' : ''}">${escAttr(t.title)}</div>
         ${t.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${escAttr(t.description)}</div>` : ''}
         ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
@@ -146,14 +146,14 @@ export function buildIncidentsHTML({ incidents = [] }) {
     const s = INCIDENT_SEVERITY[i.severity] || INCIDENT_SEVERITY.low;
     return `<div style="background:var(--bg3);border:1px solid var(--line);border-right:3px solid ${t.col};border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">
       <span style="font-size:var(--fs-2xl);flex-shrink:0">${t.ico}</span>
-      <div style="flex:1;min-width:0">
+      <div class="flex-1 min-w-0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
           <span class="txt-bold-md">${escAttr(i.title) || t.lbl}</span>
           <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${s.bg};color:${s.col}">${s.lbl}</span>
         </div>
         ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:var(--lh-base)">${escAttr(i.description)}</div>` : ''}
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
+        <div class="txt-meta-xs" style="margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
       </div>
       <button type="button" onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-xs)" title="حذف">🗑</button>
     </div>`;
@@ -199,7 +199,7 @@ export function buildClientsHTML({ orders = [], format = defaultFormat }) {
     const isRepeat = c.orders.length > 1;
     return `<div style="display:flex;gap:var(--space-md);align-items:center;padding:11px 14px;background:var(--bg3);border-radius:var(--rad);margin-bottom:7px;border-right:3px solid ${rateCol};${isTop ? 'box-shadow:0 2px 8px rgba(0,217,126,.12)' : ''}">
       <div style="width:38px;height:38px;border-radius:50%;background:${isTop ? 'rgba(0,217,126,.15)' : 'var(--bg2)'};color:${isTop ? 'var(--g)' : 'var(--dim)'};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:var(--fw-heavy);flex-shrink:0">${(c.name || '?')[0].toUpperCase()}</div>
-      <div style="flex:1;min-width:0">
+      <div class="flex-1 min-w-0">
         <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);margin-bottom:3px;display:flex;gap:6px;align-items:center">
           ${escAttr(c.name)}
           ${isTop ? '<span class="bdg-mini bdg-mini-g">★ الأعلى</span>' : ''}

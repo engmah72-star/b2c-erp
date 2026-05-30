@@ -130,7 +130,7 @@ export function buildSalariesHTML({
               <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${typeCol}18;color:${typeCol}">${typeLabel}</span>
               <span class="txt-meta-sm">${escAttr(s.walletName) || '—'}</span>
             </div>
-            <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${escAttr(s.note || s.date) || '—'}</div>
+            <div class="txt-meta-xs" style="margin-top:2px">${escAttr(s.note || s.date) || '—'}</div>
           </div>
           <div style="display:flex;align-items:center;gap:var(--space-sm)">
             <span style="font-size:15px;font-weight:var(--fw-heavy);color:${isDeduct ? 'var(--r)' : 'var(--g)'}">${isDeduct ? '-' : ''}${format(amt)} ج</span>

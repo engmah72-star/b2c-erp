@@ -31,14 +31,14 @@ export function buildSetPasswordModalHTML({ employeeName }) {
         <div class="fg" style="margin-bottom:12px">
           <label>كلمة السر الجديدة *</label>
           <input class="inp" id="new-emp-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">ستظهر هنا للأدمن — أبلغ الموظف بها ليدخل ويغيّرها</div>
+          <div class="txt-meta-xs" style="margin-top:4px">ستظهر هنا للأدمن — أبلغ الموظف بها ليدخل ويغيّرها</div>
         </div>
         <div class="fg" style="margin-bottom:12px">
           <label style="display:flex;align-items:center;gap:6px">كلمة السر الحالية <span style="color:var(--dim2);font-weight:var(--fw-normal);font-size:var(--fs-xs)">(اختياري — لو الموظف غيّرها)</span></label>
           <input class="inp" id="current-emp-pw" type="text" dir="ltr" placeholder="اتركها فارغة لو الأدمن لم يغيّرها">
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">إن كان الموظف غيّر كلمة السر بنفسه، اكتب الكلمة الحالية هنا (إن عرفتها) ليتم التطبيق فوراً.</div>
+          <div class="txt-meta-xs" style="margin-top:4px">إن كان الموظف غيّر كلمة السر بنفسه، اكتب الكلمة الحالية هنا (إن عرفتها) ليتم التطبيق فوراً.</div>
         </div>
-        <button type="button" class="btn btn-g" id="sp-save" style="width:100%" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
+        <button type="button" class="btn btn-g w-full" id="sp-save" onclick="saveEmployeePassword(this)">💾 حفظ وتطبيق</button>
         <div id="sp-msg" style="font-size:var(--fs-sm);margin-top:8px;color:var(--dim2);line-height:1.6"></div>
       </div>
     </div>`;
@@ -68,7 +68,7 @@ export function buildRebuildAuthModalHTML({ employeeName, employeePhone }) {
           <label>كلمة السر الجديدة</label>
           <input class="inp" id="rb-pw" type="text" dir="ltr" inputmode="numeric" placeholder="6 أرقام على الأقل" value="123456" autofocus>
         </div>
-        <button type="button" class="btn btn-g" id="rb-save" style="width:100%" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
+        <button type="button" class="btn btn-g w-full" id="rb-save" onclick="doRebuildEmployeeAuth(this)">🔄 إعادة الإنشاء</button>
         <div id="rb-msg" style="font-size:var(--fs-sm);margin-top:10px;color:var(--dim2);line-height:var(--lh-relaxed)"></div>
       </div>
     </div>`;
@@ -85,7 +85,7 @@ export function buildPasswordCardHTML({ displayPassword, setByName, setAtStr }) 
           ? `<div style="font-family:ui-monospace,monospace;font-size:17px;font-weight:var(--fw-heavy);letter-spacing:1px;user-select:all;cursor:pointer;color:var(--snow)" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" title="اضغط للنسخ">${dp}</div>
              ${setAtStr ? `<div style="font-size:var(--fs-xs);color:var(--dim);margin-top:3px">عُيّنت بواسطة ${setByName || 'النظام'} · ${setAtStr}</div>` : ''}`
           : `<div style="font-size:var(--fs-base);color:var(--y);font-weight:var(--fw-bold)">🔒 سر شخصي — غيّرها الموظف بنفسه</div>
-             <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">اضغط "تعيين" لكلمة جديدة يعرفها الأدمن</div>`}
+             <div class="txt-meta-xs" style="margin-top:2px">اضغط "تعيين" لكلمة جديدة يعرفها الأدمن</div>`}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${dp ? `<button type="button" class="btn btn-ghost btn-sm" onclick="copyToClipboard('${dp.replace(/'/g, '')}',this)" style="font-size:var(--fs-sm)">📋 نسخ</button>` : ''}
