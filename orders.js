@@ -784,6 +784,15 @@ export function validateStageRequirements(order, fromStage) {
       errors.push('⛔ يجب تسجيل بند تكلفة واحد على الأقل قبل التحويل للشحن');
     }
 
+    // 🚚 بيانات الشحن يُفترض إدخالها في مرحلة الطباعة (prepareForShipping).
+    // تحذير قابل للتجاوز لو ناقصة، حتى لا يصل الأوردر لمسؤول الشحن بـ
+    // «طريقة الشحن: —» وبدون عنوان توصيل. pickup معفى من شرط العنوان.
+    if (!order.shipMethod) {
+      warnings.push('⚠️ لم تُسجَّل طريقة الشحن — أدخل بيانات الشحن في مرحلة الطباعة');
+    } else if (order.shipMethod !== 'pickup' && !(order.deliveryAddress && order.deliveryAddress.gov)) {
+      warnings.push('⚠️ عنوان التوصيل ناقص — أدخل المحافظة على الأقل قبل الشحن');
+    }
+
     // B4 (Phase 2): يسد فجوة G2 من PHASE_2_DIAGNOSIS.
     // المنتجات في حالة pending/in_progress كانت تصل لمرحلة الشحن بسبب غياب
     // فحص productStatus في الـ gate. هنا نمنع الانتقال صلباً، ونحذّر للـ on_hold.
