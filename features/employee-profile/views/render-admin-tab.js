@@ -208,15 +208,15 @@ export function buildClientsHTML({ orders = [], format = defaultFormat }) {
         <div class="txt-meta-xs">${escAttr(c.phone) || '—'} · آخر أوردر: ${lastStr}</div>
       </div>
       <div style="display:flex;gap:14px;align-items:center;flex-shrink:0">
-        <div style="text-align:center">
+        <div class="text-center">
           <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy)">${c.orders.length}</div>
           <div class="txt-meta-tiny">أوردر</div>
         </div>
-        <div style="text-align:center">
+        <div class="text-center">
           <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--g)">${format(c.revenue)}</div>
           <div class="txt-meta-tiny">ج</div>
         </div>
-        <div style="text-align:center">
+        <div class="text-center">
           <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:${rateCol}">${rate}%</div>
           <div class="txt-meta-tiny">مكتمل</div>
         </div>
