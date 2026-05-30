@@ -115,10 +115,13 @@
         <input type="text" id="m-dispatch-phone" placeholder="📞 تليفون التسليم (اختياري)" style="margin-top:8px">
       </div>
     </div>
-    <div class="row" id="m-dispatch-cost-row">
-      <label>تكلفة الشحن علينا (ج) — اختياري</label>
-      <input type="number" id="m-dispatch-cost" min="0" step="0.01" placeholder="0" oninput="updateDispatchCalc()">
-      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;line-height:1.5">💡 للتسجيل فقط — تُحاسَب فعليًا عند التسوية مع الشركة (لا خصم الآن). تقدر تعدّلها لاحقًا.</div>
+    <div class="row" id="m-dispatch-ship-row">
+      <label>الشحن</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button type="button" id="m-dispatch-incl-yes" class="ship-toggle" onclick="setDispatchIncl(true)">✅ السعر شامل الشحن</button>
+        <button type="button" id="m-dispatch-incl-no" class="ship-toggle" onclick="setDispatchIncl(false)">🚚 غير شامل (على العميل)</button>
+      </div>
+      <div id="m-dispatch-incl-hint" style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px;line-height:1.5"></div>
     </div>
     <div class="row">
       <label>ملاحظات (اختياري)</label>
@@ -1381,6 +1384,11 @@ window.openDispatch = (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
   pendingOrder = o;
+  // المتبقي على العميل — عرض ذكي يوجّه مسؤول الشحن (هل يحصّل ولا لأ)
+  const rem = getExpectedCollection(o);
+  const remRow = rem > 0
+    ? `<div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px"><span>💰 المتبقي على العميل</span><span class="money-neg" style="font-weight:var(--fw-heavy)">${fmtMoney(rem)} ج</span></div>`
+    : `<div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px"><span>💰 المتبقي على العميل</span><span class="money-pos" style="font-weight:var(--fw-heavy)">✅ مدفوع بالكامل</span></div>`;
   $('m-dispatch-info').innerHTML = `
     <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0, 6)}</span></div>
     <div class="modal-info-row"><span>العميل</span><span>${o.clientName || '—'}</span></div>
@@ -1390,11 +1398,13 @@ window.openDispatch = (orderId) => {
         ? `<div class="modal-info-row" style="align-items:flex-start"><span>📍 العنوان</span><span style="text-align:left;max-width:65%;line-height:var(--lh-base)">${escAttr(a.gov)}${a.addr ? '<br><span style="color:var(--dim2);font-weight:var(--fw-semi);font-size:11.5px">' + escAttr(a.addr) + '</span>' : ''}</span></div>`
         : `<div class="modal-info-row"><span>📍 العنوان</span><span class="text-y">— لا يوجد عنوان مُسجَّل —</span></div>`;
     })()}
+    ${remRow}
   `;
   $('m-dispatch-method').value = 'company';
   $('m-dispatch-company').value = '';
-  $('m-dispatch-cost').value = '';
   $('m-dispatch-note').value = '';
+  // الشحن شامل/غير شامل — من الأوردر (يُدخَل عادةً في الطباعة، يقدر يعدّله هنا)
+  setDispatchIncl(!!o.priceIncludesShipping);
   // حقول العنوان: تُملأ من العنوان الحالي (لو موجود) وتظهر فقط لو ناقص
   const a0 = getDeliveryAddress(o);
   if ($('m-dispatch-gov'))    $('m-dispatch-gov').value = a0.gov || '';
@@ -1405,10 +1415,23 @@ window.openDispatch = (orderId) => {
   openMod('m-dispatch');
 };
 
+// حالة شامل/غير شامل الشحن في شاشة التسليم
+let _dispatchIncl = false;
+window.setDispatchIncl = (incl) => {
+  _dispatchIncl = !!incl;
+  const yes = $('m-dispatch-incl-yes'), no = $('m-dispatch-incl-no'), hint = $('m-dispatch-incl-hint');
+  if (yes) yes.classList.toggle('on', _dispatchIncl);
+  if (no)  no.classList.toggle('on', !_dispatchIncl);
+  if (hint) hint.textContent = _dispatchIncl
+    ? '✅ العميل دفع الشحن ضمن السعر — لا رسوم إضافية عند التسليم.'
+    : '🚚 العميل يدفع الشحن للمندوب مباشرة — خارج حسابات الشركة.';
+};
+
 window.onDispatchMethodChange = () => {
   const m = $('m-dispatch-method').value;
   $('m-dispatch-company-row').style.display = m === 'pickup' ? 'none' : '';
-  $('m-dispatch-cost-row').style.display = m === 'pickup' ? 'none' : '';
+  const shipRow = $('m-dispatch-ship-row');
+  if (shipRow) shipRow.style.display = m === 'pickup' ? 'none' : '';
   // صف العنوان: يظهر فقط لغير pickup ولو الأوردر مفيهوش عنوان مُسجَّل
   const addrRow = $('m-dispatch-addr-row');
   if (addrRow) {
@@ -1418,30 +1441,16 @@ window.onDispatchMethodChange = () => {
   updateDispatchCalc();
 };
 
+// التسليم = تسجيل فقط (لا حركة مالية ولا تكلفة). الـ calc panel لم يعد مستخدماً.
 window.updateDispatchCalc = () => {
-  const m = $('m-dispatch-method').value;
-  const cost = parseFloat($('m-dispatch-cost').value) || 0;
   const panel = $('m-dispatch-calc-panel');
-  const content = $('m-dispatch-calc-content');
-  if (!panel || !content) return;
-  // التسليم = تسجيل فقط (لا حركة مالية). التكلفة رقم معلوماتي يُحاسَب عند
-  // التسوية — فمفيش خصم محفظة هنا (يمنع ازدواج حساب التكلفة).
-  if (m === 'pickup' || cost <= 0) {
-    panel.style.display = 'none';
-    return;
-  }
-  panel.style.display = 'block';
-  content.innerHTML = `
-    <div class="calc-row"><span>تكلفة الشحن (مسجّلة)</span><span>${fmtMoney(cost)} ج</span></div>
-    <div class="calc-result ok">ℹ️ تُحاسَب عند التسوية مع الشركة — لا خصم الآن</div>
-  `;
+  if (panel) panel.style.display = 'none';
 };
 
 window.confirmDispatch = async () => {
   if (!pendingOrder) return;
   const method = $('m-dispatch-method').value;
   const companyId = $('m-dispatch-company').value;
-  const cost = parseFloat($('m-dispatch-cost').value) || 0;
   const note = $('m-dispatch-note').value.trim();
   const company = shippers.find(s => s._id === companyId);
 
@@ -1463,7 +1472,7 @@ window.confirmDispatch = async () => {
   const result = await shippingActions.confirmShipped({
     db, orderId: pendingOrder._id,
     companyId, companyName: company?.name || '',
-    method, cost,
+    method, priceIncludesShipping: _dispatchIncl,
     note, deliveryAddress, customerPhoneShip,
     role: myRole, userId: me.uid, userName: myUserName,
   });
