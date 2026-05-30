@@ -380,15 +380,11 @@ export function applyPrintCCHeader(o, ctx) {
  * (uploadPrintFinal, openEditProds, setProductStatus...) تشتغل كما هي.
  */
 export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
-  const events = buildPrintTimeline(order);
+  // ملاحظة: السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html).
   return `
     <div class="pcc-tabs" id="pcc-tabs">
       <button type="button" class="pcc-tab on" data-pcctab="production" onclick="switchPrintPanelTab('production',this)">
         <span class="pcc-tab-ico">🖨</span><span class="pcc-tab-lbl">الإنتاج</span>
-      </button>
-      <button type="button" class="pcc-tab" data-pcctab="timeline" onclick="switchPrintPanelTab('timeline',this)">
-        <span class="pcc-tab-ico">⏱</span><span class="pcc-tab-lbl">Timeline</span>
-        <span class="pcc-tab-cnt">${events.length}</span>
       </button>
       <button type="button" class="pcc-tab" data-pcctab="more" onclick="switchPrintPanelTab('more',this)">
         <span class="pcc-tab-ico">⚙️</span><span class="pcc-tab-lbl">المزيد</span>
@@ -396,7 +392,6 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
     </div>
 
     <div class="pcc-pane" id="pcc-pane-production" style="display:block">${productionBodyHTML}</div>
-    <div class="pcc-pane" id="pcc-pane-timeline" style="display:none">${printTimelineHTML(events)}</div>
     <div class="pcc-pane" id="pcc-pane-more" style="display:none">${printMoreTabHTML(order)}</div>`;
 }
 
@@ -404,7 +399,7 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
 export function switchPrintPanelTab(tab, btn) {
   document.querySelectorAll('.pcc-tab').forEach(b => b.classList.remove('on'));
   if (btn) btn.classList.add('on');
-  ['production', 'timeline', 'more'].forEach(t => {
+  ['production', 'more'].forEach(t => {
     const pane = document.getElementById('pcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });
