@@ -41,6 +41,8 @@ import {
   normalizeShipStage,
   // Phase 2 / B6 — block reversal on archived orders:
   ORDER_STAGES,
+  // role gate لتعديل تكلفة الشحن (editShippingCost):
+  SHIPPING_DISPATCH_ROLES,
 } from './orders.js';
 import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
@@ -661,6 +663,51 @@ export const shippingActions = {
       };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التجهيز'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * editShippingCost — تعديل تكلفة الشحن علينا (shippingCost) قبل التسوية.
+   *
+   * تكلفة الشحن = ما ندفعه لشركة الشحن. تدخل في حساب التسوية لحظياً
+   * (المحصّل لنا = shipCollected − shippingCost)، فتعديلها قبل التسوية كافٍ
+   * ولا يحتاج أي حدث مالي منفصل — التأثير المالي يتحقق وقت settleWithCompany.
+   *
+   * تعمل في حالتي «شامل / غير شامل الشحن» سواء — لا تمسّ salePrice ولا
+   * customerShipFee (الذي يبقى 0). لا تُسمح بعد التسوية (shipSettled) لأن
+   * shipSettledAmount يكون قد سُجِّل على القيمة القديمة.
+   */
+  async editShippingCost({ db, orderId, newCost, note = '', role, userId, userName }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    const cost = parseFloat(newCost);
+    const errors = [];
+    if (!Number.isFinite(cost) || cost < 0) errors.push('⚠️ تكلفة الشحن غير صالحة');
+    if (order.stage === ORDER_STAGES.ARCHIVED) errors.push('⛔ الأوردر مؤرشف — لا يمكن تعديله');
+    if (normalizeShipStage(order.shipStage) === 'returned_full') errors.push('⛔ الأوردر مرتجع — لا يمكن تعديله');
+    if (order.shipSettled === true) errors.push('⛔ الأوردر مسوّى مع شركة الشحن — ألغِ التسوية أولاً لتعديل التكلفة');
+    if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) errors.push('ليس لديك صلاحية تعديل تكلفة الشحن');
+    if (errors.length) return { ok: false, errors, warnings: [], orderId };
+
+    const oldCost = parseFloat(order.shippingCost) || 0;
+    if (Math.abs(cost - oldCost) < 0.005) {
+      return { ok: true, errors: [], warnings: ['لا توجد تغييرات'], orderId, action: 'edit_shipping_cost', shippingCost: oldCost };
+    }
+
+    try {
+      await updateDoc(order._ref, {
+        shippingCost: cost,
+        timeline: [...(order.timeline || []), _tlEntry(
+          `✏️ تعديل تكلفة الشحن: ${oldCost} → ${cost} ج${note ? ' — ' + note : ''}`,
+          userName, userId
+        )],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'edit_shipping_cost', shippingCost: cost, oldCost };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تعديل تكلفة الشحن'], warnings: [], orderId };
     }
   },
 
