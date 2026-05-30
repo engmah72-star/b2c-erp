@@ -1339,6 +1339,11 @@ export function validateCompanyCollect({ order, amount, expectedFromCustomer, ro
   if (!Number.isFinite(amt) || amt < 0) {
     errors.push('⚠️ المبلغ غير صالح');
   }
+  // تأكيد تحصيل بصفر مالوش معنى — كان يُدخِل الأوردر للتسوية بـ shipCollected=0
+  // فتطلع التسوية صفر رغم وجود متبقّي على العميل. لازم > 0.
+  else if (amt === 0) {
+    errors.push('⚠️ مبلغ التحصيل لازم يكون أكبر من صفر — أدخِل المبلغ المُحصَّل من العميل');
+  }
 
   if (role && !SHIPPING_COLLECT_ROLES.includes(role)) {
     errors.push('ليس لديك صلاحية تأكيد التحصيل');
@@ -2109,8 +2114,18 @@ export function isShipActive(order) {
 
 /** صافي ما تدين به الشركة لنا لهذا الأوردر = shipCollected − shippingCost */
 function _expectedFromCompany(order) {
-  const collected = parseFloat(order?.shipCollected) || 0;
-  const cost      = parseFloat(order?.shippingCost) || 0;
+  let collected = parseFloat(order?.shipCollected) || 0;
+  // Fallback: لو خطوة "تأكيد التحصيل" اتفوّتت (shipCollected=0) بينما العميل
+  // عليه متبقّي، الشركة بتحصّل المتبقي. نستخدمه بدل صفر عشان التسوية ما تطلعش
+  // صفر وتقفل الأوردر صح. (نفس صيغة getExpectedCollection)
+  if (collected <= 0) {
+    const sale = parseFloat(order?.salePrice) || 0;
+    const cust = parseFloat(order?.customerShipFee) || 0;
+    const disc = parseFloat(order?.discount) || 0;
+    const paid = parseFloat(order?.totalPaid) || parseFloat(order?.deposit) || 0;
+    collected = Math.max(0, sale + cust - disc - paid);
+  }
+  const cost = parseFloat(order?.shippingCost) || 0;
   return Math.max(0, collected - cost);
 }
 
