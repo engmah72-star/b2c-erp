@@ -70,17 +70,17 @@ export function buildSalariesHTML({
   // ── reminder banner ────────────────────────────────────────────
   let reminder;
   if (curMonthPays.length === 0) {
-    reminder = `<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+    reminder = `<div style="background:var(--tint-y-soft);border:1px solid var(--tint-y-line);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:var(--fs-base);color:var(--y)">⚠️ لم يُصرف مرتب ${curMonthLabel} بعد</span>
       <button type="button" class="btn btn-g btn-xs" onclick="openSalary()">صرف الآن</button>
     </div>`;
   } else if (remaining > 0) {
-    reminder = `<div style="background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+    reminder = `<div style="background:var(--tint-b-soft);border:1px solid var(--tint-b-line);border-radius:var(--rad);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:var(--fs-base);color:var(--b)">💸 مدفوع ${format(curMonthTotal)} ج · متبقي <strong>${format(remaining)} ج</strong></span>
       <button type="button" class="btn btn-b btn-xs" onclick="openSalary()">＋ دفعة</button>
     </div>`;
   } else {
-    reminder = `<div style="background:rgba(0,217,126,.06);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:8px 14px;margin-bottom:10px;font-size:var(--fs-base);color:var(--g);font-weight:var(--fw-bold)">✅ ${curMonthLabel} مكتمل — ${format(curMonthTotal)} ج</div>`;
+    reminder = `<div class="alert alert-success" style="margin-bottom:10px">✅ ${curMonthLabel} مكتمل — ${format(curMonthTotal)} ج</div>`;
   }
 
   // ── quick action buttons ───────────────────────────────────────
