@@ -47,6 +47,17 @@ function mount(ud) {
     + '<div><div class="nav-user-name" id="nav-name">' + esc(name) + '</div>'
     + '<div class="nav-user-role">تسجيل خروج</div></div></div></div>';
   // الأقسام المجمّعة (الرئيسية/الأوردرات/الإدارة) عبر الباني المركزي
+  buildLinks(ud);
+  // حارس: لو باني محلي مكرّر (قديم، async) كتب قائمة مسطّحة فوق المركزي بعد
+  // ما خلصنا، نعيد التأكيد مرة واحدة بعد فترة قصيرة. لو القائمة لسه مجمّعة
+  // (فيها .nav-group) مانعملش حاجة → مفيش loop. (انتقالي لحد حذف البواني المحلية)
+  setTimeout(() => {
+    const links = document.getElementById('nav-links');
+    if (links && !links.querySelector('.nav-group')) buildLinks(ud);
+  }, 900);
+}
+
+function buildLinks(ud) {
   try {
     if (window.B2CSidebar && typeof window.B2CSidebar.build === 'function') {
       window.B2CSidebar.build(ud, CUR);

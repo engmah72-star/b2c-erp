@@ -165,4 +165,16 @@ try {
     s.defer = true;
     document.head.appendChild(s);
   }
+
+  // ── Auto-load CENTRAL SIDEBAR mount (single source on every page) ──
+  // core/sidebar-mount.js يبني الـ sidebar الكامل (brand + أقسام مجمّعة +
+  // footer) من window.SIDEBAR_PAGES عبر window.B2CSidebar.build. تحميله من
+  // هنا يضمن sidebar موحَّد على كل صفحة بدون باني محلي مكرّر. (module)
+  if (!document.getElementById('sidebar-mount-loader')) {
+    const s = document.createElement('script');
+    s.id = 'sidebar-mount-loader';
+    s.type = 'module';
+    s.src = 'core/sidebar-mount.js?v=2';
+    document.head.appendChild(s);
+  }
 })();
