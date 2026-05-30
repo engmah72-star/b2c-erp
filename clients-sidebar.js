@@ -48,8 +48,13 @@ const ALL_PAGES = [
 
 export function buildDynamicSidebar(uid, currentPage) {
   const nav = document.getElementById('nav-scroll-dynamic')
+           || document.getElementById('nav-links')
            || document.querySelector('.nav-scroll');
   if (!nav) return;
+  // المصدر المركزي للهيكل المجمّع (sidebar-config.js على window). fallback
+  // للقائمة المحلية لو مش متاح (نادراً). الأقسام: الرئيسية/الأوردرات/الإدارة.
+  const PAGES  = (typeof window !== 'undefined' && window.SIDEBAR_PAGES) || ALL_PAGES;
+  const GROUPS = (typeof window !== 'undefined' && window.GROUP_LABELS) || {};
   firebase.firestore().collection('users').doc(uid).get().then(function (usnap) {
     const ud = usnap.exists ? usnap.data() : {};
     const role = ud.role || 'admin';
@@ -58,11 +63,22 @@ export function buildDynamicSidebar(uid, currentPage) {
     const isAdm = ['admin', 'operation_manager'].includes(role);
     const dash = ROLE_DASH[role] || 'accounts.html';
     let html = '<a class="nav-link' + (currentPage === dash ? ' active' : '') + '" href="' + dash + '"><span class="nav-ico">⬡</span> ' + (isAdm ? 'الحسابات' : 'داشبوردي') + '</a>';
-    for (const pg of ALL_PAGES) {
+    let lastGroup = '';
+    for (const pg of PAGES) {
+      const file = pg.file || pg.f;
+      const label = pg.label || pg.l;
+      const ico = pg.ico || pg.i;
+      const perm = pg.perm || pg.p;
+      if (file === dash) continue; // الـ dashboard مضاف فوق
       if (pg.adminOnly && !isAdm) continue;
-      const ok = pg.public || isAdm || userPages.includes('*') || userPages.includes(pg.p);
+      const ok = pg.public || isAdm || userPages.includes('*') || (perm && userPages.includes(perm));
       if (!ok) continue;
-      html += '<a class="nav-link' + (currentPage === pg.f ? ' active' : '') + '" href="' + pg.f + '"><span class="nav-ico">' + pg.i + '</span> ' + pg.l + '</a>';
+      // عنوان القسم (مجمّع) — زي الباني المركزي
+      if (pg.group && pg.group !== lastGroup) {
+        html += '<div class="nav-group">' + (GROUPS[pg.group] || pg.group) + '</div>';
+        lastGroup = pg.group;
+      }
+      html += '<a class="nav-link' + (currentPage === file ? ' active' : '') + '" href="' + file + '"><span class="nav-ico">' + ico + '</span> ' + label + '</a>';
     }
     nav.innerHTML = html;
   }).catch(function () {
