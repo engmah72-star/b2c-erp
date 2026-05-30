@@ -102,7 +102,10 @@ function startListeners() {
     S.attToday = snap.empty ? null : { ...snap.docs[0].data(), _id: snap.docs[0].id }; render();
   });
   if (S.empId) {
-    onSnapshot(query(collection(db, 'employee_incidents'), where('employeeId', '==', S.empId), where('monthKey', '==', monthKey()), limit(100)), snap => {
+    // فلتر بـ authUid (مش employeeId) عشان يطابق rule employee_incidents
+    // (allow read if authUid == request.auth.uid) — زي ما my-profile.html بيعمل.
+    // الـ query بـ employeeId كان بيسبّب permission-denied (الـ rule بيتحقق authUid).
+    onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
       S.incidents = snap.size; render();
     });
   }
