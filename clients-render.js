@@ -637,7 +637,12 @@ export function clientCardHTML(client, idx, ctx = {}) {
           <div class="cc-mini-lbl">المتأخرة</div>
         </div>
       </div>
-      <div class="cc-foot">${lastActivityTxt}</div>
+      <div class="cc-foot" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        ${canSee('price_remaining') && rem > 0 && priority !== 'rem'
+          ? `<span style="color:var(--y-amber);font-weight:var(--fw-extra)">💰 باقي ${fn(rem)} ج</span>`
+          : '<span></span>'}
+        <span>${lastActivityTxt}</span>
+      </div>
     </div>`;
 }
 
