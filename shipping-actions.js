@@ -88,6 +88,7 @@ export const shippingActions = {
     method, cost = 0, walletId = '', walletName = '',
     note = '',
     deliveryAddress = null, customerPhoneShip = '',
+    priceIncludesShipping = undefined,
     role, userId, userName,
   }) {
     if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
@@ -120,7 +121,11 @@ export const shippingActions = {
       shipCompanyId: companyId || '',
       shipCompanyName: companyName || '',
       shipMethod: method,
-      shippingCost: amt,
+      // تكلفة الشحن علينا تُحدَّد عند التسوية — لا نكتبها هنا إلا لو مُرِّرت
+      // صراحةً (cost>0) حتى لا ندهس قيمة سابقة بصفر.
+      ...(amt > 0 ? { shippingCost: amt } : {}),
+      // الشحن شامل/غير شامل (لو مُرِّر من شاشة التسليم)
+      ...(typeof priceIncludesShipping === 'boolean' ? { priceIncludesShipping } : {}),
       shipStage: newShipStage,
       shipDispatchedAt: serverTimestamp(),
       shipDispatchedBy: userName || '',
