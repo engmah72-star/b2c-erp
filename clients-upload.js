@@ -31,6 +31,20 @@
  *
  * Pure: uses DOM canvas API; doesn't reach into the page DOM.
  */
+// webp support is browser-global, not per-image — detect once (1×1 canvas)
+// instead of re-encoding every full image just to probe support.
+let _webpSupport;
+function supportsWebp() {
+  if (_webpSupport === undefined) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 1;
+      _webpSupport = c.toDataURL('image/webp').startsWith('data:image/webp');
+    } catch { _webpSupport = false; }
+  }
+  return _webpSupport;
+}
+
 export function compressImage(file) {
   return new Promise((res) => {
     if (!file?.type?.startsWith('image/')) { res(file); return; }
@@ -45,10 +59,9 @@ export function compressImage(file) {
       else       { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const fmt = canvas.toDataURL('image/webp', 0.1).startsWith('data:image/webp')
-        ? 'image/webp' : 'image/jpeg';
+      const fmt = supportsWebp() ? 'image/webp' : 'image/jpeg';
       canvas.toBlob(
-        (blob) => res(new File([blob], file.name, { type: fmt })),
+        (blob) => res(blob ? new File([blob], file.name, { type: fmt }) : file),
         fmt, 0.65
       );
     };
