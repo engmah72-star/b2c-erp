@@ -174,7 +174,7 @@ try {
     const s = document.createElement('script');
     s.id = 'sidebar-mount-loader';
     s.type = 'module';
-    s.src = 'core/sidebar-mount.js?v=2';
+    s.src = 'core/sidebar-mount.js?v=3';
     document.head.appendChild(s);
   }
 })();

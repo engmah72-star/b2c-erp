@@ -48,13 +48,30 @@ function mount(ud) {
     + '<div class="nav-user-role">تسجيل خروج</div></div></div></div>';
   // الأقسام المجمّعة (الرئيسية/الأوردرات/الإدارة) عبر الباني المركزي
   buildLinks(ud);
-  // حارس: لو باني محلي مكرّر (قديم، async) كتب قائمة مسطّحة فوق المركزي بعد
-  // ما خلصنا، نعيد التأكيد مرة واحدة بعد فترة قصيرة. لو القائمة لسه مجمّعة
-  // (فيها .nav-group) مانعملش حاجة → مفيش loop. (انتقالي لحد حذف البواني المحلية)
-  setTimeout(() => {
+
+  // حارس مركزي (MutationObserver): لو أي باني محلي قديم (مهما كان اسمه/توقيته)
+  // كتب قائمة مسطّحة فوق المركزي، نعيد فرض المجمّع فوراً. self-stabilizing:
+  // build() بيضيف .nav-group → الـ observer يشوفها → ما يعملش حاجة (مفيش loop).
+  // ده يضمن المركزي يكسب على كل الصفحات بدون حذف البواني المحلية واحدة واحدة.
+  try {
     const links = document.getElementById('nav-links');
-    if (links && !links.querySelector('.nav-group')) buildLinks(ud);
-  }, 900);
+    if (links && !window.__sbGuard) {
+      window.__sbGuard = true;
+      let fixing = false;
+      const obs = new MutationObserver(() => {
+        if (fixing) return;
+        const el = document.getElementById('nav-links');
+        if (el && !el.querySelector('.nav-group')) {
+          fixing = true;
+          buildLinks(ud);
+          fixing = false;
+        }
+      });
+      obs.observe(links, { childList: true, subtree: true });
+      // أوقف المراقبة بعد 8 ثوانٍ — بعدها كل البواني المحلية الـ async خلصت
+      setTimeout(() => { try { obs.disconnect(); } catch (_) {} }, 8000);
+    }
+  } catch (_) {}
 }
 
 function buildLinks(ud) {
