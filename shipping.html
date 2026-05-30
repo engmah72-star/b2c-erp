@@ -99,6 +99,18 @@
       <label>شركة الشحن</label>
       <select id="m-dispatch-company"></select>
     </div>
+    <!-- عنوان التوصيل — يظهر فقط لو الأوردر مفيهوش عنوان مُسجَّل (اتفوّت في الطباعة) -->
+    <div id="m-dispatch-addr-row" style="display:none">
+      <div class="row" style="background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <label style="color:var(--y)">📍 لا يوجد عنوان — أدخِله الآن</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+          <input type="text" id="m-dispatch-gov" placeholder="المحافظة">
+          <input type="text" id="m-dispatch-city" placeholder="المدينة/المنطقة">
+        </div>
+        <input type="text" id="m-dispatch-street" placeholder="العنوان بالتفصيل (شارع / علامة مميزة)" style="margin-top:8px">
+        <input type="text" id="m-dispatch-phone" placeholder="📞 تليفون التسليم (اختياري)" style="margin-top:8px">
+      </div>
+    </div>
     <div class="row" id="m-dispatch-cost-row">
       <label>تكلفة الشحن علينا (ج)</label>
       <input type="number" id="m-dispatch-cost" min="0" step="0.01" placeholder="0" oninput="updateDispatchCalc()">
@@ -1336,6 +1348,12 @@ window.openDispatch = (orderId) => {
   $('m-dispatch-cost').value = '';
   $('m-dispatch-wallet').value = '';
   $('m-dispatch-note').value = '';
+  // حقول العنوان: تُملأ من العنوان الحالي (لو موجود) وتظهر فقط لو ناقص
+  const a0 = getDeliveryAddress(o);
+  if ($('m-dispatch-gov'))    $('m-dispatch-gov').value = a0.gov || '';
+  if ($('m-dispatch-city'))   $('m-dispatch-city').value = (o.deliveryAddress?.city) || '';
+  if ($('m-dispatch-street')) $('m-dispatch-street').value = (o.deliveryAddress?.street) || a0.addr || '';
+  if ($('m-dispatch-phone'))  $('m-dispatch-phone').value = o.customerPhoneShip || o.clientPhone || '';
   onDispatchMethodChange();
   openMod('m-dispatch');
 };
@@ -1345,6 +1363,12 @@ window.onDispatchMethodChange = () => {
   $('m-dispatch-company-row').style.display = m === 'pickup' ? 'none' : '';
   $('m-dispatch-cost-row').style.display = m === 'pickup' ? 'none' : '';
   $('m-dispatch-wallet-row').style.display = m === 'pickup' ? 'none' : '';
+  // صف العنوان: يظهر فقط لغير pickup ولو الأوردر مفيهوش عنوان مُسجَّل
+  const addrRow = $('m-dispatch-addr-row');
+  if (addrRow) {
+    const hasAddr = pendingOrder && !!getDeliveryAddress(pendingOrder).gov;
+    addrRow.style.display = (m !== 'pickup' && !hasAddr) ? '' : 'none';
+  }
   updateDispatchCalc();
 };
 
@@ -1385,6 +1409,18 @@ window.confirmDispatch = async () => {
   const company = shippers.find(s => s._id === companyId);
   const wallet = wallets.find(w => w._id === walletId);
 
+  // العنوان: لو الصف ظاهر (الأوردر مفيهوش عنوان) نجمعه ونتحقق منه
+  let deliveryAddress = null, customerPhoneShip = '';
+  const addrRow = $('m-dispatch-addr-row');
+  if (method !== 'pickup' && addrRow && addrRow.style.display !== 'none') {
+    const gov = ($('m-dispatch-gov')?.value || '').trim();
+    const city = ($('m-dispatch-city')?.value || '').trim();
+    const street = ($('m-dispatch-street')?.value || '').trim();
+    customerPhoneShip = ($('m-dispatch-phone')?.value || '').trim();
+    if (!gov) { toast('⚠️ أدخِل المحافظة على الأقل', 'err'); return; }
+    deliveryAddress = { gov, city, street };
+  }
+
   const btn = $('btn-dispatch-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
@@ -1392,7 +1428,8 @@ window.confirmDispatch = async () => {
     db, orderId: pendingOrder._id,
     companyId, companyName: company?.name || '',
     method, cost, walletId, walletName: wallet?.name || '',
-    note, role: myRole, userId: me.uid, userName: myUserName,
+    note, deliveryAddress, customerPhoneShip,
+    role: myRole, userId: me.uid, userName: myUserName,
   });
 
   btn.disabled = false; btn.textContent = '✅ تسليم';
