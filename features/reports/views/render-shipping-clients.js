@@ -67,7 +67,7 @@ export function buildClientsTabHTML({ stats, kpi, bar, format = defaultFormat })
     ${s.sorted.slice(0, 20).map(c => `<div class="rep-card" style="padding:12px 16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><div class="txt-bold-md">${c.name}</div><div class="txt-meta-sm">${c.phone} · ${c.count} أوردر</div></div>
-        <div style="text-align:left">
+        <div class="text-left">
           <div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--b)">${format(c.total)} ج</div>
           <div style="font-size:var(--fs-xs);color:${c.paid >= c.total ? 'var(--g)' : 'var(--r)'}">${format(c.paid)} محصّل</div>
         </div>

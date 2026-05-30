@@ -28,7 +28,7 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
       <button type="button" class="ib-chat-back" onclick="closeChat()">←</button>
       <div class="ib-chat-hdr-info">
         <div class="ib-conv-avatar" style="background:${convColor(activeConv, ctx)};width:40px;height:40px;font-size:15px">${convIcon(activeConv, ctx)}</div>
-        <div style="flex:1;min-width:0">
+        <div class="flex-1 min-w-0">
           <div class="ib-chat-hdr-name" id="chat-hdr-name">${esc(convDisplayName(activeConv, ctx))}</div>
           <div class="ib-chat-hdr-sub" id="chat-hdr-sub"></div>
         </div>

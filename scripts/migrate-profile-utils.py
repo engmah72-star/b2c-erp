@@ -34,7 +34,7 @@ CLASS_RE = re.compile(r'(\sclass=")([^"]*)(")')
 def transform_tag(tag):
     # Guard: a real HTML opening tag never contains JS markers. This prevents
     # JS comparisons like `a<b` (inside <script>) from being mistaken for tags.
-    if re.search(r'[`{};]', tag):
+    if re.search(r'[`{}]', tag):
         return tag, 0
     m = STYLE_RE.search(tag)
     if not m:

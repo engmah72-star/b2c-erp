@@ -95,7 +95,7 @@ export function buildReturnsTabHTML({ stats, kpi, format = defaultFormat }) {
           const stPill = `<span style="padding:2px 8px;border-radius:var(--rad);font-size:var(--fs-tiny);font-weight:var(--fw-extra);background:rgba(167,139,250,.15);color:var(--p)">${t.status}</span>`;
           const slaBadge = t.slaBreached ? ' <span style="font-size:var(--fs-tiny);color:var(--r)">⚠️ SLA</span>' : '';
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
-              <div style="flex:1;min-width:0">
+              <div class="flex-1 min-w-0">
                 <div><b class="mono">${(t.ticketNo || t._id.slice(-6))}</b> · ${(t.clientName || '—').slice(0, 30)} ${slaBadge}</div>
                 <div style="color:var(--dim2);font-size:var(--fs-xs);margin-top:2px">${RETURNS_REASON_LABEL[t.reason] || t.reason || ''} · ${stPill}</div>
               </div>

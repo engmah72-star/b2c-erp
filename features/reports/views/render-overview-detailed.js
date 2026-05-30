@@ -258,7 +258,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         <div class="kpi-lbl">💼 الكاش في الخزينة</div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px;font-weight:var(--fw-bold)">${wallets.length} محفظة</div>
       </div>
-      <div onclick="openRevDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل الإيرادات">
+      <div onclick="openRevDrawer()" class="clickable cursor-pointer" title="تفاصيل الإيرادات">
         <div class="kpi-box clickable">
           <div class="kpi-val" style="color:var(--g)"><span data-counter="${tot}" data-suffix=" ج">${fn(tot)} ج</span></div>
           <div class="kpi-lbl">↗ محصّل في الفترة</div>
@@ -266,14 +266,14 @@ export function renderOverviewDetailedView(f, prev, ctx) {
           ${sparkline(totSpark,'var(--g)')}
         </div>
       </div>
-      <div onclick="goCollectionPostDesign()" class="clickable" style="cursor:pointer" title="اضغط لعرض الأوردرات اللي وافقت على التصميم ولم تُحصَّل">
+      <div onclick="goCollectionPostDesign()" class="clickable cursor-pointer" title="اضغط لعرض الأوردرات اللي وافقت على التصميم ولم تُحصَّل">
         <div class="kpi-box clickable">
           <div class="kpi-val" style="color:var(--y)"><span data-counter="${rem}" data-suffix=" ج">${fn(rem)} ج</span></div>
           <div class="kpi-lbl">⏳ باقي التحصيل</div>
           ${remCritical>0?`<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-xs);font-weight:var(--fw-extra)"><span style="color:var(--r)">⚠️ <span data-counter="${remCritical}" data-suffix=" ج">${fn(remCritical)} ج</span></span><span style="color:var(--dim2)">بعد التصميم</span></div>`:''}
         </div>
       </div>
-      <div onclick="openExpenseDrawer()" class="clickable" style="cursor:pointer" title="تفاصيل المصروفات">
+      <div onclick="openExpenseDrawer()" class="clickable cursor-pointer" title="تفاصيل المصروفات">
         <div class="kpi-box clickable">
           <div class="kpi-val" style="color:${profit>=0?'var(--g)':'var(--r)'}"><span data-counter="${Math.abs(profit)}" data-suffix=" ج">${profit>=0?'ربح ':'خسارة '}${fn(Math.abs(profit))} ج</span></div>
           <div class="kpi-lbl">${profit>=0?'💹 الربح الصافي':'📉 الخسارة الصافية'}</div>
@@ -289,7 +289,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
       <div class="pipe-row">
         ${Object.entries(pipeline).map(([s,n])=>{
           const pct=Math.round(n/Math.max(f.length,1)*100);
-          return`<div class="pipe-cell" style="cursor:pointer" onclick="switchTab('collection');setTimeout(()=>filterByStage('${s}'),60)" title="${pct}% من إجمالي الفترة">
+          return`<div class="pipe-cell cursor-pointer" onclick="switchTab('collection');setTimeout(()=>filterByStage('${s}'),60)" title="${pct}% من إجمالي الفترة">
             <div class="pipe-stage-lbl">${stageLabel[s]}</div>
             <div class="pipe-stage-num">${n}</div>
             <div class="pipe-stage-bar"><div style="width:${n/pipelineMax*100}%;background:var(--b)"></div></div>
@@ -375,7 +375,7 @@ export function renderOverviewDetailedView(f, prev, ctx) {
         <div style="overflow-x:auto">
         <table class="dc-table">
           <thead><tr>
-            <th style="text-align:right">المحفظة</th>
+            <th class="text-right">المحفظة</th>
             ${[...Array(7).keys()].map(i=>{const d=new Date();d.setDate(d.getDate()-(6-i));return `<th>${d.toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit'})}</th>`;}).join('')}
             <th>داخل</th><th>خارج</th><th>صافي</th>
           </tr></thead>

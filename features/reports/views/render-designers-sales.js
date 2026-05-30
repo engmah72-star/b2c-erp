@@ -24,7 +24,7 @@ export function buildDesignersTabHTML({ stats }) {
     return `<div class="rep-card" ${isTop ? 'style="border-color:rgba(255,215,0,.35);background:linear-gradient(135deg,rgba(255,215,0,.04),var(--bg2))"' : ''}>
       <div class="rep-card-head">
         <div><div class="rep-name">${isTop ? '<span class="tp-crown">🏆 الأفضل</span>' : ''}🎨 ${s.name}</div><div class="rep-sub">${s.emp.role || 'مصمم'}</div></div>
-        <div style="text-align:left"><div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${s.orders.length}</div><div class="txt-meta-xs">أوردر</div></div>
+        <div class="text-left"><div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${s.orders.length}</div><div class="txt-meta-xs">أوردر</div></div>
       </div>
       <div class="rep-stats">
         <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${s.done}</div><div class="rep-stat-lbl">أنجز</div></div>
