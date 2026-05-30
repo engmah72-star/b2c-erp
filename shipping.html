@@ -116,12 +116,9 @@
       </div>
     </div>
     <div class="row" id="m-dispatch-cost-row">
-      <label>تكلفة الشحن علينا (ج)</label>
+      <label>تكلفة الشحن علينا (ج) — اختياري</label>
       <input type="number" id="m-dispatch-cost" min="0" step="0.01" placeholder="0" oninput="updateDispatchCalc()">
-    </div>
-    <div class="row" id="m-dispatch-wallet-row">
-      <label>محفظة الخصم</label>
-      <select id="m-dispatch-wallet"></select>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;line-height:1.5">💡 للتسجيل فقط — تُحاسَب فعليًا عند التسوية مع الشركة (لا خصم الآن). تقدر تعدّلها لاحقًا.</div>
     </div>
     <div class="row">
       <label>ملاحظات (اختياري)</label>
@@ -441,7 +438,7 @@ function populateCompanyDropdowns() {
 function populateWalletDropdowns() {
   const opts = '<option value="">— اختر محفظة —</option>' +
     wallets.map(w => `<option value="${w._id}">${w.name} (${fmtMoney(w.balance)} ج)</option>`).join('');
-  ['m-dispatch-wallet', 'm-collect-wallet', 'm-settle-wallet', 'm-return-wallet'].forEach(id => {
+  ['m-collect-wallet', 'm-settle-wallet', 'm-return-wallet'].forEach(id => {
     const el = $(id);
     if (el) el.innerHTML = opts;
   });
@@ -1397,7 +1394,6 @@ window.openDispatch = (orderId) => {
   $('m-dispatch-method').value = 'company';
   $('m-dispatch-company').value = '';
   $('m-dispatch-cost').value = '';
-  $('m-dispatch-wallet').value = '';
   $('m-dispatch-note').value = '';
   // حقول العنوان: تُملأ من العنوان الحالي (لو موجود) وتظهر فقط لو ناقص
   const a0 = getDeliveryAddress(o);
@@ -1413,7 +1409,6 @@ window.onDispatchMethodChange = () => {
   const m = $('m-dispatch-method').value;
   $('m-dispatch-company-row').style.display = m === 'pickup' ? 'none' : '';
   $('m-dispatch-cost-row').style.display = m === 'pickup' ? 'none' : '';
-  $('m-dispatch-wallet-row').style.display = m === 'pickup' ? 'none' : '';
   // صف العنوان: يظهر فقط لغير pickup ولو الأوردر مفيهوش عنوان مُسجَّل
   const addrRow = $('m-dispatch-addr-row');
   if (addrRow) {
@@ -1426,27 +1421,19 @@ window.onDispatchMethodChange = () => {
 window.updateDispatchCalc = () => {
   const m = $('m-dispatch-method').value;
   const cost = parseFloat($('m-dispatch-cost').value) || 0;
-  const walletId = $('m-dispatch-wallet').value;
   const panel = $('m-dispatch-calc-panel');
   const content = $('m-dispatch-calc-content');
-
+  if (!panel || !content) return;
+  // التسليم = تسجيل فقط (لا حركة مالية). التكلفة رقم معلوماتي يُحاسَب عند
+  // التسوية — فمفيش خصم محفظة هنا (يمنع ازدواج حساب التكلفة).
   if (m === 'pickup' || cost <= 0) {
     panel.style.display = 'none';
     return;
   }
   panel.style.display = 'block';
-  const wallet = wallets.find(w => w._id === walletId);
-  const wb = parseFloat(wallet?.balance) || 0;
-  const newBalance = wb - cost;
-  const insufficient = walletId && newBalance < 0;
   content.innerHTML = `
-    <div class="calc-row"><span>تكلفة الشحن</span><span class="money-neg">-${fmtMoney(cost)} ج</span></div>
-    ${walletId ? `
-      <div class="calc-row"><span>رصيد المحفظة قبل</span><span>${fmtMoney(wb)} ج</span></div>
-      <div class="calc-sep"></div>
-      <div class="calc-row"><span>الرصيد بعد</span><span class="${newBalance >= 0 ? 'money-pos' : 'money-neg'}">${fmtMoney(newBalance)} ج</span></div>
-      ${insufficient ? '<div class="calc-result err">⚠️ رصيد المحفظة غير كافٍ!</div>' : '<div class="calc-result ok">✅ التكلفة تُسجَّل في المحفظة كمصروف</div>'}
-    ` : '<div class="calc-result warn">⚠️ بدون محفظة — التكلفة لن تُسجَّل كمصروف الآن</div>'}
+    <div class="calc-row"><span>تكلفة الشحن (مسجّلة)</span><span>${fmtMoney(cost)} ج</span></div>
+    <div class="calc-result ok">ℹ️ تُحاسَب عند التسوية مع الشركة — لا خصم الآن</div>
   `;
 };
 
@@ -1455,10 +1442,8 @@ window.confirmDispatch = async () => {
   const method = $('m-dispatch-method').value;
   const companyId = $('m-dispatch-company').value;
   const cost = parseFloat($('m-dispatch-cost').value) || 0;
-  const walletId = $('m-dispatch-wallet').value;
   const note = $('m-dispatch-note').value.trim();
   const company = shippers.find(s => s._id === companyId);
-  const wallet = wallets.find(w => w._id === walletId);
 
   // العنوان: لو الصف ظاهر (الأوردر مفيهوش عنوان) نجمعه ونتحقق منه
   let deliveryAddress = null, customerPhoneShip = '';
@@ -1478,7 +1463,7 @@ window.confirmDispatch = async () => {
   const result = await shippingActions.confirmShipped({
     db, orderId: pendingOrder._id,
     companyId, companyName: company?.name || '',
-    method, cost, walletId, walletName: wallet?.name || '',
+    method, cost,
     note, deliveryAddress, customerPhoneShip,
     role: myRole, userId: me.uid, userName: myUserName,
   });
