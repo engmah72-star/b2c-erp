@@ -87,6 +87,7 @@ export const shippingActions = {
     companyId = '', companyName = '',
     method, cost = 0, walletId = '', walletName = '',
     note = '',
+    deliveryAddress = null, customerPhoneShip = '',
     role, userId, userName,
   }) {
     if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
@@ -109,6 +110,12 @@ export const shippingActions = {
       ? '🏬 جاهز للاستلام من المطبعة'
       : `🚚 تسليم لشركة شحن — ${companyName || ''}${amt > 0 ? ` (تكلفة: ${amt} ج)` : ''}`;
 
+    // العنوان: لو اتمرّر عنوان جديد (لأن الأوردر مفيهوش عنوان مُسجَّل من
+    // مرحلة الطباعة) نكتبه على الأوردر. اختياري وbackward-compatible —
+    // pickup لا يحتاج عنوان، والأوردرات اللي ليها عنوان مسبقاً لا تتأثر.
+    const addrProvided = method !== 'pickup' && deliveryAddress
+      && typeof deliveryAddress === 'object' && (deliveryAddress.gov || deliveryAddress.street || deliveryAddress.city);
+
     const orderFields = {
       shipCompanyId: companyId || '',
       shipCompanyName: companyName || '',
@@ -118,7 +125,12 @@ export const shippingActions = {
       shipDispatchedAt: serverTimestamp(),
       shipDispatchedBy: userName || '',
       shipDispatchedById: userId || '',
-      timeline: [...(order.timeline || []), _tlEntry(actionLabel, userName, userId)],
+      ...(addrProvided ? { deliveryAddress } : {}),
+      ...(customerPhoneShip ? { customerPhoneShip } : {}),
+      timeline: [...(order.timeline || []), _tlEntry(
+        actionLabel + (addrProvided ? ` — 📍 ${deliveryAddress.gov || ''}` : ''),
+        userName, userId
+      )],
     };
 
     try {
