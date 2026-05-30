@@ -58,7 +58,8 @@ needs a quick visual check before merge — hence separate PRs, not a big-bang.
 
 | Phase | Concern | Target | Risk |
 |---|---|---|---|
-| **2 — Buttons** | ~26 inline buttons with custom `padding/border-radius` | `.btn` + size/color variants → identical primary/secondary actions | low-med (minor padding/radius normalization) |
+| **2a — Buttons (soft-tinted) ✅ DONE** | 9 soft-tinted rectangular inline buttons (`bg:rgba(c,.1x);color:var(--c)`) | `.btn .btn-{g/y/r/p/b}` (+`btn-sm`) — `display:none`/`onclick` preserved | done |
+| **2b — Buttons (rest)** | ~110 remaining inline buttons: neutral-snow, tiny chips, icon/circular, gradient CTAs, dynamic-color | map to `.btn`/`.btn-ghost`/icon-btn after visual QA | med (needs eyeball per group) |
 | **3 — Badges/pills** | ~62 inline pills | `.bdg` / `.bdg-mini` + tonal modifiers | low (shade normalization to tint tokens) |
 | **4 — Hex normalization** | `#ff3d6e`→`var(--r)`, `#f03660`→`var(--r)`, green/blue variants | canonical tokens (RULE U1.2/U1.5) | low (`#f03660` byte-equal; others tiny shade shift) |
 | **5 — order.html `<style>`** | 215-line page-local block | extract to `order.css`, reuse `.card`/`.kpi` | low (move, no rule change) |
