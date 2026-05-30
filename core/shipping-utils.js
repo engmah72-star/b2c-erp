@@ -9,14 +9,19 @@
 
 /**
  * Resolve the canonical delivery address for an order.
- *   shipGov + shipAddress (fallback to clientGov when shipGov missing).
+ * Prefers `deliveryAddress` {gov, city, street} written by the print operator
+ * via prepareForShipping, then falls back to the historical flat fields
+ * (shipGov / shipAddress / clientGov). Backward compatible (RULE 6).
  *
  * @returns {{gov, addr, full}}
  */
 export function getDeliveryAddress(order) {
   if (!order) return { gov: '', addr: '', full: '' };
-  const gov = order.shipGov || order.clientGov || '';
-  const addr = order.shipAddress || '';
+  const da = (order.deliveryAddress && typeof order.deliveryAddress === 'object')
+    ? order.deliveryAddress : {};
+  const gov = da.gov || order.shipGov || order.clientGov || '';
+  const addr = [da.city, da.street || da.address].filter(Boolean).join('، ')
+             || order.shipAddress || '';
   return { gov, addr, full: [gov, addr].filter(Boolean).join(' — ') };
 }
 
