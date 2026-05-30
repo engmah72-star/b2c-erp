@@ -130,7 +130,7 @@ export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {
           stroke-dasharray="${fill} ${circ}" stroke-linecap="round"/>
       </svg>
       <div style="position:absolute;width:44px;text-align:center;font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${col};margin-right:0;line-height:44px">${score}</div>
-      <div style="flex:1">
+      <div class="flex-1">
         <div class="txt-bold-md">${lbl} <span style="font-size:var(--fs-sm);font-weight:var(--fw-medium);color:${col}">— ${grade}</span></div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px">
           حضور ${ev.attScore || 0}/35 · إنتاجية ${ev.prodScore || 0}/40 · جودة ${ev.qualScore || 0}/25

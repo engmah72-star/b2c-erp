@@ -39,7 +39,7 @@ export function buildScoreHTML({ current, previous, prevMonthLabel }) {
       </svg>
       <div class="score-num" style="color:${col}">${score}</div>
     </div>
-    <div style="flex:1">
+    <div class="flex-1">
       <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:6px;flex-wrap:wrap">
         <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${col}">${grade}</div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${dCol};background:${dCol}1a;padding:2px 8px;border-radius:var(--rad)" title="مقارنة بالشهر السابق (${previous.score}/100)">${dLbl}</span>

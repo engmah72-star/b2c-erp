@@ -49,7 +49,7 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
 
   const firstChar = (e.name || '?')[0].toUpperCase();
   const statusInactive = e.status === 'inactive'
-    ? ` <span style="font-size:var(--fs-xs);background:rgba(255,61,110,.12);color:var(--r);padding:1px 7px;border-radius:8px;font-weight:var(--fw-bold)">غير نشط</span>`
+    ? ` <span class="bdg-mini bdg-mini-r">غير نشط</span>`
     : '';
   const chipPhone     = e.phone     ? `<span class="hero-chip">📞 ${escAttr(e.phone)}</span>`        : '';
   const chipEmail     = e.email     ? `<span class="hero-chip">${escAttr(e.email)}</span>`           : '';
