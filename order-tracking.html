@@ -38,7 +38,7 @@ import { skeletonCards as __sc } from "./orders.js";
 <script type="module">
 import { auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { STAGES, getStageAge, stageSlaBadge, stageProgressBar, skeletonCards, productStatusBadge, fn } from "./orders.js";
 const params = new URLSearchParams(location.search);
 const orderDocId = params.get('id');
@@ -73,8 +73,29 @@ onAuthStateChanged(auth, async u => {
       isAdmin = ['admin','operation_manager'].includes(role);
     }
   } catch(_) {}
+
+  // حلّ المعرّف: الرابط قد يمرّر معرّف مستند Firestore أو رقم الأوردر التجاري (orderId)
+  // — نبحث بالمستند أولاً، وإن لم يوجد نبحث بحقل orderId حتى تعمل كل الروابط.
+  let resolvedId = orderDocId;
+  try {
+    const direct = await getDoc(doc(db, 'orders', orderDocId));
+    if (!direct.exists()) {
+      const byField = await getDocs(query(collection(db, 'orders'), where('orderId', '==', orderDocId), limit(1)));
+      if (!byField.empty) {
+        resolvedId = byField.docs[0].id;
+      } else {
+        document.getElementById('wrap').innerHTML = '<div class="error-card">❌ الأوردر غير موجود</div>';
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[order-tracking] resolve id error', err);
+    document.getElementById('wrap').innerHTML = '<div class="error-card">⚠️ تعذّر تحميل الأوردر — تحقق من الصلاحيات أو الاتصال</div>';
+    return;
+  }
+
   // اشترك في الأوردر
-  onSnapshot(doc(db, 'orders', orderDocId), snap => {
+  onSnapshot(doc(db, 'orders', resolvedId), snap => {
     if (!snap.exists()) {
       document.getElementById('wrap').innerHTML = '<div class="error-card">❌ الأوردر غير موجود</div>';
       return;
@@ -86,7 +107,7 @@ onAuthStateChanged(auth, async u => {
     document.getElementById('wrap').innerHTML = '<div class="error-card">⚠️ تعذّر تحميل الأوردر — تحقق من الصلاحيات أو الاتصال</div>';
   });
   // اشترك في القيود المالية المرتبطة
-  onSnapshot(query(collection(db, 'financial_ledger'), where('orderId', '==', orderDocId), limit(200)), snap => {
+  onSnapshot(query(collection(db, 'financial_ledger'), where('orderId', '==', resolvedId), limit(200)), snap => {
     ledger = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
       .filter(x => !x.isDeleted)
       .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
