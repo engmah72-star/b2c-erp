@@ -337,6 +337,7 @@ import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, s
 // FSE imports removed — financial writes now go through orderActions.recordPayment/recordPrintAdvance
 import { buildStageRevert, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { shippingActions } from "./shipping-actions.js";
 import { clientActions } from "./client-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -765,6 +766,40 @@ function renderPanel(o){
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);color:var(--b);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-base)">📎 الملف المرجعي ←</a>`:''}
     </div>`:''}
 
+    <!-- ══ بيانات الشحن (يُدخلها مسؤول الطباعة قبل التحويل للتنفيذ) ══ -->
+    <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">🚚 بيانات الشحن</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
+            <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
+              <option value="company"${o.shipMethod==='company'?' selected':''}>شركة شحن</option>
+              <option value="pickup"${o.shipMethod==='pickup'?' selected':''}>استلام من المطبعة</option>
+              <option value="courier"${o.shipMethod==='courier'?' selected':''}>مندوب داخلي</option>
+            </select></div>
+          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">📞 تليفون التسليم</label>
+            <input class="inp" id="ps-phone" value="${o.customerPhoneShip||o.clientPhone||''}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المحافظة</label>
+            <input class="inp" id="ps-gov" value="${o.deliveryAddress?.gov||''}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
+          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المدينة/المنطقة</label>
+            <input class="inp" id="ps-city" value="${o.deliveryAddress?.city||''}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
+        </div>
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">العنوان بالتفصيل</label>
+          <input class="inp" id="ps-street" value="${o.deliveryAddress?.street||''}" placeholder="الشارع / رقم العقار / علامة مميزة" style="width:100%;margin-top:3px"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:6px 0">
+          <input type="checkbox" id="ps-incl" ${o.priceIncludesShipping?'checked':''} onchange="onPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
+          السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
+        </label>
+        <div id="ps-fee-row" style="${o.priceIncludesShipping?'display:none;':''}">
+          <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💵 رسوم الشحن على العميل (غير شامل — يدفعها للمندوب)</label>
+          <input class="inp" id="ps-fee" type="number" min="0" step="0.01" value="${o.customerShipFee||''}" placeholder="0" style="width:100%;margin-top:3px">
+        </div>
+        <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
+      </div>
+    </div>
+
     <!-- Timeline (compact) — للأدمن/مدير العمليات فقط -->
     ${['admin','operation_manager'].includes(currentRole)?`<div style="padding:12px 16px">
       <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">📋 آخر الأحداث</div>
@@ -801,6 +836,37 @@ window.savePrintNotes=async function(){
   const r=await orderActions.savePrintNotes({db,orderId:activeId,notes});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   toast('✅ تم الحفظ','ok');
+};
+
+// ══ بيانات الشحن (مسؤول الطباعة) — عبر shippingActions.prepareForShipping ══
+window.onPsMethodChange=function(){
+  // (UI hint فقط — العنوان مطلوب لغير الاستلام؛ الـ validator المركزي يفرضه)
+};
+window.onPsInclChange=function(){
+  const incl=document.getElementById('ps-incl')?.checked;
+  const row=document.getElementById('ps-fee-row');
+  if(row)row.style.display=incl?'none':'';
+  if(incl){const f=document.getElementById('ps-fee');if(f)f.value='';}
+};
+window.savePrintShipping=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const shipMethod=document.getElementById('ps-method')?.value||'company';
+  const incl=!!document.getElementById('ps-incl')?.checked;
+  const fee=incl?0:(parseFloat(document.getElementById('ps-fee')?.value)||0);
+  const deliveryAddress={
+    gov:document.getElementById('ps-gov')?.value.trim()||'',
+    city:document.getElementById('ps-city')?.value.trim()||'',
+    street:document.getElementById('ps-street')?.value.trim()||'',
+  };
+  const customerPhoneShip=document.getElementById('ps-phone')?.value.trim()||'';
+  const r=await shippingActions.prepareForShipping({
+    db,orderId:activeId,shipMethod,deliveryAddress,
+    customerShipFee:fee,priceIncludesShipping:incl,customerPhoneShip,
+    role:currentRole,userId:auth?.currentUser?.uid||'',userName,
+  });
+  if(!r||!r.ok)return toast('❌ '+((r&&r.errors||[]).join(' · ')||'فشل حفظ بيانات الشحن'),'err');
+  toast('✅ تم حفظ بيانات الشحن','ok');
 };
 
 // Move to Production
