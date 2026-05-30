@@ -74,15 +74,20 @@ onAuthStateChanged(auth, async u => {
     }
   } catch(_) {}
 
-  // حلّ المعرّف: الرابط قد يمرّر معرّف مستند Firestore أو رقم الأوردر التجاري (orderId)
-  // — نبحث بالمستند أولاً، وإن لم يوجد نبحث بحقل orderId حتى تعمل كل الروابط.
+  // حلّ المعرّف: الرابط قد يمرّر معرّف مستند Firestore أو الرقم التجاري للأوردر.
+  // الرقم التجاري مخزَّن في حقل 'orderId' (مسار orders.js) أو 'id' (مسار shared.js
+  // القديم) — لذلك نبحث بالمستند أولاً، ثم بكلا الحقلين حتى تعمل كل الروابط مهما
+  // كان مصدر الأوردر.
   let resolvedId = orderDocId;
   try {
     const direct = await getDoc(doc(db, 'orders', orderDocId));
     if (!direct.exists()) {
-      const byField = await getDocs(query(collection(db, 'orders'), where('orderId', '==', orderDocId), limit(1)));
-      if (!byField.empty) {
-        resolvedId = byField.docs[0].id;
+      let match = await getDocs(query(collection(db, 'orders'), where('orderId', '==', orderDocId), limit(1)));
+      if (match.empty) {
+        match = await getDocs(query(collection(db, 'orders'), where('id', '==', orderDocId), limit(1)));
+      }
+      if (!match.empty) {
+        resolvedId = match.docs[0].id;
       } else {
         document.getElementById('wrap').innerHTML = '<div class="error-card">❌ الأوردر غير موجود</div>';
         return;
