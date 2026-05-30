@@ -2,7 +2,7 @@
  * Tests for core/order-math.js
  * Run: node tests/core-order-math.test.mjs
  */
-import { calcRem } from '../core/order-math.js';
+import { calcRem, orderGrossTotal, expectedFromCompany } from '../core/order-math.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -82,6 +82,50 @@ test('calcRem: courierDirectFee is ignored (outside company accounts)', () => {
 
 test('calcRem: courierDirectFee + customerShipFee=0 → only sale counts', () => {
   assertEq(calcRem({ salePrice: 500, customerShipFee: 0, courierDirectFee: 50, totalPaid: 200 }), 300);
+});
+
+// ── orderGrossTotal ────────────────────────────────────────────────
+test('orderGrossTotal: sale + shipFee − discount', () => {
+  assertEq(orderGrossTotal({ salePrice: 1000, customerShipFee: 50, discount: 100 }), 950);
+});
+test('orderGrossTotal: clamps at 0', () => {
+  assertEq(orderGrossTotal({ salePrice: 100, discount: 500 }), 0);
+});
+test('orderGrossTotal: missing fields → 0', () => {
+  assertEq(orderGrossTotal({}), 0);
+});
+
+// ── expectedFromCompany ────────────────────────────────────────────
+// المتوقَّع من شركة الشحن = shipCollected − shippingCost
+test('expectedFromCompany: collected − cost', () => {
+  assertEq(expectedFromCompany({ shipCollected: 700, shippingCost: 65 }), 635);
+});
+test('expectedFromCompany: collected with no cost (شامل/المتبقي كامل)', () => {
+  assertEq(expectedFromCompany({ shipCollected: 2850, shippingCost: 0 }), 2850);
+});
+// الـ fallback الحرج (سبب bug «التسوية تطلع صفر» — PR #1344):
+// لو shipCollected=0 بينما العميل عليه متبقّي، نستخدم المتبقي.
+test('expectedFromCompany: fallback to customer remaining when shipCollected=0', () => {
+  assertEq(expectedFromCompany({ shipCollected: 0, salePrice: 2850, totalPaid: 0, shippingCost: 0 }), 2850);
+});
+test('expectedFromCompany: fallback minus cost', () => {
+  assertEq(expectedFromCompany({ shipCollected: 0, salePrice: 1000, totalPaid: 0, shippingCost: 65 }), 935);
+});
+test('expectedFromCompany: fallback respects prior payments', () => {
+  assertEq(expectedFromCompany({ shipCollected: 0, salePrice: 1000, totalPaid: 400, shippingCost: 0 }), 600);
+});
+test('expectedFromCompany: fallback with deposit (no totalPaid)', () => {
+  assertEq(expectedFromCompany({ shipCollected: 0, salePrice: 1000, deposit: 300, shippingCost: 0 }), 700);
+});
+test('expectedFromCompany: recorded collected takes precedence over remaining', () => {
+  // shipCollected موجود → يُستخدم هو، لا الـ fallback
+  assertEq(expectedFromCompany({ shipCollected: 500, salePrice: 9999, totalPaid: 0, shippingCost: 100 }), 400);
+});
+test('expectedFromCompany: clamps at 0 when cost exceeds collected', () => {
+  assertEq(expectedFromCompany({ shipCollected: 50, shippingCost: 200 }), 0);
+});
+test('expectedFromCompany: empty order → 0', () => {
+  assertEq(expectedFromCompany({}), 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
