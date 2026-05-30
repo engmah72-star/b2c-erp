@@ -1163,13 +1163,10 @@ window.openSettleByCompany = (cid) => {
   const sumCollected = list.reduce((s, o) => s + (parseFloat(o.shipCollected) || 0), 0);
   const sumCost = list.reduce((s, o) => s + (parseFloat(o.shippingCost) || 0), 0);
   const expected = Math.max(0, sumCollected - sumCost);
-  $('m-settle-info').innerHTML = `
-    <div class="modal-info-row"><span>الشركة</span><span>${company?.name || '—'}</span></div>
-    <div class="modal-info-row"><span>عدد الشحنات</span><span>${list.length}</span></div>
-    <div class="modal-info-row"><span>إجمالي المُحصَّل</span><span>${fmtMoney(sumCollected)} ج</span></div>
-    <div class="modal-info-row"><span>إجمالي التكلفة</span><span>${fmtMoney(sumCost)} ج</span></div>
-    <div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px;color:var(--g)"><span>المستحق</span><span>${fmtMoney(expected)} ج</span></div>
-  `;
+  $('m-settle-info').innerHTML =
+    `<div class="modal-info-row"><span>الشركة</span><span>${company?.name || '—'}</span></div>` +
+    `<div class="modal-info-row"><span>عدد الشحنات</span><span>${list.length}</span></div>` +
+    buildSettleSummary(list);
   $('m-settle-amount').value = expected;
   $('m-settle-wallet').value = '';
   $('m-settle-note').value = '';
@@ -1177,6 +1174,30 @@ window.openSettleByCompany = (cid) => {
   updateSettleCalc();
   openMod('m-settle');
 };
+
+// ── ملخص التسوية البسيط (مبدأ التسوية — حالتين فقط) ──────────────
+// شامل الشحن (shippingCost>0):   المحصّل = المتبقي − الشحن
+// غير شامل (shippingCost=0):     المتبقي = المحصّل، وأي فرق → السبب
+// نفس الأرقام المصدر (shipCollected − shippingCost) — عرض فقط، صفر تغيير حسابي.
+function buildSettleSummary(list) {
+  const collected = list.reduce((s, o) => s + (parseFloat(o.shipCollected) || 0), 0);
+  const cost      = list.reduce((s, o) => s + (parseFloat(o.shippingCost) || 0), 0);
+  const net       = collected - cost;
+  if (cost > 0) {
+    // السعر شامل الشحن
+    return (
+      `<div class="modal-info-row"><span>المبلغ المتبقي</span><span>${fmtMoney(collected)} ج</span></div>` +
+      `<div class="modal-info-row"><span>الشحن (تكلفتنا)</span><span>− ${fmtMoney(cost)} ج</span></div>` +
+      `<div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px;color:var(--g)"><span>المحصّل (لنا)</span><span>${fmtMoney(net)} ج</span></div>`
+    );
+  }
+  // السعر غير شامل الشحن — المتوقع = المحصّل، والفرق يظهر بعد إدخال المبلغ الفعلي
+  return (
+    `<div class="modal-info-row"><span>المبلغ المتبقي (المتوقع)</span><span>${fmtMoney(collected)} ج</span></div>` +
+    `<div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px;color:var(--g)"><span>المحصّل (لنا)</span><span>${fmtMoney(net)} ج</span></div>`
+  );
+}
+
 
 // ══════════════════════════════════════════
 // DASHBOARD TAB
@@ -1488,14 +1509,11 @@ window.openSettleSingle = (orderId) => {
   const collected = parseFloat(o.shipCollected) || 0;
   const cost = parseFloat(o.shippingCost) || 0;
   const expected = Math.max(0, collected - cost);
-  $('m-settle-info').innerHTML = `
-    <div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0, 6)}</span></div>
-    <div class="modal-info-row"><span>العميل</span><span>${o.clientName || '—'}</span></div>
-    <div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName || '—'}</span></div>
-    <div class="modal-info-row"><span>المُحصَّل من العميل</span><span>${fmtMoney(collected)} ج</span></div>
-    <div class="modal-info-row"><span>تكلفة الشحن</span><span>${fmtMoney(cost)} ج</span></div>
-    <div class="modal-info-row" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px;color:var(--g)"><span>المستحق لنا</span><span>${fmtMoney(expected)} ج</span></div>
-  `;
+  $('m-settle-info').innerHTML =
+    `<div class="modal-info-row"><span>الطلب</span><span>#${o.orderNumber || o._id.slice(0, 6)}</span></div>` +
+    `<div class="modal-info-row"><span>العميل</span><span>${o.clientName || '—'}</span></div>` +
+    `<div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName || '—'}</span></div>` +
+    buildSettleSummary([o]);
   $('m-settle-amount').value = expected;
   $('m-settle-wallet').value = '';
   $('m-settle-note').value = '';
@@ -1513,11 +1531,12 @@ window.updateSettleCalc = () => {
   const diff = amt - expected;
   const hasDiff = Math.abs(diff) > 0.01;
   const content = $('m-settle-calc-content');
+  // نفس مبدأ التسوية البسيط: المتبقي − الشحن = المحصّل المتوقع، وأي فرق → السبب.
   content.innerHTML = `
-    <div class="calc-row"><span>إجمالي محصَّل من العملاء</span><span>${fmtMoney(sumCollected)} ج</span></div>
-    <div class="calc-row"><span>إجمالي تكلفة الشحن</span><span class="money-neg">-${fmtMoney(sumCost)} ج</span></div>
+    <div class="calc-row"><span>المبلغ المتبقي</span><span>${fmtMoney(sumCollected)} ج</span></div>
+    ${sumCost > 0 ? `<div class="calc-row"><span>الشحن (تكلفتنا)</span><span class="money-neg">-${fmtMoney(sumCost)} ج</span></div>` : ''}
     <div class="calc-sep"></div>
-    <div class="calc-row"><span>المستحق المتوقع</span><span>${fmtMoney(expected)} ج</span></div>
+    <div class="calc-row"><span>المحصّل المتوقع</span><span>${fmtMoney(expected)} ج</span></div>
     <div class="calc-row"><span>المبلغ الفعلي</span><span class="money-pos">${fmtMoney(amt)} ج</span></div>
     ${hasDiff ? `<div class="calc-result warn">⚠️ فرق: ${diff > 0 ? '+' : ''}${fmtMoney(diff)} ج — حدد السبب</div>` : '<div class="calc-result ok">✅ المبلغ يطابق المتوقع</div>'}
   `;
