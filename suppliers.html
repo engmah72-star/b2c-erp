@@ -13,7 +13,7 @@
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="suppliers.css?v=4">
+<link rel="stylesheet" href="suppliers.css?v=5">
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -191,6 +191,12 @@
               <button type="button" onclick="toggleAddCat()" class="btn btn-ghost btn-sm">✕</button>
             </div>
           </div>
+        </div>
+
+        <!-- الخدمات (اختيار متعدد من نفس قائمة الإعدادات — مصدر واحد) -->
+        <div class="fg">
+          <label>🛠️ الخدمات</label>
+          <div id="f-services-wrap" style="background:var(--bg2);border:1.5px solid var(--line);border-radius:var(--rad);padding:var(--space-md);max-height:200px;overflow-y:auto"></div>
         </div>
 
         <!-- الطاقة الإنتاجية -->
@@ -881,13 +887,20 @@ async function loadMasterLists(){
 }
 
 function renderCategorySelect(){
-  const wrap=document.getElementById('f-specialties-wrap');if(!wrap)return;
-  let lastGroup='';
-  wrap.innerHTML=masterCategories.filter(c=>c.isActive!==false).map((c,i)=>{
-    let g='';
-    if(c.group!==lastGroup){lastGroup=c.group;g=`<div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-top:${i>0?'10px':'0'};margin-bottom:4px">${c.group}</div>`;}
-    return`${g}<label style="display:flex;align-items:center;gap:var(--space-sm);padding:4px 0;font-size:var(--fs-md);cursor:pointer"><input type="checkbox" id="f-spec-${i}" value="${c.label}" style="width:16px;height:16px;accent-color:var(--b)"> ${c.label}</label>`;
-  }).join('');
+  const items=masterCategories.filter(c=>c.isActive!==false);
+  // نفس القائمة (مصدر واحد من الإعدادات) تُستخدم للتخصص والخدمات
+  const buildList=(idPrefix,accent)=>{
+    let lastGroup='';
+    return items.map((c,i)=>{
+      let g='';
+      if(c.group!==lastGroup){lastGroup=c.group;g=`<div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-top:${i>0?'10px':'0'};margin-bottom:4px">${c.group}</div>`;}
+      return`${g}<label style="display:flex;align-items:center;gap:var(--space-sm);padding:4px 0;font-size:var(--fs-md);cursor:pointer"><input type="checkbox" id="${idPrefix}-${i}" value="${c.label}" style="width:16px;height:16px;accent-color:${accent}"> ${c.label}</label>`;
+    }).join('');
+  };
+  const specWrap=document.getElementById('f-specialties-wrap');
+  if(specWrap) specWrap.innerHTML=buildList('f-spec','var(--b)');
+  const svcWrap=document.getElementById('f-services-wrap');
+  if(svcWrap) svcWrap.innerHTML=buildList('f-svc','var(--g)');
 }
 
 window.toggleAddCat=function(){
@@ -921,6 +934,7 @@ function clearForm(){
   sv('f-payterms','cash');sv('f-status','active');sv('f-rating','');sv('f-area','');
   ALL_SVC_IDS.forEach(id=>{const el=document.getElementById(id);if(el)el.checked=false;});
   document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{cb.checked=false;});
+  document.querySelectorAll('#f-services-wrap input[type=checkbox]').forEach(cb=>{cb.checked=false;});
 }
 window.openAdd=function(){
   document.getElementById('edit-id').value='';
@@ -964,6 +978,11 @@ window.openEdit=function(){
   document.querySelectorAll('#f-specialties-wrap input[type=checkbox]').forEach(cb=>{
     cb.checked=specs.includes(cb.value);
   });
+  // الخدمات المحفوظة (نفس مصدر القائمة)
+  const savedSvcs=activeSup.services||[];
+  document.querySelectorAll('#f-services-wrap input[type=checkbox]').forEach(cb=>{
+    cb.checked=savedSvcs.includes(cb.value);
+  });
   // work days
   const wdays=activeSup.workDays||[];
   ALL_SVC_IDS.forEach(id=>{const el=document.getElementById(id);if(el)el.checked=wdays.includes(el.value);});
@@ -986,6 +1005,7 @@ window.saveSup=async function(){
     ...(type==='printer'?{
       specialties:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value),
       printType:[...document.querySelectorAll('#f-specialties-wrap input[type=checkbox]:checked')].map(cb=>cb.value)[0]||'',
+      services:[...document.querySelectorAll('#f-services-wrap input[type=checkbox]:checked')].map(cb=>cb.value),
       workDays,
       minQty:parseInt(gv('f-minqty'))||0,
       leadTimeDays:parseInt(gv('f-leadtime'))||0,
