@@ -4,7 +4,7 @@
  */
 import {
   getDeliveryAddress, isCreatedToday, getCustomerContext,
-  isUrgentOrder, renderSmartBadges, fmtTimestamp,
+  isUrgentOrder, renderSmartBadges, fmtTimestamp, isMissingShippingData,
 } from '../core/shipping-utils.js';
 
 let passed = 0, failed = 0;
