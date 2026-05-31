@@ -1239,6 +1239,13 @@ export function validateDispatch({ order, companyId, method, cost, walletId, rol
   if (order.stage === 'archived')           errors.push('⛔ الأوردر مؤرشف');
   if (order.stage === 'cancelled')          errors.push('⛔ الأوردر ملغي');
   if (order.shipStage === 'returned')       errors.push('⛔ الأوردر مرتجع');
+  // الأوردر لازم يكون في مرحلة الشحن قبل التسليم لشركة/مندوب. لو لسه في
+  // الإنتاج (بعض الداشبوردات تعرضه كـ"جاهز للشحن")، التسليم يكتب shipStage
+  // بدون نقل stage → الأوردر يعلق (يختفي من جاهز ولا يظهر في "اتشحن" لأن
+  // الفلاتر تشترط stage==='shipping'). نمنعه ونوجّه لإتمام الإنتاج أولاً.
+  if (order.stage && order.stage !== 'shipping') {
+    errors.push('⛔ الأوردر لسه مش في مرحلة الشحن — أكمِل التنفيذ وحوّله للشحن أولاً');
+  }
 
   // Pickup (استلام من المطبعة) doesn't need a shipping company — العميل بيستلم
   // من المطبعة مباشرة. Only require company for methods that involve one.
