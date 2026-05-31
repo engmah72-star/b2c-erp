@@ -194,21 +194,33 @@ export function getCompanyReconciliation(orders, shippers) {
     });
   });
 
+  // نربط أسماء الشركات بالـ id المسجّل (من الـ shippers) لتفادي صفوف مكررة
+  // بنفس الاسم عندما تختلف/تغيب shipCompanyId على بعض الأوردرات القديمة.
+  const nameToSeededId = new Map();
+  byCompany.forEach((row, id) => { if (row.companyName) nameToSeededId.set(row.companyName, id); });
+
   for (const o of (orders || [])) {
     if (!o || o.shipMethod !== 'company') continue;
-    const cid = o.shipCompanyId || '_unknown';
+    // مفتاح موحَّد: id المسجّل إن وُجد، وإلا id المطابق للاسم (يدمج المكرر)،
+    // وإلا الاسم نفسه. يمنع ظهور نفس الشركة (مثل "اسكوتر") في صفّين.
+    const cid = (o.shipCompanyId && byCompany.has(o.shipCompanyId))
+      ? o.shipCompanyId
+      : (o.shipCompanyName && nameToSeededId.has(o.shipCompanyName))
+        ? nameToSeededId.get(o.shipCompanyName)
+        : (o.shipCompanyName || o.shipCompanyId || '_unknown');
     if (!byCompany.has(cid)) {
       byCompany.set(cid, {
-        companyId: cid,
+        companyId: o.shipCompanyId || cid,
         companyName: o.shipCompanyName || 'غير معروف',
         pendingOrders: 0, pendingCollected: 0, pendingCost: 0, pendingExpected: 0,
         settledOrders: 0, settledAmount: 0,
         inTransit: 0, returned: 0, isActive: true,
       });
+      if (o.shipCompanyName) nameToSeededId.set(o.shipCompanyName, cid);
     }
     const row = byCompany.get(cid);
 
-    if (o.shipStage === 'returned') {
+    if (isShipTerminal(o) && normalizeShipStage(o.shipStage) === 'returned_full') {
       row.returned++;
       continue;
     }
@@ -220,12 +232,16 @@ export function getCompanyReconciliation(orders, shippers) {
     if (o.shipSettled === true) {
       row.settledOrders++;
       row.settledAmount += parseFloat(o.shipSettledAmount) || 0;
-    } else if (o.shipStage === 'collected') {
+    } else if (isShipPendingSettle(o)) {
+      // نفس منطق تبويب "للتسوية" بالضبط (يشمل استبعاد المدفوع بالكامل) —
+      // فلا يحدث تناقض: "حسابات الشركات" تطابق عدّاد تبويب التسوية.
       row.pendingOrders++;
       row.pendingCollected += collected;
       row.pendingCost += cost;
       row.pendingExpected += expected;
-    } else if (['wait_delivery', 'wait_collection'].includes(o.shipStage)) {
+    } else if (!isShipTerminal(o)) {
+      // أي أوردر نشط آخر (لسه ما اتسوّى ولا اكتمل) = نشاط جارٍ "في الطريق".
+      // يشمل المدفوع بالكامل المُستبعَد من التسوية — يظهر كنشاط لا كـ pending.
       row.inTransit++;
     }
   }
