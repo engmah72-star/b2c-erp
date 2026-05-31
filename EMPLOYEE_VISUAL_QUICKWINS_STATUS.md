@@ -26,6 +26,13 @@
 > **مُستبعَد عمدًا (نطاق ضيق):** `.lv-badge` (يستخدم `var(--rad)` لا 20px) — sibling pill لكنه خارج النطاق المعتمَد؛ مرشَّح لتوحيد لاحق.
 > circles/micro/`--rad` لا تزال سليمة. الـ diff = border-radius فقط؛ صفر مساس بالمنطق/markup/events.
 
+### ✅ Q2-B+ — إكمال عائلة الـ pills
+بعد اعتماد المتابعة، أُكملت العائلة بـ 4 bubbles كانت تستخدم `var(--rad)`:
+`.lv-badge` · `.tab-btn .badge-count` (employee-profile) · `.badge-c` (my-profile) · `.tab .badge` (my-requests) → `var(--r-pill)`.
+- كلها bubbles قصيرة (~12-14px) → نصف الارتفاع < قيمتها الحالية → **stadium كامل أصلًا** → `--r-pill` نفس الشكل = **صفر تغيير بصري**.
+- **مُستبعَد:** `.ep-skill-tags` (حاوية 40px ارتفاع — surface لا pill؛ `--r-pill` كان سيغيّر شكلها) → بقيت `var(--rad)`.
+- **النتيجة:** عائلة الـ pills/badges بالكامل موحّدة على توكن `--r-pill` واحد (15 عنصر).
+
 ---
 
 ## 1. Radius Audit (جرد كامل)
