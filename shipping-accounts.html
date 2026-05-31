@@ -402,6 +402,7 @@ import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js
 import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, applyOrderHealPatch, validateSettle, validateReturn, buildSettlementUpdates } from "./orders.js";
 import { shippingActions } from "./shipping-actions.js";
 import { orderActions } from "./order-actions.js";
+import { withIdempotency } from "./core/idempotency.js";
 // ══ State ══
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
@@ -1189,6 +1190,14 @@ window.saveReturn=async function(){
     const colTxDocs=[...colSnap.docs,...adjSnap.docs];
 
     // ═══ Batch Atomic: كل عمليات المرتجع في كتابة واحدة ═══
+    // H1.2: مغلّف بـ withIdempotency لمنع double-spend عند الضغط المزدوج —
+    // المرتجع يعكس تسوية + عربون + تحصيلات (حركة مالية حساسة لا يصح تكرارها).
+    const __idemRes = await withIdempotency(db, {
+      actionType: 'shipacc_return_full',
+      entityId: ordId,
+      actorId: currentUser?.uid || '',
+      payload: { settledAmt, depAmt, cost: Number(cost) || 0 },
+    }, async () => {
     const batch=writeBatch(db);
 
     // 1. سجل المرتجع
@@ -1317,6 +1326,9 @@ window.saveReturn=async function(){
     }
 
     await batch.commit();
+    return { ok: true };
+    }); // end withIdempotency
+    if (__idemRes && __idemRes.idempotent) { toast('⚠️ المرتجع مُسجَّل بالفعل', ''); document.getElementById('ov-return').classList.remove('open'); return; }
     document.getElementById('ov-return').classList.remove('open');
     toast('✅ تم تسجيل المرتجع','ok');
     clearOpError();
@@ -1384,6 +1396,13 @@ async function savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note)
   try{
     const now=nowStr();
     const byName=document.getElementById('nav-name')?.textContent||userName||'';
+    // H1.2: مغلّف بـ withIdempotency لمنع double-spend (استرداد مزدوج) عند الضغط المزدوج.
+    const __idemRes = await withIdempotency(db, {
+      actionType: 'shipacc_return_partial',
+      entityId: ordId,
+      actorId: currentUser?.uid || '',
+      payload: { refundAmount, refundFromWallet, cost: Number(cost) || 0, items: returnedItems.length },
+    }, async () => {
     const batch=writeBatch(db);
 
     // 1. shipping_returns
@@ -1459,6 +1478,9 @@ async function savePartialReturn(o,ordId,reason,reasonLabel,lossParty,cost,note)
     }
 
     await batch.commit();
+    return { ok: true };
+    }); // end withIdempotency
+    if (__idemRes && __idemRes.idempotent) { toast('⚠️ المرتجع الجزئي مُسجَّل بالفعل', ''); document.getElementById('ov-return').classList.remove('open'); return; }
     document.getElementById('ov-return').classList.remove('open');
     toast(`✅ مرتجع جزئي تم: ${returnedItems.length} منتج · ${fn(refundAmount)} ج${refundFromWallet>0?' (استرداد '+fn(refundFromWallet)+' ج)':''}`,'ok');
   }catch(e){
