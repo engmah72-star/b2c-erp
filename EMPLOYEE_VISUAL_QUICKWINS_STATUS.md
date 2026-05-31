@@ -16,6 +16,16 @@
 
 **After verification:** circles 50% (16) · pills 20px (10) · micro 2-7px (30) · `--rad` token (45) — **كلها سليمة بلا تغيير**. الـ diff = قيم border-radius فقط؛ braces متوازنة؛ صفر مساس بالـ markup/logic/events/data-act/IDs. 3 ملفات CSS فقط.
 
+## ✅ EXECUTED — Scope B (Pill family unification)
+| التغيير | المواضع | الملفات |
+|---------|:-------:|---------|
+| `20px → var(--r-pill)` | 10 (emp-chip · pp-btn · status-pill · fchip · hero-chip · prof-pp · pri-badge · skill-tag · month-badge · day-pill) | employees.css · employee-profile.css |
+| `14px → var(--r-pill)` | 1 (.rc-status) | my-requests.css |
+
+> **Zero render change:** كل الـ 11 chip قصيرة (ارتفاع 16-34px)، و20px/14px **يتجاوز نصف الارتفاع أصلًا** → المتصفّح يقصّها لشكل stadium كامل. `--r-pill` (999px) يُنتج **نفس الشكل بالضبط** → صفر تغيير بصري + توحيد على توكن pill واحد.
+> **مُستبعَد عمدًا (نطاق ضيق):** `.lv-badge` (يستخدم `var(--rad)` لا 20px) — sibling pill لكنه خارج النطاق المعتمَد؛ مرشَّح لتوحيد لاحق.
+> circles/micro/`--rad` لا تزال سليمة. الـ diff = border-radius فقط؛ صفر مساس بالمنطق/markup/events.
+
 ---
 
 ## 1. Radius Audit (جرد كامل)
