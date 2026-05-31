@@ -333,23 +333,33 @@ export const shippingActions = {
       return { ok: false, errors: [], warnings: v.warnings, needsConfirmation: true, orderId };
     }
 
-    try {
-      await updateDoc(order._ref, {
-        shipCollected: amt,
-        shipCollectedAt: serverTimestamp(),
-        shipCollectedBy: userName || '',
-        shipStage: 'collected',
-        shipCollectNote: note || '',
-        timeline: [...(order.timeline || []), _tlEntry(
-          `📦 تأكيد تحصيل من شركة الشحن — ${amt} ج — بانتظار التسوية`,
-          userName, userId
-        )],
-        updatedAt: serverTimestamp(),
-      });
-      return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'mark_company_collected' };
-    } catch (e) {
-      return { ok: false, errors: [e.message || 'فشل تأكيد التحصيل'], warnings: [], orderId };
-    }
+    // H1.2 (P0.2): idempotency — التحقق + confirmation خارج الـ guard (مسار
+    // شرعي قبل الكتابة)؛ نلفّ الكتابة فقط لمنع تكرار تسجيل التحصيل عند الضغط
+    // المزدوج (يكتب shipCollected/shipStage — يؤثر على التسوية لاحقاً).
+    return withIdempotency(db, {
+      actionType: 'mark_company_collected',
+      entityId: orderId,
+      actorId: userId || '',
+      payload: { amount: amt },
+    }, async () => {
+      try {
+        await updateDoc(order._ref, {
+          shipCollected: amt,
+          shipCollectedAt: serverTimestamp(),
+          shipCollectedBy: userName || '',
+          shipStage: 'collected',
+          shipCollectNote: note || '',
+          timeline: [...(order.timeline || []), _tlEntry(
+            `📦 تأكيد تحصيل من شركة الشحن — ${amt} ج — بانتظار التسوية`,
+            userName, userId
+          )],
+          updatedAt: serverTimestamp(),
+        });
+        return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'mark_company_collected' };
+      } catch (e) {
+        return { ok: false, errors: [e.message || 'فشل تأكيد التحصيل'], warnings: [], orderId };
+      }
+    });
   },
 
   /**
