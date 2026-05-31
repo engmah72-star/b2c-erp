@@ -123,6 +123,11 @@
       </div>
       <div id="m-dispatch-incl-hint" style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px;line-height:1.5"></div>
     </div>
+    <div class="row" id="m-dispatch-cost-row">
+      <label>تكلفة الشحن علينا (ج) — اختياري</label>
+      <input type="number" id="m-dispatch-cost" min="0" step="0.01" placeholder="0">
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;line-height:1.5">💡 اللي بندفعه لشركة الشحن (للتسجيل فقط — تُخصم عند التسوية، مش الآن). تقدر تسيبها وتحدّدها وقت التسوية.</div>
+    </div>
     <div class="row">
       <label>ملاحظات (اختياري)</label>
       <textarea id="m-dispatch-note" rows="2"></textarea>
@@ -1434,6 +1439,8 @@ window.openDispatch = (orderId) => {
   $('m-dispatch-method').value = 'company';
   $('m-dispatch-company').value = '';
   $('m-dispatch-note').value = '';
+  // تكلفة الشحن علينا — تُملأ من القيمة الحالية لو موجودة (تسجيل فقط، تُخصم بالتسوية)
+  if ($('m-dispatch-cost')) $('m-dispatch-cost').value = (parseFloat(o.shippingCost) > 0) ? o.shippingCost : '';
   // الشحن شامل/غير شامل — من الأوردر (يُدخَل عادةً في الطباعة، يقدر يعدّله هنا)
   setDispatchIncl(!!o.priceIncludesShipping);
   // حقول العنوان: تُملأ من العنوان الحالي (لو موجود) وتظهر فقط لو ناقص
@@ -1463,6 +1470,9 @@ window.onDispatchMethodChange = () => {
   $('m-dispatch-company-row').style.display = m === 'pickup' ? 'none' : '';
   const shipRow = $('m-dispatch-ship-row');
   if (shipRow) shipRow.style.display = m === 'pickup' ? 'none' : '';
+  // تكلفة الشحن علينا: تخص شركة الشحن — تظهر لغير pickup فقط
+  const costRow = $('m-dispatch-cost-row');
+  if (costRow) costRow.style.display = m === 'pickup' ? 'none' : '';
   // صف العنوان: يظهر فقط لغير pickup ولو الأوردر مفيهوش عنوان مُسجَّل
   const addrRow = $('m-dispatch-addr-row');
   if (addrRow) {
@@ -1483,6 +1493,7 @@ window.confirmDispatch = async () => {
   const method = $('m-dispatch-method').value;
   const companyId = $('m-dispatch-company').value;
   const note = $('m-dispatch-note').value.trim();
+  const cost = method === 'pickup' ? 0 : (parseFloat($('m-dispatch-cost').value) || 0);
   const company = shippers.find(s => s._id === companyId);
 
   // العنوان: لو الصف ظاهر (الأوردر مفيهوش عنوان) نجمعه ونتحقق منه
@@ -1503,7 +1514,7 @@ window.confirmDispatch = async () => {
   const result = await shippingActions.confirmShipped({
     db, orderId: pendingOrder._id,
     companyId, companyName: company?.name || '',
-    method, priceIncludesShipping: _dispatchIncl,
+    method, cost, priceIncludesShipping: _dispatchIncl,
     note, deliveryAddress, customerPhoneShip,
     role: myRole, userId: me.uid, userName: myUserName,
   });
