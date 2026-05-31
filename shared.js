@@ -210,10 +210,16 @@ export function startListeners(callbacks = {}, opts = {}) {
   }
 
   // Orders (unified collection) — bounded. أهم إصلاح أداء.
-  // الـ archived و cancelled مستبعدة لتقليل الـ payload (هم >50% عادة).
+  // opts.orderStage (اختياري): يفلتر على مرحلة واحدة (مثلاً 'shipping') —
+  // مهم للصفحات المتخصّصة: بدونه الـ limit يمتلئ بأوردرات مؤرشفة قديمة
+  // (الأرشيف >50%) فتطلع الأوردرات النشطة برّه الـ limit وتختفي من الصفحة.
+  // بدون orderStage: السلوك القديم (آخر N أوردر بكل المراحل) — backward-compatible.
   if (!skip.has('orders')) {
+    const ordersQuery = opts.orderStage
+      ? query(collection(db,'orders'), where('stage','==',opts.orderStage), orderBy('createdAt','desc'), limit(orderLimit))
+      : query(collection(db,'orders'), orderBy('createdAt','desc'), limit(orderLimit));
     subs.push(onSnapshot(
-      query(collection(db,'orders'), orderBy('createdAt','desc'), limit(orderLimit)),
+      ordersQuery,
       snap => {
         AppState.orders = snap.docs.map(d => ({...d.data(), _id: d.id}));
         callbacks.onOrders?.(AppState.orders);
