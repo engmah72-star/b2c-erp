@@ -256,19 +256,16 @@ export function designPanelHeaderDCC(order = {}, ctx = {}) {
 // ─── 3-TAB BODY ─────────────────────────────────────────────────────
 export function designPanelBodyDCC(order = {}, ctx = {}) {
   const o = order;
-  const events = buildOrderTimeline(o);
 
   // Tab 1: Design tab — delegates to legacy renderer but slices specific sections.
-  // We'll inject the legacy panel HTML into this tab, then hide the timeline +
-  // admin sections via CSS (they're moved to other tabs in CC mode).
+  // We'll inject the legacy panel HTML into this tab, then hide the admin
+  // sections via CSS (they're moved to other tabs in CC mode).
   const legacyHTML = (typeof window.renderPanelHTML === 'function')
     ? window.renderPanelHTML(o, ctx)
     : '<div class="dcc-empty-sm">تعذّر تحميل محتوى التصميم.</div>';
 
-  // Tab 2: Timeline
-  const timelineHTML = designTimelineHTML(events, o._id);
-
-  // Tab 3: More (deposit, gallery, rejected reason, admin section moved here)
+  // Tab 2: More (deposit, gallery, rejected reason, admin section moved here)
+  // ملاحظة: السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html).
   const isAdmin = (ctx.currentRole === 'admin' || ctx.currentRole === 'operation_manager');
   const moreHTML = designMoreTabHTML(o, ctx, { isAdmin });
 
@@ -277,17 +274,12 @@ export function designPanelBodyDCC(order = {}, ctx = {}) {
       <button type="button" class="dcc-tab on" data-dcctab="design" onclick="switchDesignPanelTab('design',this)">
         <span class="dcc-tab-ico">🎨</span><span class="dcc-tab-lbl">التصميم</span>
       </button>
-      <button type="button" class="dcc-tab" data-dcctab="timeline" onclick="switchDesignPanelTab('timeline',this)">
-        <span class="dcc-tab-ico">⏱</span><span class="dcc-tab-lbl">Timeline</span>
-        <span class="dcc-tab-cnt">${events.length}</span>
-      </button>
       <button type="button" class="dcc-tab" data-dcctab="more" onclick="switchDesignPanelTab('more',this)">
         <span class="dcc-tab-ico">⚙️</span><span class="dcc-tab-lbl">المزيد</span>
       </button>
     </div>
 
     <div class="dcc-pane dcc-pane-design" id="dcc-pane-design" style="display:block">${legacyHTML}</div>
-    <div class="dcc-pane" id="dcc-pane-timeline" style="display:none">${timelineHTML}</div>
     <div class="dcc-pane" id="dcc-pane-more" style="display:none">${moreHTML}</div>`;
 }
 
@@ -364,7 +356,7 @@ function designMoreTabHTML(order, ctx, { isAdmin } = {}) {
 export function switchDesignPanelTab(tab, btn) {
   document.querySelectorAll('.dcc-tab').forEach(b => b.classList.remove('on'));
   if (btn) btn.classList.add('on');
-  ['design', 'timeline', 'more'].forEach(t => {
+  ['design', 'more'].forEach(t => {
     const pane = document.getElementById('dcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });

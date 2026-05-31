@@ -259,7 +259,6 @@ export function renderPanelHTML(o, ctx = {}) {
     </div>
 
     ${o.rejectReason ? `<div class="section" style="border:1px solid rgba(255,61,110,.2)"><div class="section-title" style="color:var(--r)">✕ سبب الرفض</div><div style="font-size:var(--fs-md);margin-top:8px">${o.rejectReason}</div></div>` : ''}
-    ${['admin', 'operation_manager'].includes(currentRole) ? `<div class="section"><div class="section-title" style="margin-bottom:8px">📋 سجل الأوردر</div>${tlHtml(o.timeline)}</div>` : ''}
 
     <!-- ⚙️ إدارة الأوردر — للأدمن فقط -->
     <div id="admin-mgmt-section" style="display:none;margin-top:12px;background:rgba(255,61,110,.05);border:1px solid rgba(255,61,110,.2);border-radius:12px;padding:14px">
