@@ -2,8 +2,19 @@
 
 > **النوع:** Design System Cleanup (radius فقط). تحليل + قرار قبل التنفيذ.
 > **القيد المطلق:** Zero Functional Risk (الأولوية القصوى) · الحفاظ على شخصية الواجهة · لا تعديل Layout/Markup/View Builders/Logic/Events/Colors/Typography/Shadows/Icons.
-> **القرار:** ⛔ **تم تفعيل بند IMPORTANT — اكتُشفت قيم radius مرتبطة بسلوك وظيفي/شخصية بصرية → توقّف + تقرير، لم يُنفَّذ أي تغيير.**
+> **القرار:** الجولة الأولى = تقرير + توقّف (بند IMPORTANT). ثم **اعتُمد النطاق A وتم تنفيذه** (surface فقط: 14→12، 18→16 ×6 مواضع). العائلات الحسّاسة (دوائر/pills/micro/`--rad`) **لم تُمسّ**.
 > الفرع: `claude/employee-module-architecture-9qZX1` · 2026-05-31
+
+---
+
+## ✅ EXECUTED — Scope A (Surface family only)
+| التغيير | المواضع | الملفات |
+|---------|:-------:|---------|
+| `14px → 12px` | 3 (qstat · empty · mp-card-14) | my-profile.css |
+| `18px → 16px` | 3 (hero + modal bottom-sheet ×2) | my-profile.css · employees.css · employee-profile.css |
+| **مُستبعَد عمدًا** | `.rc-status` (14px، **pill** لا surface) | my-requests.css (لم يُمسّ) |
+
+**After verification:** circles 50% (16) · pills 20px (10) · micro 2-7px (30) · `--rad` token (45) — **كلها سليمة بلا تغيير**. الـ diff = قيم border-radius فقط؛ braces متوازنة؛ صفر مساس بالـ markup/logic/events/data-act/IDs. 3 ملفات CSS فقط.
 
 ---
 
