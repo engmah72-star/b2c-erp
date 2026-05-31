@@ -6,6 +6,18 @@
 
 ---
 
+## 📅 2026-05-31 — Financial Architecture Debt (employees.html)
+
+> اكتُشف أثناء Phase 3 prep (Employees Page Decomposition). مُسجَّل بقرار صريح **خارج نطاق التفكيك** — يُعالَج لاحقاً في PR مستقل مع اختبارات مالية مخصّصة.
+
+| ID | Drift | القاعدة | الموقع | الخطة |
+|----|-------|---------|--------|-------|
+| **FIN-D1** | `employees.html` يستدعي `dispatchFinancialEvent` مباشرة من الـ UI (×3) بدل المرور عبر `employeeActions.*` | A1 / H1.1 / RULE 2 | `employees.html:1637` (FE.PAYROLL), `:1781` (FE.SALARY_PAYMENT), `:1797` (FE.SALARY_PAYMENT_REVERSAL) | PR مستقل: نقل المنطق إلى `employeeActions.recordPayroll/recordSalaryPayment/reverseSalaryPayment` + chaos tests (H2.6: double-click, parallel, idempotency). **لا يُلمَس أثناء Phase 3 decomposition.** |
+
+> **ملاحظة:** الـ CI architecture-guard لا يُمسك هذا لأنه يفحص **الإضافات الجديدة فقط** (diff-based)؛ الاستدعاءات سابقة. التفكيك (Phase 3) ينقل الـ **markup** فقط ويحوّل الـ **trigger** من inline onclick إلى listener — **دون لمس جسم الدوال المالية**.
+
+---
+
 ## 📅 2026-05-28 — Audit مقابل RULE PC1 / PC2 / PC3
 
 **النطاق:** كل صفحات `*.html` التشغيلية + `*.js` + `core/`.
