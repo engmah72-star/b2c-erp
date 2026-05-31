@@ -433,9 +433,15 @@ window.doAtt = async function () {
 function populateCompanyDropdowns() {
   const opts = '<option value="">— اختر شركة —</option>' +
     shippers.map(s => `<option value="${s._id}">${s.name || 'بدون اسم'}</option>`).join('');
+  // فلتر الشركات: القيمة = الاسم (معرّف مستقر يطابق shipCompanyName على
+  // الأوردرات + مفتاح حسابات الشركات الموحَّد). يمنع فشل الفلتر عند تقلّب الـ id.
   const fc = $('f-company');
-  if (fc) fc.innerHTML = '<option value="">كل الشركات</option>' +
-    shippers.map(s => `<option value="${s._id}">${s.name}</option>`).join('');
+  if (fc) {
+    const cur = fc.value;
+    fc.innerHTML = '<option value="">كل الشركات</option>' +
+      shippers.map(s => `<option value="${escAttr(s.name)}">${s.name}</option>`).join('');
+    if (cur) fc.value = cur;
+  }
   const dc = $('m-dispatch-company');
   if (dc) dc.innerHTML = opts;
 }
@@ -462,7 +468,10 @@ function applyFilters(list) {
   const fm = $('f-method').value;
 
   return list.filter(o => {
-    if (fc && o.shipCompanyId !== fc) return false;
+    // المطابقة بالاسم أو الـ id — shipCompanyName معرّف مستقر (يُكتب دائماً)
+    // بينما shipCompanyId قد يغيب/يختلف على أوردرات قديمة. fc قد يكون اسماً
+    // (من حسابات الشركات بعد توحيد التجميع) أو id (من قائمة الفلتر).
+    if (fc && o.shipCompanyId !== fc && o.shipCompanyName !== fc) return false;
     if (fm && o.shipMethod !== fm) return false;
     if (q) {
       const hay = `${o.orderNumber || ''} ${o.clientName || ''} ${o._id} ${o.clientPhone || ''} ${o.shipGov || o.clientGov || ''} ${o.shipAddress || ''}`.toLowerCase();
@@ -1235,8 +1244,8 @@ function renderAccountsTab() {
         </div>
       </div>
       <div style="padding:12px 16px;display:flex;gap:var(--space-sm);justify-content:flex-end;flex-wrap:wrap">
-        ${r.pendingOrders > 0 ? `<button type="button" class="btn btn-sm btn-g" onclick="openSettleByCompany('${r.companyId}')">📋 تسوية الكل (${r.pendingOrders})</button>` : ''}
-        <button type="button" class="btn btn-sm btn-ghost" onclick="filterByCompany('${r.companyId}')">عرض الطلبات</button>
+        ${r.pendingOrders > 0 ? `<button type="button" class="btn btn-sm btn-g" onclick="openSettleByCompany('${escAttr(r.companyName)}')">📋 تسوية الكل (${r.pendingOrders})</button>` : ''}
+        <button type="button" class="btn btn-sm btn-ghost" onclick="filterByCompany('${escAttr(r.companyName)}')">عرض الطلبات</button>
       </div>
     </div>
   `).join('');
@@ -1247,12 +1256,15 @@ window.filterByCompany = (id) => {
   switchTab('settle');
 };
 
-window.openSettleByCompany = (cid) => {
-  const list = getOrdersPendingSettlement(orders).filter(o => o.shipCompanyId === cid);
+window.openSettleByCompany = (key) => {
+  // key قد يكون id أو اسم (الـ reconciliation يوحّد بالاسم). نطابق بالاثنين
+  // لنجمع كل أوردرات الشركة حتى لو shipCompanyId متقلّب على بعضها.
+  const list = getOrdersPendingSettlement(orders)
+    .filter(o => o.shipCompanyId === key || o.shipCompanyName === key);
   if (!list.length) { toast('لا توجد طلبات للتسوية', 'err'); return; }
   pendingOrders = list;
   pendingOrder = null;
-  const company = shippers.find(s => s._id === cid);
+  const company = shippers.find(s => s._id === key || s.name === key);
   const sumCollected = list.reduce((s, o) => s + getSettleCollected(o), 0);
   const sumCost = list.reduce((s, o) => s + (parseFloat(o.shippingCost) || 0), 0);
   const expected = Math.max(0, sumCollected - sumCost);
