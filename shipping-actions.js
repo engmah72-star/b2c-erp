@@ -106,9 +106,12 @@ export const shippingActions = {
     if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings, orderId };
 
     const amt = parseFloat(cost) || 0;
-    const newShipStage = method === 'pickup' ? 'ready' : 'wait_delivery';
+    // pickup (استلام من المكتب): العميل بيجي ياخد طلبه ويدفع كاش مباشرة. فبدل
+    // ما يفضل في "جاهز للشحن" (ready)، ننقله لـ wait_collection (= delivered)
+    // فيظهر في تبويب "وصل وللتحصيل" بزرّ تحصيل → التحصيل الكامل يؤرشفه تلقائياً.
+    const newShipStage = method === 'pickup' ? 'wait_collection' : 'wait_delivery';
     const actionLabel = method === 'pickup'
-      ? '🏬 جاهز للاستلام من المطبعة'
+      ? '🏬 جاهز للاستلام من المكتب — بانتظار التحصيل'
       : `🚚 تسليم لشركة شحن — ${companyName || ''}${amt > 0 ? ` (تكلفة: ${amt} ج)` : ''}`;
 
     // العنوان: لو اتمرّر عنوان جديد (لأن الأوردر مفيهوش عنوان مُسجَّل من
