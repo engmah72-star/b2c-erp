@@ -176,6 +176,11 @@
   <div class="modal-card">
     <h3>📋 تسوية مع شركة الشحن</h3>
     <div class="modal-info" id="m-settle-info"></div>
+    <div class="row" id="m-settle-cost-row">
+      <label>تكلفة الشحن علينا (ج)</label>
+      <input type="number" id="m-settle-cost" min="0" step="0.01" placeholder="0" oninput="onSettleCostInput()">
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;line-height:1.5">💡 اللي بتاخده شركة الشحن — يُخصم من المحصّل (المحصّل لنا = المتبقي − تكلفة الشحن).</div>
+    </div>
     <div class="row">
       <label>المبلغ الفعلي المستلَم (ج)</label>
       <input type="number" id="m-settle-amount" min="0" step="0.01" placeholder="0" oninput="updateSettleCalc()">
@@ -1668,12 +1673,30 @@ window.openSettleSingle = (orderId) => {
     `<div class="modal-info-row"><span>العميل</span><span>${o.clientName || '—'}</span></div>` +
     `<div class="modal-info-row"><span>الشركة</span><span>${o.shipCompanyName || '—'}</span></div>` +
     buildSettleSummary([o]);
+  // حقل تكلفة الشحن — للأوردر المفرد فقط (يقدر يحدّدها هنا لو فاتت بالتسليم)
+  const costRow = $('m-settle-cost-row');
+  if (costRow) costRow.style.display = '';
+  if ($('m-settle-cost')) $('m-settle-cost').value = cost > 0 ? cost : '';
+  __settleCostOrigId = o._id;
+  __settleCostOrigVal = cost;
   $('m-settle-amount').value = expected;
   $('m-settle-wallet').value = '';
   $('m-settle-note').value = '';
   $('m-settle-diff-reason').value = '';
   updateSettleCalc();
   openMod('m-settle');
+};
+
+// تعديل تكلفة الشحن داخل شاشة التسوية (للأوردر المفرد) — يحدّث القيمة محلياً
+// لإعادة حساب المتوقع، وتُحفَظ فعلياً عبر editShippingCost عند التأكيد.
+let __settleCostOrigId = null, __settleCostOrigVal = 0;
+window.onSettleCostInput = () => {
+  if (pendingOrders.length !== 1) return;
+  const newCost = parseFloat($('m-settle-cost').value) || 0;
+  pendingOrders[0].shippingCost = newCost; // محلي فقط — الحفظ عند التأكيد
+  const collected = getSettleCollected(pendingOrders[0]);
+  $('m-settle-amount').value = Math.max(0, collected - newCost);
+  updateSettleCalc();
 };
 
 window.updateSettleCalc = () => {
@@ -1729,6 +1752,19 @@ window.confirmSettle = async () => {
   }
 
   btn.textContent = '⏳ جارٍ التسوية...';
+
+  // لو عُدّلت تكلفة الشحن في الشاشة (أوردر مفرد) — نحفظها مركزياً قبل التسوية
+  // عبر editShippingCost (idempotent, audit) كي تُحسب التسوية على القيمة الصحيحة.
+  if (__settleCostOrigId && pendingOrders.length === 1) {
+    const newCost = parseFloat($('m-settle-cost').value) || 0;
+    if (Math.abs(newCost - (parseFloat(__settleCostOrigVal) || 0)) > 0.005) {
+      const cr = await shippingActions.editShippingCost({
+        db, orderId: __settleCostOrigId, newCost,
+        role: myRole, userId: me.uid, userName: myUserName,
+      });
+      if (!cr.ok) { btn.disabled = false; btn.textContent = '✅ تأكيد التسوية'; toast(cr.errors[0] || 'فشل حفظ تكلفة الشحن', 'err'); return; }
+    }
+  }
 
   let result = await shippingActions.settleFromCompany({
     db, orderIds: pendingOrders.map(o => o._id),
