@@ -146,6 +146,8 @@
       <div class="psec-title">📝 ملاحظة</div>
       <textarea class="note-inp" id="prod-note" rows="2" placeholder="ملاحظة اختيارية..." onchange="saveNote()"></textarea>
     </div>
+    <!-- 🚚 بيانات الشحن (عرض/تعديل — مصدرها الطباعة، يكملها التنفيذ قبل التحويل) -->
+    <div class="psec"><div class="psec-title">🚚 بيانات الشحن</div><div id="prod-ship-box"></div></div>
     <!-- المنتج النهائي -->
     <div class="psec" style="border-bottom:none">
       <div class="psec-title">📸 المنتج النهائي</div>
@@ -295,10 +297,12 @@ import { collection, doc, onSnapshot, updateDoc, getDoc, getDocs, query, where, 
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageAdvance, buildStageRevert, buildArchiveSpec, stageSlaBadge, stageProgressBar, skeletonCards, emptyState, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { shippingActions } from "./shipping-actions.js";
 import { productionActions } from "./production-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone } from "./core/permissions-matrix.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],masterCategories=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',currentUserPerms=null,activeProdIdx=-1,__editCostIdx=-1,mineOnly=true;
+let shippers=[];   // شركات الشحن — لقسم "بيانات الشحن" في البانل
 
 // Bridge for features/cost-items/drawer.js — exposes module-scoped state read-only.
 // The drawer uses this to render UI; it still calls window.addCostFromPanel for the
@@ -499,6 +503,8 @@ onAuthStateChanged(auth,async u=>{
     filterSupsByType('','ac-sup');
   });
   onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  // شركات الشحن — لتعبئة قائمة "بيانات الشحن" في البانل (يكملها التنفيذ).
+  onSnapshot(query(collection(db,'shippers_v2'),limit(200)),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderProdShipBox(u);}});
   // موظفي الشحن (shipping_officer) لـ pick-ship modal — مع dedup
   onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -1360,11 +1366,69 @@ window.closePanel=function(){
   window.AppState?.clearOpenEntity?.();
 };
 
+// ══ 🚚 بيانات الشحن في التنفيذ — عرض/تعديل عبر shippingActions.prepareForShipping ══
+// (نفس الأكشن المركزي الذي تستخدمه الطباعة — RULE A1/C1. لا تغيير stage.)
+const _lblP='font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)';
+function _escAttrP(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function renderProdShipBox(o){
+  const box=document.getElementById('prod-ship-box'); if(!box||!o)return;
+  const m=o.shipMethod||'company', incl=!!o.priceIncludesShipping, addr=o.deliveryAddress||{};
+  const compOpts=(shippers||[]).map(s=>`<option value="${_escAttrP(s._id)}"${o.shipCompanyId===s._id?' selected':''}>${_escAttrP(s.name||'بدون اسم')}</option>`).join('');
+  box.innerHTML=`
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="${_lblP}">طريقة الشحن</label>
+          <select class="inp" id="pps-method" onchange="onProdPsMethodChange()" style="width:100%;margin-top:3px">
+            <option value="company"${m==='company'?' selected':''}>شركة شحن</option>
+            <option value="pickup"${m==='pickup'?' selected':''}>استلام من المطبعة</option>
+            <option value="courier"${m==='courier'?' selected':''}>مندوب داخلي</option>
+          </select></div>
+        <div><label style="${_lblP}">📞 تليفون التسليم</label>
+          <input class="inp" id="pps-phone" value="${_escAttrP(o.customerPhoneShip||o.clientPhone||'')}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div id="pps-company-row" style="${m==='company'?'':'display:none;'}">
+        <label style="${_lblP}">🏢 شركة الشحن</label>
+        <select class="inp" id="pps-company" style="width:100%;margin-top:3px"><option value="">— اختر شركة —</option>${compOpts}</select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="${_lblP}">المحافظة</label><input class="inp" id="pps-gov" value="${_escAttrP(addr.gov||'')}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
+        <div><label style="${_lblP}">المدينة/المنطقة</label><input class="inp" id="pps-city" value="${_escAttrP(addr.city||'')}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div><label style="${_lblP}">العنوان بالتفصيل</label><input class="inp" id="pps-street" value="${_escAttrP(addr.street||'')}" placeholder="الشارع / علامة مميزة" style="width:100%;margin-top:3px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:4px 0">
+        <input type="checkbox" id="pps-incl" ${incl?'checked':''} onchange="onProdPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
+        السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
+      </label>
+      <div id="pps-fee-row" style="${incl?'display:none;':''}">
+        <label style="${_lblP}">💵 رسوم الشحن على العميل (يدفعها للمندوب)</label>
+        <input class="inp" id="pps-fee" type="number" min="0" step="0.01" value="${_escAttrP(o.courierDirectFee||o.customerShipFee||'')}" placeholder="0" style="width:100%;margin-top:3px">
+      </div>
+      <button type="button" class="btn btn-g btn-sm" onclick="saveProdShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
+    </div>`;
+}
+window.onProdPsMethodChange=function(){const m=gv('pps-method')||'company';const cr=document.getElementById('pps-company-row');if(cr)cr.style.display=(m==='company')?'':'none';};
+window.onProdPsInclChange=function(){const incl=document.getElementById('pps-incl')?.checked;const row=document.getElementById('pps-fee-row');if(row)row.style.display=incl?'none':'';if(incl){const f=document.getElementById('pps-fee');if(f)f.value='';}};
+window.saveProdShipping=async function(){
+  if(!activeId)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const shipMethod=gv('pps-method')||'company';
+  const incl=!!document.getElementById('pps-incl')?.checked;
+  const fee=incl?0:(parseFloat(gv('pps-fee'))||0);
+  const deliveryAddress={gov:gv('pps-gov').trim(),city:gv('pps-city').trim(),street:gv('pps-street').trim()};
+  const customerPhoneShip=gv('pps-phone').trim();
+  const companyId=shipMethod==='company'?gv('pps-company'):'';
+  const companyName=companyId?((shippers.find(s=>s._id===companyId)||{}).name||''):'';
+  const r=await shippingActions.prepareForShipping({db,orderId:activeId,shipMethod,shipCompanyId:companyId,shipCompanyName:companyName,deliveryAddress,customerShipFee:fee,priceIncludesShipping:incl,customerPhoneShip,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!r||!r.ok)return toast('❌ '+((r&&r.errors||[]).join(' · ')||'فشل حفظ بيانات الشحن'),'err');
+  toast('✅ تم حفظ بيانات الشحن','ok');
+};
+
 function renderPanel(o){
   const trackLink=document.getElementById('pn-track-link');
   if(trackLink)trackLink.href='order-tracking.html?id='+o._id;
   const progEl=document.getElementById('panel-progress');
   if(progEl)progEl.innerHTML=stageProgressBar(o);
+  renderProdShipBox(o);
   // بانر "الأوردر مُسلَّم"
   const awBanner=document.getElementById('awaiting-archive-banner');
   const awBtn=document.getElementById('archive-now-btn');

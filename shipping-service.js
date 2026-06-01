@@ -40,6 +40,17 @@ export function getOrdersReadyToDispatch(orders) {
 }
 
 /**
+ * قادم من التنفيذ (رؤية مبكرة — قراءة فقط):
+ *   stage='production' — الأوردر لسه في التنفيذ ولم يُحوَّل للشحن بعد.
+ *   يظهر في مركز الشحن بشارة "لسه في التنفيذ" وبدون زر تسليم (لأن
+ *   order.stage لم يتغيّر — RULE W1.1). الهدف: رؤية مبكرة لمنع ضياع
+ *   الأوردرات عند التسليم بين التنفيذ والشحن.
+ */
+export function getOrdersUpcomingFromProduction(orders) {
+  return (orders || []).filter(o => o && o.stage === 'production');
+}
+
+/**
  * الطلبات قيد التوصيل:
  *   stage='shipping' + shipStage ∈ {'wait_delivery' (legacy), 'shipped' (canonical)}
  */
