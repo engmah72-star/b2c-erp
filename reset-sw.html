@@ -65,7 +65,31 @@ async function reset(){
       add(`✗ خطأ في مسح cache: ${e.message}`, 'err');
     }
   }
-  // 3) Clear localStorage / sessionStorage (لا تمسح Firebase auth)
+  // 3) Clear Firestore IndexedDB (الكاش + طابور الكتابة دون اتصال).
+  //    لو فيه عمليات عالقة في الطابور (مثلاً فشلت قبل إصلاح صلاحية) Firestore
+  //    بيفضل يعيد محاولتها فيبطّئ كل عملية. نمسح قواعد Firestore المحلية فقط
+  //    ونحافظ على firebaseLocalStorageDb (جلسة الدخول) عشان ما نطلّعش المستخدم.
+  if (window.indexedDB) {
+    try {
+      let dbs = [];
+      if (indexedDB.databases) { dbs = await indexedDB.databases(); }
+      const names = dbs.map(d => d && d.name).filter(Boolean);
+      // fallback: لو المتصفح ما بيرجّعش القائمة، نجرّب الأسماء المعروفة لـ Firestore
+      if (!names.length) names.push('firestore/[DEFAULT]/business2card-c041b/main');
+      const fsNames = names.filter(n => /firestore/i.test(n));
+      add(`وجد ${fsNames.length} قاعدة Firestore محلية`, 'done');
+      for (const n of fsNames) {
+        await new Promise((res) => {
+          const req = indexedDB.deleteDatabase(n);
+          req.onsuccess = req.onerror = req.onblocked = () => res();
+        });
+        add(`✓ مسحت كاش/طابور Firestore: ${n}`, 'done');
+      }
+    } catch (e) {
+      add(`✗ خطأ في مسح Firestore IndexedDB: ${e.message}`, 'err');
+    }
+  }
+  // 4) Clear localStorage / sessionStorage (لا تمسح Firebase auth)
   // ملاحظة: لو مسحنا الـ localStorage، الـ Firebase auth session ينتهي.
   // عشان نحافظ على تسجيل الدخول، نسيب localStorage في حاله.
   add('✓ تم التنظيف بنجاح — اضغط الزر للدخول', 'done');
