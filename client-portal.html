@@ -39,6 +39,8 @@
 <script type="module">
 import { app, db } from "./core/firebase-init.js";
 import { collection, query, where, limit, getDocs, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+// مصدر موحَّد لثوابت/دوال المرتجعات (RULE C2/V1) — pure exports بلا اعتمادية auth.
+import { RT_STATUS, RT_REASON, RT_RETURN_TYPE, RT_BLAMED_PARTY, makeTicketNo, calcInspectDeadline } from "./returns-core.js";
 // Read session
 const SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
 const session = JSON.parse(localStorage.getItem('clientSession') || 'null');
@@ -342,24 +344,24 @@ onSnapshot(
 );
 
 const RT_REASON_LABEL = {
-  damaged:'🔨 منتج تالف',
-  wrong_design:'🎨 تصميم غير مطابق',
-  late_delivery:'⏰ تأخر التسليم',
-  quality_low:'⭐ جودة ضعيفة',
-  wrong_product:'📦 منتج خاطئ',
-  customer_changed_mind:'🔄 تغيير رأي',
-  other:'📝 سبب آخر',
+  [RT_REASON.DAMAGED]:               '🔨 منتج تالف',
+  [RT_REASON.WRONG_DESIGN]:          '🎨 تصميم غير مطابق',
+  [RT_REASON.LATE_DELIVERY]:         '⏰ تأخر التسليم',
+  [RT_REASON.QUALITY_LOW]:           '⭐ جودة ضعيفة',
+  [RT_REASON.WRONG_PRODUCT]:         '📦 منتج خاطئ',
+  [RT_REASON.CUSTOMER_CHANGED_MIND]: '🔄 تغيير رأي',
+  [RT_REASON.OTHER]:                 '📝 سبب آخر',
 };
 
 const RT_STATUS_LABEL = {
-  requested:'📋 طلب جديد',
-  inspecting:'🔍 قيد المراجعة',
-  approved:'✅ تمت الموافقة',
-  refunded:'💸 تم الاسترداد',
-  rejected:'❌ مرفوض',
-  replacement_issued:'🔁 صدر بديل',
-  cancelled:'🚫 ملغى',
-  closed:'📦 منتهي',
+  [RT_STATUS.REQUESTED]:          '📋 طلب جديد',
+  [RT_STATUS.INSPECTING]:         '🔍 قيد المراجعة',
+  [RT_STATUS.APPROVED]:           '✅ تمت الموافقة',
+  [RT_STATUS.REFUNDED]:           '💸 تم الاسترداد',
+  [RT_STATUS.REJECTED]:           '❌ مرفوض',
+  [RT_STATUS.REPLACEMENT_ISSUED]: '🔁 صدر بديل',
+  [RT_STATUS.CANCELLED]:          '🚫 ملغى',
+  [RT_STATUS.CLOSED]:             '📦 منتهي',
 };
 
 function escHtml(s){return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -368,7 +370,7 @@ function renderReturnsTab(){
   const content = document.getElementById('portal-content');
   const existing = myReturnTickets.filter(t => !t.isDeleted);
   // الـ tickets المغلقة ما تمنعش طلب جديد (لكن المفتوحة تمنع)
-  const blocking = existing.find(t => !['cancelled','closed','rejected'].includes(t.status));
+  const blocking = existing.find(t => ![RT_STATUS.CANCELLED, RT_STATUS.CLOSED, RT_STATUS.REJECTED].includes(t.status));
 
   let html = `
     <div style="padding:var(--space-lg);max-width:560px;margin:0 auto">
@@ -454,17 +456,15 @@ window.submitClientReturn = async function(){
   btn.disabled = true;
   btn.textContent = '⏳ جاري الإرسال...';
   try{
-    // makeTicketNo logic مطابق لـ returns-core.js لكن inline (مستقل عن Firebase auth)
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth()+1).padStart(2,'0');
-    const dd = String(now.getDate()).padStart(2,'0');
-    // sequential-ish: hex من الـ timestamp + random
-    const tail = (Date.now().toString(36) + Math.random().toString(36).slice(2,5)).slice(-6).toUpperCase();
-    const ticketNo = `RT-${yyyy}${mm}${dd}-${tail}`;
-
-    const slaInspectDeadline = new Date(now);
-    slaInspectDeadline.setHours(slaInspectDeadline.getHours() + 24);
+    // ticketNo + SLA + الثوابت من returns-core.js (مصدر موحَّد — RULE C2/V1).
+    // الـ portal يكتب الـ ticket فقط (single doc) لأن مسار no-auth في
+    // firestore.rules لا يسمح بلمس orders/audit_logs — لذا لا نستدعي
+    // handleReturnRequest الكامل (الذي يستخدم writeBatch ذرّي + audit).
+    // seed عشوائي بدل docId (لا pre-reserve مع addDoc)، لكن الصيغة
+    // موحَّدة عبر makeTicketNo (RT-YYYYMMDD-XXXXXX).
+    const now      = new Date();
+    const seed     = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const ticketNo = makeTicketNo(seed, now);
 
     await addDoc(collection(db, 'returns_tickets'), {
       ticketNo,
@@ -472,19 +472,19 @@ window.submitClientReturn = async function(){
       orderId:         orderDocId,
       orderRef:        orderCode || orderDocId.slice(-6),
       productIds:      [],
-      returnType:      'full',
+      returnType:      RT_RETURN_TYPE.FULL,
       clientId:        clientId || '',
       clientName:      clientName || '',
       clientPhone:     session.phone,
       reason,
       reasonDetails:   details,
       evidenceUrls:    [],
-      blamedParty:     'unknown',
-      status:          'requested',
+      blamedParty:     RT_BLAMED_PARTY.UNKNOWN,
+      status:          RT_STATUS.REQUESTED,
       requestedBy:     'client_portal',
       requestedByName: clientName || '',
       requestedAt:     now.toISOString(),
-      slaInspectDeadline: slaInspectDeadline.toISOString(),
+      slaInspectDeadline: calcInspectDeadline(now),
       slaBreached:     false,
       decision:        null,
       refundAmount:    0,
