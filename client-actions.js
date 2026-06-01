@@ -73,7 +73,9 @@ function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
     errors.push('⚠️ الهاتف الأساسي والثاني لا يصح أن يكونا متطابقين');
   }
   if (email && email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-    errors.push('⚠️ البريد الإلكتروني غير صحيح');
+    // الحقل اختياري — وجّه الموظف: إمّا يصحّح الصيغة أو يتركه فارغاً.
+    // (سبب شائع: كتابة رقم تليفون في خانة الإيميل بالخطأ — راجع لقطة الإنتاج)
+    errors.push('⚠️ خانة الإيميل غير صحيحة — اكتبه مثل name@example.com أو اتركه فارغاً (اختياري)');
   }
   return { ok: errors.length === 0, errors, warnings: [] };
 }
