@@ -48,24 +48,49 @@ function supportsWebp() {
 export function compressImage(file) {
   return new Promise((res) => {
     if (!file?.type?.startsWith('image/')) { res(file); return; }
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const canvas = document.createElement('canvas');
-      let { width: w, height: h } = img;
-      const MAX = 800;
-      if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
-      else       { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const fmt = supportsWebp() ? 'image/webp' : 'image/jpeg';
-      canvas.toBlob(
-        (blob) => res(blob ? new File([blob], file.name, { type: fmt }) : file),
-        fmt, 0.65
-      );
+    // settle-once guard: any failure path must still resolve (with the
+    // original file) so the caller's await never hangs. Without this, a
+    // canvas/getContext failure inside img.onload (seen on some remote /
+    // hardware-accel-disabled desktops) left the Promise pending forever →
+    // the order-save button stuck on "جاري الرفع..." and nothing saved.
+    let done = false;
+    let url = '';
+    const settle = (out) => {
+      if (done) return;
+      done = true;
+      try { if (url) URL.revokeObjectURL(url); } catch { /* noop */ }
+      clearTimeout(timer);
+      res(out);
     };
-    img.onerror = () => res(file);
+    // Hard timeout: if decode/encode stalls (huge image, stuck stream),
+    // fall back to the original file instead of blocking the save flow.
+    const timer = setTimeout(() => settle(file), 15000);
+
+    const img = new Image();
+    try { url = URL.createObjectURL(file); }
+    catch { settle(file); return; }
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        let { width: w, height: h } = img;
+        const MAX = 800;
+        if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
+        else       { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { settle(file); return; } // no 2d context → keep original
+        ctx.drawImage(img, 0, 0, w, h);
+        const fmt = supportsWebp() ? 'image/webp' : 'image/jpeg';
+        canvas.toBlob(
+          (blob) => settle(blob ? new File([blob], file.name, { type: fmt }) : file),
+          fmt, 0.65
+        );
+      } catch {
+        settle(file); // any canvas/encode throw → upload the original
+      }
+    };
+    img.onerror = () => settle(file);
     img.src = url;
   });
 }
