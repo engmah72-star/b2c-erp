@@ -9,8 +9,45 @@
 
 import { db } from '../../../core/firebase-init.js';
 import {
-  doc, updateDoc, arrayUnion, serverTimestamp,
+  collection, doc, addDoc, updateDoc, arrayUnion, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+/**
+ * إنشاء بند تصميم جديد لأوردر (order-level upload — Phase 1).
+ * يرجّع id البند الجديد. يضبط updatedAt (إلزامي ليظهر في listeners المرتّبة).
+ */
+export async function createDesignItem({
+  orderDocId, orderId = '', clientId = null, clientName = '',
+  designerId = null, designerName = '', itemName = '', itemQty = null,
+  userId, userName,
+}) {
+  if (!orderDocId) throw new Error('createDesignItem: orderDocId required');
+  const ref = await addDoc(collection(db, 'design_items'), {
+    orderDocId,
+    orderId: orderId || '',
+    clientId: clientId || null,
+    clientName: clientName || '',
+    designerId: designerId || null,
+    designerName: designerName || '',
+    itemName: itemName || 'تصميم جديد',
+    itemQty: itemQty || null,
+    versions: [],
+    isApproved: false,
+    isPrintReady: false,
+    visibility: 'internal',
+    status: 'wip',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: userId || null,
+    createdByName: userName || '',
+    editHistory: [{
+      at: new Date().toISOString(),
+      by: userName || userId || 'system',
+      action: 'created',
+    }],
+  });
+  return ref.id;
+}
 
 /**
  * تعليم بند كمعتمد.

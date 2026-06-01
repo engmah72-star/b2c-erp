@@ -22,7 +22,7 @@ import {
   $, escapeHtml, escapeAttr, fn, debounce, setText,
   getLatestVersion, getItemFiles, getItemThumb,
 } from '../components/utils.js';
-import { orderCard } from '../components/grid-card.js';
+import { orderCard, libraryCard } from '../components/grid-card.js';
 import { openLightbox } from '../components/lightbox.js';
 
 const state = {
@@ -55,10 +55,7 @@ export function mountWorkView({ container, user, userDoc }) {
       </aside>
 
       <section class="dh-work-main" id="dh-work-main">
-        <div class="dh-empty">
-          <div class="dh-empty-ico">📂</div>
-          <div>اختر أوردر من القائمة على اليمين</div>
-        </div>
+        <div class="dh-loader"><div class="dh-spinner"></div></div>
       </section>
     </div>
   `;
@@ -94,8 +91,9 @@ export function mountWorkView({ container, user, userDoc }) {
     uid: state.user?.uid,
     onUpdate: (items) => {
       state.items = items;
-      // Refresh open order panel if items changed
+      // Refresh open order panel if items changed، وإلا حدّث grid "آخر التصاميم"
       if (state.currentOrderId) renderOrderPanel();
+      else renderWorkHome();
       // refresh side counts
       renderOrdersList();
     },
@@ -152,6 +150,37 @@ function renderOrdersList() {
   }).join('');
 }
 
+/**
+ * Empty state للـ main: grid لآخر التصاميم (design_items) لما ما فيش أوردر مفتوح.
+ * يعيد استخدام libraryCard الموجود لكل عنصر؛ الضغط يفتح أوردر التصميم (openOrder).
+ * يستخدم state.items المُشترَك بالفعل (subscribeDesignItems بالـ limit الموجود).
+ */
+function renderWorkHome() {
+  const mainEl = $('dh-work-main');
+  if (!mainEl) return;
+  const items = state.items; // مرتّبة updatedAt desc من repository
+
+  const head = `
+    <header class="dh-home-head">
+      <div class="dh-home-title">🎨 آخر التصاميم</div>
+      ${items.length ? `<div class="dh-home-sub">${items.length} تصميم · اضغط أي تصميم لفتح أوردره</div>` : ''}
+    </header>`;
+
+  if (!items.length) {
+    mainEl.innerHTML = head + `<div class="dh-empty"><div class="dh-empty-ico">📂</div><div>لا توجد تصاميم بعد — اختر أوردر من القائمة للبدء</div></div>`;
+    return;
+  }
+
+  const codeByOrder = new Map(state.orders.map(o => [o._id || o.id, o.orderId || String(o._id || o.id).slice(0, 6)]));
+  const cells = items.map(it => {
+    const oid = it.orderDocId || '';
+    const ctx = { orderCode: codeByOrder.get(oid) };
+    return `<div class="dh-home-cell" data-action="open-order-cell" data-order-id="${escapeAttr(oid)}">${libraryCard(it, ctx)}</div>`;
+  }).join('');
+
+  mainEl.innerHTML = head + `<div class="dh-home-grid">${cells}</div>`;
+}
+
 function openOrder(orderId) {
   state.currentOrderId = orderId;
   // Subscribe to items for this specific order
@@ -187,8 +216,14 @@ function renderOrderPanel() {
       </div>
       <div class="dh-work-actions">
         ${order.designerName ? `<span class="dh-tag">✍️ ${escapeHtml(order.designerName)}</span>` : ''}
+        <label class="dh-btn dh-btn-primary">
+          <input type="file" hidden accept="application/pdf,image/*" data-action="upload-new" data-order-id="${escapeAttr(state.currentOrderId)}">
+          📎 ارفع تصميم (PDF / موك أب)
+        </label>
       </div>
     </header>
+
+    <div class="dh-upload-status" id="dh-upload-status"></div>
 
     <div class="dh-items-list">
       ${items.length
@@ -250,6 +285,12 @@ function fileBadge(ico, label, file) {
 }
 
 async function onMainClick(e) {
+  // grid "آخر التصاميم": فتح أوردر التصميم عند الضغط على أي كارت
+  const homeCell = e.target.closest('[data-action="open-order-cell"], [data-action="open-work-item"]');
+  if (homeCell && homeCell.dataset.orderId) {
+    openOrder(homeCell.dataset.orderId);
+    return;
+  }
   const uploadInput = e.target.closest('[data-action="upload"]');
   if (uploadInput && uploadInput.tagName === 'INPUT') {
     return; // file change handled below
@@ -275,16 +316,69 @@ async function onMainClick(e) {
   }
 }
 
-// File input change listener (delegate)
+// File input change listener (delegate) — يدعم رفع نسخة لبند + رفع تصميم جديد للأوردر
 document.addEventListener('change', async (e) => {
-  const inp = e.target.closest('input[type="file"][data-action="upload"]');
+  const inp = e.target.closest('input[type="file"][data-action="upload"], input[type="file"][data-action="upload-new"]');
   if (!inp) return;
-  const itemId = inp.dataset.itemId;
   const file = inp.files?.[0];
-  if (!itemId || !file) return;
+  if (!file) return;
   inp.value = ''; // reset for re-upload
-  await onUploadVersion(itemId, file);
+  if (inp.dataset.action === 'upload-new') {
+    await onUploadNewDesign(inp.dataset.orderId, file);
+  } else if (inp.dataset.itemId) {
+    await onUploadVersion(inp.dataset.itemId, file);
+  }
 });
+
+/**
+ * رفع تصميم جديد على مستوى الأوردر (Phase 1):
+ * إنشاء بند → رفع الملف عبر uploadService → إضافة النسخة. لا منطق رفع جديد.
+ */
+async function onUploadNewDesign(orderId, file) {
+  const order = state.orders.find(o => (o._id || o.id) === orderId);
+  if (!order) return;
+  const setStatus = (html, kind) => {
+    const el = $('dh-upload-status');
+    if (el) { el.className = `dh-upload-status ${kind || ''}`; el.innerHTML = html; }
+  };
+  try {
+    setStatus(`⏳ تجهيز بند ورفع <b>${escapeHtml(file.name)}</b>…`);
+    const itemId = await itemsService.createDesignItem({
+      orderDocId: orderId,
+      orderId: order.orderId || '',
+      clientId: order.clientId || null,
+      clientName: order.clientName || '',
+      designerId: order.designerId || state.user?.uid || null,
+      designerName: order.designerName || state.userDoc?.name || '',
+      itemName: file.name.replace(/\.[^.]+$/, ''),
+      userId: state.user?.uid,
+      userName: state.userDoc?.name || '',
+    });
+    const slot = uploadService.inferSlotKind(file);
+    const uploaded = await uploadService.uploadSlotFile({
+      itemId, file, slot,
+      onProgress: (pct) => setStatus(`⬆️ <b>${escapeHtml(file.name)}</b> — ${pct}%`),
+    });
+    const version = uploadService.buildVersion({
+      vNum: 1,
+      files: [uploaded],
+      uploadedBy: state.user?.uid,
+      uploadedByName: state.userDoc?.name || state.user?.email || '',
+    });
+    await itemsService.appendVersion({
+      itemId, version,
+      userId: state.user?.uid,
+      userName: state.userDoc?.name || '',
+    });
+    setStatus(`✅ تم رفع <b>${escapeHtml(file.name)}</b>`, 'ok');
+    _toast('✅ تم رفع التصميم', 'ok');
+    setTimeout(() => { const el = $('dh-upload-status'); if (el) { el.className = 'dh-upload-status'; el.innerHTML = ''; } }, 2600);
+  } catch (err) {
+    console.error('[upload-new] failed:', err);
+    setStatus(`⚠️ فشل الرفع: ${escapeHtml(err.message || '')}`, 'err');
+    _toast('⚠️ فشل رفع التصميم', 'err');
+  }
+}
 
 async function onUploadVersion(itemId, file) {
   try {
