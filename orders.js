@@ -558,18 +558,17 @@ function _toMs(v) {
  * مدد المراحل — قيم محسوبة (derived) من order.stageEnteredAt + approvedAt + createdAt.
  * لا تضيف أي state جديد (متوافق مع W1) — للعرض/التحليل فقط.
  *
- * المقاطع:
- *   1) التصميم (تسجيل → اعتماد)      = approvedAt − stageEnteredAt.design
- *   2) اعتماد → طباعة                = stageEnteredAt.printing − approvedAt
- *   3) طباعة → تنفيذ                 = stageEnteredAt.production − stageEnteredAt.printing
- *   4) تنفيذ → شحن                   = stageEnteredAt.shipping − stageEnteredAt.production
- *   5) شحن → أرشيف                   = stageEnteredAt.archived − stageEnteredAt.shipping
+ * لكل مرحلة (تصميم/طباعة/تنفيذ/شحن) — مدّتها + مسؤولها + تقييمها:
+ *   - owner   : المسؤول (designerName/printerName/productionAgentName/shippingOfficerName)
+ *   - ms/text : مدة بقاء الأوردر في المرحلة = (دخول المرحلة التالية − دخول المرحلة)؛
+ *               التصميم يُحسب حتى الاعتماد (approvedAt) إن وُجد.
+ *   - slaHours + rating : تقييم مقارنةً بالـ SLA المعتمد (STAGE_SLA_DEFAULTS)
+ *               rating ∈ 'good' (ضمن المدة) | 'late' (تجاوز) | 'ongoing' | 'pending'
  *
- * كل مقطع: { key, label, ms, text, status } حيث status ∈ 'done' | 'ongoing' | 'pending'.
- * يرجّع { segments, totalMs, totalText }.
+ * قيم محسوبة (derived) — لا state جديد (W1). يرجّع { stages, totalMs, totalText }.
  */
 export function getStageDurations(order) {
-  if (!order) return { segments: [], totalMs: 0, totalText: '—' };
+  if (!order) return { stages: [], totalMs: 0, totalText: '—' };
   const ent = order.stageEnteredAt || {};
   const tDesign   = _toMs(ent.design) || _toMs(order.createdAt);
   const tApproved = _toMs(order.approvedAt);
@@ -579,33 +578,34 @@ export function getStageDurations(order) {
   const tArch     = _toMs(ent.archived);
   const now = Date.now();
 
-  const raw = [
-    { key: 'design',        label: 'التصميم (تسجيل → اعتماد)', from: tDesign,            to: tApproved || tPrint },
-    { key: 'approve2print', label: 'اعتماد → طباعة',           from: tApproved || tPrint, to: tPrint },
-    { key: 'print2prod',    label: 'طباعة → تنفيذ',            from: tPrint,             to: tProd },
-    { key: 'prod2ship',     label: 'تنفيذ → شحن',              from: tProd,              to: tShip },
-    { key: 'ship2arch',     label: 'شحن → أرشيف',              from: tShip,              to: tArch },
+  const defs = [
+    { key: 'design',     label: 'التصميم', owner: order.designerName,        start: tDesign, end: tApproved || tPrint, sla: STAGE_SLA_DEFAULTS.design },
+    { key: 'printing',   label: 'الطباعة', owner: order.printerName,         start: tPrint,  end: tProd,               sla: STAGE_SLA_DEFAULTS.printing },
+    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: STAGE_SLA_DEFAULTS.production },
+    { key: 'shipping',   label: 'الشحن',   owner: order.shippingOfficerName, start: tShip,   end: tArch,               sla: STAGE_SLA_DEFAULTS.shipping },
   ];
 
   let totalMs = 0;
-  const segments = raw.map(s => {
-    if (!s.from) return { key: s.key, label: s.label, ms: 0, text: '—', status: 'pending' };
-    if (s.to) {
-      const ms = Math.max(0, s.to - s.from);
-      totalMs += ms;
-      return { key: s.key, label: s.label, ms, text: formatDurationAr(ms), status: 'done' };
+  const stages = defs.map(d => {
+    const owner = d.owner || '';
+    if (!d.start) {
+      return { key: d.key, label: d.label, owner, ms: 0, text: '—', hours: 0, slaHours: d.sla || 0, status: 'pending', rating: 'pending' };
     }
-    // البداية موجودة بلا نهاية = المرحلة الجارية الآن
-    const ms = Math.max(0, now - s.from);
+    const ongoing = !d.end;
+    const ms = Math.max(0, (ongoing ? now : d.end) - d.start);
     totalMs += ms;
-    return { key: s.key, label: s.label, ms, text: formatDurationAr(ms), status: 'ongoing' };
+    const hours = ms / 3600000;
+    const overSla = d.sla ? hours > d.sla : false;
+    const rating = ongoing ? (overSla ? 'late' : 'ongoing') : (overSla ? 'late' : 'good');
+    return { key: d.key, label: d.label, owner, ms, text: formatDurationAr(ms), hours, slaHours: d.sla || 0, status: ongoing ? 'ongoing' : 'done', rating };
   });
 
-  return { segments, totalMs, totalText: formatDurationAr(totalMs) };
+  return { stages, totalMs, totalText: formatDurationAr(totalMs) };
 }
 
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
-export function isStageOverdue(order, slaTable = null) {  if (!order || !order.stage) return false;
+export function isStageOverdue(order, slaTable = null) {
+  if (!order || !order.stage) return false;
   const stage = order.stage;
   const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
   if (!sla) return false;
