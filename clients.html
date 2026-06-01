@@ -1685,7 +1685,15 @@ function saveNewOrder(){
   };
 
   // ─ Upload first → call action with URLs ─
-  Promise.all([uploadDesignFile(), uploadReceipts()]).then(async ([
+  // Upload-phase safety net: لو الرفع علّق لأي سبب (شبكة/Storage/ضغط الصورة)
+  // الزر كان يفضل "جاري الرفع..." للأبد والأوردر "مش بيتحفظ". الـ timeout ده
+  // يضمن إن المستخدم يقدر يعيد المحاولة بدل ما يعلّق. (مكمّل للـ 15s بتاع createOrder.)
+  const uploadWithTimeout = Promise.race([
+    Promise.all([uploadDesignFile(), uploadReceipts()]),
+    new Promise((_, reject)=>setTimeout(
+      ()=>reject(new Error('تعذّر رفع الصورة — تحقق من الاتصال وحاول مرة أخرى')), 45000)),
+  ]);
+  uploadWithTimeout.then(async ([
     {firstUrl:designFileUrl,allFiles:designFiles},
     {firstUrl:depositReceiptUrl,allFiles:depositReceiptFiles},
   ])=>{
@@ -1738,6 +1746,8 @@ function saveNewOrder(){
     setTimeout(()=>(typeof navigatePage==='function'?navigatePage:url=>location.href=url)(stage==='design'?'design.html':'print.html'),700);
   }).catch(e=>{
     console.warn('[orderActions] createOrder exception', e);
+    // اخفِ شريط الرفع لو ظل ظاهراً بعد فشل/تعليق الرفع
+    const pw=document.getElementById('no-upload-progress');if(pw)pw.style.display='none';
     const handled=window.financialGuard?.(e,{operation:'إنشاء أوردر بعربون',amount:dep,walletName:wName,clientName:cl.name,orderId});
     if(!handled)toast('❌ '+(e?.message||'خطأ'),'err');
     btn.disabled=false;btn.textContent='✓ إنشاء الطلب';
