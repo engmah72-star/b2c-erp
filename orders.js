@@ -501,9 +501,111 @@ export function getStageAge(order, slaOverride = null) {
   return Math.max(0, (Date.now() - enteredMs) / (1000 * 60 * 60));
 }
 
+/**
+ * تنسيق مدة بالميلي ثانية إلى نص عربي مختصر: "Xي Yس" أو "Yس Zد".
+ */
+export function formatDurationAr(ms) {
+  if (!ms || ms <= 0) return '—';
+  const totalMin = Math.round(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  const parts = [];
+  if (d) parts.push(d + 'ي');
+  if (h) parts.push(h + 'س');
+  if (m && !d) parts.push(m + 'د'); // الدقائق تظهر فقط لو لا توجد أيام (إيجاز)
+  return parts.length ? parts.join(' ') : '<1د';
+}
+
+// تطبيع الأرقام العربية/الفارسية إلى ASCII + إزالة علامات الاتجاه (RTL/LTR marks).
+const _AR_DIGITS = {
+  '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9',
+  '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9',
+};
+function _normDigits(s) {
+  return String(s).replace(/[٠-٩۰-۹]/g, d => _AR_DIGITS[d] || d).replace(/[‎‏؜]/g, '');
+}
+
+/**
+ * coerce قيمة وقت إلى ms. أقوى من parseArDate: يدعم Firestore Timestamp،
+ * ISO، وصيغة nowStr ar-EG (أرقام عربية + ص/م) — لأن stageEnteredAt يُكتب
+ * بصيغ مختلفة حسب المسار (orders.js → nowStr عربي، order-actions.js → ISO).
+ * يفسّر التواريخ غير الـ ISO كـ يوم/شهر/سنة (ar-EG) صراحةً (لا التباس US M/D).
+ */
+function _toMs(v) {
+  if (!v) return null;
+  if (typeof v === 'object') {
+    if (typeof v.toDate === 'function') { try { return v.toDate().getTime(); } catch { return null; } }
+    if (typeof v.seconds === 'number') return v.seconds * 1000; // Firestore Timestamp-like
+    return null;
+  }
+  const s = _normDigits(v).trim();
+  // ISO أولاً (غير ملتبس)
+  if (/\d{4}-\d{2}-\d{2}/.test(s)) { const t = Date.parse(s); if (!isNaN(t)) return t; }
+  // dd/mm/yyyy [hh:mm] [ص|م] — يوم/شهر/سنة صراحةً
+  const m = s.match(/(\d{1,2})\D+(\d{1,2})\D+(\d{4})(?:\D+(\d{1,2})\D+(\d{1,2}))?/);
+  if (m) {
+    let hh = parseInt(m[4] || '0', 10); const mm = parseInt(m[5] || '0', 10);
+    if (/م/.test(s) && hh < 12) hh += 12;      // مساءً (PM)
+    if (/ص/.test(s) && hh === 12) hh = 0;       // 12 صباحاً
+    const d = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]), hh, mm);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+  const t = Date.parse(s); return isNaN(t) ? null : t;
+}
+
+/**
+ * مدد المراحل — قيم محسوبة (derived) من order.stageEnteredAt + approvedAt + createdAt.
+ * لا تضيف أي state جديد (متوافق مع W1) — للعرض/التحليل فقط.
+ *
+ * المقاطع:
+ *   1) التصميم (تسجيل → اعتماد)      = approvedAt − stageEnteredAt.design
+ *   2) اعتماد → طباعة                = stageEnteredAt.printing − approvedAt
+ *   3) طباعة → تنفيذ                 = stageEnteredAt.production − stageEnteredAt.printing
+ *   4) تنفيذ → شحن                   = stageEnteredAt.shipping − stageEnteredAt.production
+ *   5) شحن → أرشيف                   = stageEnteredAt.archived − stageEnteredAt.shipping
+ *
+ * كل مقطع: { key, label, ms, text, status } حيث status ∈ 'done' | 'ongoing' | 'pending'.
+ * يرجّع { segments, totalMs, totalText }.
+ */
+export function getStageDurations(order) {
+  if (!order) return { segments: [], totalMs: 0, totalText: '—' };
+  const ent = order.stageEnteredAt || {};
+  const tDesign   = _toMs(ent.design) || _toMs(order.createdAt);
+  const tApproved = _toMs(order.approvedAt);
+  const tPrint    = _toMs(ent.printing);
+  const tProd     = _toMs(ent.production);
+  const tShip     = _toMs(ent.shipping);
+  const tArch     = _toMs(ent.archived);
+  const now = Date.now();
+
+  const raw = [
+    { key: 'design',        label: 'التصميم (تسجيل → اعتماد)', from: tDesign,            to: tApproved || tPrint },
+    { key: 'approve2print', label: 'اعتماد → طباعة',           from: tApproved || tPrint, to: tPrint },
+    { key: 'print2prod',    label: 'طباعة → تنفيذ',            from: tPrint,             to: tProd },
+    { key: 'prod2ship',     label: 'تنفيذ → شحن',              from: tProd,              to: tShip },
+    { key: 'ship2arch',     label: 'شحن → أرشيف',              from: tShip,              to: tArch },
+  ];
+
+  let totalMs = 0;
+  const segments = raw.map(s => {
+    if (!s.from) return { key: s.key, label: s.label, ms: 0, text: '—', status: 'pending' };
+    if (s.to) {
+      const ms = Math.max(0, s.to - s.from);
+      totalMs += ms;
+      return { key: s.key, label: s.label, ms, text: formatDurationAr(ms), status: 'done' };
+    }
+    // البداية موجودة بلا نهاية = المرحلة الجارية الآن
+    const ms = Math.max(0, now - s.from);
+    totalMs += ms;
+    return { key: s.key, label: s.label, ms, text: formatDurationAr(ms), status: 'ongoing' };
+  });
+
+  return { segments, totalMs, totalText: formatDurationAr(totalMs) };
+}
+
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
-export function isStageOverdue(order, slaTable = null) {
-  if (!order || !order.stage) return false;
+export function isStageOverdue(order, slaTable = null) {  if (!order || !order.stage) return false;
   const stage = order.stage;
   const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
   if (!sla) return false;
