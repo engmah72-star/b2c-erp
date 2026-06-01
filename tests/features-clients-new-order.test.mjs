@@ -117,24 +117,38 @@ test('printing requires salePrice > 0 + focusField', () => {
   assertEq(r.focusField, 'no-sale-price');
 });
 
+test('deadline is required', () => {
+  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deadline: '' });
+  assertEq(r.ok, false);
+  assertEq(r.focusField, 'no-deadline');
+  if (!r.errors[0].includes('موعد التسليم')) throw new Error('wrong msg');
+});
+
 test('design allows salePrice = 0', () => {
-  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0 });
+  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deadline: '2026-06-01' });
   assertEq(r.ok, true);
 });
 
 test('deposit > 0 requires walletId', () => {
-  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deposit: 100, walletId: '' });
+  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deposit: 100, walletId: '', deadline: '2026-06-01' });
   assertEq(r.ok, false);
   if (!r.errors[0].includes('المحفظة')) throw new Error('wrong msg');
 });
 
-test('deposit > 0 with walletId passes', () => {
-  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deposit: 100, walletId: 'w1' });
+test('deposit > 0 requires receipt image', () => {
+  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deposit: 100, walletId: 'w1', deadline: '2026-06-01', receiptCount: 0 });
+  assertEq(r.ok, false);
+  assertEq(r.focusField, 'no-receipt-zone');
+  if (!r.errors[0].includes('الإيصال')) throw new Error('wrong msg');
+});
+
+test('deposit > 0 with walletId + receipt passes', () => {
+  const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deposit: 100, walletId: 'w1', deadline: '2026-06-01', receiptCount: 1 });
   assertEq(r.ok, true);
 });
 
 test('all valid → ok:true', () => {
-  const r = validateNewOrderForm({ stage: 'printing', products: [{}], salePrice: 500 });
+  const r = validateNewOrderForm({ stage: 'printing', products: [{}], salePrice: 500, deadline: '2026-06-01' });
   assertEq(r.ok, true);
 });
 
