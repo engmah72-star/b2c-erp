@@ -659,7 +659,14 @@ service cloud.firestore {
     }
     // PR-7-salvage G1: financial_operations — idempotency log (append-only).
     match /financial_operations/{opId} {
-      allow read: if isAuth() && (isAdmin() || resource.data.actorId == request.auth.uid);
+      // `resource == null` يسمح بقراءة مستند غير موجود — ضروري لأن معاملة
+      // الحجز (withIdempotency) تعمل tx.get على operationId جديد قبل إنشائه.
+      // بدونها، أي مستخدم غير أدمن (مثل customer_service) يفشل في إنشاء أي
+      // أوردر/عملية مالية بـ permission-denied. لا تسريب: المستند غير الموجود
+      // يرجع فارغاً، والمستندات الموجودة تظل محصورة على المالك/الأدمن.
+      allow read: if isAuth() && (
+        isAdmin() || resource == null || resource.data.actorId == request.auth.uid
+      );
       allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
       allow update: if isAuth() && (
         isAdmin() || resource.data.actorId == request.auth.uid

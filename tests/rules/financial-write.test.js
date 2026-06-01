@@ -209,6 +209,48 @@ async function runTests() {
     );
   });
 
+  // ──────────────────────────────────────────────────────────────
+  // financial_operations — idempotency reservation (non-admin actors)
+  // Regression: non-admin (e.g. customer_service) must be able to GET a
+  // not-yet-existing op doc so withIdempotency's reservation tx works.
+  // ──────────────────────────────────────────────────────────────
+
+  await test('customer_service CAN read a non-existent financial_operations doc (reservation get)', async () => {
+    await seedUser(env, 'cs1', 'customer_service', ['clients']);
+    const ctx = env.authenticatedContext('cs1');
+    await assertSucceeds(
+      ctx.firestore().doc('financial_operations/op_new_xyz').get()
+    );
+  });
+
+  await test('customer_service CAN create + read its OWN financial_operations doc', async () => {
+    await seedUser(env, 'cs2', 'customer_service', ['clients']);
+    const ctx = env.authenticatedContext('cs2');
+    await assertSucceeds(
+      ctx.firestore().doc('financial_operations/op_cs2').set({
+        operationId: 'op_cs2', actionType: 'create_order',
+        actorId: 'cs2', status: 'pending',
+      })
+    );
+    await assertSucceeds(
+      ctx.firestore().doc('financial_operations/op_cs2').get()
+    );
+  });
+
+  await test('customer_service CANNOT read ANOTHER actor\'s existing financial_operations doc', async () => {
+    await seedUser(env, 'cs3', 'customer_service', ['clients']);
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('financial_operations/op_other').set({
+        operationId: 'op_other', actionType: 'create_order',
+        actorId: 'someone_else', status: 'completed',
+      });
+    });
+    const ctx = env.authenticatedContext('cs3');
+    await assertFails(
+      ctx.firestore().doc('financial_operations/op_other').get()
+    );
+  });
+
   await env.cleanup();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
