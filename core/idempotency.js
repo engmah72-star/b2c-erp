@@ -206,18 +206,26 @@ export async function withIdempotency(db, opMeta, fn) {
     throw e;
   }
 
-  // 4) record completed
-  try {
-    await updateDoc(opRef, {
-      status: 'completed',
-      result: sanitizeResult(result),
-      completedAt: serverTimestamp(),
-    });
-  } catch (e) {
-    console.warn('[IDEMPOTENCY] فشل تسجيل completed (العملية تمت):', e);
-  }
+  // 4) record completed — fire-and-forget (bookkeeping, NOT user-visible).
+  //    The real mutation already committed inside fn(). Awaiting this extra
+  //    Firestore round-trip (plus the telemetry write below) on slow/flaky
+  //    networks was pushing callers past their 15s save budget and surfacing
+  //    a false "انتهت مهلة الحفظ (15ث)" even though the order/payment WAS
+  //    saved. We still issue the write — we just stop blocking the result on
+  //    it. Idempotency stays correct: a retry of the same op before this
+  //    lands sees status='pending' (rejected → no double-write); after it
+  //    lands sees 'completed' (cached no-op).
+  updateDoc(opRef, {
+    status: 'completed',
+    result: sanitizeResult(result),
+    completedAt: serverTimestamp(),
+  }).catch((e) => console.warn('[IDEMPOTENCY] فشل تسجيل completed (العملية تمت):', e));
 
-  return finalize({ ...result, operationId, idempotent: false });
+  // Telemetry finish is observability only → also fire-and-forget so it can
+  // never delay or fail the user-visible result.
+  const finalResult = { ...result, operationId, idempotent: false };
+  trace.finish(db, finalResult).catch(() => {});
+  return finalResult;
 }
 
 /**
