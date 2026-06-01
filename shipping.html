@@ -54,6 +54,7 @@
     <!-- Tabs Navigation -->
     <div class="ship-tabs" id="ship-tabs">
       <button type="button" class="ship-tab active" data-tab="ready"            onclick="switchTab('ready')">📦 جاهز للشحن <span class="ship-tab-count" id="cnt-ready">0</span></button>
+      <button type="button" class="ship-tab"        data-tab="upcoming"         onclick="switchTab('upcoming')">🔜 قادم من التنفيذ <span class="ship-tab-count" id="cnt-upcoming">0</span></button>
       <button type="button" class="ship-tab"        data-tab="transit"          onclick="switchTab('transit')">🚚 اتشحن <span class="ship-tab-count" id="cnt-transit">0</span></button>
       <button type="button" class="ship-tab"        data-tab="collect"          onclick="switchTab('collect')">💰 وصل وللتحصيل <span class="ship-tab-count" id="cnt-collect">0</span></button>
       <button type="button" class="ship-tab"        data-tab="settle"           onclick="switchTab('settle')">📋 للتسوية <span class="ship-tab-count" id="cnt-settle">0</span></button>
@@ -316,7 +317,7 @@ import { employeeActions } from './employee-actions.js';
 // PR-1 helpers (scalable-drifting-ember): central method/stage labels.
 import { getShipMethodLabel, getShipStageLabel, normalizeShipStage, getExpectedCollection } from "./orders.js";
 import {
-  getOrdersReadyToDispatch, getOrdersInTransit, getOrdersWaitingCollection,
+  getOrdersReadyToDispatch, getOrdersUpcomingFromProduction, getOrdersInTransit, getOrdersWaitingCollection,
   getOrdersPendingSettlement, getOrdersSettled, getOrdersReturned,
   getDelayedOrders, getCompanyReconciliation, getShippingKPIs,
   shipStageBadgeHTML, fmtMoney, fmtDays, SHIP_STAGE_LABELS,
@@ -335,6 +336,7 @@ import {
 // ══════════════════════════════════════════
 let me = null, myRole = '', myUserName = '';
 let orders = [], shippers = [], wallets = [];
+let upcomingOrders = [];   // stage='production' — رؤية مبكرة (قراءة فقط، W1: لا تغيير stage)
 let todayAtt = null;       // attendance record اليوم (الحضور — منقول من الداشبورد)
 let currentTab = 'ready';
 let pendingOrder = null;   // for modals
@@ -381,6 +383,13 @@ initAuth(async (state) => {
   onSnapshot(query(collection(db, 'shippers_v2'), limit(200)), (snap) => {
     shippers = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     populateCompanyDropdowns();
+    refreshAll();
+  });
+
+  // 🔜 قادم من التنفيذ — أوردرات stage='production' (رؤية مبكرة، قراءة فقط).
+  // bounded (G3). لا تغيّر order.stage — مجرد view مختلف (W1.1 + C1.8).
+  onSnapshot(query(collection(db, 'orders'), where('stage', '==', 'production'), limit(300)), (snap) => {
+    upcomingOrders = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     refreshAll();
   });
 
@@ -550,6 +559,7 @@ function renderKPIs() {
 
 function renderTabCounts() {
   $('cnt-ready').textContent = getOrdersReadyToDispatch(orders).length;
+  { const _u = $('cnt-upcoming'); if (_u) _u.textContent = getOrdersUpcomingFromProduction(upcomingOrders).length; }
   $('cnt-transit').textContent = getOrdersInTransit(orders).length;
   $('cnt-collect').textContent = getOrdersWaitingCollection(orders).length;
   $('cnt-settle').textContent = getOrdersPendingSettlement(orders).length;
@@ -575,6 +585,7 @@ function renderTabContent() {
   const c = $('tab-content');
   switch (currentTab) {
     case 'ready':     c.innerHTML = renderOrdersGallery(applyFilters(getOrdersReadyToDispatch(orders)), 'ready'); break;
+    case 'upcoming':  c.innerHTML = renderOrdersGallery(applyFilters(getOrdersUpcomingFromProduction(upcomingOrders)), 'upcoming'); break;
     case 'transit':   c.innerHTML = renderOrdersGallery(applyFilters(getOrdersInTransit(orders)), 'transit'); break;
     case 'collect':   c.innerHTML = renderOrdersGallery(applyFilters(getOrdersWaitingCollection(orders)), 'collect'); break;
     case 'settle':    c.innerHTML = renderOrdersGallery(applyFilters(getOrdersPendingSettlement(orders)), 'settle'); break;
@@ -642,7 +653,7 @@ function renderCard(o, tab) {
         ${cover
           ? `<img src="${escAttr(cover)}" alt="${escAttr(o.clientName || '')}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;card-cover-empty&quot;>📦</div>'">`
           : `<div class="card-cover-empty">📦</div>`}
-        <div class="card-status" style="background:${stage.col}d9">${stage.ico} ${stage.label}</div>
+        <div class="card-status" style="background:${tab === 'upcoming' ? '#ff3d6e' : stage.col}d9">${tab === 'upcoming' ? '🏭 لسه في التنفيذ' : stage.ico + ' ' + stage.label}</div>
         ${badges ? `<div class="card-smart-badges">${badges}</div>` : ''}
       </div>
       <div class="card-body">
@@ -799,6 +810,7 @@ function renderDetailContent(o) {
 function getEmptyHint(tab) {
   return ({
     ready: 'الطلبات الجاهزة للشحن ستظهر هنا. تأتي من قسم التنفيذ بعد اكتمال المنتجات.',
+    upcoming: 'طلبات لسه في التنفيذ — تظهر هنا للرؤية المبكرة فقط. تنتقل لـ"جاهز للشحن" تلقائياً بعد ما التنفيذ يحوّلها.',
     transit: 'الطلبات التي تم تسليمها لشركة شحن ولم تصل بعد للعميل.',
     collect: 'الطلبات التي وصلت للعميل وبانتظار التحصيل.',
     settle: 'الطلبات المُحصَّلة عبر شركات الشحن وتنتظر التسوية.',

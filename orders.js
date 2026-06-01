@@ -1214,6 +1214,10 @@ export function validateRefund({ order, amount, role }) {
 // shipping.html, shipping-followup.html, and shipping-accounts.html.
 
 export const SHIPPING_DISPATCH_ROLES = ['admin', 'operation_manager', 'shipping_officer'];
+// تجهيز بيانات الشحن (إدخال بيانات فقط — لا مال، لا تغيير stage): يُسمح به
+// لمن يتعامل مع الأوردر في الطباعة/التنفيذ كذلك، لا فقط موظف الشحن. الـ
+// dispatch الفعلي يبقى محصوراً في SHIPPING_DISPATCH_ROLES أعلاه.
+export const SHIPPING_PREPARE_ROLES = ['admin', 'operation_manager', 'shipping_officer', 'production_agent', 'customer_service'];
 const SHIPPING_COLLECT_ROLES  = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
 const SHIPPING_SETTLE_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
 const SHIPPING_RETURN_ROLES   = ['admin', 'operation_manager', 'shipping_officer', 'wallet_manager'];
@@ -1564,7 +1568,7 @@ export function validatePrepareShipping({
     errors.push('⛔ السعر شامل الشحن — لا رسوم شحن منفصلة على العميل');
   }
 
-  if (role && !SHIPPING_DISPATCH_ROLES.includes(role)) {
+  if (role && !SHIPPING_PREPARE_ROLES.includes(role)) {
     errors.push('ليس لديك صلاحية تجهيز الشحن');
   }
 
