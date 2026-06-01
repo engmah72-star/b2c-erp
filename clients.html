@@ -782,6 +782,9 @@ window.setQuickFilter=function(filter,el){
 function renderGrid(){
   const el=document.getElementById('clients-grid');
   if(!el)return;
+  // من هنا فصاعداً كل المسارات تستبدل الـ spinner (success/empty/list/error)،
+  // فنعتبر الرسم الأول قد تمّ — تُسمح بعده بتأجيل إعادات الرسم أثناء الـ modal.
+  _firstPaintDone=true;
   // Attach long-press handlers once when CC mode is on. Safe to call
   // repeatedly — the helper short-circuits on already-bound roots.
   try {
@@ -861,6 +864,10 @@ function getClientOrders(c){return window.__clientOrdersIndex?window.__clientOrd
 // ── Debounce updateStats + renderGrid to avoid triple-execution on snapshots ──
 let _statsTimer=null, _gridTimer=null;
 let _pendingRerender=false;
+// أول رسم للشبكة يجب أن يحدث دائماً (حتى لو الـ modal مفتوح)، وإلا تبقى
+// الصفحة عالقة على الـ spinner لو وصل أول snapshot والـ modal مفتوح
+// (stuck-spinner race — بلاغ موظف خدمة العملاء بعد حفظ عميل).
+let _firstPaintDone=false;
 const _origUpdateStats=null;
 function isClientModalOpen(){
   const m=document.getElementById('ov-client');
@@ -871,7 +878,11 @@ function scheduleStatsAndGrid(){
   // While the add/edit client modal is open, snapshot-driven re-renders of
   // 2000-card grid + stats freeze the form. Mark dirty and let
   // closeClientModal() flush once when the user finishes typing.
-  if(isClientModalOpen()){ _pendingRerender=true; return; }
+  // EXCEPTION: never defer the very first paint — otherwise the grid stays
+  // stuck on the spinner if the first snapshot lands while the modal is open
+  // (recovery would depend solely on closeClientModal, so an X/backdrop close
+  // leaves the page hung). First paint runs once regardless of modal state.
+  if(isClientModalOpen() && _firstPaintDone){ _pendingRerender=true; return; }
   clearTimeout(_statsTimer);
   clearTimeout(_gridTimer);
   _statsTimer=setTimeout(()=>{ try{ updateStats(); }catch(e){console.warn('updateStats:',e);} },80);
