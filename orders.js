@@ -1249,7 +1249,10 @@ export function validateDispatch({ order, companyId, method, cost, walletId, rol
 
   // Pickup (استلام من المطبعة) doesn't need a shipping company — العميل بيستلم
   // من المطبعة مباشرة. Only require company for methods that involve one.
-  const needsCompany = method !== 'pickup';
+  // courier (مندوب داخلي) = موظف توصيل تابع للشركة، لا شركة شحن خارجية — لا
+  // يتطلّب اختيار شركة (متّسق مع منطق التسوية الذي يخص shipMethod==='company'
+  // فقط). pickup كذلك بلا شركة. غير هؤلاء (company/prepaid) يلزمهم شركة.
+  const needsCompany = method !== 'pickup' && method !== 'courier';
   if (needsCompany && !companyId) errors.push('⚠️ اختر شركة الشحن');
   const amt = parseFloat(cost) || 0;
   if (amt < 0) errors.push('⚠️ التكلفة غير صالحة');
