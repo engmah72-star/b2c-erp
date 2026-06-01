@@ -38,6 +38,36 @@ export function buildDesignersTabHTML({ stats }) {
 }
 
 /**
+ * Build the performance tab HTML (مدة إنجاز كل فرد + الالتزام بالـ SLA).
+ *
+ * @param {Object} args
+ * @param {Object} args.stats — { people } from buildStagePerformanceStats
+ */
+export function buildStagePerformanceTabHTML({ stats }) {
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const people = (stats && stats.people) || [];
+  if (!people.length) {
+    return '<div class="empty-pretty"><div class="ico">⏱️</div><div class="ttl">لا توجد بيانات أداء</div><div class="sub">محتاج أوردرات مكتملة المراحل مع مسؤولين معيّنين وتواريخ مراحل (stageEnteredAt)</div></div>';
+  }
+  return people.map(p => {
+    const slaCol = p.slaPct >= 80 ? 'var(--g)' : (p.slaPct >= 50 ? 'var(--y)' : 'var(--r)');
+    return `<div class="rep-card">
+      <div class="rep-card-head">
+        <div><div class="rep-name">👤 ${esc(p.name)}</div><div class="rep-sub">${esc(p.stageLabel)}${p.slaHours ? ' · SLA ' + p.slaHours + 'س' : ''}</div></div>
+        <div class="text-left"><div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${p.count}</div><div class="txt-meta-xs">أوردر</div></div>
+      </div>
+      <div class="rep-stats">
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--snow)">${esc(p.avgText)}</div><div class="rep-stat-lbl">متوسط الإنجاز</div></div>
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${p.onTime}</div><div class="rep-stat-lbl">ضمن المدة</div></div>
+        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--r)">${p.late}</div><div class="rep-stat-lbl">متأخر</div></div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${p.slaPct}%;background:${slaCol}"></div></div>
+      <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px;text-align:left">${p.slaPct}% التزام بالمدة</div>
+    </div>`;
+  }).join('');
+}
+
+/**
  * Build the sales tab HTML.
  *
  * @param {Object} args
