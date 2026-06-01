@@ -1757,9 +1757,19 @@ function openAddClient(){
   sv('c-source',''); sv('c-sector',''); sv('c-gov',''); sv('c-city','');
   document.querySelectorAll('.tag-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('hint-phone1').textContent='';
+  const hn=document.getElementById('hint-name');if(hn)hn.textContent='';
   sv('c-intl-cc','');sv('c-intl-phone','');
   const hi=document.getElementById('hint-intl');if(hi)hi.textContent='';
+  // افتراضات ذكية: تصنيف "جديد" + تذكّر آخر مصدر/قطاع مختار
+  document.querySelector('.tag-btn[data-tag="new"]')?.classList.add('on');
+  try{
+    const ls=localStorage.getItem('cl_last_source')||'';
+    const lk=localStorage.getItem('cl_last_sector')||'';
+    if(ls)sv('c-source',ls);
+    if(lk)sv('c-sector',lk);
+  }catch(e){}
   fillGovSelect();
+  updateClientSaveState();
   document.getElementById('ov-client').classList.add('open');
   setTimeout(()=>document.getElementById('c-name').focus(),100);
 }
@@ -1832,22 +1842,64 @@ function editClient(id){
     sv('c-legacy-notes',c.legacyNotes||'');
   }
   closePanel();
+  updateClientSaveState();
   document.getElementById('ov-client').classList.add('open');
 }
 
+function isValidEgPhone(v){ return /^01[0125][0-9]{8}$/.test((v||'').trim()); }
+
+// كشف فوري لتكرار رقم على عميل موجود (هاتف 1/2)، باستثناء العميل الجاري تعديله.
+function findClientByPhone(v){
+  if(!v) return null;
+  const arr=(typeof clients!=='undefined'&&Array.isArray(clients))?clients:[];
+  return arr.find(c=>c._id!==editId&&(c.phone1===v||c.phone2===v))||null;
+}
+
 function checkPhone(inp){
+  // تنظيف ذكي: أرقام فقط (لصق برموز/مسافات)
+  const cleaned=(inp.value||'').replace(/[^\d]/g,'');
+  if(cleaned!==inp.value) inp.value=cleaned;
   const v=inp.value;
   const hint=document.getElementById('hint-'+inp.id);
-  if(!hint)return;
-  if(!v){hint.textContent='';inp.classList.remove('valid','invalid');return;}
-  if(/^01[0125][0-9]{8}$/.test(v)){
-    inp.classList.add('valid');inp.classList.remove('invalid');
-    hint.textContent='✓ رقم صحيح';hint.className='field-hint ok';
-  } else {
-    inp.classList.add('invalid');inp.classList.remove('valid');
-    hint.textContent='رقم غير صحيح (11 رقم يبدأ بـ 010/011/012/015)';
-    hint.className='field-hint err';
+  if(hint){
+    if(!v){hint.textContent='';inp.classList.remove('valid','invalid');}
+    else if(isValidEgPhone(v)){
+      inp.classList.add('valid');inp.classList.remove('invalid');
+      const dup=inp.id==='c-phone1'?findClientByPhone(v):null; // كشف تكرار فوري لهاتف 1
+      if(dup){
+        hint.textContent='⚠️ الرقم مسجّل بالفعل لـ '+(dup.name||'عميل')+' — تحقق قبل الإضافة';
+        hint.className='field-hint warn';
+      }else{
+        hint.textContent='✓ رقم صحيح';hint.className='field-hint ok';
+      }
+    } else {
+      inp.classList.add('invalid');inp.classList.remove('valid');
+      hint.textContent='رقم غير صحيح (11 رقم يبدأ بـ 010/011/012/015)';
+      hint.className='field-hint err';
+    }
   }
+  updateClientSaveState();
+}
+
+// حفظ ذكي: عطّل زر الحفظ ما لم يكتمل الاسم وصحّة الهاتف (لو مُدخَل).
+function updateClientSaveState(){
+  const btn=document.getElementById('save-client-btn');
+  if(!btn) return;
+  const name=(document.getElementById('c-name')?.value||'').trim();
+  const p1=(document.getElementById('c-phone1')?.value||'').trim();
+  const phoneBad=p1.length>0&&!isValidEgPhone(p1);
+  btn.disabled=!(name.length>=2&&!phoneBad);
+}
+
+function onClientNameInput(inp){
+  const hint=document.getElementById('hint-name');
+  if(hint){
+    const v=(inp.value||'').trim();
+    if(!inp.value){hint.textContent='';}
+    else if(v.length<2){hint.textContent='الاسم قصير جداً';hint.className='field-hint err';}
+    else{hint.textContent='';}
+  }
+  updateClientSaveState();
 }
 
 function checkIntlPhone(){
@@ -1897,6 +1949,9 @@ function fillFilters(){
 // window.clientActions.addClient / editClient. الصفحة تجمع inputs فقط.
 async function saveClient(){
   const btn=document.getElementById('save-client-btn');
+  // تطبيع ذكي: شيل المسافات الزائدة من الاسم
+  const nameEl=document.getElementById('c-name');
+  if(nameEl) nameEl.value=nameEl.value.trim().replace(/\s+/g,' ');
   // Intl phone — pure validator في features/clients/client-form.js
   const intlV=window.__validateIntlPhone?.(gv('c-intl-cc'), gv('c-intl-phone')||'')||{ok:true,intlPhone:''};
   if(!intlV.ok){toast(intlV.errors[0],'err');return;}
@@ -1966,6 +2021,11 @@ async function saveClient(){
       btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';
       return;
     }
+    // تذكّر آخر مصدر/قطاع لتسريع الإدخال التالي
+    try{
+      localStorage.setItem('cl_last_source', gv('c-source')||'');
+      localStorage.setItem('cl_last_sector', gv('c-sector')||'');
+    }catch(e){}
     closeClientModal();
     toast(editId?'✅ تم تحديث بيانات العميل':'✅ تم إضافة العميل','ok');
     btn.disabled=false; btn.textContent=editId?'✓ حفظ':'✓ إضافة';

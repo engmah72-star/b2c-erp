@@ -33,7 +33,7 @@ export const CLIENTS_MODALS_HTML = `
     </div>
     <div class="modal-body">
       <div class="divider"><div class="div-line"></div><div class="div-text">البيانات الأساسية</div><div class="div-line"></div></div>
-      <div class="fg"><label>الاسم الكامل *</label><input class="inp" id="c-name" placeholder="محمد أحمد"></div>
+      <div class="fg"><label>الاسم الكامل *</label><input class="inp" id="c-name" placeholder="محمد أحمد" oninput="onClientNameInput(this)"><div class="field-hint" id="hint-name"></div></div>
       <div class="g2">
         <div class="fg">
           <label>هاتف 1 (واتساب) *</label>
