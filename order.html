@@ -139,6 +139,10 @@
   .sd-chip.ongoing{background:var(--tint-y-soft);color:var(--y);border:1px solid var(--tint-y-line);}
   .sd-chip.good{background:var(--tint-g-soft);color:var(--g);border:1px solid var(--tint-g-line);}
   .sd-chip.late{background:var(--tint-r-soft);color:var(--r);border:1px solid var(--tint-r-line);}
+  /* Tap-to-select+copy (مبدأ الذكاء — اضغط الرقم/الاسم يتعلّم ويُنسخ) */
+  .tap-select{cursor:pointer;position:relative;}
+  .tap-select:hover{text-decoration:underline dotted;text-underline-offset:3px;}
+  .tap-select.tap-copied::after{content:'✓ تم النسخ';position:absolute;top:-16px;right:0;font-size:10px;font-weight:800;color:var(--g);background:var(--bg2);border:1px solid var(--g);border-radius:6px;padding:1px 6px;white-space:nowrap;}
   /* Quick status buttons */
   .qs-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
   .qs-actions button{flex:1;min-width:90px;padding:9px 10px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:var(--trans);touch-action:manipulation;-webkit-tap-highlight-color:transparent;position:relative;}
@@ -508,9 +512,9 @@ function renderOrder(o) {
 
   // ── Hero ──
   html += '<div class="order-hero">';
-  html += '<h1>' + esc(o.clientName||'—') + '</h1>';
-  html += '<div class="order-id">' + esc(o.orderId || o._id || '—') + '</div>';
-  if (phone) html += '<div class="order-id" style="direction:ltr">' + esc(phone) + '</div>';
+  html += '<h1 class="tap-select" title="اضغط للنسخ">' + esc(o.clientName||'—') + '</h1>';
+  html += '<div class="order-id tap-select" title="اضغط للنسخ">' + esc(o.orderId || o._id || '—') + '</div>';
+  if (phone) html += '<div class="order-id tap-select" style="direction:ltr" title="اضغط للنسخ">' + esc(phone) + '</div>';
   html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span></div>';
   html += '</div>';
 
@@ -759,6 +763,29 @@ function renderOrder(o) {
   $('order-detail').className = '';
   $('order-detail').innerHTML = html;
 }
+
+// ── Tap-to-select + copy (مبدأ الذكاء): اضغط الرقم/الاسم يتعلّم النص ويُنسخ ──
+function _tapSelectAndCopy(el) {
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (_) { /* selection best-effort */ }
+  const text = (el.textContent || '').trim();
+  const flash = () => { el.classList.add('tap-copied'); setTimeout(() => el.classList.remove('tap-copied'), 1100); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flash).catch(() => { try { document.execCommand('copy'); } catch (_) {} flash(); });
+  } else {
+    try { document.execCommand('copy'); } catch (_) {}
+    flash();
+  }
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('.tap-select');
+  if (t) _tapSelectAndCopy(t);
+});
 
 // ── Toolbar menu (⋯ المزيد) ──
 window.toggleMore = function() {
