@@ -126,6 +126,23 @@
   .order-timeline-item{padding:8px 12px;background:var(--bg3);border-right:3px solid var(--p);border-radius:var(--rad);}
   .order-timeline-action{font-size:13px;color:var(--snow);font-weight:600;margin-bottom:2px;}
   .order-timeline-meta{font-size:11px;color:var(--dim2);}
+  /* Stage durations + owner + rating (derived) */
+  .stage-durations{display:flex;flex-direction:column;gap:6px;}
+  .stage-duration-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border-radius:var(--rad);flex-wrap:wrap;}
+  .sd-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .sd-label{font-size:13px;color:var(--snow);font-weight:600;}
+  .sd-owner{font-size:11px;color:var(--dim2);font-weight:600;}
+  .sd-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+  .sd-val{font-size:13px;color:var(--snow);font-weight:700;white-space:nowrap;}
+  .sd-sla{font-size:10px;color:var(--dim2);font-weight:700;}
+  .sd-chip{display:inline-block;font-size:10px;font-weight:800;padding:1px 7px;border-radius:8px;}
+  .sd-chip.ongoing{background:var(--tint-y-soft);color:var(--y);border:1px solid var(--tint-y-line);}
+  .sd-chip.good{background:var(--tint-g-soft);color:var(--g);border:1px solid var(--tint-g-line);}
+  .sd-chip.late{background:var(--tint-r-soft);color:var(--r);border:1px solid var(--tint-r-line);}
+  /* Tap-to-select+copy (مبدأ الذكاء — اضغط الرقم/الاسم يتعلّم ويُنسخ) */
+  .tap-select{cursor:pointer;position:relative;}
+  .tap-select:hover{text-decoration:underline dotted;text-underline-offset:3px;}
+  .tap-select.tap-copied::after{content:'✓ تم النسخ';position:absolute;top:-16px;right:0;font-size:10px;font-weight:800;color:var(--g);background:var(--bg2);border:1px solid var(--g);border-radius:6px;padding:1px 6px;white-space:nowrap;}
   /* Quick status buttons */
   .qs-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
   .qs-actions button{flex:1;min-width:90px;padding:9px 10px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:var(--trans);touch-action:manipulation;-webkit-tap-highlight-color:transparent;position:relative;}
@@ -352,7 +369,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -495,9 +512,9 @@ function renderOrder(o) {
 
   // ── Hero ──
   html += '<div class="order-hero">';
-  html += '<h1>' + esc(o.clientName||'—') + '</h1>';
-  html += '<div class="order-id">' + esc(o.orderId || o._id || '—') + '</div>';
-  if (phone) html += '<div class="order-id" style="direction:ltr">' + esc(phone) + '</div>';
+  html += '<h1 class="tap-select" title="اضغط للنسخ">' + esc(o.clientName||'—') + '</h1>';
+  html += '<div class="order-id tap-select" title="اضغط للنسخ">' + esc(o.orderId || o._id || '—') + '</div>';
+  if (phone) html += '<div class="order-id tap-select" style="direction:ltr" title="اضغط للنسخ">' + esc(phone) + '</div>';
   html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span></div>';
   html += '</div>';
 
@@ -693,6 +710,35 @@ function renderOrder(o) {
     html += '</div>';
   }
 
+  // ── مدد المراحل + المسؤول + التقييم (derived من stageEnteredAt/approvedAt/SLA — W1) ──
+  {
+    const dur = getStageDurations(o);
+    const shown = dur.stages.filter(s => s.status !== 'pending');
+    if (shown.length > 0) {
+      html += '<div class="order-section">';
+      html += '<div class="order-section-head">⏱️ مدد المراحل والتقييم <span style="font-size:12px;color:var(--dim2);font-weight:700">(الإجمالي ' + esc(dur.totalText) + ')</span></div>';
+      html += '<div class="order-section-body">';
+      html += '<div class="stage-durations">';
+      for (const s of shown) {
+        let chip;
+        if (s.rating === 'late') chip = '<span class="sd-chip late">⚠️ متأخر</span>';
+        else if (s.rating === 'ongoing') chip = '<span class="sd-chip ongoing">🔄 جارٍ</span>';
+        else chip = '<span class="sd-chip good">✅ ضمن المدة</span>';
+        const slaTxt = s.slaHours ? ('SLA ' + s.slaHours + 'س') : '';
+        html += '<div class="stage-duration-row">';
+        html += '<div class="sd-main"><span class="sd-label">' + esc(s.label) + '</span>';
+        html += '<span class="sd-owner">' + (s.owner ? '👤 ' + esc(s.owner) : 'غير محدد') + '</span></div>';
+        html += '<div class="sd-side"><span class="sd-val">' + esc(s.text) + '</span> ' + chip;
+        if (slaTxt) html += '<span class="sd-sla">' + esc(slaTxt) + '</span>';
+        html += '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+  }
+
   // ── Timeline ──
   if (timeline.length > 0) {
     html += '<div class="order-section">';
@@ -717,6 +763,29 @@ function renderOrder(o) {
   $('order-detail').className = '';
   $('order-detail').innerHTML = html;
 }
+
+// ── Tap-to-select + copy (مبدأ الذكاء): اضغط الرقم/الاسم يتعلّم النص ويُنسخ ──
+function _tapSelectAndCopy(el) {
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (_) { /* selection best-effort */ }
+  const text = (el.textContent || '').trim();
+  const flash = () => { el.classList.add('tap-copied'); setTimeout(() => el.classList.remove('tap-copied'), 1100); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flash).catch(() => { try { document.execCommand('copy'); } catch (_) {} flash(); });
+  } else {
+    try { document.execCommand('copy'); } catch (_) {}
+    flash();
+  }
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('.tap-select');
+  if (t) _tapSelectAndCopy(t);
+});
 
 // ── Toolbar menu (⋯ المزيد) ──
 window.toggleMore = function() {

@@ -136,3 +136,46 @@ export function buildClientActivityStats(filteredOrders = [], clients = [], rang
 
   return { sorted, newCount, repeatCount, avgOrder, activeCount, maxTotal };
 }
+
+/**
+ * أداء الأفراد: مدة إنجاز كل فرد عبر الأوردرات + الالتزام بالـ SLA.
+ *
+ * يجمّع المراحل المكتملة (status='done') حسب (المسؤول، المرحلة):
+ * عدد الأوردرات، متوسط مدة الإنجاز، عدد ضمن المدة / متأخر، ونسبة الالتزام.
+ *
+ * Pure — يأخذ getStageDurations + formatDurationAr من orders.js كـ params
+ * (نفس نمط buildDesignerStats مع resolveDesigner — بدون import coupling).
+ *
+ * @param {Array}    orders
+ * @param {Function} getStageDurations — (order) → { stages: [...] }
+ * @param {Function} [formatDurationAr] — (ms) → string
+ * @returns {{ people: Array<{name,stageKey,stageLabel,slaHours,count,avgMs,avgText,onTime,late,slaPct}> }}
+ */
+export function buildStagePerformanceStats(orders = [], getStageDurations, formatDurationAr) {
+  if (typeof getStageDurations !== 'function') return { people: [] };
+  const buckets = new Map();
+  for (const o of orders) {
+    const res = getStageDurations(o) || {};
+    for (const s of (res.stages || [])) {
+      if (s.status !== 'done' || !s.owner) continue; // فقط المكتمل بمسؤول معروف
+      const key = s.owner + '@' + s.key;
+      if (!buckets.has(key)) {
+        buckets.set(key, { name: s.owner, stageKey: s.key, stageLabel: s.label, slaHours: s.slaHours, count: 0, totalMs: 0, onTime: 0, late: 0 });
+      }
+      const b = buckets.get(key);
+      b.count++; b.totalMs += s.ms;
+      if (s.rating === 'late') b.late++; else b.onTime++;
+    }
+  }
+  const people = [...buckets.values()].map(b => {
+    const avgMs = b.count ? Math.round(b.totalMs / b.count) : 0;
+    const slaPct = b.count ? Math.round(b.onTime / b.count * 100) : 0;
+    return {
+      name: b.name, stageKey: b.stageKey, stageLabel: b.stageLabel, slaHours: b.slaHours,
+      count: b.count, avgMs,
+      avgText: typeof formatDurationAr === 'function' ? formatDurationAr(avgMs) : String(avgMs),
+      onTime: b.onTime, late: b.late, slaPct,
+    };
+  }).sort((a, b) => b.count - a.count || b.slaPct - a.slaPct);
+  return { people };
+}
