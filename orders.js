@@ -740,15 +740,13 @@ export function getStageResponsibilities(order, slaTable = null) {
       if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
     }
 
-    // الموعد المستهدف يُحسب حيّاً من SLA الحالي (يعكس إعدادات settings.stageSla فوراً)؛
-    // طابع stageDeadline المخزّن fallback فقط لو تعذّر الحساب.
+    // الموعد المستهدف: المخزّن (اليدوي — مثل موعد تسليم التصميم من الفورم) يفوز؛
+    // وإلا يُحسب حيّاً من SLA الحالي (يعكس إعدادات settings.stageSla فوراً).
     const slaHours = getStageSlaForOrder(order, stage, slaTable);
-    let deadline = '', deadlineMs = null;
-    if (enteredMs && slaHours) {
+    let deadline = dl[stage] || '';
+    let deadlineMs = _toMs(deadline);
+    if (!deadlineMs && enteredMs && slaHours) {
       deadline = computeStageDeadlineForOrder(order, stage, enteredMs, slaTable);
-      deadlineMs = _toMs(deadline);
-    } else if (dl[stage]) {
-      deadline = dl[stage];
       deadlineMs = _toMs(deadline);
     }
 
@@ -940,7 +938,8 @@ export function createOrderData(data, userId, userName) {
     // طوابع زمن دخول/إنجاز كل مرحلة + الموعد المستهدف (لـ SLA tracking + تتبّع المسؤولية)
     stageEnteredAt:   { design: now },
     stageCompletedAt: {},
-    stageDeadline:    { design: computeStageDeadlineStr('design', Date.now()) },
+    // موعد تسليم التصميم اليدوي (من الفورم) — نهاية اليوم المُدخَل؛ يفوز على حساب SLA.
+    stageDeadline:    data.deadline ? { design: fmtDateAr(new Date(data.deadline + 'T23:59:59')) } : {},
     designFiles:  [],
     designFileUrl:'',
     designFileNote: data.designFileNote || '',
@@ -1223,7 +1222,6 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
 
   const targetConf = STAGES[target];
   const now = nowStr();
-  const nowMs = Date.now();
 
   // ـ تعيين الموظف المستلم للمرحلة الجديدة (إن وُجد) ـ
   const ownership = STAGE_OWNERSHIP[target];
@@ -1233,12 +1231,13 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     assigneeFields[ownership.nameField] = nextAssigneeName || '';
   }
 
-  // ـ طوابع زمن: إنجاز المرحلة الحالية (الخروج) + دخول الجديدة + موعدها المستهدف ـ
+  // ـ طوابع زمن: إنجاز المرحلة الحالية (الخروج) + دخول الجديدة ـ
+  // ملاحظة: stageDeadline لا يُكتب هنا — مواعيد المراحل التشغيلية تُحسب حيّاً من SLA،
+  // وstageDeadline يُحجز للمواعيد اليدوية فقط (مثل موعد تسليم التصميم من الفورم).
   const fields = {
     stage: target,
     [`stageCompletedAt.${cur}`]: now,   // الخروج الصريح من المرحلة الحالية
     [`stageEnteredAt.${target}`]: now,
-    [`stageDeadline.${target}`]: computeStageDeadlineForOrder(order, target, nowMs, slaTable),
     ...assigneeFields,
     ...extraFields,
   };
@@ -1296,13 +1295,12 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
 
   const targetConf = STAGES[target];
   const now = nowStr();
-  // الارتداد = إعادة فتح المرحلة الهدف: نعيد ضبط ساعة الدخول وموعدها المستهدف
-  // (المدة تُحسب من جديد)، ونلغي طابع إنجازها السابق إن وُجد.
+  // الارتداد = إعادة فتح المرحلة الهدف: نعيد ضبط ساعة الدخول (المدة تُحسب من جديد)
+  // ونلغي طابع إنجازها السابق. الموعد اليدوي (إن وُجد) يبقى كما هو.
   const fields = {
     stage: target,
     [`stageEnteredAt.${target}`]: now,
     [`stageCompletedAt.${target}`]: '',
-    [`stageDeadline.${target}`]: computeStageDeadlineForOrder(order, target, Date.now()),
     ...extraFields,
   };
   const timelineEntry = {

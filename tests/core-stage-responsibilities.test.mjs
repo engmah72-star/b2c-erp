@@ -20,6 +20,7 @@ import {
   buildStageRevert,
   getStageResponsibilities,
   getStageHistory,
+  fmtDateAr,
   STAGE_SLA_DEFAULTS,
   PRODUCTION_SLA_BY_PRINT,
 } from '../orders.js';
@@ -115,7 +116,8 @@ test('buildStageAdvance: design→printing writes all stage-date fields', () => 
   assertEq(r.fields.stage, 'printing');
   assert(r.fields['stageCompletedAt.design'], 'design completion stamped');
   assert(r.fields['stageEnteredAt.printing'], 'printing entry stamped');
-  assert(r.fields['stageDeadline.printing'], 'printing deadline computed');
+  // stageDeadline لا يُكتب تلقائياً — مواعيد المراحل التشغيلية تُحسب حيّاً من SLA
+  assertEq(r.fields['stageDeadline.printing'], undefined, 'no auto deadline write');
   assertEq(r.fields.printerId, 'p1');
   assertEq(r.fields.printerName, 'طبّاع');
   assertEq(r.timelineEntry.kind, 'stage', 'timeline entry tagged');
@@ -138,7 +140,8 @@ test('buildStageRevert: printing→design resets entry + clears completion', () 
   assertEq(r.fields.stage, 'design');
   assert(r.fields['stageEnteredAt.design'], 'design re-entered now');
   assertEq(r.fields['stageCompletedAt.design'], '', 'design completion cleared');
-  assert(r.fields['stageDeadline.design'], 'design deadline recomputed');
+  // الموعد اليدوي لا يُعاد حسابه/يُمسح عند الارتداد
+  assertEq(r.fields['stageDeadline.design'], undefined, 'manual deadline preserved');
   assertEq(r.timelineEntry.kind, 'stage');
 });
 test('buildStageRevert: requires reason', () => {
@@ -234,6 +237,21 @@ test('getStageResponsibilities: derives completion from next entry when stageCom
 
 test('getStageResponsibilities: empty/no order → []', () => {
   assertEq(getStageResponsibilities(null).length, 0);
+});
+
+test('getStageResponsibilities: manual design deadline (from form) wins over SLA', () => {
+  const now = Date.now();
+  // الموعد اليدوي بصيغة fmtDateAr (نفس ما يكتبه مسار الإنشاء) — تاريخ بعيد عن SLA.
+  const manual = fmtDateAr(new Date('2026-06-10T23:59:59'));
+  const order = {
+    stage: 'design',
+    stageEnteredAt: { design: new Date(now - 2 * HOUR).toISOString() },
+    stageDeadline:  { design: manual },
+  };
+  const design = getStageResponsibilities(order).find(r => r.stage === 'design');
+  assertEq(design.deadline, manual, 'manual deadline shown as-is (stored wins)');
+  // ويُفسَّر صحيحاً (يوم 10، مش الموعد المحسوب من SLA)
+  assertEq(new Date(design.deadlineMs).getDate(), 10, 'deadline points to entered day');
 });
 
 test('getStageResponsibilities: honors settings slaTable override (live)', () => {
