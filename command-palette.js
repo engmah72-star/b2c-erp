@@ -98,7 +98,24 @@
         const fil = (p.file || '').toLowerCase();
         return lbl.includes(q) || fil.includes(q);
       });
-      return [{ section: null, items: matches }];
+      const groups = [{ section: null, items: matches }];
+
+      // ── فتح أوردر مباشرةً بالكود ──────────────────────────────────────
+      // لو الاستعلام يشبه رقم/كود أوردر (يحتوي رقماً وكله محارف كود)، نضيف
+      // اختصاراً يفتح صفحة التتبّع — وهي التي تتولّى الـ lookup الفعلي
+      // (where orderId==code) والصلاحيات و«غير موجود» بنفسها. صفر Firestore
+      // هنا. نُظهره فقط لمن لديه وصول لأي صفحة من مجموعة الأوردرات.
+      const code = (query || '').trim();
+      const looksLikeOrder = /\d/.test(code) && /^[\w\-/]{2,}$/.test(code);
+      const canOrders = all.some(p => p.group === 'orders');
+      if (looksLikeOrder && canOrders) {
+        groups.unshift({ section: null, items: [{
+          file: 'order-tracking.html?id=' + encodeURIComponent(code),
+          label: 'افتح الأوردر رقم «' + code + '»',
+          ico: '📋',
+        }] });
+      }
+      return groups;
     }
 
     const usedFiles = new Set([...favs.map(p => p.file), ...recent.map(p => p.file)]);
@@ -153,7 +170,7 @@
       + '<div class="cp-modal">'
       + '  <div class="cp-input-row">'
       + '    <span class="cp-input-icon">🔍</span>'
-      + '    <input class="cp-input" type="text" placeholder="اكتب اسم الصفحة..." autocomplete="off" aria-label="بحث">'
+      + '    <input class="cp-input" type="text" placeholder="اكتب اسم صفحة أو رقم أوردر..." autocomplete="off" aria-label="بحث">'
       + '  </div>'
       + '  <div class="cp-list"></div>'
       + '  <div class="cp-footer">'
@@ -268,6 +285,34 @@
       if (p) navigate(p.file);
     }
   });
+
+  // ── Visible trigger button (topbar) — اكتشاف + لمس/موبايل ──────────
+  // اللوحة كانت تُفتح بـ Ctrl+K فقط (مخفية تماماً للمستخدم العادي وغير
+  // متاحة باللمس على الموبايل). نحقن زرّ بحث ظاهر في .topbar-right بنفس
+  // نمط زر الثيم (notif-bell)، مع إعادة محاولات للصفحات التي تبني الـ
+  // topbar متأخراً (بعد المصادقة). additive · لا تعديل HTML لأي صفحة.
+  function injectTriggerButton() {
+    if (document.getElementById('cpTriggerBtn')) return;
+    const host = document.querySelector('.topbar-right');
+    if (!host) return;
+    const btn = document.createElement('button');
+    btn.id = 'cpTriggerBtn';
+    btn.type = 'button';
+    btn.className = 'notif-bell'; // نفس استايل أيقونات الـ topbar (دائرة 34px)
+    btn.style.cursor = 'pointer';
+    btn.title = 'بحث وتنقّل سريع (Ctrl+K)';
+    btn.setAttribute('aria-label', 'بحث وتنقّل سريع');
+    btn.textContent = '🔍';
+    btn.addEventListener('click', () => { if (modal) close(); else open(); });
+    host.insertBefore(btn, host.firstChild);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectTriggerButton);
+  } else {
+    injectTriggerButton();
+  }
+  window.addEventListener('load', injectTriggerButton);
+  [200, 500, 1000, 2000].forEach(d => setTimeout(injectTriggerButton, d));
 
   // Expose for programmatic use
   window.__b2cCommandPalette = { open, close };
