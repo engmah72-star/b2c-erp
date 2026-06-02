@@ -19,7 +19,9 @@ import {
   buildStageAdvance,
   buildStageRevert,
   getStageResponsibilities,
+  getStageDurations,
   getStageHistory,
+  getOrderDates,
   validateOrderResponsibility,
   fmtDateAr,
   STAGE_SLA_DEFAULTS,
@@ -240,6 +242,42 @@ test('getStageResponsibilities: empty/no order → []', () => {
   assertEq(getStageResponsibilities(null).length, 0);
 });
 
+test('getStageDurations: delegates to single source (matches getStageResponsibilities)', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'production',
+    designerName: 'مصمم', printerName: 'طبّاع', productionAgentName: 'منفّذ',
+    stageEnteredAt: {
+      design:     new Date(now - 50 * HOUR).toISOString(),
+      printing:   new Date(now - 40 * HOUR).toISOString(),
+      production: new Date(now - 10 * HOUR).toISOString(),
+    },
+    stageCompletedAt: {
+      design:   new Date(now - 40 * HOUR).toISOString(),
+      printing: new Date(now - 10 * HOUR).toISOString(),
+    },
+  };
+  const dur = getStageDurations(order);
+  const rows = getStageResponsibilities(order).filter(r => r.kind === 'stage');
+  assertEq(dur.stages.length, 4, 'four stages (no intake)');
+  // كل صف في getStageDurations يطابق المرجع الواحد
+  dur.stages.forEach((s, i) => {
+    assertEq(s.key, rows[i].stage);
+    // المرحلة الجارية تعتمد على Date.now() لحظة كل استدعاء → سماحية صغيرة
+    assert(Math.abs(s.ms - rows[i].durationMs) <= 50, 'duration matches source for ' + s.key);
+    assertEq(s.rating, rows[i].rating, 'rating matches source for ' + s.key);
+    assertEq(s.owner, rows[i].responsibleName);
+  });
+});
+
+test('getStageResponsibilities: ISO stageEnteredAt normalized to ar-EG display', () => {
+  const iso = new Date(Date.now() - 3 * HOUR).toISOString();
+  const order = { stage: 'design', stageEnteredAt: { design: iso } };
+  const design = getStageResponsibilities(order).find(r => r.stage === 'design');
+  assert(design.enteredAt && !/[TZ]/.test(design.enteredAt), 'no raw ISO in display: ' + design.enteredAt);
+  assert(design.enteredMs, 'enteredMs parsed from ISO');
+});
+
 test('getStageResponsibilities: manual design deadline (from form) wins over SLA', () => {
   const now = Date.now();
   // الموعد اليدوي بصيغة fmtDateAr (نفس ما يكتبه مسار الإنشاء) — تاريخ بعيد عن SLA.
@@ -334,6 +372,46 @@ test('buildStageAdvance: explicit assignee wins', () => {
   const order = { stage: 'design', printerId: 'p9', designFiles: [{ url: 'x' }], stageEnteredAt: { design: 'x' }, timeline: [] };
   const r = buildStageAdvance({ order, role: 'admin', userId: 'actor1', userName: 'a', nextAssigneeId: 'p1', nextAssigneeName: 'طبّاع', bypassWarnings: true });
   assertEq(r.fields.printerId, 'p1', 'chosen assignee wins');
+});
+
+// ── getOrderDates — المرجع الواحد لكل تواريخ الأوردر ──────────────
+test('getOrderDates: null order → null', () => {
+  assertEq(getOrderDates(null), null);
+});
+test('getOrderDates: designDeadline = stageDeadline.design (canonical, not legacy deadline)', () => {
+  const canon = fmtDateAr(new Date('2026-06-10T23:59:59'));
+  const order = { stage: 'design', deadline: '2026-06-01', stageDeadline: { design: canon }, stageEnteredAt: { design: 'x' } };
+  const d = getOrderDates(order);
+  assertEq(d.designDeadline.text, canon, 'canonical stageDeadline.design wins over legacy deadline');
+});
+test('getOrderDates: falls back to legacy deadline when no stageDeadline', () => {
+  const order = { stage: 'design', deadline: '2026-06-10' };
+  const d = getOrderDates(order);
+  assert(d.designDeadline && d.designDeadline.ms, 'uses legacy deadline as fallback');
+});
+test('getOrderDates: surfaces shipping sub-stage dates + archived', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'archived',
+    createdAt: new Date(now - 100 * HOUR).toISOString(),
+    deliveredAt: new Date(now - 10 * HOUR).toISOString(),
+    shipCollectedAt: new Date(now - 8 * HOUR).toISOString(),
+    archivedAt: new Date(now - 5 * HOUR).toISOString(),
+    stageEnteredAt: { design: new Date(now - 100 * HOUR).toISOString() },
+  };
+  const d = getOrderDates(order);
+  assert(d.shipping.delivered && d.shipping.delivered.ms, 'delivered surfaced');
+  assert(d.shipping.collected && d.shipping.collected.ms, 'collected surfaced');
+  assert(d.archived && d.archived.ms, 'archived surfaced');
+  // milestones مرتّبة زمنياً
+  for (let i = 1; i < d.milestones.length; i++) {
+    assert(d.milestones[i].ms >= d.milestones[i - 1].ms, 'milestones sorted ascending');
+  }
+});
+test('getOrderDates: archived falls back to stageEnteredAt.archived', () => {
+  const order = { stage: 'archived', stageEnteredAt: { archived: new Date().toISOString() } };
+  const d = getOrderDates(order);
+  assert(d.archived && d.archived.ms, 'archived from stageEnteredAt.archived');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

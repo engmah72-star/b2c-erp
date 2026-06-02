@@ -622,58 +622,37 @@ function _toMs(v) {
 }
 
 /**
- * مدد المراحل — قيم محسوبة (derived) من order.stageEnteredAt + approvedAt + createdAt.
- * لا تضيف أي state جديد (متوافق مع W1) — للعرض/التحليل فقط.
+ * مدد المراحل (شكل legacy) — wrapper نحيف فوق getStageResponsibilities.
  *
- * لكل مرحلة (تصميم/طباعة/تنفيذ/شحن) — مدّتها + مسؤولها + تقييمها:
- *   - owner   : المسؤول (designerName/printerName/productionAgentName/shippingOfficerName)
- *   - ms/text : مدة بقاء الأوردر في المرحلة = (دخول المرحلة التالية − دخول المرحلة)؛
- *               التصميم يُحسب حتى الاعتماد (approvedAt) إن وُجد.
- *   - slaHours + rating : تقييم مقارنةً بالـ SLA المعتمد (STAGE_SLA_DEFAULTS)
- *               rating ∈ 'good' (ضمن المدة) | 'late' (تجاوز) | 'ongoing' | 'pending'
+ * ⚠️ المرجع الوحيد لدقة تواريخ/مدد/مسؤولية المراحل هو getStageResponsibilities
+ * (RULE 1 — Single Source of Truth). هذه الدالة تشتقّ منه فقط وتعيد تشكيل الخرج
+ * للصيغة القديمة المستخدَمة في order.html/reports.html — مفيش حساب مستقل (لا drift).
  *
- * قيم محسوبة (derived) — لا state جديد (W1). يرجّع { stages, totalMs, totalText }.
+ * @returns { stages:[{key,label,owner,ms,text,hours,slaHours,status,rating}], totalMs, totalText }
  */
-export function getStageDurations(order) {
+export function getStageDurations(order, slaTable = null) {
   if (!order) return { stages: [], totalMs: 0, totalText: '—' };
-  const ent = order.stageEnteredAt || {};
-  const tDesign   = _toMs(ent.design) || _toMs(order.createdAt);
-  const tApproved = _toMs(order.approvedAt);
-  const tPrint    = _toMs(ent.printing);
-  const tProd     = _toMs(ent.production);
-  const tShip     = _toMs(ent.shipping);
-  const tArch     = _toMs(ent.archived);
-  const now = Date.now();
-
-  const defs = [
-    { key: 'design',     label: 'التصميم', owner: order.designerName,        start: tDesign, end: tApproved || tPrint, sla: STAGE_SLA_DEFAULTS.design },
-    { key: 'printing',   label: 'الطباعة', owner: order.printerName,         start: tPrint,  end: tProd,               sla: STAGE_SLA_DEFAULTS.printing },
-    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: getStageSlaForOrder(order, 'production') },
-    { key: 'shipping',   label: 'الشحن',   owner: order.shippingOfficerName, start: tShip,   end: tArch,               sla: STAGE_SLA_DEFAULTS.shipping },
-  ];
-
+  const rows = getStageResponsibilities(order, slaTable).filter(r => r.kind === 'stage');
   let totalMs = 0;
-  const stages = defs.map(d => {
-    const owner = d.owner || '';
-    if (!d.start) {
-      return { key: d.key, label: d.label, owner, ms: 0, text: '—', hours: 0, slaHours: d.sla || 0, status: 'pending', rating: 'pending' };
-    }
-    const ongoing = !d.end;
-    const ms = Math.max(0, (ongoing ? now : d.end) - d.start);
-    totalMs += ms;
-    const hours = ms / 3600000;
-    const overSla = d.sla ? hours > d.sla : false;
-    const rating = ongoing ? (overSla ? 'late' : 'ongoing') : (overSla ? 'late' : 'good');
-    return { key: d.key, label: d.label, owner, ms, text: formatDurationAr(ms), hours, slaHours: d.sla || 0, status: ongoing ? 'ongoing' : 'done', rating };
+  const stages = rows.map(r => {
+    totalMs += r.durationMs;
+    return {
+      key: r.stage, label: r.label, owner: r.responsibleName,
+      ms: r.durationMs, text: r.durationText, hours: r.durationMs / 3600000,
+      slaHours: r.slaHours, status: r.status, rating: r.rating,
+    };
   });
-
   return { stages, totalMs, totalText: formatDurationAr(totalMs) };
 }
 
 // ══════════════════════════════════════════
-// STAGE RESPONSIBILITIES — مدخل موحّد: لكل مرحلة (تاريخ + مسؤول + موعد + تقييم)
+// STAGE RESPONSIBILITIES — المرجع الوحيد لتواريخ/مدد/مسؤولية مراحل الأوردر
 // ══════════════════════════════════════════
 /**
+ * 🔱 المصدر الوحيد للحقيقة (RULE 1) لكل ما يخص دقة تواريخ ومسؤولية مراحل الأوردر.
+ * أي عرض/تحليل لتواريخ أو مدد أو مسؤولي المراحل يشتقّ من هنا — مفيش مصدر تاني
+ * (getStageDurations نفسها wrapper فوق هذه الدالة).
+ *
  * يجمّع في مصفوفة واحدة كل ما يخص كل مرحلة من الأوردر — derived فقط (W1):
  *   - المسؤول (id/name) من STAGE_OWNERSHIP (designerId/printerId/...).
  *   - تاريخ الدخول   (stageEnteredAt[stage]).
@@ -707,7 +686,7 @@ export function getStageResponsibilities(order, slaTable = null) {
     label: 'إدخال الطلب',
     responsibleId:   order.createdBy     || order.assignedTo || '',
     responsibleName: order.createdByName || order.csName     || '',
-    enteredAt: typeof intakeEnteredAt === 'string' ? intakeEnteredAt : (intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : ''),
+    enteredAt: intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : (typeof intakeEnteredAt === 'string' ? intakeEnteredAt : ''),
     enteredMs: intakeEnteredMs,
     completedAt: intakeDoneMs ? fmtDateAr(new Date(intakeDoneMs)) : '',
     completedMs: intakeDoneMs,
@@ -726,18 +705,16 @@ export function getStageResponsibilities(order, slaTable = null) {
     const responsibleId   = order[own.idField]   || '';
     const responsibleName = order[own.nameField] || '';
 
-    const enteredAt = ent[stage] || '';
-    const enteredMs = _toMs(enteredAt);
+    const enteredRaw = ent[stage] || '';
+    const enteredMs = _toMs(enteredRaw);
 
     // الإنجاز: stageCompletedAt الصريح أولاً، ثم fallback derived (للبيانات القديمة):
     //   التصميم → approvedAt أو دخول الطباعة؛ باقي المراحل → دخول المرحلة التالية.
-    let completedAt = comp[stage] || '';
-    let completedMs = _toMs(completedAt);
+    let completedMs = _toMs(comp[stage]);
     if (!completedMs) {
-      const derivedMs = stage === 'design'
+      completedMs = stage === 'design'
         ? (_toMs(order.approvedAt) || _toMs(ent.printing))
         : _toMs(ent[keys[i + 1]] || (stage === 'shipping' ? order.stageEnteredAt?.archived : ''));
-      if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
     }
 
     // الموعد المستهدف: المخزّن (اليدوي — مثل موعد تسليم التصميم من الفورم) يفوز؛
@@ -765,11 +742,15 @@ export function getStageResponsibilities(order, slaTable = null) {
     else if (status === 'ongoing') rating = overdue ? 'late' : 'ongoing';
     else rating = overdue ? 'late' : 'good';
 
+    // عرض موحّد ar-EG لكل التواريخ (stageEnteredAt.design يُخزَّن ISO عند الإنشاء؛
+    // باقي المراحل ar-EG) — نطبّع للعرض من الـ ms فلا يظهر نص ISO خام.
     return {
       stage, label: STAGES[stage]?.label || stage,
       responsibleId, responsibleName,
-      enteredAt, enteredMs,
-      completedAt, completedMs,
+      enteredAt: enteredMs ? fmtDateAr(new Date(enteredMs)) : '',
+      enteredMs,
+      completedAt: completedMs ? fmtDateAr(new Date(completedMs)) : '',
+      completedMs,
       deadline, deadlineMs,
       durationMs, durationText: formatDurationAr(durationMs),
       slaHours, status, rating, overdue,
@@ -804,6 +785,64 @@ export function getStageHistory(order) {
       responsibleName: t.assigneeName || '',
       action: t.action || '',
     }));
+}
+
+// ══════════════════════════════════════════
+// ORDER DATES — المرجع الواحد لقراءة كل تواريخ الأوردر (RULE 1)
+// ══════════════════════════════════════════
+/**
+ * 🔱 getOrderDates — المصدر الوحيد لقراءة أي تاريخ يخصّ الأوردر من مكان واحد.
+ * derived بالكامل من حقول الأوردر — صفر state جديد (W1). أي صفحة تحتاج تاريخاً
+ * للأوردر تقرأه من هنا بدل لمس الحقول الفردية المتفرّقة (deadline/approvedAt/
+ * deliveredAt/...). يوحّد الصيغ (ISO/ar-EG) ويزيل التكرار:
+ *   - designDeadline: المرجع stageDeadline.design (fallback الحقل القديم deadline).
+ *   - archived: archivedAt (fallback stageEnteredAt.archived).
+ *
+ * كل تاريخ يُرجَّع كـ { ms, text } (ar-EG) أو null.
+ * @returns {{ created, createdBy, createdByName, designDeadline, stages,
+ *   designApproved, productionDone, shipping, archived, milestones } | null}
+ */
+export function getOrderDates(order) {
+  if (!order) return null;
+  const ent = order.stageEnteredAt || {};
+  const D = (v) => { const ms = _toMs(v); return ms ? { ms, text: fmtDateAr(new Date(ms)) } : null; };
+
+  const created        = D(order.createdAt) || D(order.createdDate);
+  const designDeadline = D(order.stageDeadline?.design) || D(order.deadline);
+  const designApproved = D(order.approvedAt);
+  const productionDone = D(order.prodDoneAt);
+  const shipping = {
+    dispatched:      D(order.shipDispatchedAt),
+    delivered:       D(order.deliveredAt),
+    deliveredBy:     order.deliveredBy || '',
+    collected:       D(order.shipCollectedAt),
+    returned:        D(order.returnedAt),
+    partialReturned: D(order.partialReturnedAt),
+  };
+  const archived = D(order.archivedAt) || D(ent.archived);
+  const stages = getStageResponsibilities(order);
+
+  // مسار زمني موحّد (مرتّب) لكل أحداث الأوردر — مكان واحد لكل التواريخ
+  const M = (key, label, d) => (d ? { key, label, ms: d.ms, text: d.text } : null);
+  const milestones = [
+    M('created', 'إنشاء الطلب', created),
+    ...stages.filter(s => s.kind === 'stage' && s.enteredMs)
+             .map(s => ({ key: 'enter_' + s.stage, label: 'دخول ' + s.label, ms: s.enteredMs, text: s.enteredAt })),
+    M('design_approved', 'اعتماد التصميم', designApproved),
+    M('production_done', 'انتهاء التنفيذ', productionDone),
+    M('ship_dispatched', 'خروج للشحن', shipping.dispatched),
+    M('delivered',       'تسليم للعميل', shipping.delivered),
+    M('collected',       'تحصيل',        shipping.collected),
+    M('returned',        'مرتجع كامل',   shipping.returned),
+    M('partial_returned','مرتجع جزئي',   shipping.partialReturned),
+    M('archived',        'أرشفة',        archived),
+  ].filter(Boolean).sort((a, b) => a.ms - b.ms);
+
+  return {
+    created,
+    createdBy: order.createdBy || '', createdByName: order.createdByName || '',
+    designDeadline, stages, designApproved, productionDone, shipping, archived, milestones,
+  };
 }
 
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
