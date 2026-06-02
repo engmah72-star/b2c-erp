@@ -266,8 +266,14 @@
             <option value="">— اختر المنتج —</option>
           </select>
         </div>
+        <!-- Phase 2: منتقي المصفوفة (مقاس/طباعة/كمية) — يظهر للمنتجات matrix فقط -->
+        <div class="row-gap-sm" id="ep-new-matrix" style="display:none">
+          <div class="fg flex-1"><label>المقاس</label><select class="inp" id="ep-new-size" onchange="onNewProdMatrixChange()"></select></div>
+          <div class="fg flex-1"><label>الطباعة</label><select class="inp" id="ep-new-ptype" onchange="onNewProdMatrixChange()"></select></div>
+          <div class="fg flex-1"><label>الكمية</label><select class="inp" id="ep-new-mqty" onchange="onNewProdMatrixChange()"></select></div>
+        </div>
         <div class="row-gap-sm">
-          <div class="fg flex-1">
+          <div class="fg flex-1" id="ep-new-qty-fg">
             <label>الكمية</label>
             <input type="number" class="inp" id="ep-new-qty" value="1" min="1">
           </div>
@@ -1873,12 +1879,53 @@ window.closeAddProduct = function() {
   const wrap = document.getElementById('ep-add-product-wrap');
   if(wrap) wrap.style.display = 'none';
 };
+// Phase 2: جلب سعر خلية المصفوفة (inline — مطابق لـ getMatrixPrice)
+function _matrixPrice(product,size,printType,qty){
+  if(!product||product.pricingMode!=='matrix')return null;
+  const rows=Array.isArray(product.priceMatrix)?product.priceMatrix:[];
+  const r=rows.find(x=>x.size===size&&x.printType===printType&&Number(x.qty)===Number(qty));
+  return r?(parseFloat(r.price)||0):null;
+}
+function _attr(v){return String(v==null?'':v).replace(/"/g,'&quot;');}
 window.onNewProdSelect = function() {
   const sel = document.getElementById('ep-new-prod-select');
   const opt = sel?.options[sel.selectedIndex];
-  const price = opt?.dataset.price || 0;
   const priceInp = document.getElementById('ep-new-price');
+  const mxWrap = document.getElementById('ep-new-matrix');
+  const qtyFg = document.getElementById('ep-new-qty-fg');
+  const product = productsCatalog.find(p=>p._id===sel?.value);
+  if(product && product.pricingMode==='matrix'){
+    // ملء منتقيات المصفوفة
+    const sizes=product.matrixSizes||[],ptypes=product.matrixPrintTypes||[],qtys=product.matrixQuantities||[];
+    const lbl=t=>t==='digital'?'💻 ديجيتال':'🖨️ أوفست';
+    document.getElementById('ep-new-size').innerHTML=sizes.map(s=>`<option value="${_attr(s)}">📏 ${s}</option>`).join('');
+    document.getElementById('ep-new-ptype').innerHTML=ptypes.map(t=>`<option value="${_attr(t)}">${lbl(t)}</option>`).join('');
+    document.getElementById('ep-new-mqty').innerHTML=qtys.map(q=>`<option value="${q}">${q} ق</option>`).join('');
+    if(mxWrap)mxWrap.style.display='';
+    if(qtyFg)qtyFg.style.display='none';
+    onNewProdMatrixChange();
+    return;
+  }
+  // غير مصفوفة: السلوك القديم (defaultPrice)
+  if(mxWrap)mxWrap.style.display='none';
+  if(qtyFg)qtyFg.style.display='';
+  const price = opt?.dataset.price || 0;
   if(priceInp && price > 0) priceInp.value = price;
+};
+// مزامنة اختيار المصفوفة → السعر + الكمية
+window.onNewProdMatrixChange = function() {
+  const sel = document.getElementById('ep-new-prod-select');
+  const product = productsCatalog.find(p=>p._id===sel?.value);
+  if(!product||product.pricingMode!=='matrix')return;
+  const size=document.getElementById('ep-new-size')?.value||'';
+  const printType=document.getElementById('ep-new-ptype')?.value||'';
+  const mqty=parseInt(document.getElementById('ep-new-mqty')?.value)||0;
+  // مزامنة الكمية لحقل qty الذي يقرؤه confirmAddProduct
+  const qtyInp=document.getElementById('ep-new-qty');if(qtyInp&&mqty)qtyInp.value=mqty;
+  const mp=_matrixPrice(product,size,printType,mqty);
+  const priceInp=document.getElementById('ep-new-price');
+  if(priceInp&&mp!=null)priceInp.value=mp;
+  if(typeof calcAutoPrice==='function')calcAutoPrice();
 };
 window.confirmAddProduct = function() {
   const sel = document.getElementById('ep-new-prod-select');
@@ -1887,15 +1934,19 @@ window.confirmAddProduct = function() {
   const qty = parseInt(document.getElementById('ep-new-qty')?.value)||1;
   const unitPrice = parseFloat(document.getElementById('ep-new-price')?.value)||0;
   const product = productsCatalog.find(p=>p._id===sel.value);
+  const isMatrix = product?.pricingMode==='matrix';
+  // للمنتجات matrix: المقاس/الطباعة من منتقي المصفوفة
+  const mxSize = isMatrix ? (document.getElementById('ep-new-size')?.value||'') : '';
+  const mxPType = isMatrix ? (document.getElementById('ep-new-ptype')?.value||'') : '';
   editProdsData.push({
     productId: sel.value,
     name: product?.name || opt.text.split(' — ')[0],
     qty, unitPrice,
     designImageUrl: '',
-    printType: product?.printType || '',
+    printType: mxPType || product?.printType || '',
     paper: product?.paper || '',
     weight: product?.weight || 0,
-    size: product?.size || '',
+    size: mxSize || product?.size || '',
     notes: product?.notes || ''
   });
   renderEditProdsList();
