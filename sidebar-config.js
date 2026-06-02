@@ -146,11 +146,11 @@ try {
 
   // ── Auto-load Command Palette (Ctrl+K / Cmd+K) ──
   // ينشر التنقّل السريع على كل صفحة تحمّل sidebar-config.js.
-  // Self-contained module — لا تأثير على الـ DOM إلا عند الضغط على Ctrl+K.
+  // Self-contained module — يحقن زرّ بحث ظاهر في الـ topbar + يفتح بـ Ctrl+K.
   if (!document.getElementById('cp-loader')) {
     const s = document.createElement('script');
     s.id = 'cp-loader';
-    s.src = 'command-palette.js?v=1';
+    s.src = 'command-palette.js?v=2';
     s.defer = true;
     document.head.appendChild(s);
   }

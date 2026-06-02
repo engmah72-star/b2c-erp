@@ -269,6 +269,34 @@
     }
   });
 
+  // ── Visible trigger button (topbar) — اكتشاف + لمس/موبايل ──────────
+  // اللوحة كانت تُفتح بـ Ctrl+K فقط (مخفية تماماً للمستخدم العادي وغير
+  // متاحة باللمس على الموبايل). نحقن زرّ بحث ظاهر في .topbar-right بنفس
+  // نمط زر الثيم (notif-bell)، مع إعادة محاولات للصفحات التي تبني الـ
+  // topbar متأخراً (بعد المصادقة). additive · لا تعديل HTML لأي صفحة.
+  function injectTriggerButton() {
+    if (document.getElementById('cpTriggerBtn')) return;
+    const host = document.querySelector('.topbar-right');
+    if (!host) return;
+    const btn = document.createElement('button');
+    btn.id = 'cpTriggerBtn';
+    btn.type = 'button';
+    btn.className = 'notif-bell'; // نفس استايل أيقونات الـ topbar (دائرة 34px)
+    btn.style.cursor = 'pointer';
+    btn.title = 'بحث وتنقّل سريع (Ctrl+K)';
+    btn.setAttribute('aria-label', 'بحث وتنقّل سريع');
+    btn.textContent = '🔍';
+    btn.addEventListener('click', () => { if (modal) close(); else open(); });
+    host.insertBefore(btn, host.firstChild);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectTriggerButton);
+  } else {
+    injectTriggerButton();
+  }
+  window.addEventListener('load', injectTriggerButton);
+  [200, 500, 1000, 2000].forEach(d => setTimeout(injectTriggerButton, d));
+
   // Expose for programmatic use
   window.__b2cCommandPalette = { open, close };
 })();
