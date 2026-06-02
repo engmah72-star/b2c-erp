@@ -622,58 +622,37 @@ function _toMs(v) {
 }
 
 /**
- * مدد المراحل — قيم محسوبة (derived) من order.stageEnteredAt + approvedAt + createdAt.
- * لا تضيف أي state جديد (متوافق مع W1) — للعرض/التحليل فقط.
+ * مدد المراحل (شكل legacy) — wrapper نحيف فوق getStageResponsibilities.
  *
- * لكل مرحلة (تصميم/طباعة/تنفيذ/شحن) — مدّتها + مسؤولها + تقييمها:
- *   - owner   : المسؤول (designerName/printerName/productionAgentName/shippingOfficerName)
- *   - ms/text : مدة بقاء الأوردر في المرحلة = (دخول المرحلة التالية − دخول المرحلة)؛
- *               التصميم يُحسب حتى الاعتماد (approvedAt) إن وُجد.
- *   - slaHours + rating : تقييم مقارنةً بالـ SLA المعتمد (STAGE_SLA_DEFAULTS)
- *               rating ∈ 'good' (ضمن المدة) | 'late' (تجاوز) | 'ongoing' | 'pending'
+ * ⚠️ المرجع الوحيد لدقة تواريخ/مدد/مسؤولية المراحل هو getStageResponsibilities
+ * (RULE 1 — Single Source of Truth). هذه الدالة تشتقّ منه فقط وتعيد تشكيل الخرج
+ * للصيغة القديمة المستخدَمة في order.html/reports.html — مفيش حساب مستقل (لا drift).
  *
- * قيم محسوبة (derived) — لا state جديد (W1). يرجّع { stages, totalMs, totalText }.
+ * @returns { stages:[{key,label,owner,ms,text,hours,slaHours,status,rating}], totalMs, totalText }
  */
-export function getStageDurations(order) {
+export function getStageDurations(order, slaTable = null) {
   if (!order) return { stages: [], totalMs: 0, totalText: '—' };
-  const ent = order.stageEnteredAt || {};
-  const tDesign   = _toMs(ent.design) || _toMs(order.createdAt);
-  const tApproved = _toMs(order.approvedAt);
-  const tPrint    = _toMs(ent.printing);
-  const tProd     = _toMs(ent.production);
-  const tShip     = _toMs(ent.shipping);
-  const tArch     = _toMs(ent.archived);
-  const now = Date.now();
-
-  const defs = [
-    { key: 'design',     label: 'التصميم', owner: order.designerName,        start: tDesign, end: tApproved || tPrint, sla: STAGE_SLA_DEFAULTS.design },
-    { key: 'printing',   label: 'الطباعة', owner: order.printerName,         start: tPrint,  end: tProd,               sla: STAGE_SLA_DEFAULTS.printing },
-    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: getStageSlaForOrder(order, 'production') },
-    { key: 'shipping',   label: 'الشحن',   owner: order.shippingOfficerName, start: tShip,   end: tArch,               sla: STAGE_SLA_DEFAULTS.shipping },
-  ];
-
+  const rows = getStageResponsibilities(order, slaTable).filter(r => r.kind === 'stage');
   let totalMs = 0;
-  const stages = defs.map(d => {
-    const owner = d.owner || '';
-    if (!d.start) {
-      return { key: d.key, label: d.label, owner, ms: 0, text: '—', hours: 0, slaHours: d.sla || 0, status: 'pending', rating: 'pending' };
-    }
-    const ongoing = !d.end;
-    const ms = Math.max(0, (ongoing ? now : d.end) - d.start);
-    totalMs += ms;
-    const hours = ms / 3600000;
-    const overSla = d.sla ? hours > d.sla : false;
-    const rating = ongoing ? (overSla ? 'late' : 'ongoing') : (overSla ? 'late' : 'good');
-    return { key: d.key, label: d.label, owner, ms, text: formatDurationAr(ms), hours, slaHours: d.sla || 0, status: ongoing ? 'ongoing' : 'done', rating };
+  const stages = rows.map(r => {
+    totalMs += r.durationMs;
+    return {
+      key: r.stage, label: r.label, owner: r.responsibleName,
+      ms: r.durationMs, text: r.durationText, hours: r.durationMs / 3600000,
+      slaHours: r.slaHours, status: r.status, rating: r.rating,
+    };
   });
-
   return { stages, totalMs, totalText: formatDurationAr(totalMs) };
 }
 
 // ══════════════════════════════════════════
-// STAGE RESPONSIBILITIES — مدخل موحّد: لكل مرحلة (تاريخ + مسؤول + موعد + تقييم)
+// STAGE RESPONSIBILITIES — المرجع الوحيد لتواريخ/مدد/مسؤولية مراحل الأوردر
 // ══════════════════════════════════════════
 /**
+ * 🔱 المصدر الوحيد للحقيقة (RULE 1) لكل ما يخص دقة تواريخ ومسؤولية مراحل الأوردر.
+ * أي عرض/تحليل لتواريخ أو مدد أو مسؤولي المراحل يشتقّ من هنا — مفيش مصدر تاني
+ * (getStageDurations نفسها wrapper فوق هذه الدالة).
+ *
  * يجمّع في مصفوفة واحدة كل ما يخص كل مرحلة من الأوردر — derived فقط (W1):
  *   - المسؤول (id/name) من STAGE_OWNERSHIP (designerId/printerId/...).
  *   - تاريخ الدخول   (stageEnteredAt[stage]).

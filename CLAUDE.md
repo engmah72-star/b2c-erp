@@ -72,6 +72,7 @@ shipping/collection/returns/files/financial events).
 | رصيد عميل | `transactions_v2` + `orders` |
 | رصيد الشحن | `shipping_settlements` |
 | **حالة الطلب** | `order.stage` (المرجع الرسمي الوحيد) |
+| **تواريخ/مدد/مسؤولية مراحل الأوردر** | `getStageResponsibilities()` (يشتقّ من `stageEnteredAt`/`stageCompletedAt`/`stageDeadline` + حقول الملكية) — **المرجع الوحيد**؛ `getStageDurations` wrapper فوقه. ممنوع حساب تواريخ/مدد المراحل مستقلاً في أي صفحة. |
 
 حالات مساعِدة (لا تتعارض مع stage): `shipStage` · `approvalStatus` ·
 `productStatus` (داخل `products[]`) · `returnStatus`.

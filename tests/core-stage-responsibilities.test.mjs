@@ -19,6 +19,7 @@ import {
   buildStageAdvance,
   buildStageRevert,
   getStageResponsibilities,
+  getStageDurations,
   getStageHistory,
   validateOrderResponsibility,
   fmtDateAr,
@@ -238,6 +239,34 @@ test('getStageResponsibilities: derives completion from next entry when stageCom
 
 test('getStageResponsibilities: empty/no order → []', () => {
   assertEq(getStageResponsibilities(null).length, 0);
+});
+
+test('getStageDurations: delegates to single source (matches getStageResponsibilities)', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'production',
+    designerName: 'مصمم', printerName: 'طبّاع', productionAgentName: 'منفّذ',
+    stageEnteredAt: {
+      design:     new Date(now - 50 * HOUR).toISOString(),
+      printing:   new Date(now - 40 * HOUR).toISOString(),
+      production: new Date(now - 10 * HOUR).toISOString(),
+    },
+    stageCompletedAt: {
+      design:   new Date(now - 40 * HOUR).toISOString(),
+      printing: new Date(now - 10 * HOUR).toISOString(),
+    },
+  };
+  const dur = getStageDurations(order);
+  const rows = getStageResponsibilities(order).filter(r => r.kind === 'stage');
+  assertEq(dur.stages.length, 4, 'four stages (no intake)');
+  // كل صف في getStageDurations يطابق المرجع الواحد
+  dur.stages.forEach((s, i) => {
+    assertEq(s.key, rows[i].stage);
+    // المرحلة الجارية تعتمد على Date.now() لحظة كل استدعاء → سماحية صغيرة
+    assert(Math.abs(s.ms - rows[i].durationMs) <= 50, 'duration matches source for ' + s.key);
+    assertEq(s.rating, rows[i].rating, 'rating matches source for ' + s.key);
+    assertEq(s.owner, rows[i].responsibleName);
+  });
 });
 
 test('getStageResponsibilities: ISO stageEnteredAt normalized to ar-EG display', () => {
