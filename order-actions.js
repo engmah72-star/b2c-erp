@@ -31,6 +31,7 @@ import {
   advanceOrderStageWithLock,
   nowStr,
   fmtDateAr,
+  validateOrderResponsibility,
   ORDER_DESIGN_STAGES,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
@@ -288,6 +289,13 @@ export const orderActions = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+
+      // قاعدة المسؤولية العامة (R): مفيش أوردر بدون مسؤول + تاريخ.
+      // createdBy=userId و createdDate مضمونان أعلاه، فالحارس دفاعي (fail-closed).
+      const respChk = validateOrderResponsibility({ ...orderData, createdAt: nowAr });
+      if (!respChk.ok) {
+        return { ok: false, errors: respChk.errors, warnings: [], orderId };
+      }
 
       try {
         const batch = writeBatch(db);
