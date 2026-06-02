@@ -6,7 +6,7 @@ import {
   calcPeriodFlow, calcOrderStats, calcNewClientsInRange,
   calcSupplierDue, calcStageDistribution,
   calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount,
-  calcMonthlyRevenueChart, diffHTML,
+  calcMonthlyRevenueChart, calcTargetProgress, diffHTML,
 } from '../core/reports-financial-kpis.js';
 
 let passed = 0, failed = 0;
@@ -49,6 +49,44 @@ test('excludes out-of-range transactions', () => {
   ];
   const r = calcPeriodFlow(txs, RANGE);
   assertEq(r.periodIn, 100);
+});
+
+// ── calcTargetProgress ─────────────────────────────────────────────
+test('no targets configured → hasTargets false, pct 0', () => {
+  const r = calcTargetProgress({ transactions: [], clients: [], range: RANGE });
+  assertEq(r.hasTargets, false);
+  assertEq(r.revenuePct, 0);
+  assertEq(r.clientsPct, 0);
+});
+
+test('revenue + clients progress percentages', () => {
+  const txs = [
+    { ...ts(NOW), type: 'in', amount: 50000 },
+    { ...ts(NOW), type: 'out', amount: 9999 }, // ignored for income
+  ];
+  const clients = [ts(NOW), ts(NOW), ts(NOW)]; // 3 new in range
+  const r = calcTargetProgress({
+    transactions: txs, clients, range: RANGE,
+    revenueTarget: 100000, clientTarget: 30,
+  });
+  assertEq(r.hasTargets, true);
+  assertEq(r.revenueAchieved, 50000);
+  assertEq(r.revenuePct, 50);
+  assertEq(r.clientsAchieved, 3);
+  assertEq(r.clientsPct, 10);
+});
+
+test('over-achievement exceeds 100%, out-of-range excluded', () => {
+  const txs = [
+    { ...ts(NOW), type: 'in', amount: 150000 },
+    { ...ts(new Date(2026, 3, 1)), type: 'in', amount: 99999 }, // April, excluded
+  ];
+  const r = calcTargetProgress({
+    transactions: txs, clients: [], range: RANGE,
+    revenueTarget: 100000, clientTarget: 0,
+  });
+  assertEq(r.revenuePct, 150);
+  assertEq(r.clientsPct, 0); // zero target → 0
 });
 
 // ── calcOrderStats ─────────────────────────────────────────────────
