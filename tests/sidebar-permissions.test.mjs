@@ -73,22 +73,24 @@ function loadScript(rel, env) {
   fn(env.window, env.document, env.location, env.localStorage);
 }
 // Build a fresh sidebar API bound to its own env + render the link list for a role.
-function sidebarFor(role, { pathname = '/order.html' } = {}) {
-  const env = makeEnv({ pathname });
+function sidebarFor(role, { pathname = '/order.html', search = '' } = {}) {
+  const env = makeEnv({ pathname, search });
   loadScript('sidebar-config.js', env);
   loadScript('sidebar.js', env);
   const userData = { role, permissions: getRoleDefaultPermissions(role) };
   return { env, api: env.window.B2CSidebar, userData };
 }
-function pagesFor(role) {
-  const { env, api, userData } = sidebarFor(role);
+function pagesFor(role, opts) {
+  const { env, api, userData } = sidebarFor(role, opts);
   const cur = '/order.html'.split('/').pop();
   api.build(userData, cur);
   return [...env.navEl.innerHTML.matchAll(/href="([^"]+)"/g)].map(m => m[1]);
 }
 
 const PUBLIC_PAGES = ['my-home.html', 'my-requests.html', 'my-profile.html', 'inbox.html'];
-const ADMIN_ONLY_PAGES = ['employees.html', 'role-viewer.html', 'report-bug.html', 'settings.html', 'employee-control.html'];
+// صفحات الأدمن الإدارية الصرفة — admin فقط (operation_manager لا يراها بعد إصلاح #1).
+const ADMIN_ONLY_PAGES = ['employees.html', 'role-viewer.html', 'report-bug.html', 'employee-control.html'];
+// settings صفحة تشغيلية: يراها admin + operation_manager، وتُحجب عن باقي الأدوار.
 
 // ══ build() — link visibility per role (pins current behavior) ════
 
@@ -100,20 +102,35 @@ test('build: every role sees the 4 public pages', () => {
   }
 });
 
-test('build: admin sees admin-only management pages', () => {
+test('build: admin sees admin-only management pages + settings', () => {
   const pages = pagesFor('admin');
   ADMIN_ONLY_PAGES.forEach(p => assertHas(pages, p));
-  ['accounts.html', 'reports.html', 'suppliers.html', 'products.html', 'approvals.html'].forEach(p => assertHas(pages, p));
+  ['settings.html', 'accounts.html', 'reports.html', 'suppliers.html', 'products.html', 'approvals.html']
+    .forEach(p => assertHas(pages, p));
 });
 
-// ── FINDING #1 (documented as CURRENT behavior, not endorsed) ──
-// operation_manager is treated as "admin" by isAdmin(), so it bypasses the
-// adminOnly flag and sees employees/settings/role-viewer/report-bug too.
-// This test PINS that reality. If the over-permission is ever fixed, update
-// this test deliberately (it is the trip-wire).
-test('build: operation_manager currently sees ALL adminOnly pages (finding #1)', () => {
+// ── FINDING #1 — FIXED ──
+// operation_manager no longer bypasses adminOnly. It loses the admin-management
+// pages (employees/employee-control/role-viewer/report-bug) but KEEPS settings,
+// which was reclassified as an operational (perm-based) page.
+test('build: operation_manager does NOT see admin-management pages (finding #1 fixed)', () => {
   const pages = pagesFor('operation_manager');
+  ADMIN_ONLY_PAGES.forEach(p => assertHasNot(pages, p));
+});
+
+test('build: operation_manager DOES keep settings (operational page)', () => {
+  assertHas(pagesFor('operation_manager'), 'settings.html');
+});
+
+// ── Kill switch (reversible — RULE E1) ──
+// feat.opsAdminPages=1 restores pre-fix behavior: ops sees adminOnly pages again.
+test('build: kill switch feat.opsAdminPages=1 restores adminOnly pages for ops', () => {
+  const pages = pagesFor('operation_manager', { search: '?feat.opsAdminPages=1' });
   ADMIN_ONLY_PAGES.forEach(p => assertHas(pages, p));
+});
+
+test('build: settings stays hidden from non-admin roles (e.g. customer_service)', () => {
+  assertHasNot(pagesFor('customer_service'), 'settings.html');
 });
 
 test('build: customer_service sees clients/design, NOT admin pages', () => {
@@ -158,8 +175,19 @@ test('guard: admin allowed on any page', () => {
   assertEq(api.guard(userData, 'employees.html'), true);
 });
 
-test('guard: operation_manager allowed on admin pages (finding #1)', () => {
-  const { api, userData } = sidebarFor('operation_manager', { pathname: '/employees.html' });
+test('guard: operation_manager denied on employees.html → redirect (finding #1 fixed)', () => {
+  const { env, api, userData } = sidebarFor('operation_manager', { pathname: '/employees.html' });
+  assertEq(api.guard(userData, 'employees.html'), false);
+  assertEq(env.location.href, 'ops-dashboard.html', '(role landing page)');
+});
+
+test('guard: operation_manager still allowed on settings.html', () => {
+  const { api, userData } = sidebarFor('operation_manager', { pathname: '/settings.html' });
+  assertEq(api.guard(userData, 'settings.html'), true);
+});
+
+test('guard: kill switch feat.opsAdminPages=1 re-allows ops on employees.html', () => {
+  const { api, userData } = sidebarFor('operation_manager', { pathname: '/employees.html', search: '?feat.opsAdminPages=1' });
   assertEq(api.guard(userData, 'employees.html'), true);
 });
 
