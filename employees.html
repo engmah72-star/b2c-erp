@@ -275,7 +275,7 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],appSettings={};
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
 let payOneEmpId=null,periodFilter='month_cur';
@@ -494,7 +494,8 @@ window.openKpiPanel=function(empId,authUid,empName){
   },null);
   const isAdmin=['admin','operation_manager'].includes(currentRole);
   hdr.innerHTML=buildKpiPanelHeaderHTML({empName,roleLabel:ROLES[e.role]?.label||e.role,mKey});
-  body.innerHTML=buildKpiPanelBodyHTML({attendance,productivity,quality,total,monthAtt,workDays,scoreCol,scoreLbl,mKey,savedEval,goal,lastAct,isAdmin,empId,empName,e,escAttr});
+  const roleDefault=parseFloat(appSettings.roleTargets?.[e.role])||0;
+  body.innerHTML=buildKpiPanelBodyHTML({attendance,productivity,quality,total,monthAtt,workDays,scoreCol,scoreLbl,mKey,savedEval,goal,lastAct,isAdmin,empId,empName,e,escAttr,roleDefault});
   window.__kpiRating=savedEval?.managerRating||0;
   document.getElementById('panel-ov').classList.add('open');
 };
@@ -506,6 +507,7 @@ window.saveEmpGoal=async function(empId,empName,month){
   const attDays=parseInt(document.getElementById('kpi-g-att')?.value)||0;
   const ordersT=parseInt(document.getElementById('kpi-g-ord')?.value)||0;
   const qualPct=parseInt(document.getElementById('kpi-g-qlt')?.value)||0;
+  const primaryT=parseFloat(document.getElementById('kpi-g-primary')?.value)||0;
   // حوّل أيام الحضور إلى نسبة مئوية
   const emp2=employees.find(x=>x._id===empId);
   const wDays=Math.max(1,emp2?.annualLeaveQuota?Math.round((365-(emp2.annualLeaveQuota||21))/12):22);
@@ -518,6 +520,8 @@ window.saveEmpGoal=async function(empId,empName,month){
       targetOrdersMonthly:ordersT,
       targetAttendancePct,
       targetQualityPct:qualPct,
+      // هدف الدور الأساسي (تخصيص لكل موظف) — يتجاوز افتراضي الدور في settings/main
+      targetPrimary:primaryT,
       // Nested format — used by KPI panel in this page
       targets:{attendanceDays:attDays,ordersTarget:ordersT,qualityPct:qualPct},
       updatedBy:currentUser?.uid||'',updatedByName:userName,updatedAt:serverTimestamp()
@@ -605,6 +609,8 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'employee_goals'),limit(2000)),snap=>{
     empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
+  // أهداف الأدوار الافتراضية (settings/main) — لعرضها كـ placeholder في لوحة KPI
+  onSnapshot(doc(db,'settings','main'),snap=>{appSettings=snap.exists()?snap.data():{};});
   onSnapshot(query(collection(db,'employee_evaluations'),limit(2000)),snap=>{
     empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });

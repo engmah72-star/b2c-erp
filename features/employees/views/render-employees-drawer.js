@@ -22,6 +22,8 @@
  * and #panel-body delegation (set-rating / save-goal / save-eval) is unaffected.
  */
 
+import { ROLE_TARGET_METRICS } from '../../../core/employee-kpis.js';
+
 /* ── KPI panel header (former openKpiPanel lines 585–588) ── */
 export function buildKpiPanelHeaderHTML({ empName, roleLabel, mKey }) {
   return `<div>
@@ -34,8 +36,9 @@ export function buildKpiPanelHeaderHTML({ empName, roleLabel, mKey }) {
 export function buildKpiPanelBodyHTML({
   attendance, productivity, quality, total, monthAtt, workDays,
   scoreCol, scoreLbl, mKey, savedEval, goal, lastAct, isAdmin,
-  empId, empName, e, escAttr,
+  empId, empName, e, escAttr, roleDefault = 0,
 }) {
+  const tm = ROLE_TARGET_METRICS[e?.role];
   const axisRow=(lbl,val,max,col,sub,goalVal)=>`<div class="emp2-axis">
     <div class="emp2-axis-head">
       <span class="txt-strong-base">${lbl}</span>
@@ -72,6 +75,9 @@ export function buildKpiPanelBodyHTML({
         <div><div class="emp2-goal-lbl">جودة %</div>
           <input id="kpi-g-qlt" type="number" min="0" max="100" placeholder="80" value="${goal?.targets?.qualityPct||''}" class="emp2-goal-input"></div>
       </div>
+      ${tm?`<div style="margin-top:8px">
+        <div class="emp2-goal-lbl">${tm.ico} ${tm.label} — هدف الشهر${roleDefault>0?` <span style="opacity:.6">(افتراضي الدور: ${roleDefault})</span>`:''}</div>
+        <input id="kpi-g-primary" type="number" min="0" placeholder="${roleDefault||tm.label}" value="${goal?.targetPrimary||''}" class="emp2-goal-input"></div>`:''}
       <button type="button" data-act="save-goal" data-eid="${escAttr(empId)}" data-ename="${escAttr(empName)}" data-mkey="${escAttr(mKey)}" class="emp2-goal-save">💾 حفظ الأهداف</button>
     </div>
     <div class="emp2-eval-box">

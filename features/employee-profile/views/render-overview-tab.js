@@ -109,6 +109,30 @@ export function buildGoalsHTML({ goal, actualOrders = 0, actualDone = 0, present
   </div>`;
 }
 
+// ── ROLE TARGET ACHIEVEMENT ─────────────────────────────────────────
+
+/**
+ * Build the "🎯 هدف الشهر" achievement card (role-specific metric).
+ * @param {null|Object} ach — output of computeTargetAchievement(); null → empty string
+ * @returns {string} HTML
+ */
+export function buildTargetAchievementHTML(ach) {
+  if (!ach) return '';
+  const w = Math.min(100, ach.pct);
+  const done = ach.pct >= 100;
+  return `<div style="background:var(--bg3);border-radius:var(--rad2);padding:14px;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-weight:var(--fw-extra);font-size:var(--fs-md)">${ach.ico} هدف الشهر — ${escAttr(ach.label)}</span>
+      <span style="font-weight:var(--fw-heavy);color:${ach.col};font-size:var(--fs-lg)">${ach.pct}%${done ? ' ✅' : ''}</span>
+    </div>
+    <div class="prod-bar-wrap"><div class="prod-bar-fill" style="width:${w}%;background:${ach.col}"></div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:var(--fs-sm);color:var(--dim2)">
+      <span>المُحقّق: <b style="color:${ach.col}">${ach.actualFmt} ${ach.unit}</b></span>
+      <span>الهدف: <b>${ach.targetFmt} ${ach.unit}</b>${ach.isOverride ? ' <span style="opacity:.6">(مخصص)</span>' : ''}</span>
+    </div>
+  </div>`;
+}
+
 // ── EVALUATIONS ────────────────────────────────────────────────────
 
 export function buildEvaluationsHTML({ evaluations = [], currentMonthKey }) {

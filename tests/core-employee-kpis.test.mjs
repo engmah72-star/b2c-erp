@@ -5,7 +5,7 @@
  * Pure tests — no Firestore, no DOM. Locks role-based KPI shapes and
  * commission computation against future regressions.
  */
-import { computeRoleKpis } from '../core/employee-kpis.js';
+import { computeRoleKpis, computeTargetAchievement } from '../core/employee-kpis.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -195,6 +195,63 @@ test('income.total = base + commission', () => {
   });
   assertEq(r.income.total, 7000);
   assertEq(r.income.base, 7000);
+});
+
+// ── computeTargetAchievement ────────────────────────────────────────
+test('CS target = unique clients in month orders, uses role default', () => {
+  const orders = [
+    { clientId: 'c1', salePrice: 100 },
+    { clientId: 'c1', salePrice: 200 }, // same client
+    { clientId: 'c2', salePrice: 50 },
+  ];
+  const r = computeTargetAchievement({
+    employee: { role: 'customer_service' }, myOrders: orders,
+    roleTargets: { customer_service: 4 }, format: latinFmt,
+  });
+  assertEq(r.actual, 2);          // 2 unique clients
+  assertEq(r.target, 4);
+  assertEq(r.pct, 50);
+  assertEq(r.unit, 'عميل');
+  assertEq(r.isOverride, false);
+});
+
+test('designer target = sum of salePrice (revenue)', () => {
+  const orders = [{ salePrice: 3000 }, { salePrice: 2000 }];
+  const r = computeTargetAchievement({
+    employee: { role: 'graphic_designer' }, myOrders: orders,
+    roleTargets: { graphic_designer: 10000 }, format: latinFmt,
+  });
+  assertEq(r.key, 'revenue');
+  assertEq(r.actual, 5000);
+  assertEq(r.pct, 50);
+  assertEq(r.targetFmt, '10000');
+});
+
+test('per-employee goal.targetPrimary overrides role default', () => {
+  const r = computeTargetAchievement({
+    employee: { role: 'shipping_officer' },
+    myOrders: [{ stage: 'archived' }, { stage: 'shipping' }, { stage: 'design' }],
+    goal: { targetPrimary: 2 }, roleTargets: { shipping_officer: 99 }, format: latinFmt,
+  });
+  assertEq(r.actual, 2);          // 2 shipped (archived + shipping)
+  assertEq(r.target, 2);          // override wins
+  assertEq(r.pct, 100);
+  assertEq(r.isOverride, true);
+});
+
+test('null when no target configured', () => {
+  const r = computeTargetAchievement({
+    employee: { role: 'customer_service' }, myOrders: [{ clientId: 'c1' }],
+    roleTargets: {}, format: latinFmt,
+  });
+  assertEq(r, null);
+});
+
+test('null when role has no metric (admin)', () => {
+  const r = computeTargetAchievement({
+    employee: { role: 'admin' }, myOrders: [], roleTargets: { admin: 5 },
+  });
+  assertEq(r, null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

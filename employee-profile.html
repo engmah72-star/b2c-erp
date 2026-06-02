@@ -255,14 +255,14 @@ import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
-import { computeRoleKpis } from "./core/employee-kpis.js";
+import { computeRoleKpis, computeTargetAchievement } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
 import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
 import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
 import { buildTasksHTML, buildIncidentsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
-import { computeProductStats, buildGoalsHTML, buildEvaluationsHTML, buildSkillsAndProductsHTML, buildSkillEditTagsHTML, buildBehaviorHTML, buildInsightsHTML } from "./features/employee-profile/views/render-overview-tab.js";
+import { computeProductStats, buildGoalsHTML, buildTargetAchievementHTML, buildEvaluationsHTML, buildSkillsAndProductsHTML, buildSkillEditTagsHTML, buildBehaviorHTML, buildInsightsHTML } from "./features/employee-profile/views/render-overview-tab.js";
 import { TAB_KEYS, setupStickyHero, setupKeyboardShortcuts, setupQAMenuOutsideClick, toggleQAMenu, closeQAMenu } from "./features/employee-profile/views/tab-router.js";
 import { buildScoreHTML } from "./features/employee-profile/views/render-score.js";
 import { buildTabsShellHTML } from "./features/employee-profile/views/render-tabs-shell.js";
@@ -272,6 +272,7 @@ import { employeeActions } from "./employee-actions.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
+let appSettings={}; // settings/main — per-role default monthly targets (roleTargets)
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
@@ -555,6 +556,8 @@ onAuthStateChanged(auth,async u=>{
     empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderGoals();
   });
+  // أهداف الأدوار الافتراضية (settings/main) — single doc
+  onSnapshot(doc(db,'settings','main'),snap=>{appSettings=snap.exists()?snap.data():{};renderGoals();});
   // تقييمات الموظف
   onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId),limit(60)),snap=>{
     empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
@@ -686,15 +689,18 @@ function renderGoals(){
   const el=document.getElementById('goals-container');if(!el||!emp)return;
   const mKey=monthKey();
   const goal=empGoals.find(g=>g.month===mKey);
-  if(!goal){el.innerHTML=buildGoalsHTML({goal:null});return;}
   const mOrdsG=getEmpOrders(allOrders.filter(o=>{const d=o.createdAt?.toDate?.();return d&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}));
-  el.innerHTML=buildGoalsHTML({
+  // 🎯 هدف الدور الأساسي (نسبة التحقق) — يظهر حتى بدون goal شهري (يستخدم افتراضي الدور)
+  const ach=computeTargetAchievement({employee:emp,myOrders:mOrdsG,goal,roleTargets:appSettings.roleTargets||{},format:fn});
+  const achHTML=buildTargetAchievementHTML(ach);
+  const goalsHTML=goal?buildGoalsHTML({
     goal,
     actualOrders:mOrdsG.length,
     actualDone:mOrdsG.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length,
     presentDays:empAttendance.filter(a=>a.date?.startsWith(mKey)).length,
     elapsed:Math.max(1,now.getDate()),
-  });
+  }):buildGoalsHTML({goal:null});
+  el.innerHTML=achHTML+goalsHTML;
 }
 
 // ══ EVALUATIONS ══

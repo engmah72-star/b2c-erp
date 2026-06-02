@@ -128,6 +128,74 @@ function kpisDefault({ myOrders, employee }) {
   ];
 }
 
+// ── ROLE-BASED MONTHLY TARGET ACHIEVEMENT ──────────────────────────
+//
+// لكل دور "هدف أساسي" بمقياسه المناسب (يختلف عن الأهداف العامة في employee_goals).
+// مصدر قيمة الهدف: override لكل موظف (employee_goals.targetPrimary) ثم الافتراضي
+// العام للدور (settings/main.roleTargets[role]). المُحقّق يُحسب من أوردرات الشهر.
+
+/** Role → primary target metric descriptor. */
+export const ROLE_TARGET_METRICS = {
+  customer_service:  { key: 'clients',   label: 'عدد العملاء',     unit: 'عميل',  ico: '🧑‍🤝‍🧑' },
+  operation_manager: { key: 'orders',    label: 'عدد الأوردرات',   unit: 'أوردر', ico: '📦' },
+  graphic_designer:  { key: 'revenue',   label: 'قيمة التصميمات',  unit: 'ج',     ico: '💰' },
+  design_operator:   { key: 'revenue',   label: 'قيمة التصميمات',  unit: 'ج',     ico: '💰' },
+  production_agent:  { key: 'orders',    label: 'أوردرات التنفيذ', unit: 'أوردر', ico: '🏭' },
+  shipping_officer:  { key: 'shipments', label: 'عدد الشحنات',     unit: 'شحنة',  ico: '🚚' },
+};
+
+/** Compute the achieved value for a metric key from a month's employee orders. */
+function targetActual(metricKey, myOrders) {
+  switch (metricKey) {
+    case 'clients':
+      return new Set(myOrders.map(o => o.clientId || o.clientPhone || o.clientName)).size;
+    case 'revenue':
+      return myOrders.reduce((s, o) => s + (parseFloat(o.salePrice) || 0), 0);
+    case 'shipments':
+      return myOrders.filter(o => SHIPPED_STAGES.includes(o.stage)).length;
+    case 'orders':
+    default:
+      return myOrders.length;
+  }
+}
+
+/**
+ * Role-specific monthly target achievement.
+ *
+ * @param {Object}   args
+ * @param {Object}   args.employee     — { role }
+ * @param {Array}    [args.myOrders=[]] — employee orders filtered to the CURRENT month
+ * @param {Object}   [args.goal]        — employee_goals doc for the month (override via targetPrimary)
+ * @param {Object}   [args.roleTargets] — settings/main.roleTargets (per-role defaults)
+ * @param {Function} [args.format]
+ * @returns {null | {key,label,unit,ico,actual,target,pct,col,actualFmt,targetFmt,isOverride}}
+ *          null when the role has no metric or no target is configured.
+ */
+export function computeTargetAchievement({
+  employee, myOrders = [], goal = null, roleTargets = {}, format = defaultFormat,
+}) {
+  const role = employee?.role;
+  const metric = ROLE_TARGET_METRICS[role];
+  if (!metric) return null;
+
+  const override = parseFloat(goal?.targetPrimary) || 0;
+  const fallback = parseFloat(roleTargets?.[role]) || 0;
+  const target = override > 0 ? override : fallback;
+  if (!(target > 0)) return null;
+
+  const actual = targetActual(metric.key, myOrders);
+  const pct = Math.max(0, Math.round((actual / target) * 100));
+  const col = pct >= 100 ? 'var(--g)' : pct >= 70 ? 'var(--b)' : pct >= 40 ? 'var(--y)' : 'var(--r)';
+
+  return {
+    key: metric.key, label: metric.label, unit: metric.unit, ico: metric.ico,
+    actual, target, pct, col,
+    actualFmt: metric.key === 'revenue' ? format(actual) : String(actual),
+    targetFmt: metric.key === 'revenue' ? format(target) : String(target),
+    isOverride: override > 0,
+  };
+}
+
 // ── public API ──────────────────────────────────────────────────────
 
 /**

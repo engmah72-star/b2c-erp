@@ -88,6 +88,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { computeTargetAchievement } from "./core/employee-kpis.js";
 const ROLES={
   admin:{label:'Admin',col:'var(--r)',ico:'👑'},
   operation_manager:{label:'مدير عمليات',col:'var(--b-bright)',ico:'📋'},
@@ -114,6 +115,7 @@ const INC_SEV={low:{lbl:'منخفض',col:'var(--dim2)'},medium:{lbl:'متوسط'
 // ── State ──
 let me=null, myEmpId='', myAuthUid='';
 let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[];
+let appSettings={}; // settings/main — per-role default monthly targets (roleTargets)
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
 // Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
 const TAB_KEYS_MP=['overview','attendance','salary','feedback'];
@@ -256,6 +258,10 @@ function renderAll(){
   if(!me)return;
   const r=ROLES[me.role]||{label:me.role,col:'var(--dim-arch)',ico:'👤'};
   const cur=calcScoreFor(monthKey());
+  // 🎯 تحقيق هدف الدور (نسبة) — من أوردرات الشهر الحالي
+  const _mk=monthKey().split('-').map(Number);
+  const _monthOrds=myOrders.filter(o=>{const d=o.createdAt?.toDate?.();return d&&d.getMonth()===(_mk[1]-1)&&d.getFullYear()===_mk[0];});
+  const ach=computeTargetAchievement({employee:me,myOrders:_monthOrds,goal:cur.meta.goal,roleTargets:appSettings.roleTargets||{},format:fn});
   const prevKey=(()=>{const d=new Date(now.getFullYear(),now.getMonth()-1,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
   const prev=calcScoreFor(prevKey);
   const delta=cur.score-prev.score;
@@ -364,16 +370,23 @@ function renderAll(){
         </div>
       </div>
 
-      <!-- Goal -->
-      ${cur.meta.goal?`<div class="section mp-mb-14">
+      <!-- Goal — تحقيق هدف الدور الأساسي (نسبة) -->
+      ${ach?`<div class="section mp-mb-14">
         <div class="section-head mp-mb-10">
-          <div class="section-title">🎯 هدف الشهر</div>
+          <div class="section-title">🎯 هدف الشهر — ${ach.label}</div>
         </div>
         <div class="mp-card">
-          ${cur.meta.goal.targetOrdersMonthly?`<div class="mp-lv-row mb-6"><span class="txt-meta-base">📦 الأوردرات</span><span class="txt-bold-base">${cur.breakdown.prod.total} / ${cur.meta.goal.targetOrdersMonthly}</span></div>
-          <div class="bd-bar"><div class="bd-fill mp-fill-b" style="width:${Math.min(100,cur.breakdown.prod.total/cur.meta.goal.targetOrdersMonthly*100)}%"></div></div>`:''}
+          <div class="mp-lv-row mb-6"><span class="txt-meta-base">${ach.ico} المُحقّق</span><span class="txt-bold-base" style="color:${ach.col}">${ach.actualFmt} / ${ach.targetFmt} ${ach.unit} · ${ach.pct}%${ach.pct>=100?' ✅':''}</span></div>
+          <div class="bd-bar"><div class="bd-fill" style="width:${Math.min(100,ach.pct)}%;background:${ach.col}"></div></div>
+          ${ach.isOverride?'<div class="mp-subnote">هدف مخصص لك</div>':''}
         </div>
-      </div>`:''}
+      </div>`:(cur.meta.goal?.targetOrdersMonthly?`<div class="section mp-mb-14">
+        <div class="section-head mp-mb-10"><div class="section-title">🎯 هدف الشهر</div></div>
+        <div class="mp-card">
+          <div class="mp-lv-row mb-6"><span class="txt-meta-base">📦 الأوردرات</span><span class="txt-bold-base">${cur.breakdown.prod.total} / ${cur.meta.goal.targetOrdersMonthly}</span></div>
+          <div class="bd-bar"><div class="bd-fill mp-fill-b" style="width:${Math.min(100,cur.breakdown.prod.total/cur.meta.goal.targetOrdersMonthly*100)}%"></div></div>
+        </div>
+      </div>`:'')}
 
       <!-- Tip -->
       <div class="tip">
@@ -689,6 +702,9 @@ onAuthStateChanged(auth,async u=>{
     myGoals=s.docs.map(d=>({...d.data(),_id:d.id}));
     renderAll();
   },err=>console.warn('goal:',err.message));
+
+  // أهداف الأدوار الافتراضية (settings/main) — single doc
+  onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};renderAll();},err=>console.warn('settings:',err.message));
 
   // Orders relevant to me — for productivity score (bounded, RULE G3).
   // Reads the most recent 3000 orders; productivity is current-quarter heavy.
