@@ -707,7 +707,7 @@ export function getStageResponsibilities(order, slaTable = null) {
     label: 'إدخال الطلب',
     responsibleId:   order.createdBy     || order.assignedTo || '',
     responsibleName: order.createdByName || order.csName     || '',
-    enteredAt: typeof intakeEnteredAt === 'string' ? intakeEnteredAt : (intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : ''),
+    enteredAt: intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : (typeof intakeEnteredAt === 'string' ? intakeEnteredAt : ''),
     enteredMs: intakeEnteredMs,
     completedAt: intakeDoneMs ? fmtDateAr(new Date(intakeDoneMs)) : '',
     completedMs: intakeDoneMs,
@@ -726,18 +726,16 @@ export function getStageResponsibilities(order, slaTable = null) {
     const responsibleId   = order[own.idField]   || '';
     const responsibleName = order[own.nameField] || '';
 
-    const enteredAt = ent[stage] || '';
-    const enteredMs = _toMs(enteredAt);
+    const enteredRaw = ent[stage] || '';
+    const enteredMs = _toMs(enteredRaw);
 
     // الإنجاز: stageCompletedAt الصريح أولاً، ثم fallback derived (للبيانات القديمة):
     //   التصميم → approvedAt أو دخول الطباعة؛ باقي المراحل → دخول المرحلة التالية.
-    let completedAt = comp[stage] || '';
-    let completedMs = _toMs(completedAt);
+    let completedMs = _toMs(comp[stage]);
     if (!completedMs) {
-      const derivedMs = stage === 'design'
+      completedMs = stage === 'design'
         ? (_toMs(order.approvedAt) || _toMs(ent.printing))
         : _toMs(ent[keys[i + 1]] || (stage === 'shipping' ? order.stageEnteredAt?.archived : ''));
-      if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
     }
 
     // الموعد المستهدف: المخزّن (اليدوي — مثل موعد تسليم التصميم من الفورم) يفوز؛
@@ -765,11 +763,15 @@ export function getStageResponsibilities(order, slaTable = null) {
     else if (status === 'ongoing') rating = overdue ? 'late' : 'ongoing';
     else rating = overdue ? 'late' : 'good';
 
+    // عرض موحّد ar-EG لكل التواريخ (stageEnteredAt.design يُخزَّن ISO عند الإنشاء؛
+    // باقي المراحل ar-EG) — نطبّع للعرض من الـ ms فلا يظهر نص ISO خام.
     return {
       stage, label: STAGES[stage]?.label || stage,
       responsibleId, responsibleName,
-      enteredAt, enteredMs,
-      completedAt, completedMs,
+      enteredAt: enteredMs ? fmtDateAr(new Date(enteredMs)) : '',
+      enteredMs,
+      completedAt: completedMs ? fmtDateAr(new Date(completedMs)) : '',
+      completedMs,
       deadline, deadlineMs,
       durationMs, durationText: formatDurationAr(durationMs),
       slaHours, status, rating, overdue,

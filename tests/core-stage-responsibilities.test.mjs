@@ -240,6 +240,14 @@ test('getStageResponsibilities: empty/no order → []', () => {
   assertEq(getStageResponsibilities(null).length, 0);
 });
 
+test('getStageResponsibilities: ISO stageEnteredAt normalized to ar-EG display', () => {
+  const iso = new Date(Date.now() - 3 * HOUR).toISOString();
+  const order = { stage: 'design', stageEnteredAt: { design: iso } };
+  const design = getStageResponsibilities(order).find(r => r.stage === 'design');
+  assert(design.enteredAt && !/[TZ]/.test(design.enteredAt), 'no raw ISO in display: ' + design.enteredAt);
+  assert(design.enteredMs, 'enteredMs parsed from ISO');
+});
+
 test('getStageResponsibilities: manual design deadline (from form) wins over SLA', () => {
   const now = Date.now();
   // الموعد اليدوي بصيغة fmtDateAr (نفس ما يكتبه مسار الإنشاء) — تاريخ بعيد عن SLA.
