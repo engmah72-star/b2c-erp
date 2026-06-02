@@ -201,3 +201,184 @@
     module.exports = API;
   }
 })();
+
+/* ════════════════════════════════════════════════════════════════
+   font.js (مدمج) — Font Choices Engine
+   ────────────────────────────────────────────────────────────────
+   • يُحفَظ الاختيار في localStorage تحت المفتاح: b2c-font
+   • القيم: tajawal (الافتراضي) | cairo | almarai | plex | rubik | system
+   • يضبط <html data-font="..."> فينعكس على --font-ar في shared.css
+   • يحمّل خط Google ديناميكياً عند الاختيار (الافتراضي tajawal محمَّل أصلاً)
+   • يحقن زر اختيار في .topbar-right (بعد زر الثيم) يفتح قائمة بمعاينة الخطوط
+   • API: window.B2CFont
+   ════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  const KEY = 'b2c-font';
+  const DEFAULT = 'tajawal';
+  // label = الاسم المعروض · google = عائلة Google Fonts (null = خط نظام بلا تحميل)
+  const FONTS = {
+    tajawal: { label: 'تجوال',     google: 'Tajawal:wght@400;500;700;800' },
+    cairo:   { label: 'القاهرة',   google: 'Cairo:wght@400;500;600;700' },
+    almarai: { label: 'المراعي',   google: 'Almarai:wght@400;700;800' },
+    plex:    { label: 'IBM Plex',  google: 'IBM+Plex+Sans+Arabic:wght@400;500;600;700' },
+    rubik:   { label: 'روبيك',     google: 'Rubik:wght@400;500;600;700' },
+    system:  { label: 'خط النظام', google: null },
+  };
+  const ORDER = ['tajawal','cairo','almarai','plex','rubik','system'];
+
+  function getStored(){
+    try { const v = localStorage.getItem(KEY); return FONTS[v] ? v : DEFAULT; }
+    catch(e){ return DEFAULT; }
+  }
+
+  // حقن <link> لخط Google مرة واحدة لكل عائلة
+  function ensureLoaded(key){
+    const f = FONTS[key];
+    if (!f || !f.google) return;
+    const id = 'b2c-font-' + key;
+    if (document.getElementById(id)) return;
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=' + f.google + '&display=swap';
+    document.head.appendChild(link);
+  }
+
+  function apply(key){
+    if (!FONTS[key]) key = DEFAULT;
+    document.documentElement.setAttribute('data-font', key);
+    if (document.body) document.body.setAttribute('data-font', key);
+    ensureLoaded(key);
+    try { window.dispatchEvent(new CustomEvent('fontchange', { detail: { font: key } })); } catch(_){}
+  }
+
+  function setFont(key){
+    if (!FONTS[key]) key = DEFAULT;
+    try { localStorage.setItem(KEY, key); } catch(e){}
+    apply(key);
+    renderMenu();
+  }
+
+  // أيقونة typography (نفس أسلوب أيقونات theme.js)
+  const ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
+
+  let menuEl = null;
+
+  function closeMenu(){
+    if (menuEl){ menuEl.remove(); menuEl = null; }
+    document.removeEventListener('click', onDocClick, true);
+  }
+  function onDocClick(e){
+    if (menuEl && !menuEl.contains(e.target) && e.target.id !== 'fontToggleBtn' &&
+        !(e.target.closest && e.target.closest('#fontToggleBtn'))) closeMenu();
+  }
+
+  function renderMenu(){
+    if (!menuEl) return;
+    const cur = getStored();
+    menuEl.innerHTML =
+      '<div style="padding:6px 10px;font-size:11px;font-weight:800;color:var(--dim2,#7c8db8);border-bottom:1px solid var(--line,rgba(130,160,235,.14));margin-bottom:4px;">اختيار الخط</div>' +
+      ORDER.map(k => {
+        const f = FONTS[k];
+        const active = k === cur;
+        const stack = k === 'system'
+          ? "system-ui,-apple-system,'Segoe UI',sans-serif"
+          : "'" + (k==='plex' ? 'IBM Plex Sans Arabic' : k==='tajawal' ? 'Tajawal' : k==='cairo' ? 'Cairo' : k==='almarai' ? 'Almarai' : 'Rubik') + "',sans-serif";
+        return '<button type="button" data-font-key="' + k + '" ' +
+          'style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:start;' +
+          'padding:9px 12px;border:0;border-radius:8px;cursor:pointer;font-family:' + stack + ';font-size:15px;' +
+          'background:' + (active ? 'var(--tint-b-soft,rgba(74,142,245,.12))' : 'transparent') + ';' +
+          'color:' + (active ? 'var(--b,#4a8ef5)' : 'var(--snow,#e4ebfb)') + ';font-weight:' + (active ? '800' : '600') + ';">' +
+          '<span>' + f.label + ' — أبجد هوز</span>' +
+          (active ? '<span style="font-size:13px;">✓</span>' : '') +
+        '</button>';
+      }).join('');
+    // ربط الأزرار
+    menuEl.querySelectorAll('[data-font-key]').forEach(b => {
+      b.addEventListener('mouseenter', () => { if (b.getAttribute('data-font-key') !== getStored()) b.style.background = 'var(--hover,rgba(255,255,255,.06))'; });
+      b.addEventListener('mouseleave', () => { if (b.getAttribute('data-font-key') !== getStored()) b.style.background = 'transparent'; });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setFont(b.getAttribute('data-font-key'));
+        closeMenu();
+      });
+    });
+  }
+
+  function openMenu(btn){
+    // حمّل كل الخطوط لتظهر المعاينة بشكلها الصحيح
+    ORDER.forEach(ensureLoaded);
+    menuEl = document.createElement('div');
+    menuEl.id = 'fontMenu';
+    const r = btn.getBoundingClientRect();
+    Object.assign(menuEl.style, {
+      position: 'fixed',
+      top: (r.bottom + 8) + 'px',
+      insetInlineEnd: Math.max(8, (window.innerWidth - r.right)) + 'px',
+      minWidth: '220px',
+      background: 'var(--bg2,#131c33)',
+      border: '1px solid var(--line2,rgba(130,160,235,.22))',
+      borderRadius: '12px',
+      boxShadow: '0 16px 48px rgba(0,0,0,.45)',
+      padding: '6px',
+      zIndex: '9999',
+    });
+    document.body.appendChild(menuEl);
+    renderMenu();
+    setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+  }
+
+  function toggleMenu(e){
+    if (e){ e.preventDefault(); e.stopPropagation(); }
+    const btn = document.getElementById('fontToggleBtn');
+    if (menuEl) { closeMenu(); return; }
+    if (btn) openMenu(btn);
+  }
+
+  function injectButton(){
+    const existing = document.getElementById('fontToggleBtn');
+    if (existing){
+      if (!existing.__fontBound){ existing.addEventListener('click', toggleMenu); existing.__fontBound = true; }
+      return;
+    }
+    const host = document.querySelector('.topbar-right');
+    if (!host) return;
+    const btn = document.createElement('button');
+    btn.id = 'fontToggleBtn';
+    btn.type = 'button';
+    btn.className = 'notif-bell';
+    btn.style.cursor = 'pointer';
+    btn.innerHTML = ICON;
+    const tip = 'اختيار الخط';
+    btn.title = tip; btn.setAttribute('aria-label', tip); btn.setAttribute('data-tip', tip);
+    btn.addEventListener('click', toggleMenu);
+    btn.__fontBound = true;
+    // بعد زر الثيم إن وُجد، وإلا أول عنصر
+    const themeBtn = document.getElementById('themeToggleBtn');
+    if (themeBtn && themeBtn.nextSibling) host.insertBefore(btn, themeBtn.nextSibling);
+    else if (themeBtn) host.appendChild(btn);
+    else host.insertBefore(btn, host.firstChild);
+  }
+
+  // INIT
+  apply(getStored());
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', () => { apply(getStored()); injectButton(); });
+  } else { apply(getStored()); injectButton(); }
+  window.addEventListener('load', injectButton);
+  [200,500,1000,2000].forEach(d => setTimeout(injectButton, d));
+  window.addEventListener('resize', closeMenu);
+
+  // حافظ على data-font لو مسحه سكربت آخر
+  if (typeof MutationObserver !== 'undefined'){
+    const mo = new MutationObserver(() => {
+      if (!document.documentElement.hasAttribute('data-font'))
+        document.documentElement.setAttribute('data-font', getStored());
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-font'] });
+  }
+
+  window.B2CFont = { set: setFont, get: getStored, list: () => ORDER.slice() };
+})();
