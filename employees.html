@@ -19,7 +19,7 @@
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="employees.css?v=2">
+<link rel="stylesheet" href="employees.css?v=3">
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -59,6 +59,11 @@
     </div>
   </div>
   <div class="content">
+    <!-- View toggle: قائمة الموظفين ↔ لوحة اليوم -->
+    <div class="emp2-viewtabs" id="emp-viewtabs">
+      <button type="button" class="emp2-viewtab active" data-view="list">📋 القائمة</button>
+      <button type="button" class="emp2-viewtab" data-view="board">🗓️ لوحة اليوم</button>
+    </div>
     <!-- Stats — single horizontal scroll row, clickable as filters -->
     <div class="stats-scroll" id="stats-row">
       <div class="stat emp2-sc-b" id="st-total" role="button" tabindex="0" data-sf="all" data-act="stat-filter"><div class="stat-icon">👥</div><div class="stat-val" id="s-total">0</div><div class="stat-lbl">إجمالي</div></div>
@@ -116,6 +121,7 @@
 
     <div id="emp-alerts" class="emp2-alerts-wrap"></div>
     <div id="list"></div>
+    <div id="hr-board" class="hide"></div>
   </div>
 </div>
 </div>
@@ -253,6 +259,7 @@ import { buildEmployeesSkeletonHTML } from "./features/employees/views/render-em
 import { buildEmployeesAlertsHTML } from "./features/employees/views/render-employees-alerts.js";
 import { buildKpiPanelHeaderHTML, buildKpiPanelBodyHTML, buildAttPanelHeaderHTML, buildAttPanelEmptyHTML, buildAttPanelBodyHTML } from "./features/employees/views/render-employees-drawer.js";
 import { buildAllEmployeeModalsHTML } from "./features/employees/views/render-employees-modals.js";
+import { buildHrBoardHTML } from "./features/employees/views/render-hr-board.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -275,7 +282,8 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],tasks=[];
+let viewMode='list';
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
 let payOneEmpId=null,periodFilter='month_cur';
@@ -285,7 +293,8 @@ let currentPage=1;
 // Render scheduler (debounces multiple snapshot bursts into one paint)
 let __statsRaf=0,__listRaf=0,__alertsRaf=0;
 const scheduleStats=()=>{if(__statsRaf)return;__statsRaf=requestAnimationFrame(()=>{__statsRaf=0;updateStats();});};
-const scheduleList=()=>{if(__listRaf)return;__listRaf=requestAnimationFrame(()=>{__listRaf=0;renderList();});};
+const scheduleList=()=>{if(__listRaf)return;__listRaf=requestAnimationFrame(()=>{__listRaf=0;renderActiveView();});};
+function renderActiveView(){if(viewMode==='board')renderHrBoard();else renderList();}
 const scheduleAlerts=()=>{if(__alertsRaf)return;__alertsRaf=requestAnimationFrame(()=>{__alertsRaf=0;renderAlerts();});};
 // Caches — invalidated by version counters
 let __ordersVer=0,__empVer=0,__attVer=0;
@@ -347,9 +356,9 @@ window.setPeriod=function(p){
   periodFilter=p;
   currentPage=1;
   document.querySelectorAll('.pp-btn').forEach(b=>b.classList.toggle('active',b.dataset.p===p));
-  syncURL();updateStats();renderList();
+  syncURL();updateStats();renderActiveView();
 };
-window.resetPageAndRender=function(){currentPage=1;syncURL();renderList();};
+window.resetPageAndRender=function(){currentPage=1;syncURL();renderActiveView();};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -577,6 +586,34 @@ function renderSkeleton(){
   el.innerHTML=buildEmployeesSkeletonHTML();
 }
 
+// ══ HR DAILY BOARD ══
+function renderHrBoard(){
+  const el=document.getElementById('hr-board');if(!el)return;
+  el.innerHTML=buildHrBoardHTML({
+    employees,allOrders,attendanceRecords,tasks,
+    periodFilter,todayStr,curMonthKey,
+    calcKpiBreakdown,ROLES,fn,escAttr,nameToColor,
+    query:gv('q'),roleFilter:gv('f-role'),
+  });
+}
+window.setEmpView=function(mode){
+  viewMode=mode;
+  document.querySelectorAll('.emp2-viewtab').forEach(b=>b.classList.toggle('active',b.dataset.view===mode));
+  const board=document.getElementById('hr-board');
+  const list=document.getElementById('list');
+  const alerts=document.getElementById('emp-alerts');
+  const chips=document.getElementById('filter-chips');
+  if(mode==='board'){
+    list?.classList.add('hide');alerts?.classList.add('hide');chips?.classList.add('hide');
+    board?.classList.remove('hide');
+    renderHrBoard();
+  }else{
+    board?.classList.add('hide');
+    list?.classList.remove('hide');alerts?.classList.remove('hide');
+    renderList();
+  }
+};
+
 // ══ AUTH & LISTENERS ══
 let __listenersStarted=false;
 onAuthStateChanged(auth,async u=>{
@@ -592,6 +629,7 @@ onAuthStateChanged(auth,async u=>{
     if(d.role!=='admin'&&d.role!=='operation_manager'){
       document.getElementById('list').innerHTML='<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">هذه الصفحة للأدمن فقط</div></div>';
       document.querySelector('.topbar-right').style.display='none';
+      document.getElementById('emp-viewtabs')?.classList.add('hide');
       return;
     }
     userName=d.name||u.email;
@@ -640,6 +678,11 @@ onAuthStateChanged(auth,async u=>{
     attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
     __attVer++;
     scheduleStats();scheduleList();scheduleAlerts();
+  });
+  // المهام — للوحة اليوم (أنجز كام مهمة). G3: bounded.
+  onSnapshot(query(collection(db,'tasks'),limit(3000)),snap=>{
+    tasks=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    if(viewMode==='board')scheduleList();
   });
 });
 
@@ -1515,6 +1558,7 @@ document.getElementById('period-row')?.addEventListener('click',e=>{
 // Search + role filter
 document.getElementById('q')?.addEventListener('input',()=>resetPageAndRender());
 document.getElementById('f-role')?.addEventListener('change',()=>resetPageAndRender());
+document.getElementById('emp-viewtabs')?.addEventListener('click',e=>{const b=e.target.closest('.emp2-viewtab');if(b)setEmpView(b.dataset.view);});
 
 // Emp modal: role change + pay-one type + payroll wallet + amount edited flag
 document.getElementById('e-role')?.addEventListener('change',()=>updateSalaryUI());
