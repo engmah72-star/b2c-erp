@@ -54,6 +54,40 @@ export function calcNewClientsInRange(clients = [], range) {
 }
 
 /**
+ * Monthly targets progress — achieved vs configured monthly target.
+ *
+ * - revenue achieved = sum of 'in' transactions within range (same source as
+ *   the "إيرادات الشهر" KPI, via calcPeriodFlow).
+ * - clients achieved = count of clients created within range.
+ * - pct clamped to ≥ 0 (may exceed 100 to surface over-achievement).
+ *
+ * @returns {{
+ *   revenueAchieved:number, revenueTarget:number, revenuePct:number,
+ *   clientsAchieved:number, clientsTarget:number, clientsPct:number,
+ *   hasTargets:boolean
+ * }}
+ */
+export function calcTargetProgress({
+  transactions = [], clients = [], range,
+  revenueTarget = 0, clientTarget = 0,
+} = {}) {
+  const { periodIn } = calcPeriodFlow(transactions, range);
+  const clientsAchieved = calcNewClientsInRange(clients, range);
+  const rT = Math.max(0, parseFloat(revenueTarget) || 0);
+  const cT = Math.max(0, parseFloat(clientTarget) || 0);
+  const pct = (a, t) => (t > 0 ? Math.max(0, Math.round((a / t) * 100)) : 0);
+  return {
+    revenueAchieved: periodIn,
+    revenueTarget: rT,
+    revenuePct: pct(periodIn, rT),
+    clientsAchieved,
+    clientsTarget: cT,
+    clientsPct: pct(clientsAchieved, cT),
+    hasTargets: rT > 0 || cT > 0,
+  };
+}
+
+/**
  * Total outstanding due to suppliers across all orders.
  * For each supplier: due = sum(orders.costItems where supplierId matches) - sum(payments)
  */
