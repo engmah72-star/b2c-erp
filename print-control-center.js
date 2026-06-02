@@ -445,6 +445,78 @@ export function openPrintOrderContactSheet(orderId) {
   });
 }
 
+// ─── PRODUCTION HANDOFF (WhatsApp to production agent) ─────────────
+/**
+ * waPhoneEG(raw) — يطبّع رقم مصري لصيغة wa.me (20XXXXXXXXXX).
+ * يقبل `01012345678` / `201012345678` / مع رموز ويُرجع digits فقط.
+ */
+function waPhoneEG(raw) {
+  const phone = String(raw == null ? '' : raw).replace(/\D/g, '');
+  if (!phone) return '';
+  if (phone.startsWith('20')) return phone;
+  if (phone.startsWith('0')) return '20' + phone.slice(1);
+  return '20' + phone;
+}
+
+/**
+ * buildProductionHandoffMessage(order) — يبني نص واتساب يُرسَل لمندوب
+ * التنفيذ عند تحويل أوردر الطباعة للتنفيذ. ملخّص تشغيلي (مش specs المطبعة):
+ * رقم الأوردر · العميل · الميعاد · المنتجات (الاسم × الكمية) · ملاحظة.
+ */
+export function buildProductionHandoffMessage(order = {}) {
+  const o = order;
+  const lines = [];
+  lines.push('🏭 أوردر جديد للتنفيذ');
+  lines.push('');
+  lines.push(`🔖 رقم الأوردر: ${o.orderId || (o._id || '').slice(-6) || '—'}`);
+  if (o.clientName) lines.push(`👤 العميل: ${o.clientName}`);
+  if (o.deadline) {
+    const dLate = daysOverDeadline(o.deadline);
+    lines.push(`📅 الميعاد: ${o.deadline}${dLate > 0 ? ` (متأخر ${dLate} يوم)` : ''}`);
+  }
+
+  const prods = (o.products || []).filter(Boolean);
+  if (prods.length) {
+    lines.push('');
+    lines.push('📦 المنتجات:');
+    for (const p of prods) {
+      const nm = p.name || 'منتج';
+      const qty = (parseFloat(p.qty) || 0) > 0 ? ` × ${fmtNum(p.qty)}` : '';
+      lines.push(`• ${nm}${qty}`);
+    }
+  }
+
+  const note = o.productionNote || o.printNotes || '';
+  if (note) {
+    lines.push('');
+    lines.push(`✏️ ملاحظة: ${note}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * sendProductionHandoff(order, agent) — يفتح واتساب المندوب بالرسالة.
+ * best-effort side-effect (لا يكتب في DB) — يُستدعى بعد نجاح التحويل.
+ * يُرجع { ok, error } عشان الـ caller (print.html) يعرض الـ toast بنفسه.
+ */
+export function sendProductionHandoff(order, agent) {
+  if (!order) return { ok: false, error: 'لا يوجد أوردر' };
+  if (!agent) return { ok: false, error: 'لم يُحدَّد منفّذ — تخطّي إرسال الواتساب' };
+  const waPhone = waPhoneEG(agent.phone || agent.whatsapp);
+  if (!waPhone) {
+    return { ok: false, error: `المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته` };
+  }
+  const message = buildProductionHandoffMessage(order);
+  const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
+  try {
+    window.open(waUrl, '_blank');
+  } catch (e) {
+    return { ok: false, error: 'تعذّر فتح واتساب' };
+  }
+  return { ok: true };
+}
+
 // ─── DEV TOGGLE ─────────────────────────────────────────────────────
 export function togglePrintControlCenter(enable) {
   const next = enable === undefined ? !isPrintControlCenterOn() : !!enable;
@@ -465,6 +537,8 @@ if (typeof window !== 'undefined') {
     applyPrintCCHeader,
     buildPrintTimeline,
     printTimelineHTML,
+    buildProductionHandoffMessage,
+    sendProductionHandoff,
     togglePrintControlCenter,
   });
 }
