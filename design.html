@@ -477,6 +477,7 @@ import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, o
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { getMatrixPrice } from "./product-actions.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // God-page decomp PR-2 (design): renderPanel HTML extracted.
 import { renderPanelHTML } from "./design-render.js";
@@ -1333,14 +1334,8 @@ window.selectClient=function(id,name,phone){
 // ── منتجات ──
 function prodOptsHtml(){return'<option value="">— اختر المنتج —</option>'+products.map(p=>`<option value="${p._id}" data-name="${(p.name||'').replace(/"/g,'')}" data-price="${p.defaultPrice||0}">${p.name}</option>`).join('');}
 function refreshProdSelects(){document.querySelectorAll('.prod-select').forEach(s=>{const cur=s.value;s.innerHTML=prodOptsHtml();if(cur)s.value=cur;});}
-// Phase 2: جلب سعر خلية المصفوفة (نسخة inline — مطابقة لـ getMatrixPrice في product-actions.js)
-function _matrixPrice(product,size,printType,qty){
-  if(!product||product.pricingMode!=='matrix')return null;
-  const rows=Array.isArray(product.priceMatrix)?product.priceMatrix:[];
-  const r=rows.find(x=>x.size===size&&x.printType===printType&&Number(x.qty)===Number(qty));
-  return r?(parseFloat(r.price)||0):null;
-}
-function _attr(v){return String(v==null?'':v).replace(/"/g,'&quot;');}
+// Phase 2: سعر خلية المصفوفة عبر getMatrixPrice المُصدَّر (مصدر واحد — راجع product-actions.js)
+function _attr(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);}
 window.addProdRow=function(){
   const div=document.createElement('div');div.className='prod-row';
   div.innerHTML=`<select class="prod-select" onchange="onProdRowChange(this)"><option value="">— اختر المنتج —</option></select><input type="number" class="prod-qty" value="1" min="1"><button type="button" onclick="this.closest('.prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">✕</button><div class="prod-mx" style="grid-column:1/-1;display:none;gap:6px;grid-template-columns:1fr 1fr 1fr"></div>`;
@@ -1356,7 +1351,7 @@ window.onProdRowChange=function(sel){
   if(!p||p.pricingMode!=='matrix'){if(mx){mx.style.display='none';mx.innerHTML='';}if(qtyInp)qtyInp.style.display='';return;}
   const sizes=p.matrixSizes||[],ptypes=p.matrixPrintTypes||[],qtys=p.matrixQuantities||[];
   const lbl=t=>t==='digital'?'💻 ديجيتال':'🖨️ أوفست';
-  mx.innerHTML=`<select class="pmx-size" onchange="onMatrixRowChange(this)">${sizes.map(s=>`<option value="${_attr(s)}">📏 ${s}</option>`).join('')}</select>`+
+  mx.innerHTML=`<select class="pmx-size" onchange="onMatrixRowChange(this)">${sizes.map(s=>`<option value="${_attr(s)}">📏 ${_attr(s)}</option>`).join('')}</select>`+
     `<select class="pmx-ptype" onchange="onMatrixRowChange(this)">${ptypes.map(t=>`<option value="${_attr(t)}">${lbl(t)}</option>`).join('')}</select>`+
     `<select class="pmx-qty" onchange="onMatrixRowChange(this)">${qtys.map(q=>`<option value="${q}">${q} ق</option>`).join('')}</select>`;
   mx.style.display='grid';
@@ -1476,8 +1471,9 @@ window.saveOrder=async function(){
     if(p&&p.pricingMode==='matrix'){
       size=row.querySelector('.pmx-size')?.value||'';
       printType=row.querySelector('.pmx-ptype')?.value||'';
-      const mp=_matrixPrice(p,size,printType,qtyVal);
-      if(mp!=null)unitPrice=mp;
+      const mp=getMatrixPrice(p,{size,printType,qty:qtyVal});
+      if(mp==null){toast(`⛔ التركيبة غير مُسعّرة: ${p.name} · ${size} · ${printType==='digital'?'ديجيتال':'أوفست'} · ${qtyVal} ق`,'err');return;}
+      unitPrice=mp;
     }
     const line={productId:sel.value,name:opt.dataset.name||opt.text,qty:qtyVal,unitPrice};
     if(size)line.size=size;
