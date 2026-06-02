@@ -25,8 +25,56 @@ import {
 import { canDo } from './core/permissions-matrix.js';
 
 // ══════════════════════════════════════════
+// CONSTANTS (C2 — لا magic strings)
+// ══════════════════════════════════════════
+
+/** أنماط التسعير المدعومة للمنتج. */
+export const PRICING_MODES = {
+  SIMPLE: 'simple',     // سعر واحد (defaultPrice)
+  VARIANTS: 'variants', // سعر أساسي + إضافات (basePrice + variantOptions)
+  MATRIX: 'matrix',     // مصفوفة (مقاس × نوع طباعة × كمية) = سعر صريح
+};
+const _PRICING_MODE_VALUES = Object.values(PRICING_MODES);
+
+// ══════════════════════════════════════════
 // INTERNAL HELPERS
 // ══════════════════════════════════════════
+
+/**
+ * استنتاج نمط التسعير من بيانات المنتج (backward-compatible).
+ * المستندات القديمة بلا pricingMode → variants لو hasVariants، وإلا simple.
+ */
+function _resolvePricingMode(data) {
+  if (data && _PRICING_MODE_VALUES.includes(data.pricingMode)) return data.pricingMode;
+  return data && data.hasVariants ? PRICING_MODES.VARIANTS : PRICING_MODES.SIMPLE;
+}
+
+/** validation لنمط المصفوفة (يُضيف على errors/warnings الممرّرة). */
+function _validateMatrix(data, errors) {
+  const sizes = Array.isArray(data.matrixSizes) ? data.matrixSizes.filter(s => String(s || '').trim()) : [];
+  const types = Array.isArray(data.matrixPrintTypes) ? data.matrixPrintTypes.filter(Boolean) : [];
+  const qtys = Array.isArray(data.matrixQuantities) ? data.matrixQuantities.map(q => parseFloat(q)).filter(q => q > 0) : [];
+  if (!sizes.length) errors.push('أضف مقاساً واحداً على الأقل');
+  if (!types.length) errors.push('اختر نوع طباعة واحداً على الأقل');
+  if (!qtys.length) errors.push('أضف كمية واحدة على الأقل');
+  const matrix = Array.isArray(data.priceMatrix) ? data.priceMatrix : [];
+  if (matrix.some(r => (parseFloat(r.price) || 0) < 0)) errors.push('السعر لا يمكن أن يكون سالباً');
+  const priced = matrix.filter(r => (parseFloat(r.price) || 0) > 0);
+  if (!priced.length) errors.push('أدخل سعراً واحداً على الأقل في جدول الأسعار');
+}
+
+/**
+ * الحقول المشتقة لمنتج المصفوفة — للتوافق الخلفي مع المستهلكين
+ * (design.html / print.html يقرؤون defaultPrice فقط).
+ * defaultPrice = أقل سعر في الجدول → يظهر كـ "يبدأ من".
+ */
+function _deriveMatrixFields(data) {
+  if (_resolvePricingMode(data) !== PRICING_MODES.MATRIX) return {};
+  const priced = (data.priceMatrix || []).map(r => parseFloat(r.price) || 0).filter(p => p > 0);
+  const minPrice = priced.length ? Math.min(...priced) : 0;
+  const maxPrice = priced.length ? Math.max(...priced) : 0;
+  return { defaultPrice: minPrice, matrixMinPrice: minPrice, matrixMaxPrice: maxPrice };
+}
 
 /** validation موحَّد لبيانات المنتج */
 function _validateProductData(data) {
@@ -40,15 +88,20 @@ function _validateProductData(data) {
   if (data.printType && !['digital', 'offset'].includes(data.printType)) {
     errors.push(`printType غير معروف "${data.printType}" — المسموح: digital | offset`);
   }
-  const price = parseFloat(data.hasVariants ? data.basePrice : data.defaultPrice) || 0;
-  if (price <= 0) errors.push('السعر يجب أن يكون أكبر من صفر');
-  if (data.weight && parseFloat(data.weight) < 0) errors.push('الوزن لا يمكن أن يكون سالباً');
-  // variants validation
-  if (data.hasVariants) {
-    if (!data.variantOptions || typeof data.variantOptions !== 'object') {
-      errors.push('variantOptions مطلوبة لو hasVariants=true');
+  const mode = _resolvePricingMode(data);
+  if (mode === PRICING_MODES.MATRIX) {
+    _validateMatrix(data, errors);
+  } else {
+    const price = parseFloat(data.hasVariants ? data.basePrice : data.defaultPrice) || 0;
+    if (price <= 0) errors.push('السعر يجب أن يكون أكبر من صفر');
+    // variants validation
+    if (data.hasVariants) {
+      if (!data.variantOptions || typeof data.variantOptions !== 'object') {
+        errors.push('variantOptions مطلوبة لو hasVariants=true');
+      }
     }
   }
+  if (data.weight && parseFloat(data.weight) < 0) errors.push('الوزن لا يمكن أن يكون سالباً');
   return { errors, warnings };
 }
 
@@ -92,6 +145,7 @@ export const productActions = {
     try {
       const ref = await addDoc(collection(db, 'products_v2'), {
         ...data,
+        ..._deriveMatrixFields(data),
         createdAt: serverTimestamp(),
         createdBy: userId || '',
         createdByName: userName || '',
@@ -116,18 +170,30 @@ export const productActions = {
     const v = _validateProductData(data);
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: v.warnings };
 
-    // priceHistory أوتوماتيك
+    // priceHistory أوتوماتيك — السعر المرجعي يختلف حسب نمط التسعير
     let priceHistory = currentProduct?.priceHistory || [];
-    const hasVariants = !!data.hasVariants;
-    const oldRefPrice = parseFloat(hasVariants ? currentProduct?.basePrice : currentProduct?.defaultPrice) || 0;
-    const newRefPrice = parseFloat(hasVariants ? data.basePrice : data.defaultPrice) || 0;
+    const mode = _resolvePricingMode(data);
+    const derived = _deriveMatrixFields(data);
+    let oldRefPrice, newRefPrice, refField;
+    if (mode === PRICING_MODES.MATRIX) {
+      oldRefPrice = parseFloat(currentProduct?.matrixMinPrice ?? currentProduct?.defaultPrice) || 0;
+      newRefPrice = derived.defaultPrice || 0;
+      refField = 'matrixMinPrice';
+    } else if (mode === PRICING_MODES.VARIANTS) {
+      oldRefPrice = parseFloat(currentProduct?.basePrice) || 0;
+      newRefPrice = parseFloat(data.basePrice) || 0;
+      refField = 'basePrice';
+    } else {
+      oldRefPrice = parseFloat(currentProduct?.defaultPrice) || 0;
+      newRefPrice = parseFloat(data.defaultPrice) || 0;
+      refField = 'defaultPrice';
+    }
     if (currentProduct && oldRefPrice !== newRefPrice) {
       priceHistory = [
         ...priceHistory,
         _buildPriceHistoryEntry({
           oldPrice: oldRefPrice, newPrice: newRefPrice,
-          field: hasVariants ? 'basePrice' : 'defaultPrice',
-          userId, userName,
+          field: refField, userId, userName,
         }),
       ];
     }
@@ -135,6 +201,7 @@ export const productActions = {
     try {
       await updateDoc(doc(db, 'products_v2', productId), {
         ...data,
+        ...derived,
         priceHistory,
         updatedAt: serverTimestamp(),
         updatedBy: userId || '',
@@ -327,5 +394,28 @@ export const productActions = {
     }
   },
 };
+
+// ══════════════════════════════════════════
+// PRICE LOOKUP (للمستهلكين: design / print / order)
+// ══════════════════════════════════════════
+
+/**
+ * جلب سعر خلية محددة من مصفوفة المنتج.
+ * @param {Object} product — مستند المنتج (products_v2)
+ * @param {{size:string, printType:string, qty:number|string}} sel — التركيبة المطلوبة
+ * @returns {number|null} السعر، أو null لو المنتج ليس matrix أو التركيبة غير مُسعّرة
+ */
+export function getMatrixPrice(product, { size, printType, qty } = {}) {
+  if (!product || _resolvePricingMode(product) !== PRICING_MODES.MATRIX) return null;
+  const rows = Array.isArray(product.priceMatrix) ? product.priceMatrix : [];
+  const row = rows.find(r =>
+    r.size === size &&
+    r.printType === printType &&
+    Number(r.qty) === Number(qty)
+  );
+  if (!row) return null;
+  const p = parseFloat(row.price);
+  return Number.isFinite(p) ? p : null;
+}
 
 export default productActions;

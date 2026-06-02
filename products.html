@@ -182,19 +182,25 @@
         <div class="fg"><label>نوع الورق</label><input class="inp" id="p-paper" placeholder="كوشيه / بريستول..."></div>
         <div class="fg"><label>وزن الورق (جرام)</label><input class="inp" id="p-weight" type="number" placeholder="300"></div>
       </div>
-      <div class="g2">
+      <!-- ── Pricing Mode Selector ── -->
+      <div class="fg">
+        <label>نمط التسعير</label>
+        <div class="pm-bar" id="pm-bar">
+          <button type="button" class="pm-btn active" data-mode="simple" onclick="setPricingMode('simple')">💲 سعر واحد</button>
+          <button type="button" class="pm-btn" data-mode="variants" onclick="setPricingMode('variants')">🎛 متغيّرات</button>
+          <button type="button" class="pm-btn" data-mode="matrix" onclick="setPricingMode('matrix')">▦ مصفوفة</button>
+        </div>
+        <div class="pm-hint" id="pm-hint">سعر ثابت واحد للمنتج.</div>
+      </div>
+
+      <!-- simple / variants: المقاس + السعر -->
+      <div class="g2" id="simple-fields">
         <div class="fg"><label>المقاس</label><input class="inp" id="p-size" placeholder="9×5 / A4..."></div>
         <div class="fg"><label>السعر الافتراضي (ج.م)</label><input class="inp" id="p-price" type="number" placeholder="450"></div>
       </div>
 
-      <!-- ── Variant Options Toggle ── -->
-      <label class="var-toggle">
-        <input type="checkbox" id="p-has-variants" onchange="toggleVariantsUI()">
-        <div class="flex-1">
-          <div class="var-toggle-label">🎛 منتج له خيارات متعددة</div>
-          <div class="var-toggle-sub">مثال: فلاير له مقاسات A5/A4، أوراق مختلفة، سلوفان اختياري...</div>
-        </div>
-      </label>
+      <!-- hidden compat: بعض الدوال القديمة تقرأ هذا الـ checkbox -->
+      <input type="checkbox" id="p-has-variants" class="hide" aria-hidden="true">
 
       <!-- ── Variants Builder (hidden by default) ── -->
       <div id="var-builder" class="hide">
@@ -249,6 +255,42 @@
           <div class="var-preview-title">🔮 معاينة مثال</div>
           <div id="var-preview-body"></div>
         </div>
+      </div>
+
+      <!-- ── Matrix Builder (مقاس × نوع طباعة × كمية = سعر) ── -->
+      <div id="matrix-builder" class="hide">
+        <!-- محور المقاسات -->
+        <div class="mx-axis">
+          <div class="mx-axis-title">📏 المقاسات</div>
+          <div class="mx-chips" id="mx-sizes"></div>
+          <div class="mx-add">
+            <input class="inp" id="mx-size-inp" placeholder="مثال: 35×50" onkeydown="if(event.key==='Enter'){event.preventDefault();addMxAxis('sizes')}">
+            <button type="button" class="var-add-btn" onclick="addMxAxis('sizes')">＋ أضف مقاس</button>
+          </div>
+        </div>
+        <!-- محور أنواع الطباعة -->
+        <div class="mx-axis">
+          <div class="mx-axis-title">🖨️ أنواع الطباعة</div>
+          <div class="mx-types">
+            <label class="mx-type"><input type="checkbox" value="digital" onchange="toggleMxType('digital',this.checked)"> 💻 ديجيتال</label>
+            <label class="mx-type"><input type="checkbox" value="offset" onchange="toggleMxType('offset',this.checked)"> 🖨️ أوفست</label>
+          </div>
+        </div>
+        <!-- محور الكميات -->
+        <div class="mx-axis">
+          <div class="mx-axis-title">🔢 الكميات</div>
+          <div class="mx-chips" id="mx-qtys"></div>
+          <div class="mx-add">
+            <input class="inp" id="mx-qty-inp" type="number" placeholder="مثال: 500" min="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addMxAxis('qtys')}">
+            <button type="button" class="var-add-btn" onclick="addMxAxis('qtys')">＋ أضف كمية</button>
+          </div>
+        </div>
+        <!-- جدول الأسعار -->
+        <div class="mx-grid-title">💰 جدول الأسعار (اترك الخلية فارغة لو التركيبة غير متاحة)</div>
+        <div class="mx-grid-wrap" id="mx-grid">
+          <div class="mx-empty">أضف مقاساً ونوع طباعة وكمية لبناء الجدول</div>
+        </div>
+        <div class="mx-summary" id="mx-summary"></div>
       </div>
 
       <div class="fg"><label>ملاحظات</label><textarea class="inp" id="p-notes" placeholder="مواصفات إضافية..."></textarea></div>
@@ -476,6 +518,142 @@ document.addEventListener('DOMContentLoaded', () => {
   if (bp) bp.addEventListener('input', updateVarPreview);
 });
 
+// ══════════════════════════════════════════
+// PRICING MODE + MATRIX BUILDER
+// ══════════════════════════════════════════
+let pricingMode = 'simple';
+let matrixState = { sizes: [], printTypes: [], qtys: [], prices: {} };
+const MX_SEP = '|||';
+const mxKey = (s,t,q) => `${s}${MX_SEP}${t}${MX_SEP}${q}`;
+const PM_HINTS = {
+  simple:   'سعر ثابت واحد للمنتج.',
+  variants: 'سعر أساسي + إضافات لكل خيار (مقاس/ورق/تشطيب/لون).',
+  matrix:   'لكل تركيبة (مقاس × نوع طباعة × كمية) سعر صريح.',
+};
+
+window.setPricingMode = function(mode){
+  pricingMode = mode;
+  document.querySelectorAll('#pm-bar .pm-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  const hint = document.getElementById('pm-hint'); if (hint) hint.textContent = PM_HINTS[mode] || '';
+  // مزامنة الـ checkbox القديم (منطق باني المتغيّرات يقرؤه)
+  const cb = document.getElementById('p-has-variants'); if (cb) cb.checked = (mode === 'variants');
+  // تبديل الكلاس hide (display:none !important — لا يصلح معه style.display)
+  document.getElementById('simple-fields').classList.toggle('hide', mode === 'matrix');
+  document.getElementById('var-builder').classList.toggle('hide', mode !== 'variants');
+  document.getElementById('matrix-builder').classList.toggle('hide', mode !== 'matrix');
+  if (mode === 'variants') { ['sizes','papers','finishings','colors'].forEach(k => renderVarOpts(k)); updateVarPreview(); }
+  if (mode === 'matrix')   { renderMxAxis('sizes'); renderMxAxis('qtys'); syncMxTypeChecks(); renderMxGrid(); }
+};
+
+function syncMxTypeChecks(){
+  document.querySelectorAll('#matrix-builder .mx-type input').forEach(cb => {
+    cb.checked = matrixState.printTypes.includes(cb.value);
+  });
+}
+
+window.addMxAxis = function(kind){
+  const inp = document.getElementById(kind === 'sizes' ? 'mx-size-inp' : 'mx-qty-inp');
+  if (!inp) return;
+  let val = (inp.value || '').trim();
+  if (!val) return;
+  if (kind === 'qtys') {
+    val = parseFloat(val);
+    if (!val || val <= 0) return toast('⚠️ كمية غير صحيحة','err');
+    if (!matrixState.qtys.includes(val)) matrixState.qtys.push(val);
+    matrixState.qtys.sort((a,b) => a - b);
+  } else {
+    if (!matrixState.sizes.includes(val)) matrixState.sizes.push(val);
+  }
+  inp.value = '';
+  renderMxAxis(kind); renderMxGrid();
+};
+
+window.removeMxAxis = function(kind, val){
+  if (kind === 'sizes') matrixState.sizes = matrixState.sizes.filter(x => x !== val);
+  else matrixState.qtys = matrixState.qtys.filter(x => Number(x) !== Number(val));
+  renderMxAxis(kind); renderMxGrid();
+};
+
+window.toggleMxType = function(type, on){
+  if (on) { if (!matrixState.printTypes.includes(type)) matrixState.printTypes.push(type); }
+  else matrixState.printTypes = matrixState.printTypes.filter(t => t !== type);
+  renderMxGrid();
+};
+
+function renderMxAxis(kind){
+  const el = document.getElementById(kind === 'sizes' ? 'mx-sizes' : 'mx-qtys');
+  if (!el) return;
+  const list = kind === 'sizes' ? matrixState.sizes : matrixState.qtys;
+  if (!list.length) { el.innerHTML = `<span class="mx-chip-empty">لا يوجد بعد</span>`; return; }
+  el.innerHTML = list.map(v => {
+    const sv = esc(String(v));
+    return `<span class="mx-chip">${sv}${kind==='qtys'?' ق':''}<button type="button" onclick="removeMxAxis('${kind}','${sv}')">✕</button></span>`;
+  }).join('');
+}
+
+window.setMxPrice = function(s,t,q,val){
+  const k = mxKey(s,t,q);
+  const num = parseFloat(val);
+  if (!val || !(num > 0) || !Number.isFinite(num)) delete matrixState.prices[k];
+  else matrixState.prices[k] = num;
+  updateMxSummary();
+};
+
+function renderMxGrid(){
+  const el = document.getElementById('mx-grid'); if (!el) return;
+  const { sizes, printTypes, qtys } = matrixState;
+  if (!sizes.length || !printTypes.length || !qtys.length) {
+    el.innerHTML = `<div class="mx-empty">أضف مقاساً ونوع طباعة وكمية لبناء الجدول</div>`;
+    updateMxSummary(); return;
+  }
+  const typeLbl = t => t === 'digital' ? '💻 ديجيتال' : '🖨️ أوفست';
+  let html = `<table class="mx-table"><thead><tr><th>المقاس</th><th>الطباعة</th>${qtys.map(q=>`<th>${fn(q)} ق</th>`).join('')}</tr></thead><tbody>`;
+  sizes.forEach(s => {
+    printTypes.forEach(t => {
+      html += `<tr><td class="mx-rowh">${esc(s)}</td><td>${typeLbl(t)}</td>`;
+      qtys.forEach(q => {
+        const v = matrixState.prices[mxKey(s,t,q)] || '';
+        html += `<td><input class="inp mx-cell" type="number" min="0" placeholder="—" value="${v}" oninput="setMxPrice('${esc(s)}','${t}',${q},this.value)"></td>`;
+      });
+      html += `</tr>`;
+    });
+  });
+  html += `</tbody></table>`;
+  el.innerHTML = html;
+  updateMxSummary();
+}
+
+function updateMxSummary(){
+  const el = document.getElementById('mx-summary'); if (!el) return;
+  const vals = Object.values(matrixState.prices).filter(p => p > 0);
+  const { sizes, printTypes, qtys } = matrixState;
+  const cells = sizes.length * printTypes.length * qtys.length;
+  if (!vals.length) { el.innerHTML = `<span class="mx-sum-dim">لم تُدخل أسعاراً بعد · ${cells} خلية ممكنة</span>`; return; }
+  const min = Math.min(...vals), max = Math.max(...vals);
+  el.innerHTML = `📊 ${vals.length}/${cells} خلية مُسعّرة · النطاق <strong class="text-snow">${fn(min)} → ${fn(max)} ج</strong>`;
+}
+
+function buildPriceMatrix(){
+  const rows = [];
+  const { sizes, printTypes, qtys, prices } = matrixState;
+  sizes.forEach(s => printTypes.forEach(t => qtys.forEach(q => {
+    const p = prices[mxKey(s,t,q)];
+    if (p > 0) rows.push({ size: s, printType: t, qty: q, price: p });
+  })));
+  return rows;
+}
+
+function loadMatrix(p){
+  matrixState = { sizes: [], printTypes: [], qtys: [], prices: {} };
+  matrixState.sizes = [...(p.matrixSizes || [])];
+  matrixState.printTypes = [...(p.matrixPrintTypes || [])];
+  matrixState.qtys = [...(p.matrixQuantities || [])].map(Number).filter(q => q > 0).sort((a,b) => a - b);
+  (p.priceMatrix || []).forEach(r => {
+    const price = parseFloat(r.price) || 0;
+    if (price > 0) matrixState.prices[mxKey(r.size, r.printType, Number(r.qty))] = price;
+  });
+}
+
 let suppliers=[],masterCategories=[],activeProductId=null;
 
 const ROLE_HOME_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -559,7 +737,8 @@ function updateStats(){
 // Populate dropdowns (paper, size) from existing product data
 function refreshFilterDropdowns(){
   const papers = [...new Set(products.map(p => p.paper).filter(x => x && x !== '—'))].sort();
-  const sizes  = [...new Set(products.map(p => p.size).filter(Boolean))].sort();
+  // المقاسات: المقاس المفرد + مقاسات المصفوفة
+  const sizes  = [...new Set(products.flatMap(p => [p.size, ...(p.matrixSizes||[])]).filter(Boolean))].sort();
   const pSel = document.getElementById('f-paper');
   if (pSel) {
     const cur = pSel.value;
@@ -618,7 +797,7 @@ window.render=function(){
     if (q && !((p.name||'').toLowerCase().includes(q) || (p.paper||'').toLowerCase().includes(q) || (p.notes||'').toLowerCase().includes(q))) return false;
     if (ft && p.printType !== ft) return false;
     if (fp && p.paper !== fp) return false;
-    if (fs && p.size !== fs) return false;
+    if (fs && p.size !== fs && !(p.matrixSizes||[]).includes(fs)) return false;
     const price = parseFloat(p.defaultPrice) || 0;
     if (price < pmin || price > pmax) return false;
     if (activeCategory && (p.category || CAT_DEFAULT) !== activeCategory) return false;
@@ -635,8 +814,22 @@ window.render=function(){
     const cat=getCatMeta(p.category||CAT_DEFAULT);
     // Variant info
     const hasVar = p.hasVariants && p.variantOptions;
+    const isMatrix = p.pricingMode === 'matrix';
     let priceCell, specCell;
-    if (hasVar) {
+    if (isMatrix) {
+      const rows = p.priceMatrix || [];
+      const prices = rows.map(r => parseFloat(r.price) || 0).filter(x => x > 0);
+      const min = p.matrixMinPrice ?? (prices.length ? Math.min(...prices) : 0);
+      const max = p.matrixMaxPrice ?? (prices.length ? Math.max(...prices) : 0);
+      priceCell = `<div class="pc-price-range" style="color:${col}">${min===max ? fn(min)+' ج' : fn(min)+' - '+fn(max)+' ج'}</div>
+        <div class="pc-price-range-from">من → إلى</div>`;
+      const ns=(p.matrixSizes||[]).length, nt=(p.matrixPrintTypes||[]).length, nq=(p.matrixQuantities||[]).length;
+      const badges=[];
+      if(ns) badges.push(`📏 ${ns} مقاس`);
+      if(nt) badges.push(`🖨️ ${nt} طباعة`);
+      if(nq) badges.push(`🔢 ${nq} كمية`);
+      specCell = badges.length ? `<div class="pc-spec" style="display:flex;flex-wrap:wrap;gap:var(--space-xs)">${badges.map(b => `<span class="pc-variant-badge">${b}</span>`).join('')}</div>` : '';
+    } else if (hasVar) {
       const vo = p.variantOptions;
       const base = parseFloat(p.basePrice) || 0;
       const minOf = (k) => Math.min(0, ...((vo[k]||[]).map(o => o.priceModifier||0)));
@@ -674,6 +867,7 @@ window.render=function(){
             <span style="width:6px;height:6px;border-radius:50%;background:${col};display:inline-block"></span>
             ${isDig?'ديجيتال':'أوفست'}
             <span style="font-size:var(--fs-tiny);background:var(--bg3);color:var(--dim2);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">${cat.ico} ${cat.label}</span>
+            ${isMatrix?'<span style="font-size:var(--fs-tiny);background:rgba(74,142,245,.15);color:var(--b);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">▦ مصفوفة</span>':''}
             ${hasVar?'<span style="font-size:var(--fs-tiny);background:rgba(122,90,248,.15);color:var(--p);padding:1px 6px;border-radius:8px;font-weight:var(--fw-bold)">🎛 خيارات</span>':''}
           </div>
           <div class="pc-name">${p.name}</div>
@@ -706,7 +900,6 @@ function fillCategoryDropdown(){
 
 window.saveProd=async function(){
   const name=gv('p-name');if(!name)return toast('⚠️ أدخل اسم المنتج','err');
-  const hasVariants = document.getElementById('p-has-variants')?.checked || false;
   const basePrice = parseFloat(gv('p-base-price')) || 0;
   const newPrice = parseFloat(gv('p-price'))||0;
   const data={
@@ -718,9 +911,10 @@ window.saveProd=async function(){
     size:gv('p-size'),
     defaultPrice:newPrice,
     notes:gv('p-notes'),
-    hasVariants,
+    pricingMode,
+    hasVariants: pricingMode === 'variants',
   };
-  if (hasVariants) {
+  if (pricingMode === 'variants') {
     if (!basePrice) return toast('⚠️ أدخل السعر الأساسي','err');
     // Filter out empty options (no value)
     const cleanOpts = {};
@@ -734,6 +928,16 @@ window.saveProd=async function(){
     });
     data.basePrice = basePrice;
     data.variantOptions = cleanOpts;
+  } else if (pricingMode === 'matrix') {
+    data.matrixSizes = [...matrixState.sizes];
+    data.matrixPrintTypes = [...matrixState.printTypes];
+    data.matrixQuantities = [...matrixState.qtys];
+    data.priceMatrix = buildPriceMatrix();
+    // printType/size الأساسيان = أول قيمة مختارة (للإحصائيات/الفلترة/التوافق الخلفي)
+    data.printType = matrixState.printTypes[0] || gv('p-type') || 'digital';
+    data.size = matrixState.sizes[0] || '';
+    // defaultPrice يُحسب مركزياً في الـ action (= أقل سعر بالجدول)
+    data.defaultPrice = 0;
   }
   // RULE A1 + P1: عبر productActions (validation + canDo + priceHistory مُمَركَزة)
   const baseArgs = { db, role:currentRole, userId:currentUser?.uid||'', userName:currentUserName||currentUser?.email||'' };
@@ -752,10 +956,10 @@ window.editProd=function(id){
   sv('p-name',p.name||'');sv('p-type',p.printType||'digital');sv('p-category',p.category||CAT_DEFAULT);
   sv('p-paper',p.paper||'');sv('p-weight',p.weight||'');sv('p-size',p.size||'');
   sv('p-price',p.defaultPrice||'');sv('p-notes',p.notes||'');
-  // Load variants if any
-  const cb = document.getElementById('p-has-variants');
-  if (cb) cb.checked = !!p.hasVariants;
-  if (p.hasVariants) {
+  // تحديد نمط التسعير (backward-compatible: مستندات قديمة بلا pricingMode)
+  const mode = p.pricingMode || (p.hasVariants ? 'variants' : 'simple');
+  // تحميل حالة المتغيّرات
+  if (mode === 'variants') {
     sv('p-base-price', p.basePrice || '');
     const vo = p.variantOptions || {};
     currentVariants = {
@@ -768,7 +972,10 @@ window.editProd=function(id){
     sv('p-base-price', '');
     currentVariants = { sizes: [], papers: [], finishings: [], colors: [] };
   }
-  toggleVariantsUI();
+  // تحميل حالة المصفوفة
+  if (mode === 'matrix') loadMatrix(p);
+  else matrixState = { sizes: [], printTypes: [], qtys: [], prices: {} };
+  setPricingMode(mode);
   const histLen = (p.priceHistory || []).length;
   if (histLen) {
     const last = p.priceHistory[histLen-1];
@@ -809,16 +1016,16 @@ window.resetForm=function(){
   clearF(['p-name','p-paper','p-weight','p-size','p-price','p-notes','p-base-price']);
   sv('p-type','digital');
   sv('p-category',CAT_DEFAULT);
-  // Reset variant state
+  // Reset variant + matrix state
   currentVariants = { sizes: [], papers: [], finishings: [], colors: [] };
-  const cb = document.getElementById('p-has-variants'); if (cb) cb.checked = false;
-  toggleVariantsUI();
+  matrixState = { sizes: [], printTypes: [], qtys: [], prices: {} };
+  setPricingMode('simple');
 };
 
 window.exportCSV=function(){
   const rows=[[
     'الاسم','النوع','الفئة','الورق','الوزن','المقاس','السعر الافتراضي',
-    'له خيارات','عدد المقاسات','عدد الأوراق','عدد التشطيبات','عدد الألوان',
+    'نمط التسعير','عدد المقاسات','عدد الأوراق','عدد التشطيبات','عدد الألوان','عدد أنواع الطباعة','عدد الكميات',
     'السعر الأدنى','السعر الأعلى',
     'عدد سجلات التكلفة','آخر تكلفة','متوسط تكلفة الوحدة',
     'تاريخ أول تكلفة','تاريخ آخر تكلفة','عدد تغييرات السعر','ملاحظات'
@@ -830,11 +1037,18 @@ window.exportCSV=function(){
     const totalCost = h.reduce((s,e)=>s+(parseFloat(e.total)||0),0);
     const avgUnit = totalQty ? (totalCost/totalQty) : 0;
     const dates = h.map(e => e.date).filter(Boolean).sort();
-    // Variants summary
-    const vo = (p.hasVariants && p.variantOptions) || null;
+    // Pricing summary
+    const mode = p.pricingMode || (p.hasVariants ? 'variants' : 'simple');
+    const isMatrix = mode === 'matrix';
+    const vo = (mode === 'variants' && p.variantOptions) || null;
     const cnt = (k) => vo ? (vo[k]||[]).length : 0;
+    const modeLabel = isMatrix ? 'مصفوفة' : (vo ? 'متغيّرات' : 'سعر واحد');
     let priceMin = 0, priceMax = 0;
-    if (vo) {
+    if (isMatrix) {
+      const pr = (p.priceMatrix||[]).map(r => parseFloat(r.price)||0).filter(x => x>0);
+      priceMin = p.matrixMinPrice ?? (pr.length ? Math.min(...pr) : 0);
+      priceMax = p.matrixMaxPrice ?? (pr.length ? Math.max(...pr) : 0);
+    } else if (vo) {
       const base = parseFloat(p.basePrice) || 0;
       const minOf = (k) => Math.min(0, ...((vo[k]||[]).map(o => o.priceModifier||0)));
       const maxOf = (k) => Math.max(0, ...((vo[k]||[]).map(o => o.priceModifier||0)));
@@ -852,11 +1066,13 @@ window.exportCSV=function(){
       p.weight||0,
       p.size||'',
       p.defaultPrice||0,
-      vo ? 'نعم' : 'لا',
-      cnt('sizes'),
+      modeLabel,
+      isMatrix ? (p.matrixSizes||[]).length : cnt('sizes'),
       cnt('papers'),
       cnt('finishings'),
       cnt('colors'),
+      isMatrix ? (p.matrixPrintTypes||[]).length : 0,
+      isMatrix ? (p.matrixQuantities||[]).length : 0,
       priceMin,
       priceMax,
       h.length,
@@ -1312,6 +1528,7 @@ function sv(id,v){const e=document.getElementById(id);if(e)e.value=v;}
 function clearF(ids){ids.forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})}
 function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
 function fn(n){return(n||0).toLocaleString('ar-EG');}
+function esc(s){return String(s==null?'':s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);}
 </script>
 <nav class="mob-nav">
   <div class="mob-nav-items">
