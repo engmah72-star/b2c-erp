@@ -740,11 +740,15 @@ export function getStageResponsibilities(order, slaTable = null) {
       if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
     }
 
+    // الموعد المستهدف يُحسب حيّاً من SLA الحالي (يعكس إعدادات settings.stageSla فوراً)؛
+    // طابع stageDeadline المخزّن fallback فقط لو تعذّر الحساب.
     const slaHours = getStageSlaForOrder(order, stage, slaTable);
-    let deadline = dl[stage] || '';
-    let deadlineMs = _toMs(deadline);
-    if (!deadlineMs && enteredMs && slaHours) {
+    let deadline = '', deadlineMs = null;
+    if (enteredMs && slaHours) {
       deadline = computeStageDeadlineForOrder(order, stage, enteredMs, slaTable);
+      deadlineMs = _toMs(deadline);
+    } else if (dl[stage]) {
+      deadline = dl[stage];
       deadlineMs = _toMs(deadline);
     }
 

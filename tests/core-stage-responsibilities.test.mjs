@@ -236,6 +236,24 @@ test('getStageResponsibilities: empty/no order → []', () => {
   assertEq(getStageResponsibilities(null).length, 0);
 });
 
+test('getStageResponsibilities: honors settings slaTable override (live)', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'production',
+    products: [{ printType: 'offset' }],
+    stageEnteredAt: { production: new Date(now - 50 * HOUR).toISOString() },
+  };
+  // default offset SLA = 72h → 50h ongoing = within (ongoing). Override to 24h → late.
+  const def = getStageResponsibilities(order).find(r => r.stage === 'production');
+  assertEq(def.slaHours, 72);
+  assertEq(def.rating, 'ongoing');
+
+  const over = getStageResponsibilities(order, { production: { offset: 24, digital: 12 } })
+    .find(r => r.stage === 'production');
+  assertEq(over.slaHours, 24);
+  assertEq(over.rating, 'late'); // 50h ongoing > 24h deadline
+});
+
 // ── getStageHistory: derive from timeline ─────────────────────────
 test('getStageHistory: captures tagged + legacy transitions', () => {
   const order = {
