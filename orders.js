@@ -635,10 +635,13 @@ export function getStageDurations(order) {
  *   - الموعد المستهدف (stageDeadline[stage]، أو محسوب من الدخول + SLA — backward-compat للأوردرات القديمة).
  *   - المدة + التقييم (good/late/ongoing/pending) + هل متأخر عن الموعد.
  *
+ * يتضمّن صفّاً افتتاحياً "إدخال الطلب" (intake) — الموظف الذي أنشأ الأوردر
+ * (createdBy/createdByName، أو assignedTo/csName للأوردرات المُسنَدة) وتاريخ الإنشاء.
+ *
  * بديل العرض الموحّد لِما كان متفرّقاً (stageEnteredAt + حقول ملكية مختلفة لكل مرحلة).
  * @returns {Array<{stage,label,responsibleId,responsibleName,enteredAt,enteredMs,
  *                  completedAt,completedMs,deadline,deadlineMs,durationMs,durationText,
- *                  slaHours,status,rating,overdue,isCurrent}>}
+ *                  slaHours,status,rating,overdue,isCurrent,kind}>}
  */
 export function getStageResponsibilities(order, slaTable = null) {
   if (!order) return [];
@@ -649,7 +652,30 @@ export function getStageResponsibilities(order, slaTable = null) {
   const now = Date.now();
   const keys = ['design', 'printing', 'production', 'shipping'];
 
-  return keys.map((stage, i) => {
+  // ── صفّ الإدخال (intake): من أنشأ الأوردر/أدخل العميل + تاريخ الإنشاء ──
+  const intakeEnteredAt = order.createdDate || order.createdAt || '';
+  const intakeEnteredMs = _toMs(order.createdAt) || _toMs(order.createdDate);
+  const intakeDoneMs = _toMs(ent.design) || intakeEnteredMs;
+  const intakeRow = {
+    stage: 'intake',
+    label: 'إدخال الطلب',
+    responsibleId:   order.createdBy     || order.assignedTo || '',
+    responsibleName: order.createdByName || order.csName     || '',
+    enteredAt: typeof intakeEnteredAt === 'string' ? intakeEnteredAt : (intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : ''),
+    enteredMs: intakeEnteredMs,
+    completedAt: intakeDoneMs ? fmtDateAr(new Date(intakeDoneMs)) : '',
+    completedMs: intakeDoneMs,
+    deadline: '', deadlineMs: null,
+    durationMs: 0, durationText: '—',
+    slaHours: 0,
+    status: intakeEnteredMs ? 'done' : 'pending',
+    rating: 'logged',          // حدث لحظي — لا تقييم SLA
+    overdue: false,
+    isCurrent: false,
+    kind: 'intake',
+  };
+
+  const stageRows = keys.map((stage, i) => {
     const own = STAGE_OWNERSHIP[stage] || {};
     const responsibleId   = order[own.idField]   || '';
     const responsibleName = order[own.nameField] || '';
@@ -700,8 +726,11 @@ export function getStageResponsibilities(order, slaTable = null) {
       durationMs, durationText: formatDurationAr(durationMs),
       slaHours, status, rating, overdue,
       isCurrent: stage === curStage,
+      kind: 'stage',
     };
   });
+
+  return [intakeRow, ...stageRows];
 }
 
 /**

@@ -106,6 +106,36 @@ test('buildStageRevert: requires reason', () => {
 });
 
 // ── getStageResponsibilities: unified read ────────────────────────
+test('getStageResponsibilities: intake row first — creator + creation date', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'design',
+    createdBy: 'cs1', createdByName: 'خدمة عملاء',
+    createdAt: new Date(now - 5 * HOUR).toISOString(),
+    designerName: 'مصمم', designerId: 'd1',
+    stageEnteredAt: { design: new Date(now - 5 * HOUR).toISOString() },
+  };
+  const rows = getStageResponsibilities(order);
+  assertEq(rows[0].stage, 'intake', 'intake is first row');
+  assertEq(rows[0].kind, 'intake');
+  assertEq(rows[0].responsibleName, 'خدمة عملاء');
+  assertEq(rows[0].status, 'done');
+  assert(rows[0].enteredAt, 'intake has creation date');
+  // التشغيلية تبدأ من الصف الثاني
+  assertEq(rows[1].stage, 'design');
+});
+
+test('getStageResponsibilities: intake falls back to assignedTo/csName', () => {
+  const order = {
+    stage: 'design',
+    assignedTo: 'cs2', csName: 'موظف مُسنَد',
+    createdAt: new Date().toISOString(),
+    stageEnteredAt: { design: new Date().toISOString() },
+  };
+  const rows = getStageResponsibilities(order);
+  assertEq(rows[0].responsibleName, 'موظف مُسنَد');
+});
+
 test('getStageResponsibilities: current stage is ongoing, prior is done', () => {
   const now = Date.now();
   const order = {
