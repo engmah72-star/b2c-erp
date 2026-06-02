@@ -87,7 +87,9 @@ try {
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
     { file:'report-bug.html',        label:'تقارير الأخطاء',   ico:'🐛', group:'admin',  adminOnly:true },
-    { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
+    // settings = perm عادي (لا adminOnly): يراها admin + operation_manager (pages:['*'])
+    // كصفحة تشغيلية للقوائم الرئيسية، بينما تبقى محجوبة عن باقي الأدوار (لا '*'/'settings').
+    { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  perm:'settings' },
   ];
 
   // أين تذهب كل دور عند الـ login (الـ dashboard المخصص)
