@@ -65,6 +65,33 @@ function orderCode(o) {
   return o.code || o.orderCode || o.serial || o.ref || ('#' + String(o._id || '').slice(-5));
 }
 
+// سهم الاتجاه — مقارنة درجة الشهر بالشهر الماضي
+function trendHTML(m) {
+  const t = m.trend || 0;
+  const cls = t >= 3 ? 'up' : t <= -3 ? 'down' : 'flat';
+  const ico = t >= 3 ? '▲' : t <= -3 ? '▼' : '▬';
+  const txt = t > 0 ? '+' + t : String(t);
+  return `<span class="ec-trend ${cls}" title="مقارنة بالشهر الماضي (${m.prevScore ?? '—'})">${ico} ${txt}</span>`;
+}
+
+// الترتيب وسط نفس الدور + شريط نسبة مئوية
+function rankHTML(m) {
+  if (!m.rankTotal || m.rankTotal < 2) return '';
+  return `<span class="ec-rank" title="ترتيبه وسط زملائه في نفس الدور">#${m.rank}/${m.rankTotal}</span>` +
+    `<span class="ec-pct"><span class="ec-pct-f" style="width:${m.percentile}%"></span></span>`;
+}
+
+// زمن دورة العمل — متوسط المرحلة + أقدم أوردر جارٍ
+function slaHTML(m) {
+  const parts = [];
+  if (m.slaAvgDays != null) parts.push(`⏱️ ${m.slaAvgDays}ي/مرحلة`);
+  if (m.slaOldestDays > 0) {
+    const warn = m.slaOldestDays >= 3;
+    parts.push(`<span class="${warn ? 'ec-sla-warn' : ''}">أقدم ${m.slaOldestDays}ي${warn ? ' ⚠️' : ''}</span>`);
+  }
+  return parts.length ? `<div class="ec-sla">${parts.join(' · ')}</div>` : '';
+}
+
 // ── One employee row ─────────────────────────────────────────────────
 function renderRow(emp, m, caps) {
   const id = esc(emp._id);
@@ -184,9 +211,16 @@ function activityCard(emp, m, caps) {
         <a class="ec-name" href="employee-profile.html?id=${id}">${name}</a>
         <div class="ec-role">${roleLbl}${sig.length ? ' · ' + sig.join('') : ''}</div>
       </div>
-      <div class="ec-score" style="--sc:${m.scoreCol}" title="${esc(m.grade || '')}">${m.score}<span>/100</span></div>
+      <div class="ec-score-wrap">
+        <div class="ec-score" style="--sc:${m.scoreCol}" title="${esc(m.grade || '')}">${m.score}<span>/100</span></div>
+        ${trendHTML(m)}
+      </div>
     </div>
-    <div class="ec-att ${attCls}">${attTxt}</div>
+    <div class="ec-meta">
+      <div class="ec-att ${attCls}">${attTxt}</div>
+      <div class="ec-rankwrap">${rankHTML(m)}</div>
+    </div>
+    ${slaHTML(m)}
     <div class="ec-card-stats">
       <div class="ec-stat"><span class="ec-stat-v">${m.workingCount}</span><span class="ec-stat-l">🔧 شغّال على</span></div>
       <div class="ec-stat"><span class="ec-stat-v">${m.finished}</span><span class="ec-stat-l">✅ أنجز اليوم</span></div>
@@ -194,6 +228,27 @@ function activityCard(emp, m, caps) {
     </div>
     ${workBox}
     <div class="ec-card-acts">${acts}</div>
+  </div>`;
+}
+
+// ── Leaderboard مصغّر (أعلى 3 / أحوج 3 للمتابعة) ─────────────────────
+export function renderLeaderboard({ employees, metrics }) {
+  const rows = employees
+    .filter(e => (e.status || 'active') === 'active')
+    .map(e => ({ e, m: metrics.get(e._id) }))
+    .filter(x => x.m);
+  if (rows.length < 3) return '';
+  const medals = ['🥇', '🥈', '🥉'];
+  const top = [...rows].sort((a, b) => b.m.score - a.m.score).slice(0, 3);
+  const need = [...rows].sort((a, b) => (a.m.score - b.m.score) || (a.m.trend - b.m.trend)).slice(0, 3);
+  const chip = (x, badge) =>
+    `<a class="ec-lb-chip" href="employee-profile.html?id=${esc(x.e._id)}">
+       <span class="ec-lb-badge">${badge}</span>
+       <span class="ec-lb-name">${esc(x.e.name || '—')}</span>
+       <span class="ec-lb-sc" style="color:${x.m.scoreCol}">${x.m.score}</span></a>`;
+  return `<div class="ec-lb">
+    <div class="ec-lb-col top"><div class="ec-lb-h">🏆 الأعلى أداءً</div>${top.map((x, i) => chip(x, medals[i])).join('')}</div>
+    <div class="ec-lb-col need"><div class="ec-lb-h">🚩 يحتاجون متابعة</div>${need.map(x => chip(x, '⚠️')).join('')}</div>
   </div>`;
 }
 
