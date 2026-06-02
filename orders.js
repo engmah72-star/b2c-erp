@@ -845,6 +845,36 @@ export function getOrderDates(order) {
   };
 }
 
+// ══════════════════════════════════════════
+// ORDER ALERTS — تنبيهات التأخير (مشتقة من المرجع الواحد)
+// ══════════════════════════════════════════
+/**
+ * تنبيهات تأخير الأوردر — derived من getStageResponsibilities (المرجع الواحد).
+ * المرحلة "متأخرة" = تجاوزت موعدها المستهدف (المرحلة الحالية الجارية أو مرحلة
+ * مكتملة تأخّرت). يُرجَّع ملخص جاهز للعرض (badge/قائمة).
+ *
+ * @returns {{ overdueStages:Array<{stage,label,responsibleId,responsibleName,deadline,durationText,isCurrent}>,
+ *             currentOverdue:boolean, count:number, worst:(string|null) }}
+ */
+export function getOrderAlerts(order, slaTable = null) {
+  const empty = { overdueStages: [], currentOverdue: false, count: 0, worst: null };
+  if (!order) return empty;
+  const rows = getStageResponsibilities(order, slaTable).filter(r => r.kind === 'stage' && r.overdue);
+  if (!rows.length) return empty;
+  const overdueStages = rows.map(r => ({
+    stage: r.stage, label: r.label,
+    responsibleId: r.responsibleId, responsibleName: r.responsibleName,
+    deadline: r.deadline, durationText: r.durationText, isCurrent: r.isCurrent,
+  }));
+  const current = overdueStages.find(r => r.isCurrent);
+  return {
+    overdueStages,
+    currentOverdue: !!current,
+    count: overdueStages.length,
+    worst: (current || overdueStages[0]).label,
+  };
+}
+
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
 export function isStageOverdue(order, slaTable = null) {
   if (!order || !order.stage) return false;
