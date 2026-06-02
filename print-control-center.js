@@ -459,11 +459,29 @@ function waPhoneEG(raw) {
 }
 
 /**
- * buildProductionHandoffMessage(order) — يبني نص واتساب يُرسَل لمندوب
+ * buildProductionActionUrl(order) — يبني لينك مطلق يفتح الأوردر في صفحة
+ * الإنتاج (production.html?orderId=…) — auto-open للبانل اللي فيه تسجيل
+ * التكلفة (recordCostItem) وتأكيد الانتهاء (moveToShipping).
+ * مطلق (origin كامل) عشان يشتغل من واتساب خارج التطبيق.
+ */
+export function buildProductionActionUrl(order = {}) {
+  const id = order && order._id ? order._id : '';
+  if (!id) return '';
+  const rel = `production.html?orderId=${encodeURIComponent(id)}`;
+  try {
+    return new URL(rel, window.location.href).href;
+  } catch (_) {
+    return rel;
+  }
+}
+
+/**
+ * buildProductionHandoffMessage(order, opts) — يبني نص واتساب يُرسَل لمندوب
  * التنفيذ عند تحويل أوردر الطباعة للتنفيذ. ملخّص تشغيلي (مش specs المطبعة):
  * رقم الأوردر · العميل · الميعاد · المنتجات (الاسم × الكمية) · ملاحظة.
+ * opts.actionUrl (اختياري): لينك يفتح الأوردر لتسجيل التكلفة وتأكيد الانتهاء.
  */
-export function buildProductionHandoffMessage(order = {}) {
+export function buildProductionHandoffMessage(order = {}, opts = {}) {
   const o = order;
   const lines = [];
   lines.push('🏭 أوردر جديد للتنفيذ');
@@ -492,6 +510,13 @@ export function buildProductionHandoffMessage(order = {}) {
     lines.push(`✏️ ملاحظة: ${note}`);
   }
 
+  // 🔗 لينك التنفيذ — يفتح الأوردر مباشرةً لتسجيل التكلفة وتأكيد الانتهاء.
+  if (opts.actionUrl) {
+    lines.push('');
+    lines.push('💰 سجّل التكلفة وأكّد الانتهاء من هنا:');
+    lines.push(opts.actionUrl);
+  }
+
   return lines.join('\n');
 }
 
@@ -507,7 +532,8 @@ export function sendProductionHandoff(order, agent) {
   if (!waPhone) {
     return { ok: false, error: `المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته` };
   }
-  const message = buildProductionHandoffMessage(order);
+  const actionUrl = buildProductionActionUrl(order);
+  const message = buildProductionHandoffMessage(order, { actionUrl });
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
   try {
     window.open(waUrl, '_blank');
@@ -537,6 +563,7 @@ if (typeof window !== 'undefined') {
     applyPrintCCHeader,
     buildPrintTimeline,
     printTimelineHTML,
+    buildProductionActionUrl,
     buildProductionHandoffMessage,
     sendProductionHandoff,
     togglePrintControlCenter,
