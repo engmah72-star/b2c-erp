@@ -477,6 +477,7 @@ import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, o
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
 import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { getMatrixPrice } from "./product-actions.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 // God-page decomp PR-2 (design): renderPanel HTML extracted.
 import { renderPanelHTML } from "./design-render.js";
@@ -1333,12 +1334,35 @@ window.selectClient=function(id,name,phone){
 // ── منتجات ──
 function prodOptsHtml(){return'<option value="">— اختر المنتج —</option>'+products.map(p=>`<option value="${p._id}" data-name="${(p.name||'').replace(/"/g,'')}" data-price="${p.defaultPrice||0}">${p.name}</option>`).join('');}
 function refreshProdSelects(){document.querySelectorAll('.prod-select').forEach(s=>{const cur=s.value;s.innerHTML=prodOptsHtml();if(cur)s.value=cur;});}
+// Phase 2: سعر خلية المصفوفة عبر getMatrixPrice المُصدَّر (مصدر واحد — راجع product-actions.js)
+function _attr(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);}
 window.addProdRow=function(){
   const div=document.createElement('div');div.className='prod-row';
-  div.innerHTML=`<select class="prod-select"><option value="">— اختر المنتج —</option></select><input type="number" value="1" min="1"><button type="button" onclick="this.closest('.prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">✕</button>`;
-  const sel=div.querySelector('select');
+  div.innerHTML=`<select class="prod-select" onchange="onProdRowChange(this)"><option value="">— اختر المنتج —</option></select><input type="number" class="prod-qty" value="1" min="1"><button type="button" onclick="this.closest('.prod-row').remove()" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">✕</button><div class="prod-mx" style="grid-column:1/-1;display:none;gap:6px;grid-template-columns:1fr 1fr 1fr"></div>`;
+  const sel=div.querySelector('select.prod-select');
   sel.innerHTML=prodOptsHtml();
   document.getElementById('prod-rows').appendChild(div);
+};
+// عند اختيار منتج: لو مصفوفة، أظهر منتقي المقاس/الطباعة/الكمية (شريحة)
+window.onProdRowChange=function(sel){
+  const row=sel.closest('.prod-row');if(!row)return;
+  const mx=row.querySelector('.prod-mx');const qtyInp=row.querySelector('.prod-qty');
+  const p=products.find(x=>x._id===sel.value);
+  if(!p||p.pricingMode!=='matrix'){if(mx){mx.style.display='none';mx.innerHTML='';}if(qtyInp)qtyInp.style.display='';return;}
+  const sizes=p.matrixSizes||[],ptypes=p.matrixPrintTypes||[],qtys=p.matrixQuantities||[];
+  const lbl=t=>t==='digital'?'💻 ديجيتال':'🖨️ أوفست';
+  mx.innerHTML=`<select class="pmx-size" onchange="onMatrixRowChange(this)">${sizes.map(s=>`<option value="${_attr(s)}">📏 ${_attr(s)}</option>`).join('')}</select>`+
+    `<select class="pmx-ptype" onchange="onMatrixRowChange(this)">${ptypes.map(t=>`<option value="${_attr(t)}">${lbl(t)}</option>`).join('')}</select>`+
+    `<select class="pmx-qty" onchange="onMatrixRowChange(this)">${qtys.map(q=>`<option value="${q}">${q} ق</option>`).join('')}</select>`;
+  mx.style.display='grid';
+  if(qtyInp)qtyInp.style.display='none';
+  const tierSel=mx.querySelector('.pmx-qty');if(tierSel)onMatrixRowChange(tierSel);
+};
+// مزامنة الكمية المختارة (الشريحة) إلى حقل qty الذي يقرؤه gather
+window.onMatrixRowChange=function(el){
+  const row=el.closest('.prod-row');if(!row)return;
+  const qtyInp=row.querySelector('.prod-qty');const tier=row.querySelector('.pmx-qty')?.value;
+  if(qtyInp&&tier)qtyInp.value=tier;
 };
 
 // ── العربون ──
@@ -1438,10 +1462,23 @@ window.saveOrder=async function(){
   const rows=document.querySelectorAll('#prod-rows .prod-row');
   const prods=[];
   for(const row of rows){
-    const sel=row.querySelector('select');const qty=row.querySelector('input[type="number"]');
+    const sel=row.querySelector('select.prod-select');const qty=row.querySelector('.prod-qty');
     if(!sel.value)continue;
     const opt=sel.options[sel.selectedIndex];
-    prods.push({productId:sel.value,name:opt.dataset.name||opt.text,qty:parseInt(qty?.value)||1,unitPrice:parseFloat(opt.dataset.price)||0});
+    const p=products.find(x=>x._id===sel.value);
+    const qtyVal=parseInt(qty?.value)||1;
+    let unitPrice=parseFloat(opt.dataset.price)||0,size='',printType='';
+    if(p&&p.pricingMode==='matrix'){
+      size=row.querySelector('.pmx-size')?.value||'';
+      printType=row.querySelector('.pmx-ptype')?.value||'';
+      const mp=getMatrixPrice(p,{size,printType,qty:qtyVal});
+      if(mp==null){toast(`⛔ التركيبة غير مُسعّرة: ${p.name} · ${size} · ${printType==='digital'?'ديجيتال':'أوفست'} · ${qtyVal} ق`,'err');return;}
+      unitPrice=mp;
+    }
+    const line={productId:sel.value,name:opt.dataset.name||opt.text,qty:qtyVal,unitPrice};
+    if(size)line.size=size;
+    if(printType)line.printType=printType;
+    prods.push(line);
   }
   if(!prods.length)return toast('⚠️ أضف منتجاً على الأقل','err');
   const dep=parseFloat(gv('np-deposit'))||0;
