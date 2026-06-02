@@ -1223,12 +1223,24 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
   const targetConf = STAGES[target];
   const now = nowStr();
 
-  // ـ تعيين الموظف المستلم للمرحلة الجديدة (إن وُجد) ـ
+  // ـ تعيين الموظف المسؤول عن المرحلة الجديدة ـ
+  // قاعدة عامة (R — Order Responsibility): مفيش مرحلة بلا مسؤول. الأولوية:
+  //   المستلِم المُختار > المالك الحالي للمرحلة > مُنفّذ الانتقال (fallback).
   const ownership = STAGE_OWNERSHIP[target];
   const assigneeFields = {};
-  if (ownership && nextAssigneeId) {
-    assigneeFields[ownership.idField]   = nextAssigneeId;
-    assigneeFields[ownership.nameField] = nextAssigneeName || '';
+  let effAssigneeId = '', effAssigneeName = '';
+  if (ownership) {
+    if (nextAssigneeId) {
+      effAssigneeId = nextAssigneeId; effAssigneeName = nextAssigneeName || '';
+    } else if (order[ownership.idField]) {
+      effAssigneeId = order[ownership.idField]; effAssigneeName = order[ownership.nameField] || '';
+    } else {
+      effAssigneeId = userId || ''; effAssigneeName = userName || '';   // fallback: مُنفّذ الانتقال
+    }
+    if (effAssigneeId) {
+      assigneeFields[ownership.idField]   = effAssigneeId;
+      assigneeFields[ownership.nameField] = effAssigneeName;
+    }
   }
 
   // ـ طوابع زمن: إنجاز المرحلة الحالية (الخروج) + دخول الجديدة ـ
@@ -1250,8 +1262,8 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     fields.shipStage = SHIP_STAGES.READY;
   }
 
-  // ـ سطر timeline يوضح الانتقال + المستلم لو معيَّن ـ
-  const handoffSuffix = nextAssigneeName ? ` — تسليم إلى ${nextAssigneeName}` : '';
+  // ـ سطر timeline يوضح الانتقال + المسؤول الفعلي للمرحلة الجديدة ـ
+  const handoffSuffix = effAssigneeName ? ` — مسؤول: ${effAssigneeName}` : '';
   const timelineEntry = {
     date:  now,
     stage: target,
@@ -1259,8 +1271,8 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     action: `${targetConf.ico} انتقل ${stageConf.label} → ${targetConf.label}${handoffSuffix}`,
     by:    userName || '',
     byId:  userId   || '',
-    assigneeId:   nextAssigneeId   || '',
-    assigneeName: nextAssigneeName || '',
+    assigneeId:   effAssigneeId   || '',
+    assigneeName: effAssigneeName || '',
   };
 
   return { ok:true, newStage: target, fields, timelineEntry };
@@ -2119,11 +2131,42 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
  * @param {Object} orderData — بيانات الأوردر قبل الحفظ
  * @returns { ok, errors, warnings }
  */
+/**
+ * R — Order Responsibility Invariant (قاعدة عامة):
+ * كل أوردر لا بد أن يكون مرتبطاً بـ:
+ *   • مسؤول: createdBy (المُنشئ) — أو assignedTo أو مالك أي مرحلة.
+ *   • تاريخ: createdAt/createdDate — أو دخول أي مرحلة (stageEnteredAt).
+ * مفيش أوردر بدون الاثنين. يُستخدم كحارس عند الإنشاء وكفحص ثبات.
+ * @returns { ok, errors, warnings }
+ */
+export function validateOrderResponsibility(order) {
+  if (!order) return { ok:false, errors:['لا توجد بيانات أوردر'], warnings:[] };
+  const errors = [];
+
+  const hasResponsible = !!(
+    order.createdBy || order.assignedTo ||
+    order.designerId || order.printerId ||
+    order.productionAgent || order.shippingOfficerId
+  );
+  if (!hasResponsible) errors.push('كل أوردر يجب أن يكون له مسؤول (createdBy على الأقل)');
+
+  const hasDate = !!(
+    order.createdAt || order.createdDate ||
+    (order.stageEnteredAt && Object.keys(order.stageEnteredAt).length > 0)
+  );
+  if (!hasDate) errors.push('كل أوردر يجب أن يكون له تاريخ (إنشاء أو دخول مرحلة)');
+
+  return { ok: errors.length === 0, errors, warnings: [] };
+}
+
 export function validateOrder(orderData) {
   const errors = [];
   const warnings = [];
 
   if (!orderData) return { ok:false, errors:['لا توجد بيانات أوردر'], warnings:[] };
+
+  // قاعدة المسؤولية العامة (R): مسؤول + تاريخ إلزاميان
+  errors.push(...validateOrderResponsibility(orderData).errors);
 
   // العميل
   if (!orderData.clientId) errors.push('clientId مطلوب');

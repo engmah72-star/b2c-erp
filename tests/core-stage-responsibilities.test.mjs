@@ -20,6 +20,7 @@ import {
   buildStageRevert,
   getStageResponsibilities,
   getStageHistory,
+  validateOrderResponsibility,
   fmtDateAr,
   STAGE_SLA_DEFAULTS,
   PRODUCTION_SLA_BY_PRINT,
@@ -287,6 +288,52 @@ test('getStageHistory: captures tagged + legacy transitions', () => {
   assertEq(h[0].responsibleName, 'مصمم');
   assertEq(h[1].stage, 'printing');
   assertEq(h[2].stage, 'design');
+});
+
+// ── R — Order Responsibility Invariant ────────────────────────────
+test('validateOrderResponsibility: createdBy + date → ok', () => {
+  const r = validateOrderResponsibility({ createdBy: 'u1', createdDate: '01/06/2026' });
+  assert(r.ok, JSON.stringify(r.errors));
+});
+test('validateOrderResponsibility: stage owner + stageEnteredAt → ok', () => {
+  const r = validateOrderResponsibility({ designerId: 'd1', stageEnteredAt: { design: 'x' } });
+  assert(r.ok, JSON.stringify(r.errors));
+});
+test('validateOrderResponsibility: no responsible → error', () => {
+  const r = validateOrderResponsibility({ createdDate: '01/06/2026' });
+  assert(!r.ok);
+  assert(r.errors.some(e => /مسؤول/.test(e)), 'responsible error');
+});
+test('validateOrderResponsibility: no date → error', () => {
+  const r = validateOrderResponsibility({ createdBy: 'u1' });
+  assert(!r.ok);
+  assert(r.errors.some(e => /تاريخ/.test(e)), 'date error');
+});
+test('validateOrderResponsibility: empty order → both errors', () => {
+  const r = validateOrderResponsibility({});
+  assertEq(r.errors.length, 2);
+});
+
+// ── buildStageAdvance: كل مرحلة جديدة لها مسؤول (fallback) ─────────
+test('buildStageAdvance: no assignee → target owner falls back to actor', () => {
+  const order = { stage: 'design', designFiles: [{ url: 'x' }], stageEnteredAt: { design: 'x' }, timeline: [] };
+  const r = buildStageAdvance({ order, role: 'admin', userId: 'actor1', userName: 'المنفّذ', bypassWarnings: true });
+  assert(r.ok, JSON.stringify(r.errors));
+  assertEq(r.fields.printerId, 'actor1', 'printer = actor fallback');
+  assertEq(r.fields.printerName, 'المنفّذ');
+  assertEq(r.timelineEntry.assigneeId, 'actor1');
+});
+test('buildStageAdvance: keeps existing stage owner when no new assignee', () => {
+  const order = { stage: 'design', printerId: 'p9', printerName: 'طبّاع قديم', designFiles: [{ url: 'x' }], stageEnteredAt: { design: 'x' }, timeline: [] };
+  const r = buildStageAdvance({ order, role: 'admin', userId: 'actor1', userName: 'المنفّذ', bypassWarnings: true });
+  assert(r.ok, JSON.stringify(r.errors));
+  assertEq(r.fields.printerId, 'p9', 'existing owner preserved');
+  assertEq(r.fields.printerName, 'طبّاع قديم');
+});
+test('buildStageAdvance: explicit assignee wins', () => {
+  const order = { stage: 'design', printerId: 'p9', designFiles: [{ url: 'x' }], stageEnteredAt: { design: 'x' }, timeline: [] };
+  const r = buildStageAdvance({ order, role: 'admin', userId: 'actor1', userName: 'a', nextAssigneeId: 'p1', nextAssigneeName: 'طبّاع', bypassWarnings: true });
+  assertEq(r.fields.printerId, 'p1', 'chosen assignee wins');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
