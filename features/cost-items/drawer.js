@@ -66,6 +66,18 @@
   let _editIdx = -1; // -1 = creating; >=0 = editing item at this index in order.costItems
   let _pop = null; // current popover element (auto-close on outside click)
 
+  // ── Product Proposals (feature: production.productProposals) ──────
+  // وضع "المقترح": بدل ما كل سطر يُسجَّل فوراً كـ costItem، بنجمّع سطور المنتج
+  // الكامل (عدة موردين مسموح) في staging محلي، وزر "اعتمد" واحد يولّد كل البنود
+  // دفعةً واحدة عبر productProposalActions.acceptProposal. الـ flag مقفول =
+  // سلوك اليوم بالضبط (صفر regression).
+  let _proposalMode = false;     // resolved from feature flag on open()
+  let _proposalLines = [];       // staged lines [{lineId,type,supplierId,supplierName,total,note,paperMeta}]
+  let _proposalEditLineId = null;// when editing a staged line
+  let _accepting = false;        // guard against double-accept
+  // المقترح بالمنتج الكامل → فعّال فقط عند فتح الـ drawer من منتج محدد.
+  const proposalActive = () => _proposalMode && _prodIdx >= 0;
+
   // ── DOM references (mounted once) ────────────────────────
   let _root, _backdrop, _drawer;
 
@@ -201,9 +213,13 @@
           ${renderItemsList(ci, allCi)}
         </section>` : ''}
 
+        ${proposalActive() ? renderProposalSection() : ''}
+
         <section class="cid-sect">
           <div class="cid-sect-label">
-            <span>${_editIdx >= 0 ? '✏️ تعديل البند' : '➕ إضافة بند جديد'}</span>
+            <span>${proposalActive()
+              ? (_proposalEditLineId ? '✏️ تعديل سطر المقترح' : '➕ أضف سطر للمقترح')
+              : (_editIdx >= 0 ? '✏️ تعديل البند' : '➕ إضافة بند جديد')}</span>
             <span class="cid-line"></span>
             ${_editIdx >= 0
               ? `<button class="cid-cancel-edit" type="button" data-action="cancel-edit">إلغاء التعديل</button>`
@@ -382,6 +398,56 @@
                  value="${escapeHtml(_draft.note||'')}" data-cid-field="note"/>
         </label>
       </div>
+    `;
+  }
+
+  // PR: Product Proposals — سطور المقترح المجمّعة (staging محلي) + شريط الاعتماد.
+  // الإجمالي = إجمالي المنتج الكامل. breakdown بالمورد للتوضيح (لكن الوحدة = المنتج).
+  function renderProposalSection(){
+    const lines = _proposalLines;
+    const total = lines.reduce((s,l)=>s+(parseFloat(l.total)||0),0);
+    // breakdown بالمورد (توضيحي فقط)
+    const bySup = {};
+    lines.forEach(l => {
+      const k = l.supplierName || '—';
+      bySup[k] = (bySup[k]||0) + (parseFloat(l.total)||0);
+    });
+    const supChips = Object.entries(bySup).map(([n,v]) =>
+      `<span class="cid-prop-sup">🏭 ${escapeHtml(n)} · ${fn(v)} ج</span>`).join('');
+
+    return `
+      <section class="cid-sect cid-prop">
+        <div class="cid-sect-label">
+          <span>🧾 مقترح المنتج الكامل (${lines.length} ${lines.length===1?'سطر':'سطر'})</span>
+          <span class="cid-line"></span>
+          <span class="cid-hint">إجمالي ${fn(total)} ج</span>
+        </div>
+        ${lines.length ? `
+          <div class="cid-prop-lines">
+            ${lines.map(l => `
+              <div class="cid-item-row${_proposalEditLineId===l.lineId?' is-editing':''}">
+                <div class="cid-item-main">
+                  <div class="cid-item-name">${getCostIco(l.type)} ${escapeHtml(l.type||'—')}</div>
+                  <div class="cid-item-sub">🏭 ${escapeHtml(l.supplierName||'—')}</div>
+                  ${l.note ? `<div class="cid-item-sub">💬 ${escapeHtml(l.note)}</div>` : ''}
+                </div>
+                <div class="cid-item-amt">${fn(l.total)} ج</div>
+                <div class="cid-item-actions">
+                  <button class="cid-item-btn cid-item-btn-edit" type="button" data-action="edit-prop-line" data-id="${escapeHtml(l.lineId)}" title="تعديل">✏️</button>
+                  <button class="cid-item-btn cid-item-btn-del" type="button" data-action="del-prop-line" data-id="${escapeHtml(l.lineId)}" title="حذف">✕</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          ${supChips ? `<div class="cid-prop-sups">${supChips}</div>` : ''}
+          <div class="cid-prop-bar">
+            <button class="cid-prop-accept" type="button" data-action="accept-proposal" ${_accepting?'disabled':''}>
+              ${_accepting ? '⏳ جارٍ التوليد...' : `✅ اعتمد المقترح وولّد التكاليف (${fn(total)} ج)`}
+            </button>
+            <button class="cid-prop-clear" type="button" data-action="clear-proposal" ${_accepting?'disabled':''}>تفريغ</button>
+          </div>
+        ` : `<div class="cid-prop-empty">لسه مفيش سطور — أضف بنود المنتج (من أكتر من مورد لو محتاج) ثم اعتمد المقترح.</div>`}
+      </section>
     `;
   }
 
@@ -570,6 +636,16 @@
     });
     _drawer.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', cancelEdit);
 
+    // proposal staging actions (only present in proposal mode)
+    _drawer.querySelectorAll('[data-action="edit-prop-line"]').forEach(el => {
+      el.addEventListener('click', () => startEditProposalLine(el.dataset.id));
+    });
+    _drawer.querySelectorAll('[data-action="del-prop-line"]').forEach(el => {
+      el.addEventListener('click', () => deleteProposalLine(el.dataset.id));
+    });
+    _drawer.querySelector('[data-action="accept-proposal"]')?.addEventListener('click', acceptProposalFlow);
+    _drawer.querySelector('[data-action="clear-proposal"]')?.addEventListener('click', clearProposal);
+
     // total input — Enter submits
     const totalInput = _drawer.querySelector('[data-cid-field="total"]');
     if(totalInput){
@@ -755,6 +831,30 @@
     const total = parseFloat(_draft.total) || 0;
     if(total <= 0){ toast('⚠️ أدخل التكلفة', 'err'); return; }
 
+    // ── proposal mode: stage the line locally (no DB write yet) ──
+    // المقترح بالمنتج الكامل — بنجمّع السطور ثم نعتمدها مرة واحدة.
+    if(proposalActive()){
+      const lineObj = {
+        lineId: _proposalEditLineId || (Date.now().toString(36)+Math.random().toString(36).slice(2,7)),
+        type: _draft.type,
+        supplierId: _draft.supplierId,
+        supplierName: _draft.supplierName,
+        total,
+        note: _draft.note || '',
+        ...(_draft.paperMeta && Object.keys(_draft.paperMeta).length ? { paperMeta: _draft.paperMeta } : {}),
+      };
+      if(_proposalEditLineId){
+        const i = _proposalLines.findIndex(l => l.lineId === _proposalEditLineId);
+        if(i >= 0) _proposalLines.splice(i, 1, lineObj); else _proposalLines.push(lineObj);
+      } else {
+        _proposalLines.push(lineObj);
+      }
+      _proposalEditLineId = null;
+      _draft = { supplierId:'', supplierName:'', supplierSpecialties:[], type:'', total:'', note:'', paperMeta:null };
+      render();
+      return;
+    }
+
     const c = ctx();
     if(!c){ toast('❌ السياق غير جاهز', 'err'); return; }
     const o = c.getOrder(_orderId);
@@ -828,6 +928,104 @@
     render();
   }
 
+  // ── proposal staging handlers ─────────────────────────────
+  function startEditProposalLine(lineId){
+    const line = _proposalLines.find(l => l.lineId === lineId);
+    if(!line) return;
+    const c = ctx();
+    const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+    const sup = suppliers.find(s => s._id === line.supplierId);
+    const specs = sup
+      ? (Array.isArray(sup.specialties) && sup.specialties.length
+          ? sup.specialties
+          : (sup.printType ? [sup.printType] : []))
+      : [];
+    _proposalEditLineId = lineId;
+    _editIdx = -1;
+    _draft = {
+      supplierId: line.supplierId || '',
+      supplierName: line.supplierName || '',
+      supplierSpecialties: specs,
+      type: line.type || '',
+      total: String(line.total || ''),
+      note: line.note || '',
+      paperMeta: line.paperMeta || null,
+    };
+    render();
+    setTimeout(() => _drawer.querySelector('[data-cid-field="total"]')?.focus(), 50);
+  }
+
+  function deleteProposalLine(lineId){
+    const i = _proposalLines.findIndex(l => l.lineId === lineId);
+    if(i < 0) return;
+    _proposalLines.splice(i, 1);
+    if(_proposalEditLineId === lineId){
+      _proposalEditLineId = null;
+      _draft = { supplierId:'', supplierName:'', supplierSpecialties:[], type:'', total:'', note:'', paperMeta:null };
+    }
+    render();
+  }
+
+  function clearProposal(){
+    if(_accepting) return;
+    if(_proposalLines.length && !confirm('تفريغ كل سطور المقترح؟')) return;
+    _proposalLines = [];
+    _proposalEditLineId = null;
+    render();
+  }
+
+  // اعتماد المقترح: احفظ مسوّدة → اعتمد (يولّد costItems في batch واحد ذرّي).
+  // التوليد كله عبر productProposalActions (RULE 3 + FSE + idempotency).
+  async function acceptProposalFlow(){
+    if(_accepting) return;
+    if(!_proposalLines.length){ toast('⚠️ أضف سطر واحد على الأقل', 'err'); return; }
+    if(_prodIdx < 0){ toast('⚠️ المقترح بيكون بالمنتج — افتح من منتج محدد', 'err'); return; }
+
+    const c = ctx();
+    if(!c){ toast('❌ السياق غير جاهز', 'err'); return; }
+
+    // lazy-load productProposalActions + db
+    let actions = window.__productProposalActions;
+    if(!actions){
+      try { actions = (await import('../../core/product-proposals.js')).productProposalActions; }
+      catch(e){ toast('❌ فشل تحميل نظام المقترحات', 'err'); console.error(e); return; }
+    }
+    let db = window.__firestoreDb;
+    if(!db){
+      try { db = (await import('../../core/firebase-init.js')).db; window.__firestoreDb = db; }
+      catch(e){ toast('❌ فشل تحميل Firestore', 'err'); console.error(e); return; }
+    }
+
+    const userId = (c.getCurrentUser && c.getCurrentUser()?.uid) || '';
+    const userName = c.getUserName ? c.getUserName() : '';
+
+    _accepting = true; render();
+    try {
+      const saved = await actions.saveProposal({
+        db, orderId: _orderId, prodIdx: _prodIdx,
+        lines: _proposalLines, userId, userName,
+      });
+      if(!saved.ok){ toast('❌ '+(saved.errors?.[0]||'فشل حفظ المقترح'), 'err'); _accepting=false; render(); return; }
+
+      const res = await actions.acceptProposal({
+        db, orderId: _orderId, proposalId: saved.proposalId, userId, userName,
+      });
+      if(!res.ok){ toast('❌ '+(res.errors?.[0]||'فشل اعتماد المقترح'), 'err'); _accepting=false; render(); return; }
+
+      const n = (res.generatedCostItemIds||[]).length;
+      toast(`✅ تم اعتماد المقترح — تولّد ${n} ${n===1?'بند':'بنود'} تكلفة`, 'ok');
+      _proposalLines = [];
+      _proposalEditLineId = null;
+      _accepting = false;
+      // onSnapshot هيحدّث الأوردر؛ نقفل الـ drawer بعد لحظة
+      setTimeout(close, 400);
+    } catch(e){
+      console.error('acceptProposalFlow failed', e);
+      toast('❌ خطأ غير متوقع في الاعتماد', 'err');
+      _accepting = false; render();
+    }
+  }
+
   async function submitMany(sugs){
     for(const s of sugs){
       applySuggestion(s);
@@ -857,12 +1055,34 @@
   }
 
   // ── public API ────────────────────────────────────────────
+  // Resolve the proposals feature flag. Reads window.__featureFlags if already
+  // present; otherwise lazy-imports feature-flags.js and re-renders when ready.
+  // Default false → existing behaviour untouched until the flag is on.
+  function resolveProposalFlag(){
+    try {
+      const ff = window.__featureFlags;
+      if(ff && typeof ff.isFeatureEnabled === 'function'){
+        _proposalMode = !!ff.isFeatureEnabled('production.productProposals');
+        return;
+      }
+    } catch(_){}
+    // lazy import (one-shot) then re-render if mode flips on
+    import('../../core/feature-flags.js').then(m => {
+      const on = !!m.isFeatureEnabled('production.productProposals');
+      if(on !== _proposalMode){ _proposalMode = on; if(_open) render(); }
+    }).catch(()=>{});
+  }
+
   function open(orderId, prodIdx){
     mount();
     _orderId = orderId;
     _prodIdx = (prodIdx == null || prodIdx < 0) ? -1 : parseInt(prodIdx, 10);
     _draft = { type:'', supplierId:'', supplierName:'', total:'', mode:'int', note:'', walletId:'' };
     _editIdx = -1;
+    _proposalLines = [];
+    _proposalEditLineId = null;
+    _accepting = false;
+    resolveProposalFlag();
     _open = true;
     render();
     // Animate in
