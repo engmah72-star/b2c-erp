@@ -98,7 +98,24 @@
         const fil = (p.file || '').toLowerCase();
         return lbl.includes(q) || fil.includes(q);
       });
-      return [{ section: null, items: matches }];
+      const groups = [{ section: null, items: matches }];
+
+      // ── فتح أوردر مباشرةً بالكود ──────────────────────────────────────
+      // لو الاستعلام يشبه رقم/كود أوردر (يحتوي رقماً وكله محارف كود)، نضيف
+      // اختصاراً يفتح صفحة التتبّع — وهي التي تتولّى الـ lookup الفعلي
+      // (where orderId==code) والصلاحيات و«غير موجود» بنفسها. صفر Firestore
+      // هنا. نُظهره فقط لمن لديه وصول لأي صفحة من مجموعة الأوردرات.
+      const code = (query || '').trim();
+      const looksLikeOrder = /\d/.test(code) && /^[\w\-/]{2,}$/.test(code);
+      const canOrders = all.some(p => p.group === 'orders');
+      if (looksLikeOrder && canOrders) {
+        groups.unshift({ section: null, items: [{
+          file: 'order-tracking.html?id=' + encodeURIComponent(code),
+          label: 'افتح الأوردر رقم «' + code + '»',
+          ico: '📋',
+        }] });
+      }
+      return groups;
     }
 
     const usedFiles = new Set([...favs.map(p => p.file), ...recent.map(p => p.file)]);
@@ -153,7 +170,7 @@
       + '<div class="cp-modal">'
       + '  <div class="cp-input-row">'
       + '    <span class="cp-input-icon">🔍</span>'
-      + '    <input class="cp-input" type="text" placeholder="اكتب اسم الصفحة..." autocomplete="off" aria-label="بحث">'
+      + '    <input class="cp-input" type="text" placeholder="اكتب اسم صفحة أو رقم أوردر..." autocomplete="off" aria-label="بحث">'
       + '  </div>'
       + '  <div class="cp-list"></div>'
       + '  <div class="cp-footer">'

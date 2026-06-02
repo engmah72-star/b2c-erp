@@ -150,7 +150,7 @@ try {
   if (!document.getElementById('cp-loader')) {
     const s = document.createElement('script');
     s.id = 'cp-loader';
-    s.src = 'command-palette.js?v=2';
+    s.src = 'command-palette.js?v=3';
     s.defer = true;
     document.head.appendChild(s);
   }
