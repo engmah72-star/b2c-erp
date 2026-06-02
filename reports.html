@@ -222,7 +222,7 @@ import { calcRem } from "./core/order-math.js";
 import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
 import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
-import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue, calcStageDistribution, calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount, calcMonthlyRevenueChart, diffHTML } from "./core/reports-financial-kpis.js";
+import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue, calcStageDistribution, calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount, calcMonthlyRevenueChart, calcTargetProgress, diffHTML } from "./core/reports-financial-kpis.js";
 import { buildDesignerStats, buildShippingStats, buildClientActivityStats, buildStagePerformanceStats } from "./core/reports-tab-stats.js";
 import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 import { buildReturnsStats } from "./core/reports-returns-stats.js";
@@ -232,6 +232,7 @@ import { buildShippingTabHTML, buildClientsTabHTML } from "./features/reports/vi
 import { buildDesignersTabHTML, buildSalesTabHTML, buildStagePerformanceTabHTML } from "./features/reports/views/render-designers-sales.js";
 import { renderOverviewDetailedView } from "./features/reports/views/render-overview-detailed.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
+let appSettings={}; // settings/main — monthly targets (الأهداف الشهرية)
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
 // المستخدم يقدر يتحوّل لـ Advanced mode (التابات القديمة) من زر "🔧 عرض متقدم".
@@ -504,6 +505,8 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
   onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
   onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
+  // settings/main — single doc (G3 exception): الأهداف الشهرية للدخل والعملاء
+  onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();});
   onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(10000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
   // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
   onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
@@ -650,6 +653,38 @@ function renderExec(f, prev, range){
       ${kpiBox('🏭', supDue,    'مستحق الموردين', 'var(--p)')}
     </div>`;
 
+  // ── 4.5) 🎯 الأهداف الشهرية — نسبة التحقق (دخل + عملاء جدد) ──
+  // الهدف شهري بطبيعته، فنعرضه فقط في فترة الشهر (الحالي/الماضي) لتجنّب مقارنة مضلّلة.
+  const tgt = calcTargetProgress({
+    transactions, clients, range,
+    revenueTarget: appSettings.monthlyRevenueTarget,
+    clientTarget: appSettings.monthlyClientTarget,
+  });
+  const showTargets = (filterMode === 'month' || filterMode === 'lastmonth') && tgt.hasTargets;
+  const tgtBar = (ico, label, achieved, target, pct, col, unit) => {
+    const w = Math.min(100, pct);
+    const done = pct >= 100;
+    const c = done ? 'var(--g)' : col;
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;font-size:var(--fs-sm);gap:8px;flex-wrap:wrap">
+        <span style="font-weight:var(--fw-bold);color:var(--snow)">${ico} ${label}</span>
+        <span style="color:var(--dim2)"><b style="color:${c}">${fn(achieved)}</b> / ${fn(target)} ${unit} · <b style="color:${c}">${pct}%</b>${done?' ✅':''}</span>
+      </div>
+      <div style="height:10px;background:var(--bg3);border-radius:6px;overflow:hidden">
+        <div style="height:100%;width:${w}%;background:${c};border-radius:6px;transition:width .5s"></div>
+      </div>
+    </div>`;
+  };
+  const targetCard = showTargets ? `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
+      <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+        <span>🎯 أهداف ${PER}</span>
+        <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">من إعدادات النظام</span>
+      </div>
+      ${tgt.revenueTarget > 0 ? tgtBar('💰', 'هدف الدخل', tgt.revenueAchieved, tgt.revenueTarget, tgt.revenuePct, 'var(--g)', 'ج') : ''}
+      ${tgt.clientsTarget > 0 ? tgtBar('👥', 'هدف العملاء الجدد', tgt.clientsAchieved, tgt.clientsTarget, tgt.clientsPct, 'var(--b)', 'عميل') : ''}
+    </div>` : '';
+
   // ── 5) Pipeline توزيع الأوردرات ──
   const stages = [
     { key:'design',     label:'تصميم',  ico:'✏️', col:'#a78bfa' },
@@ -755,7 +790,7 @@ function renderExec(f, prev, range){
     </div>`;
 
   // ── النتيجة ──
-  return kpiGrid + pipeline + topPerformers + alertsHtml + trend;
+  return kpiGrid + targetCard + pipeline + topPerformers + alertsHtml + trend;
 }
 
 // ══ Helpers ══
