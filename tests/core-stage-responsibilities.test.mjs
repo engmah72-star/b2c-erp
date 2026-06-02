@@ -13,12 +13,15 @@
  */
 import {
   getStageSla,
+  getStageSlaForOrder,
+  orderIsOffset,
   computeStageDeadlineStr,
   buildStageAdvance,
   buildStageRevert,
   getStageResponsibilities,
   getStageHistory,
   STAGE_SLA_DEFAULTS,
+  PRODUCTION_SLA_BY_PRINT,
 } from '../orders.js';
 
 let passed = 0, failed = 0;
@@ -43,6 +46,45 @@ test('getStageSla: override table wins', () => {
 });
 test('getStageSla: unknown stage → 0', () => {
   assertEq(getStageSla('archived'), 0);
+});
+
+// ── standard SLA values (المعايير) ────────────────────────────────
+test('STAGE_SLA_DEFAULTS: design 2d, printing 1d, shipping 2d', () => {
+  assertEq(STAGE_SLA_DEFAULTS.design, 48);
+  assertEq(STAGE_SLA_DEFAULTS.printing, 24);
+  assertEq(STAGE_SLA_DEFAULTS.shipping, 48);
+});
+test('PRODUCTION_SLA_BY_PRINT: offset 3d, digital 2d', () => {
+  assertEq(PRODUCTION_SLA_BY_PRINT.offset, 72);
+  assertEq(PRODUCTION_SLA_BY_PRINT.digital, 48);
+});
+
+// ── orderIsOffset ─────────────────────────────────────────────────
+test('orderIsOffset: any offset product → true', () => {
+  assertEq(orderIsOffset({ products: [{ printType: 'digital' }, { printType: 'offset' }] }), true);
+});
+test('orderIsOffset: all digital → false', () => {
+  assertEq(orderIsOffset({ products: [{ printType: 'digital' }] }), false);
+});
+test('orderIsOffset: fallback to order.printType', () => {
+  assertEq(orderIsOffset({ printType: 'offset' }), true);
+});
+
+// ── getStageSlaForOrder: production branches on print type ─────────
+test('getStageSlaForOrder: production offset → 72', () => {
+  assertEq(getStageSlaForOrder({ products: [{ printType: 'offset' }] }, 'production'), 72);
+});
+test('getStageSlaForOrder: production digital → 48', () => {
+  assertEq(getStageSlaForOrder({ products: [{ printType: 'digital' }] }, 'production'), 48);
+});
+test('getStageSlaForOrder: non-production unchanged', () => {
+  assertEq(getStageSlaForOrder({}, 'design'), 48);
+  assertEq(getStageSlaForOrder({}, 'printing'), 24);
+});
+test('getStageSlaForOrder: settings override {offset,digital}', () => {
+  const t = { production: { offset: 96, digital: 60 } };
+  assertEq(getStageSlaForOrder({ products: [{ printType: 'offset' }] }, 'production', t), 96);
+  assertEq(getStageSlaForOrder({ products: [{ printType: 'digital' }] }, 'production', t), 60);
 });
 
 // ── computeStageDeadlineStr ───────────────────────────────────────
@@ -144,13 +186,13 @@ test('getStageResponsibilities: current stage is ongoing, prior is done', () => 
     printerName: 'طبّاع', printerId: 'p1',
     productionAgentName: 'منفّذ', productionAgent: 'x1',
     stageEnteredAt: {
-      design:     new Date(now - 30 * HOUR).toISOString(),
-      printing:   new Date(now - 20 * HOUR).toISOString(),
-      production: new Date(now - 2 * HOUR).toISOString(),
+      design:     new Date(now - 50 * HOUR).toISOString(),
+      printing:   new Date(now - 40 * HOUR).toISOString(),
+      production: new Date(now - 10 * HOUR).toISOString(),
     },
     stageCompletedAt: {
-      design:   new Date(now - 20 * HOUR).toISOString(),
-      printing: new Date(now - 2 * HOUR).toISOString(),
+      design:   new Date(now - 40 * HOUR).toISOString(),
+      printing: new Date(now - 10 * HOUR).toISOString(),
     },
   };
   const rows = getStageResponsibilities(order);
@@ -163,11 +205,14 @@ test('getStageResponsibilities: current stage is ongoing, prior is done', () => 
   assertEq(byKey.production.isCurrent, true);
   assertEq(byKey.shipping.status, 'pending');
 
-  // design took 10h, SLA 24 → good
+  // design took 10h, SLA 48 → good
   assertEq(byKey.design.rating, 'good');
-  // printing took 18h, SLA 8 → late
+  // printing took 30h, SLA 24 → late
   assertEq(byKey.printing.rating, 'late');
   assert(byKey.printing.overdue, 'printing overdue vs deadline');
+  // production ongoing 10h, digital SLA 48 → ongoing (not late)
+  assertEq(byKey.production.slaHours, 48);
+  assertEq(byKey.production.rating, 'ongoing');
 });
 
 test('getStageResponsibilities: derives completion from next entry when stageCompletedAt absent (legacy)', () => {

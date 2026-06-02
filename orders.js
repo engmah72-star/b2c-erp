@@ -479,13 +479,31 @@ export function buildOrderSplit({ order, productIndices, role, userId, userName,
 // ══════════════════════════════════════════
 // STAGE SLA — الحدود الزمنية القياسية لكل مرحلة (بالساعات)
 // ══════════════════════════════════════════
-// يمكن override عبر settings/main.stageSla لاحقاً
+// يمكن override عبر settings/main.stageSla لاحقاً (slaTable في كل دالة).
+// المعايير: تصميم يومين · طباعة يوم · تنفيذ 3 أيام أوفست/يومين ديجيتال · شحن يومين.
 export const STAGE_SLA_DEFAULTS = {
-  design:     24,
-  printing:    8,
-  production: 24,
-  shipping:   48,
+  design:     48,   // يومان
+  printing:   24,   // يوم
+  production: 48,   // افتراضي (ديجيتال) — أوفست أطول، يُحسب عبر getStageSlaForOrder
+  shipping:   48,   // يومان
 };
+
+// معيار مرحلة التنفيذ حسب نوع الطباعة (بالساعات) — الأوفست أطول من الديجيتال.
+export const PRODUCTION_SLA_BY_PRINT = {
+  digital: 48,   // يومان
+  offset:  72,   // ثلاثة أيام
+};
+
+/**
+ * هل الأوردر أوفست؟ القاعدة: لو أي منتج أوفست → الأوردر أوفست (نأخذ المعيار الأطول).
+ * يعتمد على order.products[i].printType ('offset'/'digital')، مع fallback لِـ order.printType.
+ */
+export function orderIsOffset(order) {
+  if (!order) return false;
+  const prods = Array.isArray(order.products) ? order.products : [];
+  if (prods.some(p => (p?.printType || '').toString().toLowerCase().includes('offset'))) return true;
+  return (order.printType || '').toString().toLowerCase().includes('offset');
+}
 
 /**
  * عمر الأوردر في مرحلته الحالية بالساعات.
@@ -507,7 +525,26 @@ export function getStageAge(order, slaOverride = null) {
  */
 export function getStageSla(stage, slaTable = null) {
   const t = slaTable || STAGE_SLA_DEFAULTS;
-  return t[stage] || STAGE_SLA_DEFAULTS[stage] || 0;
+  const v = t[stage] != null ? t[stage] : STAGE_SLA_DEFAULTS[stage];
+  // production قد يكون كائناً {offset,digital} في slaTable — رقم واحد هنا (افتراضي).
+  if (v && typeof v === 'object') return v.digital || v.offset || STAGE_SLA_DEFAULTS[stage] || 0;
+  return v || 0;
+}
+
+/**
+ * SLA لمرحلة مع مراعاة الأوردر — مرحلة التنفيذ تتفرّع حسب نوع الطباعة
+ * (أوفست أطول من الديجيتال)؛ باقي المراحل ثابتة عبر getStageSla.
+ * slaTable.production يمكن أن يكون رقماً أو كائناً {offset, digital} (override من الإعدادات).
+ */
+export function getStageSlaForOrder(order, stage, slaTable = null) {
+  if (stage === 'production') {
+    const o = slaTable && slaTable.production;
+    const table = (o && typeof o === 'object') ? o : PRODUCTION_SLA_BY_PRINT;
+    return orderIsOffset(order)
+      ? (table.offset  || PRODUCTION_SLA_BY_PRINT.offset)
+      : (table.digital || PRODUCTION_SLA_BY_PRINT.digital);
+  }
+  return getStageSla(stage, slaTable);
 }
 
 /**
@@ -518,6 +555,15 @@ export function getStageSla(stage, slaTable = null) {
  */
 export function computeStageDeadlineStr(stage, enteredMs = Date.now(), slaTable = null) {
   const sla = getStageSla(stage, slaTable);
+  if (!sla || !enteredMs) return '';
+  return fmtDateAr(new Date(enteredMs + sla * 3600000));
+}
+
+/**
+ * مثل computeStageDeadlineStr لكن مع مراعاة نوع طباعة الأوردر (للتنفيذ أوفست/ديجيتال).
+ */
+export function computeStageDeadlineForOrder(order, stage, enteredMs = Date.now(), slaTable = null) {
+  const sla = getStageSlaForOrder(order, stage, slaTable);
   if (!sla || !enteredMs) return '';
   return fmtDateAr(new Date(enteredMs + sla * 3600000));
 }
@@ -602,7 +648,7 @@ export function getStageDurations(order) {
   const defs = [
     { key: 'design',     label: 'التصميم', owner: order.designerName,        start: tDesign, end: tApproved || tPrint, sla: STAGE_SLA_DEFAULTS.design },
     { key: 'printing',   label: 'الطباعة', owner: order.printerName,         start: tPrint,  end: tProd,               sla: STAGE_SLA_DEFAULTS.printing },
-    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: STAGE_SLA_DEFAULTS.production },
+    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: getStageSlaForOrder(order, 'production') },
     { key: 'shipping',   label: 'الشحن',   owner: order.shippingOfficerName, start: tShip,   end: tArch,               sla: STAGE_SLA_DEFAULTS.shipping },
   ];
 
@@ -694,11 +740,11 @@ export function getStageResponsibilities(order, slaTable = null) {
       if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
     }
 
-    const slaHours = getStageSla(stage, slaTable);
+    const slaHours = getStageSlaForOrder(order, stage, slaTable);
     let deadline = dl[stage] || '';
     let deadlineMs = _toMs(deadline);
     if (!deadlineMs && enteredMs && slaHours) {
-      deadline = computeStageDeadlineStr(stage, enteredMs, slaTable);
+      deadline = computeStageDeadlineForOrder(order, stage, enteredMs, slaTable);
       deadlineMs = _toMs(deadline);
     }
 
@@ -761,8 +807,7 @@ export function getStageHistory(order) {
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
 export function isStageOverdue(order, slaTable = null) {
   if (!order || !order.stage) return false;
-  const stage = order.stage;
-  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  const sla = getStageSlaForOrder(order, order.stage, slaTable);
   if (!sla) return false;
   return getStageAge(order) > sla;
 }
@@ -772,8 +817,7 @@ export function stageSlaBadge(order, slaTable = null) {
   if (!order || !order.stage) return '';
   const age = getStageAge(order);
   if (age <= 0) return '';
-  const stage = order.stage;
-  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  const sla = getStageSlaForOrder(order, order.stage, slaTable);
   if (!sla) return '';
   const overdue = age > sla;
   const ageFmt = age < 1
@@ -1190,7 +1234,7 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     stage: target,
     [`stageCompletedAt.${cur}`]: now,   // الخروج الصريح من المرحلة الحالية
     [`stageEnteredAt.${target}`]: now,
-    [`stageDeadline.${target}`]: computeStageDeadlineStr(target, nowMs, slaTable),
+    [`stageDeadline.${target}`]: computeStageDeadlineForOrder(order, target, nowMs, slaTable),
     ...assigneeFields,
     ...extraFields,
   };
@@ -1254,7 +1298,7 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
     stage: target,
     [`stageEnteredAt.${target}`]: now,
     [`stageCompletedAt.${target}`]: '',
-    [`stageDeadline.${target}`]: computeStageDeadlineStr(target, Date.now()),
+    [`stageDeadline.${target}`]: computeStageDeadlineForOrder(order, target, Date.now()),
     ...extraFields,
   };
   const timelineEntry = {
