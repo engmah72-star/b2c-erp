@@ -371,7 +371,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -382,6 +382,12 @@ let currentRole = 'admin';
 let currentUserPerms = null;
 let currentOrder = null;
 let unsubscribe = null;
+// SLA override من الإعدادات (settings/main.stageSla) — للموعد المستهدف وتقييم المراحل.
+let stageSlaTable = null;
+onSnapshot(doc(db, 'settings', 'main'), s => {
+  stageSlaTable = (s.exists() && s.data().stageSla) ? s.data().stageSla : null;
+  if (currentOrder) renderOrder(currentOrder); // أعد العرض لو تغيّرت المعايير
+});
 // Cost-entry deps (loaded once after auth)
 let suppliers = [];
 let costCategoriesList = [];
@@ -709,27 +715,37 @@ function renderOrder(o) {
     html += '</div>';
   }
 
-  // ── مدد المراحل + المسؤول + التقييم (derived من stageEnteredAt/approvedAt/SLA — W1) ──
+  // ── مراحل الأوردر: المسؤول + تواريخ الدخول/الإنجاز/الموعد + المدة + التقييم ──
+  // (derived من stageEnteredAt/stageCompletedAt/stageDeadline/الملكية — W1)
   {
+    const rows = getStageResponsibilities(o, stageSlaTable);
     const dur = getStageDurations(o);
-    const shown = dur.stages.filter(s => s.status !== 'pending');
+    const shown = rows.filter(s => s.status !== 'pending');
     if (shown.length > 0) {
       html += '<div class="order-section">';
-      html += '<div class="order-section-head">⏱️ مدد المراحل والتقييم <span style="font-size:12px;color:var(--dim2);font-weight:700">(الإجمالي ' + esc(dur.totalText) + ')</span></div>';
+      html += '<div class="order-section-head">⏱️ المراحل: المسؤول والتواريخ <span style="font-size:12px;color:var(--dim2);font-weight:700">(الإجمالي ' + esc(dur.totalText) + ')</span></div>';
       html += '<div class="order-section-body">';
       html += '<div class="stage-durations">';
       for (const s of shown) {
+        const isIntake = s.kind === 'intake';
         let chip;
-        if (s.rating === 'late') chip = '<span class="sd-chip late">⚠️ متأخر</span>';
+        if (isIntake) chip = '<span class="sd-chip">📝 تم الإدخال</span>';
+        else if (s.rating === 'late') chip = '<span class="sd-chip late">⚠️ متأخر</span>';
         else if (s.rating === 'ongoing') chip = '<span class="sd-chip ongoing">🔄 جارٍ</span>';
         else chip = '<span class="sd-chip good">✅ ضمن المدة</span>';
-        const slaTxt = s.slaHours ? ('SLA ' + s.slaHours + 'س') : '';
+        const slaTxt = (!isIntake && s.slaHours) ? ('SLA ' + s.slaHours + 'س') : '';
         html += '<div class="stage-duration-row">';
-        html += '<div class="sd-main"><span class="sd-label">' + esc(s.label) + '</span>';
-        html += '<span class="sd-owner">' + (s.owner ? '👤 ' + esc(s.owner) : 'غير محدد') + '</span></div>';
-        html += '<div class="sd-side"><span class="sd-val">' + esc(s.text) + '</span> ' + chip;
+        html += '<div class="sd-main"><span class="sd-label">' + esc(s.label) + (s.isCurrent ? ' <span class="sd-chip ongoing" style="font-size:9px">الحالية</span>' : '') + '</span>';
+        html += '<span class="sd-owner">' + (s.responsibleName ? '👤 ' + esc(s.responsibleName) : 'غير محدد') + '</span></div>';
+        html += '<div class="sd-side">' + (isIntake ? '' : '<span class="sd-val">' + esc(s.durationText) + '</span> ') + chip;
         if (slaTxt) html += '<span class="sd-sla">' + esc(slaTxt) + '</span>';
         html += '</div>';
+        // سطر التواريخ: دخل · خرج · الموعد المستهدف
+        const dates = [];
+        if (s.enteredAt)   dates.push('دخل: ' + esc(s.enteredAt));
+        if (s.completedAt && s.status === 'done') dates.push('خرج: ' + esc(s.completedAt));
+        if (s.deadline)    dates.push((s.overdue ? '⚠️ ' : '🎯 ') + 'الموعد: ' + esc(s.deadline));
+        if (dates.length) html += '<div class="sd-dates" style="grid-column:1/-1;font-size:11px;color:var(--dim2);margin-top:2px">' + dates.join(' · ') + '</div>';
         html += '</div>';
       }
       html += '</div>';

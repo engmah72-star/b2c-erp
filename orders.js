@@ -479,13 +479,31 @@ export function buildOrderSplit({ order, productIndices, role, userId, userName,
 // ══════════════════════════════════════════
 // STAGE SLA — الحدود الزمنية القياسية لكل مرحلة (بالساعات)
 // ══════════════════════════════════════════
-// يمكن override عبر settings/main.stageSla لاحقاً
+// يمكن override عبر settings/main.stageSla لاحقاً (slaTable في كل دالة).
+// المعايير: تصميم يومين · طباعة يوم · تنفيذ 3 أيام أوفست/يومين ديجيتال · شحن يومين.
 export const STAGE_SLA_DEFAULTS = {
-  design:     24,
-  printing:    8,
-  production: 24,
-  shipping:   48,
+  design:     48,   // يومان
+  printing:   24,   // يوم
+  production: 48,   // افتراضي (ديجيتال) — أوفست أطول، يُحسب عبر getStageSlaForOrder
+  shipping:   48,   // يومان
 };
+
+// معيار مرحلة التنفيذ حسب نوع الطباعة (بالساعات) — الأوفست أطول من الديجيتال.
+export const PRODUCTION_SLA_BY_PRINT = {
+  digital: 48,   // يومان
+  offset:  72,   // ثلاثة أيام
+};
+
+/**
+ * هل الأوردر أوفست؟ القاعدة: لو أي منتج أوفست → الأوردر أوفست (نأخذ المعيار الأطول).
+ * يعتمد على order.products[i].printType ('offset'/'digital')، مع fallback لِـ order.printType.
+ */
+export function orderIsOffset(order) {
+  if (!order) return false;
+  const prods = Array.isArray(order.products) ? order.products : [];
+  if (prods.some(p => (p?.printType || '').toString().toLowerCase().includes('offset'))) return true;
+  return (order.printType || '').toString().toLowerCase().includes('offset');
+}
 
 /**
  * عمر الأوردر في مرحلته الحالية بالساعات.
@@ -499,6 +517,55 @@ export function getStageAge(order, slaOverride = null) {
   const enteredMs = parseArDate(enteredStr);
   if (!enteredMs) return 0;
   return Math.max(0, (Date.now() - enteredMs) / (1000 * 60 * 60));
+}
+
+/**
+ * SLA (بالساعات) لمرحلة — مع دعم override من settings (slaTable).
+ * يرجع 0 لو لا SLA معرّف (مثل archived/cancelled).
+ */
+export function getStageSla(stage, slaTable = null) {
+  const t = slaTable || STAGE_SLA_DEFAULTS;
+  const v = t[stage] != null ? t[stage] : STAGE_SLA_DEFAULTS[stage];
+  // production قد يكون كائناً {offset,digital} في slaTable — رقم واحد هنا (افتراضي).
+  if (v && typeof v === 'object') return v.digital || v.offset || STAGE_SLA_DEFAULTS[stage] || 0;
+  return v || 0;
+}
+
+/**
+ * SLA لمرحلة مع مراعاة الأوردر — مرحلة التنفيذ تتفرّع حسب نوع الطباعة
+ * (أوفست أطول من الديجيتال)؛ باقي المراحل ثابتة عبر getStageSla.
+ * slaTable.production يمكن أن يكون رقماً أو كائناً {offset, digital} (override من الإعدادات).
+ */
+export function getStageSlaForOrder(order, stage, slaTable = null) {
+  if (stage === 'production') {
+    const o = slaTable && slaTable.production;
+    const table = (o && typeof o === 'object') ? o : PRODUCTION_SLA_BY_PRINT;
+    return orderIsOffset(order)
+      ? (table.offset  || PRODUCTION_SLA_BY_PRINT.offset)
+      : (table.digital || PRODUCTION_SLA_BY_PRINT.digital);
+  }
+  return getStageSla(stage, slaTable);
+}
+
+/**
+ * الموعد المستهدف (deadline) لإنهاء مرحلة = لحظة الدخول + SLA.
+ * يُرجع نص ar-EG (صيغة fmtDateAr) للعرض/التخزين، أو '' لو لا SLA/لحظة دخول.
+ * @param {string} stage
+ * @param {number} enteredMs — لحظة دخول المرحلة (ms). افتراضي: الآن.
+ */
+export function computeStageDeadlineStr(stage, enteredMs = Date.now(), slaTable = null) {
+  const sla = getStageSla(stage, slaTable);
+  if (!sla || !enteredMs) return '';
+  return fmtDateAr(new Date(enteredMs + sla * 3600000));
+}
+
+/**
+ * مثل computeStageDeadlineStr لكن مع مراعاة نوع طباعة الأوردر (للتنفيذ أوفست/ديجيتال).
+ */
+export function computeStageDeadlineForOrder(order, stage, enteredMs = Date.now(), slaTable = null) {
+  const sla = getStageSlaForOrder(order, stage, slaTable);
+  if (!sla || !enteredMs) return '';
+  return fmtDateAr(new Date(enteredMs + sla * 3600000));
 }
 
 /**
@@ -581,7 +648,7 @@ export function getStageDurations(order) {
   const defs = [
     { key: 'design',     label: 'التصميم', owner: order.designerName,        start: tDesign, end: tApproved || tPrint, sla: STAGE_SLA_DEFAULTS.design },
     { key: 'printing',   label: 'الطباعة', owner: order.printerName,         start: tPrint,  end: tProd,               sla: STAGE_SLA_DEFAULTS.printing },
-    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: STAGE_SLA_DEFAULTS.production },
+    { key: 'production', label: 'التنفيذ', owner: order.productionAgentName, start: tProd,   end: tShip,               sla: getStageSlaForOrder(order, 'production') },
     { key: 'shipping',   label: 'الشحن',   owner: order.shippingOfficerName, start: tShip,   end: tArch,               sla: STAGE_SLA_DEFAULTS.shipping },
   ];
 
@@ -603,11 +670,146 @@ export function getStageDurations(order) {
   return { stages, totalMs, totalText: formatDurationAr(totalMs) };
 }
 
+// ══════════════════════════════════════════
+// STAGE RESPONSIBILITIES — مدخل موحّد: لكل مرحلة (تاريخ + مسؤول + موعد + تقييم)
+// ══════════════════════════════════════════
+/**
+ * يجمّع في مصفوفة واحدة كل ما يخص كل مرحلة من الأوردر — derived فقط (W1):
+ *   - المسؤول (id/name) من STAGE_OWNERSHIP (designerId/printerId/...).
+ *   - تاريخ الدخول   (stageEnteredAt[stage]).
+ *   - تاريخ الإنجاز  (stageCompletedAt[stage]، أو derived من دخول المرحلة التالية / approvedAt للتصميم).
+ *   - الموعد المستهدف (stageDeadline[stage]، أو محسوب من الدخول + SLA — backward-compat للأوردرات القديمة).
+ *   - المدة + التقييم (good/late/ongoing/pending) + هل متأخر عن الموعد.
+ *
+ * يتضمّن صفّاً افتتاحياً "إدخال الطلب" (intake) — الموظف الذي أنشأ الأوردر
+ * (createdBy/createdByName، أو assignedTo/csName للأوردرات المُسنَدة) وتاريخ الإنشاء.
+ *
+ * بديل العرض الموحّد لِما كان متفرّقاً (stageEnteredAt + حقول ملكية مختلفة لكل مرحلة).
+ * @returns {Array<{stage,label,responsibleId,responsibleName,enteredAt,enteredMs,
+ *                  completedAt,completedMs,deadline,deadlineMs,durationMs,durationText,
+ *                  slaHours,status,rating,overdue,isCurrent,kind}>}
+ */
+export function getStageResponsibilities(order, slaTable = null) {
+  if (!order) return [];
+  const ent  = order.stageEnteredAt   || {};
+  const comp = order.stageCompletedAt || {};
+  const dl   = order.stageDeadline    || {};
+  const curStage = order.stage || 'design';
+  const now = Date.now();
+  const keys = ['design', 'printing', 'production', 'shipping'];
+
+  // ── صفّ الإدخال (intake): من أنشأ الأوردر/أدخل العميل + تاريخ الإنشاء ──
+  const intakeEnteredAt = order.createdDate || order.createdAt || '';
+  const intakeEnteredMs = _toMs(order.createdAt) || _toMs(order.createdDate);
+  const intakeDoneMs = _toMs(ent.design) || intakeEnteredMs;
+  const intakeRow = {
+    stage: 'intake',
+    label: 'إدخال الطلب',
+    responsibleId:   order.createdBy     || order.assignedTo || '',
+    responsibleName: order.createdByName || order.csName     || '',
+    enteredAt: typeof intakeEnteredAt === 'string' ? intakeEnteredAt : (intakeEnteredMs ? fmtDateAr(new Date(intakeEnteredMs)) : ''),
+    enteredMs: intakeEnteredMs,
+    completedAt: intakeDoneMs ? fmtDateAr(new Date(intakeDoneMs)) : '',
+    completedMs: intakeDoneMs,
+    deadline: '', deadlineMs: null,
+    durationMs: 0, durationText: '—',
+    slaHours: 0,
+    status: intakeEnteredMs ? 'done' : 'pending',
+    rating: 'logged',          // حدث لحظي — لا تقييم SLA
+    overdue: false,
+    isCurrent: false,
+    kind: 'intake',
+  };
+
+  const stageRows = keys.map((stage, i) => {
+    const own = STAGE_OWNERSHIP[stage] || {};
+    const responsibleId   = order[own.idField]   || '';
+    const responsibleName = order[own.nameField] || '';
+
+    const enteredAt = ent[stage] || '';
+    const enteredMs = _toMs(enteredAt);
+
+    // الإنجاز: stageCompletedAt الصريح أولاً، ثم fallback derived (للبيانات القديمة):
+    //   التصميم → approvedAt أو دخول الطباعة؛ باقي المراحل → دخول المرحلة التالية.
+    let completedAt = comp[stage] || '';
+    let completedMs = _toMs(completedAt);
+    if (!completedMs) {
+      const derivedMs = stage === 'design'
+        ? (_toMs(order.approvedAt) || _toMs(ent.printing))
+        : _toMs(ent[keys[i + 1]] || (stage === 'shipping' ? order.stageEnteredAt?.archived : ''));
+      if (derivedMs) { completedMs = derivedMs; completedAt = completedAt || fmtDateAr(new Date(derivedMs)); }
+    }
+
+    // الموعد المستهدف: المخزّن (اليدوي — مثل موعد تسليم التصميم من الفورم) يفوز؛
+    // وإلا يُحسب حيّاً من SLA الحالي (يعكس إعدادات settings.stageSla فوراً).
+    const slaHours = getStageSlaForOrder(order, stage, slaTable);
+    let deadline = dl[stage] || '';
+    let deadlineMs = _toMs(deadline);
+    if (!deadlineMs && enteredMs && slaHours) {
+      deadline = computeStageDeadlineForOrder(order, stage, enteredMs, slaTable);
+      deadlineMs = _toMs(deadline);
+    }
+
+    // الحالة: لم تبدأ / المرحلة الحالية جارية / منتهية.
+    let status;
+    if (!enteredMs) status = 'pending';
+    else if (stage === curStage) status = 'ongoing';
+    else status = 'done'; // مرحلة سابقة دخلناها (وغادرناها) = منتهية
+
+    const endMs = status === 'done' ? (completedMs || enteredMs) : (status === 'ongoing' ? now : null);
+    const durationMs = (enteredMs && endMs) ? Math.max(0, endMs - enteredMs) : 0;
+    const overdue = !!(deadlineMs && (endMs || now) > deadlineMs && status !== 'pending');
+
+    let rating;
+    if (status === 'pending') rating = 'pending';
+    else if (status === 'ongoing') rating = overdue ? 'late' : 'ongoing';
+    else rating = overdue ? 'late' : 'good';
+
+    return {
+      stage, label: STAGES[stage]?.label || stage,
+      responsibleId, responsibleName,
+      enteredAt, enteredMs,
+      completedAt, completedMs,
+      deadline, deadlineMs,
+      durationMs, durationText: formatDurationAr(durationMs),
+      slaHours, status, rating, overdue,
+      isCurrent: stage === curStage,
+      kind: 'stage',
+    };
+  });
+
+  return [intakeRow, ...stageRows];
+}
+
+/**
+ * السجل الكامل للمسؤولين عبر الزمن — derived من order.timeline (append-only).
+ * يلتقط كل دخول/ارتداد مرحلة (حتى لو تغيّر المسؤول أو رُجّعت المرحلة)، فيُظهر
+ * "من تولّى أي مرحلة ومتى" دون أي state جديد.
+ * @returns {Array<{stage,date,by,byId,responsibleId,responsibleName,action}>}
+ */
+export function getStageHistory(order) {
+  if (!order || !Array.isArray(order.timeline)) return [];
+  return order.timeline
+    .filter(t => t && t.stage && (
+      t.kind === 'stage' ||
+      t.assigneeId !== undefined ||
+      /انتقل|ارتداد|إنشاء/.test(t.action || '')
+    ))
+    .map(t => ({
+      stage: t.stage,
+      date: t.date || '',
+      by: t.by || '',
+      byId: t.byId || '',
+      responsibleId: t.assigneeId || '',
+      responsibleName: t.assigneeName || '',
+      action: t.action || '',
+    }));
+}
+
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
 export function isStageOverdue(order, slaTable = null) {
   if (!order || !order.stage) return false;
-  const stage = order.stage;
-  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  const sla = getStageSlaForOrder(order, order.stage, slaTable);
   if (!sla) return false;
   return getStageAge(order) > sla;
 }
@@ -617,8 +819,7 @@ export function stageSlaBadge(order, slaTable = null) {
   if (!order || !order.stage) return '';
   const age = getStageAge(order);
   if (age <= 0) return '';
-  const stage = order.stage;
-  const sla = (slaTable && slaTable[stage]) || STAGE_SLA_DEFAULTS[stage];
+  const sla = getStageSlaForOrder(order, order.stage, slaTable);
   if (!sla) return '';
   const overdue = age > sla;
   const ageFmt = age < 1
@@ -734,8 +935,11 @@ export function createOrderData(data, userId, userName) {
     shippingOfficerId:   '',
     shippingOfficerName: '',
 
-    // طوابع زمن دخول كل مرحلة (لـ SLA tracking)
-    stageEnteredAt: { design: now },
+    // طوابع زمن دخول/إنجاز كل مرحلة + الموعد المستهدف (لـ SLA tracking + تتبّع المسؤولية)
+    stageEnteredAt:   { design: now },
+    stageCompletedAt: {},
+    // موعد تسليم التصميم اليدوي (من الفورم) — نهاية اليوم المُدخَل؛ يفوز على حساب SLA.
+    stageDeadline:    data.deadline ? { design: fmtDateAr(new Date(data.deadline + 'T23:59:59')) } : {},
     designFiles:  [],
     designFileUrl:'',
     designFileNote: data.designFileNote || '',
@@ -776,9 +980,12 @@ export function createOrderData(data, userId, userName) {
     timeline: [{
       date:  now,
       stage: 'design',
+      kind:  'stage',
       action:'🆕 تم إنشاء الأوردر',
       by:    userName,
       byId:  userId,
+      assigneeId:   data.designerId   || '',
+      assigneeName: data.designerName || '',
     }],
 
     // Metadata
@@ -985,7 +1192,7 @@ export function validateStageRequirements(order, fromStage) {
  *   - errors:   مشاكل تمنع الانتقال نهائياً (data integrity)
  *   - warnings: ملاحظات يمكن تجاوزها بـ bypassWarnings:true
  */
-export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '', bypassWarnings = false }) {
+export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '', bypassWarnings = false, slaTable = null }) {
   if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
   const cur = order.stage || 'design';
   const stageConf = STAGES[cur];
@@ -1024,12 +1231,13 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
     assigneeFields[ownership.nameField] = nextAssigneeName || '';
   }
 
-  // ـ طابع زمن دخول المرحلة الجديدة ـ
-  const enteredAtPath = `stageEnteredAt.${target}`;
-
+  // ـ طوابع زمن: إنجاز المرحلة الحالية (الخروج) + دخول الجديدة ـ
+  // ملاحظة: stageDeadline لا يُكتب هنا — مواعيد المراحل التشغيلية تُحسب حيّاً من SLA،
+  // وstageDeadline يُحجز للمواعيد اليدوية فقط (مثل موعد تسليم التصميم من الفورم).
   const fields = {
     stage: target,
-    [enteredAtPath]: now,
+    [`stageCompletedAt.${cur}`]: now,   // الخروج الصريح من المرحلة الحالية
+    [`stageEnteredAt.${target}`]: now,
     ...assigneeFields,
     ...extraFields,
   };
@@ -1047,6 +1255,7 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
   const timelineEntry = {
     date:  now,
     stage: target,
+    kind:  'stage',
     action: `${targetConf.ico} انتقل ${stageConf.label} → ${targetConf.label}${handoffSuffix}`,
     by:    userName || '',
     byId:  userId   || '',
@@ -1085,13 +1294,19 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
   }
 
   const targetConf = STAGES[target];
+  const now = nowStr();
+  // الارتداد = إعادة فتح المرحلة الهدف: نعيد ضبط ساعة الدخول (المدة تُحسب من جديد)
+  // ونلغي طابع إنجازها السابق. الموعد اليدوي (إن وُجد) يبقى كما هو.
   const fields = {
     stage: target,
+    [`stageEnteredAt.${target}`]: now,
+    [`stageCompletedAt.${target}`]: '',
     ...extraFields,
   };
   const timelineEntry = {
-    date:  nowStr(),
+    date:  now,
     stage: target,
+    kind:  'stage',
     action: `↩️ ارتداد ${stageConf.label} → ${targetConf.label} — ${reason.trim()}`,
     by:    userName || '',
     byId:  userId   || '',
@@ -1184,6 +1399,7 @@ export function buildArchiveSpec({
 
   const fields = {
     stage: 'archived',
+    [`stageCompletedAt.${cur}`]: now,   // إنجاز المرحلة التي تمت الأرشفة منها
     'stageEnteredAt.archived': now,
     archivedAt:     now,
     archivedBy:     userId || '',
@@ -1208,6 +1424,7 @@ export function buildArchiveSpec({
   const timelineEntry = {
     date:   now,
     stage:  'archived',
+    kind:   'stage',
     action: `📁 ${sourceLabel}${reasonSuffix}`,
     by:     userName || '',
     byId:   userId   || '',
@@ -2027,6 +2244,17 @@ export function resolveDesigner(canonicalList, designerId, designerName) {
 export const nowStr = () =>
   new Date().toLocaleDateString('ar-EG') + ' ' +
   new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * صيغة عرض ar-EG لأي تاريخ (نفس صيغة nowStr) — للمواعيد المحسوبة (deadlines).
+ * يقبل Date أو ms أو string؛ يُرجع '' لو غير صالح.
+ */
+export const fmtDateAr = (d) => {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString('ar-EG') + ' ' +
+    dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+};
 
 export const calcDelay = (dueDateStr, closedDate = null) => {
   if (!dueDateStr || closedDate) return 0;
