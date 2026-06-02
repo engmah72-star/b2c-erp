@@ -73,6 +73,7 @@ shipping/collection/returns/files/financial events).
 | رصيد الشحن | `shipping_settlements` |
 | **حالة الطلب** | `order.stage` (المرجع الرسمي الوحيد) |
 | **تواريخ/مدد/مسؤولية مراحل الأوردر** | `getStageResponsibilities()` (يشتقّ من `stageEnteredAt`/`stageCompletedAt`/`stageDeadline` + حقول الملكية) — **المرجع الوحيد**؛ `getStageDurations` wrapper فوقه. ممنوع حساب تواريخ/مدد المراحل مستقلاً في أي صفحة. |
+| **كل تواريخ الأوردر (قراءة)** | `getOrderDates()` — المرجع الوحيد لأي تاريخ يخصّ الأوردر (إنشاء · مراحل · اعتماد · تنفيذ · شحن فرعي · أرشفة · `milestones` مرتّبة). يوحّد الصيغ ويزيل التكرار (`designDeadline`=`stageDeadline.design`، `archived`=`archivedAt`). الصفحات تقرأ التواريخ من هنا لا من الحقول المتفرّقة. |
 
 حالات مساعِدة (لا تتعارض مع stage): `shipStage` · `approvalStatus` ·
 `productStatus` (داخل `products[]`) · `returnStatus`.

@@ -787,6 +787,64 @@ export function getStageHistory(order) {
     }));
 }
 
+// ══════════════════════════════════════════
+// ORDER DATES — المرجع الواحد لقراءة كل تواريخ الأوردر (RULE 1)
+// ══════════════════════════════════════════
+/**
+ * 🔱 getOrderDates — المصدر الوحيد لقراءة أي تاريخ يخصّ الأوردر من مكان واحد.
+ * derived بالكامل من حقول الأوردر — صفر state جديد (W1). أي صفحة تحتاج تاريخاً
+ * للأوردر تقرأه من هنا بدل لمس الحقول الفردية المتفرّقة (deadline/approvedAt/
+ * deliveredAt/...). يوحّد الصيغ (ISO/ar-EG) ويزيل التكرار:
+ *   - designDeadline: المرجع stageDeadline.design (fallback الحقل القديم deadline).
+ *   - archived: archivedAt (fallback stageEnteredAt.archived).
+ *
+ * كل تاريخ يُرجَّع كـ { ms, text } (ar-EG) أو null.
+ * @returns {{ created, createdBy, createdByName, designDeadline, stages,
+ *   designApproved, productionDone, shipping, archived, milestones } | null}
+ */
+export function getOrderDates(order) {
+  if (!order) return null;
+  const ent = order.stageEnteredAt || {};
+  const D = (v) => { const ms = _toMs(v); return ms ? { ms, text: fmtDateAr(new Date(ms)) } : null; };
+
+  const created        = D(order.createdAt) || D(order.createdDate);
+  const designDeadline = D(order.stageDeadline?.design) || D(order.deadline);
+  const designApproved = D(order.approvedAt);
+  const productionDone = D(order.prodDoneAt);
+  const shipping = {
+    dispatched:      D(order.shipDispatchedAt),
+    delivered:       D(order.deliveredAt),
+    deliveredBy:     order.deliveredBy || '',
+    collected:       D(order.shipCollectedAt),
+    returned:        D(order.returnedAt),
+    partialReturned: D(order.partialReturnedAt),
+  };
+  const archived = D(order.archivedAt) || D(ent.archived);
+  const stages = getStageResponsibilities(order);
+
+  // مسار زمني موحّد (مرتّب) لكل أحداث الأوردر — مكان واحد لكل التواريخ
+  const M = (key, label, d) => (d ? { key, label, ms: d.ms, text: d.text } : null);
+  const milestones = [
+    M('created', 'إنشاء الطلب', created),
+    ...stages.filter(s => s.kind === 'stage' && s.enteredMs)
+             .map(s => ({ key: 'enter_' + s.stage, label: 'دخول ' + s.label, ms: s.enteredMs, text: s.enteredAt })),
+    M('design_approved', 'اعتماد التصميم', designApproved),
+    M('production_done', 'انتهاء التنفيذ', productionDone),
+    M('ship_dispatched', 'خروج للشحن', shipping.dispatched),
+    M('delivered',       'تسليم للعميل', shipping.delivered),
+    M('collected',       'تحصيل',        shipping.collected),
+    M('returned',        'مرتجع كامل',   shipping.returned),
+    M('partial_returned','مرتجع جزئي',   shipping.partialReturned),
+    M('archived',        'أرشفة',        archived),
+  ].filter(Boolean).sort((a, b) => a.ms - b.ms);
+
+  return {
+    created,
+    createdBy: order.createdBy || '', createdByName: order.createdByName || '',
+    designDeadline, stages, designApproved, productionDone, shipping, archived, milestones,
+  };
+}
+
 /** هل الأوردر تجاوز SLA مرحلته الحالية؟ */
 export function isStageOverdue(order, slaTable = null) {
   if (!order || !order.stage) return false;
