@@ -371,7 +371,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -520,7 +520,14 @@ function renderOrder(o) {
   html += '<h1 class="tap-select" title="اضغط للنسخ">' + esc(o.clientName||'—') + '</h1>';
   html += '<div class="order-id tap-select" title="اضغط للنسخ">' + esc(o.orderId || o._id || '—') + '</div>';
   if (phone) html += '<div class="order-id tap-select" style="direction:ltr" title="اضغط للنسخ">' + esc(phone) + '</div>';
-  html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span></div>';
+  html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span>';
+  // تنبيه التأخير — مشتق من المرجع الواحد (getOrderAlerts)
+  const _alerts = getOrderAlerts(o, stageSlaTable);
+  if (_alerts.count > 0) {
+    const _txt = _alerts.currentOverdue ? ('متأخر: ' + esc(_alerts.worst)) : ('تأخّر سابق (' + _alerts.count + ')');
+    html += ' <span class="order-stage-badge" style="background:rgba(255,61,110,.15);color:var(--r,#ff3d6e)">⚠️ ' + _txt + '</span>';
+  }
+  html += '</div>';
   html += '</div>';
 
   // (Quick actions moved to sticky toolbar — see renderToolbar)
@@ -748,6 +755,29 @@ function renderOrder(o) {
         if (dates.length) html += '<div class="sd-dates" style="grid-column:1/-1;font-size:11px;color:var(--dim2);margin-top:2px">' + dates.join(' · ') + '</div>';
         html += '</div>';
       }
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+  }
+
+  // ── المسار الزمني (تواريخ الأوردر — المرجع الواحد getOrderDates) ──
+  {
+    const od = getOrderDates(o);
+    const ms = (od && od.milestones) || [];
+    if (ms.length > 0) {
+      html += '<div class="order-section">';
+      html += '<div class="order-section-head">🗓️ المسار الزمني <span style="font-size:12px;color:var(--dim2);font-weight:700">(' + ms.length + ')</span></div>';
+      html += '<div class="order-section-body">';
+      html += '<div class="order-timeline">';
+      for (const m of ms) {
+        html += '<div class="order-timeline-item">';
+        html += '<div class="order-timeline-action">' + esc(m.label) + '</div>';
+        html += '<div class="order-timeline-meta">' + esc(m.text) + '</div>';
+        html += '</div>';
+      }
+      // الموعد المستهدف للتصميم (هدف لا حدث)
+      if (od.designDeadline) html += '<div class="order-timeline-item"><div class="order-timeline-action">🎯 موعد تسليم التصميم</div><div class="order-timeline-meta">' + esc(od.designDeadline.text) + '</div></div>';
       html += '</div>';
       html += '</div>';
       html += '</div>';

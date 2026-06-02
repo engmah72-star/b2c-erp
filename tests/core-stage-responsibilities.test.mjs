@@ -22,6 +22,7 @@ import {
   getStageDurations,
   getStageHistory,
   getOrderDates,
+  getOrderAlerts,
   validateOrderResponsibility,
   fmtDateAr,
   STAGE_SLA_DEFAULTS,
@@ -412,6 +413,37 @@ test('getOrderDates: archived falls back to stageEnteredAt.archived', () => {
   const order = { stage: 'archived', stageEnteredAt: { archived: new Date().toISOString() } };
   const d = getOrderDates(order);
   assert(d.archived && d.archived.ms, 'archived from stageEnteredAt.archived');
+});
+
+// ── getOrderAlerts — تنبيهات التأخير ──────────────────────────────
+test('getOrderAlerts: no overdue → empty', () => {
+  const order = { stage: 'design', stageEnteredAt: { design: new Date().toISOString() } };
+  const a = getOrderAlerts(order);
+  assertEq(a.count, 0);
+  assertEq(a.currentOverdue, false);
+});
+test('getOrderAlerts: current stage past deadline → alert', () => {
+  const now = Date.now();
+  const order = {
+    stage: 'production',
+    products: [{ printType: 'digital' }], // SLA 48h
+    stageEnteredAt: { production: new Date(now - 60 * HOUR).toISOString() },
+  };
+  const a = getOrderAlerts(order);
+  assert(a.count >= 1, 'production overdue');
+  assertEq(a.currentOverdue, true);
+  assertEq(a.worst, 'تنفيذ');
+});
+test('getOrderAlerts: design past manual deadline → alert', () => {
+  const past = fmtDateAr(new Date(Date.now() - 5 * HOUR));
+  const order = {
+    stage: 'design',
+    stageEnteredAt: { design: new Date(Date.now() - 30 * HOUR).toISOString() },
+    stageDeadline: { design: past },
+  };
+  const a = getOrderAlerts(order);
+  assertEq(a.currentOverdue, true);
+  assertEq(a.overdueStages[0].stage, 'design');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
