@@ -458,16 +458,9 @@ function waPhoneEG(raw) {
   return '20' + phone;
 }
 
-/**
- * buildProductionActionUrl(order) — يبني لينك مطلق يفتح الأوردر في صفحة
- * الإنتاج (production.html?orderId=…) — auto-open للبانل اللي فيه تسجيل
- * التكلفة (recordCostItem) وتأكيد الانتهاء (moveToShipping).
- * مطلق (origin كامل) عشان يشتغل من واتساب خارج التطبيق.
- */
-export function buildProductionActionUrl(order = {}) {
-  const id = order && order._id ? order._id : '';
-  if (!id) return '';
-  const rel = `production.html?orderId=${encodeURIComponent(id)}`;
+/** absUrl(rel) — يحوّل مسار نسبي للينك مطلق (origin كامل) عشان يشتغل من
+ *  واتساب خارج التطبيق. يحافظ على الـ subdirectory لو التطبيق مش على الـ root. */
+function absUrl(rel) {
   try {
     return new URL(rel, window.location.href).href;
   } catch (_) {
@@ -476,10 +469,29 @@ export function buildProductionActionUrl(order = {}) {
 }
 
 /**
+ * buildProductionCostUrl(order) — لينك صفحة بنود التكلفة المخصّصة. بتفتح
+ * مودال تسجيل التكلفة للأوردر مباشرةً (exec-cost-entry.html?id=… → openCostModal).
+ */
+export function buildProductionCostUrl(order = {}) {
+  const id = order && order._id ? order._id : '';
+  return id ? absUrl(`exec-cost-entry.html?id=${encodeURIComponent(id)}`) : '';
+}
+
+/**
+ * buildProductionOrderUrl(order) — لينك صفحة الأوردر، فيها زر "تحويل للشحن"
+ * (تأكيد الانتهاء من التنفيذ) المتاح لمندوب التنفيذ (order.html?id=…).
+ */
+export function buildProductionOrderUrl(order = {}) {
+  const id = order && order._id ? order._id : '';
+  return id ? absUrl(`order.html?id=${encodeURIComponent(id)}`) : '';
+}
+
+/**
  * buildProductionHandoffMessage(order, opts) — يبني نص واتساب يُرسَل لمندوب
  * التنفيذ عند تحويل أوردر الطباعة للتنفيذ. ملخّص تشغيلي (مش specs المطبعة):
  * رقم الأوردر · العميل · الميعاد · المنتجات (الاسم × الكمية) · ملاحظة.
- * opts.actionUrl (اختياري): لينك يفتح الأوردر لتسجيل التكلفة وتأكيد الانتهاء.
+ * opts.costUrl (اختياري): لينك صفحة بنود التكلفة (يفتح المودال على طول).
+ * opts.orderUrl (اختياري): لينك صفحة الأوردر (لتأكيد الانتهاء/التحويل للشحن).
  */
 export function buildProductionHandoffMessage(order = {}, opts = {}) {
   const o = order;
@@ -510,11 +522,16 @@ export function buildProductionHandoffMessage(order = {}, opts = {}) {
     lines.push(`✏️ ملاحظة: ${note}`);
   }
 
-  // 🔗 لينك التنفيذ — يفتح الأوردر مباشرةً لتسجيل التكلفة وتأكيد الانتهاء.
-  if (opts.actionUrl) {
+  // 🔗 لينكات التنفيذ — تسجيل التكلفة (صفحة مخصّصة) + تأكيد الانتهاء (صفحة الأوردر).
+  if (opts.costUrl) {
     lines.push('');
-    lines.push('💰 سجّل التكلفة وأكّد الانتهاء من هنا:');
-    lines.push(opts.actionUrl);
+    lines.push('💰 سجّل التكلفة من هنا:');
+    lines.push(opts.costUrl);
+  }
+  if (opts.orderUrl) {
+    lines.push('');
+    lines.push('✅ أكّد الانتهاء (تحويل للشحن) من هنا:');
+    lines.push(opts.orderUrl);
   }
 
   return lines.join('\n');
@@ -532,8 +549,9 @@ export function sendProductionHandoff(order, agent) {
   if (!waPhone) {
     return { ok: false, error: `المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته` };
   }
-  const actionUrl = buildProductionActionUrl(order);
-  const message = buildProductionHandoffMessage(order, { actionUrl });
+  const costUrl = buildProductionCostUrl(order);
+  const orderUrl = buildProductionOrderUrl(order);
+  const message = buildProductionHandoffMessage(order, { costUrl, orderUrl });
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
   try {
     window.open(waUrl, '_blank');
@@ -563,7 +581,8 @@ if (typeof window !== 'undefined') {
     applyPrintCCHeader,
     buildPrintTimeline,
     printTimelineHTML,
-    buildProductionActionUrl,
+    buildProductionCostUrl,
+    buildProductionOrderUrl,
     buildProductionHandoffMessage,
     sendProductionHandoff,
     togglePrintControlCenter,
