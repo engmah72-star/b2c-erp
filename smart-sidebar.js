@@ -52,8 +52,6 @@
   const setFavs   = (a) => { try { localStorage.setItem(LS_FAVORITES, JSON.stringify(a)); } catch(_) {} };
   const getUsage  = () => { try { return JSON.parse(localStorage.getItem(LS_USAGE) || '{}'); } catch(_) { return {}; } };
   const setUsage  = (o) => { try { localStorage.setItem(LS_USAGE, JSON.stringify(o)); } catch(_) {} };
-  const isCompact = () => false;  // disabled — compact toggle removed
-  const isHidden  = () => false;  // disabled — hide toggle removed
 
   function pageKey(href) {
     return (href || '').split('/').pop().split('?')[0].split('#')[0].toLowerCase();
@@ -103,22 +101,6 @@
       + '.nav-group{cursor:pointer;user-select:none;}'
       + '.nav-group:hover{opacity:.75;}'
       + '.nav-group.collapsed::after{content:" ◀";font-size:8px;opacity:.5;}'
-      // Compact mode — narrow sidebar, icons only
-      + '.sidenav.sb-compact{width:64px!important;min-width:64px!important;}'
-      + '.sidenav.sb-compact .nav-link{justify-content:center;padding:10px 4px!important;text-align:center;}'
-      + '.sidenav.sb-compact .nav-link>:not(.nav-ico):not(.sb-star){display:none!important;}'
-      + '.sidenav.sb-compact .nav-link .nav-ico{margin:0!important;font-size:var(--fs-2xl);}'
-      + '.sidenav.sb-compact .nav-group{display:none;}'
-      + '.sidenav.sb-compact .sb-search-row{display:none;}'
-      + '.sidenav.sb-compact .sb-tools-btns{flex-direction:column;}'
-      + '.sidenav.sb-compact .sb-tools-btns .sb-tool-btn{width:100%;font-size:var(--fs-tiny);padding:5px 2px;}'
-      + '.sidenav.sb-compact .sb-tools-btns .sb-reset-favs{display:none;}'
-      + '.sidenav.sb-compact .nav-brand-name,'
-      + '.sidenav.sb-compact .nav-brand-role,'
-      + '.sidenav.sb-compact .nav-user-name,'
-      + '.sidenav.sb-compact .nav-user-role{display:none;}'
-      + '.sidenav.sb-compact .sb-flame{display:none;}'
-      + '.sidenav.sb-compact .sb-star{position:absolute;left:2px;top:2px;transform:none;font-size:8px;padding:var(--space-2xs);}'
       // Active link polish — no !important (let page styles take precedence if needed)
       + '.nav-link.active{background:linear-gradient(135deg,rgba(167,139,250,.16),rgba(74,142,245,.08));}'
       // Mobile compact toolbar (يوفر مساحة عمودية للعناصر)
@@ -127,7 +109,6 @@
       +   '.sb-search-row{padding:4px 7px;}'
       +   '.sb-search-row input{font-size:var(--fs-md);}'
       +   '.sb-tool-btn{padding:5px 6px;font-size:var(--fs-xs);}'
-      +   '.sidenav.sb-compact{width:auto!important;min-width:0!important;}'
       + '}';
     document.head.appendChild(s);
   }
@@ -144,88 +125,6 @@
   function topUsed(n) {
     const u = getUsage();
     return Object.entries(u).sort((a,b) => b[1] - a[1]).slice(0, n).map(([k]) => k);
-  }
-
-  // ── Apply compact mode class to sidenav ──
-  function applyCompact(sidenav, on) {
-    if (!sidenav) return;
-    sidenav.classList.toggle('sb-compact', on);
-    const btn = sidenav.querySelector('.sb-compact-toggle');
-    if (btn) {
-      btn.classList.toggle('on', on);
-      btn.textContent = on ? '📐 موسّع' : '📌 مضغوط';
-    }
-  }
-
-  // ── Apply hidden mode (full hide, desktop only) ──
-  // CSS in shared.css handles the actual hide via @media(min-width:769px).
-  // On mobile, .mob-open + the default slide-off behavior take precedence,
-  // so toggling this class on mobile is a no-op visually (safe).
-  function applyHidden(sidenav, on) {
-    if (!sidenav) return;
-    sidenav.classList.toggle('sb-hidden', on);
-    document.body.classList.toggle('sb-hidden', on);
-    const btn = sidenav.querySelector('.sb-hide-toggle');
-    if (btn) btn.textContent = on ? '👁️‍🗨️ إظهار' : '👁️ إخفاء';
-  }
-
-  // ── Floating reveal button (created once, lives on document.body) ──
-  function ensureShowButton(sidenav) {
-    if (document.querySelector('.sb-show-btn')) return;
-    const btn = document.createElement('button');
-    btn.className = 'sb-show-btn';
-    btn.type = 'button';
-    btn.title = 'إظهار القائمة';
-    btn.setAttribute('aria-label', 'إظهار القائمة');
-    btn.textContent = '☰';
-    btn.addEventListener('click', () => {
-      try { localStorage.setItem(LS_HIDDEN, '0'); } catch(_) {}
-      document.body.classList.remove('sb-peek');
-      applyHidden(sidenav, false);
-    });
-    document.body.appendChild(btn);
-  }
-
-  // ── Hover-peek (Notion-style) — show sidebar as overlay when mouse
-  // ── approaches the right edge (RTL); hide again on mouseleave ──
-  function setupHoverPeek(sidenav) {
-    if (document.querySelector('.sb-hot-zone')) return;
-
-    const hot = document.createElement('div');
-    hot.className = 'sb-hot-zone';
-    hot.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(hot);
-
-    let hideTimer = null;
-    const HIDE_DELAY = 220; // ms — pause before re-hiding to avoid flicker
-
-    const peekOn  = () => {
-      clearTimeout(hideTimer);
-      // Only peek while persistently hidden — otherwise sidebar is already visible
-      if (!document.body.classList.contains('sb-hidden')) return;
-      document.body.classList.add('sb-peek');
-    };
-
-    const peekOff = (immediate) => {
-      clearTimeout(hideTimer);
-      // Don't hide while a focused input inside the sidebar is active
-      // (e.g., user typing in the search box)
-      if (sidenav.contains(document.activeElement)) return;
-      const delay = immediate ? 0 : HIDE_DELAY;
-      hideTimer = setTimeout(() => {
-        document.body.classList.remove('sb-peek');
-      }, delay);
-    };
-
-    hot.addEventListener('mouseenter', peekOn);
-    sidenav.addEventListener('mouseenter', () => clearTimeout(hideTimer));
-    sidenav.addEventListener('mouseleave', () => peekOff(false));
-    // Clicking a nav link → navigate; clear peek immediately so the new page
-    // doesn't briefly render with the overlay still on
-    sidenav.addEventListener('click', (e) => {
-      const link = e.target.closest('a.nav-link');
-      if (link) peekOff(true);
-    });
   }
 
   // ── Build toolbar — INSERTED BETWEEN .nav-brand AND .nav-scroll ──
@@ -376,14 +275,26 @@
     navScroll.querySelectorAll('.nav-group').forEach(g => {
       if (g.dataset.sbCollapseBound) return;
       g.dataset.sbCollapseBound = '1';
-      g.addEventListener('click', () => {
-        g.classList.toggle('collapsed');
+      // a11y: مجموعة قابلة للطي = زر يُشغَّل بلوحة المفاتيح (Enter/Space)
+      g.setAttribute('role', 'button');
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('aria-expanded', 'true');
+      const toggle = () => {
+        const collapsed = g.classList.toggle('collapsed');
+        g.setAttribute('aria-expanded', String(!collapsed));
         let sib = g.nextElementSibling;
         while (sib && !sib.classList.contains('nav-group')) {
           if (sib.classList.contains('nav-link')) {
-            sib.style.display = g.classList.contains('collapsed') ? 'none' : '';
+            sib.style.display = collapsed ? 'none' : '';
           }
           sib = sib.nextElementSibling;
+        }
+      };
+      g.addEventListener('click', toggle);
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          toggle();
         }
       });
     });
@@ -412,11 +323,8 @@
     // 1) Toolbar — outside .nav-scroll so it survives innerHTML rebuilds
     buildToolbar(sidenav, navScroll);
 
-    // 1b/1c) Floating ☰ + hover-peek مُعطَّلَيْن — الـ sidebar مش بتختفي خالص بعد
-    //  PR #819 (إزالة hide/compact toggles)، فالـ overlay machinery مش محتاجة و
-    //  بتخلق احتمال overlap (body.sb-peek يخلي main margin-right:0).
-    // ensureShowButton(sidenav);
-    // setupHoverPeek(sidenav);
+    // NOTE: hide/compact toggles + floating ☰ + hover-peek أُزيلت بالكامل بعد
+    // PR #819 — الـ sidebar تبقى ظاهرة دائماً (لا overlay machinery، لا overlap).
 
     // 2) First enhancement
     enhanceLinks(navScroll);

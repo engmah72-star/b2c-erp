@@ -19,6 +19,7 @@
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
+<script type="module" src="text-select.js?v=1"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -237,6 +238,7 @@ let suppliers = [];
 let employees = [];
 let activeReqType = 'supplier_payment';
 let executingReq = null;
+let financialPolicy = null; // master_lists/financial_policy override (افتراضي advisory)
 let receivingReq = null;
 
 const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
@@ -252,7 +254,10 @@ function buildSidebar(){
 }
 
 document.getElementById('menu-btn')?.addEventListener('click', ()=>{
-  document.getElementById('sidebar')?.classList.toggle('open');
+  // toggleNav المركزية (sidebar.js): تفتح .sidenav.mob-open + الـ overlay.
+  // القديم كان يبدّل #sidebar.open — عنصر/كلاس غير موجودين، فالقائمة ما كانت تفتح.
+  if (typeof window.toggleNav === 'function') window.toggleNav();
+  else document.querySelector('.sidenav')?.classList.toggle('mob-open');
 });
 
 window.logoutBtn = async function(){
@@ -342,6 +347,14 @@ function canRequestForOthers(){
 }
 
 function startListeners(){
+  // سياسة الرقابة المالية (master_lists/financial_policy) — مستمع حيّ حتى
+  // يسري أي تعديل من الأدمن فوراً على الجلسات المفتوحة (نقطة التطبيق الفعلية).
+  // غيابها = الافتراضي (advisory) → لا تصعيد، backward-compatible. single doc
+  // ref → مُستثنى من قاعدة limit() (G3).
+  onSnapshot(doc(db,'master_lists','financial_policy'),
+    s=>{ financialPolicy = s.exists() ? s.data() : null; },
+    err=>console.warn('[approvals] financial_policy:', err));
+
   // RULE G3: cap the remaining unbounded subscriptions on this page.
   onSnapshot(query(collection(db,'wallets'),limit(100)),
     snap=>{
@@ -697,7 +710,7 @@ function entityHistory(r){
 
 // ══ رصد المخاطر — تنبيهات للأدمن قبل الاعتماد ══
 // pure logic مُمَركَزة في core/approvals-utils.js
-const detectRisks = (r) => _detectRisks(r,{allRequests:requests,ordersMap,format:fn});
+const detectRisks = (r) => _detectRisks(r,{allRequests:requests,ordersMap,format:fn,policy:financialPolicy});
 
 function renderRequestCard(r){
   const typeLbl = REQ_TYPE_LBL[r.type] || r.type;
@@ -1445,16 +1458,37 @@ window.executeRequest = async function(){
       if(saveBtn) saveBtn.textContent = 'حفظ الحركة...';
     }
 
+    const walletType = (walletsArr.find(w=>w._id===wId)||{}).type || '';
+    // إجمالي خارج هذه المحفظة اليوم (للسقف اليومي) — من allTxs، نستبعد
+    // العكوس/الملغاة. الدفعة الحالية ليست في allTxs بعد (projected = السابق + هذه).
+    const _todayStart = new Date(); _todayStart.setHours(0,0,0,0);
+    const dailyWalletOutflow = allTxs.reduce((s,t)=>{
+      if(t.walletId!==wId || t.type!=='out' || t.isReversal || t.isReversed) return s;
+      const ts = t.createdAt?.seconds ? t.createdAt.seconds*1000 : null;
+      if(ts==null || ts < _todayStart.getTime()) return s;
+      return s + (parseFloat(t.amount)||0);
+    },0);
     const exec = await approvalActions.executePaymentRequest({
       db, request:r, walletId:wId, walletName:wName, walletBalance:wBal,
       transferRef, note, receipt,
       userId:currentUid, userName:currentUserName,
+      role:currentRole, walletType, policy:financialPolicy, dailyWalletOutflow,
     });
     if(!exec.ok){
+      // تصعيد السياسة: حركة فوق الحدّ تحتاج مُعتمِداً مؤهَّلاً (لا تُحرَّك الفلوس)
+      if(exec.requiresApproval){
+        showToast('🔒 '+((exec.errors||[]).join(' · ')||'يلزم اعتماد أعلى لهذا المبلغ')+' — جارٍ إخطار الأدمن','err');
+        // P4: أخطر الأدمن أن الطلب ينتظر اعتماده (fire-and-forget، dedupe داخلي)
+        approvalActions.notifyApprovalEscalation({db, request:r, userId:currentUid, userName:currentUserName})
+          .then(n=>{ if(n?.ok && n.notified) showToast(`📨 أُخطِر ${n.notified} أدمن للاعتماد`,'ok'); })
+          .catch(()=>{});
+        return;
+      }
       const handled = window.financialGuard?.({message:(exec.errors||[])[0]||'فشل'},{operation:'تنفيذ طلب', amount:r.amount});
       if(!handled) showToast('❌ '+((exec.errors||[]).join(' · ')||'فشل التنفيذ'),'err');
       return;
     }
+    const _polWarn = (exec.warnings||[]).length ? ' — ⚠️ '+exec.warnings.join(' · ') : '';
     const summary = [
       'tx + ledger',
       exec.supplierPaymentId ? 'supplier_payments' : null,
@@ -1463,7 +1497,7 @@ window.executeRequest = async function(){
       exec.itemsCount ? `${exec.itemsCount} costItem.paid` : null,
       receipt?.url ? 'receipt' : null,
     ].filter(Boolean).join(' + ');
-    showToast(`✅ ${receipt?.url?'نُفّذ + إيصال — بانتظار الاعتماد':'نُفّذ — لا تنسَ رفع الإيصال'} (${summary})`,'ok');
+    showToast(`✅ ${receipt?.url?'نُفّذ + إيصال — بانتظار الاعتماد':'نُفّذ — لا تنسَ رفع الإيصال'} (${summary})${_polWarn}`,'ok');
     cM('exec');
     executingReq = null;
   }catch(e){

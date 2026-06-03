@@ -78,6 +78,21 @@
       نسيت كلمة السر؟
     </button>
 
+    <!-- OR divider -->
+    <div style="display:flex;align-items:center;gap:10px;margin:16px 0 12px;color:var(--dim2);font-size:var(--fs-sm)">
+      <span style="flex:1;height:1px;background:var(--line)"></span>
+      <span>أو</span>
+      <span style="flex:1;height:1px;background:var(--line)"></span>
+    </div>
+
+    <!-- Google sign-in: لحسابات الموظفين/الإدارة المُسجَّلة بمزوّد Google (بلا كلمة
+         سر). فورم الباسورد أعلاه لا يصلح معها → كان يظهر "بيانات الدخول غلط". -->
+    <button type="button" class="btn-login" id="google-btn" onclick="doGoogleLogin()"
+      style="background:#fff;color:#1f1f1f;display:flex;align-items:center;justify-content:center;gap:10px">
+      <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      تسجيل الدخول بحساب Google
+    </button>
+
     <!-- ROLES INFO -->
     <div class="roles-info">
       <div class="roles-title">الأدوار المتاحة في النظام</div>
@@ -104,7 +119,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { signInWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { signInWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 /* ROLE → REDIRECT MAP */
 const ROLE_PAGES = {
@@ -246,6 +261,36 @@ window.doLogin = async function() {
       'auth/network-request-failed':'مشكلة في الإنترنت — تحقّق من الاتصال',
     };
     showErr(msg[e.code] || 'خطأ في تسجيل الدخول: ' + (e.message || e.code || ''));
+  }
+};
+
+/* GOOGLE SIGN-IN — لحسابات Google-provider (بلا كلمة سر). نفس مسار التوجيه
+   بعد المصادقة: نقرأ users/{uid} ونوجّه حسب الدور. لو مفيش users doc (حساب
+   Google غير مُصرَّح به في النظام) → getUserData يرمي خطأ ويُمنع الدخول. */
+window.doGoogleLogin = async function() {
+  const btn = document.getElementById('google-btn');
+  btn.disabled = true;
+  hideErr();
+  try {
+    const rem = document.getElementById('remember').checked;
+    const persist = rem ? browserLocalPersistence : browserSessionPersistence;
+    await setPersistence(auth, persist);
+
+    const provider = new GoogleAuthProvider();
+    const cred = await signInWithPopup(auth, provider);
+    const data = await getUserData(cred.user.uid);
+    routeUser(data, cred.user.uid);
+  } catch(e) {
+    btn.disabled = false;
+    const msg = {
+      'auth/popup-closed-by-user':       'تم إغلاق نافذة Google قبل إكمال الدخول',
+      'auth/cancelled-popup-request':    'تم إلغاء طلب الدخول — حاول مرة أخرى',
+      'auth/popup-blocked':              'المتصفّح حظر النافذة المنبثقة — اسمح بها ثم حاول',
+      'auth/account-exists-with-different-credential':'هذا الإيميل مسجّل بطريقة دخول أخرى',
+      'auth/network-request-failed':     'مشكلة في الإنترنت — تحقّق من الاتصال',
+    };
+    // getUserData يرمي "المستخدم غير موجود في النظام" لو مفيش users doc
+    showErr(msg[e.code] || (e.message || 'تعذّر الدخول عبر Google'));
   }
 };
 

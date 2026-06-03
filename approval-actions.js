@@ -18,9 +18,12 @@ import {
   updateDoc,
   addDoc,
   getDoc,
+  getDocs,
+  query,
+  where,
+  limit,
   writeBatch,
   serverTimestamp,
-  increment,
   arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -30,6 +33,10 @@ import {
   FE,
   approvalFields,
 } from './financial-sync-engine.js';
+import { withIdempotency } from './core/idempotency.js';
+import { auditEntry } from './core/audit.js';
+import { resolveFinancialPolicy, evaluateOutflow, canApproveOutflow } from './core/financial-policy.js';
+import { addWalletDeltaToBatch, setWalletBalanceInBatch } from './core/wallet-ledger.js';
 
 function _nowStr() {
   return new Date().toLocaleString('ar-EG', {
@@ -67,6 +74,22 @@ export async function createPaymentRequest({
   if (!requestData.reason || !String(requestData.reason).trim()) {
     return { ok: false, errors: ['⚠️ أدخل السبب'], warnings: [] };
   }
+  return withIdempotency(db, {
+    actionType: 'create_payment_request',
+    entityId: requestData.orderId || requestData.type,
+    actorId: userId,
+    actorName: userName,
+    payload: {
+      type: requestData.type,
+      amount: parseFloat(requestData.amount) || 0,
+      supplierId: requestData.supplierId || null,
+      employeeId: requestData.employeeId || null,
+      // هوية البنود تميّز طلبات مشروعة متعددة بنفس المبلغ/المورد على نفس
+      // الأوردر خلال نافذة الـ dedupe (تجنّب false-positive يمنع طلباً صحيحاً).
+      costItemIndex: requestData.costItemIndex ?? null,
+      costItemRefs: (requestData.costItemRefs || []).map(r => `${r.orderId}:${r.costItemIndex}`),
+    },
+  }, async () => {
   try {
     const reqRef = doc(collection(db, 'payment_requests'));
     const batch = writeBatch(db);
@@ -113,7 +136,10 @@ export async function createPaymentRequest({
             : `💸 طلب دفع: ${items[list[0].costItemIndex]?.type || ''} — ${(parseFloat(requestData.amount) || 0).toLocaleString('ar-EG')} ج → ${items[list[0].costItemIndex]?.supplierName || ''}`;
           batch.update(doc(db, 'orders', oid), {
             costItems: items,
-            timeline: [...(oData.timeline || []), { date: _nowStr(), action, by: userName || '' }],
+            timeline: [...(oData.timeline || []), auditEntry({
+              action, userId, userName, kind: 'op',
+              meta: { paymentRequestId: reqRef.id, items: list.length },
+            })],
             updatedAt: serverTimestamp(),
           });
         }
@@ -124,6 +150,7 @@ export async function createPaymentRequest({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل إنشاء الطلب'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -148,6 +175,10 @@ export async function createPaymentRequest({
  * @param {string} transferRef
  * @param {string} [note]
  * @param {Object} [receipt] — { url, path } لو رُفع إيصال مسبقاً (caller يرفع)
+ * @param {string} [role] — دور المُنفِّذ (لبوابة سياسة الخروج)
+ * @param {string} [walletType] — 'cash' | 'bank' | ... (لتشديد الكاش)
+ * @param {Object} [policy] — override من master_lists/financial_policy (افتراضي advisory)
+ * @param {number} [dailyWalletOutflow] — إجمالي خارج هذه المحفظة اليوم (للحدّ اليومي)
  */
 export async function executePaymentRequest({
   db = defaultDb, request,
@@ -155,6 +186,7 @@ export async function executePaymentRequest({
   transferRef, note = '',
   receipt = null,
   userId, userName,
+  role = '', walletType = '', policy = null, dailyWalletOutflow = 0,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!request || !request._id) return { ok: false, errors: ['⚠️ request مطلوب'], warnings: [] };
@@ -166,6 +198,34 @@ export async function executePaymentRequest({
     return { ok: false, errors: ['⚠️ أدخل رقم/مرجع التحويل'], warnings: [] };
   }
   const r = request;
+
+  // ── بوابة سياسة الخروج (Financial Policy) ──────────────────────────
+  // افتراضياً advisory → لا تمنع (backward-compatible). في mode='escalate'
+  // الحركات فوق الحدّ تتطلّب مُعتمِداً بالدور المطلوب ومختلفاً عن منشئ الطلب
+  // (أربع عيون) قبل أن تتحرّك الفلوس. التحذيرات تُرفَق دائماً في النتيجة.
+  const _policy = resolveFinancialPolicy(policy);
+  const _polEval = evaluateOutflow({
+    amount: r.amount, walletType,
+    dailyWalletOutflow, policy: _policy,
+  });
+  if (_polEval.requiresApproval) {
+    const gate = canApproveOutflow(_polEval, { role, userId }, r.requestedBy || '');
+    if (!gate.ok) {
+      return {
+        ok: false, errors: gate.errors, warnings: _polEval.warnings,
+        requiresApproval: true, policy: _polEval,
+      };
+    }
+  }
+  const _policyWarnings = _polEval.warnings;
+
+  return withIdempotency(db, {
+    actionType: 'execute_payment_request',
+    entityId: r._id,
+    actorId: userId,
+    actorName: userName,
+    payload: { amount: r.amount, walletId, transferRef },
+  }, async () => {
   try {
     let orderDoc = null;
     if (r.orderId && (r.type === 'client_refund' || r.costItemIndex !== undefined)) {
@@ -174,7 +234,7 @@ export async function executePaymentRequest({
     }
 
     const batch = writeBatch(db);
-    batch.update(doc(db, 'wallets', walletId), { balance: increment(-r.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId, delta: -r.amount, event: r.type, refId: r._id });
 
     let spRef = null;
     if (r.type === 'supplier_payment' && r.supplierId) {
@@ -338,7 +398,7 @@ export async function executePaymentRequest({
 
     await batch.commit();
     return {
-      ok: true, errors: [], warnings: [],
+      ok: true, errors: [], warnings: _policyWarnings,
       transactionId: txRef.id,
       supplierPaymentId: spRef?.id || null,
       employeePaymentId: epRef?.id || null,
@@ -348,6 +408,7 @@ export async function executePaymentRequest({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التنفيذ'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -362,6 +423,13 @@ export async function rejectPaymentRequest({
   if (!request || !request._id) return { ok: false, errors: ['⚠️ request مطلوب'], warnings: [] };
   if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ السبب مطلوب'], warnings: [] };
   const r = request;
+  return withIdempotency(db, {
+    actionType: 'reject_payment_request',
+    entityId: r._id,
+    actorId: userId,
+    actorName: userName,
+    payload: { reason: reason.trim() },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'payment_requests', r._id), {
@@ -398,11 +466,11 @@ export async function rejectPaymentRequest({
         if (mutated) {
           batch.update(doc(db, 'orders', oid), {
             costItems: items,
-            timeline: [...(oData.timeline || []), {
-              date: _nowStr(),
+            timeline: [...(oData.timeline || []), auditEntry({
               action: `❌ رُفِض طلب دفع (${list.length} بند) — ${reason.trim()}`,
-              by: userName || '',
-            }],
+              userId, userName, kind: 'reversal',
+              meta: { paymentRequestId: r._id, items: list.length },
+            })],
             updatedAt: serverTimestamp(),
           });
         }
@@ -413,6 +481,7 @@ export async function rejectPaymentRequest({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الرفض'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -425,6 +494,13 @@ export async function approvePaymentRequest({
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!requestId) return { ok: false, errors: ['⚠️ requestId مطلوب'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'approve_payment_request',
+    entityId: requestId,
+    actorId: userId,
+    actorName: userName,
+    payload: {},
+  }, async () => {
   try {
     await updateDoc(doc(db, 'payment_requests', requestId), {
       status: 'approved',
@@ -437,6 +513,7 @@ export async function approvePaymentRequest({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -455,6 +532,13 @@ export async function attachReceiptToRequest({
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!requestId) return { ok: false, errors: ['⚠️ requestId مطلوب'], warnings: [] };
   if (!receiptUrl) return { ok: false, errors: ['⚠️ receiptUrl مطلوب'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'attach_receipt_to_request',
+    entityId: requestId,
+    actorId: userId,
+    actorName: userName,
+    payload: { receiptUrl },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'payment_requests', requestId), {
@@ -475,6 +559,7 @@ export async function attachReceiptToRequest({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الإرفاق'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -508,6 +593,13 @@ export async function confirmTransaction({
   if (tx.isRecovery && tx.createdBy === userId) {
     return { ok: false, errors: ['⛔ لا يمكنك مراجعة عمليتك الخاصة (مبدأ الأربع عيون)'], warnings: [] };
   }
+  return withIdempotency(db, {
+    actionType: 'confirm_transaction',
+    entityId: tx._id,
+    actorId: userId,
+    actorName: userName,
+    payload: { stage: 'confirmed' },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'transactions_v2', tx._id), {
@@ -534,6 +626,7 @@ export async function confirmTransaction({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التأكيد'], warnings: [] };
   }
+  });
 }
 
 /**
@@ -548,6 +641,13 @@ export async function approveTransaction({
   if (tx.isRecovery && tx.createdBy === userId) {
     return { ok: false, errors: ['⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد'], warnings: [] };
   }
+  return withIdempotency(db, {
+    actionType: 'approve_transaction',
+    entityId: tx._id,
+    actorId: userId,
+    actorName: userName,
+    payload: { stage: 'approved' },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'transactions_v2', tx._id), {
@@ -575,6 +675,7 @@ export async function approveTransaction({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
+  });
 }
 
 /**
@@ -590,6 +691,13 @@ export async function rejectTransaction({
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!tx || !tx._id) return { ok: false, errors: ['⚠️ tx مطلوب'], warnings: [] };
   if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ السبب مطلوب'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'reject_transaction',
+    entityId: tx._id,
+    actorId: userId,
+    actorName: userName,
+    payload: { reason: reason.trim() },
+  }, async () => {
   try {
     let orderDoc = null;
     if (tx.orderId && (tx.category === 'refund' || tx.paymentRequestId)) {
@@ -614,7 +722,7 @@ export async function rejectTransaction({
       isReversed: true,
     });
     if (tx.walletId) {
-      batch.update(doc(db, 'wallets', tx.walletId), { balance: increment(reverseSign * tx.amount) });
+      addWalletDeltaToBatch(batch, db, { walletId: tx.walletId, delta: reverseSign * tx.amount, event: 'reject_reversal', refId: tx._id });
     }
 
     const revRef = doc(collection(db, 'transactions_v2'));
@@ -704,6 +812,7 @@ export async function rejectTransaction({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الرفض'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -729,9 +838,16 @@ export async function recoveryAdjustment({
   if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل السبب'], warnings: [] };
   const diff = target - cur;
   if (Math.abs(diff) < 0.01) return { ok: false, errors: ['ℹ️ لا فرق — لا حاجة للضبط'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'recovery_adjustment',
+    entityId: walletId,
+    actorId: userId,
+    actorName: userName,
+    payload: { target, reason: reason.trim() },
+  }, async () => {
   try {
     const batch = writeBatch(db);
-    batch.update(doc(db, 'wallets', walletId), { balance: target });
+    setWalletBalanceInBatch(batch, db, { walletId, target, event: 'recovery_adjustment' });
     const txRef = doc(collection(db, 'transactions_v2'));
     const isIn = diff > 0;
     batch.set(txRef, {
@@ -768,6 +884,69 @@ export async function recoveryAdjustment({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الضبط'], warnings: [] };
   }
+  });
+}
+
+// ══════════════════════════════════════════
+// APPROVAL ESCALATION NOTIFICATION (P4)
+// ══════════════════════════════════════════
+
+/**
+ * يُخطر الأدمن أن دفعة تجاوزت حدّ السياسة وتنتظر اعتماده (تصعيد).
+ * dedupe عبر استعلام الإشعارات (refPaymentRequestId) — لا يُكرّر لنفس الطلب،
+ * ولا يلمس قاعدة payment_requests. غير مالي (لا idempotency reservation).
+ *
+ * @param {Object} request — payment_request doc (with _id, amount, ...)
+ */
+export async function notifyApprovalEscalation({
+  db = defaultDb, request, userId, userName,
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!request || !request._id) return { ok: false, errors: ['⚠️ request مطلوب'], warnings: [] };
+  const r = request;
+  try {
+    // dedupe (best-effort): لو سبق إخطار لنفس الطلب → لا تُكرّر. فشل القراءة
+    // (صلاحية) لا يُجهض الإخطار — أسوأ حالة تكرار إشعار، غير ضار.
+    try {
+      const prior = await getDocs(query(
+        collection(db, 'notifications'),
+        where('refPaymentRequestId', '==', r._id),
+        limit(10),
+      ));
+      if (prior.docs.some(d => d.data().type === 'approval_escalation')) {
+        return { ok: true, errors: [], warnings: [], alreadyNotified: true, notified: 0 };
+      }
+    } catch (_) { /* skip dedupe on read-denied */ }
+    const admins = await getDocs(query(
+      collection(db, 'users'), where('role', '==', 'admin'), limit(20),
+    ));
+    const amount = parseFloat(r.amount) || 0;
+    const who = r.supplierName || r.employeeName || r.clientName || 'مصروف عام';
+    const batch = writeBatch(db);
+    let count = 0;
+    admins.forEach(d => {
+      if (d.id === userId) return; // لا تُخطر المُنفّذ نفسه لو كان admin
+      const notRef = doc(collection(db, 'notifications'));
+      batch.set(notRef, {
+        toUid: d.id, toName: d.data().name || '',
+        type: 'approval_escalation',
+        severity: 'high',
+        title: '🔒 دفعة كبيرة تنتظر اعتمادك',
+        message: `${amount.toLocaleString('ar-EG')} ج — ${who}\nتجاوزت حدّ السياسة وتحتاج موافقة أدمن قبل التنفيذ.`,
+        refPaymentRequestId: r._id,
+        refOrderId: r.orderId || null,
+        createdBy: userId, createdByName: userName || '',
+        createdAt: serverTimestamp(),
+        seenAt: null,
+      });
+      count++;
+    });
+    if (count === 0) return { ok: true, errors: [], warnings: ['لا يوجد أدمن لإخطاره'], notified: 0 };
+    await batch.commit();
+    return { ok: true, errors: [], warnings: [], notified: count };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إخطار التصعيد'], warnings: [] };
+  }
 }
 
 // ══════════════════════════════════════════
@@ -784,6 +963,7 @@ export const approvalActions = {
   approveTransaction,
   rejectTransaction,
   recoveryAdjustment,
+  notifyApprovalEscalation,
 };
 
 export default approvalActions;

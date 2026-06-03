@@ -72,6 +72,8 @@ shipping/collection/returns/files/financial events).
 | رصيد عميل | `transactions_v2` + `orders` |
 | رصيد الشحن | `shipping_settlements` |
 | **حالة الطلب** | `order.stage` (المرجع الرسمي الوحيد) |
+| **تواريخ/مدد/مسؤولية مراحل الأوردر** | `getStageResponsibilities()` (يشتقّ من `stageEnteredAt`/`stageCompletedAt`/`stageDeadline` + حقول الملكية) — **المرجع الوحيد**؛ `getStageDurations` wrapper فوقه. ممنوع حساب تواريخ/مدد المراحل مستقلاً في أي صفحة. |
+| **كل تواريخ الأوردر (قراءة)** | `getOrderDates()` — المرجع الوحيد لأي تاريخ يخصّ الأوردر (إنشاء · مراحل · اعتماد · تنفيذ · شحن فرعي · أرشفة · `milestones` مرتّبة). يوحّد الصيغ ويزيل التكرار (`designDeadline`=`stageDeadline.design`، `archived`=`archivedAt`). الصفحات تقرأ التواريخ من هنا لا من الحقول المتفرّقة. |
 
 حالات مساعِدة (لا تتعارض مع stage): `shipStage` · `approvalStatus` ·
 `productStatus` (داخل `products[]`) · `returnStatus`.
@@ -218,6 +220,12 @@ Helpers: `canDo(cap)` · `canSee(field)` · `hasPage(page)`.
     legacy load-bearing.
 16. **Multi-tenant (G7 — target):** ملفات الكتابة الأساسية لا تكتب `tenantId`
     بعد. عند تفعيله: كل doc يكتب `tenantId` وكل query يفلتر به.
+17. **Order Responsibility (R):** مفيش أوردر بدون **مسؤول + تاريخ**. المسؤول
+    الأدنى = `createdBy` (المُنشئ)؛ التاريخ = `createdDate`/`createdAt` أو
+    `stageEnteredAt`. مفروضة عبر `validateOrderResponsibility()` (حارس الإنشاء في
+    `orderActions.createOrder` + داخل `validateOrder`)، وكل انتقال مرحلة يضمن
+    مسؤولاً للمرحلة الجديدة (المختار > المالك الحالي > مُنفّذ الانتقال) في
+    `buildStageAdvance`.
 
 > للتفاصيل الكاملة لأي قاعدة (نصها الأصلي + جداول القبول + أمثلة) راجع
 > `docs/archive/CLAUDE.full.md`.

@@ -30,6 +30,8 @@ import {
   validateCostItem,
   advanceOrderStageWithLock,
   nowStr,
+  fmtDateAr,
+  validateOrderResponsibility,
   ORDER_DESIGN_STAGES,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
@@ -273,6 +275,10 @@ export const orderActions = {
           ? { deliveryAddress } : {}),
         ...(customerPhoneShip ? { customerPhoneShip } : {}),
         stageEnteredAt: { [stage]: nowIso },
+        stageCompletedAt: {},
+        // موعد تسليم التصميم اليدوي (الحقل الإجباري في الفورم) — نهاية اليوم المُدخَل.
+        // يُخزَّن كـ stageDeadline.design فيتوحّد مع مفهوم مواعيد المراحل (يفوز على حساب SLA).
+        stageDeadline: deadline ? { design: fmtDateAr(new Date(deadline + 'T23:59:59')) } : {},
         designFileUrl, designFiles, designFileNote: designNote,
         depositReceiptUrl, depositReceiptFiles,
         costItems: [],
@@ -283,6 +289,13 @@ export const orderActions = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+
+      // قاعدة المسؤولية العامة (R): مفيش أوردر بدون مسؤول + تاريخ.
+      // createdBy=userId و createdDate مضمونان أعلاه، فالحارس دفاعي (fail-closed).
+      const respChk = validateOrderResponsibility({ ...orderData, createdAt: nowAr });
+      if (!respChk.ok) {
+        return { ok: false, errors: respChk.errors, warnings: [], orderId };
+      }
 
       try {
         const batch = writeBatch(db);

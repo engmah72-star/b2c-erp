@@ -251,6 +251,81 @@ async function runTests() {
     );
   });
 
+  // ──────────────────────────────────────────────────────────────
+  // Financial Policy — server-side outflow escalation (master_lists/financial_policy)
+  // mode='escalate' + outflow.escalate=10000 + requiredApproverRole='admin'
+  // ──────────────────────────────────────────────────────────────
+
+  const setPolicy = async (policy) => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('master_lists/financial_policy').set(policy);
+    });
+  };
+  const clearPolicy = async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('master_lists/financial_policy').delete();
+    });
+  };
+  const outTx = (amount, extra = {}) => ({
+    walletId: 'w1', type: 'out', amount, category: 'printer_payment',
+    description: 'test', date: '2026/06/03', ...extra,
+  });
+
+  await test('NO policy doc → ops CAN create large outflow (advisory default, backward-compat)', async () => {
+    await clearPolicy();
+    await seedUser(env, 'pol_ops0', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops0');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(outTx(15000)));
+  });
+
+  await test('advisory mode → ops CAN create large outflow (no enforcement)', async () => {
+    await setPolicy({ mode: 'advisory', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_ops1', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops1');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(outTx(15000)));
+  });
+
+  await test('escalate mode → ops_manager CANNOT create outflow above limit', async () => {
+    await setPolicy({ mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_ops2', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops2');
+    await assertFails(ctx.firestore().collection('transactions_v2').add(outTx(15000)));
+  });
+
+  await test('escalate mode → admin CAN create outflow above limit', async () => {
+    await setPolicy({ mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_adm1', 'admin', ['accounts']);
+    const ctx = env.authenticatedContext('pol_adm1');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(outTx(15000)));
+  });
+
+  await test('escalate mode → ops CAN create outflow BELOW limit', async () => {
+    await setPolicy({ mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_ops3', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops3');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(outTx(5000)));
+  });
+
+  await test('escalate mode → large INFLOW is not gated (outflow-only)', async () => {
+    await setPolicy({ mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_ops4', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops4');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(
+      outTx(20000, { type: 'in', category: 'client_payment' })
+    ));
+  });
+
+  await test('escalate mode → large REVERSAL outflow is exempt (system correction)', async () => {
+    await setPolicy({ mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin' } });
+    await seedUser(env, 'pol_ops5', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('pol_ops5');
+    await assertSucceeds(ctx.firestore().collection('transactions_v2').add(
+      outTx(15000, { isReversal: true })
+    ));
+  });
+
+  await clearPolicy();
+
   await env.cleanup();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

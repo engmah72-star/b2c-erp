@@ -21,6 +21,7 @@
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
+<script type="module" src="text-select.js?v=1"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -256,6 +257,8 @@ import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
+import { buildEmployeeStagePerformance } from "./core/employee-stage-performance.js";
+import { getStageResponsibilities, formatDurationAr } from "./orders.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
 import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
@@ -897,6 +900,37 @@ function renderInsights(){
     empOrders:getEmpOrders(),
     format:fn,
   });
+
+  // ── أداء الموظف على المراحل — ربط التقييم بمدد المراحل والالتزام بالـ SLA ──
+  // مشتق من المرجع الواحد getStageResponsibilities (RULE 1).
+  try {
+    const perf = buildEmployeeStagePerformance(getEmpOrders(allOrders), o => getStageResponsibilities(o));
+    const ids = new Set([empId, emp.authUid].filter(Boolean));
+    const nm = (emp.name || '').trim();
+    const mine = perf
+      .filter(e => ids.has(e.employeeId) || (nm && (e.employeeName || '').trim() === nm))
+      .sort((a, b) => b.totalCount - a.totalCount)[0];
+    if (mine && mine.totalCount > 0) el.innerHTML += buildStagePerfCard(mine);
+  } catch (e) { console.warn('stage-perf:', e?.message); }
+}
+
+/** بطاقة أداء الموظف على المراحل (متوسط المدة + نسبة الالتزام بالموعد). */
+function buildStagePerfCard(e){
+  const STG={design:'التصميم',printing:'الطباعة',production:'التنفيذ',shipping:'الشحن'};
+  const colOf=p=>p>=80?'var(--g)':p>=50?'var(--y)':'var(--r)';
+  const rows=Object.entries(e.stages).map(([k,s])=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+      <span>${STG[k]||k} <span style="color:var(--dim2);font-size:11px">(${s.count})</span></span>
+      <span style="display:flex;gap:12px;align-items:center">
+        <span style="color:var(--dim2);font-size:12px">⌀ ${formatDurationAr(s.avgMs)}</span>
+        <span style="color:${colOf(s.onTimePct)};font-weight:700">${s.onTimePct}%</span>
+      </span>
+    </div>`).join('');
+  return `<div class="card" style="margin-top:12px">
+    <div style="font-weight:800;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+      <span>⏱️ الأداء على المراحل</span>
+      <span style="font-size:13px">الالتزام بالموعد: <b style="color:${colOf(e.onTimePct)}">${e.onTimePct}%</b> <span style="color:var(--dim2);font-size:11px">(${e.totalCount} مرحلة)</span></span>
+    </div>${rows}</div>`;
 }
 
 // ══ PERMISSIONS ══

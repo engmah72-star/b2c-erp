@@ -22,11 +22,20 @@
 // لو الصفحة محمَّلة كـ iframe في runtime shell (?embed=1)، علّم الـ HTML
 // element مبكراً (sync في الـ head) عشان shared.css يخفي الـ chrome
 // المكرّر (topbar/sidenav/mob-nav) قبل أي paint = no flash.
+//
+// BUGFIX: نشترط أن الصفحة فعلاً داخل iframe (window.self !== window.top) — مش
+// مجرد وجود ?embed=1 في الـ URL. غير كده، فتح الصفحة standalone برابط فيه
+// embed=1 (فتح في تاب جديد / بوكمارك / نسخ URL الـ iframe) كان بيضيف embed-mode
+// فيختفي السايد بار بالكامل ويفضل مختفي بعد الـ refresh.
 try {
-  if (location.search && location.search.indexOf('embed=1') >= 0) {
+  var _inIframe = window.self !== window.top;
+  if (_inIframe && location.search && location.search.indexOf('embed=1') >= 0) {
     document.documentElement.classList.add('embed-mode');
   }
-} catch (_) {}
+} catch (_) {
+  // الوصول لـ window.top قد يرمي في iframe عابر للأصل (cross-origin)؛ شِل
+  // التطبيق same-origin فلن يحدث. fail-safe: لا نضيف embed-mode (السايد بار يظهر).
+}
 
 // ── Stale Takeover Cleanup (defensive — runs once only) ──
 // لو OLD sidebar-takeover.js cached وبيشتغل، نشيل أي .sb-panel-host
@@ -67,6 +76,7 @@ try {
     { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
+    { file:'order-rail.html',        label:'سجل الأوردرات',    ico:'🚂', group:'orders', perm:'order-rail' },
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
@@ -87,7 +97,9 @@ try {
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
     { file:'role-viewer.html',       label:'معاينة الأدوار',   ico:'🔍', group:'admin',  adminOnly:true },
     { file:'report-bug.html',        label:'تقارير الأخطاء',   ico:'🐛', group:'admin',  adminOnly:true },
-    { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  adminOnly:true },
+    // settings = perm عادي (لا adminOnly): يراها admin + operation_manager (pages:['*'])
+    // كصفحة تشغيلية للقوائم الرئيسية، بينما تبقى محجوبة عن باقي الأدوار (لا '*'/'settings').
+    { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  perm:'settings' },
   ];
 
   // أين تذهب كل دور عند الـ login (الـ dashboard المخصص)
@@ -146,11 +158,11 @@ try {
 
   // ── Auto-load Command Palette (Ctrl+K / Cmd+K) ──
   // ينشر التنقّل السريع على كل صفحة تحمّل sidebar-config.js.
-  // Self-contained module — لا تأثير على الـ DOM إلا عند الضغط على Ctrl+K.
+  // Self-contained module — يحقن زرّ بحث ظاهر في الـ topbar + يفتح بـ Ctrl+K.
   if (!document.getElementById('cp-loader')) {
     const s = document.createElement('script');
     s.id = 'cp-loader';
-    s.src = 'command-palette.js?v=1';
+    s.src = 'command-palette.js?v=3';
     s.defer = true;
     document.head.appendChild(s);
   }

@@ -17,6 +17,7 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
+<script type="module" src="text-select.js?v=1"></script>
 <style>
   /* Order page-specific styles */
   .order-hero{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow-card);}
@@ -178,8 +179,9 @@
     border-bottom:1px solid var(--line);
     padding:10px 12px;
     display:flex;align-items:center;gap:6px;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
+    /* FIX: كان overflow-x:auto يقصّ قائمة «المزيد» المنسدلة (قيد CSS: قصّ المحور الآخر).
+       flex-wrap يسمح للأزرار بالالتفاف بدل التمرير، فتظهر القائمة كاملة. */
+    flex-wrap:wrap;
     margin:-20px -20px 16px;  /* extend to content edges */
   }
   .order-toolbar::-webkit-scrollbar{display:none;}
@@ -369,7 +371,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations } from "./orders.js";
+import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -380,6 +382,12 @@ let currentRole = 'admin';
 let currentUserPerms = null;
 let currentOrder = null;
 let unsubscribe = null;
+// SLA override من الإعدادات (settings/main.stageSla) — للموعد المستهدف وتقييم المراحل.
+let stageSlaTable = null;
+onSnapshot(doc(db, 'settings', 'main'), s => {
+  stageSlaTable = (s.exists() && s.data().stageSla) ? s.data().stageSla : null;
+  if (currentOrder) renderOrder(currentOrder); // أعد العرض لو تغيّرت المعايير
+});
 // Cost-entry deps (loaded once after auth)
 let suppliers = [];
 let costCategoriesList = [];
@@ -452,16 +460,13 @@ function renderToolbar(o) {
   html += '<div class="order-tb-more">';
   html += '<button type="button" class="order-tb-btn show-lbl" onclick="event.stopPropagation();toggleMore()" aria-label="المزيد">⋯ <span class="lbl">المزيد</span></button>';
   html += '<div class="order-tb-menu" id="order-tb-menu">';
-  html += '<a class="order-tb-menu-item" href="waybill.html?id=' + id + '" target="_blank" rel="noopener">🧾 البوليصة</a>';
-  html += '<a class="order-tb-menu-item" href="order-tracking.html?id=' + oidParam + '" target="_blank" rel="noopener">📋 تتبع كامل</a>';
-  html += '<a class="order-tb-menu-item" href="exec-cost-entry.html?id=' + id + '">💰 بنود التكلفة</a>';
-  html += '<a class="order-tb-menu-item" href="production.html?orderId=' + id + '">✏️ تعديل البيانات</a>';
+  // الإجراءات الفريدة فقط — الباقي (بوليصة/تتبع/تكلفة/تعديل) موجود في الشريط الرئيسي بلا تكرار
   if (o.clientId) {
     // RULE N1.3 — use ?openClient= (consumed by clients.html:476) instead of #client= (no consumer)
     html += '<a class="order-tb-menu-item" href="clients.html?openClient=' + encodeURIComponent(o.clientId) + '">👤 ملف العميل</a>';
   }
-  html += '<div class="order-tb-menu-divider"></div>';
   if (o.stage !== 'archived') {
+    if (o.clientId) html += '<div class="order-tb-menu-divider"></div>';
     html += '<button type="button" class="order-tb-menu-item danger" onclick="archiveOrder()">📁 أرشفة الأوردر</button>';
   }
   html += '</div>';  // .order-tb-menu
@@ -515,7 +520,14 @@ function renderOrder(o) {
   html += '<h1 class="tap-select" title="اضغط للنسخ">' + esc(o.clientName||'—') + '</h1>';
   html += '<div class="order-id tap-select" title="اضغط للنسخ">' + esc(o.orderId || o._id || '—') + '</div>';
   if (phone) html += '<div class="order-id tap-select" style="direction:ltr" title="اضغط للنسخ">' + esc(phone) + '</div>';
-  html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span></div>';
+  html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span>';
+  // تنبيه التأخير — مشتق من المرجع الواحد (getOrderAlerts)
+  const _alerts = getOrderAlerts(o, stageSlaTable);
+  if (_alerts.count > 0) {
+    const _txt = _alerts.currentOverdue ? ('متأخر: ' + esc(_alerts.worst)) : ('تأخّر سابق (' + _alerts.count + ')');
+    html += ' <span class="order-stage-badge" style="background:rgba(255,61,110,.15);color:var(--r,#ff3d6e)">⚠️ ' + _txt + '</span>';
+  }
+  html += '</div>';
   html += '</div>';
 
   // (Quick actions moved to sticky toolbar — see renderToolbar)
@@ -710,29 +722,62 @@ function renderOrder(o) {
     html += '</div>';
   }
 
-  // ── مدد المراحل + المسؤول + التقييم (derived من stageEnteredAt/approvedAt/SLA — W1) ──
+  // ── مراحل الأوردر: المسؤول + تواريخ الدخول/الإنجاز/الموعد + المدة + التقييم ──
+  // (derived من stageEnteredAt/stageCompletedAt/stageDeadline/الملكية — W1)
   {
+    const rows = getStageResponsibilities(o, stageSlaTable);
     const dur = getStageDurations(o);
-    const shown = dur.stages.filter(s => s.status !== 'pending');
+    const shown = rows.filter(s => s.status !== 'pending');
     if (shown.length > 0) {
       html += '<div class="order-section">';
-      html += '<div class="order-section-head">⏱️ مدد المراحل والتقييم <span style="font-size:12px;color:var(--dim2);font-weight:700">(الإجمالي ' + esc(dur.totalText) + ')</span></div>';
+      html += '<div class="order-section-head">⏱️ المراحل: المسؤول والتواريخ <span style="font-size:12px;color:var(--dim2);font-weight:700">(الإجمالي ' + esc(dur.totalText) + ')</span></div>';
       html += '<div class="order-section-body">';
       html += '<div class="stage-durations">';
       for (const s of shown) {
+        const isIntake = s.kind === 'intake';
         let chip;
-        if (s.rating === 'late') chip = '<span class="sd-chip late">⚠️ متأخر</span>';
+        if (isIntake) chip = '<span class="sd-chip">📝 تم الإدخال</span>';
+        else if (s.rating === 'late') chip = '<span class="sd-chip late">⚠️ متأخر</span>';
         else if (s.rating === 'ongoing') chip = '<span class="sd-chip ongoing">🔄 جارٍ</span>';
         else chip = '<span class="sd-chip good">✅ ضمن المدة</span>';
-        const slaTxt = s.slaHours ? ('SLA ' + s.slaHours + 'س') : '';
+        const slaTxt = (!isIntake && s.slaHours) ? ('SLA ' + s.slaHours + 'س') : '';
         html += '<div class="stage-duration-row">';
-        html += '<div class="sd-main"><span class="sd-label">' + esc(s.label) + '</span>';
-        html += '<span class="sd-owner">' + (s.owner ? '👤 ' + esc(s.owner) : 'غير محدد') + '</span></div>';
-        html += '<div class="sd-side"><span class="sd-val">' + esc(s.text) + '</span> ' + chip;
+        html += '<div class="sd-main"><span class="sd-label">' + esc(s.label) + (s.isCurrent ? ' <span class="sd-chip ongoing" style="font-size:9px">الحالية</span>' : '') + '</span>';
+        html += '<span class="sd-owner">' + (s.responsibleName ? '👤 ' + esc(s.responsibleName) : 'غير محدد') + '</span></div>';
+        html += '<div class="sd-side">' + (isIntake ? '' : '<span class="sd-val">' + esc(s.durationText) + '</span> ') + chip;
         if (slaTxt) html += '<span class="sd-sla">' + esc(slaTxt) + '</span>';
         html += '</div>';
+        // سطر التواريخ: دخل · خرج · الموعد المستهدف
+        const dates = [];
+        if (s.enteredAt)   dates.push('دخل: ' + esc(s.enteredAt));
+        if (s.completedAt && s.status === 'done') dates.push('خرج: ' + esc(s.completedAt));
+        if (s.deadline)    dates.push((s.overdue ? '⚠️ ' : '🎯 ') + 'الموعد: ' + esc(s.deadline));
+        if (dates.length) html += '<div class="sd-dates" style="grid-column:1/-1;font-size:11px;color:var(--dim2);margin-top:2px">' + dates.join(' · ') + '</div>';
         html += '</div>';
       }
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+  }
+
+  // ── المسار الزمني (تواريخ الأوردر — المرجع الواحد getOrderDates) ──
+  {
+    const od = getOrderDates(o);
+    const ms = (od && od.milestones) || [];
+    if (ms.length > 0) {
+      html += '<div class="order-section">';
+      html += '<div class="order-section-head">🗓️ المسار الزمني <span style="font-size:12px;color:var(--dim2);font-weight:700">(' + ms.length + ')</span></div>';
+      html += '<div class="order-section-body">';
+      html += '<div class="order-timeline">';
+      for (const m of ms) {
+        html += '<div class="order-timeline-item">';
+        html += '<div class="order-timeline-action">' + esc(m.label) + '</div>';
+        html += '<div class="order-timeline-meta">' + esc(m.text) + '</div>';
+        html += '</div>';
+      }
+      // الموعد المستهدف للتصميم (هدف لا حدث)
+      if (od.designDeadline) html += '<div class="order-timeline-item"><div class="order-timeline-action">🎯 موعد تسليم التصميم</div><div class="order-timeline-meta">' + esc(od.designDeadline.text) + '</div></div>';
       html += '</div>';
       html += '</div>';
       html += '</div>';

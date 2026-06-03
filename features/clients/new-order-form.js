@@ -120,7 +120,7 @@ export function validateNewOrderForm({
     return { ok: false, errors: ['⚠️ يجب إدخال سعر الأوردر'], focusField: 'no-sale-price' };
   }
   if (!deadline) {
-    return { ok: false, errors: ['⚠️ موعد التسليم مطلوب'], focusField: 'no-deadline' };
+    return { ok: false, errors: ['⚠️ موعد تسليم التصميم مطلوب'], focusField: 'no-deadline' };
   }
   if (parseFloat(deposit) > 0 && !walletId) {
     return { ok: false, errors: ['⚠️ اختر المحفظة للعربون'] };

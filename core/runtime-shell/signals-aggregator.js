@@ -122,23 +122,36 @@ const AGGREGATORS = [
   // ── Accounts ──
   {
     domain: 'accounts', key: 'pending-approvals',
-    desc: 'Pending financial approvals',
+    desc: 'Pending financial approvals (payment requests + transactions awaiting approval)',
     build() {
-      // لو في approvals collection
-      const q = query(
-        collection(db, 'approvals'),
-        where('status', '==', 'pending'),
+      // المصدر الفعلي للموافقات المعلّقة: payment_requests في حالات تحتاج
+      // إجراء + transactions_v2 بانتظار اعتماد. (الكود القديم كان يستعلم من
+      // collection اسمه 'approvals' غير موجود في نموذج البيانات → العدّاد
+      // كان يبتلع not-found ويُظهر 0 دائماً — bug.)
+      let reqCount = 0, txCount = 0;
+      const emit = () => signals.setMetric('accounts', 'pending-approvals', reqCount + txCount);
+      const onErr = (label) => (err) => {
+        // غير المخوَّلين مالياً (مثل graphic_designer) سيرون permission-denied —
+        // نتجاهله بصمت ونُبقي العدّاد كما هو (0 لتلك الفئة).
+        if (err?.code !== 'permission-denied' && err?.code !== 'not-found') {
+          console.warn(`[signals:accounts:pending-approvals:${label}]`, err);
+        }
+        emit();
+      };
+      const reqQ = query(
+        collection(db, 'payment_requests'),
+        where('status', 'in', ['requested', 'awaiting_receipt', 'pending', 'confirmed']),
         limit(200),
       );
-      return onSnapshot(q, snap => {
-        signals.setMetric('accounts', 'pending-approvals', snap.size);
-      }, err => {
-        // لو الـ collection مش موجود أو لا permission → فقط console
-        if (err?.code !== 'permission-denied' && err?.code !== 'not-found') {
-          console.warn('[signals:accounts:pending-approvals]', err);
-        }
-        signals.setMetric('accounts', 'pending-approvals', 0);
-      });
+      const txQ = query(
+        collection(db, 'transactions_v2'),
+        where('approvalStatus', 'in', ['pending', 'confirmed']),
+        limit(200),
+      );
+      const u1 = onSnapshot(reqQ, snap => { reqCount = snap.size; emit(); }, onErr('requests'));
+      const u2 = onSnapshot(txQ,  snap => { txCount  = snap.size; emit(); }, onErr('transactions'));
+      // عزل كل إلغاء: فشل أحدهما لا يمنع الآخر (تجنّب تسرّب مستمع).
+      return () => { try { u1(); } catch (_) {} try { u2(); } catch (_) {} };
     },
   },
 

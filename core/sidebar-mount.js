@@ -14,6 +14,14 @@
 import { auth, db } from './firebase-init.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { ROLE_PAGES } from './permissions-matrix.js';
+
+// ── Expose canonical role→pages defaults to the plain-script world ──
+// sidebar.js (plain IIFE، لا يستطيع import) يستخدمها كـ fallback عندما تكون
+// users/{uid}.permissions.pages مفقودة (مستخدمون قدام). يُضبط هنا وقت تقييم
+// الـ module (sync) فيكون جاهزاً قبل أي build/guard. المصدر الوحيد يبقى
+// permissions-matrix — لا تكرار.
+try { if (typeof window !== 'undefined' && !window.ROLE_PAGES) window.ROLE_PAGES = ROLE_PAGES; } catch (_) {}
 
 const CUR = (location.pathname.split('/').pop() || '').toLowerCase();
 const SKIP = ['login.html', 'client-login.html', 'client-portal.html', 'waybill.html',
@@ -38,12 +46,13 @@ function mount(ud) {
   const initial = (name.trim().charAt(0) || 'U').toUpperCase();
   const roleLabel = ROLE_LABELS[ud.role] || ud.role || '';
   aside.innerHTML =
-    '<div class="nav-brand"><div class="nav-logo">🎨</div><div>'
+    '<div class="nav-brand"><div class="nav-logo" aria-hidden="true">🎨</div><div>'
     + '<div class="nav-brand-name">Business2Card</div>'
     + '<div class="nav-brand-role" id="role-badge">' + esc(roleLabel) + '</div></div></div>'
     + '<div class="nav-scroll" id="nav-links"></div>'
-    + '<div class="nav-foot"><div class="nav-user" onclick="appLogout()">'
-    + '<div class="nav-avatar" id="nav-av">' + esc(initial) + '</div>'
+    + '<div class="nav-foot"><div class="nav-user" role="button" tabindex="0" aria-label="تسجيل خروج"'
+    + ' onclick="appLogout()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();appLogout();}">'
+    + '<div class="nav-avatar" id="nav-av" aria-hidden="true">' + esc(initial) + '</div>'
     + '<div><div class="nav-user-name" id="nav-name">' + esc(name) + '</div>'
     + '<div class="nav-user-role">تسجيل خروج</div></div></div></div>';
   // الأقسام المجمّعة (الرئيسية/الأوردرات/الإدارة) عبر الباني المركزي

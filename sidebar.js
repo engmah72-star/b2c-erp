@@ -49,14 +49,32 @@
     return role === 'admin' || role === 'operation_manager';
   }
 
+  // Kill switch (reversible — RULE E1): feat.opsAdminPages=1 (URL أو localStorage)
+  // يعيد سلوك ما قبل إصلاح مراجعة #1، فيرى operation_manager صفحات adminOnly
+  // مرة أخرى. الافتراضي = الإصلاح مفعّل (ops لا يرى صفحات الأدمن الإدارية).
+  function legacyOpsAdminPages() {
+    try {
+      const qs = new URLSearchParams(location.search || '');
+      return (qs.get('feat.opsAdminPages') || localStorage.getItem('feat.opsAdminPages')) === '1';
+    } catch (_) { return false; }
+  }
+
   // هل المستخدم مسموح له يشوف الصفحة في الـ sidebar؟
   function isAllowed(cfg, userData) {
     const role = userData.role || 'customer_service';
     if (cfg.public) return true;
+    // adminOnly = admin فقط (إصلاح مراجعة #1). operation_manager لم يعد يتجاوزها
+    // تلقائياً — يتوافق مع canAccessEmployees:false في permissions-matrix.
+    // الإعدادات (settings) نُقلت لـ perm عادي في sidebar-config فيراها ops عبر pages:['*'].
+    if (cfg.adminOnly) return role === 'admin' || (role === 'operation_manager' && legacyOpsAdminPages());
     if (isAdmin(role)) return !cfg.guestOnly;
-    if (cfg.adminOnly) return false;
     const perms = userData.permissions || {};
-    const pages = perms.pages || [];
+    // Fallback للمستخدمين القدام: لو pages مفقودة تماماً (ليست مصفوفة)، استخدم
+    // الصفحات الافتراضية للدور من window.ROLE_PAGES (permissions-matrix). مصفوفة
+    // فارغة [] تُحترم كقفل مقصود من الأدمن (لا تُستبدل بالافتراضي).
+    const pages = Array.isArray(perms.pages)
+      ? perms.pages
+      : ((typeof window !== 'undefined' && window.ROLE_PAGES && window.ROLE_PAGES[role]) || []);
     const hasPagePerm = pages.includes('*') || pages.includes(cfg.perm || '');
     const hasViewClients = cfg.perm === 'clients' && perms.canViewClients === true;
     return hasPagePerm || hasViewClients;
@@ -80,7 +98,7 @@
     const dashHome = ROLE_HOME[role] || 'accounts.html';
     const dashLabel = DASH_LABELS[role] || 'داشبوردي';
 
-    let html = `<a class="nav-link${cur === dashHome ? ' active' : ''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${dashLabel}</a>`;
+    let html = `<a class="nav-link${cur === dashHome ? ' active' : ''}" href="${dashHome}"><span class="nav-ico" aria-hidden="true">⬡</span> ${dashLabel}</a>`;
     let lastGroup = '';
 
     for (const cfg of SIDEBAR_PAGES) {
@@ -90,7 +108,7 @@
         html += `<div class="nav-group">${GROUP_LABELS[cfg.group] || cfg.group}</div>`;
         lastGroup = cfg.group;
       }
-      html += `<a class="nav-link${cur === cfg.file ? ' active' : ''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
+      html += `<a class="nav-link${cur === cfg.file ? ' active' : ''}" href="${cfg.file}"><span class="nav-ico" aria-hidden="true">${cfg.ico}</span> ${cfg.label}</a>`;
     }
 
     navEl.innerHTML = html;
@@ -99,7 +117,10 @@
   function guard(userData, currentPage) {
     if (!userData) return true;
     const role = userData.role || 'customer_service';
-    if (isAdmin(role)) return true;
+    // admin يمر دائماً. operation_manager لم يعد يُمنح مرور تلقائي — يخضع لـ
+    // isAllowed أدناه حتى تُحترم صفحات adminOnly عند الدخول المباشر بالـ URL
+    // (إصلاح مراجعة #1، متوافق مع build). الـ kill switch يُطبَّق داخل isAllowed.
+    if (role === 'admin') return true;
 
     const cur = curPage(currentPage);
     const SIDEBAR_PAGES = window.SIDEBAR_PAGES || [];

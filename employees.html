@@ -26,6 +26,7 @@
 <script src="pwa-install.js?v=1" defer></script>
 <script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
+<script type="module" src="text-select.js?v=1"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -1131,13 +1132,18 @@ window.saveEmp=async function(){
         await signOut(secondaryAuth);await deleteApp(secondaryApp);
       }catch(authErr){
         if(authErr.code==='auth/email-already-in-use'){
-          // حساب Auth موجود — ابحث عن users doc محذوف بنفس الإيميل
+          // حساب Auth موجود بنفس الإيميل ({phone}@b2c.local).
+          // S0-FIX: لو في مستند users حيّ بنفس الإيميل، ممنوع إعادة استخدام
+          // الـ authUid والكتابة فوقه — لأن createEmployeeWithUser يعمل batch.set
+          // (overwrite كامل) فيمسح role/permissions الحالية (مثلاً حساب admin
+          // يُحوَّل لموظف عادي وتنمسح صلاحياته). أوقف العملية بدل تخريب الحساب.
           const snap=await getDocs(query(collection(db,'users'),where('email','==',email)));
           if(!snap.empty){
-            authUid=snap.docs[0].id; // أعد استخدام نفس الـ authUid
-          } else {
-            toast('⚠️ رقم الهاتف له حساب نشط بالفعل','err');btn.disabled=false;btn.textContent='✓ إضافة';return;
+            const existingRole=snap.docs[0].data().role||'؟';
+            toast(`⚠️ هذا الرقم مرتبط بحساب مستخدم موجود بالفعل (الدور: ${existingRole}). لا يمكن الكتابة فوقه — أدِر الحساب من صفحته أو استخدم رقماً آخر.`,'err');
+            btn.disabled=false;btn.textContent='✓ إضافة';return;
           }
+          toast('⚠️ رقم الهاتف له حساب Auth بالفعل — تواصل مع مسؤول النظام لربطه.','err');btn.disabled=false;btn.textContent='✓ إضافة';return;
         } else { throw authErr; }
       }
       empData.authUid=authUid;empData.email=email;empData.mustChangePassword=true;empData.createdAt=serverTimestamp();empData.createdBy=currentUser.uid;

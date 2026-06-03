@@ -349,3 +349,39 @@ export function canDo(capability, userRole, userPerms) {
 
 /** alias مرادف لـ canDo */
 export const hasCapability = canDo;
+
+// ══════════════════════════════════════════════════════════
+// PAGE PERMISSIONS — الطبقة الأولى (Page-level access)
+// ══════════════════════════════════════════════════════════
+// عرض مشتقّ (derived) لخريطة الدور → الصفحات المسموح بها، مصدره الوحيد
+// DEFAULT_ROLE_PERMISSIONS.pages — فلا تكرار لمصدر الحقيقة. '*' = كل الصفحات.
+
+/** خريطة الدور → قائمة صفحاته الافتراضية (مجمّدة، مشتقّة من DEFAULT_ROLE_PERMISSIONS). */
+export const ROLE_PAGES = Object.freeze(
+  Object.fromEntries(
+    Object.entries(DEFAULT_ROLE_PERMISSIONS).map(
+      ([role, p]) => [role, Object.freeze([...(p.pages || [])])]
+    )
+  )
+);
+
+/**
+ * hasPage — هل يملك المستخدم صلاحية الوصول لصفحة معيّنة؟ (الطبقة الأولى).
+ *
+ * Order of resolution:
+ *   1) user-level override (users.permissions.pages) إن كانت مصفوفة
+ *   2) role default (ROLE_PAGES[role])، مع fallback على customer_service
+ * '*' في القائمة = كل الصفحات.
+ *
+ * @param {string} page — معرّف الصفحة (اسم الـ HTML بدون .html، مثل 'clients')
+ * @param {string} userRole — دور المستخدم
+ * @param {Object} userPerms — users.permissions object (اختياري، مع .pages)
+ * @returns {boolean}
+ */
+export function hasPage(page, userRole, userPerms) {
+  if (!page) return false;
+  const pages = (userPerms && Array.isArray(userPerms.pages))
+    ? userPerms.pages
+    : (ROLE_PAGES[userRole] || ROLE_PAGES.customer_service || []);
+  return pages.includes('*') || pages.includes(page);
+}
