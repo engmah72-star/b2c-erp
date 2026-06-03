@@ -22,11 +22,20 @@
 // لو الصفحة محمَّلة كـ iframe في runtime shell (?embed=1)، علّم الـ HTML
 // element مبكراً (sync في الـ head) عشان shared.css يخفي الـ chrome
 // المكرّر (topbar/sidenav/mob-nav) قبل أي paint = no flash.
+//
+// BUGFIX: نشترط أن الصفحة فعلاً داخل iframe (window.self !== window.top) — مش
+// مجرد وجود ?embed=1 في الـ URL. غير كده، فتح الصفحة standalone برابط فيه
+// embed=1 (فتح في تاب جديد / بوكمارك / نسخ URL الـ iframe) كان بيضيف embed-mode
+// فيختفي السايد بار بالكامل ويفضل مختفي بعد الـ refresh.
 try {
-  if (location.search && location.search.indexOf('embed=1') >= 0) {
+  var _inIframe = window.self !== window.top;
+  if (_inIframe && location.search && location.search.indexOf('embed=1') >= 0) {
     document.documentElement.classList.add('embed-mode');
   }
-} catch (_) {}
+} catch (_) {
+  // الوصول لـ window.top قد يرمي في iframe عابر للأصل (cross-origin)؛ شِل
+  // التطبيق same-origin فلن يحدث. fail-safe: لا نضيف embed-mode (السايد بار يظهر).
+}
 
 // ── Stale Takeover Cleanup (defensive — runs once only) ──
 // لو OLD sidebar-takeover.js cached وبيشتغل، نشيل أي .sb-panel-host

@@ -41,7 +41,7 @@ function classList() {
     toggle: (c, f) => { const h = s.has(c); const w = f === undefined ? !h : !!f; w ? s.add(c) : s.delete(c); return w; },
   };
 }
-function makeEnv({ pathname = '/order.html', search = '' } = {}) {
+function makeEnv({ pathname = '/order.html', search = '', iframe = false } = {}) {
   const store = {};
   const localStorage = {
     getItem: k => (k in store ? store[k] : null),
@@ -64,6 +64,9 @@ function makeEnv({ pathname = '/order.html', search = '' } = {}) {
   };
   const location = { pathname, search, href: '' };
   const window = {};
+  // self === top → standalone ؛ self !== top → داخل iframe (الـ shell)
+  window.self = window;
+  window.top = iframe ? {} : window;
   return { window, document, location, localStorage, navEl };
 }
 function loadScript(rel, env) {
@@ -277,6 +280,33 @@ test('build: decorative nav-ico emoji are aria-hidden', () => {
       throw new Error('nav-ico missing aria-hidden: <span class="nav-ico"' + m[1] + '>');
     }
   });
+});
+
+// ══ embed-mode guard (bug: sidebar hidden on standalone ?embed=1) ═
+// embed-mode (الذي يخفي السايد بار) يجب أن يُطبَّق فقط داخل iframe الـ shell،
+// لا لمجرد وجود ?embed=1 في رابط صفحة standalone.
+test('embed-mode: standalone page with ?embed=1 → NOT hidden (sidebar visible)', () => {
+  const env = makeEnv({ search: '?embed=1', iframe: false });
+  loadScript('sidebar-config.js', env);
+  assertEq(env.document.documentElement.classList.contains('embed-mode'), false);
+});
+
+test('embed-mode: inside iframe with ?embed=1 → applied (shell behavior kept)', () => {
+  const env = makeEnv({ search: '?embed=1', iframe: true });
+  loadScript('sidebar-config.js', env);
+  assertEq(env.document.documentElement.classList.contains('embed-mode'), true);
+});
+
+test('embed-mode: standalone page without embed param → not applied', () => {
+  const env = makeEnv({ search: '', iframe: false });
+  loadScript('sidebar-config.js', env);
+  assertEq(env.document.documentElement.classList.contains('embed-mode'), false);
+});
+
+test('embed-mode: inside iframe WITHOUT embed param → not applied', () => {
+  const env = makeEnv({ search: '', iframe: true });
+  loadScript('sidebar-config.js', env);
+  assertEq(env.document.documentElement.classList.contains('embed-mode'), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
