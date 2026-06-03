@@ -39,7 +39,7 @@ export function create(ctx) {
     async onAction(a) {
       if (a === 'approve') { const r = await sendRequest(ctx, { order, kind: 'order', text: approveText(order) }); if (r.ok) close?.(); return; }
       if (a === 'reorder') { await sendRequest(ctx, { order, kind: 'order', text: reorderText(order) }); return; }
-      if (a === 'contact') { await sendRequest(ctx, { order, kind: 'order', text: `💬 لديّ استفسار بخصوص الطلب رقم #${order.serial || order._id?.slice(0, 6) || ''}.` }); }
+      if (a === 'contact') { close?.(); ctx.openChat({ kind: 'order', order }); }
     },
   };
 }

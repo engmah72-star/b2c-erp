@@ -18,8 +18,9 @@ const shell = createAppShell({
   root: document.getElementById('cp-app'),
   brand: { icon: '🎨', title: 'بوابة العميل', sub: 'Business2Card' },
   tabs: TABS,
-  actions: [],
+  actions: [{ key: 'support', icon: '💬', label: 'الدعم' }],
   onNavigate: (key) => router.go(key),
+  onAction: (key) => { if (key === 'support') router.openChat({ kind: 'support' }); },
 });
 
 const router = createRouter({ shell, store, services });

@@ -42,25 +42,38 @@ export function createRouter({ shell, store, services }) {
   });
 
   function ctx() {
-    return { services, store, shell, go, openOrder, repaint, loading: loadingHtml };
+    return { services, store, shell, go, openOrder, openChat, repaint, loading: loadingHtml };
   }
 
   /** يعيد رسم محتوى الشاشة الحالية بـ HTML جاهز (بعد فلترة/تحديث محلي). */
   function repaint(html) { shell.mount(html); }
 
-  /** يفتح/يحدّث الـ Overlay بمحتوى تفاصيل الطلب. */
-  async function openOrder(order) {
-    const mod = await REGISTRY_DETAIL();
-    modalView = mod.create({ ...ctx(), order, close: () => shell.modal.close() });
+  /** يفتح View داخل الـ Overlay مع تنظيف دورة حياته عند الإغلاق. */
+  async function openModalView(mod, { title, extra }) {
+    modalView = mod.create({ ...ctx(), ...extra, close: () => shell.modal.close() });
     shell.modal.open({
-      title: `طلب #${order.serial || order._id?.slice(0, 6) || ''}`,
+      title,
       content: loadingHtml(),
-      onClose: () => { modalView = null; },
+      onClose: () => { try { modalView?.destroy?.(); } catch (_) {} modalView = null; },
     });
     const html = await modalView.mount();
     shell.modal.body.innerHTML = html;
   }
-  const REGISTRY_DETAIL = () => import('./order-detail.view.js');
+
+  /** يفتح تفاصيل الطلب في الـ Overlay. */
+  async function openOrder(order) {
+    await openModalView(await import('./order-detail.view.js'), {
+      title: `طلب #${order.serial || order._id?.slice(0, 6) || ''}`, extra: { order },
+    });
+  }
+
+  /** يفتح محادثة حيّة (kind: 'order' | 'support') في الـ Overlay. */
+  async function openChat({ kind = 'support', order = null } = {}) {
+    await openModalView(await import('./chat.view.js'), {
+      title: kind === 'order' ? `💬 محادثة الطلب #${order?.serial || order?._id?.slice(0, 6) || ''}` : '💬 الدعم',
+      extra: { kind, order },
+    });
+  }
 
   /** ينتقل إلى شاشة (tab) ويعرض حالة تحميل ثم المحتوى. */
   async function go(key) {
@@ -83,5 +96,5 @@ export function createRouter({ shell, store, services }) {
 
   function start(key) { return go(key); }
 
-  return { go, openOrder, start };
+  return { go, openOrder, openChat, start };
 }
