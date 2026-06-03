@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { getRoleDefaultPermissions, ROLE_PAGES } from '../core/permissions-matrix.js';
-import { computeNavModel } from '../core/sidebar-model.js';
+import { computeNavModel, topUsed } from '../core/sidebar-model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -100,6 +100,12 @@ test('parity: explicit empty pages [] respected (locked)', () => {
     JSON.stringify(modelFiles('customer_service', { permissions: { pages: [] } })),
     JSON.stringify(legacyHrefs('customer_service', { permissions: { pages: [] } })),
     '(locked user)');
+});
+
+test('topUsed: returns top-n keys by count, ignores zero/empty', () => {
+  assertEq(JSON.stringify(topUsed({ a: 5, b: 1, c: 9, d: 0 }, 2)), JSON.stringify(['c', 'a']));
+  assertEq(JSON.stringify(topUsed({}, 3)), JSON.stringify([]));
+  assertEq(JSON.stringify(topUsed(null, 3)), JSON.stringify([]));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

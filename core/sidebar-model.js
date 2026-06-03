@@ -79,3 +79,16 @@ export function computeNavModel(userData, currentPage, cfg = {}) {
   }
   return { dashHome, items };
 }
+
+/**
+ * أكثر n صفحات استخداماً (pure) — من خريطة usage {pageKey: count}.
+ * مرتّبة تنازلياً بالعدّ؛ يُرجع مفاتيح الصفحات فقط.
+ */
+export function topUsed(usage, n = 3) {
+  return Object.entries(usage || {})
+    .filter(([, c]) => c > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k]) => k);
+}
+
