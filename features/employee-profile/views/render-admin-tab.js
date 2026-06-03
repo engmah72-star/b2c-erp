@@ -152,6 +152,7 @@ export function buildIncidentsHTML({ incidents = [] }) {
           <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${s.bg};color:${s.col}">${s.lbl}</span>
         </div>
         ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:var(--lh-base)">${escAttr(i.description)}</div>` : ''}
+        ${i.imageUrl ? `<a href="${escAttr(i.imageUrl)}" target="_blank" rel="noopener" title="عرض صورة المخالفة" style="display:inline-block;margin-top:6px"><img src="${escAttr(i.imageUrl)}" alt="صورة المخالفة" loading="lazy" style="max-width:120px;max-height:90px;border-radius:var(--rad);border:1px solid var(--line2);object-fit:cover;display:block"></a>` : ''}
         ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
         <div class="txt-meta-xs" style="margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
       </div>
