@@ -60,6 +60,30 @@ export async function removeWork({ uid, email, name, index }) {
   return saveWorks({ uid, email, name: client?.name || name, phone: client?.phone1 || '', bp, works });
 }
 
+/** يضبط حقلاً مفرداً في businessProfile مع الحفاظ على الباقي (logoUrl/coverUrl). */
+async function setMediaUrl({ uid, email, name, kind, url }) {
+  const client = await loadClient(uid);
+  const bp = client?.businessProfile || {};
+  const field = kind === 'cover' ? 'coverUrl' : 'logoUrl';
+  const fb = await firebase();
+  return fb.clientActions.upsertClientSelf({
+    authUid: uid, authEmail: email, authName: client?.name || name,
+    data: { name: client?.name || name, phone1: client?.phone1 || '', businessProfile: { ...bp, [field]: url } },
+  });
+}
+
+/** يرفع شعاراً/غلافاً (kind: 'logo' | 'cover') ويحفظ رابطه في البروفايل والكارت. */
+export async function uploadMedia({ uid, email, name, kind, file }) {
+  const { uploadClientFile } = await import('../../../core/storage-helpers.js'); // كسول (S1)
+  const up = await uploadClientFile({ clientId: uid, file, kind });
+  return setMediaUrl({ uid, email, name, kind, url: up.url });
+}
+
+/** يحذف الشعار/الغلاف (يفرّغ الرابط). */
+export async function removeMedia({ uid, email, name, kind }) {
+  return setMediaUrl({ uid, email, name, kind, url: '' });
+}
+
 /** يحمّل الكارت العام public_cards/{uid} (أو null). */
 export async function loadPublicCard(uid) {
   const fb = await firebase();
