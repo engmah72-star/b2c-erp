@@ -161,6 +161,8 @@ export const CAPABILITIES = Object.freeze({
   VIEW_ALL_SHIPMENTS: 'view_all_shipments',
   VIEW_FINANCIALS:    'view_financials',
   MANAGE_PAYMENTS:    'manage_payments',
+  EXECUTE_PAYMENTS:        'execute_payments',         // تنفيذ/صرف الدفعات + التأكيد + تسوية المحفظة (admin/ops)
+  FINAL_APPROVE_PAYMENTS:  'final_approve_payments',    // الاعتماد النهائي المُقفِل (admin فقط)
   MANAGE_RETURNS:     'manage_returns',
   MANAGE_EMPLOYEES:        'manage_employees',
   MANAGE_PRODUCTS:         'manage_products',
@@ -173,6 +175,7 @@ export const CAPABILITIES = Object.freeze({
 // admin/operation_manager = كل شيء. باقي الأدوار حسب طبيعة عملهم.
 export const DEFAULT_CAPABILITIES = {
   admin: {
+    execute_payments:true, final_approve_payments:true,
     view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:true,
@@ -181,6 +184,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:true,
   },
   operation_manager: {
+    execute_payments:true, final_approve_payments:false,
     view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:true,
@@ -189,6 +193,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:false,
   },
   customer_service: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:true, edit_orders:true, archive_orders:false,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:false,
@@ -197,6 +202,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:true, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   graphic_designer: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
     view_clients:false, edit_clients:false,
     upload_designs:true, approve_designs:false,
@@ -205,6 +211,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   design_operator: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:false,
     view_clients:false, edit_clients:false,
     upload_designs:true, approve_designs:true,
@@ -213,6 +220,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   production_agent: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
     view_clients:false, edit_clients:false,
     upload_designs:false, approve_designs:false,
@@ -221,6 +229,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   shipping_officer: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:false, edit_orders:true, archive_orders:true,
     view_clients:false, edit_clients:false,
     upload_designs:false, approve_designs:false,
@@ -229,6 +238,7 @@ export const DEFAULT_CAPABILITIES = {
     manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   wallet_manager: {
+    execute_payments:false, final_approve_payments:false,
     view_orders:true, create_orders:false, edit_orders:false, archive_orders:false,
     view_clients:false, edit_clients:false,
     upload_designs:false, approve_designs:false,

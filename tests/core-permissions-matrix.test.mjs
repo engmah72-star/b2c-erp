@@ -200,5 +200,30 @@ test('hasPage: empty/missing page → false', () => {
   assertEq(hasPage(undefined, 'admin'), false);
 });
 
+// ── execute_payments / final_approve_payments (P6 — حصر صرف الأموال) ──
+test('execute_payments: admin + operation_manager only (default)', () => {
+  assertEq(canDo('execute_payments', 'admin'), true);
+  assertEq(canDo('execute_payments', 'operation_manager'), true);
+  assertEq(canDo('execute_payments', 'customer_service'), false);
+  assertEq(canDo('execute_payments', 'wallet_manager'), false);
+  assertEq(canDo('execute_payments', 'graphic_designer'), false);
+  assertEq(canDo('execute_payments', 'shipping_officer'), false);
+});
+
+test('final_approve_payments: admin ONLY (default)', () => {
+  assertEq(canDo('final_approve_payments', 'admin'), true);
+  assertEq(canDo('final_approve_payments', 'operation_manager'), false);
+  assertEq(canDo('final_approve_payments', 'customer_service'), false);
+  assertEq(canDo('final_approve_payments', 'wallet_manager'), false);
+});
+
+test('execute_payments: user override can widen (intentional)', () => {
+  assertEq(canDo('execute_payments', 'customer_service', { capabilities: { execute_payments: true } }), true);
+});
+
+test('final_approve_payments: user override can restrict admin', () => {
+  assertEq(canDo('final_approve_payments', 'admin', { capabilities: { final_approve_payments: false } }), false);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
