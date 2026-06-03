@@ -3,14 +3,14 @@
  * الـ Views تستورد من هنا فقط — لا تلمس Firebase ولا clientActions مباشرة.
  */
 import { watchAuth, signInWithGoogle, signOut } from './auth.service.js';
-import { loadClient, saveProfile, loadPublicCard, addWork, removeWork } from './profile.service.js';
+import { loadClient, saveProfile, loadPublicCard, addWork, removeWork, uploadMedia, removeMedia } from './profile.service.js';
 import { loadOrders, invoiceOf, totalsOf } from './orders.service.js';
 import { loadGallery, categoriesOf } from './gallery.service.js';
 import { openThread, sendMessage, subscribeMessages } from './chat.service.js';
 
 export const services = {
   auth:    { watchAuth, signInWithGoogle, signOut },
-  profile: { loadClient, saveProfile, loadPublicCard, addWork, removeWork },
+  profile: { loadClient, saveProfile, loadPublicCard, addWork, removeWork, uploadMedia, removeMedia },
   orders:  { loadOrders, invoiceOf, totalsOf },
   gallery: { loadGallery, categoriesOf },
   chat:    { openThread, sendMessage, subscribeMessages },
