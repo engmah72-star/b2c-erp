@@ -5,6 +5,7 @@
 import { escapeHtml, qs } from '../utils/dom.js';
 import { Card, Button, Input, Avatar } from '../components/index.js';
 import { cropResize } from '../utils/image.js';
+import { slugUsername } from '../utils/username.js';
 import { validateProfile } from '../validators/profile.validator.js';
 
 export function create(ctx) {
@@ -15,7 +16,10 @@ export function create(ctx) {
   let pending = null; // { kind:'logo'|'cover', file, dataUrl } — معاينة قبل الحفظ
   let errors = [];
 
-  const cardUrl = (uid) => `${location.origin}/card.html?id=${encodeURIComponent(uid)}`;
+  const publicUrl = () => {
+    const u = client?.businessProfile?.username;
+    return u ? `${location.origin}/u/${encodeURIComponent(u)}` : `${location.origin}/card.html?id=${encodeURIComponent(uid())}`;
+  };
   const uid = () => store.get('user')?.uid || '';
   const email = () => store.get('user')?.email || '';
   const uname = () => client?.name || store.get('user')?.displayName || 'عميل';
@@ -74,7 +78,9 @@ export function create(ctx) {
       ${Input({ id: 'f-biz', label: 'اسم النشاط', value: biz.bizName || '', required: true })}
       ${Input({ id: 'f-phone', label: 'رقم التواصل', type: 'tel', value: client?.phone1 || '', required: true, dir: 'ltr', placeholder: '01xxxxxxxxx' })}
       ${Input({ id: 'f-tagline', label: 'وصف مختصر', value: biz.tagline || '' })}
-      ${Input({ id: 'f-activity', label: 'النشاط', value: biz.activity || '' })}
+      ${Input({ id: 'f-activity', label: 'النشاط / التخصص', value: biz.activity || '' })}
+      ${Input({ id: 'f-city', label: 'المحافظة / المدينة', value: biz.city || '' })}
+      ${Input({ id: 'f-username', label: 'اسم الصفحة العامة (username)', value: biz.username || '', dir: 'ltr', placeholder: 'my-brand', hint: 'رابطك: /u/my-brand' })}
       ${errBox}
       <div class="cp-row cp-row--wrap">
         ${Button({ label: 'حفظ', icon: '💾', size: 'sm', block: false, action: 'save' })}
@@ -132,9 +138,9 @@ export function create(ctx) {
       }
       if (a === 'share') {
         if (!uid()) return;
-        const url = cardUrl(uid());
-        if (navigator.share) { try { await navigator.share({ title: 'كارتي الرقمي', url }); } catch (_) {} }
-        else { try { await navigator.clipboard.writeText(url); shell.notify('تم نسخ رابط الكارت ✅', 'ok'); } catch (_) { shell.notify(url, 'ok'); } }
+        const url = publicUrl();
+        if (navigator.share) { try { await navigator.share({ title: 'صفحتي', url }); } catch (_) {} }
+        else { try { await navigator.clipboard.writeText(url); shell.notify('تم نسخ الرابط ✅', 'ok'); } catch (_) { shell.notify(url, 'ok'); } }
         return;
       }
       if (a === 'save') {
@@ -142,8 +148,16 @@ export function create(ctx) {
         const bizName = get('f-biz'); const phone = get('f-phone');
         const v = validateProfile({ bizName, phone });
         if (!v.ok) { errors = v.errors; return paint(); }
+        const username = slugUsername(get('f-username'));
+        if (username && !(await services.profile.usernameAvailable(username, uid()))) {
+          errors = ['⚠️ اسم الصفحة محجوز — اختر اسمًا آخر']; return paint();
+        }
         const user = store.get('user');
-        const businessProfile = { ...(client?.businessProfile || {}), bizName, tagline: get('f-tagline'), activity: get('f-activity') };
+        const businessProfile = {
+          ...(client?.businessProfile || {}),
+          bizName, tagline: get('f-tagline'), activity: get('f-activity'),
+          city: get('f-city'), username,
+        };
         const r = await services.profile.saveProfile({ uid: user.uid, email: user.email, name: user.displayName, phone, businessProfile });
         if (r?.ok) { await reload(); editing = false; errors = []; shell.notify('تم حفظ البيانات ✅', 'ok'); paint(); }
         else shell.notify('تعذّر الحفظ، حاول مجدداً', 'danger');

@@ -102,6 +102,16 @@ export async function uploadServiceImage({ uid, file }) {
   return up.url;
 }
 
+/** يتحقّق أن اسم المستخدم متاح (غير مستخدَم لعميل آخر). */
+export async function usernameAvailable(username, uid) {
+  if (!username) return true;
+  const fb = await firebase();
+  const snap = await fb.getDocs(
+    fb.query(fb.collection(fb.db, 'public_cards'), fb.where('username', '==', username), fb.limit(1)),
+  );
+  return snap.empty || snap.docs[0].id === uid;
+}
+
 /** يحمّل الكارت العام public_cards/{uid} (أو null). */
 export async function loadPublicCard(uid) {
   const fb = await firebase();

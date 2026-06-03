@@ -58,6 +58,15 @@ import { planClientMerge } from './features/clients/duplicate-scan.js';
 /** EG mobile: 010/011/012/015 + 8 digits. */
 const RE_EG_PHONE = /^01[0125][0-9]{8}$/;
 
+/** يطبّع اسم المستخدم لصفحة الأعمال العامة (slug آمن للروابط). */
+function slugUsername(v) {
+  return String(v || '').trim().toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w؀-ۿ-]/g, '') // حروف/أرقام/عربي/شرطة فقط
+    .replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+}
+
 function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
   const errors = [];
   const p1 = (phone1 || '').trim();
@@ -290,6 +299,14 @@ export const clientActions = {
       social: bp.social || {},
       services: Array.isArray(bp.services) ? bp.services : [],
       works: Array.isArray(bp.works) ? bp.works : [],
+      // صفحة الأعمال العامة + الدليل (P1/P5)
+      username: slugUsername(bp.username),
+      activity: (bp.activity || '').trim(),
+      city: (bp.city || '').trim(),
+      listedInDirectory: bp.listedInDirectory === true,
+      // حقول محايدة للتوسّع المستقبلي (اشتراكات/إعلانات مميزة) — غير مفعّلة
+      plan: bp.plan || 'free',
+      featured: bp.featured === true,
       updatedAt: serverTimestamp(),
     };
 
