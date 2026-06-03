@@ -84,6 +84,24 @@ export async function removeMedia({ uid, email, name, kind }) {
   return setMediaUrl({ uid, email, name, kind, url: '' });
 }
 
+/** يحفظ قائمة الخدمات (structured) ضمن البروفايل والكارت العام. */
+export async function saveServices({ uid, email, name, services }) {
+  const client = await loadClient(uid);
+  const bp = client?.businessProfile || {};
+  const fb = await firebase();
+  return fb.clientActions.upsertClientSelf({
+    authUid: uid, authEmail: email, authName: client?.name || name,
+    data: { name: client?.name || name, phone1: client?.phone1 || '', businessProfile: { ...bp, services } },
+  });
+}
+
+/** يرفع صورة خدمة (kind: gallery) ويُرجع رابطها. */
+export async function uploadServiceImage({ uid, file }) {
+  const { uploadClientFile } = await import('../../../core/storage-helpers.js'); // كسول (S1)
+  const up = await uploadClientFile({ clientId: uid, file, kind: 'gallery' });
+  return up.url;
+}
+
 /** يحمّل الكارت العام public_cards/{uid} (أو null). */
 export async function loadPublicCard(uid) {
   const fb = await firebase();

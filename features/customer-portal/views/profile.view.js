@@ -58,6 +58,7 @@ export function create(ctx) {
     </div>` });
     const actions = `<div class="cp-stack cp-stack--sm">
       ${Button({ label: 'مشاركة الكارت الرقمي', icon: '🔗', action: 'share', disabled: !uid() })}
+      ${Button({ label: 'إدارة الخدمات', icon: '🛠', variant: 'ghost', action: 'services' })}
       ${Button({ label: 'تعديل البيانات', icon: '✏️', variant: 'ghost', action: 'edit' })}
       ${Button({ label: 'تسجيل الخروج', icon: '🚪', variant: 'ghost', action: 'logout' })}
     </div>`;
@@ -109,6 +110,7 @@ export function create(ctx) {
       if (a === 'edit') { editing = true; errors = []; return paint(); }
       if (a === 'cancel') { editing = false; errors = []; return paint(); }
       if (a === 'logout') return services.auth.signOut();
+      if (a === 'services') return ctx.openServices();
       if (a === 'pick-logo') { qs('#pf-logo', document)?.click(); return; }
       if (a === 'pick-cover') { qs('#pf-cover', document)?.click(); return; }
       if (a === 'cancel-media') { pending = null; return paint(); }

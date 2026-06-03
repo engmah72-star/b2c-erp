@@ -45,14 +45,22 @@ export function createRouter({ shell, store, services }) {
   delegate(shell.modal.body, 'click', '[data-action]', (el) => {
     if (modalView?.onAction) modalView.onAction(el.dataset.action, el);
   });
+  delegate(shell.modal.body, 'change', 'input[type="file"]', (el) => {
+    if (modalView?.onUpload) modalView.onUpload(el);
+  });
 
   function ctx() {
-    return { services, store, shell, go, openOrder, openChat, openNewOrder, repaint, loading: loadingHtml };
+    return { services, store, shell, go, openOrder, openChat, openNewOrder, openServices, repaint, loading: loadingHtml };
   }
 
   /** يفتح نموذج «اطلب الآن» في الـ Overlay. */
   async function openNewOrder() {
     await openModalView(await import('./new-order.view.js'), { title: '🆕 اطلب الآن', extra: {} });
+  }
+
+  /** يفتح مدير الخدمات في الـ Overlay. */
+  async function openServices() {
+    await openModalView(await import('./services-edit.view.js'), { title: '🛠 إدارة الخدمات', extra: {} });
   }
 
   /** يعيد رسم محتوى الشاشة الحالية بـ HTML جاهز (بعد فلترة/تحديث محلي). */
@@ -106,5 +114,5 @@ export function createRouter({ shell, store, services }) {
 
   function start(key) { return go(key); }
 
-  return { go, openOrder, openChat, openNewOrder, start };
+  return { go, openOrder, openChat, openNewOrder, openServices, start };
 }
