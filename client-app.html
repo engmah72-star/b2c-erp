@@ -28,6 +28,11 @@ body{font-family:var(--font-ar);background:var(--bg);color:var(--snow);
 .app-head .hi span{font-size:var(--fs-sm);color:var(--dim2);}
 .app-head .out{background:none;border:1px solid var(--line);border-radius:var(--rad);
   color:var(--dim2);padding:7px 10px;font-family:inherit;font-size:var(--fs-sm);cursor:pointer;}
+/* شريط وضع المعاينة */
+.demo-bar{position:sticky;top:0;z-index:29;display:none;text-align:center;
+  padding:8px 14px;font-size:var(--fs-sm);font-weight:var(--fw-bold);
+  background:linear-gradient(135deg,#f59e0b,#f97316);color:#1a1205;}
+.demo-bar a{color:#1a1205;text-decoration:underline;font-weight:var(--fw-heavy);}
 /* ── Content ── */
 .wrap{max-width:560px;margin:0 auto;padding:16px;}
 .panel{display:none;}
@@ -142,6 +147,8 @@ textarea.inp{resize:vertical;min-height:64px;}
   </div>
   <button class="out" id="btn-logout">خروج</button>
 </header>
+
+<div class="demo-bar" id="demo-bar">👁 وضع المعاينة — بدون تسجيل دخول. الحفظ والرفع للتجربة فقط · <a href="client-login.html">دخول حقيقي</a></div>
 
 <div id="gate" class="wrap">⟳ جاري التحقق من تسجيل الدخول...</div>
 
@@ -275,26 +282,81 @@ function fatal(msg) {
 window.addEventListener('error', e => fatal((e.message || 'JS error') + ' — ' + ((e.filename || '').split('/').pop()) + ':' + (e.lineno || '')));
 window.addEventListener('unhandledrejection', e => fatal('Promise: ' + (e.reason?.message || e.reason || '')));
 
+// ── وضع المعاينة (?demo=1) — يتجاوز التحقق ويعرض بيانات تجريبية بدون Firebase ──
+const params = new URLSearchParams(location.search);
+const DEMO = params.get('demo') === '1' || params.get('preview') === '1';
+
 // ── Auth gate ──
 let authFired = false;
-onAuthStateChanged(auth, async (u) => {
-  authFired = true;
-  try {
-    if (!u) { window.location.replace('client-login.html'); return; }
-    user = u;
-    await loadClient();
-    $('gate').style.display = 'none';
-    $('app').style.display = 'block';
-    $('tabbar').style.display = 'flex';
-    renderHome();
-  } catch (err) {
-    fatal(err?.message || String(err));
-  }
-});
-// watchdog: لو التحقق ما استجابش (إعداد ناقص) ما نسيبش الصفحة معلّقة
-setTimeout(() => {
-  if (!authFired) fatal('لم يستجب التحقق من الدخول. تأكد من تفعيل الدخول في Firebase، أو سجّل دخول من جديد.');
-}, 8000);
+if (DEMO) {
+  startDemo();
+} else {
+  onAuthStateChanged(auth, async (u) => {
+    authFired = true;
+    try {
+      if (!u) { window.location.replace('client-login.html'); return; }
+      user = u;
+      await loadClient();
+      $('gate').style.display = 'none';
+      $('app').style.display = 'block';
+      $('tabbar').style.display = 'flex';
+      renderHome();
+    } catch (err) {
+      fatal(err?.message || String(err));
+    }
+  });
+  // watchdog: لو التحقق ما استجابش (إعداد ناقص) ما نسيبش الصفحة معلّقة
+  setTimeout(() => {
+    if (!authFired) fatal('لم يستجب التحقق من الدخول. تأكد من تفعيل الدخول في Firebase، أو سجّل دخول من جديد.');
+  }, 8000);
+}
+
+function startDemo() {
+  user = { uid: 'demo', email: 'demo@business2card.app', displayName: 'متجر تجريبي' };
+  clientDoc = {
+    _id: 'demo', name: 'متجر النور', phone1: '01000000000',
+    businessProfile: {
+      bizName: 'متجر النور للدعاية والتصميم',
+      bio: 'نصمّم هويتك البصرية وكروتك الشخصية باحترافية وسرعة.',
+      whatsapp: '01000000000', website: 'https://example.com',
+      social: { facebook: 'NoorDesign', instagram: '@noor.design', tiktok: '', linkedin: '' },
+      services: ['كروت شخصية', 'بروشورات', 'تصميم شعار', 'بانرات ورول أب'],
+      logoUrl: '', coverUrl: '',
+    },
+  };
+  const bp = clientDoc.businessProfile;
+  $('h-name').textContent = bp.bizName;
+  $('h-sub').textContent = 'وضع المعاينة';
+  $('hero-name').textContent = bp.bizName;
+  $('hero-av').textContent = 'م';
+  fillProfile(bp);
+  $('demo-bar').style.display = 'block';
+  $('gate').style.display = 'none';
+  $('app').style.display = 'block';
+  $('tabbar').style.display = 'flex';
+  renderHomeDemo();
+}
+
+// بيانات طلبات تجريبية للرئيسية (بدون Firestore)
+function renderHomeDemo() {
+  const demoOrders = [
+    { _id: 'd1', orderId: 'ORD-1042', clientName: 'متجر النور', stage: 'design' },
+    { _id: 'd2', orderId: 'ORD-1031', clientName: 'متجر النور', stage: 'printing' },
+    { _id: 'd3', orderId: 'ORD-1009', clientName: 'متجر النور', stage: 'archived' },
+  ];
+  $('home-notifs').innerHTML = `<div class="notif">
+    <span class="ic">🔔</span>
+    <span class="tx">لديك <b>1</b> تصميم في انتظار رأيك واعتمادك</span>
+    <span class="badge">عرض</span></div>`;
+  $('home-orders').innerHTML = demoOrders.map(o => {
+    const st = STAGE_AR[o.stage] || o.stage;
+    return `<div class="card order-card">
+      <div class="order-thumb">📋</div>
+      <div class="order-info"><div class="code">${esc(o.orderId)}</div><div class="name">${esc(o.clientName)}</div></div>
+      <span class="badge st-${esc(o.stage)}">${st}</span>
+    </div>`;
+  }).join('');
+}
 
 async function loadClient() {
   try {
@@ -389,6 +451,7 @@ async function renderLatestDesign(order, notifEl) {
 
 // فتح الطلب في بوابة الاعتماد الحالية (إعادة استخدام)
 function openOrder(orderDocId, orderCode) {
+  if (DEMO) { alert('👁 وضع المعاينة — متابعة الطلب تُفتح بعد تسجيل الدخول.'); return; }
   localStorage.setItem('clientSession', JSON.stringify({
     orderDocId, orderCode,
     phone: (clientDoc?.phone1 || ''),
@@ -438,6 +501,7 @@ function showMsg(type, text) {
 
 async function saveProfile() {
   $('p-msg').className = 'msg';
+  if (DEMO) { showMsg('ok', 'ℹ️ وضع المعاينة فقط — للحفظ الفعلي سجّل دخول بحسابك.'); return; }
   const bizName = $('p-bizname').value.trim();
   const phone1  = $('p-phone').value.trim();
   const businessProfile = {
@@ -488,6 +552,13 @@ function bindUI() {
     $('file-' + kind)?.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
+      if (DEMO) {
+        showImg(kind, URL.createObjectURL(file));
+        media[kind + 'Url'] = '';
+        showMsg('ok', '👁 معاينة محلية فقط — الرفع الفعلي بعد تسجيل الدخول.');
+        e.target.value = '';
+        return;
+      }
       $(kind + '-busy').style.display = 'flex';
       try {
         const res = await uploadClientFile({ clientId: user.uid, file, kind });
