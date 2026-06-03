@@ -89,6 +89,17 @@
 
   <button type="button" class="btn-run" onclick="runAll()" id="rbtn">▶ تشغيل كل الاختبارات</button>
   <div class="sum" id="sum"></div>
+
+  <!-- 🔬 P3 — Wallet balance drift detection (uses core/wallet-ledger.js) -->
+  <div class="card" id="drift-card" style="margin-top:16px">
+    <h2>🔬 فحص توازن أرصدة المحافظ</h2>
+    <div style="font-size:var(--fs-md);color:#94a3b8;line-height:1.9;margin-bottom:10px">
+      يقارن رصيد كل محفظة بمجموع حركاتها (الرصيد الافتتاحي محسوب كحركة).
+      أي فرق = <b>انحراف</b> يستوجب المراجعة/التسوية.
+    </div>
+    <button type="button" class="btn-run" onclick="runDriftCheck()" id="dbtn">▶ افحص الأرصدة</button>
+    <div id="drift-out" style="margin-top:12px"></div>
+  </div>
 </div>
 
 <script type="module">
@@ -97,6 +108,7 @@ import { signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/1
 import { collection, doc, getDocs, getDoc, query, where, limit, writeBatch, increment, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dispatchFinancialEvent, FE, addLedgerToBatch, inferEventType }
   from "./financial-sync-engine.js?v=2";
+import { checkWalletBalanceIntegrity } from "./core/wallet-ledger.js";
 let me = null, wallet = null, emp = null, sup = null;
 // unique tag per test so a single-equality query finds exactly the right ledger doc
 const RID  = 'VAL' + Date.now();
@@ -144,6 +156,46 @@ window.doLogin = async () => {
     st(`✓ تسجيل ناجح (${role}) — جاري تحميل بيانات الاختبار...`,'sok');
     await loadData();
   } catch(e) { st('❌ '+e.message,'serr'); }
+};
+
+// ── P3: wallet balance drift check (read-only diagnostic) ───────────────────
+window.runDriftCheck = async () => {
+  if (!me) return st('سجّل الدخول كأدمن أولاً','serr');
+  const out = $('drift-out');
+  out.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const TX_CAP = 50000;
+    const [wSnap, tSnap] = await Promise.all([
+      getDocs(collection(db,'wallets')),
+      getDocs(query(collection(db,'transactions_v2'), limit(TX_CAP))),
+    ]);
+    const wallets = wSnap.docs.map(d=>({...d.data(),_id:d.id}));
+    const txs     = tSnap.docs.map(d=>({...d.data(),_id:d.id}));
+    const capped  = txs.length >= TX_CAP;
+    const rows = wallets.map(w => ({
+      ...checkWalletBalanceIntegrity(w, txs),
+      name: w.name || w._id,
+    }));
+    const drifted = rows.filter(r => !r.ok).sort((a,b)=>Math.abs(b.drift)-Math.abs(a.drift));
+    const okCount = rows.length - drifted.length;
+    let html = '';
+    if (capped) html += `<div class="serr" style="display:block;padding:8px;margin-bottom:8px">⚠️ بلغنا حدّ ${TX_CAP} حركة — النتائج قد تكون غير مكتملة.</div>`;
+    html += `<div style="margin-bottom:8px">✅ متوازنة: <b>${okCount}</b> · ⚠️ منحرفة: <b style="color:#f87171">${drifted.length}</b> (من ${rows.length} محفظة)</div>`;
+    if (drifted.length) {
+      html += '<table style="width:100%;border-collapse:collapse;font-size:var(--fs-sm)">'
+        + '<tr style="text-align:right;color:#94a3b8"><th>المحفظة</th><th>الرصيد المخزَّن</th><th>المتوقَّع</th><th>الفرق</th></tr>'
+        + drifted.map(r => `<tr style="border-top:1px solid #334155">`
+            + `<td>${r.name}</td><td>${fmt(r.actual)}</td><td>${fmt(r.expected)}</td>`
+            + `<td style="color:#f87171;font-weight:700">${r.drift>0?'+':''}${fmt(r.drift)}</td></tr>`).join('')
+        + '</table>'
+        + '<div style="font-size:var(--fs-sm);color:#94a3b8;margin-top:8px">التسوية: من «الحسابات» أو «الاعتمادات» عبر ضبط الرصيد (أربع عيون).</div>';
+    } else {
+      html += '<div style="color:#34d399">🎉 كل المحافظ متوازنة — لا انحراف.</div>';
+    }
+    out.innerHTML = html;
+  } catch(e) {
+    out.innerHTML = '<div class="serr" style="display:block">❌ '+e.message+'</div>';
+  }
 };
 
 // ── load real data ────────────────────────────────────────────────────────
