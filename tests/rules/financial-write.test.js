@@ -324,6 +324,37 @@ async function runTests() {
     ));
   });
 
+  // ── per-type escalate thresholds (escalateByType, keyed via category) ──
+  const byTypePolicy = { mode: 'escalate', outflow: { escalate: 10000, requiredApproverRole: 'admin', escalateByType: { supplier_payment: 20000, salary: 5000 } } };
+
+  await test('per-type → ops CAN create supplier 15000 (under type 20000, over global)', async () => {
+    await setPolicy(byTypePolicy);
+    await seedUser(env, 'pt_ops1', 'operation_manager', ['accounts']);
+    await assertSucceeds(env.authenticatedContext('pt_ops1').firestore().collection('transactions_v2').add(
+      outTx(15000, { category: 'printer_payment' })));
+  });
+
+  await test('per-type → ops CANNOT create supplier 25000 (over type 20000)', async () => {
+    await setPolicy(byTypePolicy);
+    await seedUser(env, 'pt_ops2', 'operation_manager', ['accounts']);
+    await assertFails(env.authenticatedContext('pt_ops2').firestore().collection('transactions_v2').add(
+      outTx(25000, { category: 'printer_payment' })));
+  });
+
+  await test('per-type → ops CANNOT create salary 8000 (over tight type 5000)', async () => {
+    await setPolicy(byTypePolicy);
+    await seedUser(env, 'pt_ops3', 'operation_manager', ['accounts']);
+    await assertFails(env.authenticatedContext('pt_ops3').firestore().collection('transactions_v2').add(
+      outTx(8000, { category: 'salary' })));
+  });
+
+  await test('per-type → admin CAN create salary 8000', async () => {
+    await setPolicy(byTypePolicy);
+    await seedUser(env, 'pt_adm', 'admin', ['accounts']);
+    await assertSucceeds(env.authenticatedContext('pt_adm').firestore().collection('transactions_v2').add(
+      outTx(8000, { category: 'salary' })));
+  });
+
   await clearPolicy();
 
   // ──────────────────────────────────────────────────────────────

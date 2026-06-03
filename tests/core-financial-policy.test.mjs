@@ -166,6 +166,24 @@ test('escalated + admin + distinct from requester → ok', () => {
   assertEq(r.ok, true);
 });
 
+// ── per-type escalate thresholds ────────────────────────────────────
+test('per-type escalate: type threshold overrides global', () => {
+  const policy = resolveFinancialPolicy({ mode: 'escalate', outflow: { escalate: 10000, escalateByType: { supplier_payment: 20000, salary: 5000 } } });
+  // supplier 15000 < type 20000 → لا تصعيد (رغم تجاوز العام 10000)
+  assertEq(evaluateOutflow({ amount: 15000, type: 'supplier_payment', policy }).requiresApproval, false);
+  // supplier 25000 > 20000 → تصعيد
+  assertEq(evaluateOutflow({ amount: 25000, type: 'supplier_payment', policy }).requiresApproval, true);
+  // salary 8000 > type 5000 → تصعيد (رغم أنه < العام 10000)
+  assertEq(evaluateOutflow({ amount: 8000, type: 'salary', policy }).requiresApproval, true);
+  // general (لا حدّ نوع) → يستخدم العام 10000
+  assertEq(evaluateOutflow({ amount: 8000, type: 'general', policy }).requiresApproval, false);
+});
+
+test('per-type escalate: empty escalateByType → global applies', () => {
+  const policy = resolveFinancialPolicy({ mode: 'escalate', outflow: { escalate: 10000 } });
+  assertEq(evaluateOutflow({ amount: 15000, type: 'supplier_payment', policy }).requiresApproval, true);
+});
+
 // ── strict approval separation (Segregation of Duties) ──────────────
 test('strictSeparation: default false', () => {
   assertEq(requiresStrictSeparation(null), false);

@@ -39,6 +39,9 @@ export const DEFAULT_FINANCIAL_POLICY = Object.freeze({
     advisoryMed:  5000,   // فوقها: تحذير med
     advisoryHigh: 10000,  // فوقها: تحذير high
     escalate:     10000,  // فوق هذا الحدّ (في mode='escalate') → اعتماد ثانٍ إلزامي
+    // حدّ تصعيد لكل نوع دفعة (يفوق الحدّ العام عند تحديده). مفاتيح:
+    // supplier_payment · salary · client_refund · general. فارغ → الحدّ العام.
+    escalateByType: Object.freeze({}),
     dailyWalletCap: 50000, // إجمالي خارج المحفظة الواحدة/اليوم — فوقه تصعيد
     requiredApproverRole: 'admin', // الدور الأدنى المطلوب للاعتماد فوق الحدّ
     fourEyes: true,       // المُعتمِد ≠ منشئ الطلب
@@ -123,7 +126,10 @@ export function checkApprovalSeparation({ approvalStatus, confirmedBy } = {}, ap
 }
 
 // ── helper: الحدّ الفعّال للتصعيد مع مراعاة نوع المحفظة ──
-function _effectiveOutflowEscalate(policy, walletType) {
+function _effectiveOutflowEscalate(policy, walletType, type) {
+  // الأسبقية: حدّ النوع > حدّ نوع المحفظة (كاش) > الحدّ العام.
+  const byType = policy.outflow.escalateByType || {};
+  if (type && typeof byType[type] === 'number') return byType[type];
   const wo = (policy.walletOverrides || {})[walletType] || {};
   return (typeof wo.outflowEscalate === 'number') ? wo.outflowEscalate : policy.outflow.escalate;
 }
@@ -150,7 +156,7 @@ function _effectiveDailyCap(policy, walletType) {
  *   reasons: string[], warnings: string[], thresholds: Object
  * }}
  */
-export function evaluateOutflow({ amount, walletType, dailyWalletOutflow = 0, policy } = {}) {
+export function evaluateOutflow({ amount, walletType, type, dailyWalletOutflow = 0, policy } = {}) {
   const p = policy && policy.outflow ? policy : resolveFinancialPolicy(policy);
   const amt = parseFloat(amount) || 0;
   const out = {
@@ -158,7 +164,7 @@ export function evaluateOutflow({ amount, walletType, dailyWalletOutflow = 0, po
     requiresApproval: false, requiredApproverRole: null, fourEyes: false,
     reasons: [], warnings: [],
     thresholds: {
-      escalate: _effectiveOutflowEscalate(p, walletType),
+      escalate: _effectiveOutflowEscalate(p, walletType, type),
       dailyCap: _effectiveDailyCap(p, walletType),
     },
   };

@@ -282,6 +282,14 @@
               <input type="checkbox" id="fp-foureyes" style="width:18px;height:18px;justify-self:start">
               <label for="fp-cash-escalate">💵 حدّ تصعيد الكاش (ج)</label>
               <input class="inp" id="fp-cash-escalate" type="number" min="0" step="100" style="max-width:140px" placeholder="5000">
+              <label for="fp-esc-supplier">🏭 حدّ تصعيد المورد (ج · فارغ=عام)</label>
+              <input class="inp" id="fp-esc-supplier" type="number" min="0" step="100" style="max-width:140px" placeholder="—">
+              <label for="fp-esc-salary">👤 حدّ تصعيد المرتب (ج · فارغ=عام)</label>
+              <input class="inp" id="fp-esc-salary" type="number" min="0" step="100" style="max-width:140px" placeholder="—">
+              <label for="fp-esc-refund">↩️ حدّ تصعيد الاسترداد (ج · فارغ=عام)</label>
+              <input class="inp" id="fp-esc-refund" type="number" min="0" step="100" style="max-width:140px" placeholder="—">
+              <label for="fp-esc-general">💸 حدّ تصعيد المصروف (ج · فارغ=عام)</label>
+              <input class="inp" id="fp-esc-general" type="number" min="0" step="100" style="max-width:140px" placeholder="—">
               <label for="fp-in-review">🔎 حدّ مراجعة المقبوض (ج)</label>
               <input class="inp" id="fp-in-review" type="number" min="0" step="100" style="max-width:140px" placeholder="20000">
               <label for="fp-in-receipt">🧾 إيصال إلزامي فوق (ج)</label>
@@ -1006,6 +1014,11 @@ function renderFinancialPolicy() {
   set('fp-out-daily', p.outflow.dailyWalletCap);
   set('fp-role', p.outflow.requiredApproverRole);
   set('fp-cash-escalate', (p.walletOverrides.cash||{}).outflowEscalate);
+  const _bt = (p.outflow.escalateByType)||{};
+  set('fp-esc-supplier', _bt.supplier_payment);
+  set('fp-esc-salary', _bt.salary);
+  set('fp-esc-refund', _bt.client_refund);
+  set('fp-esc-general', _bt.general);
   set('fp-in-review', p.inflow.reviewThreshold);
   set('fp-in-receipt', p.inflow.requireReceiptAbove);
   const fe=document.getElementById('fp-foureyes'); if(fe&&document.activeElement!==fe) fe.checked = !!p.outflow.fourEyes;
@@ -1014,7 +1027,7 @@ function renderFinancialPolicy() {
   // تعديل السياسة للأدمن فقط (القاعدة تفرضه أيضاً) — غيره عرض فقط.
   // idempotent: قد يُستدعى قبل/بعد اكتمال المصادقة، فنضبط الحالتين صراحةً.
   const canEdit = isAdminUser;
-  ['fp-mode','fp-out-escalate','fp-out-daily','fp-role','fp-foureyes','fp-cash-escalate','fp-in-review','fp-in-receipt','fp-strict','fp-stale-hours']
+  ['fp-mode','fp-out-escalate','fp-out-daily','fp-role','fp-foureyes','fp-cash-escalate','fp-in-review','fp-in-receipt','fp-strict','fp-stale-hours','fp-esc-supplier','fp-esc-salary','fp-esc-refund','fp-esc-general']
     .forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!canEdit;});
   const btn=document.getElementById('fp-save-btn'); if(btn) btn.style.display = canEdit ? '' : 'none';
   const note=document.getElementById('fp-readonly-note'); if(note) note.style.display = canEdit ? 'none' : 'block';
@@ -1023,10 +1036,15 @@ function renderFinancialPolicy() {
 window.saveFinancialPolicyUI = async function() {
   if(!isAdminUser) return toast('⛔ تعديل السياسة المالية للأدمن فقط','err');
   const num=(id,def)=>{const v=parseFloat(document.getElementById(id)?.value);return Number.isFinite(v)&&v>=0?v:def;};
+  const numOpt=(id)=>{const v=parseFloat(document.getElementById(id)?.value);return (Number.isFinite(v)&&v>0)?v:undefined;};
+  const _byType = {};
+  [['fp-esc-supplier','supplier_payment'],['fp-esc-salary','salary'],['fp-esc-refund','client_refund'],['fp-esc-general','general']]
+    .forEach(([id,k])=>{const v=numOpt(id); if(v!==undefined) _byType[k]=v;});
   const policy = {
     mode: document.getElementById('fp-mode')?.value || 'advisory',
     outflow: {
       escalate: num('fp-out-escalate', 10000),
+      escalateByType: _byType,
       dailyWalletCap: num('fp-out-daily', 50000),
       requiredApproverRole: document.getElementById('fp-role')?.value || 'admin',
       fourEyes: !!document.getElementById('fp-foureyes')?.checked,
