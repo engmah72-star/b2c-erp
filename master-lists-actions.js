@@ -20,6 +20,7 @@ import {
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
+import { resolveFinancialPolicy } from './core/financial-policy.js';
 
 // ══════════════════════════════════════════
 // SUPPLIER CATEGORIES (master_lists/supplier_categories)
@@ -196,6 +197,36 @@ export async function saveAppSettings({ db = defaultDb, settings }) {
 }
 
 // ══════════════════════════════════════════
+// FINANCIAL CONTROL POLICY (master_lists/financial_policy)
+// ══════════════════════════════════════════
+
+/**
+ * حفظ سياسة الرقابة المالية. يُطبَّع المُدخل عبر resolveFinancialPolicy
+ * (دمج فوق الافتراضي + رفض mode غير صالح) قبل التخزين — فلا يُكتب شكل فاسد.
+ * القاعدة (master_lists/{listId}) تفرض الكتابة على admin فقط.
+ *
+ * @param {Object} args
+ * @param {Object} args.policy — { mode, outflow{...}, inflow{...}, walletOverrides{...} }
+ * @param {string} [args.userId] — للتدقيق (من غيّر السياسة)
+ */
+export async function saveFinancialPolicy({ db = defaultDb, policy, userId = '' }) {
+  if (!policy || typeof policy !== 'object') {
+    return { ok: false, errors: ['⚠️ policy مطلوب'], warnings: [] };
+  }
+  const resolved = resolveFinancialPolicy(policy);
+  try {
+    await setDoc(doc(db, 'master_lists', 'financial_policy'), {
+      ...resolved,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId || '',
+    }, { merge: true });
+    return { ok: true, errors: [], warnings: [], policy: resolved };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل حفظ السياسة المالية'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // WHATSAPP SETTINGS (settings/whatsapp)
 // ══════════════════════════════════════════
 
@@ -243,6 +274,7 @@ export const masterListsActions = {
   savePrintBriefTemplates,
   saveAppSettings,
   saveWhatsAppSettings,
+  saveFinancialPolicy,
   markSupplierOrderReceived,
   migrateProductionServices,
 };

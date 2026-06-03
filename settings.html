@@ -248,6 +248,51 @@
           </div>
         </div>
 
+        <!-- 🛡️ سياسة الرقابة المالية -->
+        <div class="card" id="sec-finpolicy">
+          <div class="card-head">
+            <div class="card-title"><span class="ic-bx m">🛡️</span>الرقابة المالية (حدود الفلوس)</div>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <span class="alert-ico">🔒</span>
+              <div class="alert-body">
+                <div class="alert-title">حدود اعتماد المقبوضات والمدفوعات</div>
+                <div><strong>تحذير فقط</strong> = يُنبّه دون منع. <strong>تصعيد للاعتماد</strong> = الدفعات فوق الحدّ تحتاج اعتماد دور أعلى (أربع عيون) قبل تحرّك الفلوس. <strong>تعطيل</strong> = إيقاف الرقابة.</div>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;margin-bottom:10px">
+              <label for="fp-mode">⚙️ وضع الرقابة</label>
+              <select class="inp" id="fp-mode" style="max-width:180px">
+                <option value="advisory">تحذير فقط (advisory)</option>
+                <option value="escalate">تصعيد للاعتماد (escalate)</option>
+                <option value="off">تعطيل (off)</option>
+              </select>
+              <label for="fp-out-escalate">💸 حدّ تصعيد الخارج (ج)</label>
+              <input class="inp" id="fp-out-escalate" type="number" min="0" step="100" style="max-width:140px" placeholder="10000">
+              <label for="fp-out-daily">📊 سقف خارج المحفظة/اليوم (ج)</label>
+              <input class="inp" id="fp-out-daily" type="number" min="0" step="100" style="max-width:140px" placeholder="50000">
+              <label for="fp-role">👤 دور المُعتمِد فوق الحدّ</label>
+              <select class="inp" id="fp-role" style="max-width:180px">
+                <option value="admin">admin</option>
+                <option value="operation_manager">operation_manager</option>
+              </select>
+              <label for="fp-foureyes">👁️ أربع عيون (المُعتمِد ≠ المُنشئ)</label>
+              <input type="checkbox" id="fp-foureyes" style="width:18px;height:18px;justify-self:start">
+              <label for="fp-cash-escalate">💵 حدّ تصعيد الكاش (ج)</label>
+              <input class="inp" id="fp-cash-escalate" type="number" min="0" step="100" style="max-width:140px" placeholder="5000">
+              <label for="fp-in-review">🔎 حدّ مراجعة المقبوض (ج)</label>
+              <input class="inp" id="fp-in-review" type="number" min="0" step="100" style="max-width:140px" placeholder="20000">
+              <label for="fp-in-receipt">🧾 إيصال إلزامي فوق (ج)</label>
+              <input class="inp" id="fp-in-receipt" type="number" min="0" step="100" style="max-width:140px" placeholder="10000">
+            </div>
+
+            <button type="button" class="btn btn-c btn-sm w-full" id="fp-save-btn" onclick="saveFinancialPolicyUI()">💾 حفظ سياسة الرقابة</button>
+            <div id="fp-readonly-note" style="display:none;margin-top:8px;font-size:var(--fs-sm);color:var(--dim)">عرض فقط — تعديل السياسة المالية للأدمن فقط</div>
+          </div>
+        </div>
+
       </div>
 
       <!-- ─────────── COL 2 ─────────── -->
@@ -607,6 +652,7 @@ import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { walletActions } from "./wallet-actions.js";
 import { employeeActions } from "./employee-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
+import { resolveFinancialPolicy } from "./core/financial-policy.js";
 const functions = getFunctions(app);
 
 // Phase A #3 — settings.html legacy permissions projection.
@@ -656,6 +702,8 @@ let settings = {
 let users = [];
 let wallets = [];
 let currentUser = null;
+let isAdminUser = false;          // تعديل السياسة المالية للأدمن فقط (القاعدة تفرضه أيضاً)
+let financialPolicy = null;       // master_lists/financial_policy (raw)
 let specialties = []; // legacy alias — same as productionServices filtered isSupplierService
 let productionServices = []; // unified source (master_lists/supplier_categories)
 
@@ -672,6 +720,8 @@ onAuthStateChanged(auth, async u => {
       setTimeout(()=>(typeof navigatePage==='function'?navigatePage:url=>location.href=url)('accounts.html'),2000);
       return;
     }
+    isAdminUser = d.role === 'admin';
+    renderFinancialPolicy(); // re-apply edit-gate now that role is known
     const r = ROLES[d.role]||ROLES.admin;
     /* sidebar: central mount */
     {const _nm=document.getElementById('nav-name'); if(_nm)_nm.textContent = d.name||u.email;}
@@ -696,6 +746,12 @@ onSnapshot(doc(db,'settings','main'), snap => {
   }
   renderSettings();
 });
+
+// LOAD FINANCIAL POLICY (master_lists/financial_policy) — قراءة لأي مُصادَق
+onSnapshot(doc(db,'master_lists','financial_policy'), snap => {
+  financialPolicy = snap.exists() ? snap.data() : null;
+  renderFinancialPolicy();
+}, err => console.warn('[settings] financial_policy:', err));
 
 // LOAD USERS (RULE G3 — bounded for safety; org user count is small)
 onSnapshot(query(collection(db,'users'), orderBy('name','asc'), limit(500)), snap => {
@@ -918,6 +974,48 @@ window.saveStageSla = async function() {
     shipping: num('sla-shipping', 48),
   };
   await saveSettings();
+};
+
+function renderFinancialPolicy() {
+  const p = resolveFinancialPolicy(financialPolicy);
+  const set=(id,v)=>{const el=document.getElementById(id);if(el&&document.activeElement!==el&&v!=null)el.value=v;};
+  set('fp-mode', p.mode);
+  set('fp-out-escalate', p.outflow.escalate);
+  set('fp-out-daily', p.outflow.dailyWalletCap);
+  set('fp-role', p.outflow.requiredApproverRole);
+  set('fp-cash-escalate', (p.walletOverrides.cash||{}).outflowEscalate);
+  set('fp-in-review', p.inflow.reviewThreshold);
+  set('fp-in-receipt', p.inflow.requireReceiptAbove);
+  const fe=document.getElementById('fp-foureyes'); if(fe&&document.activeElement!==fe) fe.checked = !!p.outflow.fourEyes;
+  // تعديل السياسة للأدمن فقط (القاعدة تفرضه أيضاً) — غيره عرض فقط.
+  // idempotent: قد يُستدعى قبل/بعد اكتمال المصادقة، فنضبط الحالتين صراحةً.
+  const canEdit = isAdminUser;
+  ['fp-mode','fp-out-escalate','fp-out-daily','fp-role','fp-foureyes','fp-cash-escalate','fp-in-review','fp-in-receipt']
+    .forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!canEdit;});
+  const btn=document.getElementById('fp-save-btn'); if(btn) btn.style.display = canEdit ? '' : 'none';
+  const note=document.getElementById('fp-readonly-note'); if(note) note.style.display = canEdit ? 'none' : 'block';
+}
+
+window.saveFinancialPolicyUI = async function() {
+  if(!isAdminUser) return toast('⛔ تعديل السياسة المالية للأدمن فقط','err');
+  const num=(id,def)=>{const v=parseFloat(document.getElementById(id)?.value);return Number.isFinite(v)&&v>=0?v:def;};
+  const policy = {
+    mode: document.getElementById('fp-mode')?.value || 'advisory',
+    outflow: {
+      escalate: num('fp-out-escalate', 10000),
+      dailyWalletCap: num('fp-out-daily', 50000),
+      requiredApproverRole: document.getElementById('fp-role')?.value || 'admin',
+      fourEyes: !!document.getElementById('fp-foureyes')?.checked,
+    },
+    inflow: {
+      reviewThreshold: num('fp-in-review', 20000),
+      requireReceiptAbove: num('fp-in-receipt', 10000),
+    },
+    walletOverrides: { cash: { outflowEscalate: num('fp-cash-escalate', 5000) } },
+  };
+  const r = await masterListsActions.saveFinancialPolicy({ db, policy, userId: currentUser?.uid || '' });
+  if(!r.ok){ toast('❌ '+(r.errors||[]).join(' · '),'err'); return; }
+  toast('✅ تم حفظ سياسة الرقابة المالية','ok');
 };
 
 window.saveTargets = async function() {
