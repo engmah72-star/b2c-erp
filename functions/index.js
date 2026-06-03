@@ -17,7 +17,7 @@
  */
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { setGlobalOptions } = require('firebase-functions/v2');
@@ -25,6 +25,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
+const { renderProfileHtml } = require('./public-profile');
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -3447,4 +3448,40 @@ exports.runProjectionDriftScan = onCall(
       ledgerEntries: ledgerSnap.size,
     };
   }
+);
+
+// ════════════════════════════════════════════════════════════
+// PUBLIC PROFILE SSR — صفحة الأعمال العامة /u/{username}
+// تُولّد HTML كامل + OG/SEO من السيرفر (معاينة غنية على السوشيال + صفر شاشة تحميل).
+// fail-safe: أي خطأ يعرض صفحة "غير موجودة" بحالة 200 — لا يكسر المسار أبداً.
+// ════════════════════════════════════════════════════════════
+exports.profilePage = onRequest(
+  { region: 'us-central1', maxInstances: 10, invoker: 'public' },
+  async (req, res) => {
+    const origin = 'https://business2card-c041b.web.app';
+    let canonical = origin + req.originalUrl.split('?')[0];
+    try {
+      const m = (req.path || '').match(/\/u\/([^/?#]+)/);
+      const uname = m ? decodeURIComponent(m[1]).trim().toLowerCase() : String(req.query.u || '').trim().toLowerCase();
+      const id = String(req.query.id || '').trim();
+
+      let card = null;
+      if (uname) {
+        const snap = await db.collection('public_cards').where('username', '==', uname).limit(1).get();
+        if (!snap.empty) { card = snap.docs[0].data(); canonical = `${origin}/u/${encodeURIComponent(uname)}`; }
+      }
+      if (!card && id) {
+        const s = await db.collection('public_cards').doc(id).get();
+        if (s.exists) card = s.data();
+      }
+
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('Cache-Control', card ? 'public, max-age=300, s-maxage=600' : 'no-cache');
+      res.status(200).send(renderProfileHtml(card, canonical));
+    } catch (e) {
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('Cache-Control', 'no-cache');
+      res.status(200).send(renderProfileHtml(null, canonical));
+    }
+  },
 );
