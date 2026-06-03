@@ -62,6 +62,8 @@ export const DEFAULT_FINANCIAL_POLICY = Object.freeze({
     // اعتماد مباشر لعملية pending (يلزم تأكيد سابق من شخص آخر). افتراضياً مُطفأ
     // (E1) — يُفعَّل من الإعدادات عند توفّر ≥2 مُخوَّلَين.
     strictSeparation: false,
+    // عتبة تقادم الطلب المعلّق (ساعات) — فوقها يُعَدّ «متأخّراً» (SLA).
+    staleHours: 48,
   }),
 });
 

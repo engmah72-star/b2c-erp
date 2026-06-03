@@ -178,3 +178,41 @@ export function computeSupplierDues({ ordersMap = new Map() } = {}) {
     (b.totalUnpaid + b.totalPending) - (a.totalUnpaid + a.totalPending)
   );
 }
+
+// ══════════════════════════════════════════════════════════
+// APPROVAL AGING / SLA (تقادم الطلبات المعلّقة)
+// ══════════════════════════════════════════════════════════
+
+/** حالات الطلب المعلّقة (تنتظر إجراءً). */
+export const PENDING_REQUEST_STATES = ['requested', 'awaiting_receipt', 'pending', 'confirmed'];
+
+/**
+ * يحسب عمر طلب معلّق وهل تجاوز عتبة الـ SLA (متأخّر).
+ *
+ * @param {Object} request — payment_request (status, requestedAt{seconds})
+ * @param {Object} [opts] — { now=new Date(), staleHours=48 }
+ * @returns {{ pending:boolean, ageHours:number, isStale:boolean }}
+ */
+export function computeRequestAging(request, { now = new Date(), staleHours = 48 } = {}) {
+  const status = request && request.status;
+  if (!PENDING_REQUEST_STATES.includes(status)) {
+    return { pending: false, ageHours: 0, isStale: false };
+  }
+  const sec = request && request.requestedAt && request.requestedAt.seconds;
+  if (!sec) return { pending: true, ageHours: 0, isStale: false };
+  const ageHours = Math.max(0, (now.getTime() - sec * 1000) / 3600000);
+  return { pending: true, ageHours, isStale: ageHours >= staleHours };
+}
+
+/**
+ * يلخّص الطلبات المتأخّرة عبر قائمة.
+ * @returns {{ staleCount:number, oldestHours:number }}
+ */
+export function summarizeStaleRequests(requests = [], opts = {}) {
+  let staleCount = 0, oldestHours = 0;
+  for (const r of (requests || [])) {
+    const a = computeRequestAging(r, opts);
+    if (a.isStale) { staleCount++; if (a.ageHours > oldestHours) oldestHours = a.ageHours; }
+  }
+  return { staleCount, oldestHours };
+}
