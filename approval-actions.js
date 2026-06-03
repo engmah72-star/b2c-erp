@@ -18,6 +18,10 @@ import {
   updateDoc,
   addDoc,
   getDoc,
+  getDocs,
+  query,
+  where,
+  limit,
   writeBatch,
   serverTimestamp,
   arrayUnion,
@@ -884,6 +888,68 @@ export async function recoveryAdjustment({
 }
 
 // ══════════════════════════════════════════
+// APPROVAL ESCALATION NOTIFICATION (P4)
+// ══════════════════════════════════════════
+
+/**
+ * يُخطر الأدمن أن دفعة تجاوزت حدّ السياسة وتنتظر اعتماده (تصعيد).
+ * dedupe عبر استعلام الإشعارات (refPaymentRequestId) — لا يُكرّر لنفس الطلب،
+ * ولا يلمس قاعدة payment_requests. غير مالي (لا idempotency reservation).
+ *
+ * @param {Object} request — payment_request doc (with _id, amount, ...)
+ */
+export async function notifyApprovalEscalation({
+  db = defaultDb, request, userId, userName,
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!request || !request._id) return { ok: false, errors: ['⚠️ request مطلوب'], warnings: [] };
+  const r = request;
+  try {
+    // dedupe (best-effort): لو سبق إخطار لنفس الطلب → لا تُكرّر. فشل القراءة
+    // (صلاحية) لا يُجهض الإخطار — أسوأ حالة تكرار إشعار، غير ضار.
+    try {
+      const prior = await getDocs(query(
+        collection(db, 'notifications'),
+        where('refPaymentRequestId', '==', r._id),
+        limit(10),
+      ));
+      if (prior.docs.some(d => d.data().type === 'approval_escalation')) {
+        return { ok: true, errors: [], warnings: [], alreadyNotified: true, notified: 0 };
+      }
+    } catch (_) { /* skip dedupe on read-denied */ }
+    const admins = await getDocs(query(
+      collection(db, 'users'), where('role', '==', 'admin'), limit(20),
+    ));
+    const amount = parseFloat(r.amount) || 0;
+    const who = r.supplierName || r.employeeName || r.clientName || 'مصروف عام';
+    const batch = writeBatch(db);
+    let count = 0;
+    admins.forEach(d => {
+      if (d.id === userId) return; // لا تُخطر المُنفّذ نفسه لو كان admin
+      const notRef = doc(collection(db, 'notifications'));
+      batch.set(notRef, {
+        toUid: d.id, toName: d.data().name || '',
+        type: 'approval_escalation',
+        severity: 'high',
+        title: '🔒 دفعة كبيرة تنتظر اعتمادك',
+        message: `${amount.toLocaleString('ar-EG')} ج — ${who}\nتجاوزت حدّ السياسة وتحتاج موافقة أدمن قبل التنفيذ.`,
+        refPaymentRequestId: r._id,
+        refOrderId: r.orderId || null,
+        createdBy: userId, createdByName: userName || '',
+        createdAt: serverTimestamp(),
+        seenAt: null,
+      });
+      count++;
+    });
+    if (count === 0) return { ok: true, errors: [], warnings: ['لا يوجد أدمن لإخطاره'], notified: 0 };
+    await batch.commit();
+    return { ok: true, errors: [], warnings: [], notified: count };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إخطار التصعيد'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // EXPORTS
 // ══════════════════════════════════════════
 
@@ -897,6 +963,7 @@ export const approvalActions = {
   approveTransaction,
   rejectTransaction,
   recoveryAdjustment,
+  notifyApprovalEscalation,
 };
 
 export default approvalActions;
