@@ -376,6 +376,50 @@ async function runTests() {
 
   await clearPolicy();
 
+  // ──────────────────────────────────────────────────────────────
+  // financial_policy_audit — append-only (admin create, immutable)
+  // ──────────────────────────────────────────────────────────────
+  await test('policy audit: admin CAN create an audit entry', async () => {
+    await seedUser(env, 'aud_adm', 'admin', ['accounts']);
+    const ctx = env.authenticatedContext('aud_adm');
+    await assertSucceeds(ctx.firestore().collection('financial_policy_audit').add({
+      changedBy: 'aud_adm', changedAt: new Date(), after: { mode: 'escalate' },
+    }));
+  });
+
+  await test('policy audit: ops_manager CANNOT create (admin only)', async () => {
+    await seedUser(env, 'aud_ops', 'operation_manager', ['accounts']);
+    const ctx = env.authenticatedContext('aud_ops');
+    await assertFails(ctx.firestore().collection('financial_policy_audit').add({
+      changedBy: 'aud_ops', changedAt: new Date(), after: { mode: 'escalate' },
+    }));
+  });
+
+  await test('policy audit: immutable — even admin CANNOT update', async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('financial_policy_audit/a1u').set({ changedBy: 'x', after: { mode: 'advisory' } });
+    });
+    await seedUser(env, 'aud_adm2', 'admin', ['accounts']);
+    await assertFails(env.authenticatedContext('aud_adm2').firestore().doc('financial_policy_audit/a1u').update({ changedBy: 'hacked' }));
+  });
+
+  await test('policy audit: immutable — even admin CANNOT delete', async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('financial_policy_audit/a1d').set({ changedBy: 'x', after: { mode: 'advisory' } });
+    });
+    await seedUser(env, 'aud_adm3', 'admin', ['accounts']);
+    await assertFails(env.authenticatedContext('aud_adm3').firestore().doc('financial_policy_audit/a1d').delete());
+  });
+
+  await test('policy audit: financial reader CAN read', async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc('financial_policy_audit/a2').set({ changedBy: 'x', after: { mode: 'advisory' } });
+    });
+    await seedUser(env, 'aud_wm', 'wallet_manager', ['accounts']);
+    const ctx = env.authenticatedContext('aud_wm');
+    await assertSucceeds(ctx.firestore().doc('financial_policy_audit/a2').get());
+  });
+
   await env.cleanup();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
