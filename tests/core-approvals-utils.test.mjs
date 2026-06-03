@@ -96,6 +96,21 @@ test('small amount → no amount risk', () => {
   }
 });
 
+test('thresholds come from policy (DRY single source)', () => {
+  // policy override يشدّد الحدود: med=1000, high=2000.
+  const policy = { mode: 'advisory', outflow: { advisoryMed: 1000, advisoryHigh: 2000 } };
+  // 1500 لا يُعَدّ خطراً افتراضياً (< 5k) لكنه med مع السياسة المشدّدة.
+  const r = detectRisks({ amount: 1500 }, { policy });
+  if (!r.some(x => x.lvl === 'med' && x.txt.includes('مبلغ متوسط'))) {
+    throw new Error('expected med risk from policy threshold (1000)');
+  }
+  // 3000 يصبح high مع السياسة المشدّدة (> 2000).
+  const r2 = detectRisks({ amount: 3000 }, { policy });
+  if (!r2.some(x => x.lvl === 'high' && x.txt.includes('مبلغ كبير'))) {
+    throw new Error('expected high risk from policy threshold (2000)');
+  }
+});
+
 test('same-day duplicate detected', () => {
   const now = new Date(2026, 4, 15);
   const today = Math.floor(now.getTime() / 1000);
