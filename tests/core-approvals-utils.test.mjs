@@ -4,6 +4,7 @@
  */
 import {
   computeWalletState, detectRisks, computeSupplierDues,
+  computeRequestAging, summarizeStaleRequests,
 } from '../core/approvals-utils.js';
 
 let passed = 0, failed = 0;
@@ -219,6 +220,46 @@ test('excludes items without supplierId', () => {
     ['o1', { stage: 'design', costItems: [{ total: 100 }] }],
   ]);
   assertEq(computeSupplierDues({ ordersMap }).length, 0);
+});
+
+// ── computeRequestAging / summarizeStaleRequests (SLA) ──────────────
+const _now = new Date('2026-06-03T12:00:00Z');
+const _secAgo = (h) => ({ seconds: Math.floor((_now.getTime() - h * 3600000) / 1000) });
+
+test('aging: non-pending status → not pending, not stale', () => {
+  const a = computeRequestAging({ status: 'approved', requestedAt: _secAgo(100) }, { now: _now, staleHours: 48 });
+  assertEq(a.pending, false);
+  assertEq(a.isStale, false);
+});
+
+test('aging: pending within threshold → not stale', () => {
+  const a = computeRequestAging({ status: 'pending', requestedAt: _secAgo(10) }, { now: _now, staleHours: 48 });
+  assertEq(a.pending, true);
+  assertEq(a.isStale, false);
+  assertEq(Math.round(a.ageHours), 10);
+});
+
+test('aging: pending beyond threshold → stale', () => {
+  const a = computeRequestAging({ status: 'confirmed', requestedAt: _secAgo(60) }, { now: _now, staleHours: 48 });
+  assertEq(a.isStale, true);
+});
+
+test('aging: missing requestedAt → pending but not stale', () => {
+  const a = computeRequestAging({ status: 'requested' }, { now: _now, staleHours: 48 });
+  assertEq(a.pending, true);
+  assertEq(a.isStale, false);
+});
+
+test('summarizeStaleRequests: counts stale + oldest', () => {
+  const reqs = [
+    { status: 'pending', requestedAt: _secAgo(10) },   // fresh
+    { status: 'requested', requestedAt: _secAgo(60) },  // stale
+    { status: 'confirmed', requestedAt: _secAgo(100) }, // stale (oldest)
+    { status: 'approved', requestedAt: _secAgo(200) },  // not pending
+  ];
+  const s = summarizeStaleRequests(reqs, { now: _now, staleHours: 48 });
+  assertEq(s.staleCount, 2);
+  assertEq(Math.round(s.oldestHours), 100);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -288,6 +288,8 @@
               <input class="inp" id="fp-in-receipt" type="number" min="0" step="100" style="max-width:140px" placeholder="10000">
               <label for="fp-strict">🔏 فصل صارم (المُعتمِد ≠ المؤكِّد · لا اعتماد مباشر)</label>
               <input type="checkbox" id="fp-strict" style="width:18px;height:18px;justify-self:start">
+              <label for="fp-stale-hours">⏳ عتبة تأخّر الطلب (ساعات)</label>
+              <input class="inp" id="fp-stale-hours" type="number" min="1" step="1" style="max-width:140px" placeholder="48">
             </div>
 
             <button type="button" class="btn btn-c btn-sm w-full" id="fp-save-btn" onclick="saveFinancialPolicyUI()">💾 حفظ سياسة الرقابة</button>
@@ -990,10 +992,11 @@ function renderFinancialPolicy() {
   set('fp-in-receipt', p.inflow.requireReceiptAbove);
   const fe=document.getElementById('fp-foureyes'); if(fe&&document.activeElement!==fe) fe.checked = !!p.outflow.fourEyes;
   const st=document.getElementById('fp-strict'); if(st&&document.activeElement!==st) st.checked = !!(p.approval||{}).strictSeparation;
+  set('fp-stale-hours', (p.approval||{}).staleHours);
   // تعديل السياسة للأدمن فقط (القاعدة تفرضه أيضاً) — غيره عرض فقط.
   // idempotent: قد يُستدعى قبل/بعد اكتمال المصادقة، فنضبط الحالتين صراحةً.
   const canEdit = isAdminUser;
-  ['fp-mode','fp-out-escalate','fp-out-daily','fp-role','fp-foureyes','fp-cash-escalate','fp-in-review','fp-in-receipt','fp-strict']
+  ['fp-mode','fp-out-escalate','fp-out-daily','fp-role','fp-foureyes','fp-cash-escalate','fp-in-review','fp-in-receipt','fp-strict','fp-stale-hours']
     .forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!canEdit;});
   const btn=document.getElementById('fp-save-btn'); if(btn) btn.style.display = canEdit ? '' : 'none';
   const note=document.getElementById('fp-readonly-note'); if(note) note.style.display = canEdit ? 'none' : 'block';
@@ -1015,7 +1018,10 @@ window.saveFinancialPolicyUI = async function() {
       requireReceiptAbove: num('fp-in-receipt', 10000),
     },
     walletOverrides: { cash: { outflowEscalate: num('fp-cash-escalate', 5000) } },
-    approval: { strictSeparation: !!document.getElementById('fp-strict')?.checked },
+    approval: {
+      strictSeparation: !!document.getElementById('fp-strict')?.checked,
+      staleHours: num('fp-stale-hours', 48),
+    },
   };
   const r = await masterListsActions.saveFinancialPolicy({ db, policy, userId: currentUser?.uid || '' });
   if(!r.ok){ toast('❌ '+(r.errors||[]).join(' · '),'err'); return; }
