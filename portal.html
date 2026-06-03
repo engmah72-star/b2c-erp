@@ -170,6 +170,33 @@ textarea.inp{resize:vertical;min-height:64px;}
 .gal-card .sim{margin:6px 11px 11px;padding:9px;border:none;border-radius:10px;background:#25d366;color:#06311a;
   font-family:inherit;font-weight:var(--fw-extra);font-size:var(--fs-sm);cursor:pointer;}
 .gal-card .sim:hover{opacity:.9;}
+/* ── Chat overlay (خط التواصل) ── */
+.chat-ov{position:fixed;inset:0;z-index:60;background:var(--bg);display:none;flex-direction:column;}
+.chat-ov.open{display:flex;}
+.chat-head{display:flex;align-items:center;gap:10px;padding:13px 14px;background:var(--bg2);
+  border-bottom:1px solid var(--line);}
+.chat-head .bk{background:none;border:none;color:var(--snow);font-size:20px;cursor:pointer;padding:4px 8px;}
+.chat-head .ttl{flex:1;min-width:0;font-weight:var(--fw-heavy);font-size:var(--fs-lg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px;}
+.msg-b{max-width:78%;padding:9px 13px;border-radius:16px;font-size:var(--fs-md);line-height:1.6;word-break:break-word;white-space:pre-wrap;}
+.msg-b.me{align-self:flex-start;background:linear-gradient(135deg,var(--p),var(--b));color:#fff;border-bottom-left-radius:5px;}
+.msg-b.them{align-self:flex-end;background:var(--bg3);border:1px solid var(--line);border-bottom-right-radius:5px;}
+.msg-b .who{font-size:var(--fs-xs);opacity:.75;margin-bottom:2px;font-weight:var(--fw-bold);}
+.msg-b .tm{font-size:var(--fs-xs);opacity:.6;margin-top:3px;text-align:left;}
+.chat-empty{margin:auto;text-align:center;color:var(--dim2);font-size:var(--fs-md);line-height:1.8;}
+.chat-empty .big{font-size:42px;display:block;margin-bottom:10px;}
+.chat-input{display:flex;gap:8px;padding:10px 12px;background:var(--bg2);border-top:1px solid var(--line);
+  padding-bottom:calc(10px + env(safe-area-inset-bottom,0));}
+.chat-input input{flex:1;padding:11px 14px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:999px;color:var(--snow);font-family:inherit;font-size:var(--fs-md);outline:none;}
+.chat-input input:focus{border-color:var(--p);}
+.chat-input button{width:46px;height:46px;border-radius:50%;border:none;flex-shrink:0;cursor:pointer;
+  background:linear-gradient(135deg,var(--p),var(--b));color:#fff;font-size:18px;}
+.chat-input button:disabled{opacity:.5;}
+.order-card .chat-btn{flex-shrink:0;width:38px;height:38px;border-radius:11px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--snow);font-size:17px;cursor:pointer;}
+.order-card .chat-btn:hover{border-color:var(--p);}
 
 /* ════ Responsive — تابلت/كمبيوتر: عمود متمركز + شريط تنقّل عائم (دوك) ════ */
 @media (min-width:760px){
@@ -225,6 +252,7 @@ textarea.inp{resize:vertical;min-height:64px;}
     <div class="sec-title">طلباتي الحالية</div>
     <div id="home-orders"><div class="empty">⟳ تحميل…</div></div>
     <button class="btn" style="margin-top:8px" id="btn-new">➕ طلب تصميم جديد</button>
+    <button class="btn-ghost" id="btn-support">💬 تواصل مع خدمة العملاء</button>
   </section>
 
   <!-- ═══ 2) معرض التصميمات ═══ -->
@@ -323,6 +351,19 @@ textarea.inp{resize:vertical;min-height:64px;}
 
 </main>
 
+<!-- خط التواصل: واجهة محادثة (overlay) -->
+<div class="chat-ov" id="chat-ov">
+  <div class="chat-head">
+    <button class="bk" id="chat-back" aria-label="رجوع">→</button>
+    <div class="ttl" id="chat-title">محادثة</div>
+  </div>
+  <div class="chat-msgs" id="chat-msgs"></div>
+  <div class="chat-input">
+    <input id="chat-text" type="text" placeholder="اكتب رسالتك…" autocomplete="off">
+    <button id="chat-send" aria-label="إرسال">➤</button>
+  </div>
+</div>
+
 <nav class="tabbar" id="tabbar" style="display:none">
   <button class="active" data-tab="home"><span class="ti">🏠</span>الرئيسية</button>
   <button data-tab="designs"><span class="ti">🎨</span>التصميمات</button>
@@ -333,7 +374,7 @@ textarea.inp{resize:vertical;min-height:64px;}
 <script type="module">
 // Firebase يُحمّل عند الحاجة فقط (dynamic import) — لو فشل تحميله، تظل
 // التبويبات ووضع المعاينة شغّالة (لا يوجد static import يقتل الموديول).
-let auth, db, onAuthStateChanged, signOut, doc, getDoc, getDocs, collection, query, where, limit, clientActions, uploadClientFile;
+let auth, db, onAuthStateChanged, signOut, doc, getDoc, getDocs, collection, query, where, limit, orderBy, onSnapshot, clientActions, uploadClientFile;
 let _fbReady = null;
 function ensureFirebase() {
   if (!_fbReady) _fbReady = (async () => {
@@ -343,7 +384,7 @@ function ensureFirebase() {
     onAuthStateChanged = fa.onAuthStateChanged; signOut = fa.signOut;
     const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
     doc = fs.doc; getDoc = fs.getDoc; getDocs = fs.getDocs; collection = fs.collection;
-    query = fs.query; where = fs.where; limit = fs.limit;
+    query = fs.query; where = fs.where; limit = fs.limit; orderBy = fs.orderBy; onSnapshot = fs.onSnapshot;
     clientActions = (await import('./client-actions.js')).clientActions;
     uploadClientFile = (await import('./core/storage-helpers.js')).uploadClientFile;
   })();
@@ -361,6 +402,9 @@ let user = null;
 let clientDoc = null;
 const media = { logoUrl: '', coverUrl: '' };
 let works = [];  // [{type:'image'|'video'|'pdf', url, name}]
+let homeOrders = [];  // طلبات العميل المعروضة (للوصول من زر المحادثة)
+let chatUnsub = null; // مُلغي اشتراك رسائل المحادثة الحالية
+let chatCtx = null;   // { convId, participants }
 let gallery = [];     // معرض تصاميم الشركة (collection: gallery)
 let galFilter = 'all';
 let galLoaded = false;
@@ -459,6 +503,7 @@ function renderHomeDemo() {
     { _id: 'd2', orderId: 'ORD-1031', clientName: 'متجر النور', stage: 'printing' },
     { _id: 'd3', orderId: 'ORD-1009', clientName: 'متجر النور', stage: 'archived' },
   ];
+  homeOrders = demoOrders;
   $('home-notifs').innerHTML = `<div class="notif">
     <span class="ic">🔔</span>
     <span class="tx">لديك <b>1</b> تصميم في انتظار رأيك واعتمادك</span>
@@ -466,6 +511,7 @@ function renderHomeDemo() {
   $('home-orders').innerHTML = demoOrders.map(o => {
     const st = STAGE_AR[o.stage] || o.stage;
     return `<div class="card order-card">
+      <button class="chat-btn" data-chat-oid="${esc(o._id)}" title="محادثة فريق الأوردر">💬</button>
       <div class="order-thumb">📋</div>
       <div class="order-info"><div class="code">${esc(o.orderId)}</div><div class="name">${esc(o.clientName)}</div></div>
       <span class="badge st-${esc(o.stage)}">${st}</span>
@@ -555,6 +601,79 @@ function wantSimilar(item) {
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
 }
 
+// ════════════════ CHAT — خط التواصل (Phase 7) ════════════════
+async function openChat(kind, order) {
+  if (DEMO) { alert('👁 وضع المعاينة — المحادثة تشتغل بعد تسجيل الدخول.'); return; }
+  const title = kind === 'order'
+    ? '💬 فريق الأوردر #' + (order?.orderId || order?._id?.slice(-6) || '')
+    : '💬 خدمة العملاء';
+  $('chat-title').textContent = title;
+  $('chat-msgs').innerHTML = '<div class="chat-empty"><span class="big">⟳</span>جاري الفتح…</div>';
+  $('chat-ov').classList.add('open');
+  try {
+    await ensureFirebase();
+    // لمحادثة الدعم بدون أوردر: نمرّر أحدث أوردر (لو فيه) لربط منشئه (CS)
+    const supOrder = kind === 'support' ? (homeOrders[0] || null) : order;
+    const res = await clientActions.openClientThread({
+      kind, clientUid: user.uid, clientName: (clientDoc?.businessProfile?.bizName || clientDoc?.name || ''),
+      order: supOrder,
+    });
+    if (!res.ok) { $('chat-msgs').innerHTML = '<div class="chat-empty">' + esc((res.errors||['تعذّر فتح المحادثة'])[0]) + '</div>'; return; }
+    chatCtx = { convId: res.convId, participants: res.participants };
+    subscribeChat(res.convId);
+  } catch (e) {
+    $('chat-msgs').innerHTML = '<div class="chat-empty">تعذّر فتح المحادثة: ' + esc(e.message || '') + '</div>';
+  }
+}
+
+function subscribeChat(convId) {
+  if (chatUnsub) { try { chatUnsub(); } catch (_) {} chatUnsub = null; }
+  const q = query(collection(db, 'conversations', convId, 'messages'), orderBy('createdAt', 'asc'), limit(200));
+  chatUnsub = onSnapshot(q, snap => {
+    const msgs = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(m => !m.deletedAt);
+    renderMessages(msgs);
+  }, err => {
+    $('chat-msgs').innerHTML = '<div class="chat-empty">تعذّر تحميل الرسائل: ' + esc(err.message || '') + '</div>';
+  });
+}
+
+function renderMessages(msgs) {
+  const box = $('chat-msgs');
+  if (!msgs.length) {
+    box.innerHTML = '<div class="chat-empty"><span class="big">💬</span>ابدأ المحادثة — اكتب رسالتك وسيردّ عليك الفريق.</div>';
+    return;
+  }
+  box.innerHTML = msgs.map(m => {
+    const mine = m.senderId === user.uid;
+    const tm = m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '';
+    return `<div class="msg-b ${mine ? 'me' : 'them'}">`
+      + (mine ? '' : `<div class="who">${esc(m.senderName || 'الفريق')}</div>`)
+      + esc(m.text || '')
+      + (tm ? `<div class="tm">${tm}</div>` : '')
+      + `</div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendChat() {
+  const input = $('chat-text');
+  const text = input.value.trim();
+  if (!text || !chatCtx) return;
+  input.value = '';
+  const res = await clientActions.sendClientMessage({
+    convId: chatCtx.convId, text, senderId: user.uid,
+    senderName: (clientDoc?.businessProfile?.bizName || clientDoc?.name || 'عميل'),
+    participants: chatCtx.participants,
+  });
+  if (!res.ok) { input.value = text; alert((res.errors || ['تعذّر الإرسال'])[0]); }
+}
+
+function closeChat() {
+  $('chat-ov').classList.remove('open');
+  if (chatUnsub) { try { chatUnsub(); } catch (_) {} chatUnsub = null; }
+  chatCtx = null;
+}
+
 // ════════════════ HOME ════════════════
 async function renderHome() {
   const phone = (clientDoc?.phone1 || clientDoc?.businessProfile?.phone || '').trim();
@@ -574,6 +693,7 @@ async function renderHome() {
     }
     const ts = o => (o.createdAt?.seconds ?? (o.createdAt?.toMillis ? o.createdAt.toMillis()/1000 : 0)) || 0;
     orders.sort((a, b) => ts(b) - ts(a));
+    homeOrders = orders;   // للوصول من زر المحادثة
 
     // آخر تصميم + إشعارات الاعتماد (لأحدث طلب)
     await renderLatestDesign(orders[0], notifEl);
@@ -582,6 +702,7 @@ async function renderHome() {
       const st = STAGE_AR[o.stage] || o.stage || '—';
       const code = o.orderId || o._id.slice(-6);
       return `<div class="card order-card" data-oid="${esc(o._id)}" data-ocode="${esc(o.orderId||o._id)}">
+        <button class="chat-btn" data-chat-oid="${esc(o._id)}" title="محادثة فريق الأوردر">💬</button>
         <div class="order-thumb">📋</div>
         <div class="order-info">
           <div class="code">${esc(code)}</div>
@@ -830,6 +951,8 @@ function bindUI() {
   });
   // العناصر الديناميكية (كروت الطلبات + إشعار) عبر event delegation
   $('home-orders')?.addEventListener('click', e => {
+    const chatBtn = e.target.closest('.chat-btn');
+    if (chatBtn) { const o = homeOrders.find(x => x._id === chatBtn.dataset.chatOid); if (o) openChat('order', o); return; }
     const c = e.target.closest('.order-card');
     if (c) openOrder(c.dataset.oid, c.dataset.ocode);
   });
@@ -837,6 +960,11 @@ function bindUI() {
     const n = e.target.closest('.notif');
     if (n) openOrder(n.dataset.oid, n.dataset.ocode);
   });
+  // خط التواصل (Phase 7)
+  $('btn-support')?.addEventListener('click', () => openChat('support'));
+  $('chat-back')?.addEventListener('click', closeChat);
+  $('chat-send')?.addEventListener('click', sendChat);
+  $('chat-text')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
   // معرض التصاميم (Phase 5)
   $('gal-chips')?.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');

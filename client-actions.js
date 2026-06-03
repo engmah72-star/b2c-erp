@@ -37,7 +37,7 @@
 
 import {
   doc, collection, getDoc, getDocs, addDoc, setDoc, updateDoc, writeBatch,
-  query, where, limit, serverTimestamp,
+  query, where, limit, serverTimestamp, increment,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
@@ -312,6 +312,76 @@ export const clientActions = {
           : (e.message || 'فشل حفظ البيانات')],
         warnings: [],
       };
+    }
+  },
+
+  /**
+   * خط تواصل العميل (Client ↔ Staff messaging).
+   *
+   * يفتح/ينشئ محادثة يكون العميل فيها participant، فتعمل تلقائياً مع قواعد
+   * conversations الحالية (participant-based) — بلا أي تغيير في القواعد.
+   *   - kind='order':   conversations/clord_{orderDocId}، يضيف فريق الأوردر
+   *                     (المصمم/الإنتاج/الشحن/المنشئ) كـ participants فيرونها بالإنبوكس.
+   *   - kind='support': conversations/csupport_{uid}، يضيف منشئ آخر أوردر (CS) إن وُجد.
+   * Returns: { ok, convId, participants }
+   */
+  async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null }) {
+    if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    let convId, type, name, extra = {}, staff = [];
+    if (kind === 'order') {
+      if (!order?._id) return { ok: false, errors: ['⚠️ الأوردر مطلوب'], warnings: [] };
+      convId = 'clord_' + order._id;
+      staff = [order.designerId, order.productionAgent, order.shippingOfficerId, order.createdBy].filter(Boolean);
+      type = 'order_thread';
+      name = '💬 ' + (clientName || 'عميل') + ' — #' + (order.orderId || order._id.slice(-6));
+      extra = { orderId: order.orderId || order._id, orderRef: { orderId: order.orderId || order._id, clientName } };
+    } else {
+      convId = 'csupport_' + clientUid;
+      staff = order?.createdBy ? [order.createdBy] : [];
+      type = 'dm';
+      name = '💬 دعم — ' + (clientName || 'عميل');
+    }
+    const participants = [...new Set([clientUid, ...staff])];
+    const ref = doc(db, 'conversations', convId);
+    try {
+      let snap = null;
+      try { snap = await getDoc(ref); } catch (_) {}
+      if (!snap || !snap.exists()) {
+        await setDoc(ref, {
+          type, participants, name, isClientThread: true,
+          createdAt: serverTimestamp(), lastMessageAt: serverTimestamp(),
+          lastMessagePreview: '', unreadCount: {}, ...extra,
+        });
+      } else {
+        const cur = snap.data().participants || [];
+        const merged = [...new Set([...cur, ...participants])];
+        if (merged.length !== cur.length) await updateDoc(ref, { participants: merged });
+      }
+      return { ok: true, errors: [], warnings: [], convId, participants };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر فتح المحادثة' : (e.message || 'فشل فتح المحادثة')], warnings: [] };
+    }
+  },
+
+  /** إرسال رسالة نصية من العميل في محادثته. */
+  async sendClientMessage({ db = defaultDb, convId, text, senderId, senderName = 'عميل', participants = [] }) {
+    const t = (text || '').trim();
+    if (!convId || !senderId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    if (!t) return { ok: false, errors: ['⚠️ اكتب رسالة'], warnings: [] };
+    try {
+      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+        senderId, senderName, type: 'text', text: t,
+        createdAt: serverTimestamp(), readBy: { [senderId]: serverTimestamp() },
+      });
+      const upd = {
+        lastMessageAt: serverTimestamp(), lastMessagePreview: t.slice(0, 80),
+        lastSenderId: senderId, lastSenderName: senderName, archivedBy: [],
+      };
+      participants.filter(p => p && p !== senderId).forEach(p => { upd['unreadCount.' + p] = increment(1); });
+      await updateDoc(doc(db, 'conversations', convId), upd);
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر إرسال الرسالة' : (e.message || 'فشل الإرسال')], warnings: [] };
     }
   },
 
