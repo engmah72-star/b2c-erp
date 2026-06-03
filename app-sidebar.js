@@ -42,14 +42,12 @@ const getUsage = () => { try { return JSON.parse(localStorage.getItem(LS_USE) ||
 const setUsage = (o) => { try { localStorage.setItem(LS_USE, JSON.stringify(o)); } catch (_) {} };
 const pageKey  = (h) => (h || '').split('/').pop().split('?')[0].split('#')[0].toLowerCase();
 
-const FLAG_ON = (() => {
-  try {
-    const qs = new URLSearchParams(location.search);
-    if (qs.get('feat.sidebarV2') === '0') return false;       // explicit kill
-    if (qs.get('sb') === 'v2' || qs.get('feat.sidebarV2') === '1') return true;
-    return localStorage.getItem('feat.sidebarV2') === '1';
-  } catch (_) { return false; }
-})();
+// التفعيل: KILL يغلب الكل (مفتاح إيقاف فوري) → FORCE (تجربة على أي صفحة) →
+// وإلا: تفعيل لكل عنصر يحمل خاصية active (تفعيل افتراضي مقصود لكل صفحة).
+const _qsFlag = (k) => { try { return new URLSearchParams(location.search).get(k); } catch (_) { return null; } };
+const _ls = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+const KILL  = _qsFlag('sb') === 'v1' || _qsFlag('feat.sidebarV2') === '0' || _ls('feat.sidebarV2') === '0';
+const FORCE = _qsFlag('sb') === 'v2' || _qsFlag('feat.sidebarV2') === '1' || _ls('feat.sidebarV2') === '1';
 
 const ROLE_LABELS = {
   admin: 'مدير عام', operation_manager: 'مدير تشغيل', customer_service: 'خدمة عملاء',
@@ -69,7 +67,9 @@ function opsAdminPagesFlag() {
 
 class AppSidebar extends HTMLElement {
   connectedCallback() {
-    if (!FLAG_ON || this._mounted) return;   // flag off → no-op (legacy untouched)
+    // مفعّل لو: مش مُوقَف (KILL) و(مفروض بـ FORCE أو العنصر يحمل active).
+    // غير كده → no-op تماماً (السايد بار القديم كما هو).
+    if (KILL || (!FORCE && !this.hasAttribute('active')) || this._mounted) return;
     this._mounted = true;
     this._current = this.getAttribute('current') ||
       (location.pathname.split('/').pop() || '').replace(/\?.*/, '');
