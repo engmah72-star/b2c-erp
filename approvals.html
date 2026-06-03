@@ -1456,11 +1456,20 @@ window.executeRequest = async function(){
     }
 
     const walletType = (walletsArr.find(w=>w._id===wId)||{}).type || '';
+    // إجمالي خارج هذه المحفظة اليوم (للسقف اليومي) — من allTxs، نستبعد
+    // العكوس/الملغاة. الدفعة الحالية ليست في allTxs بعد (projected = السابق + هذه).
+    const _todayStart = new Date(); _todayStart.setHours(0,0,0,0);
+    const dailyWalletOutflow = allTxs.reduce((s,t)=>{
+      if(t.walletId!==wId || t.type!=='out' || t.isReversal || t.isReversed) return s;
+      const ts = t.createdAt?.seconds ? t.createdAt.seconds*1000 : null;
+      if(ts==null || ts < _todayStart.getTime()) return s;
+      return s + (parseFloat(t.amount)||0);
+    },0);
     const exec = await approvalActions.executePaymentRequest({
       db, request:r, walletId:wId, walletName:wName, walletBalance:wBal,
       transferRef, note, receipt,
       userId:currentUid, userName:currentUserName,
-      role:currentRole, walletType, policy:financialPolicy,
+      role:currentRole, walletType, policy:financialPolicy, dailyWalletOutflow,
     });
     if(!exec.ok){
       // تصعيد السياسة: حركة فوق الحدّ تحتاج مُعتمِداً مؤهَّلاً (لا تُحرَّك الفلوس)
