@@ -183,46 +183,14 @@ window.doLogin = async function() {
 
 const EMAIL_LINK_KEY = 'b2c_emailForSignIn';
 
-/** بعد نجاح المصادقة: طابِق العميل ببريده → جِب أوردراته → وجّهه لأحدث أوردر. */
-async function routeAuthedClient(user) {
-  const email = (user?.email || '').toLowerCase().trim();
-  if (!email) { showErr('❌ هذا الحساب لا يحتوي على بريد إلكتروني — استخدم رقم الهاتف وكود الأوردر.'); return false; }
-
-  // 1) العميل بالبريد
-  const cSnap = await getDocs(query(collection(db,'clients'), where('email','==',email), limit(2)));
-  const clientDoc = cSnap.docs.find(d => !d.data().isDeleted);
-  if (!clientDoc) {
-    showErr('❌ لا يوجد عميل مسجّل بهذا البريد. ادخل برقم الهاتف وكود الأوردر، أو تواصل مع خدمة العملاء لربط بريدك بحسابك.');
+/** بعد نجاح المصادقة (Google/Email): وجّه العميل لصفحة بروفايله ليملأ/يراجع
+ *  بياناته. الهوية محفوظة في Firebase Auth (persistent) — تقرأها client-profile. */
+function routeAuthedClient(user) {
+  if (!(user?.email)) {
+    showErr('❌ هذا الحساب لا يحتوي على بريد إلكتروني — استخدم رقم الهاتف وكود الأوردر.');
     return false;
   }
-  const client = { ...clientDoc.data(), _id: clientDoc.id };
-
-  // 2) أوردراته (بالـ clientId، واحتياطياً بالهاتف)
-  let orders = (await getDocs(query(collection(db,'orders'), where('clientId','==',client._id), limit(50))))
-    .docs.map(d => ({ ...d.data(), _id: d.id }));
-  if (!orders.length && client.phone1) {
-    orders = (await getDocs(query(collection(db,'orders'), where('clientPhone','==',client.phone1), limit(50))))
-      .docs.map(d => ({ ...d.data(), _id: d.id }));
-  }
-  orders = orders.filter(o => !o.isDeleted);
-  if (!orders.length) { showErr('❌ لا توجد أوردرات مرتبطة بحسابك بعد. تواصل مع خدمة العملاء.'); return false; }
-
-  // 3) الأحدث (sort بالـ createdAt محلياً — يتجنّب composite index)
-  const ts = o => (o.createdAt?.seconds ?? (o.createdAt?.toMillis ? o.createdAt.toMillis()/1000 : 0)) || 0;
-  orders.sort((a,b) => ts(b) - ts(a));
-  const order = orders[0];
-
-  // 4) نفس شكل جلسة doLogin → البوابة تشتغل دون تعديل
-  localStorage.setItem('clientSession', JSON.stringify({
-    orderDocId: order._id,
-    orderCode: order.orderId || order._id,
-    phone: client.phone1 || '',
-    clientName: client.name || order.clientName || '',
-    clientId: client._id,
-    authEmail: email,
-    savedAt: Date.now(),
-  }));
-  window.location.href = 'client-portal.html';
+  window.location.href = 'client-profile.html';
   return true;
 }
 
