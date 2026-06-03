@@ -1,11 +1,5 @@
 /**
- * UTILS LAYER · username — slug آمن لاسم صفحة الأعمال العامة (نقي). (STANDARDS §6)
- * يطابق التطبيع في client-actions (المصدر النهائي عند الكتابة).
+ * UTILS LAYER · username — slug اسم الصفحة العامة.
+ * مُعاد تصديره من المصدر المركزي core/text-format (بلا ازدواجية). (STANDARDS §6)
  */
-export function slugUsername(v) {
-  return String(v || '').trim().toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w؀-ۿ-]/g, '')
-    .replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-}
+export { slugUsername } from '../../../core/text-format.js';

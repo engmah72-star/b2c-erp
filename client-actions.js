@@ -43,6 +43,7 @@ import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry } from './core/audit.js';
 import { planClientMerge } from './features/clients/duplicate-scan.js';
+import { slugUsername } from './core/text-format.js';
 
 // P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
 // modular `db` instance. When called from compat consumers, the `db`
@@ -58,14 +59,6 @@ import { planClientMerge } from './features/clients/duplicate-scan.js';
 /** EG mobile: 010/011/012/015 + 8 digits. */
 const RE_EG_PHONE = /^01[0125][0-9]{8}$/;
 
-/** يطبّع اسم المستخدم لصفحة الأعمال العامة (slug آمن للروابط). */
-function slugUsername(v) {
-  return String(v || '').trim().toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w؀-ۿ-]/g, '') // حروف/أرقام/عربي/شرطة فقط
-    .replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-}
 
 function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
   const errors = [];

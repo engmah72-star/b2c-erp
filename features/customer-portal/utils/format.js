@@ -1,7 +1,9 @@
 /**
  * UTILS LAYER · format — تنسيق عرض نقي بلا حالة. (STANDARDS §6)
  * لا منطق أعمال (الحسابات المالية في order-math/Services).
+ * normalizeWa مُعاد تصديره من المصدر المركزي core/text-format (بلا ازدواجية).
  */
+export { normalizeWa } from '../../../core/text-format.js';
 
 const STAGE_AR = {
   design: '✏️ تصميم', printing: '🖨️ طباعة', production: '🏭 تنفيذ',
@@ -16,14 +18,6 @@ export const stageLabel = (stage) => STAGE_AR[stage] || stage || '—';
 
 /** نغمة شارة الحالة (للـ Badge tone) — نفس مفتاح المرحلة. */
 export const stageTone = (stage) => (STAGE_AR[stage] ? stage : 'neutral');
-
-/** رقم واتساب بصيغة دولية (مصر). */
-export function normalizeWa(n) {
-  let s = String(n || '').replace(/[^\d+]/g, '');
-  if (s.startsWith('00')) s = s.slice(2);
-  if (s.startsWith('0')) s = '2' + s;
-  return s;
-}
 
 /** وقت مختصر من Firestore Timestamp. */
 export function shortTime(ts) {
