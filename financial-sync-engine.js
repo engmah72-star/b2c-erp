@@ -14,8 +14,9 @@
  *       يُضيف إدخال ledger لـ batch موجود (للوحدات ذات المنطق المعقد)
  */
 import {
-  writeBatch, doc, collection, serverTimestamp, increment,
+  writeBatch, doc, collection, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { addWalletDeltaToBatch } from "./core/wallet-ledger.js";
 
 console.log('[FSE] 🚀 Financial Sync Engine v2 loaded — all atomic writes active');
 
@@ -294,7 +295,7 @@ async function handleVendorPayment(db, p) {
   const supCategory = p.supplierType === 'shipper' ? 'shipper_payment' : 'printer_payment';
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: -p.amount, event: 'VENDOR_PAYMENT' });
     console.log('[FSE] 💳 balance updated:', p.walletId, '-', p.amount);
   }
 
@@ -340,7 +341,7 @@ async function handleVendorPaymentReversal(db, p) {
   const supCategory = p.supplierType === 'shipper' ? 'shipper_payment' : 'printer_payment';
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: p.amount, event: 'VENDOR_PAYMENT_REVERSAL' });
     console.log('[FSE] 💳 balance updated:', p.walletId, '+', p.amount);
   }
 
@@ -380,7 +381,7 @@ async function handleSalaryPaymentReversal(db, p) {
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? -p.amount : p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: isDeduction ? -p.amount : p.amount, event: 'SALARY_PAYMENT_REVERSAL' });
     console.log('[FSE] 💳 balance restored:', isDeduction ? '-' : '+', p.amount);
   }
 
@@ -413,7 +414,7 @@ async function handleSalaryPayment(db, p) {
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(isDeduction ? p.amount : -p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: isDeduction ? p.amount : -p.amount, event: 'SALARY_PAYMENT' });
     console.log('[FSE] 💳 balance updated:', isDeduction ? '+' : '-', p.amount);
   }
 
@@ -468,7 +469,7 @@ async function handlePayroll(db, p) {
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.totalAmount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: -p.totalAmount, event: 'PAYROLL' });
     console.log('[FSE] 💳 balance updated:', p.walletId, '-', p.totalAmount);
   }
 
@@ -530,7 +531,7 @@ async function handleCustomerPayment(db, p) {
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(sign * p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: sign * p.amount, event: evtType });
     console.log('[FSE] 💳 balance updated:', p.walletId, sign > 0 ? '+' : '-', p.amount);
   }
 
@@ -589,7 +590,7 @@ async function handleShippingSettlement(db, p) {
   const batch = writeBatch(db);
   const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
 
-  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(p.amount) });
+  addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: p.amount, event: 'SHIPPING_SETTLEMENT' });
 
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
@@ -664,7 +665,7 @@ async function handleShippingSettlementReversal(db, p) {
   const batch = writeBatch(db);
   const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
 
-  batch.update(doc(db, 'wallets', p.walletId), { balance: increment(-p.amount) });
+  addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: -p.amount, event: 'SHIPPING_SETTLEMENT_REVERSAL' });
 
   const txRef = doc(collection(db, 'transactions_v2'));
   batch.set(txRef, {
@@ -726,8 +727,8 @@ async function handleWalletTransfer(db, p) {
   if (!(p.amount > 0)) throw new Error('[FSE] WALLET_TRANSFER: amount غير صالح');
 
   const batch = writeBatch(db);
-  batch.update(doc(db, 'wallets', p.fromWalletId), { balance: increment(-p.amount) });
-  batch.update(doc(db, 'wallets', p.toWalletId),   { balance: increment(p.amount) });
+  addWalletDeltaToBatch(batch, db, { walletId: p.fromWalletId, delta: -p.amount, event: 'WALLET_TRANSFER' });
+  addWalletDeltaToBatch(batch, db, { walletId: p.toWalletId, delta: p.amount, event: 'WALLET_TRANSFER' });
 
   const transferGroupId = doc(collection(db, 'transactions_v2')).id;
   const dateStr = p.date || new Date().toLocaleDateString('ar-EG');
@@ -773,7 +774,7 @@ async function handleGeneralExpense(db, p) {
   const batch = writeBatch(db);
 
   if (p.walletId) {
-    batch.update(doc(db, 'wallets', p.walletId), { balance: increment(sign * p.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId: p.walletId, delta: sign * p.amount, event: 'GENERAL_EXPENSE' });
     console.log('[FSE] 💳 balance updated:', p.walletId, sign > 0 ? '+' : '-', p.amount);
   }
 
