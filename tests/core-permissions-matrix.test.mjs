@@ -6,6 +6,7 @@ import {
   canSeeField, maskPhone, canDo,
   getRoleDefaultPermissions,
   CAPABILITIES, ROLE_CAN_SEE_PHONE,
+  ROLE_PAGES, hasPage,
 } from '../core/permissions-matrix.js';
 
 let passed = 0, failed = 0;
@@ -143,6 +144,60 @@ test('CAPABILITIES: frozen (cannot be mutated)', () => {
   const original = CAPABILITIES.VIEW_ORDERS;
   try { CAPABILITIES.VIEW_ORDERS = 'hacked'; } catch {}
   assertEq(CAPABILITIES.VIEW_ORDERS, original);
+});
+
+// ── ROLE_PAGES / hasPage (Page-level access) ─────────────────────
+test('ROLE_PAGES: admin & operation_manager have wildcard "*"', () => {
+  assertEq(ROLE_PAGES.admin.includes('*'), true);
+  assertEq(ROLE_PAGES.operation_manager.includes('*'), true);
+});
+
+test('ROLE_PAGES: mirrors DEFAULT_ROLE_PERMISSIONS pages', () => {
+  assertEq(JSON.stringify(ROLE_PAGES.customer_service),
+    JSON.stringify(getRoleDefaultPermissions('customer_service').pages));
+  assertEq(JSON.stringify(ROLE_PAGES.wallet_manager),
+    JSON.stringify(getRoleDefaultPermissions('wallet_manager').pages));
+});
+
+test('ROLE_PAGES: frozen (cannot be mutated)', () => {
+  try { ROLE_PAGES.customer_service.push('hacked'); } catch {}
+  assertEq(ROLE_PAGES.customer_service.includes('hacked'), false);
+});
+
+test('hasPage: wildcard role sees any page', () => {
+  assertEq(hasPage('employees', 'admin'), true);
+  assertEq(hasPage('anything-at-all', 'operation_manager'), true);
+});
+
+test('hasPage: role default — allowed page', () => {
+  assertEq(hasPage('clients', 'customer_service'), true);
+  assertEq(hasPage('design', 'graphic_designer'), true);
+  assertEq(hasPage('accounts', 'wallet_manager'), true);
+});
+
+test('hasPage: role default — disallowed page', () => {
+  assertEq(hasPage('accounts', 'customer_service'), false);
+  assertEq(hasPage('clients', 'graphic_designer'), false);
+  assertEq(hasPage('design', 'wallet_manager'), false);
+});
+
+test('hasPage: user-level pages override wins over role default', () => {
+  // override يمنح صفحة ليست في الدور الافتراضي
+  assertEq(hasPage('accounts', 'customer_service', { pages: ['accounts'] }), true);
+  // override يقيّد (لا يشمل صفحة الدور الافتراضية)
+  assertEq(hasPage('clients', 'customer_service', { pages: ['design'] }), false);
+  // override بـ '*' يفتح كل شيء
+  assertEq(hasPage('employees', 'customer_service', { pages: ['*'] }), true);
+});
+
+test('hasPage: unknown role falls back to customer_service defaults', () => {
+  assertEq(hasPage('clients', 'no_such_role'), true);   // CS يرى clients
+  assertEq(hasPage('accounts', 'no_such_role'), false); // CS لا يرى accounts
+});
+
+test('hasPage: empty/missing page → false', () => {
+  assertEq(hasPage('', 'admin'), false);
+  assertEq(hasPage(undefined, 'admin'), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
