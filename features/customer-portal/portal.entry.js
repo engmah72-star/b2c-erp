@@ -11,6 +11,7 @@ const TABS = [
   { key: 'home',    icon: '🏠', label: 'الرئيسية' },
   { key: 'orders',  icon: '🧾', label: 'طلباتي' },
   { key: 'designs', icon: '🎨', label: 'التصاميم' },
+  { key: 'portfolio', icon: '📁', label: 'أعمالي' },
   { key: 'profile', icon: '💼', label: 'بروفايلي' },
 ];
 
