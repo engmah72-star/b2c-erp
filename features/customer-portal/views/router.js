@@ -44,7 +44,12 @@ export function createRouter({ shell, store, services }) {
   });
 
   function ctx() {
-    return { services, store, shell, go, openOrder, openChat, repaint, loading: loadingHtml };
+    return { services, store, shell, go, openOrder, openChat, openNewOrder, repaint, loading: loadingHtml };
+  }
+
+  /** يفتح نموذج «اطلب الآن» في الـ Overlay. */
+  async function openNewOrder() {
+    await openModalView(await import('./new-order.view.js'), { title: '🆕 اطلب الآن', extra: {} });
   }
 
   /** يعيد رسم محتوى الشاشة الحالية بـ HTML جاهز (بعد فلترة/تحديث محلي). */
@@ -98,5 +103,5 @@ export function createRouter({ shell, store, services }) {
 
   function start(key) { return go(key); }
 
-  return { go, openOrder, openChat, start };
+  return { go, openOrder, openChat, openNewOrder, start };
 }
