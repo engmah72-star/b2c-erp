@@ -40,8 +40,35 @@
 .st-date{font-size:9px;color:var(--dim2)}
 .station.cancelled .st-dot{background:rgba(120,120,160,.12);border-style:dashed}
 @keyframes railmove{0%,100%{transform:translateX(0)}50%{transform:translateX(-5px)}}
+.rail-product{font-size:var(--fs-sm,13px);color:var(--dim);margin:-6px 0 12px;display:flex;align-items:center;gap:6px}
+.rail-product b{font-weight:700;color:var(--snow,#e8e8f0)}
 .rail-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
 .rail-count{font-size:var(--fs-sm,13px);color:var(--dim2);font-weight:700;margin-inline-start:auto}
+
+/* ══ لوحة التفاصيل المنزلقة ══ */
+.panel-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:.2s;z-index:90}
+.panel-ov.open{opacity:1;pointer-events:auto}
+.panel{position:fixed;top:0;bottom:0;inset-inline-start:0;width:min(560px,94vw);background:var(--bg1,#16161f);border-inline-end:1px solid var(--line);transform:translateX(-100%);transition:.25s;overflow-y:auto;z-index:91;display:flex;flex-direction:column}
+html[dir=rtl] .panel{inset-inline-start:auto;inset-inline-end:0;border-inline-end:none;border-inline-start:1px solid var(--line);transform:translateX(100%)}
+.panel-ov.open .panel{transform:translateX(0)}
+.panel-head{position:sticky;top:0;background:var(--bg2);border-bottom:1px solid var(--line);padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;z-index:2}
+.panel-body{padding:16px}
+.pn-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.pn-kpi{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad,10px);padding:10px 6px;text-align:center}
+.pn-kpi-val{font-size:var(--fs-lg,16px);font-weight:800}
+.pn-kpi-lbl{font-size:10px;color:var(--dim2);margin-top:2px}
+.pn-sec{margin-bottom:16px}
+.pn-sec-h{font-size:var(--fs-sm,13px);font-weight:800;color:var(--dim2);margin-bottom:8px}
+.pn-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:var(--fs-base,13px)}
+.pn-row:last-child{border-bottom:none}
+.pn-stage{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px}
+.pn-stage-ico{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--bg3);flex:none}
+.pn-stage.done .pn-stage-ico{background:rgba(0,217,126,.15);color:var(--g)}
+.pn-stage.current .pn-stage-ico{background:rgba(74,142,245,.18);color:var(--b)}
+.pn-stage.late{border-color:var(--r)}
+.pn-stage-body{flex:1;min-width:0}
+.pn-stage-top{display:flex;justify-content:space-between;gap:8px;font-weight:700;font-size:var(--fs-base,13px)}
+.pn-stage-sub{font-size:11px;color:var(--dim2);margin-top:2px}
 </style>
 </head>
 <body>
@@ -95,18 +122,35 @@
 </div>
 <div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav')?.classList.remove('mob-open');this.classList.remove('show')"></div>
 
+<!-- ══ لوحة تفاصيل الأوردر ══ -->
+<div class="panel-ov" id="panel-ov" onclick="if(event.target===this)closePanel()">
+  <div class="panel">
+    <div class="panel-head" id="panel-head"></div>
+    <div class="panel-body" id="panel-body"></div>
+  </div>
+</div>
+
 <script type="module">
 import { auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, getDoc, onSnapshot, collection, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { STAGES, getStageResponsibilities, getOrderDates, getOrderAlerts, skeletonCards, emptyState } from "./orders.js";
+import { STAGES, getStageResponsibilities, getOrderDates, getOrderAlerts, skeletonCards, emptyState, productStatusBadge, fn } from "./orders.js";
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
 let orders = [];
 let slaTable = null;
+let currentRole = '';
 $('list').innerHTML = skeletonCards(4);
+
+// RULE 8 — قناع رقم العميل
+function maskPh(p) {
+  if (!p) return '';
+  if (['admin','operation_manager','customer_service','shipping_officer'].includes(currentRole)) return p;
+  const s = String(p).replace(/\D/g, '');
+  return s.length >= 6 ? s.slice(0,3) + '****' + s.slice(-3) : '****';
+}
 
 onAuthStateChanged(auth, async u => {
   if (!u) { location.href = 'login.html'; return; }
@@ -114,6 +158,7 @@ onAuthStateChanged(auth, async u => {
     const us = await getDoc(doc(db, 'users', u.uid));
     if (us.exists()) {
       const d = us.data();
+      currentRole = d.role || '';
       const nm = $('nav-name'); if (nm) nm.textContent = d.name || u.email;
       const av = $('nav-av'); if (av) av.textContent = (d.name || 'A')[0].toUpperCase();
     }
@@ -181,7 +226,9 @@ function cardHTML(o) {
     </div>`;
   }).join('');
 
-  return `<div class="rail-card" onclick="openOrder('${esc(o._id)}')">
+  const prodTxt = (o.products || []).map(p => `${p.name || '—'} ×${p.qty || 1}`).join(' + ') || o.product || '—';
+
+  return `<div class="rail-card" onclick="openPanel('${esc(o._id)}')">
     <div class="rail-head">
       <span class="rail-id">${esc(o.orderId || o._id.slice(-6))}</span>
       <span class="rail-client">${esc(o.clientName || '—')}</span>
@@ -190,6 +237,7 @@ function cardHTML(o) {
       ${cancelled ? '<span class="rail-alert" style="color:var(--dim2);background:rgba(120,120,160,.12)">✕ ملغي</span>' : ''}
       ${alerts.count > 0 ? `<span class="rail-alert">⚠️ ${alerts.currentOverdue ? 'متأخر: ' + esc(alerts.worst) : 'تأخّر سابق (' + alerts.count + ')'}</span>` : ''}
     </div>
+    <div class="rail-product">📦 <b>${esc(prodTxt)}</b></div>
     <div class="rail">${stationsHtml}</div>
   </div>`;
 }
@@ -214,10 +262,100 @@ window.renderList = function () {
     : emptyState({ ico:'🚂', title:'لا توجد أوردرات', sub:'جرّب فلتر مختلف' });
 };
 
+// ══ لوحة التفاصيل الكاملة ══
+window.openPanel = function (id) {
+  const o = orders.find(x => x._id === id);
+  if (!o) return;
+  renderPanel(o);
+  $('panel-ov').classList.add('open');
+};
+window.closePanel = function () { $('panel-ov').classList.remove('open'); };
 window.openOrder = function (id) {
   if (typeof navigatePage === 'function') navigatePage('order.html?id=' + id);
   else location.href = 'order.html?id=' + id;
 };
+
+function renderPanel(o) {
+  const cur = o.stage || 'design';
+  const sc = STAGES[cur] || { label: cur, ico:'📋', col:'#7878a0' };
+  const alerts = getOrderAlerts(o, slaTable);
+  const sale = parseFloat(o.salePrice) || 0;
+  const paid = parseFloat(o.totalPaid) || parseFloat(o.paid) || 0;
+  const rem  = (o.remaining != null) ? (parseFloat(o.remaining) || 0) : Math.max(0, sale - paid);
+  const cost = (o.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
+
+  // header
+  $('panel-head').innerHTML = `
+    <div style="min-width:0">
+      <div style="font-size:var(--fs-xs,11px);color:var(--dim2);font-weight:700">${esc(o.orderId || o._id.slice(-6))}</div>
+      <div style="font-size:var(--fs-lg,17px);font-weight:800">${esc(o.clientName || '—')}</div>
+      ${o.clientPhone ? `<div style="font-size:var(--fs-sm,12px);color:var(--dim2);direction:ltr;text-align:start">${esc(maskPh(o.clientPhone))}</div>` : ''}
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="rail-stagebadge" style="background:${sc.col}1f;color:${sc.col}">${esc(sc.ico)} ${esc(sc.label)}</span>
+        ${alerts.count > 0 ? `<span class="rail-alert">⚠️ ${alerts.currentOverdue ? 'متأخر: ' + esc(alerts.worst) : 'تأخّر سابق (' + alerts.count + ')'}</span>` : ''}
+      </div>
+    </div>
+    <button type="button" class="modal-x" onclick="closePanel()" style="flex:none">✕</button>`;
+
+  // KPIs
+  let html = `<div class="pn-kpis">
+    <div class="pn-kpi"><div class="pn-kpi-val" style="color:var(--p,#a78bfa)">${fn(sale)}</div><div class="pn-kpi-lbl">💰 السعر</div></div>
+    <div class="pn-kpi"><div class="pn-kpi-val" style="color:var(--g)">${fn(paid)}</div><div class="pn-kpi-lbl">✅ محصّل</div></div>
+    <div class="pn-kpi"><div class="pn-kpi-val" style="color:var(--r)">${fn(rem)}</div><div class="pn-kpi-lbl">⏳ متبقّي</div></div>
+    <div class="pn-kpi"><div class="pn-kpi-val" style="color:var(--y)">${fn(cost)}</div><div class="pn-kpi-lbl">🏭 تكلفة</div></div>
+  </div>`;
+
+  // products
+  const prods = o.products || [];
+  html += `<div class="pn-sec"><div class="pn-sec-h">📦 المنتجات (${prods.length || (o.product ? 1 : 0)})</div>`;
+  if (prods.length) {
+    html += prods.map(p => `<div class="pn-row"><span><b>${esc(p.name || '—')}</b> <span style="color:var(--dim2)">× ${esc(p.qty || 1)}</span>${p.printType ? ` <span style="color:var(--dim2);font-size:11px">· ${esc(p.printType === 'offset' ? 'أوفست' : 'ديجيتال')}</span>` : ''}</span>${productStatusBadge(p.productStatus || p.execStatus || 'pending')}</div>`).join('');
+  } else {
+    html += `<div class="pn-row"><span>${esc(o.product || '—')}</span></div>`;
+  }
+  html += `</div>`;
+
+  // stages (full — المرجع الواحد)
+  const rows = getStageResponsibilities(o, slaTable);
+  html += `<div class="pn-sec"><div class="pn-sec-h">⏱️ المراحل: المسؤول والتواريخ</div>`;
+  rows.forEach(r => {
+    const isIntake = r.kind === 'intake';
+    let cls = r.status === 'done' ? 'done' : (r.isCurrent ? 'current' : '');
+    if (r.overdue) cls += ' late';
+    const ico = isIntake ? '📝' : ((STAGES[r.stage] || {}).ico || '•');
+    let chip = '';
+    if (isIntake) chip = '📝';
+    else if (r.status === 'pending') chip = '<span style="color:var(--dim2)">— لم تبدأ</span>';
+    else if (r.rating === 'late') chip = '<span style="color:var(--r)">⚠️ متأخر</span>';
+    else if (r.rating === 'ongoing') chip = '<span style="color:var(--b)">🔄 جارٍ</span>';
+    else chip = '<span style="color:var(--g)">✅ ' + esc(r.durationText) + '</span>';
+    const dates = [];
+    if (r.enteredAt) dates.push('دخل: ' + esc(r.enteredAt));
+    if (r.completedAt && r.status === 'done') dates.push('خرج: ' + esc(r.completedAt));
+    if (r.deadline && !isIntake) dates.push((r.overdue ? '⚠️ ' : '🎯 ') + esc(r.deadline));
+    html += `<div class="pn-stage ${cls}">
+      <div class="pn-stage-ico">${ico}</div>
+      <div class="pn-stage-body">
+        <div class="pn-stage-top"><span>${esc(r.label)}${r.isCurrent ? ' <span style="color:var(--b);font-size:10px">(الحالية)</span>' : ''}</span><span>${chip}</span></div>
+        <div class="pn-stage-sub">${r.responsibleName ? '👤 ' + esc(r.responsibleName) : 'غير محدد'}${dates.length ? ' · ' + dates.join(' · ') : ''}</div>
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // timeline (آخر السجل)
+  const tl = [...(o.timeline || [])].slice(-12).reverse();
+  if (tl.length) {
+    html += `<div class="pn-sec"><div class="pn-sec-h">🗒 السجل (${(o.timeline || []).length})</div>`;
+    html += tl.map(t => `<div class="pn-row"><span style="flex:1">${esc(t.action || '—')}</span><span style="color:var(--dim2);font-size:11px;white-space:nowrap">${esc(t.by || '')}${t.by && t.date ? ' · ' : ''}${esc(t.date || '')}</span></div>`).join('');
+    html += `</div>`;
+  }
+
+  // فتح الصفحة الكاملة
+  html += `<button type="button" class="btn btn-b w-full" style="margin-top:6px" onclick="openOrder('${esc(o._id)}')">↗ فتح صفحة الأوردر الكاملة</button>`;
+
+  $('panel-body').innerHTML = html;
+}
 
 window.doLogout = async function () {
   try { const { signOut } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"); await signOut(auth); } catch (_) {}
