@@ -35,7 +35,7 @@ import {
 } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
-import { resolveFinancialPolicy, evaluateOutflow, canApproveOutflow } from './core/financial-policy.js';
+import { resolveFinancialPolicy, evaluateOutflow, canApproveOutflow, checkApprovalSeparation } from './core/financial-policy.js';
 import { addWalletDeltaToBatch, setWalletBalanceInBatch } from './core/wallet-ledger.js';
 
 function _nowStr() {
@@ -491,9 +491,13 @@ export async function rejectPaymentRequest({
 export async function approvePaymentRequest({
   db = defaultDb, requestId,
   userId, userName,
+  policy = null, requestStatus = '', confirmedBy = '',
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!requestId) return { ok: false, errors: ['⚠️ requestId مطلوب'], warnings: [] };
+  // الفصل الصارم على طلب الدفع (يُطبَّق فقط عند تفعيله):
+  const _sep = checkApprovalSeparation({ approvalStatus: requestStatus, confirmedBy }, userId, policy);
+  if (!_sep.ok) return { ok: false, errors: _sep.errors, warnings: [] };
   return withIdempotency(db, {
     actionType: 'approve_payment_request',
     entityId: requestId,
@@ -634,13 +638,16 @@ export async function confirmTransaction({
  */
 export async function approveTransaction({
   db = defaultDb, tx,
-  userId, userName,
+  userId, userName, policy = null,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!tx || !tx._id) return { ok: false, errors: ['⚠️ tx مطلوب'], warnings: [] };
   if (tx.isRecovery && tx.createdBy === userId) {
     return { ok: false, errors: ['⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد'], warnings: [] };
   }
+  // الفصل الصارم (Segregation of Duties) — يُطبَّق فقط عند تفعيله في السياسة:
+  const _sep = checkApprovalSeparation({ approvalStatus: tx.approvalStatus, confirmedBy: tx.confirmedBy }, userId, policy);
+  if (!_sep.ok) return { ok: false, errors: _sep.errors, warnings: [] };
   return withIdempotency(db, {
     actionType: 'approve_transaction',
     entityId: tx._id,
