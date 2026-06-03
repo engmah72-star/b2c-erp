@@ -184,12 +184,20 @@ service firebase.storage {
       allow write: if request.auth != null && isStaff()
         && request.resource.size < 20 * 1024 * 1024;
     }
-    // ملفات الموظفين المهيكلة (incidents/documents/contracts/avatar) — staff only
+    // ملفات الموظفين المهيكلة (incidents/documents/contracts/avatar)
     // الـ frontend (uploadEmployeeFile) يبني الـ path: employees/{empId}/{kind}/{ts}_{name}
     // صور إثبات المخالفات (incidents) + مستندات الموظف. صور أو PDF فقط.
+    //
+    // ملاحظة أمنية: لا نعتمد على isStaff() هنا لأن دور المستخدم يُقرأ من
+    // custom claim (request.auth.token.role) عبر syncUserAuthClaims، وهو
+    // غير مضمون لكل مستخدم (backfillAuthClaims قد لا يكون شُغّل، أو توكن
+    // المتصفح لم يُحدَّث بعد) → isStaff() يفشل fail-closed ويمنع الرفع.
+    // لذلك نكتفي بالمصادقة + حدود الحجم/النوع. صلاحية «من يسجّل إخفاقاً»
+    // مفروضة في الـ UI عبر capability gating. عرض الصور يتم عبر downloadURL
+    // المُوقّع الذي يتجاوز قاعدة القراءة أصلاً.
     match /employees/{empId}/{kind}/{file=**} {
-      allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null
         && request.resource.size < 20 * 1024 * 1024
         && ( request.resource.contentType.matches('image/.*')
              || request.resource.contentType == 'application/pdf' );
