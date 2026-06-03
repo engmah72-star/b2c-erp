@@ -1320,6 +1320,150 @@ export const orderActions = {
     });
   },
 
+  /**
+   * Admin-only: **تصفير نهائي** للأوردر — حذف كل أثره من السجلات.
+   *
+   * بخلاف adminDeleteOrder (الذي يترك قيود عكس reversal في financial_ledger
+   * كأثر تدقيقي)، هذه العملية تمحو الأوردر **بالكامل**: المستند + معاملاته +
+   * قيوده في الـ ledger + تذاكر مرتجعاته + أوامر مورديه — مع عكس أرصدة المحافظ
+   * فقط (wallets = مصدر الحقيقة، RULE 1) كي تبقى الأرصدة صحيحة "وكأن الأوردر
+   * لم يوجد". تُكتب فقط سطر مساءلة واحد في audit_logs (مَن/متى — ليس بيانات
+   * الأوردر) لأن عملية حذف لا رجعة فيها يجب أن تُسجَّل (H3).
+   *
+   * Flow (atomic writeBatch + idempotency):
+   *   0. block إذا وُجدت shipping_settlements (قد تشمل أوردرات أخرى — أَلغِها أولاً)
+   *   1. اعكس رصيد المحفظة لكل معاملة (in → نقص، out → زيادة) واحذف المعاملة
+   *      + احذف supplier_payment المرتبط (tx.spId)
+   *   2. احذف كل financial_ledger للأوردر (orderId == — لا يلمس قيود orderIds[]
+   *      المشتركة مع أوردرات أخرى)
+   *   3. احذف returns_tickets (orderId ==) و supplier_orders (من costItems)
+   *   4. احذف الأوردر — ثم سطر audit_logs (best-effort بعد الـ commit)
+   *
+   * @param {Object} args
+   * @param {Object} [args.db=defaultDb]
+   * @param {string} args.orderId
+   * @param {string} args.reason            — سبب التصفير (مطلوب)
+   * @param {string} [args.note]
+   * @param {string} args.role
+   * @param {string} args.userId
+   * @param {string} [args.userName]
+   * @returns {{ok, errors, warnings, orderId, walletsReversed, txDeleted,
+   *            ledgerDeleted, returnsDeleted, supplierOrdersDeleted,
+   *            operationId, idempotent}}
+   */
+  async purgeOrder({
+    db = defaultDb,
+    orderId, reason, note = '',
+    role = '', userId, userName = '',
+  }) {
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!userId)  return { ok: false, errors: ['⚠️ userId مطلوب'],  warnings: [] };
+    if (!reason)  return { ok: false, errors: ['⚠️ اختر سبب التصفير أولاً'], warnings: [] };
+
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+
+    return withIdempotency(db, {
+      actionType: 'purge_order',
+      entityId: orderId,
+      actorId: userId,
+      payload: { orderId, reason },
+    }, async () => {
+      // 0) shipping_settlements guard (RULE 4 — قد تشمل أوردرات أخرى)
+      const stSnap = await getDocs(query(
+        collection(db, 'shipping_settlements'),
+        where('orderId', '==', orderId)
+      ));
+      if (!stSnap.empty) {
+        return {
+          ok: false,
+          errors: ['الأوردر مرتبط بتسوية شحن — أَلغِ التسوية أولاً من صفحة حسابات الشحن'],
+          warnings: [], orderId,
+        };
+      }
+
+      // اجمع كل المستندات المرتبطة (قبل بناء الـ batch لفحص الحجم)
+      const [txSnap, ledgerSnap, returnsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', orderId))),
+        getDocs(query(collection(db, 'financial_ledger'), where('orderId', '==', orderId))),
+        getDocs(query(collection(db, 'returns_tickets'), where('orderId', '==', orderId))),
+      ]);
+      const supplierOrderIds = [...new Set(
+        (order.costItems || []).map(ci => ci?.supplierOrderId).filter(Boolean)
+      )];
+
+      // حارس حجم الدفعة (Firestore batch limit = 500). تقدير متحفّظ.
+      const estOps =
+        txSnap.size * 3 + ledgerSnap.size + returnsSnap.size +
+        supplierOrderIds.length + 1;
+      if (estOps > 450) {
+        return {
+          ok: false,
+          errors: [`الأوردر مرتبط ببيانات كثيرة (${estOps} عملية) تتجاوز حد الدفعة — استخدم سكربت سيرفر-سايد للتصفير`],
+          warnings: [], orderId,
+        };
+      }
+
+      const batch = writeBatch(db);
+      let walletsReversed = 0;
+
+      // 1) معاملات: عكس رصيد المحفظة + حذف tx + حذف supplier_payment المرتبط
+      for (const txDoc of txSnap.docs) {
+        const tx = txDoc.data();
+        const amt = parseFloat(tx.amount) || 0;
+        const wid = tx.walletId || '';
+        if (amt > 0 && wid) {
+          // in (دفعة عميل) → اخصم من المحفظة ؛ out (مصروف) → أعِد للمحفظة
+          const delta = tx.type === 'in' ? -amt : amt;
+          batch.update(doc(db, 'wallets', wid), { balance: increment(delta) });
+          walletsReversed++;
+        }
+        if (tx.spId) batch.delete(doc(db, 'supplier_payments', tx.spId));
+        batch.delete(txDoc.ref);
+      }
+
+      // 2) قيود الـ ledger الخاصة بالأوردر فقط
+      for (const lDoc of ledgerSnap.docs) batch.delete(lDoc.ref);
+
+      // 3) تذاكر المرتجعات + أوامر الموردين
+      for (const rDoc of returnsSnap.docs) batch.delete(rDoc.ref);
+      for (const soId of supplierOrderIds) batch.delete(doc(db, 'supplier_orders', soId));
+
+      // 4) الأوردر نفسه
+      batch.delete(doc(db, 'orders', orderId));
+      await batch.commit();
+
+      // سطر مساءلة (best-effort — لا يعيد إنشاء بيانات الأوردر، فقط مَن/متى)
+      addDoc(collection(db, 'audit_logs'), {
+        action: 'order.purge',
+        details: {
+          orderId,
+          clientName: order.clientName || '',
+          reason, note,
+          walletsReversed,
+          txDeleted: txSnap.size,
+          ledgerDeleted: ledgerSnap.size,
+          returnsDeleted: returnsSnap.size,
+          supplierOrdersDeleted: supplierOrderIds.length,
+        },
+        userId, userName: userName || '',
+        userRole: role || '',
+        timestamp: serverTimestamp(),
+        source: 'orderActions.purgeOrder',
+      }).catch(e => console.warn('[audit] purgeOrder log failed:', e?.code || e?.message));
+
+      return {
+        ok: true, errors: [], warnings: [],
+        orderId,
+        walletsReversed,
+        txDeleted: txSnap.size,
+        ledgerDeleted: ledgerSnap.size,
+        returnsDeleted: returnsSnap.size,
+        supplierOrdersDeleted: supplierOrderIds.length,
+      };
+    });
+  },
+
   async recordCostItem({
     db, orderId, prodIdx,
     payload,

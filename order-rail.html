@@ -135,6 +135,7 @@ import { auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, getDoc, onSnapshot, collection, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { STAGES, getStageResponsibilities, getOrderDates, getOrderAlerts, skeletonCards, emptyState, productStatusBadge, fn } from "./orders.js";
+import { orderActions } from "./order-actions.js";
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -142,6 +143,8 @@ const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp
 let orders = [];
 let slaTable = null;
 let currentRole = '';
+let currentUser = null;
+let userName = '';
 $('list').innerHTML = skeletonCards(4);
 
 // RULE 8 — قناع رقم العميل
@@ -154,11 +157,14 @@ function maskPh(p) {
 
 onAuthStateChanged(auth, async u => {
   if (!u) { location.href = 'login.html'; return; }
+  currentUser = u;
+  userName = u.displayName || u.email || 'مستخدم';
   try {
     const us = await getDoc(doc(db, 'users', u.uid));
     if (us.exists()) {
       const d = us.data();
       currentRole = d.role || '';
+      if (d.name) userName = d.name;
       const nm = $('nav-name'); if (nm) nm.textContent = d.name || u.email;
       const av = $('nav-av'); if (av) av.textContent = (d.name || 'A')[0].toUpperCase();
     }
@@ -354,8 +360,40 @@ function renderPanel(o) {
   // فتح الصفحة الكاملة
   html += `<button type="button" class="btn btn-b w-full" style="margin-top:6px" onclick="openOrder('${esc(o._id)}')">↗ فتح صفحة الأوردر الكاملة</button>`;
 
+  // حذف نهائي من السجل — admin فقط، لا رجعة فيه
+  if (currentRole === 'admin') {
+    html += `<button type="button" class="btn w-full" style="margin-top:6px;background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.4);color:var(--r)" onclick="purgeOrderFromRail('${esc(o._id)}')">🗑 حذف نهائي من السجل</button>`;
+  }
+
   $('panel-body').innerHTML = html;
 }
+
+// حذف نهائي للأوردر من السجل (تصفير كامل) — admin فقط
+window.purgeOrderFromRail = async function (id) {
+  if (currentRole !== 'admin') return alert('⛔ هذه العملية للأدمن فقط');
+  const o = orders.find(x => x._id === id);
+  if (!o) return alert('⚠️ الأوردر غير موجود');
+  const label = o.orderId || o._id;
+  if (!confirm('⚠️ حذف نهائي للأوردر "' + (o.clientName || label) + '"؟\n\nسيُمحى من كل السجلات (الأوردر + معاملاته + قيود الـ ledger + المرتجعات) وتُعكس أرصدة المحافظ. لا يمكن التراجع.')) return;
+  const reason = prompt('سبب الحذف النهائي (مطلوب):', '');
+  if (reason === null) return;
+  if (!reason.trim()) return alert('⚠️ السبب مطلوب');
+  if (!confirm('تأكيد أخير — حذف نهائي لا رجعة فيه؟')) return;
+  try {
+    const r = await orderActions.purgeOrder({
+      db, orderId: id, reason: reason.trim(),
+      role: currentRole, userId: currentUser?.uid || '', userName,
+    });
+    if (!r.ok) return alert('❌ ' + (r.errors || []).join(' · '));
+    if (r.idempotent && !r.pending) { closePanel(); return alert('ℹ️ الأوردر محذوف مسبقاً'); }
+    closePanel();
+    // القائمة تتحدّث تلقائياً عبر onSnapshot
+    alert('🗑 تم الحذف النهائي' + (r.txDeleted ? ` · ${r.txDeleted} معاملة` : '') + (r.ledgerDeleted ? ` · ${r.ledgerDeleted} قيد` : ''));
+  } catch (e) {
+    console.error(e);
+    alert('❌ خطأ: ' + (e?.message || e));
+  }
+};
 
 window.doLogout = async function () {
   try { const { signOut } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"); await signOut(auth); } catch (_) {}
