@@ -276,8 +276,29 @@ export const clientActions = {
       payload.createdByName = (authName || data.name || '').trim();
     }
 
+    // نسخة عامة مصغّرة للكارت الرقمي (public_cards/{uid}) — بدون أي بيانات داخلية.
+    const bp = data.businessProfile || {};
+    const publicCard = {
+      uid: authUid,
+      bizName: (bp.bizName || data.name || '').trim(),
+      bio: bp.bio || '',
+      logoUrl: bp.logoUrl || '',
+      coverUrl: bp.coverUrl || '',
+      phone: (data.phone1 || '').trim(),
+      whatsapp: bp.whatsapp || '',
+      website: bp.website || '',
+      social: bp.social || {},
+      services: Array.isArray(bp.services) ? bp.services : [],
+      works: Array.isArray(bp.works) ? bp.works : [],
+      updatedAt: serverTimestamp(),
+    };
+
     try {
-      await setDoc(ref, payload, { merge: true });
+      // كتابة السجلّين معاً (clients + public_cards) في batch واحد (RULE 3).
+      const batch = writeBatch(db);
+      batch.set(ref, payload, { merge: true });
+      batch.set(doc(db, 'public_cards', authUid), publicCard, { merge: true });
+      await batch.commit();
       return {
         ok: true, errors: [], warnings: [],
         clientId: authUid,

@@ -249,13 +249,36 @@ textarea.inp{resize:vertical;min-height:64px;}
 
     <button class="btn" id="p-save">💾 حفظ صفحتي</button>
     <div class="msg" id="p-msg"></div>
+
+    <!-- صفحة الأعمال العامة (Phase 6) -->
+    <div class="sec-title">صفحتك العامة (للمشاركة)</div>
+    <div class="card" id="public-card-box">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+        <img id="qr-img" alt="QR" width="92" height="92"
+          style="border-radius:10px;background:#fff;padding:5px;flex-shrink:0">
+        <div style="min-width:0;flex:1">
+          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-bottom:4px">رابط كارتك الرقمي:</div>
+          <div id="public-link" dir="ltr" style="font-size:var(--fs-sm);word-break:break-all;color:var(--p)">—</div>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn-ghost" id="btn-copy" style="margin-top:0">📋 نسخ الرابط</button>
+        <button class="btn-ghost" id="btn-share" style="margin-top:0">📤 مشاركة</button>
+      </div>
+      <a class="btn-ghost" id="btn-open-card" target="_blank" style="display:block;text-align:center;text-decoration:none;margin-top:8px">👁 افتح صفحتك العامة</a>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;margin-top:8px">احفظ بياناتك أولاً ليظهر كل شيء في صفحتك العامة.</div>
+    </div>
   </section>
 
   <!-- ═══ 4) معرض أعمالي ═══ -->
   <section class="panel" id="tab-works">
-    <div class="soon"><span class="big">📁</span>
-      معرض أعمالك (صور · فيديو · كتالوج PDF)<br><br>
-      <b>قريباً</b> — قيد التطوير
+    <div class="sec-title">معرض أعمالي</div>
+    <button class="btn" id="btn-add-work">＋ أضف عملاً (صورة / فيديو / PDF)</button>
+    <input type="file" id="file-work" class="hidden-file" accept="image/*,video/*,application/pdf">
+    <div class="msg" id="w-msg"></div>
+    <div id="works-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px"></div>
+    <div class="empty" id="works-empty" style="margin-top:14px">
+      <span class="big">📁</span>لسه مافيش أعمال.<br>اضغط «أضف عملاً» لرفع صورك وفيديوهاتك وكتالوجك.
     </div>
   </section>
 
@@ -298,6 +321,7 @@ const $ = id => document.getElementById(id);
 let user = null;
 let clientDoc = null;
 const media = { logoUrl: '', coverUrl: '' };
+let works = [];  // [{type:'image'|'video'|'pdf', url, name}]
 
 // ── On-screen diagnostics (بدل الصفحة الميتة: نعرض الخطأ) ──
 function fatal(msg) {
@@ -524,6 +548,76 @@ function fillProfile(bp) {
   $('p-services').value = (bp.services || []).join('\n');
   if (bp.logoUrl)  { media.logoUrl = bp.logoUrl;  showImg('logo', bp.logoUrl); }
   if (bp.coverUrl) { media.coverUrl = bp.coverUrl; showImg('cover', bp.coverUrl); }
+  works = Array.isArray(bp.works) ? bp.works.slice() : [];
+  renderWorks();
+  updatePublicCard();
+}
+
+// ════════════════ WORKS GALLERY (Phase 4) ════════════════
+function renderWorks() {
+  const grid = $('works-grid'); if (!grid) return;
+  $('works-empty').style.display = works.length ? 'none' : 'block';
+  grid.innerHTML = works.map((w, i) => {
+    let media = '';
+    if (w.type === 'video') media = `<video src="${esc(w.url)}" controls style="width:100%;height:120px;object-fit:cover;border-radius:10px;background:#000"></video>`;
+    else if (w.type === 'pdf') media = `<a href="${esc(w.url)}" target="_blank" style="display:flex;align-items:center;justify-content:center;height:120px;background:var(--bg3);border-radius:10px;font-size:34px;text-decoration:none">📄</a>`;
+    else media = `<img src="${esc(w.url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px">`;
+    return `<div class="card" style="padding:8px;position:relative">
+      ${media}
+      <button class="work-del" data-i="${i}" style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,.6);border:none;color:#fff;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:13px">✕</button>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(w.name || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+function workType(file) {
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type === 'application/pdf') return 'pdf';
+  return 'image';
+}
+
+async function addWork(file) {
+  if (!file) return;
+  $('w-msg').className = 'msg';
+  if (DEMO) {
+    works.push({ type: workType(file), url: URL.createObjectURL(file), name: file.name });
+    renderWorks();
+    showWMsg('ok', '👁 معاينة محلية فقط — الرفع والحفظ الفعلي بعد تسجيل الدخول.');
+    return;
+  }
+  showWMsg('ok', '⟳ جاري الرفع…');
+  try {
+    await ensureFirebase();
+    const res = await uploadClientFile({ clientId: user.uid, file, kind: 'works' });
+    works.push({ type: workType(file), url: res.url, name: file.name });
+    renderWorks();
+    await persistProfile();   // يحفظ works ضمن البروفايل + الكارت العام
+    showWMsg('ok', '✅ تم إضافة العمل.');
+  } catch (e) {
+    showWMsg('err', '❌ تعذّر الرفع: ' + (e.message || ''));
+  }
+}
+
+async function deleteWork(i) {
+  works.splice(i, 1);
+  renderWorks();
+  if (!DEMO) { try { await persistProfile(); } catch (_) {} }
+}
+
+function showWMsg(type, text) {
+  const el = $('w-msg'); el.textContent = text; el.className = 'msg show ' + type;
+}
+
+// ════════════════ PUBLIC CARD (Phase 6) ════════════════
+function publicCardUrl() {
+  const id = (clientDoc?._id) || user?.uid || 'demo';
+  return location.origin + location.pathname.replace(/[^/]*$/, '') + 'card.html?id=' + encodeURIComponent(id);
+}
+function updatePublicCard() {
+  const url = publicCardUrl();
+  if ($('public-link')) $('public-link').textContent = url;
+  if ($('btn-open-card')) $('btn-open-card').href = url;
+  if ($('qr-img')) $('qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=0&data=' + encodeURIComponent(url);
 }
 
 function showImg(kind, url) {
@@ -540,13 +634,10 @@ function showMsg(type, text) {
   el.className = 'msg show ' + type;
 }
 
-async function saveProfile() {
-  $('p-msg').className = 'msg';
-  if (DEMO) { showMsg('ok', 'ℹ️ وضع المعاينة فقط — للحفظ الفعلي سجّل دخول بحسابك.'); return; }
-  const bizName = $('p-bizname').value.trim();
-  const phone1  = $('p-phone').value.trim();
-  const businessProfile = {
-    bizName, bio: $('p-bio').value.trim(),
+function buildBusinessProfile() {
+  return {
+    bizName: $('p-bizname').value.trim(),
+    bio: $('p-bio').value.trim(),
     whatsapp: $('p-wa').value.trim(),
     website: $('p-web').value.trim(),
     social: {
@@ -555,18 +646,35 @@ async function saveProfile() {
     },
     services: $('p-services').value.split('\n').map(s => s.trim()).filter(Boolean),
     logoUrl: media.logoUrl, coverUrl: media.coverUrl,
+    works,
   };
+}
+
+// حفظ البروفايل (يُستخدم من زر الحفظ ومن إضافة/حذف الأعمال). يُرجع نتيجة الـ action.
+async function persistProfile() {
+  const bizName = $('p-bizname').value.trim();
+  const phone1  = $('p-phone').value.trim();
+  const businessProfile = buildBusinessProfile();
+  await ensureFirebase();
+  const res = await clientActions.upsertClientSelf({
+    authUid: user.uid, authEmail: user.email, authName: bizName,
+    data: { name: bizName, phone1, businessProfile },
+  });
+  if (res.ok) {
+    clientDoc = { ...(clientDoc || {}), _id: user.uid, name: bizName, phone1, businessProfile };
+    updatePublicCard();
+  }
+  return res;
+}
+
+async function saveProfile() {
+  $('p-msg').className = 'msg';
+  if (DEMO) { showMsg('ok', 'ℹ️ وضع المعاينة فقط — للحفظ الفعلي سجّل دخول بحسابك.'); return; }
   $('p-save').disabled = true;
   try {
-    await ensureFirebase();
-    const res = await clientActions.upsertClientSelf({
-      authUid: user.uid, authEmail: user.email, authName: bizName,
-      data: { name: bizName, phone1, businessProfile },
-    });
+    const res = await persistProfile();
     if (!res.ok) { showMsg('err', (res.errors || ['تعذّر الحفظ']).join('\n')); return; }
-    // حدّث النسخة المحلية + الهيدر + الرئيسية
-    clientDoc = { ...(clientDoc || {}), name: bizName, phone1, businessProfile };
-    $('h-name').textContent = bizName || $('h-name').textContent;
+    $('h-name').textContent = $('p-bizname').value.trim() || $('h-name').textContent;
     showMsg('ok', '✅ تم حفظ صفحتك بنجاح.');
     renderHome();
   } catch (e) {
@@ -623,6 +731,23 @@ function bindUI() {
   $('home-notifs')?.addEventListener('click', e => {
     const n = e.target.closest('.notif');
     if (n) openOrder(n.dataset.oid, n.dataset.ocode);
+  });
+  // معرض أعمالي (Phase 4)
+  $('btn-add-work')?.addEventListener('click', () => $('file-work').click());
+  $('file-work')?.addEventListener('change', (e) => { addWork(e.target.files?.[0]); e.target.value = ''; });
+  $('works-grid')?.addEventListener('click', (e) => {
+    const del = e.target.closest('.work-del');
+    if (del) deleteWork(parseInt(del.dataset.i, 10));
+  });
+  // صفحتي العامة (Phase 6)
+  $('btn-copy')?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(publicCardUrl()); showMsg('ok', '✅ تم نسخ الرابط.'); }
+    catch (_) { showMsg('err', 'انسخ الرابط يدوياً: ' + publicCardUrl()); }
+  });
+  $('btn-share')?.addEventListener('click', async () => {
+    const url = publicCardUrl();
+    if (navigator.share) { try { await navigator.share({ title: 'كارتي الرقمي', url }); } catch (_) {} }
+    else window.open('https://wa.me/?text=' + encodeURIComponent(url), '_blank');
   });
 }
 </script>
