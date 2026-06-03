@@ -20,7 +20,6 @@ import {
   getDoc,
   writeBatch,
   serverTimestamp,
-  increment,
   arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -33,6 +32,7 @@ import {
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
 import { resolveFinancialPolicy, evaluateOutflow, canApproveOutflow } from './core/financial-policy.js';
+import { addWalletDeltaToBatch, setWalletBalanceInBatch } from './core/wallet-ledger.js';
 
 function _nowStr() {
   return new Date().toLocaleString('ar-EG', {
@@ -230,7 +230,7 @@ export async function executePaymentRequest({
     }
 
     const batch = writeBatch(db);
-    batch.update(doc(db, 'wallets', walletId), { balance: increment(-r.amount) });
+    addWalletDeltaToBatch(batch, db, { walletId, delta: -r.amount, event: r.type, refId: r._id });
 
     let spRef = null;
     if (r.type === 'supplier_payment' && r.supplierId) {
@@ -718,7 +718,7 @@ export async function rejectTransaction({
       isReversed: true,
     });
     if (tx.walletId) {
-      batch.update(doc(db, 'wallets', tx.walletId), { balance: increment(reverseSign * tx.amount) });
+      addWalletDeltaToBatch(batch, db, { walletId: tx.walletId, delta: reverseSign * tx.amount, event: 'reject_reversal', refId: tx._id });
     }
 
     const revRef = doc(collection(db, 'transactions_v2'));
@@ -843,7 +843,7 @@ export async function recoveryAdjustment({
   }, async () => {
   try {
     const batch = writeBatch(db);
-    batch.update(doc(db, 'wallets', walletId), { balance: target });
+    setWalletBalanceInBatch(batch, db, { walletId, target, event: 'recovery_adjustment' });
     const txRef = doc(collection(db, 'transactions_v2'));
     const isIn = diff > 0;
     batch.set(txRef, {
