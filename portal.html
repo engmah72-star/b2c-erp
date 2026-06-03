@@ -152,6 +152,24 @@ textarea.inp{resize:vertical;min-height:64px;}
 .tabbar button.active::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
   width:26px;height:3px;border-radius:0 0 4px 4px;background:var(--p);}
 #gate{text-align:center;color:var(--dim2);padding:80px 16px;}
+/* ── Designs gallery (Phase 5) ── */
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.chips::-webkit-scrollbar{display:none;}
+.chip{flex-shrink:0;padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:var(--bg3);
+  color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;white-space:nowrap;transition:.15s;}
+.chip:hover{border-color:var(--p);}
+.chip.on{background:linear-gradient(135deg,var(--p),var(--b));color:#fff;border-color:transparent;}
+.gal-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+.gal-card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;}
+.gal-card .img{width:100%;height:152px;object-fit:cover;background:var(--bg3);display:block;cursor:pointer;}
+.gal-card .ph{height:152px;display:flex;align-items:center;justify-content:center;font-size:38px;
+  background:linear-gradient(135deg,rgba(167,139,250,.28),rgba(96,165,250,.18));}
+.gal-card .meta{padding:9px 11px 6px;}
+.gal-card .cat{font-size:var(--fs-xs);color:var(--p);font-weight:var(--fw-bold);margin-bottom:2px;}
+.gal-card .ttl{font-size:var(--fs-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gal-card .sim{margin:6px 11px 11px;padding:9px;border:none;border-radius:10px;background:#25d366;color:#06311a;
+  font-family:inherit;font-weight:var(--fw-extra);font-size:var(--fs-sm);cursor:pointer;}
+.gal-card .sim:hover{opacity:.9;}
 
 /* ════ Responsive — تابلت/كمبيوتر: عمود متمركز + شريط تنقّل عائم (دوك) ════ */
 @media (min-width:760px){
@@ -211,11 +229,9 @@ textarea.inp{resize:vertical;min-height:64px;}
 
   <!-- ═══ 2) معرض التصميمات ═══ -->
   <section class="cp-panel" id="tab-designs">
-    <div class="soon"><span class="big">🎨</span>
-      معرض التصميمات حسب النشاط<br>(محامي · طبيب · شركة · مطعم…)<br><br>
-      <b>قريباً</b> — قيد التطوير
-    </div>
-    <a class="btn-ghost" href="gallery.html" style="display:block;text-align:center;text-decoration:none">🖼️ تصفّح المعرض العام الآن</a>
+    <div class="sec-title">معرض تصميماتنا</div>
+    <div class="chips" id="gal-chips"></div>
+    <div id="gal-grid" class="gal-grid"><div class="empty">⟳ تحميل المعرض…</div></div>
   </section>
 
   <!-- ═══ 3) بروفايل أعمالي ═══ -->
@@ -345,6 +361,17 @@ let user = null;
 let clientDoc = null;
 const media = { logoUrl: '', coverUrl: '' };
 let works = [];  // [{type:'image'|'video'|'pdf', url, name}]
+let gallery = [];     // معرض تصاميم الشركة (collection: gallery)
+let galFilter = 'all';
+let galLoaded = false;
+const DEMO_DESIGNS = [
+  { productType:'محامي', title:'كارت مكتب محاماة' },
+  { productType:'طبيب',  title:'كارت عيادة أسنان' },
+  { productType:'مطاعم', title:'منيو مطعم فاخر' },
+  { productType:'شركات', title:'هوية بصرية لشركة' },
+  { productType:'مهندس', title:'كارت مكتب هندسي' },
+  { productType:'محامي', title:'ورقة رسمية محاماة' },
+];
 
 // ── On-screen diagnostics (بدل الصفحة الميتة: نعرض الخطأ) ──
 function fatal(msg) {
@@ -470,8 +497,63 @@ function switchTab(name) {
   document.querySelectorAll('.cp-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   window.scrollTo(0, 0);
+  if (name === 'designs' && !galLoaded) { galLoaded = true; loadGallery(); }
 }
 function esc(s){ return String(s == null ? '' : s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+// ════════════════ DESIGNS GALLERY (Phase 5) ════════════════
+async function loadGallery() {
+  const grid = $('gal-grid');
+  if (DEMO) { gallery = DEMO_DESIGNS.slice(); renderGallery(); return; }
+  try {
+    await ensureFirebase();
+    const snap = await getDocs(query(collection(db, 'gallery'), where('isVisible', '==', true), limit(60)));
+    gallery = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    const ts = g => (g.publishedAt?.seconds ?? (g.publishedAt?.toMillis ? g.publishedAt.toMillis()/1000 : 0)) || 0;
+    gallery.sort((a, b) => ts(b) - ts(a));
+    renderGallery();
+  } catch (e) {
+    grid.innerHTML = '<div class="empty">تعذّر تحميل المعرض: ' + esc(e.message || '') + '</div>';
+  }
+}
+
+function galCategories() {
+  const set = new Set();
+  gallery.forEach(g => { const c = (g.productType || '').trim(); if (c) set.add(c); });
+  return [...set];
+}
+
+function renderGallery() {
+  const chips = $('gal-chips'), grid = $('gal-grid');
+  const cats = galCategories();
+  chips.innerHTML = ['<span class="chip ' + (galFilter === 'all' ? 'on' : '') + '" data-cat="all">الكل</span>']
+    .concat(cats.map(c => '<span class="chip ' + (galFilter === c ? 'on' : '') + '" data-cat="' + esc(c) + '">' + esc(c) + '</span>')).join('');
+  const items = galFilter === 'all' ? gallery : gallery.filter(g => (g.productType || '').trim() === galFilter);
+  grid.__items = items;
+  if (!items.length) {
+    grid.innerHTML = '<div class="empty"><span class="big">🎨</span>لا توجد تصاميم في هذا التصنيف بعد.</div>';
+    return;
+  }
+  grid.innerHTML = items.map((g, i) => {
+    const img = g.imageUrl
+      ? `<img class="img" src="${esc(g.imageUrl)}" alt="" loading="lazy" data-i="${i}">`
+      : `<div class="ph">🎨</div>`;
+    const cat = esc((g.productType || 'تصميم').trim());
+    return `<div class="gal-card">
+      ${img}
+      <div class="meta"><div class="cat">${cat}</div><div class="ttl">${esc(g.title || 'تصميم')}</div></div>
+      <button class="sim" data-i="${i}">💬 أريد تصميم مشابه</button>
+    </div>`;
+  }).join('');
+}
+
+function wantSimilar(item) {
+  if (!item) return;
+  const name = clientDoc?.businessProfile?.bizName || clientDoc?.name || '';
+  const ref = item.title || item.productType || 'التصميم';
+  const msg = `السلام عليكم 👋\n${name ? 'أنا ' + name + '\n' : ''}عايز تصميم مشابه لـ: ${ref}${item.imageUrl ? '\n' + item.imageUrl : ''}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
 
 // ════════════════ HOME ════════════════
 async function renderHome() {
@@ -754,6 +836,20 @@ function bindUI() {
   $('home-notifs')?.addEventListener('click', e => {
     const n = e.target.closest('.notif');
     if (n) openOrder(n.dataset.oid, n.dataset.ocode);
+  });
+  // معرض التصاميم (Phase 5)
+  $('gal-chips')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    galFilter = chip.dataset.cat;
+    renderGallery();
+  });
+  $('gal-grid')?.addEventListener('click', (e) => {
+    const items = $('gal-grid').__items || [];
+    const sim = e.target.closest('.sim');
+    if (sim) { wantSimilar(items[+sim.dataset.i]); return; }
+    const img = e.target.closest('.img');
+    if (img && img.src) window.open(img.src, '_blank');
   });
   // معرض أعمالي (Phase 4)
   $('btn-add-work')?.addEventListener('click', () => $('file-work').click());
