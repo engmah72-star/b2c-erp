@@ -152,12 +152,24 @@ service cloud.firestore {
       return finOutflow().get('requiredApproverRole', 'admin') == 'admin'
         ? isAdminOnly() : isAdmin();
     }
+    // نوع الدفعة مشتقّ من category المعاملة (لمطابقة حدود escalateByType).
+    function txTypeFromCategory(cat) {
+      return (cat == 'printer_payment' || cat == 'shipper_payment') ? 'supplier_payment'
+           : cat == 'salary' ? 'salary'
+           : cat == 'refund' ? 'client_refund'
+           : 'general';
+    }
+    // الحدّ الفعّال للتصعيد: حدّ النوع (escalateByType) إن وُجد، وإلا الحدّ العام.
+    function effOutflowEscalate() {
+      let t = txTypeFromCategory(request.resource.data.get('category', ''));
+      return finOutflow().get('escalateByType', {}).get(t, finOutflow().get('escalate', 999999999));
+    }
     function outflowWithinPolicy() {
       let d = request.resource.data;
       return !( finEscalateActive()
                 && d.type == 'out'
                 && d.amount is number
-                && d.amount > finOutflow().get('escalate', 999999999)
+                && d.amount > effOutflowEscalate()
                 && d.get('isReversal', false) == false )
              || finApproverOk();
     }

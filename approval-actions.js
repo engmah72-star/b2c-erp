@@ -205,7 +205,7 @@ export async function executePaymentRequest({
   // (أربع عيون) قبل أن تتحرّك الفلوس. التحذيرات تُرفَق دائماً في النتيجة.
   const _policy = resolveFinancialPolicy(policy);
   const _polEval = evaluateOutflow({
-    amount: r.amount, walletType,
+    amount: r.amount, walletType, type: r.type,
     dailyWalletOutflow, policy: _policy,
   });
   if (_polEval.requiresApproval) {
