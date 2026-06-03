@@ -469,6 +469,11 @@ function renderToolbar(o) {
     if (o.clientId) html += '<div class="order-tb-menu-divider"></div>';
     html += '<button type="button" class="order-tb-menu-item danger" onclick="archiveOrder()">📁 أرشفة الأوردر</button>';
   }
+  // حذف نهائي (تصفير من السجل) — admin فقط (مثل reports.html). عملية لا رجعة فيها.
+  if (currentRole === 'admin') {
+    html += '<div class="order-tb-menu-divider"></div>';
+    html += '<button type="button" class="order-tb-menu-item danger" onclick="purgeOrder()">🗑 حذف نهائي من السجل</button>';
+  }
   html += '</div>';  // .order-tb-menu
   html += '</div>';  // .order-tb-more
   html += '</div>';  // .order-toolbar
@@ -870,6 +875,39 @@ window.archiveOrder = async function() {
       return toast('❌ ' + (r.errors||[]).join(' · '), 'err');
     }
     toast('📁 تم الأرشفة', 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ خطأ: ' + e.message, 'err');
+  }
+};
+
+// ── Purge action (حذف نهائي من السجل) — admin فقط، لا رجعة فيه ──
+window.purgeOrder = async function() {
+  if (!currentOrder) return;
+  if (currentRole !== 'admin') return toast('⛔ هذه العملية للأدمن فقط', 'err');
+  $('order-tb-menu')?.classList.remove('open');
+  const label = currentOrder.orderId || currentOrder._id;
+  if (!confirm('⚠️ حذف نهائي للأوردر "' + (currentOrder.clientName || label) + '"؟\n\nسيُمحى من كل السجلات (الأوردر + معاملاته + قيود الـ ledger + المرتجعات) وتُعكس أرصدة المحافظ. لا يمكن التراجع.')) return;
+  const reason = prompt('سبب الحذف النهائي (مطلوب):', '');
+  if (reason === null) return;
+  if (!reason.trim()) return toast('⚠️ السبب مطلوب', 'err');
+  if (!confirm('تأكيد أخير — حذف نهائي لا رجعة فيه؟')) return;
+  try {
+    const r = await orderActions.purgeOrder({
+      db, orderId: currentOrder._id, reason: reason.trim(),
+      role: currentRole, userId: currentUser?.uid || '', userName,
+    });
+    if (!r.ok) return toast('❌ ' + (r.errors||[]).join(' · '), 'err');
+    if (r.idempotent && !r.pending) return toast('ℹ️ الأوردر محذوف مسبقاً', 'ok');
+    let msg = '🗑 تم الحذف النهائي';
+    if (r.txDeleted) msg += ` · ${r.txDeleted} معاملة`;
+    if (r.ledgerDeleted) msg += ` · ${r.ledgerDeleted} قيد`;
+    toast(msg, 'ok');
+    setTimeout(() => {
+      if (history.length > 1) history.back();
+      else if (typeof window.navigatePage === 'function') window.navigatePage('production.html');
+      else location.href = 'production.html';
+    }, 900);
   } catch (e) {
     console.error(e);
     toast('❌ خطأ: ' + e.message, 'err');
