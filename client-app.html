@@ -262,16 +262,39 @@ let user = null;
 let clientDoc = null;
 const media = { logoUrl: '', coverUrl: '' };
 
+// ── On-screen diagnostics (بدل الصفحة الميتة: نعرض الخطأ) ──
+function fatal(msg) {
+  const g = $('gate');
+  if (!g) return;
+  g.style.display = 'block';
+  g.innerHTML = '⚠️ حصلت مشكلة في تحميل البوابة:<br>'
+    + '<span style="color:var(--r);font-size:13px;word-break:break-word">' + (msg || '') + '</span><br><br>'
+    + '<button class="btn" style="max-width:220px;margin:0 auto" onclick="location.reload()">🔄 إعادة تحميل</button>'
+    + '<div style="margin-top:10px"><a href="client-login.html" style="color:var(--p);font-size:13px">تسجيل الدخول من جديد</a></div>';
+}
+window.addEventListener('error', e => fatal((e.message || 'JS error') + ' — ' + ((e.filename || '').split('/').pop()) + ':' + (e.lineno || '')));
+window.addEventListener('unhandledrejection', e => fatal('Promise: ' + (e.reason?.message || e.reason || '')));
+
 // ── Auth gate ──
+let authFired = false;
 onAuthStateChanged(auth, async (u) => {
-  if (!u) { window.location.replace('client-login.html'); return; }
-  user = u;
-  await loadClient();
-  $('gate').style.display = 'none';
-  $('app').style.display = 'block';
-  $('tabbar').style.display = 'flex';
-  renderHome();
+  authFired = true;
+  try {
+    if (!u) { window.location.replace('client-login.html'); return; }
+    user = u;
+    await loadClient();
+    $('gate').style.display = 'none';
+    $('app').style.display = 'block';
+    $('tabbar').style.display = 'flex';
+    renderHome();
+  } catch (err) {
+    fatal(err?.message || String(err));
+  }
 });
+// watchdog: لو التحقق ما استجابش (إعداد ناقص) ما نسيبش الصفحة معلّقة
+setTimeout(() => {
+  if (!authFired) fatal('لم يستجب التحقق من الدخول. تأكد من تفعيل الدخول في Firebase، أو سجّل دخول من جديد.');
+}, 8000);
 
 async function loadClient() {
   try {
