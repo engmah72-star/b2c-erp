@@ -6,6 +6,7 @@ import { escapeHtml, qs } from '../utils/dom.js';
 import { Card, Button, Input, Avatar } from '../components/index.js';
 import { cropResize } from '../utils/image.js';
 import { slugUsername } from '../utils/username.js';
+import { qrSrc, downloadQR } from '../utils/qr.js';
 import { validateProfile } from '../validators/profile.validator.js';
 
 export function create(ctx) {
@@ -60,8 +61,17 @@ export function create(ctx) {
       <div class="cp-kv"><span class="cp-kv__k">الهاتف</span><span class="cp-kv__v">${escapeHtml(phone || '—')}</span></div>
       <div class="cp-kv"><span class="cp-kv__k">النشاط</span><span class="cp-kv__v">${escapeHtml(biz.activity || '—')}</span></div>
     </div>` });
+    const qrCard = uid() ? Card({ body: `<div class="cp-stack cp-stack--sm cp-text-c">
+      <div class="cp-title">QR صفحتك</div>
+      <img class="cp-qr" src="${escapeHtml(qrSrc(publicUrl(), 300))}" alt="QR" loading="lazy">
+      <div class="cp-muted" dir="ltr">${escapeHtml(publicUrl())}</div>
+      <div class="cp-row cp-row--wrap">
+        ${Button({ label: 'تنزيل QR', icon: '⬇️', variant: 'ghost', size: 'sm', block: false, action: 'qr-download' })}
+        ${Button({ label: 'مشاركة', icon: '🔗', variant: 'ghost', size: 'sm', block: false, action: 'share' })}
+      </div></div>` }) : '';
     const actions = `<div class="cp-stack cp-stack--sm">
-      ${Button({ label: 'مشاركة الكارت الرقمي', icon: '🔗', action: 'share', disabled: !uid() })}
+      ${qrCard}
+      ${Button({ label: 'مشاركة الصفحة العامة', icon: '🔗', action: 'share', disabled: !uid() })}
       ${Button({ label: 'إدارة الخدمات', icon: '🛠', variant: 'ghost', action: 'services' })}
       ${Button({ label: 'تعديل البيانات', icon: '✏️', variant: 'ghost', action: 'edit' })}
       ${Button({ label: 'تسجيل الخروج', icon: '🚪', variant: 'ghost', action: 'logout' })}
@@ -117,6 +127,7 @@ export function create(ctx) {
       if (a === 'cancel') { editing = false; errors = []; return paint(); }
       if (a === 'logout') return services.auth.signOut();
       if (a === 'services') return ctx.openServices();
+      if (a === 'qr-download') { await downloadQR(publicUrl(), 'business2card-qr.png'); return; }
       if (a === 'pick-logo') { qs('#pf-logo', document)?.click(); return; }
       if (a === 'pick-cover') { qs('#pf-cover', document)?.click(); return; }
       if (a === 'cancel-media') { pending = null; return paint(); }
