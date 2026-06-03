@@ -20,6 +20,18 @@ import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { ROLE_PAGES } from './core/permissions-matrix.js';
 import { computeNavModel, topUsed } from './core/sidebar-model.js';
+import * as signals from './core/runtime-shell/signals.js';
+import * as signalsAgg from './core/runtime-shell/signals-aggregator.js';
+
+// خريطة الشارات الحيّة: ملف الصفحة → [(domain, signalKey), ...] تُجمع.
+// تعيد استخدام عدّادات signals-aggregator الموجودة (محدودة + آمنة للصلاحيات).
+const BADGE_MAP = {
+  'approvals.html':  [['accounts', 'pending-approvals']],
+  'production.html': [['production', 'late']],
+  'shipping.html':   [['shipping', 'late']],
+  'clients.html':    [['clients', 'delayed']],
+  'inbox.html':      [['inbox', 'unread']],
+};
 
 // ── Smart features state (نفس مفاتيح smart-sidebar → الحالة تنتقل بسلاسة) ──
 const LS_FAV = 'sb_favorites_v1';
@@ -110,7 +122,11 @@ class AppSidebar extends HTMLElement {
       '.app-sb .nav-group.collapsed::after{content:" ◀";font-size:8px;opacity:.5;}' +
       '.app-sb-favs{padding:4px 0 6px;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:4px;}' +
       '.app-sb-favs .nav-group{color:var(--y-amber,#fbbf24);opacity:.85;}' +
-      '.app-sb-none{padding:14px 12px;color:rgba(255,255,255,.45);font-size:var(--fs-sm);text-align:center;font-style:italic;}';
+      '.app-sb-none{padding:14px 12px;color:rgba(255,255,255,.45);font-size:var(--fs-sm);text-align:center;font-style:italic;}' +
+      // live count badge
+      '.app-sb-badge{margin-inline-start:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;' +
+      'background:var(--p,#a78bfa);color:#fff;font-size:var(--fs-xs,11px);font-weight:700;' +
+      'display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:middle;}';
     document.head.appendChild(st);
   }
 
@@ -158,7 +174,30 @@ class AppSidebar extends HTMLElement {
       }
     }
     const linksEl = this.querySelector('#app-sb-links');
-    if (linksEl) { linksEl.innerHTML = html; this._enhance(linksEl); }
+    if (linksEl) { linksEl.innerHTML = html; this._enhance(linksEl); this._wireBadges(linksEl); }
+  }
+
+  // ── Live count badges (reuse signals-aggregator — bounded + permission-safe) ──
+  _wireBadges(linksEl) {
+    try { signalsAgg.start(); } catch (_) {}        // idempotent (guarded by _started)
+    const apply = () => {
+      linksEl.querySelectorAll('a.nav-link').forEach(a => {
+        if (a.closest('.app-sb-favs')) return;       // favorites clones excluded
+        const file = (a.getAttribute('href') || '').split('/').pop();
+        const keys = BADGE_MAP[file];
+        let badge = a.querySelector('.app-sb-badge');
+        if (!keys) { badge?.remove(); return; }
+        const total = keys.reduce((s, [d, k]) => s + (signals.getMetric(d, k) || 0), 0);
+        if (total > 0) {
+          if (!badge) { badge = document.createElement('span'); badge.className = 'app-sb-badge'; a.appendChild(badge); }
+          badge.textContent = total > 99 ? '99+' : String(total);
+          badge.setAttribute('aria-label', total + ' عنصر يحتاج إجراء');
+        } else if (badge) { badge.remove(); }
+      });
+    };
+    apply();
+    if (this._badgeUnsub) { try { this._badgeUnsub(); } catch (_) {} }
+    this._badgeUnsub = signals.onChange(() => apply());
   }
 
   // ── Smart features (search · favorites · usage flames · collapsible) ──
