@@ -9,6 +9,8 @@
  *   - computeSupplierDues — aggregate unpaid supplier dues across all orders
  */
 
+import { resolveFinancialPolicy } from './financial-policy.js';
+
 /**
  * Compute wallet balance state around a specific transaction.
  *
@@ -78,15 +80,18 @@ export function computeWalletState(tx, { wallets = [], transactions = [] } = {})
  *
  * @returns {Array<{lvl:'high'|'med', txt:string}>}
  */
-export function detectRisks(request, { allRequests = [], ordersMap = new Map(), format, now = new Date() } = {}) {
+export function detectRisks(request, { allRequests = [], ordersMap = new Map(), format, now = new Date(), policy = null } = {}) {
   const fmt = format || ((n) => (parseFloat(n) || 0).toLocaleString('ar-EG'));
   const risks = [];
   if (!request) return risks;
+  // الحدود من السياسة المالية (مصدر واحد) — افتراضياً 5,000 / 10,000.
+  const _p = resolveFinancialPolicy(policy);
+  const medT = _p.outflow.advisoryMed, highT = _p.outflow.advisoryHigh;
   // Large amount
-  if (request.amount > 10000) {
-    risks.push({ lvl: 'high', txt: `💰 مبلغ كبير: ${fmt(request.amount)} ج (> 10,000)` });
-  } else if (request.amount > 5000) {
-    risks.push({ lvl: 'med', txt: `⚠️ مبلغ متوسط: ${fmt(request.amount)} ج (> 5,000)` });
+  if (request.amount > highT) {
+    risks.push({ lvl: 'high', txt: `💰 مبلغ كبير: ${fmt(request.amount)} ج (> ${fmt(highT)})` });
+  } else if (request.amount > medT) {
+    risks.push({ lvl: 'med', txt: `⚠️ مبلغ متوسط: ${fmt(request.amount)} ج (> ${fmt(medT)})` });
   }
   // Same-day duplicates (same amount + supplier + employee, not rejected)
   const todayStr = now.toDateString();
