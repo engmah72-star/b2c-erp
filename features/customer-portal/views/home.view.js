@@ -77,13 +77,14 @@ export function create(ctx) {
     if (!orders.length) {
       return `<div class="cp-stack cp-stack--lg">${greeting()}${EmptyState({
         icon: '🚀', title: 'ابدأ أول طلب',
-        hint: 'لا توجد طلبات بعد — اطلب عرض سعر وسنبدأ معك فوراً.',
-        action: Button({ label: 'اطلب عرض سعر', icon: '🧾', action: 'quote', block: false }),
+        hint: 'لا توجد طلبات بعد — اطلب الآن وسنبدأ معك فوراً.',
+        action: Button({ label: 'اطلب الآن', icon: '🚀', action: 'neworder', block: false }),
       })}</div>`;
     }
     const recent = orders.slice(0, 6).map(orderCard).join('');
     return `<div class="cp-stack cp-stack--lg">
       ${greeting()}
+      ${Button({ label: 'اطلب الآن', icon: '🚀', action: 'neworder' })}
       ${attention()}
       ${stats()}
       ${Button({ label: 'كل الفواتير والمدفوعات', icon: '📑', variant: 'ghost', action: 'go:invoices' })}
@@ -99,6 +100,7 @@ export function create(ctx) {
       return html();
     },
     async onAction(a) {
+      if (a === 'neworder') return ctx.openNewOrder();
       if (a.startsWith('go:')) return ctx.go(a.slice(3));
       if (a.startsWith('open:')) { const o = byId.get(a.slice(5)); if (o) ctx.openOrder(o); return; }
       if (a.startsWith('reorder:')) { const o = byId.get(a.slice(8)); if (o) await sendRequest(ctx, { order: o, kind: 'order', text: reorderText(o) }); return; }

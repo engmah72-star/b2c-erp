@@ -44,7 +44,10 @@ export function create(ctx) {
   function html() {
     const list = visible();
     const head = `<div class="cp-stack cp-stack--sm">
-      <h2 class="cp-sec">طلباتي (${orders.length})</h2>
+      <div class="cp-row cp-row--between">
+        <h2 class="cp-sec">طلباتي (${orders.length})</h2>
+        ${Button({ label: 'طلب جديد', icon: '🚀', size: 'sm', block: false, action: 'neworder' })}
+      </div>
       ${Chips(FILTERS, filter)}
     </div>`;
     const content = list.length
@@ -62,6 +65,7 @@ export function create(ctx) {
     },
     onChip(value) { if (value && value !== filter) { filter = value; ctx.repaint(html()); } },
     async onAction(a) {
+      if (a === 'neworder') return ctx.openNewOrder();
       if (a.startsWith('open:')) { const o = byId.get(a.slice(5)); if (o) ctx.openOrder(o); return; }
       if (a.startsWith('reorder:')) { const o = byId.get(a.slice(8)); if (o) await sendRequest(ctx, { order: o, kind: 'order', text: reorderText(o) }); return; }
       if (a.startsWith('approve:')) { const o = byId.get(a.slice(8)); if (o) await sendRequest(ctx, { order: o, kind: 'order', text: approveText(o) }); }
