@@ -275,14 +275,26 @@
     navScroll.querySelectorAll('.nav-group').forEach(g => {
       if (g.dataset.sbCollapseBound) return;
       g.dataset.sbCollapseBound = '1';
-      g.addEventListener('click', () => {
-        g.classList.toggle('collapsed');
+      // a11y: مجموعة قابلة للطي = زر يُشغَّل بلوحة المفاتيح (Enter/Space)
+      g.setAttribute('role', 'button');
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('aria-expanded', 'true');
+      const toggle = () => {
+        const collapsed = g.classList.toggle('collapsed');
+        g.setAttribute('aria-expanded', String(!collapsed));
         let sib = g.nextElementSibling;
         while (sib && !sib.classList.contains('nav-group')) {
           if (sib.classList.contains('nav-link')) {
-            sib.style.display = g.classList.contains('collapsed') ? 'none' : '';
+            sib.style.display = collapsed ? 'none' : '';
           }
           sib = sib.nextElementSibling;
+        }
+      };
+      g.addEventListener('click', toggle);
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          toggle();
         }
       });
     });

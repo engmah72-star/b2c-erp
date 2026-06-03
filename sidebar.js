@@ -98,7 +98,7 @@
     const dashHome = ROLE_HOME[role] || 'accounts.html';
     const dashLabel = DASH_LABELS[role] || 'داشبوردي';
 
-    let html = `<a class="nav-link${cur === dashHome ? ' active' : ''}" href="${dashHome}"><span class="nav-ico">⬡</span> ${dashLabel}</a>`;
+    let html = `<a class="nav-link${cur === dashHome ? ' active' : ''}" href="${dashHome}"><span class="nav-ico" aria-hidden="true">⬡</span> ${dashLabel}</a>`;
     let lastGroup = '';
 
     for (const cfg of SIDEBAR_PAGES) {
@@ -108,7 +108,7 @@
         html += `<div class="nav-group">${GROUP_LABELS[cfg.group] || cfg.group}</div>`;
         lastGroup = cfg.group;
       }
-      html += `<a class="nav-link${cur === cfg.file ? ' active' : ''}" href="${cfg.file}"><span class="nav-ico">${cfg.ico}</span> ${cfg.label}</a>`;
+      html += `<a class="nav-link${cur === cfg.file ? ' active' : ''}" href="${cfg.file}"><span class="nav-ico" aria-hidden="true">${cfg.ico}</span> ${cfg.label}</a>`;
     }
 
     navEl.innerHTML = html;

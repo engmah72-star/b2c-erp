@@ -46,12 +46,13 @@ function mount(ud) {
   const initial = (name.trim().charAt(0) || 'U').toUpperCase();
   const roleLabel = ROLE_LABELS[ud.role] || ud.role || '';
   aside.innerHTML =
-    '<div class="nav-brand"><div class="nav-logo">🎨</div><div>'
+    '<div class="nav-brand"><div class="nav-logo" aria-hidden="true">🎨</div><div>'
     + '<div class="nav-brand-name">Business2Card</div>'
     + '<div class="nav-brand-role" id="role-badge">' + esc(roleLabel) + '</div></div></div>'
     + '<div class="nav-scroll" id="nav-links"></div>'
-    + '<div class="nav-foot"><div class="nav-user" onclick="appLogout()">'
-    + '<div class="nav-avatar" id="nav-av">' + esc(initial) + '</div>'
+    + '<div class="nav-foot"><div class="nav-user" role="button" tabindex="0" aria-label="تسجيل خروج"'
+    + ' onclick="appLogout()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();appLogout();}">'
+    + '<div class="nav-avatar" id="nav-av" aria-hidden="true">' + esc(initial) + '</div>'
     + '<div><div class="nav-user-name" id="nav-name">' + esc(name) + '</div>'
     + '<div class="nav-user-role">تسجيل خروج</div></div></div></div>';
   // الأقسام المجمّعة (الرئيسية/الأوردرات/الإدارة) عبر الباني المركزي

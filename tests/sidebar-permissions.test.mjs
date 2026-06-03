@@ -266,5 +266,18 @@ test('guard: legacy user (no pages) denied on a non-default page', () => {
   assertEq(env.location.href, 'cs-dashboard.html');
 });
 
+// ══ Accessibility (finding #6) ═══════════════════════════════════
+test('build: decorative nav-ico emoji are aria-hidden', () => {
+  const { env, api, userData } = sidebarFor('admin');
+  api.build(userData, 'order.html');
+  const icos = [...env.navEl.innerHTML.matchAll(/<span class="nav-ico"([^>]*)>/g)];
+  if (!icos.length) throw new Error('no nav-ico spans rendered');
+  icos.forEach(m => {
+    if (!/aria-hidden="true"/.test(m[1])) {
+      throw new Error('nav-ico missing aria-hidden: <span class="nav-ico"' + m[1] + '>');
+    }
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
