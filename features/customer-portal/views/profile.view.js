@@ -91,6 +91,8 @@ export function create(ctx) {
       ${Input({ id: 'f-activity', label: 'النشاط / التخصص', value: biz.activity || '' })}
       ${Input({ id: 'f-city', label: 'المحافظة / المدينة', value: biz.city || '' })}
       ${Input({ id: 'f-username', label: 'اسم الصفحة العامة (username)', value: biz.username || '', dir: 'ltr', placeholder: 'my-brand', hint: 'رابطك: /u/my-brand' })}
+      <label class="cp-check"><input type="checkbox" id="f-directory"${biz.listedInDirectory ? ' checked' : ''}>
+        <span>إظهار نشاطي داخل دليل الأعمال</span></label>
       ${errBox}
       <div class="cp-row cp-row--wrap">
         ${Button({ label: 'حفظ', icon: '💾', size: 'sm', block: false, action: 'save' })}
@@ -168,6 +170,7 @@ export function create(ctx) {
           ...(client?.businessProfile || {}),
           bizName, tagline: get('f-tagline'), activity: get('f-activity'),
           city: get('f-city'), username,
+          listedInDirectory: !!qs('#f-directory')?.checked,
         };
         const r = await services.profile.saveProfile({ uid: user.uid, email: user.email, name: user.displayName, phone, businessProfile });
         if (r?.ok) { await reload(); editing = false; errors = []; shell.notify('تم حفظ البيانات ✅', 'ok'); paint(); }

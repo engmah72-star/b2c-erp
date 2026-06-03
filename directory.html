@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>دليل الأعمال — Business2Card</title>
+<meta name="description" content="دليل أعمال: ابحث عن الأنشطة بالاسم أو التخصص أو المحافظة.">
+<meta name="robots" content="index,follow">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="stylesheet" href="shared.css?v=45">
+<link rel="stylesheet" href="client-theme.css?v=1">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font-ar);background:var(--bg);color:var(--snow);min-height:100vh;}
+.wrap{max-width:680px;margin:0 auto;padding:20px 16px 48px;}
+.head{text-align:center;padding:14px 0 18px;}
+.head h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);}
+.head p{color:var(--dim2);font-size:var(--fs-md);margin-top:6px;}
+.search{position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;}
+.search input{width:100%;min-height:48px;padding:12px 16px;border-radius:var(--rad);border:1px solid var(--line);
+  background:var(--bg3);color:var(--snow);font-family:inherit;font-size:var(--fs-md);}
+.search input:focus{border-color:var(--p);outline:none;}
+.count{color:var(--dim2);font-size:var(--fs-sm);margin:8px 2px 14px;}
+.grid{display:flex;flex-direction:column;gap:12px;}
+.biz{display:flex;gap:14px;align-items:center;background:var(--bg2);border:1px solid var(--line);
+  border-radius:16px;padding:14px;text-decoration:none;color:inherit;transition:border-color .15s;}
+.biz:hover{border-color:var(--p);}
+.biz .logo{width:58px;height:58px;border-radius:14px;background:var(--bg3);overflow:hidden;flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:var(--fw-heavy);}
+.biz .logo img{width:100%;height:100%;object-fit:cover;}
+.biz .info{flex:1;min-width:0;}
+.biz .name{font-weight:var(--fw-heavy);font-size:var(--fs-lg);}
+.biz .meta{color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);margin-top:1px;}
+.biz .bio{color:var(--dim2);font-size:var(--fs-sm);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.biz .go{color:var(--dim2);font-size:20px;flex:0 0 auto;}
+#state{padding:60px 16px;text-align:center;color:var(--dim2);font-size:var(--fs-lg);line-height:1.8;}
+.foot{text-align:center;color:var(--dim2);font-size:var(--fs-xs);padding:24px;}
+.foot a{color:var(--p);text-decoration:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><h1>📒 دليل الأعمال</h1><p>ابحث بالاسم · التخصص · المحافظة</p></div>
+  <div class="search"><input id="q" type="search" placeholder="🔎 ابحث عن نشاط…" aria-label="بحث"></div>
+  <div class="count" id="count"></div>
+  <div id="state">⟳ جاري التحميل…</div>
+  <div class="grid" id="grid"></div>
+  <div class="foot">صُنع عبر <a href="client-login.html">Business2Card</a></div>
+</div>
+
+<script type="module">
+import { db } from "./core/firebase-init.js";
+import { collection, query, where, limit, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+let all = [];
+
+const linkOf = c => c.username ? `/u/${encodeURIComponent(c.username)}` : `card.html?id=${encodeURIComponent(c.uid)}`;
+
+function card(c){
+  const logo = c.logoUrl ? `<img src="${esc(c.logoUrl)}" alt="">` : esc((c.bizName||'★').trim()[0]||'★');
+  const meta = [c.activity, c.city].filter(Boolean).map(esc).join(' · ');
+  return `<a class="biz" href="${esc(linkOf(c))}">
+    <div class="logo">${logo}</div>
+    <div class="info">
+      <div class="name">${esc(c.bizName||'نشاط')}</div>
+      ${meta?`<div class="meta">${meta}</div>`:''}
+      ${c.bio?`<div class="bio">${esc(c.bio)}</div>`:''}
+    </div><div class="go">‹</div></a>`;
+}
+
+function render(list){
+  $('count').textContent = list.length ? `${list.length} نشاط` : '';
+  $('grid').innerHTML = list.map(card).join('');
+  $('state').hidden = list.length > 0;
+  if (!list.length) $('state').innerHTML = '🔍 لا توجد نتائج.';
+  else $('state').hidden = true;
+}
+
+function applySearch(){
+  const q = ($('q').value || '').trim().toLowerCase();
+  if (!q) return render(all);
+  render(all.filter(c => [c.bizName, c.activity, c.city, c.bio]
+    .filter(Boolean).some(v => String(v).toLowerCase().includes(q))));
+}
+
+(async function load(){
+  try{
+    const snap = await getDocs(query(collection(db,'public_cards'), where('listedInDirectory','==',true), limit(200)));
+    all = snap.docs.map(d => ({ uid:d.id, ...d.data() }))
+      .filter(c => (c.bizName||'').trim())
+      .sort((a,b) => (b.featured?1:0)-(a.featured?1:0) || (a.bizName||'').localeCompare(b.bizName||'','ar'));
+  }catch(e){ $('state').textContent = '❌ تعذّر التحميل: ' + (e.message||''); return; }
+  if (!all.length){ $('state').innerHTML = '📭 لا توجد أنشطة في الدليل بعد.'; return; }
+  render(all);
+  $('q').addEventListener('input', applySearch);
+})();
+</script>
+</body>
+</html>
