@@ -69,6 +69,7 @@
         <button type="button" class="rep-tab" data-tab="sales" onclick="switchTab('sales',this)">💰 المبيعات <span class="tab-badge dim hide" data-badge="sales"></span></button>
         <button type="button" class="rep-tab" data-tab="collection" onclick="switchTab('collection',this)">📋 جرد التحصيل <span class="tab-badge hide" data-badge="collection"></span></button>
         <button type="button" class="rep-tab" data-tab="returns" onclick="switchTab('returns',this)">↩️ المرتجعات <span class="tab-badge warn hide" data-badge="returns"></span></button>
+        <button type="button" class="rep-tab" data-tab="approvals" onclick="switchTab('approvals',this)">🔐 الاعتمادات <span class="tab-badge dim hide" data-badge="approvals"></span></button>
       </div>
       <!-- Mode toggle: executive summary (default) vs advanced tabs -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -226,12 +227,14 @@ import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue,
 import { buildDesignerStats, buildShippingStats, buildClientActivityStats, buildStagePerformanceStats } from "./core/reports-tab-stats.js";
 import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 import { buildReturnsStats } from "./core/reports-returns-stats.js";
+import { buildApprovalsStats } from "./core/reports-approvals-stats.js";
 import { buildCollectionStats, buildCollectionByClient } from "./core/reports-collection-stats.js";
 import { buildReturnsTabHTML } from "./features/reports/views/render-returns.js";
+import { buildApprovalsTabHTML } from "./features/reports/views/render-approvals.js";
 import { buildShippingTabHTML, buildClientsTabHTML } from "./features/reports/views/render-shipping-clients.js";
 import { buildDesignersTabHTML, buildSalesTabHTML, buildStagePerformanceTabHTML } from "./features/reports/views/render-designers-sales.js";
 import { renderOverviewDetailedView } from "./features/reports/views/render-overview-detailed.js";
-let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[];
+let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[],paymentRequests=[];
 let appSettings={}; // settings/main — monthly targets (الأهداف الشهرية)
 let currentTab='overview',dateFrom=null,dateTo=null,filterMode='month';
 // Executive Summary mode = الافتراضي (لوحة واحدة بكل الأرقام، بدون tabs).
@@ -510,6 +513,8 @@ onAuthStateChanged(auth,async u=>{
   onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(10000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
   // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
   onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
+  // payment_requests — تبويب الاعتمادات (P8). bounded؛ يتدهور بأمان لغير المخوّلين مالياً.
+  onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
   // طبّق active class على الـ tab/date button المختارين من URL
@@ -601,6 +606,7 @@ function render(){
     requestAnimationFrame(()=>applyCollectionFilters());
   }
   else if(currentTab==='returns') el.innerHTML=renderReturns(filtered,range);
+  else if(currentTab==='approvals') el.innerHTML=renderApprovals(range);
   updateTabBadges();
   // animate counters في كل KPI فيه data-counter
   requestAnimationFrame(()=>applyCounters(el));
@@ -1219,6 +1225,15 @@ function renderReturns(filteredOrders, range){
   return buildReturnsTabHTML({
     stats: buildReturnsStats(returns, filteredOrders, range),
     kpi, format: fn,
+  });
+}
+
+// ══ Tab 8: الاعتمادات (P8) ══
+function renderApprovals(range){
+  // pure view module: features/reports/views/render-approvals.js
+  return buildApprovalsTabHTML({
+    stats: buildApprovalsStats(paymentRequests, range),
+    format: fn,
   });
 }
 
