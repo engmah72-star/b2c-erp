@@ -294,6 +294,10 @@
 
             <button type="button" class="btn btn-c btn-sm w-full" id="fp-save-btn" onclick="saveFinancialPolicyUI()">💾 حفظ سياسة الرقابة</button>
             <div id="fp-readonly-note" style="display:none;margin-top:8px;font-size:var(--fs-sm);color:var(--dim)">عرض فقط — تعديل السياسة المالية للأدمن فقط</div>
+            <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
+              <div style="font-size:var(--fs-sm);color:var(--dim);font-weight:var(--fw-bold);margin-bottom:6px">🗂️ آخر تغييرات السياسة</div>
+              <div id="fp-audit-log" style="font-size:var(--fs-sm);color:var(--dim);line-height:1.9">—</div>
+            </div>
           </div>
         </div>
 
@@ -757,6 +761,20 @@ onSnapshot(doc(db,'master_lists','financial_policy'), snap => {
   renderFinancialPolicy();
 }, err => console.warn('[settings] financial_policy:', err));
 
+// LOAD FINANCIAL POLICY AUDIT — آخر 10 تغييرات (append-only، قراءة فقط)
+onSnapshot(query(collection(db,'financial_policy_audit'), orderBy('changedAt','desc'), limit(10)), snap => {
+  const el = document.getElementById('fp-audit-log'); if(!el) return;
+  if(snap.empty){ el.textContent = 'لا تغييرات مسجَّلة بعد.'; return; }
+  el.innerHTML = snap.docs.map(d=>{
+    const x = d.data();
+    const dt = x.changedAt?.seconds ? new Date(x.changedAt.seconds*1000).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '—';
+    const who = x.changedByName || x.changedBy || '—';
+    const mode = (x.after||{}).mode || '—';
+    const strict = ((x.after||{}).approval||{}).strictSeparation ? ' · فصل صارم✓' : '';
+    return `• <b>${who}</b> · ${dt} · وضع=${mode}${strict}`;
+  }).join('<br>');
+}, err => console.warn('[settings] policy_audit:', err));
+
 // LOAD USERS (RULE G3 — bounded for safety; org user count is small)
 onSnapshot(query(collection(db,'users'), orderBy('name','asc'), limit(500)), snap => {
   users = snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -1023,7 +1041,7 @@ window.saveFinancialPolicyUI = async function() {
       staleHours: num('fp-stale-hours', 48),
     },
   };
-  const r = await masterListsActions.saveFinancialPolicy({ db, policy, userId: currentUser?.uid || '' });
+  const r = await masterListsActions.saveFinancialPolicy({ db, policy, userId: currentUser?.uid || '', userName: document.getElementById('nav-name')?.textContent || '' });
   if(!r.ok){ toast('❌ '+(r.errors||[]).join(' · '),'err'); return; }
   toast('✅ تم حفظ سياسة الرقابة المالية','ok');
 };

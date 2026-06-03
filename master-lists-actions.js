@@ -14,9 +14,11 @@
 
 import {
   doc,
+  collection,
   setDoc,
   updateDoc,
   getDoc,
+  writeBatch,
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -209,17 +211,41 @@ export async function saveAppSettings({ db = defaultDb, settings }) {
  * @param {Object} args.policy — { mode, outflow{...}, inflow{...}, walletOverrides{...} }
  * @param {string} [args.userId] — للتدقيق (من غيّر السياسة)
  */
-export async function saveFinancialPolicy({ db = defaultDb, policy, userId = '' }) {
+/** لقطة نظيفة من حقول السياسة (للمقارنة قبل/بعد في السجلّ). */
+function _policySnap(p) {
+  if (!p || typeof p !== 'object') return null;
+  return {
+    mode: p.mode ?? null,
+    outflow: p.outflow ?? null,
+    inflow: p.inflow ?? null,
+    walletOverrides: p.walletOverrides ?? null,
+    approval: p.approval ?? null,
+  };
+}
+
+export async function saveFinancialPolicy({ db = defaultDb, policy, userId = '', userName = '' }) {
   if (!policy || typeof policy !== 'object') {
     return { ok: false, errors: ['⚠️ policy مطلوب'], warnings: [] };
   }
   const resolved = resolveFinancialPolicy(policy);
   try {
-    await setDoc(doc(db, 'master_lists', 'financial_policy'), {
-      ...resolved,
-      updatedAt: serverTimestamp(),
-      updatedBy: userId || '',
-    }, { merge: true });
+    const ref = doc(db, 'master_lists', 'financial_policy');
+    // اقرأ الحالة الحالية (قبل) للسجلّ — فشل القراءة لا يمنع الحفظ
+    let before = null;
+    try { const s = await getDoc(ref); if (s.exists()) before = s.data(); } catch (_) {}
+
+    const batch = writeBatch(db);
+    batch.set(ref, { ...resolved, updatedAt: serverTimestamp(), updatedBy: userId || '' }, { merge: true });
+    // سجلّ تغيير غير قابل للتعديل (append-only) — financial_policy_audit
+    const auditRef = doc(collection(db, 'financial_policy_audit'));
+    batch.set(auditRef, {
+      changedBy: userId || '',
+      changedByName: userName || '',
+      changedAt: serverTimestamp(),
+      before: _policySnap(before),
+      after: _policySnap(resolved),
+    });
+    await batch.commit();
     return { ok: true, errors: [], warnings: [], policy: resolved };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل حفظ السياسة المالية'], warnings: [] };
