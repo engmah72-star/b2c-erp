@@ -32,6 +32,7 @@ import {
 } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
+import { resolveFinancialPolicy, evaluateOutflow, canApproveOutflow } from './core/financial-policy.js';
 
 function _nowStr() {
   return new Date().toLocaleString('ar-EG', {
@@ -170,6 +171,10 @@ export async function createPaymentRequest({
  * @param {string} transferRef
  * @param {string} [note]
  * @param {Object} [receipt] — { url, path } لو رُفع إيصال مسبقاً (caller يرفع)
+ * @param {string} [role] — دور المُنفِّذ (لبوابة سياسة الخروج)
+ * @param {string} [walletType] — 'cash' | 'bank' | ... (لتشديد الكاش)
+ * @param {Object} [policy] — override من master_lists/financial_policy (افتراضي advisory)
+ * @param {number} [dailyWalletOutflow] — إجمالي خارج هذه المحفظة اليوم (للحدّ اليومي)
  */
 export async function executePaymentRequest({
   db = defaultDb, request,
@@ -177,6 +182,7 @@ export async function executePaymentRequest({
   transferRef, note = '',
   receipt = null,
   userId, userName,
+  role = '', walletType = '', policy = null, dailyWalletOutflow = 0,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!request || !request._id) return { ok: false, errors: ['⚠️ request مطلوب'], warnings: [] };
@@ -188,6 +194,27 @@ export async function executePaymentRequest({
     return { ok: false, errors: ['⚠️ أدخل رقم/مرجع التحويل'], warnings: [] };
   }
   const r = request;
+
+  // ── بوابة سياسة الخروج (Financial Policy) ──────────────────────────
+  // افتراضياً advisory → لا تمنع (backward-compatible). في mode='escalate'
+  // الحركات فوق الحدّ تتطلّب مُعتمِداً بالدور المطلوب ومختلفاً عن منشئ الطلب
+  // (أربع عيون) قبل أن تتحرّك الفلوس. التحذيرات تُرفَق دائماً في النتيجة.
+  const _policy = resolveFinancialPolicy(policy);
+  const _polEval = evaluateOutflow({
+    amount: r.amount, walletType,
+    dailyWalletOutflow, policy: _policy,
+  });
+  if (_polEval.requiresApproval) {
+    const gate = canApproveOutflow(_polEval, { role, userId }, r.requestedBy || '');
+    if (!gate.ok) {
+      return {
+        ok: false, errors: gate.errors, warnings: _polEval.warnings,
+        requiresApproval: true, policy: _polEval,
+      };
+    }
+  }
+  const _policyWarnings = _polEval.warnings;
+
   return withIdempotency(db, {
     actionType: 'execute_payment_request',
     entityId: r._id,
@@ -367,7 +394,7 @@ export async function executePaymentRequest({
 
     await batch.commit();
     return {
-      ok: true, errors: [], warnings: [],
+      ok: true, errors: [], warnings: _policyWarnings,
       transactionId: txRef.id,
       supplierPaymentId: spRef?.id || null,
       employeePaymentId: epRef?.id || null,
