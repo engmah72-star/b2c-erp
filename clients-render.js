@@ -713,6 +713,8 @@ export function clientPanelHeaderHTML({ client, color } = {}) {
         <div style="font-size:var(--fs-xl);font-weight:var(--fw-extra)">${c.name} ${c.status === 'legacy' ? '<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:20px;background:rgba(150,150,170,.15);color:#aaa;font-weight:var(--fw-extra);margin-right:6px">📁 قديم</span>' : ''}</div>
         <div class="txt-meta-sm">${canSee('client_phone') ? (c.phone1 || '') : ''} ${c.job ? '· ' + c.job : ''}</div>
       </div>
+      <a href="client-hub.html?id=${c._id || ''}" target="_blank" title="ملف العميل الكامل (360)"
+        style="margin-inline-start:auto;padding:8px 12px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg3);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);text-decoration:none;white-space:nowrap">🧭 الملف الكامل</a>
     </div>`;
 }
 
