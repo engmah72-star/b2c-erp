@@ -1,0 +1,73 @@
+name: Cleanup Preview Channels
+
+# تنظيف قنوات معاينة Firebase Hosting (تفريغ الحصة).
+#  - workflow_dispatch: يحذف **كل** القنوات ما عدا `live` (تفريغ كامل يدوي).
+#  - pull_request[closed]: يحذف قناة الـ PR المعني فقط (تنظيف تلقائي مستمر).
+# لا يلمس `live` ولا الإنتاج — مجرّد روابط معاينة مؤقتة. (نفس مصادقة deploy.yml)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    # forks لا تملك secrets؛ شغّل فقط لأحداث المستودع نفسه أو التشغيل اليدوي.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Delete preview channel(s) via Hosting REST API
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PROJECT: business2card-c041b
+          SITE: business2card-c041b
+          MODE: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error
+          from google.oauth2 import service_account
+          import google.auth.transport.requests as gr
+
+          SITE = os.environ["SITE"]
+          MODE = os.environ["MODE"]
+          PR   = os.environ.get("PR_NUMBER") or ""
+          sa = json.loads(os.environ["FIREBASE_SA"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+          creds.refresh(gr.Request())
+          hdrs = {"Authorization": f"Bearer {creds.token}"}
+          base = f"https://firebasehosting.googleapis.com/v1beta1/sites/{SITE}/channels"
+
+          # اجمع كل القنوات (مع الترقيم)
+          channels, token = [], None
+          while True:
+              url = base + "?pageSize=100" + (f"&pageToken={token}" if token else "")
+              req = urllib.request.Request(url, headers=hdrs)
+              data = json.loads(urllib.request.urlopen(req).read())
+              channels += data.get("channels", [])
+              token = data.get("nextPageToken")
+              if not token: break
+
+          def cid(c): return c["name"].split("/")[-1]
+          targets = [cid(c) for c in channels if cid(c) != "live"]
+          if MODE == "pull_request":
+              targets = [n for n in targets if n.startswith(f"pr{PR}-")]
+
+          if not targets:
+              print("No preview channels to delete."); raise SystemExit(0)
+
+          print(f"Deleting {len(targets)} channel(s): {targets}")
+          for ch in targets:
+              req = urllib.request.Request(f"{base}/{ch}", headers=hdrs, method="DELETE")
+              try:
+                  urllib.request.urlopen(req); print(f"  ✓ deleted {ch}")
+              except urllib.error.HTTPError as e:
+                  print(f"  ✗ {ch}: {e.code} {e.read().decode()[:200]}")
+          print("Done.")
+          PY
