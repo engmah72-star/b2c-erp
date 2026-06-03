@@ -69,7 +69,12 @@
     if (cfg.adminOnly) return role === 'admin' || (role === 'operation_manager' && legacyOpsAdminPages());
     if (isAdmin(role)) return !cfg.guestOnly;
     const perms = userData.permissions || {};
-    const pages = perms.pages || [];
+    // Fallback للمستخدمين القدام: لو pages مفقودة تماماً (ليست مصفوفة)، استخدم
+    // الصفحات الافتراضية للدور من window.ROLE_PAGES (permissions-matrix). مصفوفة
+    // فارغة [] تُحترم كقفل مقصود من الأدمن (لا تُستبدل بالافتراضي).
+    const pages = Array.isArray(perms.pages)
+      ? perms.pages
+      : ((typeof window !== 'undefined' && window.ROLE_PAGES && window.ROLE_PAGES[role]) || []);
     const hasPagePerm = pages.includes('*') || pages.includes(cfg.perm || '');
     const hasViewClients = cfg.perm === 'clients' && perms.canViewClients === true;
     return hasPagePerm || hasViewClients;

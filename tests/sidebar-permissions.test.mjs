@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { getRoleDefaultPermissions } from '../core/permissions-matrix.js';
+import { getRoleDefaultPermissions, ROLE_PAGES } from '../core/permissions-matrix.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -216,6 +216,54 @@ test('guard: page not present in sidebar config is NOT guarded (returns true)', 
 test('guard: missing userData → true (no guard before auth resolves)', () => {
   const { api } = sidebarFor('customer_service');
   assertEq(api.guard(null, 'employees.html'), true);
+});
+
+// ══ Legacy-user fallback (finding #3) ════════════════════════════
+// permissions.pages مفقودة → fallback على ROLE_PAGES (window). مصفوفة
+// فارغة [] تُحترم كقفل مقصود.
+function buildWith(role, permissions, { exposeRolePages = true } = {}) {
+  const env = makeEnv({ pathname: '/order.html' });
+  loadScript('sidebar-config.js', env);
+  loadScript('sidebar.js', env);
+  if (exposeRolePages) env.window.ROLE_PAGES = ROLE_PAGES;
+  env.window.B2CSidebar.build({ role, permissions }, 'order.html');
+  return [...env.navEl.innerHTML.matchAll(/href="([^"]+)"/g)].map(m => m[1]);
+}
+function guardWith(role, permissions, page) {
+  const env = makeEnv({ pathname: '/' + page });
+  loadScript('sidebar-config.js', env);
+  loadScript('sidebar.js', env);
+  env.window.ROLE_PAGES = ROLE_PAGES;
+  return { result: env.window.B2CSidebar.guard({ role, permissions }, page), env };
+}
+
+test('build: legacy user with NO permissions.pages → falls back to role defaults', () => {
+  const pages = buildWith('customer_service', {});  // no pages key
+  assertHas(pages, 'clients.html');
+  assertHas(pages, 'design.html');
+});
+
+test('build: explicit empty pages [] is respected (locked, not re-granted)', () => {
+  const pages = buildWith('customer_service', { pages: [] });
+  assertHasNot(pages, 'clients.html');
+  assertHasNot(pages, 'design.html');
+  assertHas(pages, 'inbox.html'); // public pages still visible
+});
+
+test('build: missing pages + ROLE_PAGES unavailable → no regression (public only)', () => {
+  const pages = buildWith('customer_service', {}, { exposeRolePages: false });
+  assertHasNot(pages, 'clients.html');
+  assertHas(pages, 'inbox.html');
+});
+
+test('guard: legacy user (no pages) allowed on a role-default page via fallback', () => {
+  assertEq(guardWith('customer_service', {}, 'clients.html').result, true);
+});
+
+test('guard: legacy user (no pages) denied on a non-default page', () => {
+  const { result, env } = guardWith('customer_service', {}, 'accounts.html');
+  assertEq(result, false);
+  assertEq(env.location.href, 'cs-dashboard.html');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

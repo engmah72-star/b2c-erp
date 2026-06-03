@@ -14,6 +14,14 @@
 import { auth, db } from './firebase-init.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { ROLE_PAGES } from './permissions-matrix.js';
+
+// ── Expose canonical role→pages defaults to the plain-script world ──
+// sidebar.js (plain IIFE، لا يستطيع import) يستخدمها كـ fallback عندما تكون
+// users/{uid}.permissions.pages مفقودة (مستخدمون قدام). يُضبط هنا وقت تقييم
+// الـ module (sync) فيكون جاهزاً قبل أي build/guard. المصدر الوحيد يبقى
+// permissions-matrix — لا تكرار.
+try { if (typeof window !== 'undefined' && !window.ROLE_PAGES) window.ROLE_PAGES = ROLE_PAGES; } catch (_) {}
 
 const CUR = (location.pathname.split('/').pop() || '').toLowerCase();
 const SKIP = ['login.html', 'client-login.html', 'client-portal.html', 'waybill.html',
