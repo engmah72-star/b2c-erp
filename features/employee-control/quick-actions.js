@@ -7,6 +7,7 @@
 
 import { employeeActions } from '../../employee-actions.js';
 import { getRoleDefaultPermissions } from '../../core/permissions-matrix.js';
+import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from '../../core/storage-helpers.js';
 import { ROLE_LABELS, esc } from './render.js';
 
 // Local copies of the incident catalog (single concept, kept in sync with
@@ -33,11 +34,11 @@ function closeModal() { host().innerHTML = ''; }
 
 // Generic modal: title + body HTML + submit handler.
 // onSubmit(formEl) → returns a result-contract { ok, errors[] } (or throws).
-function openModal({ title, body, submitLabel = '✓ تأكيد', onSubmit, danger = false }) {
+function openModal({ title, body, submitLabel = '✓ تأكيد', onSubmit, onMount, danger = false }) {
   const h = host();
   h.innerHTML = `
     <div class="ec-modal-ov" data-ov="1">
-      <div class="ec-modal-card" role="dialog" aria-modal="true">
+      <div class="ec-modal-card${danger ? ' danger' : ''}" role="dialog" aria-modal="true">
         <div class="ec-modal-head"><h3>${esc(title)}</h3>
           <button type="button" class="ec-modal-x" data-close="1">✕</button></div>
         <form class="ec-modal-body" id="ec-form">${body}</form>
@@ -51,6 +52,8 @@ function openModal({ title, body, submitLabel = '✓ تأكيد', onSubmit, dang
   const ov = h.querySelector('.ec-modal-ov');
   h.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModal));
   ov.addEventListener('click', e => { if (e.target.dataset.ov) closeModal(); });
+
+  if (typeof onMount === 'function') onMount(h.querySelector('#ec-form'));
 
   const submit = h.querySelector('#ec-submit');
   submit.addEventListener('click', async () => {
@@ -73,8 +76,64 @@ function openModal({ title, body, submitLabel = '✓ تأكيد', onSubmit, dang
 }
 
 const fld = (label, inner) => `<label class="ec-fld"><span>${esc(label)}</span>${inner}</label>`;
+const fldRow = (...fields) => `<div class="ec-fld-row">${fields.join('')}</div>`;
 const opt = (v, l, sel = false) => `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(l)}</option>`;
 const today = () => new Date().toISOString().slice(0, 10);
+
+// ── Image upload dropzone (view markup + behaviour wiring) ──────────────
+// المعاينة محلية (object URL) قبل الرفع؛ الرفع الفعلي يتم وقت الـ submit.
+const MAX_IMG_BYTES = 10 * 1024 * 1024; // 10MB
+
+function imageField(label, hint = 'صورة واحدة · حتى 10MB') {
+  return `
+    <div class="ec-fld">
+      <span>${esc(label)}</span>
+      <label class="ec-upload">
+        <input type="file" id="f-img" accept="image/*" hidden>
+        <div class="ec-upload-empty" id="f-img-empty">
+          <span class="ec-upload-ico">📷</span>
+          <span class="ec-upload-txt">اضغط لاختيار صورة أو التقاطها</span>
+          <span class="ec-upload-hint">${esc(hint)}</span>
+        </div>
+        <div class="ec-upload-preview" id="f-img-preview" hidden>
+          <img id="f-img-thumb" alt="معاينة الصورة">
+          <button type="button" class="ec-upload-clear" id="f-img-clear">✕ إزالة</button>
+        </div>
+      </label>
+    </div>`;
+}
+
+function wireImageUpload(form) {
+  if (!form) return;
+  const input   = form.querySelector('#f-img');
+  const empty   = form.querySelector('#f-img-empty');
+  const preview = form.querySelector('#f-img-preview');
+  const thumb   = form.querySelector('#f-img-thumb');
+  const clear   = form.querySelector('#f-img-clear');
+  if (!input) return;
+  let objUrl = null;
+  const reset = () => {
+    input.value = '';
+    if (objUrl) { URL.revokeObjectURL(objUrl); objUrl = null; }
+    preview.hidden = true; empty.hidden = false; thumb.removeAttribute('src');
+  };
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return reset();
+    if (!(file.type || '').startsWith('image/')) {
+      window.__ecToast?.('الملف يجب أن يكون صورة', 'err'); return reset();
+    }
+    if (file.size > MAX_IMG_BYTES) {
+      window.__ecToast?.('حجم الصورة أكبر من 10MB', 'err'); return reset();
+    }
+    if (objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = URL.createObjectURL(file);
+    thumb.src = objUrl; preview.hidden = false; empty.hidden = true;
+  });
+  clear?.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation(); reset();
+  });
+}
 
 // ── 1) إسناد مهمة ────────────────────────────────────────────────────
 function taskModal(emp, ctx) {
@@ -104,23 +163,44 @@ function incidentModal(emp, ctx) {
   openModal({
     title: `⚠️ تسجيل إخفاق — ${esc(emp.name || '')}`,
     danger: true,
+    onMount: wireImageUpload,
     body:
-      fld('النوع', `<select class="inp" id="f-type">${Object.entries(INCIDENT_TYPES).map(([k, v]) => opt(k, v)).join('')}</select>`) +
-      fld('الخطورة', `<select class="inp" id="f-sev">${Object.entries(SEVERITIES).map(([k, v], i) => opt(k, v, i === 0)).join('')}</select>`) +
-      fld('العنوان', `<input class="inp" id="f-title" placeholder="وصف مختصر">`) +
-      fld('التفاصيل', `<textarea class="inp" id="f-desc" rows="3"></textarea>`) +
+      fldRow(
+        fld('النوع', `<select class="inp" id="f-type">${Object.entries(INCIDENT_TYPES).map(([k, v]) => opt(k, v)).join('')}</select>`),
+        fld('الخطورة', `<select class="inp" id="f-sev">${Object.entries(SEVERITIES).map(([k, v], i) => opt(k, v, i === 0)).join('')}</select>`),
+      ) +
+      fld('العنوان', `<input class="inp" id="f-title" placeholder="وصف مختصر للمخالفة">`) +
+      fld('التفاصيل', `<textarea class="inp" id="f-desc" rows="3" placeholder="اشرح ما حدث (اختياري)"></textarea>`) +
+      imageField('📸 صورة المخالفة (اختياري)') +
       fld('التاريخ', `<input class="inp" type="date" id="f-date" value="${today()}">`),
     submitLabel: '⚠️ تسجيل',
-    onSubmit: (f) => employeeActions.addIncident({
-      db: ctx.db,
-      employeeId: emp._id, employeeName: emp.name || '', authUid: emp.authUid || '',
-      date: f.querySelector('#f-date').value || today(),
-      type: f.querySelector('#f-type').value,
-      severity: f.querySelector('#f-sev').value,
-      title: f.querySelector('#f-title').value,
-      description: f.querySelector('#f-desc').value,
-      userId: ctx.me.uid, userName: ctx.me.name,
-    }),
+    onSubmit: async (f) => {
+      // 1) ارفع صورة المخالفة أولاً (إن وُجدت) عبر الـ storage helper المركزي
+      const file = f.querySelector('#f-img')?.files?.[0] || null;
+      let imageUrl = '', imagePath = '';
+      if (file) {
+        try {
+          const up = await uploadEmployeeFile({
+            employeeId: emp._id, file, kind: EMPLOYEE_FILE_KINDS.INCIDENTS,
+          });
+          imageUrl = up.url; imagePath = up.path;
+        } catch (e) {
+          return { ok: false, errors: ['فشل رفع الصورة: ' + (e.message || 'خطأ')], warnings: [] };
+        }
+      }
+      // 2) سجّل الإخفاق عبر الـ action المركزي
+      return employeeActions.addIncident({
+        db: ctx.db,
+        employeeId: emp._id, employeeName: emp.name || '', authUid: emp.authUid || '',
+        date: f.querySelector('#f-date').value || today(),
+        type: f.querySelector('#f-type').value,
+        severity: f.querySelector('#f-sev').value,
+        title: f.querySelector('#f-title').value,
+        description: f.querySelector('#f-desc').value,
+        imageUrl, imagePath,
+        userId: ctx.me.uid, userName: ctx.me.name,
+      });
+    },
   });
 }
 

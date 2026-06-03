@@ -44,6 +44,7 @@ export async function addIncident({
   date, type, severity,
   title = '', description = '',
   orderId = null, clientName = null,
+  imageUrl = '', imagePath = '',
   userId, userName,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
@@ -59,6 +60,8 @@ export async function addIncident({
       title, description,
       orderId: orderId || null,
       clientName: clientName || null,
+      imageUrl: imageUrl || '',
+      imagePath: imagePath || '',
       createdBy: userId,
       createdByName: userName || '',
       createdAt: serverTimestamp(),

@@ -48,6 +48,7 @@ export const EMPLOYEE_FILE_KINDS = Object.freeze({
   AVATAR:    'avatar',
   DOCUMENTS: 'documents',
   CONTRACTS: 'contracts',
+  INCIDENTS: 'incidents',   // صور إثبات الإخفاقات/المخالفات
 });
 
 export const SUPPLIER_FILE_KINDS = Object.freeze({

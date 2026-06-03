@@ -271,6 +271,7 @@ import { buildTabsShellHTML } from "./features/employee-profile/views/render-tab
 import { buildAllModalsHTML } from "./features/employee-profile/views/render-modals.js";
 import { buildPasswordCardHTML, buildSetPasswordModalHTML, buildRebuildAuthModalHTML } from "./features/employee-profile/views/render-password-card.js";
 import { employeeActions } from "./employee-actions.js";
+import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from "./core/storage-helpers.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
@@ -732,6 +733,33 @@ function renderIncidents(){
   el.innerHTML=r.html;
 }
 
+// ── incident image upload (preview محلي + رفع وقت الحفظ) ──
+let _incImgUrl=null; // object URL للمعاينة
+function _incImgReset(){
+  const input=document.getElementById('inc-img');if(input)input.value='';
+  if(_incImgUrl){URL.revokeObjectURL(_incImgUrl);_incImgUrl=null;}
+  const pv=document.getElementById('inc-img-preview');const em=document.getElementById('inc-img-empty');
+  const th=document.getElementById('inc-img-thumb');
+  if(pv)pv.hidden=true;if(em)em.hidden=false;if(th)th.removeAttribute('src');
+}
+function _wireIncImg(){
+  const input=document.getElementById('inc-img');if(!input||input.dataset.wired)return;
+  input.dataset.wired='1';
+  input.addEventListener('change',()=>{
+    const file=input.files&&input.files[0];
+    if(!file)return _incImgReset();
+    if(!(file.type||'').startsWith('image/')){toast('⚠️ الملف يجب أن يكون صورة','err');return _incImgReset();}
+    if(file.size>10*1024*1024){toast('⚠️ حجم الصورة أكبر من 10MB','err');return _incImgReset();}
+    if(_incImgUrl)URL.revokeObjectURL(_incImgUrl);
+    _incImgUrl=URL.createObjectURL(file);
+    document.getElementById('inc-img-thumb').src=_incImgUrl;
+    document.getElementById('inc-img-preview').hidden=false;
+    document.getElementById('inc-img-empty').hidden=true;
+  });
+  const clr=document.getElementById('inc-img-clear');
+  if(clr)clr.addEventListener('click',(e)=>{e.preventDefault();e.stopPropagation();_incImgReset();});
+}
+
 window.openAddIncident=function(){
   document.getElementById('inc-title').value='';
   document.getElementById('inc-desc').value='';
@@ -739,6 +767,7 @@ window.openAddIncident=function(){
   document.getElementById('inc-severity').value='medium';
   document.getElementById('inc-order').value='';
   document.getElementById('inc-date').value=todayStr();
+  _wireIncImg();_incImgReset();
   // populate orders dropdown with employee's recent orders
   const uid=emp.authUid||empId;
   const myOrders=getEmpOrders(allOrders).slice(0,30);
@@ -757,6 +786,15 @@ window.saveIncident=async function(){
   const orderSel=document.getElementById('inc-order');
   const clientName=orderSel?.selectedOptions?.[0]?.dataset?.client||'';
   if(!title&&type==='other'){toast('⚠️ أدخل عنواناً','err');return;}
+  // ارفع صورة المخالفة أولاً (إن وُجدت) عبر الـ storage helper المركزي
+  const imgFile=(document.getElementById('inc-img')||{}).files?.[0]||null;
+  let imageUrl='',imagePath='';
+  if(imgFile){
+    try{
+      const up=await uploadEmployeeFile({employeeId:empId,file:imgFile,kind:EMPLOYEE_FILE_KINDS.INCIDENTS});
+      imageUrl=up.url;imagePath=up.path;
+    }catch(e){return toast('❌ فشل رفع الصورة: '+(e.message||'خطأ'),'err');}
+  }
   const r=await employeeActions.addIncident({
     db,
     employeeId:empId,employeeName:emp?.name||'',authUid:emp?.authUid||'',
@@ -764,10 +802,12 @@ window.saveIncident=async function(){
     title:title||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
     description,
     orderId:orderId||null,clientName:clientName||null,
+    imageUrl,imagePath,
     userId:currentUser.uid,userName:adminName,
   });
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   document.getElementById('ov-incident').classList.remove('open');
+  _incImgReset();
   toast('✅ تم تسجيل الإخفاق','ok');
 };
 

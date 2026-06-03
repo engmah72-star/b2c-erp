@@ -238,6 +238,21 @@ export function buildIncidentModalHTML() {
         <label>💬 التفاصيل (اختياري)</label>
         <textarea class="inp ep-textarea-min70" id="inc-desc" placeholder="ما حصل وما الإجراء المتخذ"></textarea>
       </div>
+      <div class="fg ep-mt-10">
+        <label>📸 صورة المخالفة (اختياري)</label>
+        <label class="ep-upload">
+          <input type="file" id="inc-img" accept="image/*" hidden>
+          <div class="ep-upload-empty" id="inc-img-empty">
+            <span class="ep-upload-ico">📷</span>
+            <span class="ep-upload-txt">اضغط لاختيار صورة أو التقاطها</span>
+            <span class="ep-upload-hint">صورة واحدة · حتى 10MB</span>
+          </div>
+          <div class="ep-upload-preview" id="inc-img-preview" hidden>
+            <img id="inc-img-thumb" alt="معاينة الصورة">
+            <button type="button" class="ep-upload-clear" id="inc-img-clear">✕ إزالة</button>
+          </div>
+        </label>
+      </div>
       <div class="g2 ep-mt-10">
         <div class="fg">
           <label>📅 التاريخ</label>
