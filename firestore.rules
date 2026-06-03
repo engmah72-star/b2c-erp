@@ -130,6 +130,37 @@ service cloud.firestore {
           || can('canFinancialWrite')
           || can('canFinancialRead');
     }
+    // ══ Financial Policy — server-side enforcement (master_lists/financial_policy) ══
+    // رقابة خادمية على المدفوعات الكبيرة (مرآة core/financial-policy.js):
+    // في mode='escalate'، أي حركة خارجة (type='out') فوق حدّ التصعيد يجب أن
+    // ينشئها الدور المطلوب (admin افتراضياً). الوضع الافتراضي 'advisory' أو
+    // غياب الوثيقة → لا فرض إطلاقاً (E1 backward-compatible). العكوس مستثناة
+    // (تصحيحات نظامية). get() مُخزّن داخل تقييم الطلب الواحد فلا تتعدّد القراءات.
+    function finPolicy() {
+      return exists(/databases/$(database)/documents/master_lists/financial_policy)
+        ? get(/databases/$(database)/documents/master_lists/financial_policy).data
+        : {};
+    }
+    function finOutflow() {
+      return finPolicy().get('outflow', {});
+    }
+    function finEscalateActive() {
+      return finPolicy().get('mode', 'advisory') == 'escalate';
+    }
+    function finApproverOk() {
+      // 'admin' = الأشدّ (isAdminOnly)؛ غيره يسمح لـ ops أيضاً (isAdmin).
+      return finOutflow().get('requiredApproverRole', 'admin') == 'admin'
+        ? isAdminOnly() : isAdmin();
+    }
+    function outflowWithinPolicy() {
+      let d = request.resource.data;
+      return !( finEscalateActive()
+                && d.type == 'out'
+                && d.amount is number
+                && d.amount > finOutflow().get('escalate', 999999999)
+                && d.get('isReversal', false) == false )
+             || finApproverOk();
+    }
     function validLedger() {
       let d = request.resource.data;
       // كل قيد يجب أن يربط بكيان واحد على الأقل (RULE 5: full audit)
@@ -382,7 +413,7 @@ service cloud.firestore {
     // ══ Transactions ══
     match /transactions_v2/{txId} {
       allow read:   if isAuth() && canFinancialRead();
-      allow create: if isAuth() && canFinancialWrite() && validTx();
+      allow create: if isAuth() && canFinancialWrite() && validTx() && outflowWithinPolicy();
       // التحديث: admin يقدر يعمل أي تعديل (لكن المغلق محمي حتى من admin إلا للاعتماد)
       // ops_manager يقدر يأكد فقط (تحديث حقول approval)
       // أي مستخدم آخر: ممنوع
