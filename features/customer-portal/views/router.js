@@ -14,6 +14,7 @@ const REGISTRY = {
   login:     () => import('./login.view.js'),
   home:      () => import('./home.view.js'),
   orders:    () => import('./orders.view.js'),
+  invoices:  () => import('./invoices.view.js'),
   designs:   () => import('./designs.view.js'),
   portfolio: () => import('./portfolio.view.js'),
   profile:   () => import('./profile.view.js'),

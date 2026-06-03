@@ -86,6 +86,7 @@ export function create(ctx) {
       ${greeting()}
       ${attention()}
       ${stats()}
+      ${Button({ label: 'كل الفواتير والمدفوعات', icon: '📑', variant: 'ghost', action: 'go:invoices' })}
       <div><h2 class="cp-sec">آخر الطلبات</h2><div class="cp-stack">${recent}</div></div>
     </div>`;
   }
