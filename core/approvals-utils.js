@@ -216,3 +216,49 @@ export function summarizeStaleRequests(requests = [], opts = {}) {
   }
   return { staleCount, oldestHours };
 }
+
+// ══════════════════════════════════════════════════════════
+// SUPPLIER PAYMENT ANOMALY (كشف الشذوذ في دفعات الموردين)
+// ══════════════════════════════════════════════════════════
+
+/**
+ * يكشف إن كانت دفعة المورد شاذّة مقارنةً بتاريخه:
+ *   - مبلغ ≈ factor× متوسط دفعاته السابقة → high
+ *   - أعلى دفعة لهذا المورد تاريخياً → med
+ * يتطلّب تاريخاً كافياً (minHistory) وإلا لا يُطلِق شيئاً (يتجنّب الإنذار الكاذب).
+ *
+ * @param {Object} request — payment_request (type='supplier_payment', supplierId, amount, _id)
+ * @param {Object} args
+ * @param {Array}  args.allTxns — transactions_v2 (لاشتقاق تاريخ المورد)
+ * @param {number} [args.factor=3]      — مضاعف المتوسط لاعتبار الشذوذ عالياً
+ * @param {number} [args.minHistory=3]  — أقل عدد دفعات سابقة مطلوب
+ * @param {Function} [args.format]
+ * @returns {Array<{lvl:'high'|'med', txt:string}>}
+ */
+export function detectSupplierAnomaly(request, { allTxns = [], factor = 3, minHistory = 3, format } = {}) {
+  const fmt = format || ((n) => (parseFloat(n) || 0).toLocaleString('ar-EG'));
+  const risks = [];
+  if (!request || request.type !== 'supplier_payment' || !request.supplierId) return risks;
+  const amt = parseFloat(request.amount) || 0;
+  if (!(amt > 0)) return risks;
+
+  const hist = [];
+  for (const t of (allTxns || [])) {
+    if (!t || t.type !== 'out') continue;
+    if (t.supplierId !== request.supplierId) continue;
+    if (t.isReversal || t.isReversed) continue;
+    if (request._id && t.paymentRequestId === request._id) continue; // استبعاد الحركة الحالية
+    const a = parseFloat(t.amount) || 0;
+    if (a > 0) hist.push(a);
+  }
+  if (hist.length < minHistory) return risks;
+
+  const avg = hist.reduce((s, n) => s + n, 0) / hist.length;
+  const max = Math.max(...hist);
+  if (avg > 0 && amt > factor * avg) {
+    risks.push({ lvl: 'high', txt: `📈 شاذّ: ${fmt(amt)} ج ≈ ${(amt / avg).toFixed(1)}× متوسط دفعات هذا المورد (${fmt(Math.round(avg))} ج)` });
+  } else if (amt > max) {
+    risks.push({ lvl: 'med', txt: `📊 أعلى دفعة لهذا المورد تاريخياً (الأعلى سابقاً ${fmt(max)} ج)` });
+  }
+  return risks;
+}

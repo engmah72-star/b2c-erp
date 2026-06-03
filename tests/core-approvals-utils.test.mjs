@@ -4,7 +4,7 @@
  */
 import {
   computeWalletState, detectRisks, computeSupplierDues,
-  computeRequestAging, summarizeStaleRequests,
+  computeRequestAging, summarizeStaleRequests, detectSupplierAnomaly,
 } from '../core/approvals-utils.js';
 
 let passed = 0, failed = 0;
@@ -260,6 +260,50 @@ test('summarizeStaleRequests: counts stale + oldest', () => {
   const s = summarizeStaleRequests(reqs, { now: _now, staleHours: 48 });
   assertEq(s.staleCount, 2);
   assertEq(Math.round(s.oldestHours), 100);
+});
+
+// ── detectSupplierAnomaly ───────────────────────────────────────────
+const supTx = (supplierId, amount, extra = {}) => ({ type: 'out', supplierId, amount, ...extra });
+
+test('anomaly: non-supplier_payment → no risk', () => {
+  assertEq(detectSupplierAnomaly({ type: 'salary', amount: 9999 }, { allTxns: [] }).length, 0);
+});
+
+test('anomaly: insufficient history (<3) → no risk', () => {
+  const r = detectSupplierAnomaly({ type: 'supplier_payment', supplierId: 's1', amount: 99999 },
+    { allTxns: [supTx('s1', 100), supTx('s1', 100)] });
+  assertEq(r.length, 0);
+});
+
+test('anomaly: amount > 3× average → high risk', () => {
+  const hist = [supTx('s1', 100), supTx('s1', 100), supTx('s1', 100)]; // avg 100
+  const r = detectSupplierAnomaly({ type: 'supplier_payment', supplierId: 's1', amount: 400 },
+    { allTxns: hist });
+  if (!r.some(x => x.lvl === 'high' && x.txt.includes('شاذّ'))) throw new Error('expected high anomaly');
+});
+
+test('anomaly: new historical max (but < 3× avg) → med risk', () => {
+  const hist = [supTx('s1', 100), supTx('s1', 200), supTx('s1', 150)]; // avg 150, max 200
+  const r = detectSupplierAnomaly({ type: 'supplier_payment', supplierId: 's1', amount: 260 },
+    { allTxns: hist }); // 260 < 3*150=450, but > max 200
+  if (!r.some(x => x.lvl === 'med' && x.txt.includes('أعلى دفعة'))) throw new Error('expected med (new max)');
+});
+
+test('anomaly: normal amount within history → no risk', () => {
+  const hist = [supTx('s1', 100), supTx('s1', 200), supTx('s1', 150)];
+  assertEq(detectSupplierAnomaly({ type: 'supplier_payment', supplierId: 's1', amount: 120 }, { allTxns: hist }).length, 0);
+});
+
+test('anomaly: excludes reversed txns + current request from history', () => {
+  const hist = [
+    supTx('s1', 100), supTx('s1', 100), supTx('s1', 100),
+    supTx('s1', 9999, { isReversed: true }),       // excluded
+    supTx('s1', 9999, { paymentRequestId: 'req1' }), // current → excluded
+    supTx('s2', 9999),                              // other supplier → excluded
+  ];
+  const r = detectSupplierAnomaly({ _id: 'req1', type: 'supplier_payment', supplierId: 's1', amount: 400 }, { allTxns: hist });
+  // avg of [100,100,100]=100 → 400 > 3×100 → high
+  if (!r.some(x => x.lvl === 'high')) throw new Error('expected high (clean history avg 100)');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
