@@ -252,11 +252,24 @@ textarea.inp{resize:vertical;min-height:64px;}
 </nav>
 
 <script type="module">
-import { auth, db } from "./core/firebase-init.js";
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, getDoc, getDocs, collection, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { clientActions } from "./client-actions.js";
-import { uploadClientFile } from "./core/storage-helpers.js";
+// Firebase يُحمّل عند الحاجة فقط (dynamic import) — لو فشل تحميله، تظل
+// التبويبات ووضع المعاينة شغّالة (لا يوجد static import يقتل الموديول).
+let auth, db, onAuthStateChanged, signOut, doc, getDoc, getDocs, collection, query, where, limit, clientActions, uploadClientFile;
+let _fbReady = null;
+function ensureFirebase() {
+  if (!_fbReady) _fbReady = (async () => {
+    const fi = await import('./core/firebase-init.js');
+    auth = fi.auth; db = fi.db;
+    const fa = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    onAuthStateChanged = fa.onAuthStateChanged; signOut = fa.signOut;
+    const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    doc = fs.doc; getDoc = fs.getDoc; getDocs = fs.getDocs; collection = fs.collection;
+    query = fs.query; where = fs.where; limit = fs.limit;
+    clientActions = (await import('./client-actions.js')).clientActions;
+    uploadClientFile = (await import('./core/storage-helpers.js')).uploadClientFile;
+  })();
+  return _fbReady;
+}
 
 // مراحل الطلب (نسخة عميل خفيفة — مرآة لـ clients-constants.js STAGE_AR)
 const STAGE_AR = {
@@ -286,11 +299,23 @@ window.addEventListener('unhandledrejection', e => fatal('Promise: ' + (e.reason
 const params = new URLSearchParams(location.search);
 const DEMO = params.get('demo') === '1' || params.get('preview') === '1';
 
-// ── Auth gate ──
-let authFired = false;
+// اربط الواجهة فوراً (التبويبات تشتغل بغضّ النظر عن Firebase)
+bindUI();
+
 if (DEMO) {
   startDemo();
 } else {
+  initReal();
+}
+
+async function initReal() {
+  try {
+    await ensureFirebase();
+  } catch (e) {
+    fatal('تعذّر تحميل Firebase: ' + (e?.message || e));
+    return;
+  }
+  let authFired = false;
   onAuthStateChanged(auth, async (u) => {
     authFired = true;
     try {
@@ -305,7 +330,6 @@ if (DEMO) {
       fatal(err?.message || String(err));
     }
   });
-  // watchdog: لو التحقق ما استجابش (إعداد ناقص) ما نسيبش الصفحة معلّقة
   setTimeout(() => {
     if (!authFired) fatal('لم يستجب التحقق من الدخول. تأكد من تفعيل الدخول في Firebase، أو سجّل دخول من جديد.');
   }, 8000);
@@ -517,6 +541,7 @@ async function saveProfile() {
   };
   $('p-save').disabled = true;
   try {
+    await ensureFirebase();
     const res = await clientActions.upsertClientSelf({
       authUid: user.uid, authEmail: user.email, authName: bizName,
       data: { name: bizName, phone1, businessProfile },
@@ -561,6 +586,7 @@ function bindUI() {
       }
       $(kind + '-busy').style.display = 'flex';
       try {
+        await ensureFirebase();
         const res = await uploadClientFile({ clientId: user.uid, file, kind });
         media[kind + 'Url'] = res.url;
         showImg(kind, res.url);
@@ -582,7 +608,6 @@ function bindUI() {
     if (n) openOrder(n.dataset.oid, n.dataset.ocode);
   });
 }
-bindUI();
 </script>
 </body>
 </html>
