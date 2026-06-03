@@ -221,6 +221,7 @@ import {
   computeRequestAging as _computeRequestAging,
   summarizeStaleRequests as _summarizeStaleRequests,
   detectSupplierAnomaly as _detectSupplierAnomaly,
+  selectBulkEligible as _selectBulkEligible,
 } from "./core/approvals-utils.js";
 import { STAGE_AR, STAGE_COL, ROLE_LABELS } from "./core/shared-constants.js";
 import { maskPhone, canSee } from "./shared.js";
@@ -522,9 +523,26 @@ function render(){
     return;
   }
   el.innerHTML = [
+    _bulkBar(filtered),
     ...extraRequests.map(r => renderRequestCard(r)),
     ...filtered.map(t => renderCard(t))
   ].join('');
+}
+
+// شريط الإجراء الجماعي (تأكيد الكل / اعتماد الكل) — يحترم القدرات والضوابط.
+function _bulkBar(visibleTxs){
+  const strict = requiresStrictSeparation(financialPolicy);
+  let action = '', label = '', fn = '';
+  if(activeTab === 'pending' && canDo('execute_payments', currentRole, currentPerms)){
+    action = 'confirm'; fn = 'bulkConfirm()'; label = '✓ تأكيد الكل';
+  } else if(activeTab === 'confirmed' && canDo('final_approve_payments', currentRole, currentPerms)){
+    action = 'approve'; fn = 'bulkApprove()'; label = '✅ اعتماد الكل';
+  } else { return ''; }
+  const n = _selectBulkEligible(visibleTxs, { action, userId: currentUid, strict }).length;
+  if(n < 2) return ''; // الإجراء الجماعي يظهر فقط عند ≥2 مؤهَّلة
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+    <button type="button" class="btn-approve" onclick="${fn}">${label} (${n})</button>
+  </div>`;
 }
 
 function fmtDate(ts){
@@ -1846,6 +1864,32 @@ window.approveTx = async function(txId){
   }
   showToast('🔒 تم الاعتماد والأرشفة' + (result.clientLogged ? ' + سُجِّل في كارت العميل' : ''),'ok');
 };
+
+// ═══════════ الإجراء الجماعي (Bulk) — تأكيد/اعتماد عدة عمليات ═══════════
+function _visibleTxs(){
+  let f = txs.filter(t=>t.approvalStatus === activeTab);
+  if(activeDir !== 'all') f = f.filter(t=>t.type === activeDir);
+  return f;
+}
+async function _runBulk(action){
+  const strict = requiresStrictSeparation(financialPolicy);
+  const list = _selectBulkEligible(_visibleTxs(), { action, userId: currentUid, strict });
+  if(!list.length) return showToast('لا عمليات مؤهَّلة','err');
+  const verb = action==='confirm' ? 'تأكيد' : 'اعتماد';
+  if(!confirm(`${verb} ${list.length} عملية دفعة واحدة؟`)) return;
+  let ok=0, fail=0;
+  for(const t of list){
+    try{
+      const r = action==='confirm'
+        ? await approvalActions.confirmTransaction({db,tx:t,userId:currentUid,userName:currentUserName})
+        : await approvalActions.approveTransaction({db,tx:t,userId:currentUid,userName:currentUserName,policy:financialPolicy});
+      if(r && r.ok) ok++; else fail++;
+    }catch(_){ fail++; }
+  }
+  showToast(`✅ ${verb} ${ok}${fail?` · تعذّر ${fail}`:''}`, fail?'err':'ok');
+}
+window.bulkConfirm = () => _runBulk('confirm');
+window.bulkApprove = () => _runBulk('approve');
 
 // رفض tx مع عكس مالي كامل + cascade على كل السجلات المرتبطة
 window.rejectTx = async function(txId){

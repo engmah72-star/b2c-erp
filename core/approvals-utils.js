@@ -262,3 +262,31 @@ export function detectSupplierAnomaly(request, { allTxns = [], factor = 3, minHi
   }
   return risks;
 }
+
+// ══════════════════════════════════════════════════════════
+// BULK APPROVAL — اختيار المعاملات المؤهَّلة لإجراء جماعي
+// ══════════════════════════════════════════════════════════
+
+/**
+ * يُرشّح المعاملات المؤهَّلة لإجراء جماعي (تأكيد/اعتماد) مع احترام الضوابط:
+ *   - الأربع عيون: تُستبعَد عمليات الاسترداد التي أنشأها المستخدم نفسه.
+ *   - confirm: المعاملات pending.
+ *   - approve: المعاملات confirmed؛ ومع الفصل الصارم تُستبعَد التي أكّدها المستخدم.
+ *
+ * @param {Array} txns
+ * @param {Object} args — { action:'confirm'|'approve', userId, strict=false }
+ * @returns {Array} subset مؤهَّل
+ */
+export function selectBulkEligible(txns, { action, userId, strict = false } = {}) {
+  return (txns || []).filter((t) => {
+    if (!t) return false;
+    if (t.isRecovery && t.createdBy === userId) return false; // four-eyes
+    if (action === 'confirm') return t.approvalStatus === 'pending';
+    if (action === 'approve') {
+      if (t.approvalStatus !== 'confirmed') return false;
+      if (strict && t.confirmedBy === userId) return false; // فصل صارم
+      return true;
+    }
+    return false;
+  });
+}
