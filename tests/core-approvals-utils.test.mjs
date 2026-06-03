@@ -4,7 +4,7 @@
  */
 import {
   computeWalletState, detectRisks, computeSupplierDues,
-  computeRequestAging, summarizeStaleRequests, detectSupplierAnomaly,
+  computeRequestAging, summarizeStaleRequests, detectSupplierAnomaly, selectBulkEligible,
 } from '../core/approvals-utils.js';
 
 let passed = 0, failed = 0;
@@ -304,6 +304,35 @@ test('anomaly: excludes reversed txns + current request from history', () => {
   const r = detectSupplierAnomaly({ _id: 'req1', type: 'supplier_payment', supplierId: 's1', amount: 400 }, { allTxns: hist });
   // avg of [100,100,100]=100 → 400 > 3×100 → high
   if (!r.some(x => x.lvl === 'high')) throw new Error('expected high (clean history avg 100)');
+});
+
+// ── selectBulkEligible ──────────────────────────────────────────────
+const _txs = [
+  { _id: '1', approvalStatus: 'pending' },
+  { _id: '2', approvalStatus: 'pending', isRecovery: true, createdBy: 'me' },   // own recovery
+  { _id: '3', approvalStatus: 'confirmed', confirmedBy: 'other' },
+  { _id: '4', approvalStatus: 'confirmed', confirmedBy: 'me' },                 // I confirmed
+  { _id: '5', approvalStatus: 'approved' },
+];
+
+test('bulk confirm: only pending, excludes own recovery', () => {
+  const r = selectBulkEligible(_txs, { action: 'confirm', userId: 'me' }).map(t => t._id);
+  assertEq(JSON.stringify(r), JSON.stringify(['1']));
+});
+
+test('bulk approve (non-strict): all confirmed', () => {
+  const r = selectBulkEligible(_txs, { action: 'approve', userId: 'me', strict: false }).map(t => t._id);
+  assertEq(JSON.stringify(r), JSON.stringify(['3', '4']));
+});
+
+test('bulk approve (strict): excludes ones I confirmed', () => {
+  const r = selectBulkEligible(_txs, { action: 'approve', userId: 'me', strict: true }).map(t => t._id);
+  assertEq(JSON.stringify(r), JSON.stringify(['3']));
+});
+
+test('bulk: empty/unknown action → none', () => {
+  assertEq(selectBulkEligible(_txs, { action: 'x', userId: 'me' }).length, 0);
+  assertEq(selectBulkEligible([], { action: 'confirm', userId: 'me' }).length, 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
