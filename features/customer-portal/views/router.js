@@ -37,6 +37,9 @@ export function createRouter({ shell, store, services }) {
   delegate(main, 'click', '.cp-chip', (el) => {
     if (current?.onChip) current.onChip(el.dataset.chip, el);
   });
+  delegate(main, 'change', 'input[type="file"]', (el) => {
+    if (current?.onUpload) current.onUpload(el);
+  });
 
   // ── delegation داخل الـ Overlay (تفاصيل الطلب) ──
   delegate(shell.modal.body, 'click', '[data-action]', (el) => {

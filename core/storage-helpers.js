@@ -42,6 +42,11 @@ export const ORDER_FILE_KINDS = Object.freeze({
 export const CLIENT_FILE_KINDS = Object.freeze({
   AVATAR:    'avatar',
   DOCUMENTS: 'documents',
+  // وسائط الكارت الرقمي (قراءة عامة في storage.rules) — يبنيها العميل بنفسه.
+  LOGO:      'logo',
+  COVER:     'cover',
+  WORKS:     'works',
+  GALLERY:   'gallery',
 });
 
 export const EMPLOYEE_FILE_KINDS = Object.freeze({
