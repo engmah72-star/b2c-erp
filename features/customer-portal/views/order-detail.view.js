@@ -37,7 +37,14 @@ export function create(ctx) {
   return {
     async mount() { return html(); },
     async onAction(a) {
-      if (a === 'approve') { const r = await sendRequest(ctx, { order, kind: 'order', text: approveText(order) }); if (r.ok) close?.(); return; }
+      if (a === 'approve') {
+        // الفعل المركزي (Cloud Function) أولاً؛ fallback لرسالة المحادثة لو فشل.
+        const r = await ctx.services.approval.approveDesign(order._id);
+        if (r.ok) { ctx.shell.notify('تم اعتماد التصميم ✅', 'ok'); close?.(); return; }
+        const m = await sendRequest(ctx, { order, kind: 'order', text: approveText(order) });
+        if (m.ok) close?.();
+        return;
+      }
       if (a === 'reorder') { await sendRequest(ctx, { order, kind: 'order', text: reorderText(order) }); return; }
       if (a === 'contact') { close?.(); ctx.openChat({ kind: 'order', order }); }
     },

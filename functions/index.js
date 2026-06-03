@@ -3485,3 +3485,35 @@ exports.profilePage = onRequest(
     }
   },
 );
+
+// ════════════════════════════════════════════════════════════
+// CLIENT DESIGN APPROVAL — فعل اعتماد مركزي للعميل (#3 مركزية)
+// العميل يعتمد بروفة أوردره من البوابة عبر نقطة واحدة مُتحقَّق منها (ملكية بالهاتف).
+// يسجّل في حقل مستقل clientApproval (لا يلمس approvalStatus الخاص بالطاقم) + timeline.
+// ════════════════════════════════════════════════════════════
+exports.requestDesignApproval = onCall(CALL_OPTS, async (req) => {
+  const uid = req.auth && req.auth.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+  const orderId = String((req.data && req.data.orderId) || '').trim();
+  if (!orderId) throw new HttpsError('invalid-argument', 'orderId مطلوب');
+
+  const [clientSnap, orderSnap] = await Promise.all([
+    db.doc(`clients/${uid}`).get(),
+    db.doc(`orders/${orderId}`).get(),
+  ]);
+  if (!orderSnap.exists) throw new HttpsError('not-found', 'الأوردر غير موجود');
+  const order = orderSnap.data();
+  const phone = (clientSnap.exists && String(clientSnap.data().phone1 || '').trim()) || '';
+  // تحقّق الملكية: هاتف العميل المسجّل == هاتف الأوردر (غير فارغ).
+  if (!phone || order.clientPhone !== phone) throw new HttpsError('permission-denied', 'هذا ليس أوردرك');
+  if (order.stage !== 'design') throw new HttpsError('failed-precondition', 'الأوردر ليس في مرحلة التصميم');
+
+  await db.doc(`orders/${orderId}`).update({
+    clientApproval: { status: 'approved', at: new Date().toISOString(), by: uid },
+    timeline: FieldValue.arrayUnion({
+      action: '✅ اعتمد العميل التصميم عبر البوابة',
+      at: new Date().toISOString(), by: uid, byName: order.clientName || 'عميل', kind: 'op',
+    }),
+  });
+  return { ok: true };
+});

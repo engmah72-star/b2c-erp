@@ -10,9 +10,11 @@ import {
 import { loadOrders, invoiceOf, totalsOf } from './orders.service.js';
 import { loadGallery, categoriesOf } from './gallery.service.js';
 import { openThread, sendMessage, subscribeMessages } from './chat.service.js';
+import { approveDesign } from './approval.service.js';
 
 export const services = {
   auth:    { watchAuth, signInWithGoogle, signOut },
+  approval: { approveDesign },
   profile: {
     loadClient, saveProfile, loadPublicCard, addWork, removeWork,
     uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable,
