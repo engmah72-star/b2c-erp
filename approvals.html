@@ -220,6 +220,7 @@ import {
 import { STAGE_AR, STAGE_COL, ROLE_LABELS } from "./core/shared-constants.js";
 import { maskPhone, canSee } from "./shared.js";
 import { canDo } from "./core/permissions-matrix.js";
+import { requiresStrictSeparation } from "./core/financial-policy.js";
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 
@@ -1068,6 +1069,7 @@ function renderCard(t){
   //   _canFinal = final_approve_payments (اعتماد نهائي مُقفِل) — افتراضياً admin
   const _canExec  = canDo('execute_payments', currentRole, currentPerms);
   const _canFinal = canDo('final_approve_payments', currentRole, currentPerms);
+  const _strict   = requiresStrictSeparation(financialPolicy); // الفصل الصارم بين المؤكِّد والمُعتمِد
   let actions = '';
   if(t.approvalStatus === 'pending' && _canExec && !_canFinal){
     if(isOwnRecovery){
@@ -1080,13 +1082,17 @@ function renderCard(t){
     if(isOwnRecovery){
       actions = `<div style="font-size:var(--fs-sm);color:var(--r);padding:var(--space-sm);background:rgba(255,61,110,.08);border-radius:6px">⛔ لا يمكنك مراجعة استردادك الخاص (مبدأ الأربع عيون) — يحتاج admin/ops آخر</div>`;
     } else {
+      // الفصل الصارم: لا «اعتماد مباشر» — يلزم تأكيد سابق من شخص آخر.
       actions = `<button type="button" class="btn-confirm" onclick="confirmTx('${t._id}')">✓ تأكيد</button>
-                 <button type="button" class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد مباشر</button>
+                 ${_strict ? '' : `<button type="button" class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد مباشر</button>`}
                  <button type="button" class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
     }
   } else if(t.approvalStatus === 'confirmed' && _canFinal){
     if(isOwnRecovery){
       actions = `<div style="font-size:var(--fs-sm);color:var(--r);padding:var(--space-sm);background:rgba(255,61,110,.08);border-radius:6px">⛔ لا يمكنك اعتماد استردادك الخاص — admin آخر يجب أن يعتمد</div>`;
+    } else if(_strict && t.confirmedBy === currentUid){
+      actions = `<div style="font-size:var(--fs-sm);color:var(--r);padding:var(--space-sm);background:rgba(255,61,110,.08);border-radius:6px">⛔ الفصل الصارم: أنت من أكّد هذه العملية — يلزم admin مختلف للاعتماد</div>
+                 <button type="button" class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
     } else {
       actions = `<button type="button" class="btn-approve" onclick="approveTx('${t._id}')">✅ اعتماد + أرشفة</button>
                  <button type="button" class="btn-reject" onclick="rejectTx('${t._id}')">✕ رفض</button>`;
@@ -1556,7 +1562,7 @@ window.approveRequest = async function(reqId){
   if(!r) return;
   if(!['pending','confirmed'].includes(r.status)) return showToast('⛔ هذا الطلب لا يمكن اعتماده الآن','err');
   if(!confirm(`اعتماد نهائي للطلب — ${fn(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}?`)) return;
-  const result = await approvalActions.approvePaymentRequest({db,requestId:reqId,userId:currentUid,userName:currentUserName});
+  const result = await approvalActions.approvePaymentRequest({db,requestId:reqId,userId:currentUid,userName:currentUserName,policy:financialPolicy,requestStatus:r.status,confirmedBy:r.confirmedBy||''});
   if(!result.ok) return showToast('❌ '+((result.errors||[]).join(' · ')||'فشل'),'err');
   showToast('✅ تم الاعتماد النهائي + قُفل السجل','ok');
 };
@@ -1805,7 +1811,7 @@ window.confirmTx = async function(txId){
 window.approveTx = async function(txId){
   const tx = txs.find(x=>x._id===txId);
   if(!confirm('اعتماد نهائي؟ سيتم قفل العملية.')) return;
-  const result = await approvalActions.approveTransaction({db,tx,userId:currentUid,userName:currentUserName});
+  const result = await approvalActions.approveTransaction({db,tx,userId:currentUid,userName:currentUserName,policy:financialPolicy});
   if(!result.ok){
     const handled = window.financialGuard?.({message:(result.errors||[])[0]||'فشل'},{operation:'اعتماد', txId});
     if(!handled) showToast('❌ '+((result.errors||[]).join(' · ')||'فشل الاعتماد'),'err');

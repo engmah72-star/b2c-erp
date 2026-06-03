@@ -161,6 +161,19 @@ service cloud.firestore {
                 && d.get('isReversal', false) == false )
              || finApproverOk();
     }
+    // ── الفصل الصارم بين المؤكِّد والمُعتمِد (Segregation of Duties) ──
+    // عند تفعيله: الانتقال إلى approved يلزمه (1) أن تكون العملية مؤكَّدة
+    // مسبقاً (لا اعتماد مباشر لـ pending) و(2) أن يختلف المُعتمِد عن المؤكِّد.
+    function finStrictSeparation() {
+      return finPolicy().get('approval', {}).get('strictSeparation', false) == true;
+    }
+    function approveSeparationOk() {
+      return !( finStrictSeparation()
+                && request.resource.data.approvalStatus == 'approved'
+                && resource.data.get('approvalStatus', 'pending') != 'approved' )
+             || ( resource.data.get('approvalStatus', 'pending') == 'confirmed'
+                  && resource.data.get('confirmedBy', '') != request.auth.uid );
+    }
     function validLedger() {
       let d = request.resource.data;
       // كل قيد يجب أن يربط بكيان واحد على الأقل (RULE 5: full audit)
@@ -454,7 +467,9 @@ service cloud.firestore {
       // التحديث: admin يقدر يعمل أي تعديل (لكن المغلق محمي حتى من admin إلا للاعتماد)
       // ops_manager يقدر يأكد فقط (تحديث حقول approval)
       // أي مستخدم آخر: ممنوع
-      allow update: if isAuth() && (
+      allow update: if isAuth()
+        && approveSeparationOk()  // الفصل الصارم عند الاعتماد (لو مُفعَّل)
+        && (
         // قفل: لا تعديل بعد الاعتماد إلا لو admin يحدّث حقول approval فقط
         (isLocked() ? (isAdmin() && isApprovalUpdate())
                     : (isAdmin() || (isOpsManager() && isApprovalUpdate() && canConfirm())

@@ -55,6 +55,14 @@ export const DEFAULT_FINANCIAL_POLICY = Object.freeze({
     cash: Object.freeze({ outflowEscalate: 5000, dailyWalletCap: 20000 }),
     bank: Object.freeze({}),
   }),
+
+  // ── فصل المهام في الطبقتين (Segregation of Duties) ──
+  approval: Object.freeze({
+    // strictSeparation=true → المُعتمِد (admin) يجب أن يختلف عن المؤكِّد، ولا
+    // اعتماد مباشر لعملية pending (يلزم تأكيد سابق من شخص آخر). افتراضياً مُطفأ
+    // (E1) — يُفعَّل من الإعدادات عند توفّر ≥2 مُخوَّلَين.
+    strictSeparation: false,
+  }),
 });
 
 // ══════════════════════════════════════════════════════════
@@ -71,7 +79,7 @@ export const DEFAULT_FINANCIAL_POLICY = Object.freeze({
 export function resolveFinancialPolicy(override) {
   const d = DEFAULT_FINANCIAL_POLICY;
   if (!override || typeof override !== 'object') {
-    return { ...d, outflow: { ...d.outflow }, inflow: { ...d.inflow }, walletOverrides: { ...d.walletOverrides } };
+    return { ...d, outflow: { ...d.outflow }, inflow: { ...d.inflow }, walletOverrides: { ...d.walletOverrides }, approval: { ...d.approval } };
   }
   return {
     version: override.version ?? d.version,
@@ -82,7 +90,34 @@ export function resolveFinancialPolicy(override) {
       cash: { ...d.walletOverrides.cash, ...((override.walletOverrides || {}).cash || {}) },
       bank: { ...d.walletOverrides.bank, ...((override.walletOverrides || {}).bank || {}) },
     },
+    approval: { ...d.approval, ...(override.approval || {}) },
   };
+}
+
+/** هل الفصل الصارم بين المؤكِّد والمُعتمِد مُفعَّل؟ */
+export function requiresStrictSeparation(policy) {
+  const p = policy && policy.approval ? policy : resolveFinancialPolicy(policy);
+  return !!p.approval.strictSeparation;
+}
+
+/**
+ * تحقّق الفصل الصارم عند الاعتماد: يلزم أن تكون العملية مؤكَّدة مسبقاً، وأن
+ * يختلف المُعتمِد عن المؤكِّد. (يُطبَّق فقط عند تفعيل strictSeparation.)
+ *
+ * @param {Object} args — { approvalStatus, confirmedBy } للعملية
+ * @param {string} approverId — المُعتمِد الحالي
+ * @param {Object} [policy]
+ * @returns {{ ok: boolean, errors: string[] }}
+ */
+export function checkApprovalSeparation({ approvalStatus, confirmedBy } = {}, approverId = '', policy = null) {
+  if (!requiresStrictSeparation(policy)) return { ok: true, errors: [] };
+  if (approvalStatus !== 'confirmed') {
+    return { ok: false, errors: ['⛔ الفصل الصارم: يلزم تأكيد العملية أولاً من شخص آخر قبل الاعتماد (لا اعتماد مباشر)'] };
+  }
+  if (confirmedBy && approverId && confirmedBy === approverId) {
+    return { ok: false, errors: ['⛔ الفصل الصارم: لا يمكنك اعتماد عملية أكّدتها بنفسك — يلزم مُعتمِد مختلف'] };
+  }
+  return { ok: true, errors: [] };
 }
 
 // ── helper: الحدّ الفعّال للتصعيد مع مراعاة نوع المحفظة ──

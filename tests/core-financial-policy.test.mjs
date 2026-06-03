@@ -8,6 +8,8 @@ import {
   evaluateOutflow,
   evaluateInflow,
   canApproveOutflow,
+  requiresStrictSeparation,
+  checkApprovalSeparation,
 } from '../core/financial-policy.js';
 
 let passed = 0, failed = 0;
@@ -161,6 +163,42 @@ test('escalated + admin but same as requester → four-eyes blocks', () => {
 test('escalated + admin + distinct from requester → ok', () => {
   const ev = { requiresApproval: true, requiredApproverRole: 'admin', fourEyes: true };
   const r = canApproveOutflow(ev, { role: 'admin', userId: 'u2' }, 'u1');
+  assertEq(r.ok, true);
+});
+
+// ── strict approval separation (Segregation of Duties) ──────────────
+test('strictSeparation: default false', () => {
+  assertEq(requiresStrictSeparation(null), false);
+  assertEq(DEFAULT_FINANCIAL_POLICY.approval.strictSeparation, false);
+});
+
+test('strictSeparation: resolve merges approval override', () => {
+  const p = resolveFinancialPolicy({ approval: { strictSeparation: true } });
+  assertEq(requiresStrictSeparation(p), true);
+});
+
+test('checkApprovalSeparation: OFF → always ok (any state/actor)', () => {
+  const r = checkApprovalSeparation({ approvalStatus: 'pending', confirmedBy: 'u1' }, 'u1', null);
+  assertEq(r.ok, true);
+});
+
+test('checkApprovalSeparation: ON + pending (no confirm) → blocked (no direct approve)', () => {
+  const policy = resolveFinancialPolicy({ approval: { strictSeparation: true } });
+  const r = checkApprovalSeparation({ approvalStatus: 'pending', confirmedBy: '' }, 'admin1', policy);
+  assertEq(r.ok, false);
+  assert(r.errors[0].includes('تأكيد'));
+});
+
+test('checkApprovalSeparation: ON + confirmer approves own → blocked', () => {
+  const policy = resolveFinancialPolicy({ approval: { strictSeparation: true } });
+  const r = checkApprovalSeparation({ approvalStatus: 'confirmed', confirmedBy: 'u1' }, 'u1', policy);
+  assertEq(r.ok, false);
+  assert(r.errors[0].includes('أكّدتها بنفسك'));
+});
+
+test('checkApprovalSeparation: ON + confirmed + different approver → ok', () => {
+  const policy = resolveFinancialPolicy({ approval: { strictSeparation: true } });
+  const r = checkApprovalSeparation({ approvalStatus: 'confirmed', confirmedBy: 'u1' }, 'u2', policy);
   assertEq(r.ok, true);
 });
 

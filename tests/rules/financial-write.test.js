@@ -326,6 +326,56 @@ async function runTests() {
 
   await clearPolicy();
 
+  // ──────────────────────────────────────────────────────────────
+  // Strict approval separation (Segregation of Duties)
+  // policy.approval.strictSeparation = true
+  // ──────────────────────────────────────────────────────────────
+  const seedTx = async (id, data) => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      await c.firestore().doc(`transactions_v2/${id}`).set({
+        walletId: 'w1', type: 'out', amount: 100, category: 'printer_payment',
+        description: 'sep', date: '2026/06/03', createdBy: 'someone',
+        approvalStatus: 'pending', confirmedBy: '', confirmedByName: '',
+        approvedBy: '', isLocked: false, ...data,
+      });
+    });
+  };
+  const approveUpdate = { approvalStatus: 'approved', approvedBy: 'X', approvedByName: 'X', approvedAt: new Date(), isLocked: true };
+
+  await test('strict OFF → admin CAN approve pending directly (direct approve)', async () => {
+    await clearPolicy();
+    await seedUser(env, 'sep_adm0', 'admin', ['accounts']);
+    await seedTx('tx_sep0', { approvalStatus: 'pending' });
+    const ctx = env.authenticatedContext('sep_adm0');
+    await assertSucceeds(ctx.firestore().doc('transactions_v2/tx_sep0').update(approveUpdate));
+  });
+
+  await test('strict ON → admin CANNOT approve pending directly (no prior confirm)', async () => {
+    await setPolicy({ mode: 'advisory', approval: { strictSeparation: true } });
+    await seedUser(env, 'sep_adm1', 'admin', ['accounts']);
+    await seedTx('tx_sep1', { approvalStatus: 'pending', confirmedBy: '' });
+    const ctx = env.authenticatedContext('sep_adm1');
+    await assertFails(ctx.firestore().doc('transactions_v2/tx_sep1').update(approveUpdate));
+  });
+
+  await test('strict ON → confirmer CANNOT approve own confirmed tx', async () => {
+    await setPolicy({ mode: 'advisory', approval: { strictSeparation: true } });
+    await seedUser(env, 'sep_adm2', 'admin', ['accounts']);
+    await seedTx('tx_sep2', { approvalStatus: 'confirmed', confirmedBy: 'sep_adm2' });
+    const ctx = env.authenticatedContext('sep_adm2');
+    await assertFails(ctx.firestore().doc('transactions_v2/tx_sep2').update(approveUpdate));
+  });
+
+  await test('strict ON → different admin CAN approve a confirmed tx', async () => {
+    await setPolicy({ mode: 'advisory', approval: { strictSeparation: true } });
+    await seedUser(env, 'sep_adm3', 'admin', ['accounts']);
+    await seedTx('tx_sep3', { approvalStatus: 'confirmed', confirmedBy: 'someone_else' });
+    const ctx = env.authenticatedContext('sep_adm3');
+    await assertSucceeds(ctx.firestore().doc('transactions_v2/tx_sep3').update(approveUpdate));
+  });
+
+  await clearPolicy();
+
   await env.cleanup();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
