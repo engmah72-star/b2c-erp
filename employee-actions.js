@@ -138,6 +138,35 @@ export async function createEmployeeWithUser({
 }
 
 /**
+ * إنشاء "ملف موظف" لمستخدم موجود بالفعل (له حساب Auth + users doc) — مثل الأدمن
+ * الذي يريد أن يصبح له ملف موظف (حضور/راتب/تقييم) دون إنشاء حساب Auth جديد ولا
+ * الكتابة فوق users doc الحالي (حفاظاً على الدور والصلاحيات). يكتب employees doc
+ * فقط، مرتبطاً بالـ authUid الحالي. يرفض التكرار لو فيه ملف موظف بنفس الـ authUid.
+ * (يختلف عن createEmployeeWithUser الذي ينشئ حساباً جديداً + يكتب users doc.)
+ */
+export async function createSelfEmployeeFile({
+  db = defaultDb, authUid, employeeData,
+}) {
+  if (!authUid) return { ok: false, errors: ['⚠️ authUid مطلوب'], warnings: [] };
+  if (!employeeData || typeof employeeData !== 'object') {
+    return { ok: false, errors: ['⚠️ employeeData مطلوب'], warnings: [] };
+  }
+  try {
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    // حارس تكرار: لو فيه ملف موظف مرتبط بنفس الحساب، أوقف بدل إنشاء نسخة ثانية.
+    const existing = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
+    if (!existing.empty) {
+      return { ok: false, errors: ['⚠️ يوجد ملف موظف مرتبط بهذا الحساب بالفعل'], warnings: [] };
+    }
+    const empRef = doc(collection(db, 'employees'));
+    await setDoc(empRef, { ...employeeData, authUid });
+    return { ok: true, errors: [], warnings: [], employeeId: empRef.id };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الإنشاء'], warnings: [] };
+  }
+}
+
+/**
  * Full employee profile edit — accepts the entire form shape.
  * Used by employees.html admin edit flow (covers name/phone/role/salary/etc).
  */
@@ -705,7 +734,7 @@ export async function reverseSalaryPayment({
 export const employeeActions = {
   addIncident, deleteIncident,
   updateEmployeeSkills, updateEmployeeData, updateEmployeeProfile, updateEmployeeSchedule,
-  createEmployeeWithUser,
+  createEmployeeWithUser, createSelfEmployeeFile,
   changeUserRole, deleteUserDoc,
   setEmployeeStatus,
   softDeleteEmployee,

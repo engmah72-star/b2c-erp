@@ -114,6 +114,9 @@
     <!-- Active filter chips -->
     <div id="filter-chips" class="filter-chips hide"></div>
 
+    <!-- Self employee-file prompt (للمستخدم الحالي بدون ملف موظف — مثل الأدمن) -->
+    <div id="self-file-banner"></div>
+
     <div id="emp-alerts" class="emp2-alerts-wrap"></div>
     <div id="list"></div>
   </div>
@@ -277,6 +280,7 @@ const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو',
 // ══ STATE ══
 let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
+let __selfMode=false,__myUserDoc=null,__empSnapLoaded=false; // __selfMode: نمط "إنشاء ملف موظف لي" · __myUserDoc: users doc للمستخدم الحالي · __empSnapLoaded: هل وصل snapshot الموظفين
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
 let payOneEmpId=null,periodFilter='month_cur';
 // Pagination
@@ -452,6 +456,7 @@ function renderAlerts(){
 // ══ EDIT EMPLOYEE ══
 window.openEditEmp=function(id){
   const e=employees.find(x=>x._id===id);if(!e)return;
+  __selfMode=false;{const _r=document.getElementById('e-role');if(_r)_r.disabled=false;}
   editingId=id;
   setText('emp-title','✏️ تعديل بيانات');
   document.getElementById('save-btn').textContent='✓ حفظ';
@@ -588,6 +593,7 @@ onAuthStateChanged(auth,async u=>{
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
     const d=snap.data();
+    __myUserDoc=d;
     buildSidebar(d);
     if(d.role!=='admin'&&d.role!=='operation_manager'){
       document.getElementById('list').innerHTML='<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">هذه الصفحة للأدمن فقط</div></div>';
@@ -600,6 +606,7 @@ onAuthStateChanged(auth,async u=>{
     {const _av=document.getElementById('nav-av'); if(_av)_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();}
     {const _rb=document.getElementById('role-badge'); if(_rb)_rb.textContent='Admin';}
     initNotifications(app,u);
+    renderSelfFileBanner();
   }
 
   onSnapshot(query(collection(db,'employee_goals'),limit(2000)),snap=>{
@@ -615,9 +622,9 @@ onAuthStateChanged(auth,async u=>{
     employees=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     // النسخة الخام للعرض في زر "السجلات المكرّرة" فقط
     window.__rawEmployees=raw;
-    __empVer++;
+    __empVer++;__empSnapLoaded=true;
     if(!__urlLoaded){loadURL();__urlLoaded=true;}
-    scheduleStats();scheduleList();scheduleAlerts();fillWalletSelects();
+    scheduleStats();scheduleList();scheduleAlerts();fillWalletSelects();renderSelfFileBanner();
   });
   // C7: bounded — أحدث 3000 أوردر للـ KPIs (يكفي لمتوسط شركة لمدة سنة).
   onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),snap=>{
@@ -1086,8 +1093,88 @@ document.addEventListener('keydown',e=>{
   }
 });
 
+// ══ SELF EMPLOYEE-FILE (ملف موظف للمستخدم الحالي — مثل الأدمن) ══
+// الأدمن (وأي مستخدم يصل لهذه الصفحة) قد يكون له حساب users/Auth لكن بدون
+// employees doc — فلا يظهر له ملف موظف (حضور/راتب/تقييم). نعرض بانر يتيح إنشاءه
+// مرتبطاً بحسابه الحالي دون إنشاء حساب Auth جديد ولا الكتابة فوق users doc.
+window.renderSelfFileBanner=function(){
+  const host=document.getElementById('self-file-banner');if(!host)return;
+  if(!currentUser||!__myUserDoc){host.innerHTML='';return;}
+  // الكتابة على employees مقصورة على الأدمن (isAdminOnly في firestore.rules) — لذا
+  // نعرض البانر للأدمن فقط (هو المقصود بالطلب أيضاً).
+  if(__myUserDoc.role!=='admin'){host.innerHTML='';return;}
+  // انتظر أول snapshot للموظفين قبل القرار (تفادي وميض البانر لأدمن له ملف فعلاً).
+  if(!__empSnapLoaded){host.innerHTML='';return;}
+  const hasFile=employees.some(e=>e.authUid===currentUser.uid);
+  if(hasFile){host.innerHTML='';return;}
+  const r=ROLES[__myUserDoc.role]||{ico:'👤',label:__myUserDoc.role||''};
+  host.innerHTML=`<div class="self-file-card">
+    <div class="self-file-ico">${r.ico}</div>
+    <div class="self-file-txt">
+      <div class="self-file-title">لا يوجد ملف موظف مرتبط بحسابك</div>
+      <div class="self-file-sub">أنشئ ملف موظف باسم <strong>${escAttr(userName||__myUserDoc.name||'')}</strong> (${escAttr(r.label)}) لتسجيل الحضور والراتب والتقييم — دون إنشاء حساب جديد أو المساس بصلاحياتك.</div>
+    </div>
+    <button type="button" class="btn btn-b self-file-btn" data-act="open-self-emp">＋ أنشئ ملف موظف لي</button>
+  </div>`;
+};
+
+window.openSelfEmpFile=function(){
+  if(!currentUser){return toast('⚠️ لم يتم تحميل الحساب بعد','err');}
+  __selfMode=true;editingId=null;
+  const role=(__myUserDoc&&__myUserDoc.role)||currentRole||'admin';
+  setText('emp-title','👑 إنشاء ملف موظف لي');
+  document.getElementById('save-btn').textContent='✓ إنشاء ملفي';
+  sv('e-name',userName||(__myUserDoc&&__myUserDoc.name)||'');
+  sv('e-phone',(__myUserDoc&&__myUserDoc.phone)||'');
+  sv('e-role',role);
+  sv('e-nid','');sv('e-salary','');sv('e-commission','');
+  sv('e-leave-quota',21);sv('e-commission-order',0);
+  sv('e-start',new Date().toISOString().slice(0,10));
+  document.getElementById('e-status').value='active';
+  // الدور مقفول على دور المستخدم الفعلي — ملف ذاتي لا يغيّر الدور.
+  {const _r=document.getElementById('e-role');if(_r)_r.disabled=true;}
+  updateSalaryUI();
+  document.getElementById('ov-emp').classList.add('open');
+};
+
+async function saveSelfEmp(){
+  const name=gv('e-name').trim();
+  const salary=parseFloat(gv('e-salary'))||0;
+  const phone=gv('e-phone').trim();
+  if(!name)return toast('⚠️ أدخل الاسم','err');
+  if(phone&&!/^01[0125][0-9]{8}$/.test(phone))return toast('⚠️ رقم الهاتف غير صحيح','err');
+  if(!salary)return toast('⚠️ أدخل المرتب','err');
+  if(employees.some(e=>e.authUid===currentUser.uid))return toast('⚠️ يوجد ملف موظف مرتبط بحسابك بالفعل','err');
+  const role=(__myUserDoc&&__myUserDoc.role)||currentRole||'admin';
+  const btn=document.getElementById('save-btn');btn.disabled=true;btn.textContent='جاري...';
+  const empData={
+    name,phone,role,
+    nationalId:gv('e-nid'),
+    baseSalary:salary,
+    commissionPct:(role==='graphic_designer'||role==='design_operator')?(parseFloat(gv('e-commission'))||0):0,
+    commissionPerOrder:parseFloat(gv('e-commission-order'))||0,
+    annualLeaveQuota:parseInt(gv('e-leave-quota'))||21,
+    startDate:gv('e-start')||new Date().toISOString().slice(0,10),
+    status:gv('e-status')||'active',
+    email:(__myUserDoc&&__myUserDoc.email)||currentUser.email||'',
+    isSelfFile:true,
+    createdAt:serverTimestamp(),
+    createdBy:currentUser.uid,
+    updatedAt:serverTimestamp(),
+  };
+  try{
+    const r=await employeeActions.createSelfEmployeeFile({db,authUid:currentUser.uid,employeeData:empData});
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');btn.disabled=false;btn.textContent='✓ إنشاء ملفي';return;}
+    toast('✅ تم إنشاء ملف الموظف الخاص بك','ok');
+    __selfMode=false;{const _r=document.getElementById('e-role');if(_r)_r.disabled=false;}
+    document.getElementById('ov-emp').classList.remove('open');
+  }catch(e){console.error(e);toast('❌ '+e.message,'err');}
+  btn.disabled=false;btn.textContent='✓ حفظ';
+}
+
 // ══ MODAL: موظف جديد/تعديل ══
 window.openAddEmp=function(){
+  __selfMode=false;{const _r=document.getElementById('e-role');if(_r)_r.disabled=false;}
   editingId=null;
   setText('emp-title','＋ موظف جديد');
   document.getElementById('save-btn').textContent='✓ إضافة';
@@ -1105,6 +1192,7 @@ window.updateSalaryUI=function(){
 function updatePreview(){setText('e-preview-email',gv('e-phone')+'@b2c.local');}
 
 window.saveEmp=async function(){
+  if(__selfMode)return saveSelfEmp();
   const name=gv('e-name').trim(),phone=gv('e-phone').trim(),role=gv('e-role');
   const salary=parseFloat(gv('e-salary'))||0,commission=parseFloat(gv('e-commission'))||0;
   if(!name)return toast('⚠️ أدخل الاسم','err');
@@ -1468,7 +1556,11 @@ window.reverseSalaryTx=async function(txId,employeeId,employeeName,amount,isDedu
 // up exactly as they did when the markup was inline (Phase 3C / Phase 2.3 pattern).
 document.getElementById('modal-host').innerHTML=buildAllEmployeeModalsHTML();
 
-const closeOverlay=id=>document.getElementById(id)?.classList.remove('open');
+const closeOverlay=id=>{
+  document.getElementById(id)?.classList.remove('open');
+  // إغلاق مودال الموظف يلغي نمط الملف الذاتي ويعيد تفعيل اختيار الدور.
+  if(id==='ov-emp'){__selfMode=false;const _r=document.getElementById('e-role');if(_r)_r.disabled=false;}
+};
 
 // Modal close buttons (data-close="<overlay-id>")
 document.querySelectorAll('[data-close]').forEach(b=>{
@@ -1498,6 +1590,11 @@ document.querySelectorAll('[data-act]').forEach(el=>{
   // handler below (so clicks inside the panel don't close it).
   const fnDo=STATIC_ACTIONS[el.dataset.act];
   if(fnDo) el.addEventListener('click',fnDo);
+});
+
+// Self employee-file banner — delegated (button rendered dynamically)
+document.getElementById('self-file-banner')?.addEventListener('click',e=>{
+  if(e.target.closest('[data-act="open-self-emp"]'))openSelfEmpFile();
 });
 
 // Sort menu toggle (stop propagation so the doc-level close handler doesn't fire)
