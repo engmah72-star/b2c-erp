@@ -150,7 +150,8 @@ const AGGREGATORS = [
       );
       const u1 = onSnapshot(reqQ, snap => { reqCount = snap.size; emit(); }, onErr('requests'));
       const u2 = onSnapshot(txQ,  snap => { txCount  = snap.size; emit(); }, onErr('transactions'));
-      return () => { u1(); u2(); };
+      // عزل كل إلغاء: فشل أحدهما لا يمنع الآخر (تجنّب تسرّب مستمع).
+      return () => { try { u1(); } catch (_) {} try { u2(); } catch (_) {} };
     },
   },
 
