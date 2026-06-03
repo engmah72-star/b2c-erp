@@ -36,7 +36,7 @@
  */
 
 import {
-  doc, collection, getDoc, getDocs, addDoc, updateDoc, writeBatch,
+  doc, collection, getDoc, getDocs, addDoc, setDoc, updateDoc, writeBatch,
   query, where, limit, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -225,6 +225,91 @@ export const clientActions = {
         errors: [e.code === 'permission-denied'
           ? '🔒 ليس لديك صلاحية إضافة عملاء'
           : (e.message || 'فشل إضافة العميل')],
+        warnings: [],
+      };
+    }
+  },
+
+  /**
+   * تسجيل/تحديث ذاتي للعميل (Client self-service).
+   *
+   * يكتب سجلّ العميل في `clients/{authUid}` (مُعرّف حتمي = uid) عبر setDoc merge،
+   * بحيث لكل حساب Google/Email عميل واحد فقط. لا يفحص dedup عبر عملاء آخرين
+   * (العميل لا يملك صلاحية قراءتهم — RULE 8)، والربط يتم لاحقاً يدوياً من الموظف.
+   *
+   * متطلبات firestore.rules (self-branch): clientId == uid، authUid == uid،
+   * status == 'self_registered'، البريد = بريد الحساب الموثّق.
+   *
+   * Returns: { ok, errors, warnings, clientId?, action? }
+   */
+  async upsertClientSelf({ db = defaultDb, authUid, authEmail, authName, data }) {
+    if (!authUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    if (!data)    return { ok: false, errors: ['⚠️ data مطلوبة'], warnings: [] };
+
+    // البريد دائماً = بريد الحساب الموثّق (القواعد تفرض المطابقة)
+    const email = (authEmail || '').toLowerCase().trim();
+    if (!email) return { ok: false, errors: ['⚠️ حسابك لا يحتوي على بريد موثّق'], warnings: [] };
+
+    const v = validateClientPayload({ ...data, email });
+    if (!v.ok) return v;
+
+    const ref = doc(db, 'clients', authUid);
+    let existing = null;
+    try { existing = await getDoc(ref); } catch (_) { /* قد لا يقرأ قبل الإنشاء */ }
+    const isNew = !existing || !existing.exists();
+
+    const payload = {
+      ...data,
+      email,
+      phone1: (data.phone1 || '').trim(),
+      phone2: (data.phone2 || '').trim(),
+      name: (data.name || '').trim(),
+      authUid,
+      status: 'self_registered',
+      isDeleted: false,
+      updatedAt: serverTimestamp(),
+    };
+    if (isNew) {
+      payload.selfRegistered = true;
+      payload.createdAt = serverTimestamp();
+      payload.createdBy = authUid;
+      payload.createdByName = (authName || data.name || '').trim();
+    }
+
+    // نسخة عامة مصغّرة للكارت الرقمي (public_cards/{uid}) — بدون أي بيانات داخلية.
+    const bp = data.businessProfile || {};
+    const publicCard = {
+      uid: authUid,
+      bizName: (bp.bizName || data.name || '').trim(),
+      bio: bp.bio || '',
+      logoUrl: bp.logoUrl || '',
+      coverUrl: bp.coverUrl || '',
+      phone: (data.phone1 || '').trim(),
+      whatsapp: bp.whatsapp || '',
+      website: bp.website || '',
+      social: bp.social || {},
+      services: Array.isArray(bp.services) ? bp.services : [],
+      works: Array.isArray(bp.works) ? bp.works : [],
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      // كتابة السجلّين معاً (clients + public_cards) في batch واحد (RULE 3).
+      const batch = writeBatch(db);
+      batch.set(ref, payload, { merge: true });
+      batch.set(doc(db, 'public_cards', authUid), publicCard, { merge: true });
+      await batch.commit();
+      return {
+        ok: true, errors: [], warnings: [],
+        clientId: authUid,
+        action: isNew ? 'self_register' : 'self_update',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied'
+          ? '🔒 تعذّر حفظ بياناتك — تأكد من تسجيل الدخول بنفس الحساب'
+          : (e.message || 'فشل حفظ البيانات')],
         warnings: [],
       };
     }

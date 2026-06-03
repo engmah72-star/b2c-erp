@@ -38,6 +38,22 @@ h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);text-align:center;margin-
 .loader{display:none;text-align:center;color:var(--dim2);font-size:var(--fs-md);margin-top:12px;}
 .hint{font-size:var(--fs-sm);color:var(--dim2);text-align:center;margin-top:18px;line-height:var(--lh-relaxed);}
 .hint a{color:var(--p);text-decoration:none;}
+/* OR divider + social/email auth (إضافة E1 — بديل اختياري للدخول بالكود) */
+.divider{display:flex;align-items:center;gap:12px;margin:22px 0 16px;color:var(--dim2);font-size:var(--fs-sm);}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line);}
+.btn-alt{width:100%;padding:12px;display:flex;align-items:center;justify-content:center;gap:10px;
+  background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);color:var(--snow);
+  font-family:inherit;font-size:var(--fs-md);font-weight:var(--fw-bold);cursor:pointer;
+  transition:border-color .2s,background .2s;margin-bottom:10px;}
+.btn-alt:hover{border-color:var(--p);background:var(--bg2);}
+.btn-alt:disabled{opacity:.5;cursor:not-allowed;}
+.btn-alt .ico{width:20px;height:20px;flex-shrink:0;}
+.email-box{display:none;margin-top:4px;}
+.email-box.show{display:block;}
+.ok-msg{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);
+  border-radius:var(--rad);padding:11px 14px;font-size:var(--fs-md);color:var(--g,#34d399);
+  margin-top:14px;display:none;white-space:pre-line;}
+.ok-msg.show{display:block;}
 </style>
 </head>
 <body>
@@ -59,9 +75,33 @@ h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);text-align:center;margin-
   <button type="button" class="btn" id="btn-login" onclick="doLogin()">دخول ←</button>
   <div class="loader" id="loader">⟳ جاري التحقق...</div>
   <div class="err" id="err-msg"></div>
+  <div class="ok-msg" id="ok-msg"></div>
+
+  <div class="divider">أو سجّل دخولك بحسابك</div>
+
+  <button type="button" class="btn-alt" id="btn-google" onclick="loginGoogle()">
+    <svg class="ico" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35 24 35c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.3 5.1 29.4 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.3 7.1 29.4 5 24 5 16.3 5 9.7 9.3 6.3 14.7z" transform="translate(0 -2)"/><path fill="#4CAF50" d="M24 45c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 35.9 26.7 37 24 37c-5.3 0-9.7-2.6-11.3-7l-6.5 5C9.6 40.6 16.2 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4 5.5l6.3 5.3C41.3 36.3 45 30.7 45 24c0-1.3-.1-2.3-.4-3.5z"/></svg>
+    الدخول بحساب Google
+  </button>
+
+  <button type="button" class="btn-alt" id="btn-email-toggle" onclick="toggleEmailBox()">
+    ✉️ الدخول برابط على الإيميل
+  </button>
+
+  <div class="email-box" id="email-box">
+    <div class="fg">
+      <label>📧 بريدك الإلكتروني</label>
+      <input class="inp" id="inp-email" type="email" dir="ltr" placeholder="name@example.com"
+        inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false"
+        onkeydown="if(event.key==='Enter')sendEmailLink()">
+    </div>
+    <button type="button" class="btn" id="btn-send-email" onclick="sendEmailLink()">📨 أرسل رابط الدخول</button>
+  </div>
 
   <p class="hint">مش عارف الكود؟ تواصل مع خدمة العملاء<br>
     <a href="gallery.html">🖼️ معرض التصاميم العام</a>
+    &nbsp;·&nbsp;
+    <a href="portal.html?demo=1">👁 معاينة البوابة بدون تسجيل</a>
   </p>
   <p class="hint" style="margin-top:8px;font-size:var(--fs-sm);opacity:.7">
     <a href="privacy.html">سياسة الخصوصية</a>
@@ -69,13 +109,19 @@ h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);text-align:center;margin-
 </div>
 
 <script type="module">
-import { app, db } from "./core/firebase-init.js";
-import { collection, query, where, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { app, db, auth } from "./core/firebase-init.js";
+import { collection, query, where, getDocs, getDoc, doc, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {
+  GoogleAuthProvider, signInWithPopup,
+  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 function showErr(msg) {
   const el = document.getElementById('err-msg');
   el.textContent = msg; el.style.display = 'block';
 }
 function hideErr() { document.getElementById('err-msg').style.display = 'none'; }
+function showOk(msg) { const el = document.getElementById('ok-msg'); el.textContent = msg; el.classList.add('show'); }
+function hideOk() { document.getElementById('ok-msg').classList.remove('show'); }
 
 window.doLogin = async function() {
   hideErr();
@@ -132,9 +178,100 @@ window.doLogin = async function() {
   }
 };
 
+// ══════════════════════════════════════════
+// Google / Email sign-in (E1 — مسار دخول إضافي اختياري)
+// يمنح العميل هوية Firebase حقيقية، ثم يربطه بأوردراته عبر بريده.
+// ══════════════════════════════════════════
+
+const EMAIL_LINK_KEY = 'b2c_emailForSignIn';
+
+/** بعد نجاح المصادقة (Google/Email): وجّه العميل لبوابته (4 تبويبات).
+ *  الهوية محفوظة في Firebase Auth (persistent) — تقرأها client-app. */
+function routeAuthedClient(user) {
+  if (!(user?.email)) {
+    showErr('❌ هذا الحساب لا يحتوي على بريد إلكتروني — استخدم رقم الهاتف وكود الأوردر.');
+    return false;
+  }
+  window.location.href = 'portal.html';
+  return true;
+}
+
+/** الدخول بحساب Google (popup). */
+window.loginGoogle = async function() {
+  hideErr(); hideOk();
+  const btn = document.getElementById('btn-google');
+  const loader = document.getElementById('loader');
+  btn.disabled = true; loader.style.display = 'block';
+  try {
+    const provider = new GoogleAuthProvider();
+    const cred = await signInWithPopup(auth, provider);
+    await routeAuthedClient(cred.user);
+  } catch(e) {
+    const map = {
+      'auth/popup-closed-by-user': 'تم إغلاق نافذة الدخول قبل إكمالها.',
+      'auth/cancelled-popup-request': 'تم إلغاء الطلب — حاول مرة أخرى.',
+      'auth/popup-blocked': 'المتصفح منع النافذة المنبثقة — اسمح بها ثم حاول ثانية.',
+      'auth/operation-not-allowed': 'دخول Google غير مفعّل في إعدادات Firebase — تواصل مع الإدارة.',
+      'auth/unauthorized-domain': 'النطاق غير مُصرّح في إعدادات Firebase Auth.',
+    };
+    showErr('❌ ' + (map[e.code] || e.message || 'تعذّر الدخول بـ Google'));
+  } finally {
+    btn.disabled = false; loader.style.display = 'none';
+  }
+};
+
+/** إظهار/إخفاء حقل البريد لإرسال رابط الدخول. */
+window.toggleEmailBox = function() {
+  const box = document.getElementById('email-box');
+  box.classList.toggle('show');
+  if (box.classList.contains('show')) document.getElementById('inp-email').focus();
+};
+
+/** إرسال رابط دخول بدون كلمة مرور (passwordless email link). */
+window.sendEmailLink = async function() {
+  hideErr(); hideOk();
+  const email = document.getElementById('inp-email').value.trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showErr('⚠️ اكتب بريداً صحيحاً مثل name@example.com');
+  const btn = document.getElementById('btn-send-email');
+  btn.disabled = true;
+  try {
+    await sendSignInLinkToEmail(auth, email, { url: location.origin + location.pathname, handleCodeInApp: true });
+    try { localStorage.setItem(EMAIL_LINK_KEY, email); } catch(_) {}
+    showOk('✅ أرسلنا رابط الدخول إلى ' + email + '\nافتح الرابط من بريدك (راجع الـ spam) لإكمال الدخول.');
+  } catch(e) {
+    const map = {
+      'auth/operation-not-allowed': 'دخول رابط الإيميل غير مفعّل في إعدادات Firebase — تواصل مع الإدارة.',
+      'auth/invalid-email': 'صيغة البريد غير صحيحة.',
+      'auth/unauthorized-domain': 'النطاق غير مُصرّح في إعدادات Firebase Auth.',
+    };
+    showErr('❌ ' + (map[e.code] || e.message || 'تعذّر إرسال الرابط'));
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+/** إكمال الدخول لو الصفحة فُتحت عبر رابط الإيميل. */
+(async function completeEmailLinkIfPresent() {
+  try {
+    if (!isSignInWithEmailLink(auth, location.href)) return;
+    let email = '';
+    try { email = (localStorage.getItem(EMAIL_LINK_KEY) || '').toLowerCase(); } catch(_) {}
+    if (!email) email = (window.prompt('أكّد بريدك الإلكتروني لإكمال الدخول:') || '').trim().toLowerCase();
+    if (!email) return;
+    document.getElementById('loader').style.display = 'block';
+    const cred = await signInWithEmailLink(auth, email, location.href);
+    try { localStorage.removeItem(EMAIL_LINK_KEY); } catch(_) {}
+    try { history.replaceState(null, '', location.pathname); } catch(_) {}  // نظّف رموز الرابط من الـ URL
+    await routeAuthedClient(cred.user);
+  } catch(e) {
+    showErr('❌ تعذّر إكمال الدخول بالرابط: ' + (e.message || ''));
+    document.getElementById('loader').style.display = 'none';
+  }
+})();
+
 // Auto-clear error on input
-['inp-phone','inp-code'].forEach(id => {
-  document.getElementById(id)?.addEventListener('input', hideErr);
+['inp-phone','inp-code','inp-email'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', () => { hideErr(); hideOk(); });
 });
 </script>
 </body>

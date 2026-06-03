@@ -342,7 +342,12 @@ service cloud.firestore {
         resource.data.get('createdBy','__') == request.auth.uid ||
         resource.data.get('designerId','__') == request.auth.uid ||
         resource.data.get('productionAgent','__') == request.auth.uid ||
-        resource.data.get('shippingOfficerId','__') == request.auth.uid
+        resource.data.get('shippingOfficerId','__') == request.auth.uid ||
+        // Client self-service: العميل يقرأ أوردراته فقط بمطابقة هاتفه المسجّل
+        // (clients/{uid}.phone1 == order.clientPhone). الهاتف الفارغ لا يطابق.
+        ( exists(/databases/$(database)/documents/clients/$(request.auth.uid))
+          && get(/databases/$(database)/documents/clients/$(request.auth.uid)).data.get('phone1','') != ''
+          && resource.data.get('clientPhone','') == get(/databases/$(database)/documents/clients/$(request.auth.uid)).data.phone1 )
       );
       allow create: if isAuth() && (isAdmin() || can('canAddOrders'));
       allow update: if isAuth() && (
@@ -376,6 +381,11 @@ service cloud.firestore {
       // (CS + Admin + Ops + Shipping)، أو من أنشأ العميل بنفسه.
       // الأدوار الأخرى (Designer, Production, Wallet Manager...) لا تحتاج
       // الوصول لـ /clients ولا يجب أن تراه.
+      // ── Client self-service (تسجيل ذاتي عبر Google / Email link) ──
+      // العميل مصادَق عبر Firebase Auth لكن بلا users doc (role()='' ⇒ كل
+      // helpers الموظفين ترجّع false بأمان). يُسمح له بسجله الخاص فقط، المُعرَّف
+      // حتمياً بـ clientId == uid و authUid == uid وبريد السجل = بريده الموثّق
+      // (email_verified) — فلا يمكنه قراءة/تعديل سجلات عملاء آخرين.
       allow read: if isAuth() && (
         canSeeCustomerPhone() && (
           hasPage('clients') ||
@@ -384,22 +394,49 @@ service cloud.firestore {
           can('canFollowUpClients') ||
           can('canArchiveClients')
         ) ||
-        resource.data.get('createdBy','__') == request.auth.uid
+        resource.data.get('createdBy','__') == request.auth.uid ||
+        resource.data.get('authUid','__') == request.auth.uid
       );
-      allow create: if isAuth() && canSeeCustomerPhone() && (isAdmin() || can('canAddClients'));
+      allow create: if isAuth() && (
+        ( canSeeCustomerPhone() && (isAdmin() || can('canAddClients')) ) ||
+        // self-register: doc id = uid، يملك authUid، بريد موثّق مطابق، self_registered، غير محذوف
+        ( clientId == request.auth.uid
+          && request.resource.data.get('authUid','') == request.auth.uid
+          && request.auth.token.get('email_verified', false) == true
+          && request.auth.token.get('email','') != ''
+          && request.resource.data.get('email','') == request.auth.token.email
+          && request.resource.data.get('status','') == 'self_registered'
+          && request.resource.data.get('isDeleted', false) == false )
+      );
       // Update covers add-style edits + follow-up notes + archive flag.
       // Each is a separate permission so a CS rep can be allowed to follow up
       // without being able to add new clients, etc.
       // RULE 8.1: تعديل أرقام التليفون محصور على الأدوار المصرّحة.
-      allow update: if isAuth() && canSeeCustomerPhone() && (
-        isAdmin() ||
-        can('canAddClients') ||
-        can('canFollowUpClients') ||
-        can('canArchiveClients') ||
-        hasPage('print') ||
-        resource.data.get('createdBy','__') == request.auth.uid
+      allow update: if isAuth() && (
+        ( canSeeCustomerPhone() && (
+          isAdmin() ||
+          can('canAddClients') ||
+          can('canFollowUpClients') ||
+          can('canArchiveClients') ||
+          hasPage('print') ||
+          resource.data.get('createdBy','__') == request.auth.uid
+        ) ) ||
+        // self-update: العميل يعدّل سجله فقط، دون تغيير المالك أو بريده الموثّق
+        ( resource.data.get('authUid','__') == request.auth.uid
+          && request.resource.data.get('authUid','') == request.auth.uid
+          && request.resource.data.get('email','') == resource.data.get('email','') )
       );
       allow delete: if isAdminOnly();
+    }
+
+    // ══ Public business cards — الكارت الرقمي العام (Phase 6) ══
+    // نسخة عامة مصغّرة من بروفايل أعمال العميل (بدون أي بيانات داخلية).
+    // القراءة عامة لأي زائر (صفحة قابلة للمشاركة)؛ الكتابة لصاحب الحساب فقط
+    // (cardId == uid) أو admin. لا يحتوي حقول حسّاسة غير ما ينشره العميل بنفسه.
+    match /public_cards/{cardId} {
+      allow read: if true;
+      allow create, update: if isAuth() && cardId == request.auth.uid;
+      allow delete: if isAuth() && (cardId == request.auth.uid || isAdminOnly());
     }
 
     // ══ Wallets ══
