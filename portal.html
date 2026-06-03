@@ -147,6 +147,20 @@ textarea.inp{resize:vertical;min-height:64px;}
 .tabbar button.active::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
   width:26px;height:3px;border-radius:0 0 4px 4px;background:var(--p);}
 #gate{text-align:center;color:var(--dim2);padding:80px 16px;}
+/* ── UX: toasts + skeletons + press feedback ── */
+.toast-wrap{position:fixed;left:0;right:0;bottom:88px;z-index:80;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px;}
+.toast{pointer-events:auto;max-width:420px;width:fit-content;padding:11px 16px;border-radius:14px;font-size:var(--fs-md);font-weight:var(--fw-bold);
+  box-shadow:0 10px 30px rgba(0,0,0,.4);animation:toastUp .25s ease;background:var(--bg2);border:1px solid var(--line);color:var(--snow);}
+.toast.ok{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:var(--cp-ok);}
+.toast.err{background:rgba(255,61,110,.13);border-color:rgba(255,61,110,.4);color:var(--r);}
+@keyframes toastUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+.skel{position:relative;overflow:hidden;background:var(--bg3);border-radius:12px;}
+.skel::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);animation:shim 1.2s infinite;}
+@keyframes shim{from{transform:translateX(-100%);}to{transform:translateX(100%);}}
+.skel-card{height:74px;margin-bottom:12px;}
+/* أزرار: استجابة لمس واضحة (الواجهة سريعة الإحساس) */
+.btn:active,.btn-ghost:active,.chip:active,.gal-card .sim:active,.chat-input button:active{transform:scale(.97);}
+.btn,.btn-ghost{min-height:46px;}
 /* ── Designs gallery (Phase 5) ── */
 .chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
 .chips::-webkit-scrollbar{display:none;}
@@ -245,7 +259,7 @@ textarea.inp{resize:vertical;min-height:64px;}
     </div>
     <div id="home-notifs"></div>
     <div class="sec-title">طلباتي الحالية</div>
-    <div id="home-orders"><div class="empty">⟳ تحميل…</div></div>
+    <div id="home-orders"><div class="skel skel-card"></div><div class="skel skel-card"></div></div>
     <button class="btn" style="margin-top:8px" id="btn-new">➕ طلب تصميم جديد</button>
     <button class="btn-ghost" id="btn-support">💬 تواصل مع خدمة العملاء</button>
   </section>
@@ -358,6 +372,8 @@ textarea.inp{resize:vertical;min-height:64px;}
     <button id="chat-send" aria-label="إرسال">➤</button>
   </div>
 </div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
 
 <nav class="tabbar" id="tabbar" style="display:none">
   <button class="active" data-tab="home"><span class="ti">🏠</span>الرئيسية</button>
@@ -541,6 +557,16 @@ function switchTab(name) {
   if (name === 'designs' && !galLoaded) { galLoaded = true; loadGallery(); }
 }
 function esc(s){ return String(s == null ? '' : s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+// تنبيه غير معطّل (toast) — أنعم من alert
+function toast(msg, type = '') {
+  const w = $('toast-wrap'); if (!w) { return; }
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  w.appendChild(t);
+  setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 2600);
+}
+const SKEL = '<div class="skel skel-card"></div>'.repeat(3);
 
 // ════════════════ DESIGNS GALLERY (Phase 5) ════════════════
 async function loadGallery() {
@@ -598,7 +624,7 @@ function wantSimilar(item) {
 
 // ════════════════ CHAT — خط التواصل (Phase 7) ════════════════
 async function openChat(kind, order) {
-  if (DEMO) { alert('👁 وضع المعاينة — المحادثة تشتغل بعد تسجيل الدخول.'); return; }
+  if (DEMO) { toast('👁 وضع المعاينة — المحادثة تشتغل بعد تسجيل الدخول'); return; }
   const title = kind === 'order'
     ? '💬 فريق الأوردر #' + (order?.orderId || order?._id?.slice(-6) || '')
     : '💬 خدمة العملاء';
@@ -655,12 +681,19 @@ async function sendChat() {
   const text = input.value.trim();
   if (!text || !chatCtx) return;
   input.value = '';
+  // Optimistic: أظهر الرسالة فوراً (إحساس لحظي) قبل تأكيد السيرفر
+  const box = $('chat-msgs');
+  const empt = box.querySelector('.chat-empty'); if (empt) box.innerHTML = '';
+  const b = document.createElement('div');
+  b.className = 'msg-b me'; b.style.opacity = '.6'; b.textContent = text;
+  box.appendChild(b); box.scrollTop = box.scrollHeight;
   const res = await clientActions.sendClientMessage({
     convId: chatCtx.convId, text, senderId: user.uid,
     senderName: (clientDoc?.businessProfile?.bizName || clientDoc?.name || 'عميل'),
     participants: chatCtx.participants,
   });
-  if (!res.ok) { input.value = text; alert((res.errors || ['تعذّر الإرسال'])[0]); }
+  if (!res.ok) { input.value = text; b.remove(); toast((res.errors || ['تعذّر الإرسال'])[0], 'err'); }
+  // عند النجاح: onSnapshot هيعيد رسم الرسائل (تشمل الرسالة بختم الوقت)
 }
 
 function closeChat() {
@@ -679,6 +712,7 @@ async function renderHome() {
     ordersEl.innerHTML = '<div class="empty"><span class="big">👋</span>أكمِل بياناتك في تبويب <b>بروفايلي</b> لنربط طلباتك ونخدمك بشكل أفضل.</div>';
     return;
   }
+  ordersEl.innerHTML = SKEL;
   try {
     const snap = await getDocs(query(collection(db, 'orders'), where('clientPhone', '==', phone), limit(20)));
     let orders = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(o => !o.isDeleted);
@@ -737,7 +771,7 @@ async function renderLatestDesign(order, notifEl) {
 
 // فتح الطلب في بوابة الاعتماد الحالية (إعادة استخدام)
 function openOrder(orderDocId, orderCode) {
-  if (DEMO) { alert('👁 وضع المعاينة — متابعة الطلب تُفتح بعد تسجيل الدخول.'); return; }
+  if (DEMO) { toast('👁 وضع المعاينة — متابعة الطلب تُفتح بعد تسجيل الدخول'); return; }
   localStorage.setItem('clientSession', JSON.stringify({
     orderDocId, orderCode,
     phone: (clientDoc?.phone1 || ''),
@@ -983,7 +1017,7 @@ function bindUI() {
   });
   // صفحتي العامة (Phase 6)
   $('btn-copy')?.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(publicCardUrl()); showMsg('ok', '✅ تم نسخ الرابط.'); }
+    try { await navigator.clipboard.writeText(publicCardUrl()); toast('✅ تم نسخ الرابط','ok'); }
     catch (_) { showMsg('err', 'انسخ الرابط يدوياً: ' + publicCardUrl()); }
   });
   $('btn-share')?.addEventListener('click', async () => {
