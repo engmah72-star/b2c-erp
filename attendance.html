@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="theme-color" content="#0a0f1e">
+<title>Business2Card — لوحة الحضور</title>
+<link rel="stylesheet" href="shared.css?v=45">
+<script src="theme.js?v=13"></script>
+<style>
+  .ab-wrap { max-width: 920px; margin: 0 auto; padding: 16px; }
+  .ab-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ab-title { font-size: var(--fs-xl); font-weight: var(--fw-extra); color: var(--snow); margin: 0; flex: 1; min-width: 0; }
+  .ab-datenav { display: flex; align-items: center; gap: 6px; }
+  .ab-date { font-weight: var(--fw-bold); color: var(--snow); min-width: 120px; text-align: center; }
+  .ab-summary { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .ab-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: var(--fs-sm); }
+  .ab-row { background: var(--bg2); border: 1px solid var(--line); border-radius: var(--rad); padding: 10px 12px; margin-bottom: 8px; }
+  .ab-main { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+  .ab-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ab-status { font-size: 18px; line-height: 1; }
+  .ab-name { font-weight: var(--fw-bold); color: var(--snow); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ab-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ab-badge { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+  .ab-pend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .ab-deny { max-width: 480px; margin: 60px auto; text-align: center; color: var(--dim2); }
+</style>
+</head>
+<body>
+<div class="ab-wrap">
+  <div class="ab-head">
+    <h1 class="ab-title">🕐 لوحة الحضور اليومية</h1>
+    <div class="ab-datenav">
+      <button type="button" class="btn btn-ghost btn-xs" data-act="day-prev">←</button>
+      <span class="ab-date" id="ab-date">—</span>
+      <button type="button" class="btn btn-ghost btn-xs" id="ab-next" data-act="day-next">→</button>
+      <button type="button" class="btn btn-b btn-xs" data-act="day-today">اليوم</button>
+    </div>
+  </div>
+  <div class="ab-summary" id="ab-summary"></div>
+  <div id="ab-board"></div>
+</div>
+
+<script type="module">
+import { auth, db } from './core/firebase-init.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { collection, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { employeeActions } from './employee-actions.js';
+import { resolveDayStatus } from './core/attendance-core.js';
+import { buildAttendanceBoardHTML, buildBoardSummaryHTML } from './features/attendance-board/render.js';
+
+const ROLE_AR = {
+  admin: 'مدير', operation_manager: 'مدير تشغيل', customer_service: 'خدمة عملاء',
+  graphic_designer: 'مصمم', design_operator: 'مشغّل تصميم', production_agent: 'إنتاج',
+  shipping_officer: 'شحن', wallet_manager: 'محاسب',
+};
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const addDays = (iso, n) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+function toast(msg, type) { if (typeof window.toast === 'function' && window.toast !== toast) return window.toast(msg, type); alert(msg); }
+
+let me = { uid: '', name: '' }, canManage = false;
+let selDate = todayIso();
+let employees = [], attRecords = [], leaves = [], permissions = [];
+let _unsubDay = null;
+
+function render() {
+  document.getElementById('ab-date').textContent = selDate;
+  document.getElementById('ab-next').disabled = selDate >= todayIso();
+  const today = todayIso();
+  const isToday = selDate === today;
+  const counts = {};
+  const rows = employees
+    .filter(e => (e.status || 'active') === 'active')
+    .map(e => {
+      const uid = e.authUid || e._id;
+      const record = attRecords.find(a =>
+        a.date === selDate && (a.employeeUid === uid || a.employeeId === e._id || a.employeeId === uid)) || null;
+      const empLeaves = leaves.filter(lv => lv.employeeId === e._id || lv.employeeUid === uid);
+      const empPerms = permissions.filter(p => p.employeeId === e._id || p.employeeUid === uid);
+      const d = resolveDayStatus({ date: selDate, today, record, leaves: empLeaves, permissions: empPerms, workSchedule: e.workSchedule });
+      counts[d.status] = (counts[d.status] || 0) + 1;
+      const pending = empPerms.filter(p => p.date === selDate && p.status === 'pending');
+      counts.pending = (counts.pending || 0) + pending.length;
+      return {
+        empId: e._id, authUid: uid, name: e.name || '—', role: ROLE_AR[e.role] || e.role || '',
+        status: d.status, lateMinutes: d.lateMinutes || 0,
+        checkInStr: d.checkInStr || '', checkOutStr: d.checkOutStr || '',
+        expectedStart: e.workSchedule?.startTime || '',
+        canCheckin: isToday && d.status === 'absent',
+        pending,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  document.getElementById('ab-summary').innerHTML = buildBoardSummaryHTML(counts);
+  document.getElementById('ab-board').innerHTML = buildAttendanceBoardHTML({ rows, canManage });
+}
+
+function subscribeDay() {
+  if (_unsubDay) { try { _unsubDay(); } catch (_) {} }
+  const unsubA = onSnapshot(query(collection(db, 'attendance'), where('date', '==', selDate), limit(500)),
+    s => { attRecords = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+  const unsubP = onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', selDate), limit(500)),
+    s => { permissions = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+  _unsubDay = () => { unsubA(); unsubP(); };
+}
+
+document.querySelector('.ab-wrap').addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'day-prev') { selDate = addDays(selDate, -1); subscribeDay(); render(); return; }
+  if (act === 'day-next') { if (selDate < todayIso()) { selDate = addDays(selDate, 1); subscribeDay(); render(); } return; }
+  if (act === 'day-today') { selDate = todayIso(); subscribeDay(); render(); return; }
+  if (!canManage) return;
+  if (act === 'board-checkin') {
+    el.disabled = true;
+    const r = await employeeActions.recordAttendanceCheckIn({
+      db, employeeId: el.dataset.emp, employeeUid: el.dataset.uid, employeeName: el.dataset.name,
+      date: selDate, monthKey: selDate.slice(0, 7),
+      expectedStart: el.dataset.start || '', graceMinutes: 15, source: 'central',
+      recordedBy: me.uid, recordedByName: me.name,
+    });
+    toast(r.ok ? (r.lateMinutes > 0 ? `⚠️ حضور متأخر ${r.lateMinutes}د` : '✅ تم تسجيل الحضور') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    return;
+  }
+  if (act === 'board-approve' || act === 'board-reject') {
+    el.disabled = true;
+    const r = await employeeActions.decideAttendancePermission({
+      db, permissionId: el.dataset.perm, decision: act === 'board-approve' ? 'approved' : 'rejected',
+      decidedBy: me.uid, decidedByName: me.name,
+    });
+    toast(r.ok ? (act === 'board-approve' ? '✅ تم الاعتماد' : '🚫 تم الرفض') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+  }
+});
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { location.href = 'login.html'; return; }
+  me = { uid: user.uid, name: user.displayName || '' };
+  let userData = {};
+  try {
+    const { doc, getDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const us = await getDoc(doc(db, 'users', user.uid));
+    userData = us.exists() ? us.data() : {};
+  } catch (_) {}
+  if (!me.name) me.name = userData.name || '';
+  const role = userData.role || '';
+  const caps = userData.permissions?.capabilities || {};
+  canManage = role === 'admin' || role === 'operation_manager' || caps.manage_attendance === true;
+  if (!canManage) {
+    document.querySelector('.ab-wrap').innerHTML =
+      '<div class="ab-deny"><div style="font-size:40px">🔒</div><div>لوحة الحضور متاحة للإدارة فقط.</div></div>';
+    return;
+  }
+  onSnapshot(query(collection(db, 'employees'), limit(500)),
+    s => { employees = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+  onSnapshot(query(collection(db, 'employee_leaves'), limit(1000)),
+    s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+  subscribeDay();
+  render();
+});
+
+window.addEventListener('beforeunload', () => { if (_unsubDay) { try { _unsubDay(); } catch (_) {} } });
+</script>
+</body>
+</html>

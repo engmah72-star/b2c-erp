@@ -15,9 +15,9 @@
 // كل role يشوف أي domains. الـ admin + operation_manager بيشوفوا الكل.
 // باقي الأدوار = subset حسب وظيفتهم.
 const ROLE_DOMAINS = {
-  admin: ['clients', 'design', 'production', 'shipping', 'accounts', 'reports', 'inbox', 'admin'],
+  admin: ['clients', 'design', 'production', 'shipping', 'accounts', 'reports', 'attendance', 'inbox', 'admin'],
 
-  operation_manager: ['clients', 'design', 'production', 'shipping', 'accounts', 'reports', 'inbox', 'admin'],
+  operation_manager: ['clients', 'design', 'production', 'shipping', 'accounts', 'reports', 'attendance', 'inbox', 'admin'],
 
   customer_service: ['clients', 'design', 'shipping', 'reports', 'inbox'],
 

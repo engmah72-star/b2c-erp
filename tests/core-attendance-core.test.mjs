@@ -9,6 +9,7 @@
 import {
   isWorkDayFor, isLeaveDayFor, computeLateMinutes,
   excusedLateMinutes, PERMISSION_TYPES, PERMISSION_STATUS,
+  resolveDayStatus,
 } from '../core/attendance-core.js';
 
 let passed = 0, failed = 0;
@@ -162,6 +163,43 @@ test('early_out is ignored for late arrival', () => {
 });
 test('permission on a different date does not apply', () => {
   assertEq(excusedLateMinutes(D, [{ date: '2026-06-04', type: 'late_in', status: 'approved' }]), 0);
+});
+
+// ── resolveDayStatus (daily board) ──────────────────────────────────
+// 2026-06-03 Wed (work day), 06-05 Fri (off), today anchor 2026-06-10
+const ST = (args) => resolveDayStatus({ today: '2026-06-10', ...args }).status;
+
+test('check-in record on time → present', () => {
+  assertEq(ST({ date: '2026-06-03', record: { checkIn: true, lateMinutes: 0 } }), 'present');
+});
+test('check-in record late → late (with minutes)', () => {
+  const r = resolveDayStatus({ date: '2026-06-03', today: '2026-06-10', record: { checkIn: true, lateMinutes: 45 } });
+  assertEq(r.status, 'late');
+  assertEq(r.lateMinutes, 45);
+});
+test('late record forgiven by approved late_in → present', () => {
+  const r = resolveDayStatus({
+    date: '2026-06-03', today: '2026-06-10',
+    record: { checkIn: true, lateMinutes: 45 },
+    permissions: [{ date: '2026-06-03', type: 'late_in', status: 'approved' }],
+  });
+  assertEq(r.status, 'present');
+  assertEq(r.lateMinutes, 0);
+});
+test('no record + leave → leave', () => {
+  assertEq(ST({ date: '2026-06-03', leaves: [{ startDate: '2026-06-03' }] }), 'leave');
+});
+test('no record + approved mission → mission', () => {
+  assertEq(ST({ date: '2026-06-03', permissions: [{ date: '2026-06-03', type: 'mission', status: 'approved' }] }), 'mission');
+});
+test('no record on a non-work day → off', () => {
+  assertEq(ST({ date: '2026-06-05' }), 'off'); // Friday
+});
+test('no record on a future work day → upcoming', () => {
+  assertEq(ST({ date: '2026-06-11' }), 'upcoming'); // after today anchor
+});
+test('no record on a past work day → absent', () => {
+  assertEq(ST({ date: '2026-06-03' }), 'absent');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

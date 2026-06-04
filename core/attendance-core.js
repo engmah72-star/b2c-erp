@@ -120,3 +120,46 @@ export function excusedLateMinutes(dateStr, permissions = []) {
   }
   return total;
 }
+
+/**
+ * Resolve one employee's attendance status for a single day — the single
+ * source the daily board, the calendar and the profile all read from.
+ *
+ * Priority: a check-in record wins (present/late, with permission-forgiven
+ * lateness) → leave → approved full-day permission (mission/remote) → a
+ * non-work day (off) → a future work day (upcoming) → otherwise absent.
+ *
+ * @param {Object} args
+ * @param {string}  args.date            — 'YYYY-MM-DD'
+ * @param {string}  [args.today]         — 'YYYY-MM-DD' (to mark future days)
+ * @param {Object}  [args.record]        — the employee's attendance doc for `date`
+ * @param {Array}   [args.leaves]        — employee leaves
+ * @param {Array}   [args.permissions]   — employee permissions
+ * @param {Object}  [args.workSchedule]  — { days?, startTime? }
+ * @returns {{ status, lateMinutes, checkInStr?, checkOutStr? }}
+ *          status ∈ present|late|leave|mission|remote|off|upcoming|absent
+ */
+export function resolveDayStatus({
+  date, today = '', record = null,
+  leaves = [], permissions = [], workSchedule = null,
+}) {
+  if (record && record.checkIn) {
+    const raw = parseInt(record.lateMinutes) || 0;
+    const excused = excusedLateMinutes(date, permissions);
+    const late = excused === Infinity ? 0 : Math.max(0, raw - excused);
+    return {
+      status: late > 0 ? 'late' : 'present',
+      lateMinutes: late,
+      checkInStr: record.checkInStr || '',
+      checkOutStr: record.checkOutStr || '',
+    };
+  }
+  if (isLeaveDayFor(date, leaves)) return { status: 'leave', lateMinutes: 0 };
+  const full = permissions.find(p =>
+    p && p.status === 'approved' && p.date === date &&
+    (p.type === 'mission' || p.type === 'remote'));
+  if (full) return { status: full.type, lateMinutes: 0 };
+  if (!isWorkDayFor(date, workSchedule)) return { status: 'off', lateMinutes: 0 };
+  if (today && date > today) return { status: 'upcoming', lateMinutes: 0 };
+  return { status: 'absent', lateMinutes: 0 };
+}

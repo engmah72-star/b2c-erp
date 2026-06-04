@@ -27,6 +27,7 @@ export const DOMAINS = [
   { id: 'shipping',   icon: '🚚',  title: 'الشحن',     workspace: 'shipping.html'   },
   { id: 'accounts',   icon: '💰',  title: 'الحسابات',  workspace: 'accounts.html'   },
   { id: 'reports',    icon: '📊',  title: 'التقارير',  workspace: 'reports.html'    },
+  { id: 'attendance', icon: '🕐',  title: 'الحضور',    workspace: 'attendance.html' },
   { id: 'inbox',      icon: '💬',  title: 'الرسائل',   workspace: 'inbox.html'      },
   { id: 'admin',      icon: '⚙',  title: 'الإدارة',   workspace: 'settings.html'   },
 ];
