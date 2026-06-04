@@ -3517,3 +3517,34 @@ exports.requestDesignApproval = onCall(CALL_OPTS, async (req) => {
   });
   return { ok: true };
 });
+
+// ════════════════════════════════════════════════════════════
+// CLIENT IN-APP NOTIFICATION — إشعار العميل داخل البوابة عند تغيّر المرحلة (#Notifications)
+// مستقل عن FCM (يعمل بلا توكن push): يكتب notifications doc يقرأه العميل في البوابة.
+// يحلّ uid العميل عبر clientId أو مطابقة الهاتف (clients.phone1 == order.clientPhone).
+// ════════════════════════════════════════════════════════════
+exports.onOrderStageNotifyClientInApp = onDocumentUpdated('orders/{orderId}', async (e) => {
+  const before = (e.data && e.data.before && e.data.before.data()) || {};
+  const after = (e.data && e.data.after && e.data.after.data()) || {};
+  if (!after.stage || before.stage === after.stage) return;
+  if (!STAGE_LABELS[after.stage]) return;
+
+  let uid = after.clientId || null;
+  if (!uid && after.clientPhone) {
+    try {
+      const snap = await db.collection('clients').where('phone1', '==', String(after.clientPhone)).limit(1).get();
+      if (!snap.empty) uid = snap.docs[0].id;
+    } catch (_) { /* تجاهل */ }
+  }
+  if (!uid) return;
+
+  const orderNum = after.orderNumber || after.serial || e.params.orderId.slice(0, 6);
+  await db.collection('notifications').add({
+    toUid: uid,
+    title: `📦 تحديث طلبك #${orderNum}`,
+    desc: STAGE_LABELS[after.stage],
+    ico: '📦', link: '/cp-shell.html', type: 'order_stage',
+    entityId: e.params.orderId, orderId: e.params.orderId, stage: after.stage,
+    read: false, createdAt: FieldValue.serverTimestamp(),
+  }).catch((err) => console.warn('client in-app notif failed', err.message));
+});
