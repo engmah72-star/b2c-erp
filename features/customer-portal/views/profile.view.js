@@ -72,8 +72,8 @@ export function create(ctx) {
         ${Button({ label: 'تنزيل QR', icon: '⬇️', variant: 'ghost', size: 'sm', block: false, action: 'qr-download' })}
         ${Button({ label: 'مشاركة', icon: '🔗', variant: 'ghost', size: 'sm', block: false, action: 'share' })}
       </div></div>` }) : '';
-    // بطاقة الخطة (استهلاك core/entitlements — Premium gating).
-    const ent = entitlementsOf({ plan: biz.plan, featured: biz.featured });
+    // بطاقة الخطة (استهلاك core/entitlements — من المصدر الموثوق subscriptions).
+    const ent = entitlementsOf(store.get('entitlement') || { plan: 'free' });
     const tone = ent.plan === 'free' ? 'neutral' : 'ok';
     const planCard = Card({ body: `<div class="cp-stack cp-stack--sm">
       <div class="cp-row cp-row--between">

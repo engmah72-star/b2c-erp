@@ -297,9 +297,8 @@ export const clientActions = {
       activity: (bp.activity || '').trim(),
       city: (bp.city || '').trim(),
       listedInDirectory: bp.listedInDirectory === true,
-      // حقول محايدة للتوسّع المستقبلي (اشتراكات/إعلانات مميزة) — غير مفعّلة
-      plan: bp.plan || 'free',
-      featured: bp.featured === true,
+      // ملاحظة: plan/featured لا تُكتب من العميل — مصدرها الموثوق subscriptions/{uid}
+      // (write:false) وتُضبط حصراً عبر Cloud Function setClientPlan. لا تلاعب ذاتي بالخطة.
       updatedAt: serverTimestamp(),
     };
 
