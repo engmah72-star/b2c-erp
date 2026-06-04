@@ -143,7 +143,11 @@ Helpers: `canDo(cap)` · `canSee(field)` · `hasPage(page)`.
 دفاع متعدد الطبقات: UI (`canSee`) + `firestore.rules` (fail-closed) + audit.
 
 ### المداخل (PC3 — مدخل واحد لكل فئة)
-- الموظفون/الإدارة: `shell.html` (Runtime Shell، domains بالصلاحيات)
+- الموظفون/الإدارة: `login.html` → صفحة الـ landing حسب الدور (`ROLE_PAGES[role]`،
+  صفحات standalone بالسايد بار الموحّد `<app-sidebar>`). **ده المدخل الفعلي الحالي.**
+  - الـ Runtime Shell (`shell.html`، domains بالصلاحيات) **مش المدخل الافتراضي**
+    حالياً — اتشال «قرار منتج» بسبب مشاكل موبايل (`login.html:routeUser`). لسه
+    متاح بالـ URL المباشر لشغل مستقبلي، والرجوع reversible (سطر واحد في `routeUser`).
 - العملاء: `client-login.html` → `client-portal.html`
 - الموردون: `supplier-requests.html`
 
@@ -174,7 +178,7 @@ Helpers: `canDo(cap)` · `canSee(field)` · `hasPage(page)`.
 | التقارير | `reports.html` | `core/report-actions.js` · `core/reports-*.js` |
 | الإعدادات | `settings.html` | `master-lists-actions.js` |
 | الـ Inbox | `inbox.html` | `inbox-actions.js` · `core/inbox-utils.js` |
-| Runtime Shell | `shell.html` | `core/runtime-shell/*` · `core/domains/*/sidebar.js` |
+| Runtime Shell (متوقّف كمدخل افتراضي — PC3) | `shell.html` | `core/runtime-shell/*` · `core/domains/*/sidebar.js` |
 | التحقق المالي | `validate-financial.html` | اختبار حي قبل أي push مالي |
 
 البنية التحتية: `core/firebase-init.js` (FB config مرة واحدة) · `sw.js`
