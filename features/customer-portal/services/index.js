@@ -7,7 +7,7 @@ import {
   loadClient, saveProfile, loadPublicCard, addWork, removeWork,
   uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable, loadSubscription,
 } from './profile.service.js';
-import { loadOrders, invoiceOf, totalsOf } from './orders.service.js';
+import { loadOrders, loadRequests, invoiceOf, totalsOf } from './orders.service.js';
 import { loadGallery, categoriesOf } from './gallery.service.js';
 import { openThread, sendMessage, subscribeMessages } from './chat.service.js';
 import { approveDesign } from './approval.service.js';
@@ -25,7 +25,7 @@ export const services = {
     loadClient, saveProfile, loadPublicCard, addWork, removeWork,
     uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable, loadSubscription,
   },
-  orders:  { loadOrders, invoiceOf, totalsOf },
+  orders:  { loadOrders, loadRequests, invoiceOf, totalsOf },
   gallery: { loadGallery, categoriesOf },
   chat:    { openThread, sendMessage, subscribeMessages },
 };

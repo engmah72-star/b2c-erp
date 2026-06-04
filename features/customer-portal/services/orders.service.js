@@ -20,6 +20,17 @@ export async function loadOrders(phone) {
     .sort((a, b) => ts(b) - ts(a));
 }
 
+/** يحمّل طلبات البوابة المُهيكلة للعميل (order_requests) لتتبّع حالتها، الأحدث أولاً. */
+export async function loadRequests(uid) {
+  if (!uid) return [];
+  const fb = await firebase();
+  const snap = await fb.getDocs(
+    fb.query(fb.collection(fb.db, 'order_requests'), fb.where('clientUid', '==', uid), fb.limit(30)),
+  );
+  return snap.docs.map((d) => ({ ...d.data(), _id: d.id }))
+    .sort((a, b) => ts(b) - ts(a));
+}
+
 /** فاتورة طلب واحد: { gross, paid, rem } — قيم مُقصّرة ≥ 0. */
 export function invoiceOf(order) {
   const gross = Math.max(0, orderGrossTotal(order));
