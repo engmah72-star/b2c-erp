@@ -19,7 +19,7 @@
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="employees.css?v=2">
+<link rel="stylesheet" href="employees.css?v=3">
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -96,6 +96,7 @@
         </select>
         <button type="button" class="btn btn-ghost btn-sm emp2-toolbar-btn" id="f-sal-unpaid" data-act="toggle-sal-filter">⏳ لم يُصرف</button>
         <button type="button" class="btn btn-ghost btn-sm emp2-toolbar-btn" id="f-att-today" data-act="toggle-att-filter">📅 حضر اليوم</button>
+        <a href="attendance.html" class="btn btn-ghost btn-sm emp2-toolbar-btn">🕐 لوحة الحضور</a>
         <div class="sort-wrap">
           <button type="button" class="btn btn-ghost btn-sm emp2-toolbar-btn" id="sort-btn" data-act="toggle-sort-menu">↕️ <span id="sort-lbl">ترتيب</span></button>
           <div class="sort-menu" id="sort-menu">
@@ -118,6 +119,8 @@
     <div id="self-file-banner"></div>
 
     <div id="emp-alerts" class="emp2-alerts-wrap"></div>
+    <!-- لوحة الحضور اليومية المصغّرة (Phase-6) -->
+    <div id="att-strip" class="emp2-att-strip"></div>
     <div id="list"></div>
   </div>
 </div>
@@ -255,6 +258,8 @@ import { buildEmployeeCardHTML, buildEmployeesEmptyHTML, buildEmployeesPagerHTML
 import { buildEmployeesSkeletonHTML } from "./features/employees/views/render-employees-skeleton.js";
 import { buildEmployeesAlertsHTML } from "./features/employees/views/render-employees-alerts.js";
 import { buildKpiPanelHeaderHTML, buildKpiPanelBodyHTML, buildAttPanelHeaderHTML, buildAttPanelEmptyHTML, buildAttPanelBodyHTML } from "./features/employees/views/render-employees-drawer.js";
+import { resolveDayStatus } from "./core/attendance-core.js";
+import { buildBoardSummaryHTML } from "./features/attendance-board/render.js";
 import { buildAllEmployeeModalsHTML } from "./features/employees/views/render-employees-modals.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
@@ -278,7 +283,7 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[];
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],attPermsToday=[],empLeavesAll=[];
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let __selfMode=false,__myUserDoc=null,__empSnapLoaded=false; // __selfMode: نمط "إنشاء ملف موظف لي" · __myUserDoc: users doc للمستخدم الحالي · __empSnapLoaded: هل وصل snapshot الموظفين
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
@@ -555,6 +560,26 @@ window.saveEmpEvaluation=async function(empId,empName,role,month,att,prod,qual,t
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
+// ── Quick attendance actions from the board (Phase-6) ──
+window.boardCheckin=async function(btn){
+  btn.disabled=true;
+  const r=await employeeActions.recordAttendanceCheckIn({
+    db, employeeId:btn.dataset.eid, employeeUid:btn.dataset.uid, employeeName:btn.dataset.ename,
+    date:todayStr(), monthKey:todayStr().slice(0,7),
+    expectedStart:btn.dataset.start||'', graceMinutes:15, source:'central',
+    recordedBy:currentUser?.uid||'', recordedByName:userName,
+  });
+  if(!r.ok){btn.disabled=false;return toast('❌ '+(r.errors||[]).join(' · '),'err');}
+  toast(r.lateMinutes>0?`⚠️ حضور متأخر ${r.lateMinutes}د`:'✅ تم تسجيل الحضور','ok');
+};
+window.decideBoardPerm=async function(permId,decision){
+  const r=await employeeActions.decideAttendancePermission({
+    db, permissionId:permId, decision, decidedBy:currentUser?.uid||'', decidedByName:userName,
+  });
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(decision==='approved'?'✅ تم اعتماد الإذن':'🚫 تم رفض الإذن','ok');
+};
+
 window.openAttPanel=function(empId,authUid,empName){
   const hdr=document.getElementById('pn-hdr');
   const body=document.getElementById('panel-body');
@@ -647,6 +672,15 @@ onAuthStateChanged(auth,async u=>{
     attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
     __attVer++;
     scheduleStats();scheduleList();scheduleAlerts();
+  });
+  // اليوم: أذونات الحضور (لحالة اليوم + الاعتماد) + الإجازات (لتمييز الإجازة)
+  onSnapshot(query(collection(db,'attendance_permissions'),where('date','==',todayStr()),limit(1000)),snap=>{
+    attPermsToday=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    scheduleList();
+  });
+  onSnapshot(query(collection(db,'employee_leaves'),limit(2000)),snap=>{
+    empLeavesAll=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    scheduleList();
   });
 });
 
@@ -873,7 +907,22 @@ window.renderList=function(){
   const activeOrdsAll=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
   const periodOrders=ordersInPeriod();
   const pLbl=getPeriodLabel();
-  const cardCtx={paidEmpIds,attendedToday,todayAttMap,attendedInPeriod,activeOrdsAll,periodOrders,allOrders,lastActivityMap,periodFilter,pLbl,ROLES,calcKpi,getEmpStatus,nameToColor,fn,escAttr};
+  // ── حالة الحضور اليوم (resolveDayStatus) + ملخّص + أذونات معلّقة (Phase-6) ──
+  const attStatusMap=new Map(), pendingPermMap=new Map(), attCounts={};
+  employees.filter(e=>e.status==='active').forEach(e=>{
+    const aUid=e.authUid||e._id;
+    const rec=todayAttMap.get(aUid)||todayAttMap.get(e._id)||null;
+    const lvs=empLeavesAll.filter(lv=>lv.employeeId===e._id||lv.employeeUid===aUid);
+    const prm=attPermsToday.filter(p=>p.employeeId===e._id||p.employeeUid===aUid);
+    const ds=resolveDayStatus({date:today,today,record:rec,leaves:lvs,permissions:prm,workSchedule:e.workSchedule});
+    attStatusMap.set(e._id,ds);attStatusMap.set(aUid,ds);
+    attCounts[ds.status]=(attCounts[ds.status]||0)+1;
+    const pend=prm.filter(p=>p.status==='pending');
+    if(pend.length){pendingPermMap.set(e._id,pend);attCounts.pending=(attCounts.pending||0)+pend.length;}
+  });
+  const _strip=document.getElementById('att-strip');
+  if(_strip)_strip.innerHTML=buildBoardSummaryHTML(attCounts);
+  const cardCtx={paidEmpIds,attendedToday,todayAttMap,attendedInPeriod,activeOrdsAll,periodOrders,allOrders,lastActivityMap,periodFilter,pLbl,ROLES,calcKpi,getEmpStatus,nameToColor,fn,escAttr,attStatusMap,pendingPermMap,canManage:(currentRole==='admin'||currentRole==='operation_manager')};
   el.innerHTML='<div class="emp2-cards-grid">'+pageData.map(e=>buildEmployeeCardHTML(e,cardCtx)).join('')+'</div>'+buildEmployeesPagerHTML({currentPage,totalPages,pageStart,PAGE_SIZE,dataLength:data.length});
 };
 
@@ -1682,6 +1731,12 @@ document.getElementById('list')?.addEventListener('click',e=>{
   if(ring){ e.stopPropagation(); openKpiPanel(ring.dataset.eid,ring.dataset.uid,ring.dataset.ename); return; }
   const att=e.target.closest('[data-act="open-att"]');
   if(att){ e.stopPropagation(); openAttPanel(att.dataset.eid,att.dataset.uid,att.dataset.ename); return; }
+  const aci=e.target.closest('[data-act="att-checkin"]');
+  if(aci){ e.stopPropagation(); boardCheckin(aci); return; }
+  const aap=e.target.closest('[data-act="att-approve"]');
+  if(aap){ e.stopPropagation(); decideBoardPerm(aap.dataset.perm,'approved'); return; }
+  const arj=e.target.closest('[data-act="att-reject"]');
+  if(arj){ e.stopPropagation(); decideBoardPerm(arj.dataset.perm,'rejected'); return; }
   const pay=e.target.closest('[data-act="open-pay-one"]');
   if(pay){ e.stopPropagation(); openPayOne(pay.dataset.eid); return; }
   const more=e.target.closest('[data-act="toggle-act-menu"]');

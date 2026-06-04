@@ -24,6 +24,18 @@
  * preserved 1:1. Event delegation on #list (employees.html) is unaffected.
  */
 
+/* ── Today attendance status meta (Phase-6 — resolveDayStatus → chip/dot) ── */
+const ATT_META = {
+  present:  { lbl: 'حاضر',    ico: '🟢', col: 'var(--g)' },
+  late:     { lbl: 'متأخر',   ico: '🟠', col: 'var(--y)' },
+  absent:   { lbl: 'غائب',    ico: '🔴', col: 'var(--r)' },
+  leave:    { lbl: 'إجازة',   ico: '🏖️', col: 'var(--b)' },
+  mission:  { lbl: 'مأمورية', ico: '🚗', col: 'var(--b)' },
+  remote:   { lbl: 'عن بُعد', ico: '🏠', col: 'var(--b)' },
+  off:      { lbl: 'عطلة',    ico: '⚪', col: 'var(--dim2)' },
+  upcoming: { lbl: '—',       ico: '⚪', col: 'var(--dim2)' },
+};
+
 /* ── Empty states (former renderList lines 1025–1035) ── */
 export function buildEmployeesEmptyHTML({ hasEmployees, hasFilter, sug, escAttr }) {
   if (hasEmployees) {
@@ -44,7 +56,8 @@ export function buildEmployeesEmptyHTML({ hasEmployees, hasFilter, sug, escAttr 
 export function buildEmployeeCardHTML(e, ctx) {
   const { paidEmpIds, attendedToday, todayAttMap, attendedInPeriod, activeOrdsAll,
           periodOrders, allOrders, lastActivityMap, periodFilter, pLbl,
-          ROLES, calcKpi, getEmpStatus, nameToColor, fn, escAttr } = ctx;
+          ROLES, calcKpi, getEmpStatus, nameToColor, fn, escAttr,
+          attStatusMap, pendingPermMap, canManage } = ctx;
     const r=ROLES[e.role]||{label:e.role,col:'var(--dim-arch)',ico:'👤'};
     const isPaid=paidEmpIds.has(e._id);
     const isActive=e.status==='active';
@@ -56,6 +69,10 @@ export function buildEmployeeCardHTML(e, ctx) {
     const waHref=phone?'https://wa.me/2'+phone.replace(/^0/,''):'';
     const activeOrderCnt=activeOrdsAll.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficerId===uid||o.createdBy===uid).length;
     const empSt=isActive?getEmpStatus(uid,e._id,todayRec,activeOrderCnt):{label:'غير نشط',col:'var(--dim2)',bg:'rgba(78,86,114,.12)'};
+    // today attendance status (resolveDayStatus) — drives the dot + a chip + quick actions
+    const attSt=isActive&&attStatusMap?(attStatusMap.get(uid)||attStatusMap.get(e._id)||null):null;
+    const attMeta=attSt?(ATT_META[attSt.status]||ATT_META.off):null;
+    const pendPerms=(isActive&&pendingPermMap?(pendingPermMap.get(e._id)||pendingPermMap.get(uid)):null)||[];
     const kpiScore=isActive?calcKpi(e,uid):0;
     const kpiCol=kpiScore>=90?'var(--g)':kpiScore>=70?'var(--b)':kpiScore>=50?'var(--y)':'var(--r)';
     const lastAct=lastActivityMap.get(e.name)||null;
@@ -120,13 +137,14 @@ export function buildEmployeeCardHTML(e, ctx) {
       <div class="emp2-card-head">
         <div class="emp-avatar" style="background:${avColor}">
           ${(e.name||'?')[0].toUpperCase()}
-          <div class="dot" style="background:${empSt.col}" title="${empSt.label}"></div>
+          <div class="dot" style="background:${attMeta?attMeta.col:empSt.col}" title="${attMeta?attMeta.lbl:empSt.label}"></div>
         </div>
         <div class="flex-1 min-w-0">
           <div class="emp2-card-name">${e.name||'—'}</div>
           <div class="emp2-card-chiprow">
             <span class="emp-chip" style="background:${r.col}18;color:${r.col};border:1px solid ${r.col}30">${r.ico} ${r.label}</span>
             ${isActive&&todayRec?`<span class="emp2-card-time">${todayRec.checkInStr||''}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:' ●'}</span>`:''}
+            ${isActive&&attMeta?`<span class="emp2-att-chip" style="color:${attMeta.col}">${attMeta.ico} ${attMeta.lbl}${(attSt.lateMinutes||0)>0?' '+attSt.lateMinutes+'د':''}</span>`:''}
           </div>
         </div>
         ${ringHtml}
@@ -150,6 +168,12 @@ export function buildEmployeeCardHTML(e, ctx) {
       ${isActive?`<div class="emp-metric emp2-card-att" data-act="open-att" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" title="اضغط لعرض السجل">
         <span class="txt-meta-sm">📅 حضور ${pLbl}</span>
         <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم</span>
+      </div>`:''}
+
+      <!-- Quick attendance actions (manager): central check-in / approve permissions -->
+      ${isActive&&canManage&&((attSt&&attSt.status==='absent')||pendPerms.length)?`<div class="emp2-att-actions">
+        ${attSt&&attSt.status==='absent'?`<button type="button" class="btn btn-b btn-xs" data-act="att-checkin" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" data-start="${escAttr(e.workSchedule?.startTime||'')}">✓ تسجيل حضور</button>`:''}
+        ${pendPerms.map(p=>`<span class="emp2-att-pend"><span class="bdg-mini">🟡 إذن</span><button type="button" class="btn btn-g btn-xs" data-act="att-approve" data-perm="${escAttr(p._id)}" title="اعتماد">✅</button><button type="button" class="btn btn-ghost btn-xs" data-act="att-reject" data-perm="${escAttr(p._id)}" title="رفض">🚫</button></span>`).join('')}
       </div>`:''}
 
       <!-- Last activity -->
