@@ -77,3 +77,89 @@ export function computeLateMinutes(checkInDate, expectedStart, graceMinutes = 0)
   const diff = actualMin - expectedMin - (graceMinutes || 0);
   return Math.max(0, diff);
 }
+
+// ── Permissions (أذونات) — Phase-3 ─────────────────────────────────
+
+export const PERMISSION_TYPES = Object.freeze({
+  LATE_IN:   'late_in',    // إذن تأخير في الحضور
+  EARLY_OUT: 'early_out',  // إذن انصراف مبكر
+  MISSION:   'mission',    // مأمورية خارجية
+  REMOTE:    'remote',     // عمل عن بُعد
+  PARTIAL:   'partial',    // إذن جزئي (مدة محددة)
+});
+
+export const PERMISSION_STATUS = Object.freeze({
+  PENDING:  'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+});
+
+// Types that fully excuse a day's late arrival when approved.
+const _FULL_LATE_EXCUSE = new Set(['late_in', 'mission', 'remote']);
+
+/**
+ * Minutes of late-arrival excused on `dateStr` by APPROVED permissions only.
+ *
+ *   late_in / mission / remote → fully excused → Infinity
+ *   partial                    → the permission's `minutes` (summed)
+ *   early_out                  → ignored (affects departure, not arrival)
+ *
+ * Pending / rejected permissions never count. Used by the salary calculator
+ * to forgive tardiness on days covered by an approved excuse (single source).
+ *
+ * @param {string} dateStr        — 'YYYY-MM-DD'
+ * @param {Array}  [permissions]  — [{ date, type, status, minutes? }]
+ * @returns {number} excused minutes (>= 0, or Infinity for a full excuse)
+ */
+export function excusedLateMinutes(dateStr, permissions = []) {
+  let total = 0;
+  for (const p of permissions) {
+    if (p?.status !== 'approved' || p?.date !== dateStr) continue;
+    if (_FULL_LATE_EXCUSE.has(p.type)) return Infinity;
+    if (p.type === 'partial') total += parseInt(p.minutes) || 0;
+  }
+  return total;
+}
+
+/**
+ * Resolve one employee's attendance status for a single day — the single
+ * source the daily board, the calendar and the profile all read from.
+ *
+ * Priority: a check-in record wins (present/late, with permission-forgiven
+ * lateness) → leave → approved full-day permission (mission/remote) → a
+ * non-work day (off) → a future work day (upcoming) → otherwise absent.
+ *
+ * @param {Object} args
+ * @param {string}  args.date            — 'YYYY-MM-DD'
+ * @param {string}  [args.today]         — 'YYYY-MM-DD' (to mark future days)
+ * @param {Object}  [args.record]        — the employee's attendance doc for `date`
+ * @param {Array}   [args.leaves]        — employee leaves
+ * @param {Array}   [args.permissions]   — employee permissions
+ * @param {Object}  [args.workSchedule]  — { days?, startTime? }
+ * @returns {{ status, lateMinutes, checkInStr?, checkOutStr? }}
+ *          status ∈ present|late|leave|mission|remote|off|upcoming|absent
+ */
+export function resolveDayStatus({
+  date, today = '', record = null,
+  leaves = [], permissions = [], workSchedule = null,
+}) {
+  if (record && record.checkIn) {
+    const raw = parseInt(record.lateMinutes) || 0;
+    const excused = excusedLateMinutes(date, permissions);
+    const late = excused === Infinity ? 0 : Math.max(0, raw - excused);
+    return {
+      status: late > 0 ? 'late' : 'present',
+      lateMinutes: late,
+      checkInStr: record.checkInStr || '',
+      checkOutStr: record.checkOutStr || '',
+    };
+  }
+  if (isLeaveDayFor(date, leaves)) return { status: 'leave', lateMinutes: 0 };
+  const full = permissions.find(p =>
+    p && p.status === 'approved' && p.date === date &&
+    (p.type === 'mission' || p.type === 'remote'));
+  if (full) return { status: full.type, lateMinutes: 0 };
+  if (!isWorkDayFor(date, workSchedule)) return { status: 'off', lateMinutes: 0 };
+  if (today && date > today) return { status: 'upcoming', lateMinutes: 0 };
+  return { status: 'absent', lateMinutes: 0 };
+}

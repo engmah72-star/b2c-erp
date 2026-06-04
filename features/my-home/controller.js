@@ -80,7 +80,9 @@ function wireActions() {
       el.disabled = true;
       const r = await employeeActions.recordAttendanceCheckIn({
         db, employeeId: S.empId, employeeUid: S.me.uid, employeeName: S.me.name,
-        date: todayStr(), monthKey: monthKey(), recordedBy: S.me.uid, recordedByName: S.me.name,
+        date: todayStr(), monthKey: monthKey(),
+        expectedStart: S.emp?.workSchedule?.startTime || '', graceMinutes: 15, source: 'self',
+        recordedBy: S.me.uid, recordedByName: S.me.name,
       });
       window.__mhToast(r.ok === false ? (r.errors?.[0] || 'فشل') : '🟢 تم تسجيل حضورك', r.ok === false ? 'err' : 'ok');
       return;

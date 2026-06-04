@@ -260,7 +260,7 @@ import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { buildEmployeeStagePerformance } from "./core/employee-stage-performance.js";
 import { getStageResponsibilities, formatDurationAr } from "./orders.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
-import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
+import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, buildPermissionsListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
 import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
 import { buildTasksHTML, buildIncidentsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
@@ -274,7 +274,7 @@ import { employeeActions } from "./employee-actions.js";
 import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from "./core/storage-helpers.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
-let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empGoals=[], empEvaluations=[], empIncidents=[];
+let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empPermissions=[], empGoals=[], empEvaluations=[], empIncidents=[];
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
@@ -355,7 +355,7 @@ window.setTab=function(t){
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
   // re-run section renderers — DOM containers were destroyed/recreated
   if(t==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
-  else if(t==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
+  else if(t==='attendance'){renderSchedule();renderLeaves();renderPermissions();renderAttendance();}
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
   else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
@@ -402,6 +402,7 @@ const EP_STATIC_ACTS = {
   'save-schedule':   ()=>saveSchedule(),
   'save-leave':      ()=>saveLeave(),
   'save-incident':   ()=>saveIncident(),
+  'save-permission': ()=>savePermission(),
 };
 document.querySelectorAll('.overlay [data-act]').forEach(el=>{
   const fn = EP_STATIC_ACTS[el.dataset.act];
@@ -436,6 +437,7 @@ const EP_DYN_ACTS = {
   'open-edit-skills':    ()=>openEditSkills(),
   'open-edit-schedule':  ()=>openEditSchedule(),
   'open-add-leave':      ()=>openAddLeave(),
+  'open-add-permission': ()=>openAddPermission(),
   'att-prev':            ()=>navigateAttMonth(-1),
   'att-next':            ()=>navigateAttMonth(1),
   'record-attendance':   ()=>recordAttendanceToday(),
@@ -553,6 +555,10 @@ onAuthStateChanged(auth,async u=>{
     empLeaves=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
     renderLeaves();renderAttendance();
   });
+  onSnapshot(query(collection(db,'attendance_permissions'),where('employeeId','==',empId),limit(200)),snap=>{
+    empPermissions=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderPermissions();renderSalaries();
+  });
   // أهداف الموظف
   onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId),limit(60)),snap=>{
     empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -640,7 +646,7 @@ function renderAll(){
 
   // render فقط أقسام التاب الفعّال (الباقي يتعمل عند setTab)
   if(activeTab==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
-  else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderAttendance();}
+  else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderPermissions();renderAttendance();}
   else if(activeTab==='salaries'){renderSalaries();}
   else if(activeTab==='tasks'){renderTasks();}
   else if(activeTab==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
@@ -1572,13 +1578,49 @@ window.deleteLeave=async function(id){
   toast('✅ تم الحذف','ok');
 };
 
+// ══ PERMISSIONS (أذونات) — Phase-3 ══
+function renderPermissions(){
+  const el=document.getElementById('perms-container');if(!el)return;
+  el.innerHTML=buildPermissionsListHTML({permissions:empPermissions,canManage:true});
+}
+window.openAddPermission=function(){
+  document.getElementById('pm-type').value='late_in';
+  document.getElementById('pm-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('pm-minutes').value='';
+  document.getElementById('pm-reason').value='';
+  document.getElementById('ov-perm').classList.add('open');
+};
+window.savePermission=async function(){
+  const type=document.getElementById('pm-type').value;
+  const date=document.getElementById('pm-date').value;
+  const minutes=parseInt(document.getElementById('pm-minutes').value)||0;
+  const reason=document.getElementById('pm-reason').value.trim();
+  if(!date)return toast('⚠️ حدد التاريخ','err');
+  // المدير يمنح الإذن مباشرةً (معتمد) — يُلغي خصم تأخير اليوم في الراتب
+  const r=await employeeActions.requestAttendancePermission({db,employeeId:empId,employeeUid:emp.authUid||empId,employeeName:emp.name||'',type,date,minutes,reason,status:'approved',requestedBy:currentUser.uid,requestedByName:adminName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  document.getElementById('ov-perm').classList.remove('open');
+  toast('✅ تم تسجيل الإذن','ok');
+};
+window.decidePermission=async function(id,decision){
+  const r=await employeeActions.decideAttendancePermission({db,permissionId:id,decision,decidedBy:currentUser.uid,decidedByName:adminName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(decision==='approved'?'✅ تم اعتماد الإذن':'🚫 تم رفض الإذن','ok');
+};
+window.cancelPermission=async function(id){
+  if(!confirm('حذف هذا الإذن؟'))return;
+  const r=await employeeActions.cancelAttendancePermission({db,permissionId:id});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الحذف','ok');
+};
+
 // ══ SALARIES ══
 
 function computeSuggestedForMonth(mKey){
   if(!emp)return 0;
   return computeSalarySuggestion({
     mKey, employee:emp, employeeId:empId,
-    attendance:attendanceRecords, leaves:empLeaves, allOrders,
+    attendance:attendanceRecords, leaves:empLeaves, permissions:empPermissions, allOrders,
   }).suggested;
 }
 
@@ -1643,7 +1685,7 @@ window.updateSalaryCalc=function(){
   // الحساب pure في core/employee-salary-calc.js
   const calc=computeSalarySuggestion({
     mKey, employee:emp, employeeId:empId,
-    attendance:attendanceRecords, leaves:empLeaves, allOrders,
+    attendance:attendanceRecords, leaves:empLeaves, permissions:empPermissions, allOrders,
   });
   const {base,commission,suggested,absenceDeduction,tardinessDeduction,attendanceBonus,
          daysPresent,daysAbsent,workDays,tardinessDays,lateRecords}=calc;

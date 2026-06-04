@@ -661,20 +661,47 @@ service cloud.firestore {
     }
 
     // ══ Attendance ══
+    // الموظف يكتب/يقرأ سجله هو (employeeUid == uid) — تسجيل ذاتي.
+    // المدير (isAdmin) أو حامل قدرة manage_attendance — تسجيل مركزي لأي موظف.
+    // ملاحظة (E1): لم نُلزم source=='self' على الإنشاء الذاتي بعد، لأنّ كتّاباً
+    // legacy (design.html بكتابة addDoc مباشرة + my-home القديم) لا يضبطون
+    // source؛ تشديده الآن يكسرهم. يُؤجَّل حتى توحيد هؤلاء الكتّاب.
     match /attendance/{attId} {
       allow read: if isAuth() && (
-        isAdmin() ||
+        isAdmin() || can('manage_attendance') ||
         resource.data.get('employeeUid','__') == request.auth.uid
       );
       allow create: if isAuth() && (
-        isAdmin() ||
+        isAdmin() || can('manage_attendance') ||
         request.resource.data.get('employeeUid','') == request.auth.uid
       );
       allow update: if isAuth() && (
-        isAdmin() ||
+        isAdmin() || can('manage_attendance') ||
         resource.data.get('employeeUid','__') == request.auth.uid
       );
       allow delete: if isAdmin();
+    }
+
+    // ══ Attendance Permissions (أذونات) — Phase-3 ══
+    // مجموعة جديدة بلا كتّاب legacy ⇒ نفرض القيود بدقة:
+    //  - الموظف يطلب لنفسه فقط، و status لازم 'pending' (لا يعتمد طلبه).
+    //  - الاعتماد/الرفض (update) للمدير أو حامل manage_attendance فقط.
+    //  - الموظف يلغي طلبه (delete)؛ المدير يلغي أيّ طلب.
+    match /attendance_permissions/{permId} {
+      allow read: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        resource.data.get('employeeUid','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        (request.resource.data.get('employeeUid','') == request.auth.uid
+         && request.resource.data.get('status','') == 'pending')
+      );
+      allow update: if isAuth() && (isAdmin() || can('manage_attendance'));
+      allow delete: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        resource.data.get('employeeUid','__') == request.auth.uid
+      );
     }
 
     // ══ Tasks ══

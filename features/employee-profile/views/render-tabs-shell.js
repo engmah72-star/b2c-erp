@@ -114,6 +114,14 @@ export function buildTabsShellHTML({ activeTab, tasksOpen, kpis, profilePeriod, 
         </div>
         <div id="leaves-container"></div>
       </div>
+      <!-- الأذونات -->
+      <div class="section ep-mb-14">
+        <div class="section-head ep-mb-12">
+          <div class="section-title">🪪 الأذونات</div>
+          <button type="button" class="btn btn-b btn-xs" data-act="open-add-permission">＋ إذن</button>
+        </div>
+        <div id="perms-container"></div>
+      </div>
       <!-- الحضور الشهري -->
       <div class="section ep-mb-14">
         <div class="section-head ep-mb-8">

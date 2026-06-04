@@ -26,7 +26,7 @@
 // ── helpers (private, pure) ─────────────────────────────────────────
 // Day-status primitives (isWorkDayFor / isLeaveDayFor) live in the shared
 // single source attendance-core.js; tardiness ladder stays salary-local.
-import { isWorkDayFor, isLeaveDayFor } from './attendance-core.js';
+import { isWorkDayFor, isLeaveDayFor, excusedLateMinutes } from './attendance-core.js';
 
 function tardinessDaysFor(lateMinutes) {
   if (lateMinutes > 240) return 1;
@@ -91,6 +91,7 @@ export function computeSalarySuggestion({
   employeeId,
   attendance = [],
   leaves = [],
+  permissions = [],
   allOrders = [],
   fallbackWorkDays = 26,
 }) {
@@ -126,10 +127,12 @@ export function computeSalarySuggestion({
   const dailyRate = base / workDays;
   const absenceDeduction = Math.round(dailyRate * daysAbsent);
 
-  // tardiness
+  // tardiness — approved permissions forgive a day's late arrival (Phase-3)
   let tardinessDays = 0, lateRecords = 0;
   for (const a of mAtt) {
-    const lm = parseInt(a.lateMinutes) || 0;
+    const raw = parseInt(a.lateMinutes) || 0;
+    const excused = excusedLateMinutes(a.date, permissions);
+    const lm = excused === Infinity ? 0 : Math.max(0, raw - excused);
     if (lm > 0) lateRecords++;
     tardinessDays += tardinessDaysFor(lm);
   }

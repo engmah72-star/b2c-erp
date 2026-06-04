@@ -197,6 +197,48 @@ export function buildLeaveModalHTML() {
 </div>`;
 }
 
+export function buildPermissionModalHTML() {
+  return `<!-- MODAL: تسجيل إذن (Phase-3) -->
+<div class="overlay" id="ov-perm">
+  <div class="modal ep-modal-440">
+    <div class="modal-head">
+      <span class="modal-title">🪪 تسجيل إذن</span>
+      <button type="button" class="modal-x" data-close="ov-perm">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>🏷️ نوع الإذن</label>
+        <select class="inp" id="pm-type">
+          <option value="late_in">🕒 إذن تأخير</option>
+          <option value="early_out">🚪 انصراف مبكر</option>
+          <option value="mission">🚗 مأمورية خارجية</option>
+          <option value="remote">🏠 عمل عن بُعد</option>
+          <option value="partial">⏳ إذن جزئي</option>
+        </select>
+      </div>
+      <div class="g2">
+        <div class="fg">
+          <label>📅 التاريخ</label>
+          <input class="inp" id="pm-date" type="date">
+        </div>
+        <div class="fg">
+          <label>⏱️ المدة (دقائق)</label>
+          <input class="inp" id="pm-minutes" type="number" min="0" placeholder="للإذن الجزئي">
+        </div>
+      </div>
+      <div class="fg">
+        <label>📝 السبب / ملاحظة (اختياري)</label>
+        <input class="inp" id="pm-reason" placeholder="مثال: مراجعة مستشفى">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" data-close="ov-perm">إلغاء</button>
+      <button type="button" class="btn btn-b" data-act="save-permission">✓ تسجيل الإذن</button>
+    </div>
+  </div>
+</div>`;
+}
+
 export function buildIncidentModalHTML() {
   return `<!-- MODAL: إضافة إخفاق -->
 <div class="overlay" id="ov-incident">
@@ -285,6 +327,7 @@ export function buildAllModalsHTML() {
     buildSkillsModalHTML(),
     buildScheduleModalHTML(),
     buildLeaveModalHTML(),
+    buildPermissionModalHTML(),
     buildIncidentModalHTML(),
   ].join('\n');
 }

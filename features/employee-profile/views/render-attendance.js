@@ -157,3 +157,59 @@ export function buildLeavesListHTML({ leaves = [], todayIso }) {
   }
   return html;
 }
+
+// ── Permissions (أذونات) — Phase-3 ─────────────────────────────────
+
+export const PERMISSION_TYPE_LABELS = {
+  late_in:   { lbl: 'إذن تأخير',    ico: '🕒' },
+  early_out: { lbl: 'انصراف مبكر',  ico: '🚪' },
+  mission:   { lbl: 'مأمورية',      ico: '🚗' },
+  remote:    { lbl: 'عمل عن بُعد',   ico: '🏠' },
+  partial:   { lbl: 'إذن جزئي',      ico: '⏳' },
+};
+
+const PERM_STATUS_LABEL = {
+  pending:  '🟡 قيد الاعتماد',
+  approved: '✅ معتمد',
+  rejected: '🚫 مرفوض',
+};
+
+/**
+ * Build the permissions list (or empty CTA). Mirrors the leaves list style.
+ *
+ * @param {Object} args
+ * @param {Array}   args.permissions  — [{ _id, type, date, minutes?, reason?, status }]
+ * @param {boolean} [args.canManage]  — show approve/reject on pending rows
+ * @returns {string} HTML
+ */
+export function buildPermissionsListHTML({ permissions = [], canManage = false }) {
+  if (!permissions.length) {
+    return `<div class="empty-cta">
+    <div class="empty-icon">🪪</div>
+    <div class="empty-text">لا توجد أذونات مسجّلة</div>
+    <button type="button" class="btn btn-b btn-sm" onclick="openAddPermission()">＋ تسجيل إذن</button>
+  </div>`;
+  }
+  const sorted = [...permissions].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return sorted.map(p => {
+    const t = PERMISSION_TYPE_LABELS[p.type] || PERMISSION_TYPE_LABELS.partial;
+    const status = p.status || 'pending';
+    const mins = (parseInt(p.minutes) || 0) > 0 ? ' · ' + (parseInt(p.minutes) || 0) + 'د' : '';
+    const decide = (canManage && status === 'pending')
+      ? `<button type="button" class="btn btn-g btn-xs" onclick="decidePermission('${escAttr(p._id)}','approved')" title="اعتماد">✅</button>`
+        + `<button type="button" class="btn btn-ghost btn-xs" onclick="decidePermission('${escAttr(p._id)}','rejected')" title="رفض">🚫</button>`
+      : '';
+    return `<div class="leave-row"${status === 'pending' ? ' style="border-right:3px solid var(--y)"' : ''}>
+      <div class="flex-1 min-w-0">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+          <span class="lv-badge">${t.ico} ${t.lbl}</span>
+          <span class="bdg-mini">${PERM_STATUS_LABEL[status] || escAttr(status)}</span>
+          ${p.reason ? `<span style="font-size:var(--fs-sm);color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escAttr(p.reason)}</span>` : ''}
+        </div>
+        <div class="txt-meta-sm">${escAttr(p.date || '')}${mins}</div>
+      </div>
+      ${decide}
+      <button type="button" onclick="cancelPermission('${escAttr(p._id)}')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:15px;padding:4px 8px;opacity:.55;transition:.15s" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.55" title="حذف">✕</button>
+    </div>`;
+  }).join('');
+}
