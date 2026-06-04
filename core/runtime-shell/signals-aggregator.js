@@ -176,6 +176,27 @@ const AGGREGATORS = [
     },
   },
 
+  // ── Returns ──
+  {
+    domain: 'shipping', key: 'returns-open',
+    desc: 'Open return tickets needing action (requested/inspecting/approved)',
+    build() {
+      const q = query(
+        collection(db, 'returns_tickets'),
+        where('status', 'in', ['requested', 'inspecting', 'approved']),
+        limit(500),
+      );
+      return onSnapshot(q, snap => {
+        signals.setMetric('shipping', 'returns-open', snap.size);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:returns:open]', err);
+        }
+        signals.setMetric('shipping', 'returns-open', 0);
+      });
+    },
+  },
+
   // ── Inbox ──
   {
     domain: 'inbox', key: 'unread',

@@ -29,6 +29,7 @@ const BADGE_MAP = {
   'approvals.html':  [['accounts', 'pending-approvals']],
   'production.html': [['production', 'late']],
   'shipping.html':   [['shipping', 'late']],
+  'returns.html':    [['shipping', 'returns-open']],
   'clients.html':    [['clients', 'delayed']],
   'inbox.html':      [['inbox', 'unread']],
 };
