@@ -79,6 +79,7 @@ function renderRow(emp, m, caps) {
   const acts = [
     btn('task',     '📋', 'إسناد مهمة'),
     btn('incident', '⚠️', 'تسجيل إخفاق'),
+    btn('schedule', '🕐', 'جدول العمل'),
     caps.finance ? btn('finance', '💰', 'خصم / مكافأة') : '',
     caps.perms   ? btn('perms',   '🔐', 'صلاحيات / تفعيل') : '',
     btn('profile',  '👤', 'فتح البروفايل'),
