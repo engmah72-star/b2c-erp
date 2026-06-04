@@ -26,7 +26,10 @@
 // ── helpers (private, pure) ─────────────────────────────────────────
 // Day-status primitives (isWorkDayFor / isLeaveDayFor) live in the shared
 // single source attendance-core.js; tardiness ladder stays salary-local.
-import { isWorkDayFor, isLeaveDayFor, excusedLateMinutes } from './attendance-core.js';
+import {
+  isWorkDayFor, isLeaveDayFor, excusedLateMinutes,
+  computeWorkedMinutes, scheduledMinutes, computeOvertimeMinutes,
+} from './attendance-core.js';
 
 function tardinessDaysFor(lateMinutes) {
   if (lateMinutes > 240) return 1;
@@ -94,6 +97,7 @@ export function computeSalarySuggestion({
   permissions = [],
   allOrders = [],
   fallbackWorkDays = 26,
+  payOvertime = false,
 }) {
   if (!employee || !mKey) {
     return {
@@ -144,9 +148,29 @@ export function computeSalarySuggestion({
 
   const commission = computeCommissionForMonth({ employee, employeeId, allOrders, mYear, mMon });
 
+  // worked hours / overtime (Phase-5) — computed from checkInAt/checkOutAt.
+  // Always reported as an indicator; only added to `suggested` when the caller
+  // opts in via payOvertime (feature flag) → zero behaviour change by default.
+  const breakMinutes = parseInt(employee.workSchedule?.breakMinutes) || 0;
+  const schedMin = scheduledMinutes(employee.workSchedule, { breakMinutes });
+  let workedMinutes = 0, overtimeMinutes = 0;
+  for (const a of mAtt) {
+    const w = computeWorkedMinutes(a, { breakMinutes });
+    workedMinutes += w;
+    overtimeMinutes += computeOvertimeMinutes(w, schedMin);
+  }
+  const workedHours = Math.round((workedMinutes / 60) * 10) / 10;
+  const overtimeHours = Math.round((overtimeMinutes / 60) * 10) / 10;
+  const dailyHours = schedMin > 0 ? schedMin / 60 : 8;
+  const hourlyRate = dailyRate / dailyHours;
+  const overtimeMultiplier = parseFloat(employee.overtimeMultiplier) || 1;
+  const overtimePay = payOvertime
+    ? Math.round((overtimeMinutes / 60) * hourlyRate * overtimeMultiplier)
+    : 0;
+
   const suggested = Math.max(
     0,
-    base - absenceDeduction - tardinessDeduction + attendanceBonus + Math.round(commission)
+    base - absenceDeduction - tardinessDeduction + attendanceBonus + Math.round(commission) + overtimePay
   );
 
   return {
@@ -158,5 +182,6 @@ export function computeSalarySuggestion({
     absenceDeduction,
     tardinessDays, tardinessDeduction, lateRecords,
     attendanceBonus,
+    workedHours, overtimeHours, overtimePay,
   };
 }

@@ -10,6 +10,7 @@ import {
   isWorkDayFor, isLeaveDayFor, computeLateMinutes,
   excusedLateMinutes, PERMISSION_TYPES, PERMISSION_STATUS,
   resolveDayStatus,
+  computeWorkedMinutes, scheduledMinutes, computeOvertimeMinutes,
 } from '../core/attendance-core.js';
 
 let passed = 0, failed = 0;
@@ -200,6 +201,42 @@ test('no record on a future work day → upcoming', () => {
 });
 test('no record on a past work day → absent', () => {
   assertEq(ST({ date: '2026-06-03' }), 'absent');
+});
+
+// ── worked hours / overtime (Phase-5) ───────────────────────────────
+const rec = (h1, m1, h2, m2) => ({
+  checkInAt: new Date(2026, 5, 3, h1, m1),
+  checkOutAt: new Date(2026, 5, 3, h2, m2),
+});
+
+test('computeWorkedMinutes: missing timestamps → 0', () => {
+  assertEq(computeWorkedMinutes(null), 0);
+  assertEq(computeWorkedMinutes({ checkIn: true }), 0); // legacy record, no checkInAt
+  assertEq(computeWorkedMinutes({ checkInAt: new Date() }), 0); // no checkout
+});
+test('computeWorkedMinutes: 09:00→18:00 = 540', () => {
+  assertEq(computeWorkedMinutes(rec(9, 0, 18, 0)), 540);
+});
+test('computeWorkedMinutes: deducts break', () => {
+  assertEq(computeWorkedMinutes(rec(9, 0, 18, 0), { breakMinutes: 60 }), 480);
+});
+test('computeWorkedMinutes: checkout before checkin → 0', () => {
+  assertEq(computeWorkedMinutes(rec(18, 0, 9, 0)), 0);
+});
+test('computeWorkedMinutes: accepts {seconds} timestamps', () => {
+  const base = Math.floor(new Date(2026, 5, 3, 9, 0).getTime() / 1000);
+  assertEq(computeWorkedMinutes({ checkInAt: { seconds: base }, checkOutAt: { seconds: base + 3600 } }), 60);
+});
+test('scheduledMinutes: 09:00–17:00 = 480 (− break)', () => {
+  assertEq(scheduledMinutes({ startTime: '09:00', endTime: '17:00' }), 480);
+  assertEq(scheduledMinutes({ startTime: '09:00', endTime: '17:00' }, { breakMinutes: 60 }), 420);
+  assertEq(scheduledMinutes({ startTime: '09:00' }), 0); // no end
+  assertEq(scheduledMinutes(null), 0);
+});
+test('computeOvertimeMinutes: only beyond scheduled', () => {
+  assertEq(computeOvertimeMinutes(540, 480), 60);
+  assertEq(computeOvertimeMinutes(400, 480), 0);
+  assertEq(computeOvertimeMinutes(0, 480), 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

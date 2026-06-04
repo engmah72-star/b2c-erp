@@ -130,6 +130,26 @@ test('pending permission does NOT forgive tardiness', () => {
   assertEq(r.tardinessDays, 0.5);
 });
 
+// ── overtime (Phase-5) ────────────────────────────────────────────
+test('overtime reported always, paid only when payOvertime flag is on', () => {
+  const att = fullMonthPresent('2026-01');
+  // two 9-hour days against a 09:00–17:00 (8h) schedule → 1h overtime each
+  att[0].checkInAt = new Date(2026, 0, 5, 9, 0); att[0].checkOutAt = new Date(2026, 0, 5, 18, 0);
+  att[1].checkInAt = new Date(2026, 0, 6, 9, 0); att[1].checkOutAt = new Date(2026, 0, 6, 18, 0);
+  const employee = { baseSalary: 4400, role: 'admin', workSchedule: { days: [0, 1, 2, 3, 4], startTime: '09:00', endTime: '17:00' } };
+  const args = { mKey: '2026-01', employee, employeeId: 'a1', attendance: att };
+
+  const off = computeSalarySuggestion(args);
+  assertEq(off.overtimeHours, 2);     // reported
+  assertEq(off.overtimePay, 0);       // not paid (flag off)
+  assertEq(off.suggested, 4400);      // zero behaviour change
+
+  const on = computeSalarySuggestion({ ...args, payOvertime: true });
+  assertEq(on.overtimeHours, 2);
+  assertEq(on.overtimePay > 0, true);
+  assertEq(on.suggested, 4400 + on.overtimePay);
+});
+
 // ── commission ─────────────────────────────────────────────────────
 test('designer commission: pct × salePrice on paid orders this month', () => {
   const monthDate = new Date(2026, 4, 10);
