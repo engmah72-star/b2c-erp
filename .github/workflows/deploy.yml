@@ -304,7 +304,7 @@ jobs:
                   print(f"  {api}: {rr.status_code}")
           PYEOF
 
-      - name: Ensure WhatsApp secret exists (placeholder if missing)
+      - name: Ensure deploy secrets exist (WHATSAPP_TOKEN + GITHUB_PAT placeholders)
         # WhatsApp functions use defineSecret('WHATSAPP_TOKEN'). The deploy
         # refuses to proceed in --non-interactive mode if the secret has no
         # value, even when the runtime mode is 'stub'. We seed a placeholder
@@ -322,7 +322,9 @@ jobs:
           from google.auth.transport.requests import Request
 
           PROJECT = "business2card-c041b"
-          SECRET_NAME = "WHATSAPP_TOKEN"
+          # كل أسرار defineSecret() المطلوبة وقت النشر — أي سرّ بلا قيمة يُفشل
+          # النشر غير التفاعلي بالكامل (قبل نشر أي دالة). نزرع placeholder لكلٍّ.
+          SECRET_NAMES = ["WHATSAPP_TOKEN", "GITHUB_PAT"]
           PLACEHOLDER_VALUE = "placeholder-update-when-going-live"
 
           sa = json.loads(os.environ["FIREBASE_SA"])
@@ -333,45 +335,50 @@ jobs:
           hdrs = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
           base = f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}"
 
-          # 1) Check if the secret already exists
-          r = requests.get(f"{base}/secrets/{SECRET_NAME}", headers=hdrs)
-          if r.status_code == 200:
-              print(f"✓ Secret {SECRET_NAME} already exists — leaving as-is")
-              # Also check if there's any version with data
-              rv = requests.get(f"{base}/secrets/{SECRET_NAME}/versions", headers=hdrs)
-              if rv.status_code == 200 and rv.json().get("versions"):
-                  print(f"  ({len(rv.json().get('versions', []))} version(s) on file)")
-              else:
-                  print("  WARN: secret exists but has no versions — adding placeholder")
+          def ensure_secret(SECRET_NAME):
+              # 1) Check if the secret already exists
+              r = requests.get(f"{base}/secrets/{SECRET_NAME}", headers=hdrs)
+              if r.status_code == 200:
+                  print(f"✓ Secret {SECRET_NAME} already exists — leaving as-is")
+                  # Also check if there's any version with data
+                  rv = requests.get(f"{base}/secrets/{SECRET_NAME}/versions", headers=hdrs)
+                  if rv.status_code == 200 and rv.json().get("versions"):
+                      print(f"  ({len(rv.json().get('versions', []))} version(s) on file)")
+                  else:
+                      print("  WARN: secret exists but has no versions — adding placeholder")
+                      data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
+                      rav = requests.post(
+                          f"{base}/secrets/{SECRET_NAME}:addVersion",
+                          headers=hdrs,
+                          json={"payload": {"data": data}}
+                      )
+                      print(f"  addVersion: {rav.status_code}")
+              elif r.status_code == 404:
+                  # 2) Create the secret + first version
+                  print(f"→ Creating secret {SECRET_NAME} with placeholder...")
+                  r1 = requests.post(
+                      f"{base}/secrets?secretId={SECRET_NAME}",
+                      headers=hdrs,
+                      json={"replication": {"automatic": {}}}
+                  )
+                  print(f"  create: {r1.status_code}")
+                  if r1.status_code not in (200, 409):
+                      print(f"  body: {r1.text[:400]}")
                   data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
-                  rav = requests.post(
+                  r2 = requests.post(
                       f"{base}/secrets/{SECRET_NAME}:addVersion",
                       headers=hdrs,
                       json={"payload": {"data": data}}
                   )
-                  print(f"  addVersion: {rav.status_code}")
-          elif r.status_code == 404:
-              # 2) Create the secret + first version
-              print(f"→ Creating secret {SECRET_NAME} with placeholder...")
-              r1 = requests.post(
-                  f"{base}/secrets?secretId={SECRET_NAME}",
-                  headers=hdrs,
-                  json={"replication": {"automatic": {}}}
-              )
-              print(f"  create: {r1.status_code}")
-              if r1.status_code not in (200, 409):
-                  print(f"  body: {r1.text[:400]}")
-              data = base64.b64encode(PLACEHOLDER_VALUE.encode()).decode()
-              r2 = requests.post(
-                  f"{base}/secrets/{SECRET_NAME}:addVersion",
-                  headers=hdrs,
-                  json={"payload": {"data": data}}
-              )
-              print(f"  addVersion: {r2.status_code}")
-              if r2.status_code not in (200, 201):
-                  print(f"  body: {r2.text[:400]}")
-          else:
-              print(f"WARN: unexpected status {r.status_code}: {r.text[:300]}")
+                  print(f"  addVersion: {r2.status_code}")
+                  if r2.status_code not in (200, 201):
+                      print(f"  body: {r2.text[:400]}")
+              else:
+                  print(f"WARN: unexpected status {r.status_code}: {r.text[:300]}")
+
+          for SECRET_NAME in SECRET_NAMES:
+              print(f"── ensuring secret: {SECRET_NAME} ──")
+              ensure_secret(SECRET_NAME)
           PYEOF
 
       - name: Install functions dependencies
