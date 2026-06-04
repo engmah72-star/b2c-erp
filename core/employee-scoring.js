@@ -14,22 +14,8 @@
  *   - tests/core-employee-scoring.test.mjs
  */
 
-// ── helpers (private, pure) ─────────────────────────────────────────
-
-/** Default work week excludes Friday (5) and Saturday (6). */
-function isWorkDayFor(dateStr, workSchedule) {
-  const days = workSchedule?.days;
-  const d = new Date(dateStr).getDay();
-  if (!days?.length) return d !== 5 && d !== 6;
-  return days.includes(d);
-}
-
-function isLeaveDayFor(dateStr, leaves = []) {
-  return leaves.some(lv =>
-    dateStr >= (lv.startDate || '') &&
-    dateStr <= (lv.endDate || lv.startDate || '')
-  );
-}
+// ── helpers (shared day-status primitives — single source: attendance-core) ─
+import { isWorkDayFor, isLeaveDayFor } from './attendance-core.js';
 
 // ── public API ──────────────────────────────────────────────────────
 
