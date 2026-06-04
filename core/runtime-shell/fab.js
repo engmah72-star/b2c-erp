@@ -68,9 +68,18 @@ function _onClick(e) {
     if (typeof _currentConfig.handler === 'function') {
       _currentConfig.handler();
     } else {
-      // string handler = placeholder (consistent with sidebar quick actions)
+      // string handler → dispatch a real action intent to the workspace
+      // (Phase 3). Falls back to a toast if the page hasn't been ported.
       console.info('[rt-fab:action]', _currentConfig.handler);
-      _toast((_currentConfig.label || 'إجراء') + ' — Phase 8');
+      const label = _currentConfig.label || 'إجراء';
+      const bus = (window.top && window.top.B2CActionBus) || window.B2CActionBus;
+      if (bus && typeof bus.dispatch === 'function' && _currentConfig.handler) {
+        bus.dispatch(_currentConfig.domain || null, _currentConfig.handler, { label }).then((handled) => {
+          if (!handled) _toast(label + ' — قريباً');
+        });
+      } else {
+        _toast(label + ' — قريباً');
+      }
     }
   } catch (err) {
     console.warn('[rt-fab] handler error', err);

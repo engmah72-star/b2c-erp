@@ -216,20 +216,42 @@ export function buildSidebar({ container, domain, config = {} }) {
     }
   }
 
-  // ── Wire quick-action buttons (Phase 3 placeholders) ──
+  // ── Run a named action (Phase 3: real dispatch to workspace) ──
+  // Sends the intent to the active workspace iframe via the action bus.
+  // If the page handles it (ACK) we close the mobile drawer; otherwise we
+  // fall back to the legacy "coming soon" toast (pages not yet ported).
+  function _runAction(handler, label) {
+    if (!handler) return;
+    console.info('[' + domain.id + ':action]', handler);
+    const bus = (window.top && window.top.B2CActionBus) || window.B2CActionBus;
+    if (bus && typeof bus.dispatch === 'function') {
+      bus.dispatch(domain.id, handler, { label }).then((handled) => {
+        if (handled) {
+          const shell = (window.top && window.top.B2CShell) || window.B2CShell;
+          if (shell && typeof shell.closeSidebar === 'function') shell.closeSidebar();
+        } else {
+          _toast(label + ' — قريباً');
+        }
+      });
+      return;
+    }
+    _toast(label + ' — قريباً');
+  }
+
+  // ── Wire quick-action buttons ──
   container.querySelectorAll('[data-handler]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       const handler = btn.dataset.handler;
       const label = btn.querySelector('.rt-ctx-item-lbl')?.textContent || handler;
-      console.info('[' + domain.id + ':action]', handler);
-      _toast(label + ' — Phase 3');
+      _runAction(handler, label);
     });
   });
 
-  // ── Add button (placeholder) ──
+  // ── Add button (header "+") → domain primary action ──
   container.querySelector('[data-rt-add]')?.addEventListener('click', () => {
-    _toast((config.addLabel || 'إضافة') + ' — Phase 3');
+    const handler = (config.primaryAction && config.primaryAction.handler) || 'add';
+    _runAction(handler, config.addLabel || 'إضافة');
   });
 
   // ── "المزيد" toggle (Phase A: progressive disclosure for secondary views) ──
@@ -267,7 +289,7 @@ export function buildSidebar({ container, domain, config = {} }) {
 
   // ── Sync FAB with this domain's primary action (Phase 7) ──
   if (config.primaryAction && config.primaryAction.icon) {
-    fab.show(config.primaryAction);
+    fab.show({ ...config.primaryAction, domain: domain.id });
   } else {
     fab.hide();
   }

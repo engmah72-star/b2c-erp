@@ -766,6 +766,30 @@ window.setQuickFilter=function(filter,el){
   }
 })();
 
+// ── Runtime-shell action handler (Phase 3) ──
+// The sidebar quick-actions / header "+" / mobile FAB dispatch named action
+// intents via the action bus. We run the matching in-page entry point and
+// ACK so the shell suppresses its fallback toast. Unknown actions → no ACK
+// → shell shows "قريباً" (backward-compatible, no breakage).
+(function wireRuntimeActions(){
+  const HANDLERS = {
+    openAddClient: () => (typeof window.openAddClient === 'function') && (window.openAddClient(), true),
+  };
+  window.addEventListener('message', (e) => {
+    const data = e?.data;
+    if (!data || data.type !== 'b2c:runtime-action') return;
+    if (data.domain && data.domain !== 'clients') return;   // not our domain
+    const fn = HANDLERS[data.action];
+    if (typeof fn !== 'function') return;                    // unknown → no ACK
+    let ok = false;
+    try { ok = fn() !== false; } catch (_) { ok = false; }
+    if (ok && window.parent && window.parent !== window) {
+      try { window.parent.postMessage({ type: 'b2c:runtime-action-ack', nonce: data.nonce }, '*'); }
+      catch (_) { /* not embedded — fine */ }
+    }
+  });
+})();
+
 // ══ GRID ══
 function renderGrid(){
   const el=document.getElementById('clients-grid');
