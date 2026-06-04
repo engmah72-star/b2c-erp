@@ -26,7 +26,7 @@ async function setupEnv() {
   return await initializeTestEnvironment({
     projectId: PROJECT_ID,
     storage: {
-      rules: readFileSync('storage.rules', 'utf8'),
+      rules: readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8'),
       host: '127.0.0.1',
       port: 9199,
     },
