@@ -197,6 +197,31 @@ const AGGREGATORS = [
     },
   },
 
+  // ── Suppliers ──
+  {
+    domain: 'suppliers', key: 'pending',
+    desc: 'Supplier payment requests still active (requested/awaiting_receipt/pending/confirmed)',
+    build() {
+      // query single-field (type) — نفلتر status في JS لتجنّب composite index
+      const q = query(
+        collection(db, 'payment_requests'),
+        where('type', '==', 'supplier_payment'),
+        limit(500),
+      );
+      const ACTIVE = ['requested', 'awaiting_receipt', 'pending', 'confirmed'];
+      return onSnapshot(q, snap => {
+        let count = 0;
+        snap.forEach(d => { if (ACTIVE.includes(d.data().status)) count++; });
+        signals.setMetric('suppliers', 'pending', count);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:suppliers:pending]', err);
+        }
+        signals.setMetric('suppliers', 'pending', 0);
+      });
+    },
+  },
+
   // ── Inbox ──
   {
     domain: 'inbox', key: 'unread',
