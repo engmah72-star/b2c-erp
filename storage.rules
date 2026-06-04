@@ -117,42 +117,52 @@ service firebase.storage {
     //
     // التضييق المحدود الآمن:
     //   - الـ read محصور على staff (الـ public لا يقرأ receipts/designs)
-    //   - الـ write يبقى كما كان لتفادي كسر uploads حالية
+    //   - الـ write لا يعتمد على isStaff()
+    //
+    // ملاحظة أمنية (نفس مبرّر مسار employees/ أعلاه): isStaff() يقرأ الدور من
+    // custom claim (request.auth.token.role) المنشور عبر syncUserAuthClaims.
+    // الـ trigger ده onDocumentUpdated فقط (لا يطلق عند إنشاء user)، وحتى بعد
+    // نشر الـ claim لازم توكن المتصفح يتجدّد قبل ما يظهر. لذلك لمستخدم staff
+    // حديث الإنشاء أو بتوكن قديم أو في بيئة لم يُشغَّل فيها backfillAuthClaims،
+    // يفشل isStaff() fail-closed ويمنع الرفع المشروع (storage/unauthorized →
+    // «مش بيحفظ» عند إنشاء الأوردر). نكتفي بالمصادقة + حدود الحجم/النوع؛
+    // صلاحية «من يرفع» مفروضة في الـ UI عبر capability gating، والقراءة تتم
+    // عبر downloadURL المُوقّع. القراءة تبقى محصورة على staff لحماية الخصوصية.
 
     // إيصالات طلبات الدفع — LEGACY
     match /receipts/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
     // ملفات التصميم — LEGACY
     match /designs/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 20 * 1024 * 1024;
     }
     match /design-refs/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 20 * 1024 * 1024;
     }
     // ملفات التصميم المهيكلة — LEGACY (paths بدون tenant)
     match /design-files/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 50 * 1024 * 1024;
     }
     // ملفات الطباعة النهائية — LEGACY
     match /print-finals/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 50 * 1024 * 1024;
     }
     // ملفات الإنتاج — LEGACY
     match /production/{file=**} {
       allow read:  if request.auth != null && isStaff();
-      allow write: if request.auth != null && isStaff()
+      allow write: if request.auth != null
         && request.resource.size < 50 * 1024 * 1024;
     }
     // ملفات الجاليري العام — قراءة عامة (للزوار)، الكتابة للمصممين/الأدمن فقط
