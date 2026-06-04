@@ -1548,9 +1548,17 @@ function selectOrderType(type){
   if(hint)hint.textContent=window.__getOrderTypePriceHint?.('design')||'';
 }
 window.__noDesignFiles=[];
+// حد حجم ملف التصميم — يطابق قاعدة Storage لمسار designs/ (80 م.ب). الملفات
+// الأكبر لا يمكن رفعها أصلاً، وكانت تعلّق حتى مهلة الرفع ثم تعطي رسالة «تحقق
+// من الاتصال» مضلِّلة. التحقق الفوري هنا يخبر الموظف بالسبب الحقيقي على طول.
+const MAX_DESIGN_BYTES = 80 * 1024 * 1024;
 window.addDesignFiles=function(inp){
   if(!inp.files||!inp.files.length)return;
   Array.from(inp.files).forEach(f=>{
+    if(f.size > MAX_DESIGN_BYTES){
+      toast(`«${f.name}» كبير جدًا (${(f.size/1024/1024).toFixed(0)} م.ب) — الحد الأقصى 80 م.ب. اضغط الملف أو قسّمه.`,'err');
+      return;
+    }
     if(!window.__noDesignFiles.some(x=>x.name===f.name&&x.size===f.size))
       window.__noDesignFiles.push(f);
   });
@@ -1683,10 +1691,12 @@ function saveNewOrder(){
   // Upload-phase safety net: لو الرفع علّق لأي سبب (شبكة/Storage/ضغط الصورة)
   // الزر كان يفضل "جاري الرفع..." للأبد والأوردر "مش بيتحفظ". الـ timeout ده
   // يضمن إن المستخدم يقدر يعيد المحاولة بدل ما يعلّق. (مكمّل للـ 15s بتاع createOrder.)
+  // المهلة 240ث (4 دقائق) تكفي لملف تصميم حتى 80 م.ب على اتصال متوسط؛ الحجم
+  // مُتحقَّق منه مسبقاً عند الاختيار فالفشل هنا غالباً اتصال بطيء فعلاً.
   const uploadWithTimeout = Promise.race([
     Promise.all([uploadDesignFile(), uploadReceipts()]),
     new Promise((_, reject)=>setTimeout(
-      ()=>reject(new Error('تعذّر رفع الصورة — تحقق من الاتصال وحاول مرة أخرى')), 45000)),
+      ()=>reject(new Error('تعذّر رفع الملفات — الاتصال بطيء أو الملف كبير. حاول مرة أخرى.')), 240000)),
   ]);
   uploadWithTimeout.then(async ([
     {firstUrl:designFileUrl,allFiles:designFiles},
