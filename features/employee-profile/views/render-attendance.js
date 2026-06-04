@@ -12,6 +12,9 @@
  * edit-modal pills in the page.
  */
 
+// Day-status primitives — single source: core/attendance-core.js (Phase-0 de-dup)
+import { isWorkDayFor, isLeaveDayFor } from '../../../core/attendance-core.js';
+
 export const DAY_NAMES_AR = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
 
 export const LEAVE_TYPES = {
@@ -29,20 +32,6 @@ function escAttr(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
     .replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function isWorkDayFor(dateStr, workSchedule) {
-  const days = workSchedule?.days;
-  const d = new Date(dateStr).getDay();
-  if (!days?.length) return d !== 5 && d !== 6;
-  return days.includes(d);
-}
-
-function isLeaveDayFor(dateStr, leaves = []) {
-  return leaves.some(lv =>
-    dateStr >= (lv.startDate || '') &&
-    dateStr <= (lv.endDate || lv.startDate || '')
-  );
 }
 
 /**

@@ -24,20 +24,9 @@
  */
 
 // ── helpers (private, pure) ─────────────────────────────────────────
-
-function isWorkDayFor(dateStr, workSchedule) {
-  const days = workSchedule?.days;
-  const d = new Date(dateStr).getDay();
-  if (!days?.length) return d !== 5 && d !== 6;
-  return days.includes(d);
-}
-
-function isLeaveDayFor(dateStr, leaves = []) {
-  return leaves.some(lv =>
-    dateStr >= (lv.startDate || '') &&
-    dateStr <= (lv.endDate || lv.startDate || '')
-  );
-}
+// Day-status primitives (isWorkDayFor / isLeaveDayFor) live in the shared
+// single source attendance-core.js; tardiness ladder stays salary-local.
+import { isWorkDayFor, isLeaveDayFor } from './attendance-core.js';
 
 function tardinessDaysFor(lateMinutes) {
   if (lateMinutes > 240) return 1;
