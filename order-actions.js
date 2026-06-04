@@ -359,6 +359,73 @@ export const orderActions = {
   },
 
   /**
+   * تحويل طلب بوابة مُهيكل (order_requests) إلى أوردر رسمي — يُغلِق حلقة العملية.
+   *
+   * يقرأ المستند من order_requests، يُنشئ أوردراً حقيقياً عبر createOrder (نفس
+   * المسار الذرّي/المالي)، ثم يُعلّم الطلب `converted` ويربطه بالأوردر. الطلب هو
+   * نقطة البداية الرسمية — لا رسالة محادثة (Order = SSoT).
+   *
+   * Returns: { ok, errors[], warnings[], orderId?, orderDocId?, requestId }
+   */
+  async createOrderFromRequest({
+    db = defaultDb, requestId, role, userId, userName,
+    salePrice = 0, deadline = '', notes = '',
+  }) {
+    if (!requestId) return { ok: false, errors: ['⚠️ requestId مطلوب'], warnings: [] };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+
+    const reqRef = doc(db, 'order_requests', requestId);
+    let rq;
+    try {
+      const snap = await getDoc(reqRef);
+      if (!snap.exists()) return { ok: false, errors: ['⚠️ الطلب غير موجود'], warnings: [], requestId };
+      rq = snap.data();
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'تعذّر قراءة الطلب'], warnings: [], requestId };
+    }
+    if (rq.status === 'converted') {
+      return { ok: false, errors: ['⚠️ الطلب مُحوّل لأوردر بالفعل'], warnings: [], requestId, orderDocId: rq.convertedOrderId || '' };
+    }
+    if (!rq.clientUid) return { ok: false, errors: ['⚠️ الطلب بلا عميل'], warnings: [], requestId };
+
+    const products = [{
+      productId: 'portal_request',
+      name: rq.product || 'طلب من البوابة',
+      qty: parseInt(rq.qty, 10) || 1,
+    }];
+    const orderId = 'ORD-' + Date.now().toString().slice(-8);
+
+    const res = await orderActions.createOrder({
+      db,
+      clientId: rq.clientUid, clientName: rq.clientName || '', clientPhone: rq.clientPhone || '',
+      products, stage: 'design',
+      salePrice: parseFloat(salePrice) || 0,
+      deadline, notes: notes || rq.notes || '',
+      orderId, userId, userName,
+    });
+    if (!res.ok) return { ...res, requestId };
+
+    // علّم الطلب «مُحوّل» — الأوردر أُنشئ بالفعل، ففشل هذا التعليم غير قاتل.
+    try {
+      await updateDoc(reqRef, {
+        status: 'converted',
+        convertedOrderId: res.orderDocId,
+        reviewedBy: userId, reviewedByName: userName || '',
+        convertedAt: serverTimestamp(),
+        timeline: [
+          ...(Array.isArray(rq.timeline) ? rq.timeline : []),
+          auditEntry({ action: `🔄 حُوِّل الطلب لأوردر ${orderId}`, userId, userName, kind: 'op', meta: { orderDocId: res.orderDocId } }),
+        ],
+      });
+    } catch (_) { /* non-fatal: order exists; request flag can be reconciled */ }
+
+    return {
+      ok: true, errors: [], warnings: res.warnings || [],
+      orderId: res.orderId, orderDocId: res.orderDocId, requestId,
+    };
+  },
+
+  /**
    * any active stage → archived
    * يستخدم buildArchiveSpec (نفس الفحوصات المركزية).
    *

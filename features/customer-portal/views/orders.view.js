@@ -5,7 +5,7 @@
 import { escapeHtml } from '../utils/dom.js';
 import { Card, Button, Chips, EmptyState } from '../components/index.js';
 import { Stepper, stageBadge, nextActionOf, ReorderBtn, money } from './partials.js';
-import { sendRequest, reorderText, approveText } from './requests.js';
+import { submitRequest } from './requests.js';
 
 const FILTERS = [
   { label: 'الكل', value: 'all' },
@@ -67,8 +67,15 @@ export function create(ctx) {
     async onAction(a) {
       if (a === 'neworder') return ctx.openNewOrder();
       if (a.startsWith('open:')) { const o = byId.get(a.slice(5)); if (o) ctx.openOrder(o); return; }
-      if (a.startsWith('reorder:')) { const o = byId.get(a.slice(8)); if (o) await sendRequest(ctx, { order: o, kind: 'order', text: reorderText(o) }); return; }
-      if (a.startsWith('approve:')) { const o = byId.get(a.slice(8)); if (o) await sendRequest(ctx, { order: o, kind: 'order', text: approveText(o) }); }
+      if (a.startsWith('reorder:')) { const o = byId.get(a.slice(8)); if (o) await submitRequest(ctx, { type: 'reorder', order: o }); return; }
+      if (a.startsWith('approve:')) {
+        // الاعتماد عبر الفعل المركزي (Cloud Function → order.clientApproval) فقط — لا رسالة.
+        const o = byId.get(a.slice(8));
+        if (o) {
+          const r = await ctx.services.approval.approveDesign(o._id);
+          ctx.shell.notify(r.ok ? 'تم اعتماد التصميم ✅' : 'تعذّر الاعتماد — حاول مرة أخرى', r.ok ? 'ok' : 'danger');
+        }
+      }
     },
   };
 }

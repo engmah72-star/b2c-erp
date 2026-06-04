@@ -5,7 +5,7 @@
 import { escapeHtml } from '../utils/dom.js';
 import { Button } from '../components/index.js';
 import { Stepper, stageBadge, nextActionOf, kv, money } from './partials.js';
-import { sendRequest, reorderText } from './requests.js';
+import { submitRequest } from './requests.js';
 
 export function create(ctx) {
   const { services, order, close } = ctx;
@@ -71,6 +71,8 @@ export function create(ctx) {
     async mount() { return html(); },
     async onAction(a) {
       if (a === 'approve') {
+        // الاعتماد حالة رسمية على الأوردر فقط (order.clientApproval) — لا fallback
+        // لرسالة محادثة. عند فشل الـ Cloud Function: خطأ + إتاحة إعادة المحاولة.
         const r = await ctx.services.approval.approveDesign(order._id);
         if (r.ok) {
           order.clientApproval = { status: 'approved' };
@@ -78,12 +80,11 @@ export function create(ctx) {
           ctx.shell.modal.body.innerHTML = html(); // اعكس الحالة فوراً
           return;
         }
-        const m = await sendRequest(ctx, { order, kind: 'order', text: `✅ أعتمِد تصميم الطلب رقم #${order.serial || order._id?.slice(0, 6) || ''}.` });
-        if (m.ok) close?.();
+        ctx.shell.notify('تعذّر اعتماد التصميم — حاول مرة أخرى', 'danger');
         return;
       }
       if (a === 'modify') { close?.(); ctx.openChat({ kind: 'order', order }); return; }
-      if (a === 'reorder') { await sendRequest(ctx, { order, kind: 'order', text: reorderText(order) }); return; }
+      if (a === 'reorder') { await submitRequest(ctx, { type: 'reorder', order }); return; }
       if (a === 'contact') { close?.(); ctx.openChat({ kind: 'order', order }); }
     },
   };
