@@ -426,6 +426,34 @@ export const orderActions = {
   },
 
   /**
+   * رفض طلب بوابة مُهيكل (order_requests) — حالة نهائية، بلا أثر مالي.
+   * Returns: { ok, errors[], warnings[], requestId }
+   */
+  async rejectOrderRequest({ db = defaultDb, requestId, userId, userName, reason = '' }) {
+    if (!requestId) return { ok: false, errors: ['⚠️ requestId مطلوب'], warnings: [] };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    const reqRef = doc(db, 'order_requests', requestId);
+    try {
+      const snap = await getDoc(reqRef);
+      if (!snap.exists()) return { ok: false, errors: ['⚠️ الطلب غير موجود'], warnings: [], requestId };
+      const rq = snap.data();
+      if (rq.status === 'converted') return { ok: false, errors: ['⚠️ الطلب مُحوّل لأوردر — لا يُرفض'], warnings: [], requestId };
+      await updateDoc(reqRef, {
+        status: 'rejected',
+        reviewedBy: userId, reviewedByName: userName || '',
+        rejectedAt: serverTimestamp(), rejectReason: reason || '',
+        timeline: [
+          ...(Array.isArray(rq.timeline) ? rq.timeline : []),
+          auditEntry({ action: `🚫 رُفض الطلب${reason ? ' — ' + reason : ''}`, userId, userName, kind: 'op' }),
+        ],
+      });
+      return { ok: true, errors: [], warnings: [], requestId };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 لا صلاحية' : (e.message || 'فشل الرفض')], warnings: [], requestId };
+    }
+  },
+
+  /**
    * any active stage → archived
    * يستخدم buildArchiveSpec (نفس الفحوصات المركزية).
    *

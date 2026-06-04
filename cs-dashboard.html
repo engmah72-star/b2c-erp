@@ -14,7 +14,7 @@
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="cs-dashboard.css?v=1">
+<link rel="stylesheet" href="cs-dashboard.css?v=2">
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
@@ -104,6 +104,13 @@
     <div id="fu-list">
       <div style="padding:28px;text-align:center;color:var(--dim2);font-size:var(--fs-base)">جاري التحميل...</div>
     </div>
+
+    <!-- ── طلبات البوابة (order_requests) — نقطة بداية مُهيكلة، تُحوَّل لأوردر ── -->
+    <div class="cs-sec" id="req-sec" style="margin-top:8px;display:none">
+      <span class="cs-sec-title">🆕 طلبات البوابة</span>
+      <span class="cs-sec-link" id="req-count"></span>
+    </div>
+    <div id="req-list" style="display:none"></div>
 
     <!-- ── الأوردرات ── -->
     <div class="cs-sec" style="margin-top:8px">
@@ -220,7 +227,8 @@ set('cs-date',`${DAYS[nowDate.getDay()]} · ${nowDate.getDate()} ${MONTHS[nowDat
 
 // ── Data ──
 let myOrders=[],myClients=[],wallets=[],todayAtt=null,myConvs=[];
-let currentUser=null,userName='',uid='',activeTab='active';
+let currentUser=null,userName='',uid='',activeTab='active',currentRole='customer_service';
+let portalReqs=[];
 let payOrderId=null,payOrderRef=null;
 let searchKbdIdx=-1;
 
@@ -233,7 +241,7 @@ onAuthStateChanged(auth,async u=>{
   const snap=await getDoc(doc(db,'users',u.uid));
   if(!snap.exists()){location.href='login.html';return;}
   const d=snap.data();
-  const role=d.role||'customer_service';
+  const role=d.role||'customer_service';currentRole=role;
   const RDASH={graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html',admin:'accounts.html',operation_manager:'ops-dashboard.html'};
   if(role!=='admin'&&role!=='operation_manager'&&role!=='customer_service'){location.href=RDASH[role]||'login.html';return;}
   userName=d.name||u.email;
@@ -277,6 +285,14 @@ onAuthStateChanged(auth,async u=>{
   },err=>{
     // فشل القراءة لا يكسر باقي الصفحة — فقط نخفي الـ widget
     console.warn('[cs] conversations listener:',err.message);
+  });
+
+  // Order-requests listener — طلبات بوابة جديدة بانتظار التحويل لأوردر (G3: limit)
+  onSnapshot(query(collection(db,'order_requests'),where('status','==','new'),orderBy('createdAt','desc'),limit(50)),snap=>{
+    portalReqs=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderRequests();
+  },err=>{
+    console.warn('[cs] order_requests listener:',err.message);
   });
 });
 
@@ -568,6 +584,50 @@ function renderInboxMini(){
     </a>`;
   }).join('');
 }
+
+// ── 🆕 Portal requests (order_requests → order) ──
+const REQ_KIND={'new':'🆕 طلب جديد','reorder':'🔁 إعادة طلب','quote':'🧾 عرض سعر'};
+function renderRequests(){
+  const sec=document.getElementById('req-sec');
+  const list=document.getElementById('req-list');
+  const cnt=document.getElementById('req-count');
+  if(!sec||!list)return;
+  if(!portalReqs.length){sec.style.display='none';list.style.display='none';return;}
+  sec.style.display='flex';list.style.display='block';
+  if(cnt)cnt.textContent=portalReqs.length+' بانتظار التحويل';
+  const esc=s=>(s||'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  list.innerHTML=portalReqs.map(r=>{
+    const meta=[r.product&&esc(r.product),r.qty&&('كمية '+esc(r.qty))].filter(Boolean).join(' · ');
+    const phone=esc(r.clientPhone||'');
+    return`<div class="req-card" id="req-${r._id}">
+      <div class="req-head">
+        <span class="req-kind">${REQ_KIND[r.type]||esc(r.type)}</span>
+        <span class="req-name">${esc(r.clientName||'عميل')}${phone?` · <span dir="ltr">${phone}</span>`:''}</span>
+      </div>
+      ${meta?`<div class="req-meta">${meta}</div>`:''}
+      ${r.notes?`<div class="req-notes">${esc(r.notes)}</div>`:''}
+      <div class="req-actions">
+        <button type="button" class="btn btn-g btn-sm" onclick="convertRequest('${r._id}',this)">✅ حوّل لأوردر</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="rejectRequest('${r._id}',this)">🚫 رفض</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.convertRequest=async function(id,btn){
+  if(btn)btn.disabled=true;
+  const r=await orderActions.createOrderFromRequest({db,requestId:id,role:currentRole,userId:uid,userName});
+  if(!r.ok){if(btn)btn.disabled=false;return toast('❌ '+(r.errors||['تعذّر التحويل']).join(' · '),'err');}
+  toast('✅ تم التحويل لأوردر '+(r.orderId||'')+' — سعّره من صفحة العملاء','ok');
+  // الـ listener يُزيل البطاقة تلقائياً (status لم يعد 'new').
+};
+
+window.rejectRequest=async function(id,btn){
+  if(btn)btn.disabled=true;
+  const r=await orderActions.rejectOrderRequest({db,requestId:id,userId:uid,userName});
+  if(!r.ok){if(btn)btn.disabled=false;return toast('❌ '+(r.errors||['تعذّر الرفض']).join(' · '),'err');}
+  toast('🚫 رُفض الطلب','');
+};
 
 // ── 🔍 Global search ──
 const norm=s=>(s||'').toString().toLowerCase().replace(/\s+/g,' ').trim();
