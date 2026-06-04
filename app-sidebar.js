@@ -27,7 +27,8 @@ import * as signalsAgg from './core/runtime-shell/signals-aggregator.js';
 // تعيد استخدام عدّادات signals-aggregator الموجودة (محدودة + آمنة للصلاحيات).
 const BADGE_MAP = {
   'approvals.html':  [['accounts', 'pending-approvals']],
-  'production.html': [['production', 'late']],
+  'production.html': [['production', 'late'], ['production', 'no-supplier']],
+  'suppliers.html':  [['suppliers', 'pending']],
   'shipping.html':   [['shipping', 'late']],
   'returns.html':    [['shipping', 'returns-open']],
   'clients.html':    [['clients', 'delayed']],
