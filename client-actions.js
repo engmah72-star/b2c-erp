@@ -160,6 +160,22 @@ async function _logAudit(db, { action, details, userId, userName }) {
 // CLIENT CRUD
 // ══════════════════════════════════════════
 
+/**
+ * يحمّل قائمة موظفي الدعم (CS pool) من إعداد مركزي يقرأه العميل.
+ * `master_lists/support_agents` = { uids: [...] } — read: isAuth، write: admin.
+ * مصدر مركزي: يضمن وجود موظف مستلِم في كل محادثة عميل (إصلاح تسليم الرسائل).
+ * يفشل بهدوء → [] (لا يكسر فتح المحادثة).
+ */
+async function _loadSupportAgents(db) {
+  try {
+    const snap = await getDoc(doc(db, 'master_lists', 'support_agents'));
+    const uids = snap.exists() ? snap.data().uids : [];
+    return Array.isArray(uids) ? uids.filter(Boolean) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 export const clientActions = {
 
   /**
@@ -336,17 +352,24 @@ export const clientActions = {
    */
   async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null }) {
     if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    // CS pool المركزي — يضمن وجود موظف مستلِم في محادثة العميل (HOTFIX delivery).
+    const supportAgents = await _loadSupportAgents(db);
     let convId, type, name, extra = {}, staff = [];
     if (kind === 'order') {
       if (!order?._id) return { ok: false, errors: ['⚠️ الأوردر مطلوب'], warnings: [] };
       convId = 'clord_' + order._id;
       staff = [order.designerId, order.productionAgent, order.shippingOfficerId, order.createdBy].filter(Boolean);
+      // Fallback routing: أوردر بلا فريق مُعيَّن بعد → وجّه لِـ CS pool حتى لا يُتَّم
+      // إنشاء محادثة بلا مستلِم (orphaned thread).
+      if (!staff.length) staff = supportAgents;
       type = 'order_thread';
       name = '💬 ' + (clientName || 'عميل') + ' — #' + (order.orderId || order._id.slice(-6));
       extra = { orderId: order.orderId || order._id, orderRef: { orderId: order.orderId || order._id, clientName } };
     } else {
       convId = 'csupport_' + clientUid;
-      staff = order?.createdBy ? [order.createdBy] : [];
+      // FIX: محادثة الدعم كانت تُنشأ بلا موظف (participants=[client] فقط) →
+      // غير مرئية لأي موظف. الآن تُوجَّه دائماً لِـ CS pool المركزي.
+      staff = supportAgents.length ? supportAgents : (order?.createdBy ? [order.createdBy] : []);
       type = 'dm';
       name = '💬 دعم — ' + (clientName || 'عميل');
     }

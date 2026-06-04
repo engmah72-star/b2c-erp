@@ -932,6 +932,7 @@ service cloud.firestore {
       //   2) NON-participant joining a CHANNEL: allowed to add only themselves
       //      to participants (so new employees / role changes can self-join).
       allow update: if isAuth() && (
+        isAdmin() ||
         request.auth.uid in resource.data.get('participants', [])
         || (
           resource.data.get('type','') == 'channel'
@@ -947,12 +948,19 @@ service cloud.firestore {
           isAdmin() ||
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.get('participants', [])
         );
-        // create: must be participant and senderId must match auth uid
+        // create: senderId must match auth uid; sender must be a participant
+        //   OR admin (oversight/intervention — can always reply in any thread).
         allow create: if isAuth()
           && request.resource.data.senderId == request.auth.uid
-          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.get('participants', []);
-        // update: only readBy + reactions + editedAt updates by participants
-        allow update: if isAuth() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.get('participants', []);
+          && (
+            isAdmin() ||
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.get('participants', [])
+          );
+        // update: readBy + reactions + editedAt by participants OR admin.
+        allow update: if isAuth() && (
+          isAdmin() ||
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.get('participants', [])
+        );
         allow delete: if isAdmin() || (isAuth() && resource.data.senderId == request.auth.uid);
       }
     }
