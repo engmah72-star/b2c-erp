@@ -4,6 +4,7 @@
  */
 import { escapeHtml, qs } from '../utils/dom.js';
 import { Card, Button, EmptyState } from '../components/index.js';
+import { worksLimit } from '../../../core/entitlements.js';
 
 const MAX_BYTES = 60 * 1024 * 1024;
 const okType = (f) => /^image\//.test(f.type) || /^video\//.test(f.type) || f.type === 'application/pdf';
@@ -23,6 +24,10 @@ export function create(ctx) {
   const uid = () => store.get('user')?.uid || '';
   const email = () => store.get('user')?.email || '';
   const uname = () => store.get('client')?.name || store.get('user')?.displayName || 'عميل';
+  // استهلاك الاستحقاق المركزي (Premium gating): سقف الأعمال حسب الخطة.
+  const planCard = () => ({ plan: store.get('client')?.businessProfile?.plan });
+  const cap = () => worksLimit(planCard());
+  const atCap = () => works.length >= cap();
 
   function tile(w, i) {
     const body = `<div class="cp-stack cp-stack--sm">${media(w)}
@@ -32,8 +37,17 @@ export function create(ctx) {
   }
 
   function uploader() {
-    return `<input type="file" id="pf-file" accept="image/*,video/*,application/pdf" hidden>
-      ${Button({ label: busy ? 'جاري الرفع…' : 'أضف عملاً', icon: '➕', action: 'pick', loading: busy, disabled: busy })}`;
+    const limit = cap();
+    const counter = Number.isFinite(limit) ? ` (${works.length}/${limit})` : '';
+    const fileInput = '<input type="file" id="pf-file" accept="image/*,video/*,application/pdf" hidden>';
+    if (atCap()) {
+      return `<div class="cp-cta-banner">
+        <div class="cp-cta-banner__title">⭐ وصلت حدّ خطتك المجانية${counter}</div>
+        <div class="cp-muted">رقِّ خطتك لرفع أعمال غير محدودة.</div>
+        ${Button({ label: 'ترقية الخطة', icon: '⭐', action: 'upgrade' })}
+      </div>${fileInput}`;
+    }
+    return `${fileInput}${Button({ label: (busy ? 'جاري الرفع…' : 'أضف عملاً') + counter, icon: '➕', action: 'pick', loading: busy, disabled: busy })}`;
   }
 
   function html() {
@@ -61,6 +75,7 @@ export function create(ctx) {
       return html();
     },
     async onAction(a) {
+      if (a === 'upgrade') return ctx.openChat({ kind: 'support' });
       if (a === 'pick' && !busy) { qs('#pf-file', document)?.click(); return; }
       if (a.startsWith('del:')) {
         const i = parseInt(a.slice(4), 10);
@@ -75,6 +90,7 @@ export function create(ctx) {
       const file = input.files && input.files[0];
       input.value = '';
       if (!file || busy) return;
+      if (atCap()) { shell.notify(`وصلت حدّ خطتك (${cap()} عمل) — رقِّ خطتك للمزيد`, 'danger'); return; }
       if (!okType(file)) { shell.notify('يُسمح بصور/فيديو/PDF فقط', 'danger'); return; }
       if (file.size > MAX_BYTES) { shell.notify('الحجم الأقصى 60 ميجا', 'danger'); return; }
       busy = true; paint();

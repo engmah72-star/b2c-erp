@@ -7,7 +7,10 @@ import { Card, Button, Input, Avatar } from '../components/index.js';
 import { cropResize } from '../utils/image.js';
 import { slugUsername } from '../utils/username.js';
 import { qrSrc, downloadQR } from '../utils/qr.js';
+import { entitlementsOf } from '../../../core/entitlements.js';
 import { validateProfile } from '../validators/profile.validator.js';
+
+const PLAN_AR = { free: 'مجانية', pro: 'احترافية', business: 'أعمال' };
 
 export function create(ctx) {
   const { services, store, shell } = ctx;
@@ -69,8 +72,20 @@ export function create(ctx) {
         ${Button({ label: 'تنزيل QR', icon: '⬇️', variant: 'ghost', size: 'sm', block: false, action: 'qr-download' })}
         ${Button({ label: 'مشاركة', icon: '🔗', variant: 'ghost', size: 'sm', block: false, action: 'share' })}
       </div></div>` }) : '';
+    // بطاقة الخطة (استهلاك core/entitlements — Premium gating).
+    const ent = entitlementsOf({ plan: biz.plan, featured: biz.featured });
+    const tone = ent.plan === 'free' ? 'neutral' : 'ok';
+    const planCard = Card({ body: `<div class="cp-stack cp-stack--sm">
+      <div class="cp-row cp-row--between">
+        <strong>خطتك: ${escapeHtml(PLAN_AR[ent.plan] || ent.plan)}</strong>
+        <span class="cp-badge${tone === 'ok' ? ' cp-badge--ok' : ''}">${ent.featured ? '⭐ مميَّز' : escapeHtml(PLAN_AR[ent.plan] || ent.plan)}</span>
+      </div>
+      <div class="cp-muted">المزايا: ${ent.features.length} ميزة مفعّلة</div>
+      ${ent.plan === 'free' ? Button({ label: 'ترقية الخطة', icon: '⭐', variant: 'ghost', size: 'sm', block: false, action: 'upgrade' }) : ''}
+    </div>` });
     const actions = `<div class="cp-stack cp-stack--sm">
       ${qrCard}
+      ${planCard}
       ${Button({ label: 'مشاركة الصفحة العامة', icon: '🔗', action: 'share', disabled: !uid() })}
       ${Button({ label: 'إدارة الخدمات', icon: '🛠', variant: 'ghost', action: 'services' })}
       ${Button({ label: 'تعديل البيانات', icon: '✏️', variant: 'ghost', action: 'edit' })}
@@ -129,6 +144,7 @@ export function create(ctx) {
       if (a === 'cancel') { editing = false; errors = []; return paint(); }
       if (a === 'logout') return services.auth.signOut();
       if (a === 'services') return ctx.openServices();
+      if (a === 'upgrade') return ctx.openChat({ kind: 'support' });
       if (a === 'qr-download') { await downloadQR(publicUrl(), 'business2card-qr.png'); return; }
       if (a === 'pick-logo') { qs('#pf-logo', document)?.click(); return; }
       if (a === 'pick-cover') { qs('#pf-cover', document)?.click(); return; }

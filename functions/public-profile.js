@@ -135,6 +135,11 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
   }).join('')}</div></section>` : '';
 
   const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=0&data=' + encodeURIComponent(canonicalUrl);
+  // Premium gating: خطة الأعمال تزيل براندينج Business2Card (remove_branding).
+  const removeBranding = String(card.plan || 'free').toLowerCase() === 'business';
+  const footer = removeBranding
+    ? '<div class="foot"><a href="/directory">دليل الأعمال</a></div>'
+    : '<div class="foot">صُنع عبر <a href="/client-login.html">Business2Card</a> · <a href="/directory">دليل الأعمال</a></div>';
 
   return head(title, desc, ogImage) + `<body><main class="page">
   <article>
@@ -151,7 +156,7 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
         <button class="btn" id="dlBtn">⬇️ تنزيل QR</button>
       </div>
     </div>
-    <div class="foot">صُنع عبر <a href="/client-login.html">Business2Card</a> · <a href="/directory">دليل الأعمال</a></div>
+    ${footer}
   </article></main>
   <script>
   document.getElementById('shareBtn').addEventListener('click',async()=>{

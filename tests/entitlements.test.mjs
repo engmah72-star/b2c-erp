@@ -2,7 +2,7 @@
  * tests · entitlements — اختبار المصدر المركزي للاستحقاقات (#6). نقي.
  * تشغيل: node tests/entitlements.test.mjs
  */
-import { planOf, isFeatured, hasFeature, entitlementsOf, PLANS } from '../core/entitlements.js';
+import { planOf, isFeatured, hasFeature, entitlementsOf, PLANS, worksLimit, WORKS_FREE_LIMIT } from '../core/entitlements.js';
 
 let pass = 0, fail = 0;
 const ok = (n, c) => { if (c) pass++; else { fail++; console.error('✗', n); } };
@@ -23,6 +23,10 @@ ok('not featured without flag', isFeatured({ plan: 'pro' }) === false);
 const e = entitlementsOf({ plan: 'pro', featured: true });
 ok('entitlements shape', e.plan === 'pro' && e.featured === true && Array.isArray(e.features) && e.features.includes('unlimited_works'));
 ok('plans order', PLANS[0] === 'free' && PLANS[PLANS.length - 1] === 'business');
+
+ok('free works limit', worksLimit({ plan: 'free' }) === WORKS_FREE_LIMIT);
+ok('pro works unlimited', worksLimit({ plan: 'pro' }) === Infinity);
+ok('business works unlimited', worksLimit({ plan: 'business' }) === Infinity);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
