@@ -50,7 +50,12 @@ export function createRouter({ shell, store, services }) {
   });
 
   function ctx() {
-    return { services, store, shell, go, openOrder, openChat, openNewOrder, openServices, repaint, loading: loadingHtml };
+    return { services, store, shell, go, openOrder, openChat, openNewOrder, openServices, openNotifications, repaint, loading: loadingHtml };
+  }
+
+  /** يفتح مركز الإشعارات في الـ Overlay. */
+  async function openNotifications() {
+    await openModalView(await import('./notifications.view.js'), { title: '🔔 الإشعارات', extra: {} });
   }
 
   /** يفتح نموذج «اطلب الآن» في الـ Overlay. */
@@ -114,5 +119,5 @@ export function createRouter({ shell, store, services }) {
 
   function start(key) { return go(key); }
 
-  return { go, openOrder, openChat, openNewOrder, openServices, start };
+  return { go, openOrder, openChat, openNewOrder, openServices, openNotifications, start };
 }
