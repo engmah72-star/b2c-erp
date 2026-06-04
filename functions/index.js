@@ -3465,14 +3465,23 @@ exports.profilePage = onRequest(
       const uname = m ? decodeURIComponent(m[1]).trim().toLowerCase() : String(req.query.u || '').trim().toLowerCase();
       const id = String(req.query.id || '').trim();
 
-      let card = null;
+      let card = null; let cardUid = id || null;
       if (uname) {
         const snap = await db.collection('public_cards').where('username', '==', uname).limit(1).get();
-        if (!snap.empty) { card = snap.docs[0].data(); canonical = `${origin}/u/${encodeURIComponent(uname)}`; }
+        if (!snap.empty) { card = snap.docs[0].data(); cardUid = snap.docs[0].id; canonical = `${origin}/u/${encodeURIComponent(uname)}`; }
       }
       if (!card && id) {
         const s = await db.collection('public_cards').doc(id).get();
-        if (s.exists) card = s.data();
+        if (s.exists) { card = s.data(); cardUid = s.id; }
+      }
+      // الخطة من المصدر الموثوق (subscriptions · write:false) لا من public_cards القابل للتزوير.
+      if (card && cardUid) {
+        try {
+          const sub = await db.doc(`subscriptions/${cardUid}`).get();
+          const sd = sub.exists ? sub.data() : {};
+          card.plan = sd.plan || 'free';
+          card.featured = sd.featured === true;
+        } catch (_) { card.plan = 'free'; card.featured = false; }
       }
 
       res.set('Content-Type', 'text/html; charset=utf-8');
@@ -3547,4 +3556,33 @@ exports.onOrderStageNotifyClientInApp = onDocumentUpdated('orders/{orderId}', as
     entityId: e.params.orderId, orderId: e.params.orderId, stage: after.stage,
     read: false, createdAt: FieldValue.serverTimestamp(),
   }).catch((err) => console.warn('client in-app notif failed', err.message));
+});
+
+// ════════════════════════════════════════════════════════════
+// BILLING — منح/ترقية خطة العميل (Admin-only). المصدر الموثوق = subscriptions/{uid}
+// (write:false في القواعد) → لا يمنح العميل نفسه خطة. يُمرّر له لاحقاً webhook الدفع.
+// ════════════════════════════════════════════════════════════
+exports.setClientPlan = onCall(CALL_OPTS, async (req) => {
+  const callerUid = req.auth && req.auth.uid;
+  if (!callerUid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+  const callerSnap = await db.doc(`users/${callerUid}`).get();
+  const role = callerSnap.exists ? (callerSnap.data().role || '') : '';
+  if (role !== 'admin' && role !== 'operation_manager') {
+    throw new HttpsError('permission-denied', 'الإدارة فقط');
+  }
+  const clientUid = String((req.data && req.data.clientUid) || '').trim();
+  const plan = String((req.data && req.data.plan) || 'free').toLowerCase().trim();
+  const featured = (req.data && req.data.featured) === true;
+  if (!clientUid) throw new HttpsError('invalid-argument', 'clientUid مطلوب');
+  if (!['free', 'pro', 'business'].includes(plan)) throw new HttpsError('invalid-argument', 'خطة غير صحيحة');
+
+  const batch = db.batch();
+  batch.set(db.doc(`subscriptions/${clientUid}`), {
+    plan, featured, status: plan === 'free' ? 'free' : 'active',
+    grantedBy: callerUid, source: 'admin', updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  // نسخة عامة للقراءة السريعة (مرآة — الكتابة عبر الدالة فقط)
+  batch.set(db.doc(`public_cards/${clientUid}`), { plan, featured }, { merge: true });
+  await batch.commit();
+  return { ok: true, plan, featured };
 });

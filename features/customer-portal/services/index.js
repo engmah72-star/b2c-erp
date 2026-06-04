@@ -5,7 +5,7 @@
 import { watchAuth, signInWithGoogle, signOut } from './auth.service.js';
 import {
   loadClient, saveProfile, loadPublicCard, addWork, removeWork,
-  uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable,
+  uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable, loadSubscription,
 } from './profile.service.js';
 import { loadOrders, invoiceOf, totalsOf } from './orders.service.js';
 import { loadGallery, categoriesOf } from './gallery.service.js';
@@ -19,7 +19,7 @@ export const services = {
   notifications: { subscribeNotifications, markRead },
   profile: {
     loadClient, saveProfile, loadPublicCard, addWork, removeWork,
-    uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable,
+    uploadMedia, removeMedia, saveServices, uploadServiceImage, usernameAvailable, loadSubscription,
   },
   orders:  { loadOrders, invoiceOf, totalsOf },
   gallery: { loadGallery, categoriesOf },

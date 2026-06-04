@@ -112,6 +112,17 @@ export async function usernameAvailable(username, uid) {
   return snap.empty || snap.docs[0].id === uid;
 }
 
+/** يحمّل خطة الاشتراك الموثوقة subscriptions/{uid} → { plan, featured }. */
+export async function loadSubscription(uid) {
+  if (!uid) return { plan: 'free', featured: false };
+  const fb = await firebase();
+  try {
+    const snap = await fb.getDoc(fb.doc(fb.db, 'subscriptions', uid));
+    const d = snap.exists() ? snap.data() : {};
+    return { plan: d.plan || 'free', featured: d.featured === true };
+  } catch (_) { return { plan: 'free', featured: false }; }
+}
+
 /** يحمّل الكارت العام public_cards/{uid} (أو null). */
 export async function loadPublicCard(uid) {
   const fb = await firebase();

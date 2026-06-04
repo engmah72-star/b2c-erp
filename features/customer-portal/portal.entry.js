@@ -52,6 +52,7 @@ let booted = false;
       if (user) {
         store.set({ user });
         try { store.set({ client: await services.profile.loadClient(user.uid) }); } catch (_) {}
+        try { store.set({ entitlement: await services.profile.loadSubscription(user.uid) }); } catch (_) { store.set({ entitlement: { plan: 'free', featured: false } }); }
         watchUnread(user.uid);
         if (!booted || store.get('activeTab') === 'login') { booted = true; router.go('home'); }
       } else {

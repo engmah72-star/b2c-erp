@@ -24,8 +24,8 @@ export function create(ctx) {
   const uid = () => store.get('user')?.uid || '';
   const email = () => store.get('user')?.email || '';
   const uname = () => store.get('client')?.name || store.get('user')?.displayName || 'عميل';
-  // استهلاك الاستحقاق المركزي (Premium gating): سقف الأعمال حسب الخطة.
-  const planCard = () => ({ plan: store.get('client')?.businessProfile?.plan });
+  // استهلاك الاستحقاق المركزي (Premium gating): سقف الأعمال حسب الخطة الموثوقة (subscriptions).
+  const planCard = () => store.get('entitlement') || { plan: 'free' };
   const cap = () => worksLimit(planCard());
   const atCap = () => works.length >= cap();
 
