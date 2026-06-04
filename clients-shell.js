@@ -92,6 +92,13 @@ export const CLIENTS_SHELL_HTML = `
     </div>
 
     <!-- ════════════════════════════════════════════════════════════
+         PORTAL REQUESTS — طلبات البوابة (order_requests · status=new)
+         نقطة استقبال ثانية بجانب cs-dashboard. يُعبّأ بواسطة
+         clients-portal-requests.js (موديول منفصل · G5). مخفي حتى يصل طلب.
+         ════════════════════════════════════════════════════════════ -->
+    <section class="cl-preq" id="cl-preq-host" hidden></section>
+
+    <!-- ════════════════════════════════════════════════════════════
          STATS PANEL — collapsible على الموبايل / مفتوح على الكمبيوتر
          ════════════════════════════════════════════════════════════ -->
     <section class="cl-panel" id="cl-stats-panel" data-panel="stats">
