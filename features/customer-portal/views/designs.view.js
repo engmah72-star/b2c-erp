@@ -4,7 +4,7 @@
  */
 import { escapeHtml } from '../utils/dom.js';
 import { Card, Button, Chips, EmptyState } from '../components/index.js';
-import { sendRequest } from './requests.js';
+import { submitRequest } from './requests.js';
 
 const imgOf = (g) => g.imageUrl || g.thumbUrl || g.url || g.image || '';
 
@@ -52,7 +52,7 @@ export function create(ctx) {
       if (a.startsWith('similar:')) {
         const g = byId.get(a.slice(8));
         const label = g?.title || g?.productType || 'هذا التصميم';
-        await sendRequest(ctx, { text: `✨ أرغب في تصميم مشابه لـ «${label}». برجاء التواصل معي.` });
+        await submitRequest(ctx, { type: 'quote', notes: `أرغب في تصميم مشابه لـ «${label}».` });
       }
     },
   };

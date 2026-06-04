@@ -134,3 +134,85 @@ jobs:
           else
             echo "✅ all changed files within $BUDGET-line budget"
           fi
+
+  order-centric:
+    name: 🧭 Order = SSoT — no business logic from messages
+    # يقفل نتيجة docs/ARCHITECTURE_CENTRALITY_AUDIT.md: الأوردر هو المصدر الوحيد
+    # للحقيقة، والمحادثات طبقة تواصل بلا منطق أعمال. يفحص الأسطر المُضافة فقط.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan added lines for message-as-truth violations
+        run: |
+          set +e
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          VIOLATIONS=0
+          added() { git diff "$BASE_SHA" HEAD -- "$1" | grep -E '^\+' | grep -vE '^\+\+\+' | sed 's/^+//'; }
+
+          # ── (1) لا Cloud Function trigger على conversations/messages ──────────
+          # المحادثات يجب ألا تُشغّل منطق أعمال على الأوردر/المالية.
+          for f in $(git diff --name-only "$BASE_SHA" HEAD -- 'functions/*.js'); do
+            [ -f "$f" ] || continue
+            hits=$(added "$f" \
+              | grep -nE "(onDocument[A-Za-z]*|\.document)\s*\(\s*['\"]conversations" \
+              | grep -vE '^\s*[0-9]+:\s*(//|\*)')
+            if [ -n "$hits" ]; then
+              VIOLATIONS=$((VIOLATIONS+1))
+              echo ""
+              echo "❌ $f — new Cloud Function trigger on conversations/messages:"
+              echo "$hits" | sed 's/^/    /'
+            fi
+          done
+
+          # ── (2) لا قراءة لحقول مالية/مشتقّة من orderRef/order_share snapshot ──
+          # snapshot الرسالة للعرض فقط؛ الحقيقة المالية من order + order-math.
+          FINFIELDS='orderRef\.(salePrice|remaining|totalPaid|paymentStatus|discount|deposit|paid|grossTotal|dueByCo|net)'
+          for f in $(git diff --name-only "$BASE_SHA" HEAD -- '*.js' '*.html'); do
+            [ -f "$f" ] || continue
+            hits=$(added "$f" \
+              | grep -nE "$FINFIELDS" \
+              | grep -vE '^\s*[0-9]+:\s*(//|\*)')
+            if [ -n "$hits" ]; then
+              VIOLATIONS=$((VIOLATIONS+1))
+              echo ""
+              echo "❌ $f — reads financial truth from a message snapshot (orderRef.*):"
+              echo "$hits" | sed 's/^/    /'
+            fi
+          done
+
+          # ── (3) لا كتابة للأوردر/المالية داخل ملفات المراسلة ─────────────────
+          # ملفات الرسائل تكتب conversations/messages فقط — لا orders/مالية.
+          MSG_FILES='^(inbox-actions\.js|features/inbox/|features/customer-portal/services/chat\.service\.js)'
+          # ملفات الرسائل تكتب conversations/messages فقط. أي ذكر لمحرك/مجموعات
+          # مالية فيها = منطق أعمال في غير محلّه (يُراجَع يدوياً إن كان مشروعاً).
+          BIZWRITE='dispatchFinancialEvent\s*\(|addLedgerToBatch\s*\(|transactions_v2|financial_ledger|\bwallets\b'
+          for f in $(git diff --name-only "$BASE_SHA" HEAD -- '*.js' | grep -E "$MSG_FILES"); do
+            [ -f "$f" ] || continue
+            hits=$(added "$f" \
+              | grep -nE "$BIZWRITE" \
+              | grep -vE '^\s*[0-9]+:\s*(//|\*)')
+            if [ -n "$hits" ]; then
+              VIOLATIONS=$((VIOLATIONS+1))
+              echo ""
+              echo "❌ $f — messaging file writes to order/financial collections:"
+              echo "$hits" | sed 's/^/    /'
+            fi
+          done
+
+          if [ $VIOLATIONS -gt 0 ]; then
+            echo ""
+            echo "──────────────────────────────────────────────────────"
+            echo "🚫 Order-Centric Guard — $VIOLATIONS violation(s)"
+            echo "──────────────────────────────────────────────────────"
+            echo "Order (orders/{id}) + FSE collections are the SINGLE source of truth."
+            echo "Conversations are communication only — no business logic."
+            echo "  • financial/derived truth → order + core/order-math.js (never orderRef.*)"
+            echo "  • order/payment state → orderActions.* / FSE (never messaging files)"
+            echo "  • no Cloud Function triggers on conversations/messages"
+            echo "See docs/ARCHITECTURE_CENTRALITY_AUDIT.md."
+            exit 1
+          fi
+          echo "✅ no message-as-truth violations in added lines"

@@ -372,6 +372,52 @@ export const clientActions = {
     }
   },
 
+  /**
+   * طلب مُهيكل من بوابة العميل (Order = SSoT — نقطة بداية رسمية للعملية).
+   *
+   * يكتب مستنداً في `order_requests` بدل الاعتماد على رسالة محادثة كنقطة بداية
+   * (راجع docs/ORDER_CENTRIC_HARDENING.md). الموظف يحوّله لأوردر رسمي عبر
+   * `orderActions.createOrderFromRequest`. لا منطق أعمال يعيش في الرسائل.
+   *
+   *   type='new'     — «اطلب الآن»
+   *   type='reorder' — «اطلب تاني» (يحمل sourceOrderId للمرجعية)
+   *   type='quote'   — طلب عرض سعر
+   * Returns: { ok, errors[], warnings[], requestId? }
+   */
+  async createOrderRequest({
+    db = defaultDb, type = 'new', clientUid, clientName = '', clientPhone = '',
+    sourceOrderId = '', product = '', qty = '', notes = '',
+  }) {
+    if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    if (!['new', 'reorder', 'quote'].includes(type)) {
+      return { ok: false, errors: ['⚠️ نوع طلب غير معروف'], warnings: [] };
+    }
+    try {
+      const entry = opEntry({
+        action: type === 'reorder' ? '🔁 طلب إعادة من البوابة'
+              : type === 'quote' ? '🧾 طلب عرض سعر من البوابة'
+              : '🆕 طلب جديد من البوابة',
+        userId: clientUid, userName: clientName || 'عميل',
+        meta: { type, sourceOrderId: sourceOrderId || '' },
+      });
+      const ref = await addDoc(collection(db, 'order_requests'), {
+        type, clientUid, clientName, clientPhone,
+        sourceOrderId: sourceOrderId || '',
+        product: product || '', qty: qty || '', notes: notes || '',
+        status: 'new', convertedOrderId: '',
+        createdBy: clientUid, createdAt: serverTimestamp(),
+        timeline: [entry],
+      });
+      return { ok: true, errors: [], warnings: [], requestId: ref.id };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.code === 'permission-denied' ? '🔒 تعذّر إرسال الطلب' : (e.message || 'فشل إرسال الطلب')],
+        warnings: [],
+      };
+    }
+  },
+
   /** إرسال رسالة نصية من العميل في محادثته. */
   async sendClientMessage({ db = defaultDb, convId, text, senderId, senderName = 'عميل', participants = [] }) {
     const t = (text || '').trim();

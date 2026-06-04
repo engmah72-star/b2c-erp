@@ -1,11 +1,12 @@
 /**
  * VIEWS · new-order — «اطلب الآن»: نموذج طلب مُهيكل (overlay).
- * يتحوّل لرسالة طلب منظّمة للفريق عبر قناة المحادثات (H1.1) — لا إنشاء أوردر مباشر.
+ * يكتب كياناً مُهيكلاً في order_requests (نقطة بداية رسمية · Order = SSoT) عبر
+ * services.requests/clientActions (H1.1) — لا رسالة محادثة كنقطة بداية للعملية.
  * تركيب مكوّنات + نداء Service. (STANDARDS §6 · L1)
  */
 import { qs } from '../utils/dom.js';
 import { Select, Input, Button } from '../components/index.js';
-import { sendRequest } from './requests.js';
+import { submitRequest } from './requests.js';
 
 const PRODUCTS = [
   { value: 'كروت شخصية', label: 'كروت شخصية' },
@@ -47,9 +48,9 @@ export function create(ctx) {
       const product = val('no-product');
       const qty = val('no-qty');
       const notes = val('no-notes');
-      const text = `🆕 طلب جديد:\n• المنتج: ${product}${qty ? `\n• الكمية: ${qty}` : ''}${notes ? `\n• تفاصيل: ${notes}` : ''}`;
       busy = true; repaint();
-      const r = await sendRequest(ctx, { text, kind: 'support' });
+      // نقطة بداية مُهيكلة: order_requests (Order = SSoT) — لا رسالة محادثة.
+      const r = await submitRequest(ctx, { type: 'new', product, qty, notes });
       busy = false;
       if (r?.ok) close?.(); else repaint();
     },

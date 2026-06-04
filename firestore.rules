@@ -1047,6 +1047,26 @@ service cloud.firestore {
       allow update, delete: if isAdmin() || (isAuth() && hasPage('design'));
     }
 
+    // ══ Order Requests — نقطة بداية مُهيكلة لطلبات بوابة العميل (Order = SSoT) ══
+    // العميل (Firebase-auth) يُنشئ طلباً لنفسه فقط؛ الموظف يقرأ ويحوّله لأوردر.
+    // يستبدل الاعتماد على رسائل المحادثة كنقطة بداية للعملية.
+    //   create: العميل لنفسه (clientUid==uid) · status='new' فقط · نوع معروف.
+    //   read:   صاحب الطلب · أو موظف (admin/canAddOrders/clients).
+    //   update: موظف فقط (مراجعة/تحويل/رفض) — العميل لا يعدّل بعد الإرسال.
+    match /order_requests/{reqId} {
+      allow read: if isAuth() && (
+        isAdmin() || can('canAddOrders') || hasPage('clients')
+        || resource.data.get('clientUid', '') == request.auth.uid
+      );
+      allow create: if isAuth()
+        && request.resource.data.get('clientUid', '') == request.auth.uid
+        && request.resource.data.keys().hasAll(['type', 'clientUid', 'status'])
+        && request.resource.data.type in ['new', 'reorder', 'quote']
+        && request.resource.data.status == 'new';
+      allow update: if isAuth() && (isAdmin() || can('canAddOrders') || hasPage('clients'));
+      allow delete: if isAdminOnly();
+    }
+
     // ══ Master Lists — قوائم مركزية (تصنيفات، خدمات) ══
     // كل المصادقين يقرأون، الأدمن فقط يكتب
     match /master_lists/{listId} {

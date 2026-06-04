@@ -1,10 +1,31 @@
 /**
- * VIEWS · requests — أفعال العميل التي تمرّ عبر قناة المحادثات (clientActions).
- * إعادة الطلب · الاعتماد · طلب عرض سعر — تُرسَل للموظف الذي ينفّذ الانتقال الرسمي.
+ * VIEWS · requests — أفعال العميل.
+ *
+ * • submitRequest — نقطة البداية الرسمية لإنشاء/إعادة طلب: تكتب كياناً مُهيكلاً
+ *   في order_requests عبر services.requests (Order = SSoT). الموظف يحوّله لأوردر.
+ *   لا رسالة محادثة كنقطة بداية للعملية (راجع docs/ORDER_CENTRIC_HARDENING.md).
+ * • sendRequest — تواصل حرّ فقط (رسالة على خيط) — ليس نقطة بداية لأي عملية.
+ *
  * (H1.1: لا كتابة مباشرة — عبر Services/clientActions فقط · STANDARDS §6)
  */
 
-/** يرسل طلباً نصياً للموظفين على خيط محادثة (order/support). يُرجع { ok }. */
+/**
+ * يُنشئ طلباً مُهيكلاً (type: 'new' | 'reorder' | 'quote'). يُرجع { ok, requestId? }.
+ */
+export async function submitRequest(ctx, { type = 'new', order = null, product = '', qty = '', notes = '' }) {
+  const { services, store, shell } = ctx;
+  const user = store.get('user');
+  if (!user) { shell.notify('سجّل الدخول أولاً', 'danger'); return { ok: false }; }
+  const client = store.get('client');
+  const name = client?.name || user.displayName || 'عميل';
+  const phone = client?.phone1 || client?.phone || '';
+  const r = await services.requests.createRequest({ type, uid: user.uid, name, phone, order, product, qty, notes });
+  if (r?.ok) shell.notify('تم استلام طلبك ✅ سنتواصل معك قريباً', 'ok');
+  else shell.notify((r?.errors && r.errors[0]) || 'تعذّر إرسال الطلب', 'danger');
+  return r || { ok: false };
+}
+
+/** يرسل رسالة تواصل حرّ للموظفين على خيط محادثة. (تواصل فقط — لا منطق أعمال) */
 export async function sendRequest(ctx, { order = null, text, kind = 'support' }) {
   const { services, store, shell } = ctx;
   const user = store.get('user');
@@ -19,7 +40,3 @@ export async function sendRequest(ctx, { order = null, text, kind = 'support' })
   else shell.notify('تعذّر الإرسال', 'danger');
   return r || { ok: false };
 }
-
-export const reorderText = (o) => `🔁 أرغب بإعادة طلب مشابه للطلب رقم #${o.serial || o._id?.slice(0, 6) || ''}.`;
-export const approveText = (o) => `✅ أعتمِد التصميم الخاص بالطلب رقم #${o.serial || o._id?.slice(0, 6) || ''} وأوافق على المتابعة للطباعة.`;
-export const quoteText = () => '🧾 أرغب في طلب عرض سعر لمنتج جديد. برجاء التواصل معي بالتفاصيل.';
