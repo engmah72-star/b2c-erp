@@ -6,7 +6,7 @@
  * were unified from three byte-identical inline copies (salary-calc,
  * scoring, render-attendance) so the single source can't regress.
  */
-import { isWorkDayFor, isLeaveDayFor } from '../core/attendance-core.js';
+import { isWorkDayFor, isLeaveDayFor, computeLateMinutes } from '../core/attendance-core.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -81,6 +81,44 @@ test('matches if any leave in the list covers the date', () => {
   ];
   assertEq(isLeaveDayFor('2026-06-11', leaves), true);
   assertEq(isLeaveDayFor('2026-06-05', leaves), false);
+});
+
+// ── computeLateMinutes ──────────────────────────────────────────────
+// Dates built from local components; the helper also reads local components,
+// so results are timezone-independent.
+const at = (h, m) => new Date(2026, 5, 3, h, m); // 2026-06-03 local
+
+test('no expectedStart → 0 (never penalise on missing schedule)', () => {
+  assertEq(computeLateMinutes(at(10, 0), ''), 0);
+  assertEq(computeLateMinutes(at(10, 0), undefined), 0);
+});
+test('unparseable expectedStart → 0', () => {
+  assertEq(computeLateMinutes(at(10, 0), 'abc'), 0);
+});
+test('on-time (exact start, no grace) → 0', () => {
+  assertEq(computeLateMinutes(at(9, 0), '09:00', 0), 0);
+});
+test('early arrival → 0', () => {
+  assertEq(computeLateMinutes(at(8, 45), '09:00', 0), 0);
+});
+test('late beyond zero grace counts every minute', () => {
+  assertEq(computeLateMinutes(at(9, 45), '09:00', 0), 45);
+});
+test('within grace window → 0', () => {
+  assertEq(computeLateMinutes(at(9, 10), '09:00', 15), 0);
+});
+test('past grace window counts overflow only', () => {
+  assertEq(computeLateMinutes(at(9, 20), '09:00', 15), 5);
+});
+test('respects HH:MM minutes component', () => {
+  assertEq(computeLateMinutes(at(10, 0), '09:30', 0), 30);
+});
+test('legacy parity: 09:00 start, 09:20 arrival, 15 grace → 5', () => {
+  // matches the old inline employee-profile.html formula (actual-expected-15)
+  assertEq(computeLateMinutes(at(9, 20), '09:00', 15), 5);
+});
+test('accepts a timestamp/ISO input, not just Date', () => {
+  assertEq(computeLateMinutes(at(9, 30).getTime(), '09:00', 0), 30);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -1762,28 +1762,15 @@ window.confirmSalary=async function(){
 };
 
 // ══ ATTENDANCE RECORDING ══
-// Compute how many minutes late this check-in is, given the employee's schedule.
-// Returns 0 if on-time or no schedule defined.
-function computeLateMinutes(checkInDate){
-  const exp=emp?.workSchedule?.startTime;
-  if(!exp)return 0;
-  const[eh,em]=exp.split(':').map(Number);
-  if(isNaN(eh))return 0;
-  const expectedMin=eh*60+(em||0);
-  const actualMin=checkInDate.getHours()*60+checkInDate.getMinutes();
-  // 15-min grace period
-  const diff=actualMin-expectedMin-15;
-  return Math.max(0,diff);
-}
-
+// lateMinutes is computed centrally inside recordAttendanceCheckIn from the
+// employee's schedule (expectedStart) with a 15-min grace — single source.
 window.recordAttendanceToday=async function(){
   if(!emp)return;
   const dateStr=todayStr();
   const mKey=monthKey();
   const existing=empAttendance.find(a=>a.date===dateStr);
   if(existing){toast('⚠️ تم تسجيل حضور '+emp.name+' اليوم مسبقاً','err');return;}
-  const lateMinutes=computeLateMinutes(new Date());
-  const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:empId,employeeUid:emp.authUid||empId,employeeName:emp.name||'',date:dateStr,monthKey:mKey,lateMinutes,recordedBy:currentUser.uid,recordedByName:adminName});
+  const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:empId,employeeUid:emp.authUid||empId,employeeName:emp.name||'',date:dateStr,monthKey:mKey,expectedStart:emp?.workSchedule?.startTime||'',graceMinutes:15,source:'central',recordedBy:currentUser.uid,recordedByName:adminName});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   if(r.lateMinutes>0)toast(`⚠️ حضور متأخر ${r.lateMinutes}د — ${emp.name}`,'err');
   else toast('✅ تم تسجيل حضور '+emp.name+' اليوم','ok');

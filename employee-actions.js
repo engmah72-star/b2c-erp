@@ -33,6 +33,8 @@ import {
 import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
+import { auditEntry } from './core/audit.js';
+import { computeLateMinutes } from './core/attendance-core.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
@@ -455,11 +457,18 @@ export async function deleteEmployeeLeave({ db = defaultDb, leaveId }) {
 /**
  * Idempotent check-in: doc id = `${employeeId}_${dateStr}` يمنع التكرار حتى لو
  * تنافس tabs. الـ runTransaction يضمن fail لو سُجِّل مسبقاً.
+ *
+ * التأخير (lateMinutes): لو مُرِّر `expectedStart` ('HH:MM') يُحسب آلياً من جدول
+ * الموظف (المصدر الوحيد `attendance-core.computeLateMinutes`) ويتجاوز أي قيمة
+ * مُمرَّرة؛ غياب `expectedStart` يُبقي السلوك القديم (يستعمل `lateMinutes` كما هو).
+ * `source` يميّز التسجيل الذاتي ('self') عن المركزي ('central').
  */
 export async function recordAttendanceCheckIn({
   db = defaultDb,
   employeeId, employeeUid, employeeName,
   date, monthKey, lateMinutes = 0,
+  expectedStart = '', graceMinutes = 0,
+  source = 'central',
   recordedBy, recordedByName,
 }) {
   if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
@@ -468,6 +477,10 @@ export async function recordAttendanceCheckIn({
   const attId = `${employeeId}_${date}`;
   const attRef = doc(db, 'attendance', attId);
   const nowD = new Date();
+  // auto-late from schedule when available; otherwise honour the passed value
+  const lateMin = expectedStart
+    ? computeLateMinutes(nowD, expectedStart, graceMinutes)
+    : (parseInt(lateMinutes) || 0);
   try {
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(attRef);
@@ -480,13 +493,22 @@ export async function recordAttendanceCheckIn({
         monthKey: monthKey || date.slice(0, 7),
         checkIn: true,
         checkInStr: nowD.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-        lateMinutes: parseInt(lateMinutes) || 0,
+        checkInAt: serverTimestamp(),
+        lateMinutes: lateMin,
+        source: source === 'self' ? 'self' : 'central',
         recordedBy,
         recordedByName: recordedByName || '',
+        timeline: [auditEntry({
+          action: source === 'self' ? '🟢 تسجيل حضور (ذاتي)' : '🟢 تسجيل حضور',
+          userId: recordedBy,
+          userName: recordedByName || '',
+          kind: 'op',
+          meta: { source: source === 'self' ? 'self' : 'central', date, lateMinutes: lateMin },
+        })],
         createdAt: serverTimestamp(),
       });
     });
-    return { ok: true, errors: [], warnings: [], attendanceId: attId, lateMinutes: parseInt(lateMinutes) || 0 };
+    return { ok: true, errors: [], warnings: [], attendanceId: attId, lateMinutes: lateMin };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
@@ -500,6 +522,7 @@ export async function recordAttendanceCheckOut({
     await updateDoc(doc(db, 'attendance', attendanceId), {
       checkOut: true,
       checkOutStr: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      checkOutAt: serverTimestamp(),
     });
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
