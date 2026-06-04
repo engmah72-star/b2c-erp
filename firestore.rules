@@ -682,6 +682,28 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ══ Attendance Permissions (أذونات) — Phase-3 ══
+    // مجموعة جديدة بلا كتّاب legacy ⇒ نفرض القيود بدقة:
+    //  - الموظف يطلب لنفسه فقط، و status لازم 'pending' (لا يعتمد طلبه).
+    //  - الاعتماد/الرفض (update) للمدير أو حامل manage_attendance فقط.
+    //  - الموظف يلغي طلبه (delete)؛ المدير يلغي أيّ طلب.
+    match /attendance_permissions/{permId} {
+      allow read: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        resource.data.get('employeeUid','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        (request.resource.data.get('employeeUid','') == request.auth.uid
+         && request.resource.data.get('status','') == 'pending')
+      );
+      allow update: if isAuth() && (isAdmin() || can('manage_attendance'));
+      allow delete: if isAuth() && (
+        isAdmin() || can('manage_attendance') ||
+        resource.data.get('employeeUid','__') == request.auth.uid
+      );
+    }
+
     // ══ Tasks ══
     match /tasks/{taskId} {
       allow read: if isAuth() && (

@@ -103,6 +103,33 @@ test('tardiness ladder: 30/120/240 thresholds', () => {
   assertEq(r.lateRecords, 4);       // any lateMinutes > 0 counts (grace included)
 });
 
+// ── permissions forgive tardiness (Phase-3) ───────────────────────
+test('approved late_in fully forgives a day; approved partial reduces it', () => {
+  const att = fullMonthPresent('2026-01').slice(0, 2);
+  att[0].lateMinutes = 121;  // without excuse → 0.5
+  att[1].lateMinutes = 121;  // without excuse → 0.5
+  const permissions = [
+    { date: att[0].date, type: 'late_in', status: 'approved' },               // full → 0
+    { date: att[1].date, type: 'partial', status: 'approved', minutes: 60 },   // 121-60=61 → 0.25
+  ];
+  const r = computeSalarySuggestion({
+    mKey: '2026-01', employee: { baseSalary: 5000, role: 'admin' }, employeeId: 'a1',
+    attendance: att, permissions,
+  });
+  assertEq(r.tardinessDays, 0.25);  // 0 (forgiven) + 0.25 (reduced)
+  assertEq(r.lateRecords, 1);       // forgiven day no longer counts late
+});
+
+test('pending permission does NOT forgive tardiness', () => {
+  const att = fullMonthPresent('2026-01').slice(0, 1);
+  att[0].lateMinutes = 121;  // → 0.5
+  const r = computeSalarySuggestion({
+    mKey: '2026-01', employee: { baseSalary: 5000, role: 'admin' }, employeeId: 'a1',
+    attendance: att, permissions: [{ date: att[0].date, type: 'late_in', status: 'pending' }],
+  });
+  assertEq(r.tardinessDays, 0.5);
+});
+
 // ── commission ─────────────────────────────────────────────────────
 test('designer commission: pct × salePrice on paid orders this month', () => {
   const monthDate = new Date(2026, 4, 10);

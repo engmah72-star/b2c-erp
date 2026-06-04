@@ -6,7 +6,10 @@
  * were unified from three byte-identical inline copies (salary-calc,
  * scoring, render-attendance) so the single source can't regress.
  */
-import { isWorkDayFor, isLeaveDayFor, computeLateMinutes } from '../core/attendance-core.js';
+import {
+  isWorkDayFor, isLeaveDayFor, computeLateMinutes,
+  excusedLateMinutes, PERMISSION_TYPES, PERMISSION_STATUS,
+} from '../core/attendance-core.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -119,6 +122,46 @@ test('legacy parity: 09:00 start, 09:20 arrival, 15 grace → 5', () => {
 });
 test('accepts a timestamp/ISO input, not just Date', () => {
   assertEq(computeLateMinutes(at(9, 30).getTime(), '09:00', 0), 30);
+});
+
+// ── excusedLateMinutes (permissions) ────────────────────────────────
+const D = '2026-06-03';
+const approved = (type, extra = {}) => ({ date: D, type, status: 'approved', ...extra });
+
+test('enums are frozen with expected members', () => {
+  assertEq(PERMISSION_TYPES.LATE_IN, 'late_in');
+  assertEq(PERMISSION_STATUS.APPROVED, 'approved');
+  assertEq(Object.isFrozen(PERMISSION_TYPES), true);
+});
+test('no permissions → 0 excused', () => {
+  assertEq(excusedLateMinutes(D, []), 0);
+  assertEq(excusedLateMinutes(D), 0);
+});
+test('pending late_in does NOT excuse (only approved counts)', () => {
+  assertEq(excusedLateMinutes(D, [{ date: D, type: 'late_in', status: 'pending' }]), 0);
+});
+test('rejected mission does NOT excuse', () => {
+  assertEq(excusedLateMinutes(D, [{ date: D, type: 'mission', status: 'rejected' }]), 0);
+});
+test('approved late_in / mission / remote fully excuse (Infinity)', () => {
+  assertEq(excusedLateMinutes(D, [approved('late_in')]), Infinity);
+  assertEq(excusedLateMinutes(D, [approved('mission')]), Infinity);
+  assertEq(excusedLateMinutes(D, [approved('remote')]), Infinity);
+});
+test('approved partial returns its minutes', () => {
+  assertEq(excusedLateMinutes(D, [approved('partial', { minutes: 30 })]), 30);
+});
+test('partial minutes sum across multiple same-day permissions', () => {
+  assertEq(excusedLateMinutes(D, [approved('partial', { minutes: 20 }), approved('partial', { minutes: 15 })]), 35);
+});
+test('a full excuse wins over partials on the same day', () => {
+  assertEq(excusedLateMinutes(D, [approved('partial', { minutes: 20 }), approved('mission')]), Infinity);
+});
+test('early_out is ignored for late arrival', () => {
+  assertEq(excusedLateMinutes(D, [approved('early_out', { minutes: 60 })]), 0);
+});
+test('permission on a different date does not apply', () => {
+  assertEq(excusedLateMinutes(D, [{ date: '2026-06-04', type: 'late_in', status: 'approved' }]), 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

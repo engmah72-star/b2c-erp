@@ -29,6 +29,7 @@ import {
   writeBatch,
   runTransaction,
   serverTimestamp,
+  arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
@@ -531,6 +532,99 @@ export async function recordAttendanceCheckOut({
 }
 
 // ══════════════════════════════════════════
+// ATTENDANCE PERMISSIONS (أذونات) — Phase-3
+// ══════════════════════════════════════════
+
+/**
+ * طلب/منح إذن (collection: attendance_permissions).
+ * - الموظف يطلب لنفسه → status:'pending'.
+ * - المدير يمنح مباشرةً → status:'approved' (يُمرَّر صراحةً).
+ * إذن معتمد من نوع late_in/mission/remote/partial يُلغي خصم تأخير اليوم في
+ * حاسبة الراتب (عبر attendance-core.excusedLateMinutes).
+ */
+export async function requestAttendancePermission({
+  db = defaultDb,
+  employeeId, employeeUid, employeeName,
+  type, date, fromTime = '', toTime = '', minutes = 0, reason = '',
+  status = 'pending',
+  requestedBy, requestedByName,
+}) {
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!type) return { ok: false, errors: ['⚠️ نوع الإذن مطلوب'], warnings: [] };
+  if (!date) return { ok: false, errors: ['⚠️ التاريخ مطلوب'], warnings: [] };
+  if (!requestedBy) return { ok: false, errors: ['⚠️ requestedBy مطلوب'], warnings: [] };
+  const st = status === 'approved' ? 'approved' : 'pending';
+  try {
+    const ref = await addDoc(collection(db, 'attendance_permissions'), {
+      employeeId,
+      employeeUid: employeeUid || employeeId,
+      employeeName: employeeName || '',
+      type, date, monthKey: date.slice(0, 7),
+      fromTime: fromTime || '', toTime: toTime || '',
+      minutes: parseInt(minutes) || 0,
+      reason: reason || '',
+      status: st,
+      requestedBy, requestedByName: requestedByName || '',
+      requestedAt: serverTimestamp(),
+      decidedBy: st === 'approved' ? requestedBy : null,
+      decidedByName: st === 'approved' ? (requestedByName || '') : null,
+      decidedAt: st === 'approved' ? serverTimestamp() : null,
+      decisionNote: '',
+      timeline: [auditEntry({
+        action: st === 'approved' ? '🟢 منح إذن' : '📝 طلب إذن',
+        userId: requestedBy, userName: requestedByName || '', kind: 'op',
+        meta: { type, date, status: st, minutes: parseInt(minutes) || 0 },
+      })],
+      createdAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [], permissionId: ref.id, status: st };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل تسجيل الإذن'], warnings: [] };
+  }
+}
+
+/**
+ * اعتماد/رفض إذن قيد الانتظار (للمدير / حامل manage_attendance — تُفرَض في rules).
+ */
+export async function decideAttendancePermission({
+  db = defaultDb, permissionId, decision, decisionNote = '',
+  decidedBy, decidedByName,
+}) {
+  if (!permissionId) return { ok: false, errors: ['⚠️ permissionId مطلوب'], warnings: [] };
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return { ok: false, errors: ['⚠️ decision لازم approved أو rejected'], warnings: [] };
+  }
+  if (!decidedBy) return { ok: false, errors: ['⚠️ decidedBy مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance_permissions', permissionId), {
+      status: decision,
+      decidedBy, decidedByName: decidedByName || '',
+      decidedAt: serverTimestamp(),
+      decisionNote: decisionNote || '',
+      timeline: arrayUnion(auditEntry({
+        action: decision === 'approved' ? '✅ اعتماد إذن' : '🚫 رفض إذن',
+        userId: decidedBy, userName: decidedByName || '', kind: 'op',
+        meta: { decision },
+      })),
+    });
+    return { ok: true, errors: [], warnings: [], status: decision };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
+  }
+}
+
+/** إلغاء/حذف إذن (الموظف يلغي طلبه، أو المدير — تُفرَض في rules). */
+export async function cancelAttendancePermission({ db = defaultDb, permissionId }) {
+  if (!permissionId) return { ok: false, errors: ['⚠️ permissionId مطلوب'], warnings: [] };
+  try {
+    await deleteDoc(doc(db, 'attendance_permissions', permissionId));
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الإلغاء'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // ROLE CHANGE + USER DELETE (settings.html flows)
 // ══════════════════════════════════════════
 
@@ -770,6 +864,7 @@ export const employeeActions = {
   addEmployeeTask, setTaskStatus,
   addEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
+  requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,
 };

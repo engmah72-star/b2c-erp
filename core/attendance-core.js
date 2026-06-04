@@ -77,3 +77,46 @@ export function computeLateMinutes(checkInDate, expectedStart, graceMinutes = 0)
   const diff = actualMin - expectedMin - (graceMinutes || 0);
   return Math.max(0, diff);
 }
+
+// ── Permissions (أذونات) — Phase-3 ─────────────────────────────────
+
+export const PERMISSION_TYPES = Object.freeze({
+  LATE_IN:   'late_in',    // إذن تأخير في الحضور
+  EARLY_OUT: 'early_out',  // إذن انصراف مبكر
+  MISSION:   'mission',    // مأمورية خارجية
+  REMOTE:    'remote',     // عمل عن بُعد
+  PARTIAL:   'partial',    // إذن جزئي (مدة محددة)
+});
+
+export const PERMISSION_STATUS = Object.freeze({
+  PENDING:  'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+});
+
+// Types that fully excuse a day's late arrival when approved.
+const _FULL_LATE_EXCUSE = new Set(['late_in', 'mission', 'remote']);
+
+/**
+ * Minutes of late-arrival excused on `dateStr` by APPROVED permissions only.
+ *
+ *   late_in / mission / remote → fully excused → Infinity
+ *   partial                    → the permission's `minutes` (summed)
+ *   early_out                  → ignored (affects departure, not arrival)
+ *
+ * Pending / rejected permissions never count. Used by the salary calculator
+ * to forgive tardiness on days covered by an approved excuse (single source).
+ *
+ * @param {string} dateStr        — 'YYYY-MM-DD'
+ * @param {Array}  [permissions]  — [{ date, type, status, minutes? }]
+ * @returns {number} excused minutes (>= 0, or Infinity for a full excuse)
+ */
+export function excusedLateMinutes(dateStr, permissions = []) {
+  let total = 0;
+  for (const p of permissions) {
+    if (p?.status !== 'approved' || p?.date !== dateStr) continue;
+    if (_FULL_LATE_EXCUSE.has(p.type)) return Infinity;
+    if (p.type === 'partial') total += parseInt(p.minutes) || 0;
+  }
+  return total;
+}
