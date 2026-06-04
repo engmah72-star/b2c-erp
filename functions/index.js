@@ -16,7 +16,7 @@
  *   - WHATSAPP_TOKEN
  */
 
-const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -3585,6 +3585,54 @@ exports.setClientPlan = onCall(CALL_OPTS, async (req) => {
   batch.set(db.doc(`public_cards/${clientUid}`), { plan, featured }, { merge: true });
   await batch.commit();
   return { ok: true, plan, featured };
+});
+
+// ════════════════════════════════════════════════════════════
+// PRODUCT CATALOG MIRROR — مرآة عامة لكتالوج الشركة (products_v2 → public_products)
+// تتيح لبوابة العميل الطلب من منتجات الشركة الفعلية. تنسخ الحقول الآمنة فقط
+// (اسم/تصنيف/نوع طباعة) — بلا أسعار ولا تكلفة (RULE 8). المؤرشف يُحذف من المرآة.
+// ════════════════════════════════════════════════════════════
+const PUBLIC_PRODUCT_FIELDS = (p) => ({
+  name: String(p.name || '').trim(),
+  category: String(p.category || '').trim(),
+  printType: String(p.printType || '').trim(),
+  order: Number(p.order) || 0,
+  active: true,
+  updatedAt: FieldValue.serverTimestamp(),
+});
+
+exports.mirrorProductPublic = onDocumentWritten('products_v2/{prodId}', async (e) => {
+  const id = e.params.prodId;
+  const after = (e.data && e.data.after && e.data.after.exists) ? e.data.after.data() : null;
+  const ref = db.doc(`public_products/${id}`);
+  // محذوف أو مؤرشف → أزِله من الكتالوج العام.
+  if (!after || after.isArchived === true) {
+    await ref.delete().catch(() => {});
+    return;
+  }
+  await ref.set(PUBLIC_PRODUCT_FIELDS(after), { merge: true })
+    .catch((err) => console.warn('mirrorProductPublic failed', id, err.message));
+});
+
+// مزامنة أولية لمرة واحدة (Admin) — تملأ public_products من products_v2 الموجود.
+exports.backfillPublicProducts = onCall(CALL_OPTS, async (req) => {
+  const callerUid = req.auth && req.auth.uid;
+  if (!callerUid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+  const role = (await db.doc(`users/${callerUid}`).get()).data()?.role || '';
+  if (role !== 'admin' && role !== 'operation_manager') throw new HttpsError('permission-denied', 'الإدارة فقط');
+
+  const snap = await db.collection('products_v2').limit(2000).get();
+  let mirrored = 0, removed = 0, ops = 0;
+  let batch = db.batch();
+  const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+  for (const d of snap.docs) {
+    const p = d.data();
+    const ref = db.doc(`public_products/${d.id}`);
+    if (p.isArchived === true) { batch.delete(ref); removed++; } else { batch.set(ref, PUBLIC_PRODUCT_FIELDS(p), { merge: true }); mirrored++; }
+    if (++ops >= 400) await flush();
+  }
+  await flush();
+  return { ok: true, scanned: snap.size, mirrored, removed };
 });
 
 // ════════════════════════════════════════════════════════════

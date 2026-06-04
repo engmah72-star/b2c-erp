@@ -12,14 +12,14 @@
 /**
  * يُنشئ طلباً مُهيكلاً (type: 'new' | 'reorder' | 'quote'). يُرجع { ok, requestId? }.
  */
-export async function submitRequest(ctx, { type = 'new', order = null, product = '', qty = '', notes = '' }) {
+export async function submitRequest(ctx, { type = 'new', order = null, product = '', productId = '', qty = '', notes = '' }) {
   const { services, store, shell } = ctx;
   const user = store.get('user');
   if (!user) { shell.notify('سجّل الدخول أولاً', 'danger'); return { ok: false }; }
   const client = store.get('client');
   const name = client?.name || user.displayName || 'عميل';
   const phone = client?.phone1 || client?.phone || '';
-  const r = await services.requests.createRequest({ type, uid: user.uid, name, phone, order, product, qty, notes });
+  const r = await services.requests.createRequest({ type, uid: user.uid, name, phone, order, product, productId, qty, notes });
   if (r?.ok) shell.notify('تم استلام طلبك ✅ سنتواصل معك قريباً', 'ok');
   else shell.notify((r?.errors && r.errors[0]) || 'تعذّر إرسال الطلب', 'danger');
   return r || { ok: false };

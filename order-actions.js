@@ -388,8 +388,10 @@ export const orderActions = {
     }
     if (!rq.clientUid) return { ok: false, errors: ['⚠️ الطلب بلا عميل'], warnings: [], requestId };
 
+    // اربط الأوردر بمنتج الشركة الفعلي الذي اختاره العميل (productId من البوابة)؛
+    // وإلا (طلب «منتج آخر» أو طلب قديم) استخدم المُعرّف الوهمي portal_request.
     const products = [{
-      productId: 'portal_request',
+      productId: rq.productId || 'portal_request',
       name: rq.product || 'طلب من البوابة',
       qty: parseInt(rq.qty, 10) || 1,
     }];
