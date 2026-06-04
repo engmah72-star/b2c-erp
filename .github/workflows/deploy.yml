@@ -449,6 +449,25 @@ jobs:
           fi
           rm -f /tmp/sa.json
 
+      # دوال v2 callable الجديدة تُنشَر private افتراضياً → الـCORS preflight يفشل
+      # من المتصفح. نمنح allUsers دور run.invoker (الدالة تتحقّق من auth+الدور داخلياً
+      # عبر التوكن، فالوصول العام آمن — هكذا تعمل callable functions). continue-on-error
+      # كي لا يكسر النشر إن غابت إحدى الدوال أو الصلاحية.
+      - name: Grant public invoker to callable functions (CORS)
+        continue-on-error: true
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SA" > /tmp/sa.json
+          gcloud auth activate-service-account --key-file=/tmp/sa.json --quiet || true
+          for FN in auditOrderFinancialDrift setClientPlan requestDesignApproval; do
+            echo "→ granting run.invoker on $FN"
+            gcloud run services add-iam-policy-binding "$FN" \
+              --region=us-central1 --member=allUsers --role=roles/run.invoker \
+              --project=business2card-c041b --quiet 2>&1 | tail -2 || echo "  skip $FN"
+          done
+          rm -f /tmp/sa.json
+
       # ALWAYS create a GitHub issue with the deploy log + functions list — so
       # that even apparent "success" with no functions can be diagnosed.
       # The issue is closed automatically below if functions ARE present.
