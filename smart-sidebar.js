@@ -18,6 +18,22 @@
                 'waybill.html','chat.html','order-tracking.html',''];
   if (SKIP.includes(PATH)) return;
 
+  // ── Skip when the unified <app-sidebar> (v2) is active ──────────────
+  // app-sidebar يرسم سايد بار خاص به (بحث/مفضّلة/usage مدمجة) ويخفي القديم.
+  // تزويد السايد بار المخفي هنا = هدر صافٍ. نتخطّى فقط لما v2 مفعّل؛ لو اترجع
+  // (?sb=v1 / feat.sidebarV2=0) نشتغل عادي على القديم — فالـ rollback يحتفظ
+  // بالميزات الذكية. (sidebar.js/sidebar-mount يفضلوا محمّلين → fallback سليم.)
+  // نفس منطق التفعيل في app-sidebar.js (KILL يغلب → FORCE → عنصر active).
+  try {
+    const qs   = new URLSearchParams(location.search);
+    const ls   = (k) => { try { return localStorage.getItem(k); } catch(_) { return null; } };
+    const KILL = qs.get('sb') === 'v1' || qs.get('feat.sidebarV2') === '0' || ls('feat.sidebarV2') === '0';
+    if (!KILL) {
+      const FORCE = qs.get('sb') === 'v2' || qs.get('feat.sidebarV2') === '1' || ls('feat.sidebarV2') === '1';
+      if (FORCE || document.querySelector('app-sidebar[active]')) return;
+    }
+  } catch(_) { /* لو فشل الفحص، نكمل عادي (آمن) */ }
+
   // ── localStorage keys (per browser) ──
   const LS_FAVORITES = 'sb_favorites_v1';
   const LS_USAGE     = 'sb_usage_v1';
