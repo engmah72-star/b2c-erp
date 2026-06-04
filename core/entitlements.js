@@ -45,6 +45,14 @@ export function hasFeature(card, feature) {
   return featuresUpTo(planOf(card)).has(feature);
 }
 
+/** حدّ أعمال المعرض في الخطة المجانية (غير محدود في pro+). */
+export const WORKS_FREE_LIMIT = 6;
+
+/** حدّ عدد الأعمال المسموح به للحساب (Infinity لو يملك unlimited_works). */
+export function worksLimit(card) {
+  return hasFeature(card, 'unlimited_works') ? Infinity : WORKS_FREE_LIMIT;
+}
+
 /** ملخّص الاستحقاق الكامل (للعرض/التحكّم). */
 export function entitlementsOf(card) {
   const plan = planOf(card);
