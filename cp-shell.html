@@ -3,9 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Business2Card — App Shell</title>
+<title>بطاقتي — Business2Card</title>
 <!-- Shell Host رفيع: يربط الطبقات (Theme → Base → Layout → Components → Utilities)
-     ويُقلع الـ Shell فقط. لا CSS/منطق هنا — الصفحات تُحقن داخل #cp-app. (STANDARDS §2) -->
+     + تطبيق العميل (PWA: manifest + service worker + زر تثبيت). (STANDARDS §2) -->
+<meta name="theme-color" content="#a78bfa">
+<link rel="manifest" href="/client.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="بطاقتي">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="stylesheet" href="features/customer-portal/theme/theme.css">
@@ -16,6 +23,43 @@
 </head>
 <body>
   <div id="cp-app"></div>
+  <button id="cp-install" class="cp-install-fab" type="button" hidden>📲 ثبّت التطبيق</button>
   <script type="module" src="features/customer-portal/portal.entry.js"></script>
+
+  <!-- PWA glue (تطبيق العميل): تسجيل SW + زر التثبيت. plumbing فقط، لا منطق أعمال. -->
+  <script>
+  (function () {
+    // 1) Service Worker (network-first · منفصل عن sw.js الطاقم)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/cp-sw.js').catch(function () {});
+      });
+    }
+    // 2) زر التثبيت
+    var btn = document.getElementById('cp-install');
+    var deferred = null;
+    var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferred = e;
+      if (!standalone) btn.hidden = false;
+    });
+    window.addEventListener('appinstalled', function () { btn.hidden = true; });
+
+    // iOS لا يدعم beforeinstallprompt — أظهر زر التعليمات (لو لسه مش مثبَّت)
+    if (isIOS && !standalone) btn.hidden = false;
+
+    btn.addEventListener('click', function () {
+      if (deferred) {
+        deferred.prompt();
+        deferred.userChoice.then(function () { deferred = null; btn.hidden = true; });
+      } else if (isIOS) {
+        alert('لتثبيت التطبيق على آيفون:\n\n١) اضغط زر المشاركة ⬆️ بالأسفل.\n٢) اختر «إضافة إلى الشاشة الرئيسية».');
+      }
+    });
+  })();
+  </script>
 </body>
 </html>
