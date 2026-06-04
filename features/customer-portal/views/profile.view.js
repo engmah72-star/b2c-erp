@@ -3,7 +3,7 @@
  * تركيب مكوّنات + نداء Services + Validator. الكتابة عبر clientActions. (STANDARDS §6 · L1)
  */
 import { escapeHtml, qs } from '../utils/dom.js';
-import { Card, Button, Input, Avatar } from '../components/index.js';
+import { Card, Button, Input, Select, Avatar } from '../components/index.js';
 import { cropResize } from '../utils/image.js';
 import { slugUsername } from '../utils/username.js';
 import { qrSrc, downloadQR } from '../utils/qr.js';
@@ -11,6 +11,14 @@ import { entitlementsOf } from '../../../core/entitlements.js';
 import { validateProfile } from '../validators/profile.validator.js';
 
 const PLAN_AR = { free: 'مجانية', pro: 'احترافية', business: 'أعمال' };
+
+// قوالب الكارت الرقمي (متاحة لكل العملاء). القيمة تُحفظ في businessProfile.template
+// وتُعرض في الكارت العام (card.html + /u/{username}) عبر data-template.
+const TEMPLATE_OPTS = [
+  { value: 'classic', label: '🟣 كلاسيكي (بنفسجي)' },
+  { value: 'dark-gold', label: '⚜️ أسود وذهبي (فخم)' },
+  { value: 'minimal', label: '⚪ أبيض بسيط' },
+];
 
 export function create(ctx) {
   const { services, store, shell } = ctx;
@@ -87,6 +95,7 @@ export function create(ctx) {
       ${qrCard}
       ${planCard}
       ${Button({ label: 'مشاركة الصفحة العامة', icon: '🔗', action: 'share', disabled: !uid() })}
+      ${Button({ label: 'معاينة الكارت', icon: '👁', variant: 'ghost', action: 'open-card', disabled: !uid() })}
       ${Button({ label: 'إدارة الخدمات', icon: '🛠', variant: 'ghost', action: 'services' })}
       ${Button({ label: 'تعديل البيانات', icon: '✏️', variant: 'ghost', action: 'edit' })}
       ${Button({ label: 'تسجيل الخروج', icon: '🚪', variant: 'ghost', action: 'logout' })}
@@ -105,6 +114,8 @@ export function create(ctx) {
       ${Input({ id: 'f-tagline', label: 'وصف مختصر', value: biz.tagline || '' })}
       ${Input({ id: 'f-activity', label: 'النشاط / التخصص', value: biz.activity || '' })}
       ${Input({ id: 'f-city', label: 'المحافظة / المدينة', value: biz.city || '' })}
+      ${Input({ id: 'f-address', label: 'العنوان (يفتح خرائط جوجل)', value: biz.address || '', placeholder: 'مثال: ٧٧ ش أيوب — رأس البر' })}
+      ${Select({ id: 'f-template', label: 'قالب الكارت', options: TEMPLATE_OPTS, value: biz.template || 'classic' })}
       ${Input({ id: 'f-username', label: 'اسم الصفحة العامة (username)', value: biz.username || '', dir: 'ltr', placeholder: 'my-brand', hint: 'رابطك: /u/my-brand' })}
       <label class="cp-check"><input type="checkbox" id="f-directory"${biz.listedInDirectory ? ' checked' : ''}>
         <span>إظهار نشاطي داخل دليل الأعمال</span></label>
@@ -146,6 +157,7 @@ export function create(ctx) {
       if (a === 'services') return ctx.openServices();
       if (a === 'upgrade') return ctx.openChat({ kind: 'support' });
       if (a === 'qr-download') { await downloadQR(publicUrl(), 'business2card-qr.png'); return; }
+      if (a === 'open-card') { if (uid()) window.open(publicUrl(), '_blank', 'noopener'); return; }
       if (a === 'pick-logo') { qs('#pf-logo', document)?.click(); return; }
       if (a === 'pick-cover') { qs('#pf-cover', document)?.click(); return; }
       if (a === 'cancel-media') { pending = null; return paint(); }
@@ -185,7 +197,8 @@ export function create(ctx) {
         const businessProfile = {
           ...(client?.businessProfile || {}),
           bizName, tagline: get('f-tagline'), activity: get('f-activity'),
-          city: get('f-city'), username,
+          city: get('f-city'), address: get('f-address'),
+          template: get('f-template') || 'classic', username,
           listedInDirectory: !!qs('#f-directory')?.checked,
         };
         const r = await services.profile.saveProfile({ uid: user.uid, email: user.email, name: user.displayName, phone, businessProfile });

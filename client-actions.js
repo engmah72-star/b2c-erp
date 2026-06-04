@@ -312,6 +312,8 @@ export const clientActions = {
       username: slugUsername(bp.username),
       activity: (bp.activity || '').trim(),
       city: (bp.city || '').trim(),
+      address: (bp.address || '').trim(),
+      template: (bp.template || '').trim(),
       listedInDirectory: bp.listedInDirectory === true,
       // ملاحظة: plan/featured لا تُكتب من العميل — مصدرها الموثوق subscriptions/{uid}
       // (write:false) وتُضبط حصراً عبر Cloud Function setClientPlan. لا تلاعب ذاتي بالخطة.

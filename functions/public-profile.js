@@ -42,7 +42,7 @@ h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);margin-bottom:4px;}
 .act{flex:1;min-width:120px;min-height:46px;padding:13px;border-radius:var(--rad);text-decoration:none;text-align:center;font-weight:var(--fw-extra);font-size:var(--fs-md);display:flex;align-items:center;justify-content:center;gap:8px;}
 .act-call{background:var(--cp-grad);color:#fff;}
 .act-wa{background:var(--cp-wa);color:var(--cp-wa-ink);}
-.act-web{background:var(--bg3);color:var(--snow);border:1px solid var(--line);}
+.act-web,.act-loc{background:var(--bg3);color:var(--snow);border:1px solid var(--line);}
 .sec{font-size:var(--fs-lg);font-weight:var(--fw-heavy);margin:24px 0 12px;display:flex;align-items:center;gap:8px;}
 .sec::before{content:"";width:4px;height:18px;border-radius:3px;background:var(--cp-grad);}
 .sec--center{justify-content:center;}
@@ -63,7 +63,15 @@ h1{font-size:var(--fs-3xl);font-weight:var(--fw-heavy);margin-bottom:4px;}
 .share .btn{display:inline-block;margin-top:12px;min-height:46px;padding:12px 22px;border-radius:var(--rad);border:none;background:var(--cp-grad);color:#fff;font-family:inherit;font-weight:var(--fw-extra);font-size:var(--fs-md);cursor:pointer;}
 .foot{text-align:center;color:var(--dim2);font-size:var(--fs-xs);padding:20px;}
 .foot a{color:var(--p);text-decoration:none;}
-#state{padding:80px 24px;text-align:center;color:var(--dim2);font-size:var(--fs-lg);line-height:1.8;}`;
+#state{padding:80px 24px;text-align:center;color:var(--dim2);font-size:var(--fs-lg);line-height:1.8;}
+/* ===== جلود القوالب (data-template على body) — تُعيد تعريف التوكنز فيتغيّر الشكل كله ===== */
+body[data-template="dark-gold"]{--bg:#070707;--bg2:#0e0d0b;--bg3:#17140f;--snow:#f4ead0;--dim2:#bda981;--p:#e7c66b;--b:#caa24a;--line:rgba(231,198,107,.26);--cp-grad:linear-gradient(135deg,#b8893a,#e7c66b);}
+body[data-template="dark-gold"] h1{font-family:'Aref Ruqaa',var(--font-ar);color:#e7c66b;letter-spacing:.5px;line-height:1.5;}
+body[data-template="dark-gold"] .cover{min-height:240px;border-bottom:2px solid var(--p);}
+body[data-template="dark-gold"] .logo{border-color:var(--p);}
+body[data-template="dark-gold"] .act-call,body[data-template="dark-gold"] .share .btn{color:#1a1408;}
+body[data-template="minimal"]{--bg:#eceff4;--bg2:#ffffff;--bg3:#f3f6fb;--snow:#0f182a;--dim2:#5a6a86;--p:#0f62fe;--b:#3b82f6;--line:rgba(15,24,42,.10);--cp-grad:linear-gradient(135deg,#0f62fe,#3b82f6);}
+body[data-template="minimal"] .cover{min-height:120px;}`;
 
 function socialLinks(so = {}) {
   const icons = { facebook: '📘', instagram: '📸', tiktok: '🎵', linkedin: '💼' };
@@ -94,7 +102,7 @@ function renderProfileHtml(card, canonicalUrl = '') {
 <meta property="og:description" content="${esc(desc)}">${image ? `<meta property="og:image" content="${esc(image)}">` : ''}
 ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${url}">` : ''}
 <meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}">
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Aref+Ruqaa:wght@400;700&display=swap" rel="stylesheet">
 <link rel="icon" href="/icon-192.png" type="image/png">
 <link rel="stylesheet" href="/shared.css?v=45"><link rel="stylesheet" href="/client-theme.css?v=1">
 <style>${PAGE_STYLE}</style></head>`;
@@ -114,9 +122,14 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
     : esc((card.bizName || '★').trim()[0] || '★');
   const coverStyle = card.coverUrl ? ` style="background-image:url('${esc(card.coverUrl)}')"` : '';
 
+  // قالب الكارت (data-template). كل عناصر التواصل روابط ذكية (tel/wa.me/خرائط/سوشيال).
+  const TEMPLATES = ['classic', 'dark-gold', 'minimal'];
+  const tpl = TEMPLATES.includes(card.template) ? card.template : 'classic';
+
   let acts = '';
   if (card.phone) acts += `<a class="act act-call" href="tel:${esc(card.phone)}">📞 اتصال</a>`;
   if (card.whatsapp) acts += `<a class="act act-wa" href="https://wa.me/${esc(normWa(card.whatsapp))}" target="_blank" rel="noopener">💬 واتساب</a>`;
+  if (card.address) acts += `<a class="act act-loc" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(card.address)}" target="_blank" rel="noopener">📍 العنوان</a>`;
   if (card.website) acts += `<a class="act act-web" href="${esc(card.website)}" target="_blank" rel="noopener">🌐 الموقع</a>`;
 
   const svcs = normServices(card.services);
@@ -141,7 +154,7 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
     ? '<div class="foot"><a href="/directory">دليل الأعمال</a></div>'
     : '<div class="foot">صُنع عبر <a href="/client-login.html">Business2Card</a> · <a href="/directory">دليل الأعمال</a></div>';
 
-  return head(title, desc, ogImage) + `<body><main class="page">
+  return head(title, desc, ogImage) + `<body data-template="${esc(tpl)}"><main class="page">
   <article>
     <div class="cover" id="cover"${coverStyle}><div class="logo">${logo}</div></div>
     <div class="body">
