@@ -155,3 +155,32 @@ jobs:
               fi
             fi
           done
+
+  # ──────────────────────────────────────────────────────────────
+  # 🔐 Security Rules Tests — بوابة مانعة (blocking)
+  # تشغّل اختبارات firestore.rules + storage.rules على الـ emulator.
+  # تمنع تكرار عطل «الأوردر مش بيحفظ» (storage/unauthorized): أي تعديل
+  # على القواعد يكسر رفع/قراءة ملفات الأوردر (receipts/designs) أو يعيد
+  # ربط الصلاحيات بـ isStaff() غير الموثوق = يفشل الـ PR قبل الدمج.
+  # ──────────────────────────────────────────────────────────────
+  rules-tests:
+    name: 🔐 Security Rules Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Java مطلوب لـ Firestore/Storage emulators — مثبّت مسبقاً على ubuntu-latest.
+      - name: Install rules-test deps
+        run: cd tests/rules && npm install --no-audit --no-fund
+
+      - name: Run Firestore + Storage rules tests (emulator)
+        # يشغّل من جذر الريبو (firebase.json هنا)؛ ملفات الاختبار تقرأ القواعد
+        # عبر import.meta.url فتعمل أياً كان CWD. يخرج بـ 1 عند أي فشل = blocking.
+        run: |
+          ./tests/rules/node_modules/.bin/firebase emulators:exec \
+            --only firestore,storage --project demo-test \
+            "cd tests/rules && npm run test:ci"

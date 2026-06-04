@@ -21,7 +21,7 @@ async function setupEnv() {
   return await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
-      rules: readFileSync('firestore.rules', 'utf8'),
+      rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8'),
       host: '127.0.0.1',
       port: 8080,
     },

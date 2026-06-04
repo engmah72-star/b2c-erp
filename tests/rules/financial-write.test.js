@@ -18,7 +18,7 @@ async function setupEnv() {
   return await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
-      rules: readFileSync('firestore.rules', 'utf8'),
+      rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8'),
       host: '127.0.0.1',
       port: 8080,
     },
@@ -225,15 +225,15 @@ async function runTests() {
 
   await test('customer_service CAN create + read its OWN financial_operations doc', async () => {
     await seedUser(env, 'cs2', 'customer_service', ['clients']);
-    const ctx = env.authenticatedContext('cs2');
+    const fs = env.authenticatedContext('cs2').firestore();
     await assertSucceeds(
-      ctx.firestore().doc('financial_operations/op_cs2').set({
+      fs.doc('financial_operations/op_cs2').set({
         operationId: 'op_cs2', actionType: 'create_order',
         actorId: 'cs2', status: 'pending',
       })
     );
     await assertSucceeds(
-      ctx.firestore().doc('financial_operations/op_cs2').get()
+      fs.doc('financial_operations/op_cs2').get()
     );
   });
 
