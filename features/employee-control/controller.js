@@ -13,6 +13,8 @@ import { canDo } from '../../core/permissions-matrix.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
 import { renderKpiBar, renderGroups } from './render.js';
 import { openQuickAction } from './quick-actions.js';
+import { buildAttendanceSectionHTML } from './attendance-section.js';
+import { employeeActions } from '../../employee-actions.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const monthKey = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
@@ -33,6 +35,7 @@ const state = {
   role: '',
   caps: { manageEmployees: false, finance: false, perms: false },
   employees: [], attToday: [], incidents: [], tasks: [], wallets: [],
+  leaves: [], permsToday: [],
   filter: { q: '', status: 'all', flagged: false },
 };
 
@@ -70,8 +73,18 @@ function render() {
     openTasks: state.tasks.length,
     disabled: state.employees.length - active.length,
   };
+  // self attendance: resolve the logged-in user's own employee record + today's row
+  const myEmp = state.employees.find(e => e.authUid === state.me.uid) || null;
+  const myUid = myEmp ? (myEmp.authUid || myEmp._id) : state.me.uid;
+  const myRecord = state.attToday.find(a => a.employeeUid === myUid || (myEmp && a.employeeId === myEmp._id)) || null;
+
   root.innerHTML =
     renderKpiBar(kpis) +
+    buildAttendanceSectionHTML({
+      myEmp, myRecord,
+      employees: state.employees, attToday: state.attToday,
+      leaves: state.leaves, permsToday: state.permsToday,
+    }) +
     `<div class="ec-filters">
       <input class="inp ec-search" id="ec-q" placeholder="🔍 ابحث بالاسم أو الهاتف" value="${state.filter.q.replace(/"/g, '&quot;')}">
       <select class="inp ec-fstatus" id="ec-status">
@@ -101,8 +114,38 @@ function wireFilters() {
 }
 
 // ── event delegation for quick actions (one listener) ───────────────
+let __punchBusy = false;
+async function selfPunch(kind) {
+  if (__punchBusy) return;
+  const myEmp = state.employees.find(e => e.authUid === state.me.uid);
+  if (!myEmp) return window.__ecToast('لا يوجد ملف موظف مرتبط بحسابك', 'err');
+  const today = todayStr();
+  __punchBusy = true;
+  try {
+    let r;
+    if (kind === 'in') {
+      r = await employeeActions.recordAttendanceCheckIn({
+        db, employeeId: myEmp._id, employeeUid: state.me.uid, employeeName: state.me.name,
+        date: today, monthKey: monthKey(),
+        expectedStart: myEmp.workSchedule?.startTime || '', graceMinutes: 15, source: 'self',
+        recordedBy: state.me.uid, recordedByName: state.me.name,
+      });
+      window.__ecToast(r.ok ? (r.lateMinutes > 0 ? `⚠️ حضور متأخر ${r.lateMinutes}د` : '✅ تم تسجيل حضورك') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    } else {
+      r = await employeeActions.recordAttendanceCheckOut({ db, attendanceId: `${myEmp._id}_${today}` });
+      window.__ecToast(r.ok ? '✅ تم تسجيل انصرافك' : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    }
+  } catch (e) {
+    window.__ecToast('❌ ' + (e?.message || 'تعذّر التسجيل'), 'err');
+  } finally {
+    __punchBusy = false;
+  }
+}
+
 function wireActions() {
   document.getElementById('ec-root').addEventListener('click', (e) => {
+    const punch = e.target.closest('[data-att]');
+    if (punch) { selfPunch(punch.dataset.att); return; }
     const btn = e.target.closest('.ec-act');
     if (!btn) return;
     const emp = state.employees.find(x => x._id === btn.dataset.emp);
@@ -131,6 +174,15 @@ function startListeners() {
   });
   onSnapshot(query(collection(db, 'employee_incidents'), where('monthKey', '==', monthKey()), limit(1000)), snap => {
     state.incidents = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    if (state.employees.length) render();
+  });
+  // attendance permissions (today) + leaves — for the accurate day-status summary
+  onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', todayStr()), limit(800)), snap => {
+    state.permsToday = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    if (state.employees.length) render();
+  });
+  onSnapshot(query(collection(db, 'employee_leaves'), limit(2000)), snap => {
+    state.leaves = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     if (state.employees.length) render();
   });
   onSnapshot(query(collection(db, 'tasks'), where('status', '==', 'pending'), limit(2000)), snap => {
