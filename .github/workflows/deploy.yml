@@ -458,9 +458,10 @@ jobs:
           rm -f /tmp/sa.json
 
       # دوال v2 callable الجديدة تُنشَر private افتراضياً → الـCORS preflight يفشل
-      # من المتصفح. نمنح allUsers دور run.invoker (الدالة تتحقّق من auth+الدور داخلياً
-      # عبر التوكن، فالوصول العام آمن — هكذا تعمل callable functions). continue-on-error
-      # كي لا يكسر النشر إن غابت إحدى الدوال أو الصلاحية.
+      # من المتصفح. نمنح allUsers صلاحية الاستدعاء عبر واجهة Cloud Functions Gen2
+      # (gcloud functions add-invoker-policy-binding — تتعامل مع خدمة Cloud Run
+      # الأساسية بالاسم الصحيح). الدالة تتحقّق من auth+الدور داخلياً عبر التوكن
+      # فالوصول العام آمن. continue-on-error كي لا يكسر النشر.
       - name: Grant public invoker to callable functions (CORS)
         continue-on-error: true
         env:
@@ -469,10 +470,10 @@ jobs:
           echo "$FIREBASE_SA" > /tmp/sa.json
           gcloud auth activate-service-account --key-file=/tmp/sa.json --quiet || true
           for FN in auditOrderFinancialDrift setClientPlan requestDesignApproval; do
-            echo "→ granting run.invoker on $FN"
-            gcloud run services add-iam-policy-binding "$FN" \
-              --region=us-central1 --member=allUsers --role=roles/run.invoker \
-              --project=business2card-c041b --quiet 2>&1 | tail -2 || echo "  skip $FN"
+            echo "→ granting invoker on $FN"
+            gcloud functions add-invoker-policy-binding "$FN" \
+              --gen2 --region=us-central1 --member=allUsers \
+              --project=business2card-c041b 2>&1 | tail -3 || echo "  skip $FN"
           done
           rm -f /tmp/sa.json
 
