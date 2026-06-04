@@ -409,7 +409,7 @@ export const clientActions = {
    */
   async createOrderRequest({
     db = defaultDb, type = 'new', clientUid, clientName = '', clientPhone = '',
-    sourceOrderId = '', product = '', qty = '', notes = '',
+    sourceOrderId = '', product = '', productId = '', qty = '', notes = '',
   }) {
     if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
     if (!['new', 'reorder', 'quote'].includes(type)) {
@@ -426,7 +426,7 @@ export const clientActions = {
       const ref = await addDoc(collection(db, 'order_requests'), {
         type, clientUid, clientName, clientPhone,
         sourceOrderId: sourceOrderId || '',
-        product: product || '', qty: qty || '', notes: notes || '',
+        product: product || '', productId: productId || '', qty: qty || '', notes: notes || '',
         status: 'new', convertedOrderId: '',
         createdBy: clientUid, createdAt: serverTimestamp(),
         timeline: [entry],

@@ -8,12 +8,12 @@ import { firebase } from './firebase.js';
 /**
  * يُنشئ طلباً مُهيكلاً (type: 'new' | 'reorder' | 'quote'). يُرجع { ok, requestId? }.
  */
-export async function createRequest({ type = 'new', uid, name, phone, order = null, product = '', qty = '', notes = '' }) {
+export async function createRequest({ type = 'new', uid, name, phone, order = null, product = '', productId = '', qty = '', notes = '' }) {
   const fb = await firebase();
   return fb.clientActions.createOrderRequest({
     type,
     clientUid: uid, clientName: name, clientPhone: phone || '',
     sourceOrderId: order?._id || '',
-    product, qty, notes,
+    product, productId, qty, notes,
   });
 }
