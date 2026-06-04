@@ -3586,3 +3586,40 @@ exports.setClientPlan = onCall(CALL_OPTS, async (req) => {
   await batch.commit();
   return { ok: true, plan, featured };
 });
+
+// ════════════════════════════════════════════════════════════
+// FINANCIAL MIGRATION · M0 (قياس) — تدقيق انحراف ماليّات الأوردر (read-only · Admin)
+// يقيس كم أوردر فيه تعارض بين القيمة المخزّنة (remaining/paymentStatus) والمحسوبة
+// (order-math) — شرط قبل أي حذف/توحيد للحقول المخزّنة. لا يكتب أي شيء.
+// ════════════════════════════════════════════════════════════
+exports.auditOrderFinancialDrift = onCall(CALL_OPTS, async (req) => {
+  const callerUid = req.auth && req.auth.uid;
+  if (!callerUid) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول');
+  const role = (await db.doc(`users/${callerUid}`).get()).data()?.role || '';
+  if (role !== 'admin' && role !== 'operation_manager') throw new HttpsError('permission-denied', 'الإدارة فقط');
+
+  const lim = Math.min(8000, Math.max(1, (req.data && req.data.limit) || 3000));
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const calcRem = (o) => {
+    if (o.paymentStatus === 'returned' || o.shipStage === 'returned') return 0;
+    return Math.max(0, num(o.salePrice) + num(o.customerShipFee) - num(o.discount)
+      - (num(o.totalPaid) || num(o.paid) || num(o.deposit)));
+  };
+  const grossOf = (o) => Math.max(0, num(o.salePrice) + num(o.customerShipFee) - num(o.discount));
+  const statusOf = (o) => { const g = grossOf(o), r = calcRem(o); if (g <= 0) return 'none'; if (r <= 0.01) return 'paid'; if (r < g - 0.01) return 'partial'; return 'pending'; };
+
+  const snap = await db.collection('orders').limit(lim).get();
+  let scanned = 0, remDrift = 0, statusDrift = 0, multiPaidFields = 0;
+  const samples = [];
+  snap.forEach((d) => {
+    const o = d.data(); scanned++;
+    if (o.remaining != null && Math.abs(num(o.remaining) - calcRem(o)) > 0.01) {
+      remDrift++;
+      if (samples.length < 25) samples.push({ id: d.id, storedRem: num(o.remaining), computedRem: calcRem(o) });
+    }
+    if (o.paymentStatus && o.paymentStatus !== 'returned' && o.paymentStatus !== statusOf(o)) statusDrift++;
+    const paidFields = ['totalPaid', 'paid', 'deposit'].filter((f) => o[f] != null).length;
+    if (paidFields > 1) multiPaidFields++;
+  });
+  return { ok: true, scanned, remDrift, statusDrift, multiPaidFields, samples };
+});
