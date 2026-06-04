@@ -3,7 +3,7 @@
  * تركيب مكوّنات + نداء Services. (STANDARDS §6 · L1)
  */
 import { escapeHtml } from '../utils/dom.js';
-import { Card, Button, Chips, EmptyState } from '../components/index.js';
+import { Card, Button, Chips, EmptyState, Badge } from '../components/index.js';
 import { Stepper, stageBadge, nextActionOf, ReorderBtn, money } from './partials.js';
 import { submitRequest } from './requests.js';
 
@@ -13,9 +13,17 @@ const FILTERS = [
   { label: 'مكتملة', value: 'archived' },
 ];
 
+// حالات طلب البوابة (order_requests) — للعرض فقط. المُحوّل يظهر كأوردر فلا نكرّره.
+const REQ_STATUS = {
+  new:      { label: 'بانتظار المراجعة', tone: 'printing', ico: '🕒' },
+  rejected: { label: 'تعذّر تنفيذه', tone: 'danger', ico: '🚫' },
+};
+const reqTypeLabel = (t) => (t === 'reorder' ? 'إعادة طلب' : t === 'quote' ? 'عرض سعر' : 'طلب جديد');
+
 export function create(ctx) {
   const { services, store } = ctx;
   let orders = [];
+  let requests = [];
   let filter = 'all';
   const byId = new Map();
 
@@ -41,8 +49,21 @@ export function create(ctx) {
     return Card({ body });
   }
 
+  // بطاقة طلب بوابة قيد المراجعة/مرفوض (قبل أن يصبح أوردراً).
+  function requestCard(r) {
+    const st = REQ_STATUS[r.status] || REQ_STATUS.new;
+    const lines = [
+      `<div class="cp-row cp-row--between"><strong>${st.ico} ${escapeHtml(reqTypeLabel(r.type))}</strong>${Badge({ text: st.label, tone: st.tone })}</div>`,
+      r.product ? `<div class="cp-row cp-row--between"><span class="cp-muted">المنتج</span><strong>${escapeHtml(r.product)}${r.qty ? ' ×' + escapeHtml(String(r.qty)) : ''}</strong></div>` : '',
+      (r.status === 'rejected' && r.rejectReason) ? `<div class="cp-muted">السبب: ${escapeHtml(r.rejectReason)}</div>` : '',
+      r.status !== 'rejected' ? `<div class="cp-muted">استلمنا طلبك — سنراجعه ونردّ عليك بعرض السعر قريباً.</div>` : '',
+    ].filter(Boolean).join('');
+    return Card({ body: `<div class="cp-stack cp-stack--sm">${lines}</div>` });
+  }
+
   function html() {
     const list = visible();
+    const pending = requests.filter((r) => r.status === 'new' || r.status === 'rejected');
     const head = `<div class="cp-stack cp-stack--sm">
       <div class="cp-row cp-row--between">
         <h2 class="cp-sec">طلباتي (${orders.length})</h2>
@@ -50,16 +71,26 @@ export function create(ctx) {
       </div>
       ${Chips(FILTERS, filter)}
     </div>`;
+    const reqSection = pending.length
+      ? `<div class="cp-stack cp-stack--sm">
+          <h2 class="cp-sec">قيد المراجعة (${pending.length})</h2>
+          ${pending.map(requestCard).join('')}
+        </div>`
+      : '';
     const content = list.length
       ? `<div class="cp-stack">${list.map(orderCard).join('')}</div>`
       : EmptyState({ icon: '📭', title: 'لا توجد طلبات في هذا التصنيف', hint: 'جرّب تصنيفاً آخر.' });
-    return `<div class="cp-stack cp-stack--lg">${head}${content}</div>`;
+    return `<div class="cp-stack cp-stack--lg">${head}${reqSection}${content}</div>`;
   }
 
   return {
     async mount() {
       const phone = store.get('client')?.phone1 || store.get('client')?.phone || '';
-      orders = await services.orders.loadOrders(phone);
+      const uid = store.get('user')?.uid || '';
+      [orders, requests] = await Promise.all([
+        services.orders.loadOrders(phone),
+        services.orders.loadRequests(uid),
+      ]);
       byId.clear(); orders.forEach((o) => byId.set(o._id, o));
       return html();
     },

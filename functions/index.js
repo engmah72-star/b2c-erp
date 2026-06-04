@@ -3559,6 +3559,49 @@ exports.onOrderStageNotifyClientInApp = onDocumentUpdated('orders/{orderId}', as
 });
 
 // ════════════════════════════════════════════════════════════
+// PORTAL REQUEST → STAFF ALERT — تنبيه الموظفين فور وصول طلب جديد من البوابة
+// يكتب إشعار جرس لكل موظف معني (admin/ops/CS) + push (FCM) — فلا يضيع الطلب
+// بانتظار أن يفتح أحدهم لوحة خدمة العملاء. المرجع: order_requests (status:new).
+// ════════════════════════════════════════════════════════════
+const PORTAL_REQ_STAFF_ROLES = [ROLES.ADMIN, ROLES.OPS_MGR, ROLES.CS];
+
+exports.onOrderRequestNotifyStaff = onDocumentCreated('order_requests/{reqId}', async (e) => {
+  const r = (e.data && e.data.data()) || {};
+  if (r.status && r.status !== 'new') return;
+  const typeLabel = r.type === 'reorder' ? '🔁 طلب إعادة'
+    : r.type === 'quote' ? '🧾 طلب عرض سعر'
+      : '🆕 طلب جديد';
+  const title = `${typeLabel} من البوابة`;
+  const who = String(r.clientName || 'عميل').trim();
+  const prod = r.product ? ` — ${String(r.product).trim()}` : '';
+  const qty = r.qty ? ` ×${String(r.qty).trim()}` : '';
+  const desc = `${who}${prod}${qty}`;
+  const reqId = e.params.reqId;
+
+  // 1) جرس داخل التطبيق لكل موظف معني (toUid لكلٍّ).
+  try {
+    const usersSnap = await db.collection('users').where('role', 'in', PORTAL_REQ_STAFF_ROLES).get();
+    if (!usersSnap.empty) {
+      const wb = db.batch();
+      usersSnap.docs.forEach((u) => {
+        wb.set(db.collection('notifications').doc(), {
+          toUid: u.id, title, desc, ico: '🛎️',
+          link: '/cs-dashboard.html', type: 'order_request', entityId: reqId,
+          read: false, createdAt: FieldValue.serverTimestamp(),
+        });
+      });
+      await wb.commit();
+    }
+  } catch (err) { console.warn('order_request in-app notify failed', err.message); }
+
+  // 2) Push (FCM) — تنبيه فوري حتى لو لا أحد فاتح اللوحة.
+  try {
+    const tokens = await getRoleTokens(PORTAL_REQ_STAFF_ROLES);
+    await sendPush({ tokens, title, body: desc, link: '/cs-dashboard.html', data: { type: 'order_request', reqId } });
+  } catch (err) { console.warn('order_request push failed', err.message); }
+});
+
+// ════════════════════════════════════════════════════════════
 // BILLING — منح/ترقية خطة العميل (Admin-only). المصدر الموثوق = subscriptions/{uid}
 // (write:false في القواعد) → لا يمنح العميل نفسه خطة. يُمرّر له لاحقاً webhook الدفع.
 // ════════════════════════════════════════════════════════════
