@@ -257,6 +257,7 @@ import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
+import { isFeatureEnabled } from "./core/feature-flags.js";
 import { buildEmployeeStagePerformance } from "./core/employee-stage-performance.js";
 import { getStageResponsibilities, formatDurationAr } from "./orders.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
@@ -355,7 +356,7 @@ window.setTab=function(t){
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
   // re-run section renderers — DOM containers were destroyed/recreated
   if(t==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
-  else if(t==='attendance'){renderSchedule();renderLeaves();renderPermissions();renderAttendance();}
+  else if(t==='attendance'){renderSchedule();renderLeaves();renderAttendancePermissions();renderAttendance();}
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
   else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
@@ -557,7 +558,7 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(query(collection(db,'attendance_permissions'),where('employeeId','==',empId),limit(200)),snap=>{
     empPermissions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderPermissions();renderSalaries();
+    renderAttendancePermissions();renderSalaries();
   });
   // أهداف الموظف
   onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId),limit(60)),snap=>{
@@ -646,7 +647,7 @@ function renderAll(){
 
   // render فقط أقسام التاب الفعّال (الباقي يتعمل عند setTab)
   if(activeTab==='overview'){renderPasswordCard();renderScore();renderGoals();renderSkillsAndProducts();renderBehavior();renderInsights();}
-  else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderPermissions();renderAttendance();}
+  else if(activeTab==='attendance'){renderSchedule();renderLeaves();renderAttendancePermissions();renderAttendance();}
   else if(activeTab==='salaries'){renderSalaries();}
   else if(activeTab==='tasks'){renderTasks();}
   else if(activeTab==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
@@ -1578,8 +1579,10 @@ window.deleteLeave=async function(id){
   toast('✅ تم الحذف','ok');
 };
 
-// ══ PERMISSIONS (أذونات) — Phase-3 ══
-function renderPermissions(){
+// ══ ATTENDANCE PERMISSIONS (أذونات) — Phase-3 ══
+// NB: distinct from renderPermissions() above (user-role capabilities) — keep
+// the names separate; they are two functions in the same module scope.
+function renderAttendancePermissions(){
   const el=document.getElementById('perms-container');if(!el)return;
   el.innerHTML=buildPermissionsListHTML({permissions:empPermissions,canManage:true});
 }
@@ -1621,6 +1624,7 @@ function computeSuggestedForMonth(mKey){
   return computeSalarySuggestion({
     mKey, employee:emp, employeeId:empId,
     attendance:attendanceRecords, leaves:empLeaves, permissions:empPermissions, allOrders,
+    payOvertime:isFeatureEnabled('attendance.overtimePay'),
   }).suggested;
 }
 
@@ -1686,9 +1690,11 @@ window.updateSalaryCalc=function(){
   const calc=computeSalarySuggestion({
     mKey, employee:emp, employeeId:empId,
     attendance:attendanceRecords, leaves:empLeaves, permissions:empPermissions, allOrders,
+    payOvertime:isFeatureEnabled('attendance.overtimePay'),
   });
   const {base,commission,suggested,absenceDeduction,tardinessDeduction,attendanceBonus,
-         daysPresent,daysAbsent,workDays,tardinessDays,lateRecords}=calc;
+         daysPresent,daysAbsent,workDays,tardinessDays,lateRecords,
+         workedHours,overtimeHours,overtimePay}=calc;
   salaryData={base,commission,suggested,month:mKey,absenceDeduction,tardinessDeduction,
               attendanceBonus,daysPresent,daysAbsent,workDays,tardinessDays,lateRecords};
 
@@ -1717,14 +1723,16 @@ window.updateSalaryCalc=function(){
   // حضور تفصيل
   const attEl=document.getElementById('sal-attendance-detail');
   if(attEl){
-    const showBlock=salType==='salary'&&(daysAbsent>0||attendanceBonus>0||tardinessDays>0);
+    const showBlock=salType==='salary'&&(daysAbsent>0||attendanceBonus>0||tardinessDays>0||workedHours>0||overtimeHours>0);
     if(showBlock){
       attEl.style.display='block';
       attEl.innerHTML=`<div class="ep-att-box">
         <div class="row-between ep-mb-4"><span class="text-muted">أيام الحضور</span><span class="ep-att-g">${daysPresent} / ${workDays} يوم</span></div>
         ${daysAbsent>0?`<div class="row-between ep-mb-4"><span class="text-muted">خصم غياب</span><span class="ep-att-r">- ${fn(absenceDeduction)} ج</span></div>`:''}
         ${tardinessDays>0?`<div class="row-between ep-mb-4"><span class="text-muted">خصم تأخير (${lateRecords} مرة · ≈${tardinessDays} يوم)</span><span class="ep-att-y">- ${fn(tardinessDeduction)} ج</span></div>`:''}
-        ${attendanceBonus>0?`<div class="row-between"><span class="text-muted">بدل حضور كامل</span><span class="ep-att-g">+ ${fn(attendanceBonus)} ج</span></div>`:''}
+        ${attendanceBonus>0?`<div class="row-between ep-mb-4"><span class="text-muted">بدل حضور كامل</span><span class="ep-att-g">+ ${fn(attendanceBonus)} ج</span></div>`:''}
+        ${workedHours>0?`<div class="row-between ep-mb-4"><span class="text-muted">ساعات العمل</span><span class="ep-att-g">${workedHours} س</span></div>`:''}
+        ${overtimeHours>0?`<div class="row-between"><span class="text-muted">وقت إضافي (${overtimeHours} س)</span><span class="${overtimePay>0?'ep-att-g':'text-muted'}">${overtimePay>0?'+ '+fn(overtimePay)+' ج':'— غير مفعّل'}</span></div>`:''}
       </div>`;
     } else { attEl.style.display='none'; }
   }

@@ -163,3 +163,51 @@ export function resolveDayStatus({
   if (today && date > today) return { status: 'upcoming', lateMinutes: 0 };
   return { status: 'absent', lateMinutes: 0 };
 }
+
+// ── Worked hours / overtime — Phase-5 ───────────────────────────────
+
+function _tsToMs(ts) {
+  if (ts == null) return null;
+  if (typeof ts.toDate === 'function') { try { return ts.toDate().getTime(); } catch (_) { return null; } }
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'number') return ts;
+  return null;
+}
+
+/**
+ * Minutes actually worked on a day, from the record's checkInAt/checkOutAt
+ * timestamps (recorded since Phase-1). Returns 0 when either timestamp is
+ * missing/invalid (legacy records) or out of order — never negative, so it
+ * is safe to sum across a month of mixed-schema records.
+ *
+ * @param {Object} record               — { checkInAt?, checkOutAt? }
+ * @param {Object} [opts]
+ * @param {number} [opts.breakMinutes=0] — unpaid break deducted from the span
+ * @returns {number} worked minutes (>= 0)
+ */
+export function computeWorkedMinutes(record, { breakMinutes = 0 } = {}) {
+  if (!record) return 0;
+  const inMs = _tsToMs(record.checkInAt);
+  const outMs = _tsToMs(record.checkOutAt);
+  if (inMs == null || outMs == null || outMs <= inMs) return 0;
+  return Math.max(0, Math.round((outMs - inMs) / 60000) - (parseInt(breakMinutes) || 0));
+}
+
+/** Scheduled minutes per day from workSchedule (end − start − break). */
+export function scheduledMinutes(workSchedule, { breakMinutes = 0 } = {}) {
+  const s = workSchedule?.startTime, e = workSchedule?.endTime;
+  if (!s || !e) return 0;
+  const [sh, sm] = String(s).split(':').map(Number);
+  const [eh, em] = String(e).split(':').map(Number);
+  if (isNaN(sh) || isNaN(eh)) return 0;
+  const mins = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+  if (mins <= 0) return 0;
+  return Math.max(0, mins - (parseInt(breakMinutes) || 0));
+}
+
+/** Overtime minutes = minutes worked beyond the scheduled day (>= 0). */
+export function computeOvertimeMinutes(workedMin, scheduledMin) {
+  if (!workedMin || !scheduledMin) return 0;
+  return Math.max(0, workedMin - scheduledMin);
+}
