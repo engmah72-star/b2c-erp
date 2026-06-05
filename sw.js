@@ -20,6 +20,10 @@ const NETWORK_FIRST_SUFFIXES = [
   // ── Core JS modules without version pins — must stay fresh across deploys ──
   '/sidebar-config.js',
   '/smart-sidebar.js',
+  '/app-sidebar.js',
+  '/core/sidebar-mount.js',
+  '/core/sidebar-model.js',
+  '/core/runtime-shell/signals-aggregator.js',
   '/viewas.js',
   '/financial-guard.js',
   '/inbox-badge.js',
