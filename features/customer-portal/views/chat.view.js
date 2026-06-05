@@ -8,7 +8,7 @@ import { Button, Input, Skeleton } from '../components/index.js';
 import { shortTime } from '../utils/format.js';
 
 export function create(ctx) {
-  const { services, store, shell, kind = 'support', order = null } = ctx;
+  const { services, store, shell, kind = 'support', order = null, peer = null, conv = null } = ctx;
   let convId = null, participants = [], unsub = null, ready = false;
 
   const me = () => store.get('user')?.uid || '';
@@ -67,10 +67,16 @@ export function create(ctx) {
   }
 
   async function start() {
-    const t = await services.chat.openThread({ kind, uid: me(), name: myName(), order });
-    if (!t?.ok) { paintMessages([]); shell.notify('تعذّر فتح المحادثة', 'danger'); return; }
-    convId = t.convId; participants = t.participants || [];
+    // فتح محادثة موجودة مباشرة (من «محادثاتي») أو إنشاء/فتح عبر المدخل المركزي.
+    if (conv?.convId) {
+      convId = conv.convId; participants = conv.participants || [];
+    } else {
+      const t = await services.chat.openThread({ kind, uid: me(), name: myName(), order, peer });
+      if (!t?.ok) { paintMessages([]); shell.notify('تعذّر فتح المحادثة', 'danger'); return; }
+      convId = t.convId; participants = t.participants || [];
+    }
     ready = true;
+    try { await services.chat.markThreadRead({ convId, uid: me() }); } catch (_) {}
     unsub = await services.chat.subscribeMessages(convId, paintMessages);
   }
 

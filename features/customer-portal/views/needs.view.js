@@ -33,7 +33,10 @@ export function create(ctx) {
           <span class="cp-muted">📨 ${Number(n.responsesCount) || 0} مهتم</span>
           ${Button({ label: 'إنهاء', variant: 'ghost', size: 'sm', block: false, action: `close:${n._id}` })}
         </div>`
-      : Button({ label: did ? 'تم إرسال اهتمامك ✓' : '🤝 أنا مهتم', variant: did ? 'ghost' : 'primary', size: 'sm', block: false, action: did ? '' : `respond:${n._id}`, disabled: did });
+      : `<div class="cp-row cp-row--wrap">
+          ${Button({ label: did ? 'تم إرسال اهتمامك ✓' : '🤝 أنا مهتم', variant: did ? 'ghost' : 'primary', size: 'sm', block: false, action: did ? '' : `respond:${n._id}`, disabled: did })}
+          ${Button({ label: 'محادثة', icon: '💬', variant: 'ghost', size: 'sm', block: false, action: `chat:${n._id}` })}
+        </div>`;
     const meta = [SPEC_LABEL[n.specialty] || n.specialty, n.city && ('📍 ' + n.city)].filter(Boolean).join(' · ');
     const body = `<div class="cp-stack cp-stack--sm">
       <div class="cp-row cp-row--between">
@@ -102,6 +105,13 @@ export function create(ctx) {
         busy = false;
         if (r?.ok) { posting = false; await load(); shell.notify('تم نشر احتياجك ✅', 'ok'); repaint(); }
         else { repaint(); shell.notify((r?.errors && r.errors[0]) || 'تعذّر النشر', 'danger'); }
+        return;
+      }
+      if (a.startsWith('chat:')) {
+        const n = byId.get(a.slice(5));
+        if (n && n.authorUid && n.authorUid !== me().uid) {
+          ctx.openChat?.({ kind: 'member', peer: { uid: n.authorUid, name: n.authorName || 'عضو' } });
+        }
         return;
       }
       if (a.startsWith('respond:')) {
