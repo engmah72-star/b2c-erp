@@ -45,6 +45,7 @@ import { auditEntry, opEntry } from './core/audit.js';
 import { planClientMerge } from './features/clients/duplicate-scan.js';
 import { slugUsername } from './core/text-format.js';
 import { isFeatureEnabled, FLAGS } from './core/feature-flags.js';
+import { resolve as resolveMessagingPolicy, PARTIES } from './core/messaging-policy.js';
 
 // P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
 // modular `db` instance. When called from compat consumers, the `db`
@@ -359,6 +360,18 @@ export const clientActions = {
    */
   async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null, peer = null }) {
     if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    // Messaging Policy (Phase 0): مصدر الحقيقة الواحد للعلاقة/النمط/القدرات.
+    // الكارت/الأوردر/الدعم كلها حواف client→(client|employee). resolve() يؤكّد
+    // السماح البنيوي ويشتقّ النمط (mode) المخزَّن على المحادثة. الإنفاذ التشغيلي
+    // (flag/سياق/قبول) يبقى أدناه — تكافؤ تام مع السلوك الحالي.
+    const _binding = kind === 'order' ? 'order' : kind === 'member' ? 'referral' : 'support';
+    const _policy = resolveMessagingPolicy({
+      from: PARTIES.CLIENT,
+      to: kind === 'member' ? PARTIES.CLIENT : PARTIES.EMPLOYEE,
+      context: { binding: _binding },
+    });
+    if (!_policy.allowed) return { ok: false, errors: ['🔒 علاقة تواصل غير مسموحة'], warnings: [] };
+    const _mode = _policy.mode;
     // CS pool المركزي — يضمن وجود موظف مستلِم في محادثة العميل (HOTFIX delivery).
     // محادثة عضو↔عضو لا تحتاج CS pool.
     const supportAgents = kind === 'member' ? [] : await _loadSupportAgents(db);
@@ -402,7 +415,7 @@ export const clientActions = {
       try { snap = await getDoc(ref); } catch (_) {}
       if (!snap || !snap.exists()) {
         await setDoc(ref, {
-          type, participants, name, isClientThread: true,
+          type, mode: _mode, participants, name, isClientThread: true,
           archivedBy: [], lastReadByAll: false,
           createdAt: serverTimestamp(), lastMessageAt: serverTimestamp(),
           lastMessagePreview: '', unreadCount: {}, ...extra,

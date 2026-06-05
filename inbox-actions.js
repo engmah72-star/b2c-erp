@@ -30,6 +30,9 @@ import {
   increment,
   Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+// Messaging Policy (Phase 0): مصدر الثوابت الواحد للنمط. محادثات الإنبوكس
+// (DM/قناة/خيط أوردر بين الموظفين) = نمط «زمالة». import مراسلة→مراسلة (يمر قفل الحدود).
+import { MODES } from './core/messaging-policy.js';
 
 // ══════════════════════════════════════════
 // PRESENCE
@@ -76,7 +79,7 @@ export async function ensureChannelConversation({
     const members = (participants || []).slice();
     if (currentUserId && !members.includes(currentUserId)) members.push(currentUserId);
     await setDoc(ref, {
-      type: 'channel',
+      type: 'channel', mode: MODES.COLLEGIAL,
       channelKey, name, ico,
       participants: members,
       archivedBy: [],
@@ -108,7 +111,7 @@ export async function ensureDM({
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     await setDoc(ref, {
-      type: 'dm',
+      type: 'dm', mode: MODES.COLLEGIAL,
       participants: ids,
       dmNames: { [currentUserId]: currentUserName, [otherUserId]: otherUserName },
       archivedBy: [],
@@ -142,7 +145,7 @@ export async function ensureOrderThread({
     (extraParticipants || []).forEach(u => stake.push(u));
     const participants = [...new Set(stake.filter(Boolean))];
     await setDoc(ref, {
-      type: 'order_thread',
+      type: 'order_thread', mode: MODES.COLLEGIAL,
       orderId: order.orderId,
       name: 'تعليقات #' + (order.orderCode || (order.orderId || '').slice(-6)) + ' — ' + (order.clientName || ''),
       participants,
