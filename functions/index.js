@@ -3484,8 +3484,25 @@ exports.profilePage = onRequest(
         } catch (_) { card.plan = 'free'; card.featured = false; }
       }
 
+      // إحالة (Business Network): زيارة عبر ?ref=<uid> تُسجَّل لصاحب الكارت.
+      // عند وجود ref نُعطّل الكاش حتى تُحتسب كل زيارة (لا تُخدَم من CDN).
+      const refUid = String(req.query.ref || '').trim();
+      let refLogged = false;
+      if (card && cardUid && refUid && refUid !== cardUid) {
+        refLogged = true;
+        try {
+          const batch = db.batch();
+          batch.set(db.collection('referrals').doc(), {
+            cardUid, refUid, at: FieldValue.serverTimestamp(),
+            ua: String(req.get('user-agent') || '').slice(0, 180),
+          });
+          batch.set(db.doc(`public_cards/${cardUid}`), { referralCount: FieldValue.increment(1) }, { merge: true });
+          await batch.commit();
+        } catch (_) { /* تسجيل الإحالة غير قاتل */ }
+      }
+
       res.set('Content-Type', 'text/html; charset=utf-8');
-      res.set('Cache-Control', card ? 'public, max-age=300, s-maxage=600' : 'no-cache');
+      res.set('Cache-Control', refLogged ? 'no-store' : (card ? 'public, max-age=300, s-maxage=600' : 'no-cache'));
       res.status(200).send(renderProfileHtml(card, canonical));
     } catch (e) {
       res.set('Content-Type', 'text/html; charset=utf-8');
