@@ -659,24 +659,16 @@ function collapsibleSection(id, icon, title, content, defaultOpen){
   </details>`;
 }
 
-// ── قسم الملفات (الملف النهائي للمطبعة) — بارز أعلى الصفحة لتسهيل الرفع ──
+// ── صور المنتجات — المصدر الوحيد للصور في الطباعة (أُلغي رفع «الملف النهائي»).
+// مدخل بارز أعلى الصفحة لإضافة/تعديل صور كل منتج عبر «تعديل المنتجات». ──
 function renderFilesSection(o){
+  const hasImg=(o.products||[]).some(p=>(Array.isArray(p.designImages)&&p.designImages.filter(Boolean).length)||p.designImageUrl)||!!o.designImageUrl;
   return `<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
-    <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">📁 الملف النهائي للمطبعة</div>
-    ${o.printFinalUrl?(o.printFinalType?.includes('pdf')
-      ?`<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:12px 14px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);color:var(--p);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-md);margin-bottom:8px">📄 فتح الملف (PDF) ←</a>`
-      :`<img src="${o.printFinalUrl}" onclick="window.open('${o.printFinalUrl}','_blank')" loading="lazy" decoding="async" alt="الملف النهائي" style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:200px;object-fit:contain;background:var(--bg3);margin-bottom:10px;display:block">`)
-    :''}
-    <div onclick="document.getElementById('print-final-inp').click()" style="background:${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'};border:2px dashed ${o.printFinalUrl?'var(--line)':'rgba(59,158,255,.4)'};border-radius:12px;padding:${o.printFinalUrl?'12px':'20px'};text-align:center;cursor:pointer;transition:background .15s" ontouchstart="this.style.background='var(--bg3)'" ontouchend="this.style.background='${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'}'">
-      <div style="font-size:${o.printFinalUrl?'20':'32'}px;margin-bottom:4px">${o.printFinalUrl?'🔄':'📁'}</div>
-      <div style="font-size:${o.printFinalUrl?'12':'14'}px;font-weight:var(--fw-extra);color:${o.printFinalUrl?'var(--dim2)':'var(--b)'}">${o.printFinalUrl?'تغيير الملف':'ارفع الملف النهائي'}</div>
-      ${!o.printFinalUrl?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px">صورة أو PDF</div>`:''}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2)">🖼️ صور المنتجات ${hasImg?'<span style="color:var(--g)">✓ موجودة</span>':'<span style="color:var(--r)">— غير مرفوعة</span>'}</div>
+      <button type="button" onclick="openEditProds()" style="padding:8px 14px;border-radius:9px;border:1px solid var(--b);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;flex-shrink:0">📦 إضافة/تعديل الصور</button>
     </div>
-    <div class="prog-wrap" id="prog-wrap">
-      <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
-      <div class="prog-txt" id="prog-txt">0%</div>
-    </div>
-    <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:8px">🖼️ صور المنتجات تُضاف من «📦 تعديل المنتجات» (زر الصورة على كل منتج).</div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px">تُضاف صورة كل منتج من «تعديل المنتجات» → زر الصورة على المنتج.</div>
   </div>`;
 }
 
@@ -744,7 +736,7 @@ function renderPanel(o){
         <span style="font-size:24px">⚠️</span>
         <div>
           <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">لا توجد صورة تصميم</div>
-          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">ارفع الملف النهائي أو أضف صورة من "📦 تعديل المنتجات"</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">أضف صورة المنتج من «📦 تعديل المنتجات»</div>
         </div>
       </div>
     </div>`:''}
@@ -1094,7 +1086,7 @@ window.confirmSplitOrder=async function(){
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
 // ══ Templates: apply / save ══
-const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','cutSize','lamination','innerType','briefNotes','paper'];
+const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','cutSize','lamination','innerType','briefNotes','paper','weight'];
 
 window.applyBriefTemplate = async function(orderId, idx, tplId){
   if(!tplId) return;
@@ -1468,10 +1460,15 @@ function renderProductBrief(o, p, idx){
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📄 نوع الورق</div>
           <select onchange="updateProductBriefField('${o._id}',${idx},'paper',this.value)" style="${inp};direction:rtl;cursor:pointer">${paperOpts}</select>
         </div>
-        <!-- السلوفان -->
+        <!-- وزن الورق -->
         <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">⚖️ وزن الورق (جم)</div>
+          <input type="number" min="0" value="${p.weight||''}" oninput="updateProductBriefField('${o._id}',${idx},'weight',parseFloat(this.value)||0)" placeholder="مثال: 300" style="${inp};direction:ltr;text-align:right">
+        </div>
+        <!-- السلوفان -->
+        <div style="grid-column:1/-1">
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✨ السلوفان</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:5px">${lamOpts}</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;padding-top:5px">${lamOpts}</div>
         </div>
       </div>
       ${offsetHtml}
