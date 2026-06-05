@@ -536,6 +536,29 @@ export const clientActions = {
     }
   },
 
+  /** إرسال مرفق (صورة/ملف) من العميل — نفس شكل الإنبوكس (type + attachments[]). */
+  async sendClientAttachment({ db = defaultDb, convId, type, attachment, senderId, senderName = 'عميل', participants = [] }) {
+    if (!convId || !senderId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    if (!attachment || !attachment.url) return { ok: false, errors: ['⚠️ لا يوجد مرفق'], warnings: [] };
+    if (!['image', 'file'].includes(type)) return { ok: false, errors: ['⚠️ نوع مرفق غير معروف'], warnings: [] };
+    try {
+      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+        senderId, senderName, type, attachments: [attachment],
+        createdAt: serverTimestamp(), readBy: { [senderId]: serverTimestamp() },
+      });
+      const preview = type === 'image' ? '📷 صورة' : '📄 ' + (attachment.name || 'مرفق');
+      const upd = {
+        lastMessageAt: serverTimestamp(), lastMessagePreview: preview.slice(0, 80),
+        lastSenderId: senderId, lastSenderName: senderName, archivedBy: [],
+      };
+      participants.filter(p => p && p !== senderId).forEach(p => { upd['unreadCount.' + p] = increment(1); });
+      await updateDoc(doc(db, 'conversations', convId), upd);
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر إرسال المرفق' : (e.message || 'فشل الإرسال')], warnings: [] };
+    }
+  },
+
   /**
    * تعديل عميل موجود. يتتبّع التغييرات في editHistory[].
    */

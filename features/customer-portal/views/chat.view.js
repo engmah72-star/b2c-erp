@@ -58,9 +58,11 @@ export function create(ctx) {
     return `<div class="cp-chat">
       <div class="cp-chat__list" id="cp-chat-list" aria-live="polite">${Skeleton({ variant: 'line', count: 3 })}</div>
       <div class="cp-chat__bar">
+        ${Button({ label: '', icon: '📎', variant: 'ghost', size: 'sm', block: false, action: 'attach' })}
         ${Input({ id: 'cp-chat-input', label: '', placeholder: 'اكتب رسالتك…' })}
         ${Button({ label: 'إرسال', icon: '➤', size: 'sm', block: false, action: 'send' })}
       </div>
+      <input type="file" id="cp-chat-file" accept="image/*,application/pdf" hidden>
     </div>`;
   }
 
@@ -75,6 +77,7 @@ export function create(ctx) {
   return {
     async mount() { start(); return html(); },
     async onAction(a) {
+      if (a === 'attach') { if (ready) qs('#cp-chat-file', shell.modal.body)?.click(); return; }
       if (a !== 'send') return;
       const input = qs('#cp-chat-input', shell.modal.body);
       const text = (input?.value || '').trim();
@@ -82,6 +85,17 @@ export function create(ctx) {
       input.value = '';
       const r = await services.chat.sendMessage({ convId, text, uid: me(), name: myName(), participants });
       if (!r?.ok) { shell.notify('تعذّر إرسال الرسالة', 'danger'); input.value = text; }
+    },
+    async onUpload(el) {
+      const file = el.files && el.files[0];
+      el.value = '';
+      if (!file || !ready) return;
+      const okType = /^image\//.test(file.type) || file.type === 'application/pdf';
+      if (!okType) { shell.notify('يُسمح بالصور وملفات PDF فقط', 'danger'); return; }
+      if (file.size > 20 * 1024 * 1024) { shell.notify('الحجم الأقصى 20 ميجا', 'danger'); return; }
+      shell.notify('جارٍ رفع المرفق…', 'ok');
+      const r = await services.chat.sendAttachment({ convId, file, uid: me(), name: myName(), participants });
+      if (!r?.ok) shell.notify((r?.errors && r.errors[0]) || 'تعذّر إرسال المرفق', 'danger');
     },
     destroy() { try { unsub && unsub(); } catch (_) {} },
   };

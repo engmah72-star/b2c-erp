@@ -16,6 +16,19 @@ export async function sendMessage({ convId, text, uid, name, participants }) {
   return fb.clientActions.sendClientMessage({ convId, text, senderId: uid, senderName: name, participants });
 }
 
+/** يرفع مرفقًا (صورة/PDF) إلى تخزين العميل ثم يرسله كرسالة (نفس شكل الإنبوكس). */
+export async function sendAttachment({ convId, file, uid, name, participants }) {
+  const fb = await firebase();
+  const { uploadClientFile } = await import('../../../core/storage-helpers.js');
+  const up = await uploadClientFile({ clientId: uid, file, kind: 'chat' });
+  const type = (file.type || '').startsWith('image/') ? 'image' : 'file';
+  return fb.clientActions.sendClientAttachment({
+    convId, type,
+    attachment: { url: up.url, name: file.name, size: file.size, mime: file.type || '' },
+    senderId: uid, senderName: name, participants,
+  });
+}
+
 /** يشترك في رسائل محادثة (مرتّبة، محدودة). cb(messages[]). يُرجع دالة إلغاء. */
 export async function subscribeMessages(convId, cb) {
   const fb = await firebase();

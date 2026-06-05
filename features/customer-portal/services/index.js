@@ -9,7 +9,7 @@ import {
 } from './profile.service.js';
 import { loadOrders, loadRequests, invoiceOf, totalsOf } from './orders.service.js';
 import { loadGallery, categoriesOf } from './gallery.service.js';
-import { openThread, sendMessage, subscribeMessages } from './chat.service.js';
+import { openThread, sendMessage, sendAttachment, subscribeMessages } from './chat.service.js';
 import { approveDesign } from './approval.service.js';
 import { createRequest } from './requests.service.js';
 import { loadProducts } from './products.service.js';
@@ -29,5 +29,5 @@ export const services = {
   },
   orders:  { loadOrders, loadRequests, invoiceOf, totalsOf },
   gallery: { loadGallery, categoriesOf },
-  chat:    { openThread, sendMessage, subscribeMessages },
+  chat:    { openThread, sendMessage, sendAttachment, subscribeMessages },
 };
