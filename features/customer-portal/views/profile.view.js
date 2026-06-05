@@ -131,9 +131,28 @@ export function create(ctx) {
   function paint() { ctx.repaint(editing ? form() : view()); }
   const reload = async () => { client = await services.profile.loadClient(uid()); store.set({ client }); };
 
+  // يضمن للعميل username نظيف (رابط /u/الاسم) لو ملوش — فالـQR يفتح فورًا (SSR)
+  // بدل card.html?id=الطويل. توليد لمرة واحدة من اسم النشاط (يحفظ بصمت).
+  async function ensureUsername() {
+    const biz = client?.businessProfile || {};
+    if (!uid() || biz.username) return;
+    const base = slugUsername(biz.bizName || client?.name || '') || ('card-' + uid().slice(0, 6).toLowerCase());
+    let candidate = base;
+    for (let i = 0; i < 5; i++) {
+      if (await services.profile.usernameAvailable(candidate, uid())) break;
+      candidate = (base + '-' + Math.random().toString(36).slice(2, 5)).slice(0, 40);
+    }
+    const user = store.get('user');
+    if (!user) return;
+    const businessProfile = { ...(client?.businessProfile || {}), username: candidate };
+    const r = await services.profile.saveProfile({ uid: user.uid, email: user.email, name: user.displayName, phone: client?.phone1 || '', businessProfile });
+    if (r?.ok) await reload();
+  }
+
   return {
     async mount() {
       client = uid() ? await services.profile.loadClient(uid()) : null;
+      if (client && uid()) { try { await ensureUsername(); } catch (_) { /* غير قاتل */ } }
       return editing ? form() : view();
     },
     async onUpload(input) {
@@ -189,7 +208,7 @@ export function create(ctx) {
         const bizName = get('f-biz'); const phone = get('f-phone');
         const v = validateProfile({ bizName, phone });
         if (!v.ok) { errors = v.errors; return paint(); }
-        const username = slugUsername(get('f-username'));
+        const username = slugUsername(get('f-username')) || (client?.businessProfile?.username || '');
         if (username && !(await services.profile.usernameAvailable(username, uid()))) {
           errors = ['⚠️ اسم الصفحة محجوز — اختر اسمًا آخر']; return paint();
         }
