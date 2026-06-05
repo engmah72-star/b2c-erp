@@ -19,7 +19,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -163,45 +162,6 @@
       <button type="button" class="ib-as-submit" style="background:var(--ws-panel2);color:var(--ws-text)" onclick="document.getElementById('as-file').click()">📷 اختيار صورة</button>
       <textarea class="ib-as-txt-input" id="as-caption" placeholder="تعليق (اختياري)" maxlength="200" style="min-height:60px;margin-top:10px"></textarea>
       <button type="button" class="ib-as-submit" id="as-img-submit" onclick="submitImageStory()" disabled>نشر اللحظة</button>
-    </div>
-  </div>
-</div>
-
-<!-- AI Assistant modal -->
-<div class="ib-modal-ov" id="ai-ov">
-  <div class="ib-modal" style="max-width:480px">
-    <div class="ib-modal-hdr">
-      <h3 id="ai-hdr-title">🤖 مساعد المحادثة</h3>
-      <button type="button" class="ib-iconbtn" onclick="closeAIPanel()">✕</button>
-    </div>
-    <div class="ib-modal-body" id="ai-body">
-      <div class="ib-ai-list" id="ai-list">
-        <button type="button" class="ib-ai-card" onclick="aiSummarize()">
-          <span class="ib-ai-card-ico">📝</span>
-          <div class="ib-ai-card-body">
-            <div class="ib-ai-card-title">تلخيص المحادثة</div>
-            <div class="ib-ai-card-sub">ملخص سريع لآخر النقاط في المحادثة</div>
-          </div>
-        </button>
-        <button type="button" class="ib-ai-card" onclick="aiExtractTasks()">
-          <span class="ib-ai-card-ico">✅</span>
-          <div class="ib-ai-card-body">
-            <div class="ib-ai-card-title">استخراج المهام</div>
-            <div class="ib-ai-card-sub">المهام، المواعيد، والقرارات من المحادثة</div>
-          </div>
-        </button>
-        <button type="button" class="ib-ai-card" onclick="aiSuggestReply()">
-          <span class="ib-ai-card-ico">💬</span>
-          <div class="ib-ai-card-body">
-            <div class="ib-ai-card-title">اقتراح رد</div>
-            <div class="ib-ai-card-sub">3 ردود مقترحة بناءً على آخر رسالة</div>
-          </div>
-        </button>
-      </div>
-    </div>
-    <div class="ib-ai-actions hide" id="ai-actions">
-      <button type="button" class="ib-ai-btn" onclick="openAIPanel()">← رجوع</button>
-      <button type="button" class="ib-ai-btn primary" id="ai-copy-btn" onclick="aiCopyResult()">📋 نسخ النتيجة</button>
     </div>
   </div>
 </div>
@@ -1338,109 +1298,6 @@ window.convSearchNav = function(dir){
   __cSearchIdx = (__cSearchIdx + dir + __cSearchMatches.length) % __cSearchMatches.length;
   $('csearch-info').textContent = `${__cSearchIdx+1}/${__cSearchMatches.length}`;
   jumpToMsg(__cSearchMatches[__cSearchIdx]);
-};
-
-// ════════════════════════════════════════════════════════════════════
-//  🤖 AI Smart features — تلخيص / استخراج مهام / اقتراح رد
-// ════════════════════════════════════════════════════════════════════
-let __aiResult = '';
-
-window.openAIPanel = function(){
-  $('chat-menu')?.classList.remove('show');
-  $('ai-hdr-title').textContent = '🤖 مساعد المحادثة';
-  $('ai-actions').style.display = 'none';
-  // If ai-body was replaced by a result/loading view, restore the action list
-  let list = $('ai-list');
-  if (!list) {
-    $('ai-body').innerHTML = '<div class="ib-ai-list" id="ai-list"></div>';
-    list = $('ai-list');
-  }
-  list.style.display = '';
-  if (!list.children.length) {
-    list.innerHTML = `
-      <button type="button" class="ib-ai-card" onclick="aiSummarize()">
-        <span class="ib-ai-card-ico">📝</span>
-        <div class="ib-ai-card-body"><div class="ib-ai-card-title">تلخيص المحادثة</div><div class="ib-ai-card-sub">ملخص سريع لآخر النقاط في المحادثة</div></div>
-      </button>
-      <button type="button" class="ib-ai-card" onclick="aiExtractTasks()">
-        <span class="ib-ai-card-ico">✅</span>
-        <div class="ib-ai-card-body"><div class="ib-ai-card-title">استخراج المهام</div><div class="ib-ai-card-sub">المهام، المواعيد، والقرارات من المحادثة</div></div>
-      </button>
-      <button type="button" class="ib-ai-card" onclick="aiSuggestReply()">
-        <span class="ib-ai-card-ico">💬</span>
-        <div class="ib-ai-card-body"><div class="ib-ai-card-title">اقتراح رد</div><div class="ib-ai-card-sub">3 ردود مقترحة بناءً على آخر رسالة</div></div>
-      </button>`;
-  }
-  $('ai-ov').classList.add('show');
-};
-window.closeAIPanel = ()=>$('ai-ov').classList.remove('show');
-
-function buildConvContext(maxMessages = 30){
-  const recent = messages.filter(m => !m.deletedAt && m.type !== 'system').slice(-maxMessages);
-  return recent.map(m => {
-    let body = m.text || '';
-    if (!body) {
-      if (m.type === 'image') body = '[صورة]';
-      else if (m.type === 'file') body = '[ملف: '+(m.attachments?.[0]?.name||'مرفق')+']';
-      else if (m.type === 'voice') body = '[رسالة صوتية]';
-      else if (m.type === 'order_share') body = '[أوردر مشارَك: '+(m.orderRef?.clientName||'')+']';
-    }
-    return `${m.senderName||'—'}: ${body}`;
-  }).join('\n');
-}
-
-async function runAI(headerTitle, prompt){
-  $('ai-hdr-title').textContent = headerTitle;
-  $('ai-list').style.display = 'none';
-  $('ai-body').innerHTML = '<div class="ib-ai-loading">جاري التحليل…</div>';
-  $('ai-actions').style.display = 'none';
-  try {
-    const { askAI, KEY_NEEDED } = await import('./ai-engine.js');
-    const result = await askAI(prompt, { temperature: 0.6, maxTokens: 1500 });
-    __aiResult = result;
-    $('ai-body').innerHTML = `<div class="ib-ai-result">${esc(result)}</div>`;
-    $('ai-actions').style.display = '';
-  } catch(e){
-    if (e.message === '__AI_KEY_NEEDED__' || e.code === '__AI_KEY_NEEDED__') {
-      $('ai-body').innerHTML = `<div style="padding:var(--space-xl);text-align:center;font-size:var(--fs-md)">
-        <div style="font-size:32px;margin-bottom:10px">🔑</div>
-        <div style="color:var(--ws-text);font-weight:var(--fw-bold);margin-bottom:6px">مفتاح Gemini غير مُهيّأ</div>
-        <div style="color:var(--ws-text-dim);font-size:var(--fs-base);line-height:var(--lh-relaxed)">اضغط زر "اسأل AI" وأضف المفتاح</div>
-      </div>`;
-    } else {
-      $('ai-body').innerHTML = `<div style="padding:var(--space-xl);color:#ef4444;font-size:var(--fs-md);text-align:center">${esc(e.message||'فشل التحليل')}</div>`;
-    }
-  }
-}
-
-window.aiSummarize = function(){
-  const ctx = buildConvContext(50);
-  if (!ctx.trim()) { toast('لا توجد رسائل للتلخيص','err'); return; }
-  const prompt = `حلّل المحادثة التالية ولخّصها بالعربية في 3-5 نقاط واضحة (موضوع المحادثة، آخر التطورات، أي قرارات اتُّخذت، أي نقاط معلّقة):\n\n${ctx}\n\nاكتب ملخصاً تنفيذياً موجزاً بدون مقدّمات.`;
-  runAI('📝 ملخص المحادثة', prompt);
-};
-
-window.aiExtractTasks = function(){
-  const ctx = buildConvContext(50);
-  if (!ctx.trim()) { toast('لا توجد رسائل','err'); return; }
-  const prompt = `استخرج من المحادثة التالية كل المهام والقرارات والمواعيد. اكتب كل بند في سطر مستقل على الشكل:\n- [ ] المهمة — المسؤول (إن وُجد) — الموعد (إن وُجد)\n\nالمحادثة:\n${ctx}\n\nإن لم تجد مهاماً واضحة، اكتب "لا توجد مهام صريحة في المحادثة".`;
-  runAI('✅ المهام المستخرجة', prompt);
-};
-
-window.aiSuggestReply = function(){
-  const ctx = buildConvContext(15);
-  if (!ctx.trim()) { toast('لا توجد رسائل','err'); return; }
-  const myName = currentUserName || 'أنا';
-  const prompt = `أنت تساعد ${myName} في الرد على المحادثة التالية. اقترح 3 ردود مختلفة بأطوال متفاوتة (قصير/متوسط/تفصيلي) بالعربية المصرية المهنية. اكتبها على الشكل:\n\n1. <رد قصير>\n2. <رد متوسط>\n3. <رد تفصيلي>\n\nالمحادثة:\n${ctx}\n\n${myName} الآن سيرد على آخر رسالة.`;
-  runAI('💬 ردود مقترحة', prompt);
-};
-
-window.aiCopyResult = async function(){
-  if (!__aiResult) return;
-  try {
-    await navigator.clipboard.writeText(__aiResult);
-    toast('✅ تم النسخ','ok');
-  } catch(_){ toast('انسخ يدوياً','err'); }
 };
 
 // (pin-strip + search highlights are refreshed from inside renderMessages above)

@@ -139,62 +139,6 @@ export function bcSection(title, body) {
 // DOM insertion. No closure state assumed.
 
 /**
- * aiAnalysisHTML(d) — يبني HTML للوحة تحليل العميل بالذكاء الاصطناعي.
- * d: { summary, churnRiskAssessment, predictedNextProduct,
- *      opportunities[], recommendedActions[{priority, action, reason}] }
- *
- * Returns HTML string. Caller writes into the target element:
- *   document.getElementById('ai-body').innerHTML = aiAnalysisHTML(d);
- */
-export function aiAnalysisHTML(d) {
-  if (!d) {
-    return '<div style="color:var(--dim2);text-align:center;padding:var(--space-xl)">لا توجد بيانات</div>';
-  }
-  const priorityCol = { high: 'var(--r)', medium: 'var(--y)', low: 'var(--g)' };
-  const priorityIco = { high: '🔥', medium: '⚡', low: '🌱' };
-  const actions = (d.recommendedActions || []).map(a => `
-    <div style="background:var(--bg3);border-right:3px solid ${priorityCol[a.priority] || 'var(--dim)'};border-radius:8px;padding:10px 12px;margin-bottom:6px">
-      <div style="font-weight:var(--fw-bold);color:var(--snow);font-size:var(--fs-md);margin-bottom:4px">${priorityIco[a.priority] || '•'} ${escapeHtml(a.action || '')}</div>
-      <div style="font-size:var(--fs-sm);color:var(--dim);line-height:1.6">${escapeHtml(a.reason || '')}</div>
-    </div>`).join('');
-  const opps = (d.opportunities || []).map(o => `<li style="margin-bottom:4px">${escapeHtml(o)}</li>`).join('');
-
-  return `
-    <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--ai,var(--g-emerald));text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">ملخّص</div>
-      <div style="color:var(--snow);font-size:var(--fs-md);line-height:var(--lh-relaxed)">${escapeHtml(d.summary || '')}</div>
-    </div>
-
-    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ تقييم خطر الفقد</div>
-      <div style="color:var(--snow);font-size:var(--fs-md);line-height:var(--lh-relaxed)">${escapeHtml(d.churnRiskAssessment || '')}</div>
-    </div>
-
-    ${d.predictedNextProduct ? `
-    <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--pu,var(--p));text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🔮 المنتج المتوقع للطلب القادم</div>
-      <div style="color:var(--snow);font-size:var(--fs-lg);font-weight:var(--fw-bold)">${escapeHtml(d.predictedNextProduct)}</div>
-    </div>` : ''}
-
-    ${opps ? `
-    <div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px 14px;margin-bottom:12px">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💡 فرص</div>
-      <ul style="margin:0;padding-right:18px;color:var(--snow);font-size:var(--fs-md)">${opps}</ul>
-    </div>` : ''}
-
-    ${actions ? `
-    <div>
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📋 الإجراءات المقترحة</div>
-      ${actions}
-    </div>` : ''}
-
-    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-xs);color:var(--dim2);text-align:center">
-      🤖 توليد بـ Genkit + Gemini · هذا تحليل آلي، راجع قبل التنفيذ
-    </div>
-  `;
-}
-
-/**
  * clientFollowupsHTML({followups, err, orders, FU_TYPE_COL, FU_TYPES,
  *                      FU_OUTCOMES, STAGE_HREF}) — يبني HTML لتبويب
  * المتابعات داخل لوحة العميل. كل الـ refs الخارجية تمرَّر صراحةً.
@@ -1606,8 +1550,7 @@ if (typeof window !== 'undefined') {
     fuTimeAgo, fuFmtDate, toLocalDT,
     escapeHtml,
     pRow, bcInput, bcTextarea, bcSection,
-    // PR-2:
-    aiAnalysisHTML, clientFollowupsHTML,
+    clientFollowupsHTML,
     // PR-3:
     panelOrdersHTML,
     // PR-4:

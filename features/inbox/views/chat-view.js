@@ -35,7 +35,6 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
       </div>
       <div class="ib-chat-hdr-actions" style="position:relative">
         <button type="button" class="ib-iconbtn" onclick="toggleConvSearch()" title="بحث في المحادثة">🔍</button>
-        <button type="button" class="ib-iconbtn" onclick="openAIPanel()" title="مساعد AI">🤖</button>
         <button type="button" class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
         <button type="button" class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
         <button type="button" class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
