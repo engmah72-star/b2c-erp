@@ -7,6 +7,7 @@
 > **التوافق الدستوري:** BUSINESS DNA (4 أطراف · ليس Marketplace) · L1 (الصفحة view) ·
 > H1.1 (الكتابة عبر actions) · RULE 3 (atomic) · G3 (bounded) · H3 (audit) · RULE 8 (حقول حسّاسة).
 > **المرجع المعماري الكامل:** `docs/MESSAGING_SYSTEM_DESIGN.md`.
+> **نموذج الحوكمة (الأساس — مَن/كيف/بماذا):** `docs/MESSAGING_GOVERNANCE_MODEL.md`.
 > **الاستثناء الدستوري لعميل↔عميل:** `docs/CONSTITUTIONAL_EXCEPTION_MEMBER_MESSAGING.md`.
 
 ---
@@ -25,6 +26,26 @@
 **الفجوات المعروفة** (من تدقيق `MESSAGING_SYSTEM_DESIGN.md §2):** قواعد أمان واسعة ·
 لا rate-limit · لا pagination · لا بحث · إشعارات client-synthesized · لا internal-notes ·
 لا triage/SLA · لا admin console.
+
+---
+
+## المرحلة 0 — ترميز نموذج الحوكمة (تأسيسية — Policy-First)
+**التعقيد: S · الأولوية: 🔴 قبل كل شيء · بلا تغيير سلوك ظاهر (تكافؤ)**
+
+تُرسي مصدر الحقيقة الواحد للعلاقات والقدرات قبل أي ميزة. التفاصيل في
+`docs/MESSAGING_GOVERNANCE_MODEL.md §8`.
+
+1. **`core/messaging-policy.js`** (pure · بلا I/O): مصفوفة العلاقات (مَن يكلّم مَن) +
+   حِزَم القدرات (`CAP_FULL/SERVICE/PEER/PROCUREMENT`) + دالة
+   `resolve({from,to,context}) → {allowed, mode, channelType, caps, visibility, lifecycle, requiresContext?, requiresConsent?}`.
+2. **حارس مركزي واحد:** `openClientThread`/`inboxActions.ensure*` تستدعي `resolve()`
+   قبل أي كتابة وترفض لو `!allowed` (يستوعب حارس `messaging.memberToMember` الحالي).
+3. **تخزين `mode` صراحةً** على المحادثة (بدل استنتاجه من الـ id) — additive · backward-compatible.
+4. **اختبارات المصفوفة:** كل خلية ممنوعة/مسموحة (عميل لا يفتح DM موظف · مورد↔عميل ممنوع ·
+   عضو↔عضو يحتاج flag+سياق+قبول · موظف↔موظف حر).
+
+**معيار القبول:** لا مدخل يفتح محادثة دون `resolve()` · سلوك اليوم يبقى مطابقاً (تكافؤ) ·
+كل ميزة تالية تستهلك الـ policy لا تكرّر شروطها.
 
 ---
 
