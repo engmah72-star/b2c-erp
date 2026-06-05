@@ -172,9 +172,17 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
     ${footer}
   </article></main>
   <script>
+  // إحالة (Business Network): لو الزائر عضو مسجَّل (cpMemberUid في نفس الأصل) وليس
+  // صاحب الكارت، يصبح زر المشاركة «أحِل واكسب» ويضيف ?ref=<uid> فتُحتسب زيارته إحالة.
+  var OWNER='${esc(card.uid || '')}';
+  var ME=(function(){try{return localStorage.getItem('cpMemberUid')||'';}catch(_){return '';}})();
+  var IS_REF=ME&&ME!==OWNER;
+  function shareUrl(){return IS_REF?(location.origin+location.pathname+'?ref='+encodeURIComponent(ME)):(location.origin+location.pathname);}
+  if(IS_REF){var rb=document.getElementById('shareBtn');if(rb)rb.textContent='🔗 أحِل واكسب';}
   document.getElementById('shareBtn').addEventListener('click',async()=>{
-    if(navigator.share){try{await navigator.share({title:document.title,url:location.href});}catch(_){}}
-    else{try{await navigator.clipboard.writeText(location.href);alert('✅ تم نسخ الرابط');}catch(_){prompt('انسخ الرابط:',location.href);}}
+    var u=shareUrl();
+    if(navigator.share){try{await navigator.share({title:document.title,url:u});}catch(_){}}
+    else{try{await navigator.clipboard.writeText(u);alert(IS_REF?'✅ تم نسخ رابط الإحالة':'✅ تم نسخ الرابط');}catch(_){prompt('انسخ الرابط:',u);}}
   });
   document.getElementById('dlBtn').addEventListener('click',async()=>{
     const big='https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=0&data='+encodeURIComponent(location.href);

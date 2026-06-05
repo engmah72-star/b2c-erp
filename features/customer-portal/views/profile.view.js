@@ -24,6 +24,7 @@ const TEMPLATE_OPTS = [
 export function create(ctx) {
   const { services, store, shell } = ctx;
   let client = null;
+  let pub = null; // public_cards (لعرض عدّاد الإحالات)
   let editing = false;
   let busy = false;
   let pending = null; // { kind:'logo'|'cover', file, dataUrl } — معاينة قبل الحفظ
@@ -72,6 +73,7 @@ export function create(ctx) {
       <div class="cp-kv"><span class="cp-kv__k">الاسم</span><span class="cp-kv__v">${escapeHtml(uname())}</span></div>
       <div class="cp-kv"><span class="cp-kv__k">الهاتف</span><span class="cp-kv__v">${escapeHtml(phone || '—')}</span></div>
       <div class="cp-kv"><span class="cp-kv__k">النشاط</span><span class="cp-kv__v">${escapeHtml(biz.activity || '—')}</span></div>
+      <div class="cp-kv"><span class="cp-kv__k">👀 زيارات بإحالة</span><span class="cp-kv__v">${Number(pub?.referralCount) || 0}</span></div>
     </div>` });
     const qrCard = uid() ? Card({ body: `<div class="cp-stack cp-stack--sm cp-text-c">
       <div class="cp-title">QR صفحتك</div>
@@ -155,6 +157,7 @@ export function create(ctx) {
     async mount() {
       client = uid() ? await services.profile.loadClient(uid()) : null;
       if (client && uid()) { try { await ensureUsername(); } catch (_) { /* غير قاتل */ } }
+      if (uid()) { try { pub = await services.profile.loadPublicCard(uid()); } catch (_) { pub = null; } }
       return editing ? form() : view();
     },
     async onUpload(input) {
