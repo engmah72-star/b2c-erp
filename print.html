@@ -1874,15 +1874,26 @@ function getPaperOptions(){
 // ── فتح Modal التعديل ──
 // focusIdx (اختياري): يفتح منتج بعينه (accordion) عند الدخول من زر «تعديل
 // بيانات الطباعة» على كارت المنتج في البانل.
-window.__openEP = {};
-window.toggleEPCard = function(i){ window.__openEP[i] = !window.__openEP[i]; renderEditProdsList(); };
+// Wizard: المودال يعرض منتج واحد في كل خطوة (__epStep) + شريط تقدّم + تنقّل.
+window.__epStep = 0;
+window.epGoStep = function(delta){
+  const n = editProdsData.length; if(!n) return;
+  window.__epStep = Math.max(0, Math.min(n-1, (window.__epStep||0)+delta));
+  renderEditProdsList();
+  const body=document.querySelector('#ov-edit-prods .modal-body'); if(body)body.scrollTop=0;
+};
+window.epGotoStep = function(j){
+  const n = editProdsData.length; if(!n) return;
+  window.__epStep = Math.max(0, Math.min(n-1, j));
+  renderEditProdsList();
+  const body=document.querySelector('#ov-edit-prods .modal-body'); if(body)body.scrollTop=0;
+};
 window.openEditProds = function(focusIdx) {
   if(!activeOrder) return;
   const o = activeOrder;
   // نسخ المنتجات الحالية
   editProdsData = (o.products||[]).map(p=>({...p}));
-  window.__openEP = {};
-  if(typeof focusIdx==='number' && focusIdx>=0) window.__openEP[focusIdx]=true;
+  window.__epStep = (typeof focusIdx==='number' && focusIdx>=0) ? focusIdx : 0;
   renderEditProdsList();
   // السعر الكلي
   const priceInp = document.getElementById('ep-sale-price');
@@ -1893,65 +1904,81 @@ window.openEditProds = function(focusIdx) {
   document.getElementById('ov-edit-prods')?.classList.add('open');
 };
 
-// ── رندر القائمة ──
+// ── رندر القائمة (Wizard: منتج واحد لكل خطوة) ──
 function renderEditProdsList() {
   const el = document.getElementById('ep-products-list');
   if(!el) return;
-  if(!editProdsData.length) {
+  const n = editProdsData.length;
+  if(!n) {
     el.innerHTML = '<div style="font-size:var(--fs-base);color:var(--dim2);text-align:center;padding:10px">لا توجد منتجات — أضف منتجاً</div>';
     return;
   }
-  const multi = editProdsData.length>1;
-  el.innerHTML = editProdsData.map((p,i) => {
-    const isOpen = !multi || !!window.__openEP[i];
-    const rr = computeProductReadiness(activeOrder||{}, p);
-    const rc = rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)');
+  const multi = n>1;
+  if(window.__epStep==null) window.__epStep=0;
+  window.__epStep = Math.max(0, Math.min(n-1, window.__epStep));
+  const i = window.__epStep;
+  const p = editProdsData[i];
 
-    // صف مضغوط (منتجات كتير + مطوي) — كل منتج يتعدّل لوحده
-    if(multi && !isOpen){
-      return `<div onclick="toggleEPCard(${i})" style="display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:11px 12px;margin-bottom:8px;cursor:pointer">
-        <div style="flex:1;min-width:0">
-          <div class="txt-bold-md" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'} <span style="font-size:var(--fs-xs);color:var(--y)">×${p.qty||1}</span></div>
-          <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc};margin-top:2px">${rr.ready?'✅ بيانات الطباعة مكتملة':`بيانات الطباعة ${rr.pct}%`}</div>
-        </div>
-        <span style="color:var(--dim2);font-size:var(--fs-lg)">▸</span>
-      </div>`;
-    }
+  // شريط التقدّم + العدّاد (يظهر لو أكتر من منتج) — كل شريحة تنقّلك للمنتج
+  const doneCount = editProdsData.filter(pp=>computeProductReadiness(activeOrder||{},pp).ready).length;
+  const head = multi ? `
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">
+        <span>📦 منتج ${i+1} من ${n}</span>
+        <span style="color:${doneCount===n?'var(--g)':'var(--dim2)'}">${doneCount}/${n} مكتمل</span>
+      </div>
+      <div style="display:flex;gap:4px">
+        ${editProdsData.map((pp,j)=>{const rj=computeProductReadiness(activeOrder||{},pp);const c=j===i?'var(--b)':(rj.ready?'var(--g)':'var(--line2)');return `<div onclick="epGotoStep(${j})" title="منتج ${j+1}" style="flex:1;height:7px;border-radius:4px;background:${c};cursor:pointer"></div>`;}).join('')}
+      </div>
+    </div>` : '';
 
-    // الإضافات — تُحقن داخل «بيانات الطباعة» (جزء منها حسب طلب المستخدم)
-    const extrasHTML = (()=>{
-      const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
-      const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
-      const extrasList=_unified.length?_unified:_legacy;
-      if(!extrasList.length)return'';
-      const sel=p.extras||[];
-      return `<div style="margin-top:10px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ الإضافات</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${extrasList.map(ex=>{const on=sel.includes(ex);return`<button type="button" onclick="toggleProdExtra(${i},'${ex}',${!on})" style="padding:3px 12px;border-radius:20px;border:1px solid ${on?'var(--g)':'var(--line)'};background:${on?'rgba(0,217,126,.12)':'var(--bg2)'};color:${on?'var(--g)':'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${on?'✓ ':''}${ex}</button>`;}).join('')}
-        </div>
-      </div>`;
-    })();
+  // أزرار التنقّل (السابق/التالي)
+  const nav = multi ? `
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button type="button" onclick="epGoStep(-1)" ${i===0?'disabled':''} style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);color:${i===0?'var(--dim2)':'var(--snow)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${i===0?'not-allowed':'pointer'};font-family:inherit;opacity:${i===0?'.5':'1'}">◀ السابق</button>
+      <button type="button" onclick="epGoStep(1)" ${i===n-1?'disabled':''} style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--b);background:${i===n-1?'var(--bg2)':'rgba(59,158,255,.1)'};color:${i===n-1?'var(--dim2)':'var(--b)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${i===n-1?'not-allowed':'pointer'};font-family:inherit;opacity:${i===n-1?'.5':'1'}">التالي ▶</button>
+    </div>` : '';
 
-    // صور المنتج
-    const imagesHTML = (()=>{
-      const imgs=getProductImages(p); const cnt=imgs.length;
-      return `<div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:10px">
-        ${cnt>0
-          ? `<div onclick="openProdImg(${i})" style="position:relative;cursor:pointer;flex-shrink:0"><img src="${imgs[0]}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:var(--bg2)" alt="">${cnt>1?`<span style="position:absolute;top:-4px;left:-4px;background:var(--p);color:#fff;font-size:var(--fs-xs);font-weight:var(--fw-extra);border-radius:var(--rad);padding:1px 6px">+${cnt-1}</span>`:''}</div>`
-          : `<div onclick="openProdImg(${i})" style="width:48px;height:48px;border-radius:8px;border:2px dashed var(--line2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;background:var(--bg2)" title="رفع صورة">🖼️</div>`}
-        <button type="button" class="btn btn-ghost btn-sm" onclick="openProdImg(${i})" style="flex:1;font-size:var(--fs-sm)">${cnt>0 ? `🔄 إدارة الصور (${cnt})` : '＋ إضافة صور'}</button>
-      </div>`;
-    })();
+  el.innerHTML = head + renderEPProductCard(p, i) + nav;
+}
 
-    return`
-    <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)">
-      <!-- رأس: اسم + جاهزية + (طي لو متعدد) + حذف -->
+// كارت تعديل منتج واحد (داخل الـ wizard): اسم/حذف + كمية/سعر + نوع الطباعة +
+// بيانات الطباعة (renderProductBrief بـ hideQty) + الإضافات بداخلها + الصور.
+function renderEPProductCard(p, i){
+  const rr = computeProductReadiness(activeOrder||{}, p);
+  const rc = rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)');
+
+  const extrasHTML = (()=>{
+    const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
+    const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+    const extrasList=_unified.length?_unified:_legacy;
+    if(!extrasList.length)return'';
+    const sel=p.extras||[];
+    return `<div style="margin-top:10px">
+      <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ الإضافات</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${extrasList.map(ex=>{const on=sel.includes(ex);return`<button type="button" onclick="toggleProdExtra(${i},'${ex}',${!on})" style="padding:3px 12px;border-radius:20px;border:1px solid ${on?'var(--g)':'var(--line)'};background:${on?'rgba(0,217,126,.12)':'var(--bg2)'};color:${on?'var(--g)':'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${on?'✓ ':''}${ex}</button>`;}).join('')}
+      </div>
+    </div>`;
+  })();
+
+  const imagesHTML = (()=>{
+    const imgs=getProductImages(p); const cnt=imgs.length;
+    return `<div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:10px">
+      ${cnt>0
+        ? `<div onclick="openProdImg(${i})" style="position:relative;cursor:pointer;flex-shrink:0"><img src="${imgs[0]}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:var(--bg2)" alt="">${cnt>1?`<span style="position:absolute;top:-4px;left:-4px;background:var(--p);color:#fff;font-size:var(--fs-xs);font-weight:var(--fw-extra);border-radius:var(--rad);padding:1px 6px">+${cnt-1}</span>`:''}</div>`
+        : `<div onclick="openProdImg(${i})" style="width:48px;height:48px;border-radius:8px;border:2px dashed var(--line2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;background:var(--bg2)" title="رفع صورة">🖼️</div>`}
+      <button type="button" class="btn btn-ghost btn-sm" onclick="openProdImg(${i})" style="flex:1;font-size:var(--fs-sm)">${cnt>0 ? `🔄 إدارة الصور (${cnt})` : '＋ إضافة صور'}</button>
+    </div>`;
+  })();
+
+  return `
+    <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;border:1px solid var(--line)">
+      <!-- رأس: اسم + جاهزية + حذف -->
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
-        <div ${multi?`onclick="toggleEPCard(${i})" style="cursor:pointer;`:'style="'}display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          ${multi?`<span style="color:var(--dim2);font-size:var(--fs-lg)">▾</span>`:''}
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
           <div class="txt-bold-md" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'}</div>
-          <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc};flex-shrink:0">${rr.ready?'✅':rr.pct+'%'}</span>
+          <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc};flex-shrink:0">${rr.ready?'✅ مكتمل':rr.pct+'%'}</span>
         </div>
         <button type="button" onclick="removeEditProd(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:var(--fs-base);flex-shrink:0">✕</button>
       </div>
@@ -1977,7 +2004,6 @@ function renderEditProdsList() {
       ${renderProductBrief(activeOrder||{}, p, i, {hideQty:true, extrasHTML})}
       ${imagesHTML}
     </div>`;
-  }).join('');
 }
 
 window.setProdPrintType=function(i,type){
@@ -2089,6 +2115,7 @@ window.confirmAddProduct = function() {
     size: mxSize || product?.size || '',
     notes: product?.notes || ''
   });
+  window.__epStep = editProdsData.length - 1; // الـ wizard ينتقل للمنتج الجديد
   renderEditProdsList();
   calcAutoPrice();
   closeAddProduct();
