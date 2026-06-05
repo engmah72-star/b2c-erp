@@ -44,6 +44,7 @@ import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry } from './core/audit.js';
 import { planClientMerge } from './features/clients/duplicate-scan.js';
 import { slugUsername } from './core/text-format.js';
+import { isFeatureEnabled, FLAGS } from './core/feature-flags.js';
 
 // P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
 // modular `db` instance. When called from compat consumers, the `db`
@@ -363,6 +364,11 @@ export const clientActions = {
     const supportAgents = kind === 'member' ? [] : await _loadSupportAgents(db);
     let convId, type, name, extra = {}, staff = [];
     if (kind === 'member') {
+      // حارس دستوري (المدخل المركزي الوحيد): محادثة عضو↔عضو استثناء محدود النطاق
+      // عن الـ BUSINESS DNA، فلا تُفتح إلا مع تفعيل العلم صراحةً (افتراضي OFF · E1).
+      if (!isFeatureEnabled(FLAGS.MESSAGING_MEMBER_TO_MEMBER)) {
+        return { ok: false, errors: ['🔒 محادثة الأعضاء غير مُفعّلة'], warnings: [] };
+      }
       if (!peer?.uid) return { ok: false, errors: ['⚠️ العضو المطلوب غير محدّد'], warnings: [] };
       if (peer.uid === clientUid) return { ok: false, errors: ['⚠️ لا يمكنك محادثة نفسك'], warnings: [] };
       const ids = [clientUid, peer.uid].sort();
