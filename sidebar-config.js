@@ -77,6 +77,7 @@ try {
 
     // ─── الأوردرات (orders) ───
     { file:'order-rail.html',        label:'سجل الأوردرات',    ico:'🚂', group:'orders', perm:'order-rail' },
+    { file:'portal-orders.html',     label:'أوردرات البوابة',  ico:'🌐', group:'orders', perm:'clients' },
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
