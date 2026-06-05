@@ -644,6 +644,42 @@ window.openOrder=function(id){
 
 window.closePanel=function(){document.getElementById('panel-ov').classList.remove('open');activeId=null;activeOrder=null;window.AppState?.clearOpenEntity?.();};
 
+// ── أقسام مطوية ثانوية (تقلّل زحمة الصفحة). الحالة محفوظة في window.__openSec
+// عشان تفضل ثابتة عبر re-render البانل المتكرر (ontoggle يحدّثها بدون رسم). ──
+if(typeof window!=='undefined' && !window.__openSec) window.__openSec={};
+function collapsibleSection(id, icon, title, content, defaultOpen){
+  const store=window.__openSec||{};
+  const open=(id in store)?store[id]:!!defaultOpen;
+  return `<details ${open?'open':''} ontoggle="(window.__openSec=window.__openSec||{})['${id}']=this.open" style="border-bottom:1px solid var(--line)">
+    <summary style="padding:12px 16px;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);-webkit-tap-highlight-color:transparent">
+      <span>${icon} ${title}</span>
+      <span style="color:var(--dim2);font-size:var(--fs-lg)">⌄</span>
+    </summary>
+    <div style="padding:0 16px 14px">${content}</div>
+  </details>`;
+}
+
+// ── قسم الملفات (الملف النهائي للمطبعة) — بارز أعلى الصفحة لتسهيل الرفع ──
+function renderFilesSection(o){
+  return `<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+    <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">📁 الملف النهائي للمطبعة</div>
+    ${o.printFinalUrl?(o.printFinalType?.includes('pdf')
+      ?`<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:12px 14px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);color:var(--p);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-md);margin-bottom:8px">📄 فتح الملف (PDF) ←</a>`
+      :`<img src="${o.printFinalUrl}" onclick="window.open('${o.printFinalUrl}','_blank')" loading="lazy" decoding="async" alt="الملف النهائي" style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:200px;object-fit:contain;background:var(--bg3);margin-bottom:10px;display:block">`)
+    :''}
+    <div onclick="document.getElementById('print-final-inp').click()" style="background:${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'};border:2px dashed ${o.printFinalUrl?'var(--line)':'rgba(59,158,255,.4)'};border-radius:12px;padding:${o.printFinalUrl?'12px':'20px'};text-align:center;cursor:pointer;transition:background .15s" ontouchstart="this.style.background='var(--bg3)'" ontouchend="this.style.background='${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'}'">
+      <div style="font-size:${o.printFinalUrl?'20':'32'}px;margin-bottom:4px">${o.printFinalUrl?'🔄':'📁'}</div>
+      <div style="font-size:${o.printFinalUrl?'12':'14'}px;font-weight:var(--fw-extra);color:${o.printFinalUrl?'var(--dim2)':'var(--b)'}">${o.printFinalUrl?'تغيير الملف':'ارفع الملف النهائي'}</div>
+      ${!o.printFinalUrl?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px">صورة أو PDF</div>`:''}
+    </div>
+    <div class="prog-wrap" id="prog-wrap">
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
+      <div class="prog-txt" id="prog-txt">0%</div>
+    </div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:8px">🖼️ صور المنتجات تُضاف من «📦 تعديل المنتجات» (زر الصورة على كل منتج).</div>
+  </div>`;
+}
+
 // Render Panel
 function renderPanel(o){
   if(!o)return; // حارس: لا يُرسَم بدون أوردر مفتوح (يمنع crash من listeners تستدعيه بلا arg)
@@ -659,6 +695,18 @@ function renderPanel(o){
       <a href="order-tracking.html?id=${o._id}" class="chip-track" style="margin-bottom:10px">📋 تتبع كامل للأوردر</a>
     </div>
     ${renderOrderReadinessCard(o)}
+    <!-- تنبيه عدم وجود صورة (بارز أعلى الصفحة) -->
+    ${!(o.products||[]).some(p=>p.designImageUrl)&&!o.designImageUrl&&!o.printFinalUrl?`<div style="padding:14px 16px 0">
+      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:12px 14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:24px">⚠️</span>
+        <div>
+          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">لا توجد صورة تصميم</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">ارفع الملف النهائي أو أضف صورة من "📦 تعديل المنتجات"</div>
+        </div>
+      </div>
+    </div>`:''}
+    <!-- الملفات (بارز أعلى الصفحة) -->
+    ${renderFilesSection(o)}
     <!-- Products: each with image + specs -->
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
@@ -754,71 +802,34 @@ function renderPanel(o){
       </div>
     </div>
 
-    <!-- Finance bar (compact) -->
-    ${sale>0?`<div style="padding:10px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
-      <div class="flex-1">
-        <div class="fin-bar" style="margin-bottom:4px"><div class="fin-bar-fill" style="width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'}"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2)">
-          <span>محصّل <b class="text-g">${fn(paid)} ج</b></span>
-          ${rem>0?`<span>باقي <b class="text-r">${fn(rem)} ج</b></span>`:`<span style="color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</span>`}
+    <!-- المالية (مطوي) -->
+    ${sale>0?collapsibleSection('fin','💰','المالية',`
+      <div style="display:flex;align-items:center;gap:10px;padding-top:4px">
+        <div class="flex-1">
+          <div class="fin-bar" style="margin-bottom:4px"><div class="fin-bar-fill" style="width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'}"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2)">
+            <span>محصّل <b class="text-g">${fn(paid)} ج</b></span>
+            ${rem>0?`<span>باقي <b class="text-r">${fn(rem)} ج</b></span>`:`<span style="color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</span>`}
+          </div>
         </div>
-      </div>
-      <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);flex-shrink:0">${fn(sale)} ج</div>
-    </div>`:''}
+        <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);flex-shrink:0">${fn(sale)} ج</div>
+      </div>`,false):''}
 
-    <!-- Print notes (prominent, auto-save) -->
-    ${o.printNotes?`<div style="padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(255,193,7,.05)">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--y);margin-bottom:4px">📋 تعليمات الطباعة</div>
-      <div style="font-size:var(--fs-base);color:var(--snow);white-space:pre-wrap;line-height:1.6">${o.printNotes}</div>
-    </div>`:''}
-
-    <!-- Upload final file (PROMINENT) -->
-    <div style="padding:14px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">📁 الملف النهائي للمطبعة</div>
-      ${o.printFinalUrl?(o.printFinalType?.includes('pdf')
-        ?`<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:12px 14px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);color:var(--p);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-md);margin-bottom:8px">📄 فتح الملف (PDF) ←</a>`
-        :`<img src="${o.printFinalUrl}" onclick="window.open('${o.printFinalUrl}','_blank')" loading="lazy" decoding="async" alt="الملف النهائي" style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:200px;object-fit:contain;background:var(--bg3);margin-bottom:10px;display:block">`)
-      :''}
-      <div onclick="document.getElementById('print-final-inp').click()" style="background:${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'};border:2px dashed ${o.printFinalUrl?'var(--line)':'rgba(59,158,255,.4)'};border-radius:12px;padding:${o.printFinalUrl?'12px':'20px'};text-align:center;cursor:pointer;transition:background .15s" ontouchstart="this.style.background='var(--bg3)'" ontouchend="this.style.background='${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'}'">
-        <div style="font-size:${o.printFinalUrl?'20':'32'}px;margin-bottom:4px">${o.printFinalUrl?'🔄':'📁'}</div>
-        <div style="font-size:${o.printFinalUrl?'12':'14'}px;font-weight:var(--fw-extra);color:${o.printFinalUrl?'var(--dim2)':'var(--b)'}">${o.printFinalUrl?'تغيير الملف':'ارفع الملف النهائي'}</div>
-        ${!o.printFinalUrl?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px">صورة أو PDF</div>`:''}
-      </div>
-      <div class="prog-wrap" id="prog-wrap">
-        <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
-        <div class="prog-txt" id="prog-txt">0%</div>
-      </div>
-    </div>
-
-    <!-- Print notes edit -->
-    <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">📝 تعليمات الطباعة</div>
+    <!-- تعليمات الطباعة (مطوي — يفتح تلقائياً لو فيه تعليمات) -->
+    ${collapsibleSection('notes','📝','تعليمات الطباعة',`
       <textarea id="print-notes-inp" rows="3" placeholder="سلوفان · ٢ وجه · تسليم الخميس..." onchange="savePrintNotes()" style="width:100%;padding:11px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);color:var(--snow);font-size:var(--fs-lg);font-family:inherit;direction:rtl;resize:none;-webkit-appearance:none;box-sizing:border-box">${o.printNotes||''}</textarea>
       <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">يُحفظ تلقائياً عند تغيير النص</div>
-    </div>
+    `, !!o.printNotes)}
 
-    <!-- No design warning -->
-    ${!(o.products||[]).some(p=>p.designImageUrl)&&!o.designImageUrl&&!o.printFinalUrl?`<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
-      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:12px 14px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:24px">⚠️</span>
-        <div>
-          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">لا توجد صورة تصميم</div>
-          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">ارفع الملف النهائي أو أضف صورة من "📦 تعديل المنتجات"</div>
-        </div>
-      </div>
-    </div>`:''}
-
-    <!-- Reference files -->
-    ${o.refFileUrl||o.designNote?`<div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">🎨 مرجع التصميم</div>
+    <!-- مرجع التصميم (مطوي) -->
+    ${o.refFileUrl||o.designNote?collapsibleSection('ref','🎨','مرجع التصميم',`
       ${o.designNote?`<div style="padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:var(--fs-base);color:var(--dim2);margin-bottom:6px;line-height:var(--lh-base)">${o.designNote}</div>`:''}
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);color:var(--b);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-base)">📎 الملف المرجعي ←</a>`:''}
-    </div>`:''}
+    `, false):''}
 
-    <!-- ══ بيانات الشحن (يُدخلها مسؤول الطباعة قبل التحويل للتنفيذ) ══ -->
-    <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">🚚 بيانات الشحن</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
+    <!-- بيانات الشحن (مطوي — مفتوح افتراضياً لأنه مطلوب قبل التحويل للتنفيذ) -->
+    ${collapsibleSection('ship','🚚','بيانات الشحن',`
+      <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
             <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
@@ -854,7 +865,7 @@ function renderPanel(o){
         </div>
         <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
       </div>
-    </div>
+    `, true)}
 
     <!-- السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html). -->
   `;
