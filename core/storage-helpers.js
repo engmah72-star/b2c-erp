@@ -47,6 +47,8 @@ export const CLIENT_FILE_KINDS = Object.freeze({
   COVER:     'cover',
   WORKS:     'works',
   GALLERY:   'gallery',
+  // مرفقات محادثة العميل (قراءة بالـtoken عبر رابط التنزيل — لا قراءة عامة بالمسار).
+  CHAT:      'chat',
 });
 
 export const EMPLOYEE_FILE_KINDS = Object.freeze({
