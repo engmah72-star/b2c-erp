@@ -37,7 +37,7 @@
 
 import {
   doc, collection, getDoc, getDocs, addDoc, setDoc, updateDoc, writeBatch,
-  query, where, limit, serverTimestamp, increment,
+  query, where, limit, serverTimestamp, increment, arrayUnion, arrayRemove,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
@@ -527,16 +527,18 @@ export const clientActions = {
     }
   },
 
-  /** إرسال رسالة نصية من العميل في محادثته. */
-  async sendClientMessage({ db = defaultDb, convId, text, senderId, senderName = 'عميل', participants = [] }) {
+  /** إرسال رسالة نصية من العميل في محادثته (مع ردّ اختياري replyTo). */
+  async sendClientMessage({ db = defaultDb, convId, text, senderId, senderName = 'عميل', participants = [], replyTo = null }) {
     const t = (text || '').trim();
     if (!convId || !senderId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
     if (!t) return { ok: false, errors: ['⚠️ اكتب رسالة'], warnings: [] };
     try {
-      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+      const msg = {
         senderId, senderName, type: 'text', text: t,
         createdAt: serverTimestamp(), readBy: { [senderId]: serverTimestamp() },
-      });
+      };
+      if (replyTo && replyTo.msgId) msg.replyTo = { msgId: replyTo.msgId, senderName: replyTo.senderName || '', preview: (replyTo.preview || '').slice(0, 80) };
+      await addDoc(collection(db, 'conversations', convId, 'messages'), msg);
       const upd = {
         lastMessageAt: serverTimestamp(), lastMessagePreview: t.slice(0, 80),
         lastSenderId: senderId, lastSenderName: senderName, archivedBy: [],
@@ -558,6 +560,37 @@ export const clientActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'تعذّر التحديث'], warnings: [] };
     }
+  },
+
+  /** تعديل نص رسالة العميل (لرسائله فقط — تتحقق الواجهة من الملكية). */
+  async editClientMessage({ db = defaultDb, convId, messageId, text }) {
+    const t = (text || '').trim();
+    if (!convId || !messageId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    if (!t) return { ok: false, errors: ['⚠️ النص فارغ'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'conversations', convId, 'messages', messageId), { text: t, editedAt: serverTimestamp() });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) { return { ok: false, errors: [e.message || 'تعذّر التعديل'], warnings: [] }; }
+  },
+
+  /** حذف ناعم لرسالة العميل (يُفرّغ النص والمرفقات). */
+  async deleteClientMessage({ db = defaultDb, convId, messageId }) {
+    if (!convId || !messageId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'conversations', convId, 'messages', messageId), { deletedAt: serverTimestamp(), text: '', attachments: [] });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) { return { ok: false, errors: [e.message || 'تعذّر الحذف'], warnings: [] }; }
+  },
+
+  /** تبديل تفاعل العميل على رسالة (toggle emoji) — نفس شكل الإنبوكس. */
+  async toggleClientReaction({ db = defaultDb, convId, messageId, userId, emoji, adding }) {
+    if (!convId || !messageId || !userId || !emoji) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'conversations', convId, 'messages', messageId), {
+        ['reactions.' + emoji]: adding ? arrayUnion(userId) : arrayRemove(userId),
+      });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) { return { ok: false, errors: [e.message || 'تعذّر التفاعل'], warnings: [] }; }
   },
 
   /** إرسال مرفق (صورة/ملف) من العميل — نفس شكل الإنبوكس (type + attachments[]). */
