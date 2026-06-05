@@ -35,6 +35,20 @@ const BADGE_MAP = {
   'inbox.html':      [['inbox', 'unread']],
 };
 
+// ── Smart triage («المطلوب الآن») — مشتق من نفس الشارات الحيّة ──
+// كل بند: صفحة الهدف + أيقونة + label + درجة الإلحاح (crit>warn) + مفاتيح
+// الإشارات (تُجمع). يُعرض فقط للصفحات اللي المستخدم يقدر يوصلها (احترام
+// الصلاحيات عبر روابط القائمة)، ومرتّب حسب الإلحاح ثم العدد.
+const TRIAGE = [
+  { page: 'approvals.html',  ico: '✅', label: 'اعتمادات معلّقة',     kind: 'crit', keys: [['accounts', 'pending-approvals']] },
+  { page: 'shipping.html',   ico: '🚚', label: 'شحنات متأخرة',        kind: 'crit', keys: [['shipping', 'late']] },
+  { page: 'production.html', ico: '🏭', label: 'إنتاج محتاج انتباه',  kind: 'warn', keys: [['production', 'late'], ['production', 'no-supplier']] },
+  { page: 'returns.html',    ico: '↩️', label: 'مرتجعات مفتوحة',      kind: 'warn', keys: [['shipping', 'returns-open']] },
+  { page: 'suppliers.html',  ico: '🧾', label: 'طلبات دفع موردين',    kind: 'warn', keys: [['suppliers', 'pending']] },
+  { page: 'clients.html',    ico: '👤', label: 'عملاء متأخرين',       kind: 'warn', keys: [['clients', 'delayed']] },
+];
+const KIND_RANK = { crit: 2, warn: 1 };
+
 // ── Smart features state (نفس مفاتيح smart-sidebar → الحالة تنتقل بسلاسة) ──
 const LS_FAV = 'sb_favorites_v1';
 const LS_USE = 'sb_usage_v1';
@@ -128,7 +142,19 @@ class AppSidebar extends HTMLElement {
       // live count badge
       '.app-sb-badge{margin-inline-start:6px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;' +
       'background:var(--p,#a78bfa);color:#fff;font-size:var(--fs-xs,11px);font-weight:700;' +
-      'display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:middle;}';
+      'display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:middle;}' +
+      // smart triage («المطلوب الآن») — مشتق من الشارات الحيّة
+      '.app-sb-triage{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.12);flex-shrink:0;}' +
+      '.app-sb-triage-h{font-size:var(--fs-xs,11px);font-weight:700;color:rgba(255,255,255,.5);padding:0 4px 6px;}' +
+      '.app-sb-triage-item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;text-decoration:none;color:inherit;margin-bottom:3px;border:1px solid transparent;transition:background .15s;}' +
+      '.app-sb-triage-item:last-child{margin-bottom:0;}' +
+      '.app-sb-triage-item:hover{background:rgba(255,255,255,.06);}' +
+      '.app-sb-triage-item .t-ico{font-size:var(--fs-base);flex-shrink:0;}' +
+      '.app-sb-triage-item .t-lbl{flex:1;font-size:var(--fs-sm,13px);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.app-sb-triage-item .t-cnt{min-width:18px;height:18px;padding:0 5px;border-radius:9px;font-size:var(--fs-xs,11px);font-weight:700;display:inline-flex;align-items:center;justify-content:center;line-height:1;color:#fff;flex-shrink:0;}' +
+      '.app-sb-triage-item.kind-crit{border-color:rgba(239,68,68,.22);}' +
+      '.app-sb-triage-item.kind-crit .t-cnt{background:var(--r,#ef4444);}' +
+      '.app-sb-triage-item.kind-warn .t-cnt{background:var(--y-amber,#fbbf24);color:#1a1205;}';
     document.head.appendChild(st);
   }
 
@@ -143,6 +169,7 @@ class AppSidebar extends HTMLElement {
           '<span aria-hidden="true">🔍</span>' +
           '<input type="text" placeholder="ابحث في القائمة..." aria-label="بحث في القائمة">' +
         '</div></div>' +
+        '<div class="app-sb-triage" id="app-sb-triage" aria-label="المطلوب الآن" hidden></div>' +
         '<nav class="nav-scroll" id="app-sb-links" aria-label="القائمة الرئيسية"></nav>' +
         '<div class="nav-foot">' +
           '<div class="nav-user" role="button" tabindex="0" aria-label="تسجيل خروج">' +
@@ -176,7 +203,45 @@ class AppSidebar extends HTMLElement {
       }
     }
     const linksEl = this.querySelector('#app-sb-links');
-    if (linksEl) { linksEl.innerHTML = html; this._enhance(linksEl); this._wireBadges(linksEl); }
+    if (linksEl) { linksEl.innerHTML = html; this._enhance(linksEl); this._wireBadges(linksEl); this._wireTriage(); }
+  }
+
+  // ── Smart triage («المطلوب الآن») — ترتيب الشارات الحيّة حسب الإلحاح ──
+  // يعيد استخدام نفس signals (bounded + permission-safe). يعرض فقط البنود
+  // ذات count>0 لصفحات يقدر المستخدم يوصلها، top 4، مرتّبة crit ثم warn ثم العدد.
+  _wireTriage() {
+    const host = this.querySelector('#app-sb-triage');
+    if (!host) return;
+    try { signalsAgg.start(); } catch (_) {}        // idempotent
+    // الصفحات المتاحة للمستخدم = روابط القائمة المبنيّة (تحترم الصلاحيات)
+    const accessible = new Set(
+      Array.from(this.querySelectorAll('#app-sb-links a.nav-link'))
+        .map(a => (a.getAttribute('href') || '').split('/').pop())
+    );
+    const render = () => {
+      const rows = [];
+      for (const t of TRIAGE) {
+        if (!accessible.has(t.page)) continue;       // مش متاحة لدوره → تجاهل
+        const count = t.keys.reduce((s, [d, k]) => s + (signals.getMetric(d, k) || 0), 0);
+        if (count > 0) rows.push({ t, count });
+      }
+      rows.sort((a, b) => (KIND_RANK[b.t.kind] - KIND_RANK[a.t.kind]) || (b.count - a.count));
+      const top = rows.slice(0, 4);
+      if (!top.length) { host.hidden = true; host.innerHTML = ''; return; }
+      let h = '<div class="app-sb-triage-h">⚡ المطلوب الآن</div>';
+      for (const { t, count } of top) {
+        h += '<a class="app-sb-triage-item kind-' + t.kind + '" href="' + esc(t.page) + '">' +
+               '<span class="t-ico" aria-hidden="true">' + t.ico + '</span>' +
+               '<span class="t-lbl">' + esc(t.label) + '</span>' +
+               '<span class="t-cnt">' + (count > 99 ? '99+' : String(count)) + '</span>' +
+             '</a>';
+      }
+      host.innerHTML = h;
+      host.hidden = false;
+    };
+    render();
+    if (this._triageUnsub) { try { this._triageUnsub(); } catch (_) {} }
+    this._triageUnsub = signals.onChange(() => render());
   }
 
   // ── Live count badges (reuse signals-aggregator — bounded + permission-safe) ──
