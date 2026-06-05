@@ -372,7 +372,7 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { doc, onSnapshot, getDoc, getDocs, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { inboxActions } from "./inbox-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
@@ -386,6 +386,7 @@ let userName = '';
 let currentRole = 'admin';
 let currentUserPerms = null;
 let currentOrder = null;
+let designers = [];
 let unsubscribe = null;
 // SLA override من الإعدادات (settings/main.stageSla) — للموعد المستهدف وتقييم المراحل.
 let stageSlaTable = null;
@@ -469,6 +470,8 @@ function renderToolbar(o) {
   if (o.clientId) {
     // RULE N1.3 — use ?openClient= (consumed by clients.html:476) instead of #client= (no consumer)
     html += '<a class="order-tb-menu-item" href="clients.html?openClient=' + encodeURIComponent(o.clientId) + '">👤 ملف العميل</a>';
+    // بدء تصميم فعّال: تعيين مصمم + فتح مجموعة (مصمم + عميل + خدمة عملاء).
+    html += '<button type="button" class="order-tb-menu-item" onclick="startDesignFlow()">🎨 بدء التصميم (تعيين مصمم + مجموعة)</button>';
     // جسر تواصل العميل: فتح محادثة الأوردر معه + تقديم التصميم له (طبقة المراسلة).
     html += '<button type="button" class="order-tb-menu-item" onclick="openClientOrderChat()">💬 محادثة العميل</button>';
     html += '<button type="button" class="order-tb-menu-item" onclick="sendDesignToClient()">📨 إرسال التصميم للعميل</button>';
@@ -856,6 +859,57 @@ function _orderProofUrl(o) {
   return o.printFinalUrl || o.designFileUrl || o.mockupUrl
     || (Array.isArray(o.designFiles) && o.designFiles[0] && (o.designFiles[0].url || o.designFiles[0])) || '';
 }
+async function loadDesigners() {
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), where('role', 'in', ['graphic_designer', 'design_operator']), limit(50)));
+    designers = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(u => u.isActive !== false && !u.deleted);
+  } catch (_) { /* اختياري */ }
+}
+
+// منتقي مصمم بسيط (overlay) — يُرجع {id,name} أو null.
+function pickDesigner(currentId) {
+  return new Promise(resolve => {
+    if (!designers.length) { toast('لا توجد قائمة مصممين متاحة', 'err'); return resolve(null); }
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    const opts = designers.map(d => `<option value="${d._id}" ${d._id===currentId?'selected':''}>${(d.name||d.email||d._id)}</option>`).join('');
+    ov.innerHTML = `<div style="background:var(--ws-bg-elev,#16203a);border:1px solid var(--ws-border,#27314d);border-radius:14px;padding:18px;max-width:360px;width:100%;font-family:inherit;color:var(--ws-text,#e7ecf6)">
+      <div style="font-weight:800;font-size:16px;margin-bottom:12px">🎨 بدء التصميم — اختر المصمم</div>
+      <select id="pd-sel" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--ws-border,#27314d);background:var(--ws-bg,#0f1830);color:inherit;font-family:inherit;font-size:14px;margin-bottom:14px">${opts}</select>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" id="pd-cancel" style="padding:8px 14px;border-radius:10px;border:1px solid var(--ws-border,#27314d);background:transparent;color:inherit;font-family:inherit;cursor:pointer">إلغاء</button>
+        <button type="button" id="pd-ok" style="padding:8px 16px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--p,#7c5cff),var(--b,#4f8cff));color:#fff;font-family:inherit;font-weight:700;cursor:pointer">بدء التصميم</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const close = v => { ov.remove(); resolve(v); };
+    ov.querySelector('#pd-cancel').onclick = () => close(null);
+    ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+    ov.querySelector('#pd-ok').onclick = () => {
+      const id = ov.querySelector('#pd-sel').value;
+      const d = designers.find(x => x._id === id);
+      close(id ? { id, name: d ? (d.name || d.email || id) : '' } : null);
+    };
+  });
+}
+
+window.startDesignFlow = async function() {
+  if (!currentOrder) return;
+  if (!currentOrder.clientId) { toast('الأوردر غير مرتبط بعميل مسجّل', 'err'); return; }
+  const pick = await pickDesigner(currentOrder.designerId);
+  if (!pick) return;
+  const r = await orderActions.startDesign({
+    db, orderId: currentOrder._id, designerId: pick.id, designerName: pick.name,
+    userId: currentUser?.uid || '', userName,
+  });
+  if (!r.ok) return toast('❌ ' + (r.errors || ['تعذّر بدء التصميم']).join(' · '), 'err');
+  if ((r.warnings || []).length) toast('⚠️ ' + r.warnings.join(' · '), 'warn');
+  toast('🎨 بدأ التصميم — تم تعيين ' + pick.name + ' وفتح المجموعة', 'ok');
+  if (r.convId && confirm('فتح مجموعة التصميم الآن؟')) {
+    const url = 'inbox.html?conv=' + encodeURIComponent(r.convId);
+    if (typeof window.navigatePage === 'function') window.navigatePage(url); else location.href = url;
+  }
+};
+
 window.openClientOrderChat = async function() {
   if (!currentOrder) return;
   try {
@@ -1069,6 +1123,8 @@ onAuthStateChanged(auth, async u => {
   } catch (e) {
     console.warn('user load error', e);
   }
+
+  loadDesigners();
 
   // Validate orderId
   if (!orderId) {

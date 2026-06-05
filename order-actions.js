@@ -38,6 +38,9 @@ import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-e
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
+// طبقة المراسلة: «بدء التصميم» يفتح مجموعة العميل بعد تعيين المصمم (side-effect تواصلي).
+// استيراد أعمال→مراسلة مسموح (قفل الحدود يقيّد المراسلة فقط من لمس الأعمال، لا العكس).
+import { inboxActions } from './inbox-actions.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -2576,6 +2579,43 @@ export const orderActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [], orderId };
     }
+  },
+
+  /**
+   * «بدء تصميم فعّال»: تعيين المصمم (أعمال) + فتح مجموعة العميل (مصمم + عميل +
+   * خدمة العملاء/الفريق) + إعلان داخلها (تواصل). المجموعة = نفس clord_{orderId}
+   * المشتركة مع العميل. الإعلان يزيد unread لكل المشاركين = إشعار ضمني.
+   * يجمع فعلين مركزيين: assignDesigner (هنا) + inboxActions.ensureClientOrderThread (مراسلة).
+   * Returns: { ok, errors[], warnings[], orderId, convId?, designerId? }
+   */
+  async startDesign({
+    db = defaultDb, orderId, designerId = '', designerName = '', userId, userName = '',
+  }) {
+    if (!orderId || !designerId) return { ok: false, errors: ['⚠️ الأوردر والمصمم مطلوبان'], warnings: [], orderId };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    // 1) تعيين المصمم (أعمال — مصدر الحقيقة على الأوردر).
+    const a = await orderActions.assignDesigner({ db, orderId, designerId, designerName, userId, userName });
+    if (!a.ok) return a;
+    // 2) جهّز الأوردر بالمصمم الجديد لبناء المشاركين.
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    order.designerId = designerId; order.designerName = designerName;
+    if (!order.clientId) {
+      return { ok: true, errors: [], warnings: ['⚠️ الأوردر بلا عميل مسجّل — لم تُفتح مجموعة العميل'], orderId, designerId };
+    }
+    // 3) افتح مجموعة العميل (مصمم + عميل + منشئ/CS + المُنفِّذ) — طبقة المراسلة.
+    const t = await inboxActions.ensureClientOrderThread({
+      db, order, currentUserId: userId, currentUserName: userName,
+    });
+    // 4) إعلان «بدأ التصميم» داخل المجموعة (unread لكل المشاركين = إشعار ضمني).
+    try {
+      await inboxActions.sendMessage({
+        db, convId: t.convId, senderId: userId, senderName: userName || 'النظام',
+        conv: { participants: t.participants, archivedBy: [] },
+        payload: { type: 'text', text: '🎨 بدأ التصميم — المصمم: ' + (designerName || '—') + '. خدمة العملاء والمصمم والعميل في هذه المجموعة.' },
+      });
+    } catch (_) { /* الإعلان ثانوي — التعيين والمجموعة تمّا */ }
+    return { ok: true, errors: [], warnings: a.warnings || [], orderId, convId: t.convId, designerId };
   },
 
   /**
