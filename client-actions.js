@@ -311,6 +311,7 @@ export const clientActions = {
       // صفحة الأعمال العامة + الدليل (P1/P5)
       username: slugUsername(bp.username),
       activity: (bp.activity || '').trim(),
+      specialty: (bp.specialty || '').trim(),
       city: (bp.city || '').trim(),
       address: (bp.address || '').trim(),
       template: (bp.template || '').trim(),
