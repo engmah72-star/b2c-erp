@@ -344,21 +344,34 @@ export const clientActions = {
   },
 
   /**
-   * خط تواصل العميل (Client ↔ Staff messaging).
+   * المدخل المركزي الوحيد لفتح/إنشاء محادثة من جانب العميل (Client messaging).
+   * كل تطوير جديد يحتاج محادثة عميل يمرّ من هنا — لا أنشئ مساراً موازياً.
    *
    * يفتح/ينشئ محادثة يكون العميل فيها participant، فتعمل تلقائياً مع قواعد
    * conversations الحالية (participant-based) — بلا أي تغيير في القواعد.
    *   - kind='order':   conversations/clord_{orderDocId}، يضيف فريق الأوردر
    *                     (المصمم/الإنتاج/الشحن/المنشئ) كـ participants فيرونها بالإنبوكس.
    *   - kind='support': conversations/csupport_{uid}، يضيف منشئ آخر أوردر (CS) إن وُجد.
+   *   - kind='member':  محادثة عضو↔عضو، id موحَّد dm_{sortedUids} (نفس مخطط الإنبوكس)،
+   *                     participants = [العميل، العضو الآخر]. peer={uid,name} مطلوب.
    * Returns: { ok, convId, participants }
    */
-  async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null }) {
+  async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null, peer = null }) {
     if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
     // CS pool المركزي — يضمن وجود موظف مستلِم في محادثة العميل (HOTFIX delivery).
-    const supportAgents = await _loadSupportAgents(db);
+    // محادثة عضو↔عضو لا تحتاج CS pool.
+    const supportAgents = kind === 'member' ? [] : await _loadSupportAgents(db);
     let convId, type, name, extra = {}, staff = [];
-    if (kind === 'order') {
+    if (kind === 'member') {
+      if (!peer?.uid) return { ok: false, errors: ['⚠️ العضو المطلوب غير محدّد'], warnings: [] };
+      if (peer.uid === clientUid) return { ok: false, errors: ['⚠️ لا يمكنك محادثة نفسك'], warnings: [] };
+      const ids = [clientUid, peer.uid].sort();
+      convId = 'dm_' + ids.join('_');
+      type = 'dm';
+      name = peer.name || 'عضو';
+      staff = [peer.uid]; // الطرف الآخر participant
+      extra = { dmNames: { [clientUid]: clientName || 'عضو', [peer.uid]: peer.name || 'عضو' } };
+    } else if (kind === 'order') {
       if (!order?._id) return { ok: false, errors: ['⚠️ الأوردر مطلوب'], warnings: [] };
       convId = 'clord_' + order._id;
       staff = [order.designerId, order.productionAgent, order.shippingOfficerId, order.createdBy].filter(Boolean);
@@ -533,6 +546,17 @@ export const clientActions = {
       return { ok: true, errors: [], warnings: [] };
     } catch (e) {
       return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر إرسال الرسالة' : (e.message || 'فشل الإرسال')], warnings: [] };
+    }
+  },
+
+  /** يصفّر unreadCount[uid] على محادثة العميل (عند فتحها). */
+  async markClientThreadRead({ db = defaultDb, convId, uid }) {
+    if (!convId || !uid) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'conversations', convId), { ['unreadCount.' + uid]: 0 });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'تعذّر التحديث'], warnings: [] };
     }
   },
 

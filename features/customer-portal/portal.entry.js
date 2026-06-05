@@ -26,11 +26,11 @@ const shell = createAppShell({
   tabs: TABS,
   actions: [
     { key: 'alerts', icon: '🔔', label: 'الإشعارات' },
-    { key: 'support', icon: '💬', label: 'الدعم' },
+    { key: 'chats', icon: '💬', label: 'المحادثات' },
   ],
   onNavigate: (key) => router.go(key),
   onAction: (key) => {
-    if (key === 'support') router.openChat({ kind: 'support' });
+    if (key === 'chats') router.openConversations();
     else if (key === 'alerts') router.openNotifications();
   },
 });
