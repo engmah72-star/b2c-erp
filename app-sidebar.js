@@ -175,7 +175,15 @@ class AppSidebar extends HTMLElement {
       '.app-sb-smart-item{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:7px;text-decoration:none;color:inherit;}' +
       '.app-sb-smart-item:hover{background:rgba(255,255,255,.06);}' +
       '.app-sb-smart-item .s-ico{font-size:var(--fs-sm);flex-shrink:0;}' +
-      '.app-sb-smart-item .s-lbl{flex:1;font-size:var(--fs-sm,13px);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(255,255,255,.8);}';
+      '.app-sb-smart-item .s-lbl{flex:1;font-size:var(--fs-sm,13px);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(255,255,255,.8);}' +
+      // ── منطقة سكرول واحدة (smart + favorites + nav) — سكربار واضح + منع تسرّب السكرول للصفحة ──
+      '.app-sb-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.30) transparent;}' +
+      '.app-sb-scroll::-webkit-scrollbar{width:10px;}' +
+      '.app-sb-scroll::-webkit-scrollbar-track{background:transparent;}' +
+      '.app-sb-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.24);border-radius:6px;border:2px solid transparent;background-clip:content-box;}' +
+      '.app-sb-scroll::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42);background-clip:content-box;}' +
+      // الـ nav الداخلي ما يعملش سكرول لوحده (الـ wrapper هو اللي يسكرول) — يمنع تضارب وتسرّب
+      '.app-sb .app-sb-scroll .nav-scroll{flex:none;overflow:visible;min-height:0;}';
     document.head.appendChild(st);
   }
 
@@ -191,8 +199,10 @@ class AppSidebar extends HTMLElement {
           '<input type="text" placeholder="ابحث في القائمة..." aria-label="بحث في القائمة">' +
         '</div></div>' +
         '<div class="app-sb-triage" id="app-sb-triage" aria-label="المطلوب الآن" hidden></div>' +
-        '<div class="app-sb-smart" id="app-sb-smart" aria-label="اختصارات" hidden></div>' +
-        '<nav class="nav-scroll" id="app-sb-links" aria-label="القائمة الرئيسية"></nav>' +
+        '<div class="app-sb-scroll">' +
+          '<div class="app-sb-smart" id="app-sb-smart" aria-label="اختصارات" hidden></div>' +
+          '<nav class="nav-scroll" id="app-sb-links" aria-label="القائمة الرئيسية"></nav>' +
+        '</div>' +
         '<div class="nav-foot">' +
           '<div class="nav-user" role="button" tabindex="0" aria-label="تسجيل خروج">' +
             '<div class="nav-avatar" id="app-sb-av" aria-hidden="true">' + esc(initial) + '</div>' +
@@ -292,7 +302,7 @@ class AppSidebar extends HTMLElement {
         if (count > 0) rows.push({ t, count });
       }
       rows.sort((a, b) => (KIND_RANK[b.t.kind] - KIND_RANK[a.t.kind]) || (b.count - a.count));
-      const top = rows.slice(0, 4);
+      const top = rows.slice(0, 3);
       if (!top.length) { host.hidden = true; host.innerHTML = ''; return; }
       let h = '<div class="app-sb-triage-h">⚡ المطلوب الآن</div>';
       for (const { t, count } of top) {
