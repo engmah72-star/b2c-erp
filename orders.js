@@ -1134,11 +1134,16 @@ export function validateStageRequirements(order, fromStage) {
         if (!paper) {
           errors.push(`${name}: نوع الورق ناقص`);
         }
+        // السلوفان إلزامي لكل المنتجات (يُقبل "بلا" كتأكيد صريح).
+        if (!p.lamination) {
+          errors.push(`${name}: السلوفان ناقص (اختر لامع/مات/بلا)`);
+        }
 
         if (isOffset) {
           if (!p.zinkType) errors.push(`${name} (أوفست): نوع الزنكات ناقص`);
           const sheets = parseFloat(p.paperSheets) || 0;
           if (sheets <= 0) errors.push(`${name} (أوفست): عدد الفروخ ناقص`);
+          if (!p.cutSize)  errors.push(`${name} (أوفست): مقاس القص ناقص`);
           if (!p.pressId)  errors.push(`${name} (أوفست): المطبعة غير محددة`);
         }
       });

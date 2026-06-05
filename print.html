@@ -934,6 +934,18 @@ window.confirmMoveToProduction=async function(){
   const sel=document.getElementById('pick-prod-sel');
   const prodId=sel?.value||'';
   const prodName=prodId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // 📲 الأولوية للواتساب: افتح نافذة الواتساب فوراً (قبل أي await) داخل
+  // ضغطة الزر عشان نحافظ على الـ user-gesture على الموبايل — فيفتح تطبيق
+  // الواتساب مباشرة بدل صفحة الويب اللي بتطلب "حمّل واتساب". لو التحويل فشل
+  // أو اتلغى نقفل النافذة. بنفتحها بس لو في منفّذ مختار وعنده رقم.
+  let waWin=null,prodAgent=null;
+  if(prodId){
+    prodAgent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
+    if(prodAgent&&(prodAgent.phone||prodAgent.whatsapp)){
+      try{waWin=window.open('','_blank');}catch(_){waWin=null;}
+    }
+  }
+  const closeWa=()=>{ if(waWin){ try{waWin.close();}catch(_){} waWin=null; } };
   // RULE A1 + L1: stage transition عبر orderActions.submitToProduction
   // (validation + warning surfacing + atomic transaction with lock)
   const baseArgs={
@@ -942,25 +954,25 @@ window.confirmMoveToProduction=async function(){
   };
   let r=await orderActions.submitToProduction(baseArgs);
   if(r.needsConfirmation){
-    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟')){closeWa();return;}
     r=await orderActions.submitToProduction({...baseArgs,bypassWarnings:true});
   }
   if(!r.ok){
     // 🛡 Phase 4: errors تبلوك الجميع. admin/operation_manager يقدر يـ override
     // مع تسجيل سبب صريح في الـ timeline.
     const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
-    if(!isAdmin) return toast('⛔ '+r.errors.join(' · '),'err');
+    if(!isAdmin){closeWa();return toast('⛔ '+r.errors.join(' · '),'err');}
     const errsBlock = '⛔ مواصفات ناقصة:\n• ' + r.errors.join('\n• ');
-    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')) return;
+    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')){closeWa();return;}
     const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
-    if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+    if(!reason || !reason.trim()){closeWa();return toast('❌ سبب الـ override مطلوب','err');}
     const or = await orderActions.adminOverrideToProduction({
       db, orderId: activeId, role: currentRole,
       userId: auth?.currentUser?.uid||'', userName,
       nextAssigneeId: prodId, nextAssigneeName: prodName,
       overrideReason: reason.trim(),
     });
-    if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+    if(!or.ok){closeWa();return toast('❌ '+(or.errors||[]).join(' · '),'err');}
     r = or;
   }
   // ـ Best-effort: حفظ صور التصميم في معرض العميل بعد نجاح التقديم ـ
@@ -981,12 +993,13 @@ window.confirmMoveToProduction=async function(){
     }
   }
   // 📲 إرسال الأوردر لمندوب التنفيذ على واتساب (best-effort side-effect).
-  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم.
+  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم. بنوجّه النافذة اللي اتفتحت
+  // مبكّراً (waWin) عشان نحافظ على الـ user-gesture على الموبايل.
   if(prodId && typeof window.sendProductionHandoff==='function'){
-    const agent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
-    const hr=window.sendProductionHandoff(o,agent);
+    const hr=window.sendProductionHandoff(o,prodAgent,{win:waWin});
+    waWin=null; // ملكية النافذة اتنقلت للدالة (وجّهتها أو قفلتها)
     if(hr && !hr.ok && hr.error) toast('⚠️ '+hr.error+' — تواصل يدوياً','err');
-  }
+  } else { closeWa(); }
   cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
 };
 
@@ -1030,7 +1043,7 @@ window.confirmSplitOrder=async function(){
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
 // ══ Templates: apply / save ══
-const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','lamination','innerType','briefNotes'];
+const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','cutSize','lamination','innerType','briefNotes','paper'];
 
 window.applyBriefTemplate = async function(orderId, idx, tplId){
   if(!tplId) return;
@@ -1121,6 +1134,7 @@ function buildProductBriefMessage(o, p){
     lines.push(paperLine);
   }
 
+  if(p.cutSize)             lines.push(`مقاس القص: ${p.cutSize}`);
   if(p.printSize || p.size) lines.push(`مقاس الطباعة: ${p.printSize || p.size}`);
   if(p.zinkType)            lines.push(`الزنكات: ${p.zinkType}`);
   if(p.lamination)          lines.push(`السلوفان: ${p.lamination}`);
@@ -1165,7 +1179,9 @@ window.sendProductBrief = async function(orderId, idx){
 
 // ══ Order-level Readiness (aggregates across offset products) ══
 function computeOrderReadiness(o){
-  const prods = (o.products||[]).filter(p => (p.printType||'').includes('offset') || p.paperSheets || p.pressId);
+  // كل المنتجات لها مواصفات عامة إلزامية (الكمية/المقاس/الورق/السلوفان) —
+  // فالجاهزية تشمل الكل، مش الأوفست بس (يطابق validateStageRequirements).
+  const prods = (o.products||[]).filter(Boolean);
   if(!prods.length) return null;
   const items = prods.map((p, idx) => ({
     idx, name: p.name||'', r: computeProductReadiness(o, p)
@@ -1201,25 +1217,29 @@ function computeProductReadiness(o, p){
   const isOffset = (p.printType||'').includes('offset');
   const hasImg = (Array.isArray(p.designImages) && p.designImages.length) || !!p.designImageUrl;
 
-  // Critical (must complete before press send / production handoff)
+  // Critical عام لكل المنتجات (يطابق validateStageRequirements في orders.js)
   const critical = [
     { ok: (parseFloat(p.qty)||0) > 0,                    label: 'الكمية محددة' },
     { ok: !!(p.printSize || p.size),                     label: 'مقاس الطباعة محدد' },
     { ok: !!p.paper,                                      label: 'نوع الورق محدد' },
-    { ok: (parseFloat(p.paperSheets)||0) > 0,             label: 'عدد الفروخ محدد' },
-    { ok: !!p.pressId,                                    label: 'المطبعة مختارة' },
+    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
     { ok: hasImg,                                         label: 'صورة التصميم مرفوعة' },
   ];
 
-  // Offset-specific critical: zink type
-  if(isOffset) critical.push({ ok: !!p.zinkType, label: 'نوع الزنكات محدد' });
+  // إضافات الأوفست الحرجة: الزنكات + الفروخ + مقاس القص + المطبعة
+  if(isOffset){
+    critical.push({ ok: !!p.zinkType,                       label: 'نوع الزنكات محدد' });
+    critical.push({ ok: (parseFloat(p.paperSheets)||0) > 0, label: 'عدد الفروخ محدد' });
+    critical.push({ ok: !!p.cutSize,                        label: 'مقاس القص محدد' });
+    critical.push({ ok: !!p.pressId,                        label: 'المطبعة مختارة' });
+  }
 
-  // Warnings (recommended but not blocking)
-  const warnings = [
-    { ok: !!p.pressDeadline,                              label: 'ميعاد المطبعة محدد' },
-    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
-    { ok: (parseFloat(p.paperCuts)||0) > 0,               label: 'التقطيع محدد' },
-  ];
+  // Warnings (مُستحسَنة وغير مانعة) — للأوفست فقط
+  const warnings = [];
+  if(isOffset){
+    warnings.push({ ok: !!p.pressDeadline,                  label: 'ميعاد المطبعة محدد' });
+    warnings.push({ ok: (parseFloat(p.paperCuts)||0) > 0,   label: 'عدد التقطيع محدد' });
+  }
 
   const cTotal = critical.length;
   const cDone  = critical.filter(c => c.ok).length;
@@ -1234,12 +1254,29 @@ function computeProductReadiness(o, p){
   };
 }
 
+// ── Accordion state للبريف (idx المفتوح لكل أوردر؛ -1/undefined = الكل مطوي) ──
+// يخلّي بانل الطباعة مرتّب لما يكون فيه أكتر من منتج: تخلّص منتج (بيتحفظ
+// تلقائياً) وتطويه/تنتقل للتالي بدل ما كل الفورمات مفتوحة وتعمل زحمة.
+const __openBrief = {};
+window.togglePrintBrief = function(orderId, idx){
+  const cur = __openBrief[orderId];
+  __openBrief[orderId] = (cur === idx) ? -1 : idx;
+  if(activeOrder) renderPanel(activeOrder);
+};
+window.finishPrintBrief = function(orderId, idx){
+  const o = activeOrder; if(!o) return;
+  const n = (o.products||[]).length;
+  __openBrief[orderId] = (idx + 1 < n) ? idx + 1 : -1; // افتح التالي أو اطوِ الكل
+  renderPanel(o);
+};
+
 // ══ Smart Production Brief (per product) ══
-// Renders the 9 spec fields per product card. Read-only money — only specs.
+// قسم عام (كل المنتجات): الكمية · المقاس · نوع الورق · السلوفان.
+// قسم أوفست إضافي (للأوفست فقط): الزنكات · الفروخ · مقاس القص · عدد التقطيع
+//   · الداخلي · المطبعة · الميعاد · ملاحظات الشغل · زر الإرسال للمطبعة.
+// Read-only money — مواصفات فقط. القيم تُحفظ تلقائياً (debounced).
 function renderProductBrief(o, p, idx){
-  // Only show for offset products (digital workflow stays simpler)
   const isOffset = (p.printType||'').includes('offset');
-  if(!isOffset && !p.paperSheets && !p.pressId) return '';
 
   const r = computeProductReadiness(o, p);
   const barColor = r.ready ? 'var(--g)' : r.pct >= 60 ? 'var(--y)' : 'var(--r)';
@@ -1247,9 +1284,17 @@ function renderProductBrief(o, p, idx){
   const missingWarn = r.warnings.filter(w => !w.ok);
 
   const pid = `pb-${o._id}-${idx}`;
-  const presses = getPressOptions();
-  const pressOpts = '<option value="">— اختر المطبعة —</option>' +
-    presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+  const qty = parseFloat(p.qty) || 0;
+  const printSize = p.printSize || p.size || '';
+  const inp = 'width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;box-sizing:border-box';
+
+  // نوع الورق — قائمة من الإعدادات (settings.paperTypes) مع الحفاظ على أي قيمة حالية غير مُدرَجة
+  const paperList = getPaperOptions();
+  const curPaper = p.paper || '';
+  const paperInList = !curPaper || paperList.includes(curPaper);
+  const paperOpts = '<option value="">— اختر نوع الورق —</option>' +
+    paperList.map(v => `<option value="${escAttr(v)}" ${v===curPaper?'selected':''}>${escAttr(v)}</option>`).join('') +
+    (paperInList ? '' : `<option value="${escAttr(curPaper)}" selected>${escAttr(curPaper)} (غير مُدرَج)</option>`);
 
   const lamOpts = ['لامع','مات','بلا'].map(v =>
     `<label style="display:inline-flex;align-items:center;gap:var(--space-xs);font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);cursor:pointer">
@@ -1257,31 +1302,98 @@ function renderProductBrief(o, p, idx){
     </label>`
   ).join('');
 
-  // Default print size: fall back to product size
-  const printSize = p.printSize || p.size || '';
+  const accent = isOffset ? '255,170,0' : '110,168,254';
+  const accentVar = isOffset ? 'var(--y)' : 'var(--b)';
 
-  // Templates row
-  const tplOpts = '<option value="">— طبّق قالب —</option>' +
-    printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
-
-  return `
-    <div style="margin-top:10px;padding:10px;background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:var(--rad)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
-        <span>🤖 بيانات الإنتاج (أوفست)</span>
-        <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يُسجَّل تلقائياً</span>
-      </div>
-
-      <!-- Templates row -->
-      <div style="display:flex;gap:6px;margin-bottom:10px">
+  // ── إضافات الأوفست (تظهر للأوفست فقط) ──
+  const offsetHtml = !isOffset ? '' : (() => {
+    const presses = getPressOptions();
+    const pressOpts = '<option value="">— اختر المطبعة —</option>' +
+      presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+    const tplOpts = '<option value="">— طبّق قالب —</option>' +
+      printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
+    return `
+      <!-- Templates row (أوفست) -->
+      <div style="display:flex;gap:6px;margin:10px 0 8px">
         <select onchange="applyBriefTemplate('${o._id}',${idx},this.value);this.value=''" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-sm);font-family:inherit;direction:rtl;cursor:pointer">${tplOpts}</select>
         <button type="button" onclick="openSaveTemplate('${o._id}',${idx})" title="احفظ المواصفات الحالية كقالب" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;white-space:nowrap">💾 احفظ كقالب</button>
       </div>
 
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
+        <!-- نوع الزنكات -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
+          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="${inp};direction:rtl">
+        </div>
+        <!-- عدد الفروخ -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
+          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>
+        <!-- مقاس القص -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📏 مقاس القص</div>
+          <input type="text" value="${escAttr(p.cutSize||'')}" oninput="updateProductBriefField('${o._id}',${idx},'cutSize',this.value)" placeholder="مثال: 70×100" style="${inp};direction:rtl">
+        </div>
+        <!-- عدد التقطيع -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
+          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>
+      </div>
+
+      <!-- الداخلي -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
+        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="${inp};direction:rtl">
+      </div>
+
+      <!-- المطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(${accent},.2)">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
+        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="${inp};direction:rtl">${pressOpts}</select>
+      </div>
+
+      <!-- ميعاد المطبعة -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
+        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="${inp}">
+      </div>
+
+      <!-- ملاحظات خاصة بالشغل -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📝 ملاحظات خاصة بالشغل</div>
+        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="${inp};direction:rtl;resize:vertical">${escAttr(p.briefNotes||'')}</textarea>
+      </div>
+
+      <!-- زر إرسال للمطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(${accent},.2)">
+        <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
+        </button>
+        ${p.briefSentAt?`<div style="font-size:var(--fs-tiny);color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
+        ${!r.ready?`<div style="font-size:var(--fs-tiny);color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
+      </div>`;
+  })();
+
+  // accordion: لو فيه أكتر من منتج، نطوي الفورم ونفتح واحد بس في كل مرة
+  const multi = (o.products||[]).length > 1;
+  const isOpen = !multi || __openBrief[o._id] === idx;
+  const statusChip = r.ready
+    ? '<span style="color:var(--g)">✅ مكتمل</span>'
+    : `<span style="color:${barColor}">${r.cDone}/${r.cTotal} · ${r.pct}%</span>`;
+  return `
+    <div style="margin-top:10px;padding:10px;background:rgba(${accent},.04);border:1px solid rgba(${accent},.18);border-radius:var(--rad)">
+      <div onclick="togglePrintBrief('${o._id}',${idx})" style="cursor:${multi?'pointer':'default'};font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};${isOpen?'margin-bottom:8px':''};display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
+        <span>🤖 بيانات الطباعة${isOffset?' (أوفست)':''}</span>
+        <span style="display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);font-weight:var(--fw-extra)">${statusChip}${multi?`<span style="color:var(--dim2);font-size:var(--fs-md)">${isOpen?'▾':'▸'}</span>`:''}</span>
+      </div>
+      ${!isOpen ? '' : `
       <!-- Readiness Card -->
       <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-bottom:6px">
           <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${r.ready?'var(--g)':'var(--dim2)'}">
-            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
+            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wTotal>0&&r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
           </span>
           <span style="font-size:var(--fs-xs);color:${barColor};font-weight:var(--fw-extra)">${r.pct}%</span>
         </div>
@@ -1296,70 +1408,32 @@ function renderProductBrief(o, p, idx){
         </div>`:''}
       </div>
 
+      <!-- القسم العام (كل المنتجات) -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
+        <!-- الكمية -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🔢 الكمية</div>
+          <input type="number" min="0" value="${qty||''}" oninput="updateProductBriefField('${o._id}',${idx},'qty',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>
         <!-- مقاس الطباعة -->
         <div>
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📐 مقاس الطباعة</div>
-          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
+          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="${inp};direction:rtl">
         </div>
-
-        <!-- نوع الزنكات -->
+        <!-- نوع الورق -->
         <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
-          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📄 نوع الورق</div>
+          <select onchange="updateProductBriefField('${o._id}',${idx},'paper',this.value)" style="${inp};direction:rtl;cursor:pointer">${paperOpts}</select>
         </div>
-
-        <!-- عدد الفروخ -->
+        <!-- السلوفان -->
         <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
-          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
-        </div>
-
-        <!-- التقطيع -->
-        <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
-          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✨ السلوفان</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:5px">${lamOpts}</div>
         </div>
       </div>
-
-      <!-- السلوفان -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">✨ السلوفان</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">${lamOpts}</div>
-      </div>
-
-      <!-- الداخلي -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
-        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
-      </div>
-
-      <!-- المطبعة -->
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
-        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">${pressOpts}</select>
-      </div>
-
-      <!-- ميعاد المطبعة -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
-        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;box-sizing:border-box">
-      </div>
-
-      <!-- ملاحظات -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📝 ملاحظات للمطبعة</div>
-        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;resize:vertical;box-sizing:border-box">${escAttr(p.briefNotes||'')}</textarea>
-      </div>
-
-      <!-- زر إرسال للمطبعة -->
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
-        <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
-          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
-        </button>
-        ${p.briefSentAt?`<div style="font-size:var(--fs-tiny);color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
-        ${!r.ready?`<div style="font-size:var(--fs-tiny);color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
-      </div>
+      ${offsetHtml}
+      ${multi?`<button type="button" onclick="finishPrintBrief('${o._id}',${idx})" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid rgba(${accent},.4);background:rgba(${accent},.10);color:${accentVar};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ خلّصت المنتج ده — التالي</button>`:''}
+      `}
     </div>`;
 }
 
@@ -1741,6 +1815,13 @@ onSnapshot(doc(db,'master_lists','print_brief_templates'), snap => {
 function getPressOptions(){
   const allowed = ['مطبعة أوفست','مطبعة ديجيتال','أوفست + ديجيتال'];
   return suppliers.filter(s => allowed.includes(s.category) || allowed.includes(s.type));
+}
+
+// أنواع الورق من الإعدادات (settings/main → paperTypes) — قائمة اختيار نوع الورق
+// في مرحلة الطباعة. يُدار من صفحة الإعدادات (settings.html).
+function getPaperOptions(){
+  const arr = appSettings && Array.isArray(appSettings.paperTypes) ? appSettings.paperTypes : [];
+  return arr.filter(Boolean);
 }
 
 // ── فتح Modal التعديل ──
