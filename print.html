@@ -934,6 +934,18 @@ window.confirmMoveToProduction=async function(){
   const sel=document.getElementById('pick-prod-sel');
   const prodId=sel?.value||'';
   const prodName=prodId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // 📲 الأولوية للواتساب: افتح نافذة الواتساب فوراً (قبل أي await) داخل
+  // ضغطة الزر عشان نحافظ على الـ user-gesture على الموبايل — فيفتح تطبيق
+  // الواتساب مباشرة بدل صفحة الويب اللي بتطلب "حمّل واتساب". لو التحويل فشل
+  // أو اتلغى نقفل النافذة. بنفتحها بس لو في منفّذ مختار وعنده رقم.
+  let waWin=null,prodAgent=null;
+  if(prodId){
+    prodAgent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
+    if(prodAgent&&(prodAgent.phone||prodAgent.whatsapp)){
+      try{waWin=window.open('','_blank');}catch(_){waWin=null;}
+    }
+  }
+  const closeWa=()=>{ if(waWin){ try{waWin.close();}catch(_){} waWin=null; } };
   // RULE A1 + L1: stage transition عبر orderActions.submitToProduction
   // (validation + warning surfacing + atomic transaction with lock)
   const baseArgs={
@@ -942,25 +954,25 @@ window.confirmMoveToProduction=async function(){
   };
   let r=await orderActions.submitToProduction(baseArgs);
   if(r.needsConfirmation){
-    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟')){closeWa();return;}
     r=await orderActions.submitToProduction({...baseArgs,bypassWarnings:true});
   }
   if(!r.ok){
     // 🛡 Phase 4: errors تبلوك الجميع. admin/operation_manager يقدر يـ override
     // مع تسجيل سبب صريح في الـ timeline.
     const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
-    if(!isAdmin) return toast('⛔ '+r.errors.join(' · '),'err');
+    if(!isAdmin){closeWa();return toast('⛔ '+r.errors.join(' · '),'err');}
     const errsBlock = '⛔ مواصفات ناقصة:\n• ' + r.errors.join('\n• ');
-    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')) return;
+    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')){closeWa();return;}
     const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
-    if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+    if(!reason || !reason.trim()){closeWa();return toast('❌ سبب الـ override مطلوب','err');}
     const or = await orderActions.adminOverrideToProduction({
       db, orderId: activeId, role: currentRole,
       userId: auth?.currentUser?.uid||'', userName,
       nextAssigneeId: prodId, nextAssigneeName: prodName,
       overrideReason: reason.trim(),
     });
-    if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+    if(!or.ok){closeWa();return toast('❌ '+(or.errors||[]).join(' · '),'err');}
     r = or;
   }
   // ـ Best-effort: حفظ صور التصميم في معرض العميل بعد نجاح التقديم ـ
@@ -981,12 +993,13 @@ window.confirmMoveToProduction=async function(){
     }
   }
   // 📲 إرسال الأوردر لمندوب التنفيذ على واتساب (best-effort side-effect).
-  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم.
+  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم. بنوجّه النافذة اللي اتفتحت
+  // مبكّراً (waWin) عشان نحافظ على الـ user-gesture على الموبايل.
   if(prodId && typeof window.sendProductionHandoff==='function'){
-    const agent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
-    const hr=window.sendProductionHandoff(o,agent);
+    const hr=window.sendProductionHandoff(o,prodAgent,{win:waWin});
+    waWin=null; // ملكية النافذة اتنقلت للدالة (وجّهتها أو قفلتها)
     if(hr && !hr.ok && hr.error) toast('⚠️ '+hr.error+' — تواصل يدوياً','err');
-  }
+  } else { closeWa(); }
   cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
 };
 

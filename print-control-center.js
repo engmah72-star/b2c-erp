@@ -538,25 +538,34 @@ export function buildProductionHandoffMessage(order = {}, opts = {}) {
 }
 
 /**
- * sendProductionHandoff(order, agent) — يفتح واتساب المندوب بالرسالة.
+ * sendProductionHandoff(order, agent, opts) — يفتح واتساب المندوب بالرسالة.
  * best-effort side-effect (لا يكتب في DB) — يُستدعى بعد نجاح التحويل.
  * يُرجع { ok, error } عشان الـ caller (print.html) يعرض الـ toast بنفسه.
+ *
+ * 📲 الأولوية للواتساب (موبايل): `opts.win` نافذة اتفتحت مسبقاً **داخل**
+ * ضغطة الزر (قبل أي await). توجيهها بدل `window.open` المتأخّر يحافظ على
+ * الـ user-gesture، فبيفتح تطبيق الواتساب مباشرة بدل صفحة الويب اللي بتطلب
+ * "حمّل واتساب" على موبايل التطبيق موجود عليه أصلاً. لو فشلنا نقفلها.
  */
-export function sendProductionHandoff(order, agent) {
-  if (!order) return { ok: false, error: 'لا يوجد أوردر' };
-  if (!agent) return { ok: false, error: 'لم يُحدَّد منفّذ — تخطّي إرسال الواتساب' };
+export function sendProductionHandoff(order, agent, opts = {}) {
+  const win = opts && opts.win ? opts.win : null;
+  const closeWin = () => { if (win) { try { win.close(); } catch (_) {} } };
+  const fail = (error) => { closeWin(); return { ok: false, error }; };
+  if (!order) return fail('لا يوجد أوردر');
+  if (!agent) return fail('لم يُحدَّد منفّذ — تخطّي إرسال الواتساب');
   const waPhone = waPhoneEG(agent.phone || agent.whatsapp);
   if (!waPhone) {
-    return { ok: false, error: `المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته` };
+    return fail(`المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته`);
   }
   const costUrl = buildProductionCostUrl(order);
   const orderUrl = buildProductionOrderUrl(order);
   const message = buildProductionHandoffMessage(order, { costUrl, orderUrl });
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
   try {
-    window.open(waUrl, '_blank');
+    if (win) win.location.href = waUrl;   // وجّه النافذة المحفوظة (gesture preserved)
+    else window.open(waUrl, '_blank');     // fallback: فتح مباشر
   } catch (e) {
-    return { ok: false, error: 'تعذّر فتح واتساب' };
+    return fail('تعذّر فتح واتساب');
   }
   return { ok: true };
 }
