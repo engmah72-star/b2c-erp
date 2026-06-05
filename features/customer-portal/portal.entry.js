@@ -7,13 +7,18 @@ import { createRouter } from './views/router.js';
 import { services } from './services/index.js';
 import { store } from './state/store.js';
 
+// Feature flag (E1 · reversible): لوحة الاحتياجات (Business Network MVP).
+// إيقاف فوري بلا نشر: ?network=0 في الرابط. القيمة الافتراضية مفعّلة.
+const NETWORK_ENABLED = new URLSearchParams(location.search).get('network') !== '0';
+
 const TABS = [
   { key: 'home',    icon: '🏠', label: 'الرئيسية' },
   { key: 'orders',  icon: '🧾', label: 'طلباتي' },
+  { key: 'needs',   icon: '🤝', label: 'فرص' },
   { key: 'designs', icon: '🎨', label: 'التصاميم' },
   { key: 'portfolio', icon: '📁', label: 'أعمالي' },
   { key: 'profile', icon: '💼', label: 'بروفايلي' },
-];
+].filter((t) => t.key !== 'needs' || NETWORK_ENABLED);
 
 const shell = createAppShell({
   root: document.getElementById('cp-app'),

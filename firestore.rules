@@ -1111,6 +1111,32 @@ service cloud.firestore {
       allow delete: if isAdminOnly();
     }
 
+    // ══ Business Needs — لوحة الاحتياجات (member↔member · Business Network MVP) ══
+    // عضو يطرح احتياجًا (status:open)؛ أي عضو مصادق يقرأ اللوحة ويردّ.
+    //   read:   أي عضو مصادق (اللوحة عامة للأعضاء).
+    //   create: صاحبه فقط (authorUid==uid) + status=open + الحقول الأساسية.
+    //   update: صاحبه (تعديل/إغلاق) · أو أي عضو يزيد responsesCount فقط (عند الردّ).
+    //   delete: صاحبه أو admin.
+    //   responses/: ردّ المُهتمّ (responderUid==uid) — للقراءة فقط بعد الكتابة.
+    match /business_needs/{needId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.get('authorUid', '') == request.auth.uid
+        && request.resource.data.get('status', '') == 'open'
+        && request.resource.data.keys().hasAll(['authorUid', 'title', 'specialty', 'status']);
+      allow update: if isAuth() && (
+        resource.data.get('authorUid', '') == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['responsesCount'])
+      );
+      allow delete: if isAuth() && (resource.data.get('authorUid', '') == request.auth.uid || isAdminOnly());
+
+      match /responses/{respId} {
+        allow read: if isAuth();
+        allow create: if isAuth() && request.resource.data.get('responderUid', '') == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
     // ══ Master Lists — قوائم مركزية (تصنيفات، خدمات) ══
     // كل المصادقين يقرأون، الأدمن فقط يكتب
     match /master_lists/{listId} {
