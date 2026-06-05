@@ -376,7 +376,7 @@ import { doc, onSnapshot, getDoc, getDocs, collection, query, limit, where } fro
 import { orderActions } from "./order-actions.js";
 import { inboxActions } from "./inbox-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
+import { PRODUCT_STATUS, STAGES, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -476,8 +476,20 @@ function renderToolbar(o) {
     html += '<button type="button" class="order-tb-menu-item" onclick="openClientOrderChat()">💬 محادثة العميل</button>';
     html += '<button type="button" class="order-tb-menu-item" onclick="sendDesignToClient()">📨 إرسال التصميم للعميل</button>';
   }
-  if (o.stage !== 'archived') {
+  // ↩️ إرجاع مرحلة — رجوع الأوردر للمرحلة السابقة (stage revert) مع سبب إلزامي.
+  // الصلاحية الفعلية تُفرض مركزياً في buildStageRevert؛ هنا gate للعرض فقط
+  // (admin/ops دائماً، أو من له دور في المرحلة الهدف فيستلم العمل من جديد).
+  const _prevStage = STAGES[o.stage]?.prev;
+  const _canRevert = _prevStage && (
+    currentRole === 'admin' || currentRole === 'operation_manager' ||
+    (STAGE_PERMISSIONS[_prevStage] || []).includes(currentRole)
+  );
+  if (_canRevert) {
     if (o.clientId) html += '<div class="order-tb-menu-divider"></div>';
+    html += '<button type="button" class="order-tb-menu-item" onclick="revertStage()">↩️ إرجاع لمرحلة ' + esc(STAGES[_prevStage].label) + '</button>';
+  }
+  if (o.stage !== 'archived') {
+    if (o.clientId && !_canRevert) html += '<div class="order-tb-menu-divider"></div>';
     html += '<button type="button" class="order-tb-menu-item danger" onclick="archiveOrder()">📁 أرشفة الأوردر</button>';
   }
   // حذف نهائي (تصفير من السجل) — admin فقط (مثل reports.html). عملية لا رجعة فيها.
@@ -972,6 +984,31 @@ window.archiveOrder = async function() {
       return toast('❌ ' + (r.errors||[]).join(' · '), 'err');
     }
     toast('📁 تم الأرشفة', 'ok');
+  } catch (e) {
+    console.error(e);
+    toast('❌ خطأ: ' + e.message, 'err');
+  }
+};
+
+// ── Revert stage action (إرجاع الأوردر للمرحلة السابقة) ──
+window.revertStage = async function() {
+  if (!currentOrder) return;
+  const prev = STAGES[currentOrder.stage]?.prev;
+  if (!prev) return toast('⚠️ لا توجد مرحلة سابقة', 'err');
+  $('order-tb-menu')?.classList.remove('open');
+  const prevLabel = STAGES[prev]?.label || prev;
+  const curLabel = STAGES[currentOrder.stage]?.label || currentOrder.stage;
+  const reason = prompt('سبب إرجاع الأوردر من «' + curLabel + '» إلى «' + prevLabel + '» (مطلوب):', '');
+  if (reason === null) return;
+  if (!reason.trim()) return toast('⚠️ السبب مطلوب', 'err');
+  try {
+    const r = await orderActions.revertStage({
+      db, orderId: currentOrder._id, role: currentRole,
+      userId: currentUser?.uid || '', userName,
+      targetStage: prev, reason: reason.trim(),
+    });
+    if (!r.ok) return toast('❌ ' + (r.errors||[]).join(' · '), 'err');
+    toast('↩️ تم الإرجاع إلى ' + prevLabel, 'ok');
   } catch (e) {
     console.error(e);
     toast('❌ خطأ: ' + e.message, 'err');

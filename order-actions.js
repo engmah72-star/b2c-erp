@@ -24,6 +24,7 @@ import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, co
 import {
   buildArchiveSpec,
   buildStageAdvance,
+  buildStageRevert,
   buildOrderSplit,
   validatePayment,
   validateRefund,
@@ -3232,8 +3233,6 @@ export const orderActions = {
     if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل سبب الإرجاع'], warnings: [], orderId };
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
-    // buildStageRevert pure helper — تُستورد محلياً
-    const { buildStageRevert } = await import('./orders.js');
     const rev = buildStageRevert({
       order, role, userId, userName,
       targetStage: 'design', reason,
@@ -3247,6 +3246,40 @@ export const orderActions = {
         updatedAt: serverTimestamp(),
       });
       return { ok: true, errors: [], warnings: [], orderId, action: 'reject_from_printing' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الإرجاع'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * إرجاع الأوردر مرحلة واحدة للخلف (أو لمرحلة هدف محددة) — stage revert مُمَركَز.
+   * يستخدم buildStageRevert (نقي) ثم يكتب ذرّياً عبر updateDoc واحد.
+   * - السبب (reason) إلزامي.
+   * - الصلاحية + ضمان مسؤول المرحلة الهدف + إعادة ضبط ساعة الدخول: داخل buildStageRevert (قاعدة R).
+   * - لو targetStage فاضي → يرجع للمرحلة السابقة مباشرةً (STAGES[cur].prev).
+   */
+  async revertStage({
+    db = defaultDb, orderId, role, userId, userName,
+    targetStage = null, reason = '',
+    nextAssigneeId = '', nextAssigneeName = '', extraFields = {},
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل سبب الإرجاع'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const rev = buildStageRevert({
+      order, role, userId, userName,
+      targetStage, reason: reason.trim(),
+      nextAssigneeId, nextAssigneeName, extraFields,
+    });
+    if (!rev.ok) return { ok: false, errors: rev.errors || [], warnings: rev.warnings || [], orderId };
+    try {
+      await updateDoc(order._ref, {
+        ...rev.fields,
+        timeline: [...(order.timeline || []), rev.timelineEntry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'revert_stage', newStage: rev.newStage };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل الإرجاع'], warnings: [], orderId };
     }
