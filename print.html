@@ -1254,6 +1254,22 @@ function computeProductReadiness(o, p){
   };
 }
 
+// ── Accordion state للبريف (idx المفتوح لكل أوردر؛ -1/undefined = الكل مطوي) ──
+// يخلّي بانل الطباعة مرتّب لما يكون فيه أكتر من منتج: تخلّص منتج (بيتحفظ
+// تلقائياً) وتطويه/تنتقل للتالي بدل ما كل الفورمات مفتوحة وتعمل زحمة.
+const __openBrief = {};
+window.togglePrintBrief = function(orderId, idx){
+  const cur = __openBrief[orderId];
+  __openBrief[orderId] = (cur === idx) ? -1 : idx;
+  if(activeOrder) renderPanel(activeOrder);
+};
+window.finishPrintBrief = function(orderId, idx){
+  const o = activeOrder; if(!o) return;
+  const n = (o.products||[]).length;
+  __openBrief[orderId] = (idx + 1 < n) ? idx + 1 : -1; // افتح التالي أو اطوِ الكل
+  renderPanel(o);
+};
+
 // ══ Smart Production Brief (per product) ══
 // قسم عام (كل المنتجات): الكمية · المقاس · نوع الورق · السلوفان.
 // قسم أوفست إضافي (للأوفست فقط): الزنكات · الفروخ · مقاس القص · عدد التقطيع
@@ -1360,13 +1376,19 @@ function renderProductBrief(o, p, idx){
       </div>`;
   })();
 
+  // accordion: لو فيه أكتر من منتج، نطوي الفورم ونفتح واحد بس في كل مرة
+  const multi = (o.products||[]).length > 1;
+  const isOpen = !multi || __openBrief[o._id] === idx;
+  const statusChip = r.ready
+    ? '<span style="color:var(--g)">✅ مكتمل</span>'
+    : `<span style="color:${barColor}">${r.cDone}/${r.cTotal} · ${r.pct}%</span>`;
   return `
     <div style="margin-top:10px;padding:10px;background:rgba(${accent},.04);border:1px solid rgba(${accent},.18);border-radius:var(--rad)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
+      <div onclick="togglePrintBrief('${o._id}',${idx})" style="cursor:${multi?'pointer':'default'};font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};${isOpen?'margin-bottom:8px':''};display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
         <span>🤖 بيانات الطباعة${isOffset?' (أوفست)':''}</span>
-        <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يُسجَّل تلقائياً</span>
+        <span style="display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);font-weight:var(--fw-extra)">${statusChip}${multi?`<span style="color:var(--dim2);font-size:var(--fs-md)">${isOpen?'▾':'▸'}</span>`:''}</span>
       </div>
-
+      ${!isOpen ? '' : `
       <!-- Readiness Card -->
       <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-bottom:6px">
@@ -1410,6 +1432,8 @@ function renderProductBrief(o, p, idx){
         </div>
       </div>
       ${offsetHtml}
+      ${multi?`<button type="button" onclick="finishPrintBrief('${o._id}',${idx})" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid rgba(${accent},.4);background:rgba(${accent},.10);color:${accentVar};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ خلّصت المنتج ده — التالي</button>`:''}
+      `}
     </div>`;
 }
 
