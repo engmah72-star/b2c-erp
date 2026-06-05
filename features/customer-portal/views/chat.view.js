@@ -14,12 +14,36 @@ export function create(ctx) {
   const me = () => store.get('user')?.uid || '';
   const myName = () => store.get('client')?.name || store.get('user')?.displayName || 'عميل';
 
+  const fmtBytes = (n) => { n = +n || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
+
+  // عرض موحَّد مع الإنبوكس: نص · صورة · ملف · صوت · مشاركة أوردر (قراءة فقط).
+  function mediaBody(m) {
+    const a = (m.attachments && m.attachments[0]) || null;
+    if (m.type === 'image' && a?.url)
+      return `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener"><img class="cp-msg__img" src="${escapeHtml(a.url)}" alt="" loading="lazy"></a>`;
+    if (m.type === 'file' && a?.url)
+      return `<a class="cp-msg__file" href="${escapeHtml(a.url)}" target="_blank" rel="noopener" download="${escapeHtml(a.name || '')}">📄 ${escapeHtml(a.name || 'مستند')} · ${escapeHtml(fmtBytes(a.size))}</a>`;
+    if (m.type === 'voice' && a?.url)
+      return `<audio class="cp-msg__voice" src="${escapeHtml(a.url)}" controls preload="none"></audio>`;
+    if (m.type === 'order_share' && m.orderRef) {
+      const o = m.orderRef;
+      return `<div class="cp-msg__ordercard">📦 أوردر #${escapeHtml(o.orderCode || o.orderId || '')}${o.clientName ? ' — ' + escapeHtml(o.clientName) : ''}</div>`;
+    }
+    return '';
+  }
+
   function bubbles(list) {
     if (!list.length) return `<div class="cp-muted cp-text-c">ابدأ المحادثة — اكتب رسالتك بالأسفل 👇</div>`;
     return list.map((m) => {
       const mine = m.senderId === me();
       const meta = `${escapeHtml(mine ? 'أنت' : (m.senderName || 'الفريق'))} · ${escapeHtml(shortTime(m.createdAt))}`;
-      return `<div class="cp-msg cp-msg--${mine ? 'me' : 'them'}">${escapeHtml(m.text || '')}<span class="cp-msg__meta">${meta}</span></div>`;
+      const quote = m.replyTo ? `<div class="cp-msg__quote"><b>${escapeHtml(m.replyTo.senderName || '')}</b> ${escapeHtml(m.replyTo.preview || '')}</div>` : '';
+      const isText = !m.type || m.type === 'text';
+      const body = isText
+        ? escapeHtml(m.text || '')
+        : mediaBody(m) + (m.text ? `<div class="cp-msg__cap">${escapeHtml(m.text)}</div>` : '');
+      const edited = m.editedAt ? '<span class="cp-msg__edited"> (مُعدّلة)</span>' : '';
+      return `<div class="cp-msg cp-msg--${mine ? 'me' : 'them'}">${quote}${body}${edited}<span class="cp-msg__meta">${meta}</span></div>`;
     }).join('');
   }
 

@@ -384,6 +384,7 @@ export const clientActions = {
       if (!snap || !snap.exists()) {
         await setDoc(ref, {
           type, participants, name, isClientThread: true,
+          archivedBy: [], lastReadByAll: false,
           createdAt: serverTimestamp(), lastMessageAt: serverTimestamp(),
           lastMessagePreview: '', unreadCount: {}, ...extra,
         });
