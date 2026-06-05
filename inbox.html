@@ -252,6 +252,10 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { inboxActions } from "./inbox-actions.js";
+// view → فعل أعمال: حفظ صور المصمم في ملف تصميم الأوردر (يحترم حدّ Messaging↔Business).
+import { orderActions } from "./order-actions.js";
+// الأدوار المخوّلة بحفظ صورة كـ«تصميم» للأوردر (المصمم أساساً + إشراف).
+const DESIGN_CAPTURE_ROLES = new Set(['graphic_designer','design_operator','admin','operation_manager']);
 import {
   fmtTime as _fmtTime, fmtBytes as _fmtBytes, escapeHtml as _esc, initAvatar as _initAvatar,
   convDisplayName as _convDisplayName, convIcon as _convIcon, convColor as _convColor,
@@ -728,6 +732,19 @@ $('file-in').addEventListener('change',async e=>{
       attachments:[{url,name:f.name,size:f.size,mime:f.type}],
     });
     toast('✅ تم الإرسال','ok');
+    // حفظ تلقائي: صورة من المصمم في خيط أوردر العميل (clord_) → ملف تصميم الأوردر.
+    // الكتابة عبر orderActions (طبقة الأعمال) لا من طبقة المراسلة — يحترم الحدّ المقفول.
+    if(isImg && String(activeConvId).startsWith('clord_') && DESIGN_CAPTURE_ROLES.has(currentRole)){
+      const orderDocId=String(activeConvId).slice('clord_'.length);
+      try{
+        const rs=await orderActions.addDesignFile({
+          db, orderId:orderDocId,
+          file:{url,name:f.name,mime:f.type},
+          userId:currentUid, userName:currentUserName, source:'chat',
+        });
+        if(rs.ok && !rs.duplicate) toast('💾 حُفظت في ملف تصميم الأوردر','ok');
+      }catch(_){ /* الحفظ ثانوي — الرسالة أُرسلت */ }
+    }
   }catch(err){toast('❌ '+err.message,'err');}
   e.target.value='';
 });
