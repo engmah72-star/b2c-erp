@@ -379,19 +379,31 @@ export function applyPrintCCHeader(o, ctx) {
  * Tab 1 (الإنتاج) يحتوي على نفس المحتوى القديم — كل الـ handlers
  * (uploadPrintFinal, openEditProds, setProductStatus...) تشتغل كما هي.
  */
-export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
+export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts = {}) {
   // ملاحظة: السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html).
+  // opts.shippingHTML (اختياري): لو موجود، نعرض تاب «🚚 الشحن» منفصل بمحتواه.
+  const shippingHTML = opts && opts.shippingHTML ? opts.shippingHTML : '';
+  const shipTabBtn = shippingHTML
+    ? `<button type="button" class="pcc-tab" data-pcctab="shipping" onclick="switchPrintPanelTab('shipping',this)">
+        <span class="pcc-tab-ico">🚚</span><span class="pcc-tab-lbl">الشحن</span>
+      </button>`
+    : '';
+  const shipPane = shippingHTML
+    ? `<div class="pcc-pane" id="pcc-pane-shipping" style="display:none">${shippingHTML}</div>`
+    : '';
   return `
     <div class="pcc-tabs" id="pcc-tabs">
       <button type="button" class="pcc-tab on" data-pcctab="production" onclick="switchPrintPanelTab('production',this)">
         <span class="pcc-tab-ico">🖨</span><span class="pcc-tab-lbl">الإنتاج</span>
       </button>
+      ${shipTabBtn}
       <button type="button" class="pcc-tab" data-pcctab="more" onclick="switchPrintPanelTab('more',this)">
         <span class="pcc-tab-ico">⚙️</span><span class="pcc-tab-lbl">المزيد</span>
       </button>
     </div>
 
     <div class="pcc-pane" id="pcc-pane-production" style="display:block">${productionBodyHTML}</div>
+    ${shipPane}
     <div class="pcc-pane" id="pcc-pane-more" style="display:none">${printMoreTabHTML(order)}</div>`;
 }
 
@@ -399,7 +411,7 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
 export function switchPrintPanelTab(tab, btn) {
   document.querySelectorAll('.pcc-tab').forEach(b => b.classList.remove('on'));
   if (btn) btn.classList.add('on');
-  ['production', 'more'].forEach(t => {
+  ['production', 'shipping', 'more'].forEach(t => {
     const pane = document.getElementById('pcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });
