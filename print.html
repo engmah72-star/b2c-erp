@@ -26,6 +26,7 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
+<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -672,26 +673,58 @@ function renderPanel(o){
         const pStatus=p.productStatus||'pending';
         const sConf=PRODUCT_STATUS[pStatus]||PRODUCT_STATUS.pending;
         const isReady=pStatus==='ready'||pStatus==='printed'||pStatus==='done';
-        const dimStyle=isReady?'':'opacity:.55';
+        const dimStyle=isReady?'':'opacity:.6';
         const pImgs=getProductImages(p);
+        const multi=(o.products||[]).length>1;
+        const isOpen=!multi||__openProd[o._id]===idx;
+        const rr=computeProductReadiness(o,p);
+        const readyTxt=rr.ready?'✅ جاهز':`${rr.pct}%`;
+        const readyCol=rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)');
+
+        // ── صف مضغوط (منتجات كتير + مطوي) — يقلّل الزحمة ──
+        if(multi&&!isOpen){
+          const thumb=pImgs.length
+            ?`<img src="${pImgs[0]}" loading="lazy" style="width:46px;height:46px;border-radius:8px;object-fit:cover;background:var(--bg2);flex-shrink:0" alt="">`
+            :`<div style="width:46px;height:46px;border-radius:8px;background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0">🖼️</div>`;
+          return `<div onclick="toggleProdCard('${o._id}',${idx})" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--bg3);border:1px solid var(--line);border-left:3px solid ${sConf.col};cursor:pointer;${dimStyle}">
+            ${thumb}
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:var(--fs-base);font-weight:var(--fw-heavy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'}</span>
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--y);flex-shrink:0">×${p.qty||1}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
+                ${productStatusBadge(pStatus)}
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${readyCol}">${readyTxt}</span>
+              </div>
+            </div>
+            <span style="color:var(--dim2);font-size:var(--fs-lg);flex-shrink:0">▸</span>
+          </div>`;
+        }
+
+        // ── كارت كامل (مفتوح / منتج واحد) ──
         const galleryHtml=pImgs.length
           ?(pImgs.length===1
-            ?`<img src="${pImgs[0]}" loading="lazy" onclick="window.open('${pImgs[0].replace(/'/g,"\\'")}','_blank')" style="width:100%;max-height:240px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2);border-bottom:1px solid var(--line)" alt="">`
-            :`<div style="background:var(--bg2);border-bottom:1px solid var(--line);padding:6px"><div style="display:grid;grid-template-columns:repeat(${Math.min(pImgs.length,3)},1fr);gap:var(--space-xs)">${pImgs.map(u=>`<img src="${u}" loading="lazy" onclick="window.open('${u.replace(/'/g,"\\'")}','_blank')" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:zoom-in;background:var(--bg3)" alt="">`).join('')}</div><div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;margin-top:4px">${pImgs.length} صورة</div></div>`)
-          :`<div style="height:80px;display:flex;align-items:center;justify-content:center;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--dim2);font-size:var(--fs-base);gap:6px">🖼️ لا توجد صورة</div>`;
+            ?`<img src="${pImgs[0]}" loading="lazy" onclick="window.open('${pImgs[0].replace(/'/g,"\\'")}','_blank')" style="width:100%;max-height:170px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2);border-bottom:1px solid var(--line)" alt="">`
+            :`<div style="background:var(--bg2);border-bottom:1px solid var(--line);padding:6px"><div style="display:grid;grid-template-columns:repeat(${Math.min(pImgs.length,3)},1fr);gap:var(--space-xs)">${pImgs.map(u=>`<img src="${u}" loading="lazy" onclick="window.open('${u.replace(/'/g,"\\'")}','_blank')" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:zoom-in;background:var(--bg3)" alt="">`).join('')}</div></div>`)
+          :'';
         return`<div style="border-radius:12px;background:var(--bg3);border:1px solid var(--line);overflow:hidden;border-left:3px solid ${sConf.col};${dimStyle}">
+          ${multi?`<div onclick="toggleProdCard('${o._id}',${idx})" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)">
+            <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy)">${p.name||'—'} <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${p.qty||1}</span></span>
+            <span style="display:flex;align-items:center;gap:8px">${productStatusBadge(pStatus)}<span style="color:var(--dim2);font-size:var(--fs-lg)">▾</span></span>
+          </div>`:''}
           ${galleryHtml}
           <div style="padding:10px 12px">
-            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px">
+            ${!multi?`<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">
               <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy)">${p.name||'—'}</span>
               <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.2);color:var(--y)">× ${p.qty||1}</span>
               ${p.unitPrice||p.price?`<span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);color:var(--g)">${fn(p.unitPrice||p.price)} ج</span>`:''}
               ${productStatusBadge(pStatus)}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-              ${pStatus!=='printed'&&pStatus!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--p);background:${pStatus==='printed'?'var(--p)':'transparent'};color:${pStatus==='printed'?'#fff':'var(--p)'};transition:all .15s">🖨️ تم طباعته</button>`:''}
-              ${pStatus==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--dim2);background:transparent;color:var(--dim2);transition:all .15s;opacity:.7">↩ إعادة لجاهز</button>`:''}
-              ${!isReady&&pStatus!=='on_hold'?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--y-gold);background:transparent;color:var(--y-gold);transition:all .15s;opacity:.7">⏸ تأجيل</button>`:''}
+            </div>`:''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+              ${pStatus!=='printed'&&pStatus!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--p);background:transparent;color:var(--p)">🖨️ تم طباعته</button>`:''}
+              ${pStatus==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--dim2);background:transparent;color:var(--dim2);opacity:.8">↩ إعادة لجاهز</button>`:''}
+              ${!isReady&&pStatus!=='on_hold'?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--y-gold);background:transparent;color:var(--y-gold);opacity:.8">⏸ تأجيل</button>`:''}
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:5px">
               ${ptLabel?`<span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 9px;border-radius:20px;background:${ptCol}18;border:1px solid ${ptCol}44;color:${ptCol}">${ptLabel}</span>`:''}
@@ -703,6 +736,7 @@ function renderPanel(o){
 
             <!-- ══ Smart Production Brief (per product) ══ -->
             ${renderProductBrief(o,p,idx)}
+            ${multi?`<button type="button" onclick="finishProdCard('${o._id}',${idx})" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid var(--g);background:rgba(0,217,126,.1);color:var(--g);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ خلّصت المنتج ده — التالي</button>`:''}
           </div>
         </div>`;
       }).join('')}
@@ -1253,19 +1287,18 @@ function computeProductReadiness(o, p){
   };
 }
 
-// ── Accordion state للبريف (idx المفتوح لكل أوردر؛ -1/undefined = الكل مطوي) ──
-// يخلّي بانل الطباعة مرتّب لما يكون فيه أكتر من منتج: تخلّص منتج (بيتحفظ
-// تلقائياً) وتطويه/تنتقل للتالي بدل ما كل الفورمات مفتوحة وتعمل زحمة.
-const __openBrief = {};
-window.togglePrintBrief = function(orderId, idx){
-  const cur = __openBrief[orderId];
-  __openBrief[orderId] = (cur === idx) ? -1 : idx;
+// ── Accordion على مستوى المنتج: لما المنتجات كتير، كل منتج يبقى صف مضغوط
+// ويتفتح واحد بس في كل مرة — يقلّل زحمة بانل الطباعة. (-1/undefined = الكل مطوي)
+const __openProd = {};
+window.toggleProdCard = function(orderId, idx){
+  const cur = __openProd[orderId];
+  __openProd[orderId] = (cur === idx) ? -1 : idx;
   if(activeOrder) renderPanel(activeOrder);
 };
-window.finishPrintBrief = function(orderId, idx){
+window.finishProdCard = function(orderId, idx){
   const o = activeOrder; if(!o) return;
   const n = (o.products||[]).length;
-  __openBrief[orderId] = (idx + 1 < n) ? idx + 1 : -1; // افتح التالي أو اطوِ الكل
+  __openProd[orderId] = (idx + 1 < n) ? idx + 1 : -1; // افتح التالي أو اطوِ الكل
   renderPanel(o);
 };
 
@@ -1375,19 +1408,12 @@ function renderProductBrief(o, p, idx){
       </div>`;
   })();
 
-  // accordion: لو فيه أكتر من منتج، نطوي الفورم ونفتح واحد بس في كل مرة
-  const multi = (o.products||[]).length > 1;
-  const isOpen = !multi || __openBrief[o._id] === idx;
-  const statusChip = r.ready
-    ? '<span style="color:var(--g)">✅ مكتمل</span>'
-    : `<span style="color:${barColor}">${r.cDone}/${r.cTotal} · ${r.pct}%</span>`;
   return `
     <div style="margin-top:10px;padding:10px;background:rgba(${accent},.04);border:1px solid rgba(${accent},.18);border-radius:var(--rad)">
-      <div onclick="togglePrintBrief('${o._id}',${idx})" style="cursor:${multi?'pointer':'default'};font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};${isOpen?'margin-bottom:8px':''};display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
         <span>🤖 بيانات الطباعة${isOffset?' (أوفست)':''}</span>
-        <span style="display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);font-weight:var(--fw-extra)">${statusChip}${multi?`<span style="color:var(--dim2);font-size:var(--fs-md)">${isOpen?'▾':'▸'}</span>`:''}</span>
+        <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يُسجَّل تلقائياً</span>
       </div>
-      ${!isOpen ? '' : `
       <!-- Readiness Card -->
       <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-bottom:6px">
@@ -1431,8 +1457,6 @@ function renderProductBrief(o, p, idx){
         </div>
       </div>
       ${offsetHtml}
-      ${multi?`<button type="button" onclick="finishPrintBrief('${o._id}',${idx})" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid rgba(${accent},.4);background:rgba(${accent},.10);color:${accentVar};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ خلّصت المنتج ده — التالي</button>`:''}
-      `}
     </div>`;
 }
 
