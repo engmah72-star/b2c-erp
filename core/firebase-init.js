@@ -18,6 +18,7 @@ import {
   persistentLocalCache, persistentMultipleTabManager,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { ENV_KEY, resolveEnv, testConfigUnset, pickConfig } from "./env-config.js";
 
 // ═══════════════════════════════════════
 // FIREBASE CONFIG — المصدر الوحيد
@@ -64,40 +65,29 @@ export const FB_CONFIG_TEST = {
   appId:             "REPLACE_WITH_TEST_APP_ID",
 };
 
-const ENV_KEY = 'b2c_env';
-
-// يقرأ البيئة المطلوبة: ?env=... (يُحفظ) > localStorage > 'prod' (افتراضي صارم).
-function resolveEnv() {
-  try {
-    const q = new URL(location.href).searchParams.get('env');
-    if (q === 'test' || q === 'prod') {
-      try { localStorage.setItem(ENV_KEY, q); } catch (_) {}
-      return q;
-    }
-  } catch (_) {}
-  try {
-    if (localStorage.getItem(ENV_KEY) === 'test') return 'test';
-  } catch (_) {}
-  return 'prod';
+// قراءة الإشارات من البيئة المُشغّلة (impure layer)، ثم القرار عبر env-config (pure).
+function readUrlEnv() {
+  try { return new URL(location.href).searchParams.get('env'); } catch (_) { return null; }
+}
+function readStoredEnv() {
+  try { return localStorage.getItem(ENV_KEY); } catch (_) { return null; }
 }
 
-// هل config التجارب لسه غير مُفعّل (placeholder أو يطابق الإنتاج = ليس عزلاً)؟
-function testConfigUnset(cfg) {
-  return !cfg
-    || !cfg.projectId
-    || cfg.projectId.startsWith('REPLACE_WITH')
-    || cfg.projectId === FB_CONFIG_PROD.projectId;
+const _urlEnv = readUrlEnv();
+// ?env=... يُحفظ ليبقى أثناء التنقّل بين الصفحات.
+if (_urlEnv === 'test' || _urlEnv === 'prod') {
+  try { localStorage.setItem(ENV_KEY, _urlEnv); } catch (_) {}
 }
 
-export const APP_ENV = resolveEnv();
+export const APP_ENV = resolveEnv(_urlEnv, readStoredEnv());
 
 // لو طُلبت بيئة التجارب وهي غير مُعدّة → احجب تماماً (fail-closed) بدل الكتابة على الإنتاج.
-if (APP_ENV === 'test' && testConfigUnset(FB_CONFIG_TEST)) {
+if (APP_ENV === 'test' && testConfigUnset(FB_CONFIG_TEST, FB_CONFIG_PROD.projectId)) {
   blockUnconfiguredTestEnv();
 }
 
 export const IS_TEST_ENV = APP_ENV === 'test';
-export const FB_CONFIG = IS_TEST_ENV ? FB_CONFIG_TEST : FB_CONFIG_PROD;
+export const FB_CONFIG = pickConfig(APP_ENV, FB_CONFIG_PROD, FB_CONFIG_TEST);
 
 // تبديل البيئة (يعيد التحميل لإعادة التهيئة على المشروع الصحيح).
 export function switchEnv(env) {
