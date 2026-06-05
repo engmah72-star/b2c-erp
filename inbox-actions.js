@@ -32,7 +32,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 // Messaging Policy (Phase 0): مصدر الثوابت الواحد للنمط. محادثات الإنبوكس
 // (DM/قناة/خيط أوردر بين الموظفين) = نمط «زمالة». import مراسلة→مراسلة (يمر قفل الحدود).
-import { MODES } from './core/messaging-policy.js';
+import { MODES, resolve as resolveMessagingPolicy, PARTIES } from './core/messaging-policy.js';
 
 // ══════════════════════════════════════════
 // PRESENCE
@@ -225,6 +225,108 @@ export async function markConversationRead({
 }
 
 // ══════════════════════════════════════════
+// CLIENT ORDER BRIDGE — جسر تواصل الموظف↔العميل للأوردر
+// ══════════════════════════════════════════
+//
+// يمكّن الموظف من فتح/عرض محادثة العميل الخاصة بالأوردر (نفس clord_{orderId}
+// التي يستخدمها العميل — خيط واحد مشترك) وتقديم التصميم للعميل عبرها.
+// طبقة مراسلة بحتة: يكتب conversations + notifications فقط — لا business state
+// (يقرأ حقول الأوردر المُمرَّرة كوسيط، لا يكتب orders/financial). يمر قفل الحدود.
+
+/**
+ * يضمن وجود محادثة العميل للأوردر (clord_{orderId}) من جانب الموظف.
+ * نفس المعرّف الذي يفتحه العميل (clientActions.openClientThread) → خيط واحد.
+ * يضيف العميل + فريق الأوردر + المُنفِّذ كـ participants.
+ *
+ * @param {Object} order — { _id, orderId?, clientId?, clientName?, designerId?, productionAgent?, shippingOfficerId?, createdBy? }
+ * @returns {Promise<{created:boolean, convId:string, clientUid:string, participants:string[]}>}
+ */
+export async function ensureClientOrderThread({
+  db, order, currentUserId, currentUserName = '',
+}) {
+  if (!order || !order._id) throw new Error('[inbox] order مطلوب');
+  const clientUid = order.clientId || '';
+  const convId = 'clord_' + order._id;
+  const ref = doc(db, 'conversations', convId);
+  // النمط من المصدر الواحد: موظف→عميل بسياق أوردر = خدمة (service).
+  const mode = resolveMessagingPolicy({
+    from: PARTIES.EMPLOYEE, to: PARTIES.CLIENT, context: { binding: 'order' },
+  }).mode;
+  const staff = [
+    order.designerId, order.productionAgent, order.shippingOfficerId,
+    order.createdBy, currentUserId,
+  ].filter(Boolean);
+  const participants = [...new Set([clientUid, ...staff].filter(Boolean))];
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      type: 'order_thread', mode, isClientThread: true,
+      orderId: order.orderId || order._id,
+      orderRef: { orderId: order.orderId || order._id, clientName: order.clientName || '' },
+      name: '💬 ' + (order.clientName || 'عميل') + ' — #' + (order.orderId || (order._id || '').slice(-6)),
+      participants, archivedBy: [], lastReadByAll: false,
+      createdAt: serverTimestamp(), lastMessageAt: serverTimestamp(),
+      lastMessagePreview: '', unreadCount: {},
+    });
+    return { created: true, convId, clientUid, participants };
+  }
+  const cur = snap.data().participants || [];
+  const merged = [...new Set([...cur, ...participants])];
+  if (merged.length !== cur.length) await updateDoc(ref, { participants: merged });
+  return { created: false, convId, clientUid, participants: merged };
+}
+
+/**
+ * يقدّم التصميم (البروفة) للعميل عبر محادثة الأوردر + يُشعره.
+ * الرسالة **تشير** للبروفة الموجودة على الأوردر (proofUrl) — لا تخزّن business
+ * state. الاعتماد يبقى Order-Centric (clientApproval CF) بلا تغيير.
+ *
+ * @param {string} proofUrl — رابط البروفة (من حقول الأوردر: printFinalUrl/designFileUrl/...)
+ * @returns {Promise<{ok:boolean, convId:string, notified:boolean}>}
+ */
+export async function sendOrderDesignToClient({
+  db, order, proofUrl, currentUserId, currentUserName = '', note = '',
+}) {
+  const ens = await ensureClientOrderThread({ db, order, currentUserId, currentUserName });
+  const { convId, clientUid, participants } = ens;
+  const conv = { participants, archivedBy: [] };
+
+  // 1) ملاحظة نصية (تظهر دائماً مهما كان نوع البروفة).
+  await sendMessage({
+    db, convId, senderId: currentUserId, senderName: currentUserName, conv,
+    payload: { type: 'text', text: note || '📐 تم رفع تصميمك — راجِع البروفة واعتمِدها من صفحة الطلب.' },
+  });
+
+  // 2) البروفة كمرفق (يشير لرابط الأوردر — لا نسخ business state).
+  if (proofUrl) {
+    const isPdf = /\.pdf(\?|$)/i.test(proofUrl);
+    await sendMessage({
+      db, convId, senderId: currentUserId, senderName: currentUserName, conv,
+      payload: {
+        type: isPdf ? 'file' : 'image',
+        attachments: [{
+          url: proofUrl,
+          name: isPdf ? 'بروفة-التصميم.pdf' : 'بروفة-التصميم',
+          mime: isPdf ? 'application/pdf' : 'image/*',
+        }],
+      },
+    });
+  }
+
+  // 3) إشعار للعميل (طبقة الإشعارات — ليست business state).
+  if (clientUid) {
+    await addDoc(collection(db, 'notifications'), {
+      toUid: clientUid, type: 'design', ico: '📐',
+      title: '📐 تصميمك جاهز للمراجعة',
+      desc: 'افتح طلبك لمراجعة البروفة واعتمادها',
+      link: 'cp-shell.html', read: false, createdAt: serverTimestamp(),
+    });
+  }
+  return { ok: true, convId, notified: !!clientUid };
+}
+
+// ══════════════════════════════════════════
 // MESSAGES
 // ══════════════════════════════════════════
 
@@ -387,6 +489,9 @@ export const inboxActions = {
   setConversationArchived,
   updateConversationUserFlag,
   markConversationRead,
+  // client order bridge
+  ensureClientOrderThread,
+  sendOrderDesignToClient,
   // messages
   sendMessage,
   editMessage,

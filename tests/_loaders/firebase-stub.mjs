@@ -37,3 +37,4 @@ export const orderBy = () => ({});
 export const limit = () => ({});
 export const arrayUnion = (...a) => a;
 export const arrayRemove = (...a) => a;
+export const Timestamp = { fromDate: () => null, now: () => null };
