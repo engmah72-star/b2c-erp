@@ -15,6 +15,18 @@
 
 const PREFIX = 'feat.';
 
+// ── Known flags (documentation + single source for names) ────────────────────
+// أسماء الأعلام المعروفة تُجمَّع هنا لتفادي الـ magic strings (C2) وتوثيق النوايا.
+//
+// `messaging.memberToMember` — محادثة عضو↔عضو (عميل↔عميل) من على الكارت الشخصي.
+//   استثناء دستوري محدود النطاق: الـ BUSINESS DNA «نظام ERP داخلي، ليس Marketplace».
+//   لذلك الافتراضي OFF (الوضع الدستوري الآمن)؛ تفعيله = موافقة صريحة على نطاق محدود
+//   ومراقَب (rollout تدريجي قابل للتراجع — E1). راجع
+//   docs/CONSTITUTIONAL_EXCEPTION_MEMBER_MESSAGING.md.
+export const FLAGS = Object.freeze({
+  MESSAGING_MEMBER_TO_MEMBER: 'messaging.memberToMember',
+});
+
 let __urlCache = null;
 function readUrlFlags() {
   if (__urlCache) return __urlCache;

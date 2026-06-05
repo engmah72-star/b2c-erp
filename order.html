@@ -374,6 +374,7 @@ import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, onSnapshot, getDoc, collection, query, limit, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
+import { inboxActions } from "./inbox-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
 import { PRODUCT_STATUS, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
@@ -468,6 +469,9 @@ function renderToolbar(o) {
   if (o.clientId) {
     // RULE N1.3 — use ?openClient= (consumed by clients.html:476) instead of #client= (no consumer)
     html += '<a class="order-tb-menu-item" href="clients.html?openClient=' + encodeURIComponent(o.clientId) + '">👤 ملف العميل</a>';
+    // جسر تواصل العميل: فتح محادثة الأوردر معه + تقديم التصميم له (طبقة المراسلة).
+    html += '<button type="button" class="order-tb-menu-item" onclick="openClientOrderChat()">💬 محادثة العميل</button>';
+    html += '<button type="button" class="order-tb-menu-item" onclick="sendDesignToClient()">📨 إرسال التصميم للعميل</button>';
   }
   if (o.stage !== 'archived') {
     if (o.clientId) html += '<div class="order-tb-menu-divider"></div>';
@@ -845,6 +849,41 @@ document.addEventListener('click', (e) => {
 window.toggleMore = function() {
   const m = $('order-tb-menu');
   if (m) m.classList.toggle('open');
+};
+
+// جسر تواصل الموظف↔العميل للأوردر (طبقة المراسلة — الكتابة داخل inboxActions, H1.1).
+function _orderProofUrl(o) {
+  return o.printFinalUrl || o.designFileUrl || o.mockupUrl
+    || (Array.isArray(o.designFiles) && o.designFiles[0] && (o.designFiles[0].url || o.designFiles[0])) || '';
+}
+window.openClientOrderChat = async function() {
+  if (!currentOrder) return;
+  try {
+    const r = await inboxActions.ensureClientOrderThread({
+      db, order: currentOrder, currentUserId: currentUser?.uid || '', currentUserName: userName,
+    });
+    const url = 'inbox.html?conv=' + encodeURIComponent(r.convId);
+    if (typeof window.navigatePage === 'function') window.navigatePage(url);
+    else location.href = url;
+  } catch (e) {
+    toast('تعذّر فتح محادثة العميل: ' + (e.message || ''), 'err');
+  }
+};
+window.sendDesignToClient = async function() {
+  if (!currentOrder) return;
+  const proof = _orderProofUrl(currentOrder);
+  if (!proof) { toast('لا توجد بروفة مرفوعة بعد', 'err'); return; }
+  if (!currentOrder.clientId) { toast('الأوردر غير مرتبط بعميل مسجّل', 'err'); return; }
+  if (!confirm('إرسال التصميم للعميل وإشعاره بمراجعته؟')) return;
+  try {
+    await inboxActions.sendOrderDesignToClient({
+      db, order: currentOrder, proofUrl: proof,
+      currentUserId: currentUser?.uid || '', currentUserName: userName,
+    });
+    toast('📨 تم إرسال التصميم وإشعار العميل', 'ok');
+  } catch (e) {
+    toast('تعذّر الإرسال: ' + (e.message || ''), 'err');
+  }
 };
 // close menu on outside click
 document.addEventListener('click', (e) => {

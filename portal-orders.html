@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="manifest" href="manifest.json">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0f1e">
+<title>Business2Card — أوردرات البوابة</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css?v=45">
+<script src="sidebar-config.js"></script>
+<script src="sidebar.js"></script>
+<script type="module" src="inbox-badge.js"></script>
+<script src="theme.js?v=4"></script>
+<script src="viewas.js?v=1" defer></script>
+<script type="module" src="app-sidebar.js?v=3"></script>
+<style>
+/* RULE U1 — توكنز من shared.css. تنسيق خاص بصفحة أوردرات البوابة فقط. */
+.po-wrap{padding:18px 16px 60px;max-width:980px;margin:0 auto;}
+.po-h{display:flex;align-items:center;gap:10px;margin:6px 0 4px;}
+.po-h h1{font-size:var(--fs-2xl);font-weight:var(--fw-heavy);}
+.po-sub{color:var(--dim2);font-size:var(--fs-sm);margin-bottom:16px;}
+.po-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.po-tab{padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:var(--bg3);
+  color:var(--snow);font-family:inherit;font-weight:var(--fw-bold);font-size:var(--fs-sm);cursor:pointer;}
+.po-tab.active{background:linear-gradient(135deg,var(--p),var(--b));border-color:transparent;color:#fff;}
+.po-tab .ct{opacity:.8;font-weight:var(--fw-extra);}
+.po-sec{display:none;}
+.po-sec.active{display:block;}
+.po-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:14px;margin-bottom:12px;}
+.po-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+.po-name{font-weight:var(--fw-heavy);font-size:var(--fs-md);}
+.po-badge{font-size:var(--fs-xs);font-weight:var(--fw-extra);padding:3px 10px;border-radius:999px;border:1px solid var(--line);}
+.po-meta{color:var(--dim2);font-size:var(--fs-sm);margin-bottom:6px;}
+.po-money{display:flex;gap:14px;flex-wrap:wrap;font-size:var(--fs-sm);margin:6px 0 10px;}
+.po-money b{color:var(--snow);}
+.po-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.po-btn{padding:8px 13px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg3);
+  color:var(--snow);font-family:inherit;font-weight:var(--fw-bold);font-size:var(--fs-sm);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+.po-btn.primary{background:linear-gradient(135deg,var(--p),var(--b));border-color:transparent;color:#fff;}
+.po-btn.good{background:var(--cp-wa,#1f9d55);border-color:transparent;color:#fff;}
+.po-empty{padding:50px 20px;text-align:center;color:var(--dim2);font-size:var(--fs-md);line-height:1.9;}
+</style>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav">
+  <div class="nav-brand"><div class="nav-logo">🎨</div>
+    <div><div class="nav-brand-name">Business2Card</div><div class="nav-brand-role" id="role-badge">—</div></div></div>
+  <div class="nav-scroll" id="nav-links"></div>
+  <div class="nav-foot"><div class="nav-user" onclick="doLogout&&doLogout()">
+    <div class="nav-avatar" id="nav-av">A</div>
+    <div><div class="nav-user-name" id="nav-name">—</div><div class="nav-user-role">تسجيل خروج</div></div></div></div>
+</aside>
+<app-sidebar active current="portal-orders.html"></app-sidebar>
+
+<div class="main">
+  <div class="po-wrap">
+    <div class="po-h"><span style="font-size:26px">📦</span><h1>أوردرات البوابة</h1></div>
+    <div class="po-sub">طلبات وأوردرات العملاء القادمة من البوابة — نفس مصدر الحقيقة (orders) بتدفّق مخصّص.</div>
+
+    <div class="po-tabs">
+      <button type="button" class="po-tab active" data-tab="orders" onclick="poTab('orders')">📦 أوردرات البوابة <span class="ct" id="cnt-orders"></span></button>
+      <button type="button" class="po-tab" data-tab="requests" onclick="poTab('requests')">🆕 طلبات جديدة <span class="ct" id="cnt-requests"></span></button>
+    </div>
+
+    <div class="po-sec active" id="sec-orders"><div class="po-empty">⟳ جارٍ التحميل…</div></div>
+    <div class="po-sec" id="sec-requests"><div class="po-empty">⟳ جارٍ التحميل…</div></div>
+  </div>
+</div>
+</div>
+<div id="toasts" class="toasts"></div>
+
+<script type="module">
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { orderActions } from "./order-actions.js";
+import { inboxActions } from "./inbox-actions.js";
+import { calcRem } from "./core/order-math.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const fn = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
+function toast(msg, t='') { const c=$('toasts'); if(!c) return; const el=document.createElement('div'); el.className='toast '+t; el.textContent=msg; c.appendChild(el); setTimeout(()=>el.remove(),3200); }
+const nav = url => (typeof window.navigatePage==='function' ? window.navigatePage(url) : (location.href=url));
+
+const STAGE_AR = { design:'تصميم', printing:'طباعة', production:'تنفيذ', shipping:'شحن', delivered:'تسليم', archived:'أرشيف' };
+const REQ_KIND = { 'new':'🆕 طلب جديد', 'reorder':'🔁 إعادة طلب', 'quote':'🧾 عرض سعر' };
+
+let currentUser=null, uid='', userName='', currentRole='customer_service';
+let reqsNew=[], reqsConverted=[], ordersById=new Map();
+
+window.poTab = function(t) {
+  document.querySelectorAll('.po-tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
+  $('sec-orders').classList.toggle('active', t==='orders');
+  $('sec-requests').classList.toggle('active', t==='requests');
+};
+
+onAuthStateChanged(auth, async (u) => {
+  if (!u) { location.href = 'login.html'; return; }
+  currentUser = u; uid = u.uid;
+  try {
+    const us = await getDoc(doc(db, 'users', uid));
+    const ud = us.exists() ? us.data() : {};
+    currentRole = ud.role || 'customer_service';
+    userName = ud.name || u.displayName || u.email || 'مستخدم';
+    if ($('nav-name')) $('nav-name').textContent = userName;
+    if (window.B2CSidebar) B2CSidebar.build(ud, 'portal-orders.html');
+  } catch (_) {}
+  subscribeRequests();
+  subscribeOrders();
+});
+
+// خط الطلبات (order_requests) — جديدة + مُحوّلة (للربط مع الأوردرات).
+function subscribeRequests() {
+  const q = query(collection(db, 'order_requests'), orderBy('createdAt', 'desc'), limit(200));
+  onSnapshot(q, snap => {
+    const all = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    reqsNew = all.filter(r => (r.status || 'new') === 'new');
+    reqsConverted = all.filter(r => r.status === 'converted' && r.convertedOrderId);
+    renderRequests(); renderOrders();
+  }, err => {
+    $('sec-requests').innerHTML = `<div class="po-empty">⚠️ تعذّر تحميل الطلبات: ${esc(err.code || err.message)}</div>`;
+  });
+}
+
+// الأوردرات — نفس orders (SSoT)؛ نفلتر القادمة من البوابة عبر ربط convertedOrderId.
+function subscribeOrders() {
+  const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(1000));
+  onSnapshot(q, snap => {
+    ordersById = new Map(snap.docs.map(d => [d.id, { ...d.data(), _id: d.id }]));
+    renderOrders();
+  }, err => {
+    $('sec-orders').innerHTML = `<div class="po-empty">⚠️ تعذّر تحميل الأوردرات: ${esc(err.code || err.message)}</div>`;
+  });
+}
+
+function renderRequests() {
+  const sec = $('sec-requests');
+  $('cnt-requests').textContent = reqsNew.length ? `(${reqsNew.length})` : '';
+  if (!reqsNew.length) { sec.innerHTML = '<div class="po-empty">✅ لا طلبات جديدة بانتظار التحويل.</div>'; return; }
+  sec.innerHTML = reqsNew.map(r => {
+    const meta = [r.product && esc(r.product), r.qty && ('كمية ' + esc(r.qty))].filter(Boolean).join(' · ');
+    return `<div class="po-card" id="req-${r._id}">
+      <div class="po-card-top">
+        <span class="po-name">${esc(r.clientName || 'عميل')}</span>
+        <span class="po-badge">${REQ_KIND[r.type] || esc(r.type || 'طلب')}</span>
+      </div>
+      ${meta ? `<div class="po-meta">${meta}</div>` : ''}
+      ${r.notes ? `<div class="po-meta">📝 ${esc(r.notes)}</div>` : ''}
+      ${r.clientPhone ? `<div class="po-meta" dir="ltr">${esc(r.clientPhone)}</div>` : ''}
+      <div class="po-actions">
+        <button type="button" class="po-btn good" onclick="convertReq('${r._id}',this)">✅ حوّل لأوردر</button>
+        <button type="button" class="po-btn" onclick="rejectReq('${r._id}',this)">🚫 رفض</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderOrders() {
+  const sec = $('sec-orders');
+  const list = reqsConverted
+    .map(r => ordersById.get(r.convertedOrderId))
+    .filter(Boolean)
+    .filter(o => o.stage !== 'archived');
+  // إزالة التكرار (لو حُوّل أكثر من طلب لنفس الأوردر نظرياً)
+  const seen = new Set();
+  const orders = list.filter(o => (seen.has(o._id) ? false : seen.add(o._id)));
+  $('cnt-orders').textContent = orders.length ? `(${orders.length})` : '';
+  if (!orders.length) {
+    sec.innerHTML = '<div class="po-empty">لا أوردرات بوابة بعد.<br><span style="font-size:var(--fs-sm)">الأوردرات المُحوّلة من طلبات البوابة تظهر هنا.</span></div>';
+    return;
+  }
+  sec.innerHTML = orders.map(o => {
+    const rem = calcRem(o);
+    const sale = Number(o.salePrice || 0);
+    const paid = Number(o.totalPaid || o.paidAmount || o.paid || 0);
+    const proof = o.printFinalUrl || o.designFileUrl || o.mockupUrl
+      || (Array.isArray(o.designFiles) && o.designFiles[0] && (o.designFiles[0].url || o.designFiles[0])) || '';
+    const approved = o.clientApproval && o.clientApproval.status === 'approved';
+    return `<div class="po-card">
+      <div class="po-card-top">
+        <span class="po-name">${esc(o.clientName || 'عميل')} · #${esc(o.orderId || o._id.slice(-6))}</span>
+        <span class="po-badge">${esc(STAGE_AR[o.stage] || o.stage || '—')}${approved ? ' · ✅ معتمد' : ''}</span>
+      </div>
+      <div class="po-money">
+        <span>الإجمالي: <b>${fn(sale)}</b></span>
+        <span>مدفوع: <b>${fn(paid)}</b></span>
+        <span>متبقّي: <b>${fn(rem)}</b></span>
+      </div>
+      <div class="po-actions">
+        <a class="po-btn" href="order.html?id=${encodeURIComponent(o._id)}">📂 فتح الأوردر</a>
+        <button type="button" class="po-btn primary" onclick="clientChat('${o._id}')">💬 محادثة العميل</button>
+        ${proof ? `<button type="button" class="po-btn" onclick="sendDesign('${o._id}')">📨 إرسال التصميم</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.convertReq = async function(id, btn) {
+  if (btn) btn.disabled = true;
+  const r = await orderActions.createOrderFromRequest({ db, requestId: id, role: currentRole, userId: uid, userName });
+  if (!r.ok) { if (btn) btn.disabled = false; return toast('❌ ' + (r.errors || ['تعذّر التحويل']).join(' · '), 'err'); }
+  toast('✅ تم التحويل لأوردر ' + (r.orderId || ''), 'ok');
+};
+
+window.rejectReq = async function(id, btn) {
+  if (!confirm('رفض هذا الطلب؟')) return;
+  if (btn) btn.disabled = true;
+  const r = await orderActions.rejectOrderRequest({ db, requestId: id, userId: uid, userName, reason: '' });
+  if (!r.ok) { if (btn) btn.disabled = false; return toast('❌ ' + (r.errors || ['تعذّر الرفض']).join(' · '), 'err'); }
+  toast('🚫 تم رفض الطلب', 'ok');
+};
+
+window.clientChat = async function(orderId) {
+  const o = ordersById.get(orderId); if (!o) return;
+  try {
+    const r = await inboxActions.ensureClientOrderThread({ db, order: o, currentUserId: uid, currentUserName: userName });
+    nav('inbox.html?conv=' + encodeURIComponent(r.convId));
+  } catch (e) { toast('تعذّر فتح المحادثة: ' + (e.message || ''), 'err'); }
+};
+
+window.sendDesign = async function(orderId) {
+  const o = ordersById.get(orderId); if (!o) return;
+  const proof = o.printFinalUrl || o.designFileUrl || o.mockupUrl
+    || (Array.isArray(o.designFiles) && o.designFiles[0] && (o.designFiles[0].url || o.designFiles[0])) || '';
+  if (!proof) return toast('لا توجد بروفة مرفوعة بعد', 'err');
+  if (!o.clientId) return toast('الأوردر غير مرتبط بعميل مسجّل', 'err');
+  if (!confirm('إرسال التصميم للعميل وإشعاره؟')) return;
+  try {
+    await inboxActions.sendOrderDesignToClient({ db, order: o, proofUrl: proof, currentUserId: uid, currentUserName: userName });
+    toast('📨 تم إرسال التصميم وإشعار العميل', 'ok');
+  } catch (e) { toast('تعذّر الإرسال: ' + (e.message || ''), 'err'); }
+};
+</script>
+</body>
+</html>

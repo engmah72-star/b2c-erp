@@ -25,6 +25,8 @@
 
 import { isFeatureEnabled, setFeatureFlag } from './core/feature-flags.js';
 import { openBottomSheet } from './core/bottom-sheet.js';
+import { db } from './core/firebase-init.js';
+import { inboxActions } from './inbox-actions.js';
 
 const DCC_FLAG = 'design.controlCenter';
 // Default: ON for all users. Opt-out:
@@ -246,6 +248,7 @@ export function designPanelHeaderDCC(order = {}, ctx = {}) {
 
       <div class="dcc-hdr-actions">
         ${canSeePhone && o.clientPhone ? `<button type="button" class="dcc-hdr-btn dcc-hdr-btn-primary" onclick="openDesignOrderContactSheet('${escHtml(o._id)}')"><span class="dcc-hdr-btn-ico">📞</span><span class="dcc-hdr-btn-lbl">تواصل</span></button>` : ''}
+        ${o.clientId ? `<button type="button" class="dcc-hdr-btn dcc-hdr-btn-primary" onclick="sendDesignToClientDCC('${escHtml(o._id)}')"><span class="dcc-hdr-btn-ico">📨</span><span class="dcc-hdr-btn-lbl">للعميل</span></button>` : ''}
         ${!isRejected ? `<button type="button" class="dcc-hdr-btn dcc-hdr-btn-success" onclick="approveOrder()"><span class="dcc-hdr-btn-ico">✅</span><span class="dcc-hdr-btn-lbl">اعتمد</span></button>` : ''}
         ${!isRejected ? `<button type="button" class="dcc-hdr-btn dcc-hdr-btn-danger" onclick="openReject()"><span class="dcc-hdr-btn-ico">✕</span><span class="dcc-hdr-btn-lbl">رفض</span></button>` : ''}
         <button type="button" class="dcc-hdr-btn" onclick="openDesignOrderActionSheet('${escHtml(o._id)}')"><span class="dcc-hdr-btn-ico">⋯</span><span class="dcc-hdr-btn-lbl">المزيد</span></button>
@@ -412,6 +415,30 @@ export function openDesignOrderContactSheet(orderId) {
   });
 }
 
+/**
+ * يقدّم التصميم للعميل عبر محادثة الأوردر + يُشعره (جسر المراسلة).
+ * يقرأ البروفة من حقول الأوردر؛ الكتابة داخل inboxActions (طبقة المراسلة · H1.1).
+ */
+export async function sendDesignToClientDCC(orderId) {
+  const o = _getActiveOrder(orderId);
+  if (!o) { if (window.toast) window.toast('تعذّر تحميل بيانات الطلب', 'err'); return; }
+  const proof = o.printFinalUrl || o.designFileUrl || o.mockupUrl
+    || (Array.isArray(o.designFiles) && o.designFiles[0] && (o.designFiles[0].url || o.designFiles[0])) || '';
+  if (!proof) { if (window.toast) window.toast('لا توجد بروفة مرفوعة بعد', 'err'); return; }
+  if (!o.clientId) { if (window.toast) window.toast('الأوردر غير مرتبط بعميل مسجّل', 'err'); return; }
+  if (!window.confirm('إرسال التصميم للعميل وإشعاره بمراجعته؟')) return;
+  const ctx = (window.__dccActiveCtx) || {};
+  try {
+    await inboxActions.sendOrderDesignToClient({
+      db, order: o, proofUrl: proof,
+      currentUserId: ctx.currentUserUid || '', currentUserName: ctx.currentUserName || 'مصمم',
+    });
+    if (window.toast) window.toast('📨 تم إرسال التصميم وإشعار العميل', 'ok');
+  } catch (e) {
+    if (window.toast) window.toast('تعذّر الإرسال: ' + (e.message || ''), 'err');
+  }
+}
+
 export function openDesignOrderActionSheet(orderId) {
   const o = _getActiveOrder(orderId);
   if (!o) {
@@ -558,6 +585,7 @@ if (typeof window !== 'undefined') {
     designTimelineHTML,
     buildOrderTimeline,
     openDesignOrderContactSheet,
+    sendDesignToClientDCC,
     openDesignOrderActionSheet,
     switchDesignPanelTab,
     dccToggleAccordion,

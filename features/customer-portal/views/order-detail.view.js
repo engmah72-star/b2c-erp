@@ -83,7 +83,15 @@ export function create(ctx) {
         ctx.shell.notify('تعذّر اعتماد التصميم — حاول مرة أخرى', 'danger');
         return;
       }
-      if (a === 'modify') { close?.(); ctx.openChat({ kind: 'order', order }); return; }
+      if (a === 'modify') {
+        // طلب تعديل: يُشعر فريق الأوردر + يسجّل رسالة، ثم يفتح المحادثة (تواصل فقط —
+        // لا حالة عمل؛ الـ Revision المُهيكل بند منفصل خلف flag).
+        const note = (typeof prompt === 'function') ? (prompt('اكتب ملاحظة التعديل (اختياري):', '') || '') : '';
+        const uid = ctx.store?.get('user')?.uid || '';
+        const name = ctx.store?.get('client')?.name || ctx.store?.get('user')?.displayName || 'عميل';
+        try { await ctx.services.chat.requestModification({ order, uid, name, note }); } catch (_) {}
+        close?.(); ctx.openChat({ kind: 'order', order }); return;
+      }
       if (a === 'reorder') { await submitRequest(ctx, { type: 'reorder', order }); return; }
       if (a === 'contact') { close?.(); ctx.openChat({ kind: 'order', order }); }
     },

@@ -97,7 +97,7 @@ export function buildConvListHTML({
       <div class="ib-conv-avatar" style="background:${col}">${ico}${isDM ? `<span class="presence ${isOnline ? 'online' : ''}"></span>` : ''}</div>
       <div class="ib-conv-body">
         <div class="ib-conv-top">
-          <div class="ib-conv-name">${esc(name)}</div>
+          <div class="ib-conv-name">${c.isClientThread ? '🔗 ' : ''}${esc(name)}</div>
           <div class="ib-conv-time">${lastTime}</div>
         </div>
         <div class="ib-conv-bot">

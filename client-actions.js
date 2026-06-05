@@ -44,6 +44,8 @@ import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry } from './core/audit.js';
 import { planClientMerge } from './features/clients/duplicate-scan.js';
 import { slugUsername } from './core/text-format.js';
+import { isFeatureEnabled, FLAGS } from './core/feature-flags.js';
+import { resolve as resolveMessagingPolicy, PARTIES } from './core/messaging-policy.js';
 
 // P1.2: clients.html uses Firebase Compat SDK and can't easily pass a
 // modular `db` instance. When called from compat consumers, the `db`
@@ -358,11 +360,28 @@ export const clientActions = {
    */
   async openClientThread({ db = defaultDb, kind = 'order', clientUid, clientName = '', order = null, peer = null }) {
     if (!clientUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    // Messaging Policy (Phase 0): مصدر الحقيقة الواحد للعلاقة/النمط/القدرات.
+    // الكارت/الأوردر/الدعم كلها حواف client→(client|employee). resolve() يؤكّد
+    // السماح البنيوي ويشتقّ النمط (mode) المخزَّن على المحادثة. الإنفاذ التشغيلي
+    // (flag/سياق/قبول) يبقى أدناه — تكافؤ تام مع السلوك الحالي.
+    const _binding = kind === 'order' ? 'order' : kind === 'member' ? 'referral' : 'support';
+    const _policy = resolveMessagingPolicy({
+      from: PARTIES.CLIENT,
+      to: kind === 'member' ? PARTIES.CLIENT : PARTIES.EMPLOYEE,
+      context: { binding: _binding },
+    });
+    if (!_policy.allowed) return { ok: false, errors: ['🔒 علاقة تواصل غير مسموحة'], warnings: [] };
+    const _mode = _policy.mode;
     // CS pool المركزي — يضمن وجود موظف مستلِم في محادثة العميل (HOTFIX delivery).
     // محادثة عضو↔عضو لا تحتاج CS pool.
     const supportAgents = kind === 'member' ? [] : await _loadSupportAgents(db);
     let convId, type, name, extra = {}, staff = [];
     if (kind === 'member') {
+      // حارس دستوري (المدخل المركزي الوحيد): محادثة عضو↔عضو استثناء محدود النطاق
+      // عن الـ BUSINESS DNA، فلا تُفتح إلا مع تفعيل العلم صراحةً (افتراضي OFF · E1).
+      if (!isFeatureEnabled(FLAGS.MESSAGING_MEMBER_TO_MEMBER)) {
+        return { ok: false, errors: ['🔒 محادثة الأعضاء غير مُفعّلة'], warnings: [] };
+      }
       if (!peer?.uid) return { ok: false, errors: ['⚠️ العضو المطلوب غير محدّد'], warnings: [] };
       if (peer.uid === clientUid) return { ok: false, errors: ['⚠️ لا يمكنك محادثة نفسك'], warnings: [] };
       const ids = [clientUid, peer.uid].sort();
@@ -396,7 +415,7 @@ export const clientActions = {
       try { snap = await getDoc(ref); } catch (_) {}
       if (!snap || !snap.exists()) {
         await setDoc(ref, {
-          type, participants, name, isClientThread: true,
+          type, mode: _mode, participants, name, isClientThread: true,
           archivedBy: [], lastReadByAll: false,
           createdAt: serverTimestamp(), lastMessageAt: serverTimestamp(),
           lastMessagePreview: '', unreadCount: {}, ...extra,
@@ -547,6 +566,43 @@ export const clientActions = {
     } catch (e) {
       return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر إرسال الرسالة' : (e.message || 'فشل الإرسال')], warnings: [] };
     }
+  },
+
+  /**
+   * طلب العميل تعديلاً على التصميم: يفتح/يضمن محادثة الأوردر، يرسل رسالة طلب
+   * التعديل، **ويُشعر فريق الأوردر** (المصمم/المنشئ/التنفيذ) — يغلق الاتجاه المقابل
+   * لإشعار «إرسال التصميم للعميل». طبقة مراسلة/إشعارات فقط — لا business state؛
+   * التحويل إلى Revision مُهيكل (Order-Driven) بند منفصل خلف flag (راجع الخطة م3).
+   * Returns: { ok, errors[], warnings[], convId? }
+   */
+  async requestOrderModification({ db = defaultDb, order, clientUid, clientName = '', note = '' }) {
+    if (!order?._id || !clientUid) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    const t = await clientActions.openClientThread({ db, kind: 'order', clientUid, clientName, order });
+    if (!t.ok) return t;
+    const text = '🔧 طلب تعديل على التصميم' + (note && note.trim() ? '：' + note.trim() : '');
+    await clientActions.sendClientMessage({
+      db, convId: t.convId, text, senderId: clientUid, senderName: clientName || 'عميل',
+      participants: t.participants,
+    });
+    // إشعار فريق الأوردر (الموظفون فقط — العميل هو المُرسِل).
+    const team = [...new Set([order.designerId, order.createdBy, order.productionAgent].filter(Boolean))]
+      .filter(uid => uid !== clientUid);
+    if (team.length) {
+      try {
+        const batch = writeBatch(db);
+        team.forEach(uid => {
+          batch.set(doc(collection(db, 'notifications')), {
+            toUid: uid, type: 'order', ico: '🔧',
+            title: '🔧 العميل طلب تعديلاً',
+            desc: '#' + (order.orderId || order._id.slice(-6)) + ' — ' + (clientName || 'عميل'),
+            link: 'order.html?id=' + encodeURIComponent(order._id),
+            read: false, createdAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      } catch (_) { /* الإشعار ثانوي — لا يُفشل طلب التعديل */ }
+    }
+    return { ok: true, errors: [], warnings: [], convId: t.convId };
   },
 
   /** يصفّر unreadCount[uid] على محادثة العميل (عند فتحها). */
