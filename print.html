@@ -680,6 +680,49 @@ function renderFilesSection(o){
   </div>`;
 }
 
+// ── قسم بيانات الشحن — يُعرَض في تاب «الشحن» المنفصل داخل البانل ──
+function renderShippingSection(o){
+  return `<div style="padding:14px 16px">
+    <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px">🚚 بيانات الشحن — تُدخَل قبل التحويل للتنفيذ</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
+          <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
+            <option value="company"${o.shipMethod==='company'?' selected':''}>شركة شحن</option>
+            <option value="pickup"${o.shipMethod==='pickup'?' selected':''}>استلام من المطبعة</option>
+            <option value="courier"${o.shipMethod==='courier'?' selected':''}>مندوب داخلي</option>
+          </select></div>
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">📞 تليفون التسليم</label>
+          <input class="inp" id="ps-phone" value="${o.customerPhoneShip||o.clientPhone||''}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div id="ps-company-row" style="${(o.shipMethod||'company')==='company'?'':'display:none;'}">
+        <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">🏢 شركة الشحن</label>
+        <select class="inp" id="ps-company" style="width:100%;margin-top:3px">
+          <option value="">— اختر شركة —</option>
+          ${(shippers||[]).map(s=>`<option value="${s._id}"${o.shipCompanyId===s._id?' selected':''}>${escAttr(s.name||'بدون اسم')}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المحافظة</label>
+          <input class="inp" id="ps-gov" value="${o.deliveryAddress?.gov||''}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المدينة/المنطقة</label>
+          <input class="inp" id="ps-city" value="${o.deliveryAddress?.city||''}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">العنوان بالتفصيل</label>
+        <input class="inp" id="ps-street" value="${o.deliveryAddress?.street||''}" placeholder="الشارع / رقم العقار / علامة مميزة" style="width:100%;margin-top:3px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:6px 0">
+        <input type="checkbox" id="ps-incl" ${o.priceIncludesShipping?'checked':''} onchange="onPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
+        السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
+      </label>
+      <div id="ps-fee-row" style="${o.priceIncludesShipping?'display:none;':''}">
+        <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💵 رسوم الشحن على العميل (غير شامل — يدفعها للمندوب)</label>
+        <input class="inp" id="ps-fee" type="number" min="0" step="0.01" value="${o.courierDirectFee||o.customerShipFee||''}" placeholder="0" style="width:100%;margin-top:3px">
+      </div>
+      <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
+    </div>
+  </div>`;
+}
+
 // Render Panel
 function renderPanel(o){
   if(!o)return; // حارس: لا يُرسَم بدون أوردر مفتوح (يمنع crash من listeners تستدعيه بلا arg)
@@ -827,48 +870,10 @@ function renderPanel(o){
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);color:var(--b);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-base)">📎 الملف المرجعي ←</a>`:''}
     `, false):''}
 
-    <!-- بيانات الشحن (مطوي — مفتوح افتراضياً لأنه مطلوب قبل التحويل للتنفيذ) -->
-    ${collapsibleSection('ship','🚚','بيانات الشحن',`
-      <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
-            <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
-              <option value="company"${o.shipMethod==='company'?' selected':''}>شركة شحن</option>
-              <option value="pickup"${o.shipMethod==='pickup'?' selected':''}>استلام من المطبعة</option>
-              <option value="courier"${o.shipMethod==='courier'?' selected':''}>مندوب داخلي</option>
-            </select></div>
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">📞 تليفون التسليم</label>
-            <input class="inp" id="ps-phone" value="${o.customerPhoneShip||o.clientPhone||''}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
-        </div>
-        <div id="ps-company-row" style="${(o.shipMethod||'company')==='company'?'':'display:none;'}">
-          <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">🏢 شركة الشحن</label>
-          <select class="inp" id="ps-company" style="width:100%;margin-top:3px">
-            <option value="">— اختر شركة —</option>
-            ${(shippers||[]).map(s=>`<option value="${s._id}"${o.shipCompanyId===s._id?' selected':''}>${escAttr(s.name||'بدون اسم')}</option>`).join('')}
-          </select>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المحافظة</label>
-            <input class="inp" id="ps-gov" value="${o.deliveryAddress?.gov||''}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المدينة/المنطقة</label>
-            <input class="inp" id="ps-city" value="${o.deliveryAddress?.city||''}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
-        </div>
-        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">العنوان بالتفصيل</label>
-          <input class="inp" id="ps-street" value="${o.deliveryAddress?.street||''}" placeholder="الشارع / رقم العقار / علامة مميزة" style="width:100%;margin-top:3px"></div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:6px 0">
-          <input type="checkbox" id="ps-incl" ${o.priceIncludesShipping?'checked':''} onchange="onPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
-          السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
-        </label>
-        <div id="ps-fee-row" style="${o.priceIncludesShipping?'display:none;':''}">
-          <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💵 رسوم الشحن على العميل (غير شامل — يدفعها للمندوب)</label>
-          <input class="inp" id="ps-fee" type="number" min="0" step="0.01" value="${o.courierDirectFee||o.customerShipFee||''}" placeholder="0" style="width:100%;margin-top:3px">
-        </div>
-        <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
-      </div>
-    `, true)}
-
+    <!-- بيانات الشحن اتنقلت لتاب «🚚 الشحن» المنفصل (renderShippingSection) -->
     <!-- السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html). -->
   `;
+  const __shipHTML = renderShippingSection(o);
 
   // Print Control Center (Phase 2): wrap the production body in a 3-tab
   // structure (Production / Timeline / More). If the flag is OFF or the
@@ -876,10 +881,12 @@ function renderPanel(o){
   const __pccOn = (typeof window.isPrintControlCenterOn === 'function')
     && window.isPrintControlCenterOn()
     && typeof window.wrapPrintPanelInTabs === 'function';
-  let __finalHTML = __bodyHTML;
+  // الشحن يُعرَض في تاب منفصل (🚚 الشحن). لو PCC مقفول أو فشل الـ wrap،
+  // نلحق الشحن بآخر الجسم عشان ميختفيش.
+  let __finalHTML = __bodyHTML + __shipHTML;
   if (__pccOn) {
-    try { __finalHTML = window.wrapPrintPanelInTabs(o, __bodyHTML); }
-    catch (e) { console.warn('[renderPanel] PCC wrap failed, fallback to legacy:', e); __finalHTML = __bodyHTML; }
+    try { __finalHTML = window.wrapPrintPanelInTabs(o, __bodyHTML, { shippingHTML: __shipHTML }); }
+    catch (e) { console.warn('[renderPanel] PCC wrap failed, fallback to legacy:', e); __finalHTML = __bodyHTML + __shipHTML; }
   }
   document.getElementById('panel-body').innerHTML = __finalHTML;
 }
