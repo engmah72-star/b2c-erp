@@ -8,20 +8,8 @@
  */
 import { escapeHtml, qs } from '../utils/dom.js';
 import { Card, Button, Input, Select, Chips, EmptyState, Badge } from '../components/index.js';
+import { SPECIALTIES, SPEC_LABEL } from '../utils/specialties.js';
 
-const SPECIALTIES = [
-  { value: 'food', label: '🍽️ مطاعم / كافيهات' },
-  { value: 'clinic', label: '🩺 عيادات / صحة' },
-  { value: 'legal', label: '⚖️ خدمات قانونية' },
-  { value: 'realestate', label: '🏢 عقارات' },
-  { value: 'beauty', label: '💇 تجميل / صالونات' },
-  { value: 'education', label: '📚 تعليم / تدريب' },
-  { value: 'contracting', label: '🛠️ مقاولات / صيانة' },
-  { value: 'retail', label: '🛍️ تجارة / هدايا' },
-  { value: 'events', label: '🎉 تنظيم مناسبات' },
-  { value: 'other', label: '✨ خدمات أخرى' },
-];
-const SPEC_LABEL = Object.fromEntries(SPECIALTIES.map((s) => [s.value, s.label]));
 const FILTERS = [{ label: 'كل الفرص', value: 'all' }, { label: 'احتياجاتي', value: 'mine' }];
 
 export function create(ctx) {

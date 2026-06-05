@@ -6,6 +6,7 @@ import { escapeHtml, qs } from '../utils/dom.js';
 import { Card, Button, Input, Select, Avatar } from '../components/index.js';
 import { cropResize } from '../utils/image.js';
 import { slugUsername } from '../utils/username.js';
+import { SPECIALTIES } from '../utils/specialties.js';
 import { qrSrc, downloadQR } from '../utils/qr.js';
 import { entitlementsOf } from '../../../core/entitlements.js';
 import { validateProfile } from '../validators/profile.validator.js';
@@ -113,6 +114,7 @@ export function create(ctx) {
       ${Input({ id: 'f-phone', label: 'رقم التواصل', type: 'tel', value: client?.phone1 || '', required: true, dir: 'ltr', placeholder: '01xxxxxxxxx' })}
       ${Input({ id: 'f-tagline', label: 'وصف مختصر', value: biz.tagline || '' })}
       ${Input({ id: 'f-activity', label: 'النشاط / التخصص', value: biz.activity || '' })}
+      ${Select({ id: 'f-specialty', label: 'تصنيف نشاطك (لتصلك فرص الأعمال المطابقة)', options: [{ value: '', label: '— اختر التصنيف —' }, ...SPECIALTIES], value: biz.specialty || '' })}
       ${Input({ id: 'f-city', label: 'المحافظة / المدينة', value: biz.city || '' })}
       ${Input({ id: 'f-address', label: 'العنوان (يفتح خرائط جوجل)', value: biz.address || '', placeholder: 'مثال: ٧٧ ش أيوب — رأس البر' })}
       ${Select({ id: 'f-template', label: 'قالب الكارت', options: TEMPLATE_OPTS, value: biz.template || 'classic' })}
@@ -216,6 +218,7 @@ export function create(ctx) {
         const businessProfile = {
           ...(client?.businessProfile || {}),
           bizName, tagline: get('f-tagline'), activity: get('f-activity'),
+          specialty: qs('#f-specialty')?.value || '',
           city: get('f-city'), address: get('f-address'),
           template: get('f-template') || 'classic', username,
           listedInDirectory: !!qs('#f-directory')?.checked,

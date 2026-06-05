@@ -3602,6 +3602,38 @@ exports.onOrderRequestNotifyStaff = onDocumentCreated('order_requests/{reqId}', 
 });
 
 // ════════════════════════════════════════════════════════════
+// BUSINESS NETWORK — توجيه الفرصة للأعضاء المطابقين (demand routing)
+// عند طرح احتياج: يُشعر الأعضاء الذين تصنيف نشاطهم == تصنيف الاحتياج (عدا صاحبه)
+// فتصل الفرصة دون تصفّح. المطابقة عبر public_cards.specialty. جرس داخل التطبيق.
+// ════════════════════════════════════════════════════════════
+exports.onBusinessNeedNotifyMatches = onDocumentCreated('business_needs/{needId}', async (e) => {
+  const n = (e.data && e.data.data()) || {};
+  if ((n.status && n.status !== 'open') || !n.specialty) return;
+  const needId = e.params.needId;
+  let snap;
+  try {
+    snap = await db.collection('public_cards').where('specialty', '==', n.specialty).limit(200).get();
+  } catch (err) { console.warn('business_need match query failed', err.message); return; }
+  if (snap.empty) return;
+
+  const title = '🤝 فرصة جديدة في تخصصك';
+  const desc = String(n.title || 'احتياج جديد').slice(0, 120) + (n.city ? ' · ' + n.city : '');
+  let batch = db.batch();
+  let ops = 0;
+  const flush = async () => { if (ops) { await batch.commit().catch((er) => console.warn('need notif batch', er.message)); batch = db.batch(); ops = 0; } };
+  for (const d of snap.docs) {
+    if (d.id === n.authorUid) continue; // لا تُشعر صاحب الاحتياج
+    batch.set(db.collection('notifications').doc(), {
+      toUid: d.id, title, desc, ico: '🤝',
+      link: '/cp-shell.html', type: 'business_need', entityId: needId,
+      read: false, createdAt: FieldValue.serverTimestamp(),
+    });
+    if (++ops >= 400) await flush();
+  }
+  await flush();
+});
+
+// ════════════════════════════════════════════════════════════
 // BILLING — منح/ترقية خطة العميل (Admin-only). المصدر الموثوق = subscriptions/{uid}
 // (write:false في القواعد) → لا يمنح العميل نفسه خطة. يُمرّر له لاحقاً webhook الدفع.
 // ════════════════════════════════════════════════════════════
