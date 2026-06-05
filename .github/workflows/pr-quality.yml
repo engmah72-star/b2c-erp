@@ -184,3 +184,27 @@ jobs:
           ./tests/rules/node_modules/.bin/firebase emulators:exec \
             --only firestore,storage --project demo-test \
             "cd tests/rules && npm run test:ci"
+
+  # ──────────────────────────────────────────────────────────────
+  # 🧪 Unit / Regression Suite — بوابة مانعة (blocking)
+  # تشغّل كل اختبارات المنطق النقي في tests/*.test.mjs (order-math،
+  # financial-invariants، permissions-matrix، stage-responsibilities،
+  # reports، clients … إلخ). دي شبكة الأمان ضد «صلّحت حاجة فبوّظت تانية»:
+  # أي تعديل يكسر منطق مركزي في وحدة تانية يفشل الـ PR قبل الدمج.
+  # كانت موجودة على الرف ولا تُشغَّل في CI — وُصِّلت هنا (RULE G8).
+  # لا تحتاج emulator ولا شبكة: hooks.mjs يستبدل Firebase SDK بـ stub محلي.
+  # ──────────────────────────────────────────────────────────────
+  unit-tests:
+    name: 🧪 Unit / Regression Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run pure logic tests (node --test)
+        # node --test يجمع كل ملف ويخرج بـ 1 عند أي فشل = blocking.
+        # --import يسجّل resolve hook الذي يحوّل استيرادات Firebase https إلى stub.
+        run: node --import ./tests/_loaders/register.mjs --test tests/*.test.mjs
