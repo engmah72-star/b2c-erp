@@ -263,7 +263,7 @@ export const shippingActions = {
       batch.update(order._ref, {
         totalPaid: newPaid, remaining: newRem,
         paymentStatus: newRem <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : 'pending',
-        ...(autoCollected ? { shipStage: 'collected', shipCollectedAt: serverTimestamp() } : {}),
+        ...(autoCollected ? { shipStage: 'collected', shipCollectedAt: serverTimestamp(), shipCollectedBy: userName || '' } : {}),
         ...(note ? { shipCollectNote: note } : {}),
         timeline: [...(order.timeline || []), _tlEntry(
           `💰 تحصيل ${amt} ج عبر ${walletName || ''}${autoCollected ? ' — ✅ محصّل بالكامل' : ''}`,
