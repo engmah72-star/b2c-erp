@@ -568,6 +568,43 @@ export const clientActions = {
     }
   },
 
+  /**
+   * طلب العميل تعديلاً على التصميم: يفتح/يضمن محادثة الأوردر، يرسل رسالة طلب
+   * التعديل، **ويُشعر فريق الأوردر** (المصمم/المنشئ/التنفيذ) — يغلق الاتجاه المقابل
+   * لإشعار «إرسال التصميم للعميل». طبقة مراسلة/إشعارات فقط — لا business state؛
+   * التحويل إلى Revision مُهيكل (Order-Driven) بند منفصل خلف flag (راجع الخطة م3).
+   * Returns: { ok, errors[], warnings[], convId? }
+   */
+  async requestOrderModification({ db = defaultDb, order, clientUid, clientName = '', note = '' }) {
+    if (!order?._id || !clientUid) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    const t = await clientActions.openClientThread({ db, kind: 'order', clientUid, clientName, order });
+    if (!t.ok) return t;
+    const text = '🔧 طلب تعديل على التصميم' + (note && note.trim() ? '：' + note.trim() : '');
+    await clientActions.sendClientMessage({
+      db, convId: t.convId, text, senderId: clientUid, senderName: clientName || 'عميل',
+      participants: t.participants,
+    });
+    // إشعار فريق الأوردر (الموظفون فقط — العميل هو المُرسِل).
+    const team = [...new Set([order.designerId, order.createdBy, order.productionAgent].filter(Boolean))]
+      .filter(uid => uid !== clientUid);
+    if (team.length) {
+      try {
+        const batch = writeBatch(db);
+        team.forEach(uid => {
+          batch.set(doc(collection(db, 'notifications')), {
+            toUid: uid, type: 'order', ico: '🔧',
+            title: '🔧 العميل طلب تعديلاً',
+            desc: '#' + (order.orderId || order._id.slice(-6)) + ' — ' + (clientName || 'عميل'),
+            link: 'order.html?id=' + encodeURIComponent(order._id),
+            read: false, createdAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      } catch (_) { /* الإشعار ثانوي — لا يُفشل طلب التعديل */ }
+    }
+    return { ok: true, errors: [], warnings: [], convId: t.convId };
+  },
+
   /** يصفّر unreadCount[uid] على محادثة العميل (عند فتحها). */
   async markClientThreadRead({ db = defaultDb, convId, uid }) {
     if (!convId || !uid) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };

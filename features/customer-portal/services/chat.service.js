@@ -16,6 +16,12 @@ export async function sendMessage({ convId, text, uid, name, participants }) {
   return fb.clientActions.sendClientMessage({ convId, text, senderId: uid, senderName: name, participants });
 }
 
+/** طلب تعديل على التصميم: رسالة في خيط الأوردر + إشعار فريق الأوردر (عبر الفعل المركزي). */
+export async function requestModification({ order, uid, name, note = '' }) {
+  const fb = await firebase();
+  return fb.clientActions.requestOrderModification({ order, clientUid: uid, clientName: name, note });
+}
+
 /** يرفع مرفقًا (صورة/PDF) إلى تخزين العميل ثم يرسله كرسالة (نفس شكل الإنبوكس). */
 export async function sendAttachment({ convId, file, uid, name, participants }) {
   const fb = await firebase();
