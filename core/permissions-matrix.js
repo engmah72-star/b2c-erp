@@ -165,6 +165,7 @@ export const CAPABILITIES = Object.freeze({
   FINAL_APPROVE_PAYMENTS:  'final_approve_payments',    // الاعتماد النهائي المُقفِل (admin فقط)
   MANAGE_RETURNS:     'manage_returns',
   MANAGE_EMPLOYEES:        'manage_employees',
+  MANAGE_ATTENDANCE:       'manage_attendance',         // تسجيل/اعتماد حضور أي موظف مركزياً (firestore.rules: attendance)
   MANAGE_PRODUCTS:         'manage_products',
   MANAGE_SUPPLIERS:        'manage_suppliers',
   MANAGE_SUPPLIER_PAYMENTS:'manage_supplier_payments',
@@ -181,7 +182,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true, view_all_shipments:true,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:true,
+    manage_returns:true, manage_employees:true, manage_attendance:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:true,
   },
   operation_manager: {
     execute_payments:true, final_approve_payments:false,
@@ -190,7 +191,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true, view_all_shipments:true,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:false,
+    manage_returns:true, manage_employees:true, manage_attendance:true, manage_products:true, manage_suppliers:true, manage_supplier_payments:true, system_settings:false,
   },
   customer_service: {
     execute_payments:false, final_approve_payments:false,
@@ -199,7 +200,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:false,
     manage_printing:false, manage_shipping:false, view_all_shipments:false,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
+    manage_returns:true, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   graphic_designer: {
     execute_payments:false, final_approve_payments:false,
@@ -208,7 +209,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:false,
     manage_printing:false, manage_shipping:false, view_all_shipments:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   design_operator: {
     execute_payments:false, final_approve_payments:false,
@@ -217,7 +218,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:true, approve_designs:true,
     manage_printing:false, manage_shipping:false, view_all_shipments:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   production_agent: {
     execute_payments:false, final_approve_payments:false,
@@ -226,7 +227,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:true, manage_shipping:false, view_all_shipments:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   shipping_officer: {
     execute_payments:false, final_approve_payments:false,
@@ -235,7 +236,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:false, manage_shipping:true, view_all_shipments:false,
     view_financials:false, manage_payments:false,
-    manage_returns:false, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
+    manage_returns:false, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:false, system_settings:false,
   },
   wallet_manager: {
     execute_payments:false, final_approve_payments:false,
@@ -244,7 +245,7 @@ export const DEFAULT_CAPABILITIES = {
     upload_designs:false, approve_designs:false,
     manage_printing:false, manage_shipping:false, view_all_shipments:false,
     view_financials:true, manage_payments:true,
-    manage_returns:true, manage_employees:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:true, system_settings:false,
+    manage_returns:true, manage_employees:false, manage_attendance:false, manage_products:false, manage_suppliers:false, manage_supplier_payments:true, system_settings:false,
   },
 };
 

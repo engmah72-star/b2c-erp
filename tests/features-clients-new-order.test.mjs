@@ -121,7 +121,7 @@ test('deadline is required', () => {
   const r = validateNewOrderForm({ stage: 'design', products: [{}], salePrice: 0, deadline: '' });
   assertEq(r.ok, false);
   assertEq(r.focusField, 'no-deadline');
-  if (!r.errors[0].includes('موعد التسليم')) throw new Error('wrong msg');
+  if (!r.errors[0].includes('موعد تسليم')) throw new Error('wrong msg');
 });
 
 test('design allows salePrice = 0', () => {

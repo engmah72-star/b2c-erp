@@ -29,10 +29,25 @@ npm install --save-dev @firebase/rules-unit-testing firebase-tools
 firebase emulators:exec --only firestore "npm test"
 ```
 
+## تشغيل اختبارات المنطق النقي (`tests/*.test.mjs`)
+
+لا تحتاج emulator ولا شبكة — `_loaders/hooks.mjs` يستبدل Firebase SDK بـ stub محلي.
+
+```bash
+# كل السويت
+node --import ./tests/_loaders/register.mjs --test tests/*.test.mjs
+
+# ملف واحد
+node --import ./tests/_loaders/register.mjs --test tests/core-order-math.test.mjs
+```
+
 ## CI Integration
 
-سيُضاف لاحقاً إلى `.github/workflows/pr-quality.yml` كـ job منفصل
-بعد التأكد من استقرار الـ test suite (~أسبوع).
+- **`tests/rules/`** (Firestore/Storage rules) → job `rules-tests` في
+  `.github/workflows/pr-quality.yml` (emulator، blocking).
+- **`tests/*.test.mjs`** (المنطق النقي) → job `unit-tests` في نفس الملف
+  (blocking). دي شبكة الأمان ضد regressions «صلّحت حاجة فبوّظت تانية»:
+  أي تعديل يكسر منطقاً مركزياً في وحدة أخرى يُفشل الـ PR قبل الدمج.
 
 ## القواعد
 
