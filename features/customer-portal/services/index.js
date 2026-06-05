@@ -13,6 +13,7 @@ import { openThread, sendMessage, subscribeMessages } from './chat.service.js';
 import { approveDesign } from './approval.service.js';
 import { createRequest } from './requests.service.js';
 import { loadProducts } from './products.service.js';
+import { loadOpenNeeds, postNeed, respondNeed, closeNeed } from './needs.service.js';
 import { subscribeNotifications, markRead } from './notifications.service.js';
 
 export const services = {
@@ -20,6 +21,7 @@ export const services = {
   approval: { approveDesign },
   requests: { createRequest },
   products: { loadProducts },
+  needs: { loadOpenNeeds, postNeed, respondNeed, closeNeed },
   notifications: { subscribeNotifications, markRead },
   profile: {
     loadClient, saveProfile, loadPublicCard, addWork, removeWork,

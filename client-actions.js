@@ -443,6 +443,75 @@ export const clientActions = {
     }
   },
 
+  // ══════════════════════════════════════════
+  // BUSINESS NETWORK — لوحة الاحتياجات (member↔member · MVP)
+  // طلب صريح بين الأعضاء: عضو يطرح «احتياج»، عضو آخر يردّ بالاهتمام فيصل
+  // لصاحب الاحتياج إشعار برابط كارت المُهتمّ (سكة التواصل = الكارت الذكي).
+  // ══════════════════════════════════════════
+
+  /** طرح احتياج عمل جديد (business_needs · status:open). */
+  async postBusinessNeed({
+    db = defaultDb, authorUid, authorName = '', authorUsername = '',
+    title = '', specialty = '', city = '', details = '',
+  }) {
+    if (!authorUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    const t = (title || '').trim();
+    if (!t) return { ok: false, errors: ['⚠️ اكتب وصف الاحتياج'], warnings: [] };
+    if (!specialty) return { ok: false, errors: ['⚠️ اختر التخصص المطلوب'], warnings: [] };
+    try {
+      const ref = await addDoc(collection(db, 'business_needs'), {
+        authorUid, authorName: authorName || 'عضو', authorUsername: authorUsername || '',
+        title: t, specialty, city: (city || '').trim(), details: (details || '').trim(),
+        status: 'open', responsesCount: 0,
+        createdBy: authorUid, createdAt: serverTimestamp(),
+        timeline: [opEntry({ action: '📣 طرح احتياج', userId: authorUid, userName: authorName || 'عضو', meta: { specialty } })],
+      });
+      return { ok: true, errors: [], warnings: [], needId: ref.id };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر النشر' : (e.message || 'فشل النشر')], warnings: [] };
+    }
+  },
+
+  /** الردّ على احتياج بالاهتمام: يسجّل ردًّا + يُشعر صاحبه برابط كارت المُهتمّ (ذرّي). */
+  async respondToNeed({
+    db = defaultDb, needId, authorUid, responderUid, responderName = '', responderUsername = '',
+  }) {
+    if (!responderUid) return { ok: false, errors: ['⚠️ لم يتم تسجيل الدخول'], warnings: [] };
+    if (!needId || !authorUid) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    if (responderUid === authorUid) return { ok: false, errors: ['⚠️ لا يمكنك الردّ على احتياجك'], warnings: [] };
+    try {
+      const batch = writeBatch(db);
+      const respRef = doc(collection(db, 'business_needs', needId, 'responses'));
+      batch.set(respRef, {
+        responderUid, responderName: responderName || 'عضو', responderUsername: responderUsername || '',
+        createdBy: responderUid, createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'business_needs', needId), { responsesCount: increment(1) });
+      const link = responderUsername ? '/u/' + encodeURIComponent(responderUsername) : '/card.html?id=' + responderUid;
+      batch.set(doc(collection(db, 'notifications')), {
+        toUid: authorUid, title: '🤝 نشاط مهتم بفرصتك',
+        desc: (responderName || 'عضو') + ' — افتح كارته للتواصل',
+        ico: '🤝', link, type: 'need_response', entityId: needId,
+        read: false, createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      return { ok: false, errors: [e.code === 'permission-denied' ? '🔒 تعذّر الإرسال' : (e.message || 'فشل الإرسال')], warnings: [] };
+    }
+  },
+
+  /** إغلاق احتياج (صاحبه فقط — تفرضه القواعد). */
+  async closeBusinessNeed({ db = defaultDb, needId, uid }) {
+    if (!uid || !needId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [] };
+    try {
+      await updateDoc(doc(db, 'business_needs', needId), { status: 'closed', closedAt: serverTimestamp() });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'تعذّر الإغلاق'], warnings: [] };
+    }
+  },
+
   /** إرسال رسالة نصية من العميل في محادثته. */
   async sendClientMessage({ db = defaultDb, convId, text, senderId, senderName = 'عميل', participants = [] }) {
     const t = (text || '').trim();
