@@ -1263,6 +1263,8 @@ export function validateStageRequirements(order, fromStage) {
  */
 export function buildStageAdvance({ order, role, userId, userName, extraFields = {}, targetStage = null, nextAssigneeId = '', nextAssigneeName = '', bypassWarnings = false, slaTable = null }) {
   if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+  // قاعدة R (الوقت + المسؤول): مفيش انتقال بلا مُنفِّذ معروف — كل طابع زمني له مسؤول.
+  if (!userId && !userName) return { ok:false, errors:['العملية تحتاج مستخدماً معروفاً (المسؤول عن الانتقال)'], warnings:[] };
   const cur = order.stage || 'design';
   const stageConf = STAGES[cur];
   if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur], warnings:[] };
@@ -1356,8 +1358,10 @@ export function buildStageAdvance({ order, role, userId, userName, extraFields =
  *
  * @returns { ok, newStage, errors, fields, timelineEntry }
  */
-export function buildStageRevert({ order, role, userId, userName, targetStage, reason = '', extraFields = {} }) {
+export function buildStageRevert({ order, role, userId, userName, targetStage, reason = '', extraFields = {}, nextAssigneeId = '', nextAssigneeName = '' }) {
   if (!order) return { ok:false, errors:['لا يوجد أوردر'] };
+  // قاعدة R (الوقت + المسؤول): مفيش ارتداد بلا مُنفِّذ معروف.
+  if (!userId && !userName) return { ok:false, errors:['العملية تحتاج مستخدماً معروفاً (المسؤول عن الارتداد)'] };
   const cur = order.stage || 'design';
   const stageConf = STAGES[cur];
   if (!stageConf) return { ok:false, errors:['مرحلة غير معروفة: ' + cur] };
@@ -1376,21 +1380,40 @@ export function buildStageRevert({ order, role, userId, userName, targetStage, r
 
   const targetConf = STAGES[target];
   const now = nowStr();
+
+  // قاعدة R: المرحلة المرتدّ إليها لازم يكون لها مسؤول (المختار > المالك الحالي > مُنفّذ الارتداد)
+  const ownership = STAGE_OWNERSHIP[target];
+  const assigneeFields = {};
+  let effAssigneeId = '', effAssigneeName = '';
+  if (ownership) {
+    if (nextAssigneeId) { effAssigneeId = nextAssigneeId; effAssigneeName = nextAssigneeName || ''; }
+    else if (order[ownership.idField]) { effAssigneeId = order[ownership.idField]; effAssigneeName = order[ownership.nameField] || ''; }
+    else { effAssigneeId = userId || ''; effAssigneeName = userName || ''; }
+    if (effAssigneeId) {
+      assigneeFields[ownership.idField]   = effAssigneeId;
+      assigneeFields[ownership.nameField] = effAssigneeName;
+    }
+  }
+
   // الارتداد = إعادة فتح المرحلة الهدف: نعيد ضبط ساعة الدخول (المدة تُحسب من جديد)
   // ونلغي طابع إنجازها السابق. الموعد اليدوي (إن وُجد) يبقى كما هو.
   const fields = {
     stage: target,
     [`stageEnteredAt.${target}`]: now,
     [`stageCompletedAt.${target}`]: '',
+    ...assigneeFields,
     ...extraFields,
   };
+  const handoffSuffix = effAssigneeName ? ` — مسؤول: ${effAssigneeName}` : '';
   const timelineEntry = {
     date:  now,
     stage: target,
     kind:  'stage',
-    action: `↩️ ارتداد ${stageConf.label} → ${targetConf.label} — ${reason.trim()}`,
+    action: `↩️ ارتداد ${stageConf.label} → ${targetConf.label} — ${reason.trim()}${handoffSuffix}`,
     by:    userName || '',
     byId:  userId   || '',
+    assigneeId:   effAssigneeId   || '',
+    assigneeName: effAssigneeName || '',
   };
 
   return { ok:true, newStage: target, fields, timelineEntry };
@@ -1424,6 +1447,8 @@ export function buildArchiveSpec({
   extraFields = {},
 }) {
   if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
+  // قاعدة R (الوقت + المسؤول): مفيش أرشفة بلا مُنفِّذ معروف.
+  if (!userId && !userName) return { ok:false, errors:['العملية تحتاج مستخدماً معروفاً (المسؤول عن الأرشفة)'], warnings:[] };
 
   const cur = order.stage || 'design';
 

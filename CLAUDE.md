@@ -224,12 +224,15 @@ Helpers: `canDo(cap)` · `canSee(field)` · `hasPage(page)`.
     legacy load-bearing.
 16. **Multi-tenant (G7 — target):** ملفات الكتابة الأساسية لا تكتب `tenantId`
     بعد. عند تفعيله: كل doc يكتب `tenantId` وكل query يفلتر به.
-17. **Order Responsibility (R):** مفيش أوردر بدون **مسؤول + تاريخ**. المسؤول
-    الأدنى = `createdBy` (المُنشئ)؛ التاريخ = `createdDate`/`createdAt` أو
-    `stageEnteredAt`. مفروضة عبر `validateOrderResponsibility()` (حارس الإنشاء في
-    `orderActions.createOrder` + داخل `validateOrder`)، وكل انتقال مرحلة يضمن
-    مسؤولاً للمرحلة الجديدة (المختار > المالك الحالي > مُنفّذ الانتقال) في
-    `buildStageAdvance`.
+17. **Order Responsibility (R) — الوقت + المسؤول:** مفيش أوردر/انتقال بدون
+    **مسؤول + تاريخ**، ومفيش طابع زمني بلا مُنفِّذ معروف. المسؤول الأدنى =
+    `createdBy`؛ التاريخ = `createdDate`/`createdAt` أو `stageEnteredAt`.
+    مفروضة عبر `validateOrderResponsibility()` (حارس الإنشاء في
+    `orderActions.createOrder` + داخل `validateOrder`). كل من
+    `buildStageAdvance`/`buildStageRevert`/`buildArchiveSpec`:
+    (أ) يرفض العملية بلا مُنفِّذ (`userId`/`userName`)، (ب) يضمن مسؤولاً للمرحلة
+    الجديدة/المرتدّ إليها (المختار > المالك الحالي > مُنفّذ العملية). كل طابع
+    زمني للشحن الفرعي يحمل `*By` (مَن نفّذه).
 
 > للتفاصيل الكاملة لأي قاعدة (نصها الأصلي + جداول القبول + أمثلة) راجع
 > `docs/archive/CLAUDE.full.md`.

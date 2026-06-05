@@ -18,6 +18,7 @@ import {
   computeStageDeadlineStr,
   buildStageAdvance,
   buildStageRevert,
+  buildArchiveSpec,
   getStageResponsibilities,
   getStageDurations,
   getStageHistory,
@@ -146,12 +147,32 @@ test('buildStageRevert: printing→design resets entry + clears completion', () 
   assertEq(r.fields['stageCompletedAt.design'], '', 'design completion cleared');
   // الموعد اليدوي لا يُعاد حسابه/يُمسح عند الارتداد
   assertEq(r.fields['stageDeadline.design'], undefined, 'manual deadline preserved');
+  // تشديد R: المرحلة المرتدّ إليها لها مسؤول (fallback لمُنفّذ الارتداد)
+  assertEq(r.fields.designerId, 'u1', 'reverted stage gets a responsible (actor fallback)');
+  assertEq(r.fields.designerName, 'أدمن');
+  assertEq(r.timelineEntry.assigneeId, 'u1');
   assertEq(r.timelineEntry.kind, 'stage');
+});
+test('buildStageRevert: keeps existing target owner on revert', () => {
+  const order = { stage: 'printing', designerId: 'd9', designerName: 'مصمم', stageEnteredAt: {}, timeline: [] };
+  const r = buildStageRevert({ order, role: 'admin', userId: 'u1', userName: 'أدمن', targetStage: 'design', reason: 'x' });
+  assertEq(r.fields.designerId, 'd9', 'existing designer preserved');
 });
 test('buildStageRevert: requires reason', () => {
   const order = { stage: 'printing', stageEnteredAt: {}, timeline: [] };
   const r = buildStageRevert({ order, role: 'admin', userId: 'u1', userName: 'a', targetStage: 'design', reason: '' });
   assert(!r.ok, 'should fail without reason');
+});
+
+// ── تشديد R: مفيش انتقال/ارتداد/أرشفة بلا مُنفِّذ معروف ──────────
+test('builders reject when no actor (userId+userName empty)', () => {
+  const order = { stage: 'design', designFiles: [{ url: 'x' }], stageEnteredAt: { design: 'x' }, timeline: [], remaining: 0, paymentStatus: 'paid' };
+  const adv = buildStageAdvance({ order, role: 'admin', userId: '', userName: '', bypassWarnings: true });
+  assert(!adv.ok && /مستخدم/.test(adv.errors[0]), 'advance rejects no actor');
+  const rev = buildStageRevert({ order: { ...order, stage: 'printing' }, role: 'admin', userId: '', userName: '', targetStage: 'design', reason: 'x' });
+  assert(!rev.ok && /مستخدم/.test(rev.errors[0]), 'revert rejects no actor');
+  const arc = buildArchiveSpec({ order, role: 'admin', userId: '', userName: '', source: 'manual', bypassWarnings: true });
+  assert(!arc.ok && /مستخدم/.test(arc.errors[0]), 'archive rejects no actor');
 });
 
 // ── getStageResponsibilities: unified read ────────────────────────
