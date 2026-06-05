@@ -46,6 +46,7 @@ const TRIAGE = [
   { page: 'returns.html',    ico: '↩️', label: 'مرتجعات مفتوحة',      kind: 'warn', keys: [['shipping', 'returns-open']] },
   { page: 'suppliers.html',  ico: '🧾', label: 'طلبات دفع موردين',    kind: 'warn', keys: [['suppliers', 'pending']] },
   { page: 'clients.html',    ico: '👤', label: 'عملاء متأخرين',       kind: 'warn', keys: [['clients', 'delayed']] },
+  { page: 'inbox.html',      ico: '💬', label: 'رسائل غير مقروءة',    kind: 'warn', keys: [['inbox', 'unread']] },
 ];
 const KIND_RANK = { crit: 2, warn: 1 };
 
@@ -57,6 +58,18 @@ const setFavs  = (a) => { try { localStorage.setItem(LS_FAV, JSON.stringify(a));
 const getUsage = () => { try { return JSON.parse(localStorage.getItem(LS_USE) || '{}'); } catch (_) { return {}; } };
 const setUsage = (o) => { try { localStorage.setItem(LS_USE, JSON.stringify(o)); } catch (_) {} };
 const pageKey  = (h) => (h || '').split('/').pop().split('?')[0].split('#')[0].toLowerCase();
+
+// ── Recent pages («آخر الصفحات») — أحدث ما زاره المستخدم (file names، أحدث أولاً) ──
+const LS_RECENT = 'sb_recent_v1';
+const getRecent  = () => { try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]'); } catch (_) { return []; } };
+const pushRecent = (key) => {
+  if (!key) return;
+  try {
+    const r = getRecent().filter(k => k !== key);
+    r.unshift(key);
+    localStorage.setItem(LS_RECENT, JSON.stringify(r.slice(0, 8)));
+  } catch (_) {}
+};
 
 // التفعيل: KILL يغلب الكل (مفتاح إيقاف فوري) → FORCE (تجربة على أي صفحة) →
 // وإلا: تفعيل لكل عنصر يحمل خاصية active (تفعيل افتراضي مقصود لكل صفحة).
@@ -154,7 +167,15 @@ class AppSidebar extends HTMLElement {
       '.app-sb-triage-item .t-cnt{min-width:18px;height:18px;padding:0 5px;border-radius:9px;font-size:var(--fs-xs,11px);font-weight:700;display:inline-flex;align-items:center;justify-content:center;line-height:1;color:#fff;flex-shrink:0;}' +
       '.app-sb-triage-item.kind-crit{border-color:rgba(239,68,68,.22);}' +
       '.app-sb-triage-item.kind-crit .t-cnt{background:var(--r,#ef4444);}' +
-      '.app-sb-triage-item.kind-warn .t-cnt{background:var(--y-amber,#fbbf24);color:#1a1205;}';
+      '.app-sb-triage-item.kind-warn .t-cnt{background:var(--y-amber,#fbbf24);color:#1a1205;}' +
+      // smart quick-access («الأكثر استخداماً» + «آخر الصفحات»)
+      '.app-sb-smart{padding:6px 8px 2px;flex-shrink:0;}' +
+      '.app-sb-smart-grp{margin-bottom:4px;}' +
+      '.app-sb-smart-h{font-size:var(--fs-xs,11px);font-weight:700;color:rgba(255,255,255,.4);padding:0 4px 4px;}' +
+      '.app-sb-smart-item{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:7px;text-decoration:none;color:inherit;}' +
+      '.app-sb-smart-item:hover{background:rgba(255,255,255,.06);}' +
+      '.app-sb-smart-item .s-ico{font-size:var(--fs-sm);flex-shrink:0;}' +
+      '.app-sb-smart-item .s-lbl{flex:1;font-size:var(--fs-sm,13px);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(255,255,255,.8);}';
     document.head.appendChild(st);
   }
 
@@ -170,6 +191,7 @@ class AppSidebar extends HTMLElement {
           '<input type="text" placeholder="ابحث في القائمة..." aria-label="بحث في القائمة">' +
         '</div></div>' +
         '<div class="app-sb-triage" id="app-sb-triage" aria-label="المطلوب الآن" hidden></div>' +
+        '<div class="app-sb-smart" id="app-sb-smart" aria-label="اختصارات" hidden></div>' +
         '<nav class="nav-scroll" id="app-sb-links" aria-label="القائمة الرئيسية"></nav>' +
         '<div class="nav-foot">' +
           '<div class="nav-user" role="button" tabindex="0" aria-label="تسجيل خروج">' +
@@ -191,10 +213,12 @@ class AppSidebar extends HTMLElement {
       opsAdminPages: opsAdminPagesFlag(),
     });
     let html = '';
+    const pageMeta = {};   // file → {label, ico} للصفحات المتاحة (احترام الصلاحيات)
     for (const it of model.items) {
       if (it.type === 'group') {
         html += '<div class="nav-group">' + esc(it.label) + '</div>';
       } else {
+        pageMeta[it.file] = { label: it.label, ico: it.ico || '•' };
         const active = it.active ? ' active' : '';
         const aria = it.active ? ' aria-current="page"' : '';
         html += '<a class="nav-link' + active + '" href="' + esc(it.file) + '"' + aria + '>' +
@@ -202,8 +226,50 @@ class AppSidebar extends HTMLElement {
                 esc(it.label) + '</a>';
       }
     }
+    // سجّل زيارة الصفحة الحالية في «آخر الصفحات» (تُعرض من الزيارة التالية)
+    pushRecent(this._current);
     const linksEl = this.querySelector('#app-sb-links');
     if (linksEl) { linksEl.innerHTML = html; this._enhance(linksEl); this._wireBadges(linksEl); this._wireTriage(); }
+    this._renderSmart(pageMeta);
+  }
+
+  // ── Smart quick-access: «🔥 الأكثر استخداماً» (auto من usage) + «🕐 آخر الصفحات» ──
+  // كلاهما يحترم الصلاحيات (pageMeta = صفحات القائمة فقط)، يستثني المفضّلة
+  // والصفحة الحالية، ويختفي القسم لما مفيش بنود. نقرة الاختصار تُحدّث usage.
+  _renderSmart(pageMeta) {
+    const host = this.querySelector('#app-sb-smart');
+    if (!host || !pageMeta) return;
+    const favs = new Set(getFavs());
+    const cur  = this._current;
+    const mostUsed = topUsed(getUsage(), 12)
+      .filter(k => pageMeta[k] && !favs.has(k) && k !== cur)
+      .slice(0, 3);
+    const recent = getRecent()
+      .filter(k => pageMeta[k] && k !== cur && !favs.has(k) && !mostUsed.includes(k))
+      .slice(0, 3);
+    const item = (k) => {
+      const m = pageMeta[k];
+      return '<a class="app-sb-smart-item" href="' + esc(k) + '" data-smart="' + esc(k) + '">' +
+               '<span class="s-ico" aria-hidden="true">' + (m.ico || '•') + '</span>' +
+               '<span class="s-lbl">' + esc(m.label) + '</span></a>';
+    };
+    let h = '';
+    if (mostUsed.length) {
+      h += '<div class="app-sb-smart-grp"><div class="app-sb-smart-h">🔥 الأكثر استخداماً</div>' +
+           mostUsed.map(item).join('') + '</div>';
+    }
+    if (recent.length) {
+      h += '<div class="app-sb-smart-grp"><div class="app-sb-smart-h">🕐 آخر الصفحات</div>' +
+           recent.map(item).join('') + '</div>';
+    }
+    host.innerHTML = h;
+    host.hidden = !h;
+    host.querySelectorAll('[data-smart]').forEach(a => {
+      a.addEventListener('click', () => {
+        const k = a.getAttribute('data-smart');
+        const u = getUsage(); u[k] = (u[k] || 0) + 1; setUsage(u);
+      });
+    });
   }
 
   // ── Smart triage («المطلوب الآن») — ترتيب الشارات الحيّة حسب الإلحاح ──
