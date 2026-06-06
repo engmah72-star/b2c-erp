@@ -41,6 +41,19 @@ function _requireActor(actor) {
   return null;
 }
 
+/** تطبيع الوسوم النصية: قصّ + lowercase + إزالة الفراغ والتكرار (حد 20). */
+function _cleanKeywords(kw) {
+  if (kw == null) return null;
+  const arr = Array.isArray(kw) ? kw : String(kw).split(/[,،]/);
+  const seen = new Set();
+  const out = [];
+  for (const k of arr) {
+    const t = String(k).trim().toLowerCase();
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); if (out.length >= 20) break; }
+  }
+  return out;
+}
+
 /**
  * نشر تصميم جديد في المعرض العام.
  *
@@ -54,7 +67,7 @@ function _requireActor(actor) {
  * @returns {Promise<{ok, errors, warnings, id?}>}
  */
 export async function publishGalleryItem({
-  db = defaultDb, file, imageUrl, title, productType, tags, actor,
+  db = defaultDb, file, imageUrl, title, productType, tags, keywords, actor,
 } = {}) {
   const actorErr = _requireActor(actor);
   if (actorErr) return { ok: false, errors: [actorErr], warnings: [] };
@@ -95,6 +108,7 @@ export async function publishGalleryItem({
       description:     '',
       productType:     cat,
       tags:            Array.isArray(tags) ? tags : [],
+      keywords:        _cleanKeywords(keywords) || [],
       designerName:    actor.userName || '',
       publishedBy:     actor.userId,
       publishedByName: actor.userName || '',
@@ -155,6 +169,7 @@ export async function updateGalleryItem({ db = defaultDb, id, patch = {}, actor 
   if (typeof patch.productType === 'string') clean.productType = patch.productType.trim();
   if (typeof patch.description === 'string') clean.description = patch.description.trim();
   if (Array.isArray(patch.tags))             clean.tags = patch.tags;
+  if (patch.keywords !== undefined)          clean.keywords = _cleanKeywords(patch.keywords) || [];
 
   if (!Object.keys(clean).length) {
     return { ok: false, errors: ['⚠️ لا توجد تغييرات صالحة للحفظ'], warnings: [] };
