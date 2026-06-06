@@ -35,7 +35,7 @@ import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
-import { computeLateMinutes } from './core/attendance-core.js';
+import { computeLateMinutes, attendanceDocId } from './core/attendance-core.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
@@ -508,7 +508,9 @@ export async function recordAttendanceCheckIn({
   if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
   if (!date) return { ok: false, errors: ['⚠️ date مطلوب'], warnings: [] };
   if (!recordedBy) return { ok: false, errors: ['⚠️ recordedBy مطلوب'], warnings: [] };
-  const attId = `${employeeId}_${date}`;
+  // Canonical id (attendance-core) — one record per employee/day across ALL
+  // surfaces; never reconstruct the id locally (RULE 1).
+  const attId = attendanceDocId({ employeeUid, employeeId, date });
   const attRef = doc(db, 'attendance', attId);
   const nowD = new Date();
   // auto-late from schedule when available; otherwise honour the passed value
@@ -550,10 +552,14 @@ export async function recordAttendanceCheckIn({
 
 export async function recordAttendanceCheckOut({
   db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
 }) {
-  if (!attendanceId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  // Accept an explicit id OR derive the canonical one — so callers can never
+  // target a different doc than the matching check-in (RULE 1).
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
   try {
-    await updateDoc(doc(db, 'attendance', attendanceId), {
+    await updateDoc(doc(db, 'attendance', attId), {
       checkOut: true,
       checkOutStr: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
       checkOutAt: serverTimestamp(),
@@ -561,6 +567,60 @@ export async function recordAttendanceCheckOut({
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * يبدأ «أوفر تايم» على سجل اليوم: الموظف وصل نهاية ورديته واختار يكمّل، فيكتب
+ * بنفسه الشغل اللي هيعمله (`note`). يُعلّم السجل `overtime:true` ويختم بدايته —
+ * دقائق الأوفر تايم تُشتقّ لاحقاً من `attendance-core.computeOvertimeMinutes`
+ * (worked − scheduled)، فلا نخزّن قيمة محسوبة هنا (RULE 1). نفس مُعرّف السجل
+ * المركزي حتى لا يتفرّع عن الحضور/الانصراف.
+ */
+export async function startAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date, note = '',
+  recordedBy, recordedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtime: true,
+      overtimeNote: String(note || '').slice(0, 500),
+      overtimeStartedAt: serverTimestamp(),
+      overtimeBy: recordedBy || '',
+      overtimeByName: recordedByName || '',
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * اعتماد المدير لأوفر تايم الموظف («أكّد على الأوفر تايم»). يُعلّم السجل
+ * `overtimeApproved:true` بمن اعتمد ومتى، فتُحتسَب ساعاته الإضافية رسمياً. لا
+ * يكتب دقائق — تظل مُشتقّة مركزياً (RULE 1). نفس مُعرّف السجل المركزي.
+ */
+export async function approveAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
+  approvedBy, approvedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  if (!approvedBy) return { ok: false, errors: ['⚠️ approvedBy مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtimeApproved: true,
+      overtimeApprovedBy: approvedBy,
+      overtimeApprovedByName: approvedByName || '',
+      overtimeApprovedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
 }
 
@@ -897,6 +957,7 @@ export const employeeActions = {
   addEmployeeTask, setTaskStatus, completeRecurringTask,
   addEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
+  startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,

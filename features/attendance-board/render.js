@@ -56,11 +56,12 @@ export function buildBoardSummaryHTML(counts = {}) {
  * @param {Object} args
  * @param {Array}   args.rows     — [{ empId, authUid, name, role, status,
  *                                     lateMinutes, checkInStr, checkOutStr,
+ *                                     overtime, overtimeNote,
  *                                     expectedStart, canCheckin, pending:[] }]
  * @param {boolean} [args.canManage] — show check-in / approve / reject actions
  * @returns {string} HTML
  */
-export function buildAttendanceBoardHTML({ rows = [], canManage = false }) {
+export function buildAttendanceBoardHTML({ rows = [], canManage = false, showHours = false }) {
   if (!rows.length) {
     return `<div class="empty-cta"><div class="empty-icon">🕐</div>
       <div class="empty-text">لا يوجد موظفون لعرضهم</div></div>`;
@@ -72,8 +73,20 @@ export function buildAttendanceBoardHTML({ rows = [], canManage = false }) {
       : '';
     const lateBit = (r.lateMinutes > 0)
       ? `<span class="txt-meta-sm" style="color:var(--y)">⏰ ${r.lateMinutes}د</span>` : '';
+    const otBit = r.overtime
+      ? `<span class="txt-meta-sm" style="color:var(--y)" title="${esc(r.overtimeNote || '')}">⏱️ أوفر تايم${r.overtimeNote ? ' · ' + esc(r.overtimeNote) : ''}</span>` : '';
     const checkinBtn = (canManage && r.canCheckin)
       ? `<button type="button" class="btn btn-b btn-xs" data-act="board-checkin" data-emp="${esc(r.empId)}" data-uid="${esc(r.authUid)}" data-name="${esc(r.name)}" data-start="${esc(r.expectedStart || '')}">✓ حضور</button>`
+      : '';
+    // overtime confirmation (manager): approve the self-started overtime
+    const otOk = (canManage && r.overtime && !r.overtimeApproved)
+      ? `<button type="button" class="btn btn-g btn-xs" data-act="board-overtime-ok" data-emp="${esc(r.empId)}" data-uid="${esc(r.authUid)}" title="تأكيد الأوفر تايم">✅ أكّد الأوفر تايم</button>`
+      : '';
+    const otDone = (r.overtime && r.overtimeApproved)
+      ? `<span class="txt-meta-sm" style="color:var(--g)">✓ أوفر تايم معتمد</span>` : '';
+    // set work hours (employee-control only — opens the schedule editor)
+    const hoursBtn = (canManage && showHours)
+      ? `<button type="button" class="btn btn-ghost btn-xs" data-act="board-hours" data-emp="${esc(r.empId)}" title="تحديد ساعات العمل">🕐 ساعات</button>`
       : '';
     const pend = (r.pending || []).map(p =>
       `<div class="ab-pend">
@@ -93,7 +106,7 @@ export function buildAttendanceBoardHTML({ rows = [], canManage = false }) {
         </div>
         <div class="ab-meta">
           <span class="ab-badge" style="border-color:${m.color};color:${m.color}">${m.lbl}</span>
-          ${timeBit}${lateBit}${checkinBtn}
+          ${timeBit}${lateBit}${otBit}${otDone}${checkinBtn}${otOk}${hoursBtn}
         </div>
       </div>
       ${pend}

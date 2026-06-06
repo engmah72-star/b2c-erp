@@ -267,7 +267,44 @@ function permsModal(emp, ctx) {
   });
 }
 
-const MAP = { task: taskModal, incident: incidentModal, finance: financeModal, perms: permsModal };
+// ── 5) جدول العمل (مواعيد العمل) — set days + start/end from the board ──
+const DAY_NAMES_AR = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
+function scheduleModal(emp, ctx) {
+  const ws = emp.workSchedule || {};
+  const sel = new Set(Array.isArray(ws.days) && ws.days.length ? ws.days : [0, 1, 2, 3, 4]);
+  const pills = `<div class="ec-day-pills" id="f-days">${[0,1,2,3,4,5,6]
+    .map(d => `<button type="button" class="ec-day-pill${sel.has(d) ? ' on' : ''}" data-d="${d}">${DAY_NAMES_AR[d]}</button>`).join('')}</div>`;
+  openModal({
+    title: `🕐 جدول العمل — ${esc(emp.name || '')}`,
+    body:
+      fld('📅 أيام العمل', pills) +
+      fldRow(
+        fld('⏰ وقت البدء', `<input class="inp" type="time" id="f-start" value="${esc(ws.startTime || '09:00')}">`),
+        fld('🏁 وقت الانتهاء', `<input class="inp" type="time" id="f-end" value="${esc(ws.endTime || '17:00')}">`),
+      ) +
+      `<div class="ec-hint">يُستخدم لحساب التأخير (سماح 15د)، أيام الغياب، والوقت الإضافي.</div>`,
+    submitLabel: '💾 حفظ الجدول',
+    onMount: (form) => {
+      form.querySelector('#f-days')?.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-d]'); if (!b) return;
+        const d = parseInt(b.dataset.d);
+        if (sel.has(d)) sel.delete(d); else sel.add(d);
+        b.classList.toggle('on');
+      });
+    },
+    onSubmit: (f) => {
+      if (!sel.size) return { ok: false, errors: ['اختر يوم عمل واحد على الأقل'], warnings: [] };
+      return employeeActions.updateEmployeeSchedule({
+        db: ctx.db, employeeId: emp._id,
+        days: [...sel].sort((a, b) => a - b),
+        startTime: f.querySelector('#f-start').value || '09:00',
+        endTime: f.querySelector('#f-end').value || '17:00',
+      });
+    },
+  });
+}
+
+const MAP = { task: taskModal, incident: incidentModal, finance: financeModal, perms: permsModal, schedule: scheduleModal };
 
 // Entry point used by the controller's event delegation.
 export function openQuickAction(act, emp, ctx) {

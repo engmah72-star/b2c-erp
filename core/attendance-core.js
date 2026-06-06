@@ -78,6 +78,29 @@ export function computeLateMinutes(checkInDate, expectedStart, graceMinutes = 0)
   return Math.max(0, diff);
 }
 
+/**
+ * Canonical attendance document id for one employee on one day — the SINGLE
+ * definition every surface (self dashboards, control center, profile, the
+ * board) MUST use, so an employee's day maps to exactly ONE record no matter
+ * which page recorded it. Keyed on the auth uid when present (what every read
+ * query already filters by: `where('employeeUid','==',uid)`), falling back to
+ * the employees doc id for manual files that have no auth account.
+ *
+ * This is what makes attendance central instead of per-page: a check-in from a
+ * role dashboard and a check-out from the control center now resolve to the
+ * same `${uid}_${date}` doc — fixing the "works for some, not others" split
+ * that came from callers passing different ids (authUid vs employees._id).
+ *
+ * @param {Object} a
+ * @param {string} [a.employeeUid] — auth uid (canonical when present)
+ * @param {string} [a.employeeId]  — employees doc id (fallback)
+ * @param {string} a.date          — 'YYYY-MM-DD'
+ * @returns {string} `${employeeUid||employeeId}_${date}`
+ */
+export function attendanceDocId({ employeeUid, employeeId, date } = {}) {
+  return `${employeeUid || employeeId}_${date}`;
+}
+
 // ── Permissions (أذونات) — Phase-3 ─────────────────────────────────
 
 export const PERMISSION_TYPES = Object.freeze({

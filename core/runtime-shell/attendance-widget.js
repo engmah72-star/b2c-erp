@@ -6,11 +6,11 @@
 // mounted in the shell topbar so it is reachable from ANY domain — not only
 // the "صفحتي" (my-home) landing.
 //
-// Consistency (no duplicate rows): the attendance doc is keyed by
-// `${empId}_${today}` (employees doc id), exactly like my-home, so both
-// share ONE idempotent record per day — the runTransaction guard inside the
-// action makes a double check-in across the two surfaces a no-op. We do NOT
-// introduce a third keying scheme.
+// Consistency (no duplicate rows): the attendance record id is derived ONLY by
+// the central attendance-core.attendanceDocId (keyed on the auth uid), so this
+// widget, my-home, the role dashboards and the control center all share ONE
+// idempotent record per day. We read by the employeeUid field and let the
+// central action own the id — never reconstruct a key here.
 //
 // All writes go through employeeActions (H1.1) with source:'self' and a
 // schedule-derived lateMinutes (expectedStart + 15-min grace — single source
@@ -66,10 +66,13 @@ export async function init({ container, user }) {
   _container.hidden = false;
   _container.addEventListener('click', _onClick);
 
-  // live subscription to today's record (shared with my-home)
-  const attRef = doc(db, 'attendance', `${empId}_${_today}`);
-  _unsub = onSnapshot(attRef,
-    (snap) => { _att = snap.exists() ? snap.data() : null; _render(); },
+  // live subscription to today's record — query by the employeeUid FIELD (not a
+  // reconstructed doc id), so it resolves the canonical `${uid}_${date}` record
+  // every surface now writes, independent of the old empId-keyed scheme.
+  _unsub = onSnapshot(
+    query(collection(db, 'attendance'),
+      where('employeeUid', '==', user.uid), where('date', '==', _today), limit(3)),
+    (snap) => { _att = snap.empty ? null : snap.docs[0].data(); _render(); },
     (e) => { console.warn('[rt-att] snapshot error', e); });
 
   _render();
@@ -118,7 +121,7 @@ async function _onClick(e) {
                   r.lateMinutes > 0 ? 'err' : 'ok');
     } else if (kind === 'out') {
       const r = await employeeActions.recordAttendanceCheckOut({
-        db, attendanceId: `${_ctx.empId}_${_today}`,
+        db, employeeUid: _ctx.uid, employeeId: _ctx.empId, date: _today,
       });
       _toast(r.ok ? '✅ تم تسجيل انصرافك' : '❌ ' + (r.errors || []).join(' · '), r.ok ? 'ok' : 'err');
     }

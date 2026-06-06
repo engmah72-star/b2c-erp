@@ -75,11 +75,8 @@
     <div class="topbar-right"><button type="button" class="btn btn-c btn-sm" onclick="navigatePage('shipping.html')">🚛 مركز الشحن الجديد</button></div>
   </div>
   <div class="content">
-    <!-- حضور -->
-    <div class="att-box" id="att-box">
-      <div><div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:4px">⏰ الحضور اليوم</div><div style="font-size:var(--fs-xl);font-weight:var(--fw-extra)" id="att-status">لم يُسجَّل</div><div class="txt-meta-sm" id="att-detail"></div></div>
-      <button type="button" class="btn btn-g btn-sm" id="att-btn" onclick="doAtt()">✅ تسجيل حضور</button>
-    </div>
+    <!-- نقطة الحضور/الانصراف/الإجازات المركزية (widget موحّد) -->
+    <div id="att-self-host" style="margin-bottom:18px"></div>
     <!-- Goal Card -->
     <div id="ship-goal-card" style="display:none;background:var(--bg2);border:1px solid rgba(34,211,238,.2);border-radius:var(--rad2);padding:12px 16px;margin-bottom:14px"></div>
     <!-- KPIs -->
@@ -209,6 +206,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { employeeActions } from "./employee-actions.js";
+import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 let allOrders=[],todayAtt=null,currentUser=null,userName='',uid='',activeTab='ready',myGoal=null,myLastEvalShip=null,myEmpIdShip='';
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const now=new Date();
@@ -255,11 +253,8 @@ onAuthStateChanged(auth,async u=>{
       });
     }
   });
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',u.uid),limit(365)),snap=>{
-    const today=new Date().toISOString().slice(0,10);
-    todayAtt=snap.docs.map(d=>({...d.data(),_id:d.id})).find(a=>a.date===today);
-    renderAttBox();
-  });
+  // نقطة الحضور/الانصراف/الإجازات المركزية — widget موحّد، مركّب مرة واحدة
+  try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
 });
 function renderShipGoalCard(){
   const el=document.getElementById('ship-goal-card');if(!el)return;
@@ -307,37 +302,8 @@ function renderAlerts(){
       <span style="color:var(--r);font-weight:var(--fw-bold)">${fn(calcRem(o))} ج</span>
     </div>`).join('');
 }
-function renderAttBox(){
-  const btn=document.getElementById('att-btn');
-  const statusEl=document.getElementById('att-status');
-  const detailEl=document.getElementById('att-detail');
-  if(!todayAtt){
-    statusEl.textContent='لم يُسجَّل بعد';statusEl.style.color='var(--dim2)';
-    btn.textContent='✅ تسجيل حضور';btn.className='btn btn-g btn-sm';btn.disabled=false;
-  } else if(!todayAtt.checkOut){
-    statusEl.textContent='حاضر منذ '+todayAtt.checkInStr;statusEl.style.color='var(--g)';
-    btn.textContent='🔚 تسجيل انصراف';btn.className='btn btn-b btn-sm';btn.disabled=false;
-  } else {
-    statusEl.textContent=todayAtt.checkInStr+' → '+todayAtt.checkOutStr;statusEl.style.color='var(--b)';
-    if(detailEl)detailEl.textContent='✅ '+todayAtt.hoursWorked+' ساعة';
-    btn.textContent='✓ تم';btn.className='btn btn-ghost btn-sm';btn.disabled=true;
-  }
-}
-window.doAtt=async function(){
-  const today=new Date().toISOString().slice(0,10);
-  const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  const uid=currentUser.uid;
-  if(!todayAtt){
-    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,source:'self',recordedBy:uid,recordedByName:userName});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-  } else if(!todayAtt.checkOut){
-    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
-    toast('✅ تم الانصراف — '+hours+' ساعة','ok');
-  }
-};
+// renderAttBox() + doAtt() — removed: check-in/out now lives in the central
+// #att-self-host widget (one source of attendance UI).
 window.switchTab=function(tab){
   activeTab=tab;
   ['ready','shipped','done'].forEach(t=>{

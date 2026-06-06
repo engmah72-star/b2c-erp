@@ -59,15 +59,12 @@
         <div class="txt-meta-sm" id="cs-date"></div>
       </div>
     </div>
-    <div class="topbar-right">
-      <button type="button" class="att-pill none" id="att-pill" onclick="doAtt()">
-        <span id="att-pill-ico">✅</span>
-        <span id="att-pill-txt">تسجيل حضور</span>
-      </button>
-    </div>
+    <div class="topbar-right"></div>
   </div>
 
   <div class="content">
+  <!-- نقطة الحضور/الانصراف/الإجازات المركزية (widget موحّد) -->
+  <div id="att-self-host" style="margin-bottom:12px"></div>
 
     <!-- ── 🔍 بحث فوري ── -->
     <div class="cs-search-wrap" id="cs-search-wrap">
@@ -191,6 +188,7 @@ import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { employeeActions } from "./employee-actions.js";
+import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
 import { calcRem } from "./core/order-math.js";
 // ── Utils ──
@@ -250,6 +248,7 @@ onAuthStateChanged(auth,async u=>{
   if(role!=='admin'&&role!=='operation_manager'&&role!=='customer_service'){location.href=RDASH[role]||'login.html';return;}
   userName=d.name||u.email;
   set('nav-name',userName);set('role-badge',role==='admin'?'أدمن':role==='operation_manager'?'تشغيل':'خدمة عملاء');
+  try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
   {const _av=document.getElementById('nav-av'); if(_av)_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();}
   set('cs-greeting',`${greet}، ${userName.split(' ')[0]} 👋`);
   buildSidebar(uid);
@@ -275,12 +274,7 @@ onAuthStateChanged(auth,async u=>{
     buildWalletSelect();
   });
 
-  // Attendance listener
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
-    const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    todayAtt=atts.find(a=>a.date===todayStr)||null;
-    renderAttPill();
-  });
+  // (الحضور/الانصراف انتقل للـ widget المركزي #att-self-host)
 
   // Conversations listener (inbox mini — أرسل رسائل لم يُرد عليها)
   onSnapshot(query(collection(db,'conversations'),where('participants','array-contains',uid),limit(200)),snap=>{
@@ -300,35 +294,8 @@ onAuthStateChanged(auth,async u=>{
   });
 });
 
-// ── Attendance pill ──
-function renderAttPill(){
-  const pill=document.getElementById('att-pill');
-  const ico=document.getElementById('att-pill-ico');
-  const txt=document.getElementById('att-pill-txt');
-  if(!pill)return;
-  if(!todayAtt){
-    pill.className='att-pill none';ico.textContent='✅';txt.textContent='تسجيل حضور';pill.disabled=false;
-  } else if(!todayAtt.checkOut){
-    pill.className='att-pill in';ico.textContent='🕐';txt.textContent='حضور منذ '+todayAtt.checkInStr;pill.disabled=false;
-  } else {
-    pill.className='att-pill done';ico.textContent='✓';txt.textContent=todayAtt.hoursWorked+' ساعة';pill.disabled=true;
-  }
-}
 
-window.doAtt=async function(){
-  if(!currentUser)return;
-  const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  if(!todayAtt){
-    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:todayStr,lateMinutes:0,source:'self',recordedBy:uid,recordedByName:userName});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-  } else if(!todayAtt.checkOut){
-    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    const hrs=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(36e5)).toFixed(1):0;
-    toast('✅ انصراف — '+hrs+' ساعة','ok');
-  }
-};
+// doAtt() — removed: check-in/out now lives in the central #att-self-host widget.
 
 // ── Main render ──
 function render(){

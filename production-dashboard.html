@@ -50,15 +50,8 @@
 
   <div class="content">
 
-    <!-- Attendance -->
-    <div class="att-box" id="att-box">
-      <div>
-        <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:3px">⏰ الحضور اليوم</div>
-        <div style="font-size:15px;font-weight:var(--fw-extra)" id="att-status">لم يُسجَّل</div>
-        <div class="txt-meta-sm" id="att-detail"></div>
-      </div>
-      <button type="button" class="btn btn-g btn-sm" id="att-btn" onclick="doAtt()">✅ حضور</button>
-    </div>
+    <!-- نقطة الحضور/الانصراف/الإجازات المركزية (widget موحّد) -->
+    <div id="att-self-host" style="margin-bottom:12px"></div>
 
     <!-- Goal card -->
     <div class="goal-card" id="goal-card"></div>
@@ -184,6 +177,7 @@ import { setText, gv } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { employeeActions } from "./employee-actions.js";
+import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
 let myOrders=[],allOrders=[],todayAtt=null,currentUser=null,userName='',activeTab='active',currentRole='production_agent';
 let myGoal=null,myEmpId='',myLastEval=null;
@@ -262,48 +256,14 @@ onAuthStateChanged(auth,async u=>{
     }
   });
 
-  // Attendance
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',u.uid),limit(365)),snap=>{
-    const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    todayAtt=atts.find(a=>a.date===today);
-    renderAttBox();
-  });
+  // نقطة الحضور/الانصراف/الإجازات المركزية — widget موحّد، مركّب مرة واحدة
+  try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
 
   setText('sub',now.toLocaleDateString('ar-EG',{weekday:'long',day:'numeric',month:'long'}));
 });
 
-// ── Attendance ──
-window.doAtt=async function(){
-  const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  const uid=currentUser.uid;
-  if(!todayAtt){
-    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,source:'self',recordedBy:uid,recordedByName:userName});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-  } else if(!todayAtt.checkOut){
-    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-    const hours=todayAtt.checkIn?.toDate?((new Date()-todayAtt.checkIn.toDate())/(1000*60*60)).toFixed(1):0;
-    toast('✅ تم الانصراف — '+hours+' ساعة','ok');
-  }
-};
-
-function renderAttBox(){
-  const btn=document.getElementById('att-btn');
-  const statusEl=document.getElementById('att-status');
-  const detailEl=document.getElementById('att-detail');
-  if(!todayAtt){
-    statusEl.textContent='لم يُسجَّل بعد';statusEl.style.color='var(--dim2)';
-    btn.textContent='✅ حضور';btn.className='btn btn-g btn-sm';btn.disabled=false;
-  } else if(!todayAtt.checkOut){
-    statusEl.textContent='حاضر منذ '+todayAtt.checkInStr;statusEl.style.color='var(--g)';
-    btn.textContent='🔚 انصراف';btn.className='btn btn-b btn-sm';btn.disabled=false;
-  } else {
-    statusEl.textContent=todayAtt.checkInStr+' → '+todayAtt.checkOutStr;statusEl.style.color='var(--b)';
-    detailEl.textContent='✅ '+todayAtt.hoursWorked+' ساعة';
-    btn.textContent='✓ تم';btn.className='btn btn-ghost btn-sm';btn.disabled=true;
-  }
-}
+// doAtt() + renderAttBox() — removed: check-in/out now lives in the central
+// #att-self-host widget (one source of attendance UI).
 
 // ── Goal Card ──
 function renderGoalCard(){
