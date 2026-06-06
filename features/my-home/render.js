@@ -111,7 +111,16 @@ export function renderOrders(orders) {
 export function renderAlerts(a) {
   const items = [];
   if (a.lateTasks > 0)  items.push(`<li class="warn">⏰ لديك ${a.lateTasks} مهمة متأخرة</li>`);
-  if (a.incidents > 0)  items.push(`<li class="warn">⚠️ ${a.incidents} ملاحظة هذا الشهر — راجع بروفايلك</li>`);
+  if (a.incidents > 0) {
+    // صور المخالفات (إن وُجدت) — مصغّرة قابلة للتكبير
+    const imgs = (a.incidentList || []).filter(i => i.imageUrl);
+    const thumbs = imgs.length
+      ? `<div class="mh-inc-imgs">${imgs.slice(0, 6).map(i =>
+          `<a href="${esc(i.imageUrl)}" target="_blank" rel="noopener" class="mh-inc-imglink" title="${esc(i.title || 'صورة المخالفة')}"><img src="${esc(i.imageUrl)}" alt="صورة المخالفة" loading="lazy" class="mh-inc-img"></a>`
+        ).join('')}</div>`
+      : '';
+    items.push(`<li class="warn">⚠️ ${a.incidents} ملاحظة هذا الشهر — <a href="my-profile.html?tab=feedback">راجع بروفايلك</a>${thumbs}</li>`);
+  }
   if (a.mustChangePassword) items.push(`<li class="crit">🔑 يجب تغيير كلمة المرور — <a href="change-password.html">غيّرها الآن</a></li>`);
   if (!items.length) items.push('<li class="ok">✅ لا تنبيهات — كل شيء على ما يرام</li>');
   return card('🔔 تنبيهاتي', `<ul class="mh-alerts">${items.join('')}</ul>`);

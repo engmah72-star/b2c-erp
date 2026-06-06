@@ -41,7 +41,7 @@ window.__mhToast = function (msg, type = 'ok') {
 
 const S = {
   me: { uid: '', name: '' }, role: '', empId: '', emp: {}, mustChangePassword: false,
-  tasks: [], orders: null, attToday: null, incidents: 0,
+  tasks: [], orders: null, attToday: null, incidents: 0, incidentList: [],
 };
 
 function notice(html) { const r = document.getElementById('mh-root'); if (r) r.innerHTML = `<div class="mh-notice">${html}</div>`; }
@@ -55,7 +55,7 @@ function render() {
     renderHero({ name: S.me.name, role: S.role, attToday: S.attToday }) +
     `<div class="mh-grid">
       <div class="mh-col">${renderTasks(S.tasks, today)}${renderOrders(S.orders)}</div>
-      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, mustChangePassword: S.mustChangePassword })}${renderLinks(ROLE_DASH[S.role])}</div>
+      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, incidentList: S.incidentList, mustChangePassword: S.mustChangePassword })}${renderLinks(ROLE_DASH[S.role])}</div>
     </div>`;
 }
 
@@ -117,7 +117,9 @@ function startListeners() {
     // (allow read if authUid == request.auth.uid) — زي ما my-profile.html بيعمل.
     // الـ query بـ employeeId كان بيسبّب permission-denied (الـ rule بيتحقق authUid).
     onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
-      S.incidents = snap.size; render();
+      S.incidents = snap.size;
+      S.incidentList = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      render();
     });
   }
   const field = ROLE_ORDER_FIELD[S.role];
