@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="manifest" href="manifest.json">
+<title>طلبات الإدارة — Business2Card</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css?v=45">
+<link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="sidebar-config.js"></script>
+<script src="sidebar.js"></script>
+<link rel="stylesheet" href="admin-requests.css?v=1">
+<script type="module" src="inbox-badge.js"></script>
+<script src="smart-sidebar.js?v=1" defer></script>
+<script type="module" src="app-sidebar.js?v=3"></script>
+<script src="viewas.js?v=1" defer></script>
+<script src="pwa-install.js?v=1" defer></script>
+<script src="theme.js?v=4"></script>
+<script type="module" src="text-select.js?v=1"></script>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidenav" id="sidebar">
+  <div class="nav-brand">
+    <div class="nav-logo">🎨</div>
+    <div>
+      <div class="nav-brand-name">Business2Card</div>
+      <div class="nav-brand-role" id="nav-role">—</div>
+    </div>
+  </div>
+  <div class="nav-scroll" id="nav-links"></div>
+</aside>
+<app-sidebar active current="admin-requests.html"></app-sidebar>
+<header class="topbar">
+  <button class="menu-btn" id="menu-btn">☰</button>
+  <div>
+    <div class="page-title">📥 طلبات الإدارة</div>
+    <div class="page-sub">كل القرارات في مكان واحد — مالي · تظلمات · تصاريح · مرتجعات · إجازات</div>
+  </div>
+  <div style="margin-right:auto;display:flex;align-items:center;gap:10px">
+    <span id="nav-name" style="font-size:var(--fs-md);color:var(--dim2)"></span>
+    <button type="button" id="btn-logout" style="padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);cursor:pointer;font-family:inherit;font-size:var(--fs-base)">خروج</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="container">
+    <div class="ar-summary" id="ar-summary"></div>
+    <div id="ar-list" class="ar-list"><div class="loader"><div class="spinner"></div></div></div>
+  </div>
+</main>
+</div><!-- /.app-shell -->
+
+<!-- Modal: قرار -->
+<div class="overlay" id="ov-decide">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head"><span class="modal-title" id="decide-title">قرار</span><button type="button" class="modal-x" data-close="decide">✕</button></div>
+    <div class="modal-body">
+      <div class="ar-decide-summary" id="decide-summary"></div>
+      <div class="fg"><label id="decide-note-lbl">ملاحظة (اختيارية)</label><textarea class="inp" id="decide-note" rows="3" placeholder="سبب القرار / ملاحظة للموظف"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" data-close="decide">إلغاء</button>
+      <button type="button" class="btn" id="decide-confirm">تأكيد</button>
+    </div>
+  </div>
+</div>
+
+<div id="ar-toast"></div>
+
+<script type="module">
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { collection, doc, getDoc, onSnapshot, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
+import { ROLE_LABELS } from "./core/shared-constants.js";
+import {
+  REQUEST_KINDS, KIND_ORDER, NORMALIZERS,
+  summarizeCounts, sortByAgeDesc, filterByKind,
+} from "./core/admin-requests-utils.js";
+
+const ADMIN_ROLES = ['admin', 'operation_manager'];
+const AGED_HOURS = 48; // طلب أقدم من يومين = يتميّز بصرياً
+
+let currentUid = '', currentUserName = '', currentRole = '', currentPerms = {};
+let activeKind = 'all';
+let pendingDecision = null; // { id, kind, decision }
+
+// per-kind buckets — كل listener يحدّث الـ bucket الخاص به ثم نعيد البناء
+const buckets = { payment: [], transaction: [], appeal: [], attendance: [], leave: [], return: [] };
+
+const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtMoney = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
+
+function showToast(msg, type) {
+  const t = document.getElementById('ar-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.remove('is-err', 'is-ok');
+  if (type === 'err') t.classList.add('is-err');
+  else if (type === 'ok') t.classList.add('is-ok');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function goPage(page, query) {
+  const qs = query ? '?' + new URLSearchParams(query).toString() : '';
+  const url = page + qs;
+  if (typeof window.navigatePage === 'function') window.navigatePage(url);
+  else window.location.href = url;
+}
+
+// ── all items مجمّعة + مرتّبة بالتقادم ──
+function allItems() {
+  return sortByAgeDesc(KIND_ORDER.flatMap(k => buckets[k] || []));
+}
+
+function renderSummary(counts) {
+  const el = document.getElementById('ar-summary');
+  if (!el) return;
+  const stat = (kind, num, label, ico, extraCls = '') =>
+    `<div class="ar-stat ${extraCls} ${activeKind === kind ? 'on' : ''}" data-kind="${kind}">
+       <div class="ar-stat-top"><span class="ar-stat-ico">${ico}</span><span class="ar-stat-num">${num}</span></div>
+       <div class="ar-stat-lbl">${escapeHtml(label)}</div>
+     </div>`;
+  let html = stat('all', counts.all || 0, 'كل الطلبات', '📥', 'all');
+  for (const k of KIND_ORDER) {
+    const meta = REQUEST_KINDS[k];
+    html += stat(k, counts[k] || 0, meta.label, meta.icon);
+  }
+  el.innerHTML = html;
+}
+
+function cardHtml(it) {
+  const aged = it.ageHours >= AGED_HOURS;
+  const lines = (it.lines || []).map(l => `<div class="ar-line"><b>${escapeHtml(l.label)}:</b> ${escapeHtml(l.value)}</div>`).join('');
+  const amount = it.amount != null ? `<span class="ar-amount">${fmtMoney(it.amount)} ج</span>` : '';
+  let actions;
+  if (it.decidable) {
+    const approveLbl = it.kind === 'appeal' ? '✅ قبول' : '✅ موافقة';
+    actions = `
+      <button type="button" class="btn btn-g" data-act="approve" data-id="${escapeHtml(it.id)}" data-kind="${escapeHtml(it.kind)}">${approveLbl}</button>
+      <button type="button" class="btn btn-r" data-act="reject" data-id="${escapeHtml(it.id)}" data-kind="${escapeHtml(it.kind)}">❌ رفض</button>`;
+  } else {
+    actions = `<button type="button" class="btn btn-p" data-act="open" data-page="${escapeHtml(it.deepLink?.page || '')}" data-focus="${escapeHtml(it.id)}">↗️ افتح للقرار</button>`;
+  }
+  return `
+    <div class="ar-card ${aged ? 'aged' : ''}">
+      <div class="ar-card-head">
+        <span class="ar-card-ico">${it.icon}</span>
+        <div class="ar-card-titles">
+          <div class="ar-card-title">${escapeHtml(it.title)}</div>
+          ${it.subtitle ? `<div class="ar-card-sub">${escapeHtml(it.subtitle)}</div>` : ''}
+        </div>
+        <span class="ar-kind-tag">${escapeHtml(REQUEST_KINDS[it.kind]?.label || it.kind)}</span>
+        ${amount}
+      </div>
+      ${lines ? `<div class="ar-lines">${lines}</div>` : ''}
+      <div class="ar-card-foot">
+        <span class="ar-age ${aged ? 'aged' : ''}">⏱️ ${escapeHtml(it.ageLabel)}${it.who ? ' · ' + escapeHtml(it.who) : ''}</span>
+        <span class="ar-foot-spacer"></span>
+        ${actions}
+      </div>
+    </div>`;
+}
+
+function render() {
+  const items = filterByKind(allItems(), activeKind);
+  renderSummary(summarizeCounts(allItems()));
+  const list = document.getElementById('ar-list');
+  if (!list) return;
+  if (!items.length) {
+    list.innerHTML = `<div class="ar-empty">🎉 لا توجد طلبات بانتظار قرارك${activeKind === 'all' ? '' : ' في هذا القسم'}.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(cardHtml).join('');
+}
+
+function findItem(kind, id) {
+  return (buckets[kind] || []).find(it => it.id === id) || null;
+}
+
+// ════════════════ القرار الفوري (تظلمات/تصاريح/إجازات) ════════════════
+window.cM = id => document.getElementById('ov-' + id)?.classList.remove('open');
+window.oM = id => document.getElementById('ov-' + id)?.classList.add('open');
+
+function openDecide(kind, id, decision) {
+  const it = findItem(kind, id);
+  if (!it) return;
+  pendingDecision = { id, kind, decision };
+  const isApprove = decision === 'approve';
+  document.getElementById('decide-title').textContent =
+    (isApprove ? '✅ تأكيد الموافقة' : '❌ تأكيد الرفض') + ' — ' + (REQUEST_KINDS[kind]?.label || '');
+  document.getElementById('decide-summary').innerHTML =
+    `<b>${escapeHtml(it.title)}</b>${it.subtitle ? ' — ' + escapeHtml(it.subtitle) : ''}`;
+  const note = document.getElementById('decide-note');
+  note.value = '';
+  document.getElementById('decide-note-lbl').textContent = isApprove ? 'ملاحظة (اختيارية)' : 'سبب الرفض (اختياري لكن مُستحسن)';
+  const btn = document.getElementById('decide-confirm');
+  btn.className = 'btn ' + (isApprove ? 'btn-g' : 'btn-r');
+  btn.textContent = isApprove ? '✅ تأكيد' : '❌ تأكيد الرفض';
+  oM('decide');
+}
+
+async function confirmDecision() {
+  if (!pendingDecision) return;
+  const { id, kind, decision } = pendingDecision;
+  const note = document.getElementById('decide-note').value.trim();
+  const btn = document.getElementById('decide-confirm');
+  btn.disabled = true;
+  let res;
+  try {
+    if (kind === 'appeal') {
+      res = await employeeActions.decideIncidentAppeal({
+        db, incidentId: id,
+        decision: decision === 'approve' ? 'accepted' : 'rejected',
+        note, userId: currentUid, userName: currentUserName,
+      });
+    } else if (kind === 'attendance') {
+      res = await employeeActions.decideAttendancePermission({
+        db, permissionId: id,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
+      });
+    } else if (kind === 'leave') {
+      res = await employeeActions.decideEmployeeLeave({
+        db, leaveId: id,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
+      });
+    } else {
+      res = { ok: false, errors: ['نوع غير مدعوم للقرار الفوري'] };
+    }
+  } catch (e) {
+    res = { ok: false, errors: [e.message || 'فشل غير متوقع'] };
+  }
+  btn.disabled = false;
+  if (res && res.ok) {
+    cM('decide');
+    pendingDecision = null;
+    showToast(decision === 'approve' ? '✅ تمت الموافقة' : '❌ تم الرفض', 'ok');
+    // الـ onSnapshot هيشيل العنصر تلقائياً (خرج من حالة pending)
+  } else {
+    showToast('⚠️ ' + ((res && res.errors && res.errors[0]) || 'فشل تنفيذ القرار'), 'err');
+  }
+}
+
+// ════════════════ Event wiring ════════════════
+document.getElementById('menu-btn')?.addEventListener('click', () =>
+  document.getElementById('sidebar')?.classList.toggle('open'));
+document.getElementById('btn-logout')?.addEventListener('click', async () => {
+  try { await signOut(auth); } catch (_) {}
+  window.location.href = 'login.html';
+});
+document.getElementById('decide-confirm')?.addEventListener('click', () => confirmDecision());
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => cM(b.dataset.close)));
+
+document.getElementById('ar-summary')?.addEventListener('click', e => {
+  const card = e.target.closest('[data-kind]');
+  if (!card) return;
+  activeKind = card.dataset.kind;
+  render();
+});
+
+document.getElementById('ar-list')?.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'approve') openDecide(el.dataset.kind, el.dataset.id, 'approve');
+  else if (act === 'reject') openDecide(el.dataset.kind, el.dataset.id, 'reject');
+  else if (act === 'open') goPage(el.dataset.page, el.dataset.focus ? { focus: el.dataset.focus } : null);
+});
+
+// ════════════════ Auth + Listeners ════════════════
+function buildSidebar() {
+  const userData = { role: currentRole, permissions: currentPerms || {} };
+  if (window.B2CSidebar?.build) B2CSidebar.build(userData, 'admin-requests.html');
+  const roleEl = document.getElementById('nav-role');
+  if (roleEl) roleEl.textContent = ROLE_LABELS[currentRole] || currentRole;
+  const nameEl = document.getElementById('nav-name');
+  if (nameEl) nameEl.textContent = currentUserName;
+}
+
+// ربط listener لمجموعة واحدة → normalize → تحديث الـ bucket → render
+function attach(kind, q) {
+  const norm = NORMALIZERS[kind];
+  onSnapshot(q,
+    snap => {
+      buckets[kind] = snap.docs
+        .map(d => norm(d.data(), d.id))
+        .filter(Boolean);
+      render();
+    },
+    err => {
+      console.error(`[admin-requests] ${kind}:`, err);
+      buckets[kind] = [];
+      render();
+    }
+  );
+}
+
+function startListeners() {
+  const LIM = 200;
+  attach('payment',     query(collection(db, 'payment_requests'),       where('status', 'in', ['requested', 'awaiting_receipt', 'pending']), limit(LIM)));
+  attach('transaction', query(collection(db, 'transactions_v2'),         where('approvalStatus', 'in', ['pending', 'confirmed']),            limit(LIM)));
+  attach('appeal',      query(collection(db, 'employee_incidents'),      where('appeal.status', '==', 'pending'),                            limit(LIM)));
+  attach('attendance',  query(collection(db, 'attendance_permissions'),  where('status', '==', 'pending'),                                   limit(LIM)));
+  attach('leave',       query(collection(db, 'employee_leaves'),         where('status', '==', 'pending'),                                   limit(LIM)));
+  attach('return',      query(collection(db, 'returns_tickets'),         where('status', 'in', ['requested', 'inspecting']),                 limit(LIM)));
+}
+
+onAuthStateChanged(auth, async u => {
+  if (!u) { window.location.href = 'login.html'; return; }
+  currentUid = u.uid;
+  try {
+    const userSnap = await getDoc(doc(db, 'users', u.uid));
+    if (!userSnap.exists()) {
+      document.body.innerHTML = '<div class="ar-fullmsg">⛔ بيانات المستخدم غير موجودة</div>';
+      return;
+    }
+    const ud = userSnap.data();
+    currentRole = ud.role || '';
+    currentUserName = ud.name || u.email || '';
+    currentPerms = ud.permissions || {};
+    // طبقة UI: الصفحة للأدمن فقط (الدفاع الحقيقي في firestore.rules لكل action)
+    const allowed = ADMIN_ROLES.includes(currentRole) ||
+      (Array.isArray(currentPerms.pages) && currentPerms.pages.includes('*'));
+    if (!allowed) {
+      document.body.innerHTML = '<div class="ar-fullmsg">⛔ هذه الصفحة للإدارة فقط</div>';
+      return;
+    }
+    buildSidebar();
+    startListeners();
+  } catch (e) {
+    document.body.innerHTML = `<div class="ar-fullmsg">⛔ ${escapeHtml(e.message)}</div>`;
+  }
+});
+</script>
+</body>
+</html>
