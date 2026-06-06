@@ -31,9 +31,10 @@ export const REQUEST_KINDS = Object.freeze({
   attendance: { label: 'تصاريح الحضور',    icon: '🕐', group: 'hr' },
   leave:      { label: 'الإجازات',         icon: '🌴', group: 'hr' },
   return:     { label: 'المرتجعات',        icon: '↩️', group: 'ops' },
+  orderRequest:{ label: 'طلبات البوابة',    icon: '🌐', group: 'ops' },
 });
 
-export const KIND_ORDER = Object.freeze(['payment', 'transaction', 'return', 'appeal', 'attendance', 'leave']);
+export const KIND_ORDER = Object.freeze(['payment', 'transaction', 'return', 'orderRequest', 'appeal', 'attendance', 'leave']);
 
 // تسميات أنواع طلبات الدفع (تطابق my-requests/approvals)
 const PAYMENT_TYPE_LBL = Object.freeze({
@@ -244,15 +245,113 @@ export function normalizeReturn(data = {}, id = '', now = Date.now()) {
   };
 }
 
+export function normalizeOrderRequest(data = {}, id = '', now = Date.now()) {
+  // الحالة المعلّقة قد تكون 'new' (cs-dashboard) أو 'requested' — أي شيء غير
+  // نهائي (converted/rejected) = بانتظار قرار.
+  const PENDING = ['new', 'requested'];
+  const status = str(data.status);
+  if (!PENDING.includes(status)) return null;
+  const whenMs = tsToMs(data.createdAt) || tsToMs(data.requestedAt);
+  const aging = computeAging(whenMs, now);
+  const items = Array.isArray(data.items) ? data.items.length : 0;
+  return {
+    id, kind: 'orderRequest', group: 'ops',
+    icon: REQUEST_KINDS.orderRequest.icon,
+    title: `طلب بوابة — ${str(data.clientName) || str(data.name) || 'عميل'}`,
+    subtitle: str(data.clientPhone) || str(data.phone) || '',
+    amount: num(data.total) || num(data.amount) || null,
+    who: str(data.clientName) || str(data.name),
+    whenMs, ageHours: aging.hours, ageLabel: aging.label,
+    status,
+    decidable: false,
+    deepLink: { page: 'portal-orders.html', query: { focus: id } },
+    lines: [
+      { label: 'المنتجات', value: items ? String(items) : '' },
+      { label: 'ملاحظة', value: str(data.notes || data.reason || data.description) },
+    ].filter(l => l.value),
+    raw: data,
+  };
+}
+
 // خريطة kind → normalizer (لاستخدام الصفحة عند ربط كل listener)
 export const NORMALIZERS = Object.freeze({
-  payment:    normalizePayment,
-  transaction:normalizeTransaction,
-  appeal:     normalizeAppeal,
-  attendance: normalizeAttendance,
-  leave:      normalizeLeave,
-  return:     normalizeReturn,
+  payment:     normalizePayment,
+  transaction: normalizeTransaction,
+  appeal:      normalizeAppeal,
+  attendance:  normalizeAttendance,
+  leave:       normalizeLeave,
+  return:      normalizeReturn,
+  orderRequest:normalizeOrderRequest,
 });
+
+// ════════════════════════════════════════════════════════════════════
+// القرارات المتخذة مؤخراً (تبويب «تم مؤخراً») — للأنواع البشرية فقط
+// (تظلمات/تصاريح/إجازات) لأنها هي التي تُقرَّر من هذه الصفحة. read-only.
+// ════════════════════════════════════════════════════════════════════
+
+const DECISION_LBL = Object.freeze({
+  approved: '✅ موافَق', accepted: '✅ مقبول', rejected: '❌ مرفوض',
+});
+
+// شكل موحَّد لعنصر «تم»: { id, kind, title, subtitle, decision, decisionLabel,
+//   decidedBy, decidedAtMs, note }
+export function normalizeDecidedAppeal(data = {}, id = '') {
+  const ap = data.appeal || {};
+  if (!['accepted', 'rejected'].includes(ap.status)) return null;
+  return {
+    id, kind: 'appeal',
+    title: `تظلّم — ${str(data.reasonLabel) || str(data.title) || str(data.type) || 'إخفاق'}`,
+    subtitle: str(data.employeeName),
+    decision: ap.status, decisionLabel: DECISION_LBL[ap.status] || ap.status,
+    decidedBy: str(ap.decidedByName), decidedAtMs: tsToMs(ap.decidedAt),
+    note: str(ap.decisionNote),
+  };
+}
+
+export function normalizeDecidedAttendance(data = {}, id = '') {
+  if (!['approved', 'rejected'].includes(str(data.status))) return null;
+  return {
+    id, kind: 'attendance',
+    title: `تصريح — ${str(data.type)}${data.date ? ' — ' + str(data.date) : ''}`,
+    subtitle: str(data.employeeName),
+    decision: data.status, decisionLabel: DECISION_LBL[data.status] || data.status,
+    decidedBy: str(data.decidedByName), decidedAtMs: tsToMs(data.decidedAt),
+    note: str(data.decisionNote),
+  };
+}
+
+export function normalizeDecidedLeave(data = {}, id = '') {
+  if (!['approved', 'rejected'].includes(str(data.status))) return null;
+  // استبعاد تسجيلات الأدمن المباشرة (بلا requestedBy) — مش «قرارات» على طلب
+  if (!data.requestedBy && !data.requestedByName) return null;
+  return {
+    id, kind: 'leave',
+    title: `إجازة — ${str(data.type)}`,
+    subtitle: str(data.employeeName),
+    decision: data.status, decisionLabel: DECISION_LBL[data.status] || data.status,
+    decidedBy: str(data.decidedByName), decidedAtMs: tsToMs(data.decidedAt),
+    note: str(data.decisionNote),
+  };
+}
+
+export const DONE_NORMALIZERS = Object.freeze({
+  appeal:     normalizeDecidedAppeal,
+  attendance: normalizeDecidedAttendance,
+  leave:      normalizeDecidedLeave,
+});
+
+export function sortByDecidedDesc(items = []) {
+  return [...items].filter(Boolean).sort((a, b) => (b.decidedAtMs || 0) - (a.decidedAtMs || 0));
+}
+
+// ── بحث نصّي بسيط على العنوان/التفصيل/المسؤول ──
+export function matchesSearch(item, term) {
+  if (!term) return true;
+  const t = String(term).trim().toLowerCase();
+  if (!t) return true;
+  const hay = [item.title, item.subtitle, item.who].map(x => String(x || '').toLowerCase()).join(' ');
+  return hay.includes(t);
+}
 
 // ── عدّ الطلبات لكل نوع ──
 export function summarizeCounts(items = []) {
@@ -281,11 +380,12 @@ export function filterByKind(items = [], kind = 'all') {
 
 // تصدير افتراضي مُجمَّع (يسهّل الاستيراد + استخدام window في الصفحات)
 const adminRequestsUtils = {
-  REQUEST_KINDS, KIND_ORDER, NORMALIZERS,
+  REQUEST_KINDS, KIND_ORDER, NORMALIZERS, DONE_NORMALIZERS,
   tsToMs, computeAging,
   normalizePayment, normalizeTransaction, normalizeAppeal,
-  normalizeAttendance, normalizeLeave, normalizeReturn,
-  summarizeCounts, sortByAgeDesc, filterByKind,
+  normalizeAttendance, normalizeLeave, normalizeReturn, normalizeOrderRequest,
+  normalizeDecidedAppeal, normalizeDecidedAttendance, normalizeDecidedLeave,
+  summarizeCounts, sortByAgeDesc, sortByDecidedDesc, filterByKind, matchesSearch,
 };
 
 export default adminRequestsUtils;

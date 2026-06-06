@@ -9,8 +9,9 @@ import {
   REQUEST_KINDS, KIND_ORDER,
   tsToMs, computeAging,
   normalizePayment, normalizeTransaction, normalizeAppeal,
-  normalizeAttendance, normalizeLeave, normalizeReturn,
-  summarizeCounts, sortByAgeDesc, filterByKind,
+  normalizeAttendance, normalizeLeave, normalizeReturn, normalizeOrderRequest,
+  normalizeDecidedAppeal, normalizeDecidedAttendance, normalizeDecidedLeave,
+  summarizeCounts, sortByAgeDesc, sortByDecidedDesc, filterByKind, matchesSearch,
 } from '../core/admin-requests-utils.js';
 
 let passed = 0, failed = 0;
@@ -111,6 +112,51 @@ test('normalizeReturn only requested/inspecting + deepLink', () => {
   const it = normalizeReturn({ status: 'requested', orderId: 'O1' }, 'r4', NOW);
   assertEq(it.deepLink.page, 'returns.html');
   assertEq(it.decidable, false);
+});
+
+// ── order request ──
+test('normalizeOrderRequest only new/requested + deepLink', () => {
+  assert(normalizeOrderRequest({ status: 'new', clientName: 'عميل' }, 'or1', NOW));
+  assert(normalizeOrderRequest({ status: 'requested', clientName: 'عميل' }, 'or2', NOW));
+  assertEq(normalizeOrderRequest({ status: 'converted' }, 'or3', NOW), null);
+  assertEq(normalizeOrderRequest({ status: 'rejected' }, 'or4', NOW), null);
+  const it = normalizeOrderRequest({ status: 'new', clientName: 'منى', items: [1, 2] }, 'or5', NOW);
+  assertEq(it.kind, 'orderRequest');
+  assertEq(it.decidable, false);
+  assertEq(it.deepLink.page, 'portal-orders.html');
+  assert(it.lines.some(l => l.value === '2'), 'items count');
+});
+
+// ── done normalizers ──
+test('normalizeDecidedAppeal only accepted/rejected', () => {
+  const it = normalizeDecidedAppeal({ employeeName: 'سامي', appeal: { status: 'accepted', decidedByName: 'المدير', decisionNote: 'مقبول' } }, 'd1');
+  assert(it);
+  assertEq(it.decision, 'accepted');
+  assertEq(it.decidedBy, 'المدير');
+  assertEq(normalizeDecidedAppeal({ appeal: { status: 'pending' } }, 'd2'), null);
+});
+test('normalizeDecidedLeave excludes admin-direct (no requestedBy)', () => {
+  assertEq(normalizeDecidedLeave({ status: 'approved', employeeName: 'x' }, 'l1'), null);
+  assert(normalizeDecidedLeave({ status: 'approved', requestedBy: 'u1', employeeName: 'x' }, 'l2'));
+});
+test('normalizeDecidedAttendance only approved/rejected', () => {
+  assert(normalizeDecidedAttendance({ status: 'rejected', type: 'late' }, 'a1'));
+  assertEq(normalizeDecidedAttendance({ status: 'pending' }, 'a2'), null);
+});
+
+// ── search + sort ──
+test('matchesSearch matches title/subtitle/who, empty = all', () => {
+  const it = normalizePayment({ status: 'pending', amount: 1, type: 'supplier_payment', supplierName: 'مطبعة النور', reason: 'x', requestedByName: 'علي' }, 'p', NOW);
+  assertEq(matchesSearch(it, ''), true);
+  assertEq(matchesSearch(it, 'النور'), true);
+  assertEq(matchesSearch(it, 'علي'), true);
+  assertEq(matchesSearch(it, 'غير موجود'), false);
+});
+test('sortByDecidedDesc newest decision first', () => {
+  const a = { decidedAtMs: 100 }, b = { decidedAtMs: 500 }, c = { decidedAtMs: 300 };
+  const s = sortByDecidedDesc([a, b, c]);
+  assertEq(s[0].decidedAtMs, 500);
+  assertEq(s[2].decidedAtMs, 100);
 });
 
 // ── aggregation ──

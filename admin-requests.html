@@ -47,7 +47,18 @@
 
 <main class="main">
   <div class="container">
+    <div class="ar-toolbar">
+      <input type="search" id="ar-search" class="inp ar-search" placeholder="🔍 بحث بالموظف / العميل / العنوان…">
+      <button type="button" class="btn btn-ghost" id="ar-done-toggle">✅ تم مؤخراً</button>
+    </div>
     <div class="ar-summary" id="ar-summary"></div>
+    <div id="ar-bulkbar" class="ar-bulkbar hide">
+      <span id="ar-bulk-count">0 محدد</span>
+      <span class="ar-foot-spacer"></span>
+      <button type="button" class="btn btn-g" id="ar-bulk-approve">✅ موافقة المحدد</button>
+      <button type="button" class="btn btn-r" id="ar-bulk-reject">❌ رفض المحدد</button>
+      <button type="button" class="btn btn-ghost" id="ar-bulk-clear">إلغاء التحديد</button>
+    </div>
     <div id="ar-list" class="ar-list"><div class="loader"><div class="spinner"></div></div></div>
   </div>
 </main>
@@ -77,8 +88,8 @@ import { collection, doc, getDoc, onSnapshot, query, where, limit } from "https:
 import { employeeActions } from "./employee-actions.js";
 import { ROLE_LABELS } from "./core/shared-constants.js";
 import {
-  REQUEST_KINDS, KIND_ORDER, NORMALIZERS,
-  summarizeCounts, sortByAgeDesc, filterByKind,
+  REQUEST_KINDS, KIND_ORDER, NORMALIZERS, DONE_NORMALIZERS,
+  summarizeCounts, sortByAgeDesc, sortByDecidedDesc, filterByKind, matchesSearch,
 } from "./core/admin-requests-utils.js";
 
 const ADMIN_ROLES = ['admin', 'operation_manager'];
@@ -87,9 +98,18 @@ const AGED_HOURS = 48; // طلب أقدم من يومين = يتميّز بصر�
 let currentUid = '', currentUserName = '', currentRole = '', currentPerms = {};
 let activeKind = 'all';
 let pendingDecision = null; // { id, kind, decision }
+let searchTerm = '';
+let doneMode = false;
+let doneStarted = false;
+const selected = new Set(); // "kind:id" للقرارات الجماعية
 
 // per-kind buckets — كل listener يحدّث الـ bucket الخاص به ثم نعيد البناء
-const buckets = { payment: [], transaction: [], appeal: [], attendance: [], leave: [], return: [] };
+const buckets = { payment: [], transaction: [], appeal: [], attendance: [], leave: [], return: [], orderRequest: [] };
+// buckets «تم مؤخراً» (lazy — تُحمَّل عند تفعيل التبويب فقط)
+const doneBuckets = { appeal: [], attendance: [], leave: [] };
+
+// الأنواع القابلة للقرار الفوري (bulk + inline)
+const DECIDABLE_KINDS = new Set(['appeal', 'attendance', 'leave']);
 
 const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtMoney = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
@@ -146,9 +166,13 @@ function cardHtml(it) {
   } else {
     actions = `<button type="button" class="btn btn-p" data-act="open" data-page="${escapeHtml(it.deepLink?.page || '')}" data-focus="${escapeHtml(it.id)}">↗️ افتح للقرار</button>`;
   }
+  const checkbox = it.decidable
+    ? `<label class="ar-card-check"><input type="checkbox" data-sel="${escapeHtml(it.kind)}:${escapeHtml(it.id)}" ${selected.has(it.kind + ':' + it.id) ? 'checked' : ''}></label>`
+    : '';
   return `
     <div class="ar-card ${aged ? 'aged' : ''}">
       <div class="ar-card-head">
+        ${checkbox}
         <span class="ar-card-ico">${it.icon}</span>
         <div class="ar-card-titles">
           <div class="ar-card-title">${escapeHtml(it.title)}</div>
@@ -167,15 +191,43 @@ function cardHtml(it) {
 }
 
 function render() {
-  const items = filterByKind(allItems(), activeKind);
-  renderSummary(summarizeCounts(allItems()));
+  const all = allItems();
+  // تنظيف التحديدات القديمة (عناصر خرجت من حالة pending)
+  const valid = new Set(all.filter(it => it.decidable).map(it => it.kind + ':' + it.id));
+  for (const key of [...selected]) if (!valid.has(key)) selected.delete(key);
+
+  renderSummary(summarizeCounts(all));
   const list = document.getElementById('ar-list');
   if (!list) return;
+
+  if (doneMode) { renderDone(list); updateBulkBar(); return; }
+
+  let items = filterByKind(all, activeKind).filter(it => matchesSearch(it, searchTerm));
   if (!items.length) {
-    list.innerHTML = `<div class="ar-empty">🎉 لا توجد طلبات بانتظار قرارك${activeKind === 'all' ? '' : ' في هذا القسم'}.</div>`;
+    list.innerHTML = `<div class="ar-empty">🎉 لا توجد طلبات${searchTerm ? ' مطابِقة للبحث' : ' بانتظار قرارك'}${activeKind === 'all' || searchTerm ? '' : ' في هذا القسم'}.</div>`;
+    updateBulkBar();
     return;
   }
   list.innerHTML = items.map(cardHtml).join('');
+  updateBulkBar();
+}
+
+function renderDone(list) {
+  const items = sortByDecidedDesc(['appeal', 'attendance', 'leave'].flatMap(k => doneBuckets[k] || []))
+    .filter(it => matchesSearch(it, searchTerm))
+    .slice(0, 60);
+  if (!items.length) {
+    list.innerHTML = `<div class="ar-empty">لا توجد قرارات حديثة${doneStarted ? '' : ' — جارٍ التحميل…'}.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(it => {
+    const when = it.decidedAtMs ? new Date(it.decidedAtMs).toLocaleString('ar-EG') : '';
+    return `<div class="ar-done-card ${escapeHtml(it.decision)}">
+      <div class="ar-done-top"><b>${REQUEST_KINDS[it.kind]?.icon || ''} ${escapeHtml(it.title)}</b><span>${escapeHtml(it.decisionLabel)}</span></div>
+      <div class="ar-done-meta">${escapeHtml(it.subtitle)}${it.decidedBy ? ' · بواسطة ' + escapeHtml(it.decidedBy) : ''}${when ? ' · ' + escapeHtml(when) : ''}</div>
+      ${it.note ? `<div class="ar-done-note">📝 ${escapeHtml(it.note)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function findItem(kind, id) {
@@ -204,38 +256,41 @@ function openDecide(kind, id, decision) {
   oM('decide');
 }
 
+// نداء الـ action المركزي المناسب حسب النوع (مشترك بين القرار الفوري والجماعي)
+async function applyDecision(kind, id, decision, note = '') {
+  try {
+    if (kind === 'appeal') {
+      return await employeeActions.decideIncidentAppeal({
+        db, incidentId: id,
+        decision: decision === 'approve' ? 'accepted' : 'rejected',
+        note, userId: currentUid, userName: currentUserName,
+      });
+    } else if (kind === 'attendance') {
+      return await employeeActions.decideAttendancePermission({
+        db, permissionId: id,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
+      });
+    } else if (kind === 'leave') {
+      return await employeeActions.decideEmployeeLeave({
+        db, leaveId: id,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
+      });
+    }
+    return { ok: false, errors: ['نوع غير مدعوم للقرار الفوري'] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل غير متوقع'] };
+  }
+}
+
 async function confirmDecision() {
   if (!pendingDecision) return;
   const { id, kind, decision } = pendingDecision;
   const note = document.getElementById('decide-note').value.trim();
   const btn = document.getElementById('decide-confirm');
   btn.disabled = true;
-  let res;
-  try {
-    if (kind === 'appeal') {
-      res = await employeeActions.decideIncidentAppeal({
-        db, incidentId: id,
-        decision: decision === 'approve' ? 'accepted' : 'rejected',
-        note, userId: currentUid, userName: currentUserName,
-      });
-    } else if (kind === 'attendance') {
-      res = await employeeActions.decideAttendancePermission({
-        db, permissionId: id,
-        decision: decision === 'approve' ? 'approved' : 'rejected',
-        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
-      });
-    } else if (kind === 'leave') {
-      res = await employeeActions.decideEmployeeLeave({
-        db, leaveId: id,
-        decision: decision === 'approve' ? 'approved' : 'rejected',
-        decisionNote: note, decidedBy: currentUid, decidedByName: currentUserName,
-      });
-    } else {
-      res = { ok: false, errors: ['نوع غير مدعوم للقرار الفوري'] };
-    }
-  } catch (e) {
-    res = { ok: false, errors: [e.message || 'فشل غير متوقع'] };
-  }
+  const res = await applyDecision(kind, id, decision, note);
   btn.disabled = false;
   if (res && res.ok) {
     cM('decide');
@@ -245,6 +300,48 @@ async function confirmDecision() {
   } else {
     showToast('⚠️ ' + ((res && res.errors && res.errors[0]) || 'فشل تنفيذ القرار'), 'err');
   }
+}
+
+// ════════════════ القرارات الجماعية (bulk) ════════════════
+function toggleSelect(key, on) {
+  if (on) selected.add(key); else selected.delete(key);
+  updateBulkBar();
+}
+function clearSelection() {
+  selected.clear();
+  document.querySelectorAll('#ar-list input[data-sel]').forEach(c => { c.checked = false; });
+  updateBulkBar();
+}
+function updateBulkBar() {
+  const bar = document.getElementById('ar-bulkbar');
+  const cnt = document.getElementById('ar-bulk-count');
+  if (!bar || !cnt) return;
+  // لا قرارات جماعية في وضع «تم مؤخراً»
+  if (doneMode || selected.size === 0) { bar.classList.add('hide'); return; }
+  bar.classList.remove('hide');
+  cnt.textContent = `${selected.size} محدد`;
+}
+
+async function bulkDecide(decision) {
+  if (!selected.size) return;
+  const keys = [...selected];
+  const verb = decision === 'approve' ? 'الموافقة على' : 'رفض';
+  if (!window.confirm(`${verb} ${keys.length} طلب؟`)) return;
+  document.getElementById('ar-bulk-approve').disabled = true;
+  document.getElementById('ar-bulk-reject').disabled = true;
+  let ok = 0, fail = 0;
+  for (const key of keys) {
+    const [kind, ...rest] = key.split(':');
+    const id = rest.join(':');
+    if (!DECIDABLE_KINDS.has(kind)) { fail++; continue; }
+    const res = await applyDecision(kind, id, decision, '');
+    if (res && res.ok) { ok++; selected.delete(key); } else { fail++; }
+  }
+  document.getElementById('ar-bulk-approve').disabled = false;
+  document.getElementById('ar-bulk-reject').disabled = false;
+  showToast(`تم: ${ok}${fail ? ` · فشل: ${fail}` : ''}`, fail ? 'err' : 'ok');
+  updateBulkBar();
+  // الـ onSnapshot سيُحدِّث القائمة (العناصر المقرَّرة تخرج من pending)
 }
 
 // ════════════════ Event wiring ════════════════
@@ -261,6 +358,7 @@ document.getElementById('ar-summary')?.addEventListener('click', e => {
   const card = e.target.closest('[data-kind]');
   if (!card) return;
   activeKind = card.dataset.kind;
+  if (doneMode) { doneMode = false; document.getElementById('ar-done-toggle')?.classList.remove('on'); }
   render();
 });
 
@@ -272,6 +370,31 @@ document.getElementById('ar-list')?.addEventListener('click', e => {
   else if (act === 'reject') openDecide(el.dataset.kind, el.dataset.id, 'reject');
   else if (act === 'open') goPage(el.dataset.page, el.dataset.focus ? { focus: el.dataset.focus } : null);
 });
+// تحديد العناصر للقرار الجماعي
+document.getElementById('ar-list')?.addEventListener('change', e => {
+  const cb = e.target.closest('input[data-sel]');
+  if (cb) toggleSelect(cb.dataset.sel, cb.checked);
+});
+
+// بحث
+document.getElementById('ar-search')?.addEventListener('input', e => {
+  searchTerm = e.target.value || '';
+  render();
+});
+
+// تبويب «تم مؤخراً»
+function toggleDone() {
+  doneMode = !doneMode;
+  document.getElementById('ar-done-toggle')?.classList.toggle('on', doneMode);
+  if (doneMode) { clearSelection(); startDoneListeners(); }
+  render();
+}
+document.getElementById('ar-done-toggle')?.addEventListener('click', () => toggleDone());
+
+// أزرار القرار الجماعي
+document.getElementById('ar-bulk-approve')?.addEventListener('click', () => bulkDecide('approve'));
+document.getElementById('ar-bulk-reject')?.addEventListener('click', () => bulkDecide('reject'));
+document.getElementById('ar-bulk-clear')?.addEventListener('click', () => clearSelection());
 
 // ════════════════ Auth + Listeners ════════════════
 function buildSidebar() {
@@ -303,12 +426,28 @@ function attach(kind, q) {
 
 function startListeners() {
   const LIM = 200;
-  attach('payment',     query(collection(db, 'payment_requests'),       where('status', 'in', ['requested', 'awaiting_receipt', 'pending']), limit(LIM)));
-  attach('transaction', query(collection(db, 'transactions_v2'),         where('approvalStatus', 'in', ['pending', 'confirmed']),            limit(LIM)));
-  attach('appeal',      query(collection(db, 'employee_incidents'),      where('appeal.status', '==', 'pending'),                            limit(LIM)));
-  attach('attendance',  query(collection(db, 'attendance_permissions'),  where('status', '==', 'pending'),                                   limit(LIM)));
-  attach('leave',       query(collection(db, 'employee_leaves'),         where('status', '==', 'pending'),                                   limit(LIM)));
-  attach('return',      query(collection(db, 'returns_tickets'),         where('status', 'in', ['requested', 'inspecting']),                 limit(LIM)));
+  attach('payment',      query(collection(db, 'payment_requests'),       where('status', 'in', ['requested', 'awaiting_receipt', 'pending']), limit(LIM)));
+  attach('transaction',  query(collection(db, 'transactions_v2'),         where('approvalStatus', 'in', ['pending', 'confirmed']),            limit(LIM)));
+  attach('appeal',       query(collection(db, 'employee_incidents'),      where('appeal.status', '==', 'pending'),                            limit(LIM)));
+  attach('attendance',   query(collection(db, 'attendance_permissions'),  where('status', '==', 'pending'),                                   limit(LIM)));
+  attach('leave',        query(collection(db, 'employee_leaves'),         where('status', '==', 'pending'),                                   limit(LIM)));
+  attach('return',       query(collection(db, 'returns_tickets'),         where('status', 'in', ['requested', 'inspecting']),                 limit(LIM)));
+  attach('orderRequest', query(collection(db, 'order_requests'),          where('status', 'in', ['new', 'requested']),                        limit(LIM)));
+}
+
+// listeners «تم مؤخراً» — lazy: تُربط مرة واحدة عند أول تفعيل للتبويب فقط.
+// تجلب آخر القرارات على الأنواع البشرية وتفرز بـ decidedAt في الـ JS (تجنّب
+// composite index). bounded بـ limit(60).
+function startDoneListeners() {
+  if (doneStarted) return;
+  doneStarted = true;
+  const L = 60;
+  const wire = (kind, q, norm) => onSnapshot(q,
+    snap => { doneBuckets[kind] = snap.docs.map(d => norm(d.data(), d.id)).filter(Boolean); if (doneMode) render(); },
+    err => { console.warn(`[admin-requests] done:${kind}:`, err?.code || err); doneBuckets[kind] = []; if (doneMode) render(); });
+  wire('appeal',     query(collection(db, 'employee_incidents'),     where('appeal.status', 'in', ['accepted', 'rejected']), limit(L)), DONE_NORMALIZERS.appeal);
+  wire('attendance', query(collection(db, 'attendance_permissions'), where('status', 'in', ['approved', 'rejected']),       limit(L)), DONE_NORMALIZERS.attendance);
+  wire('leave',      query(collection(db, 'employee_leaves'),        where('status', 'in', ['approved', 'rejected']),       limit(L)), DONE_NORMALIZERS.leave);
 }
 
 onAuthStateChanged(auth, async u => {

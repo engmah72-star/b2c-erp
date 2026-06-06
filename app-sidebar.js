@@ -33,6 +33,12 @@ const BADGE_MAP = {
   'returns.html':    [['shipping', 'returns-open']],
   'clients.html':    [['clients', 'delayed']],
   'inbox.html':      [['inbox', 'unread']],
+  // مركزية الطلبات: مجموع كل ما يحتاج قرار أدمن (مالي + مرتجعات + بشري + بوابة)
+  'admin-requests.html': [
+    ['accounts', 'pending-approvals'], ['shipping', 'returns-open'],
+    ['admin-requests', 'appeals'], ['admin-requests', 'attendance'],
+    ['admin-requests', 'leaves'], ['admin-requests', 'order-requests'],
+  ],
 };
 
 // ── Smart triage («المطلوب الآن») — مشتق من نفس الشارات الحيّة ──
