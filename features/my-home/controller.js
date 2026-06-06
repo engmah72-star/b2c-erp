@@ -11,6 +11,7 @@ import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/f
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
 import { employeeActions } from '../../employee-actions.js';
+import { currentPeriodKey } from '../../core/task-recurrence.js';
 import { renderHero, renderTasks, renderOrders, renderAlerts, renderLinks } from './render.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -74,6 +75,14 @@ function wireActions() {
       el.disabled = true;
       const r = await employeeActions.setTaskStatus({ db, taskId: el.dataset.id, status: 'done' });
       window.__mhToast(r.ok === false ? (r.errors?.[0] || 'فشل') : '✅ تم إنجاز المهمة', r.ok === false ? 'err' : 'ok');
+      return;
+    }
+    if (act === 'task-recur-done') {
+      el.disabled = true;
+      const r = await employeeActions.completeRecurringTask({
+        db, taskId: el.dataset.id, periodKey: currentPeriodKey(el.dataset.rec),
+      });
+      window.__mhToast(r.ok === false ? (r.errors?.[0] || 'فشل') : '✅ تم إنجاز المهمة لهذه الفترة', r.ok === false ? 'err' : 'ok');
       return;
     }
     if (act === 'checkin') {

@@ -367,15 +367,26 @@ export async function addEmployeeTask({
   db = defaultDb,
   title, description = '', priority = 'normal',
   dueDate = '', orderId = '',
+  taskType = 'fixed', recurrence = '',
   assignedToUid, assignedToName,
   userId, userName,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!title || !title.trim()) return { ok: false, errors: ['⚠️ أدخل عنوان المهمة'], warnings: [] };
+  // نوع المهمة: محدّدة (fixed) أو دائمة متكرّرة (recurring)
+  const type = taskType === 'recurring' ? 'recurring' : 'fixed';
+  if (type === 'recurring' && !['daily', 'weekly', 'monthly'].includes(recurrence)) {
+    return { ok: false, errors: ['⚠️ اختر تكرار المهمة الدائمة (يومي/أسبوعي/شهري)'], warnings: [] };
+  }
   try {
     const ref = await addDoc(collection(db, 'tasks'), {
       title: title.trim(), description, priority,
-      dueDate, orderId,
+      // المهمة الدائمة لا تحمل dueDate؛ المحدّدة فقط
+      dueDate: type === 'recurring' ? '' : dueDate,
+      orderId,
+      taskType: type,
+      recurrence: type === 'recurring' ? recurrence : '',
+      lastCompletedPeriod: '',
       assignedTo: assignedToUid,
       assignedToName: assignedToName || '',
       assignedBy: userId,
@@ -401,6 +412,28 @@ export async function setTaskStatus({ db = defaultDb, taskId, status }) {
       updatedAt: serverTimestamp(),
     });
     return { ok: true, errors: [], warnings: [], status };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+  }
+}
+
+/**
+ * إنجاز مهمة دائمة (متكرّرة) لفترتها الحالية — لا تُغلق المهمة نهائياً، بل
+ * تُختم بمفتاح الفترة `periodKey` ثم تُعاد فتحها تلقائياً للفترة التالية.
+ * (للمهام المحدّدة استخدم setTaskStatus العادي).
+ */
+export async function completeRecurringTask({ db = defaultDb, taskId, periodKey, reopen = false }) {
+  if (!taskId) return { ok: false, errors: ['⚠️ taskId مطلوب'], warnings: [] };
+  if (!reopen && !periodKey) return { ok: false, errors: ['⚠️ periodKey مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'tasks', taskId), {
+      // reopen ⇒ مسح ختم الفترة (تعود المهمة «مستحقّة» للفترة الحالية)
+      lastCompletedPeriod: reopen ? '' : periodKey,
+      lastCompletedAt: reopen ? null : serverTimestamp(),
+      status: 'pending',
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [], periodKey: reopen ? '' : periodKey };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
   }
@@ -861,7 +894,7 @@ export const employeeActions = {
   recordPasswordChange, recordPasswordResetEmailSent,
   linkRebuiltAuth,
   saveUserPermissions, clearUserPermissions,
-  addEmployeeTask, setTaskStatus,
+  addEmployeeTask, setTaskStatus, completeRecurringTask,
   addEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,

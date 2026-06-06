@@ -40,6 +40,12 @@ export function buildTaskModalHTML() {
     <div class="modal-body">
       <div class="fg"><label>عنوان المهمة *</label><input class="inp" id="task-title" placeholder="مثال: تصميم كارت محمود"></div>
       <div class="fg"><label>التفاصيل</label><textarea class="inp ep-textarea-min" id="task-desc" placeholder="أي تفاصيل إضافية..."></textarea></div>
+      <div class="fg"><label>🗂️ نوع المهمة</label>
+        <select class="inp" id="task-type">
+          <option value="fixed" selected>📅 مهمة لمدّة محدّدة</option>
+          <option value="recurring">🔁 مهمة دائمة متكرّرة</option>
+        </select>
+      </div>
       <div class="g2">
         <div class="fg"><label>⚡ الأولوية</label>
           <select class="inp" id="task-pri">
@@ -48,7 +54,14 @@ export function buildTaskModalHTML() {
             <option value="low">📎 منخفض</option>
           </select>
         </div>
-        <div class="fg"><label>📅 موعد الإنجاز</label><input class="inp" id="task-due" type="date"></div>
+        <div class="fg" id="task-due-wrap"><label>📅 موعد الإنجاز</label><input class="inp" id="task-due" type="date"></div>
+        <div class="fg" id="task-recur-wrap" hidden><label>🔁 التكرار</label>
+          <select class="inp" id="task-recurrence">
+            <option value="daily">📆 يومي</option>
+            <option value="weekly">🗓️ أسبوعي</option>
+            <option value="monthly" selected>📅 شهري</option>
+          </select>
+        </div>
       </div>
       <div class="fg"><label>🔗 أوردر مرتبط (اختياري)</label>
         <select class="inp" id="task-order"><option value="">— بدون أوردر —</option></select>
