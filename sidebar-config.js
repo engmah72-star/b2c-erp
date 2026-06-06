@@ -80,6 +80,7 @@ try {
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
+    { file:'portal-designs.html',    label:'تصميمات البوابة',  ico:'🖼️', group:'orders', perm:'design' },
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },

@@ -337,11 +337,12 @@ function designMoreTabHTML(order, ctx, { isAdmin } = {}) {
       </div>`
     : `<div class="dcc-empty-sm">قسم الإدارة متاح للأدمن وقادة العمليات فقط.</div>`;
 
-  // Gallery publish: only for designer roles
+  // Gallery publish: زر النشر السريع للمصممين + لينك صفحة الإدارة الكاملة للكل.
   const isDesigner = (ctx.currentRole === 'graphic_designer' || ctx.currentRole === 'design_operator');
-  const galleryHTML = isDesigner
-    ? `<button type="button" class="btn btn-sm" onclick="openPublishMockup()">＋ نشر موك أب للمعرض العام</button>`
-    : `<div class="dcc-empty-sm">النشر للمعرض متاح للمصممين فقط.</div>`;
+  const galleryHTML = `
+    ${isDesigner ? `<button type="button" class="btn btn-sm" onclick="openPublishMockup()">＋ نشر موك أب للمعرض العام</button>` : ''}
+    <a class="btn btn-sm btn-ghost" href="portal-designs.html" style="text-decoration:none">🖼️ إدارة تصميمات البوابة</a>
+    ${isDesigner ? '' : `<div class="dcc-empty-sm">النشر السريع متاح للمصممين — أو أدِر المعرض من صفحة «تصميمات البوابة».</div>`}`;
 
   return `
     <div class="dcc-more">
