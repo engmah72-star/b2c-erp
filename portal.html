@@ -299,6 +299,7 @@ textarea.inp{resize:vertical;min-height:64px;}
     <div class="gal-row">
       <select class="gal-sort" id="gal-sort">
         <option value="newest">⏱ الأحدث</option>
+        <option value="popular">🔥 الأكثر مشاهدة</option>
         <option value="title">🔤 الاسم</option>
       </select>
     </div>
@@ -731,8 +732,32 @@ function openGalDetail(item) {
   $('gal-ov-body').__collection = siblings;
   $('gal-ov-body').__item = item;
   $('gal-ov').classList.add('open');
+  recordGalleryView(item);   // سجّل المشاهدة (best-effort)
 }
 function closeGalDetail() { $('gal-ov').classList.remove('open'); }
+
+// عدّاد المشاهدات (المرحلة 4) — best-effort، de-dup لكل جلسة، بلا أثر على التصفّح.
+let _galViewed = null;
+function _loadViewed() {
+  if (_galViewed) return _galViewed;
+  try { _galViewed = new Set(JSON.parse(localStorage.getItem('galViewed') || '[]')); }
+  catch (_) { _galViewed = new Set(); }
+  return _galViewed;
+}
+async function recordGalleryView(item) {
+  if (!item || !item._id || DEMO) return;
+  const seen = _loadViewed();
+  if (seen.has(item._id)) return;       // مشاهدة واحدة لكل تصميم في الجلسة
+  seen.add(item._id);
+  try { localStorage.setItem('galViewed', JSON.stringify([...seen].slice(-500))); } catch (_) {}
+  item.viewCount = (item.viewCount || 0) + 1;   // انعكاس فوري على ترتيب "الأكثر مشاهدة"
+  try {
+    await ensureFirebase();
+    const ff = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js');
+    const fns = ff.getFunctions(auth?.app, 'us-central1');
+    await ff.httpsCallable(fns, 'recordGalleryView')({ galleryId: item._id });
+  } catch (_) { /* الدالة قد لا تكون منشورة — تجاهل بصمت */ }
+}
 
 function wantSimilar(item) {
   if (!item) return;
