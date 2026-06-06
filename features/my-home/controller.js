@@ -11,6 +11,7 @@ import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/f
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
 import { employeeActions } from '../../employee-actions.js';
+import { currentPeriodKey } from '../../core/task-recurrence.js';
 import { renderHero, renderTasks, renderOrders, renderAlerts, renderLinks } from './render.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -40,7 +41,7 @@ window.__mhToast = function (msg, type = 'ok') {
 
 const S = {
   me: { uid: '', name: '' }, role: '', empId: '', emp: {}, mustChangePassword: false,
-  tasks: [], orders: null, attToday: null, incidents: 0,
+  tasks: [], orders: null, attToday: null, incidents: 0, incidentList: [],
 };
 
 function notice(html) { const r = document.getElementById('mh-root'); if (r) r.innerHTML = `<div class="mh-notice">${html}</div>`; }
@@ -54,7 +55,7 @@ function render() {
     renderHero({ name: S.me.name, role: S.role, attToday: S.attToday }) +
     `<div class="mh-grid">
       <div class="mh-col">${renderTasks(S.tasks, today)}${renderOrders(S.orders)}</div>
-      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, mustChangePassword: S.mustChangePassword })}${renderLinks(ROLE_DASH[S.role])}</div>
+      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, incidentList: S.incidentList, mustChangePassword: S.mustChangePassword })}${renderLinks(ROLE_DASH[S.role])}</div>
     </div>`;
 }
 
@@ -74,6 +75,14 @@ function wireActions() {
       el.disabled = true;
       const r = await employeeActions.setTaskStatus({ db, taskId: el.dataset.id, status: 'done' });
       window.__mhToast(r.ok === false ? (r.errors?.[0] || 'فشل') : '✅ تم إنجاز المهمة', r.ok === false ? 'err' : 'ok');
+      return;
+    }
+    if (act === 'task-recur-done') {
+      el.disabled = true;
+      const r = await employeeActions.completeRecurringTask({
+        db, taskId: el.dataset.id, periodKey: currentPeriodKey(el.dataset.rec),
+      });
+      window.__mhToast(r.ok === false ? (r.errors?.[0] || 'فشل') : '✅ تم إنجاز المهمة لهذه الفترة', r.ok === false ? 'err' : 'ok');
       return;
     }
     if (act === 'checkin') {
@@ -108,7 +117,9 @@ function startListeners() {
     // (allow read if authUid == request.auth.uid) — زي ما my-profile.html بيعمل.
     // الـ query بـ employeeId كان بيسبّب permission-denied (الـ rule بيتحقق authUid).
     onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
-      S.incidents = snap.size; render();
+      S.incidents = snap.size;
+      S.incidentList = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      render();
     });
   }
   const field = ROLE_ORDER_FIELD[S.role];

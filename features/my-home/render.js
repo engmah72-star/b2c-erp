@@ -5,6 +5,8 @@
 // Person-scoped: shows only the logged-in employee's own data (RULE 8).
 // ════════════════════════════════════════════════════════════════════
 
+import { isRecurringDue, RECURRENCE } from '../../core/task-recurrence.js';
+
 export const ROLE_LABELS = {
   admin: 'مدير النظام', operation_manager: 'مدير العمليات', customer_service: 'خدمة العملاء',
   graphic_designer: 'مصمم جرافيك', design_operator: 'مشغّل تصميم', production_agent: 'مسؤول إنتاج',
@@ -54,9 +56,12 @@ export function renderHero(d) {
 
 // ── My tasks ─────────────────────────────────────────────────────────
 export function renderTasks(tasks, today) {
-  const pending = tasks.filter(t => t.status === 'pending');
-  if (!pending.length) return card('📋 مهامي', '<div class="mh-empty">لا مهام مفتوحة 🎉</div>');
-  const rows = pending
+  // المهام المحدّدة المفتوحة + المهام الدائمة (تظهر دائماً بحالة الفترة)
+  const fixedPending = tasks.filter(t => t.taskType !== 'recurring' && t.status === 'pending');
+  const recurring = tasks.filter(t => t.taskType === 'recurring' && t.status !== 'cancelled');
+  if (!fixedPending.length && !recurring.length) return card('📋 مهامي', '<div class="mh-empty">لا مهام مفتوحة 🎉</div>');
+
+  const fixedRows = fixedPending
     .sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))
     .map(t => {
       const late = t.dueDate && t.dueDate < today;
@@ -68,7 +73,25 @@ export function renderTasks(tasks, today) {
         <button type="button" class="btn btn-sm btn-g" data-act="task-done" data-id="${esc(t._id)}">✓ تم</button>
       </div>`;
     }).join('');
-  return card(`📋 مهامي <span class="mh-badge">${pending.length}</span>`, rows);
+
+  const recRows = recurring
+    .sort((a, b) => Number(isRecurringDue(b)) - Number(isRecurringDue(a)))
+    .map(t => {
+      const due = isRecurringDue(t);
+      const pri = t.priority === 'urgent' ? '⚡' : t.priority === 'low' ? '📎' : '📌';
+      const r = RECURRENCE[t.recurrence] || {};
+      return `<div class="mh-task${due ? '' : ' done'}">
+        <div class="mh-task-main"><span>${pri}</span> <span class="mh-task-t">${esc(t.title || '')}</span>
+          <span class="mh-due">🔁 ${esc(r.lbl || 'متكرّر')}</span></div>
+        ${t.description ? `<div class="mh-task-d">${esc(t.description)}</div>` : ''}
+        ${due
+          ? `<button type="button" class="btn btn-sm btn-g" data-act="task-recur-done" data-id="${esc(t._id)}" data-rec="${esc(t.recurrence)}">✓ تم ${esc(r.period || '')}</button>`
+          : `<span class="mh-task-doneflag">✓ تمّت ${esc(r.period || '')}</span>`}
+      </div>`;
+    }).join('');
+
+  const dueCount = fixedPending.length + recurring.filter(t => isRecurringDue(t)).length;
+  return card(`📋 مهامي <span class="mh-badge">${dueCount}</span>`, recRows + fixedRows);
 }
 
 // ── My active orders (operational roles) ─────────────────────────────
@@ -88,7 +111,16 @@ export function renderOrders(orders) {
 export function renderAlerts(a) {
   const items = [];
   if (a.lateTasks > 0)  items.push(`<li class="warn">⏰ لديك ${a.lateTasks} مهمة متأخرة</li>`);
-  if (a.incidents > 0)  items.push(`<li class="warn">⚠️ ${a.incidents} ملاحظة هذا الشهر — راجع بروفايلك</li>`);
+  if (a.incidents > 0) {
+    // صور المخالفات (إن وُجدت) — مصغّرة قابلة للتكبير
+    const imgs = (a.incidentList || []).filter(i => i.imageUrl);
+    const thumbs = imgs.length
+      ? `<div class="mh-inc-imgs">${imgs.slice(0, 6).map(i =>
+          `<a href="${esc(i.imageUrl)}" target="_blank" rel="noopener" class="mh-inc-imglink" title="${esc(i.title || 'صورة المخالفة')}"><img src="${esc(i.imageUrl)}" alt="صورة المخالفة" loading="lazy" class="mh-inc-img"></a>`
+        ).join('')}</div>`
+      : '';
+    items.push(`<li class="warn">⚠️ ${a.incidents} ملاحظة هذا الشهر — <a href="my-profile.html?tab=feedback">راجع بروفايلك</a>${thumbs}</li>`);
+  }
   if (a.mustChangePassword) items.push(`<li class="crit">🔑 يجب تغيير كلمة المرور — <a href="change-password.html">غيّرها الآن</a></li>`);
   if (!items.length) items.push('<li class="ok">✅ لا تنبيهات — كل شيء على ما يرام</li>');
   return card('🔔 تنبيهاتي', `<ul class="mh-alerts">${items.join('')}</ul>`);

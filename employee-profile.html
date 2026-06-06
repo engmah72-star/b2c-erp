@@ -276,6 +276,7 @@ import { buildAllModalsHTML } from "./features/employee-profile/views/render-mod
 import { buildPasswordCardHTML, buildSetPasswordModalHTML, buildRebuildAuthModalHTML } from "./features/employee-profile/views/render-password-card.js";
 import { employeeActions } from "./employee-actions.js";
 import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from "./core/storage-helpers.js";
+import { currentPeriodKey, isRecurringDue } from "./core/task-recurrence.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empPermissions=[], empGoals=[], empEvaluations=[], empIncidents=[];
@@ -1425,6 +1426,19 @@ function renderTasks(){
 }
 
 window.toggleTask=async function(id,status){
+  const t=(empTasks||[]).find(x=>x._id===id);
+  // مهمة دائمة متكرّرة: تُختم لفترتها الحالية ثم تُعاد فتحها تلقائياً (لا تُغلق)
+  if(t&&t.taskType==='recurring'){
+    if(isRecurringDue(t)){
+      const r=await employeeActions.completeRecurringTask({db,taskId:id,periodKey:currentPeriodKey(t.recurrence)});
+      if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+      return toast('✅ تم إنجاز المهمة لهذه الفترة','ok');
+    }
+    // إلغاء ختم الفترة (إعادة فتح للفترة الحالية)
+    const r=await employeeActions.completeRecurringTask({db,taskId:id,reopen:true});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return toast('↩️ تم إعادة فتح المهمة','ok');
+  }
   const newStatus=status==='pending'?'done':'pending';
   const r=await employeeActions.setTaskStatus({db,taskId:id,status:newStatus});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
@@ -1438,9 +1452,26 @@ window.deleteTask=async function(id){
   toast('✅ تم الحذف','ok');
 };
 
+// يبدّل بين حقلَي «موعد الإنجاز» (مهمة محدّدة) و«التكرار» (مهمة دائمة)
+function _wireTaskType(){
+  const sel=document.getElementById('task-type');if(!sel)return;
+  const apply=()=>{
+    const recurring=sel.value==='recurring';
+    const dueW=document.getElementById('task-due-wrap');
+    const recW=document.getElementById('task-recur-wrap');
+    if(dueW)dueW.hidden=recurring;
+    if(recW)recW.hidden=!recurring;
+  };
+  if(!sel.dataset.wired){sel.dataset.wired='1';sel.addEventListener('change',apply);}
+  apply();
+}
+
 window.openAddTask=function(){
   sv('task-title','');sv('task-desc','');sv('task-due','');
   document.getElementById('task-pri').value='normal';
+  document.getElementById('task-type').value='fixed';
+  const recSel=document.getElementById('task-recurrence');if(recSel)recSel.value='monthly';
+  _wireTaskType();
   // ملأ الأوردرات
   const sel=document.getElementById('task-order');
   const empOrds=allOrders.filter(o=>o.stage!=='archived').slice(0,20);
@@ -1451,10 +1482,12 @@ window.openAddTask=function(){
 };
 
 window.saveTask=async function(){
+  const taskType=gv('task-type')||'fixed';
   const r=await employeeActions.addEmployeeTask({
     db,
     title:gv('task-title'),description:gv('task-desc'),priority:gv('task-pri'),
     dueDate:gv('task-due')||'',orderId:gv('task-order')||'',
+    taskType,recurrence:taskType==='recurring'?(gv('task-recurrence')||'monthly'):'',
     assignedToUid:emp.authUid||empId,assignedToName:emp.name||'',
     userId:currentUser.uid,userName:adminName,
   });

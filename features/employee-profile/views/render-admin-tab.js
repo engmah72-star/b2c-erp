@@ -16,6 +16,8 @@
  * Pure: no DOM, no Firestore, no globals.
  */
 
+import { isRecurringDue, recurrenceLabel } from '../../../core/task-recurrence.js';
+
 export const INCIDENT_TYPES = {
   design_rejected:    { lbl: 'تصميم مرفوض',   ico: '🎨', col: 'var(--p)' },
   order_late:         { lbl: 'أوردر متأخر',    ico: '⏰', col: 'var(--y)' },
@@ -67,8 +69,11 @@ function escAttr(s) {
  * @returns {{ html: string, openCount: number }}
  */
 export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
-  const open = tasks.filter(t => t.status === 'pending');
-  const done = tasks.filter(t => t.status === 'done').slice(0, 3);
+  // المهام الدائمة (المتكرّرة) تبقى دائماً «مفتوحة» — حالتها تُشتقّ من الفترة لا من status
+  const recurring = tasks.filter(t => t.taskType === 'recurring' && t.status !== 'cancelled');
+  const fixed = tasks.filter(t => t.taskType !== 'recurring');
+  const open = fixed.filter(t => t.status === 'pending');
+  const done = fixed.filter(t => t.status === 'done').slice(0, 3);
 
   // Live workload card
   const liveHtml = liveOrders.length
@@ -96,21 +101,28 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
   </div>`
     : `<div style="background:var(--bg2);border:1px dashed var(--line);border-radius:var(--rad);padding:14px;text-align:center;margin-bottom:14px"><div class="txt-meta-sm">💤 لا توجد أوردرات نشطة في إيد الموظف حالياً</div></div>`;
 
-  const allTasks = [...open, ...done];
+  // المهام الدائمة أولاً (مرتّبة)، ثم المحدّدة المفتوحة، ثم آخر المنجزة
+  const allTasks = [...recurring, ...open, ...done];
   const tasksHtml = allTasks.length
     ? allTasks.map(t => {
         const p = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
-        const isDone = t.status === 'done';
-        const isLate = t.dueDate && t.dueDate < today && !isDone;
+        const isRecurring = t.taskType === 'recurring';
+        // المتكرّرة: «منجزة» = مختومة لهذه الفترة؛ المحدّدة: status === done
+        const due = isRecurring ? isRecurringDue(t) : t.status !== 'done';
+        const isDone = !due;
+        const isLate = !isRecurring && t.dueDate && t.dueDate < today && !isDone;
+        const recLbl = isRecurring ? recurrenceLabel(t.recurrence) : '';
         return `<div class="task-item${isDone ? ' done-task' : ''}">
       <div class="task-check${isDone ? ' checked' : ''}" onclick="toggleTask('${escAttr(t._id)}','${escAttr(t.status)}')">${isDone ? '✓' : ''}</div>
       <div class="flex-1 min-w-0">
         <div style="font-size:var(--fs-md);font-weight:var(--fw-bold);${isDone ? 'text-decoration:line-through' : ''}">${escAttr(t.title)}</div>
         ${t.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${escAttr(t.description)}</div>` : ''}
-        ${t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : ''}
+        ${isRecurring
+          ? `<div style="font-size:var(--fs-xs);color:var(--p);margin-top:2px">${recLbl} · ${isDone ? '✓ تمّت لهذه الفترة' : '⏳ مستحقّة'}</div>`
+          : (t.dueDate ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:2px">📅 ${escAttr(t.dueDate)}${isLate ? ' ⚠️ متأخرة' : ''}</div>` : '')}
       </div>
       <span class="pri-badge ${p.cls}">${p.lbl}</span>
-      ${!isDone ? `<button type="button" onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-2xs)">🗑</button>` : ''}
+      <button type="button" onclick="deleteTask('${escAttr(t._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-2xs)">🗑</button>
     </div>`;
       }).join('')
     : `<div class="empty-cta">
@@ -121,7 +133,7 @@ export function buildTasksHTML({ tasks = [], liveOrders = [], today }) {
 
   return {
     html: liveHtml + tasksHtml,
-    openCount: open.length,
+    openCount: open.length + recurring.filter(t => isRecurringDue(t)).length,
   };
 }
 
