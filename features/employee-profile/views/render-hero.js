@@ -112,8 +112,12 @@ export function buildHeroHTML({ employee, roleMeta, score, stats, format = defau
  * @param {boolean} [args.allowEmailReset]  — usually = !!email && !email.endsWith('@b2c.local')
  * @returns {string} HTML
  */
-export function buildQuickActionsHTML({ employee, allowEmailReset = false }) {
+export function buildQuickActionsHTML({ employee, allowEmailReset = false, allowDM = false }) {
   const e = employee || {};
+  // البند 2 — زر مراسلة (خلف العلم؛ يستدعي window.openEmployeeDM في الصفحة)
+  const dmBtn = allowDM
+    ? `<button type="button" class="btn btn-b btn-sm qa" onclick="openEmployeeDM()" title="مراسلة الموظف">💬 مراسلة</button>`
+    : '';
   const phoneItems = e.phone
     ? `<a href="tel:${escAttr(e.phone)}" onclick="closeQAMenu()">📞 اتصال (${escAttr(e.phone)})</a>
        <a href="https://wa.me/2${escAttr(e.phone.replace(/^0/, ''))}" target="_blank" onclick="closeQAMenu()">💬 واتساب</a>`
@@ -124,6 +128,7 @@ export function buildQuickActionsHTML({ employee, allowEmailReset = false }) {
   return `
     <!-- Quick actions bar -->
     <div class="quick-actions">
+      ${dmBtn}
       <button type="button" class="btn btn-g btn-sm qa" onclick="openSalary()" title="صرف مرتب (s)">💰 صرف مرتب</button>
       <button type="button" class="btn btn-b btn-sm qa" onclick="openAddTask()" title="إضافة مهمة (t)">＋ مهمة</button>
       <button type="button" class="btn btn-ghost btn-sm qa" onclick="recordAttendanceToday()">✓ حضور اليوم</button>

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="employee-profile.css?v=2">
+<link rel="stylesheet" href="employee-profile.css?v=3">
 <script src="financial-guard.js"></script>
 <script src="sidebar-config.js?v=1" defer></script>
 <script src="smart-sidebar.js?v=1" defer></script>
@@ -267,6 +267,9 @@ import { computeRoleKpis } from "./core/employee-kpis.js";
 import { computeSalarySuggestion } from "./core/employee-salary-calc.js";
 import { isFeatureEnabled, FLAGS } from "./core/feature-flags.js";
 import { buildPendingInboxHTML } from "./features/employee-profile/views/render-pending-inbox.js";
+import { buildEmployeeTimeline } from "./core/employee-timeline.js";
+import { buildTimelineHTML } from "./features/employee-profile/views/render-timeline.js";
+import { inboxActions } from "./inbox-actions.js";
 import { buildEmployeeStagePerformance } from "./core/employee-stage-performance.js";
 import { getStageResponsibilities, formatDurationAr } from "./orders.js";
 import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./features/employee-profile/views/render-hero.js";
@@ -289,6 +292,11 @@ console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empPermissions=[], empGoals=[], empEvaluations=[], empIncidents=[], empPaymentRequests=[];
 // البند 1 — «جسر القرارات»: feature-flag (E1.8 الافتراضي OFF؛ التفعيل ?feat.employeeProfile.pendingInbox=1)
 const PENDING_INBOX_ON=isFeatureEnabled(FLAGS.EMPLOYEE_PROFILE_PENDING_INBOX,false);
+// البند 2 — زر مراسلة + تبويب السجل الموحّد (أعلام مستقلة، الافتراضي OFF — E1.8)
+const DM_BUTTON_ON=isFeatureEnabled(FLAGS.EMPLOYEE_PROFILE_DM_BUTTON,false);
+const TIMELINE_ON=isFeatureEnabled(FLAGS.EMPLOYEE_PROFILE_TIMELINE,false);
+// التبويبات الصالحة = الأساسية + «السجل» عند تفعيل علمه (تبقى ?tab=timeline لاغية لو مُطفأ)
+const VALID_TABS=TIMELINE_ON?[...TAB_KEYS,'timeline']:TAB_KEYS;
 let incidentReasons=resolveReasons([]);
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
@@ -296,9 +304,9 @@ let profilePeriod='month_cur', attViewMonth=null;
 // Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
 let activeTab=(function(){
   const qp=new URLSearchParams(location.search).get('tab');
-  if(qp&&TAB_KEYS.includes(qp))return qp;
+  if(qp&&VALID_TABS.includes(qp))return qp;
   const h=(location.hash||'').slice(1);
-  if(h&&TAB_KEYS.includes(h)){
+  if(h&&VALID_TABS.includes(h)){
     const u=new URL(location.href);u.searchParams.set('tab',h);u.hash='';
     history.replaceState(null,'',u.toString());
     return h;
@@ -362,7 +370,7 @@ window.setProfilePeriod=function(p){
 
 // ── Tabs ──
 window.setTab=function(t){
-  if(!TAB_KEYS.includes(t))return;
+  if(!VALID_TABS.includes(t))return;
   activeTab=t;
   const u=new URL(location.href);u.searchParams.set('tab',t);u.hash='';
   history.replaceState(null,'',u.toString());
@@ -374,6 +382,7 @@ window.setTab=function(t){
   else if(t==='salaries'){renderSalaries();}
   else if(t==='tasks'){renderTasks();}
   else if(t==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
+  else if(t==='timeline'){renderTimeline();}
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
 
@@ -384,6 +393,7 @@ setupQAMenuOutsideClick();
 setupStickyHero();
 setupKeyboardShortcuts({
   isReady: ()=>!!emp,
+  tabKeys: VALID_TABS,
   onSwitchTab: (key)=>window.setTab(key),
   onSalary: ()=>window.openSalary?.(),
   onTask:   ()=>window.openAddTask?.(),
@@ -662,6 +672,7 @@ function renderAll(){
   const qaHtml=buildQuickActionsHTML({
     employee:emp,
     allowEmailReset:!!(emp.email&&!emp.email.endsWith('@b2c.local')),
+    allowDM:DM_BUTTON_ON&&!!emp.authUid,
   });
   const compactHtml=buildCompactHeroHTML({
     employee:emp, roleMeta:r,
@@ -672,6 +683,7 @@ function renderAll(){
     +'<div id="pending-inbox"></div>'
     +buildTabsShellHTML({
     activeTab, tasksOpen, kpis, profilePeriod, monthLabel:MONTHS[now.getMonth()],
+    showTimeline:TIMELINE_ON,
   });
   renderPendingInbox();
 
@@ -681,7 +693,29 @@ function renderAll(){
   else if(activeTab==='salaries'){renderSalaries();}
   else if(activeTab==='tasks'){renderTasks();}
   else if(activeTab==='admin'){renderClients();renderEvaluations();renderPermissions();renderIncidents();}
+  else if(activeTab==='timeline'){renderTimeline();}
 }
+
+// ══ TIMELINE — السجل الموحّد (البند 2) ══
+// عرض فقط: يجمّع عبر core/employee-timeline.js من بيانات مُحمَّلة أصلاً.
+function renderTimeline(){
+  const el=document.getElementById('timeline-container');if(!el)return;
+  const events=buildEmployeeTimeline({
+    incidents:empIncidents, leaves:empLeaves, permissions:empPermissions,
+    payments:empSalaries, evaluations:empEvaluations, tasks:empTasks,
+  });
+  el.innerHTML=buildTimelineHTML({events});
+}
+
+// زر «مراسلة» — يضمن DM ثم ينتقل لـ inbox (تنقّل + إعادة استخدام، بلا كتابة هنا).
+window.openEmployeeDM=async function(){
+  if(!emp?.authUid)return toast('⚠️ الموظف ليس لديه حساب دخول لمراسلته','err');
+  try{
+    const r=await inboxActions.ensureDM({db,currentUserId:currentUser.uid,currentUserName:adminName||'',otherUserId:emp.authUid,otherUserName:emp.name||''});
+    if(!r?.convId)return toast('❌ تعذّر فتح المحادثة','err');
+    navigatePage('inbox.html?conv='+encodeURIComponent(r.convId));
+  }catch(e){toast('❌ '+(e.message||'تعذّر فتح المحادثة'),'err');}
+};
 
 // ══ PENDING DECISIONS INBOX (البند 1 — «جسر القرارات») ══
 // عرض فقط: يقرأ من البيانات المُحمَّلة أصلاً + يعيد استخدام window.decide* القائمة.

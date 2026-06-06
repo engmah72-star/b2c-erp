@@ -30,9 +30,17 @@ const PREFIX = 'feat.';
 //   القائمة (decideIncidentAppeal/decideEmployeeLeave/decideAttendancePermission).
 //   عرض فقط + إعادة استخدام — لا نموذج بيانات جديد. الافتراضي OFF (E1.8: rollout
 //   تدريجي قابل للتراجع)؛ التفعيل: ?feat.employeeProfile.pendingInbox=1
+//
+// `employeeProfile.dmButton` — زر «💬 مراسلة» في بروفايل الموظف يفتح/يضمن DM
+//   (COLLEGIAL) عبر inboxActions.ensureDM ثم ينتقل لـ inbox.html?conv=… . تنقّل +
+//   إعادة استخدام فقط (لا كتابة مراسلة في الصفحة). الافتراضي OFF (E1.8).
+// `employeeProfile.timeline` — تبويب «السجل» الموحّد (عرض فقط) من
+//   core/employee-timeline.js. الافتراضي OFF (E1.8).
 export const FLAGS = Object.freeze({
   MESSAGING_MEMBER_TO_MEMBER: 'messaging.memberToMember',
   EMPLOYEE_PROFILE_PENDING_INBOX: 'employeeProfile.pendingInbox',
+  EMPLOYEE_PROFILE_DM_BUTTON: 'employeeProfile.dmButton',
+  EMPLOYEE_PROFILE_TIMELINE: 'employeeProfile.timeline',
 });
 
 let __urlCache = null;
