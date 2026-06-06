@@ -620,6 +620,12 @@ export async function addEmployeeLeave({
       endDate: endDate || startDate,
       days: parseFloat(days) || 0,
       reason,
+      // الأدمن يسجّل الإجازة مباشرةً ⇒ معتمدة فوراً (توافق خلفي: الطلبات القديمة
+      // بلا status تُعامَل كمعتمدة، فقط الذاتية pending تظهر في مركزية الطلبات).
+      status: 'approved',
+      decidedBy: userId,
+      decidedByName: userName || '',
+      decidedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       createdBy: userName || '',
       createdById: userId,
@@ -627,6 +633,86 @@ export async function addEmployeeLeave({
     return { ok: true, errors: [], warnings: [], leaveId: ref.id };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * طلب إجازة من الموظف نفسه — يُسجَّل بحالة 'pending' بانتظار قرار الأدمن من
+ * مركزية الطلبات (admin-requests.html). الموظف يكتب لنفسه فقط (employeeUid يطابق
+ * authUid — تُفرَض في firestore.rules). القرار عبر decideEmployeeLeave.
+ */
+export async function requestEmployeeLeave({
+  db = defaultDb,
+  employeeId, employeeUid, employeeName,
+  type, startDate, endDate, days, reason = '',
+  userId, userName,
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!startDate) return { ok: false, errors: ['⚠️ حدد تاريخ البداية'], warnings: [] };
+  if (endDate && endDate < startDate) {
+    return { ok: false, errors: ['⚠️ تاريخ النهاية قبل البداية'], warnings: [] };
+  }
+  try {
+    const ref = await addDoc(collection(db, 'employee_leaves'), {
+      employeeId,
+      employeeUid: employeeUid || userId,
+      employeeName: employeeName || userName || '',
+      type,
+      startDate,
+      endDate: endDate || startDate,
+      days: parseFloat(days) || 0,
+      reason,
+      status: 'pending',
+      requestedBy: userId,
+      requestedByName: userName || '',
+      requestedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      createdBy: userName || '',
+      createdById: userId,
+    });
+    return { ok: true, errors: [], warnings: [], leaveId: ref.id, status: 'pending' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إرسال الطلب'], warnings: [] };
+  }
+}
+
+/**
+ * قرار الأدمن في طلب إجازة: 'approved' أو 'rejected'. يُخطِر الموظف بالنتيجة.
+ * (firestore.rules: update لطلبات الإجازة للأدمن فقط.)
+ */
+export async function decideEmployeeLeave({
+  db = defaultDb, leaveId, decision, decisionNote = '', decidedBy, decidedByName,
+}) {
+  if (!leaveId) return { ok: false, errors: ['⚠️ leaveId مطلوب'], warnings: [] };
+  if (!decidedBy) return { ok: false, errors: ['⚠️ decidedBy مطلوب'], warnings: [] };
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return { ok: false, errors: ['⚠️ decision لازم approved أو rejected'], warnings: [] };
+  }
+  try {
+    const snap = await getDoc(doc(db, 'employee_leaves', leaveId));
+    const data = snap.exists() ? snap.data() : {};
+    await updateDoc(doc(db, 'employee_leaves', leaveId), {
+      status: decision,
+      decidedBy, decidedByName: decidedByName || '',
+      decidedAt: serverTimestamp(),
+      decisionNote: decisionNote || '',
+    });
+    await _logAudit(db, {
+      action: `🌴 قرار إجازة: ${decision === 'approved' ? 'موافقة' : 'رفض'}`,
+      userId: decidedBy, userName: decidedByName,
+      details: { leaveId, decision, note: decisionNote || '' },
+    });
+    await _notify(db, {
+      toUid: data.employeeUid || data.requestedBy || '',
+      ico: decision === 'approved' ? '✅' : '❌', type: 'leave', entityId: leaveId,
+      link: 'my-requests.html',
+      title: decision === 'approved' ? '✅ تمت الموافقة على إجازتك' : '❌ تم رفض طلب إجازتك',
+      desc: decisionNote ? decisionNote : (decision === 'approved' ? 'تمت الموافقة على طلب الإجازة.' : 'تم رفض طلب الإجازة.'),
+    });
+    return { ok: true, errors: [], warnings: [], status: decision };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
 }
 
@@ -1112,7 +1198,7 @@ export const employeeActions = {
   linkRebuiltAuth,
   saveUserPermissions, clearUserPermissions,
   addEmployeeTask, setTaskStatus, completeRecurringTask,
-  addEmployeeLeave, deleteEmployeeLeave,
+  addEmployeeLeave, requestEmployeeLeave, decideEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
   startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,

@@ -133,6 +133,12 @@ try {
     if (_ec !== '0') {
       SIDEBAR_PAGES.push({ file: 'employee-control.html', label: 'لوحة الموظفين', ico: '🎛️', group: 'admin', adminOnly: true });
     }
+    // Admin Requests Center — مركزية كل الطلبات التي تحتاج قرار أدمن
+    // (مالي · تظلمات · تصاريح حضور · مرتجعات · إجازات). admin sidebar.
+    const _ar = _qs.get('feat.adminRequests') || localStorage.getItem('feat.adminRequests');
+    if (_ar !== '0') {
+      SIDEBAR_PAGES.push({ file: 'admin-requests.html', label: 'طلبات الإدارة', ico: '📥', group: 'admin', adminOnly: true });
+    }
     // My Home (صفحتي): personal landing — visible to every role.
     const _mh = _qs.get('feat.myHome') || localStorage.getItem('feat.myHome');
     if (_mh !== '0') {
