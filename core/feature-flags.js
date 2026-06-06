@@ -23,8 +23,16 @@ const PREFIX = 'feat.';
 //   لذلك الافتراضي OFF (الوضع الدستوري الآمن)؛ تفعيله = موافقة صريحة على نطاق محدود
 //   ومراقَب (rollout تدريجي قابل للتراجع — E1). راجع
 //   docs/CONSTITUTIONAL_EXCEPTION_MEMBER_MESSAGING.md.
+//
+// `employeeProfile.pendingInbox` — «جسر القرارات» داخل بروفايل الموظف: شريط أعلى
+//   البروفايل يجمع الطلبات المعلّقة الخاصة بهذا الموظف (تظلّمات إخفاقات · إجازات ·
+//   أذونات حضور · طلبات مالية) ويتيح القرار inline بإعادة استخدام نفس actions
+//   القائمة (decideIncidentAppeal/decideEmployeeLeave/decideAttendancePermission).
+//   عرض فقط + إعادة استخدام — لا نموذج بيانات جديد. الافتراضي OFF (E1.8: rollout
+//   تدريجي قابل للتراجع)؛ التفعيل: ?feat.employeeProfile.pendingInbox=1
 export const FLAGS = Object.freeze({
   MESSAGING_MEMBER_TO_MEMBER: 'messaging.memberToMember',
+  EMPLOYEE_PROFILE_PENDING_INBOX: 'employeeProfile.pendingInbox',
 });
 
 let __urlCache = null;
