@@ -173,14 +173,14 @@ function incidentModal(emp, ctx) {
     danger: true,
     onMount: wireImageUpload,
     body:
+      fld('السبب / التصنيف', `<select class="inp" id="f-reason">${reasonOptionsHTML(ctx)}</select>`) +
       fldRow(
-        fld('السبب / التصنيف', `<select class="inp" id="f-reason">${reasonOptionsHTML(ctx)}</select>`),
         fld('الخطورة', `<select class="inp" id="f-sev">${Object.entries(SEVERITIES).map(([k, v], i) => opt(k, v, i === 1)).join('')}</select>`),
+        fld('التاريخ', `<input class="inp" type="date" id="f-date" value="${today()}">`),
       ) +
       fld('العنوان (اختياري)', `<input class="inp" id="f-title" placeholder="تفصيل إضافي للمخالفة">`) +
-      fld('التفاصيل', `<textarea class="inp" id="f-desc" rows="3" placeholder="اشرح ما حدث (اختياري)"></textarea>`) +
-      imageField('📸 صورة المخالفة (اختياري)') +
-      fld('التاريخ', `<input class="inp" type="date" id="f-date" value="${today()}">`),
+      fld('التفاصيل (اختياري)', `<textarea class="inp" id="f-desc" rows="3" placeholder="اشرح ما حدث"></textarea>`) +
+      imageField('📸 صورة المخالفة (اختياري)'),
     submitLabel: '⚠️ تسجيل',
     onSubmit: async (f) => {
       // 1) ارفع صورة المخالفة أولاً (إن وُجدت) عبر الـ storage helper المركزي
