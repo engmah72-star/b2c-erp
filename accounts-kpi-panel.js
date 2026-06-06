@@ -242,6 +242,47 @@ export function renderKpiDrill({ drillType, walletFilter = '', state, helpers, c
       </div>`).join('')}
       ${d.orders.length > 5 ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;text-align:center">+ ${d.orders.length - 5} طلب آخر</div>` : ''}
     </div>`).join('') || `<div style="text-align:center;padding:var(--space-lg);color:var(--dim2)">لا توجد أوردرات مكتملة في الفترة</div>`}`;
+
+  } else if (drillType === 'printing') {
+    title = '🖨️ إجمالي الطباعة';
+    // كل بنود التكلفة من نوع "طباعة" عبر الأوردرات — مجمّعة حسب المورد.
+    const rows = [];
+    allOrders.forEach(o => (o.costItems || []).forEach(ci => {
+      if (ci.type !== 'طباعة') return;
+      rows.push({ ...ci, _orderClient: o.clientName || '', _orderId: o.orderId || o._id });
+    }));
+    const total = rows.reduce((s, r) => s + (parseFloat(r.total) || 0), 0);
+    const paid  = rows.reduce((s, r) => s + (r.paid ? (parseFloat(r.total) || 0) : 0), 0);
+    const due   = Math.max(0, total - paid);
+    const bySup = {};
+    rows.forEach(r => {
+      const key = r.supplierName || 'بدون مورد';
+      if (!bySup[key]) bySup[key] = { total: 0, count: 0, items: [] };
+      bySup[key].total += parseFloat(r.total) || 0;
+      bySup[key].count++;
+      bySup[key].items.push(r);
+    });
+    const sorted = Object.entries(bySup).sort(([, a], [, b]) => b.total - a.total);
+    html = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-sm);margin-bottom:12px">
+      <div class="acc-sumcard acc-tint-b"><div class="sc-lbl">الإجمالي</div><div class="sc-val">${fn(total)} ج</div></div>
+      <div class="acc-sumcard acc-tint-g"><div class="sc-lbl">المدفوع</div><div class="sc-val">${fn(paid)} ج</div></div>
+      <div class="acc-sumcard acc-tint-r"><div class="sc-lbl">المستحق</div><div class="sc-val">${fn(due)} ج</div></div>
+    </div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">${rows.length} بند طباعة · حسب المورد</div>
+    ${sorted.map(([sup, d]) => `<div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span class="txt-bold-md">${sup}</span>
+        <div style="text-align:left">
+          <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--b)">${fn(d.total)} ج</div>
+          <div class="txt-meta-xs">${d.count} بند</div>
+        </div>
+      </div>
+      ${d.items.slice(0, 5).map(it => `<div style="display:flex;justify-content:space-between;font-size:var(--fs-sm);padding:3px 0;border-bottom:1px solid var(--line)">
+        <span style="color:var(--snow);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%">${it._orderClient || it._orderId || '—'}${it.note ? ' · ' + it.note : ''}</span>
+        <span style="color:${it.paid ? 'var(--g)' : 'var(--b)'};font-weight:var(--fw-bold)">${fn(parseFloat(it.total) || 0)} ج${it.paid ? ' ✅' : ''}</span>
+      </div>`).join('')}
+      ${d.items.length > 5 ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px;text-align:center">+ ${d.items.length - 5} بند آخر</div>` : ''}
+    </div>`).join('') || `<div style="text-align:center;padding:var(--space-xl);color:var(--dim2)">لا توجد بنود طباعة مسجّلة</div>`}`;
   }
 
   return { title, html };

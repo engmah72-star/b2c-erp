@@ -7,6 +7,7 @@ import {
   calcPendingRevenue, calcEarnedRevenue,
   calcShippingDebt, calcClientDebt,
   calcTotalOrderCosts, calcSupplierDue, calcShippingCollected,
+  calcTotalPrinting,
   auditWalletBalances,
 } from '../core/accounts-kpis.js';
 
@@ -134,6 +135,29 @@ test('calcTotalOrderCosts: sums cost items across orders', () => {
     {},  // no costItems
   ];
   assertEq(calcTotalOrderCosts(orders), 350);
+});
+
+// ── calcTotalPrinting ───────────────────────────────────────────────
+test('calcTotalPrinting: sums only printing-type cost items', () => {
+  const orders = [
+    { costItems: [{ type: 'طباعة', total: 100 }, { type: 'ورق', total: 50 }] },
+    { costItems: [{ type: 'طباعة', total: 200, paid: true }] },
+    { costItems: [{ type: 'تصميم', total: 999 }] },  // excluded
+    {},  // no costItems
+  ];
+  const r = calcTotalPrinting(orders);
+  assertEq(r.total, 300);  // 100 + 200
+  assertEq(r.paid, 200);   // only the paid printing item
+  assertEq(r.due, 100);    // 300 - 200
+  assertEq(r.count, 2);
+});
+
+test('calcTotalPrinting: empty → zeros', () => {
+  const r = calcTotalPrinting([]);
+  assertEq(r.total, 0);
+  assertEq(r.paid, 0);
+  assertEq(r.due, 0);
+  assertEq(r.count, 0);
 });
 
 // ── calcSupplierDue ─────────────────────────────────────────────────
