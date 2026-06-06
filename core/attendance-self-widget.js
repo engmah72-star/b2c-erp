@@ -34,6 +34,9 @@ const REQUEST_TYPES = [
 ];
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+// wall-clock 'HH:MM' (local) — compared lexicographically with workSchedule
+// times (both zero-padded), so "shift ended" needs no Date math.
+const nowHHMM = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -57,7 +60,9 @@ function injectStyles() {
     .asw-cta.in{background:var(--g);color:#04130c}
     .asw-cta.out{background:var(--r);color:#fff}
     .asw-cta.done-btn{background:var(--bg4);color:var(--dim2);cursor:default}
+    .asw-cta.ot{background:var(--y,#f0a020);color:#1a1205}
     .asw-cta:disabled{opacity:.6;cursor:not-allowed}
+    .asw-btn-pair{display:flex;gap:8px;flex-wrap:wrap}
     .asw-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:10px}
     .asw-leave-btn{background:transparent;border:1px solid var(--line);color:var(--snow);padding:7px 13px;border-radius:var(--r-pill);font-family:inherit;font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;transition:.15s}
     .asw-leave-btn:hover{border-color:var(--b);color:var(--b)}
@@ -92,18 +97,36 @@ export function mountAttendanceSelf({ container, db, user }) {
   function render() {
     if (!state.ctx) { container.innerHTML = ''; return; }
     const a = state.att;
+    const dis = state.busy ? ' disabled' : '';
     let cls, time, sub, btn;
     if (!a || !a.checkIn) {
       cls = 'in'; time = 'لم تسجّل حضورك بعد'; sub = 'سجّل الحضور لتبدأ يومك';
-      btn = `<button type="button" class="asw-cta in" data-att="in"${state.busy ? ' disabled' : ''}>✅ تسجيل الحضور</button>`;
+      btn = `<button type="button" class="asw-cta in" data-att="in"${dis}>✅ تسجيل الحضور</button>`;
     } else if (!a.checkOut) {
       const late = parseInt(a.lateMinutes) || 0;
-      cls = 'out'; time = 'حاضر منذ ' + esc(a.checkInStr || '');
-      sub = late > 0 ? `⏰ متأخر ${late} دقيقة` : 'اضغط عند الانتهاء لتسجيل الانصراف';
-      btn = `<button type="button" class="asw-cta out" data-att="out"${state.busy ? ' disabled' : ''}>🔚 تسجيل الانصراف</button>`;
+      const end = state.ctx.expectedEnd;
+      const ended = end && nowHHMM() >= end;
+      if (a.overtime) {
+        // overtime in progress — show what they're working on + finish button
+        cls = 'out'; time = '⏱️ أوفر تايم';
+        sub = a.overtimeNote ? ('🛠️ ' + esc(a.overtimeNote)) : 'وقت إضافي بعد انتهاء الوردية';
+        btn = `<button type="button" class="asw-cta out" data-att="out"${dis}>🔚 إنهاء الأوفر تايم</button>`;
+      } else if (ended) {
+        // shift end reached → auto-prompt: leave now OR continue as overtime
+        cls = 'out'; time = `🏁 انتهت ورديتك (${esc(end)})`;
+        sub = 'تنصرف الآن ولا تكمّل أوفر تايم؟';
+        btn = `<div class="asw-btn-pair">`
+            + `<button type="button" class="asw-cta out" data-att="out"${dis}>🔴 انصراف الآن</button>`
+            + `<button type="button" class="asw-cta ot" data-att="overtime"${dis}>⏱️ أوفر تايم</button></div>`;
+      } else {
+        cls = 'out'; time = 'حاضر منذ ' + esc(a.checkInStr || '');
+        sub = late > 0 ? `⏰ متأخر ${late} دقيقة` : 'اضغط عند الانتهاء لتسجيل الانصراف';
+        btn = `<button type="button" class="asw-cta out" data-att="out"${dis}>🔚 تسجيل الانصراف</button>`;
+      }
     } else {
       cls = 'done'; time = esc(a.checkInStr || '') + ' → ' + esc(a.checkOutStr || '');
-      sub = '✅ سجّلت يومك'; btn = `<button type="button" class="asw-cta done-btn" disabled>تم التسجيل</button>`;
+      sub = a.overtime ? '✅ سجّلت يومك · ⏱️ مع أوفر تايم' : '✅ سجّلت يومك';
+      btn = `<button type="button" class="asw-cta done-btn" disabled>تم التسجيل</button>`;
     }
     const pendChip = state.pending > 0
       ? `<span class="asw-pend">${state.pending} طلب قيد الاعتماد</span>` : '<span></span>';
@@ -197,8 +220,54 @@ export function mountAttendanceSelf({ container, db, user }) {
     }
   }
 
+  // ── overtime: employee writes what they'll work on (their own description) ──
+  function openOvertimeModal() {
+    const host = document.createElement('div');
+    host.className = 'asw-ov';
+    host.innerHTML = `
+      <div class="asw-modal" role="dialog" aria-modal="true">
+        <div class="asw-modal-h"><h3>⏱️ أوفر تايم</h3><button type="button" class="asw-modal-x" data-x="1">✕</button></div>
+        <div class="asw-modal-b">
+          <label class="asw-fld"><span>بتشتغل على إيه؟</span><textarea class="inp" id="asw-ot-note" rows="3" placeholder="اكتب الشغل اللي هتكمّله في الوقت الإضافي"></textarea></label>
+          <div class="asw-sub">هيتسجّل إنك مكمّل بعد انتهاء ورديتك — اضغط «إنهاء الأوفر تايم» وقت ما تخلص.</div>
+        </div>
+        <div class="asw-modal-f">
+          <button type="button" class="asw-btn ghost" data-x="1">إلغاء</button>
+          <button type="button" class="asw-btn primary" id="asw-ot-send">⏱️ ابدأ الأوفر تايم</button>
+        </div>
+      </div>`;
+    document.body.appendChild(host);
+    const close = () => host.remove();
+    host.addEventListener('click', (e) => { if (e.target === host || e.target.dataset.x) close(); });
+    host.querySelector('#asw-ot-send').addEventListener('click', async (e) => {
+      const b = e.currentTarget; b.disabled = true; const o = b.textContent; b.textContent = 'جاري...';
+      const r = await employeeActions.startAttendanceOvertime({
+        db, employeeUid: state.ctx.uid, employeeId: state.ctx.empId, date: today,
+        note: host.querySelector('#asw-ot-note').value,
+        recordedBy: state.ctx.uid, recordedByName: state.ctx.name,
+      });
+      if (r && r.ok === false) { toast('❌ ' + (r.errors || ['فشل']).join(' · '), 'err'); b.disabled = false; b.textContent = o; return; }
+      toast('⏱️ تم تسجيل بدء الأوفر تايم', 'ok'); close();
+    });
+  }
+
+  // re-render exactly at shift end, so the "انصراف / أوفر تايم" prompt appears
+  // on time even without a data change.
+  let endTimer = null;
+  function scheduleEndRerender() {
+    if (endTimer) { clearTimeout(endTimer); endTimer = null; }
+    const end = state.ctx?.expectedEnd; if (!end) return;
+    const [eh, em] = String(end).split(':').map(Number); if (isNaN(eh)) return;
+    const now = new Date();
+    const endMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), eh, em || 0, 0).getTime();
+    const delta = endMs - now.getTime();
+    if (delta > 0 && delta < 24 * 3600 * 1000) endTimer = setTimeout(render, delta + 1000);
+  }
+  unsubs.push(() => { if (endTimer) { clearTimeout(endTimer); endTimer = null; } });
+
   container.addEventListener('click', (e) => {
-    const p = e.target.closest('[data-att]'); if (p) return punch(p.dataset.att);
+    const p = e.target.closest('[data-att]');
+    if (p) { return p.dataset.att === 'overtime' ? openOvertimeModal() : punch(p.dataset.att); }
     if (e.target.closest('[data-leave]')) return openLeaveModal();
   });
 
@@ -212,9 +281,11 @@ export function mountAttendanceSelf({ container, db, user }) {
         uid: user.uid, empId: es.docs[0].id,
         name: emp.name || user.displayName || '',
         expectedStart: emp.workSchedule?.startTime || '',
+        expectedEnd: emp.workSchedule?.endTime || '',
       };
     } catch (_) { return; }
     render();
+    scheduleEndRerender();
     unsubs.push(onSnapshot(
       query(collection(db, 'attendance'), where('employeeUid', '==', user.uid), where('date', '==', today), limit(3)),
       (snap) => { state.att = snap.empty ? null : snap.docs[0].data(); render(); },

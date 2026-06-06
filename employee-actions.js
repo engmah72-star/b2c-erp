@@ -537,6 +537,34 @@ export async function recordAttendanceCheckOut({
   }
 }
 
+/**
+ * يبدأ «أوفر تايم» على سجل اليوم: الموظف وصل نهاية ورديته واختار يكمّل، فيكتب
+ * بنفسه الشغل اللي هيعمله (`note`). يُعلّم السجل `overtime:true` ويختم بدايته —
+ * دقائق الأوفر تايم تُشتقّ لاحقاً من `attendance-core.computeOvertimeMinutes`
+ * (worked − scheduled)، فلا نخزّن قيمة محسوبة هنا (RULE 1). نفس مُعرّف السجل
+ * المركزي حتى لا يتفرّع عن الحضور/الانصراف.
+ */
+export async function startAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date, note = '',
+  recordedBy, recordedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtime: true,
+      overtimeNote: String(note || '').slice(0, 500),
+      overtimeStartedAt: serverTimestamp(),
+      overtimeBy: recordedBy || '',
+      overtimeByName: recordedByName || '',
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // ATTENDANCE PERMISSIONS (أذونات) — Phase-3
 // ══════════════════════════════════════════
@@ -869,7 +897,7 @@ export const employeeActions = {
   saveUserPermissions, clearUserPermissions,
   addEmployeeTask, setTaskStatus,
   addEmployeeLeave, deleteEmployeeLeave,
-  recordAttendanceCheckIn, recordAttendanceCheckOut,
+  recordAttendanceCheckIn, recordAttendanceCheckOut, startAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,
