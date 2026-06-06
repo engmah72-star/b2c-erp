@@ -3786,3 +3786,30 @@ exports.auditOrderFinancialDrift = onCall(CALL_OPTS, async (req) => {
   });
   return { ok: true, scanned, remDrift, statusDrift, multiPaidFields, samples };
 });
+
+// ════════════════════════════════════════════════════════════
+// recordGalleryView — عدّاد مشاهدات المعرض العام (المرحلة 4)
+// ────────────────────────────────────────────────────────────
+// callable عام (بلا auth إجباري) — البوابة العامة (portal.html) تناديه
+// عند فتح تفاصيل تصميم. يكتب بصلاحية admin (تجاوز firestore.rules) فيزيد
+// `viewCount` فقط ولا يلمس أي حقل آخر — فلا حاجة لفتح صلاحية كتابة عامة على
+// gallery. أسوأ حالة إساءة = تضخيم عدّاد تسويقي (صفر أثر مالي/أمني).
+// best-effort: أي خطأ يُبتلع (لا يكسر تجربة التصفّح).
+// ════════════════════════════════════════════════════════════
+exports.recordGalleryView = onCall(CALL_OPTS, async (req) => {
+  const id = (req.data && typeof req.data.galleryId === 'string') ? req.data.galleryId.trim() : '';
+  if (!id || id.length > 200) return { ok: false };
+  try {
+    const ref = db.doc(`gallery/${id}`);
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false };
+    await ref.update({
+      viewCount: FieldValue.increment(1),
+      lastViewedAt: FieldValue.serverTimestamp(),
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn('[recordGalleryView]', e && e.message ? e.message : e);
+    return { ok: false };
+  }
+});
