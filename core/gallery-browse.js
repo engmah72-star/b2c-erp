@@ -147,3 +147,50 @@ export function relatedDesigns(item, all = [], opts = {}) {
 export function browseGallery(items = [], { filter = {}, sort = SORT_MODES.NEWEST } = {}) {
   return sortGallery(filterGallery(items, filter), sort);
 }
+
+// ══════════════════════════════════════════════════════════
+// COLLECTIONS (المجموعات / الباكِجات)
+// ══════════════════════════════════════════════════════════
+
+/**
+ * تجميع التصاميم في مجموعات (باكِجات) حسب collectionId.
+ * @param {Array}  items
+ * @param {Object} opts — { includeHidden=false }
+ * @returns {Array<{id, name, items, count, cover}>} مرتّبة بالأحدث
+ */
+export function collectionsOf(items = [], opts = {}) {
+  const includeHidden = !!opts.includeHidden;
+  const map = new Map();
+  for (const it of items) {
+    if (!it || !it.collectionId) continue;
+    if (!includeHidden && it.isVisible === false) continue;
+    const id = it.collectionId;
+    const g = map.get(id) || { id, name: (it.collectionName || '').trim(), items: [], count: 0, cover: '' };
+    if (!g.name && it.collectionName) g.name = it.collectionName.trim();
+    g.items.push(it);
+    map.set(id, g);
+  }
+  const out = [...map.values()].map((g) => {
+    g.items.sort((a, b) => tsOf(b) - tsOf(a));
+    g.count = g.items.length;
+    g.cover = g.items[0]?.imageUrl || '';
+    return g;
+  });
+  return out.sort((a, b) => tsOf(b.items[0]) - tsOf(a.items[0]));
+}
+
+/**
+ * عناصر مجموعة واحدة (بترتيب الأحدث). يستبعد عنصراً مرجعياً اختيارياً.
+ * @param {Array}  items
+ * @param {string} collectionId
+ * @param {Object} opts — { excludeId, includeHidden=false }
+ */
+export function collectionItems(items = [], collectionId, opts = {}) {
+  if (!collectionId) return [];
+  const includeHidden = !!opts.includeHidden;
+  return items
+    .filter((it) => it && it.collectionId === collectionId
+      && it._id !== opts.excludeId
+      && (includeHidden || it.isVisible !== false))
+    .sort((a, b) => tsOf(b) - tsOf(a));
+}

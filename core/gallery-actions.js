@@ -67,7 +67,8 @@ function _cleanKeywords(kw) {
  * @returns {Promise<{ok, errors, warnings, id?}>}
  */
 export async function publishGalleryItem({
-  db = defaultDb, file, imageUrl, title, productType, tags, keywords, actor,
+  db = defaultDb, file, imageUrl, title, productType, tags, keywords,
+  collectionId, collectionName, actor,
 } = {}) {
   const actorErr = _requireActor(actor);
   if (actorErr) return { ok: false, errors: [actorErr], warnings: [] };
@@ -109,6 +110,8 @@ export async function publishGalleryItem({
       productType:     cat,
       tags:            Array.isArray(tags) ? tags : [],
       keywords:        _cleanKeywords(keywords) || [],
+      collectionId:    collectionId || null,
+      collectionName:  (collectionName || '').trim(),
       designerName:    actor.userName || '',
       publishedBy:     actor.userId,
       publishedByName: actor.userName || '',
@@ -170,6 +173,8 @@ export async function updateGalleryItem({ db = defaultDb, id, patch = {}, actor 
   if (typeof patch.description === 'string') clean.description = patch.description.trim();
   if (Array.isArray(patch.tags))             clean.tags = patch.tags;
   if (patch.keywords !== undefined)          clean.keywords = _cleanKeywords(patch.keywords) || [];
+  if (patch.collectionId !== undefined)      clean.collectionId = patch.collectionId || null;
+  if (typeof patch.collectionName === 'string') clean.collectionName = patch.collectionName.trim();
 
   if (!Object.keys(clean).length) {
     return { ok: false, errors: ['⚠️ لا توجد تغييرات صالحة للحفظ'], warnings: [] };

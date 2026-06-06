@@ -163,6 +163,11 @@
         <input class="inp" id="ed-keywords" placeholder="مثال: مطعم، فاخر، عصري، ذهبي">
       </div>
       <div class="fg">
+        <label>المجموعة / الباكِج <span class="txt-meta-sm">(اختياري — تجمع تصاميم مرتبطة: كارت + فلاير + سوشال)</span></label>
+        <input class="inp" id="ed-collection" list="ed-collection-list" placeholder="مثال: هوية مطعم النور">
+        <datalist id="ed-collection-list"></datalist>
+      </div>
+      <div class="fg">
         <label>ألوان مميزة <span class="txt-meta-sm">(اختياري)</span></label>
         <div class="pd-colors" id="ed-colors"></div>
       </div>
@@ -205,6 +210,7 @@ import {
 } from "./core/gallery-actions.js";
 import {
   extractFacets, browseGallery, relatedDesigns, itemKeywords, SORT_MODES,
+  collectionsOf, collectionItems,
 } from "./core/gallery-browse.js";
 
 // ── palette (مطابق لباقي النظام) ──
@@ -352,6 +358,7 @@ window.render = function () {
           <div class="pd-title">${esc(g.title || '—')}</div>
           <div class="pd-meta">📂 ${esc(g.productType || '—')}</div>
           <div class="pd-meta">✏️ ${esc(g.designerName || '—')}</div>
+          ${g.collectionId ? `<div class="pd-meta" style="color:var(--p)">📦 ${esc(g.collectionName || 'باكِج')}</div>` : ''}
           ${tags.length ? `<div class="pd-tags">${tags.map((t) => `<span class="pd-swatch" style="background:${esc(t.hex)}" title="${esc(t.name || '')}"></span>`).join('')}</div>` : ''}
         </div>
         <div class="pd-actions">
@@ -383,6 +390,18 @@ window.openDetail = function (id) {
     </div>
     ${tags.length ? `<div class="pd-detail-tags">${tags.map((t) => `<span class="pd-swatch" style="width:18px;height:18px;background:${esc(t.hex)}" title="${esc(t.name || '')}"></span>`).join('')}</div>` : ''}
     ${kws.length ? `<div class="pd-facets" style="margin-top:6px">${kws.map((k) => `<span class="pd-kw" style="cursor:default">${esc(k)}</span>`).join('')}</div>` : ''}
+    ${(() => {
+      const sibs = g.collectionId ? collectionItems(gallery, g.collectionId, { excludeId: g._id, includeHidden: true }) : [];
+      if (!g.collectionId) return '';
+      return `<div class="section-title" style="margin:18px 0 8px;font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--p)">
+          📦 باكِج: ${esc(g.collectionName || '—')} ${sibs.length ? `(${sibs.length + 1} قطعة)` : '(قطعة واحدة)'}
+        </div>
+        ${sibs.length ? `<div class="pd-related-grid">${sibs.map((r) => `
+          <div class="pd-related-card" onclick="openDetail('${r._id}')">
+            <div class="r-img">${r.imageUrl ? `<img src="${esc(r.imageUrl)}" alt="" loading="lazy">` : ''}</div>
+            <div class="r-cap">${esc(r.title || r.productType || '')}</div>
+          </div>`).join('')}</div>` : '<div class="pd-meta">هذا التصميم وحده في الباكِج حتى الآن.</div>'}`;
+    })()}
     <div class="section-title" style="margin:18px 0 8px;font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--dim2)">
       🔗 تصاميم مشابهة ${related.length ? `(${related.length})` : ''}
     </div>
@@ -414,6 +433,30 @@ function renderColorChips() {
   });
 }
 
+// ── collections helpers ──
+function fillCollectionList() {
+  const cols = collectionsOf(gallery, { includeHidden: true });
+  $('ed-collection-list').innerHTML = cols
+    .filter((c) => c.name)
+    .map((c) => `<option value="${esc(c.name)}">${c.count} قطعة</option>`).join('');
+}
+/** يحوّل اسم الباكِج المدخل إلى {collectionId, collectionName} (يعيد استخدام الموجود). */
+function resolveCollection(name) {
+  const n = (name || '').trim();
+  if (!n) return { collectionId: null, collectionName: '' };
+  const low = n.toLowerCase();
+  // عند التعديل: حافظ على نفس الـ id لو الاسم لم يتغيّر.
+  if (editId) {
+    const cur = gallery.find((x) => x._id === editId);
+    if (cur?.collectionId && (cur.collectionName || '').trim().toLowerCase() === low) {
+      return { collectionId: cur.collectionId, collectionName: cur.collectionName };
+    }
+  }
+  const existing = gallery.find((x) => x.collectionId && (x.collectionName || '').trim().toLowerCase() === low);
+  if (existing) return { collectionId: existing.collectionId, collectionName: existing.collectionName || n };
+  return { collectionId: 'col_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), collectionName: n };
+}
+
 // ── publish/edit modal ──
 window.openPublish = function () {
   editId = null; selColors = [];
@@ -424,6 +467,8 @@ window.openPublish = function () {
   $('ed-title-inp').value = '';
   $('ed-cat').value = '';
   $('ed-keywords').value = '';
+  $('ed-collection').value = '';
+  fillCollectionList();
   $('ed-save').textContent = '🖼️ نشر في المعرض';
   renderColorChips();
   $('ov-edit').classList.add('open');
@@ -438,6 +483,8 @@ window.openEdit = function (id) {
   $('ed-title-inp').value = g.title || '';
   $('ed-cat').value = g.productType || '';
   $('ed-keywords').value = (Array.isArray(g.keywords) ? g.keywords : []).join('، ');
+  $('ed-collection').value = g.collectionName || '';
+  fillCollectionList();
   $('ed-save').textContent = '💾 حفظ التعديل';
   renderColorChips();
   $('ov-edit').classList.add('open');
@@ -459,16 +506,17 @@ window.saveEdit = async function () {
   const cat = $('ed-cat').value.trim();
   const keywords = ($('ed-keywords').value || '').split(/[,،]/).map((s) => s.trim()).filter(Boolean);
   if (!cat) return toast('⚠️ أدخل التصنيف', 'err');
+  const { collectionId, collectionName } = resolveCollection($('ed-collection').value);
   const btn = $('ed-save'); btn.disabled = true;
   try {
     let res;
     if (editId) {
-      res = await updateGalleryItem({ id: editId, patch: { title, productType: cat, tags: selColors, keywords }, actor });
+      res = await updateGalleryItem({ id: editId, patch: { title, productType: cat, tags: selColors, keywords, collectionId, collectionName }, actor });
     } else {
       const file = $('ed-img').files?.[0];
       if (!file) { btn.disabled = false; return toast('⚠️ اختر صورة للموك أب', 'err'); }
       toast('⏳ جاري الرفع...');
-      res = await publishGalleryItem({ file, title, productType: cat, tags: selColors, keywords, actor });
+      res = await publishGalleryItem({ file, title, productType: cat, tags: selColors, keywords, collectionId, collectionName, actor });
     }
     if (!res.ok) { toast('❌ ' + (res.errors?.[0] || 'فشل الحفظ'), 'err'); return; }
     closeEdit();
