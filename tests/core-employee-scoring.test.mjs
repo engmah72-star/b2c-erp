@@ -174,6 +174,23 @@ test('incident penalty caps at 0.6', () => {
   assertEq(r.breakdown.qual.score, 10);
 });
 
+test('appeal-accepted (voided) incidents are excluded from the penalty', () => {
+  const incidents = [
+    { date: '2026-01-10' },                                  // active
+    { date: '2026-01-12', appeal: { status: 'accepted' } },  // voided → ignored
+    { date: '2026-01-13', appeal: { status: 'pending' } },   // still counts
+  ];
+  const r = computeScore({
+    mKey: '2026-01', now: new Date(2026, 1, 15),
+    employee: { role: 'customer_service' },
+    monthOrders: [{ stage: 'archived' }, { stage: 'archived' }],
+    incidents,
+  });
+  // 2 active (voided excluded) → penalty 0.10 → qualPct 0.9 → round(0.9*25)=23
+  assertEq(r.breakdown.qual.incidents, 2);
+  assertEq(r.breakdown.qual.score, 23);
+});
+
 // ── grade thresholds ──────────────────────────────────────────────
 test('grade boundaries: 85 → ممتاز, 70 → جيد جداً, 50 → متوسط, else → يحتاج تطوير', () => {
   // Build inputs that yield specific scores by tuning attendance only.

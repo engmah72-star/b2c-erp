@@ -45,6 +45,7 @@ export async function addIncident({
   db = defaultDb,
   employeeId, employeeName, authUid = '',
   date, type, severity,
+  reasonCode = '', reasonLabel = '',
   title = '', description = '',
   orderId = null, clientName = null,
   imageUrl = '', imagePath = '',
@@ -60,6 +61,8 @@ export async function addIncident({
       date,
       monthKey: (date || '').slice(0, 7),
       type, severity,
+      reasonCode: reasonCode || '',
+      reasonLabel: reasonLabel || '',
       title, description,
       orderId: orderId || null,
       clientName: clientName || null,
@@ -82,6 +85,59 @@ export async function deleteIncident({ db = defaultDb, incidentId }) {
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+  }
+}
+
+/**
+ * تظلّم الموظف على إخفاق مسجّل — يكتب الموظف نفسه (authUid يطابق صاحب الإخفاق).
+ * يضع التظلّم بحالة 'pending' فقط؛ القرار للأدمن عبر decideIncidentAppeal.
+ * (firestore.rules يسمح للموظف بتعديل حقل appeal وحده على إخفاقه بحالة pending).
+ */
+export async function submitIncidentAppeal({ db = defaultDb, incidentId, reason }) {
+  if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
+  if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ اكتب سبب التظلّم'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'employee_incidents', incidentId), {
+      appeal: {
+        status: 'pending',
+        reason: reason.trim(),
+        submittedAt: serverTimestamp(),
+      },
+    });
+    return { ok: true, errors: [], warnings: [], status: 'pending' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إرسال التظلّم'], warnings: [] };
+  }
+}
+
+/**
+ * قرار الأدمن في التظلّم: 'accepted' (يُلغى أثر الإخفاق على التقييم لكن يُحفظ
+ * للشفافية) أو 'rejected'. القبول لا يحذف الإخفاق — يُعلّمه فقط (isVoided).
+ */
+export async function decideIncidentAppeal({
+  db = defaultDb, incidentId, decision, note = '', userId, userName,
+}) {
+  if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!['accepted', 'rejected'].includes(decision)) {
+    return { ok: false, errors: ['⚠️ قرار غير صالح'], warnings: [] };
+  }
+  try {
+    const snap = await getDoc(doc(db, 'employee_incidents', incidentId));
+    const prev = snap.exists() ? (snap.data().appeal || {}) : {};
+    await updateDoc(doc(db, 'employee_incidents', incidentId), {
+      appeal: {
+        ...prev,
+        status: decision,
+        decisionNote: note || '',
+        decidedBy: userId,
+        decidedByName: userName || '',
+        decidedAt: serverTimestamp(),
+      },
+    });
+    return { ok: true, errors: [], warnings: [], status: decision };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل حفظ القرار'], warnings: [] };
   }
 }
 
@@ -946,6 +1002,7 @@ export async function reverseSalaryPayment({
 
 export const employeeActions = {
   addIncident, deleteIncident,
+  submitIncidentAppeal, decideIncidentAppeal,
   updateEmployeeSkills, updateEmployeeData, updateEmployeeProfile, updateEmployeeSchedule,
   createEmployeeWithUser, createSelfEmployeeFile,
   changeUserRole, deleteUserDoc,

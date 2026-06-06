@@ -117,8 +117,11 @@ function startListeners() {
     // (allow read if authUid == request.auth.uid) — زي ما my-profile.html بيعمل.
     // الـ query بـ employeeId كان بيسبّب permission-denied (الـ rule بيتحقق authUid).
     onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
-      S.incidents = snap.size;
-      S.incidentList = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      // المُلغى أثره (تم قبول تظلّمه) لا يُحتسب ولا يُعرض كتنبيه نشط
+      const active = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
+        .filter(i => !(i.appeal && i.appeal.status === 'accepted'));
+      S.incidents = active.length;
+      S.incidentList = active;
       render();
     });
   }
