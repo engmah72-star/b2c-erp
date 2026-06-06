@@ -230,6 +230,24 @@
           </div>
         </div>
 
+        <!-- ⚠️ أسباب الإخفاقات (employee_incidents) -->
+        <div class="card" id="sec-incident-reasons">
+          <div class="card-head">
+            <div class="card-title"><span class="ic-bx r">⚠️</span>أسباب الإخفاقات</div>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              الأسباب المُصنّفة التي يُسجَّل تحتها كل إخفاق للموظف — وهي ما يُحصر به تكرار «نفس الإخفاق» واقتراح التصعيد.
+            </div>
+            <div id="ir-list" style="display:flex;flex-direction:column;gap:10px"></div>
+            <div class="s-tag-add" style="margin-top:12px">
+              <input class="inp" id="ir-new-label" placeholder="اسم السبب (مثال: تأخير تسليم التصميم)">
+              <select class="inp" id="ir-new-type" style="max-width:160px"></select>
+              <button type="button" class="btn btn-r btn-sm" onclick="addIncidentReason()">＋ إضافة</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 🛒 كتالوج العميل (مرآة public_products) -->
         <div class="card" id="sec-client-catalog">
           <div class="card-head">
@@ -699,6 +717,7 @@ import { walletActions } from "./wallet-actions.js";
 import { employeeActions } from "./employee-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { resolveFinancialPolicy } from "./core/financial-policy.js";
+import { resolveReasons, REASON_TYPE_META } from "./core/incident-reasons.js";
 const functions = getFunctions(app);
 
 // Phase A #3 — settings.html legacy permissions projection.
@@ -993,6 +1012,50 @@ function renderTagList(elId, items, type) {
     </div>
   `).join('');
 }
+
+// ══ INCIDENT REASONS (master_lists/incident_reasons) ══
+let irItems = resolveReasons([]); // القائمة الكاملة المُعتمَدة (افتراضي + مُدار)
+const _irEsc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+onSnapshot(doc(db,'master_lists','incident_reasons'), snap => {
+  irItems = resolveReasons(snap.exists() ? (snap.data().items||[]) : []);
+  renderIncidentReasons();
+});
+function _irTypeOptions(sel){
+  const el=document.getElementById('ir-new-type');if(!el)return;
+  el.innerHTML=Object.entries(REASON_TYPE_META).map(([k,m])=>`<option value="${k}"${k===sel?' selected':''}>${m.ico} ${m.lbl}</option>`).join('');
+}
+function renderIncidentReasons(){
+  const el=document.getElementById('ir-list');if(!el)return;
+  _irTypeOptions();
+  const byType=new Map();
+  irItems.forEach((r,i)=>{(byType.get(r.type)||byType.set(r.type,[]).get(r.type)).push({...r,_i:i});});
+  el.innerHTML=[...byType.entries()].map(([type,list])=>{
+    const m=REASON_TYPE_META[type]||REASON_TYPE_META.other;
+    return `<div>
+      <div class="subsec-hd"><span class="dot" style="background:var(--r)"></span>${m.ico} ${m.lbl}</div>
+      <div class="s-taglist">${list.map(r=>`<div class="s-tag">${_irEsc(r.label)}<button type="button" class="tag-del" onclick="removeIncidentReason(${r._i})" title="حذف">✕</button></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
+window.addIncidentReason = async function(){
+  const inp=document.getElementById('ir-new-label');
+  const label=(inp.value||'').trim();
+  const type=document.getElementById('ir-new-type').value||'other';
+  if(!label) return;
+  if(irItems.some(r=>r.label===label && r.type===type)) return toast('⚠️ موجود بالفعل','warn');
+  irItems=[...irItems,{code:'custom_'+Date.now().toString(36),label,type}];
+  const r=await masterListsActions.saveIncidentReasons({db,items:irItems});
+  if(r.ok===false) return toast('❌ '+((r.errors||[]).join(' · ')||'فشل الحفظ'),'err');
+  inp.value='';
+  toast('✅ تمت الإضافة','ok');
+};
+window.removeIncidentReason = async function(i){
+  if(!irItems[i]) return;
+  irItems=irItems.filter((_,idx)=>idx!==i);
+  const r=await masterListsActions.saveIncidentReasons({db,items:irItems});
+  if(r.ok===false) return toast('❌ '+((r.errors||[]).join(' · ')||'فشل الحفظ'),'err');
+  toast('✅ تم الحذف','ok');
+};
 
 window.addItem = async function(type) {
   const inp = document.getElementById(type+'-inp');

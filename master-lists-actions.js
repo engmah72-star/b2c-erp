@@ -49,6 +49,31 @@ export async function saveSupplierCategories({ db = defaultDb, items }) {
 }
 
 // ══════════════════════════════════════════
+// INCIDENT REASONS (master_lists/incident_reasons)
+// ══════════════════════════════════════════
+
+/**
+ * استبدال كامل لـ master_lists/incident_reasons.items
+ * items: [{ code, label, type, disabled? }] — الأسباب المُصنّفة للإخفاقات،
+ * وهي ما يُحصر به تكرار «نفس الإخفاق». admin-only metadata — لا أثر مالي.
+ */
+export async function saveIncidentReasons({ db = defaultDb, items }) {
+  if (!Array.isArray(items)) {
+    return { ok: false, errors: ['⚠️ items مطلوب (array)'], warnings: [] };
+  }
+  try {
+    await setDoc(
+      doc(db, 'master_lists', 'incident_reasons'),
+      { items, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    return { ok: true, errors: [], warnings: [], count: items.length };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [] };
+  }
+}
+
+// ══════════════════════════════════════════
 // PRODUCTION SERVICES — Unified source (RULE M1 + C1.5)
 // ══════════════════════════════════════════
 //
@@ -297,6 +322,7 @@ export async function markSupplierOrderReceived({
 
 export const masterListsActions = {
   saveSupplierCategories,
+  saveIncidentReasons,
   savePrintBriefTemplates,
   saveAppSettings,
   saveWhatsAppSettings,

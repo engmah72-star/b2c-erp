@@ -267,7 +267,7 @@ import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./fe
 import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, buildPermissionsListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
 import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
-import { buildTasksHTML, buildIncidentsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
+import { buildTasksHTML, buildIncidentsHTML, buildIncidentInsightsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
 import { computeProductStats, buildGoalsHTML, buildEvaluationsHTML, buildSkillsAndProductsHTML, buildSkillEditTagsHTML, buildBehaviorHTML, buildInsightsHTML } from "./features/employee-profile/views/render-overview-tab.js";
 import { TAB_KEYS, setupStickyHero, setupKeyboardShortcuts, setupQAMenuOutsideClick, toggleQAMenu, closeQAMenu } from "./features/employee-profile/views/tab-router.js";
 import { buildScoreHTML } from "./features/employee-profile/views/render-score.js";
@@ -277,9 +277,11 @@ import { buildPasswordCardHTML, buildSetPasswordModalHTML, buildRebuildAuthModal
 import { employeeActions } from "./employee-actions.js";
 import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from "./core/storage-helpers.js";
 import { currentPeriodKey, isRecurringDue } from "./core/task-recurrence.js";
+import { resolveReasons, recurrenceInfo, REASON_TYPE_META } from "./core/incident-reasons.js";
 console.log('[PROFILE] 🟢 EMPLOYEE UI LOADED v2 — salary via employeeActions');
 // ══ STATE ══
 let emp=null, empUserDoc=null, allOrders=[], empTasks=[], empAttendance=[], empSalaries=[], wallets=[], attendanceRecords=[], salaryData={}, empLeaves=[], empPermissions=[], empGoals=[], empEvaluations=[], empIncidents=[];
+let incidentReasons=resolveReasons([]);
 let currentUser=null, adminRole='', adminName='';
 let profilePeriod='month_cur', attViewMonth=null;
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
@@ -579,6 +581,10 @@ onAuthStateChanged(auth,async u=>{
     empIncidents=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     renderIncidents();renderScore();
   });
+  // قائمة أسباب الإخفاق المُدارة (master_lists/incident_reasons) — تُدمج مع الافتراضية
+  onSnapshot(doc(db,'master_lists','incident_reasons'),snap=>{
+    incidentReasons=resolveReasons(snap.exists()?(snap.data().items||[]):[]);
+  },err=>console.warn('inc-reasons:',err.message));
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
   onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
@@ -740,8 +746,37 @@ function renderEvaluations(){
 function renderIncidents(){
   const el=document.getElementById('incidents-container');if(!el)return;
   setText('incidents-count',empIncidents.length);
-  const r=buildIncidentsHTML({incidents:empIncidents});
-  el.innerHTML=r.html;
+  const insights=buildIncidentInsightsHTML({incidents:empIncidents,mKey:monthKey()});
+  const r=buildIncidentsHTML({incidents:empIncidents,reasons:incidentReasons});
+  el.innerHTML=insights+r.html;
+}
+
+// يملأ قائمة الأسباب (مجمّعة بالتصنيف عبر optgroup)
+function _populateReasonSelect(){
+  const sel=document.getElementById('inc-reason');if(!sel)return;
+  const byType=new Map();
+  incidentReasons.forEach(r=>{(byType.get(r.type)||byType.set(r.type,[]).get(r.type)).push(r);});
+  let html='';
+  for(const [type,list] of byType){
+    const meta=REASON_TYPE_META[type]||REASON_TYPE_META.other;
+    html+=`<optgroup label="${meta.ico} ${meta.lbl}">`+
+      list.map(r=>`<option value="${r.code}" data-type="${r.type}" data-label="${(r.label||'').replace(/"/g,'&quot;')}">${r.label}</option>`).join('')+
+      `</optgroup>`;
+  }
+  sel.innerHTML=html;
+}
+
+// يحدّث تنبيه تكرار نفس السبب لهذا الموظف عند اختيار السبب (+اقتراح خطورة)
+function _updateIncRecurHint(){
+  const sel=document.getElementById('inc-reason');const hint=document.getElementById('inc-recur-hint');
+  if(!sel||!hint)return;
+  const code=sel.value;
+  const total=empIncidents.filter(i=>(i.reasonCode||('type:'+(i.type||'other')))===code && !(i.appeal&&i.appeal.status==='accepted')).length;
+  const info=recurrenceInfo(total+1); // +1 لأن الإخفاق الحالي سيُضاف
+  if(info.level==='none'){hint.hidden=true;hint.className='ep-inc-recur';return;}
+  hint.hidden=false;hint.className='ep-inc-recur lvl-'+info.level;
+  hint.innerHTML=`🔁 ${info.text}`;
+  if(info.suggestSeverity){const sv=document.getElementById('inc-severity');if(sv&&info.level==='high')sv.value='high';}
 }
 
 // ── incident image upload (preview محلي + رفع وقت الحفظ) ──
@@ -774,10 +809,14 @@ function _wireIncImg(){
 window.openAddIncident=function(){
   document.getElementById('inc-title').value='';
   document.getElementById('inc-desc').value='';
-  document.getElementById('inc-type').value='quality';
+  _populateReasonSelect();
   document.getElementById('inc-severity').value='medium';
   document.getElementById('inc-order').value='';
   document.getElementById('inc-date').value=todayStr();
+  // تنبيه التكرار يُحدّث مع اختيار السبب
+  const rsel=document.getElementById('inc-reason');
+  if(rsel&&!rsel.dataset.wired){rsel.dataset.wired='1';rsel.addEventListener('change',_updateIncRecurHint);}
+  _updateIncRecurHint();
   _wireIncImg();_incImgReset();
   // populate orders dropdown with employee's recent orders
   const uid=emp.authUid||empId;
@@ -790,13 +829,17 @@ window.openAddIncident=function(){
 window.saveIncident=async function(){
   const title=gv('inc-title').trim();
   const description=gv('inc-desc').trim();
-  const type=gv('inc-type');
+  const reasonSel=document.getElementById('inc-reason');
+  const reasonOpt=reasonSel?.selectedOptions?.[0];
+  const reasonCode=reasonSel?.value||'';
+  const reasonLabel=reasonOpt?.dataset?.label||'';
+  const type=reasonOpt?.dataset?.type||'other'; // النوع يُشتقّ من السبب المختار
   const severity=gv('inc-severity');
   const date=gv('inc-date')||todayStr();
   const orderId=gv('inc-order');
   const orderSel=document.getElementById('inc-order');
   const clientName=orderSel?.selectedOptions?.[0]?.dataset?.client||'';
-  if(!title&&type==='other'){toast('⚠️ أدخل عنواناً','err');return;}
+  if(!reasonCode){toast('⚠️ اختر السبب/التصنيف','err');return;}
   // ارفع صورة المخالفة أولاً (إن وُجدت) عبر الـ storage helper المركزي
   const imgFile=(document.getElementById('inc-img')||{}).files?.[0]||null;
   let imageUrl='',imagePath='';
@@ -810,7 +853,8 @@ window.saveIncident=async function(){
     db,
     employeeId:empId,employeeName:emp?.name||'',authUid:emp?.authUid||'',
     date,type,severity,
-    title:title||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
+    reasonCode,reasonLabel,
+    title:title||reasonLabel||(INCIDENT_TYPES[type]?.lbl||'إخفاق'),
     description,
     orderId:orderId||null,clientName:clientName||null,
     imageUrl,imagePath,
@@ -820,13 +864,25 @@ window.saveIncident=async function(){
   document.getElementById('ov-incident').classList.remove('open');
   _incImgReset();
   toast('✅ تم تسجيل الإخفاق','ok');
+  // التصعيد التلقائي يتم مركزياً في addIncident — هنا فقط ننبّه لو حدث
+  if(r.escalated)toast('⚠️ تكرّر هذا السبب 3 مرات أو أكثر — أُنشئت مهمة متابعة','warn');
 };
 
 window.deleteIncident=async function(id){
   if(!confirm('حذف هذا الإخفاق؟'))return;
-  const r=await employeeActions.deleteIncident({db,incidentId:id});
+  const r=await employeeActions.deleteIncident({db,incidentId:id,userId:currentUser.uid,userName:adminName});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   toast('✅ تم الحذف','ok');
+};
+
+// قرار الأدمن في تظلّم الموظف على إخفاق
+window.decideAppeal=async function(id,decision){
+  const verb=decision==='accepted'?'قبول':'رفض';
+  const note=prompt(`ملاحظة على ${verb} التظلّم (اختياري):`,'');
+  if(note===null)return; // ألغى
+  const r=await employeeActions.decideIncidentAppeal({db,incidentId:id,decision,note:note||'',userId:currentUser.uid,userName:adminName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(decision==='accepted'?'✅ تم قبول التظلّم — أُلغي أثره':'تم رفض التظلّم','ok');
 };
 
 function renderSkillsAndProducts(){

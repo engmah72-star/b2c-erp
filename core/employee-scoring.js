@@ -99,7 +99,9 @@ export function computeScore({
     const arch = monthOrders.filter(o => ['shipping', 'archived'].includes(o.stage)).length;
     qualPct = total > 0 ? arch / total : 0.5;
   }
-  const monthIncidents = incidents.filter(i => (i.date || '').startsWith(mKey));
+  // المُلغى أثره (تم قبول تظلّمه) لا يخصم من نقاط الجودة — يبقى في السجل فقط.
+  const monthIncidents = incidents.filter(i =>
+    (i.date || '').startsWith(mKey) && !(i.appeal && i.appeal.status === 'accepted'));
   const incidentPenalty = Math.min(0.6, monthIncidents.length * 0.05);
   qualPct = Math.max(0, qualPct - incidentPenalty);
   const qualScore = Math.round(qualPct * 25);

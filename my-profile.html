@@ -91,6 +91,8 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { employeeActions } from "./employee-actions.js";
+import { annotateRecurrence, isVoided, APPEAL_STATUS } from "./core/incident-reasons.js";
 const ROLES={
   admin:{label:'Admin',col:'var(--r)',ico:'👑'},
   operation_manager:{label:'مدير عمليات',col:'var(--b-bright)',ico:'📋'},
@@ -166,6 +168,17 @@ window.setTab=function(t){
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
 
+// تظلّم الموظف على ملاحظة/إخفاق — يكتب سبب الاعتراض ويُرسل للإدارة
+window.openAppeal=async function(id){
+  const reason=prompt('اكتب سبب تظلّمك على هذه الملاحظة (سيراجعها مديرك):','');
+  if(reason===null)return; // ألغى
+  if(!reason.trim()){alert('⚠️ من فضلك اكتب سبب التظلّم');return;}
+  const r=await employeeActions.submitIncidentAppeal({db,incidentId:id,reason:reason.trim(),userId:myAuthUid,userName:me?.name||''});
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر إرسال التظلّم'));return;}
+  alert('✅ تم إرسال تظلّمك — سيراجعه مديرك المباشر');
+  // onSnapshot يُحدّث العرض تلقائياً ليظهر «قيد المراجعة»
+};
+
 document.addEventListener('keydown',e=>{
   const tag=(e.target?.tagName||'').toUpperCase();
   if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
@@ -239,7 +252,8 @@ function calcScoreFor(mKey){
       qualPct=arch/myMonthOrds.length;
     }
   }
-  const monthIncidents=myIncidents.filter(i=>(i.date||'').startsWith(mKey));
+  // المُلغى أثره (تم قبول تظلّمه) لا يُحتسب في خصم الجودة
+  const monthIncidents=myIncidents.filter(i=>(i.date||'').startsWith(mKey)&&!isVoided(i));
   const incPenalty=Math.min(0.6,monthIncidents.length*0.05);
   qualPct=Math.max(0,qualPct-incPenalty);
   const qualScore=Math.round(qualPct*25);
@@ -283,7 +297,7 @@ function renderAll(){
   const baseS=parseFloat(me.baseSalary)||0;
 
   // Open incidents this month
-  const monthInc=myIncidents.filter(i=>(i.date||'').startsWith(monthKey())).length;
+  const monthInc=myIncidents.filter(i=>(i.date||'').startsWith(monthKey())&&!isVoided(i)).length;
 
   document.getElementById('main-content').innerHTML=`
     <!-- HERO -->
@@ -570,6 +584,16 @@ function renderFeedbackTab(){
   // تأمين الـ URL داخل attribute (href/src) + صورة المخالفة القابلة للتكبير
   const escA=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const incImg=i=>i.imageUrl?`<a href="${escA(i.imageUrl)}" target="_blank" rel="noopener" class="mp-inc-imglink" title="اضغط لتكبير صورة المخالفة"><img src="${escA(i.imageUrl)}" alt="صورة المخالفة" loading="lazy" class="mp-inc-img"></a>`:'';
+  // حصر تكرار نفس السبب + شارة التظلّم وزر الاعتراض
+  const recur=annotateRecurrence(myIncidents);
+  const recurBadge=i=>{const rc=recur.get(i._id);return(rc&&rc.total>1)?`<span class="mp-inc-recur">🔁 المرة ${rc.ordinal} من ${rc.total}</span>`:'';};
+  const appealBlock=i=>{
+    const ap=i.appeal;
+    if(isVoided(i))return`<div class="mp-appeal ok">${APPEAL_STATUS.accepted.lbl}</div>`;
+    if(ap&&ap.status==='pending')return`<div class="mp-appeal pend">⏳ تظلّمك قيد المراجعة من الإدارة</div>`;
+    if(ap&&ap.status==='rejected')return`<div class="mp-appeal rej">❌ تم رفض تظلّمك${ap.decisionNote?' — '+escA(ap.decisionNote):''}</div>`;
+    return`<button type="button" class="mp-appeal-btn" onclick="openAppeal('${escA(i._id)}')">🛡️ تقديم تظلّم</button>`;
+  };
 
   el.innerHTML=`
     <div class="section mp-mb-14">
@@ -584,16 +608,18 @@ function renderFeedbackTab(){
       </div>`:monthInc.map(i=>{
         const t=INC_TYPES[i.type]||INC_TYPES.other;
         const s=INC_SEV[i.severity]||INC_SEV.low;
-        return`<div class="list-row ${i.severity==='high'?'danger':i.severity==='medium'?'warning':''}">
+        return`<div class="list-row ${i.severity==='high'?'danger':i.severity==='medium'?'warning':''}"${isVoided(i)?' style="opacity:.6"':''}>
           <div class="bd-icon" style="--bdc:${s.col}">${t.ico}</div>
           <div class="flex-1 min-w-0">
             <div class="mp-inc-head">
-              <strong class="mp-inc-title">${i.title||t.lbl}</strong>
+              <strong class="mp-inc-title">${i.reasonLabel||i.title||t.lbl}</strong>
               <span class="mp-inc-sev" style="background:${s.col}1f;color:${s.col}">${s.lbl}</span>
+              ${recurBadge(i)}
             </div>
             ${i.description?`<div class="mp-desc">${i.description}</div>`:''}
             ${incImg(i)}
             <div class="mp-meta-tiny3">${i.date||''}${i.clientName?' · '+i.clientName:''}</div>
+            ${appealBlock(i)}
           </div>
         </div>`;
       }).join('')}
@@ -627,12 +653,13 @@ function renderFeedbackTab(){
       ${olderInc.map(i=>{
         const t=INC_TYPES[i.type]||INC_TYPES.other;
         const s=INC_SEV[i.severity]||INC_SEV.low;
-        return`<div class="list-row">
+        return`<div class="list-row"${isVoided(i)?' style="opacity:.6"':''}>
           <div class="bd-icon" style="--bdc:${s.col}">${t.ico}</div>
           <div class="flex-1 min-w-0">
-            <div class="txt-strong-base">${i.title||t.lbl}</div>
+            <div class="mp-inc-head"><div class="txt-strong-base">${i.reasonLabel||i.title||t.lbl}</div>${recurBadge(i)}</div>
             ${incImg(i)}
             <div class="mp-meta-tiny">${i.date||''}</div>
+            ${appealBlock(i)}
           </div>
         </div>`;
       }).join('')}

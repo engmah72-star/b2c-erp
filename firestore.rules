@@ -318,7 +318,16 @@ service cloud.firestore {
     // Admin-only writes; employees can read their own.
     match /employee_incidents/{incId} {
       allow read: if isAuth() && (isAdmin() || resource.data.authUid == request.auth.uid);
-      allow create, update: if isAuth() && isAdmin();
+      allow create: if isAuth() && isAdmin();
+      // الأدمن: تحديث كامل. الموظف صاحب الإخفاق: تظلّم فقط — يعدّل حقل `appeal`
+      // وحده وبحالة 'pending' فقط (لا يلمس النوع/الخطورة/القرار).
+      allow update: if isAuth() && (
+        isAdmin() || (
+          resource.data.authUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appeal'])
+          && request.resource.data.appeal.status == 'pending'
+        )
+      );
       allow delete: if isAdmin();
     }
 

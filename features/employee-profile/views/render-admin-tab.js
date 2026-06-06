@@ -17,6 +17,7 @@
  */
 
 import { isRecurringDue, recurrenceLabel } from '../../../core/task-recurrence.js';
+import { annotateRecurrence, recurrenceInfo, isVoided, APPEAL_STATUS } from '../../../core/incident-reasons.js';
 
 export const INCIDENT_TYPES = {
   design_rejected:    { lbl: 'تصميم مرفوض',   ico: '🎨', col: 'var(--p)' },
@@ -153,25 +154,110 @@ export function buildIncidentsHTML({ incidents = [] }) {
       count: 0,
     };
   }
+  const recur = annotateRecurrence(incidents); // id → {ordinal,total}
   const html = incidents.slice(0, 20).map(i => {
     const t = INCIDENT_TYPES[i.type] || INCIDENT_TYPES.other;
     const s = INCIDENT_SEVERITY[i.severity] || INCIDENT_SEVERITY.low;
-    return `<div style="background:var(--bg3);border:1px solid var(--line);border-right:3px solid ${t.col};border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">
+    const voided = isVoided(i);
+    const rc = recur.get(i._id);
+    const info = rc ? recurrenceInfo(rc.total) : { level: 'none' };
+    // شارة حصر التكرار: «المرة N من M» + اقتراح تصعيد
+    const recurBadge = (rc && rc.total > 1)
+      ? `<span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${info.level === 'high' ? 'rgba(255,61,110,.15)' : 'rgba(255,170,0,.15)'};color:${info.level === 'high' ? 'var(--r)' : 'var(--y)'}">🔁 المرة ${rc.ordinal} من ${rc.total}</span>`
+      : '';
+    const escalateHint = (rc && rc.ordinal === rc.total && info.level !== 'none')
+      ? `<div style="font-size:var(--fs-xs);color:${info.level === 'high' ? 'var(--r)' : 'var(--y)'};margin-top:3px">⚠️ ${escAttr(info.text)}</div>`
+      : '';
+    // التظلّم
+    const ap = i.appeal;
+    let appealBlock = '';
+    if (ap && ap.status === 'pending') {
+      appealBlock = `<div style="margin-top:6px;background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.22);border-radius:var(--rad);padding:7px 10px">
+        <div style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold);margin-bottom:4px">⏳ تظلّم الموظف: <span style="color:var(--dim2);font-weight:var(--fw-normal)">${escAttr(ap.reason) || ''}</span></div>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="btn btn-g btn-sm" onclick="decideAppeal('${escAttr(i._id)}','accepted')">✓ قبول (إلغاء الأثر)</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="decideAppeal('${escAttr(i._id)}','rejected')">✕ رفض</button>
+        </div>
+      </div>`;
+    } else if (ap && (ap.status === 'accepted' || ap.status === 'rejected')) {
+      const a = APPEAL_STATUS[ap.status];
+      appealBlock = `<div style="font-size:var(--fs-xs);color:${a.col};margin-top:5px">${a.lbl}${ap.decisionNote ? ' — ' + escAttr(ap.decisionNote) : ''}</div>`;
+    }
+    return `<div style="background:var(--bg3);border:1px solid var(--line);border-right:3px solid ${t.col};border-radius:var(--rad);padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px;${voided ? 'opacity:.6' : ''}">
       <span style="font-size:var(--fs-2xl);flex-shrink:0">${t.ico}</span>
       <div class="flex-1 min-w-0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
-          <span class="txt-bold-md">${escAttr(i.title) || t.lbl}</span>
+          <span class="txt-bold-md"${voided ? ' style="text-decoration:line-through"' : ''}>${escAttr(i.reasonLabel || i.title) || t.lbl}</span>
           <span style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);padding:2px 8px;border-radius:var(--rad);background:${s.bg};color:${s.col}">${s.lbl}</span>
+          ${recurBadge}
         </div>
         ${i.description ? `<div style="font-size:var(--fs-sm);color:var(--dim2);line-height:var(--lh-base)">${escAttr(i.description)}</div>` : ''}
+        ${escalateHint}
         ${i.imageUrl ? `<a href="${escAttr(i.imageUrl)}" target="_blank" rel="noopener" title="عرض صورة المخالفة" style="display:inline-block;margin-top:6px"><img src="${escAttr(i.imageUrl)}" alt="صورة المخالفة" loading="lazy" style="max-width:120px;max-height:90px;border-radius:var(--rad);border:1px solid var(--line2);object-fit:cover;display:block"></a>` : ''}
-        ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
+        ${i.orderId ? `<a href="order-tracking.html?id=${escAttr(i.orderId)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none;display:block;margin-top:3px">🔗 أوردر مرتبط${i.clientName ? ' — ' + escAttr(i.clientName) : ''}</a>` : ''}
         <div class="txt-meta-xs" style="margin-top:3px">${escAttr(i.date) || ''} · ${escAttr(i.createdByName) || ''}</div>
+        ${appealBlock}
       </div>
       <button type="button" onclick="deleteIncident('${escAttr(i._id)}')" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:var(--fs-lg);padding:var(--space-xs)" title="حذف">🗑</button>
     </div>`;
   }).join('');
   return { html, count: incidents.length };
+}
+
+/**
+ * تحليلات إخفاقات الموظف — KPIs + أكثر الأسباب تكراراً + بُعد «مرتبط بأوردر».
+ * يكشف هل المشكلة متركّزة في سبب/عملية معيّنة (operational excellence).
+ *
+ * @param {Object} args
+ * @param {Array}  args.incidents
+ * @param {string} args.mKey  — مفتاح الشهر الحالي "YYYY-MM"
+ * @returns {string} html (فارغ لو لا إخفاقات)
+ */
+export function buildIncidentInsightsHTML({ incidents = [], mKey = '' }) {
+  const active = incidents.filter(i => !isVoided(i));
+  if (!active.length) return '';
+  const voided = incidents.length - active.length;
+  const monthN = active.filter(i => (i.date || '').startsWith(mKey)).length;
+  const orderLinked = active.filter(i => i.orderId).length;
+  const noOrder = active.length - orderLinked;
+
+  // تجميع حسب السبب (label) + اكتشاف التكرار
+  const byReason = new Map();
+  active.forEach(i => {
+    const k = i.reasonLabel || (INCIDENT_TYPES[i.type] || INCIDENT_TYPES.other).lbl || 'أخرى';
+    byReason.set(k, (byReason.get(k) || 0) + 1);
+  });
+  const top = [...byReason.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = top.length ? top[0][1] : 1;
+
+  const kpi = (val, lbl, col) => `<div style="flex:1;min-width:78px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:8px 10px;text-align:center">
+    <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${col}">${val}</div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2)">${lbl}</div></div>`;
+
+  const reasonsHtml = top.map(([lbl, n]) => {
+    const info = recurrenceInfo(n);
+    const col = info.level === 'high' ? 'var(--r)' : info.level === 'medium' ? 'var(--y)' : 'var(--b)';
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-sm);margin-bottom:2px">
+        <span class="txt-strong-base">${escAttr(lbl)}${n >= 3 ? ' 🔁' : ''}</span>
+        <span style="font-weight:var(--fw-bold);color:${col}">${n}${n >= 3 ? ' — يُقترح تصعيد' : ''}</span>
+      </div>
+      <div style="height:6px;background:var(--bg2);border-radius:99px;overflow:hidden"><div style="height:100%;width:${Math.round(n / max * 100)}%;background:${col}"></div></div>
+    </div>`;
+  }).join('');
+
+  return `<div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-bottom:12px">
+    <div class="txt-bold-md" style="margin-bottom:8px">📊 تحليلات الإخفاقات</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${kpi(active.length, 'نشطة', 'var(--snow)')}
+      ${kpi(monthN, 'هذا الشهر', 'var(--y)')}
+      ${kpi(orderLinked, 'مرتبطة بأوردر', 'var(--b)')}
+      ${kpi(noOrder, 'بدون أوردر', 'var(--dim2)')}
+      ${voided ? kpi(voided, 'أُلغي أثرها', 'var(--g)') : ''}
+    </div>
+    <div class="txt-meta-sm" style="margin-bottom:6px">أكثر الأسباب تكراراً</div>
+    ${reasonsHtml}
+  </div>`;
 }
 
 // ── CLIENTS (admin tab) ─────────────────────────────────────────────
