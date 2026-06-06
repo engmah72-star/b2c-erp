@@ -84,6 +84,7 @@ function render() {
       myEmp, myRecord,
       employees: state.employees, attToday: state.attToday,
       leaves: state.leaves, permsToday: state.permsToday,
+      canManage: state.caps.manageEmployees,
     }) +
     `<div class="ec-filters">
       <input class="inp ec-search" id="ec-q" placeholder="🔍 ابحث بالاسم أو الهاتف" value="${state.filter.q.replace(/"/g, '&quot;')}">
@@ -142,8 +143,54 @@ async function selfPunch(kind) {
   }
 }
 
+// manager board actions (record-for-absent · set hours · approve overtime ·
+// approve/reject pending permissions) — all via central actions (A1/H1.1).
+let __boardBusy = false;
+async function handleBoardAction(el) {
+  const act = el.dataset.act;
+  const today = todayStr();
+  if (act === 'board-hours') {
+    const emp = state.employees.find(x => x._id === el.dataset.emp);
+    if (emp) openQuickAction('schedule', emp, { db, me: state.me, wallets: state.wallets, monthKey: monthKey() });
+    return;
+  }
+  if (__boardBusy) return;
+  __boardBusy = true; el.disabled = true;
+  try {
+    let r;
+    if (act === 'board-checkin') {
+      r = await employeeActions.recordAttendanceCheckIn({
+        db, employeeId: el.dataset.emp, employeeUid: el.dataset.uid, employeeName: el.dataset.name,
+        date: today, monthKey: monthKey(),
+        expectedStart: el.dataset.start || '', graceMinutes: 15, source: 'central',
+        recordedBy: state.me.uid, recordedByName: state.me.name,
+      });
+      window.__ecToast(r.ok ? (r.lateMinutes > 0 ? `⚠️ حضور متأخر ${r.lateMinutes}د` : '✅ تم تسجيل الحضور') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    } else if (act === 'board-overtime-ok') {
+      r = await employeeActions.approveAttendanceOvertime({
+        db, employeeUid: el.dataset.uid, employeeId: el.dataset.emp, date: today,
+        approvedBy: state.me.uid, approvedByName: state.me.name,
+      });
+      window.__ecToast(r.ok ? '✅ تم اعتماد الأوفر تايم' : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    } else if (act === 'board-approve' || act === 'board-reject') {
+      r = await employeeActions.decideAttendancePermission({
+        db, permissionId: el.dataset.perm, decision: act === 'board-approve' ? 'approved' : 'rejected',
+        decidedBy: state.me.uid, decidedByName: state.me.name,
+      });
+      window.__ecToast(r.ok ? (act === 'board-approve' ? '✅ تم الاعتماد' : '🚫 تم الرفض') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    }
+    if (r && r.ok === false) el.disabled = false;
+  } catch (e) {
+    window.__ecToast('❌ ' + (e?.message || 'تعذّر التنفيذ'), 'err'); el.disabled = false;
+  } finally {
+    __boardBusy = false;
+  }
+}
+
 function wireActions() {
   document.getElementById('ec-root').addEventListener('click', (e) => {
+    const board = e.target.closest('[data-act^="board-"]');
+    if (board) { handleBoardAction(board); return; }
     const punch = e.target.closest('[data-att]');
     if (punch) { selfPunch(punch.dataset.att); return; }
     const btn = e.target.closest('.ec-act');

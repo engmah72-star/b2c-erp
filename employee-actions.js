@@ -565,6 +565,32 @@ export async function startAttendanceOvertime({
   }
 }
 
+/**
+ * اعتماد المدير لأوفر تايم الموظف («أكّد على الأوفر تايم»). يُعلّم السجل
+ * `overtimeApproved:true` بمن اعتمد ومتى، فتُحتسَب ساعاته الإضافية رسمياً. لا
+ * يكتب دقائق — تظل مُشتقّة مركزياً (RULE 1). نفس مُعرّف السجل المركزي.
+ */
+export async function approveAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
+  approvedBy, approvedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  if (!approvedBy) return { ok: false, errors: ['⚠️ approvedBy مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtimeApproved: true,
+      overtimeApprovedBy: approvedBy,
+      overtimeApprovedByName: approvedByName || '',
+      overtimeApprovedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // ATTENDANCE PERMISSIONS (أذونات) — Phase-3
 // ══════════════════════════════════════════
@@ -897,7 +923,8 @@ export const employeeActions = {
   saveUserPermissions, clearUserPermissions,
   addEmployeeTask, setTaskStatus,
   addEmployeeLeave, deleteEmployeeLeave,
-  recordAttendanceCheckIn, recordAttendanceCheckOut, startAttendanceOvertime,
+  recordAttendanceCheckIn, recordAttendanceCheckOut,
+  startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,
