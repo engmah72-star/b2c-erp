@@ -68,3 +68,8 @@ try {
 export const db = _db;
 
 console.log('[core/firebase-init] ✓ Firebase initialized via core (G2 compliant)');
+
+// ── Phase 0 RUM: Web Vitals collector (fire-and-forget) ──
+// تحميل غير معطِّل ومعزول تماماً: لا يؤثر على التهيئة، ويبتلع كل خطأ داخلياً.
+// تعطيل لكل جهاز: localStorage.setItem('PERF_VITALS','0'). تعطيل عام: احذف هذا السطر.
+try { import('./perf-vitals.js').catch(() => {}); } catch (_) {}
