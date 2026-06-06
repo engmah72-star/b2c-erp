@@ -35,7 +35,7 @@ import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
-import { computeLateMinutes } from './core/attendance-core.js';
+import { computeLateMinutes, attendanceDocId } from './core/attendance-core.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
@@ -475,7 +475,9 @@ export async function recordAttendanceCheckIn({
   if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
   if (!date) return { ok: false, errors: ['⚠️ date مطلوب'], warnings: [] };
   if (!recordedBy) return { ok: false, errors: ['⚠️ recordedBy مطلوب'], warnings: [] };
-  const attId = `${employeeId}_${date}`;
+  // Canonical id (attendance-core) — one record per employee/day across ALL
+  // surfaces; never reconstruct the id locally (RULE 1).
+  const attId = attendanceDocId({ employeeUid, employeeId, date });
   const attRef = doc(db, 'attendance', attId);
   const nowD = new Date();
   // auto-late from schedule when available; otherwise honour the passed value
@@ -517,10 +519,14 @@ export async function recordAttendanceCheckIn({
 
 export async function recordAttendanceCheckOut({
   db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
 }) {
-  if (!attendanceId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  // Accept an explicit id OR derive the canonical one — so callers can never
+  // target a different doc than the matching check-in (RULE 1).
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
   try {
-    await updateDoc(doc(db, 'attendance', attendanceId), {
+    await updateDoc(doc(db, 'attendance', attId), {
       checkOut: true,
       checkOutStr: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
       checkOutAt: serverTimestamp(),

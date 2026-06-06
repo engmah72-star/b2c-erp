@@ -118,7 +118,7 @@ async function _onClick(e) {
                   r.lateMinutes > 0 ? 'err' : 'ok');
     } else if (kind === 'out') {
       const r = await employeeActions.recordAttendanceCheckOut({
-        db, attendanceId: `${_ctx.empId}_${_today}`,
+        db, employeeUid: _ctx.uid, employeeId: _ctx.empId, date: _today,
       });
       _toast(r.ok ? '✅ تم تسجيل انصرافك' : '❌ ' + (r.errors || []).join(' · '), r.ok ? 'ok' : 'err');
     }

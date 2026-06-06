@@ -132,7 +132,7 @@ async function selfPunch(kind) {
       });
       window.__ecToast(r.ok ? (r.lateMinutes > 0 ? `⚠️ حضور متأخر ${r.lateMinutes}د` : '✅ تم تسجيل حضورك') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
     } else {
-      r = await employeeActions.recordAttendanceCheckOut({ db, attendanceId: `${myEmp._id}_${today}` });
+      r = await employeeActions.recordAttendanceCheckOut({ db, employeeUid: state.me.uid, employeeId: myEmp._id, date: today });
       window.__ecToast(r.ok ? '✅ تم تسجيل انصرافك' : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
     }
   } catch (e) {
