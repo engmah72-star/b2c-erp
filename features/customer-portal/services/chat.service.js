@@ -10,10 +10,28 @@ export async function openThread({ kind, uid, name, order = null, peer = null })
   return fb.clientActions.openClientThread({ kind, clientUid: uid, clientName: name, order, peer });
 }
 
-/** يرسل رسالة نصية عبر الفعل المركزي. */
-export async function sendMessage({ convId, text, uid, name, participants }) {
+/** يرسل رسالة نصية عبر الفعل المركزي (مع ردّ اختياري). */
+export async function sendMessage({ convId, text, uid, name, participants, replyTo = null }) {
   const fb = await firebase();
-  return fb.clientActions.sendClientMessage({ convId, text, senderId: uid, senderName: name, participants });
+  return fb.clientActions.sendClientMessage({ convId, text, senderId: uid, senderName: name, participants, replyTo });
+}
+
+/** تعديل نص رسالة. */
+export async function editMessage({ convId, messageId, text }) {
+  const fb = await firebase();
+  return fb.clientActions.editClientMessage({ convId, messageId, text });
+}
+
+/** حذف رسالة (ناعم). */
+export async function deleteMessage({ convId, messageId }) {
+  const fb = await firebase();
+  return fb.clientActions.deleteClientMessage({ convId, messageId });
+}
+
+/** تبديل تفاعل على رسالة. */
+export async function reactMessage({ convId, messageId, uid, emoji, adding }) {
+  const fb = await firebase();
+  return fb.clientActions.toggleClientReaction({ convId, messageId, userId: uid, emoji, adding });
 }
 
 /** طلب تعديل على التصميم: رسالة في خيط الأوردر + إشعار فريق الأوردر (عبر الفعل المركزي). */
