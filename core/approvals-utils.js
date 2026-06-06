@@ -290,3 +290,31 @@ export function selectBulkEligible(txns, { action, userId, strict = false } = {}
     return false;
   });
 }
+
+// ══════════════════════════════════════════════════════════
+// PAYMENT REQUEST TWO-TIER ACTION (تأكيد ops ثم اعتماد admin)
+// ══════════════════════════════════════════════════════════
+
+/**
+ * يحدّد الإجراء المتاح على بطاقة طلب الدفع في حالتَي pending/confirmed،
+ * مطبّقاً الطبقتين: تأكيد (صاحب execute بلا final) ثم اعتماد (صاحب final)،
+ * مع الفصل الصارم.
+ *
+ * @param {Object} r — payment_request (status, confirmedBy)
+ * @param {Object} args — { canExec, canFinal, strict=false, userId }
+ * @returns {('confirm'|'confirm_or_approve'|'await_confirm'|'approve'|'self_confirmed'|'await_approve'|null)}
+ */
+export function requestTierAction(r, { canExec = false, canFinal = false, strict = false, userId = '' } = {}) {
+  const s = r && r.status;
+  if (s === 'pending') {
+    if (canExec && !canFinal) return 'confirm';                       // مسؤول التشغيل يؤكّد
+    if (canFinal) return strict ? 'confirm' : 'confirm_or_approve';   // الأدمن: تأكيد (+اعتماد مباشر بلا فصل صارم)
+    return 'await_confirm';
+  }
+  if (s === 'confirmed') {
+    if (canFinal && !(strict && r.confirmedBy === userId)) return 'approve';
+    if (canFinal && strict && r.confirmedBy === userId) return 'self_confirmed';
+    return 'await_approve';
+  }
+  return null;
+}
