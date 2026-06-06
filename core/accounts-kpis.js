@@ -108,6 +108,29 @@ export function calcTotalOrderCosts(allOrders = []) {
   , 0);
 }
 
+/** Cost-item type that represents printing (matches `type` written by orderActions). */
+export const PRINTING_COST_TYPE = 'طباعة';
+
+/**
+ * Total printing cost across all orders — sum of costItems whose type === 'طباعة'.
+ * Mirrors the cost-item `type` set in order-actions.js (SPCOL categories).
+ * @returns {{ total, paid, due, count }}  paid = items already settled (ci.paid),
+ *          due = unpaid printing cost (clamped at 0).
+ */
+export function calcTotalPrinting(allOrders = []) {
+  let total = 0, paid = 0, count = 0;
+  for (const o of allOrders) {
+    for (const ci of (o.costItems || [])) {
+      if (ci.type !== PRINTING_COST_TYPE) continue;
+      const amt = parseFloat(ci.total) || 0;
+      total += amt;
+      count++;
+      if (ci.paid) paid += amt;
+    }
+  }
+  return { total, paid, due: Math.max(0, total - paid), count };
+}
+
 /**
  * Supplier due = total cost items - sum of supplier_payments (clamped at 0).
  */
