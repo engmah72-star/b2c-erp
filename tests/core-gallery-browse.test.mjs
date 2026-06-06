@@ -5,6 +5,7 @@
 import {
   itemColors, itemKeywords, tsOf, extractFacets,
   filterGallery, sortGallery, relatedDesigns, browseGallery, SORT_MODES,
+  collectionsOf, collectionItems,
 } from '../core/gallery-browse.js';
 
 let passed = 0, failed = 0;
@@ -136,6 +137,39 @@ test('relatedDesigns: collection match dominates', () => {
 test('browseGallery: filter then sort', () => {
   const r = browseGallery(G, { filter: { category: 'كارت' }, sort: SORT_MODES.POPULAR });
   assertEq(r.map((x) => x._id), ['a', 'c']);
+});
+
+// ── collections ───────────────────────────────────────────────────
+const C = [
+  { _id: 'p1', title: 'كارت', collectionId: 'k1', collectionName: 'هوية مطعم', isVisible: true, publishedAt: { seconds: 10 } },
+  { _id: 'p2', title: 'فلاير', collectionId: 'k1', collectionName: 'هوية مطعم', isVisible: true, publishedAt: { seconds: 30 } },
+  { _id: 'p3', title: 'سوشال مخفي', collectionId: 'k1', isVisible: false, publishedAt: { seconds: 40 } },
+  { _id: 'p4', title: 'مفرد', isVisible: true, publishedAt: { seconds: 20 } },
+];
+
+test('collectionsOf: groups by collectionId, excludes hidden by default', () => {
+  const cols = collectionsOf(C);
+  assertEq(cols.length, 1);
+  assertEq(cols[0].id, 'k1');
+  assertEq(cols[0].count, 2);            // p1, p2 (p3 hidden, p4 no collection)
+  assertEq(cols[0].name, 'هوية مطعم');
+});
+
+test('collectionsOf: cover = newest visible item image/first', () => {
+  const cols = collectionsOf(C);
+  assertEq(cols[0].items[0]._id, 'p2');  // newest (seconds 30) first
+});
+
+test('collectionsOf: includeHidden counts hidden', () => {
+  assertEq(collectionsOf(C, { includeHidden: true })[0].count, 3);
+});
+
+test('collectionItems: returns siblings excluding ref', () => {
+  assertEq(collectionItems(C, 'k1', { excludeId: 'p2' }).map((x) => x._id), ['p1']);
+});
+
+test('collectionItems: empty for no collection', () => {
+  assertEq(collectionItems(C, ''), []);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
