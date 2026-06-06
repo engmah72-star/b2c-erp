@@ -92,7 +92,7 @@ export function createRouter({ shell, store, services }) {
   /** يفتح تفاصيل الطلب في الـ Overlay. */
   async function openOrder(order) {
     await openModalView(await import('./order-detail.view.js'), {
-      title: `طلب #${order.serial || order._id?.slice(0, 6) || ''}`, extra: { order },
+      title: `طلب #${order.orderId || order._id?.slice(0, 6) || ''}`, extra: { order },
     });
   }
 
@@ -100,7 +100,7 @@ export function createRouter({ shell, store, services }) {
   async function openChat({ kind = 'support', order = null, peer = null, conv = null } = {}) {
     const title = conv?.name ? `💬 ${conv.name}`
       : kind === 'member' ? `💬 ${peer?.name || 'محادثة'}`
-        : kind === 'order' ? `💬 محادثة الطلب #${order?.serial || order?._id?.slice(0, 6) || ''}`
+        : kind === 'order' ? `💬 محادثة الطلب #${order?.orderId || order?._id?.slice(0, 6) || ''}`
           : '💬 الدعم';
     await openModalView(await import('./chat.view.js'), { title, extra: { kind, order, peer, conv } });
   }

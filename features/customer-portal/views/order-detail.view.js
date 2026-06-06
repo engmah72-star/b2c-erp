@@ -4,7 +4,7 @@
  */
 import { escapeHtml } from '../utils/dom.js';
 import { Button } from '../components/index.js';
-import { Stepper, stageBadge, nextActionOf, kv, money } from './partials.js';
+import { Stepper, stageBadge, kv, money } from './partials.js';
 import { submitRequest } from './requests.js';
 
 export function create(ctx) {
@@ -33,13 +33,16 @@ export function create(ctx) {
       return `<div class="cp-cta-banner"><div class="cp-cta-banner__title">✅ اعتمدت هذا التصميم</div>
         <div class="cp-muted">شكرًا — طلبك ينتقل للتنفيذ.</div></div>`;
     }
-    const na = nextActionOf(order); // اعتماد متى كانت مرحلة التصميم بانتظار العميل
-    if (!na) return '';
-    const hasProof = !!proofUrl();
+    if (order.stage !== 'design') return '';
+    // لا بروفة بعد: لافتة إعلامية فقط (لا أزرار اعتماد — لا يُعتمد تصميم غير موجود).
+    if (!proofUrl()) {
+      return `<div class="cp-cta-banner">
+        <div class="cp-cta-banner__title">🎨 تصميمك قيد التنفيذ</div>
+        <div class="cp-muted">ستظهر البروفة هنا فور رفعها، وعندها تقدر تعتمد أو تطلب تعديلاً.</div></div>`;
+    }
     return `<div class="cp-cta-banner">
-      <div class="cp-cta-banner__title">⚠️ ${escapeHtml(na.hint)}</div>
-      ${hasProof ? '<div class="cp-muted">راجِع البروفة بالأعلى ثم اعتمِد أو اطلب تعديلاً.</div>'
-                 : '<div class="cp-muted">ستظهر البروفة هنا فور رفعها.</div>'}
+      <div class="cp-cta-banner__title">⚠️ بانتظار موافقتك على البروفة</div>
+      <div class="cp-muted">راجِع البروفة بالأعلى ثم اعتمِد أو اطلب تعديلاً.</div>
       <div class="cp-row cp-row--wrap">
         ${Button({ label: 'اعتمِد التصميم', icon: '✅', action: 'approve', size: 'sm', block: false })}
         ${Button({ label: 'اطلب تعديلاً', icon: '✏️', variant: 'ghost', action: 'modify', size: 'sm', block: false })}
