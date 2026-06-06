@@ -35,7 +35,7 @@ const state = {
   role: '',
   caps: { manageEmployees: false, finance: false, perms: false },
   employees: [], attToday: [], incidents: [], tasks: [], wallets: [],
-  leaves: [], permsToday: [],
+  leaves: [], permsToday: [], incidentReasons: [],
   filter: { q: '', status: 'all', flagged: false },
 };
 
@@ -151,7 +151,7 @@ async function handleBoardAction(el) {
   const today = todayStr();
   if (act === 'board-hours') {
     const emp = state.employees.find(x => x._id === el.dataset.emp);
-    if (emp) openQuickAction('schedule', emp, { db, me: state.me, wallets: state.wallets, monthKey: monthKey() });
+    if (emp) openQuickAction('schedule', emp, { db, me: state.me, wallets: state.wallets, incidentReasons: state.incidentReasons, monthKey: monthKey() });
     return;
   }
   if (__boardBusy) return;
@@ -204,7 +204,7 @@ function wireActions() {
       return;
     }
     openQuickAction(act, emp, {
-      db, me: state.me, wallets: state.wallets, monthKey: monthKey(),
+      db, me: state.me, wallets: state.wallets, incidentReasons: state.incidentReasons, monthKey: monthKey(),
     });
   });
 }
@@ -222,6 +222,10 @@ function startListeners() {
   onSnapshot(query(collection(db, 'employee_incidents'), where('monthKey', '==', monthKey()), limit(1000)), snap => {
     state.incidents = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     if (state.employees.length) render();
+  });
+  // أسباب الإخفاقات المُدارة — لتوحيد مودال «تسجيل إخفاق» مع البروفايل
+  onSnapshot(doc(db, 'master_lists', 'incident_reasons'), snap => {
+    state.incidentReasons = snap.exists() ? (snap.data().items || []) : [];
   });
   // attendance permissions (today) + leaves — for the accurate day-status summary
   onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', todayStr()), limit(800)), snap => {

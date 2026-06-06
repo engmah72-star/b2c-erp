@@ -61,6 +61,36 @@ async function _logAudit(db, { action, details, userId, userName }) {
   }
 }
 
+/**
+ * أتمتة التصعيد: لو تكرّر نفس السبب (reasonCode) 3+ مرات لنفس الموظف (مع تجاهل
+ * المُلغى أثره) يُنشئ مهمة متابعة عاجلة لمن سجّل الإخفاق. غير-حاجز — لا يُفشل
+ * تسجيل الإخفاق لو تعثّر. يعمل من أي مدخل (بروفايل/لوحة) لأنه في طبقة الـ action.
+ */
+async function _maybeEscalateIncident(db, { employeeId, employeeName, reasonCode, reasonLabel, userId, userName }) {
+  if (!reasonCode || !employeeId) return false;
+  try {
+    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await getDocs(query(collection(db, 'employee_incidents'), where('employeeId', '==', employeeId), limit(500)));
+    const total = snap.docs
+      .map(d => d.data())
+      .filter(i => (i.reasonCode || ('type:' + (i.type || 'other'))) === reasonCode && !(i.appeal && i.appeal.status === 'accepted'))
+      .length;
+    if (total < 3) return false;
+    await addEmployeeTask({
+      db,
+      title: `🔁 مراجعة تكرار إخفاق: ${reasonLabel || reasonCode} — ${employeeName || ''}`,
+      description: `تكرّر «${reasonLabel || reasonCode}» ${total} مرات لهذا الموظف. يُرجى المراجعة واتخاذ إجراء (تصعيد/تدريب/تنبيه رسمي).`,
+      priority: 'urgent', taskType: 'fixed',
+      assignedToUid: userId, assignedToName: userName || '',
+      userId, userName,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[employeeActions._maybeEscalateIncident] failed (non-blocking):', e?.message);
+    return false;
+  }
+}
+
 /** إشعار غير-حاجز في notifications (طبقة الإشعارات — ليست business state). */
 async function _notify(db, { toUid, title, desc, ico, link, type, entityId }) {
   if (!toUid) return;
@@ -120,7 +150,11 @@ export async function addIncident({
       title: '⚠️ ملاحظة جديدة على أدائك',
       desc: `${reasonLabel || title || 'ملاحظة'} — راجع بروفايلك. يمكنك تقديم تظلّم إن كان لديك اعتراض.`,
     });
-    return { ok: true, errors: [], warnings: [], incidentId: ref.id };
+    // ⚙️ أتمتة التصعيد: تكرار نفس السبب 3+ مرات ⇒ مهمة متابعة عاجلة (يعمل من أي مدخل)
+    const escalated = await _maybeEscalateIncident(db, {
+      employeeId, employeeName, reasonCode, reasonLabel, userId, userName,
+    });
+    return { ok: true, errors: [], warnings: [], incidentId: ref.id, escalated };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
