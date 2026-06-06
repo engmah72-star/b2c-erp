@@ -204,6 +204,62 @@ export function buildIncidentsHTML({ incidents = [] }) {
   return { html, count: incidents.length };
 }
 
+/**
+ * تحليلات إخفاقات الموظف — KPIs + أكثر الأسباب تكراراً + بُعد «مرتبط بأوردر».
+ * يكشف هل المشكلة متركّزة في سبب/عملية معيّنة (operational excellence).
+ *
+ * @param {Object} args
+ * @param {Array}  args.incidents
+ * @param {string} args.mKey  — مفتاح الشهر الحالي "YYYY-MM"
+ * @returns {string} html (فارغ لو لا إخفاقات)
+ */
+export function buildIncidentInsightsHTML({ incidents = [], mKey = '' }) {
+  const active = incidents.filter(i => !isVoided(i));
+  if (!active.length) return '';
+  const voided = incidents.length - active.length;
+  const monthN = active.filter(i => (i.date || '').startsWith(mKey)).length;
+  const orderLinked = active.filter(i => i.orderId).length;
+  const noOrder = active.length - orderLinked;
+
+  // تجميع حسب السبب (label) + اكتشاف التكرار
+  const byReason = new Map();
+  active.forEach(i => {
+    const k = i.reasonLabel || (INCIDENT_TYPES[i.type] || INCIDENT_TYPES.other).lbl || 'أخرى';
+    byReason.set(k, (byReason.get(k) || 0) + 1);
+  });
+  const top = [...byReason.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = top.length ? top[0][1] : 1;
+
+  const kpi = (val, lbl, col) => `<div style="flex:1;min-width:78px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);padding:8px 10px;text-align:center">
+    <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:${col}">${val}</div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2)">${lbl}</div></div>`;
+
+  const reasonsHtml = top.map(([lbl, n]) => {
+    const info = recurrenceInfo(n);
+    const col = info.level === 'high' ? 'var(--r)' : info.level === 'medium' ? 'var(--y)' : 'var(--b)';
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-sm);margin-bottom:2px">
+        <span class="txt-strong-base">${escAttr(lbl)}${n >= 3 ? ' 🔁' : ''}</span>
+        <span style="font-weight:var(--fw-bold);color:${col}">${n}${n >= 3 ? ' — يُقترح تصعيد' : ''}</span>
+      </div>
+      <div style="height:6px;background:var(--bg2);border-radius:99px;overflow:hidden"><div style="height:100%;width:${Math.round(n / max * 100)}%;background:${col}"></div></div>
+    </div>`;
+  }).join('');
+
+  return `<div style="background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:12px;margin-bottom:12px">
+    <div class="txt-bold-md" style="margin-bottom:8px">📊 تحليلات الإخفاقات</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${kpi(active.length, 'نشطة', 'var(--snow)')}
+      ${kpi(monthN, 'هذا الشهر', 'var(--y)')}
+      ${kpi(orderLinked, 'مرتبطة بأوردر', 'var(--b)')}
+      ${kpi(noOrder, 'بدون أوردر', 'var(--dim2)')}
+      ${voided ? kpi(voided, 'أُلغي أثرها', 'var(--g)') : ''}
+    </div>
+    <div class="txt-meta-sm" style="margin-bottom:6px">أكثر الأسباب تكراراً</div>
+    ${reasonsHtml}
+  </div>`;
+}
+
 // ── CLIENTS (admin tab) ─────────────────────────────────────────────
 
 /**

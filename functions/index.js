@@ -949,6 +949,29 @@ exports.onPaymentRequestPendingApproval = onDocumentUpdated('payment_requests/{r
   });
 });
 
+// ── Incident appeal submitted → notify admins/ops ──────────────────────────
+// يُطلق عند انتقال appeal.status إلى 'pending' على employee_incidents — يُشعر
+// الأدمن/مدير العمليات ليراجعوا تظلّم الموظف. (الإشعار للموظف بالقرار يتم في
+// employee-actions.decideIncidentAppeal client-side.)
+exports.onIncidentAppealSubmitted = onDocumentUpdated('employee_incidents/{incId}', async (e) => {
+  const before = e.data?.before?.data() || {};
+  const after  = e.data?.after?.data()  || {};
+  const wasPending = before.appeal && before.appeal.status === 'pending';
+  const isPending  = after.appeal  && after.appeal.status  === 'pending';
+  if (isPending === wasPending) return; // فقط عند الانتقال إلى pending
+  if (!isPending) return;
+
+  const who    = after.employeeName || 'موظف';
+  const reason = (after.appeal && after.appeal.reason) || '';
+  const label  = after.reasonLabel || after.title || 'إخفاق';
+  const title  = '🛡️ تظلّم جديد بانتظار المراجعة';
+  const body   = `${who} يعترض على «${label}»${reason ? ' — ' + reason : ''}`;
+  await notifyAdminsOfPendingApproval({
+    entityType: 'incident_appeal', entityId: e.params.incId,
+    title, body, link: `/employee-profile.html?id=${after.employeeId || ''}`,
+  });
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //   ALERT: Critical financial movements
 // ════════════════════════════════════════════════════════════════════════════

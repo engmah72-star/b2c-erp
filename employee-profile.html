@@ -267,7 +267,7 @@ import { buildHeroHTML, buildQuickActionsHTML, buildCompactHeroHTML } from "./fe
 import { buildAttendanceCalendarHTML, buildScheduleHTML, buildLeavesListHTML, buildPermissionsListHTML, DAY_NAMES_AR } from "./features/employee-profile/views/render-attendance.js";
 import { buildSalariesHTML } from "./features/employee-profile/views/render-salary.js";
 import { ALL_PAGES, ALL_PERMS, buildPermsUI, buildAdminLockedHTML } from "./features/employee-profile/views/render-permissions.js";
-import { buildTasksHTML, buildIncidentsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
+import { buildTasksHTML, buildIncidentsHTML, buildIncidentInsightsHTML, buildClientsHTML, INCIDENT_TYPES, INCIDENT_SEVERITY } from "./features/employee-profile/views/render-admin-tab.js";
 import { computeProductStats, buildGoalsHTML, buildEvaluationsHTML, buildSkillsAndProductsHTML, buildSkillEditTagsHTML, buildBehaviorHTML, buildInsightsHTML } from "./features/employee-profile/views/render-overview-tab.js";
 import { TAB_KEYS, setupStickyHero, setupKeyboardShortcuts, setupQAMenuOutsideClick, toggleQAMenu, closeQAMenu } from "./features/employee-profile/views/tab-router.js";
 import { buildScoreHTML } from "./features/employee-profile/views/render-score.js";
@@ -746,8 +746,9 @@ function renderEvaluations(){
 function renderIncidents(){
   const el=document.getElementById('incidents-container');if(!el)return;
   setText('incidents-count',empIncidents.length);
+  const insights=buildIncidentInsightsHTML({incidents:empIncidents,mKey:monthKey()});
   const r=buildIncidentsHTML({incidents:empIncidents,reasons:incidentReasons});
-  el.innerHTML=r.html;
+  el.innerHTML=insights+r.html;
 }
 
 // يملأ قائمة الأسباب (مجمّعة بالتصنيف عبر optgroup)
@@ -863,11 +864,25 @@ window.saveIncident=async function(){
   document.getElementById('ov-incident').classList.remove('open');
   _incImgReset();
   toast('✅ تم تسجيل الإخفاق','ok');
+  // أتمتة التصعيد: لو تكرّر نفس السبب 3+ مرات (مع الإخفاق الحالي) → مهمة متابعة
+  const sameReason=empIncidents.filter(i=>(i.reasonCode||('type:'+(i.type||'other')))===reasonCode && !(i.appeal&&i.appeal.status==='accepted')).length;
+  const total=sameReason+1; // الحالي لسه ما وصلش للـ snapshot
+  if(total>=3){
+    const tr=await employeeActions.addEmployeeTask({
+      db,
+      title:`🔁 مراجعة تكرار إخفاق: ${reasonLabel} — ${emp?.name||''}`,
+      description:`تكرّر «${reasonLabel}» ${total} مرات لهذا الموظف. يُرجى المراجعة واتخاذ إجراء (تصعيد/تدريب/تنبيه رسمي).`,
+      priority:'urgent',taskType:'fixed',
+      assignedToUid:currentUser.uid,assignedToName:adminName,
+      userId:currentUser.uid,userName:adminName,
+    });
+    if(tr.ok)toast(`⚠️ تكرّر هذا السبب ${total} مرات — أُنشئت مهمة متابعة`,'warn');
+  }
 };
 
 window.deleteIncident=async function(id){
   if(!confirm('حذف هذا الإخفاق؟'))return;
-  const r=await employeeActions.deleteIncident({db,incidentId:id});
+  const r=await employeeActions.deleteIncident({db,incidentId:id,userId:currentUser.uid,userName:adminName});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   toast('✅ تم الحذف','ok');
 };

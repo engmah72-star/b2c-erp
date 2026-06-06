@@ -41,6 +41,40 @@ import { computeLateMinutes, attendanceDocId } from './core/attendance-core.js';
 // INCIDENTS
 // ══════════════════════════════════════════
 
+/**
+ * سجل تدقيق غير-حاجز في audit_logs (H3) — صامت عند الفشل، لا يُعطّل الـ action.
+ * (نفس نمط product-actions._logAudit — audit_logs.rules تتطلّب action+userId+timestamp).
+ */
+async function _logAudit(db, { action, details, userId, userName }) {
+  try {
+    await addDoc(collection(db, 'audit_logs'), {
+      action,
+      details: details || {},
+      userId: userId || '',
+      userName: userName || '',
+      entity: 'employee_incident',
+      timestamp: serverTimestamp(),
+      url: typeof location !== 'undefined' ? location.pathname : '',
+    });
+  } catch (e) {
+    console.warn('[employeeActions._logAudit] failed (non-blocking):', action, e?.message);
+  }
+}
+
+/** إشعار غير-حاجز في notifications (طبقة الإشعارات — ليست business state). */
+async function _notify(db, { toUid, title, desc, ico, link, type, entityId }) {
+  if (!toUid) return;
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      toUid, title: title || '', desc: desc || '', ico: ico || '🔔',
+      link: link || null, type: type || 'system', entityId: entityId || null,
+      read: false, createdAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('[employeeActions._notify] failed (non-blocking):', e?.message);
+  }
+}
+
 export async function addIncident({
   db = defaultDb,
   employeeId, employeeName, authUid = '',
@@ -63,6 +97,8 @@ export async function addIncident({
       type, severity,
       reasonCode: reasonCode || '',
       reasonLabel: reasonLabel || '',
+      // بُعد تحليلي: هل الإخفاق مرتبط بأوردر؟
+      orderLinked: !!orderId,
       title, description,
       orderId: orderId || null,
       clientName: clientName || null,
@@ -72,16 +108,29 @@ export async function addIncident({
       createdByName: userName || '',
       createdAt: serverTimestamp(),
     });
+    // H3: سجل تدقيق + إشعار للموظف (طبقة جانبية، غير حاجزة)
+    await _logAudit(db, {
+      action: `⚠️ تسجيل إخفاق — ${reasonLabel || title || type} (${severity})`,
+      userId, userName,
+      details: { incidentId: ref.id, employeeId, reasonCode, severity, orderId: orderId || null },
+    });
+    await _notify(db, {
+      toUid: authUid,
+      ico: '⚠️', type: 'incident', entityId: ref.id, link: 'my-profile.html?tab=feedback',
+      title: '⚠️ ملاحظة جديدة على أدائك',
+      desc: `${reasonLabel || title || 'ملاحظة'} — راجع بروفايلك. يمكنك تقديم تظلّم إن كان لديك اعتراض.`,
+    });
     return { ok: true, errors: [], warnings: [], incidentId: ref.id };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
 }
 
-export async function deleteIncident({ db = defaultDb, incidentId }) {
+export async function deleteIncident({ db = defaultDb, incidentId, userId, userName }) {
   if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
   try {
     await deleteDoc(doc(db, 'employee_incidents', incidentId));
+    await _logAudit(db, { action: '🗑 حذف إخفاق', userId, userName, details: { incidentId } });
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
@@ -92,8 +141,9 @@ export async function deleteIncident({ db = defaultDb, incidentId }) {
  * تظلّم الموظف على إخفاق مسجّل — يكتب الموظف نفسه (authUid يطابق صاحب الإخفاق).
  * يضع التظلّم بحالة 'pending' فقط؛ القرار للأدمن عبر decideIncidentAppeal.
  * (firestore.rules يسمح للموظف بتعديل حقل appeal وحده على إخفاقه بحالة pending).
+ * إشعار الأدمن بالتظلّم يتم عبر Cloud Function (onIncidentAppealSubmitted).
  */
-export async function submitIncidentAppeal({ db = defaultDb, incidentId, reason }) {
+export async function submitIncidentAppeal({ db = defaultDb, incidentId, reason, userId, userName }) {
   if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
   if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ اكتب سبب التظلّم'], warnings: [] };
   try {
@@ -104,6 +154,7 @@ export async function submitIncidentAppeal({ db = defaultDb, incidentId, reason 
         submittedAt: serverTimestamp(),
       },
     });
+    await _logAudit(db, { action: '🛡️ تقديم تظلّم على إخفاق', userId, userName, details: { incidentId, reason: reason.trim() } });
     return { ok: true, errors: [], warnings: [], status: 'pending' };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل إرسال التظلّم'], warnings: [] };
@@ -124,7 +175,8 @@ export async function decideIncidentAppeal({
   }
   try {
     const snap = await getDoc(doc(db, 'employee_incidents', incidentId));
-    const prev = snap.exists() ? (snap.data().appeal || {}) : {};
+    const data = snap.exists() ? snap.data() : {};
+    const prev = data.appeal || {};
     await updateDoc(doc(db, 'employee_incidents', incidentId), {
       appeal: {
         ...prev,
@@ -134,6 +186,20 @@ export async function decideIncidentAppeal({
         decidedByName: userName || '',
         decidedAt: serverTimestamp(),
       },
+    });
+    await _logAudit(db, {
+      action: `🛡️ قرار تظلّم: ${decision === 'accepted' ? 'قبول (إلغاء الأثر)' : 'رفض'}`,
+      userId, userName, details: { incidentId, decision, note: note || '' },
+    });
+    // إشعار الموظف بنتيجة تظلّمه
+    await _notify(db, {
+      toUid: data.authUid || '',
+      ico: decision === 'accepted' ? '✅' : '❌', type: 'incident_appeal', entityId: incidentId,
+      link: 'my-profile.html?tab=feedback',
+      title: decision === 'accepted' ? '✅ تم قبول تظلّمك' : '❌ تم رفض تظلّمك',
+      desc: decision === 'accepted'
+        ? `تم إلغاء أثر الملاحظة «${data.reasonLabel || data.title || ''}» على تقييمك.`
+        : `بخصوص الملاحظة «${data.reasonLabel || data.title || ''}»${note ? ' — ' + note : ''}.`,
     });
     return { ok: true, errors: [], warnings: [], status: decision };
   } catch (e) {
