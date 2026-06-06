@@ -734,7 +734,7 @@ export async function rejectTransaction({
 
     const revRef = doc(collection(db, 'transactions_v2'));
     batch.set(revRef, {
-      walletId: tx.walletId, walletName: tx.walletName,
+      walletId: tx.walletId || null, walletName: tx.walletName || '',
       type: isOut ? 'in' : 'out', amount: tx.amount, fees: 0,
       description: `🔄 عكس رفض — ${tx.description || tx.category || ''}`,
       category: tx.category + '_reversal',
