@@ -78,6 +78,7 @@
         <button type="button" class="rep-tab" data-tab="collection" onclick="switchTab('collection',this)">📋 جرد التحصيل <span class="tab-badge hide" data-badge="collection"></span></button>
         <button type="button" class="rep-tab" data-tab="returns" onclick="switchTab('returns',this)">↩️ المرتجعات <span class="tab-badge warn hide" data-badge="returns"></span></button>
         <button type="button" class="rep-tab" data-tab="approvals" onclick="switchTab('approvals',this)">🔐 الاعتمادات <span class="tab-badge dim hide" data-badge="approvals"></span></button>
+        <button type="button" class="rep-tab" data-tab="control" onclick="switchTab('control',this)">🎛️ التحكم الكامل <span class="tab-badge warn hide" data-badge="control"></span></button>
       </div>
       <!-- Mode toggle: executive summary (default) vs advanced tabs -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
@@ -276,6 +277,8 @@ const fn=fmtNum;
 
 // ══ Collection state (search/sort/filters) ══
 let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders',__filtersOpen=false;
+// ══ Control tab state (تاب التحكم الكامل) ══
+let __ctrlSearch='',__ctrlStage='all';
 const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
@@ -603,6 +606,10 @@ function render(){
   }
   else if(currentTab==='returns') el.innerHTML=renderReturns(filtered,range);
   else if(currentTab==='approvals') el.innerHTML=renderApprovals(range);
+  else if(currentTab==='control'){
+    el.innerHTML=renderControl();
+    requestAnimationFrame(()=>ctrlFilter());
+  }
   updateTabBadges();
   // animate counters في كل KPI فيه data-counter
   requestAnimationFrame(()=>applyCounters(el));
@@ -1816,6 +1823,119 @@ window.saveDrawerCost=async function(){
   __renderDrawerCostList(o);
   __drawerHideCostForm();
   toast('✅ تم الحفظ','ok');
+};
+
+// ══════════════════════════════════════════════════════════
+// 🎛️ Tab: التحكم الكامل في الأوردرات
+// لوحة موحّدة للأدمن/مدير العمليات: بحث في كل الأوردرات، نقلها بين
+// المراحل بحرية، تعديلها الكامل، تعديل حالتها، وحذفها — كل ما يخص
+// الأوردر في مكان واحد. كل الكتابات تمرّ عبر orderActions (H1.1).
+// ══════════════════════════════════════════════════════════
+const CTRL_STAGES=[
+  {key:'design',label:'تصميم',ico:'✏️'},
+  {key:'printing',label:'طباعة',ico:'🖨️'},
+  {key:'production',label:'تنفيذ',ico:'🏭'},
+  {key:'shipping',label:'شحن',ico:'🚚'},
+  {key:'archived',label:'أرشيف',ico:'📁'},
+];
+const ctrlStageAr=st=>{const s=CTRL_STAGES.find(x=>x.key===st);return s?(s.ico+' '+s.label):(st||'—');};
+
+function renderControl(){
+  // تاب التحكم يعمل على كل الأوردرات (مش متأثر بفلتر التاريخ) — "كل الأوردر".
+  const canControl=userIsAdmin; // admin / operation_manager — نقل المراحل والحذف
+  const all=[...orders].sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  // عدّاد لكل مرحلة (للـ chips)
+  const cnt={all:all.length};
+  CTRL_STAGES.forEach(s=>cnt[s.key]=all.filter(o=>o.stage===s.key).length);
+
+  const chip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlStage===key?' active':''}" onclick="ctrlSetStage('${key}',this)">${ico} ${label} <span style="opacity:.6">${cnt[key]||0}</span></button>`;
+
+  const rows=all.map(o=>{
+    const rem=calcRem(o);
+    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
+    const sale=parseFloat(o.salePrice)||0;
+    const oid=o.orderId||o._id.slice(-6);
+    const hay=`${o.clientName||''} ${o.clientPhone||''} ${oid} ${o.product||''} ${(o.products||[]).map(p=>p.name).join(' ')}`.toLowerCase().replace(/"/g,'&quot;');
+    const stageOpts=CTRL_STAGES.map(s=>`<option value="${s.key}"${o.stage===s.key?' selected':''}>${s.ico} ${s.label}</option>`).join('');
+    const moveCtl=canControl
+      ? `<select class="inp" style="padding:5px 8px;font-size:var(--fs-sm);min-width:118px" title="نقل الأوردر لأي مرحلة" onchange="controlMoveStage('${o._id}',this.value,this)">${stageOpts}</select>`
+      : `<span class="col-chip" style="background:var(--bg3);color:var(--dim2)">${ctrlStageAr(o.stage)}</span>`;
+    return `<div class="ctrl-row" data-stage="${o.stage||''}" data-search="${hay}" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+      <div style="flex:1;min-width:160px;cursor:pointer" onclick="openOrdDrawer('${o._id}')" title="تفاصيل الأوردر">
+        <div style="font-weight:var(--fw-extra);font-size:var(--fs-base)">${o.clientName||'—'} <span style="color:var(--dim2);font-weight:var(--fw-semi);font-size:var(--fs-xs)">· ${oid}</span></div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${(o.products||[]).map(p=>p.name).join(' · ')||o.product||'—'}${o.clientPhone?' · '+o.clientPhone:''}</div>
+      </div>
+      <div style="text-align:center;min-width:78px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2)">المتبقي</div>
+        <div style="font-weight:var(--fw-heavy);color:${rem>0?'var(--r)':'var(--g)'};font-size:var(--fs-base)">${rem>0?fn(rem)+' ج':'مدفوع ✓'}</div>
+      </div>
+      <div style="text-align:center;min-width:70px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2)">السعر</div>
+        <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">${fn(sale)} ج</div>
+      </div>
+      ${moveCtl}
+      <div style="display:flex;gap:6px">
+        <button type="button" onclick="openOrdDrawer('${o._id}')" title="تفاصيل" style="padding:5px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">↗</button>
+        <button type="button" onclick="openEditOrder('${o._id}')" title="تعديل كامل" style="padding:5px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--bg3);color:var(--b);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">✏️</button>
+        ${canControl?`<button type="button" onclick="deleteOrderFromReport('${o._id}')" title="حذف" style="padding:5px 9px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">🗑</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div style="margin-bottom:14px">
+      ${canControl?'':'<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:var(--fs-sm);color:var(--y)">⚠️ نقل المراحل والحذف متاح للأدمن ومدير العمليات فقط — يمكنك العرض والتعديل.</div>'}
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <input type="search" id="ctrl-search" value="${__ctrlSearch.replace(/"/g,'&quot;')}" oninput="ctrlFilter()" placeholder="🔍 ابحث باسم العميل / التليفون / رقم الأوردر / المنتج..." class="inp" style="flex:1;min-width:240px;padding:9px 14px">
+        <span id="ctrl-count" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);white-space:nowrap">${all.length} أوردر</span>
+      </div>
+      <div id="ctrl-stages" style="display:flex;gap:6px;flex-wrap:wrap">
+        ${chip('all','الكل','📋')}
+        ${CTRL_STAGES.map(s=>chip(s.key,s.label,s.ico)).join('')}
+      </div>
+    </div>
+    <div id="ctrl-list">${rows||'<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>'}</div>
+  `;
+}
+
+window.ctrlFilter=function(){
+  const q=(document.getElementById('ctrl-search')?.value||'').trim().toLowerCase();
+  __ctrlSearch=q;
+  let shown=0;
+  document.querySelectorAll('#ctrl-list .ctrl-row').forEach(row=>{
+    const hay=row.getAttribute('data-search')||'';
+    const st=row.getAttribute('data-stage')||'';
+    const okQ=!q||hay.includes(q);
+    const okS=__ctrlStage==='all'||st===__ctrlStage;
+    const vis=okQ&&okS;
+    row.style.display=vis?'':'none';
+    if(vis)shown++;
+  });
+  const c=document.getElementById('ctrl-count');if(c)c.textContent=shown+' أوردر';
+};
+
+window.ctrlSetStage=function(stage,btn){
+  __ctrlStage=stage;
+  document.querySelectorAll('#ctrl-stages .d-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  ctrlFilter();
+};
+
+// نقل الأوردر لأي مرحلة مباشرة من القائمة — عبر orderActions.moveStage (admin/ops).
+window.controlMoveStage=async function(orderId,targetStage,sel){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const prev=o.stage;
+  if(targetStage===prev)return;
+  if(!confirm(`نقل أوردر «${o.clientName||orderId}» من ${ctrlStageAr(prev)} إلى ${ctrlStageAr(targetStage)}؟`)){if(sel)sel.value=prev;return;}
+  if(sel)sel.disabled=true;
+  const r=await orderActions.moveStage({
+    orderId, targetStage, role:userRole,
+    userId:auth.currentUser?.uid||'', userName:userName||'',
+  });
+  if(sel)sel.disabled=false;
+  if(!r.ok){if(sel)sel.value=prev;return toast('❌ '+(r.errors||[]).join(' · '),'err');}
+  toast(`✅ نُقل إلى ${ctrlStageAr(targetStage)}`,'ok');
+  // onSnapshot للأوردرات هيعيد render تلقائياً ويحافظ على البحث/الفلتر من الـ state.
 };
 
 window.exportExcel=function(){
