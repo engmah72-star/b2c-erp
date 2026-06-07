@@ -120,7 +120,7 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { signInWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { doc, getDoc, addDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 /* ROLE → REDIRECT MAP */
 const ROLE_PAGES = {
   admin:             'accounts.html',
@@ -306,13 +306,16 @@ window.doForgot = async function() {
   const isPhone = /^01[0125][0-9]{8}$/.test(norm);
   let email = isPhone ? (norm + '@b2c.local') : norm;
   hideErr();
-  // Firebase password-reset emails don't deliver to fake @b2c.local addresses.
-  // For phone-based accounts we ask the user to contact admin to reset from
-  // the employee profile UI. For real emails we send the standard reset link.
+  // حسابات الموبايل (phone@b2c.local) ما تستقبلش بريد مباشرة. بدل تنبيه المدير،
+  // نسجّل طلب ريست ذاتي: Cloud Function (Firestore-trigger) تلاقي إيميل الاسترداد
+  // المسجّل وتبعت رابط التعيين عليه. رسالة محايدة (مفيش كشف إن الرقم/الإيميل موجود).
   if(email.endsWith('@b2c.local')){
-    if(confirm('حساب الموبايل لا يستقبل رسائل بريد. تواصل مع المدير ليعيد تعيين كلمة السر من بروفايل الموظف.\n\nهل تريد فتح واتساب لتنبيه المدير؟')){
-      const msg = encodeURIComponent(`السلام عليكم 👋\nأنا (${norm||input}) نسيت كلمة السر، ممكن تعيد تعيينها من بروفايل الموظف؟`);
-      window.open(`https://wa.me/?text=${msg}`, '_blank');
+    if(!/^01[0125][0-9]{8}$/.test(norm)){ showErr('اكتب رقم موبايل صحيح'); return; }
+    try{
+      await addDoc(collection(db,'password_reset_requests'), { phone: norm, createdAt: serverTimestamp() });
+      alert('✅ لو رقمك مسجّل وله إيميل استرداد، هيوصلك رابط إعادة التعيين على إيميلك خلال دقائق.\n(راجع البريد و spam folder.)\n\nلو ملكش إيميل مسجّل، سجّله من «صفحتي ← إيميل الاسترداد» أو كلّم المدير.');
+    }catch(e){
+      showErr('تعذّر إرسال الطلب: '+(e.message||''));
     }
     return;
   }
