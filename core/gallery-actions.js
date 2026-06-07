@@ -68,7 +68,7 @@ function _cleanKeywords(kw) {
  */
 export async function publishGalleryItem({
   db = defaultDb, file, imageUrl, title, productType, tags, keywords,
-  collectionId, collectionName, actor,
+  collectionId, collectionName, sourceOrderId, clientId, actor,
 } = {}) {
   const actorErr = _requireActor(actor);
   if (actorErr) return { ok: false, errors: [actorErr], warnings: [] };
@@ -112,6 +112,9 @@ export async function publishGalleryItem({
       keywords:        _cleanKeywords(keywords) || [],
       collectionId:    collectionId || null,
       collectionName:  (collectionName || '').trim(),
+      // ربط المصدر (المرحلة 3) — IDs مبهمة فقط (لا PII)؛ تُحلّ الأسماء داخلياً.
+      sourceOrderId:   sourceOrderId || null,
+      clientId:        clientId || null,
       designerName:    actor.userName || '',
       publishedBy:     actor.userId,
       publishedByName: actor.userName || '',

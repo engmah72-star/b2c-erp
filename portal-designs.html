@@ -395,6 +395,7 @@ window.openDetail = function (id) {
       <span>👁 ${g.viewCount || 0} مشاهدة</span>
       <span>${visible ? '✅ ظاهر للعملاء' : '🚫 مخفي'}</span>
     </div>
+    ${g.sourceOrderId ? '<div class="pd-meta" id="dt-source" style="margin:4px 0 6px">🔗 ⟳ تحميل الأوردر المصدر…</div>' : ''}
     ${tags.length ? `<div class="pd-detail-tags">${tags.map((t) => `<span class="pd-swatch" style="width:18px;height:18px;background:${esc(t.hex)}" title="${esc(t.name || '')}"></span>`).join('')}</div>` : ''}
     ${kws.length ? `<div class="pd-facets" style="margin-top:6px">${kws.map((k) => `<span class="pd-kw" style="cursor:default">${esc(k)}</span>`).join('')}</div>` : ''}
     ${(() => {
@@ -420,7 +421,31 @@ window.openDetail = function (id) {
       : '<div class="pd-meta">لا توجد تصاميم مشابهة بعد — أضِف وسوماً وألواناً لربط التصاميم.</div>'}
   `;
   $('ov-detail').classList.add('open');
+  if (g.sourceOrderId) resolveSource(g.sourceOrderId, g._id);
 };
+
+// حلّ الأوردر المصدر داخلياً (كود + اسم العميل) — لا يُخزَّن أي اسم في الـ doc العام.
+const _orderCache = new Map();
+async function resolveSource(orderId, forItemId) {
+  const el = $('dt-source');
+  if (!el) return;
+  try {
+    let o = _orderCache.get(orderId);
+    if (o === undefined) {
+      const snap = await getDoc(doc(db, 'orders', orderId));
+      o = snap.exists() ? snap.data() : null;
+      _orderCache.set(orderId, o);
+    }
+    if (detailId !== forItemId) return;            // المستخدم فتح تصميماً آخر
+    if (!el || !document.body.contains(el)) return;
+    if (!o) { el.innerHTML = '🔗 الأوردر المصدر غير متاح'; return; }
+    const code = esc(o.orderId || orderId.slice(-6));
+    const client = esc(o.clientName || '—');
+    el.innerHTML = `🔗 من أوردر <a href="design.html?orderId=${encodeURIComponent(orderId)}" style="color:var(--p);font-weight:var(--fw-bold)">#${code}</a> · العميل: ${client}`;
+  } catch (_) {
+    if (el && document.body.contains(el)) el.innerHTML = '🔗 تعذّر تحميل الأوردر المصدر';
+  }
+}
 
 window.closeDetail = function () { detailId = null; $('ov-detail').classList.remove('open'); };
 window.editFromDetail = function () { const id = detailId; closeDetail(); if (id) openEdit(id); };
