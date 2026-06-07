@@ -126,6 +126,23 @@ export function renderAlerts(a) {
   return card('🔔 تنبيهاتي', `<ul class="mh-alerts">${items.join('')}</ul>`);
 }
 
+// ── Comm hub — «التواصل مع الإدارة» (البند 3 · جهة الموظف) ─────────────
+// مكان واحد يجمع قنوات الموظف نحو الإدارة بعدّادات حيّة. عرض + روابط فقط.
+export function renderCommHub({ requests = 0, incidents = 0 } = {}) {
+  const badge = n => n > 0 ? ` <span class="mh-badge">${n}</span>` : '';
+  const row = (href, ico, lbl, n, sub) => `<a class="mh-ch" href="${esc(href)}">
+    <span class="mh-ch-ico">${ico}</span>
+    <span class="mh-ch-txt"><span class="mh-ch-lbl">${esc(lbl)}${badge(n)}</span>
+      <span class="mh-ch-sub">${esc(sub)}</span></span>
+    <span class="mh-ch-go">←</span></a>`;
+  const body = `<div class="mh-ch-list">
+    ${row('my-requests.html', '🌴', 'طلباتي', requests, 'إجازات · سلف · مصروفات')}
+    ${row('my-profile.html?tab=feedback', '💬', 'ملاحظاتي وتظلّماتي', incidents, 'راجع ملاحظات الإدارة وقدّم تظلّماً')}
+    ${row('inbox.html', '✉️', 'مراسلة الإدارة', 0, 'محادثة مباشرة')}
+  </div>`;
+  return card('📨 التواصل مع الإدارة', body);
+}
+
 // ── Quick links ──────────────────────────────────────────────────────
 export function renderLinks(roleDash) {
   const link = (href, ico, lbl) => `<a class="mh-link" href="${esc(href)}">${ico}<span>${esc(lbl)}</span></a>`;

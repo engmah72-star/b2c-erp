@@ -98,6 +98,8 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { employeeActions } from "./employee-actions.js";
 import { annotateRecurrence, isVoided, APPEAL_STATUS } from "./core/incident-reasons.js";
+import { computeScore } from "./core/employee-scoring.js";
+import { isWorkDayFor } from "./core/attendance-core.js";
 const ROLES={
   admin:{label:'Admin',col:'var(--r)',ico:'👑'},
   operation_manager:{label:'مدير عمليات',col:'var(--b-bright)',ico:'📋'},
@@ -194,87 +196,25 @@ document.addEventListener('keydown',e=>{
   }
 });
 
-// ── Schedule helpers ──
-function isWorkDay(dateStr){
-  const ws=me?.workSchedule;
-  if(!ws?.days?.length)return new Date(dateStr).getDay()!==5&&new Date(dateStr).getDay()!==6;
-  return ws.days.includes(new Date(dateStr).getDay());
-}
+// ── Schedule helpers — مصدر واحد: core/attendance-core.js (RULE 1) ──
+function isWorkDay(dateStr){return isWorkDayFor(dateStr,me?.workSchedule);}
 
-// ── Score (mirrors employee-profile.calcScoreFor, simplified) ──
+// ── Score — مصدر واحد: core/employee-scoring.js (RULE 1، نفس خوارزمية الأدمن) ──
+// adapter: يُمرّر inputs الموظف لـ computeScore ثم يُثري الناتج بحقول العرض.
+// ملاحظة: my-profile لا يحمّل الإجازات، فنمرّر leaves:[] (يطابق سلوكها السابق
+// في بُعد الحضور — صفر تراجع)؛ منطق الإنتاجية/الجودة لم يعد مكرّراً هنا.
 function calcScoreFor(mKey){
   if(!me||!mKey)return{score:0,grade:'—',col:'var(--dim2)',breakdown:{},meta:{}};
   const[ys,ms]=mKey.split('-').map(Number);
-  const isCur=mKey===monthKey();
-  const dim=new Date(ys,ms,0).getDate();
-  const lastDay=isCur?now.getDate():dim;
-
-  const att=myAttendance.filter(a=>(a.date||'').startsWith(mKey));
-  const present=att.length;
-  const lateMins=att.reduce((s,a)=>s+(parseInt(a.lateMinutes)||0),0);
-  let workDays=0;
-  for(let d=1;d<=lastDay;d++){
-    const ds=mKey+'-'+String(d).padStart(2,'0');
-    if(isWorkDay(ds))workDays++;
-  }
-  const attPct=workDays>0?Math.min(1,present/workDays):0.5;
-  const latePenalty=Math.min(7,Math.floor(lateMins/60));
-  const attScore=Math.max(0,Math.round(attPct*35)-latePenalty);
-
-  // Productivity from orders (simplified — only roles that have signal)
-  const uid=me.authUid||myEmpId;
-  const myMonthOrds=myOrders.filter(o=>{
+  const monthOrders=myOrders.filter(o=>{
     const d=o.createdAt?.toDate?.();
     return d&&d.getMonth()===(ms-1)&&d.getFullYear()===ys;
   });
-  let prodPct=0.65;
-  if(myMonthOrds.length>0){
-    if(me.role==='graphic_designer'||me.role==='design_operator'){
-      const done=myMonthOrds.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
-      prodPct=done/myMonthOrds.length;
-    } else if(me.role==='production_agent'){
-      const done=myMonthOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
-      prodPct=done/myMonthOrds.length;
-    } else if(me.role==='shipping_officer'){
-      const done=myMonthOrds.filter(o=>o.stage==='archived').length;
-      prodPct=done/myMonthOrds.length;
-    } else { prodPct=Math.min(1,myMonthOrds.length/20); }
-  }
-  const goal=myGoals.find(g=>g.month===mKey);
-  if(goal?.targetOrdersMonthly>0){
-    const expected=isCur?goal.targetOrdersMonthly*(lastDay/dim):goal.targetOrdersMonthly;
-    if(expected>0)prodPct=Math.min(1,myMonthOrds.length/expected);
-  }
-  const prodScore=Math.round(prodPct*40);
-
-  let qualPct=0.8;
-  if(myMonthOrds.length>0){
-    if(me.role==='graphic_designer'||me.role==='design_operator'){
-      const rej=myMonthOrds.filter(o=>o.designStatus==='rejected'||(o.timeline||[]).some(t=>(t.action||'').includes('رفض')||(t.action||'').includes('مراجعة'))).length;
-      qualPct=Math.max(0,1-(rej/myMonthOrds.length));
-    } else {
-      const arch=myMonthOrds.filter(o=>['shipping','archived'].includes(o.stage)).length;
-      qualPct=arch/myMonthOrds.length;
-    }
-  }
-  // المُلغى أثره (تم قبول تظلّمه) لا يُحتسب في خصم الجودة
-  const monthIncidents=myIncidents.filter(i=>(i.date||'').startsWith(mKey)&&!isVoided(i));
-  const incPenalty=Math.min(0.6,monthIncidents.length*0.05);
-  qualPct=Math.max(0,qualPct-incPenalty);
-  const qualScore=Math.round(qualPct*25);
-
-  const score=Math.min(100,attScore+prodScore+qualScore);
-  const grade=score>=85?'ممتاز ⭐':score>=70?'جيد جداً':score>=50?'متوسط':'يحتاج تطوير';
-  const col=score>=85?'var(--g)':score>=70?'var(--b)':score>=50?'var(--y)':'var(--r)';
-  return{
-    score,grade,col,
-    breakdown:{
-      att:{score:attScore,pct:Math.round(attPct*100),lateMins,latePenalty,present,workDays},
-      prod:{score:prodScore,pct:Math.round(prodPct*100),total:myMonthOrds.length},
-      qual:{score:qualScore,pct:Math.round(qualPct*100),incidents:monthIncidents.length},
-    },
-    meta:{lastDay,daysInMonth:dim,goal}
-  };
+  const r=computeScore({mKey,now,employee:me,attendance:myAttendance,leaves:[],monthOrders,goals:myGoals,incidents:myIncidents});
+  // إثراء بحقول العرض التي تتوقّعها الصفحة (الحضور من meta الموحّد + الهدف)
+  if(r.breakdown&&r.breakdown.att){r.breakdown.att.present=r.meta.present;r.breakdown.att.workDays=r.meta.workDays;}
+  if(r.meta)r.meta.goal=myGoals.find(g=>g.month===mKey)||null;
+  return r;
 }
 
 // ── Render ──

@@ -23,8 +23,28 @@ const PREFIX = 'feat.';
 //   لذلك الافتراضي OFF (الوضع الدستوري الآمن)؛ تفعيله = موافقة صريحة على نطاق محدود
 //   ومراقَب (rollout تدريجي قابل للتراجع — E1). راجع
 //   docs/CONSTITUTIONAL_EXCEPTION_MEMBER_MESSAGING.md.
+//
+// `employeeProfile.pendingInbox` — «جسر القرارات» داخل بروفايل الموظف: شريط أعلى
+//   البروفايل يجمع الطلبات المعلّقة الخاصة بهذا الموظف (تظلّمات إخفاقات · إجازات ·
+//   أذونات حضور · طلبات مالية) ويتيح القرار inline بإعادة استخدام نفس actions
+//   القائمة (decideIncidentAppeal/decideEmployeeLeave/decideAttendancePermission).
+//   عرض فقط + إعادة استخدام — لا نموذج بيانات جديد. مُفعّل افتراضياً مع مفتاح
+//   إيقاف فوري (E1: قابل للتراجع): ?feat.employeeProfile.pendingInbox=0
+//
+// `employeeProfile.dmButton` — زر «💬 مراسلة» في بروفايل الموظف يفتح/يضمن DM
+//   (COLLEGIAL) عبر inboxActions.ensureDM ثم ينتقل لـ inbox.html?conv=… . تنقّل +
+//   إعادة استخدام فقط (لا كتابة مراسلة في الصفحة). مُفعّل افتراضياً (إيقاف =0).
+// `employeeProfile.timeline` — تبويب «السجل» الموحّد (عرض فقط) من
+//   core/employee-timeline.js. مُفعّل افتراضياً (إيقاف =0).
+// `myHome.commHub` — البند 3 (جهة الموظف): بطاقة «📨 التواصل مع الإدارة» في «صفحتي»
+//   تجمع في مكان واحد روابط طلبات الموظف (إجازات/مالية) · ملاحظاته/تظلّماته ·
+//   مراسلة الإدارة — مع عدّادات حيّة. عرض + تنقّل فقط. مُفعّلة افتراضياً (إيقاف =0).
 export const FLAGS = Object.freeze({
   MESSAGING_MEMBER_TO_MEMBER: 'messaging.memberToMember',
+  EMPLOYEE_PROFILE_PENDING_INBOX: 'employeeProfile.pendingInbox',
+  EMPLOYEE_PROFILE_DM_BUTTON: 'employeeProfile.dmButton',
+  EMPLOYEE_PROFILE_TIMELINE: 'employeeProfile.timeline',
+  MY_HOME_COMM_HUB: 'myHome.commHub',
 });
 
 let __urlCache = null;
