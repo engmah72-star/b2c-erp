@@ -299,6 +299,10 @@ export function openPrintOrderActionSheet(orderId) {
       onClick: () => { try { window.openCollect?.(); } catch (_) {} },
     },
     canRejectRole && {
+      icon: '💰', label: 'تعديل المبالغ (الكلي + المقدم)', variant: 'primary',
+      onClick: () => { try { window.openEditAmounts?.(); } catch (_) {} },
+    },
+    canRejectRole && {
       section: '⚠️ خطر',
       icon: '↩️', label: 'رفض الأوردر', variant: 'danger',
       onClick: () => { try { window.openReject?.(); } catch (_) {} },
