@@ -279,6 +279,7 @@ const fn=fmtNum;
 let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders',__filtersOpen=false;
 // ══ Control tab state (تاب التحكم الكامل) ══
 let __ctrlSearch='',__ctrlStage='all';
+const __ctrlSel=new Set(); // تحديد متعدد للعمليات الجماعية (order ids)
 const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
@@ -1860,7 +1861,9 @@ function renderControl(){
     const moveCtl=canControl
       ? `<select class="inp" style="padding:5px 8px;font-size:var(--fs-sm);min-width:118px" title="نقل الأوردر لأي مرحلة" onchange="controlMoveStage('${o._id}',this.value,this)">${stageOpts}</select>`
       : `<span class="col-chip" style="background:var(--bg3);color:var(--dim2)">${ctrlStageAr(o.stage)}</span>`;
+    const cb=canControl?`<input type="checkbox" class="ctrl-cb" data-id="${o._id}" ${__ctrlSel.has(o._id)?'checked':''} onclick="ctrlToggleSel('${o._id}',this)" title="تحديد للعمليات الجماعية" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:var(--b)">`:'';
     return `<div class="ctrl-row" data-stage="${o.stage||''}" data-search="${hay}" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+      ${cb}
       <div style="flex:1;min-width:160px;cursor:pointer" onclick="openOrdDrawer('${o._id}')" title="تفاصيل الأوردر">
         <div style="font-weight:var(--fw-extra);font-size:var(--fs-base)">${o.clientName||'—'} <span style="color:var(--dim2);font-weight:var(--fw-semi);font-size:var(--fs-xs)">· ${oid}</span></div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${(o.products||[]).map(p=>p.name).join(' · ')||o.product||'—'}${o.clientPhone?' · '+o.clientPhone:''}</div>
@@ -1893,8 +1896,24 @@ function renderControl(){
         ${chip('all','الكل','📋')}
         ${CTRL_STAGES.map(s=>chip(s.key,s.label,s.ico)).join('')}
       </div>
+      ${canControl?`<label style="display:inline-flex;align-items:center;gap:8px;margin-top:10px;font-size:var(--fs-sm);color:var(--dim2);cursor:pointer;user-select:none">
+        <input type="checkbox" id="ctrl-selall" onclick="ctrlSelectAllVisible(this)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--b)">
+        تحديد كل المعروض (للعمليات الجماعية)
+      </label>`:''}
     </div>
-    <div id="ctrl-list">${rows||'<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>'}</div>
+    <div id="ctrl-list" style="padding-bottom:${canControl?'88px':'0'}">${rows||'<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>'}</div>
+    ${canControl?`<div id="ctrl-bulkbar" style="display:none;position:fixed;bottom:calc(var(--mob-nav-h, 0px) + 16px);left:50%;transform:translateX(-50%);z-index:250;background:var(--bg1);border:1px solid var(--b);border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.5);padding:10px 14px;align-items:center;gap:12px;flex-wrap:wrap;max-width:calc(100vw - 24px)">
+      <span style="font-weight:var(--fw-heavy);color:var(--b);white-space:nowrap"><span id="ctrl-selcount">0</span> محدد</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <select id="ctrl-bulk-stage" class="inp" style="padding:6px 8px;font-size:var(--fs-sm);min-width:120px"><option value="">🔄 نقل لمرحلة…</option>${CTRL_STAGES.map(s=>`<option value="${s.key}">${s.ico} ${s.label}</option>`).join('')}</select>
+        <button type="button" onclick="ctrlBulkStage()" class="btn btn-b btn-sm">تنفيذ</button>
+      </div>
+      ${employees&&employees.length?`<div style="display:flex;align-items:center;gap:6px">
+        <select id="ctrl-bulk-assignee" class="inp" style="padding:6px 8px;font-size:var(--fs-sm);min-width:130px"><option value="">👤 تعيين مسؤول…</option>${employees.filter(e=>e.name&&e.active!==false).map(e=>`<option value="${e._id}">${e.name}</option>`).join('')}</select>
+        <button type="button" onclick="ctrlBulkAssign()" class="btn btn-ghost btn-sm">تعيين</button>
+      </div>`:''}
+      <button type="button" onclick="ctrlClearSel()" class="btn btn-ghost btn-sm" style="white-space:nowrap">✕ مسح</button>
+    </div>`:''}
   `;
 }
 
@@ -1912,6 +1931,99 @@ window.ctrlFilter=function(){
     if(vis)shown++;
   });
   const c=document.getElementById('ctrl-count');if(c)c.textContent=shown+' أوردر';
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+
+// ══ Control tab — العمليات الجماعية (multi-select) ══
+// قائمة صفوف الأوردرات المعروضة حالياً (بعد البحث/الفلتر)
+function __ctrlVisibleRows(){
+  return Array.from(document.querySelectorAll('#ctrl-list .ctrl-row')).filter(r=>r.style.display!=='none');
+}
+// زامن حالة «تحديد الكل» مع الصفوف المعروضة
+function ctrlSyncSelectAll(){
+  const master=document.getElementById('ctrl-selall');if(!master)return;
+  const vis=__ctrlVisibleRows();
+  const cbs=vis.map(r=>r.querySelector('.ctrl-cb')).filter(Boolean);
+  const checked=cbs.filter(cb=>cb.checked).length;
+  master.checked=cbs.length>0&&checked===cbs.length;
+  master.indeterminate=checked>0&&checked<cbs.length;
+}
+// حدّث شريط العمليات الجماعية (العدّاد + الإظهار/الإخفاء)
+window.ctrlUpdateBar=function(){
+  const bar=document.getElementById('ctrl-bulkbar');if(!bar)return;
+  const n=__ctrlSel.size;
+  const cnt=document.getElementById('ctrl-selcount');if(cnt)cnt.textContent=n;
+  bar.style.display=n>0?'flex':'none';
+};
+// تحديد/إلغاء صف واحد
+window.ctrlToggleSel=function(id,cb){
+  if(cb.checked)__ctrlSel.add(id);else __ctrlSel.delete(id);
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+// تحديد/إلغاء كل الصفوف المعروضة (يحترم البحث/الفلتر الحالي)
+window.ctrlSelectAllVisible=function(master){
+  const vis=__ctrlVisibleRows();
+  vis.forEach(r=>{
+    const cb=r.querySelector('.ctrl-cb');if(!cb)return;
+    cb.checked=master.checked;
+    const id=cb.getAttribute('data-id');
+    if(master.checked)__ctrlSel.add(id);else __ctrlSel.delete(id);
+  });
+  master.indeterminate=false;
+  ctrlUpdateBar();
+};
+// مسح كل التحديد
+window.ctrlClearSel=function(){
+  __ctrlSel.clear();
+  document.querySelectorAll('#ctrl-list .ctrl-cb').forEach(cb=>cb.checked=false);
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+// نقل جماعي للمحدد لأي مرحلة — عبر orderActions.bulkStageMove (admin/ops، atomic batched)
+window.ctrlBulkStage=async function(){
+  const sel=document.getElementById('ctrl-bulk-stage');
+  const target=sel?.value;
+  if(!target)return toast('⚠️ اختر المرحلة أولاً','err');
+  const ids=[...__ctrlSel];
+  if(!ids.length)return toast('⚠️ لم تحدّد أي أوردر','err');
+  if(!confirm(`نقل ${ids.length} أوردر إلى ${ctrlStageAr(target)}؟`)){return;}
+  const btn=sel.nextElementSibling;
+  if(btn){btn.disabled=true;btn.textContent='...';}
+  const r=await orderActions.bulkStageMove({
+    orderIds:ids, target:ctrlStageAr(target), mapping:{stage:target},
+    role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
+  });
+  if(btn){btn.disabled=false;btn.textContent='تنفيذ';}
+  if(sel)sel.value='';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  let msg=`✅ نُقل ${r.count} أوردر إلى ${ctrlStageAr(target)}`;
+  if(r.blocked)msg+=` · ${r.blocked} مستثنى`;
+  toast(msg,'ok');
+  ctrlClearSel();
+  // onSnapshot يعيد render تلقائياً.
+};
+// تعيين مسؤول للمحدد — عبر orderActions.bulkAssign (atomic batched)
+window.ctrlBulkAssign=async function(){
+  const sel=document.getElementById('ctrl-bulk-assignee');
+  const empId=sel?.value;
+  if(!empId)return toast('⚠️ اختر المسؤول أولاً','err');
+  const emp=employees.find(e=>e._id===empId);
+  const ids=[...__ctrlSel];
+  if(!ids.length)return toast('⚠️ لم تحدّد أي أوردر','err');
+  if(!confirm(`تعيين «${emp?.name||''}» على ${ids.length} أوردر؟`)){return;}
+  const btn=sel.nextElementSibling;
+  if(btn){btn.disabled=true;btn.textContent='...';}
+  const r=await orderActions.bulkAssign({
+    orderIds:ids, employeeId:empId, employeeName:emp?.name||'',
+    userId:auth.currentUser?.uid||'', userName:userName||'',
+  });
+  if(btn){btn.disabled=false;btn.textContent='تعيين';}
+  if(sel)sel.value='';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم تعيين «${emp?.name||''}» على ${r.count} أوردر`,'ok');
+  ctrlClearSel();
 };
 
 window.ctrlSetStage=function(stage,btn){
