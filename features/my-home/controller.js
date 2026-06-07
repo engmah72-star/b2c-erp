@@ -14,8 +14,8 @@ import { employeeActions } from '../../employee-actions.js';
 import { currentPeriodKey } from '../../core/task-recurrence.js';
 import { renderHero, renderTasks, renderOrders, renderAlerts, renderLinks, renderCommHub } from './render.js';
 
-// البند 3 (جهة الموظف) — بطاقة التواصل الموحّدة، خلف علم default-OFF (E1.8)
-const COMM_HUB_ON = isFeatureEnabled(FLAGS.MY_HOME_COMM_HUB, false);
+// البند 3 (جهة الموظف) — بطاقة التواصل الموحّدة: مُفعّلة افتراضياً؛ إيقاف فوري ?feat.myHome.commHub=0
+const COMM_HUB_ON = isFeatureEnabled(FLAGS.MY_HOME_COMM_HUB, true);
 const REQ_OPEN = new Set(['requested', 'awaiting_receipt', 'pending', 'confirmed']);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
