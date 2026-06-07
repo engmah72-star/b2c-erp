@@ -228,6 +228,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dedupEmployees, resolveDesigner, isDelivered, getStageDurations, formatDurationAr } from "./orders.js";
 import { calcRem, isPostDesignWithRem, POST_DESIGN_STAGES } from "./core/order-math.js";
+import { maskPhone, canSeeField } from "./core/permissions-matrix.js";
 import { cleanPhone, waLink, telLink } from "./core/comms-utils.js";
 import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
@@ -278,7 +279,12 @@ const fn=fmtNum;
 // ══ Collection state (search/sort/filters) ══
 let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders',__filtersOpen=false;
 // ══ Control tab state (تاب التحكم الكامل) ══
-let __ctrlSearch='',__ctrlStage='all';
+let __ctrlSearch='',__ctrlStage='all',__ctrlFlag='all',__ctrlSort='recent';
+let __ctrlIncludeArchived=false; // الأرشيف مستبعَد افتراضياً (أداء + يطابق النية)
+const __ctrlSel=new Set(); // تحديد متعدد للعمليات الجماعية (order ids)
+// RULE 8 — التليفون يُخفى للأدوار غير المخوّلة (admin/ops/CS/shipping فقط)
+let __canShowPhone=false;
+const fmtPhone=p=>maskPhone(p||'',__canShowPhone);
 const __debouncers={};
 function debounce(key,fn,ms){if(__debouncers[key])clearTimeout(__debouncers[key]);__debouncers[key]=setTimeout(fn,ms);}
 
@@ -492,6 +498,8 @@ onAuthStateChanged(auth,async u=>{
     if(!isAdm&&!pages.includes('*')&&!pages.includes('reports')){window.location.href=RMAP[role]||'login.html';return;}
     userName=d.name||u.email;
     userRole=role;userIsAdmin=isAdm;
+    // RULE 8 — صلاحية رؤية تليفون العميل (مع احترام overrides على مستوى المستخدم)
+    __canShowPhone=canSeeField('client_phone',role,d.permissions||null);
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=(userName[0]||'U').toUpperCase();
     buildSidebar(d,'reports.html');
@@ -1082,7 +1090,7 @@ window.openOrdDrawer=function(id){
     <div>
       <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">${stageAr} · ${o.orderId||id.slice(-6)}</div>
       <div style="font-size:17px;font-weight:var(--fw-heavy)">${o.clientName||'—'}</div>
-      <div style="font-size:var(--fs-base);color:var(--b)">${o.clientPhone||''}</div>
+      <div style="font-size:var(--fs-base);color:var(--b)">${fmtPhone(o.clientPhone)}</div>
     </div>`;
 
   document.getElementById('ord-drawer-body').innerHTML=`
@@ -1425,7 +1433,7 @@ function renderCollectionRows(data){
       <div class="col-cell" style="display:block">
         <div class="txt-bold-md">${o.clientName||'—'} ${stale?'<span title="آخر تحديث > 14 يوم" style="font-size:var(--fs-sm);color:var(--y)">⏰</span>':''} ${noCost?'<span title="مرحلة متقدمة بدون تكلفة مسجّلة" style="font-size:var(--fs-sm);color:var(--r)">🚫</span>':''}</div>
         <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">
-          ${stage} ${orderRef} · ${o.clientPhone||'—'}${ageD>0?' · <span style="color:'+(ageD>60?'var(--r)':ageD>30?'var(--y)':'var(--dim2)')+';font-weight:var(--fw-bold)">'+ageD+' يوم</span>':''}
+          ${stage} ${orderRef} · ${fmtPhone(o.clientPhone)||'—'}${ageD>0?' · <span style="color:'+(ageD>60?'var(--r)':ageD>30?'var(--y)':'var(--dim2)')+';font-weight:var(--fw-bold)">'+ageD+' يوم</span>':''}
         </div>
         <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:5px;overflow:hidden">
           <div style="height:100%;width:${pct}%;background:${status.c};border-radius:2px"></div>
@@ -1843,27 +1851,53 @@ const ctrlStageAr=st=>{const s=CTRL_STAGES.find(x=>x.key===st);return s?(s.ico+'
 function renderControl(){
   // تاب التحكم يعمل على كل الأوردرات (مش متأثر بفلتر التاريخ) — "كل الأوردر".
   const canControl=userIsAdmin; // admin / operation_manager — نقل المراحل والحذف
-  const all=[...orders].sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  // عدّاد لكل مرحلة (للـ chips)
+  // ── Scope: الأرشيف مستبعَد افتراضياً (أداء — يتجنّب رِندر آلاف الأوردرات القديمة) ──
+  const archivedCount=orders.filter(o=>o.stage==='archived').length;
+  const base=__ctrlIncludeArchived?orders:orders.filter(o=>o.stage!=='archived');
+  // ── Sort ──
+  const dl=o=>o.deadline?new Date(o.deadline).getTime():Infinity;
+  const sorters={
+    recent:(a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0),
+    oldest:(a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0),
+    rem:(a,b)=>calcRem(b)-calcRem(a),
+    deadline:(a,b)=>dl(a)-dl(b),
+  };
+  const all=[...base].sort(sorters[__ctrlSort]||sorters.recent);
+  // عدّاد لكل مرحلة (للـ chips) — على نطاق العرض الحالي
   const cnt={all:all.length};
   CTRL_STAGES.forEach(s=>cnt[s.key]=all.filter(o=>o.stage===s.key).length);
+  // عدّاد الفلاتر الذكية
+  const isLate=o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage);
+  const fcnt={
+    all:all.length,
+    late:all.filter(isLate).length,
+    nocost:all.filter(isMissingCost).length,
+    rem:all.filter(o=>calcRem(o)>0).length,
+    stale:all.filter(isStaleOrder).length,
+  };
 
   const chip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlStage===key?' active':''}" onclick="ctrlSetStage('${key}',this)">${ico} ${label} <span style="opacity:.6">${cnt[key]||0}</span></button>`;
+  const fchip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlFlag===key?' active':''}" onclick="ctrlSetFlag('${key}',this)">${ico} ${label} <span style="opacity:.6">${fcnt[key]||0}</span></button>`;
 
   const rows=all.map(o=>{
     const rem=calcRem(o);
-    const paid=parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0;
     const sale=parseFloat(o.salePrice)||0;
     const oid=o.orderId||o._id.slice(-6);
+    const phone=fmtPhone(o.clientPhone);
+    // البحث يبقى على القيمة الخام دائماً (search-only؛ مش معروض للأدوار غير المخوّلة)
     const hay=`${o.clientName||''} ${o.clientPhone||''} ${oid} ${o.product||''} ${(o.products||[]).map(p=>p.name).join(' ')}`.toLowerCase().replace(/"/g,'&quot;');
+    const fLate=isLate(o)?1:0, fNocost=isMissingCost(o)?1:0, fRem=rem>0?1:0, fStale=isStaleOrder(o)?1:0;
     const stageOpts=CTRL_STAGES.map(s=>`<option value="${s.key}"${o.stage===s.key?' selected':''}>${s.ico} ${s.label}</option>`).join('');
     const moveCtl=canControl
       ? `<select class="inp" style="padding:5px 8px;font-size:var(--fs-sm);min-width:118px" title="نقل الأوردر لأي مرحلة" onchange="controlMoveStage('${o._id}',this.value,this)">${stageOpts}</select>`
       : `<span class="col-chip" style="background:var(--bg3);color:var(--dim2)">${ctrlStageAr(o.stage)}</span>`;
-    return `<div class="ctrl-row" data-stage="${o.stage||''}" data-search="${hay}" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+    const cb=canControl?`<input type="checkbox" class="ctrl-cb" data-id="${o._id}" ${__ctrlSel.has(o._id)?'checked':''} onclick="ctrlToggleSel('${o._id}',this)" title="تحديد للعمليات الجماعية" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:var(--b)">`:'';
+    const flags=`${fLate?'<span title="متأخر عن الموعد" style="color:var(--r)">⏰</span>':''}${fNocost?'<span title="بدون تكلفة مسجّلة" style="color:var(--y)">🏭</span>':''}${fStale?'<span title="راكد >14 يوم" style="color:var(--dim2)">💤</span>':''}`;
+    return `<div class="ctrl-row" data-stage="${o.stage||''}" data-search="${hay}" data-late="${fLate}" data-nocost="${fNocost}" data-rem="${fRem}" data-stale="${fStale}" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px">
+      ${cb}
       <div style="flex:1;min-width:160px;cursor:pointer" onclick="openOrdDrawer('${o._id}')" title="تفاصيل الأوردر">
-        <div style="font-weight:var(--fw-extra);font-size:var(--fs-base)">${o.clientName||'—'} <span style="color:var(--dim2);font-weight:var(--fw-semi);font-size:var(--fs-xs)">· ${oid}</span></div>
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${(o.products||[]).map(p=>p.name).join(' · ')||o.product||'—'}${o.clientPhone?' · '+o.clientPhone:''}</div>
+        <div style="font-weight:var(--fw-extra);font-size:var(--fs-base)">${o.clientName||'—'} <span style="color:var(--dim2);font-weight:var(--fw-semi);font-size:var(--fs-xs)">· ${oid}</span> ${flags}</div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">${(o.products||[]).map(p=>p.name).join(' · ')||o.product||'—'}${phone?' · '+phone:''}</div>
       </div>
       <div style="text-align:center;min-width:78px">
         <div style="font-size:var(--fs-xs);color:var(--dim2)">المتبقي</div>
@@ -1882,36 +1916,199 @@ function renderControl(){
     </div>`;
   }).join('');
 
+  const sortOpt=(v,l)=>`<option value="${v}"${__ctrlSort===v?' selected':''}>${l}</option>`;
   return `
     <div style="margin-bottom:14px">
       ${canControl?'':'<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:var(--fs-sm);color:var(--y)">⚠️ نقل المراحل والحذف متاح للأدمن ومدير العمليات فقط — يمكنك العرض والتعديل.</div>'}
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px">🎛️ كل الأوردرات${__ctrlIncludeArchived?' (شامل الأرشيف)':' النشطة'} — غير متأثر بفلتر التاريخ بالأعلى.</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-        <input type="search" id="ctrl-search" value="${__ctrlSearch.replace(/"/g,'&quot;')}" oninput="ctrlFilter()" placeholder="🔍 ابحث باسم العميل / التليفون / رقم الأوردر / المنتج..." class="inp" style="flex:1;min-width:240px;padding:9px 14px">
+        <input type="search" id="ctrl-search" value="${__ctrlSearch.replace(/"/g,'&quot;')}" oninput="ctrlFilter()" placeholder="🔍 ابحث باسم العميل / التليفون / رقم الأوردر / المنتج..." class="inp" style="flex:1;min-width:220px;padding:9px 14px">
+        <select id="ctrl-sort" class="inp" onchange="ctrlSetSort(this.value)" style="padding:9px 10px;width:auto;min-width:130px" title="ترتيب">
+          ${sortOpt('recent','🕒 الأحدث')}${sortOpt('oldest','📜 الأقدم')}${sortOpt('rem','💰 الأعلى متبقّي')}${sortOpt('deadline','⏰ الأقرب موعداً')}
+        </select>
         <span id="ctrl-count" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);white-space:nowrap">${all.length} أوردر</span>
       </div>
       <div id="ctrl-stages" style="display:flex;gap:6px;flex-wrap:wrap">
         ${chip('all','الكل','📋')}
-        ${CTRL_STAGES.map(s=>chip(s.key,s.label,s.ico)).join('')}
+        ${CTRL_STAGES.filter(s=>s.key!=='archived'||__ctrlIncludeArchived).map(s=>chip(s.key,s.label,s.ico)).join('')}
+        <button type="button" class="d-btn${__ctrlIncludeArchived?' active':''}" onclick="ctrlToggleArchived(this)" title="إظهار/إخفاء الأوردرات المؤرشفة">📁 ${__ctrlIncludeArchived?'إخفاء الأرشيف':'تضمين الأرشيف'} <span style="opacity:.6">${archivedCount}</span></button>
       </div>
+      <div id="ctrl-flags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        ${fchip('all','الكل','▫️')}
+        ${fchip('late','متأخر','⏰')}
+        ${fchip('rem','عليه متبقّي','💰')}
+        ${fchip('nocost','بدون تكلفة','🏭')}
+        ${fchip('stale','راكد','💤')}
+      </div>
+      ${canControl?`<label style="display:inline-flex;align-items:center;gap:8px;margin-top:10px;font-size:var(--fs-sm);color:var(--dim2);cursor:pointer;user-select:none">
+        <input type="checkbox" id="ctrl-selall" onclick="ctrlSelectAllVisible(this)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--b)">
+        تحديد كل المعروض (للعمليات الجماعية)
+      </label>`:''}
     </div>
-    <div id="ctrl-list">${rows||'<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>'}</div>
+    <div id="ctrl-list" style="padding-bottom:${canControl?'88px':'0'}">${rows||'<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>'}</div>
+    ${canControl?`<div id="ctrl-bulkbar" style="display:none;position:fixed;bottom:calc(var(--mob-nav-h, 0px) + 16px);left:50%;transform:translateX(-50%);z-index:250;background:var(--bg1);border:1px solid var(--b);border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.5);padding:10px 14px;align-items:center;gap:12px;flex-wrap:wrap;max-width:calc(100vw - 24px)">
+      <span style="font-weight:var(--fw-heavy);color:var(--b);white-space:nowrap"><span id="ctrl-selcount">0</span> محدد</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <select id="ctrl-bulk-stage" class="inp" style="padding:6px 8px;font-size:var(--fs-sm);min-width:120px"><option value="">🔄 نقل لمرحلة…</option>${CTRL_STAGES.map(s=>`<option value="${s.key}">${s.ico} ${s.label}</option>`).join('')}</select>
+        <button type="button" onclick="ctrlBulkStage()" class="btn btn-b btn-sm">تنفيذ</button>
+      </div>
+      ${employees&&employees.length?`<div style="display:flex;align-items:center;gap:6px">
+        <select id="ctrl-bulk-assignee" class="inp" style="padding:6px 8px;font-size:var(--fs-sm);min-width:130px"><option value="">👤 تعيين مسؤول…</option>${employees.filter(e=>e.name&&e.active!==false).map(e=>`<option value="${e._id}">${e.name}</option>`).join('')}</select>
+        <button type="button" onclick="ctrlBulkAssign()" class="btn btn-ghost btn-sm">تعيين</button>
+      </div>`:''}
+      <button type="button" onclick="ctrlClearSel()" class="btn btn-ghost btn-sm" style="white-space:nowrap">✕ مسح</button>
+    </div>`:''}
   `;
 }
 
 window.ctrlFilter=function(){
   const q=(document.getElementById('ctrl-search')?.value||'').trim().toLowerCase();
   __ctrlSearch=q;
+  const fAttr={late:'late',rem:'rem',nocost:'nocost',stale:'stale'}[__ctrlFlag];
   let shown=0;
   document.querySelectorAll('#ctrl-list .ctrl-row').forEach(row=>{
     const hay=row.getAttribute('data-search')||'';
     const st=row.getAttribute('data-stage')||'';
     const okQ=!q||hay.includes(q);
     const okS=__ctrlStage==='all'||st===__ctrlStage;
-    const vis=okQ&&okS;
+    const okF=!fAttr||row.getAttribute('data-'+fAttr)==='1';
+    const vis=okQ&&okS&&okF;
     row.style.display=vis?'':'none';
     if(vis)shown++;
   });
   const c=document.getElementById('ctrl-count');if(c)c.textContent=shown+' أوردر';
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+
+// ══ Control tab — العمليات الجماعية (multi-select) ══
+// قائمة صفوف الأوردرات المعروضة حالياً (بعد البحث/الفلتر)
+function __ctrlVisibleRows(){
+  return Array.from(document.querySelectorAll('#ctrl-list .ctrl-row')).filter(r=>r.style.display!=='none');
+}
+// زامن حالة «تحديد الكل» مع الصفوف المعروضة
+function ctrlSyncSelectAll(){
+  const master=document.getElementById('ctrl-selall');if(!master)return;
+  const vis=__ctrlVisibleRows();
+  const cbs=vis.map(r=>r.querySelector('.ctrl-cb')).filter(Boolean);
+  const checked=cbs.filter(cb=>cb.checked).length;
+  master.checked=cbs.length>0&&checked===cbs.length;
+  master.indeterminate=checked>0&&checked<cbs.length;
+}
+// حدّث شريط العمليات الجماعية (العدّاد + الإظهار/الإخفاء)
+window.ctrlUpdateBar=function(){
+  const bar=document.getElementById('ctrl-bulkbar');if(!bar)return;
+  const n=__ctrlSel.size;
+  const cnt=document.getElementById('ctrl-selcount');if(cnt)cnt.textContent=n;
+  bar.style.display=n>0?'flex':'none';
+};
+// تحديد/إلغاء صف واحد
+window.ctrlToggleSel=function(id,cb){
+  if(cb.checked)__ctrlSel.add(id);else __ctrlSel.delete(id);
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+// تحديد/إلغاء كل الصفوف المعروضة (يحترم البحث/الفلتر الحالي)
+window.ctrlSelectAllVisible=function(master){
+  const vis=__ctrlVisibleRows();
+  vis.forEach(r=>{
+    const cb=r.querySelector('.ctrl-cb');if(!cb)return;
+    cb.checked=master.checked;
+    const id=cb.getAttribute('data-id');
+    if(master.checked)__ctrlSel.add(id);else __ctrlSel.delete(id);
+  });
+  master.indeterminate=false;
+  ctrlUpdateBar();
+};
+// مسح كل التحديد
+window.ctrlClearSel=function(){
+  __ctrlSel.clear();
+  document.querySelectorAll('#ctrl-list .ctrl-cb').forEach(cb=>cb.checked=false);
+  ctrlSyncSelectAll();
+  ctrlUpdateBar();
+};
+// نقل جماعي للمحدد لأي مرحلة — عبر orderActions.bulkStageMove (admin/ops، atomic batched)
+window.ctrlBulkStage=async function(){
+  const sel=document.getElementById('ctrl-bulk-stage');
+  const target=sel?.value;
+  if(!target)return toast('⚠️ اختر المرحلة أولاً','err');
+  const ids=[...__ctrlSel];
+  if(!ids.length)return toast('⚠️ لم تحدّد أي أوردر','err');
+  if(!confirm(`نقل ${ids.length} أوردر إلى ${ctrlStageAr(target)}؟`)){return;}
+  // التقط المراحل السابقة للتراجع (snapshot قبل النقل)
+  const prevMap=ids.map(id=>{const o=orders.find(x=>x._id===id);return o?{id,stage:o.stage}:null;}).filter(Boolean);
+  const btn=sel.nextElementSibling;
+  if(btn){btn.disabled=true;btn.textContent='...';}
+  const r=await orderActions.bulkStageMove({
+    orderIds:ids, target:ctrlStageAr(target), mapping:{stage:target},
+    role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
+  });
+  if(btn){btn.disabled=false;btn.textContent='تنفيذ';}
+  if(sel)sel.value='';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  let msg=`✅ نُقل ${r.count} أوردر إلى ${ctrlStageAr(target)}`;
+  if(r.blocked)msg+=` · ${r.blocked} مستثنى`;
+  ctrlClearSel();
+  // تراجع: يرجّع المنقولين فقط لمراحلهم السابقة (مجمّعة حسب المرحلة)
+  const movedIds=new Set(r.orderIds||ids);
+  const undoList=prevMap.filter(x=>movedIds.has(x.id));
+  showUndoToast(msg,undoList);
+  // onSnapshot يعيد render تلقائياً.
+};
+// Undo toast — يظهر «تراجع» لمدة 8 ثوانٍ بعد النقل الجماعي
+let __ctrlUndoTimer=null;
+function showUndoToast(msg,undoList){
+  const c=document.getElementById('toasts');if(!c){toast(msg,'ok');return;}
+  if(__ctrlUndoTimer){clearTimeout(__ctrlUndoTimer);__ctrlUndoTimer=null;}
+  const el=document.createElement('div');
+  el.className='toast ok';
+  el.style.cssText='display:flex;align-items:center;gap:12px';
+  el.innerHTML=`<span>${msg}</span>`;
+  if(undoList&&undoList.length){
+    const b=document.createElement('button');
+    b.type='button';b.textContent='↩️ تراجع';
+    b.style.cssText='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);color:inherit;border-radius:8px;padding:3px 12px;font-family:inherit;font-weight:var(--fw-bold);cursor:pointer;white-space:nowrap';
+    b.onclick=async()=>{b.disabled=true;b.textContent='...';await ctrlUndoBulkMove(undoList);el.remove();};
+    el.appendChild(b);
+  }
+  c.appendChild(el);
+  __ctrlUndoTimer=setTimeout(()=>el.remove(),8000);
+}
+// نفّذ التراجع — يرجّع كل مجموعة لمرحلتها السابقة عبر bulkStageMove
+async function ctrlUndoBulkMove(undoList){
+  const groups={};
+  undoList.forEach(x=>{(groups[x.stage]=groups[x.stage]||[]).push(x.id);});
+  let total=0;const errs=[];
+  for(const [stage,gids] of Object.entries(groups)){
+    const r=await orderActions.bulkStageMove({
+      orderIds:gids, target:ctrlStageAr(stage), mapping:{stage},
+      role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
+    });
+    if(r.ok)total+=r.count||0;else errs.push(...(r.errors||[]));
+  }
+  if(errs.length)toast('⚠️ تعذّر التراجع عن بعض الأوردرات: '+errs.slice(0,2).join(' · '),'err');
+  else toast(`↩️ تم التراجع — رجّعنا ${total} أوردر`,'ok');
+}
+// تعيين مسؤول للمحدد — عبر orderActions.bulkAssign (atomic batched)
+window.ctrlBulkAssign=async function(){
+  const sel=document.getElementById('ctrl-bulk-assignee');
+  const empId=sel?.value;
+  if(!empId)return toast('⚠️ اختر المسؤول أولاً','err');
+  const emp=employees.find(e=>e._id===empId);
+  const ids=[...__ctrlSel];
+  if(!ids.length)return toast('⚠️ لم تحدّد أي أوردر','err');
+  if(!confirm(`تعيين «${emp?.name||''}» على ${ids.length} أوردر؟`)){return;}
+  const btn=sel.nextElementSibling;
+  if(btn){btn.disabled=true;btn.textContent='...';}
+  const r=await orderActions.bulkAssign({
+    orderIds:ids, employeeId:empId, employeeName:emp?.name||'',
+    userId:auth.currentUser?.uid||'', userName:userName||'',
+  });
+  if(btn){btn.disabled=false;btn.textContent='تعيين';}
+  if(sel)sel.value='';
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم تعيين «${emp?.name||''}» على ${r.count} أوردر`,'ok');
+  ctrlClearSel();
 };
 
 window.ctrlSetStage=function(stage,btn){
@@ -1919,6 +2116,21 @@ window.ctrlSetStage=function(stage,btn){
   document.querySelectorAll('#ctrl-stages .d-btn').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
   ctrlFilter();
+};
+// فلتر ذكي (متأخر/متبقّي/بدون تكلفة/راكد)
+window.ctrlSetFlag=function(flag,btn){
+  __ctrlFlag=flag;
+  document.querySelectorAll('#ctrl-flags .d-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  ctrlFilter();
+};
+// تغيير الترتيب — يحتاج re-render (يغيّر ترتيب الصفوف)
+window.ctrlSetSort=function(val){__ctrlSort=val;render();};
+// تضمين/استبعاد الأرشيف — يحتاج re-render (يضيف/يشيل صفوف من الـ DOM)
+window.ctrlToggleArchived=function(){
+  __ctrlIncludeArchived=!__ctrlIncludeArchived;
+  if(!__ctrlIncludeArchived&&__ctrlStage==='archived')__ctrlStage='all';
+  render();
 };
 
 // نقل الأوردر لأي مرحلة مباشرة من القائمة — عبر orderActions.moveStage (admin/ops).
@@ -1941,7 +2153,7 @@ window.controlMoveStage=async function(orderId,targetStage,sel){
 window.exportExcel=function(){
   const range=getRange(filterMode);
   const f=orders.filter(o=>inRange(o,range));
-  const rows=[['الأوردر','العميل','التليفون','المرحلة','السعر','المدفوع','الباقي','التاريخ'],...f.map(o=>[o.orderId||o._id.slice(-6),o.clientName||'—',o.clientPhone||'—',o.stage||'—',o.salePrice||0,o.totalPaid||o.paid||0,o.remaining||0,o.createdDate||'—'])];
+  const rows=[['الأوردر','العميل','التليفون','المرحلة','السعر','المدفوع','الباقي','التاريخ'],...f.map(o=>[o.orderId||o._id.slice(-6),o.clientName||'—',fmtPhone(o.clientPhone)||'—',o.stage||'—',o.salePrice||0,o.totalPaid||o.paid||0,o.remaining||0,o.createdDate||'—'])];
   const escCell=v=>{const s=String(v===null||v===undefined?'':v);return/[,"\n\r]/.test(s)?`"${s.replace(/"/g,'""')}"`:`${s}`;};
   const csv=rows.map(r=>r.map(escCell).join(',')).join('\n');
   const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
