@@ -1182,6 +1182,25 @@ export async function reverseSalaryPayment({
   });
 }
 
+/**
+ * يحفظ إيميل الاسترداد للموظف في users/{authUid}.recoveryEmail (حقل غير محمي —
+ * القواعد تسمح للموظف يحدّث مستنده). يُستخدم في الريست الذاتي عبر الإيميل.
+ * email='' يمسح التسجيل.
+ */
+export async function setRecoveryEmail({ db = defaultDb, authUid, email }) {
+  if (!authUid) return { ok: false, errors: ['⚠️ authUid مطلوب'], warnings: [] };
+  const v = (email || '').trim();
+  if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) {
+    return { ok: false, errors: ['⚠️ صيغة إيميل غير صحيحة'], warnings: [] };
+  }
+  try {
+    await updateDoc(doc(db, 'users', authUid), { recoveryEmail: v });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل حفظ الإيميل'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // EXPORTS
 // ══════════════════════════════════════════
@@ -1204,6 +1223,7 @@ export const employeeActions = {
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,
+  setRecoveryEmail,
 };
 
 export default employeeActions;

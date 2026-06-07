@@ -124,7 +124,7 @@ const INC_TYPES={
 const INC_SEV={low:{lbl:'منخفض',col:'var(--dim2)'},medium:{lbl:'متوسط',col:'var(--y)'},high:{lbl:'مرتفع',col:'var(--r)'}};
 
 // ── State ──
-let me=null, myEmpId='', myAuthUid='';
+let me=null, myEmpId='', myAuthUid='', myRecoveryEmail='';
 let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[];
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
 // Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
@@ -195,6 +195,16 @@ document.addEventListener('keydown',e=>{
     setTab(['overview','attendance','salary','feedback'][+e.key-1]);
   }
 });
+
+// ── حفظ إيميل الاسترداد (عبر employeeActions احتراماً لـ H1.1) ──
+window.saveRecoveryEmail=async function(){
+  const v=document.getElementById('rec-email')?.value?.trim()||'';
+  const msg=document.getElementById('rec-email-msg');
+  const r=await employeeActions.setRecoveryEmail({db,authUid:myAuthUid,email:v});
+  if(!r.ok){if(msg)msg.innerHTML='<span class="text-r">❌ '+((r.errors||[]).join(' · '))+'</span>';return;}
+  myRecoveryEmail=v;
+  if(msg)msg.innerHTML=v?'<span class="text-g">✅ تم الحفظ</span>':'<span class="text-g">✅ تم المسح</span>';
+};
 
 // ── Schedule helpers — مصدر واحد: core/attendance-core.js (RULE 1) ──
 function isWorkDay(dateStr){return isWorkDayFor(dateStr,me?.workSchedule);}
@@ -350,6 +360,19 @@ function renderAll(){
           <div class="bd-bar"><div class="bd-fill mp-fill-b" style="width:${Math.min(100,cur.breakdown.prod.total/cur.meta.goal.targetOrdersMonthly*100)}%"></div></div>`:''}
         </div>
       </div>`:''}
+
+      <!-- Recovery email (self-service password reset) -->
+      <div class="section mp-mb-14">
+        <div class="section-head mp-mb-10">
+          <div class="section-title">📧 إيميل استرداد كلمة السر</div>
+        </div>
+        <div class="mp-card">
+          <div class="mp-subnote" style="margin-bottom:10px">سجّل إيميلك؛ لو نسيت كلمة السر تقدر تستعيدها بنفسك من «نسيت كلمة السر؟» في صفحة الدخول — بدون انتظار المدير.</div>
+          <input id="rec-email" type="email" class="inp" placeholder="example@gmail.com" value="${(myRecoveryEmail||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:10px">
+          <button type="button" class="btn btn-g" onclick="saveRecoveryEmail()">💾 حفظ الإيميل</button>
+          <span id="rec-email-msg" class="txt-meta-xs" style="margin-inline-start:8px"></span>
+        </div>
+      </div>
 
       <!-- Tip -->
       <div class="tip">
@@ -625,6 +648,7 @@ onAuthStateChanged(auth,async u=>{
     const usnap=await getDoc(doc(db,'users',u.uid));
     if(usnap.exists()){
       const d=usnap.data();
+      myRecoveryEmail=d.recoveryEmail||'';
       const role=d.role||'customer_service';
       B2CSidebar.build(d, 'my-profile.html');
       setText('nav-name',d.name||u.email);

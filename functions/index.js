@@ -508,6 +508,71 @@ exports.adminSetEmployeePassword = onCall(CALL_OPTS, async (req) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//   Self-Service Password Reset (Firestore-triggered — no public invoker needed)
+// ════════════════════════════════════════════════════════════════════════════
+// الموظف ينسى كلمته → login.html يكتب مستند في password_reset_requests {phone}
+// (بدون تسجيل دخول). هذا الـ trigger يلاقي الموظف بالموبايل، يولّد رابط ريست
+// عبر Admin SDK، ويرسله لإيميل الاسترداد المسجّل (users/{uid}.recoveryEmail)
+// عبر مجموعة `mail` (إكستنشن Trigger Email). Background trigger ⇒ لا CORS/IAM.
+//
+// أمان: لا نكشف للعميل إن كان الرقم/الإيميل موجوداً (login يعرض رسالة محايدة)؛
+// تفاصيل الحالة تُكتب في مستند الطلب غير القابل للقراءة من العميل.
+const PHONE_RE = /^01[0125][0-9]{8}$/;
+exports.onPasswordResetRequested = onDocumentCreated('password_reset_requests/{reqId}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const ref = snap.ref;
+  const phone = String((snap.data() || {}).phone || '').trim();
+  const mark = (status, extra = {}) =>
+    ref.update({ status, processedAt: FieldValue.serverTimestamp(), ...extra }).catch(() => {});
+
+  try {
+    if (!PHONE_RE.test(phone)) { await mark('invalid_phone'); return; }
+
+    // 1) لاقِ الموظف بالموبايل
+    const es = await getFirestore().collection('employees').where('phone', '==', phone).limit(1).get();
+    if (es.empty) { await mark('no_account'); return; }
+    const emp = es.docs[0].data() || {};
+    const authUid = emp.authUid;
+    if (!authUid) { await mark('no_account'); return; }
+
+    // 2) إيميل الاسترداد: users/{uid}.recoveryEmail (سجّله الموظف) ثم emp.email الحقيقي
+    let recovery = '';
+    try {
+      const ud = await getFirestore().doc(`users/${authUid}`).get();
+      recovery = (ud.exists && ud.data().recoveryEmail) || '';
+    } catch (_) {}
+    if (!recovery && emp.email && !String(emp.email).endsWith('@b2c.local')) recovery = emp.email;
+    if (!recovery) { await mark('no_recovery_email'); return; }
+
+    // 3) إيميل الحساب لتوليد الرابط (الحقيقي إن وُجد، وإلا phone@b2c.local)
+    let accountEmail = phone + '@b2c.local';
+    try { const u = await getAuth().getUser(authUid); if (u.email) accountEmail = u.email; } catch (_) {}
+    const link = await getAuth().generatePasswordResetLink(accountEmail);
+
+    // 4) اطلب الإرسال عبر إكستنشن Trigger Email (مجموعة mail)
+    await getFirestore().collection('mail').add({
+      to: recovery,
+      message: {
+        subject: 'إعادة تعيين كلمة السر — Business2Card',
+        html: `<div dir="rtl" style="font-family:Tajawal,Arial,sans-serif;line-height:1.7">
+          <p>مرحباً ${emp.name || ''},</p>
+          <p>وصلنا طلب لإعادة تعيين كلمة سر حسابك في Business2Card.</p>
+          <p style="margin:18px 0"><a href="${link}" style="background:#2563eb;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:bold">تعيين كلمة سر جديدة</a></p>
+          <p>أو افتح الرابط مباشرة:<br><a href="${link}">${link}</a></p>
+          <p>بعد التعيين، ادخل بـ <b>رقم موبايلك (${phone})</b> والكلمة الجديدة.</p>
+          <p style="color:#888;font-size:13px">لو لم تطلب هذا، تجاهل الرسالة — لن يتغيّر شيء.</p>
+        </div>`,
+      },
+    });
+    await mark('sent');
+  } catch (e) {
+    console.error('[onPasswordResetRequested]', e);
+    await mark('error', { error: String(e.message || e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //   Impersonate User — Custom Token for View-As (Deep Mode)
 // ════════════════════════════════════════════════════════════════════════════
 // Admin-only. Mints a short-lived custom token for the target user so the

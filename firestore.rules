@@ -1537,5 +1537,21 @@ service cloud.firestore {
         (isAuth() && resource.data.get('ownerUid','') == request.auth.uid);
       allow delete: if isAdminOnly();
     }
+
+    // ── Self-service password reset (الموظف ينسى كلمته) ──
+    // الزائر غير المسجّل يكتب طلباً بالموبايل فقط؛ الـ Cloud Function (Admin SDK)
+    // يعالجه ويرسل الرابط لإيميل الاسترداد. لا قراءة/تعديل من العميل (منع تسريب).
+    match /password_reset_requests/{reqId} {
+      allow create: if request.resource.data.phone is string
+                    && request.resource.data.phone.size() <= 20
+                    && request.resource.data.keys().hasOnly(['phone', 'createdAt']);
+      allow read, update, delete: if false; // الـ CF يتجاوز القواعد (admin)
+    }
+
+    // ── Outgoing mail queue (إكستنشن Trigger Email) ──
+    // يُكتب من الـ CF/الإكستنشن بصلاحيات admin فقط — العميل ممنوع تماماً.
+    match /mail/{mailId} {
+      allow read, write: if false;
+    }
   }
 }
