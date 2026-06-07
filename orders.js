@@ -430,6 +430,18 @@ export function buildOrderSplit({ order, productIndices, role, userId, userName,
     shippingOfficerId:   order.shippingOfficerId   || '',
     shippingOfficerName: order.shippingOfficerName || '',
 
+    // بيانات الشحن (تُدخَل في مرحلة الطباعة عبر prepareForShipping) — تُنسخ
+    // للأوردر الفرعي ليصل الشحن بنفس بيانات الأصلي (نفس العميل/العنوان).
+    // بدونها يصل الفرع الجزئي لمرحلة الشحن فارغاً من بيانات الشحن.
+    // customerShipFee يبقى 0 (RULE 4)؛ courierDirectFee معلوماتي خارج حسابات الشركة.
+    shipMethod:            order.shipMethod            || '',
+    shipCompanyId:         order.shipCompanyId         || '',
+    shipCompanyName:       order.shipCompanyName       || '',
+    deliveryAddress:       order.deliveryAddress       || null,
+    customerPhoneShip:     order.customerPhoneShip     || '',
+    priceIncludesShipping: !!order.priceIncludesShipping,
+    courierDirectFee:      parseFloat(order.courierDirectFee) || 0,
+
     // المالية = صفر (الأصلي يحتفظ بكل المال)
     salePrice:     0,
     deposit:       0,
