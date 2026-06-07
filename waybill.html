@@ -75,6 +75,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { doc, getDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getDeliveryAddress } from "./core/shipping-utils.js";
 let orders=[],currentUser=null,userName='',userRole='',userPerms={};
 const _qp=new URLSearchParams(location.search);
 const orderIdsParam=(_qp.get('ids')||_qp.get('id')||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -155,11 +156,15 @@ function showError(msg){
 function getWaybillView(o){
   const wb=o.waybill||{};
   const cargoFromProducts=(o.products||[]).map(p=>`${p.qty||1} × ${p.name}`).join(' + ')||o.product||'—';
+  // العنوان المعتمد: deliveryAddress {gov,city,street} المُدخَل في الطباعة عبر
+  // prepareForShipping، مع fallback للحقول القديمة (shipGov/shipAddress) — RULE 6.
+  const da=getDeliveryAddress(o);
   return {
     name: wb.recipientName || o.clientName || '—',
-    phone: wb.recipientPhone || o.clientPhone || '—',
-    gov: wb.recipientGov || o.shipGov || '—',
-    address: wb.recipientAddress || o.shipAddress || '—',
+    // تليفون التسليم المُدخَل في الطباعة (customerPhoneShip) أولاً ثم تليفون العميل.
+    phone: wb.recipientPhone || o.customerPhoneShip || o.clientPhone || '—',
+    gov: wb.recipientGov || da.gov || '—',
+    address: wb.recipientAddress || da.addr || '—',
     cargo: wb.cargoDescription || cargoFromProducts,
     amount: parseFloat(o.remaining)||0,    // Source of truth: order's live remaining
     notes: wb.notes || '',
