@@ -1,5 +1,5 @@
 /**
- * Business2Card ERP — report-actions.js
+ * Business2Card ERP — error-report-actions.js
  *
  * ━━━ ERROR REPORTS ACTION LAYER (RULE A1) ━━━
  *

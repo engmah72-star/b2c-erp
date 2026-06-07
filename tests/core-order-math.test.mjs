@@ -2,7 +2,7 @@
  * Tests for core/order-math.js
  * Run: node tests/core-order-math.test.mjs
  */
-import { calcRem, orderGrossTotal, expectedFromCompany, isFullyPaid } from '../core/order-math.js';
+import { calcRem, orderGrossTotal, expectedFromCompany, isFullyPaid, isPostDesignWithRem, POST_DESIGN_STAGES } from '../core/order-math.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -151,6 +151,23 @@ test('isFullyPaid: respects discount in gross', () => {
 });
 test('isFullyPaid: tiny rounding tolerance', () => {
   assertEq(isFullyPaid({ salePrice: 1000, totalPaid: 999.995 }), true);
+});
+
+// ── isPostDesignWithRem ────────────────────────────────────────────
+test('isPostDesignWithRem: priced, post-design, owes → true', () => {
+  assertEq(isPostDesignWithRem({ salePrice: 1000, stage: 'production', totalPaid: 300 }), true);
+});
+test('isPostDesignWithRem: design stage → false', () => {
+  assertEq(isPostDesignWithRem({ salePrice: 1000, stage: 'design', totalPaid: 0 }), false);
+});
+test('isPostDesignWithRem: fully paid → false', () => {
+  assertEq(isPostDesignWithRem({ salePrice: 1000, stage: 'shipping', totalPaid: 1000 }), false);
+});
+test('isPostDesignWithRem: zero sale price → false', () => {
+  assertEq(isPostDesignWithRem({ salePrice: 0, stage: 'printing', totalPaid: 0 }), false);
+});
+test('POST_DESIGN_STAGES: exact set', () => {
+  assertEq(POST_DESIGN_STAGES.join(','), 'printing,production,shipping');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
