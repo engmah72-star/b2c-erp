@@ -218,16 +218,16 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText } from "./core/dom-utils.js";
+import { setText, fmtNum } from "./core/dom-utils.js";
 // ══ Sidebar ══
 const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'reports.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, deleteDoc, updateDoc, addDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dedupEmployees, resolveDesigner, isDelivered, getStageDurations, formatDurationAr } from "./orders.js";
-import { calcRem } from "./core/order-math.js";
+import { calcRem, isPostDesignWithRem, POST_DESIGN_STAGES } from "./core/order-math.js";
+import { cleanPhone, waLink, telLink } from "./core/comms-utils.js";
 import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
 import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
@@ -272,7 +272,7 @@ let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false,returns:false};
 function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,80);}
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=fmtNum;
 
 // ══ Collection state (search/sort/filters) ══
 let __search='',__sortKey='date',__sortDir='desc',__payFilter='all',__stageFilter='all',__flagFilter='all',__viewMode='orders',__filtersOpen=false;
@@ -356,19 +356,7 @@ function applyCounters(root){
 const sparkline=_sparklineHTML;
 const dailySeries=(days,filterFn,valueFn)=>_dailySeries({items:transactions,days,filterFn,valueFn});
 
-// ══ Communication helpers ══
-// تنظيف رقم تليفون مصري وتحويله لصيغة WhatsApp الدولية
-function cleanPhone(p){
-  if(!p)return'';
-  let s=String(p).replace(/[^0-9]/g,'');
-  if(s.startsWith('00'))s=s.slice(2);
-  if(s.startsWith('20'))return s;
-  if(s.startsWith('0'))return '20'+s.slice(1);
-  if(s.length===10&&s.startsWith('1'))return '20'+s;
-  return s.length>=10?s:'';
-}
-function waLink(p){const c=cleanPhone(p);return c?`https://wa.me/${c}`:'';}
-function telLink(p){return p?`tel:${String(p).replace(/[^0-9+]/g,'')}`:'';}
+// ══ Communication helpers ══ → core/comms-utils.js (cleanPhone/waLink/telLink, SSOT)
 
 // ══ Priority items (top 5 actionable issues) ══
 // scoring = urgency × amount → الأهم في الأعلى
@@ -474,7 +462,7 @@ function updateTabBadges(){
     else el.style.display='none';
   };
   // collection: critical post-design count
-  const critical=filtered.filter(o=>parseFloat(o.salePrice)>0&&['printing','production','shipping'].includes(o.stage)&&calcRem(o)>0).length;
+  const critical=filtered.filter(isPostDesignWithRem).length;
   set('collection',critical);
   // shipping: returned count
   const returned=filtered.filter(o=>o.shipStage==='returned').length;
@@ -1472,7 +1460,7 @@ function applyCollectionFilters(){
     const noCost=r.dataset.nocost==='1';
     const payOk=__payFilter==='all'||(__payFilter==='rem'&&rem>0)||(__payFilter==='paid'&&rem<=0);
     const stageOk=__stageFilter==='all'
-      ||(__stageFilter==='post-design'&&['printing','production','shipping'].includes(stage)&&rem>0)
+      ||(__stageFilter==='post-design'&&POST_DESIGN_STAGES.includes(stage)&&rem>0)
       ||stage===__stageFilter;
     const flagOk=__flagFilter==='all'
       ||(__flagFilter==='stale'&&stale)
