@@ -46,7 +46,7 @@ export const CLIENTS_SHELL_HTML = `
     <div class="cl-primary-bar">
       <div class="sw cl-primary-search">
         <span class="sw-ico">🔍</span>
-        <input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف..." oninput="scheduleStatsAndGrid()">
+        <input class="inp" id="q" placeholder="بحث بالاسم أو الهاتف (كل العملاء)..." oninput="onClientSearchInput(this.value)">
       </div>
       <div class="cl-primary-tabs">
         <button type="button" class="stab on" id="stab-active" onclick="setStatusTab('active',this)">🟢 نشط</button>
