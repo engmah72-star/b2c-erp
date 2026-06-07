@@ -1457,8 +1457,7 @@ function renderCollectionRows(data){
           style="padding:6px 10px;border-radius:8px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-md);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">✏️</button>`:''}
         <button type="button" onclick="openOrdDrawer('${o._id}')" title="تفاصيل وتكاليف"
           style="padding:6px 10px;border-radius:8px;border:1px solid ${cost>0?'rgba(255,170,0,.3)':'rgba(255,61,110,.5)'};background:${cost>0?'rgba(255,170,0,.08)':'rgba(255,61,110,.12)'};color:${cost>0?'var(--y)':'var(--r)'};font-size:var(--fs-md);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;${userIsAdmin?'margin-top:4px':''}">💰</button>
-        ${userIsAdmin?`<button type="button" onclick="deleteOrderFromReport('${o._id}')" title="حذف"
-          style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-md);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;margin-top:4px">🗑</button>`:''}
+        ${'' /* [توحيد] الحذف نقطة واحدة فقط: تاب «🎛️ التحكم الكامل» (أدمن، purge شامل). أُزيل من هنا. */}
       </div>
     </div>`;
   }).join('');
@@ -1599,6 +1598,8 @@ window.goCollectionPostDesign=function(){
 
 let __delOrdId='',__delOrdClient='',__delOrdPaid=0,__delOrdWallet='';
 window.deleteOrderFromReport=function(orderId){
+  // [توحيد] الحذف الشامل (purge) — أدمن فقط، نقطة واحدة في كل النظام
+  if(userRole!=='admin')return toast('⛔ الحذف النهائي للأدمن فقط','err');
   const o=orders.find(x=>x._id===orderId);
   if(!o)return toast('⚠️ الأوردر غير موجود','err');
   __delOrdId=orderId;
@@ -1610,24 +1611,24 @@ window.deleteOrderFromReport=function(orderId){
   document.getElementById('ov-del-order').style.display='flex';
 };
 window.confirmDeleteOrder=async function(){
+  // [توحيد] الحذف الشامل بلا أثر (purge) — أدمن فقط
+  if(userRole!=='admin')return toast('⛔ الحذف النهائي للأدمن فقط','err');
   const reason=document.getElementById('del-ord-reason').value;
   if(!reason)return toast('⚠️ اختر سبب الحذف أولاً','err');
   const note=document.getElementById('del-ord-note').value.trim();
   const btn=document.getElementById('del-ord-confirm-btn');
   btn.disabled=true;btn.textContent='جاري...';
-  // H1.1 fix: المرّر عبر orderActions.adminDeleteOrder (atomic + idempotent + central reversals)
-  const r=await orderActions.adminDeleteOrder({
+  // حذف شامل بلا أثر: يمحو الأوردر + معاملاته + قيود الـ ledger + المرتجعات
+  // + دفعات الموردين ويعكس أرصدة المحافظ (atomic + idempotent + guards).
+  const r=await orderActions.purgeOrder({
     orderId:__delOrdId, reason, note,
-    userId:auth.currentUser?.uid||'', userName:userName||'',
-    wallets,
+    role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
   });
-  btn.disabled=false;btn.textContent='🗑 حذف نهائي';
+  btn.disabled=false;btn.textContent='🗑 حذف نهائي شامل';
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   document.getElementById('ov-del-order').style.display='none';
-  let msg='✅ تم الحذف';
-  if(r.refunded)msg+=` · ${r.refunded} دفعة عميل مستردة`;
-  if(r.vendorReversed)msg+=` · ${r.vendorReversed} دفعة مورد ملغاة`;
-  if(r.generalReversed)msg+=` · ${r.generalReversed} مصروف ملغى`;
+  let msg='✅ تم الحذف النهائي الشامل';
+  if(r.walletsReversed)msg+=` · عُكست ${r.walletsReversed} حركة محفظة`;
   if(r.idempotent&&!r.pending)msg='ℹ️ الأوردر محذوف مسبقاً';
   toast(msg,'ok');
 };
@@ -1850,7 +1851,8 @@ const ctrlStageAr=st=>{const s=CTRL_STAGES.find(x=>x.key===st);return s?(s.ico+'
 
 function renderControl(){
   // تاب التحكم يعمل على كل الأوردرات (مش متأثر بفلتر التاريخ) — "كل الأوردر".
-  const canControl=userIsAdmin; // admin / operation_manager — نقل المراحل والحذف
+  const canControl=userIsAdmin; // admin / operation_manager — نقل المراحل
+  const canDelete=userRole==='admin'; // [توحيد] الحذف الشامل (purge) — أدمن فقط، نقطة واحدة
   // ── Scope: الأرشيف مستبعَد افتراضياً (أداء — يتجنّب رِندر آلاف الأوردرات القديمة) ──
   const archivedCount=orders.filter(o=>o.stage==='archived').length;
   const base=__ctrlIncludeArchived?orders:orders.filter(o=>o.stage!=='archived');
@@ -1911,7 +1913,7 @@ function renderControl(){
       <div style="display:flex;gap:6px">
         <button type="button" onclick="openOrdDrawer('${o._id}')" title="تفاصيل" style="padding:5px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--bg3);color:var(--c);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">↗</button>
         <button type="button" onclick="openEditOrder('${o._id}')" title="تعديل كامل" style="padding:5px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--bg3);color:var(--b);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">✏️</button>
-        ${canControl?`<button type="button" onclick="deleteOrderFromReport('${o._id}')" title="حذف" style="padding:5px 9px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">🗑</button>`:''}
+        ${canDelete?`<button type="button" onclick="deleteOrderFromReport('${o._id}')" title="حذف نهائي شامل (أدمن)" style="padding:5px 9px;border-radius:7px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">🗑</button>`:''}
       </div>
     </div>`;
   }).join('');
@@ -2171,7 +2173,7 @@ window.exportExcel=function(){
     </div>
     <div class="modal-body">
       <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:var(--fs-base);color:var(--r)">
-        ⚠️ الحذف نهائي ولا يمكن التراجع عنه
+        ⚠️ حذف نهائي <b>شامل بلا أثر</b> — يمحو الأوردر وكل معاملاته وقيوده المالية والمرتجعات ويعكس أرصدة المحافظ. لا رجعة.
       </div>
       <div class="fg" style="margin-bottom:10px">
         <label>سبب الحذف *</label>
@@ -2191,7 +2193,7 @@ window.exportExcel=function(){
     </div>
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" onclick="document.getElementById('ov-del-order').style.display='none'">إلغاء</button>
-      <button type="button" class="btn btn-r" id="del-ord-confirm-btn" onclick="confirmDeleteOrder()">🗑 حذف نهائي</button>
+      <button type="button" class="btn btn-r" id="del-ord-confirm-btn" onclick="confirmDeleteOrder()">🗑 حذف نهائي شامل</button>
     </div>
   </div>
 </div>
