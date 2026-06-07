@@ -60,6 +60,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/projection.js',
   '/core/financial-invariants.js',
   '/core/audit.js',
+  '/core/perf-vitals.js',
   '/fcm-init.js',
   '/firebase-messaging-sw.js',
   '/returns-core.js',
