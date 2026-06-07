@@ -36,11 +36,15 @@ const PREFIX = 'feat.';
 //   إعادة استخدام فقط (لا كتابة مراسلة في الصفحة). الافتراضي OFF (E1.8).
 // `employeeProfile.timeline` — تبويب «السجل» الموحّد (عرض فقط) من
 //   core/employee-timeline.js. الافتراضي OFF (E1.8).
+// `myHome.commHub` — البند 3 (جهة الموظف): بطاقة «📨 التواصل مع الإدارة» في «صفحتي»
+//   تجمع في مكان واحد روابط طلبات الموظف (إجازات/مالية) · ملاحظاته/تظلّماته ·
+//   مراسلة الإدارة — مع عدّادات حيّة. عرض + تنقّل فقط. الافتراضي OFF (E1.8).
 export const FLAGS = Object.freeze({
   MESSAGING_MEMBER_TO_MEMBER: 'messaging.memberToMember',
   EMPLOYEE_PROFILE_PENDING_INBOX: 'employeeProfile.pendingInbox',
   EMPLOYEE_PROFILE_DM_BUTTON: 'employeeProfile.dmButton',
   EMPLOYEE_PROFILE_TIMELINE: 'employeeProfile.timeline',
+  MY_HOME_COMM_HUB: 'myHome.commHub',
 });
 
 let __urlCache = null;

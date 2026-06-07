@@ -9,10 +9,14 @@
 import { auth, db } from '../../core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { isFeatureEnabled } from '../../core/feature-flags.js';
+import { isFeatureEnabled, FLAGS } from '../../core/feature-flags.js';
 import { employeeActions } from '../../employee-actions.js';
 import { currentPeriodKey } from '../../core/task-recurrence.js';
-import { renderHero, renderTasks, renderOrders, renderAlerts, renderLinks } from './render.js';
+import { renderHero, renderTasks, renderOrders, renderAlerts, renderLinks, renderCommHub } from './render.js';
+
+// البند 3 (جهة الموظف) — بطاقة التواصل الموحّدة، خلف علم default-OFF (E1.8)
+const COMM_HUB_ON = isFeatureEnabled(FLAGS.MY_HOME_COMM_HUB, false);
+const REQ_OPEN = new Set(['requested', 'awaiting_receipt', 'pending', 'confirmed']);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const monthKey = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
@@ -42,6 +46,7 @@ window.__mhToast = function (msg, type = 'ok') {
 const S = {
   me: { uid: '', name: '' }, role: '', empId: '', emp: {}, mustChangePassword: false,
   tasks: [], orders: null, attToday: null, incidents: 0, incidentList: [],
+  payReqOpen: 0, leavesPending: 0,
 };
 
 function notice(html) { const r = document.getElementById('mh-root'); if (r) r.innerHTML = `<div class="mh-notice">${html}</div>`; }
@@ -55,7 +60,7 @@ function render() {
     renderHero({ name: S.me.name, role: S.role, attToday: S.attToday }) +
     `<div class="mh-grid">
       <div class="mh-col">${renderTasks(S.tasks, today)}${renderOrders(S.orders)}</div>
-      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, incidentList: S.incidentList, mustChangePassword: S.mustChangePassword })}${renderLinks(ROLE_DASH[S.role])}</div>
+      <div class="mh-col">${renderAlerts({ lateTasks, incidents: S.incidents, incidentList: S.incidentList, mustChangePassword: S.mustChangePassword })}${COMM_HUB_ON ? renderCommHub({ requests: S.payReqOpen + S.leavesPending, incidents: S.incidents }) : ''}${renderLinks(ROLE_DASH[S.role])}</div>
     </div>`;
 }
 
@@ -124,6 +129,18 @@ function startListeners() {
       S.incidentList = active;
       render();
     });
+  }
+  // البند 3 — عدّادات «التواصل»: تطابق استعلامات my-requests (requestedBy==uid).
+  // خلف العلم: لا قراءة إضافية ما لم تُفعَّل البطاقة.
+  if (COMM_HUB_ON) {
+    onSnapshot(query(collection(db, 'payment_requests'), where('requestedBy', '==', S.me.uid), limit(200)), snap => {
+      S.payReqOpen = snap.docs.map(d => d.data()).filter(r => REQ_OPEN.has(r.status)).length;
+      render();
+    }, err => console.warn('commhub-pay:', err.message));
+    onSnapshot(query(collection(db, 'employee_leaves'), where('requestedBy', '==', S.me.uid), limit(100)), snap => {
+      S.leavesPending = snap.docs.map(d => d.data()).filter(l => l.status === 'pending').length;
+      render();
+    }, err => console.warn('commhub-leave:', err.message));
   }
   const field = ROLE_ORDER_FIELD[S.role];
   if (field) {
