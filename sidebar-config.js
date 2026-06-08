@@ -144,6 +144,11 @@ try {
     if (_mh !== '0') {
       SIDEBAR_PAGES.unshift({ file: 'my-home.html', label: 'صفحتي', ico: '🏠', group: 'main', public: true });
     }
+    // معرض التصاميم (بورتفوليو الشركة): يراه من له وصول التصميم. القراءة عامة، الرفع للمصممين/الأدمن.
+    const _gl = _qs.get('feat.gallery') || localStorage.getItem('feat.gallery');
+    if (_gl !== '0') {
+      SIDEBAR_PAGES.push({ file: 'gallery.html', label: 'معرض التصاميم', ico: '🖼️', group: 'orders', perm: 'design' });
+    }
   } catch (_) { /* SSR/test envs */ }
 
   // Expose on window so module scripts can read without `import`.
