@@ -229,7 +229,7 @@ export function mountGalleryView({ container, user, userDoc }) {
   }
   async function doDelete(it) {
     if (!window.confirm('حذف هذا التصميم من المعرض نهائياً؟')) return;
-    const r = await svc.removeGalleryItem({ itemId: it.id, imagePath: it.imagePath, actorId: uid });
+    const r = await svc.removeGalleryItem({ itemId: it.id, imagePath: it.storagePath || it.imagePath, actorId: uid, actorName: userDoc?.name });
     if (!r.ok) { console.error('[gallery] remove', r.errors); toast('❌ ' + (r.errors || []).join(' · '), 'err'); }
     else toast('🗑️ تم الحذف', 'ok');
   }

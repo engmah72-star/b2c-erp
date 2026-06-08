@@ -81,7 +81,8 @@ try {
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
-    { file:'portal-designs.html',    label:'تصميمات البوابة',  ico:'🖼️', group:'orders', perm:'design' },
+    // معرض التصاميم/تصميمات البوابة: مدخل واحد يُضاف أدناه (flag-gated) — gallery.html
+    // الواجهة المصقولة، وportal-designs المحرّر التفصيلي المتاح منها. (توحيد المعرض)
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
@@ -144,10 +145,14 @@ try {
     if (_mh !== '0') {
       SIDEBAR_PAGES.unshift({ file: 'my-home.html', label: 'صفحتي', ico: '🏠', group: 'main', public: true });
     }
-    // معرض التصاميم (بورتفوليو الشركة): يراه من له وصول التصميم. القراءة عامة، الرفع للمصممين/الأدمن.
+    // معرض التصاميم (بورتفوليو الشركة) — مدخل واحد موحّد (يراه من له وصول التصميم).
+    // flag مفعّل: gallery.html (الواجهة المصقولة). kill-switch (feat.gallery=0):
+    // يرجع لـ portal-designs.html (المحرّر القديم) كي لا يُفقد الوصول للإدارة.
     const _gl = _qs.get('feat.gallery') || localStorage.getItem('feat.gallery');
     if (_gl !== '0') {
       SIDEBAR_PAGES.push({ file: 'gallery.html', label: 'معرض التصاميم', ico: '🖼️', group: 'orders', perm: 'design' });
+    } else {
+      SIDEBAR_PAGES.push({ file: 'portal-designs.html', label: 'تصميمات البوابة', ico: '🖼️', group: 'orders', perm: 'design' });
     }
   } catch (_) { /* SSR/test envs */ }
 

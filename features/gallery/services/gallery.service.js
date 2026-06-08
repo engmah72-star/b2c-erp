@@ -1,126 +1,59 @@
 /**
  * features/gallery/services/gallery.service.js
  *
- * طبقة الكتابة على collection `gallery` (بورتفوليو الشركة).
- * كل التعديلات تمرّ هنا — لا writes مباشرة في الـ view (L1 / H1.1).
+ * محوّل رفيع (adapter) فوق المصدر الوحيد للكتابة في مجموعة `gallery`:
+ *   core/gallery-actions.js  (RULE 1 / H1.1 — كاتب واحد، صفر ازدواج schema).
  *
- * غير مالي بالكامل (G6 — لا FSE, لا wallets/ledger).
- * كل mutation يحمل audit entry (H3). العقد: { ok, errors, ... } (H1.5).
- * الإلغاء = soft (isVisible=false) — reversible (E1)؛ الحذف النهائي للأدمن فقط.
+ * هذه الطبقة تُترجم فقط مدخلات الـ view (category/actorId/...) إلى عقد
+ * gallery-actions ({ actor, productType, ... })، وتحافظ على عقد العائد
+ * { ok, errors, id? } الذي يعتمده grid-view. لا writes مباشرة هنا.
  */
 
-import { db } from '../../../core/firebase-init.js';
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc,
-  arrayUnion, serverTimestamp,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { auditEntry } from '../../../core/audit.js';
-import { uploadGalleryFile, deleteFile } from '../../../core/storage-helpers.js';
-import { buildGalleryItem, validateGalleryInput } from '../model.js';
+  publishGalleryItem, setGalleryVisibility, setGalleryFeatured, deleteGalleryItem,
+} from '../../../core/gallery-actions.js';
+import { normalizeTags } from '../model.js';
+
+const _actor = (id, name) => ({ userId: id, userName: name || '' });
 
 /**
- * نشر تصميم جديد للمعرض: رفع الصورة + إنشاء doc.
- * @returns { ok, errors, id?, item? }
+ * نشر تصميم جديد للمعرض (يفوّض إلى الكاتب الوحيد).
+ * @returns { ok, errors, id? }
  */
 export async function publishToGallery({
   file, title, category, tags,
-  designerId, designerName, tenantId = null,
-  actorId, actorName, onProgress,
+  designerName, actorId, actorName, onProgress,
+  // tenantId/designerId مقبولة للتوافق لكن لا تُمرَّر — الـ schema الموحّد يديرها.
 }) {
-  const v = validateGalleryInput({ title, file });
-  if (!v.ok) return { ok: false, errors: v.errors };
   if (!actorId) return { ok: false, errors: ['غير مصرّح — لا مستخدم'] };
-
-  let uploaded;
-  try {
-    uploaded = await uploadGalleryFile({ file, designerId: designerId || actorId, onProgress });
-  } catch (e) {
-    return { ok: false, errors: ['تعذّر رفع الصورة: ' + (e?.message || '')] };
-  }
-
-  const base = buildGalleryItem({
-    title, category, tags,
-    imageUrl: uploaded.url,
-    imagePath: uploaded.path,
-    designerId: designerId || actorId,
-    designerName: designerName || actorName || '',
-    tenantId,
+  const r = await publishGalleryItem({
+    file,
+    title,
+    productType: (category || '').trim() || 'عام',
+    tags: normalizeTags(tags),
+    actor: _actor(actorId, actorName || designerName),
+    onProgress,
   });
-
-  try {
-    const ref = await addDoc(collection(db, 'gallery'), {
-      ...base,
-      publishedAt: serverTimestamp(),
-      publishedBy: actorId,
-      publishedByName: actorName || '',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      audit: [auditEntry({ action: '🖼️ نشر تصميم للمعرض', userId: actorId, userName: actorName, kind: 'op' })],
-    });
-    return { ok: true, errors: [], id: ref.id, item: { id: ref.id, ...base } };
-  } catch (e) {
-    // تنظيف الصورة المرفوعة لتفادي ملفات يتيمة
-    try { await deleteFile(uploaded.path); } catch (_) { /* best-effort */ }
-    return { ok: false, errors: ['تعذّر حفظ العنصر: ' + (e?.message || '')] };
-  }
+  return { ok: r.ok, errors: r.errors || [], warnings: r.warnings, id: r.id };
 }
 
-/**
- * إظهار/إخفاء عنصر (soft reversal — لا حذف).
- * @returns { ok, errors }
- */
+/** إظهار/إخفاء عنصر (soft reversal). */
 export async function setVisibility({ itemId, isVisible, actorId, actorName }) {
-  if (!itemId) return { ok: false, errors: ['itemId مطلوب'] };
   if (!actorId) return { ok: false, errors: ['غير مصرّح'] };
-  try {
-    await updateDoc(doc(db, 'gallery', itemId), {
-      isVisible: !!isVisible,
-      updatedAt: serverTimestamp(),
-      audit: arrayUnion(auditEntry({
-        action: isVisible ? '👁️ إظهار في المعرض' : '🙈 إخفاء من المعرض',
-        userId: actorId, userName: actorName, kind: isVisible ? 'op' : 'reversal',
-      })),
-    });
-    return { ok: true, errors: [] };
-  } catch (e) {
-    return { ok: false, errors: [e?.message || 'تعذّر التحديث'] };
-  }
+  const r = await setGalleryVisibility({ id: itemId, isVisible, actor: _actor(actorId, actorName) });
+  return { ok: r.ok, errors: r.errors || [] };
 }
 
-/**
- * تمييز/إلغاء تمييز عنصر (feature) — admin فقط (يُفرض في firestore + UI).
- * @returns { ok, errors }
- */
+/** تمييز/إلغاء تمييز عنصر. */
 export async function toggleFeature({ itemId, isFeatured, actorId, actorName }) {
-  if (!itemId) return { ok: false, errors: ['itemId مطلوب'] };
   if (!actorId) return { ok: false, errors: ['غير مصرّح'] };
-  try {
-    await updateDoc(doc(db, 'gallery', itemId), {
-      isFeatured: !!isFeatured,
-      updatedAt: serverTimestamp(),
-      audit: arrayUnion(auditEntry({
-        action: isFeatured ? '⭐ تمييز في المعرض' : '↩️ إلغاء التمييز',
-        userId: actorId, userName: actorName, kind: 'op',
-      })),
-    });
-    return { ok: true, errors: [] };
-  } catch (e) {
-    return { ok: false, errors: [e?.message || 'تعذّر التحديث'] };
-  }
+  const r = await setGalleryFeatured({ id: itemId, isFeatured, actor: _actor(actorId, actorName) });
+  return { ok: r.ok, errors: r.errors || [] };
 }
 
-/**
- * حذف نهائي — admin فقط. يحذف الـ doc + الصورة من Storage.
- * @returns { ok, errors }
- */
-export async function removeGalleryItem({ itemId, imagePath, actorId }) {
-  if (!itemId) return { ok: false, errors: ['itemId مطلوب'] };
+/** حذف نهائي (admin فقط — يُفرض في firestore). يحذف الـ doc + الصورة. */
+export async function removeGalleryItem({ itemId, imagePath, actorId, actorName }) {
   if (!actorId) return { ok: false, errors: ['غير مصرّح'] };
-  try {
-    await deleteDoc(doc(db, 'gallery', itemId));
-    if (imagePath) { try { await deleteFile(imagePath); } catch (_) { /* best-effort */ } }
-    return { ok: true, errors: [] };
-  } catch (e) {
-    return { ok: false, errors: [e?.message || 'تعذّر الحذف'] };
-  }
+  const r = await deleteGalleryItem({ id: itemId, storagePath: imagePath, actor: _actor(actorId, actorName) });
+  return { ok: r.ok, errors: r.errors || [] };
 }

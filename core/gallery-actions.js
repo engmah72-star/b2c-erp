@@ -24,11 +24,8 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc,
   getDocs, query, where, serverTimestamp, arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import {
-  ref, uploadBytes, getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
-import { db as defaultDb, storage } from './firebase-init.js';
-import { deleteFile } from './storage-helpers.js';
+import { db as defaultDb } from './firebase-init.js';
+import { deleteFile, uploadGalleryFile } from './storage-helpers.js';
 import { auditEntry } from './audit.js';
 
 const GALLERY = 'gallery';
@@ -68,7 +65,7 @@ function _cleanKeywords(kw) {
  */
 export async function publishGalleryItem({
   db = defaultDb, file, imageUrl, title, productType, tags, keywords,
-  collectionId, collectionName, sourceOrderId, clientId, actor,
+  collectionId, collectionName, sourceOrderId, clientId, actor, onProgress,
 } = {}) {
   const actorErr = _requireActor(actor);
   if (actorErr) return { ok: false, errors: [actorErr], warnings: [] };
@@ -80,15 +77,13 @@ export async function publishGalleryItem({
   let storagePath = null;
 
   try {
-    // 1) رفع الصورة (لو File) — مسار gallery/ مطابق لـ storage.rules.
+    // 1) رفع الصورة (لو File) عبر المسار الموحّد uploadGalleryFile —
+    //    يضمن: ضغط/تصغير + contentType صريح + مسار gallery/ منظّم + progress.
+    //    (المصدر الوحيد لرفع صور المعرض — لا uploadBytes مباشر هنا.)
     if (file) {
-      storagePath = `gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const r = ref(storage, storagePath);
-      // contentType صريح: storage.rules تشترط image/* — ملف بـ MIME فارغ كان
-      // يُرفع octet-stream فيُرفَض. نشتقّه من نوع الملف وإلا image/jpeg.
-      const ct = (file.type && file.type.startsWith('image/')) ? file.type : 'image/jpeg';
-      await uploadBytes(r, file, { contentType: ct });
-      url = await getDownloadURL(r);
+      const up = await uploadGalleryFile({ file, designerId: actor.userId, onProgress });
+      url = up.url;
+      storagePath = up.path;
     }
 
     // 2) كشف التكرار — best effort (لا يمنع النشر).
@@ -160,6 +155,34 @@ export async function setGalleryVisibility({ db = defaultDb, id, isVisible, acto
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e?.message || 'فشل تحديث الحالة'], warnings: [] };
+  }
+}
+
+/**
+ * تمييز/إلغاء تمييز تصميم في المعرض (featured) — يُعرض أولاً في الواجهة.
+ * @param {Object} args — { id, isFeatured:boolean, actor:{userId,userName} }
+ */
+export async function setGalleryFeatured({ db = defaultDb, id, isFeatured, actor } = {}) {
+  const actorErr = _requireActor(actor);
+  if (actorErr) return { ok: false, errors: [actorErr], warnings: [] };
+  if (!id) return { ok: false, errors: ['⚠️ معرّف التصميم مطلوب'], warnings: [] };
+
+  const feat = !!isFeatured;
+  try {
+    const audit = auditEntry({
+      action: feat ? '⭐ تمييز تصميم في المعرض' : '↩️ إلغاء تمييز تصميم',
+      userId: actor.userId, userName: actor.userName, kind: 'op',
+    });
+    await updateDoc(doc(db, GALLERY, id), {
+      isFeatured:    feat,
+      updatedAt:     serverTimestamp(),
+      updatedBy:     actor.userId,
+      updatedByName: actor.userName || '',
+      auditTrail:    arrayUnion(audit),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e?.message || 'فشل تحديث التمييز'], warnings: [] };
   }
 }
 
