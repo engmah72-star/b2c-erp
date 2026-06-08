@@ -1874,7 +1874,10 @@ exports.weeklyProductRecommendations = onSchedule(
 //
 // Output is a Zod-validated structured object (see genkit-flows.js for schema).
 
-const { analyzeClient, analyzeSuggestion } = require('./genkit-flows');
+// NB: genkit-flows يُحمَّل lazy (require داخل كل دالة) — تحميله العام كان يبطّئ
+// مرحلة discovery عند النشر (genkit + enableFirebaseTelemetry تقيلة) فيسبّب
+// "Cannot determine backend specification. Timeout". الـ lazy require يبقي
+// تحليل النشر سريعاً ويحمّل genkit فقط عند استدعاء دوال الذكاء الاصطناعي.
 
 exports.analyzeClientWithAI = onCall(
   { ...CALL_OPTS, memory: '512MiB', timeoutSeconds: 90 },
@@ -1899,6 +1902,7 @@ exports.analyzeClientWithAI = onCall(
     if (!canView) throw new HttpsError('permission-denied', 'صلاحية قراءة العملاء مطلوبة');
 
     try {
+      const { analyzeClient } = require('./genkit-flows'); // lazy — انظر الملاحظة أعلاه
       const result = await analyzeClient(apiKey, clientId);
       if (result && result.error === 'client_not_found') {
         throw new HttpsError('not-found', result.message);
@@ -1951,6 +1955,7 @@ exports.analyzeSuggestionWithAI = onCall(
     }
 
     try {
+      const { analyzeSuggestion } = require('./genkit-flows'); // lazy — انظر الملاحظة أعلاه
       const analysis = await analyzeSuggestion(apiKey, suggestion);
 
       // Write analysis back via Admin SDK
