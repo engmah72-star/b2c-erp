@@ -34,14 +34,8 @@ let off = null;
 function mount(user, userDoc) {
   if (mounted) return;
   mounted = true;
-  // اسم/أفاتار في الـ sidebar إن وُجد
-  if (userDoc) {
-    const nm = userDoc.name || user?.email || '';
-    const nameEl = document.getElementById('nav-name');
-    const avEl = document.getElementById('nav-av');
-    if (nameEl) nameEl.textContent = nm;
-    if (avEl) avEl.textContent = ((nm || '؟')[0] || '؟').toUpperCase();
-  }
+  // ملاحظة: بناء السايد بار يتولّاه core/sidebar-mount.js (المركزي) + app-sidebar (v2)
+  // — مُحمَّلان في gallery.html. هنا نركّز على محتوى المعرض فقط.
   off = mountGalleryView({ container, user: user || null, userDoc: userDoc || null });
 }
 
