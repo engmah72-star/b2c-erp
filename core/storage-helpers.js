@@ -99,17 +99,21 @@ function _buildPath({ module, entityId, kind, fileName }) {
   return `${module}/${entityId}/${kind}/${ts}_${safeName}`;
 }
 
-/** internal: actual upload */
-async function _upload({ path, file, onProgress }) {
+/** internal: actual upload.
+ * contentType اختياري — لو مُرِّر يُفرَض في الـ metadata (مهم لقواعد storage التي
+ * تشترط contentType.matches('image/.*') — ملف بلا MIME كان يُرفع كـ octet-stream فيُرفَض). */
+async function _upload({ path, file, onProgress, contentType }) {
   if (!path) throw new Error('[storage] _upload: path مطلوب');
   if (!file) throw new Error('[storage] _upload: file مطلوب');
 
   const fileRef = ref(storage, path);
+  const ct = contentType || file.type || 'application/octet-stream';
+  const metadata = { contentType: ct };
 
   // لو onProgress callback موجود، استخدم resumable upload
   if (typeof onProgress === 'function') {
     return new Promise((resolve, reject) => {
-      const task = uploadBytesResumable(fileRef, file);
+      const task = uploadBytesResumable(fileRef, file, metadata);
       task.on('state_changed',
         (snap) => {
           const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
@@ -122,7 +126,7 @@ async function _upload({ path, file, onProgress }) {
             url, path,
             fileName:    sanitizeFileName(file.name),
             size:        file.size,
-            contentType: file.type || 'application/octet-stream',
+            contentType: ct,
           });
         }
       );
@@ -130,13 +134,13 @@ async function _upload({ path, file, onProgress }) {
   }
 
   // simple upload (no progress)
-  const snap = await uploadBytes(fileRef, file);
+  const snap = await uploadBytes(fileRef, file, metadata);
   const url = await getDownloadURL(snap.ref);
   return {
     url, path,
     fileName:    sanitizeFileName(file.name),
     size:        file.size,
-    contentType: file.type || 'application/octet-stream',
+    contentType: ct,
   };
 }
 
@@ -209,10 +213,21 @@ export async function uploadSupplierFile({ supplierId, file, kind, onProgress })
  * @param {Function} [args.onProgress] (pct: 0-100) => void
  * @returns { url, path, fileName, size, contentType, kind, timestamp }
  */
+const _EXT_IMAGE_MIME = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif',
+};
 export async function uploadGalleryFile({ file, designerId, onProgress }) {
   if (!file) throw new Error('[storage] uploadGalleryFile: file مطلوب');
   const mime = (file.type || '').toLowerCase();
-  if (!mime.startsWith('image/')) {
+  // contentType صريح: من الـ MIME لو صورة، وإلا من الامتداد — يمنع رفض storage
+  // لملفات صورة بـ MIME فارغ (كانت تُرفع octet-stream فترفضها القاعدة).
+  let contentType = mime.startsWith('image/') ? mime : null;
+  if (!contentType) {
+    const ext = (file.name || '').toLowerCase().split('.').pop();
+    contentType = _EXT_IMAGE_MIME[ext] || null;
+  }
+  if (!contentType) {
     throw new Error('[storage] uploadGalleryFile: صور فقط مسموحة في المعرض');
   }
   const path = _buildPath({
@@ -221,7 +236,7 @@ export async function uploadGalleryFile({ file, designerId, onProgress }) {
     kind: 'items',
     fileName: file.name,
   });
-  const result = await _upload({ path, file, onProgress });
+  const result = await _upload({ path, file, onProgress, contentType });
   return { ...result, kind: 'items', timestamp: Date.now() };
 }
 
