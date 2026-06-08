@@ -84,7 +84,10 @@ export async function publishGalleryItem({
     if (file) {
       storagePath = `gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const r = ref(storage, storagePath);
-      await uploadBytes(r, file);
+      // contentType صريح: storage.rules تشترط image/* — ملف بـ MIME فارغ كان
+      // يُرفع octet-stream فيُرفَض. نشتقّه من نوع الملف وإلا image/jpeg.
+      const ct = (file.type && file.type.startsWith('image/')) ? file.type : 'image/jpeg';
+      await uploadBytes(r, file, { contentType: ct });
       url = await getDownloadURL(r);
     }
 
