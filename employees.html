@@ -12,6 +12,11 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Business2Card — الموظفين</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -24,7 +29,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -263,6 +267,8 @@ import { buildEmployeesSkeletonHTML } from "./features/employees/views/render-em
 import { buildEmployeesAlertsHTML } from "./features/employees/views/render-employees-alerts.js";
 import { buildKpiPanelHeaderHTML, buildKpiPanelBodyHTML, buildAttPanelHeaderHTML, buildAttPanelEmptyHTML, buildAttPanelBodyHTML } from "./features/employees/views/render-employees-drawer.js";
 import { resolveDayStatus } from "./core/attendance-core.js";
+import { computeScore } from "./core/employee-scoring.js";
+import { filterEmployeeOrders } from "./core/employee-orders.js";
 import { buildBoardSummaryHTML } from "./features/attendance-board/render.js";
 import { buildAllEmployeeModalsHTML } from "./features/employees/views/render-employees-modals.js";
 
@@ -287,7 +293,7 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],attPermsToday=[],empLeavesAll=[];
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],attPermsToday=[],empLeavesAll=[],empIncidentsAll=[];
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let __selfMode=false,__myUserDoc=null,__empSnapLoaded=false; // __selfMode: نمط "إنشاء ملف موظف لي" · __myUserDoc: users doc للمستخدم الحالي · __empSnapLoaded: هل وصل snapshot الموظفين
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
@@ -301,7 +307,7 @@ const scheduleStats=()=>{if(__statsRaf)return;__statsRaf=requestAnimationFrame((
 const scheduleList=()=>{if(__listRaf)return;__listRaf=requestAnimationFrame(()=>{__listRaf=0;renderList();});};
 const scheduleAlerts=()=>{if(__alertsRaf)return;__alertsRaf=requestAnimationFrame(()=>{__alertsRaf=0;renderAlerts();});};
 // Caches — invalidated by version counters
-let __ordersVer=0,__empVer=0,__attVer=0;
+let __ordersVer=0,__empVer=0,__attVer=0,__hrVer=0; // __hrVer: أهداف/إجازات/إخفاقات (مدخلات السكور)
 let __lastActivityMap=null,__lastActivityVer=-1;
 const __kpiCache=new Map(); // key: empId|ordersVer|attVer|monthKey -> breakdown
 
@@ -370,58 +376,39 @@ window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-op
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 window.closePanel=()=>document.getElementById('panel-ov').classList.remove('open');
 
-// ══ KPI CALCULATION — 3 محاور موحدة ══
+// ══ KPI CALCULATION — مصدر واحد: core/employee-scoring.js (RULE 1) ══
+// اللوحة تعرض نفس سكور البروفايل (computeScore) بلا تكرار خوارزمية. الشكل
+// المُعاد {attendance,productivity,quality,total,monthAtt,workDays} محفوظ كما هو
+// ليبقى مستهلكوه (بطاقة اللوحة + الـ drawer + الفرز) دون تغيير.
+// نفس فلتر ملكية البروفايل (core/employee-orders.js) ثم تصفية الشهر — تطابق سكور اللوحة مع البروفايل
+function empMonthOrders(e,uid,mKey){
+  const [ys,ms]=mKey.split('-').map(Number);
+  return filterEmployeeOrders({orders:allOrders,employee:e,employeeId:e._id,uid}).filter(o=>{
+    const d=o.createdAt?.toDate?.();
+    return d&&d.getMonth()===(ms-1)&&d.getFullYear()===ys;
+  });
+}
 function calcKpiBreakdown(e,uid,mKey){
   if(!mKey)mKey=curMonthKey();
-  const cacheKey=`${e._id}|${uid}|${__ordersVer}|${__attVer}|${mKey}`;
+  const cacheKey=`${e._id}|${uid}|${__ordersVer}|${__attVer}|${__hrVer}|${mKey}`;
   const cached=__kpiCache.get(cacheKey);
   if(cached)return cached;
-  const workDays=Math.max(1,Math.round((260-(e.annualLeaveQuota||21))/12));
-  // 1. الحضور (35) — أيام الحضور الفعلية هذا الشهر، مع خصم تأخير
-  const attEntries=attendanceRecords.filter(a=>(a.employeeUid===uid||a.employeeId===e._id)&&(a.date||'').startsWith(mKey));
-  const monthAtt=attEntries.length;
-  const lateMins=attEntries.reduce((s,a)=>s+(parseInt(a.lateMinutes)||0),0);
-  const latePenalty=Math.min(7,Math.floor(lateMins/60));
-  const attendance=Math.max(0,Math.min(35,Math.round(monthAtt/workDays*35))-latePenalty);
-  // 2. الإنتاجية (40) — حسب الدور
-  let productivity=20;
-  const mStart=mKey+'-01';
-  if(e.role==='graphic_designer'||e.role==='design_operator'){
-    const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-    const done=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage));
-    productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
-  } else if(e.role==='customer_service'){
-    const mine=allOrders.filter(o=>o.createdBy===uid&&(o.createdAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
-    productivity=Math.min(40,mine.length*4);
-  } else if(e.role==='production_agent'){
-    const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-    const done=mine.filter(o=>['shipping','archived'].includes(o.stage));
-    productivity=mine.length?Math.min(40,Math.round(done.length/mine.length*40)):20;
-  } else if(e.role==='shipping_officer'){
-    const mine=allOrders.filter(o=>(o.shippingOfficerId===uid||o.shippingOfficerId===e._id)&&['shipping','archived'].includes(o.stage)&&(o.updatedAt?.toDate?.()?.toISOString()||'').startsWith(mKey));
-    productivity=Math.min(40,mine.length*5);
-  } else { productivity=25; }
-  // 3. الجودة (25) — نسبة الإتمام بدون إعادة عمل
-  let quality=12;
-  if(e.role==='graphic_designer'||e.role==='design_operator'){
-    const mine=allOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
-    const good=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)&&!(o.timeline||[]).some(t=>t.action?.includes('مراجعة')||t.action?.includes('رفض')));
-    quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
-  } else if(e.role==='customer_service'){
-    const mine=allOrders.filter(o=>o.createdBy===uid);
-    const archived=mine.filter(o=>o.stage==='archived');
-    quality=mine.length?Math.min(25,Math.round(archived.length/mine.length*25)):12;
-  } else if(e.role==='production_agent'){
-    const mine=allOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
-    const good=mine.filter(o=>['shipping','archived'].includes(o.stage));
-    quality=mine.length?Math.min(25,Math.round(good.length/mine.length*25)):12;
-  } else if(e.role==='shipping_officer'){
-    const mine=allOrders.filter(o=>o.shippingOfficerId===uid||o.shippingOfficerId===e._id);
-    const done=mine.filter(o=>o.stage==='archived');
-    quality=mine.length?Math.min(25,Math.round(done.length/mine.length*25)):12;
-  } else { quality=15; }
-  const total=Math.min(100,attendance+productivity+quality);
-  const result={attendance,productivity,quality,total,monthAtt,workDays};
+  const r=computeScore({
+    mKey, now:new Date(), employee:e,
+    attendance:attendanceRecords.filter(a=>a.employeeUid===uid||a.employeeId===e._id),
+    leaves:empLeavesAll.filter(l=>l.employeeId===e._id||l.employeeUid===uid),
+    monthOrders:empMonthOrders(e,uid,mKey),
+    goals:empGoals.filter(g=>g.employeeId===e._id),
+    incidents:empIncidentsAll.filter(i=>i.employeeId===e._id||i.authUid===uid),
+  });
+  const result={
+    attendance:r.breakdown?.att?.score||0,
+    productivity:r.breakdown?.prod?.score||0,
+    quality:r.breakdown?.qual?.score||0,
+    total:r.score||0,
+    monthAtt:r.meta?.present||0,
+    workDays:r.meta?.workDays||0,
+  };
   // bound cache (keep last 200 entries)
   if(__kpiCache.size>200)__kpiCache.clear();
   __kpiCache.set(cacheKey,result);
@@ -640,6 +627,12 @@ onAuthStateChanged(auth,async u=>{
 
   onSnapshot(query(collection(db,'employee_goals'),limit(2000)),snap=>{
     empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    __hrVer++;scheduleStats();scheduleList();
+  });
+  // إخفاقات كل الموظفين — مدخل خصم الجودة في computeScore (مصدر واحد للسكور)
+  onSnapshot(query(collection(db,'employee_incidents'),limit(2000)),snap=>{
+    empIncidentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    __hrVer++;scheduleStats();scheduleList();
   });
   onSnapshot(query(collection(db,'employee_evaluations'),limit(2000)),snap=>{
     empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -684,7 +677,7 @@ onAuthStateChanged(auth,async u=>{
   });
   onSnapshot(query(collection(db,'employee_leaves'),limit(2000)),snap=>{
     empLeavesAll=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    scheduleList();
+    __hrVer++;scheduleStats();scheduleList();
   });
 });
 

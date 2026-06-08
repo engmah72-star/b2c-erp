@@ -34,6 +34,32 @@ export const calcRem = (o) => {
 };
 
 /**
+ * Stages after the design phase where production/shipping work happens.
+ * An order here with a positive customer balance is "critical collection"
+ * (money owed while the order has already left design). RULE C2 — no magic
+ * stage arrays scattered across pages.
+ * @type {string[]}
+ */
+export const POST_DESIGN_STAGES = ['printing', 'production', 'shipping'];
+
+/**
+ * Is this a real (priced) order, past design, that still owes a balance?
+ *   salePrice > 0 AND stage ∈ POST_DESIGN_STAGES AND calcRem(o) > 0.
+ *
+ * Single definition for the "critical post-design with remaining" rule used
+ * by the collection badge + priority alerts. (Pure aggregator modules in
+ * core/reports-*.js intentionally inline this instead — they receive calcRem
+ * via dependency-injection to stay import-free and unit-testable.)
+ *
+ * @param {object} o — order document
+ * @returns {boolean}
+ */
+export const isPostDesignWithRem = (o) =>
+  (parseFloat(o?.salePrice) || 0) > 0
+  && POST_DESIGN_STAGES.includes(o?.stage)
+  && calcRem(o) > 0;
+
+/**
  * Gross order total = salePrice + customerShipFee − discount (clamp ≥ 0).
  * The total the customer owes before any payment.
  *

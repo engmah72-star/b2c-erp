@@ -7,6 +7,12 @@
 const esc = (s) => String(s == null ? '' : s)
   .replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 
+// تهريب قيمة لتُدرَج بأمان داخل <script> inline: JSON صالح + منع كسر الوسم
+// (`</script>`) بتحويل < > & إلى هروب يونيكود. بدونه، اسم فيه «</script>» يكسر
+// السكربت ويُدرَج HTML خام في الصفحة = ثغرة XSS.
+const jsStr = (v) => JSON.stringify(v == null ? '' : String(v))
+  .replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+
 const normWa = (n) => {
   let s = String(n || '').replace(/[^\d+]/g, '');
   if (s.startsWith('00')) s = s.slice(2);
@@ -163,6 +169,7 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
       <p class="bio">${esc(card.bio || '')}</p>
       <div class="actions">${acts}</div>
       ${svcHtml}${soHtml}${worksHtml}
+      <button class="act act-call" id="msgBtn" type="button" hidden style="width:100%;margin:0 0 14px">💬 راسلني</button>
       <div class="share"><h2 class="sec sec--center">شارك الصفحة</h2>
         <img src="${esc(qr)}" alt="QR" loading="lazy" width="150" height="150">
         <br><button class="btn" id="shareBtn">📤 مشاركة</button>
@@ -179,6 +186,11 @@ ${url ? `<meta property="og:url" content="${url}"><link rel="canonical" href="${
   var IS_REF=ME&&ME!==OWNER;
   function shareUrl(){return IS_REF?(location.origin+location.pathname+'?ref='+encodeURIComponent(ME)):(location.origin+location.pathname);}
   if(IS_REF){var rb=document.getElementById('shareBtn');if(rb)rb.textContent='🔗 أحِل واكسب';}
+  // «راسلني» (محادثة عضو↔عضو) — استثناء دستوري محدود النطاق، يظهر فقط لعضو مسجَّل
+  // غير صاحب الكارت ومع تفعيل العلم messaging.memberToMember (E1 · افتراضي OFF).
+  var MSG_ON=(function(){try{var v=localStorage.getItem('feat.messaging.memberToMember');return v==='1'||v==='true';}catch(_){return false;}})();
+  if(IS_REF&&MSG_ON){var mb=document.getElementById('msgBtn');if(mb){mb.hidden=false;
+    mb.addEventListener('click',function(){location.href='/cp-shell.html?chat='+encodeURIComponent(OWNER)+'&name='+encodeURIComponent(${jsStr(card.bizName || 'عضو')});});}}
   document.getElementById('shareBtn').addEventListener('click',async()=>{
     var u=shareUrl();
     if(navigator.share){try{await navigator.share({title:document.title,url:u});}catch(_){}}

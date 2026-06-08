@@ -11,6 +11,7 @@ import {
   excusedLateMinutes, PERMISSION_TYPES, PERMISSION_STATUS,
   resolveDayStatus,
   computeWorkedMinutes, scheduledMinutes, computeOvertimeMinutes,
+  attendanceDocId,
 } from '../core/attendance-core.js';
 
 let passed = 0, failed = 0;
@@ -237,6 +238,29 @@ test('computeOvertimeMinutes: only beyond scheduled', () => {
   assertEq(computeOvertimeMinutes(540, 480), 60);
   assertEq(computeOvertimeMinutes(400, 480), 0);
   assertEq(computeOvertimeMinutes(0, 480), 0);
+});
+
+// ── attendanceDocId — the central identity that fixes "نص نص" ────────
+// The whole point: every surface must land on ONE doc per employee/day. A
+// role dashboard passes authUid as employeeId; the control center/profile pass
+// the employees doc id — they MUST still converge on the same record.
+test('attendanceDocId: keyed on authUid when present (canonical)', () => {
+  assertEq(attendanceDocId({ employeeUid: 'U123', employeeId: 'EMP9', date: '2026-06-03' }), 'U123_2026-06-03');
+});
+test('attendanceDocId: dashboard (uid) and control center (emp id) CONVERGE', () => {
+  // dashboard call: employeeId=uid, employeeUid=uid
+  const fromDashboard = attendanceDocId({ employeeUid: 'U123', employeeId: 'U123', date: '2026-06-03' });
+  // control center / profile call: employeeId=emp doc id, employeeUid=uid
+  const fromControl   = attendanceDocId({ employeeUid: 'U123', employeeId: 'EMP9', date: '2026-06-03' });
+  assertEq(fromDashboard, fromControl, '(same employee/day → one record)');
+});
+test('attendanceDocId: falls back to employees id for manual files (no authUid)', () => {
+  assertEq(attendanceDocId({ employeeUid: '', employeeId: 'EMP9', date: '2026-06-03' }), 'EMP9_2026-06-03');
+  assertEq(attendanceDocId({ employeeId: 'EMP9', date: '2026-06-03' }), 'EMP9_2026-06-03');
+});
+test('attendanceDocId: check-in and check-out derive the SAME id', () => {
+  const args = { employeeUid: 'U123', employeeId: 'EMP9', date: '2026-06-03' };
+  assertEq(attendanceDocId(args), attendanceDocId(args), '(checkout reuses checkin id)');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

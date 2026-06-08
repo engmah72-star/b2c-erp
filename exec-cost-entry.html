@@ -7,6 +7,11 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a0f1e">
 <title>B2C — بنود التكلفة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -17,7 +22,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -109,19 +113,6 @@
       <!-- Existing items -->
       <div class="items-box" id="items-box"></div>
 
-      <!-- AI Copilot (minimal one-shot) -->
-      <div class="copilot-box">
-        <div class="copilot-head" onclick="toggleCopilot()">
-          <span>🤖 اسأل AI لاقتراح بنود</span>
-          <span class="copilot-toggle" id="copilot-toggle">▾</span>
-        </div>
-        <div class="copilot-body hide" id="copilot-body">
-          <textarea class="inp copilot-input" id="copilot-input" rows="2" placeholder="مثال: اقترحلي بنود تكلفة لأوفست + سلفنة UV..."></textarea>
-          <button type="button" class="copilot-send" onclick="askCopilot()" id="copilot-send">✨ اقترح بنود</button>
-          <div id="copilot-result" class="copilot-result"></div>
-        </div>
-      </div>
-
       <!-- Add/Edit form -->
       <div class="form-section">
         <div class="form-section-title" id="form-section-title">➕ إضافة بند جديد</div>
@@ -195,24 +186,6 @@
   </div>
 </div>
 
-<!-- AI Analysis Modal -->
-<div class="overlay" id="ov-ai">
-  <div class="modal ai-modal">
-    <div class="modal-head">
-      <span class="modal-title">🧠 تحليل الأوردر بالذكاء الاصطناعي</span>
-      <button type="button" class="modal-x" onclick="closeAI()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="ai-ctx-strip" id="ai-ctx-strip">—</div>
-      <div class="ai-result" id="ai-result">—</div>
-    </div>
-    <div class="modal-foot">
-      <button type="button" class="btn btn-ghost" onclick="closeAI()">إغلاق</button>
-      <button type="button" class="btn btn-r hide" id="ai-retry-btn" onclick="runAIAnalysis()">🔄 إعادة المحاولة</button>
-    </div>
-  </div>
-</div>
-
 <div class="toasts" id="toasts"></div>
 
 <script type="module">
@@ -245,11 +218,9 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'exec-cost-entry.html')
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
-import { askAI, hasKey, KEY_NEEDED } from "./ai-engine.js";
-let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='',activeId=null,currentFilter='all',currentSort='priority',aiActiveId=null,editCostIdx=-1;
+let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='',activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
-const aiCache=new Map(); // orderId -> {text, ts}
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const nowStr=()=>new Date().toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'});
@@ -430,7 +401,6 @@ function renderList(){
         <div class="cta-row">
           <button type="button" class="add-cost-btn" onclick="event.stopPropagation();openCostModal('${o._id}')">＋ تسجيل بند تكلفة</button>
           ${hasLast?`<button type="button" class="quick-btn" title="استعادة آخر تكلفة" onclick="event.stopPropagation();openCostModal('${o._id}',true)">↩️</button>`:''}
-          <button type="button" class="ai-btn" title="تحليل ذكي للأوردر بواسطة Gemini" onclick="event.stopPropagation();openAI('${o._id}')">🧠 تحليل</button>
         </div>
       </div>
     </div>`;
@@ -602,214 +572,6 @@ function applySort(arr){
   else if(currentSort==='nosup')a.sort((x,y)=>(y.products||[]).filter(p=>!p.supplierName).length-(x.products||[]).filter(p=>!p.supplierName).length);
   return a;
 }
-
-/* ───────────── AI Analysis (Gemini) ───────────── */
-window.openAI=function(orderId){
-  aiActiveId=orderId;
-  const o=orders.find(x=>x._id===orderId);if(!o)return;
-  const m=calcMargin(o);
-  const expected=getExpectedCategories(o);
-  document.getElementById('ai-ctx-strip').innerHTML=
-    `<strong>${o.clientName||'—'}</strong> · #${o.orderId||o._id.slice(-6)} · ${o.stage||'—'}<br>`+
-    `السعر: <strong>${fn(m.sale)} ج</strong> · التكلفة المتوقعة: <strong>${fn(m.cost)} ج</strong> · هامش: <strong>${m.marginPct??'—'}%</strong><br>`+
-    `بنود متوقعة: ${expected.join(' · ')}`;
-  document.getElementById('ov-ai').classList.add('open');
-  // PR-848: classList بدل style.display لأن class="hide" + !important يفضل بيخفي
-  document.getElementById('ai-retry-btn').classList.add('hide');
-  runAIAnalysis();
-};
-window.closeAI=function(){document.getElementById('ov-ai').classList.remove('open');aiActiveId=null;};
-window.runAIAnalysis=async function(){
-  if(!aiActiveId)return;
-  const o=orders.find(x=>x._id===aiActiveId);if(!o)return;
-  const resEl=document.getElementById('ai-result');
-  const retry=document.getElementById('ai-retry-btn');
-  // cache hit
-  const cached=aiCache.get(aiActiveId);
-  if(cached&&Date.now()-cached.ts<5*60*1000){
-    resEl.classList.remove('loading','error');
-    resEl.innerHTML=cached.html;
-    // PR-848: classList بدل style.display
-    retry.classList.remove('hide');
-    return;
-  }
-  resEl.classList.add('loading');resEl.classList.remove('error');
-  resEl.innerHTML='<div class="ai-spin"></div> جارٍ التحليل بواسطة Gemini...';
-  retry.classList.add('hide');
-  // Build prompt
-  const m=calcMargin(o);
-  const prods=(o.products||[]).map(p=>{
-    const stats=p.supplierId?supplierStats(p.supplierId):null;
-    return{name:p.name,qty:p.qty,supplier:p.supplierName||'داخلي',printType:p.printType||'',paper:p.paper||'',size:p.size||'',extras:p.extras||[],supplierMedianCost:stats?Math.round(stats.median):null,supplierHistoryCount:stats?stats.count:0};
-  });
-  const similarItems=getAllCostItems().filter(c=>{
-    return (o.products||[]).some(p=>p.supplierId&&c.supplierId===p.supplierId);
-  }).slice(-12).map(c=>({type:c.type,total:c.total,supplier:c.supplierName,note:c.note}));
-  const prompt=`أنت محلل تكلفة خبير في ERP لمطبعة. حلّل الأوردر التالي بإيجاز (RTL عربي، استخدم سطور قصيرة وعلامات تعداد):
-
-# الأوردر
-- العميل: ${o.clientName||'—'}
-- المرحلة: ${o.stage||'—'}
-- إجمالي البيع: ${m.sale} جنيه
-- التكلفة الفعلية حتى الآن: ${(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0)} جنيه
-- التكلفة المتوقعة (من تاريخ الموردين): ${Math.round(m.cost)} جنيه
-- الهامش المتوقع: ${m.marginPct}%
-
-# المنتجات
-${JSON.stringify(prods,null,2)}
-
-# بنود تكلفة سابقة لنفس الموردين (للاسترشاد)
-${similarItems.length?JSON.stringify(similarItems,null,2):'لا يوجد'}
-
-# المطلوب — ردّ في 4 أقسام مرقمة قصيرة:
-1️⃣ تقسيم تكلفة مقترح بالأرقام (طباعة/ورق/تشطيب/...) — اجمع للمجموع المتوقع
-2️⃣ نقاط مخاطر (لو الهامش ضعيف، أو مورد مفقود، أو سعر شاذ)
-3️⃣ نصيحة عملية للمندوب (ماذا يفعل الآن؟ من يكلّم؟ ما يتأكد منه؟)
-4️⃣ تقييم سريع: 🟢/🟡/🔴 مع جملة واحدة
-
-لا تستخدم Markdown headers (#). استخدم emoji وأرقام عربية للأموال.`;
-  try{
-    const text=await askAI(prompt,{temperature:0.4,maxTokens:900});
-    const html=escapeHtml(text).replace(/\n/g,'<br>');
-    aiCache.set(aiActiveId,{html,ts:Date.now()});
-    resEl.classList.remove('loading');
-    resEl.innerHTML=html;
-    retry.classList.remove('hide');
-  }catch(e){
-    resEl.classList.remove('loading');resEl.classList.add('error');
-    if(e.code===KEY_NEEDED||e.message===KEY_NEEDED){
-      resEl.innerHTML='🔑 يلزم مفتاح Gemini أولاً.<br><br>افتح إعدادات الذكاء الاصطناعي من أي صفحة (زر 🧠 في القائمة) وأضف مفتاحك.<br><br><a class="text-c" href="https://aistudio.google.com/apikey" target="_blank">→ احصل على مفتاح من AI Studio</a>';
-    }else{
-      resEl.innerHTML=e.message||'فشل التحليل. حاول مجدداً.';
-    }
-    retry.classList.remove('hide');
-  }
-};
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-
-/* ───────────── AI Copilot (one-shot text → cost suggestions) ───────────── */
-let copilotLast=null;
-
-window.toggleCopilot=function(){
-  const box=document.querySelector('.copilot-box');
-  const body=document.getElementById('copilot-body');
-  if(!box||!body)return;
-  const isOpen=box.classList.toggle('open');
-  body.style.display=isOpen?'block':'none';
-  if(isOpen)setTimeout(()=>document.getElementById('copilot-input')?.focus(),100);
-};
-
-window.askCopilot=async function(){
-  if(!activeId)return;
-  const q=gv('copilot-input').trim();
-  if(!q)return toast('⚠️ اكتب سؤالك أولاً','err');
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const sendBtn=document.getElementById('copilot-send');
-  const resEl=document.getElementById('copilot-result');
-  sendBtn.disabled=true;sendBtn.textContent='⏳ جارٍ التفكير...';
-  resEl.innerHTML='<div class="copilot-loading"><div class="ai-spin"></div> Gemini يحلّل سؤالك...</div>';
-
-  // Build product snapshot
-  const prods=(o.products||[]).map(p=>({name:p.name,qty:p.qty,printType:p.printType,paper:p.paper,size:p.size,extras:p.extras||[],supplier:p.supplierName||''}));
-  const existing=(o.costItems||[]).map(c=>({type:c.type,total:c.total,supplier:c.supplierName,note:c.note}));
-  const sale=parseFloat(o.totalPrice)||parseFloat(o.price)||0;
-  const supTypes=[...new Set(suppliers.map(s=>s.printType).filter(Boolean))].slice(0,8);
-
-  const prompt=`أنت محلل تكلفة لمطبعة. سياق الأوردر:
-- العميل: ${o.clientName||'—'} · المرحلة: ${o.stage||'—'} · سعر البيع: ${sale} ج
-- المنتجات: ${JSON.stringify(prods)}
-- بنود مسجّلة بالفعل: ${existing.length?JSON.stringify(existing):'لا يوجد'}
-- أنواع موردين متاحة: ${supTypes.join(', ')||'—'}
-
-سؤال المندوب: "${q}"
-
-ارجع رد بصيغة JSON صالحة فقط — بدون markdown، بدون أي نص خارج الـ JSON:
-{
-  "message": "نصيحة قصيرة 1-2 جملة بالعربي",
-  "items": [
-    {"type": "<نوع البند، أحرف عربية: طباعة/ورق/زنكات/سلفنة/قص/تجميع/تصميم/متفرقات>", "total": <رقم بالجنيه>, "note": "<وصف اختياري قصير>", "supplier": "<اسم مورد مقترح أو فارغ>"}
-  ]
-}
-
-قواعد:
-- المبالغ معقولة بناءً على المواصفات والكمية
-- لا تكرّر بند موجود بالفعل في "بنود مسجلة"
-- لو السؤال غير واضح، رد بـ items: [] ووضّح في message`;
-
-  try{
-    const text=await askAI(prompt,{temperature:0.35,maxTokens:700});
-    const m=text.match(/\{[\s\S]*\}/);
-    if(!m)throw new Error('الرد لم يأت بصيغة JSON صالحة');
-    const data=JSON.parse(m[0]);
-    copilotLast=data;
-    renderCopilotResult(data);
-  }catch(e){
-    if(e.code===KEY_NEEDED||e.message===KEY_NEEDED){
-      resEl.innerHTML=`<div class="copilot-err">🔑 يلزم مفتاح Gemini أولاً — من زر "🧠" في القائمة العلوية. <a class="text-c" href="https://aistudio.google.com/apikey" target="_blank">احصل على مفتاح</a></div>`;
-    }else{
-      resEl.innerHTML=`<div class="copilot-err">❌ ${escapeHtml(e.message||'فشل')}</div>`;
-    }
-  }finally{
-    sendBtn.disabled=false;sendBtn.textContent='✨ اقترح بنود';
-  }
-};
-
-function renderCopilotResult(data){
-  const resEl=document.getElementById('copilot-result');if(!resEl)return;
-  const items=Array.isArray(data?.items)?data.items:[];
-  let html='';
-  if(data.message)html+=`<div class="copilot-msg">💡 ${escapeHtml(data.message)}</div>`;
-  if(!items.length){
-    html+=`<div class="copilot-err">— لم يقترح AI بنوداً —</div>`;
-  }else{
-    html+=items.map((it,i)=>{
-      const safe={type:escapeHtml(it.type||'—'),total:parseFloat(it.total)||0,note:escapeHtml(it.note||''),supplier:escapeHtml(it.supplier||'')};
-      return `<div class="copilot-suggestion">
-        <div class="copilot-suggestion-info">
-          <strong>${safe.type} · ${fn(safe.total)} ج</strong>
-          ${safe.supplier?` · 🏭 ${safe.supplier}`:''}
-          ${safe.note?`<div style="margin-top:2px">${safe.note}</div>`:''}
-        </div>
-        <button type="button" class="copilot-apply" onclick="applyCopilotItem(${i})">⬇️ نقل للنموذج</button>
-      </div>`;
-    }).join('');
-  }
-  resEl.innerHTML=html;
-}
-
-window.applyCopilotItem=function(idx){
-  const it=copilotLast?.items?.[idx];if(!it)return;
-  // Type → match dropdown
-  const tEl=document.getElementById('ac-type');
-  if(tEl&&it.type){
-    const norm=String(it.type).trim();
-    const matched=[...tEl.options].find(o=>{
-      const v=(o.value||'').trim();
-      return v===norm||v.includes(norm)||norm.includes(v);
-    });
-    if(matched){tEl.value=matched.value;onTypeChange();}
-  }
-  sv('ac-total',it.total||'');
-  sv('ac-note',it.note||'');
-  // Supplier → external + match by name
-  if(it.supplier){
-    setExternal(true);
-    setTimeout(()=>{
-      const supEl=document.getElementById('ac-sup');
-      const supName=String(it.supplier).trim();
-      const match=[...(supEl?.options||[])].find(o=>{
-        const dn=(o.dataset?.name||'').trim();
-        return dn&&(dn===supName||dn.includes(supName)||supName.includes(dn));
-      });
-      if(match)supEl.value=match.value;
-      onCostInputChange();
-    },50);
-  }else{
-    onCostInputChange();
-  }
-  toast('✅ تم نقل البند للنموذج — راجع واحفظ','ok');
-  document.getElementById('form-section-title')?.scrollIntoView({behavior:'smooth',block:'start'});
-};
 
 /* ───────────── Last-cost restore ───────────── */
 function getLastCost(){
@@ -1113,13 +875,6 @@ window.openCostModal=function(orderId,autoRestore){
   renderItemsBox(o);
   renderDrawerProfit(o);
 
-  // Reset Copilot per-order
-  copilotLast=null;
-  sv('copilot-input','');
-  const cResult=document.getElementById('copilot-result');if(cResult)cResult.innerHTML='';
-  const cBox=document.querySelector('.copilot-box');cBox?.classList.remove('open');
-  const cBody=document.getElementById('copilot-body');if(cBody)cBody.style.display='none';
-
   document.getElementById('ov-cost').classList.add('open');
   if(autoRestore&&last)restoreLastCost();
   else onCostInputChange();
@@ -1242,7 +997,9 @@ window.saveCost=async function(){
     if(isEdit){
       toast('✅ تم التعديل','ok');
     }else if(supplierId){
-      const supTotal=ci.filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      // إجمالي المستحق للمورد بعد إضافة البند الحالي. (o.costItems لسه pre-save
+      // — الـ onSnapshot بيحدّثه بعد شوية — فبنضيف total الجديد يدوياً.)
+      const supTotal=(o.costItems||[]).filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0)+total;
       toast(`✅ ${type} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
     }else{
       toast(`✅ تم تسجيل ${type}`+(walletId?' · خُصم من المحفظة':''),'ok');

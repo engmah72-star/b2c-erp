@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v302';
+const CACHE = 'b2c-v309';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -20,6 +20,10 @@ const NETWORK_FIRST_SUFFIXES = [
   // ── Core JS modules without version pins — must stay fresh across deploys ──
   '/sidebar-config.js',
   '/smart-sidebar.js',
+  '/app-sidebar.js',
+  '/core/sidebar-mount.js',
+  '/core/sidebar-model.js',
+  '/core/runtime-shell/signals-aggregator.js',
   '/viewas.js',
   '/financial-guard.js',
   '/inbox-badge.js',
@@ -28,8 +32,6 @@ const NETWORK_FIRST_SUFFIXES = [
   '/sync-monitor.js',
   '/sw-register.js',
   '/pwa-install.js',
-  '/ai-launcher.js',
-  '/ai-engine.js',
   '/orders.js',
   '/order-actions.js',
   '/client-actions.js',
@@ -42,7 +44,6 @@ const NETWORK_FIRST_SUFFIXES = [
   '/clients-shell.js',
   '/clients-upload.js',
   '/clients-image-viewer.js',
-  '/clients-ai-search.js',
   '/clients-constants.js',
   '/clients-sidebar.js',
   '/clients-bridge.js',
@@ -59,6 +60,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/projection.js',
   '/core/financial-invariants.js',
   '/core/audit.js',
+  '/core/perf-vitals.js',
   '/fcm-init.js',
   '/firebase-messaging-sw.js',
   '/returns-core.js',
@@ -70,7 +72,6 @@ const NETWORK_FIRST_SUFFIXES = [
   '/clients-shell.js',
   '/clients-upload.js',
   '/clients-image-viewer.js',
-  '/clients-ai-search.js',
   '/clients-constants.js',
   '/clients-sidebar.js',
   '/design-render.js',
@@ -102,6 +103,14 @@ const NETWORK_FIRST_SUFFIXES = [
   '/features/clients/new-order-form.js',
   '/features/cost-items/drawer.js',
   '/features/employee-profile/views/render-admin-tab.js',
+  '/features/employee-profile/views/render-modals.js',
+  '/features/employee-control/controller.js',
+  '/features/employee-control/quick-actions.js',
+  '/features/employee-control/render.js',
+  '/features/my-home/controller.js',
+  '/features/my-home/render.js',
+  '/core/incident-reasons.js',
+  '/core/task-recurrence.js',
   '/features/employee-profile/views/render-attendance.js',
   '/features/employee-profile/views/render-hero.js',
   '/features/employee-profile/views/render-overview-tab.js',
@@ -121,13 +130,14 @@ const NETWORK_FIRST_SUFFIXES = [
   // ── core/* helpers (Phase-2 extracts) — change with deploys ──
   '/core/dom-utils.js',
   '/core/order-math.js',
+  '/core/comms-utils.js',
   '/core/shared-constants.js',
   '/clients-bridge.js',
   // ── Error tracking (Phase-7) — change with deploys ──
   '/core/error-reporter.js',
   '/error-reporter-init.js',
   '/bug-reporter.js',
-  '/core/report-actions.js',
+  '/core/error-report-actions.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.

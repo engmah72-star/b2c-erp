@@ -35,7 +35,19 @@
  *   - monthLabel: Arabic month name for the current month
  * @returns {string} HTML
  */
-export function buildTabsShellHTML({ activeTab, tasksOpen, kpis, profilePeriod, monthLabel }) {
+export function buildTabsShellHTML({ activeTab, tasksOpen, kpis, profilePeriod, monthLabel, showTimeline = false }) {
+  // البند 2 — تبويب «السجل» الموحّد (خلف العلم؛ زرّ + pane يُحقَنان معاً عند التفعيل)
+  const timelineBtn = showTimeline
+    ? `<button type="button" class="tab-btn${activeTab==='timeline'?' active':''}" data-tab="timeline">🗓️ السجل</button>`
+    : '';
+  const timelinePane = showTimeline
+    ? `<div class="tab-pane" id="tab-timeline" style="${activeTab==='timeline'?'':'display:none'}">
+        <div class="section">
+          <div class="section-head ep-mb-12"><div class="section-title">🗓️ السجل الموحّد — ماذا دار بينك وبين الموظف</div></div>
+          <div id="timeline-container"></div>
+        </div>
+      </div>`
+    : '';
   return `
 
     <!-- Tabs nav -->
@@ -45,7 +57,9 @@ export function buildTabsShellHTML({ activeTab, tasksOpen, kpis, profilePeriod, 
       <button type="button" class="tab-btn${activeTab==='salaries'?' active':''}" data-tab="salaries">💰 المرتبات</button>
       <button type="button" class="tab-btn${activeTab==='tasks'?' active':''}" data-tab="tasks">✅ المهام ${tasksOpen?`<span class="badge-count">${tasksOpen}</span>`:''}</button>
       <button type="button" class="tab-btn${activeTab==='admin'?' active':''}" data-tab="admin">🔐 الإدارة</button>
+      ${timelineBtn}
     </div>
+    ${timelinePane}
 
     <!-- TAB: Overview -->
     <div class="tab-pane" id="tab-overview" style="${activeTab==='overview'?'':'display:none'}">

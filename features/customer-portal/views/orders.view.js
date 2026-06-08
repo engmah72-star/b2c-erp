@@ -35,6 +35,7 @@ export function create(ctx) {
     const na = nextActionOf(o);
     const actions = [
       Button({ label: 'تفاصيل', icon: '👁', variant: 'ghost', size: 'sm', block: false, action: `open:${o._id}` }),
+      Button({ label: 'المحادثة', icon: '💬', variant: 'ghost', size: 'sm', block: false, action: `chat:${o._id}` }),
       ReorderBtn(o._id),
       na ? Button({ label: na.label, icon: '✅', variant: 'primary', size: 'sm', block: false, action: `approve:${o._id}` }) : '',
     ].filter(Boolean).join('');
@@ -98,6 +99,8 @@ export function create(ctx) {
     async onAction(a) {
       if (a === 'neworder') return ctx.openNewOrder();
       if (a.startsWith('open:')) { const o = byId.get(a.slice(5)); if (o) ctx.openOrder(o); return; }
+      // محادثة الطلب مباشرةً من البطاقة (بلا الدخول للإنبوكس) — يفتح خيط clord_ للأوردر.
+      if (a.startsWith('chat:')) { const o = byId.get(a.slice(5)); if (o) ctx.openChat?.({ kind: 'order', order: o }); return; }
       if (a.startsWith('reorder:')) { const o = byId.get(a.slice(8)); if (o) await submitRequest(ctx, { type: 'reorder', order: o }); return; }
       if (a.startsWith('approve:')) {
         // الاعتماد عبر الفعل المركزي (Cloud Function → order.clientApproval) فقط — لا رسالة.

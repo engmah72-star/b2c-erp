@@ -6,6 +6,11 @@
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <title>طلباتي المالية — Business2Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -17,7 +22,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -45,6 +49,7 @@
   </div>
   <div class="mr-topbar-actions">
     <button class="btn btn-p" type="button" id="btn-new-request">➕ طلب جديد</button>
+    <button class="btn btn-ghost" type="button" id="btn-leave">🌴 طلب إجازة</button>
     <span id="nav-name" class="mr-nav-name"></span>
     <button type="button" id="btn-logout" class="mr-logout">خروج</button>
   </div>
@@ -65,6 +70,11 @@
     <div id="role-banner" class="mr-role-banner"></div>
 
     <div id="list-content"><div class="loader"><div class="spinner"></div></div></div>
+
+    <section id="leaves-section" style="margin-top:28px">
+      <h3 style="font-size:var(--fs-md);color:var(--snow);margin:0 0 12px">🌴 طلبات إجازاتي</h3>
+      <div id="leaves-list"></div>
+    </section>
   </div>
 </main>
 </div><!-- /.app-shell -->
@@ -135,6 +145,32 @@
   </div>
 </div>
 
+<!-- Modal: طلب إجازة -->
+<div class="overlay" id="ov-leave">
+  <div class="modal mr-modal-narrow">
+    <div class="modal-head"><span class="modal-title">🌴 طلب إجازة</span><button type="button" class="modal-x" data-close="leave">✕</button></div>
+    <div class="modal-body">
+      <div class="fg"><label>نوع الإجازة *</label>
+        <select class="inp" id="lv-type">
+          <option value="annual">سنوية</option>
+          <option value="sick">مرضية</option>
+          <option value="casual">عارضة</option>
+          <option value="emergency">طارئة</option>
+          <option value="unpaid">بدون أجر</option>
+        </select>
+      </div>
+      <div class="fg"><label>من تاريخ *</label><input class="inp" id="lv-start" type="date"></div>
+      <div class="fg"><label>إلى تاريخ</label><input class="inp" id="lv-end" type="date"></div>
+      <div class="fg"><label>عدد الأيام</label><input class="inp" id="lv-days" type="number" min="0" step="0.5" placeholder="0"></div>
+      <div class="fg"><label>السبب *</label><textarea class="inp mr-reason-area" id="lv-reason" placeholder="سبب الإجازة"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" data-close="leave">إلغاء</button>
+      <button type="button" class="btn btn-g" id="btn-save-leave">📤 إرسال الطلب</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="mr-toast"></div>
 
 <script type="module">
@@ -142,6 +178,7 @@ import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { approvalActions } from "./approval-actions.js";
+import { employeeActions } from "./employee-actions.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { STAGE_AR, ROLE_LABELS } from "./core/shared-constants.js";
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
@@ -153,6 +190,10 @@ let ordersMap = new Map();
 let activeReqType = 'supplier_payment';
 let receivingReq = null;
 let __receiptFile = null;
+let currentEmployeeId = '';
+let myLeaves = [];
+const LEAVE_TYPE_LBL = { annual:'سنوية', sick:'مرضية', casual:'عارضة', emergency:'طارئة', unpaid:'بدون أجر' };
+const LEAVE_STATUS_LBL = { pending:'⏳ بانتظار موافقة الإدارة', approved:'✅ تمت الموافقة', rejected:'❌ مرفوض' };
 
 const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const escapeHtml = s => String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -202,6 +243,8 @@ window.oM = function(id){ document.getElementById('ov-'+id)?.classList.add('open
 document.getElementById('btn-new-request')?.addEventListener('click', ()=>openNewRequest());
 document.getElementById('btn-logout')?.addEventListener('click', ()=>logoutBtn());
 document.getElementById('btn-save-request')?.addEventListener('click', ()=>saveRequest());
+document.getElementById('btn-leave')?.addEventListener('click', ()=>oM('leave'));
+document.getElementById('btn-save-leave')?.addEventListener('click', ()=>saveLeave());
 document.getElementById('receipt-save-btn')?.addEventListener('click', ()=>uploadReceipt());
 // Modal close buttons (data-close="<modal-id>")
 document.querySelectorAll('[data-close]').forEach(b=>{
@@ -272,6 +315,7 @@ onAuthStateChanged(auth, async u=>{
     currentRole = ud.role || '';
     currentUserName = ud.name || u.email || '';
     currentPerms = ud.permissions || {};
+    currentEmployeeId = ud.employeeId || u.uid;
     buildSidebar();
     updateRoleBanner();
     startListeners();
@@ -311,6 +355,65 @@ function startListeners(){
     snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
     err=>console.error('[my-requests] employees:', err)
   );
+
+  // إجازاتي (RULE G3: bounded — آخر 100 طلب لي).
+  onSnapshot(query(collection(db,'employee_leaves'), where('requestedBy','==',currentUid), limit(100)),
+    snap=>{
+      myLeaves = snap.docs.map(d=>({...d.data(),_id:d.id}));
+      myLeaves.sort((a,b)=>(b.requestedAt?.toMillis?.()||0)-(a.requestedAt?.toMillis?.()||0));
+      renderLeaves();
+    },
+    err=>console.error('[my-requests] leaves:', err)
+  );
+}
+
+function renderLeaves(){
+  const el = document.getElementById('leaves-list');
+  if(!el) return;
+  if(!myLeaves.length){
+    el.innerHTML = `<div class="empty-pl">🌴 لا توجد طلبات إجازة — اضغط «طلب إجازة» لإرسال واحد.</div>`;
+    return;
+  }
+  el.innerHTML = myLeaves.map(l=>{
+    const range = l.startDate
+      ? (l.endDate && l.endDate !== l.startDate ? `${escapeHtml(l.startDate)} → ${escapeHtml(l.endDate)}` : escapeHtml(l.startDate))
+      : '—';
+    const note = l.status === 'rejected' && l.decisionNote ? ` — ${escapeHtml(l.decisionNote)}` : '';
+    return `<div class="card" style="margin-bottom:10px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <b>🌴 إجازة ${escapeHtml(LEAVE_TYPE_LBL[l.type]||l.type||'')}</b>
+        <span style="color:var(--dim2);font-size:var(--type-caption)">${LEAVE_STATUS_LBL[l.status]||escapeHtml(l.status||'')}${note}</span>
+      </div>
+      <div style="color:var(--dim2);font-size:var(--type-caption);margin-top:4px">📅 ${range}${l.days?` · ${escapeHtml(String(l.days))} يوم`:''}</div>
+      ${l.reason?`<div style="color:var(--dim);font-size:var(--type-caption);margin-top:4px">${escapeHtml(l.reason)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function saveLeave(){
+  const type = document.getElementById('lv-type').value;
+  const startDate = document.getElementById('lv-start').value;
+  const endDate = document.getElementById('lv-end').value;
+  const days = document.getElementById('lv-days').value;
+  const reason = document.getElementById('lv-reason').value.trim();
+  if(!startDate){ showToast('⚠️ حدد تاريخ البداية','err'); return; }
+  if(!reason){ showToast('⚠️ اكتب سبب الإجازة','err'); return; }
+  const btn = document.getElementById('btn-save-leave');
+  btn.disabled = true;
+  const res = await employeeActions.requestEmployeeLeave({
+    db, employeeId: currentEmployeeId, employeeUid: currentUid, employeeName: currentUserName,
+    type, startDate, endDate, days, reason,
+    userId: currentUid, userName: currentUserName,
+  });
+  btn.disabled = false;
+  if(res && res.ok){
+    cM('leave');
+    document.getElementById('lv-reason').value = '';
+    document.getElementById('lv-days').value = '';
+    showToast('✅ تم إرسال طلب الإجازة','ok');
+  } else {
+    showToast('⚠️ '+((res&&res.errors&&res.errors[0])||'فشل الإرسال'),'err');
+  }
 }
 
 window.setTab = function(tab){

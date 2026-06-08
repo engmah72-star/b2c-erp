@@ -35,16 +35,81 @@ import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
-import { computeLateMinutes } from './core/attendance-core.js';
+import { computeLateMinutes, attendanceDocId } from './core/attendance-core.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
 // ══════════════════════════════════════════
 
+/**
+ * سجل تدقيق غير-حاجز في audit_logs (H3) — صامت عند الفشل، لا يُعطّل الـ action.
+ * (نفس نمط product-actions._logAudit — audit_logs.rules تتطلّب action+userId+timestamp).
+ */
+async function _logAudit(db, { action, details, userId, userName }) {
+  try {
+    await addDoc(collection(db, 'audit_logs'), {
+      action,
+      details: details || {},
+      userId: userId || '',
+      userName: userName || '',
+      entity: 'employee_incident',
+      timestamp: serverTimestamp(),
+      url: typeof location !== 'undefined' ? location.pathname : '',
+    });
+  } catch (e) {
+    console.warn('[employeeActions._logAudit] failed (non-blocking):', action, e?.message);
+  }
+}
+
+/**
+ * أتمتة التصعيد: لو تكرّر نفس السبب (reasonCode) 3+ مرات لنفس الموظف (مع تجاهل
+ * المُلغى أثره) يُنشئ مهمة متابعة عاجلة لمن سجّل الإخفاق. غير-حاجز — لا يُفشل
+ * تسجيل الإخفاق لو تعثّر. يعمل من أي مدخل (بروفايل/لوحة) لأنه في طبقة الـ action.
+ */
+async function _maybeEscalateIncident(db, { employeeId, employeeName, reasonCode, reasonLabel, userId, userName }) {
+  if (!reasonCode || !employeeId) return false;
+  try {
+    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const snap = await getDocs(query(collection(db, 'employee_incidents'), where('employeeId', '==', employeeId), limit(500)));
+    const total = snap.docs
+      .map(d => d.data())
+      .filter(i => (i.reasonCode || ('type:' + (i.type || 'other'))) === reasonCode && !(i.appeal && i.appeal.status === 'accepted'))
+      .length;
+    if (total < 3) return false;
+    await addEmployeeTask({
+      db,
+      title: `🔁 مراجعة تكرار إخفاق: ${reasonLabel || reasonCode} — ${employeeName || ''}`,
+      description: `تكرّر «${reasonLabel || reasonCode}» ${total} مرات لهذا الموظف. يُرجى المراجعة واتخاذ إجراء (تصعيد/تدريب/تنبيه رسمي).`,
+      priority: 'urgent', taskType: 'fixed',
+      assignedToUid: userId, assignedToName: userName || '',
+      userId, userName,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[employeeActions._maybeEscalateIncident] failed (non-blocking):', e?.message);
+    return false;
+  }
+}
+
+/** إشعار غير-حاجز في notifications (طبقة الإشعارات — ليست business state). */
+async function _notify(db, { toUid, title, desc, ico, link, type, entityId }) {
+  if (!toUid) return;
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      toUid, title: title || '', desc: desc || '', ico: ico || '🔔',
+      link: link || null, type: type || 'system', entityId: entityId || null,
+      read: false, createdAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('[employeeActions._notify] failed (non-blocking):', e?.message);
+  }
+}
+
 export async function addIncident({
   db = defaultDb,
   employeeId, employeeName, authUid = '',
   date, type, severity,
+  reasonCode = '', reasonLabel = '',
   title = '', description = '',
   orderId = null, clientName = null,
   imageUrl = '', imagePath = '',
@@ -60,6 +125,10 @@ export async function addIncident({
       date,
       monthKey: (date || '').slice(0, 7),
       type, severity,
+      reasonCode: reasonCode || '',
+      reasonLabel: reasonLabel || '',
+      // بُعد تحليلي: هل الإخفاق مرتبط بأوردر؟
+      orderLinked: !!orderId,
       title, description,
       orderId: orderId || null,
       clientName: clientName || null,
@@ -69,19 +138,106 @@ export async function addIncident({
       createdByName: userName || '',
       createdAt: serverTimestamp(),
     });
-    return { ok: true, errors: [], warnings: [], incidentId: ref.id };
+    // H3: سجل تدقيق + إشعار للموظف (طبقة جانبية، غير حاجزة)
+    await _logAudit(db, {
+      action: `⚠️ تسجيل إخفاق — ${reasonLabel || title || type} (${severity})`,
+      userId, userName,
+      details: { incidentId: ref.id, employeeId, reasonCode, severity, orderId: orderId || null },
+    });
+    await _notify(db, {
+      toUid: authUid,
+      ico: '⚠️', type: 'incident', entityId: ref.id, link: 'my-profile.html?tab=feedback',
+      title: '⚠️ ملاحظة جديدة على أدائك',
+      desc: `${reasonLabel || title || 'ملاحظة'} — راجع بروفايلك. يمكنك تقديم تظلّم إن كان لديك اعتراض.`,
+    });
+    // ⚙️ أتمتة التصعيد: تكرار نفس السبب 3+ مرات ⇒ مهمة متابعة عاجلة (يعمل من أي مدخل)
+    const escalated = await _maybeEscalateIncident(db, {
+      employeeId, employeeName, reasonCode, reasonLabel, userId, userName,
+    });
+    return { ok: true, errors: [], warnings: [], incidentId: ref.id, escalated };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
 }
 
-export async function deleteIncident({ db = defaultDb, incidentId }) {
+export async function deleteIncident({ db = defaultDb, incidentId, userId, userName }) {
   if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
   try {
     await deleteDoc(doc(db, 'employee_incidents', incidentId));
+    await _logAudit(db, { action: '🗑 حذف إخفاق', userId, userName, details: { incidentId } });
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+  }
+}
+
+/**
+ * تظلّم الموظف على إخفاق مسجّل — يكتب الموظف نفسه (authUid يطابق صاحب الإخفاق).
+ * يضع التظلّم بحالة 'pending' فقط؛ القرار للأدمن عبر decideIncidentAppeal.
+ * (firestore.rules يسمح للموظف بتعديل حقل appeal وحده على إخفاقه بحالة pending).
+ * إشعار الأدمن بالتظلّم يتم عبر Cloud Function (onIncidentAppealSubmitted).
+ */
+export async function submitIncidentAppeal({ db = defaultDb, incidentId, reason, userId, userName }) {
+  if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
+  if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ اكتب سبب التظلّم'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'employee_incidents', incidentId), {
+      appeal: {
+        status: 'pending',
+        reason: reason.trim(),
+        submittedAt: serverTimestamp(),
+      },
+    });
+    await _logAudit(db, { action: '🛡️ تقديم تظلّم على إخفاق', userId, userName, details: { incidentId, reason: reason.trim() } });
+    return { ok: true, errors: [], warnings: [], status: 'pending' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إرسال التظلّم'], warnings: [] };
+  }
+}
+
+/**
+ * قرار الأدمن في التظلّم: 'accepted' (يُلغى أثر الإخفاق على التقييم لكن يُحفظ
+ * للشفافية) أو 'rejected'. القبول لا يحذف الإخفاق — يُعلّمه فقط (isVoided).
+ */
+export async function decideIncidentAppeal({
+  db = defaultDb, incidentId, decision, note = '', userId, userName,
+}) {
+  if (!incidentId) return { ok: false, errors: ['⚠️ incidentId مطلوب'], warnings: [] };
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!['accepted', 'rejected'].includes(decision)) {
+    return { ok: false, errors: ['⚠️ قرار غير صالح'], warnings: [] };
+  }
+  try {
+    const snap = await getDoc(doc(db, 'employee_incidents', incidentId));
+    const data = snap.exists() ? snap.data() : {};
+    const prev = data.appeal || {};
+    await updateDoc(doc(db, 'employee_incidents', incidentId), {
+      appeal: {
+        ...prev,
+        status: decision,
+        decisionNote: note || '',
+        decidedBy: userId,
+        decidedByName: userName || '',
+        decidedAt: serverTimestamp(),
+      },
+    });
+    await _logAudit(db, {
+      action: `🛡️ قرار تظلّم: ${decision === 'accepted' ? 'قبول (إلغاء الأثر)' : 'رفض'}`,
+      userId, userName, details: { incidentId, decision, note: note || '' },
+    });
+    // إشعار الموظف بنتيجة تظلّمه
+    await _notify(db, {
+      toUid: data.authUid || '',
+      ico: decision === 'accepted' ? '✅' : '❌', type: 'incident_appeal', entityId: incidentId,
+      link: 'my-profile.html?tab=feedback',
+      title: decision === 'accepted' ? '✅ تم قبول تظلّمك' : '❌ تم رفض تظلّمك',
+      desc: decision === 'accepted'
+        ? `تم إلغاء أثر الملاحظة «${data.reasonLabel || data.title || ''}» على تقييمك.`
+        : `بخصوص الملاحظة «${data.reasonLabel || data.title || ''}»${note ? ' — ' + note : ''}.`,
+    });
+    return { ok: true, errors: [], warnings: [], status: decision };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل حفظ القرار'], warnings: [] };
   }
 }
 
@@ -367,15 +523,26 @@ export async function addEmployeeTask({
   db = defaultDb,
   title, description = '', priority = 'normal',
   dueDate = '', orderId = '',
+  taskType = 'fixed', recurrence = '',
   assignedToUid, assignedToName,
   userId, userName,
 }) {
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!title || !title.trim()) return { ok: false, errors: ['⚠️ أدخل عنوان المهمة'], warnings: [] };
+  // نوع المهمة: محدّدة (fixed) أو دائمة متكرّرة (recurring)
+  const type = taskType === 'recurring' ? 'recurring' : 'fixed';
+  if (type === 'recurring' && !['daily', 'weekly', 'monthly'].includes(recurrence)) {
+    return { ok: false, errors: ['⚠️ اختر تكرار المهمة الدائمة (يومي/أسبوعي/شهري)'], warnings: [] };
+  }
   try {
     const ref = await addDoc(collection(db, 'tasks'), {
       title: title.trim(), description, priority,
-      dueDate, orderId,
+      // المهمة الدائمة لا تحمل dueDate؛ المحدّدة فقط
+      dueDate: type === 'recurring' ? '' : dueDate,
+      orderId,
+      taskType: type,
+      recurrence: type === 'recurring' ? recurrence : '',
+      lastCompletedPeriod: '',
       assignedTo: assignedToUid,
       assignedToName: assignedToName || '',
       assignedBy: userId,
@@ -406,6 +573,28 @@ export async function setTaskStatus({ db = defaultDb, taskId, status }) {
   }
 }
 
+/**
+ * إنجاز مهمة دائمة (متكرّرة) لفترتها الحالية — لا تُغلق المهمة نهائياً، بل
+ * تُختم بمفتاح الفترة `periodKey` ثم تُعاد فتحها تلقائياً للفترة التالية.
+ * (للمهام المحدّدة استخدم setTaskStatus العادي).
+ */
+export async function completeRecurringTask({ db = defaultDb, taskId, periodKey, reopen = false }) {
+  if (!taskId) return { ok: false, errors: ['⚠️ taskId مطلوب'], warnings: [] };
+  if (!reopen && !periodKey) return { ok: false, errors: ['⚠️ periodKey مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'tasks', taskId), {
+      // reopen ⇒ مسح ختم الفترة (تعود المهمة «مستحقّة» للفترة الحالية)
+      lastCompletedPeriod: reopen ? '' : periodKey,
+      lastCompletedAt: reopen ? null : serverTimestamp(),
+      status: 'pending',
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [], periodKey: reopen ? '' : periodKey };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // LEAVES
 // ══════════════════════════════════════════
@@ -431,6 +620,12 @@ export async function addEmployeeLeave({
       endDate: endDate || startDate,
       days: parseFloat(days) || 0,
       reason,
+      // الأدمن يسجّل الإجازة مباشرةً ⇒ معتمدة فوراً (توافق خلفي: الطلبات القديمة
+      // بلا status تُعامَل كمعتمدة، فقط الذاتية pending تظهر في مركزية الطلبات).
+      status: 'approved',
+      decidedBy: userId,
+      decidedByName: userName || '',
+      decidedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       createdBy: userName || '',
       createdById: userId,
@@ -438,6 +633,86 @@ export async function addEmployeeLeave({
     return { ok: true, errors: [], warnings: [], leaveId: ref.id };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * طلب إجازة من الموظف نفسه — يُسجَّل بحالة 'pending' بانتظار قرار الأدمن من
+ * مركزية الطلبات (admin-requests.html). الموظف يكتب لنفسه فقط (employeeUid يطابق
+ * authUid — تُفرَض في firestore.rules). القرار عبر decideEmployeeLeave.
+ */
+export async function requestEmployeeLeave({
+  db = defaultDb,
+  employeeId, employeeUid, employeeName,
+  type, startDate, endDate, days, reason = '',
+  userId, userName,
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
+  if (!startDate) return { ok: false, errors: ['⚠️ حدد تاريخ البداية'], warnings: [] };
+  if (endDate && endDate < startDate) {
+    return { ok: false, errors: ['⚠️ تاريخ النهاية قبل البداية'], warnings: [] };
+  }
+  try {
+    const ref = await addDoc(collection(db, 'employee_leaves'), {
+      employeeId,
+      employeeUid: employeeUid || userId,
+      employeeName: employeeName || userName || '',
+      type,
+      startDate,
+      endDate: endDate || startDate,
+      days: parseFloat(days) || 0,
+      reason,
+      status: 'pending',
+      requestedBy: userId,
+      requestedByName: userName || '',
+      requestedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      createdBy: userName || '',
+      createdById: userId,
+    });
+    return { ok: true, errors: [], warnings: [], leaveId: ref.id, status: 'pending' };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إرسال الطلب'], warnings: [] };
+  }
+}
+
+/**
+ * قرار الأدمن في طلب إجازة: 'approved' أو 'rejected'. يُخطِر الموظف بالنتيجة.
+ * (firestore.rules: update لطلبات الإجازة للأدمن فقط.)
+ */
+export async function decideEmployeeLeave({
+  db = defaultDb, leaveId, decision, decisionNote = '', decidedBy, decidedByName,
+}) {
+  if (!leaveId) return { ok: false, errors: ['⚠️ leaveId مطلوب'], warnings: [] };
+  if (!decidedBy) return { ok: false, errors: ['⚠️ decidedBy مطلوب'], warnings: [] };
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return { ok: false, errors: ['⚠️ decision لازم approved أو rejected'], warnings: [] };
+  }
+  try {
+    const snap = await getDoc(doc(db, 'employee_leaves', leaveId));
+    const data = snap.exists() ? snap.data() : {};
+    await updateDoc(doc(db, 'employee_leaves', leaveId), {
+      status: decision,
+      decidedBy, decidedByName: decidedByName || '',
+      decidedAt: serverTimestamp(),
+      decisionNote: decisionNote || '',
+    });
+    await _logAudit(db, {
+      action: `🌴 قرار إجازة: ${decision === 'approved' ? 'موافقة' : 'رفض'}`,
+      userId: decidedBy, userName: decidedByName,
+      details: { leaveId, decision, note: decisionNote || '' },
+    });
+    await _notify(db, {
+      toUid: data.employeeUid || data.requestedBy || '',
+      ico: decision === 'approved' ? '✅' : '❌', type: 'leave', entityId: leaveId,
+      link: 'my-requests.html',
+      title: decision === 'approved' ? '✅ تمت الموافقة على إجازتك' : '❌ تم رفض طلب إجازتك',
+      desc: decisionNote ? decisionNote : (decision === 'approved' ? 'تمت الموافقة على طلب الإجازة.' : 'تم رفض طلب الإجازة.'),
+    });
+    return { ok: true, errors: [], warnings: [], status: decision };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
 }
 
@@ -475,7 +750,9 @@ export async function recordAttendanceCheckIn({
   if (!employeeId) return { ok: false, errors: ['⚠️ employeeId مطلوب'], warnings: [] };
   if (!date) return { ok: false, errors: ['⚠️ date مطلوب'], warnings: [] };
   if (!recordedBy) return { ok: false, errors: ['⚠️ recordedBy مطلوب'], warnings: [] };
-  const attId = `${employeeId}_${date}`;
+  // Canonical id (attendance-core) — one record per employee/day across ALL
+  // surfaces; never reconstruct the id locally (RULE 1).
+  const attId = attendanceDocId({ employeeUid, employeeId, date });
   const attRef = doc(db, 'attendance', attId);
   const nowD = new Date();
   // auto-late from schedule when available; otherwise honour the passed value
@@ -517,10 +794,14 @@ export async function recordAttendanceCheckIn({
 
 export async function recordAttendanceCheckOut({
   db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
 }) {
-  if (!attendanceId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  // Accept an explicit id OR derive the canonical one — so callers can never
+  // target a different doc than the matching check-in (RULE 1).
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
   try {
-    await updateDoc(doc(db, 'attendance', attendanceId), {
+    await updateDoc(doc(db, 'attendance', attId), {
       checkOut: true,
       checkOutStr: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
       checkOutAt: serverTimestamp(),
@@ -528,6 +809,60 @@ export async function recordAttendanceCheckOut({
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * يبدأ «أوفر تايم» على سجل اليوم: الموظف وصل نهاية ورديته واختار يكمّل، فيكتب
+ * بنفسه الشغل اللي هيعمله (`note`). يُعلّم السجل `overtime:true` ويختم بدايته —
+ * دقائق الأوفر تايم تُشتقّ لاحقاً من `attendance-core.computeOvertimeMinutes`
+ * (worked − scheduled)، فلا نخزّن قيمة محسوبة هنا (RULE 1). نفس مُعرّف السجل
+ * المركزي حتى لا يتفرّع عن الحضور/الانصراف.
+ */
+export async function startAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date, note = '',
+  recordedBy, recordedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtime: true,
+      overtimeNote: String(note || '').slice(0, 500),
+      overtimeStartedAt: serverTimestamp(),
+      overtimeBy: recordedBy || '',
+      overtimeByName: recordedByName || '',
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
+  }
+}
+
+/**
+ * اعتماد المدير لأوفر تايم الموظف («أكّد على الأوفر تايم»). يُعلّم السجل
+ * `overtimeApproved:true` بمن اعتمد ومتى، فتُحتسَب ساعاته الإضافية رسمياً. لا
+ * يكتب دقائق — تظل مُشتقّة مركزياً (RULE 1). نفس مُعرّف السجل المركزي.
+ */
+export async function approveAttendanceOvertime({
+  db = defaultDb, attendanceId,
+  employeeUid, employeeId, date,
+  approvedBy, approvedByName,
+}) {
+  const attId = attendanceId || (date ? attendanceDocId({ employeeUid, employeeId, date }) : '');
+  if (!attId) return { ok: false, errors: ['⚠️ attendanceId مطلوب'], warnings: [] };
+  if (!approvedBy) return { ok: false, errors: ['⚠️ approvedBy مطلوب'], warnings: [] };
+  try {
+    await updateDoc(doc(db, 'attendance', attId), {
+      overtimeApproved: true,
+      overtimeApprovedBy: approvedBy,
+      overtimeApprovedByName: approvedByName || '',
+      overtimeApprovedAt: serverTimestamp(),
+    });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الاعتماد'], warnings: [] };
   }
 }
 
@@ -847,12 +1182,32 @@ export async function reverseSalaryPayment({
   });
 }
 
+/**
+ * يحفظ إيميل الاسترداد للموظف في users/{authUid}.recoveryEmail (حقل غير محمي —
+ * القواعد تسمح للموظف يحدّث مستنده). يُستخدم في الريست الذاتي عبر الإيميل.
+ * email='' يمسح التسجيل.
+ */
+export async function setRecoveryEmail({ db = defaultDb, authUid, email }) {
+  if (!authUid) return { ok: false, errors: ['⚠️ authUid مطلوب'], warnings: [] };
+  const v = (email || '').trim();
+  if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) {
+    return { ok: false, errors: ['⚠️ صيغة إيميل غير صحيحة'], warnings: [] };
+  }
+  try {
+    await updateDoc(doc(db, 'users', authUid), { recoveryEmail: v });
+    return { ok: true, errors: [], warnings: [] };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل حفظ الإيميل'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // EXPORTS
 // ══════════════════════════════════════════
 
 export const employeeActions = {
   addIncident, deleteIncident,
+  submitIncidentAppeal, decideIncidentAppeal,
   updateEmployeeSkills, updateEmployeeData, updateEmployeeProfile, updateEmployeeSchedule,
   createEmployeeWithUser, createSelfEmployeeFile,
   changeUserRole, deleteUserDoc,
@@ -861,12 +1216,14 @@ export const employeeActions = {
   recordPasswordChange, recordPasswordResetEmailSent,
   linkRebuiltAuth,
   saveUserPermissions, clearUserPermissions,
-  addEmployeeTask, setTaskStatus,
-  addEmployeeLeave, deleteEmployeeLeave,
+  addEmployeeTask, setTaskStatus, completeRecurringTask,
+  addEmployeeLeave, requestEmployeeLeave, decideEmployeeLeave, deleteEmployeeLeave,
   recordAttendanceCheckIn, recordAttendanceCheckOut,
+  startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
   recordSalaryPayment, reverseSalaryPayment,
+  setRecoveryEmail,
 };
 
 export default employeeActions;

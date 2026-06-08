@@ -11,6 +11,11 @@
 <meta name="apple-mobile-web-app-title" content="B2C Design">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Business2Card — مصمم</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -22,7 +27,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -71,6 +75,8 @@
 
 <!-- MAIN -->
 <div class="main">
+  <!-- نقطة الحضور/الانصراف/الإجازات المركزية (widget موحّد · خارج منطقة الرسم) -->
+  <div id="att-self-host" style="padding:12px 12px 0"></div>
   <div class="content" style="padding-top:12px" id="main-content">
     <div class="loader"><div class="spinner"></div></div>
   </div>
@@ -179,6 +185,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { employeeActions } from "./employee-actions.js";
+import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 // ══ STATE ══
 let myOrders=[], myTasks=[], myAttendance=[], myEmployee={};
 let currentUser=null, userName='', uid='';
@@ -229,6 +236,9 @@ onAuthStateChanged(auth,async u=>{
   userName=d.name||u.email;
   setText('nav-name',userName);
   {const _av=document.getElementById('nav-av'); if(_av)_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();}
+
+  // نقطة الحضور/الانصراف/الإجازات المركزية — widget موحّد، مركّب مرة واحدة
+  try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
 
   // جيب بيانات الموظف
   onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
@@ -322,21 +332,7 @@ function render(){
     return da-db2;
   })[0];
 
-  // حالة الحضور
-  let attState='none', attText='', attDetail='', attBtnText='', attBtnClass='in';
-  if(!todayAtt){
-    attState='none'; attText='لم تسجّل حضورك بعد';
-    attDetail='سجّل الحضور لتبدأ يومك';
-    attBtnText='✅ تسجيل الحضور'; attBtnClass='in';
-  } else if(!todayAtt.checkOut){
-    attState='in'; attText='حاضر منذ '+todayAtt.checkInStr;
-    attDetail='اضغط عند الانتهاء لتسجيل الانصراف';
-    attBtnText='🔚 تسجيل الانصراف'; attBtnClass='out';
-  } else {
-    attState='done'; attText=todayAtt.checkInStr+' → '+todayAtt.checkOutStr;
-    attDetail='✅ سجّلت '+todayAtt.hoursWorked+' ساعة اليوم';
-    attBtnText='تم التسجيل'; attBtnClass='done-btn';
-  }
+  // (حالة الحضور انتقلت للـ widget المركزي #att-self-host)
 
   el.innerHTML=`
   <div class="desktop-grid">
@@ -354,17 +350,7 @@ function render(){
           <span class="live-clock" id="live-clock">—</span>
         </div>
 
-        <!-- ATT CARD -->
-        <div class="att-card ${attState==='none'?'not-in':attState==='in'?'checked-in':'done'}">
-          <div>
-            <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">⏰ الحضور</div>
-            <div class="att-time" style="color:${attState==='in'?'var(--g)':attState==='done'?'var(--b)':'var(--snow)'}">${attText}</div>
-            <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">${attDetail}</div>
-          </div>
-          <button type="button" class="att-cta ${attBtnClass}" onclick="doAtt()" ${attState==='done'?'disabled':''}>
-            ${attBtnText}
-          </button>
-        </div>
+        <!-- ATT CARD: moved to the central #att-self-host widget (one source) -->
       </div>
 
       <!-- AWAITING ACCEPTANCE BANNER -->
@@ -598,23 +584,7 @@ window.switchTab=function(tab){
   });
 };
 
-window.doAtt=async function(){
-  if(!currentUser)return;
-  const today=todayStr();
-  const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  const btn=document.querySelector('.att-cta');if(btn)btn.disabled=true;
-  if(!todayAtt){
-    const r=await employeeActions.recordAttendanceCheckIn({db,employeeId:uid,employeeUid:uid,employeeName:userName,date:today,lateMinutes:0,source:'self',recordedBy:uid,recordedByName:userName});
-    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');if(btn)btn.disabled=false;return;}
-    toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-  } else if(!todayAtt.checkOut){
-    const r=await employeeActions.recordAttendanceCheckOut({db,attendanceId:todayAtt._id});
-    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');if(btn)btn.disabled=false;return;}
-    const inTime=todayAtt.checkIn?.toDate?.();
-    const hours=inTime?((new Date()-inTime)/(1000*60*60)).toFixed(1):0;
-    toast('✅ تم تسجيل الانصراف — '+hours+' ساعة','ok');
-  }
-};
+// doAtt() — removed: check-in/out now lives in the central #att-self-host widget.
 
 window.completeTask=async function(id){
   const r=await employeeActions.setTaskStatus({db,taskId:id,status:'done'});

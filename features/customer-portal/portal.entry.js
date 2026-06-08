@@ -6,6 +6,7 @@ import { createAppShell } from './layout/app-shell.js';
 import { createRouter } from './views/router.js';
 import { services } from './services/index.js';
 import { store } from './state/store.js';
+import { isFeatureEnabled, FLAGS } from '../../core/feature-flags.js';
 
 // Feature flag (E1 · reversible): لوحة الاحتياجات (Business Network MVP).
 // إيقاف فوري بلا نشر: ?network=0 في الرابط. القيمة الافتراضية مفعّلة.
@@ -26,11 +27,11 @@ const shell = createAppShell({
   tabs: TABS,
   actions: [
     { key: 'alerts', icon: '🔔', label: 'الإشعارات' },
-    { key: 'support', icon: '💬', label: 'الدعم' },
+    { key: 'chats', icon: '💬', label: 'المحادثات' },
   ],
   onNavigate: (key) => router.go(key),
   onAction: (key) => {
-    if (key === 'support') router.openChat({ kind: 'support' });
+    if (key === 'chats') router.openConversations();
     else if (key === 'alerts') router.openNotifications();
   },
 });
@@ -49,6 +50,26 @@ function watchUnread(uid) {
   }).then((u) => { notifUnsub = u; }).catch(() => {});
 }
 
+// Deep-link «راسلني» من الكارت الشخصي: ?chat=<peerUid>&name=<n> → يفتح محادثة
+// عضو↔عضو مرة واحدة بعد الدخول. حارس دستوري: العلم messaging.memberToMember
+// (افتراضي OFF · E1) — استثناء محدود النطاق عن BUSINESS DNA.
+let chatLinkDone = false;
+function openChatDeepLink(uid) {
+  if (chatLinkDone) return;
+  let peerUid = '', peerName = '';
+  try {
+    const qs = new URLSearchParams(location.search);
+    peerUid = qs.get('chat') || '';
+    peerName = qs.get('name') || 'عضو';
+  } catch (_) { return; }
+  if (!peerUid || peerUid === uid) return;
+  chatLinkDone = true;
+  // نظّف الـ query حتى لا يُعاد فتح المحادثة عند أي re-auth/تحديث.
+  try { history.replaceState(null, '', location.pathname); } catch (_) {}
+  if (!isFeatureEnabled(FLAGS.MESSAGING_MEMBER_TO_MEMBER)) return;
+  router.openChat({ kind: 'member', peer: { uid: peerUid, name: peerName } });
+}
+
 // بوابة المصادقة: تتبّع الحالة وتوجيه أولي.
 let booted = false;
 (async () => {
@@ -62,6 +83,7 @@ let booted = false;
         try { store.set({ entitlement: await services.profile.loadSubscription(user.uid) }); } catch (_) { store.set({ entitlement: { plan: 'free', featured: false } }); }
         watchUnread(user.uid);
         if (!booted || store.get('activeTab') === 'login') { booted = true; router.go('home'); }
+        openChatDeepLink(user.uid);
       } else {
         store.set({ user: null, client: null });
         try { localStorage.removeItem('cpMemberUid'); } catch (_) {}

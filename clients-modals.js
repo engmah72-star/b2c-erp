@@ -288,20 +288,6 @@ export const CLIENTS_MODALS_HTML = `
   </div>
 </div>
 
-<div class="modal-ov" id="ov-ai" onclick="closeAiAnalysis()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:14px">
-  <div onclick="event.stopPropagation()" style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;max-width:680px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
-    <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
-      <span style="font-size:var(--fs-2xl)">🤖</span>
-      <div style="flex:1">
-        <div class="txt-bold-lg">تحليل ذكي بـ AI</div>
-        <div id="ai-subtitle" style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-semi)">—</div>
-      </div>
-      <button type="button" class="modal-x" onclick="closeAiAnalysis()">✕</button>
-    </div>
-    <div id="ai-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-size:var(--fs-md);line-height:var(--lh-relaxed)"></div>
-  </div>
-</div>
-
 <div class="overlay" id="ov-followup">
   <div class="modal" style="max-width:480px">
     <div class="modal-head">

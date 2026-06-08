@@ -6,6 +6,11 @@
 <link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Business2Card — التصميم</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -26,7 +31,6 @@
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -515,7 +519,12 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 function showAdminSection(o, isAdmin){
   const sec = document.getElementById('admin-mgmt-section');
   if(!sec) return;
-  if(!isAdmin){ sec.style.display='none'; return; }
+  // [توحيد التحكم] لوحة الأدمن الحرّة (نقل بين المراحل + تعديل مالي + حذف)
+  // اتمركزت في تاب التقارير «🎛️ التحكم الكامل» ليكون المكان الوحيد للتحكم
+  // الحر. مسار الـ workflow العادي (اعتماد → طباعة…إلخ) مش متأثّر.
+  // للرجوع: غيّر العَلَم لـ false. (E1 — reversible)
+  const CONTROL_CONSOLIDATED=true;
+  if(CONTROL_CONSOLIDATED || !isAdmin){ sec.style.display='none'; return; }
   sec.style.display='block';
   const sp=document.getElementById('adm-sale-price');
   const sp2=document.getElementById('adm-paid');
@@ -690,7 +699,6 @@ onAuthStateChanged(auth,async u=>{
     buildMobNav(currentRole,'design.html');
     initNotifications(app, u);
     startListeners();
-    initAttendance();
     setTimeout(updateDesignerUI,100);
     window.__myEmpId='';
     // جيب بيانات الموظف مرة واحدة (مش onSnapshot)
@@ -702,52 +710,11 @@ onAuthStateChanged(auth,async u=>{
   }
 });
 
-// ══ حضور وانصراف للمصمم ══
-let todayAtt=null;
-function initAttendance(){
-  if(!['graphic_designer','design_operator'].includes(currentRole))return;
-  const uid=auth.currentUser?.uid;if(!uid)return;
-  const today=new Date().toISOString().slice(0,10);
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
-    const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    todayAtt=atts.find(a=>a.date===today);
-    renderAttBtn();
-  });
-}
-function renderAttBtn(){
-  const el=document.getElementById('att-btn-wrap');if(!el)return;
-  if(!['graphic_designer','design_operator'].includes(currentRole)){el.innerHTML='';return;}
-  if(!todayAtt){
-    el.innerHTML=`<button type="button" class="btn btn-g btn-sm" onclick="doAtt()">✅ تسجيل حضور</button>`;
-  } else if(!todayAtt.checkOut){
-    const inTime=todayAtt.checkInStr||'';
-    el.innerHTML=`<button type="button" class="btn btn-b btn-sm" onclick="doAtt()">🔚 انصراف (دخلت ${inTime})</button>`;
-  } else {
-    el.innerHTML=`<span style="font-size:var(--fs-sm);color:var(--g);padding:6px 10px;background:rgba(0,217,126,.08);border-radius:var(--rad)">✅ ${todayAtt.checkInStr} → ${todayAtt.checkOutStr} · ${todayAtt.hoursWorked}س</span>`;
-  }
-}
-window.doAtt=async function(){
-  const uid=auth.currentUser?.uid;if(!uid)return;
-  const today=new Date().toISOString().slice(0,10);
-  const timeStr=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-  try{
-    if(!todayAtt){
-      await addDoc(collection(db,'attendance'),{
-        employeeUid:uid,employeeName:userName,date:today,
-        checkIn:serverTimestamp(),checkInStr:timeStr,
-        checkOut:null,hoursWorked:0,createdAt:serverTimestamp()
-      });
-      toast('✅ تم تسجيل الحضور — '+timeStr,'ok');
-    } else if(!todayAtt.checkOut){
-      const inTime=todayAtt.checkIn?.toDate?.();
-      const hours=inTime?((new Date()-inTime)/(1000*60*60)).toFixed(1):0;
-      await updateDoc(doc(db,'attendance',todayAtt._id),{
-        checkOut:serverTimestamp(),checkOutStr:timeStr,hoursWorked:parseFloat(hours)
-      });
-      toast('✅ تم تسجيل الانصراف — '+hours+' ساعة','ok');
-    }
-  }catch(e){toast('❌ '+e.message,'err');}
-};
+// ══ حضور وانصراف ══
+// أُزيل: كان كوداً ميتاً (لا عنصر #att-btn-wrap في الصفحة) وكان يكتب الحضور
+// مباشرةً في Firestore بمعرّف عشوائي وبصيغة مختلفة (checkIn كطابع زمني) — مصدر
+// تضارب. الحضور/الانصراف الآن مركزي عبر widget الحضور الموحّد على لوحة المصمم
+// (designer-dashboard) والأكشن المركزي في employee-actions.
 
 // ══ معرض التصاميم العام ══
 const GAL_COLORS=[
@@ -804,6 +771,9 @@ window.saveToGallery=async function(){
   if(!inp?.files[0])return toast('⚠️ اختر صورة للموك أب','err');
   if(!cat)return toast('⚠️ أدخل التصنيف','err');
   toast('جاري الرفع...','');
+  // ربط التصميم بأوردره المصدر (المرحلة 3) — IDs مبهمة فقط (لا أسماء/هواتف)
+  // لأن gallery قراءته عامة (RULE 8). الأسماء تُحلّ داخلياً من orders/{id}.
+  const _srcOrder = activeId ? (orders.find(x=>x._id===activeId) || null) : null;
   try{
     const storageRef=ref(storage,`gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     await uploadBytes(storageRef,inp.files[0]);
@@ -834,6 +804,8 @@ window.saveToGallery=async function(){
       publishedByName: userName,
       isVisible: true,
       publishedAt: serverTimestamp(),
+      sourceOrderId: _srcOrder?._id || activeId || null,
+      clientId: _srcOrder?.clientId || null,
     });
     console.log('[gallery] gallery doc written');
 

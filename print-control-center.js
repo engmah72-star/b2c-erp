@@ -299,6 +299,10 @@ export function openPrintOrderActionSheet(orderId) {
       onClick: () => { try { window.openCollect?.(); } catch (_) {} },
     },
     canRejectRole && {
+      icon: '💰', label: 'تعديل المبالغ (الكلي + المقدم)', variant: 'primary',
+      onClick: () => { try { window.openEditAmounts?.(); } catch (_) {} },
+    },
+    canRejectRole && {
       section: '⚠️ خطر',
       icon: '↩️', label: 'رفض الأوردر', variant: 'danger',
       onClick: () => { try { window.openReject?.(); } catch (_) {} },
@@ -379,19 +383,31 @@ export function applyPrintCCHeader(o, ctx) {
  * Tab 1 (الإنتاج) يحتوي على نفس المحتوى القديم — كل الـ handlers
  * (uploadPrintFinal, openEditProds, setProductStatus...) تشتغل كما هي.
  */
-export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
+export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts = {}) {
   // ملاحظة: السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html).
+  // opts.shippingHTML (اختياري): لو موجود، نعرض تاب «🚚 الشحن» منفصل بمحتواه.
+  const shippingHTML = opts && opts.shippingHTML ? opts.shippingHTML : '';
+  const shipTabBtn = shippingHTML
+    ? `<button type="button" class="pcc-tab" data-pcctab="shipping" onclick="switchPrintPanelTab('shipping',this)">
+        <span class="pcc-tab-ico">🚚</span><span class="pcc-tab-lbl">الشحن</span>
+      </button>`
+    : '';
+  const shipPane = shippingHTML
+    ? `<div class="pcc-pane" id="pcc-pane-shipping" style="display:none">${shippingHTML}</div>`
+    : '';
   return `
     <div class="pcc-tabs" id="pcc-tabs">
       <button type="button" class="pcc-tab on" data-pcctab="production" onclick="switchPrintPanelTab('production',this)">
         <span class="pcc-tab-ico">🖨</span><span class="pcc-tab-lbl">الإنتاج</span>
       </button>
+      ${shipTabBtn}
       <button type="button" class="pcc-tab" data-pcctab="more" onclick="switchPrintPanelTab('more',this)">
         <span class="pcc-tab-ico">⚙️</span><span class="pcc-tab-lbl">المزيد</span>
       </button>
     </div>
 
     <div class="pcc-pane" id="pcc-pane-production" style="display:block">${productionBodyHTML}</div>
+    ${shipPane}
     <div class="pcc-pane" id="pcc-pane-more" style="display:none">${printMoreTabHTML(order)}</div>`;
 }
 
@@ -399,7 +415,7 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '') {
 export function switchPrintPanelTab(tab, btn) {
   document.querySelectorAll('.pcc-tab').forEach(b => b.classList.remove('on'));
   if (btn) btn.classList.add('on');
-  ['production', 'more'].forEach(t => {
+  ['production', 'shipping', 'more'].forEach(t => {
     const pane = document.getElementById('pcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });
@@ -538,25 +554,34 @@ export function buildProductionHandoffMessage(order = {}, opts = {}) {
 }
 
 /**
- * sendProductionHandoff(order, agent) — يفتح واتساب المندوب بالرسالة.
+ * sendProductionHandoff(order, agent, opts) — يفتح واتساب المندوب بالرسالة.
  * best-effort side-effect (لا يكتب في DB) — يُستدعى بعد نجاح التحويل.
  * يُرجع { ok, error } عشان الـ caller (print.html) يعرض الـ toast بنفسه.
+ *
+ * 📲 الأولوية للواتساب (موبايل): `opts.win` نافذة اتفتحت مسبقاً **داخل**
+ * ضغطة الزر (قبل أي await). توجيهها بدل `window.open` المتأخّر يحافظ على
+ * الـ user-gesture، فبيفتح تطبيق الواتساب مباشرة بدل صفحة الويب اللي بتطلب
+ * "حمّل واتساب" على موبايل التطبيق موجود عليه أصلاً. لو فشلنا نقفلها.
  */
-export function sendProductionHandoff(order, agent) {
-  if (!order) return { ok: false, error: 'لا يوجد أوردر' };
-  if (!agent) return { ok: false, error: 'لم يُحدَّد منفّذ — تخطّي إرسال الواتساب' };
+export function sendProductionHandoff(order, agent, opts = {}) {
+  const win = opts && opts.win ? opts.win : null;
+  const closeWin = () => { if (win) { try { win.close(); } catch (_) {} } };
+  const fail = (error) => { closeWin(); return { ok: false, error }; };
+  if (!order) return fail('لا يوجد أوردر');
+  if (!agent) return fail('لم يُحدَّد منفّذ — تخطّي إرسال الواتساب');
   const waPhone = waPhoneEG(agent.phone || agent.whatsapp);
   if (!waPhone) {
-    return { ok: false, error: `المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته` };
+    return fail(`المنفّذ ${agent.name || ''} بدون رقم واتساب — حدّث بياناته`);
   }
   const costUrl = buildProductionCostUrl(order);
   const orderUrl = buildProductionOrderUrl(order);
   const message = buildProductionHandoffMessage(order, { costUrl, orderUrl });
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
   try {
-    window.open(waUrl, '_blank');
+    if (win) win.location.href = waUrl;   // وجّه النافذة المحفوظة (gesture preserved)
+    else window.open(waUrl, '_blank');     // fallback: فتح مباشر
   } catch (e) {
-    return { ok: false, error: 'تعذّر فتح واتساب' };
+    return fail('تعذّر فتح واتساب');
   }
   return { ok: true };
 }

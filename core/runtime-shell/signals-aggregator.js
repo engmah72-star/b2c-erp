@@ -18,7 +18,7 @@
 //   stop()   → يقفل كل الـ subscriptions
 // ════════════════════════════════════════════════════════════════════
 
-import { db } from '../firebase-init.js';
+import { db, auth } from '../firebase-init.js';
 import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import * as signals from './signals.js';
 
@@ -222,14 +222,114 @@ const AGGREGATORS = [
     },
   },
 
+  // ── Admin Requests (مركزية طلبات الإدارة — الأنواع البشرية + طلبات البوابة) ──
+  // المالي والمرتجعات يُعاد استخدام عدّاديهما (accounts/pending-approvals +
+  // shipping/returns-open). هنا نضيف الأنواع غير المغطّاة. غير المخوَّلين
+  // (لا يقرؤون هذه الـ collections) يحصلون على permission-denied ⇒ صفر بصمت.
+  {
+    domain: 'admin-requests', key: 'appeals',
+    desc: 'Incident appeals awaiting admin decision (appeal.status == pending)',
+    build() {
+      const q = query(
+        collection(db, 'employee_incidents'),
+        where('appeal.status', '==', 'pending'),
+        limit(200),
+      );
+      return onSnapshot(q, snap => {
+        signals.setMetric('admin-requests', 'appeals', snap.size);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:admin-requests:appeals]', err);
+        }
+        signals.setMetric('admin-requests', 'appeals', 0);
+      });
+    },
+  },
+  {
+    domain: 'admin-requests', key: 'attendance',
+    desc: 'Attendance permissions awaiting decision (status == pending)',
+    build() {
+      const q = query(
+        collection(db, 'attendance_permissions'),
+        where('status', '==', 'pending'),
+        limit(200),
+      );
+      return onSnapshot(q, snap => {
+        signals.setMetric('admin-requests', 'attendance', snap.size);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:admin-requests:attendance]', err);
+        }
+        signals.setMetric('admin-requests', 'attendance', 0);
+      });
+    },
+  },
+  {
+    domain: 'admin-requests', key: 'leaves',
+    desc: 'Leave requests awaiting decision (status == pending)',
+    build() {
+      const q = query(
+        collection(db, 'employee_leaves'),
+        where('status', '==', 'pending'),
+        limit(200),
+      );
+      return onSnapshot(q, snap => {
+        signals.setMetric('admin-requests', 'leaves', snap.size);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:admin-requests:leaves]', err);
+        }
+        signals.setMetric('admin-requests', 'leaves', 0);
+      });
+    },
+  },
+  {
+    domain: 'admin-requests', key: 'order-requests',
+    desc: 'Portal order requests awaiting convert/reject (status new/requested)',
+    build() {
+      const q = query(
+        collection(db, 'order_requests'),
+        where('status', 'in', ['new', 'requested']),
+        limit(200),
+      );
+      return onSnapshot(q, snap => {
+        signals.setMetric('admin-requests', 'order-requests', snap.size);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:admin-requests:order-requests]', err);
+        }
+        signals.setMetric('admin-requests', 'order-requests', 0);
+      });
+    },
+  },
+
   // ── Inbox ──
   {
     domain: 'inbox', key: 'unread',
-    desc: 'Unread messages count (placeholder — uses user-specific subcollection later)',
+    desc: 'Unread messages for the current user (conversations.unreadCount[uid])',
     build() {
-      // Phase 4 placeholder — يحتاج user context
-      signals.setMetric('inbox', 'unread', 0);
-      return () => {};
+      // نفس مصدر inbox-badge.js: conversations حيث المستخدم participant،
+      // ونجمع unreadCount[uid]. يُبنى بعد auth (start() يُستدعى post-auth).
+      const uid = (auth && auth.currentUser && auth.currentUser.uid) || null;
+      if (!uid) { signals.setMetric('inbox', 'unread', 0); return () => {}; }
+      const q = query(
+        collection(db, 'conversations'),
+        where('participants', 'array-contains', uid),
+        limit(200),
+      );
+      return onSnapshot(q, snap => {
+        let total = 0;
+        snap.forEach(d => {
+          const data = d.data();
+          total += (data.unreadCount && data.unreadCount[uid]) || 0;
+        });
+        signals.setMetric('inbox', 'unread', total);
+      }, err => {
+        if (err?.code !== 'permission-denied' && err?.code !== 'failed-precondition') {
+          console.warn('[signals:inbox:unread]', err);
+        }
+        signals.setMetric('inbox', 'unread', 0);
+      });
     },
   },
 ];

@@ -8,6 +8,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0f1e">
 <title>Business2Card — الطباعة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -94,6 +99,7 @@
         <button type="button" onclick="openWaybill()" style="flex:1;min-width:90px;padding:9px 6px;border-radius:9px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">🧾 البوليصة</button>
         <button type="button" id="pn-advance-btn" onclick="openPrintAdvance()" style="display:none;flex:1;padding:9px 6px;border-radius:9px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.06);color:var(--g);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">💵 مقدم</button>
         <button type="button" id="pn-collect-btn" onclick="openCollect()" style="display:none;flex:1;padding:9px 6px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">💰 تحصيل</button>
+        <button type="button" id="pn-amounts-btn" onclick="openEditAmounts()" style="display:none;flex:1;min-width:110px;padding:9px 6px;border-radius:9px;border:1px solid rgba(124,108,255,.3);background:rgba(124,108,255,.07);color:var(--p);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">💰 تعديل المبالغ</button>
       </div>
     </div>
     <!-- Scrollable body -->
@@ -173,6 +179,40 @@
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" onclick="cM('print-advance')">إلغاء</button>
       <button type="button" class="btn btn-g" onclick="savePrintAdvance()">✓ تسجيل المقدم</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: تعديل المبالغ (الكلي + المقدم) -->
+<div class="overlay" id="ov-edit-amounts">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><span class="modal-title">💰 تعديل المبالغ</span><button type="button" class="modal-x" onclick="cM('edit-amounts')">✕</button></div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>المبلغ الكلي للأوردر (ج)</label>
+        <input class="inp" id="ea-sale" type="number" min="0" step="0.01" placeholder="0" oninput="updateEaPreview()">
+      </div>
+      <div class="fg">
+        <label>المبلغ المقدم / المحصّل (ج)</label>
+        <input class="inp" id="ea-paid" type="number" min="0" step="0.01" placeholder="0" oninput="updateEaPreview()">
+        <div id="ea-paid-hint" style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px"></div>
+      </div>
+      <!-- طريقة الدفع — تظهر فقط عند تغيير المقدم (لمزامنة المحفظة) -->
+      <div class="fg" id="ea-wallet-fg" style="display:none">
+        <label>طريقة الدفع (مزامنة المحفظة) <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+        <div id="ea-wallets" style="display:flex;gap:var(--space-sm);flex-wrap:wrap"></div>
+        <input type="hidden" id="ea-wid"><input type="hidden" id="ea-wname">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">فرق المقدم سيُسجَّل دفعة/استرداداً على هذه المحفظة.</div>
+      </div>
+      <div class="fg">
+        <label>سبب التعديل (اختياري)</label>
+        <input class="inp" id="ea-reason" type="text" placeholder="مثال: تصحيح سعر · خصم متفق عليه...">
+      </div>
+      <div id="ea-summary" style="background:var(--bg3);border-radius:var(--rad);padding:var(--space-md);font-size:var(--fs-base)"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" onclick="cM('edit-amounts')">إلغاء</button>
+      <button type="button" class="btn btn-g" onclick="saveEditAmounts()">✓ حفظ المبالغ</button>
     </div>
   </div>
 </div>
@@ -602,6 +642,8 @@ window.openOrder=function(id){
   }
   const isAdm=['admin','operation_manager','customer_service'].includes(currentRole);
   const rBtn=document.getElementById('pn-reject-btn');if(rBtn)rBtn.style.display=isAdm?'':'none';
+  // 💰 تعديل المبالغ (الكلي + المقدم) — أدوار الإدارة/خدمة العملاء فقط
+  const amtBtn=document.getElementById('pn-amounts-btn');if(amtBtn)amtBtn.style.display=isAdm?'':'none';
   const rem=getRem(o),sale=getNet(o);
   const advBtn=document.getElementById('pn-advance-btn');
   if(advBtn)advBtn.style.display=rem>0&&sale>0?'':'none';
@@ -644,6 +686,77 @@ window.openOrder=function(id){
 
 window.closePanel=function(){document.getElementById('panel-ov').classList.remove('open');activeId=null;activeOrder=null;window.AppState?.clearOpenEntity?.();};
 
+// ── أقسام مطوية ثانوية (تقلّل زحمة الصفحة). الحالة محفوظة في window.__openSec
+// عشان تفضل ثابتة عبر re-render البانل المتكرر (ontoggle يحدّثها بدون رسم). ──
+if(typeof window!=='undefined' && !window.__openSec) window.__openSec={};
+function collapsibleSection(id, icon, title, content, defaultOpen){
+  const store=window.__openSec||{};
+  const open=(id in store)?store[id]:!!defaultOpen;
+  return `<details ${open?'open':''} ontoggle="(window.__openSec=window.__openSec||{})['${id}']=this.open" style="border-bottom:1px solid var(--line)">
+    <summary style="padding:12px 16px;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);-webkit-tap-highlight-color:transparent">
+      <span>${icon} ${title}</span>
+      <span style="color:var(--dim2);font-size:var(--fs-lg)">⌄</span>
+    </summary>
+    <div style="padding:0 16px 14px">${content}</div>
+  </details>`;
+}
+
+// ── صور المنتجات — المصدر الوحيد للصور في الطباعة (أُلغي رفع «الملف النهائي»).
+// مدخل بارز أعلى الصفحة لإضافة/تعديل صور كل منتج عبر «تعديل المنتجات». ──
+function renderFilesSection(o){
+  const hasImg=(o.products||[]).some(p=>(Array.isArray(p.designImages)&&p.designImages.filter(Boolean).length)||p.designImageUrl)||!!o.designImageUrl;
+  return `<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2)">🖼️ صور المنتجات ${hasImg?'<span style="color:var(--g)">✓ موجودة</span>':'<span style="color:var(--r)">— غير مرفوعة</span>'}</div>
+      <button type="button" onclick="openEditProds()" style="padding:8px 14px;border-radius:9px;border:1px solid var(--b);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;flex-shrink:0">📦 إضافة/تعديل الصور</button>
+    </div>
+    <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:6px">تُضاف صورة كل منتج من «تعديل المنتجات» → زر الصورة على المنتج.</div>
+  </div>`;
+}
+
+// ── قسم بيانات الشحن — يُعرَض في تاب «الشحن» المنفصل داخل البانل ──
+function renderShippingSection(o){
+  return `<div style="padding:14px 16px">
+    <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:10px">🚚 بيانات الشحن — تُدخَل قبل التحويل للتنفيذ</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
+          <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
+            <option value="company"${o.shipMethod==='company'?' selected':''}>شركة شحن</option>
+            <option value="pickup"${o.shipMethod==='pickup'?' selected':''}>استلام من المطبعة</option>
+            <option value="courier"${o.shipMethod==='courier'?' selected':''}>مندوب داخلي</option>
+          </select></div>
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">📞 تليفون التسليم</label>
+          <input class="inp" id="ps-phone" value="${o.customerPhoneShip||o.clientPhone||''}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div id="ps-company-row" style="${(o.shipMethod||'company')==='company'?'':'display:none;'}">
+        <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">🏢 شركة الشحن</label>
+        <select class="inp" id="ps-company" style="width:100%;margin-top:3px">
+          <option value="">— اختر شركة —</option>
+          ${(shippers||[]).map(s=>`<option value="${s._id}"${o.shipCompanyId===s._id?' selected':''}>${escAttr(s.name||'بدون اسم')}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المحافظة</label>
+          <input class="inp" id="ps-gov" value="${o.deliveryAddress?.gov||''}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
+        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المدينة/المنطقة</label>
+          <input class="inp" id="ps-city" value="${o.deliveryAddress?.city||''}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
+      </div>
+      <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">العنوان بالتفصيل</label>
+        <input class="inp" id="ps-street" value="${o.deliveryAddress?.street||''}" placeholder="الشارع / رقم العقار / علامة مميزة" style="width:100%;margin-top:3px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:6px 0">
+        <input type="checkbox" id="ps-incl" ${o.priceIncludesShipping?'checked':''} onchange="onPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
+        السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
+      </label>
+      <div id="ps-fee-row" style="${o.priceIncludesShipping?'display:none;':''}">
+        <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💵 رسوم الشحن على العميل (غير شامل — يدفعها للمندوب)</label>
+        <input class="inp" id="ps-fee" type="number" min="0" step="0.01" value="${o.courierDirectFee||o.customerShipFee||''}" placeholder="0" style="width:100%;margin-top:3px">
+      </div>
+      <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
+    </div>
+  </div>`;
+}
+
 // Render Panel
 function renderPanel(o){
   if(!o)return; // حارس: لا يُرسَم بدون أوردر مفتوح (يمنع crash من listeners تستدعيه بلا arg)
@@ -659,6 +772,18 @@ function renderPanel(o){
       <a href="order-tracking.html?id=${o._id}" class="chip-track" style="margin-bottom:10px">📋 تتبع كامل للأوردر</a>
     </div>
     ${renderOrderReadinessCard(o)}
+    <!-- تنبيه عدم وجود صورة (بارز أعلى الصفحة) -->
+    ${!(o.products||[]).some(p=>p.designImageUrl)&&!o.designImageUrl&&!o.printFinalUrl?`<div style="padding:14px 16px 0">
+      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:12px 14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:24px">⚠️</span>
+        <div>
+          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">لا توجد صورة تصميم</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">أضف صورة المنتج من «📦 تعديل المنتجات»</div>
+        </div>
+      </div>
+    </div>`:''}
+    <!-- الملفات (بارز أعلى الصفحة) -->
+    ${renderFilesSection(o)}
     <!-- Products: each with image + specs -->
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
@@ -673,37 +798,73 @@ function renderPanel(o){
         const pStatus=p.productStatus||'pending';
         const sConf=PRODUCT_STATUS[pStatus]||PRODUCT_STATUS.pending;
         const isReady=pStatus==='ready'||pStatus==='printed'||pStatus==='done';
-        const dimStyle=isReady?'':'opacity:.55';
+        const dimStyle=isReady?'':'opacity:.6';
         const pImgs=getProductImages(p);
+        const multi=(o.products||[]).length>1;
+        const isOpen=!multi||__openProd[o._id]===idx;
+        const rr=computeProductReadiness(o,p);
+        const readyTxt=rr.ready?'✅ جاهز':`${rr.pct}%`;
+        const readyCol=rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)');
+
+        // ── صف مضغوط (منتجات كتير + مطوي) — يقلّل الزحمة ──
+        if(multi&&!isOpen){
+          const thumb=pImgs.length
+            ?`<img src="${pImgs[0]}" loading="lazy" style="width:46px;height:46px;border-radius:8px;object-fit:cover;background:var(--bg2);flex-shrink:0" alt="">`
+            :`<div style="width:46px;height:46px;border-radius:8px;background:var(--bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0">🖼️</div>`;
+          return `<div onclick="toggleProdCard('${o._id}',${idx})" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--bg3);border:1px solid var(--line);border-left:3px solid ${sConf.col};cursor:pointer;${dimStyle}">
+            ${thumb}
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:var(--fs-base);font-weight:var(--fw-heavy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'}</span>
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--y);flex-shrink:0">×${p.qty||1}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
+                ${productStatusBadge(pStatus)}
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${readyCol}">${readyTxt}</span>
+              </div>
+            </div>
+            <span style="color:var(--dim2);font-size:var(--fs-lg);flex-shrink:0">▸</span>
+          </div>`;
+        }
+
+        // ── كارت كامل (مفتوح / منتج واحد) ──
         const galleryHtml=pImgs.length
           ?(pImgs.length===1
-            ?`<img src="${pImgs[0]}" loading="lazy" onclick="window.open('${pImgs[0].replace(/'/g,"\\'")}','_blank')" style="width:100%;max-height:240px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2);border-bottom:1px solid var(--line)" alt="">`
-            :`<div style="background:var(--bg2);border-bottom:1px solid var(--line);padding:6px"><div style="display:grid;grid-template-columns:repeat(${Math.min(pImgs.length,3)},1fr);gap:var(--space-xs)">${pImgs.map(u=>`<img src="${u}" loading="lazy" onclick="window.open('${u.replace(/'/g,"\\'")}','_blank')" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:zoom-in;background:var(--bg3)" alt="">`).join('')}</div><div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;margin-top:4px">${pImgs.length} صورة</div></div>`)
-          :`<div style="height:80px;display:flex;align-items:center;justify-content:center;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--dim2);font-size:var(--fs-base);gap:6px">🖼️ لا توجد صورة</div>`;
+            ?`<img src="${pImgs[0]}" loading="lazy" onclick="window.open('${pImgs[0].replace(/'/g,"\\'")}','_blank')" style="width:100%;max-height:170px;object-fit:contain;display:block;cursor:zoom-in;background:var(--bg2);border-bottom:1px solid var(--line)" alt="">`
+            :`<div style="background:var(--bg2);border-bottom:1px solid var(--line);padding:6px"><div style="display:grid;grid-template-columns:repeat(${Math.min(pImgs.length,3)},1fr);gap:var(--space-xs)">${pImgs.map(u=>`<img src="${u}" loading="lazy" onclick="window.open('${u.replace(/'/g,"\\'")}','_blank')" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:zoom-in;background:var(--bg3)" alt="">`).join('')}</div></div>`)
+          :'';
         return`<div style="border-radius:12px;background:var(--bg3);border:1px solid var(--line);overflow:hidden;border-left:3px solid ${sConf.col};${dimStyle}">
+          ${multi?`<div onclick="toggleProdCard('${o._id}',${idx})" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)">
+            <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy)">${p.name||'—'} <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${p.qty||1}</span></span>
+            <span style="display:flex;align-items:center;gap:8px">${productStatusBadge(pStatus)}<span style="color:var(--dim2);font-size:var(--fs-lg)">▾</span></span>
+          </div>`:''}
           ${galleryHtml}
           <div style="padding:10px 12px">
-            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px">
+            ${!multi?`<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">
               <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy)">${p.name||'—'}</span>
               <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.2);color:var(--y)">× ${p.qty||1}</span>
               ${p.unitPrice||p.price?`<span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);color:var(--g)">${fn(p.unitPrice||p.price)} ج</span>`:''}
               ${productStatusBadge(pStatus)}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-              ${pStatus!=='printed'&&pStatus!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--p);background:${pStatus==='printed'?'var(--p)':'transparent'};color:${pStatus==='printed'?'#fff':'var(--p)'};transition:all .15s">🖨️ تم طباعته</button>`:''}
-              ${pStatus==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--dim2);background:transparent;color:var(--dim2);transition:all .15s;opacity:.7">↩ إعادة لجاهز</button>`:''}
-              ${!isReady&&pStatus!=='on_hold'?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" style="padding:7px 14px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:2px solid var(--y-gold);background:transparent;color:var(--y-gold);transition:all .15s;opacity:.7">⏸ تأجيل</button>`:''}
+            </div>`:''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+              ${pStatus!=='printed'&&pStatus!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--p);background:transparent;color:var(--p)">🖨️ تم طباعته</button>`:''}
+              ${pStatus==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--dim2);background:transparent;color:var(--dim2);opacity:.8">↩ إعادة لجاهز</button>`:''}
+              ${!isReady&&pStatus!=='on_hold'?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" style="padding:6px 12px;border-radius:8px;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;border:1.5px solid var(--y-gold);background:transparent;color:var(--y-gold);opacity:.8">⏸ تأجيل</button>`:''}
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:5px">
               ${ptLabel?`<span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 9px;border-radius:20px;background:${ptCol}18;border:1px solid ${ptCol}44;color:${ptCol}">${ptLabel}</span>`:''}
               ${size?`<span style="font-size:var(--fs-sm);padding:2px 9px;border-radius:20px;background:var(--bg2);border:1px solid var(--line);color:var(--dim2)">📐 ${size}</span>`:''}
               ${paper?`<span style="font-size:var(--fs-sm);padding:2px 9px;border-radius:20px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);color:var(--y)">📄 ${paper}${weight&&weight>0?' · '+weight+'جم':''}</span>`:''}
+              ${p.lamination&&p.lamination!=='بلا'?`<span style="font-size:var(--fs-sm);padding:2px 9px;border-radius:20px;background:var(--bg2);border:1px solid var(--line);color:var(--dim2)">✨ ${p.lamination}</span>`:''}
               ${(p.extras||[]).map(ex=>`<span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);padding:2px 9px;border-radius:20px;background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);color:var(--g)">✓ ${ex}</span>`).join('')}
             </div>
             ${p.notes?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:6px;padding:6px 8px;background:var(--bg2);border-radius:7px;line-height:var(--lh-base)">📝 ${p.notes}</div>`:''}
 
-            <!-- ══ Smart Production Brief (per product) ══ -->
-            ${renderProductBrief(o,p,idx)}
+            <!-- بيانات الطباعة (عرض) — تُحرَّر من «تعديل المنتجات» -->
+            ${(()=>{ const rr=computeProductReadiness(o,p); const rc=rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)'); return `<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)">
+              <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc}">${rr.ready?'✅ بيانات الطباعة مكتملة':`🖨️ بيانات الطباعة ${rr.pct}%`}</span>
+              <button type="button" onclick="openEditProds(${idx})" style="margin-inline-start:auto;padding:6px 12px;border-radius:8px;border:1px solid var(--b);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;flex-shrink:0">✏️ تعديل بيانات الطباعة</button>
+            </div>`; })()}
           </div>
         </div>`;
       }).join('')}
@@ -721,110 +882,35 @@ function renderPanel(o){
       </div>
     </div>
 
-    <!-- Finance bar (compact) -->
-    ${sale>0?`<div style="padding:10px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
-      <div class="flex-1">
-        <div class="fin-bar" style="margin-bottom:4px"><div class="fin-bar-fill" style="width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'}"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2)">
-          <span>محصّل <b class="text-g">${fn(paid)} ج</b></span>
-          ${rem>0?`<span>باقي <b class="text-r">${fn(rem)} ج</b></span>`:`<span style="color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</span>`}
+    <!-- المالية (مطوي) -->
+    ${sale>0?collapsibleSection('fin','💰','المالية',`
+      <div style="display:flex;align-items:center;gap:10px;padding-top:4px">
+        <div class="flex-1">
+          <div class="fin-bar" style="margin-bottom:4px"><div class="fin-bar-fill" style="width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'}"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--dim2)">
+            <span>محصّل <b class="text-g">${fn(paid)} ج</b></span>
+            ${rem>0?`<span>باقي <b class="text-r">${fn(rem)} ج</b></span>`:`<span style="color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</span>`}
+          </div>
         </div>
-      </div>
-      <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);flex-shrink:0">${fn(sale)} ج</div>
-    </div>`:''}
+        <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);flex-shrink:0">${fn(sale)} ج</div>
+      </div>`,false):''}
 
-    <!-- Print notes (prominent, auto-save) -->
-    ${o.printNotes?`<div style="padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(255,193,7,.05)">
-      <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--y);margin-bottom:4px">📋 تعليمات الطباعة</div>
-      <div style="font-size:var(--fs-base);color:var(--snow);white-space:pre-wrap;line-height:1.6">${o.printNotes}</div>
-    </div>`:''}
-
-    <!-- Upload final file (PROMINENT) -->
-    <div style="padding:14px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">📁 الملف النهائي للمطبعة</div>
-      ${o.printFinalUrl?(o.printFinalType?.includes('pdf')
-        ?`<a href="${o.printFinalUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:12px 14px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);color:var(--p);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-md);margin-bottom:8px">📄 فتح الملف (PDF) ←</a>`
-        :`<img src="${o.printFinalUrl}" onclick="window.open('${o.printFinalUrl}','_blank')" loading="lazy" decoding="async" alt="الملف النهائي" style="width:100%;border-radius:var(--rad);border:1px solid var(--line);cursor:zoom-in;max-height:200px;object-fit:contain;background:var(--bg3);margin-bottom:10px;display:block">`)
-      :''}
-      <div onclick="document.getElementById('print-final-inp').click()" style="background:${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'};border:2px dashed ${o.printFinalUrl?'var(--line)':'rgba(59,158,255,.4)'};border-radius:12px;padding:${o.printFinalUrl?'12px':'20px'};text-align:center;cursor:pointer;transition:background .15s" ontouchstart="this.style.background='var(--bg3)'" ontouchend="this.style.background='${o.printFinalUrl?'var(--bg2)':'rgba(59,158,255,.05)'}'">
-        <div style="font-size:${o.printFinalUrl?'20':'32'}px;margin-bottom:4px">${o.printFinalUrl?'🔄':'📁'}</div>
-        <div style="font-size:${o.printFinalUrl?'12':'14'}px;font-weight:var(--fw-extra);color:${o.printFinalUrl?'var(--dim2)':'var(--b)'}">${o.printFinalUrl?'تغيير الملف':'ارفع الملف النهائي'}</div>
-        ${!o.printFinalUrl?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px">صورة أو PDF</div>`:''}
-      </div>
-      <div class="prog-wrap" id="prog-wrap">
-        <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
-        <div class="prog-txt" id="prog-txt">0%</div>
-      </div>
-    </div>
-
-    <!-- Print notes edit -->
-    <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">📝 تعليمات الطباعة</div>
+    <!-- تعليمات الطباعة (مطوي — يفتح تلقائياً لو فيه تعليمات) -->
+    ${collapsibleSection('notes','📝','تعليمات الطباعة',`
       <textarea id="print-notes-inp" rows="3" placeholder="سلوفان · ٢ وجه · تسليم الخميس..." onchange="savePrintNotes()" style="width:100%;padding:11px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);color:var(--snow);font-size:var(--fs-lg);font-family:inherit;direction:rtl;resize:none;-webkit-appearance:none;box-sizing:border-box">${o.printNotes||''}</textarea>
       <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">يُحفظ تلقائياً عند تغيير النص</div>
-    </div>
+    `, !!o.printNotes)}
 
-    <!-- No design warning -->
-    ${!(o.products||[]).some(p=>p.designImageUrl)&&!o.designImageUrl&&!o.printFinalUrl?`<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
-      <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.3);border-radius:var(--rad);padding:12px 14px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:24px">⚠️</span>
-        <div>
-          <div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">لا توجد صورة تصميم</div>
-          <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">ارفع الملف النهائي أو أضف صورة من "📦 تعديل المنتجات"</div>
-        </div>
-      </div>
-    </div>`:''}
-
-    <!-- Reference files -->
-    ${o.refFileUrl||o.designNote?`<div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">🎨 مرجع التصميم</div>
+    <!-- مرجع التصميم (مطوي) -->
+    ${o.refFileUrl||o.designNote?collapsibleSection('ref','🎨','مرجع التصميم',`
       ${o.designNote?`<div style="padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:var(--fs-base);color:var(--dim2);margin-bottom:6px;line-height:var(--lh-base)">${o.designNote}</div>`:''}
       ${o.refFileUrl?`<a href="${o.refFileUrl}" target="_blank" style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);border-radius:var(--rad);color:var(--b);text-decoration:none;font-weight:var(--fw-bold);font-size:var(--fs-base)">📎 الملف المرجعي ←</a>`:''}
-    </div>`:''}
+    `, false):''}
 
-    <!-- ══ بيانات الشحن (يُدخلها مسؤول الطباعة قبل التحويل للتنفيذ) ══ -->
-    <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">🚚 بيانات الشحن</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">طريقة الشحن</label>
-            <select class="inp" id="ps-method" onchange="onPsMethodChange()" style="width:100%;margin-top:3px">
-              <option value="company"${o.shipMethod==='company'?' selected':''}>شركة شحن</option>
-              <option value="pickup"${o.shipMethod==='pickup'?' selected':''}>استلام من المطبعة</option>
-              <option value="courier"${o.shipMethod==='courier'?' selected':''}>مندوب داخلي</option>
-            </select></div>
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">📞 تليفون التسليم</label>
-            <input class="inp" id="ps-phone" value="${o.customerPhoneShip||o.clientPhone||''}" placeholder="01xxxxxxxxx" style="width:100%;margin-top:3px"></div>
-        </div>
-        <div id="ps-company-row" style="${(o.shipMethod||'company')==='company'?'':'display:none;'}">
-          <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">🏢 شركة الشحن</label>
-          <select class="inp" id="ps-company" style="width:100%;margin-top:3px">
-            <option value="">— اختر شركة —</option>
-            ${(shippers||[]).map(s=>`<option value="${s._id}"${o.shipCompanyId===s._id?' selected':''}>${escAttr(s.name||'بدون اسم')}</option>`).join('')}
-          </select>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المحافظة</label>
-            <input class="inp" id="ps-gov" value="${o.deliveryAddress?.gov||''}" placeholder="القاهرة" style="width:100%;margin-top:3px"></div>
-          <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">المدينة/المنطقة</label>
-            <input class="inp" id="ps-city" value="${o.deliveryAddress?.city||''}" placeholder="مدينة نصر" style="width:100%;margin-top:3px"></div>
-        </div>
-        <div><label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">العنوان بالتفصيل</label>
-          <input class="inp" id="ps-street" value="${o.deliveryAddress?.street||''}" placeholder="الشارع / رقم العقار / علامة مميزة" style="width:100%;margin-top:3px"></div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;padding:6px 0">
-          <input type="checkbox" id="ps-incl" ${o.priceIncludesShipping?'checked':''} onchange="onPsInclChange()" style="width:16px;height:16px;accent-color:var(--g)">
-          السعر شامل الشحن (العميل دفع الشحن ضمن السعر)
-        </label>
-        <div id="ps-fee-row" style="${o.priceIncludesShipping?'display:none;':''}">
-          <label style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💵 رسوم الشحن على العميل (غير شامل — يدفعها للمندوب)</label>
-          <input class="inp" id="ps-fee" type="number" min="0" step="0.01" value="${o.courierDirectFee||o.customerShipFee||''}" placeholder="0" style="width:100%;margin-top:3px">
-        </div>
-        <button type="button" class="btn btn-g btn-sm" onclick="savePrintShipping()" style="width:100%;margin-top:4px">💾 حفظ بيانات الشحن</button>
-      </div>
-    </div>
-
+    <!-- بيانات الشحن اتنقلت لتاب «🚚 الشحن» المنفصل (renderShippingSection) -->
     <!-- السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html). -->
   `;
+  const __shipHTML = renderShippingSection(o);
 
   // Print Control Center (Phase 2): wrap the production body in a 3-tab
   // structure (Production / Timeline / More). If the flag is OFF or the
@@ -832,10 +918,12 @@ function renderPanel(o){
   const __pccOn = (typeof window.isPrintControlCenterOn === 'function')
     && window.isPrintControlCenterOn()
     && typeof window.wrapPrintPanelInTabs === 'function';
-  let __finalHTML = __bodyHTML;
+  // الشحن يُعرَض في تاب منفصل (🚚 الشحن). لو PCC مقفول أو فشل الـ wrap،
+  // نلحق الشحن بآخر الجسم عشان ميختفيش.
+  let __finalHTML = __bodyHTML + __shipHTML;
   if (__pccOn) {
-    try { __finalHTML = window.wrapPrintPanelInTabs(o, __bodyHTML); }
-    catch (e) { console.warn('[renderPanel] PCC wrap failed, fallback to legacy:', e); __finalHTML = __bodyHTML; }
+    try { __finalHTML = window.wrapPrintPanelInTabs(o, __bodyHTML, { shippingHTML: __shipHTML }); }
+    catch (e) { console.warn('[renderPanel] PCC wrap failed, fallback to legacy:', e); __finalHTML = __bodyHTML + __shipHTML; }
   }
   document.getElementById('panel-body').innerHTML = __finalHTML;
 }
@@ -934,6 +1022,18 @@ window.confirmMoveToProduction=async function(){
   const sel=document.getElementById('pick-prod-sel');
   const prodId=sel?.value||'';
   const prodName=prodId?(sel.options[sel.selectedIndex]?.text||''):'';
+  // 📲 الأولوية للواتساب: افتح نافذة الواتساب فوراً (قبل أي await) داخل
+  // ضغطة الزر عشان نحافظ على الـ user-gesture على الموبايل — فيفتح تطبيق
+  // الواتساب مباشرة بدل صفحة الويب اللي بتطلب "حمّل واتساب". لو التحويل فشل
+  // أو اتلغى نقفل النافذة. بنفتحها بس لو في منفّذ مختار وعنده رقم.
+  let waWin=null,prodAgent=null;
+  if(prodId){
+    prodAgent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
+    if(prodAgent&&(prodAgent.phone||prodAgent.whatsapp)){
+      try{waWin=window.open('','_blank');}catch(_){waWin=null;}
+    }
+  }
+  const closeWa=()=>{ if(waWin){ try{waWin.close();}catch(_){} waWin=null; } };
   // RULE A1 + L1: stage transition عبر orderActions.submitToProduction
   // (validation + warning surfacing + atomic transaction with lock)
   const baseArgs={
@@ -942,25 +1042,25 @@ window.confirmMoveToProduction=async function(){
   };
   let r=await orderActions.submitToProduction(baseArgs);
   if(r.needsConfirmation){
-    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟'))return;
+    if(!confirm('⚠️ ملاحظات قبل التحويل:\n• '+r.warnings.join('\n• ')+'\n\nهل تريد المتابعة؟')){closeWa();return;}
     r=await orderActions.submitToProduction({...baseArgs,bypassWarnings:true});
   }
   if(!r.ok){
     // 🛡 Phase 4: errors تبلوك الجميع. admin/operation_manager يقدر يـ override
     // مع تسجيل سبب صريح في الـ timeline.
     const isAdmin = currentRole === 'admin' || currentRole === 'operation_manager';
-    if(!isAdmin) return toast('⛔ '+r.errors.join(' · '),'err');
+    if(!isAdmin){closeWa();return toast('⛔ '+r.errors.join(' · '),'err');}
     const errsBlock = '⛔ مواصفات ناقصة:\n• ' + r.errors.join('\n• ');
-    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')) return;
+    if(!confirm(errsBlock + '\n\nهل تريد متابعة التحويل رغم ذلك؟ (admin override)')){closeWa();return;}
     const reason = prompt('سبب الـ override (إلزامي للسجل):', '');
-    if(!reason || !reason.trim()) return toast('❌ سبب الـ override مطلوب','err');
+    if(!reason || !reason.trim()){closeWa();return toast('❌ سبب الـ override مطلوب','err');}
     const or = await orderActions.adminOverrideToProduction({
       db, orderId: activeId, role: currentRole,
       userId: auth?.currentUser?.uid||'', userName,
       nextAssigneeId: prodId, nextAssigneeName: prodName,
       overrideReason: reason.trim(),
     });
-    if(!or.ok) return toast('❌ '+(or.errors||[]).join(' · '),'err');
+    if(!or.ok){closeWa();return toast('❌ '+(or.errors||[]).join(' · '),'err');}
     r = or;
   }
   // ـ Best-effort: حفظ صور التصميم في معرض العميل بعد نجاح التقديم ـ
@@ -981,12 +1081,13 @@ window.confirmMoveToProduction=async function(){
     }
   }
   // 📲 إرسال الأوردر لمندوب التنفيذ على واتساب (best-effort side-effect).
-  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم.
+  // لا يُعطّل التحويل لو فشل — فقط يُبلّغ المستخدم. بنوجّه النافذة اللي اتفتحت
+  // مبكّراً (waWin) عشان نحافظ على الـ user-gesture على الموبايل.
   if(prodId && typeof window.sendProductionHandoff==='function'){
-    const agent=(window.__prodAgents||[]).find(a=>(a.authUid||a._id)===prodId);
-    const hr=window.sendProductionHandoff(o,agent);
+    const hr=window.sendProductionHandoff(o,prodAgent,{win:waWin});
+    waWin=null; // ملكية النافذة اتنقلت للدالة (وجّهتها أو قفلتها)
     if(hr && !hr.ok && hr.error) toast('⚠️ '+hr.error+' — تواصل يدوياً','err');
-  }
+  } else { closeWa(); }
   cM('pick-prod');closePanel();toast('✅ انتقل للتنفيذ'+(prodName?` (${prodName})`:'')+(savedCount?` · حُفظت ${savedCount} صورة في معرض العميل`:''),'ok');
 };
 
@@ -1030,7 +1131,7 @@ window.confirmSplitOrder=async function(){
 
 // تحديث حالة منتج محدد داخل الأوردر من صفحة الطباعة
 // ══ Templates: apply / save ══
-const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','lamination','innerType','briefNotes'];
+const TPL_FIELDS = ['printSize','zinkType','paperSheets','paperCuts','cutSize','lamination','innerType','briefNotes','paper','weight'];
 
 window.applyBriefTemplate = async function(orderId, idx, tplId){
   if(!tplId) return;
@@ -1121,6 +1222,7 @@ function buildProductBriefMessage(o, p){
     lines.push(paperLine);
   }
 
+  if(p.cutSize)             lines.push(`مقاس القص: ${p.cutSize}`);
   if(p.printSize || p.size) lines.push(`مقاس الطباعة: ${p.printSize || p.size}`);
   if(p.zinkType)            lines.push(`الزنكات: ${p.zinkType}`);
   if(p.lamination)          lines.push(`السلوفان: ${p.lamination}`);
@@ -1165,7 +1267,9 @@ window.sendProductBrief = async function(orderId, idx){
 
 // ══ Order-level Readiness (aggregates across offset products) ══
 function computeOrderReadiness(o){
-  const prods = (o.products||[]).filter(p => (p.printType||'').includes('offset') || p.paperSheets || p.pressId);
+  // كل المنتجات لها مواصفات عامة إلزامية (الكمية/المقاس/الورق/السلوفان) —
+  // فالجاهزية تشمل الكل، مش الأوفست بس (يطابق validateStageRequirements).
+  const prods = (o.products||[]).filter(Boolean);
   if(!prods.length) return null;
   const items = prods.map((p, idx) => ({
     idx, name: p.name||'', r: computeProductReadiness(o, p)
@@ -1201,25 +1305,29 @@ function computeProductReadiness(o, p){
   const isOffset = (p.printType||'').includes('offset');
   const hasImg = (Array.isArray(p.designImages) && p.designImages.length) || !!p.designImageUrl;
 
-  // Critical (must complete before press send / production handoff)
+  // Critical عام لكل المنتجات (يطابق validateStageRequirements في orders.js)
   const critical = [
     { ok: (parseFloat(p.qty)||0) > 0,                    label: 'الكمية محددة' },
     { ok: !!(p.printSize || p.size),                     label: 'مقاس الطباعة محدد' },
     { ok: !!p.paper,                                      label: 'نوع الورق محدد' },
-    { ok: (parseFloat(p.paperSheets)||0) > 0,             label: 'عدد الفروخ محدد' },
-    { ok: !!p.pressId,                                    label: 'المطبعة مختارة' },
+    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
     { ok: hasImg,                                         label: 'صورة التصميم مرفوعة' },
   ];
 
-  // Offset-specific critical: zink type
-  if(isOffset) critical.push({ ok: !!p.zinkType, label: 'نوع الزنكات محدد' });
+  // إضافات الأوفست الحرجة: الزنكات + الفروخ + مقاس القص + المطبعة
+  if(isOffset){
+    critical.push({ ok: !!p.zinkType,                       label: 'نوع الزنكات محدد' });
+    critical.push({ ok: (parseFloat(p.paperSheets)||0) > 0, label: 'عدد الفروخ محدد' });
+    critical.push({ ok: !!p.cutSize,                        label: 'مقاس القص محدد' });
+    critical.push({ ok: !!p.pressId,                        label: 'المطبعة مختارة' });
+  }
 
-  // Warnings (recommended but not blocking)
-  const warnings = [
-    { ok: !!p.pressDeadline,                              label: 'ميعاد المطبعة محدد' },
-    { ok: !!p.lamination,                                 label: 'السلوفان محدد' },
-    { ok: (parseFloat(p.paperCuts)||0) > 0,               label: 'التقطيع محدد' },
-  ];
+  // Warnings (مُستحسَنة وغير مانعة) — للأوفست فقط
+  const warnings = [];
+  if(isOffset){
+    warnings.push({ ok: !!p.pressDeadline,                  label: 'ميعاد المطبعة محدد' });
+    warnings.push({ ok: (parseFloat(p.paperCuts)||0) > 0,   label: 'عدد التقطيع محدد' });
+  }
 
   const cTotal = critical.length;
   const cDone  = critical.filter(c => c.ok).length;
@@ -1234,12 +1342,29 @@ function computeProductReadiness(o, p){
   };
 }
 
+// ── Accordion على مستوى المنتج: لما المنتجات كتير، كل منتج يبقى صف مضغوط
+// ويتفتح واحد بس في كل مرة — يقلّل زحمة بانل الطباعة. (-1/undefined = الكل مطوي)
+const __openProd = {};
+window.toggleProdCard = function(orderId, idx){
+  const cur = __openProd[orderId];
+  __openProd[orderId] = (cur === idx) ? -1 : idx;
+  if(activeOrder) renderPanel(activeOrder);
+};
+window.finishProdCard = function(orderId, idx){
+  const o = activeOrder; if(!o) return;
+  const n = (o.products||[]).length;
+  __openProd[orderId] = (idx + 1 < n) ? idx + 1 : -1; // افتح التالي أو اطوِ الكل
+  renderPanel(o);
+};
+
 // ══ Smart Production Brief (per product) ══
-// Renders the 9 spec fields per product card. Read-only money — only specs.
-function renderProductBrief(o, p, idx){
-  // Only show for offset products (digital workflow stays simpler)
+// قسم عام (كل المنتجات): الكمية · المقاس · نوع الورق · السلوفان.
+// قسم أوفست إضافي (للأوفست فقط): الزنكات · الفروخ · مقاس القص · عدد التقطيع
+//   · الداخلي · المطبعة · الميعاد · ملاحظات الشغل · زر الإرسال للمطبعة.
+// Read-only money — مواصفات فقط. القيم تُحفظ تلقائياً (debounced).
+function renderProductBrief(o, p, idx, opts){
+  opts = opts || {};
   const isOffset = (p.printType||'').includes('offset');
-  if(!isOffset && !p.paperSheets && !p.pressId) return '';
 
   const r = computeProductReadiness(o, p);
   const barColor = r.ready ? 'var(--g)' : r.pct >= 60 ? 'var(--y)' : 'var(--r)';
@@ -1247,9 +1372,17 @@ function renderProductBrief(o, p, idx){
   const missingWarn = r.warnings.filter(w => !w.ok);
 
   const pid = `pb-${o._id}-${idx}`;
-  const presses = getPressOptions();
-  const pressOpts = '<option value="">— اختر المطبعة —</option>' +
-    presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+  const qty = parseFloat(p.qty) || 0;
+  const printSize = p.printSize || p.size || '';
+  const inp = 'width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;box-sizing:border-box';
+
+  // نوع الورق — قائمة من الإعدادات (settings.paperTypes) مع الحفاظ على أي قيمة حالية غير مُدرَجة
+  const paperList = getPaperOptions();
+  const curPaper = p.paper || '';
+  const paperInList = !curPaper || paperList.includes(curPaper);
+  const paperOpts = '<option value="">— اختر نوع الورق —</option>' +
+    paperList.map(v => `<option value="${escAttr(v)}" ${v===curPaper?'selected':''}>${escAttr(v)}</option>`).join('') +
+    (paperInList ? '' : `<option value="${escAttr(curPaper)}" selected>${escAttr(curPaper)} (غير مُدرَج)</option>`);
 
   const lamOpts = ['لامع','مات','بلا'].map(v =>
     `<label style="display:inline-flex;align-items:center;gap:var(--space-xs);font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);cursor:pointer">
@@ -1257,31 +1390,91 @@ function renderProductBrief(o, p, idx){
     </label>`
   ).join('');
 
-  // Default print size: fall back to product size
-  const printSize = p.printSize || p.size || '';
+  const accent = isOffset ? '255,170,0' : '110,168,254';
+  const accentVar = isOffset ? 'var(--y)' : 'var(--b)';
 
-  // Templates row
-  const tplOpts = '<option value="">— طبّق قالب —</option>' +
-    printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
-
-  return `
-    <div style="margin-top:10px;padding:10px;background:rgba(255,170,0,.04);border:1px solid rgba(255,170,0,.18);border-radius:var(--rad)">
-      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
-        <span>🤖 بيانات الإنتاج (أوفست)</span>
-        <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يُسجَّل تلقائياً</span>
-      </div>
-
-      <!-- Templates row -->
-      <div style="display:flex;gap:6px;margin-bottom:10px">
+  // ── إضافات الأوفست (تظهر للأوفست فقط) ──
+  const offsetHtml = !isOffset ? '' : (() => {
+    const presses = getPressOptions();
+    const pressOpts = '<option value="">— اختر المطبعة —</option>' +
+      presses.map(s => `<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}" data-phone="${s.phone||s.whatsapp||''}" ${s._id===p.pressId?'selected':''}>${s.name}${s.category?' · '+s.category:''}</option>`).join('');
+    const tplOpts = '<option value="">— طبّق قالب —</option>' +
+      printBriefTemplates.map(t => `<option value="${t.id}">${escAttr(t.name)}${t.productNameHint?' · '+escAttr(t.productNameHint):''}</option>`).join('');
+    return `
+      <!-- Templates row (أوفست) -->
+      <div style="display:flex;gap:6px;margin:10px 0 8px">
         <select onchange="applyBriefTemplate('${o._id}',${idx},this.value);this.value=''" style="flex:1;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-sm);font-family:inherit;direction:rtl;cursor:pointer">${tplOpts}</select>
         <button type="button" onclick="openSaveTemplate('${o._id}',${idx})" title="احفظ المواصفات الحالية كقالب" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;white-space:nowrap">💾 احفظ كقالب</button>
       </div>
 
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
+        <!-- نوع الزنكات -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
+          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="${inp};direction:rtl">
+        </div>
+        <!-- عدد الفروخ -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
+          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>
+        <!-- مقاس القص -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📏 مقاس القص</div>
+          <input type="text" value="${escAttr(p.cutSize||'')}" oninput="updateProductBriefField('${o._id}',${idx},'cutSize',this.value)" placeholder="مثال: 70×100" style="${inp};direction:rtl">
+        </div>
+        <!-- عدد التقطيع -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
+          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>
+      </div>
+
+      <!-- الداخلي -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
+        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="${inp};direction:rtl">
+      </div>
+
+      <!-- المطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(${accent},.2)">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
+        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="${inp};direction:rtl">${pressOpts}</select>
+      </div>
+
+      <!-- ميعاد المطبعة -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
+        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="${inp}">
+      </div>
+
+      <!-- ملاحظات خاصة بالشغل -->
+      <div style="margin-top:8px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📝 ملاحظات خاصة بالشغل</div>
+        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="${inp};direction:rtl;resize:vertical">${escAttr(p.briefNotes||'')}</textarea>
+      </div>
+
+      <!-- زر إرسال للمطبعة -->
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(${accent},.2)">
+        <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
+        </button>
+        ${p.briefSentAt?`<div style="font-size:var(--fs-tiny);color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
+        ${!r.ready?`<div style="font-size:var(--fs-tiny);color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
+      </div>`;
+  })();
+
+  return `
+    <div style="margin-top:10px;padding:10px;background:rgba(${accent},.04);border:1px solid rgba(${accent},.18);border-radius:var(--rad)">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${accentVar};margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
+        <span>🤖 بيانات الطباعة${isOffset?' (أوفست)':''}</span>
+        <span style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-semi)">يُسجَّل تلقائياً</span>
+      </div>
       <!-- Readiness Card -->
       <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-bottom:6px">
           <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${r.ready?'var(--g)':'var(--dim2)'}">
-            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
+            ${r.ready?'✅':'🤖'} جاهزية: ${r.cDone}/${r.cTotal} حرجة${r.wTotal>0&&r.wDone<r.wTotal?` · ${r.wDone}/${r.wTotal} اختياري`:''}
           </span>
           <span style="font-size:var(--fs-xs);color:${barColor};font-weight:var(--fw-extra)">${r.pct}%</span>
         </div>
@@ -1296,70 +1489,36 @@ function renderProductBrief(o, p, idx){
         </div>`:''}
       </div>
 
+      <!-- القسم العام (كل المنتجات) -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
+        ${opts.hideQty?'':`<!-- الكمية -->
+        <div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🔢 الكمية</div>
+          <input type="number" min="0" value="${qty||''}" oninput="updateProductBriefField('${o._id}',${idx},'qty',parseFloat(this.value)||0)" placeholder="0" style="${inp};direction:ltr;text-align:right">
+        </div>`}
         <!-- مقاس الطباعة -->
         <div>
           <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📐 مقاس الطباعة</div>
-          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
+          <input type="text" value="${escAttr(printSize)}" oninput="updateProductBriefField('${o._id}',${idx},'printSize',this.value)" placeholder="مثال: 9×5" style="${inp};direction:rtl">
         </div>
-
-        <!-- نوع الزنكات -->
+        <!-- نوع الورق -->
         <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🟨 نوع الزنكات</div>
-          <input type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="مثال: 4 ألوان" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📄 نوع الورق</div>
+          <select onchange="updateProductBriefField('${o._id}',${idx},'paper',this.value)" style="${inp};direction:rtl;cursor:pointer">${paperOpts}</select>
         </div>
-
-        <!-- عدد الفروخ -->
+        <!-- وزن الورق -->
         <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📦 عدد الفروخ</div>
-          <input type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">⚖️ وزن الورق (جم)</div>
+          <input type="number" min="0" value="${p.weight||''}" oninput="updateProductBriefField('${o._id}',${idx},'weight',parseFloat(this.value)||0)" placeholder="مثال: 300" style="${inp};direction:ltr;text-align:right">
         </div>
-
-        <!-- التقطيع -->
-        <div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✂️ التقطيع (× كم)</div>
-          <input type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:ltr;text-align:right;box-sizing:border-box">
+        <!-- السلوفان -->
+        <div style="grid-column:1/-1">
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">✨ السلوفان</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;padding-top:5px">${lamOpts}</div>
         </div>
       </div>
-
-      <!-- السلوفان -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:4px">✨ السلوفان</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">${lamOpts}</div>
-      </div>
-
-      <!-- الداخلي -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📁 الداخلي (للملفات/الحافظات)</div>
-        <input type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="مثال: العادي" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">
-      </div>
-
-      <!-- المطبعة -->
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">🏭 المطبعة</div>
-        <select onchange="updateProductBriefField('${o._id}',${idx},'press',this)" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;box-sizing:border-box">${pressOpts}</select>
-      </div>
-
-      <!-- ميعاد المطبعة -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📅 ميعاد المطبعة</div>
-        <input type="datetime-local" value="${toLocalDTPB(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')" style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;box-sizing:border-box">
-      </div>
-
-      <!-- ملاحظات -->
-      <div style="margin-top:8px">
-        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px">📝 ملاحظات للمطبعة</div>
-        <textarea rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="مثال: مش هبعت الورق الا لما تقولي الإعادة..." style="width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--snow);font-size:var(--fs-base);font-family:inherit;direction:rtl;resize:vertical;box-sizing:border-box">${escAttr(p.briefNotes||'')}</textarea>
-      </div>
-
-      <!-- زر إرسال للمطبعة -->
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,170,0,.2)">
-        <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} style="width:100%;padding:9px;border-radius:8px;border:none;background:${r.ready?'#25D366':'var(--bg3)'};color:${r.ready?'#fff':'var(--dim2)'};font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:${r.ready?'pointer':'not-allowed'};font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
-          💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
-        </button>
-        ${p.briefSentAt?`<div style="font-size:var(--fs-tiny);color:var(--g);margin-top:4px;text-align:center">✅ أُرسل ${p.briefSentAt}${p.briefSentByName?' بواسطة '+p.briefSentByName:''}</div>`:''}
-        ${!r.ready?`<div style="font-size:var(--fs-tiny);color:var(--dim2);margin-top:4px;text-align:center">أكمل البنود الحرجة لتفعيل الإرسال</div>`:''}
-      </div>
+      ${opts.extrasHTML||''}
+      ${offsetHtml}
     </div>`;
 }
 
@@ -1379,9 +1538,13 @@ window.updateProductBriefField = function(orderId, idx, field, value){
     const opt = value?.options?.[value.selectedIndex];
     const pressId = opt?.value || '';
     const pressName = opt?.dataset?.name || '';
+    // مزامنة النسخة المرحَّلة لمودال «تعديل المنتجات» عشان «حفظ التعديلات»
+    // ما يدوسش على تعديلات البريف (البريف auto-save + staged معاً).
+    if(editProdsData[idx]){ editProdsData[idx].pressId=pressId; editProdsData[idx].pressName=pressName; }
     queueBriefSave(orderId, idx, {pressId, pressName});
     return;
   }
+  if(editProdsData[idx]) editProdsData[idx][field]=value;
   queueBriefSave(orderId, idx, {[field]: value});
 };
 
@@ -1649,6 +1812,102 @@ window.savePrintAdvance=async function(){
 };
 
 // ════════════════════════════════════════
+// تعديل المبالغ — المبلغ الكلي (salePrice) + المقدم/المحصّل (totalPaid)
+// المصدر: orderActions.editOrderPayment (المسار الذرّي المعتمد — wallet sync
+// + transactions_v2 + financial_ledger + idempotency + audit). صفر كتابة UI.
+// ════════════════════════════════════════
+window.openEditAmounts=function(){
+  if(!activeOrder)return;
+  const o=activeOrder;
+  const sale=parseFloat(o.salePrice)||0;
+  const paid=parseFloat(o.totalPaid)||0;
+  window.__eaOrig={sale,paid};
+  const saleInp=document.getElementById('ea-sale');if(saleInp)saleInp.value=sale||'';
+  const paidInp=document.getElementById('ea-paid');if(paidInp)paidInp.value=paid||'';
+  const reasonInp=document.getElementById('ea-reason');if(reasonInp)reasonInp.value='';
+  const wid=document.getElementById('ea-wid');if(wid)wid.value='';
+  const wname=document.getElementById('ea-wname');if(wname)wname.value='';
+  renderEaWallets();
+  updateEaPreview();
+  document.getElementById('ov-edit-amounts')?.classList.add('open');
+};
+
+function renderEaWallets(){
+  const el=document.getElementById('ea-wallets');if(!el)return;
+  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectEaWallet('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="ew-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fn(w.balance)} ج</button>`).join('');
+}
+
+window.selectEaWallet=function(id,name){
+  document.getElementById('ea-wid').value=id;
+  document.getElementById('ea-wname').value=name;
+  document.querySelectorAll('[id^="ew-"]').forEach(b=>{b.style.background='var(--bg3)';b.style.color='var(--dim2)';b.style.borderColor='var(--line)';});
+  const b=document.getElementById('ew-'+id);
+  if(b){b.style.background='rgba(0,217,126,.12)';b.style.color='var(--g)';b.style.borderColor='var(--g)';}
+};
+
+window.updateEaPreview=function(){
+  if(!activeOrder)return;
+  const o=activeOrder;
+  const orig=window.__eaOrig||{sale:0,paid:0};
+  const newSale=parseFloat(document.getElementById('ea-sale')?.value)||0;
+  const newPaid=parseFloat(document.getElementById('ea-paid')?.value)||0;
+  const disc=parseFloat(o.discount)||0;
+  const cFee=parseFloat(o.customerShipFee)||0;
+  const newRem=Math.max(0,newSale+cFee-disc-newPaid);
+  const paidDiff=newPaid-orig.paid;
+  const paidChanged=Math.abs(paidDiff)>0.01;
+  // محفظة إلزامية فقط لو المقدم اتغيّر (مزامنة الرصيد عبر delta)
+  const walletFg=document.getElementById('ea-wallet-fg');
+  if(walletFg)walletFg.style.display=paidChanged?'':'none';
+  const hint=document.getElementById('ea-paid-hint');
+  if(hint){
+    if(!paidChanged){hint.style.color='var(--dim2)';hint.textContent='';}
+    else if(paidDiff>0){hint.style.color='var(--g)';hint.textContent=`▲ دفعة جديدة ${fn(paidDiff)} ج تُضاف للمحفظة`;}
+    else{hint.style.color='var(--r)';hint.textContent=`▼ استرداد ${fn(Math.abs(paidDiff))} ج يُخصم من المحفظة`;}
+  }
+  const sum=document.getElementById('ea-summary');
+  if(sum)sum.innerHTML=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">الإجمالي الجديد</span><span style="font-weight:var(--fw-extra)">${fn(newSale)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">المحصّل الجديد</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fn(newPaid)} ج</span></div>
+    ${disc>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">خصم</span><span style="font-weight:var(--fw-extra)">${fn(disc)} ج</span></div>`:''}
+    ${cFee>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">شحن على العميل</span><span style="font-weight:var(--fw-extra)">${fn(cFee)} ج</span></div>`:''}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:${newRem>0?'var(--r)':'var(--g)'};font-weight:var(--fw-extra)">${newRem>0?'الباقي':'مكتمل ✅'}</span><span style="font-weight:var(--fw-heavy);color:${newRem>0?'var(--r)':'var(--g)'};font-size:15px">${fn(newRem)} ج</span></div>`;
+};
+
+window.saveEditAmounts=async function(){
+  if(!activeId||!activeOrder)return;
+  const o=activeOrder;
+  const origSale=parseFloat(o.salePrice)||0;
+  const origPaid=parseFloat(o.totalPaid)||0;
+  const newSale=parseFloat(document.getElementById('ea-sale')?.value)||0;
+  const newPaid=parseFloat(document.getElementById('ea-paid')?.value)||0;
+  if(newSale<0||newPaid<0){toast('⚠️ مبالغ غير صالحة','err');return;}
+  const changes={};
+  if(Math.abs(newSale-origSale)>0.01)changes.salePrice=newSale;
+  if(Math.abs(newPaid-origPaid)>0.01)changes.totalPaid=newPaid;
+  if(!Object.keys(changes).length){toast('لا يوجد تغيير على المبالغ');return;}
+  let walletId='',walletName='';
+  if('totalPaid' in changes){
+    walletId=document.getElementById('ea-wid')?.value||'';
+    walletName=document.getElementById('ea-wname')?.value||'';
+    if(!walletId){toast('⚠️ اختر طريقة الدفع لمزامنة المحفظة','err');return;}
+  }
+  const reason=(document.getElementById('ea-reason')?.value||'').trim();
+  const btn=document.querySelector('#ov-edit-amounts .btn-g');
+  if(btn){btn.disabled=true;btn.textContent='جاري الحفظ...';}
+  const r=await orderActions.editOrderPayment({
+    db,orderId:activeId,changes,walletId,walletName,
+    changesLabel:`💰 تعديل المبالغ — كلي ${fn(newSale)} ج · مقدم ${fn(newPaid)} ج`,
+    editReason:reason,
+    userId:auth?.currentUser?.uid||'',userName,
+  });
+  if(btn){btn.disabled=false;btn.textContent='✓ حفظ المبالغ';}
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  window.cM('edit-amounts');
+  toast('✅ تم تحديث المبالغ','ok');
+};
+
+// ════════════════════════════════════════
 // PAYMENT RECEIPT HELPERS (مشترك بين collect/advance)
 // ════════════════════════════════════════
 window.__paReceiptFile = null;
@@ -1743,12 +2002,25 @@ function getPressOptions(){
   return suppliers.filter(s => allowed.includes(s.category) || allowed.includes(s.type));
 }
 
+// أنواع الورق من الإعدادات (settings/main → paperTypes) — قائمة اختيار نوع الورق
+// في مرحلة الطباعة. يُدار من صفحة الإعدادات (settings.html).
+function getPaperOptions(){
+  const arr = appSettings && Array.isArray(appSettings.paperTypes) ? appSettings.paperTypes : [];
+  return arr.filter(Boolean);
+}
+
 // ── فتح Modal التعديل ──
-window.openEditProds = function() {
+// focusIdx (اختياري): يفتح منتج بعينه (accordion) عند الدخول من زر «تعديل
+// بيانات الطباعة» على كارت المنتج في البانل.
+window.__openEP = {};
+window.toggleEPCard = function(i){ window.__openEP[i] = !window.__openEP[i]; renderEditProdsList(); };
+window.openEditProds = function(focusIdx) {
   if(!activeOrder) return;
   const o = activeOrder;
   // نسخ المنتجات الحالية
   editProdsData = (o.products||[]).map(p=>({...p}));
+  window.__openEP = {};
+  if(typeof focusIdx==='number' && focusIdx>=0) window.__openEP[focusIdx]=true;
   renderEditProdsList();
   // السعر الكلي
   const priceInp = document.getElementById('ep-sale-price');
@@ -1767,76 +2039,81 @@ function renderEditProdsList() {
     el.innerHTML = '<div style="font-size:var(--fs-base);color:var(--dim2);text-align:center;padding:10px">لا توجد منتجات — أضف منتجاً</div>';
     return;
   }
+  const multi = editProdsData.length>1;
   el.innerHTML = editProdsData.map((p,i) => {
-    const ptCol=p.printType?.includes('offset')?'var(--y)':p.printType?.includes('digital')?'var(--b)':'';
-    const specs=[p.printType&&`<span style="font-size:var(--fs-tiny);font-weight:var(--fw-bold);padding:1px 7px;border-radius:20px;background:${ptCol}18;color:${ptCol}">${p.printType}</span>`,p.paper&&`<span class="txt-meta-tiny">📄 ${p.paper}${p.weight?' · '+p.weight+'جم':''}</span>`,p.size&&`<span class="txt-meta-tiny">📐 ${p.size}</span>`].filter(Boolean).join(' ');
+    const isOpen = !multi || !!window.__openEP[i];
+    const rr = computeProductReadiness(activeOrder||{}, p);
+    const rc = rr.ready?'var(--g)':(rr.pct>=60?'var(--y)':'var(--r)');
+
+    // صف مضغوط (منتجات كتير + مطوي) — كل منتج يتعدّل لوحده
+    if(multi && !isOpen){
+      return `<div onclick="toggleEPCard(${i})" style="display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--line);border-radius:var(--rad);padding:11px 12px;margin-bottom:8px;cursor:pointer">
+        <div style="flex:1;min-width:0">
+          <div class="txt-bold-md" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'} <span style="font-size:var(--fs-xs);color:var(--y)">×${p.qty||1}</span></div>
+          <div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc};margin-top:2px">${rr.ready?'✅ بيانات الطباعة مكتملة':`بيانات الطباعة ${rr.pct}%`}</div>
+        </div>
+        <span style="color:var(--dim2);font-size:var(--fs-lg)">▸</span>
+      </div>`;
+    }
+
+    // الإضافات — تُحقن داخل «بيانات الطباعة» (جزء منها حسب طلب المستخدم)
+    const extrasHTML = (()=>{
+      const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
+      const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+      const extrasList=_unified.length?_unified:_legacy;
+      if(!extrasList.length)return'';
+      const sel=p.extras||[];
+      return `<div style="margin-top:10px">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ الإضافات</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${extrasList.map(ex=>{const on=sel.includes(ex);return`<button type="button" onclick="toggleProdExtra(${i},'${ex}',${!on})" style="padding:3px 12px;border-radius:20px;border:1px solid ${on?'var(--g)':'var(--line)'};background:${on?'rgba(0,217,126,.12)':'var(--bg2)'};color:${on?'var(--g)':'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${on?'✓ ':''}${ex}</button>`;}).join('')}
+        </div>
+      </div>`;
+    })();
+
+    // صور المنتج
+    const imagesHTML = (()=>{
+      const imgs=getProductImages(p); const cnt=imgs.length;
+      return `<div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:10px">
+        ${cnt>0
+          ? `<div onclick="openProdImg(${i})" style="position:relative;cursor:pointer;flex-shrink:0"><img src="${imgs[0]}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:var(--bg2)" alt="">${cnt>1?`<span style="position:absolute;top:-4px;left:-4px;background:var(--p);color:#fff;font-size:var(--fs-xs);font-weight:var(--fw-extra);border-radius:var(--rad);padding:1px 6px">+${cnt-1}</span>`:''}</div>`
+          : `<div onclick="openProdImg(${i})" style="width:48px;height:48px;border-radius:8px;border:2px dashed var(--line2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;background:var(--bg2)" title="رفع صورة">🖼️</div>`}
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openProdImg(${i})" style="flex:1;font-size:var(--fs-sm)">${cnt>0 ? `🔄 إدارة الصور (${cnt})` : '＋ إضافة صور'}</button>
+      </div>`;
+    })();
+
     return`
     <div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:8px;border:1px solid var(--line)">
-      <!-- اسم المنتج + مواصفات -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div>
-          <div class="txt-bold-md">${p.name||'—'}</div>
-          ${specs?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${specs}</div>`:''}
+      <!-- رأس: اسم + جاهزية + (طي لو متعدد) + حذف -->
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+        <div ${multi?`onclick="toggleEPCard(${i})" style="cursor:pointer;`:'style="'}display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          ${multi?`<span style="color:var(--dim2);font-size:var(--fs-lg)">▾</span>`:''}
+          <div class="txt-bold-md" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name||'—'}</div>
+          <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${rc};flex-shrink:0">${rr.ready?'✅':rr.pct+'%'}</span>
         </div>
-        <button type="button" onclick="removeEditProd(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:var(--fs-base)">✕</button>
+        <button type="button" onclick="removeEditProd(${i})" style="background:rgba(255,61,110,.15);color:var(--r);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:var(--fs-base);flex-shrink:0">✕</button>
       </div>
       <!-- كمية + سعر -->
       <div style="display:flex;gap:var(--space-sm);margin-bottom:10px">
         <div class="flex-1">
           <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">الكمية</div>
-          <input type="number" class="inp" value="${p.qty||1}" min="1"
-            style="text-align:center"
-            oninput="setEditProdQty(${i},this.value)">
+          <input type="number" class="inp" value="${p.qty||1}" min="1" style="text-align:center" oninput="setEditProdQty(${i},this.value)">
         </div>
         <div style="flex:2">
           <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">السعر الإجمالي (ج)</div>
-          <input type="number" class="inp" value="${p.unitPrice||p.price||''}" min="0"
-            placeholder="0"
-            oninput="setEditProdPrice(${i},this.value)">
+          <input type="number" class="inp" value="${p.unitPrice||p.price||''}" min="0" placeholder="0" oninput="setEditProdPrice(${i},this.value)">
         </div>
       </div>
-      <!-- نوع الطباعة لكل منتج -->
-      <div style="margin-bottom:10px">
+      <!-- نوع الطباعة -->
+      <div>
         <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">نوع الطباعة</div>
         <div class="row-gap-xs">
-          ${['digital','offset'].map(t=>`<button type="button" onclick="setProdPrintType(${i},'${t}')"
-            style="padding:4px 14px;border-radius:20px;border:1px solid ${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--line)'};background:${p.printType===t?(t==='digital'?'rgba(59,158,255,.12)':'rgba(255,170,0,.12)'):'var(--bg2)'};color:${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">
-            ${t==='digital'?'💻 ديجيتال':'🖨️ أوفست'}
-          </button>`).join('')}
+          ${['digital','offset'].map(t=>`<button type="button" onclick="setProdPrintType(${i},'${t}')" style="padding:4px 14px;border-radius:20px;border:1px solid ${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--line)'};background:${p.printType===t?(t==='digital'?'rgba(59,158,255,.12)':'rgba(255,170,0,.12)'):'var(--bg2)'};color:${p.printType===t?(t==='digital'?'var(--b)':'var(--y)'):'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${t==='digital'?'💻 ديجيتال':'🖨️ أوفست'}</button>`).join('')}
         </div>
       </div>
-      <!-- الإضافات حسب نوع الطباعة -->
-      ${(()=>{
-        // Unified source: master_lists/supplier_categories (filter by isCostItem + printTypes).
-        // Fallback: legacy settings.costTypesDigital/Offset لو الـ migration لسه ما اشتغلت.
-        const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
-        const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
-        const extrasList=_unified.length?_unified:_legacy;
-        if(!extrasList.length)return'';
-        const sel=p.extras||[];
-        return`<div style="margin-bottom:10px">
-          <div style="font-size:var(--fs-tiny);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">الإضافات</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            ${extrasList.map(ex=>{const on=sel.includes(ex);return`<button type="button" onclick="toggleProdExtra(${i},'${ex}',${!on})"
-              style="padding:3px 12px;border-radius:20px;border:1px solid ${on?'var(--g)':'var(--line)'};background:${on?'rgba(0,217,126,.12)':'var(--bg2)'};color:${on?'var(--g)':'var(--dim2)'};font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">
-              ${on?'✓ ':''} ${ex}
-            </button>`;}).join('')}
-          </div>
-        </div>`;
-      })()}
-      <!-- صور المنتج -->
-      ${(()=>{
-        const imgs=getProductImages(p);
-        const cnt=imgs.length;
-        return `<div style="display:flex;align-items:center;gap:var(--space-sm)">
-          ${cnt>0
-            ? `<div onclick="openProdImg(${i})" style="position:relative;cursor:pointer;flex-shrink:0"><img src="${imgs[0]}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:var(--bg2)" alt="">${cnt>1?`<span style="position:absolute;top:-4px;left:-4px;background:var(--p);color:#fff;font-size:var(--fs-xs);font-weight:var(--fw-extra);border-radius:var(--rad);padding:1px 6px">+${cnt-1}</span>`:''}</div>`
-            : `<div onclick="openProdImg(${i})" style="width:48px;height:48px;border-radius:8px;border:2px dashed var(--line2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;background:var(--bg2)" title="رفع صورة">🖼️</div>`}
-          <button type="button" class="btn btn-ghost btn-sm" onclick="openProdImg(${i})" style="flex:1;font-size:var(--fs-sm)">
-            ${cnt>0 ? `🔄 إدارة الصور (${cnt})` : '＋ إضافة صور'}
-          </button>
-        </div>`;
-      })()}
+      <!-- بيانات الطباعة (نفس فورم البانل) + الإضافات بداخلها -->
+      ${renderProductBrief(activeOrder||{}, p, i, {hideQty:true, extrasHTML})}
+      ${imagesHTML}
     </div>`;
   }).join('');
 }
@@ -2096,12 +2373,14 @@ window.uploadProductImg = async function(inp) {
           },
           rej,
           async () => {
-            const url = await getDownloadURL(task.snapshot.ref);
-            p.designImages.push(url);
-            // مزامنة designImageUrl مع أول صورة (للـ backward compat)
-            if(!p.designImageUrl) p.designImageUrl = p.designImages[0];
-            uploaded++;
-            res();
+            try {
+              const url = await getDownloadURL(task.snapshot.ref);
+              p.designImages.push(url);
+              // مزامنة designImageUrl مع أول صورة (للـ backward compat)
+              if(!p.designImageUrl) p.designImageUrl = p.designImages[0];
+              uploaded++;
+              res();
+            } catch(e) { rej(e); } // فشل getDownloadURL/القراءة → ما نعلّقش الـ UI
           }
         );
       });

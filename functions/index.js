@@ -508,6 +508,71 @@ exports.adminSetEmployeePassword = onCall(CALL_OPTS, async (req) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//   Self-Service Password Reset (Firestore-triggered — no public invoker needed)
+// ════════════════════════════════════════════════════════════════════════════
+// الموظف ينسى كلمته → login.html يكتب مستند في password_reset_requests {phone}
+// (بدون تسجيل دخول). هذا الـ trigger يلاقي الموظف بالموبايل، يولّد رابط ريست
+// عبر Admin SDK، ويرسله لإيميل الاسترداد المسجّل (users/{uid}.recoveryEmail)
+// عبر مجموعة `mail` (إكستنشن Trigger Email). Background trigger ⇒ لا CORS/IAM.
+//
+// أمان: لا نكشف للعميل إن كان الرقم/الإيميل موجوداً (login يعرض رسالة محايدة)؛
+// تفاصيل الحالة تُكتب في مستند الطلب غير القابل للقراءة من العميل.
+const PHONE_RE = /^01[0125][0-9]{8}$/;
+exports.onPasswordResetRequested = onDocumentCreated('password_reset_requests/{reqId}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const ref = snap.ref;
+  const phone = String((snap.data() || {}).phone || '').trim();
+  const mark = (status, extra = {}) =>
+    ref.update({ status, processedAt: FieldValue.serverTimestamp(), ...extra }).catch(() => {});
+
+  try {
+    if (!PHONE_RE.test(phone)) { await mark('invalid_phone'); return; }
+
+    // 1) لاقِ الموظف بالموبايل
+    const es = await getFirestore().collection('employees').where('phone', '==', phone).limit(1).get();
+    if (es.empty) { await mark('no_account'); return; }
+    const emp = es.docs[0].data() || {};
+    const authUid = emp.authUid;
+    if (!authUid) { await mark('no_account'); return; }
+
+    // 2) إيميل الاسترداد: users/{uid}.recoveryEmail (سجّله الموظف) ثم emp.email الحقيقي
+    let recovery = '';
+    try {
+      const ud = await getFirestore().doc(`users/${authUid}`).get();
+      recovery = (ud.exists && ud.data().recoveryEmail) || '';
+    } catch (_) {}
+    if (!recovery && emp.email && !String(emp.email).endsWith('@b2c.local')) recovery = emp.email;
+    if (!recovery) { await mark('no_recovery_email'); return; }
+
+    // 3) إيميل الحساب لتوليد الرابط (الحقيقي إن وُجد، وإلا phone@b2c.local)
+    let accountEmail = phone + '@b2c.local';
+    try { const u = await getAuth().getUser(authUid); if (u.email) accountEmail = u.email; } catch (_) {}
+    const link = await getAuth().generatePasswordResetLink(accountEmail);
+
+    // 4) اطلب الإرسال عبر إكستنشن Trigger Email (مجموعة mail)
+    await getFirestore().collection('mail').add({
+      to: recovery,
+      message: {
+        subject: 'إعادة تعيين كلمة السر — Business2Card',
+        html: `<div dir="rtl" style="font-family:Tajawal,Arial,sans-serif;line-height:1.7">
+          <p>مرحباً ${emp.name || ''},</p>
+          <p>وصلنا طلب لإعادة تعيين كلمة سر حسابك في Business2Card.</p>
+          <p style="margin:18px 0"><a href="${link}" style="background:#2563eb;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:bold">تعيين كلمة سر جديدة</a></p>
+          <p>أو افتح الرابط مباشرة:<br><a href="${link}">${link}</a></p>
+          <p>بعد التعيين، ادخل بـ <b>رقم موبايلك (${phone})</b> والكلمة الجديدة.</p>
+          <p style="color:#888;font-size:13px">لو لم تطلب هذا، تجاهل الرسالة — لن يتغيّر شيء.</p>
+        </div>`,
+      },
+    });
+    await mark('sent');
+  } catch (e) {
+    console.error('[onPasswordResetRequested]', e);
+    await mark('error', { error: String(e.message || e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //   Impersonate User — Custom Token for View-As (Deep Mode)
 // ════════════════════════════════════════════════════════════════════════════
 // Admin-only. Mints a short-lived custom token for the target user so the
@@ -946,6 +1011,29 @@ exports.onPaymentRequestPendingApproval = onDocumentUpdated('payment_requests/{r
   await notifyAdminsOfPendingApproval({
     entityType: 'payment_request', entityId: e.params.reqId,
     title, body, link: '/approvals.html',
+  });
+});
+
+// ── Incident appeal submitted → notify admins/ops ──────────────────────────
+// يُطلق عند انتقال appeal.status إلى 'pending' على employee_incidents — يُشعر
+// الأدمن/مدير العمليات ليراجعوا تظلّم الموظف. (الإشعار للموظف بالقرار يتم في
+// employee-actions.decideIncidentAppeal client-side.)
+exports.onIncidentAppealSubmitted = onDocumentUpdated('employee_incidents/{incId}', async (e) => {
+  const before = e.data?.before?.data() || {};
+  const after  = e.data?.after?.data()  || {};
+  const wasPending = before.appeal && before.appeal.status === 'pending';
+  const isPending  = after.appeal  && after.appeal.status  === 'pending';
+  if (isPending === wasPending) return; // فقط عند الانتقال إلى pending
+  if (!isPending) return;
+
+  const who    = after.employeeName || 'موظف';
+  const reason = (after.appeal && after.appeal.reason) || '';
+  const label  = after.reasonLabel || after.title || 'إخفاق';
+  const title  = '🛡️ تظلّم جديد بانتظار المراجعة';
+  const body   = `${who} يعترض على «${label}»${reason ? ' — ' + reason : ''}`;
+  await notifyAdminsOfPendingApproval({
+    entityType: 'incident_appeal', entityId: e.params.incId,
+    title, body, link: `/employee-profile.html?id=${after.employeeId || ''}`,
   });
 });
 
@@ -3762,4 +3850,31 @@ exports.auditOrderFinancialDrift = onCall(CALL_OPTS, async (req) => {
     if (paidFields > 1) multiPaidFields++;
   });
   return { ok: true, scanned, remDrift, statusDrift, multiPaidFields, samples };
+});
+
+// ════════════════════════════════════════════════════════════
+// recordGalleryView — عدّاد مشاهدات المعرض العام (المرحلة 4)
+// ────────────────────────────────────────────────────────────
+// callable عام (بلا auth إجباري) — البوابة العامة (portal.html) تناديه
+// عند فتح تفاصيل تصميم. يكتب بصلاحية admin (تجاوز firestore.rules) فيزيد
+// `viewCount` فقط ولا يلمس أي حقل آخر — فلا حاجة لفتح صلاحية كتابة عامة على
+// gallery. أسوأ حالة إساءة = تضخيم عدّاد تسويقي (صفر أثر مالي/أمني).
+// best-effort: أي خطأ يُبتلع (لا يكسر تجربة التصفّح).
+// ════════════════════════════════════════════════════════════
+exports.recordGalleryView = onCall(CALL_OPTS, async (req) => {
+  const id = (req.data && typeof req.data.galleryId === 'string') ? req.data.galleryId.trim() : '';
+  if (!id || id.length > 200) return { ok: false };
+  try {
+    const ref = db.doc(`gallery/${id}`);
+    const snap = await ref.get();
+    if (!snap.exists) return { ok: false };
+    await ref.update({
+      viewCount: FieldValue.increment(1),
+      lastViewedAt: FieldValue.serverTimestamp(),
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn('[recordGalleryView]', e && e.message ? e.message : e);
+    return { ok: false };
+  }
 });

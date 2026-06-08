@@ -23,7 +23,7 @@
  *   • All ids preserved 1:1: task-title/desc/pri/due/order ·
  *     edit-base-salary/commission/status · skill-input/suggestions/
  *     tags-edit · sched-day-pills/start/end · lv-type/start/end/
- *     days-preview/reason · inc-type/severity/title/desc/date/order.
+ *     days-preview/reason · inc-reason/severity/title/desc/date/order.
  *
  * Each builder returns the modal's outer <div class="overlay" id="ov-…">…
  * markup exactly as it appeared in the page.
@@ -40,6 +40,12 @@ export function buildTaskModalHTML() {
     <div class="modal-body">
       <div class="fg"><label>عنوان المهمة *</label><input class="inp" id="task-title" placeholder="مثال: تصميم كارت محمود"></div>
       <div class="fg"><label>التفاصيل</label><textarea class="inp ep-textarea-min" id="task-desc" placeholder="أي تفاصيل إضافية..."></textarea></div>
+      <div class="fg"><label>🗂️ نوع المهمة</label>
+        <select class="inp" id="task-type">
+          <option value="fixed" selected>📅 مهمة لمدّة محدّدة</option>
+          <option value="recurring">🔁 مهمة دائمة متكرّرة</option>
+        </select>
+      </div>
       <div class="g2">
         <div class="fg"><label>⚡ الأولوية</label>
           <select class="inp" id="task-pri">
@@ -48,7 +54,14 @@ export function buildTaskModalHTML() {
             <option value="low">📎 منخفض</option>
           </select>
         </div>
-        <div class="fg"><label>📅 موعد الإنجاز</label><input class="inp" id="task-due" type="date"></div>
+        <div class="fg" id="task-due-wrap"><label>📅 موعد الإنجاز</label><input class="inp" id="task-due" type="date"></div>
+        <div class="fg" id="task-recur-wrap" hidden><label>🔁 التكرار</label>
+          <select class="inp" id="task-recurrence">
+            <option value="daily">📆 يومي</option>
+            <option value="weekly">🗓️ أسبوعي</option>
+            <option value="monthly" selected>📅 شهري</option>
+          </select>
+        </div>
       </div>
       <div class="fg"><label>🔗 أوردر مرتبط (اختياري)</label>
         <select class="inp" id="task-order"><option value="">— بدون أوردر —</option></select>
@@ -253,15 +266,8 @@ export function buildIncidentModalHTML() {
       </div>
       <div class="g2">
         <div class="fg">
-          <label>🏷️ النوع *</label>
-          <select class="inp" id="inc-type">
-            <option value="quality">⚠️ مشكلة جودة</option>
-            <option value="design_rejected">🎨 تصميم مرفوض</option>
-            <option value="order_late">⏰ أوردر متأخر</option>
-            <option value="customer_complaint">📢 شكوى عميل</option>
-            <option value="attendance">💤 مخالفة حضور</option>
-            <option value="other">📌 أخرى</option>
-          </select>
+          <label>🏷️ السبب / التصنيف *</label>
+          <select class="inp" id="inc-reason"><!-- يُملأ من قائمة الأسباب المُدارة --></select>
         </div>
         <div class="fg">
           <label>🔥 الأهمية *</label>
@@ -272,6 +278,8 @@ export function buildIncidentModalHTML() {
           </select>
         </div>
       </div>
+      <!-- تنبيه تكرار نفس السبب لهذا الموظف (يُحدّث عند اختيار السبب) -->
+      <div id="inc-recur-hint" class="ep-inc-recur" hidden></div>
       <div class="fg ep-mt-10">
         <label>📝 العنوان</label>
         <input class="inp" id="inc-title" placeholder="مثال: تسليم متأخر يومين">

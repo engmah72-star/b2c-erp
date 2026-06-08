@@ -4,7 +4,7 @@
  */
 import {
   computeWalletState, detectRisks, computeSupplierDues,
-  computeRequestAging, summarizeStaleRequests, detectSupplierAnomaly, selectBulkEligible,
+  computeRequestAging, summarizeStaleRequests, detectSupplierAnomaly, selectBulkEligible, requestTierAction,
 } from '../core/approvals-utils.js';
 
 let passed = 0, failed = 0;
@@ -333,6 +333,33 @@ test('bulk approve (strict): excludes ones I confirmed', () => {
 test('bulk: empty/unknown action → none', () => {
   assertEq(selectBulkEligible(_txs, { action: 'x', userId: 'me' }).length, 0);
   assertEq(selectBulkEligible([], { action: 'confirm', userId: 'me' }).length, 0);
+});
+
+// ── requestTierAction (two-tier: ops confirm → admin approve) ───────
+test('tier: pending + ops (exec, !final) → confirm', () => {
+  assertEq(requestTierAction({ status: 'pending' }, { canExec: true, canFinal: false }), 'confirm');
+});
+test('tier: pending + admin (final), non-strict → confirm_or_approve', () => {
+  assertEq(requestTierAction({ status: 'pending' }, { canExec: true, canFinal: true, strict: false }), 'confirm_or_approve');
+});
+test('tier: pending + admin, strict → confirm only (no direct approve)', () => {
+  assertEq(requestTierAction({ status: 'pending' }, { canExec: true, canFinal: true, strict: true }), 'confirm');
+});
+test('tier: pending + neither → await_confirm', () => {
+  assertEq(requestTierAction({ status: 'pending' }, { canExec: false, canFinal: false }), 'await_confirm');
+});
+test('tier: confirmed + admin (different confirmer) → approve', () => {
+  assertEq(requestTierAction({ status: 'confirmed', confirmedBy: 'x' }, { canFinal: true, strict: true, userId: 'me' }), 'approve');
+});
+test('tier: confirmed + admin who confirmed it, strict → self_confirmed', () => {
+  assertEq(requestTierAction({ status: 'confirmed', confirmedBy: 'me' }, { canFinal: true, strict: true, userId: 'me' }), 'self_confirmed');
+});
+test('tier: confirmed + non-final → await_approve', () => {
+  assertEq(requestTierAction({ status: 'confirmed', confirmedBy: 'x' }, { canExec: true, canFinal: false }), 'await_approve');
+});
+test('tier: other statuses → null', () => {
+  assertEq(requestTierAction({ status: 'approved' }, { canFinal: true }), null);
+  assertEq(requestTierAction({ status: 'requested' }, { canExec: true }), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

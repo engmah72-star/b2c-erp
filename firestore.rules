@@ -287,10 +287,25 @@ service cloud.firestore {
     }
 
     // ══ Employee Leaves ══
+    // الأدمن يسجّل/يعتمد إجازات. الموظف يطلب لنفسه فقط بحالة 'pending' (لا
+    // يعتمد طلبه) ويقرأ طلباته — القرار (update) للأدمن وحده.
     match /employee_leaves/{leaveId} {
-      allow read: if isAuth() && isAdmin();
-      allow create: if isAuth() && isAdmin();
-      allow update, delete: if isAdmin();
+      allow read: if isAuth() && (
+        isAdmin() ||
+        resource.data.get('employeeUid','__') == request.auth.uid ||
+        resource.data.get('requestedBy','__') == request.auth.uid
+      );
+      allow create: if isAuth() && (
+        isAdmin() ||
+        (request.resource.data.get('employeeUid','') == request.auth.uid
+         && request.resource.data.get('status','') == 'pending')
+      );
+      allow update: if isAuth() && isAdmin();
+      allow delete: if isAuth() && (
+        isAdmin() ||
+        (resource.data.get('employeeUid','__') == request.auth.uid
+         && resource.data.get('status','') == 'pending')
+      );
     }
 
     // ══ Employee Goals (monthly targets set by admin/ops) ══
@@ -318,7 +333,16 @@ service cloud.firestore {
     // Admin-only writes; employees can read their own.
     match /employee_incidents/{incId} {
       allow read: if isAuth() && (isAdmin() || resource.data.authUid == request.auth.uid);
-      allow create, update: if isAuth() && isAdmin();
+      allow create: if isAuth() && isAdmin();
+      // الأدمن: تحديث كامل. الموظف صاحب الإخفاق: تظلّم فقط — يعدّل حقل `appeal`
+      // وحده وبحالة 'pending' فقط (لا يلمس النوع/الخطورة/القرار).
+      allow update: if isAuth() && (
+        isAdmin() || (
+          resource.data.authUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appeal'])
+          && request.resource.data.appeal.status == 'pending'
+        )
+      );
       allow delete: if isAdmin();
     }
 
@@ -816,6 +840,12 @@ service cloud.firestore {
     // PR-7-salvage R6: action_telemetry — observable action history.
     match /action_telemetry/{evtId} {
       allow read: if isAuth() && (isAdmin() || resource.data.actorId == request.auth.uid);
+      allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
+      // append-only: no updates/deletes
+    }
+    // Phase 0 RUM: perf_vitals — Web Vitals samples (LCP/CLS/INP/FCP/TTFB).
+    match /perf_vitals/{sampleId} {
+      allow read: if isAuth() && isAdmin();
       allow create: if isAuth() && request.resource.data.actorId == request.auth.uid;
       // append-only: no updates/deletes
     }
@@ -1506,6 +1536,22 @@ service cloud.firestore {
       allow update: if isAdminOnly() ||
         (isAuth() && resource.data.get('ownerUid','') == request.auth.uid);
       allow delete: if isAdminOnly();
+    }
+
+    // ── Self-service password reset (الموظف ينسى كلمته) ──
+    // الزائر غير المسجّل يكتب طلباً بالموبايل فقط؛ الـ Cloud Function (Admin SDK)
+    // يعالجه ويرسل الرابط لإيميل الاسترداد. لا قراءة/تعديل من العميل (منع تسريب).
+    match /password_reset_requests/{reqId} {
+      allow create: if request.resource.data.phone is string
+                    && request.resource.data.phone.size() <= 20
+                    && request.resource.data.keys().hasOnly(['phone', 'createdAt']);
+      allow read, update, delete: if false; // الـ CF يتجاوز القواعد (admin)
+    }
+
+    // ── Outgoing mail queue (إكستنشن Trigger Email) ──
+    // يُكتب من الـ CF/الإكستنشن بصلاحيات admin فقط — العميل ممنوع تماماً.
+    match /mail/{mailId} {
+      allow read, write: if false;
     }
   }
 }

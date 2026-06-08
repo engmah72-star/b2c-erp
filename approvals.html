@@ -6,6 +6,11 @@
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <title>الاعتمادات المالية — Business2Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
@@ -19,7 +24,6 @@
 <script type="module" src="app-sidebar.js?v=3"></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
-<script type="module" src="ai-launcher.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
 <script type="module" src="text-select.js?v=1"></script>
 </head>
@@ -226,6 +230,7 @@ import {
   summarizeStaleRequests as _summarizeStaleRequests,
   detectSupplierAnomaly as _detectSupplierAnomaly,
   selectBulkEligible as _selectBulkEligible,
+  requestTierAction as _requestTierAction,
 } from "./core/approvals-utils.js";
 import { STAGE_AR, STAGE_COL, ROLE_LABELS } from "./core/shared-constants.js";
 import { maskPhone, canSee } from "./shared.js";
@@ -866,27 +871,30 @@ function renderRequestCard(r){
       </div>`;
   }
 
-  // الأزرار حسب الدور والمرحلة — تدفّق مبسّط: مدير التشغيل ينفّذ ويرفع الإيصال، الأدمن يعتمد
-  const isAdm = currentRole === 'admin';
-  const isOps = currentRole === 'operation_manager';
+  // الأزرار حسب القدرة والمرحلة — طبقتان: تأكيد (مسؤول التشغيل) ثم اعتماد (الأدمن).
+  const _exec  = canDo('execute_payments', currentRole, currentPerms);
+  const _final = canDo('final_approve_payments', currentRole, currentPerms);
+  const _strict = requiresStrictSeparation(financialPolicy);
+  const _btnReject = `<button type="button" class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
+  const _btnConfirm = `<button type="button" class="btn-confirm" onclick="confirmRequest('${r._id}')">✓ تأكيد</button>`;
+  const _btnApprove = `<button type="button" class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد نهائي</button>`;
+  const _wait = (txt) => `<div style="font-size:var(--fs-sm);color:var(--dim2);padding:var(--space-sm)">${txt}</div>`;
   let actions = '';
   if(r.status === 'requested' && canExecute()){
-    actions = `<button type="button" class="btn-execute" onclick="openExecuteModal('${r._id}')">💸 تنفيذ + رفع إيصال</button>
-               <button type="button" class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
-  } else if(r.status === 'awaiting_receipt' && (isOps || isAdm || r.requestedBy === currentUid)){
-    actions = `<button type="button" class="btn-receive" onclick="openReceiptModal('${r._id}')">📤 رفع الإيصال</button>
-               <button type="button" class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
+    actions = `<button type="button" class="btn-execute" onclick="openExecuteModal('${r._id}')">💸 تنفيذ + رفع إيصال</button>${_btnReject}`;
+  } else if(r.status === 'awaiting_receipt' && (_exec || _final || r.requestedBy === currentUid)){
+    actions = `<button type="button" class="btn-receive" onclick="openReceiptModal('${r._id}')">📤 رفع الإيصال</button>${_btnReject}`;
   } else if(r.status === 'awaiting_receipt'){
-    actions = `<div style="font-size:var(--fs-sm);color:var(--dim2);padding:var(--space-sm)">⏳ بانتظار رفع الإيصال من المنفّذ</div>`;
-  } else if(r.status === 'pending' && isAdm){
-    actions = `<button type="button" class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد نهائي</button>
-               <button type="button" class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
-  } else if(r.status === 'pending'){
-    actions = `<div style="font-size:var(--fs-sm);color:var(--dim2);padding:var(--space-sm)">⏳ بانتظار اعتماد الأدمن</div>`;
-  } else if(r.status === 'confirmed' && isAdm){
-    // backward compat: سجلات قديمة في حالة confirmed
-    actions = `<button type="button" class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد نهائي</button>
-               <button type="button" class="btn-reject" onclick="rejectRequest('${r._id}')">✕ رفض</button>`;
+    actions = _wait('⏳ بانتظار رفع الإيصال من المنفّذ');
+  } else if(r.status === 'pending' || r.status === 'confirmed'){
+    // الطبقتان عبر helper نقي (يحترم القدرات + الفصل الصارم)
+    const stage = _requestTierAction(r, { canExec:_exec, canFinal:_final, strict:_strict, userId:currentUid });
+    if(stage === 'confirm')              actions = `${_btnConfirm}${_btnReject}`;
+    else if(stage === 'confirm_or_approve') actions = `${_btnConfirm}<button type="button" class="btn-approve" onclick="approveRequest('${r._id}')">✅ اعتماد مباشر</button>${_btnReject}`;
+    else if(stage === 'await_confirm')   actions = _wait('⏳ بانتظار تأكيد مسؤول التشغيل');
+    else if(stage === 'approve')         actions = `${_btnApprove}${_btnReject}`;
+    else if(stage === 'self_confirmed')  actions = _wait('⛔ الفصل الصارم: أنت من أكّد — يلزم أدمن مختلف للاعتماد')+_btnReject;
+    else if(stage === 'await_approve')   actions = _wait('⏳ بانتظار اعتماد الأدمن');
   }
 
   return `
@@ -1603,6 +1611,22 @@ document.getElementById('receipt-file')?.addEventListener('change', e=>{
   const url = URL.createObjectURL(f);
   document.getElementById('receipt-preview').innerHTML = `<img src="${url}" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--line)" alt="" loading="lazy">`;
 });
+
+// ══════════════ تأكيد مسؤول التشغيل — pending → confirmed ══════════════
+// يؤكّد المعاملة المرتبطة بالطلب (confirmTransaction يزامن حالة الطلب → confirmed).
+window.confirmRequest = async function(reqId){
+  if(!canDo('execute_payments', currentRole, currentPerms)) return showToast('⛔ غير مخوّل للتأكيد','err');
+  const r = requests.find(x=>x._id===reqId);
+  if(!r) return;
+  if(r.status !== 'pending') return showToast('⛔ هذا الطلب لا يمكن تأكيده الآن','err');
+  if(!r.txId) return showToast('⚠️ لا توجد معاملة مرتبطة بالطلب','err');
+  const tx = allTxs.find(t=>t._id===r.txId);
+  if(!tx) return showToast('⚠️ المعاملة المرتبطة غير محمّلة — حدّث الصفحة','err');
+  if(!confirm(`تأكيد الطلب — ${fn(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}؟`)) return;
+  const result = await approvalActions.confirmTransaction({db,tx,userId:currentUid,userName:currentUserName});
+  if(!result.ok) return showToast('❌ '+((result.errors||[]).join(' · ')||'فشل التأكيد'),'err');
+  showToast('✅ تم التأكيد — بانتظار اعتماد الأدمن','ok');
+};
 
 // ══════════════ اعتماد نهائي للأدمن — pending → approved (مقفل) ══════════════
 window.approveRequest = async function(reqId){

@@ -8,18 +8,11 @@
 import { employeeActions } from '../../employee-actions.js';
 import { getRoleDefaultPermissions } from '../../core/permissions-matrix.js';
 import { uploadEmployeeFile, EMPLOYEE_FILE_KINDS } from '../../core/storage-helpers.js';
+import { resolveReasons, REASON_TYPE_META } from '../../core/incident-reasons.js';
 import { ROLE_LABELS, esc } from './render.js';
 
-// Local copies of the incident catalog (single concept, kept in sync with
-// features/employee-profile — small constants, no logic).
-const INCIDENT_TYPES = {
-  design_rejected:    'تصميم مرفوض',
-  order_late:         'أوردر متأخر',
-  customer_complaint: 'شكوى عميل',
-  attendance:         'مخالفة حضور',
-  quality:            'مشكلة جودة',
-  other:              'أخرى',
-};
+// الأسباب تأتي من core/incident-reasons.js (السبب يُحصر به التكرار) — مُجمّعة
+// بالنوع. الخطورة قائمة ثابتة صغيرة.
 const SEVERITIES = { low: 'منخفض', medium: 'متوسط', high: 'مرتفع' };
 
 const HOST_ID = 'ec-modal-host';
@@ -159,20 +152,35 @@ function taskModal(emp, ctx) {
 }
 
 // ── 2) تسجيل إخفاق ───────────────────────────────────────────────────
+// خيارات «السبب/التصنيف» مجمّعة بالنوع عبر optgroup (موحّدة مع بروفايل الموظف).
+function reasonOptionsHTML(ctx) {
+  const reasons = resolveReasons(ctx.incidentReasons || []);
+  const byType = new Map();
+  reasons.forEach(r => { (byType.get(r.type) || byType.set(r.type, []).get(r.type)).push(r); });
+  let html = '';
+  for (const [type, list] of byType) {
+    const m = REASON_TYPE_META[type] || REASON_TYPE_META.other;
+    html += `<optgroup label="${esc(m.ico + ' ' + m.lbl)}">` +
+      list.map(r => `<option value="${esc(r.code)}" data-type="${esc(r.type)}" data-label="${esc(r.label)}">${esc(r.label)}</option>`).join('') +
+      `</optgroup>`;
+  }
+  return html;
+}
+
 function incidentModal(emp, ctx) {
   openModal({
     title: `⚠️ تسجيل إخفاق — ${esc(emp.name || '')}`,
     danger: true,
     onMount: wireImageUpload,
     body:
+      fld('السبب / التصنيف', `<select class="inp" id="f-reason">${reasonOptionsHTML(ctx)}</select>`) +
       fldRow(
-        fld('النوع', `<select class="inp" id="f-type">${Object.entries(INCIDENT_TYPES).map(([k, v]) => opt(k, v)).join('')}</select>`),
-        fld('الخطورة', `<select class="inp" id="f-sev">${Object.entries(SEVERITIES).map(([k, v], i) => opt(k, v, i === 0)).join('')}</select>`),
+        fld('الخطورة', `<select class="inp" id="f-sev">${Object.entries(SEVERITIES).map(([k, v], i) => opt(k, v, i === 1)).join('')}</select>`),
+        fld('التاريخ', `<input class="inp" type="date" id="f-date" value="${today()}">`),
       ) +
-      fld('العنوان', `<input class="inp" id="f-title" placeholder="وصف مختصر للمخالفة">`) +
-      fld('التفاصيل', `<textarea class="inp" id="f-desc" rows="3" placeholder="اشرح ما حدث (اختياري)"></textarea>`) +
-      imageField('📸 صورة المخالفة (اختياري)') +
-      fld('التاريخ', `<input class="inp" type="date" id="f-date" value="${today()}">`),
+      fld('العنوان (اختياري)', `<input class="inp" id="f-title" placeholder="تفصيل إضافي للمخالفة">`) +
+      fld('التفاصيل (اختياري)', `<textarea class="inp" id="f-desc" rows="3" placeholder="اشرح ما حدث"></textarea>`) +
+      imageField('📸 صورة المخالفة (اختياري)'),
     submitLabel: '⚠️ تسجيل',
     onSubmit: async (f) => {
       // 1) ارفع صورة المخالفة أولاً (إن وُجدت) عبر الـ storage helper المركزي
@@ -188,14 +196,21 @@ function incidentModal(emp, ctx) {
           return { ok: false, errors: ['فشل رفع الصورة: ' + (e.message || 'خطأ')], warnings: [] };
         }
       }
-      // 2) سجّل الإخفاق عبر الـ action المركزي
+      // 2) اشتقّ السبب/النوع من الخيار المختار
+      const reasonSel = f.querySelector('#f-reason');
+      const reasonOpt = reasonSel?.selectedOptions?.[0];
+      const reasonCode = reasonSel?.value || '';
+      const reasonLabel = reasonOpt?.dataset?.label || '';
+      const type = reasonOpt?.dataset?.type || 'other';
+      const title = f.querySelector('#f-title').value;
+      // 3) سجّل الإخفاق عبر الـ action المركزي
       return employeeActions.addIncident({
         db: ctx.db,
         employeeId: emp._id, employeeName: emp.name || '', authUid: emp.authUid || '',
         date: f.querySelector('#f-date').value || today(),
-        type: f.querySelector('#f-type').value,
-        severity: f.querySelector('#f-sev').value,
-        title: f.querySelector('#f-title').value,
+        type, severity: f.querySelector('#f-sev').value,
+        reasonCode, reasonLabel,
+        title: title || reasonLabel,
         description: f.querySelector('#f-desc').value,
         imageUrl, imagePath,
         userId: ctx.me.uid, userName: ctx.me.name,
@@ -267,7 +282,44 @@ function permsModal(emp, ctx) {
   });
 }
 
-const MAP = { task: taskModal, incident: incidentModal, finance: financeModal, perms: permsModal };
+// ── 5) جدول العمل (مواعيد العمل) — set days + start/end from the board ──
+const DAY_NAMES_AR = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
+function scheduleModal(emp, ctx) {
+  const ws = emp.workSchedule || {};
+  const sel = new Set(Array.isArray(ws.days) && ws.days.length ? ws.days : [0, 1, 2, 3, 4]);
+  const pills = `<div class="ec-day-pills" id="f-days">${[0,1,2,3,4,5,6]
+    .map(d => `<button type="button" class="ec-day-pill${sel.has(d) ? ' on' : ''}" data-d="${d}">${DAY_NAMES_AR[d]}</button>`).join('')}</div>`;
+  openModal({
+    title: `🕐 جدول العمل — ${esc(emp.name || '')}`,
+    body:
+      fld('📅 أيام العمل', pills) +
+      fldRow(
+        fld('⏰ وقت البدء', `<input class="inp" type="time" id="f-start" value="${esc(ws.startTime || '09:00')}">`),
+        fld('🏁 وقت الانتهاء', `<input class="inp" type="time" id="f-end" value="${esc(ws.endTime || '17:00')}">`),
+      ) +
+      `<div class="ec-hint">يُستخدم لحساب التأخير (سماح 15د)، أيام الغياب، والوقت الإضافي.</div>`,
+    submitLabel: '💾 حفظ الجدول',
+    onMount: (form) => {
+      form.querySelector('#f-days')?.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-d]'); if (!b) return;
+        const d = parseInt(b.dataset.d);
+        if (sel.has(d)) sel.delete(d); else sel.add(d);
+        b.classList.toggle('on');
+      });
+    },
+    onSubmit: (f) => {
+      if (!sel.size) return { ok: false, errors: ['اختر يوم عمل واحد على الأقل'], warnings: [] };
+      return employeeActions.updateEmployeeSchedule({
+        db: ctx.db, employeeId: emp._id,
+        days: [...sel].sort((a, b) => a - b),
+        startTime: f.querySelector('#f-start').value || '09:00',
+        endTime: f.querySelector('#f-end').value || '17:00',
+      });
+    },
+  });
+}
+
+const MAP = { task: taskModal, incident: incidentModal, finance: financeModal, perms: permsModal, schedule: scheduleModal };
 
 // Entry point used by the controller's event delegation.
 export function openQuickAction(act, emp, ctx) {

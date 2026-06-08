@@ -24,6 +24,13 @@ export const setText = (id, v) => {
 export const gv = (id) => document.getElementById(id)?.value || '';
 
 /**
+ * Format a number as Arabic-Egyptian locale digits (thousands separators).
+ * Non-numeric → 0. Single Source of Truth for the `(parseFloat||0)
+ * .toLocaleString('ar-EG')` idiom duplicated across reports/approvals/kpis.
+ */
+export const fmtNum = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');
+
+/**
  * Days a deadline is in the past (vs. now). 0 if deadline is in the
  * future, missing, or unparseable.
  */

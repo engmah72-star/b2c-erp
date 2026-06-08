@@ -24,6 +24,7 @@ import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, co
 import {
   buildArchiveSpec,
   buildStageAdvance,
+  buildStageRevert,
   buildOrderSplit,
   validatePayment,
   validateRefund,
@@ -38,6 +39,9 @@ import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-e
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry } from './core/audit.js';
+// طبقة المراسلة: «بدء التصميم» يفتح مجموعة العميل بعد تعيين المصمم (side-effect تواصلي).
+// استيراد أعمال→مراسلة مسموح (قفل الحدود يقيّد المراسلة فقط من لمس الأعمال، لا العكس).
+import { inboxActions } from './inbox-actions.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -2517,6 +2521,61 @@ export const orderActions = {
   },
 
   /**
+   * إضافة صورة/ملف تصميم إلى designFiles[] على الأوردر (مصدر الحقيقة لملف تصميم
+   * العميل). يُستدعى تلقائياً عند إرسال المصمم صورةً في محادثة الأوردر (من inbox.html
+   * كـ view → فعل أعمال؛ يحترم حدّ Messaging↔Business — لا trigger ولا كتابة من
+   * طبقة المراسلة). idempotent بالـ url.
+   * @param {{url:string,name?:string,mime?:string,type?:string}} file
+   */
+  async addDesignFile({
+    db = defaultDb, orderId, file, userId, userName = '', source = '',
+  }) {
+    if (!orderId || !file || !file.url) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [], orderId };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const existing = Array.isArray(order.designFiles) ? order.designFiles : [];
+    if (existing.some(x => (x && (x.url || x)) === file.url)) {
+      return { ok: true, errors: [], warnings: ['موجود سلفاً'], orderId, action: 'add_design_file', duplicate: true };
+    }
+    const entry = {
+      url: file.url, name: file.name || 'تصميم', type: file.mime || file.type || '',
+      by: userId, byName: userName || '', source: source || '', at: nowStr(),
+    };
+    try {
+      await updateDoc(order._ref, {
+        designFiles: [...existing, entry],
+        designFileUrl: entry.url, // أحدث ملف — توافق مع القراءة الحالية (proofUrl)
+        timeline: [...(order.timeline || []), auditEntry({
+          action: '🖼️ أُضيفت صورة تصميم' + (source === 'chat' ? ' من المحادثة' : ''),
+          userId, userName, kind: 'op', meta: { source: source || '' },
+        })],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'add_design_file' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * ربط الأوردر بمحادثته (order.conversationId) — back-pointer للوصول من الأوردر
+   * للخيط. additive · idempotent. الاتجاه الآخر (conversation.orderId) موجود سلفاً.
+   */
+  async linkOrderConversation({ db = defaultDb, orderId, conversationId, userId = '' }) {
+    if (!orderId || !conversationId) return { ok: false, errors: ['⚠️ بيانات ناقصة'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.conversationId === conversationId) return { ok: true, errors: [], warnings: [], orderId };
+    try {
+      await updateDoc(order._ref, { conversationId, updatedAt: serverTimestamp() });
+      return { ok: true, errors: [], warnings: [], orderId };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الربط'], warnings: [], orderId };
+    }
+  },
+
+  /**
    * تعيين رابط الملف المرجعي بعد رفعه إلى Storage — يُستخدم في الـ
    * post-createOrder callback من design.html.
    */
@@ -2576,6 +2635,45 @@ export const orderActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [], orderId };
     }
+  },
+
+  /**
+   * «بدء تصميم فعّال»: تعيين المصمم (أعمال) + فتح مجموعة العميل (مصمم + عميل +
+   * خدمة العملاء/الفريق) + إعلان داخلها (تواصل). المجموعة = نفس clord_{orderId}
+   * المشتركة مع العميل. الإعلان يزيد unread لكل المشاركين = إشعار ضمني.
+   * يجمع فعلين مركزيين: assignDesigner (هنا) + inboxActions.ensureClientOrderThread (مراسلة).
+   * Returns: { ok, errors[], warnings[], orderId, convId?, designerId? }
+   */
+  async startDesign({
+    db = defaultDb, orderId, designerId = '', designerName = '', userId, userName = '',
+  }) {
+    if (!orderId || !designerId) return { ok: false, errors: ['⚠️ الأوردر والمصمم مطلوبان'], warnings: [], orderId };
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    // 1) تعيين المصمم (أعمال — مصدر الحقيقة على الأوردر).
+    const a = await orderActions.assignDesigner({ db, orderId, designerId, designerName, userId, userName });
+    if (!a.ok) return a;
+    // 2) جهّز الأوردر بالمصمم الجديد لبناء المشاركين.
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    order.designerId = designerId; order.designerName = designerName;
+    if (!order.clientId) {
+      return { ok: true, errors: [], warnings: ['⚠️ الأوردر بلا عميل مسجّل — لم تُفتح مجموعة العميل'], orderId, designerId };
+    }
+    // 3) افتح مجموعة العميل (مصمم + عميل + منشئ/CS + المُنفِّذ) — طبقة المراسلة.
+    const t = await inboxActions.ensureClientOrderThread({
+      db, order, currentUserId: userId, currentUserName: userName,
+    });
+    // اربط الأوردر بمحادثته (back-pointer) — additive.
+    try { await orderActions.linkOrderConversation({ db, orderId, conversationId: t.convId, userId }); } catch (_) {}
+    // 4) إعلان «بدأ التصميم» داخل المجموعة (unread لكل المشاركين = إشعار ضمني).
+    try {
+      await inboxActions.sendMessage({
+        db, convId: t.convId, senderId: userId, senderName: userName || 'النظام',
+        conv: { participants: t.participants, archivedBy: [] },
+        payload: { type: 'text', text: '🎨 بدأ التصميم — المصمم: ' + (designerName || '—') + '. خدمة العملاء والمصمم والعميل في هذه المجموعة.' },
+      });
+    } catch (_) { /* الإعلان ثانوي — التعيين والمجموعة تمّا */ }
+    return { ok: true, errors: [], warnings: a.warnings || [], orderId, convId: t.convId, designerId };
   },
 
   /**
@@ -3135,8 +3233,6 @@ export const orderActions = {
     if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل سبب الإرجاع'], warnings: [], orderId };
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
-    // buildStageRevert pure helper — تُستورد محلياً
-    const { buildStageRevert } = await import('./orders.js');
     const rev = buildStageRevert({
       order, role, userId, userName,
       targetStage: 'design', reason,
@@ -3150,6 +3246,40 @@ export const orderActions = {
         updatedAt: serverTimestamp(),
       });
       return { ok: true, errors: [], warnings: [], orderId, action: 'reject_from_printing' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الإرجاع'], warnings: [], orderId };
+    }
+  },
+
+  /**
+   * إرجاع الأوردر مرحلة واحدة للخلف (أو لمرحلة هدف محددة) — stage revert مُمَركَز.
+   * يستخدم buildStageRevert (نقي) ثم يكتب ذرّياً عبر updateDoc واحد.
+   * - السبب (reason) إلزامي.
+   * - الصلاحية + ضمان مسؤول المرحلة الهدف + إعادة ضبط ساعة الدخول: داخل buildStageRevert (قاعدة R).
+   * - لو targetStage فاضي → يرجع للمرحلة السابقة مباشرةً (STAGES[cur].prev).
+   */
+  async revertStage({
+    db = defaultDb, orderId, role, userId, userName,
+    targetStage = null, reason = '',
+    nextAssigneeId = '', nextAssigneeName = '', extraFields = {},
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!reason || !reason.trim()) return { ok: false, errors: ['⚠️ أدخل سبب الإرجاع'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    const rev = buildStageRevert({
+      order, role, userId, userName,
+      targetStage, reason: reason.trim(),
+      nextAssigneeId, nextAssigneeName, extraFields,
+    });
+    if (!rev.ok) return { ok: false, errors: rev.errors || [], warnings: rev.warnings || [], orderId };
+    try {
+      await updateDoc(order._ref, {
+        ...rev.fields,
+        timeline: [...(order.timeline || []), rev.timelineEntry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'revert_stage', newStage: rev.newStage };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل الإرجاع'], warnings: [], orderId };
     }

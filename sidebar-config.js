@@ -77,9 +77,11 @@ try {
 
     // ─── الأوردرات (orders) ───
     { file:'order-rail.html',        label:'سجل الأوردرات',    ico:'🚂', group:'orders', perm:'order-rail' },
+    { file:'portal-orders.html',     label:'أوردرات البوابة',  ico:'🌐', group:'orders', perm:'clients' },
     { file:'clients.html',           label:'العملاء',          ico:'👤', group:'orders', perm:'clients' },
     { file:'design.html',            label:'التصميم',          ico:'✏️', group:'orders', perm:'design' },
     { file:'designer-hub.html',      label:'مساحة التصميم',   ico:'🖥️', group:'orders', perm:'design' },
+    { file:'portal-designs.html',    label:'تصميمات البوابة',  ico:'🖼️', group:'orders', perm:'design' },
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
@@ -130,6 +132,12 @@ try {
     const _ec = _qs.get('feat.employeeControl') || localStorage.getItem('feat.employeeControl');
     if (_ec !== '0') {
       SIDEBAR_PAGES.push({ file: 'employee-control.html', label: 'لوحة الموظفين', ico: '🎛️', group: 'admin', adminOnly: true });
+    }
+    // Admin Requests Center — مركزية كل الطلبات التي تحتاج قرار أدمن
+    // (مالي · تظلمات · تصاريح حضور · مرتجعات · إجازات). admin sidebar.
+    const _ar = _qs.get('feat.adminRequests') || localStorage.getItem('feat.adminRequests');
+    if (_ar !== '0') {
+      SIDEBAR_PAGES.push({ file: 'admin-requests.html', label: 'طلبات الإدارة', ico: '📥', group: 'admin', adminOnly: true });
     }
     // My Home (صفحتي): personal landing — visible to every role.
     const _mh = _qs.get('feat.myHome') || localStorage.getItem('feat.myHome');

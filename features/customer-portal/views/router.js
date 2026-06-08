@@ -51,7 +51,12 @@ export function createRouter({ shell, store, services }) {
   });
 
   function ctx() {
-    return { services, store, shell, go, openOrder, openChat, openNewOrder, openServices, openNotifications, repaint, loading: loadingHtml };
+    return { services, store, shell, go, openOrder, openChat, openConversations, openNewOrder, openServices, openNotifications, repaint, loading: loadingHtml };
+  }
+
+  /** يفتح inbox العضو الموحَّد «محادثاتي» في الـ Overlay. */
+  async function openConversations() {
+    await openModalView(await import('./conversations.view.js'), { title: '💬 محادثاتي', extra: {} });
   }
 
   /** يفتح مركز الإشعارات في الـ Overlay. */
@@ -91,12 +96,13 @@ export function createRouter({ shell, store, services }) {
     });
   }
 
-  /** يفتح محادثة حيّة (kind: 'order' | 'support') في الـ Overlay. */
-  async function openChat({ kind = 'support', order = null } = {}) {
-    await openModalView(await import('./chat.view.js'), {
-      title: kind === 'order' ? `💬 محادثة الطلب #${order?.serial || order?._id?.slice(0, 6) || ''}` : '💬 الدعم',
-      extra: { kind, order },
-    });
+  /** يفتح محادثة حيّة (kind: 'order' | 'support' | 'member' أو conv موجودة) في الـ Overlay. */
+  async function openChat({ kind = 'support', order = null, peer = null, conv = null } = {}) {
+    const title = conv?.name ? `💬 ${conv.name}`
+      : kind === 'member' ? `💬 ${peer?.name || 'محادثة'}`
+        : kind === 'order' ? `💬 محادثة الطلب #${order?.serial || order?._id?.slice(0, 6) || ''}`
+          : '💬 الدعم';
+    await openModalView(await import('./chat.view.js'), { title, extra: { kind, order, peer, conv } });
   }
 
   /** ينتقل إلى شاشة (tab) ويعرض حالة تحميل ثم المحتوى. */
@@ -120,5 +126,5 @@ export function createRouter({ shell, store, services }) {
 
   function start(key) { return go(key); }
 
-  return { go, openOrder, openChat, openNewOrder, openServices, openNotifications, start };
+  return { go, openOrder, openChat, openConversations, openNewOrder, openServices, openNotifications, start };
 }
