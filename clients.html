@@ -288,6 +288,9 @@ const clientSegments = new Map();
 // God-page decomp PR-23: SEG_STYLE extracted to clients-constants.js
 let allTx=[], txByOrder=new Map();
 let allFollowups=[], followupsByClient=new Map();
+// عملاء جُلبوا عبر البحث في السيرفر (خارج نافذة الـ14 يوم). تُدمَج في `clients`
+// كي تظهر في الشبكة + تُفتح + يُعمل لها أوردر مثل أي عميل حديث. (clients-page-performance)
+let searchExtras=[];
 window.__clientFilter='all';
 let editId=null, activeId=null, pendingClientId='';
 let currentUser=null, currentRole='customer_service', userName='', userPerms={};
@@ -471,7 +474,9 @@ auth.onAuthStateChanged(async u=>{
     __clientsListenerFired = true;
     clearTimeout(__loadWatchdog);
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
-    clients=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
+    const base=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
+    // أعِد دمج نتائج بحث السيرفر (العملاء القدامى) كي لا يمحوها الـ snapshot.
+    clients=mergeSearchExtras(base);
     scheduleStatsAndGrid();
     // Skip secondary banner/strip rebuilds while the add/edit modal is open
     // to keep the form responsive; closeClientModal() flushes them.
@@ -824,6 +829,11 @@ function renderGrid(){
     if(viewMode==='list'){renderListView(data);return;}
     el.style.display='grid';
     if(!data.length){
+      // أثناء البحث في السيرفر عن عميل قديم — أظهِر مؤشّر بدل "لا نتائج".
+      if(window.__remoteSearching && (gv('q')||'').trim().length>=2){
+        el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🔎</div><div class="empty-text">جاري البحث في كل العملاء…</div></div>`;
+        return;
+      }
       el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-icon">${isLegacyTab?'📁':'👤'}</div><div class="empty-text">${isLegacyTab?'لا يوجد عملاء قدامى مسجلين':'لا نتائج للبحث'}</div><button type="button" class="btn btn-ghost btn-sm" onclick="${isLegacyTab?'openAddLegacy()':'openAddClient()'}" style="margin-top:12px">${isLegacyTab?'＋ سجّل عميل قديم':'＋ أضف عميل'}</button></div>`;
       return;
     }
@@ -888,6 +898,94 @@ function scheduleStatsAndGrid(){
   clearTimeout(_gridTimer);
   _statsTimer=setTimeout(()=>{ try{ updateStats(); }catch(e){console.warn('updateStats:',e);} },80);
   _gridTimer=setTimeout(()=>{ try{ renderGrid(); }catch(e){console.warn('renderGrid:',e);} },120);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// بحث السيرفر — العثور على أي عميل (حتى القديم خارج نافذة الـ14 يوم)
+// ════════════════════════════════════════════════════════════════════
+// الشبكة الافتراضية تحمّل آخر 14 يوم فقط (سرعة الفتح). لكن عند الكتابة في خانة
+// البحث نستعلم Firestore مباشرةً بالاسم/الهاتف فنصل لأي عميل قديم، فيظهر في
+// الشبكة ويمكن فتحه وعمل أوردر له. (read فقط · limit إلزامي · G3)
+
+// يدمج نتائج البحث القديمة في قائمة الأساس بدون تكرار (dedup by _id).
+function mergeSearchExtras(base){
+  if(!searchExtras.length) return base;
+  const ids=new Set(base.map(c=>c._id));
+  return base.concat(searchExtras.filter(c=>!ids.has(c._id)));
+}
+
+let __rsTimer=null;            // debounce timer
+let __rsToken=0;              // سباق: أحدث بحث يفوز
+const __rsCache=new Map();    // memo داخل الجلسة: query → clients[]
+
+// يُستدعى من خانة البحث (clients-shell.js · oninput).
+window.onClientSearchInput=function(val){
+  const q=(val||'').trim();
+  // الفلترة المحلية فورية (آخر 14 يوم)
+  scheduleStatsAndGrid();
+  clearTimeout(__rsTimer);
+  if(q.length<2){ window.__remoteSearching=false; return; }
+  window.__remoteSearching=true;
+  __rsTimer=setTimeout(()=>remoteClientSearch(q),350);
+};
+
+// يستعلم Firestore عن العملاء المطابقين (prefix على الاسم أو الهاتف) ويدمجهم.
+async function remoteClientSearch(rawQ){
+  const q=(rawQ||'').trim();
+  if(q.length<2){ window.__remoteSearching=false; return; }
+  const myToken=++__rsToken;
+  if(__rsCache.has(q)){
+    mergeHits(__rsCache.get(q));
+    window.__remoteSearching=false;
+    return;
+  }
+  const isAdmin=['admin','operation_manager'].includes(currentRole);
+  const uid=currentUser?.uid;
+  const LIM=25;
+  const end=q+'';
+  const isPhone=/^[\d+]/.test(q);
+  // prefix queries — single-field indexes (تلقائية، لا تحتاج composite index)
+  const col=db.collection('clients');
+  const queries = isPhone
+    ? [
+        col.orderBy('phone1').startAt(q).endAt(end).limit(LIM).get(),
+        col.orderBy('phone2').startAt(q).endAt(end).limit(LIM).get(),
+        col.orderBy('intlPhone').startAt(q).endAt(end).limit(LIM).get(),
+      ]
+    : [
+        col.orderBy('name').startAt(q).endAt(end).limit(LIM).get(),
+      ];
+  try{
+    const snaps=await Promise.all(queries.map(p=>p.catch(()=>null)));
+    if(myToken!==__rsToken) return;   // بحث أحدث ألغى هذا
+    const seen=new Set(), hits=[];
+    for(const s of snaps){
+      if(!s) continue;
+      for(const d of s.docs){
+        if(seen.has(d.id)) continue; seen.add(d.id);
+        const c={...d.data(),_id:d.id};
+        if(c.isDeleted) continue;
+        if(!isAdmin && c.createdBy!==uid) continue;  // RULE 8 — غير الأدمن يرى عملاءه فقط
+        hits.push(c);
+      }
+    }
+    __rsCache.set(q,hits);
+    mergeHits(hits);
+  }catch(e){ console.warn('remoteClientSearch:',e); }
+  finally{ if(myToken===__rsToken) window.__remoteSearching=false; }
+}
+
+// يضيف العملاء الجدد إلى searchExtras + clients ثم يعيد الرسم.
+function mergeHits(hits){
+  if(!hits || !hits.length){ scheduleStatsAndGrid(); return; }
+  const known=new Set(searchExtras.map(c=>c._id));
+  let added=false;
+  for(const c of hits){ if(!known.has(c._id)){ searchExtras.push(c); known.add(c._id); added=true; } }
+  if(added){
+    const present=new Set(clients.map(c=>c._id));
+    clients=clients.concat(searchExtras.filter(c=>!present.has(c._id)));
+  }
+  scheduleStatsAndGrid();
 }
 
 // ══ PANEL ══
