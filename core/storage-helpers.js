@@ -196,6 +196,33 @@ export async function uploadSupplierFile({ supplierId, file, kind, onProgress })
   return { ...result, kind, timestamp: Date.now() };
 }
 
+/**
+ * رفع صورة لمعرض الشركة (بورتفوليو).
+ * المسار يبدأ بـ `gallery/` ليطابق storage.rules (match /gallery/{file=**}).
+ * صور فقط — storage.rules تفرض contentType=image/* و < 20MB.
+ *
+ * @param {Object} args
+ * @param {File}   args.file
+ * @param {string} [args.designerId]  — يُستخدم كـ entityId (تجميع ملفات المصمم). افتراضي 'shared'.
+ * @param {Function} [args.onProgress] (pct: 0-100) => void
+ * @returns { url, path, fileName, size, contentType, kind, timestamp }
+ */
+export async function uploadGalleryFile({ file, designerId, onProgress }) {
+  if (!file) throw new Error('[storage] uploadGalleryFile: file مطلوب');
+  const mime = (file.type || '').toLowerCase();
+  if (!mime.startsWith('image/')) {
+    throw new Error('[storage] uploadGalleryFile: صور فقط مسموحة في المعرض');
+  }
+  const path = _buildPath({
+    module: 'gallery',
+    entityId: designerId || 'shared',
+    kind: 'items',
+    fileName: file.name,
+  });
+  const result = await _upload({ path, file, onProgress });
+  return { ...result, kind: 'items', timestamp: Date.now() };
+}
+
 // ══════════════════════════════════════════
 // DELETE / GET HELPERS
 // ══════════════════════════════════════════
