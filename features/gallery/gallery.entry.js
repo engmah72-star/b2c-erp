@@ -34,14 +34,10 @@ let off = null;
 function mount(user, userDoc) {
   if (mounted) return;
   mounted = true;
-  // اسم/أفاتار في الـ sidebar إن وُجد
-  if (userDoc) {
-    const nm = userDoc.name || user?.email || '';
-    const nameEl = document.getElementById('nav-name');
-    const avEl = document.getElementById('nav-av');
-    if (nameEl) nameEl.textContent = nm;
-    if (avEl) avEl.textContent = ((nm || '؟')[0] || '؟').toUpperCase();
-  }
+  // موظف مُصادَق (له users doc بدور) → أظهِر السايد بار (يبنيه sidebar-mount + app-sidebar).
+  // غير ذلك (زائر عام / عميل بلا users doc) → ابقَ في وضع الزائر: معرض نظيف بلا سايد بار.
+  const isStaff = !!(user && userDoc && userDoc.role);
+  document.documentElement.classList.toggle('gallery-public', !isStaff);
   off = mountGalleryView({ container, user: user || null, userDoc: userDoc || null });
 }
 
