@@ -34,8 +34,10 @@ let off = null;
 function mount(user, userDoc) {
   if (mounted) return;
   mounted = true;
-  // ملاحظة: بناء السايد بار يتولّاه core/sidebar-mount.js (المركزي) + app-sidebar (v2)
-  // — مُحمَّلان في gallery.html. هنا نركّز على محتوى المعرض فقط.
+  // موظف مُصادَق (له users doc بدور) → أظهِر السايد بار (يبنيه sidebar-mount + app-sidebar).
+  // غير ذلك (زائر عام / عميل بلا users doc) → ابقَ في وضع الزائر: معرض نظيف بلا سايد بار.
+  const isStaff = !!(user && userDoc && userDoc.role);
+  document.documentElement.classList.toggle('gallery-public', !isStaff);
   off = mountGalleryView({ container, user: user || null, userDoc: userDoc || null });
 }
 
