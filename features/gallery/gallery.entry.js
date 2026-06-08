@@ -22,9 +22,10 @@ window.closeNav = () => {
   document.getElementById('nav-ov')?.classList.remove('show');
 };
 
-// Kill switch (E1): feat.gallery=0 يعيد التحويل للسلوك القديم.
+// Kill switch (E1): feat.gallery=0 يعيد لمدير المعرض القديم (portal-designs)
+// — نفس الوظيفة، فلا يُفقد المستخدم الوصول لإدارة المعرض.
 if (!isFeatureEnabled('gallery', true)) {
-  location.replace('designer-hub.html');
+  location.replace('portal-designs.html');
 }
 
 const container = document.getElementById('g-content');

@@ -219,12 +219,18 @@ const _EXT_IMAGE_MIME = {
 };
 export async function uploadGalleryFile({ file, designerId, onProgress }) {
   if (!file) throw new Error('[storage] uploadGalleryFile: file مطلوب');
-  const mime = (file.type || '').toLowerCase();
+  // ضغط/تصغير client-side قبل الرفع (أداء + تكلفة تخزين) — fail-safe: الأصل عند التعذّر.
+  let img = file;
+  try {
+    const { compressImage } = await import('./image-compress.js');
+    img = await compressImage(file);
+  } catch (_) { img = file; }
+  const mime = (img.type || '').toLowerCase();
   // contentType صريح: من الـ MIME لو صورة، وإلا من الامتداد — يمنع رفض storage
   // لملفات صورة بـ MIME فارغ (كانت تُرفع octet-stream فترفضها القاعدة).
   let contentType = mime.startsWith('image/') ? mime : null;
   if (!contentType) {
-    const ext = (file.name || '').toLowerCase().split('.').pop();
+    const ext = (img.name || '').toLowerCase().split('.').pop();
     contentType = _EXT_IMAGE_MIME[ext] || null;
   }
   if (!contentType) {
@@ -234,9 +240,9 @@ export async function uploadGalleryFile({ file, designerId, onProgress }) {
     module: 'gallery',
     entityId: designerId || 'shared',
     kind: 'items',
-    fileName: file.name,
+    fileName: img.name,
   });
-  const result = await _upload({ path, file, onProgress, contentType });
+  const result = await _upload({ path, file: img, onProgress, contentType });
   return { ...result, kind: 'items', timestamp: Date.now() };
 }
 
