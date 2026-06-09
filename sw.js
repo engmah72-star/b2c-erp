@@ -52,6 +52,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/employee-actions.js',
   '/wallet-actions.js',
   '/approval-actions.js',
+  '/approvals-render.js',
   '/master-lists-actions.js',
   '/shipping-service.js',
   '/shipping-pricing.js',
