@@ -192,16 +192,39 @@ body{
 .center-msg .txt{font-size:15px;color:#7080a0}
 
 /* ── PRINT ─────────────────────────────────────────────────────── */
+/* ── Multi-order separator ───────────────────────────────────────── */
+.order-sep{
+  display:flex;align-items:center;gap:12px;
+  margin:28px 0;color:#8897b8;font-size:13px;font-weight:600;
+}
+.order-sep::before,.order-sep::after{content:'';flex:1;height:1px;background:#dce4f5}
+
+.multi-header{
+  background:#16213e;border-radius:12px;padding:18px 24px;
+  margin-bottom:24px;color:#fff;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+.multi-header .mh-title{font-size:18px;font-weight:800}
+.multi-header .mh-count{
+  background:rgba(74,142,245,.3);color:#9ecfff;
+  border:1px solid rgba(74,142,245,.4);
+  padding:4px 14px;border-radius:16px;font-size:13px;font-weight:700;
+}
+
 @media print{
   .action-bar{display:none!important}
   body{background:#fff}
   .sheet-wrapper{margin:0;padding:0;max-width:100%}
   .sheet{box-shadow:none;border-radius:0}
+  .multi-header{display:none!important}
   .sh-hdr,.info-item,.fin-block,.prod-table th{
     -webkit-print-color-adjust:exact;
     print-color-adjust:exact;
   }
   .design-single img,.design-multi img{max-height:220px}
+  /* فاصل صفحة بين الطلبات عند الطباعة */
+  .order-sep{page-break-after:always;margin:0;border:none;height:0;display:block}
+  .order-sep span,.order-sep::before,.order-sep::after{display:none}
 }
 </style>
 </head>
@@ -230,7 +253,13 @@ import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase
 
 const params = new URLSearchParams(window.location.search);
 const orderId = params.get('orderId') || '';
+const idsParam = params.get('ids') || '';
 const sheetType = params.get('type') === 'delivery' ? 'delivery' : 'production';
+const autoWA = params.get('wa') === '1';
+// قائمة IDs: إما ids (متعددة) أو orderId (واحد) أو لا شيء
+const orderIds = idsParam
+  ? idsParam.split(',').map(s=>s.trim()).filter(Boolean)
+  : orderId ? [orderId] : [];
 
 // ── helpers ────────────────────────────────────────────────────────
 function esc(s){
@@ -514,6 +543,58 @@ function normalizePhone(raw){
   return '20'+d;
 }
 
+// ── Combined WA message (multi-order) ─────────────────────────────
+function buildCombinedWAText(orders,type){
+  const typeLabel=type==='production'?'🖨️ ملخص التنفيذ المجمع':'🚚 ملخص الشحن المجمع';
+  const header=`${typeLabel} (${orders.length} طلبات)\n${'─'.repeat(32)}\n`;
+  const lines=orders.map((o,i)=>{
+    const id=o.orderId||o._id?.slice(-6)||'—';
+    if(type==='production'){
+      const products=(o.products||[]);
+      const prodsLine=products.length
+        ?products.map(p=>`  • ${p.name||''}${p.qty?' × '+p.qty:''}${p.size?' | '+p.size:''}${p.paper?' | '+p.paper:''}`).join('\n')
+        :`  • ${o.product||'—'}`;
+      return (
+        `${i+1}. *${id}* — ${o.clientName||'—'}\n`+
+        (o.deadline?`   📅 ${o.deadline}\n`:'')+
+        `${prodsLine}\n`+
+        (o.printNotes?`   📝 ${o.printNotes}\n`:'')
+      );
+    }else{
+      const sale=getNet(o),paid=getPaid(o),rem=getRem(o);
+      const addr=o.deliveryAddress||{};
+      const phone=o.customerPhoneShip||o.clientPhone||'—';
+      return (
+        `${i+1}. *${id}* — ${o.clientName||'—'}\n`+
+        `   📞 ${phone}\n`+
+        (addr.gov||addr.city?`   📍 ${[addr.gov,addr.city].filter(Boolean).join(' — ')}\n`:'')+
+        (addr.street?`   🏠 ${addr.street}\n`:'')+
+        (sale>0?`   💰 الإجمالي ${fmtNum(sale)} ج | مدفوع ${fmtNum(paid)} ج${rem>0?' | *باقي '+fmtNum(rem)+' ج*':' ✅'}\n`:'')
+      );
+    }
+  });
+  return header+lines.join('─'.repeat(24)+'\n');
+}
+
+// ── Render multiple orders ─────────────────────────────────────────
+function renderMultipleOrders(orders,type){
+  const typeLabel=type==='production'?'ملخصات التنفيذ':'ملخصات الشحن والتسليم';
+  const header=`
+    <div class="multi-header">
+      <div class="mh-title">📄 ${typeLabel}</div>
+      <div class="mh-count">${orders.length} طلبات</div>
+    </div>`;
+  const sheets=orders.map((o,i)=>{
+    const sheet=type==='production'?buildProductionSheet(o):buildDeliverySheet(o);
+    // فاصل مرئي+طباعي بين الطلبات (عدا الأخير)
+    const sep=i<orders.length-1
+      ?`<div class="order-sep"><span>طلب ${i+2} من ${orders.length}</span></div>`
+      :'';
+    return sheet+sep;
+  });
+  return header+sheets.join('');
+}
+
 // ── Main ───────────────────────────────────────────────────────────
 function showError(msg){
   document.getElementById('sheet-root').innerHTML=`
@@ -523,8 +604,8 @@ function showError(msg){
     </div>`;
 }
 
-if(!orderId){
-  showError('رقم الطلب غير محدد في الرابط');
+if(!orderIds.length){
+  showError('لا توجد طلبات محددة في الرابط');
 }else{
   onAuthStateChanged(auth,async user=>{
     if(!user){
@@ -532,34 +613,51 @@ if(!orderId){
       return;
     }
     try{
-      const snap=await getDoc(doc(db,'orders',orderId));
-      if(!snap.exists()){showError('الطلب غير موجود — '+orderId);return;}
+      // تحميل كل الطلبات بالتوازي
+      const snaps=await Promise.all(orderIds.map(id=>getDoc(doc(db,'orders',id))));
+      const loaded=snaps.filter(s=>s.exists()).map(s=>({...s.data(),_id:s.id}));
 
-      const o={...snap.data(),_id:snap.id};
+      if(!loaded.length){showError('لم يُعثر على أي طلب من المحددة');return;}
+
+      const isBulk=loaded.length>1;
+      const typeLabel=sheetType==='production'?'تنفيذ':'شحن';
 
       // Title
-      document.title=(sheetType==='production'?'ورقة تنفيذ':'ورقة تسليم')+' — '+(o.orderId||orderId.slice(-6));
+      document.title=isBulk
+        ?`ملخص ${typeLabel} مجمع (${loaded.length} طلبات)`
+        :(sheetType==='production'?'ورقة تنفيذ':'ورقة تسليم')+' — '+(loaded[0].orderId||loaded[0]._id.slice(-6));
 
       // Bar label
       const lbl=document.getElementById('bar-label');
-      if(lbl) lbl.textContent=(o.orderId||orderId.slice(-6))+' · '+(o.clientName||'');
+      if(lbl) lbl.textContent=isBulk
+        ?`${loaded.length} طلبات — ملخص ${typeLabel}`
+        :(loaded[0].orderId||loaded[0]._id.slice(-6))+' · '+(loaded[0].clientName||'');
 
-      // Render sheet
-      document.getElementById('sheet-root').innerHTML=
-        sheetType==='production' ? buildProductionSheet(o) : buildDeliverySheet(o);
+      // Render
+      document.getElementById('sheet-root').innerHTML=isBulk
+        ? renderMultipleOrders(loaded,sheetType)
+        : (sheetType==='production' ? buildProductionSheet(loaded[0]) : buildDeliverySheet(loaded[0]));
 
       // WhatsApp button
-      const txt=buildWAText(o,sheetType);
-      const phone=sheetType==='delivery' ? normalizePhone(o.customerPhoneShip||o.clientPhone) : '';
-      const waHref=phone
-        ?`https://wa.me/${phone}?text=${encodeURIComponent(txt)}`
-        :`https://wa.me/?text=${encodeURIComponent(txt)}`;
+      let waHref;
+      if(isBulk){
+        const txt=buildCombinedWAText(loaded,sheetType);
+        waHref=`https://wa.me/?text=${encodeURIComponent(txt)}`;
+      }else{
+        const o=loaded[0];
+        const txt=buildWAText(o,sheetType);
+        const phone=sheetType==='delivery'?normalizePhone(o.customerPhoneShip||o.clientPhone):'';
+        waHref=phone?`https://wa.me/${phone}?text=${encodeURIComponent(txt)}`:`https://wa.me/?text=${encodeURIComponent(txt)}`;
+      }
       const waBtn=document.getElementById('wa-btn');
       if(waBtn) waBtn.href=waHref;
 
+      // لو جاء الطلب بـ ?wa=1 افتح WA تلقائياً
+      if(autoWA && waHref) setTimeout(()=>window.open(waHref,'_blank'),600);
+
     }catch(err){
       console.error('[order-summary-sheet]',err);
-      showError('فشل تحميل الطلب: '+(err.message||String(err)));
+      showError('فشل تحميل الطلبات: '+(err.message||String(err)));
     }
   });
 }
