@@ -191,3 +191,103 @@ export function buildStagePerformanceStats(orders = [], getStageDurations, forma
   }).sort((a, b) => b.count - a.count || b.slaPct - a.slaPct);
   return { people };
 }
+
+/**
+ * التقارير اليومية — تجميع يومي لأوردرات جديدة / دفعات / شحن / عملاء جدد.
+ * يُرجع قائمة أيام من الأحدث للأقدم + إجمالي الفترة.
+ *
+ * @param {Array}  filteredOrders — أوردرات الفترة المحددة
+ * @param {Array}  transactions   — كل transactions_v2 (لحساب الدفعات)
+ * @param {Array}  clients        — كل العملاء (لحساب الجدد)
+ * @param {{from:Date,to:Date}} range
+ */
+export function buildDailyStats(filteredOrders = [], transactions = [], clients = [], range) {
+  if (!range?.from) return { days: [], totals: {} };
+
+  const toMs = v => {
+    if (!v) return 0;
+    if (v?.seconds) return v.seconds * 1000;
+    const n = new Date(v).getTime();
+    return isNaN(n) ? 0 : n;
+  };
+  const dayKey = ms => ms ? new Date(ms).toISOString().slice(0, 10) : '';
+
+  const fromMs = range.from.getTime();
+  const toMs2  = (range.to || new Date()).getTime();
+
+  // أوردرات جديدة — مجمّعة بتاريخ الإنشاء
+  const ordMap = {};
+  for (const o of filteredOrders) {
+    const ms = toMs(o.createdAt) || toMs(o.createdDate);
+    const k = dayKey(ms);
+    if (!k) continue;
+    if (!ordMap[k]) ordMap[k] = { count: 0, total: 0, list: [] };
+    ordMap[k].count++;
+    ordMap[k].total += parseFloat(o.salePrice) || 0;
+    ordMap[k].list.push(o);
+  }
+
+  // دفعات محصّلة — transactions type='in' في الفترة
+  const payMap = {};
+  for (const tx of transactions) {
+    if (tx.type !== 'in') continue;
+    const ms = toMs(tx.createdAt);
+    if (!ms || ms < fromMs || ms > toMs2) continue;
+    const k = dayKey(ms);
+    if (!payMap[k]) payMap[k] = { count: 0, total: 0 };
+    payMap[k].count++;
+    payMap[k].total += parseFloat(tx.amount) || 0;
+  }
+
+  // مشحون/مسلّم — filteredOrders التي دخلت مرحلة الشحن في الفترة
+  const shipMap = {};
+  for (const o of filteredOrders) {
+    const ms = toMs(o.stageEnteredAt?.shipping);
+    if (!ms) continue;
+    const k = dayKey(ms);
+    if (!shipMap[k]) shipMap[k] = { count: 0 };
+    shipMap[k].count++;
+  }
+
+  // عملاء جدد
+  const cliMap = {};
+  for (const c of clients) {
+    const ms = toMs(c.createdAt);
+    if (!ms || ms < fromMs || ms > toMs2) continue;
+    const k = dayKey(ms);
+    if (!cliMap[k]) cliMap[k] = { count: 0 };
+    cliMap[k].count++;
+  }
+
+  // بناء قائمة الأيام في الفترة (من الأحدث للأقدم)
+  const days = [];
+  const cursor = new Date(range.to || new Date());
+  cursor.setHours(23, 59, 59, 999);
+  const start = new Date(range.from);
+  start.setHours(0, 0, 0, 0);
+  while (cursor >= start) {
+    const k = cursor.toISOString().slice(0, 10);
+    days.push({
+      date:          new Date(cursor),
+      key:           k,
+      ordersCount:   ordMap[k]?.count  || 0,
+      ordersTotal:   ordMap[k]?.total  || 0,
+      orders:        ordMap[k]?.list   || [],
+      paymentsTotal: payMap[k]?.total  || 0,
+      paymentsCount: payMap[k]?.count  || 0,
+      shippedCount:  shipMap[k]?.count || 0,
+      newClients:    cliMap[k]?.count  || 0,
+    });
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  const totals = days.reduce((a, d) => ({
+    ordersCount:   a.ordersCount   + d.ordersCount,
+    ordersTotal:   a.ordersTotal   + d.ordersTotal,
+    paymentsTotal: a.paymentsTotal + d.paymentsTotal,
+    shippedCount:  a.shippedCount  + d.shippedCount,
+    newClients:    a.newClients    + d.newClients,
+  }), { ordersCount: 0, ordersTotal: 0, paymentsTotal: 0, shippedCount: 0, newClients: 0 });
+
+  return { days, totals };
+}
