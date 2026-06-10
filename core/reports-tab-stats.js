@@ -149,18 +149,30 @@ export function buildClientActivityStats(filteredOrders = [], clients = [], rang
  * @param {Array}    orders
  * @param {Function} getStageDurations — (order) → { stages: [...] }
  * @param {Function} [formatDurationAr] — (ms) → string
+ * @param {Array}    [employees] — canonical employee list (من dedupEmployees)
+ * @param {Function} [resolveEmployee] — (employees, id, name) → employee|null
  * @returns {{ people: Array<{name,stageKey,stageLabel,slaHours,count,avgMs,avgText,onTime,late,slaPct}> }}
  */
-export function buildStagePerformanceStats(orders = [], getStageDurations, formatDurationAr) {
+export function buildStagePerformanceStats(orders = [], getStageDurations, formatDurationAr, employees = [], resolveEmployee) {
   if (typeof getStageDurations !== 'function') return { people: [] };
   const buckets = new Map();
   for (const o of orders) {
     const res = getStageDurations(o) || {};
     for (const s of (res.stages || [])) {
       if (s.status !== 'done' || !s.owner) continue; // فقط المكتمل بمسؤول معروف
-      const key = (s.ownerId || s.owner) + '@' + s.key;
+      // حل مشكلة التكرار: أوردرات بدون ownerId (قديمة) + أوردرات بـ ownerId (جديدة)
+      // لنفس الشخص تنتهي في buckets منفصلة. resolveEmployee يوحّد عبر _mergedIds + name.
+      let key, displayName = s.owner;
+      if (typeof resolveEmployee === 'function' && employees.length) {
+        const can = resolveEmployee(employees, s.ownerId, s.owner);
+        if (can) {
+          key = (can.authUid || can._id) + '@' + s.key;
+          displayName = can.name || s.owner;
+        }
+      }
+      if (!key) key = (s.ownerId || s.owner) + '@' + s.key;
       if (!buckets.has(key)) {
-        buckets.set(key, { name: s.owner, stageKey: s.key, stageLabel: s.label, slaHours: s.slaHours, count: 0, totalMs: 0, onTime: 0, late: 0 });
+        buckets.set(key, { name: displayName, stageKey: s.key, stageLabel: s.label, slaHours: s.slaHours, count: 0, totalMs: 0, onTime: 0, late: 0 });
       }
       const b = buckets.get(key);
       b.count++; b.totalMs += s.ms;
