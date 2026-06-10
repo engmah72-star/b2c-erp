@@ -78,6 +78,7 @@
         <button type="button" class="rep-tab" data-tab="collection" onclick="switchTab('collection',this)">📋 جرد التحصيل <span class="tab-badge hide" data-badge="collection"></span></button>
         <button type="button" class="rep-tab" data-tab="returns" onclick="switchTab('returns',this)">↩️ المرتجعات <span class="tab-badge warn hide" data-badge="returns"></span></button>
         <button type="button" class="rep-tab" data-tab="approvals" onclick="switchTab('approvals',this)">🔐 الاعتمادات <span class="tab-badge dim hide" data-badge="approvals"></span></button>
+        <button type="button" class="rep-tab" data-tab="daily" onclick="switchTab('daily',this)">📅 التقارير اليومية <span class="tab-badge dim hide" data-badge="daily"></span></button>
         <button type="button" class="rep-tab" data-tab="control" onclick="switchTab('control',this)">🎛️ التحكم الكامل <span class="tab-badge warn hide" data-badge="control"></span></button>
       </div>
       <!-- Mode toggle: executive summary (default) vs advanced tabs -->
@@ -234,7 +235,7 @@ import { orderActions } from "./order-actions.js";
 import { getRange as _getRange, getPrevRange as _getPrevRange, inRange as _inRange } from "./core/reports-date-filters.js";
 import { dailySeries as _dailySeries, sparklineHTML as _sparklineHTML } from "./core/reports-timeseries.js";
 import { calcPeriodFlow, calcOrderStats, calcNewClientsInRange, calcSupplierDue, calcStageDistribution, calcTopClientsByRevenue, calcTopProductsByRevenue, calcTopDesignersByCount, calcMonthlyRevenueChart, calcTargetProgress, diffHTML } from "./core/reports-financial-kpis.js";
-import { buildDesignerStats, buildShippingStats, buildClientActivityStats, buildStagePerformanceStats } from "./core/reports-tab-stats.js";
+import { buildDesignerStats, buildShippingStats, buildClientActivityStats, buildStagePerformanceStats, buildDailyStats } from "./core/reports-tab-stats.js";
 import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 import { buildReturnsStats } from "./core/reports-returns-stats.js";
 import { buildApprovalsStats } from "./core/reports-approvals-stats.js";
@@ -614,6 +615,7 @@ function render(){
   }
   else if(currentTab==='returns') el.innerHTML=renderReturns(filtered,range);
   else if(currentTab==='approvals') el.innerHTML=renderApprovals(range);
+  else if(currentTab==='daily') el.innerHTML=renderDaily(filtered,range);
   else if(currentTab==='control'){
     el.innerHTML=renderControl();
     requestAnimationFrame(()=>ctrlFilter());
@@ -1838,6 +1840,94 @@ window.saveDrawerCost=async function(){
   __drawerHideCostForm();
   toast('✅ تم الحفظ','ok');
 };
+
+// ══════════════════════════════════════════════════════════
+// 📅 Tab: التقارير اليومية
+// ══════════════════════════════════════════════════════════
+const __dailyOpen = new Set();
+window.toggleDayDetails = function(key) {
+  const el = document.getElementById('day-det-' + key);
+  if (!el) return;
+  if (__dailyOpen.has(key)) { __dailyOpen.delete(key); el.style.display = 'none'; }
+  else { __dailyOpen.add(key); el.style.display = ''; }
+};
+
+function renderDaily(f, range) {
+  const { days, totals } = buildDailyStats(f, transactions, clients, range);
+  if (!days.length) return `<div style="text-align:center;padding:60px;color:var(--dim2)">لا توجد بيانات للفترة المحددة</div>`;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const fmtDate = d => d.toLocaleDateString('ar-EG', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  const rows = days.map(d => {
+    const isToday = d.key === todayKey;
+    const hasData = d.ordersCount || d.paymentsTotal || d.shippedCount || d.newClients;
+    const isOpen  = __dailyOpen.has(d.key);
+    const bg = isToday ? 'background:rgba(0,122,255,.06);' : '';
+
+    const orderRows = d.orders.map(o => {
+      const rem = Math.max(0, (parseFloat(o.salePrice)||0) - (parseFloat(o.totalPaid)||parseFloat(o.paid)||0));
+      const oid = o.orderId || o._id.slice(-6);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:var(--fs-sm)">
+        <div style="flex:1;min-width:130px">
+          <div style="font-weight:var(--fw-bold)">${o.clientName||'—'} <span style="color:var(--dim2);font-size:var(--fs-xs)">· ${oid}</span></div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2)">${(o.products||[]).map(p=>p.name).join(' · ')||o.product||'—'}</div>
+        </div>
+        <div style="text-align:center;min-width:68px">
+          <div style="font-size:var(--fs-xs);color:var(--dim2)">السعر</div>
+          <div style="font-weight:var(--fw-bold)">${fn(o.salePrice||0)} ج</div>
+        </div>
+        <div style="text-align:center;min-width:68px">
+          <div style="font-size:var(--fs-xs);color:var(--dim2)">المتبقي</div>
+          <div style="font-weight:var(--fw-bold);color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem)+' ج':'✓'}</div>
+        </div>
+        <span style="font-size:var(--fs-xs);padding:3px 8px;border-radius:6px;background:var(--bg3);color:var(--dim2)">${o.stage||'—'}</span>
+      </div>`;
+    }).join('');
+
+    return `<tr style="cursor:pointer;${bg}border-bottom:1px solid var(--line)" onclick="toggleDayDetails('${d.key}')">
+      <td style="padding:10px 14px;font-weight:${isToday?'var(--fw-heavy)':'var(--fw-semi)'};white-space:nowrap">
+        ${isToday?'<span style="color:var(--b);font-size:var(--fs-xs);margin-inline-end:5px">●</span>':''}${fmtDate(d.date)}
+        ${hasData?`<span style="color:var(--dim3);font-size:10px;margin-inline-start:4px">${isOpen?'▴':'▾'}</span>`:''}
+      </td>
+      <td style="padding:10px 14px;text-align:center">
+        ${d.ordersCount?`<b style="color:var(--b)">${d.ordersCount}</b> <span style="font-size:var(--fs-xs);color:var(--dim2)">${fn(d.ordersTotal)} ج</span>`:'<span style="color:var(--dim3)">—</span>'}
+      </td>
+      <td style="padding:10px 14px;text-align:center;color:${d.paymentsTotal?'var(--g)':'var(--dim3)'}">
+        ${d.paymentsTotal?`<b>${fn(d.paymentsTotal)} ج</b>`:'—'}
+      </td>
+      <td style="padding:10px 14px;text-align:center">
+        ${d.shippedCount?`<b style="color:var(--y)">${d.shippedCount}</b>`:'<span style="color:var(--dim3)">—</span>'}
+      </td>
+      <td style="padding:10px 14px;text-align:center">
+        ${d.newClients?`<b style="color:var(--c)">${d.newClients}</b>`:'<span style="color:var(--dim3)">—</span>'}
+      </td>
+    </tr>
+    ${d.orders.length?`<tr id="day-det-${d.key}" style="display:${isOpen?'':'none'}">
+      <td colspan="5" style="padding:0;background:var(--bg2)">${orderRows}</td>
+    </tr>`:''}`;
+  }).join('');
+
+  const th = (t, w='') => `<th style="padding:10px 14px;${w}font-weight:var(--fw-bold);font-size:var(--fs-xs);color:var(--dim2)">${t}</th>`;
+  return `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:var(--bg2);text-align:center;border-bottom:2px solid var(--line2)">
+        ${th('اليوم','text-align:right;')}
+        ${th('📦 أوردرات جديدة')}
+        ${th('💰 دفعات محصّلة')}
+        ${th('🚚 مشحون / مسلّم')}
+        ${th('👤 عملاء جدد')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="background:var(--bg2);border-top:2px solid var(--line2);font-weight:var(--fw-heavy)">
+        <td style="padding:10px 14px">الإجمالي</td>
+        <td style="padding:10px 14px;text-align:center"><b style="color:var(--b)">${totals.ordersCount}</b> <span style="font-size:var(--fs-xs);color:var(--dim2)">${fn(totals.ordersTotal)} ج</span></td>
+        <td style="padding:10px 14px;text-align:center;color:var(--g)"><b>${fn(totals.paymentsTotal)} ج</b></td>
+        <td style="padding:10px 14px;text-align:center;color:var(--y)"><b>${totals.shippedCount}</b></td>
+        <td style="padding:10px 14px;text-align:center;color:var(--c)"><b>${totals.newClients}</b></td>
+      </tr></tfoot>
+    </table>
+  </div>`;
+}
 
 // ══════════════════════════════════════════════════════════
 // 🎛️ Tab: التحكم الكامل في الأوردرات
