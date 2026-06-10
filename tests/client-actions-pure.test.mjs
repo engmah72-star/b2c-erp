@@ -37,13 +37,15 @@ function assertEq(a, b, hint = '') {
 
 const RE_EG_PHONE = /^01[0125][0-9]{8}$/;
 
-function validateClientPayload({ name, phone1, phone2 = '', email = '' }) {
+function validateClientPayload({ name, phone1, phone2 = '', email = '', intlPhone = '' }) {
   const errors = [];
   const p1 = (phone1 || '').trim();
   const p2 = (phone2 || '').trim();
+  const hasIntl = !!(intlPhone || '').trim();
   if (!name || !name.trim()) errors.push('⚠️ اسم العميل مطلوب');
-  if (!p1) errors.push('⚠️ الهاتف الأساسي مطلوب');
-  else if (!RE_EG_PHONE.test(p1)) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
+  // phone1 مطلوب فقط لو مفيش رقم دولي بديل
+  if (!p1 && !hasIntl) errors.push('⚠️ الهاتف الأساسي مطلوب');
+  else if (p1 && !RE_EG_PHONE.test(p1)) errors.push('⚠️ رقم الهاتف الأساسي غير صحيح');
   if (p2 && !RE_EG_PHONE.test(p2)) {
     errors.push('⚠️ رقم الهاتف الثاني غير صحيح');
   }
@@ -127,6 +129,32 @@ test('phone variants — 015 valid', () => {
 });
 test('phone variants — 013 invalid', () => {
   assertEq(validateClientPayload({ name: 'X', phone1: '01312345678' }).ok, false);
+});
+
+// ── intlPhone as alternative to phone1 ──
+test('intlPhone alone (no phone1) → accepted', () => {
+  const r = validateClientPayload({ name: 'John', intlPhone: '+15551234567' });
+  assertEq(r.ok, true);
+});
+
+test('intlPhone + phone1 together → accepted', () => {
+  const r = validateClientPayload({ name: 'John', phone1: '01012345678', intlPhone: '+15551234567' });
+  assertEq(r.ok, true);
+});
+
+test('intlPhone whitespace-only → treated as absent, phone1 still required', () => {
+  const r = validateClientPayload({ name: 'John', intlPhone: '   ' });
+  assertEq(r.ok, false);
+});
+
+test('no phone1 and no intlPhone → rejected', () => {
+  const r = validateClientPayload({ name: 'John' });
+  assertEq(r.ok, false);
+});
+
+test('intlPhone present but phone1 invalid → rejected', () => {
+  const r = validateClientPayload({ name: 'John', phone1: 'badphone', intlPhone: '+15551234567' });
+  assertEq(r.ok, false);
 });
 
 // ── Self-duplicate (phone1 === phone2) tests ──
