@@ -649,7 +649,7 @@ export function getStageDurations(order, slaTable = null) {
   const stages = rows.map(r => {
     totalMs += r.durationMs;
     return {
-      key: r.stage, label: r.label, owner: r.responsibleName,
+      key: r.stage, label: r.label, owner: r.responsibleName, ownerId: r.responsibleId,
       ms: r.durationMs, text: r.durationText, hours: r.durationMs / 3600000,
       slaHours: r.slaHours, status: r.status, rating: r.rating,
     };
