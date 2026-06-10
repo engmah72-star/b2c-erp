@@ -62,6 +62,7 @@
       <button type="button" id="qf-mine" class="ftab active" onclick="setMineFilter(true,this)" style="flex:1;min-width:120px;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">👤 موكلة لي <span id="qf-mine-cnt" style="opacity:.6">(—)</span></button>
       <button type="button" id="qf-all" class="ftab" onclick="setMineFilter(false,this)" style="flex:1;min-width:120px;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:var(--fs-base);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">📋 الكل <span id="qf-all-cnt" style="opacity:.6">(—)</span></button>
       <button type="button" id="btn-bulk-waybill" onclick="printBulkWaybills()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap" title="طباعة بوليصة لكل أوردر ظاهر">🧾 طباعة الكل <span class="cnt" style="background:var(--b);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
+      <button type="button" id="btn-clear-sel" onclick="clearSelection()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.07);color:var(--r);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">✕ إلغاء التحديد <span id="sel-cnt-badge" style="background:var(--r);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
     </div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-top" style="background:var(--b)"></div><div class="kpi-val text-b" id="k-total">—</div><div class="kpi-lbl">🖨️ أوردرات</div></div>
@@ -72,6 +73,21 @@
     <div id="list"></div>
   </div>
 </div>
+</div>
+
+<!-- BULK ACTION BAR (ظاهر عند تحديد طلبات) -->
+<div id="bulk-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:500;background:var(--bg2);border-top:2px solid var(--b);padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));box-shadow:0 -4px 28px rgba(0,0,20,.5)">
+  <div style="display:flex;align-items:center;gap:8px;max-width:720px;margin:0 auto;flex-wrap:wrap">
+    <div style="font-size:13px;color:var(--b);font-weight:800;white-space:nowrap;flex-shrink:0">
+      ✓ <span id="bulk-bar-cnt">0</span> محدد
+    </div>
+    <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+      <button type="button" onclick="bulkOpenSheet('production')" style="display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:9px;border:1px solid rgba(74,142,245,.4);background:rgba(74,142,245,.1);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">🖨️ PDF تنفيذ</button>
+      <button type="button" onclick="bulkSendWhatsApp('production')" style="display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:9px;border:1px solid rgba(37,211,102,.35);background:rgba(37,211,102,.08);color:#25D366;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">💬 تنفيذ WA</button>
+      <button type="button" onclick="bulkOpenSheet('delivery')" style="display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:9px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.08);color:var(--g);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">🚚 PDF شحن</button>
+      <button type="button" onclick="bulkSendWhatsApp('delivery')" style="display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:9px;border:1px solid rgba(37,211,102,.35);background:rgba(37,211,102,.08);color:#25D366;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">💬 شحن WA</button>
+    </div>
+  </div>
 </div>
 
 <!-- PANEL -->
@@ -417,6 +433,7 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 // State
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
+if(!window.__selectedOrders)window.__selectedOrders=new Set();
 
 // RULE 8.1 — رقم تليفون العميل: CS + Admin + Ops + Shipping فقط.
 // Production يرى الملف النهائي للطباعة لكن لا يرى رقم العميل.
@@ -490,7 +507,13 @@ function updateKPIs(){
 }
 
 // Filter
-window.filterList=function(q){const s=(q||'').toLowerCase().trim();document.querySelectorAll('.ocard').forEach(c=>{const t=(c.dataset.client||'').toLowerCase()+(c.dataset.id||'').toLowerCase();c.style.display=!s||t.includes(s)?'':'none';});};
+window.filterList=function(q){const s=(q||'').toLowerCase().trim();
+  // يستهدف .ocard-wrap (غلاف الكارت الجديد) إن وُجد، وإلا .ocard مباشرةً
+  document.querySelectorAll('#list > .ocard-wrap, #list > .ocard').forEach(c=>{
+    const t=(c.dataset.client||'').toLowerCase()+(c.dataset.id||'').toLowerCase();
+    c.style.display=!s||t.includes(s)?'':'none';
+  });
+};
 
 // Render List
 window.setMineFilter=function(val,btn){
@@ -542,7 +565,13 @@ function renderList(){
     const extrasHtml=(p0?.extras||[]).map(e=>`<span style="display:inline-flex;padding:1px 6px;border-radius:var(--rad);background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2);font-size:var(--fs-xs);font-weight:var(--fw-bold)">✓ ${e}</span>`).join('');
     const hasFinal=!!(o.printFinalUrl||(o.products||[]).some(p=>p.designImageUrl));
     const noOwner=!o.printerId;
-    return`<div class="ocard ${d>0?'late':''}" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" onclick="openOrder('${o._id}')">
+    const isSel=(window.__selectedOrders||new Set()).has(o._id);
+    return`<div class="ocard-wrap" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" style="margin-bottom:10px">
+      <div class="ocard-sel-row" onclick="event.stopPropagation();toggleOrderSelection('${o._id}')" style="display:flex;align-items:center;gap:8px;padding:5px 14px;cursor:pointer;border-radius:var(--rad) var(--rad) 0 0;border-bottom:1px solid var(--line);background:${isSel?'rgba(74,142,245,.1)':'var(--bg3)'}">
+        <div class="ocard-cb" data-oid="${o._id}" style="width:18px;height:18px;border-radius:5px;border:2px solid ${isSel?'var(--b)':'var(--line)'};background:${isSel?'var(--b)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${isSel?'<span style="color:#fff;font-size:11px;font-weight:900;line-height:1">✓</span>':''}</div>
+        <span style="font-size:var(--fs-xs);font-weight:700;color:${isSel?'var(--b)':'var(--dim)'}">${isSel?`✓ محددة · ${o.orderId||o._id.slice(-6)}`:'☐ تحديد'}</span>
+      </div>
+      <div class="ocard ${d>0?'late':''}" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" onclick="openOrder('${o._id}')" style="${isSel?'border-top-left-radius:0;border-top-right-radius:0;outline:2px solid var(--b)':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-sm);margin-bottom:10px">
         <div class="flex-1 min-w-0">
           <div style="font-size:15px;font-weight:var(--fw-heavy)">${d>0?`<span style="color:var(--r);font-size:var(--fs-sm)">⚠️${d}ي </span>`:''}${o.clientName||'—'} ${stageSlaBadge(o)}</div>
@@ -579,7 +608,7 @@ function renderList(){
         </div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
-    </div>`;
+    </div></div>`;
   }).join('');
 }
 
@@ -714,6 +743,104 @@ function renderFilesSection(o){
   </div>`;
 }
 
+// ── ملخصات الطلب — زرا ورقة التنفيذ وورقة التسليم ──────────────────
+function renderOrderSummarySheets(o){
+  if(!o)return'';
+  const id=encodeURIComponent(o._id||'');
+  return`<div style="padding:14px 16px;border-bottom:1px solid var(--line)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2)">📄 ملخصات الطلب</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim);background:var(--bg3);padding:3px 9px;border-radius:10px;border:1px solid var(--line)">تُفتح في نافذة جديدة</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" onclick="openProductionSheet('${o._id||''}')" style="flex:1;min-width:140px;padding:11px 12px;border-radius:10px;border:1px solid rgba(74,142,245,.35);background:rgba(74,142,245,.08);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+        <span>🖨️</span> ملخص التنفيذ
+      </button>
+      <button type="button" onclick="openDeliverySheet('${o._id||''}')" style="flex:1;min-width:140px;padding:11px 12px;border-radius:10px;border:1px solid rgba(0,217,126,.35);background:rgba(0,217,126,.08);color:var(--g);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px">
+        <span>🚚</span> ملخص الشحن
+      </button>
+    </div>
+    <div style="font-size:var(--fs-xs);color:var(--dim);margin-top:7px">
+      ورقة التنفيذ: للمطبعة فقط (بدون أسعار) · ورقة الشحن: للمندوب أو شركة الشحن (مع التحصيل)
+    </div>
+  </div>`;
+}
+
+window.openProductionSheet=function(id){
+  const oid=id||activeId;if(!oid)return;
+  window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=production','_blank','noopener');
+};
+
+window.openDeliverySheet=function(id){
+  const oid=id||activeId;if(!oid)return;
+  window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=delivery','_blank','noopener');
+};
+
+// ── Bulk Selection ────────────────────────────────────────────────────
+window.toggleOrderSelection=function(id){
+  if(!window.__selectedOrders)window.__selectedOrders=new Set();
+  if(window.__selectedOrders.has(id)){window.__selectedOrders.delete(id);}
+  else{window.__selectedOrders.add(id);}
+  // تحديث مظهر الكارت المحدد بدون إعادة رسم القائمة كاملاً
+  const cb=document.querySelector(`.ocard-cb[data-oid="${CSS.escape(id)}"]`);
+  if(cb){
+    const isSel=window.__selectedOrders.has(id);
+    cb.style.background=isSel?'var(--b)':'transparent';
+    cb.style.borderColor=isSel?'var(--b)':'var(--line)';
+    cb.innerHTML=isSel?'<span style="color:#fff;font-size:11px;font-weight:900;line-height:1">✓</span>':'';
+    const row=cb.closest('.ocard-sel-row');
+    if(row){
+      row.style.background=isSel?'rgba(74,142,245,.1)':'var(--bg3)';
+      const lbl=row.querySelector('span');
+      if(lbl){lbl.style.color=isSel?'var(--b)':'var(--dim)';lbl.textContent=isSel?'✓ محددة':'☐ تحديد';}
+    }
+    const ocard=cb.closest('.ocard-wrap')?.querySelector('.ocard');
+    if(ocard){
+      if(isSel){ocard.style.outline='2px solid var(--b)';ocard.style.borderTopLeftRadius='0';ocard.style.borderTopRightRadius='0';}
+      else{ocard.style.outline='';ocard.style.borderTopLeftRadius='';ocard.style.borderTopRightRadius='';}
+    }
+  }
+  updateBulkBar();
+};
+
+window.clearSelection=function(){
+  if(!window.__selectedOrders)return;
+  window.__selectedOrders.clear();
+  // إعادة ضبط مظهر كل الكروت المحددة
+  document.querySelectorAll('.ocard-cb').forEach(cb=>{
+    cb.style.background='transparent';cb.style.borderColor='var(--line)';cb.innerHTML='';
+    const row=cb.closest('.ocard-sel-row');
+    if(row){row.style.background='var(--bg3)';const lbl=row.querySelector('span');if(lbl){lbl.style.color='var(--dim)';lbl.textContent='☐ تحديد';}}
+    const ocard=cb.closest('.ocard-wrap')?.querySelector('.ocard');
+    if(ocard){ocard.style.outline='';ocard.style.borderTopLeftRadius='';ocard.style.borderTopRightRadius='';}
+  });
+  updateBulkBar();
+};
+
+function updateBulkBar(){
+  const cnt=(window.__selectedOrders||new Set()).size;
+  const bar=document.getElementById('bulk-bar');
+  const cntEl=document.getElementById('bulk-bar-cnt');
+  const clearBtn=document.getElementById('btn-clear-sel');
+  const badge=document.getElementById('sel-cnt-badge');
+  if(bar)bar.style.display=cnt>0?'block':'none';
+  if(cntEl)cntEl.textContent=cnt;
+  if(clearBtn)clearBtn.style.display=cnt>0?'inline-flex':'none';
+  if(badge)badge.textContent=cnt;
+}
+
+window.bulkOpenSheet=function(type){
+  const sel=window.__selectedOrders||new Set();
+  if(!sel.size){toast('⚠️ حدّد طلباً على الأقل','err');return;}
+  const ids=[...sel].join(',');
+  window.open('order-summary-sheet.html?ids='+encodeURIComponent(ids)+'&type='+type,'_blank','noopener');
+};
+
+window.bulkSendWhatsApp=function(type){
+  // فتح صفحة الملخص مباشرةً — المستخدم يضغط زر WA بعدها (لا popup مزدوج)
+  window.bulkOpenSheet(type);
+};
+
 // ── قسم بيانات الشحن — يُعرَض في تاب «الشحن» المنفصل داخل البانل ──
 function renderShippingSection(o){
   return `<div style="padding:14px 16px">
@@ -784,6 +911,8 @@ function renderPanel(o){
     </div>`:''}
     <!-- الملفات (بارز أعلى الصفحة) -->
     ${renderFilesSection(o)}
+    <!-- ملخصات الطلب: ورقة التنفيذ + ورقة الشحن -->
+    ${renderOrderSummarySheets(o)}
     <!-- Products: each with image + specs -->
     <div style="padding:12px 16px;border-bottom:1px solid var(--line)">
       ${o.deadline?`<div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:${delay(o.deadline)>0?'var(--r)':'var(--dim2)'};margin-bottom:10px">📅 موعد التسليم: ${o.deadline}${delay(o.deadline)>0?` — متأخر ${delay(o.deadline)} يوم ⚠️`:' ✅'}</div>`:''}
