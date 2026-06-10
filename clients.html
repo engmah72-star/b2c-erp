@@ -981,10 +981,11 @@ function mergeHits(hits){
   const known=new Set(searchExtras.map(c=>c._id));
   let added=false;
   for(const c of hits){ if(!known.has(c._id)){ searchExtras.push(c); known.add(c._id); added=true; } }
-  if(added){
-    const present=new Set(clients.map(c=>c._id));
-    clients=clients.concat(searchExtras.filter(c=>!present.has(c._id)));
-  }
+  // دائماً أعِد دمج searchExtras في clients (حتى لو لم يُضَف عميل جديد)
+  // — يضمن ظهور نتائج البحث السابقة بعد أي snapshot أو تحديث للـ cache.
+  const present=new Set(clients.map(c=>c._id));
+  const missing=searchExtras.filter(c=>!present.has(c._id));
+  if(added || missing.length) clients=clients.concat(missing);
   scheduleStatsAndGrid();
 }
 
@@ -1502,7 +1503,13 @@ function addNoProdRow(){
 }
 function openNewOrder(){
   if(!activeId){toast('⚠️ اختر عميل أولاً','err');return;}
-  const cl=clients.find(x=>x._id===activeId);if(!cl)return;
+  let cl=clients.find(x=>x._id===activeId);
+  // العميل قد يكون في searchExtras (بحث سيرفر) لكن لم يُدمج بعد في clients
+  if(!cl && searchExtras.length){
+    cl=searchExtras.find(x=>x._id===activeId);
+    if(cl) clients=mergeSearchExtras(clients);
+  }
+  if(!cl){toast('⚠️ لم يتم العثور على بيانات العميل — أعِد فتح البطاقة','err');return;}
   pendingClientId=activeId;
   setText('no-client-name',cl.name||'—');
   const ph=document.getElementById('no-client-phone-link');if(ph){ph.textContent=cl.phone1||'—';ph.href='tel:'+cl.phone1;}
@@ -1685,7 +1692,13 @@ function saveNewOrder(){
     return;
   }
 
-  const cl=clients.find(x=>x._id===pendingClientId);if(!cl)return;
+  let cl=clients.find(x=>x._id===pendingClientId);
+  // العميل القديم قد يكون في searchExtras فقط — أعد الدمج مع clients
+  if(!cl && searchExtras.length){
+    cl=searchExtras.find(x=>x._id===pendingClientId);
+    if(cl) clients=mergeSearchExtras(clients);
+  }
+  if(!cl){toast('❌ لم يتم العثور على بيانات العميل — أعِد فتح البطاقة وحاول مرة أخرى','err');return;}
   if(!currentUser){toast('❌ يلزم تسجيل الدخول','err');return;}
   const wEl=document.getElementById('no-wallet');
   const wName=wEl?.options[wEl?.selectedIndex]?.text||'';
