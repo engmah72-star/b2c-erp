@@ -85,6 +85,7 @@ try {
     // الواجهة المصقولة، وportal-designs المحرّر التفصيلي المتاح منها. (توحيد المعرض)
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
+    { file:'exec-cost-entry.html',   label:'بنود التكلفة',    ico:'💰', group:'orders', perm:'production' },
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
     { file:'shipping.html',          label:'الشحن',             ico:'🚚', group:'orders', perm:'shipping' },
     { file:'shipping-accounts.html', label:'حسابات الشحن',     ico:'📦', group:'orders', perm:'shipping-accounts' },
