@@ -288,7 +288,7 @@ const clientSegments = new Map();
 // God-page decomp PR-23: SEG_STYLE extracted to clients-constants.js
 let allTx=[], txByOrder=new Map();
 let allFollowups=[], followupsByClient=new Map();
-// عملاء جُلبوا عبر البحث في السيرفر (خارج نافذة الـ14 يوم). تُدمَج في `clients`
+// عملاء جُلبوا عبر البحث في السيرفر (خارج حد الـ CLIENTS_LIMIT). تُدمَج في `clients`
 // كي تظهر في الشبكة + تُفتح + يُعمل لها أوردر مثل أي عميل حديث. (clients-page-performance)
 let searchExtras=[];
 window.__clientFilter='all';
@@ -456,18 +456,11 @@ auth.onAuthStateChanged(async u=>{
   //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
   //   T3 (defer 1500ms): followups, segments, transactions_v2 — only used in panel/cgrid
   // Limits reduced — old docs still readable on-demand via direct getDoc.
-  const CLIENTS_LIMIT = 800;     // safety cap on top of the 14-day window
+  const CLIENTS_LIMIT = 1000;    // تحميل كل العملاء (بدون قيد تاريخي)
   const ORDERS_LIMIT  = 1500;    // was 3000
   const TX_LIMIT      = 1500;    // was 3000
   const FU_LIMIT      = 800;     // was 1500
-  // العملاء: نحمل فقط آخر 14 يوم كحد أقصى. أي عميل أقدم يُجلب على الطلب
-  // عبر deep-link (openClient) أو من خلال البحث/الفتح المباشر.
-  const CLIENTS_WINDOW_DAYS = 14;
-  const __clientsCutoff = firebase.firestore.Timestamp.fromMillis(
-    Date.now() - CLIENTS_WINDOW_DAYS * 24 * 60 * 60 * 1000
-  );
   db.collection('clients')
-    .where('createdAt','>=',__clientsCutoff)
     .orderBy('createdAt','desc')
     .limit(CLIENTS_LIMIT)
     .onSnapshot(snap=>{
@@ -903,11 +896,10 @@ function scheduleStatsAndGrid(){
 }
 
 // ════════════════════════════════════════════════════════════════════
-// بحث السيرفر — العثور على أي عميل (حتى القديم خارج نافذة الـ14 يوم)
+// بحث السيرفر — العثور على أي عميل خارج حد الـ CLIENTS_LIMIT
 // ════════════════════════════════════════════════════════════════════
-// الشبكة الافتراضية تحمّل آخر 14 يوم فقط (سرعة الفتح). لكن عند الكتابة في خانة
-// البحث نستعلم Firestore مباشرةً بالاسم/الهاتف فنصل لأي عميل قديم، فيظهر في
-// الشبكة ويمكن فتحه وعمل أوردر له. (read فقط · limit إلزامي · G3)
+// الشبكة تحمّل أحدث 1000 عميل. لو كان العدد أكبر وعميل ما ظهرش،
+// البحث النصي يستعلم Firestore مباشرةً فيضيفه. (read فقط · limit إلزامي · G3)
 
 // يدمج نتائج البحث القديمة في قائمة الأساس بدون تكرار (dedup by _id).
 function mergeSearchExtras(base){
@@ -923,7 +915,7 @@ const __rsCache=new Map();    // memo داخل الجلسة: query → clients[]
 // يُستدعى من خانة البحث (clients-shell.js · oninput).
 window.onClientSearchInput=function(val){
   const q=(val||'').trim();
-  // الفلترة المحلية فورية (آخر 14 يوم)
+  // الفلترة المحلية فورية
   scheduleStatsAndGrid();
   clearTimeout(__rsTimer);
   if(q.length<2){ window.__remoteSearching=false; return; }
