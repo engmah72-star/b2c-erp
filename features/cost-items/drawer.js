@@ -943,7 +943,6 @@
           type: row.type, total: parseFloat(row.total),
           supplierId: row.supplierId, supplierName: row.supplierName,
           note: row.note||'', walletId:'', paperMeta: row.paperMeta||{},
-          isExternal: true,
         },
         role, userId, userName, wallets, isEdit:false, editIdx:-1,
       });

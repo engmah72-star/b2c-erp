@@ -1231,12 +1231,10 @@ export function validateStageRequirements(order, fromStage) {
       }
     }
 
-    // 🛡 Phase D: external cost items بدون supplier — warning.
-    // cost item external = isExternal!==false، يعني المفروض ليه مورد. لو
-    // مفيش supplierId → فقد سلسلة الـ audit. warning يحفّز التصحيح.
-    const orphanExternal = costItems.filter(ci => ci && ci.isExternal !== false && !ci.supplierId).length;
+    // 🛡 Phase D: cost items بدون supplier — warning.
+    const orphanExternal = costItems.filter(ci => ci && !ci.supplierId).length;
     if (orphanExternal > 0) {
-      warnings.push(`🏭 ${orphanExternal} بند تكلفة خارجي بدون مورد محدد — حدّد المورد قبل الشحن`);
+      warnings.push(`🏭 ${orphanExternal} بند تكلفة بدون مورد محدد — حدّد المورد قبل الشحن`);
     }
   }
   else if (stage === 'shipping') {
@@ -2184,7 +2182,7 @@ export function validateReverseSettle({ order, role }) {
  *
  * @param {Object} args
  * @param {Object} args.order            — الأوردر المستهدف
- * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta, isExternal }
+ * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta }
  * @param {string} args.role             — دور المستخدم
  * @param {Array}  [args.wallets=[]]     — قائمة المحافظ (للتحقق من الرصيد)
  * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
@@ -2228,10 +2226,8 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
     }
   }
 
-  // تحذير: بند خارجي بدون مورد
-  if (payload.isExternal && !supplierId && !errors.length) {
-    warnings.push('بند خارجي بدون مورد محدد');
-  }
+  // المورد إلزامي
+  if (!supplierId) errors.push('اختر المورد — كل بند تكلفة مرتبط بمورد');
 
   return { ok: errors.length === 0, errors, warnings };
 }
