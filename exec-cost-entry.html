@@ -126,14 +126,7 @@
           <select class="inp" id="ac-type" onchange="onTypeChange()"></select>
         </div>
 
-        <div class="fg"><label>📋 نوع التنفيذ</label>
-          <div class="seg-row">
-            <button type="button" class="seg-btn seg-int active" id="seg-int" onclick="setExternal(false)">🏠 داخلي</button>
-            <button type="button" class="seg-btn seg-ext" id="seg-ext" onclick="setExternal(true)">🏭 خارجي</button>
-          </div>
-        </div>
-
-        <div class="fg hide" id="sup-wrap"><label>🏭 المورد</label>
+        <div class="fg"><label>🏭 المورد <span class="text-r">*</span></label>
           <select class="inp" id="ac-sup" onchange="onCostInputChange()"><option value="">— اختر المورد —</option></select>
         </div>
 
@@ -700,15 +693,6 @@ window.onTypeChange=function(){
   onCostInputChange();
 };
 
-window.setExternal=function(isExt){
-  document.getElementById('seg-int').classList.toggle('active',!isExt);
-  document.getElementById('seg-ext').classList.toggle('active',isExt);
-  document.getElementById('sup-wrap').style.display=isExt?'block':'none';
-  if(!isExt){
-    const s=document.getElementById('ac-sup');if(s)s.value='';
-  }
-  onCostInputChange();
-};
 
 window.calcPaperCost=function(fromTotal){
   const sheets=parseFloat(gv('ac-psheets'))||0;
@@ -746,7 +730,7 @@ function renderItemsBox(o){
   box.innerHTML=`
     <div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow);font-weight:var(--fw-heavy)">${fn(total)} ج</strong></div>
     ${items.map((c,i)=>{
-      const supLbl=c.supplierName?`🏭 ${c.supplierName}`:'🏠 داخلي';
+      const supLbl=c.supplierName?`🏭 ${c.supplierName}`:'⚠️ بدون مورد';
       const prodLbl=(c.prodIdx!=null&&o.products?.[c.prodIdx])?` · ${o.products[c.prodIdx].name||''}`:'';
       const paid=c.walletId?'<span class="item-paid">💼 مدفوع</span>':'';
       const isEditing=i===editCostIdx;
@@ -856,9 +840,6 @@ window.openCostModal=function(orderId,autoRestore){
     if(opt)tEl.value=opt.value;
   }
 
-  // External/internal default
-  setExternal(!!o.supplierId);
-
   clearForm();
   filterSupsByType(tEl?.value||'','ac-sup');
 
@@ -867,7 +848,8 @@ window.openCostModal=function(orderId,autoRestore){
   const pill=document.getElementById('restore-pill');
   const meta=document.getElementById('restore-pill-meta');
   if(pill){
-    if(last){pill.hidden=false;meta.textContent=`${last.supplierName||'بدون مورد'} · ${fn(last.total||0)} ج`;}
+    if(last&&last.supplierId){pill.hidden=false;meta.textContent=`${last.supplierName||'—'} · ${fn(last.total||0)} ج`;}
+    else pill.hidden=true;
     else pill.hidden=true;
   }
 
@@ -902,7 +884,6 @@ window.editCost=function(idx){
   const tEl=document.getElementById('ac-type');
   if(tEl)tEl.value=item.type||'';
   onTypeChange();
-  setExternal(!!item.supplierId);
   setTimeout(()=>{const s=document.getElementById('ac-sup');if(s&&item.supplierId)s.value=item.supplierId;},20);
   sv('cost-prod-idx',item.prodIdx!=null?String(item.prodIdx):'-1');
   sv('ac-total',item.total||'');
@@ -953,6 +934,8 @@ window.saveCost=async function(){
   const supOpt=supSel?.options[supSel.selectedIndex];
   const supplierId=supOpt?.value||'';
   const supplierName=supOpt?.dataset?.name||'';
+
+  if(!supplierId)return toast('⚠️ اختر المورد — كل بند تكلفة مرتبط بمورد','err');
   const walletId=gv('ac-wallet');
   const prodIdx=parseInt(gv('cost-prod-idx')??'-1');
   let note=gv('ac-note').trim();
