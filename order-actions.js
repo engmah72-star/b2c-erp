@@ -1193,8 +1193,8 @@ export const orderActions = {
    * @param {Object} args
    * @param {Object} args.db                  — Firestore instance
    * @param {string} args.orderId
-   * @param {number} args.prodIdx             — index في order.products أو -1 (عام)
-   * @param {Object} args.payload             — { type, total, supplierId, supplierName, note, walletId, paperMeta, isExternal }
+   * @param {number} args.prodIdx             — index في order.products (إلزامي)
+   * @param {Object} args.payload             — { type, total, supplierId, supplierName, note, walletId, paperMeta }
    * @param {string} args.role
    * @param {string} args.userId
    * @param {string} args.userName
@@ -1606,7 +1606,6 @@ export const orderActions = {
     const newItem = {
       costItemId,
       orderId,
-      isExternal: !!supplierId,
       ...(supplierOrderId ? { supplierOrderId } : {}),
       type,
       supplierId,
