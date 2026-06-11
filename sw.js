@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v309';
+const CACHE = 'b2c-v310';
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -172,12 +172,13 @@ const CACHEABLE_HOSTS = [
 ];
 
 // Firebase API endpoints — dynamic data, must not be cached.
+// Note: firebasestorage.googleapis.com is handled separately below —
+// media file downloads (alt=media) are cached; other storage calls are not.
 const NEVER_CACHE_HOSTS = [
   'firestore.googleapis.com',
   'firebaseinstallations.googleapis.com',
   'identitytoolkit.googleapis.com',
   'securetoken.googleapis.com',
-  'firebasestorage.googleapis.com',
   'fcm.googleapis.com',
   'firebase.googleapis.com',
   'firebaseio.com',
@@ -210,6 +211,17 @@ self.addEventListener('fetch', e => {
 
   let url;
   try { url = new URL(req.url); } catch { return; }
+
+  // Firebase Storage media files — cache images, PDFs, and design files.
+  // Storage URLs are content-addressed: a changed file gets a new token/path,
+  // so serving a cached version is always correct for its URL.
+  // Only cache actual media downloads (alt=media); pass other storage calls through.
+  if (url.hostname === 'firebasestorage.googleapis.com') {
+    if (url.searchParams.get('alt') === 'media') {
+      e.respondWith(staleWhileRevalidate(req));
+    }
+    return;
+  }
 
   if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
