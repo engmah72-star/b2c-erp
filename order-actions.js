@@ -1725,6 +1725,23 @@ export const orderActions = {
     // ── commit ────────────────────────────────────────────
     try {
       await batch.commit();
+
+      // Fire-and-forget: auto-index in cost_item_library (non-blocking)
+      if (!isEdit && type) {
+        const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : (order.products || [])[0];
+        import('./core/cost-library-actions.js')
+          .then(({ upsertCostLibraryItem }) => upsertCostLibraryItem({
+            db, type,
+            productName: _prod?.name || '',
+            supplierId: supplierId || '',
+            supplierName: supplierName || '',
+            qty: parseFloat(_prod?.qty || 0) || 0,
+            total, orderId,
+            userId: userId || '',
+          }).catch(() => {}))
+          .catch(() => {});
+      }
+
       return {
         ok: true,
         errors: [],

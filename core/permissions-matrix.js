@@ -304,7 +304,7 @@ export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
     canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
   },
   production_agent: {
-    pages: ['production', 'production-dashboard'],
+    pages: ['production', 'production-dashboard', 'cost-items-library'],
     canSeePrices: false, canSeeAllOrders: false, canAddOrders: false,
     canViewClients: false, canAddClients: false,
     canAssignDesigner: false, canAssignTasks: false,

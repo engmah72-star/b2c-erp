@@ -63,6 +63,9 @@
   let _pop = null;
   let _popRowId = null;    // Row ID for active popover ('edit' for edit form)
 
+  let _libSuggestions = []; // Loaded from cost_item_library
+  let _libLoading    = false;
+
   let _root, _backdrop, _drawer;
 
   function newEmptyRow(){
@@ -170,6 +173,7 @@
 
       <div class="cid-body">
         ${suggestions.length ? _renderSuggestions(suggestions, lastRefEntry, lastUnitCost) : ''}
+        ${(_libLoading || _libSuggestions.length) ? _renderLibrarySuggestions() : ''}
         ${ci.length ? _renderExistingItems(ci, allCi) : ''}
         ${_editIdx >= 0 ? _renderEditSection() : _renderBatchSection()}
         ${(cmp || (existingTotal > 0 && qty > 0)) ? `
@@ -228,6 +232,44 @@
           ` : ''}
         </div>
         <div class="cid-kbd-foot" style="margin-top:4px"><span>اضغط على بند لإضافته مباشرةً</span></div>
+      </section>`;
+  }
+
+  // ── Library suggestions section ───────────────────────────
+  function _renderLibrarySuggestions(){
+    if(_libLoading) return `
+      <section class="cid-sect">
+        <div class="cid-sect-label"><span>📚 من المكتبة</span><span class="cid-line"></span></div>
+        <div class="cid-lib-loading">⏳ جارٍ تحميل اقتراحات المكتبة...</div>
+      </section>`;
+    if(!_libSuggestions.length) return '';
+    return `
+      <section class="cid-sect">
+        <div class="cid-sect-label">
+          <span>📚 من المكتبة</span>
+          <span class="cid-line"></span>
+          <span class="cid-hint">الأكثر استخداماً · أرخص مورد أولاً</span>
+        </div>
+        <div class="cid-lib-grid">
+          ${_libSuggestions.map(sg => `
+            <button class="cid-lib-card" type="button" data-action="add-lib-item"
+                    data-type="${escapeHtml(sg.type)}"
+                    data-sup-id="${escapeHtml(sg.cheapest.supplierId||'')}"
+                    data-sup-name="${escapeHtml(sg.cheapest.supplierName||'')}"
+                    data-total="${sg.cheapest.lastTotal||0}">
+              <div class="cid-lib-ico">${getCostIco(sg.type)}</div>
+              <div class="cid-lib-info">
+                <div class="cid-lib-type">${escapeHtml(sg.type)}</div>
+                <div class="cid-lib-sup">${escapeHtml(sg.cheapest.supplierName||'—')}</div>
+                ${sg.cheapest.avgUnitCost > 0 ? `<div class="cid-lib-price">${sg.cheapest.avgUnitCost.toFixed(2)} ج/قطعة</div>` : ''}
+              </div>
+              <div class="cid-lib-meta">
+                <span class="cid-lib-badge">× ${sg.usageCount||0}</span>
+                ${sg.alts.length ? `<span class="cid-lib-alts-hint">+${sg.alts.length}</span>` : ''}
+              </div>
+            </button>
+          `).join('')}
+        </div>
       </section>`;
   }
 
@@ -427,6 +469,33 @@
   // ── Event binding (delegated) ─────────────────────────────
   function _bindEvents(){
     _drawer.querySelector('.cid-close')?.addEventListener('click', close);
+
+    // Library suggestions
+    _drawer.querySelectorAll('[data-action="add-lib-item"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const type    = el.dataset.type    || '';
+        const supId   = el.dataset.supId   || '';
+        const supName = el.dataset.supName || '';
+        const total   = parseFloat(el.dataset.total) || 0;
+        const c = ctx();
+        const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+        const sup = suppliers.find(s => s._id === supId);
+        const specs = sup
+          ? (Array.isArray(sup.specialties) && sup.specialties.length
+              ? sup.specialties : (sup.printType ? [sup.printType] : []))
+          : [];
+        if(_editIdx >= 0 && _editDraft){
+          Object.assign(_editDraft, { supplierId: supId, supplierName: supName,
+            supplierSpecialties: specs, type, total: String(total||'') });
+        } else {
+          const emptyRow = _drafts.find(r => !r.supplierId && !r.type && !r.total);
+          const target   = emptyRow || (() => { const r = newEmptyRow(); _drafts.push(r); return r; })();
+          Object.assign(target, { supplierId: supId, supplierName: supName,
+            supplierSpecialties: specs, type, total: String(total||'') });
+        }
+        render();
+      });
+    });
 
     // Suggestions
     _drawer.querySelectorAll('[data-action="apply-sugg"]').forEach(el => {
@@ -695,6 +764,42 @@
     }
   }
 
+  // ── Library suggestions loader ────────────────────────────
+  async function _loadLibrarySuggestions(){
+    _libLoading = true;
+    try {
+      const loaded = await _getActionsDb();
+      if(!loaded){ _libLoading = false; return; }
+      const { db } = loaded;
+      const { getCostLibraryItems } = await import('../../core/cost-library-actions.js');
+      const items = await getCostLibraryItems({ db, limitN: 60 });
+      const active = items.filter(x => x.isActive !== false);
+
+      // Group by type, sort cheapest supplier first
+      const byType = {};
+      active.forEach(item => {
+        const t = item.type || '—';
+        if(!byType[t]) byType[t] = [];
+        byType[t].push(item);
+      });
+
+      _libSuggestions = Object.entries(byType)
+        .map(([type, list]) => {
+          const sorted   = [...list].sort((a, b) => (a.avgUnitCost||Infinity) - (b.avgUnitCost||Infinity));
+          const cheapest = sorted[0];
+          const totalUsage = list.reduce((s, x) => s + (x.usageCount||0), 0);
+          return { type, cheapest, alts: sorted.slice(1, 3), usageCount: totalUsage };
+        })
+        .sort((a, b) => b.usageCount - a.usageCount)
+        .slice(0, 8);
+    } catch(e){
+      console.warn('[cost-drawer] library load failed:', e?.message);
+      _libSuggestions = [];
+    }
+    _libLoading = false;
+    if(_open) render();
+  }
+
   // ── Suggestions helpers ───────────────────────────────────
   function _getSuggestions(){
     const c = ctx();
@@ -939,8 +1044,11 @@
     _drafts  = [newEmptyRow()];
     _editDraft = null;
     _editIdx  = -1;
+    _libSuggestions = [];
+    _libLoading = false;
     _open = true;
     render();
+    _loadLibrarySuggestions(); // fire-and-forget; re-renders when done
     requestAnimationFrame(() => {
       _backdrop.classList.add('is-open');
       _drawer.classList.add('is-open');
