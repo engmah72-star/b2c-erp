@@ -1,19 +1,25 @@
 // Business2Card ERP — Service Worker
 // Strategy:
-//   - Network-First (no artificial timeout) for HTML navigations + critical
-//     app shell JS. Guarantees users see new releases on the next page load.
-//     Falls back to cache only when the network actually fails (offline).
-//   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
-//   - Firebase API endpoints are never intercepted (data must stay live).
+//   - Stale-While-Revalidate for HTML navigations + CSS: serve from cache
+//     immediately for instant startup, revalidate in background. Safe because
+//     the CACHE version is bumped on every deploy — old caches are wiped, so
+//     the first open after a deploy always fetches fresh HTML from the network.
+//   - Network-First (no artificial timeout) for critical JS modules that contain
+//     business logic, financial rules, and permissions. Guarantees fresh code
+//     when online; falls back to cache only on genuine network failure.
+//   - Stale-While-Revalidate for Firebase Storage media (images, PDFs, design
+//     files) — URLs are content-addressed so cached versions are always correct.
+//   - Stale-While-Revalidate for static CDN assets (fonts, Firebase SDK).
+//   - Firebase API endpoints (Firestore, Auth, etc.) are never intercepted.
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v309';
+const CACHE = 'b2c-v311';
 
-// Files we ALWAYS want fresh when online — code paths that change between
-// deploys. Match by URL suffix.
+// JS modules that MUST be fresh when online — business logic, financial rules,
+// permissions, and workflow engines. HTML + CSS use stale-while-revalidate
+// (instant startup; CACHE version bump on deploy wipes stale entries).
+// Match by URL suffix.
 const NETWORK_FIRST_SUFFIXES = [
-  '.html',
   '/shared.js',
-  '/shared.css',
   '/theme.js',
   '/financial-sync-engine.js',
   '/sw.js',
@@ -75,26 +81,6 @@ const NETWORK_FIRST_SUFFIXES = [
   '/clients-constants.js',
   '/clients-sidebar.js',
   '/design-render.js',
-  '/design.css',
-  '/clients.css',
-  // ── Page CSS files extracted in Phase-2D (PRs #771-#777) ──
-  '/inbox.css',
-  '/reports.css',
-  '/shipping.css',
-  '/approvals.css',
-  '/employees.css',
-  '/employee-profile.css',
-  '/production.css',
-  '/print.css',
-  '/cs-dashboard.css',
-  '/exec-dashboard.css',
-  '/designer-dashboard.css',
-  '/production-dashboard.css',
-  '/shipping-accounts.css',
-  '/suppliers.css',
-  '/products.css',
-  '/settings.css',
-  '/my-profile.css',
   // ── features/* view modules (Phase-1 extracts) — change with deploys ──
   '/features/clients/bizcard-form.js',
   '/features/clients/client-form.js',
@@ -172,12 +158,13 @@ const CACHEABLE_HOSTS = [
 ];
 
 // Firebase API endpoints — dynamic data, must not be cached.
+// Note: firebasestorage.googleapis.com is handled separately below —
+// media file downloads (alt=media) are cached; other storage calls are not.
 const NEVER_CACHE_HOSTS = [
   'firestore.googleapis.com',
   'firebaseinstallations.googleapis.com',
   'identitytoolkit.googleapis.com',
   'securetoken.googleapis.com',
-  'firebasestorage.googleapis.com',
   'fcm.googleapis.com',
   'firebase.googleapis.com',
   'firebaseio.com',
@@ -211,6 +198,17 @@ self.addEventListener('fetch', e => {
   let url;
   try { url = new URL(req.url); } catch { return; }
 
+  // Firebase Storage media files — cache images, PDFs, and design files.
+  // Storage URLs are content-addressed: a changed file gets a new token/path,
+  // so serving a cached version is always correct for its URL.
+  // Only cache actual media downloads (alt=media); pass other storage calls through.
+  if (url.hostname === 'firebasestorage.googleapis.com') {
+    if (url.searchParams.get('alt') === 'media') {
+      e.respondWith(staleWhileRevalidate(req));
+    }
+    return;
+  }
+
   if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
   // Kill switch: never intercept reset-sw.html — it must always come from
@@ -221,13 +219,10 @@ self.addEventListener('fetch', e => {
   const cacheableCdn = CACHEABLE_HOSTS.some(h => url.hostname === h);
   if (!sameOrigin && !cacheableCdn) return;
 
-  const isNavigation = req.mode === 'navigate' ||
-    (req.headers.get('accept') || '').includes('text/html');
-
-  const isNetworkFirst = sameOrigin && (
-    isNavigation ||
-    NETWORK_FIRST_SUFFIXES.some(s => url.pathname.endsWith(s))
-  );
+  // HTML navigations and CSS use stale-while-revalidate (instant startup).
+  // Only critical JS modules use network-first (see NETWORK_FIRST_SUFFIXES).
+  const isNetworkFirst = sameOrigin &&
+    NETWORK_FIRST_SUFFIXES.some(s => url.pathname.endsWith(s));
 
   if (isNetworkFirst) {
     e.respondWith(networkFirst(req));
