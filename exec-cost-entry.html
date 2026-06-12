@@ -1367,6 +1367,14 @@ function _normProdName(name){
     .replace(/\s+/g,' ').trim().toLowerCase().substring(0,35);
 }
 
+function _extractQty(prod){
+  // prefer explicit qty field on the product
+  if(prod.qty!=null&&prod.qty!=='')return String(prod.qty);
+  // fall back to first number found in the name
+  const m=(prod.name||'').match(/([\d٠-٩][٠-٩\d,،]*)\s*(?:قطعة|نسخة|طبعة|حبة|ألف)?/i);
+  return m?m[1].replace(/[,،]/g,'').trim():'';
+}
+
 function _buildProductProfiles(){
   const profiles={};
   orders.forEach(o=>{
@@ -1375,9 +1383,11 @@ function _buildProductProfiles(){
       if(c.prodIdx==null||c.prodIdx<0)return;
       const prod=prods[c.prodIdx];
       if(!prod?.name)return;
-      const key=_normProdName(prod.name);
-      if(!key||key.length<2)return;
-      if(!profiles[key])profiles[key]={key,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
+      const baseName=_normProdName(prod.name);
+      if(!baseName||baseName.length<2)return;
+      const qty=_extractQty(prod);
+      const key=qty?`${baseName}::${qty}`:baseName;
+      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
       const ts=c.addedAtMs||(c.addedAt?new Date(c.addedAt).getTime():0);
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
       profiles[key].orderIds.add(o._id);
@@ -1403,11 +1413,12 @@ function _buildProductProfiles(){
           lastPrice:t.lastPrice,lastTs:t.lastTs,
           bestSupplierId:bestSupId,bestSupplierName:bestSup?.name||t.lastSupName||'',useCount:t.prices.length};
       }).filter(b=>b.type).sort((a,b)=>b.useCount-a.useCount);
-      return{key:p.key,displayName:p.displayName,usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,
+      return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
+        usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,
         totalEstimate:bundle.reduce((s,b)=>s+(b.lastPrice||b.avgPrice||0),0)};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
-    .slice(0,24);
+    .slice(0,40);
 }
 
 window.renderLibraryTab=function(){
@@ -1444,7 +1455,10 @@ function _renderLibProfiles(){
   }
   el.innerHTML=_libProfiles.map(p=>`
     <div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
-      <div class="lib-pc-name">${p.displayName}</div>
+      <div class="lib-pc-top">
+        <div class="lib-pc-name">${p.baseName||p.displayName}</div>
+        ${p.qty?`<span class="lib-pc-qty">${Number(p.qty).toLocaleString('ar-EG')||p.qty}</span>`:''}
+      </div>
       <div class="lib-pc-meta">${p.bundle.length} بنود · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
       <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
@@ -1456,7 +1470,11 @@ window.openProfileDetail=function(key){
   const p=_libProfiles.find(x=>x.key===key);if(!p)return;
   _activeBundleForApply=p;
   const el=document.getElementById('lib-profile-detail');if(!el)return;
-  setText('lib-pd-name',p.displayName);
+  const pdNameEl=document.getElementById('lib-pd-name');
+  if(pdNameEl){
+    const qtyBadge=p.qty?` <span class="lib-pd-qty">${Number(p.qty).toLocaleString('ar-EG')||p.qty}</span>`:'';
+    pdNameEl.innerHTML=`${p.baseName||p.displayName}${qtyBadge}`;
+  }
   const lastStr=p.lastTs?new Date(p.lastTs).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
   setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
   const tbody=document.getElementById('lib-pd-tbody');
