@@ -733,8 +733,11 @@ function _renderCompleteness(o){
   const comp=getCompleteness(o);
   if(!comp.expected.length){el.innerHTML='';return;}
   const color=comp.pct>=100?'var(--g)':comp.pct>=60?'var(--y)':'var(--r)';
+  const archiveBanner=o.awaitingFinalArchive&&comp.pct<100
+    ?`<div class="ws-archive-gate">🚨 الأوردر في انتظار الأرشفة — يجب إكمال البنود الناقصة أولاً</div>`:'';
   el.innerHTML=`
     <div class="ws-comp-wrap">
+      ${archiveBanner}
       <div class="ws-comp-header">
         <span class="ws-comp-title">🎯 اكتمال بنود التكلفة</span>
         <span class="ws-comp-pct" style="color:${color}">${comp.pct}%</span>
@@ -1215,7 +1218,12 @@ window.saveCost=async function(){
     const rem=parseFloat(o.remaining)||0;
     const ps=(o.paymentStatus||'').toLowerCase();
     if(!isEdit&&o.awaitingFinalArchive&&(rem<=0||['paid','returned','refunded'].includes(ps))){
-      await orderActions.archiveOrder({db,orderId:activeId,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false},bypassWarnings:true});
+      const comp=getCompleteness(o);
+      if(comp.pct<100){
+        toast(`🚨 الأوردر في انتظار الأرشفة — أكمل ${comp.missing.length} بند ناقص أولاً: ${comp.missing.join(' · ')}`,'err');
+      } else {
+        await orderActions.archiveOrder({db,orderId:activeId,role:currentRole,userId:currentUser?.uid||'',userName,source:'production',extraFields:{awaitingFinalArchive:false},bypassWarnings:true});
+      }
     }
 
     setLastCost({supplierId,supplierName,total,note:note||'',type,savedAt:Date.now()});
@@ -1829,46 +1837,50 @@ async function _loadCostTemplates(){
   }catch(e){console.warn('templates load:',e);}
 }
 
-function _getTmplMatch(o){
-  if(!costTemplates.length)return null;
-  for(const prod of(o.products||[])){
-    const base=_normBaseName(prod.name);
-    const qty=_extractQty(prod);
+function _getTmplMatches(o){
+  if(!costTemplates.length)return[];
+  const matches=[];
+  (o.products||[]).forEach((prod,prodIdx)=>{
+    const base=_normBaseName(prod.name),qty=_extractQty(prod);
     const t=costTemplates.find(t=>{
-      const tBase=_normBaseName(t.name);
       const qOk=!t.qty||!qty||String(t.qty)===String(qty);
-      return tBase===base&&qOk;
+      return _normBaseName(t.name)===base&&qOk;
     });
-    if(t)return{template:t,prod,prodIdx:(o.products||[]).indexOf(prod)};
-  }
-  return null;
+    if(t)matches.push({template:t,prod,prodIdx});
+  });
+  return matches;
 }
 
 function _renderTmplApply(o){
   const el=document.getElementById('ws-tmpl-apply');if(!el)return;
-  const match=_getTmplMatch(o);
-  if(!match){el.hidden=true;el.innerHTML='';return;}
-  const{template:t,prodIdx}=match;
+  const matches=_getTmplMatches(o);
+  if(!matches.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
-  const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
-  el.innerHTML=`<div class="tmpl-apply-box">
-    <div class="tmpl-apply-hdr">
-      <span class="tmpl-apply-label">⚡ قالب ثابت</span>
-      <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
-      <span class="tmpl-apply-total">${fn(total)} ج</span>
-    </div>
-    <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
-    <button type="button" class="btn btn-r tmpl-apply-btn" id="tmpl-apply-btn" onclick="applyFullTemplate('${t.id}',${prodIdx})">⚡ تطبيق الكل دفعة واحدة</button>
-  </div>`;
+  el.innerHTML=matches.map(({template:t,prodIdx})=>{
+    const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    const uid=`tap-${t.id}-${prodIdx}`;
+    return`<div class="tmpl-apply-box">
+      <div class="tmpl-apply-hdr">
+        <span class="tmpl-apply-label">⚡ قالب ثابت</span>
+        <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
+        <span class="tmpl-apply-total">${fn(total)} ج</span>
+      </div>
+      <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+      <button type="button" class="btn btn-r tmpl-apply-btn" id="${uid}" onclick="applyFullTemplate('${t.id}',${prodIdx},'${uid}')">⚡ تطبيق الكل دفعة واحدة</button>
+    </div>`;
+  }).join('');
 }
 
-window.applyFullTemplate=async function(templateId,prodIdx){
+window.applyFullTemplate=async function(templateId,prodIdx,btnId){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const t=costTemplates.find(x=>x.id===templateId);if(!t||!t.costItems.length)return;
-  const btn=document.getElementById('tmpl-apply-btn');
+  const btn=document.getElementById(btnId||'');
   if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ التطبيق...';}
+  const recorded=new Set((o.costItems||[]).map(c=>c.type));
+  const toApply=t.costItems.filter(c=>!recorded.has(c.type));
+  if(!toApply.length){if(btn){btn.disabled=false;btn.textContent='✅ مطبّق';} return toast('✅ بنود القالب مسجّلة مسبقاً','');}
   let done=0,failed=0;
-  for(const item of t.costItems){
+  for(const item of toApply){
     try{
       const r=await orderActions.recordCostItem({
         db,orderId:activeId,prodIdx:prodIdx>=0?prodIdx:-1,
@@ -1880,7 +1892,7 @@ window.applyFullTemplate=async function(templateId,prodIdx){
   }
   if(btn){btn.disabled=false;btn.textContent='⚡ تطبيق الكل دفعة واحدة';}
   toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم تطبيق ${done} بنود من القالب`,failed?'err':'ok');
-  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);}},300);
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderTmplApply(fresh);}},300);
 };
 
 function _renderLibTemplates(){
@@ -1888,10 +1900,22 @@ function _renderLibTemplates(){
   if(!costTemplates.length){el.innerHTML='<div class="lib-empty">لا توجد قوالب ثابتة — أضف قالباً للمنتجات المتكررة مثل "ملف محامي" أو "كارت 300"</div>';return;}
   el.innerHTML=`<div class="lib-tmpl-grid">${costTemplates.map(t=>{
     const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    // count matching open orders that still need this template applied
+    const pendingCount=orders.filter(o=>{
+      if(o.stage==='cancelled')return false;
+      const hasProd=(o.products||[]).some(p=>{
+        const qOk=!t.qty||!_extractQty(p)||String(t.qty)===String(_extractQty(p));
+        return _normBaseName(p.name)===_normBaseName(t.name)&&qOk;
+      });
+      if(!hasProd)return false;
+      const recorded=new Set((o.costItems||[]).map(c=>c.type));
+      return!t.costItems.every(c=>recorded.has(c.type));
+    }).length;
     return`<div class="lib-tmpl-card">
       <div class="lib-tmpl-hdr">
         <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</div>
         <div class="lib-tmpl-acts">
+          ${pendingCount?`<button type="button" class="lib-tmpl-bulk-btn" onclick="bulkApplyTemplate('${t.id}')" title="${pendingCount} أوردر بانتظار التطبيق">📦 ${pendingCount}</button>`:''}
           <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
           <button type="button" class="item-act-btn danger" onclick="deleteTmpl('${t.id}')">🗑️</button>
         </div>
@@ -1901,6 +1925,44 @@ function _renderLibTemplates(){
     </div>`;
   }).join('')}</div>`;
 }
+
+window.bulkApplyTemplate=async function(templateId){
+  const t=costTemplates.find(x=>x.id===templateId);if(!t)return;
+  const matching=orders.filter(o=>{
+    if(o.stage==='cancelled')return false;
+    const hasProd=(o.products||[]).some(p=>{
+      const qOk=!t.qty||!_extractQty(p)||String(t.qty)===String(_extractQty(p));
+      return _normBaseName(p.name)===_normBaseName(t.name)&&qOk;
+    });
+    if(!hasProd)return false;
+    const recorded=new Set((o.costItems||[]).map(c=>c.type));
+    return!t.costItems.every(c=>recorded.has(c.type));
+  });
+  if(!matching.length)return toast('✅ كل الأوردرات المطابقة تم تطبيق القالب عليها','');
+  if(!confirm(`تطبيق قالب "${t.name}" على ${matching.length} أوردر؟`))return;
+  let ordersDone=0,ordersFailed=0;
+  for(const o of matching){
+    const prodIdx=(o.products||[]).findIndex(p=>{
+      const qOk=!t.qty||!_extractQty(p)||String(t.qty)===String(_extractQty(p));
+      return _normBaseName(p.name)===_normBaseName(t.name)&&qOk;
+    });
+    const recorded=new Set((o.costItems||[]).map(c=>c.type));
+    let ok=true;
+    for(const item of t.costItems.filter(c=>!recorded.has(c.type))){
+      try{
+        const r=await orderActions.recordCostItem({
+          db,orderId:o._id,prodIdx,
+          payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId,supplierName:item.supplierName||'',note:'',walletId:'',paperMeta:{}},
+          role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+        });
+        if(!r.ok){ok=false;break;}
+      }catch(e){ok=false;break;}
+    }
+    if(ok)ordersDone++;else ordersFailed++;
+  }
+  toast(ordersFailed?`✅ ${ordersDone} أوردر · ❌ ${ordersFailed} فشل`:`✅ تم تطبيق القالب على ${ordersDone} أوردر`,ordersFailed?'err':'ok');
+  _renderLibTemplates();
+};
 
 window.openTmplModal=function(id){
   const t=id?costTemplates.find(x=>x.id===id):null;
