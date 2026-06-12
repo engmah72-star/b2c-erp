@@ -707,7 +707,7 @@ function _populateWorkspace(o){
     sel.value='-1';
     sel.onchange=()=>{
       const v=parseInt(sel.value);
-      renderProductsSummary(o,isNaN(v)?-1:v);
+      addCostForProd(isNaN(v)?-1:v);
       onCostInputChange();
     };
   }
@@ -970,6 +970,7 @@ function renderDrawerProfit(o){
 }
 
 function renderItemsBox(o){
+  if((o.products||[]).length){_renderProductsCostView(o);return;}
   const box=document.getElementById('items-box');if(!box)return;
   const items=o.costItems||[];
   if(!items.length){box.innerHTML=`<div class="items-box-empty">📋 لا توجد بنود مسجلة — أضف أول بند أدناه</div>`;return;}
@@ -977,49 +978,88 @@ function renderItemsBox(o){
   box.innerHTML=`<div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow)">${fn(total)} ج</strong></div>`
     +items.map((c,i)=>{
       const supLbl=c.supplierName?`🏭 ${c.supplierName}`:'⚠️ بدون مورد';
-      const prodLbl=(c.prodIdx!=null&&o.products?.[c.prodIdx])?' · '+o.products[c.prodIdx].name:'';
       const paid=c.walletId?'<span class="item-paid">💼 مدفوع</span>':'';
       return`<div class="item-card${i===editCostIdx?' editing':''}">
-        <div class="item-info"><div>${paid}<strong>${c.type||'—'} · ${fn(c.total||0)} ج</strong></div><div>${supLbl}${prodLbl}${c.note?' · 📝 '+c.note:''}</div></div>
+        <div class="item-info"><div>${paid}<strong>${c.type||'—'} · ${fn(c.total||0)} ج</strong></div><div>${supLbl}${c.note?' · 📝 '+c.note:''}</div></div>
         <div class="item-actions">
-          <button type="button" class="item-act-btn edit" onclick="editCost(${i})" title="تعديل">✏️</button>
-          <button type="button" class="item-act-btn danger" onclick="deleteCost(${i})" title="حذف">🗑️</button>
+          <button type="button" class="item-act-btn edit" onclick="editCost(${i})">✏️</button>
+          <button type="button" class="item-act-btn danger" onclick="deleteCost(${i})">🗑️</button>
         </div>
       </div>`;
     }).join('')
-    +`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate()" title="احفظ هذه البنود كقالب لاستخدامه مستقبلاً">💾 حفظ كقالب</button>`;
+    +`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate()">💾 حفظ كقالب</button>`;
 }
 
-function renderProductsSummary(o,selectedIdx){
-  const prods=o.products||[];
+function _renderProductsCostView(o){
   const el=document.getElementById('cost-products-summary');if(!el)return;
-  if(!prods.length){el.innerHTML='';return;}
-  const blocks=prods.map((p,i)=>{
+  const prods=o.products||[];
+  const allItems=o.costItems||[];
+  let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
+  prods.forEach((p,i)=>{
+    const pItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx===i);
+    const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
-    const isSel=selectedIdx!=null&&selectedIdx>=0&&selectedIdx===i;
-    return`<div class="prod-block${isSel?' sel':''}" onclick="pickProductFromSummary(${i})">
-      <div class="prod-block-hdr">
-        <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
-        <span class="qty-big">× ${p.qty||0}</span>
-        ${p.size?`<span class="prod-tag prod-tag-size">📐 ${p.size}</span>`:''}
-        ${p.paper?`<span class="prod-tag prod-tag-paper">📄 ${p.paper}${p.weight?' · '+p.weight+'جم':''}</span>`:''}
-        ${printLbl?`<span class="prod-tag prod-tag-print">🖨️ ${printLbl}</span>`:''}
-        ${(p.extras||[]).map(e=>`<span class="prod-tag prod-tag-extra">${e}</span>`).join('')}
-        ${p.supplierName?`<span class="prod-tag prod-tag-sup">🏭 ${p.supplierName}</span>`:'<span class="prod-tag" style="color:var(--r)">⚠️ بدون مورد</span>'}
+    html+=`<div class="prod-cost-card">
+      <div class="prod-cc-hdr">
+        <div class="prod-cc-info">
+          <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
+          <span class="qty-big">× ${p.qty||0}</span>
+          ${p.size?`<span class="prod-tag prod-tag-size">📐 ${p.size}</span>`:''}
+          ${printLbl?`<span class="prod-tag prod-tag-print">🖨️ ${printLbl}</span>`:''}
+          ${(p.extras||[]).map(e=>`<span class="prod-tag prod-tag-extra">${e}</span>`).join('')}
+          ${p.supplierName?`<span class="prod-tag prod-tag-sup">🏭 ${p.supplierName}</span>`:'<span class="prod-no-sup">⚠️ بدون مورد</span>'}
+        </div>
+        <span class="prod-cc-total">${pItems.length?fn(pTotal)+' ج':'—'}</span>
       </div>
       ${p.notes?`<div class="prod-block-notes">📝 ${p.notes}</div>`:''}
       ${p.designImageUrl?`<img src="${p.designImageUrl}" class="design-img" loading="lazy" onclick="event.stopPropagation();window.open('${p.designImageUrl}','_blank')" alt="">`:''}
+      ${pItems.length?`<div class="prod-cost-items">${pItems.map(c=>`
+        <div class="prod-ci-row${c._gi===editCostIdx?' editing':''}">
+          <span class="pci-type">${c.type||'—'}</span>
+          <span class="pci-sup">${c.supplierName||'⚠️'}</span>
+          <strong class="pci-amt">${fn(c.total||0)} ج</strong>
+          ${c.walletId?'<span class="item-paid">💼</span>':''}
+          <div class="pci-acts">
+            <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
+            <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
+          </div>
+        </div>`).join('')}</div>`:`<div class="prod-no-cost">لا توجد بنود تكلفة لهذا المنتج بعد</div>`}
+      <button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>
     </div>`;
-  }).join('');
-  el.innerHTML=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>${blocks}`;
+  });
+  const genItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx==null||c.prodIdx<0);
+  if(genItems.length){
+    const genTotal=genItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    html+=`<div class="prod-cost-card prod-cc-general">
+      <div class="prod-cc-hdr"><span class="prod-block-name">📋 بنود عامة للأوردر</span><span class="prod-cc-total">${fn(genTotal)} ج</span></div>
+      <div class="prod-cost-items">${genItems.map(c=>`
+        <div class="prod-ci-row${c._gi===editCostIdx?' editing':''}">
+          <span class="pci-type">${c.type||'—'}</span>
+          <span class="pci-sup">${c.supplierName||'—'}</span>
+          <strong class="pci-amt">${fn(c.total||0)} ج</strong>
+          ${c.walletId?'<span class="item-paid">💼</span>':''}
+          <div class="pci-acts">
+            <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
+            <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
+          </div>
+        </div>`).join('')}</div>
+    </div>`;
+  }
+  if(allItems.length) html+=`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate()">💾 حفظ كقالب</button>`;
+  el.innerHTML=html;
+  const box=document.getElementById('items-box');if(box)box.innerHTML='';
 }
 
-window.pickProductFromSummary=function(idx){
+function renderProductsSummary(o){_renderProductsCostView(o);}
+
+window.addCostForProd=function(prodIdx){
   const sel=document.getElementById('cost-prod-idx');
-  if(sel){sel.value=String(idx);onCostInputChange();}
-  const o=orders.find(x=>x._id===activeId);
-  if(o)renderProductsSummary(o,idx);
+  if(sel){sel.value=String(prodIdx);onCostInputChange();}
+  document.getElementById('form-section')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+  document.getElementById('ac-type')?.focus();
 };
+
+window.pickProductFromSummary=function(idx){addCostForProd(idx);};
 
 /* ═══════════════════════════════════════════════════
    FORM CONTROLS
