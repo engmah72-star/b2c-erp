@@ -19,6 +19,7 @@ const CONVERSATIONS_LIMIT = 200;
 const STYLE_ID = 'inbox-fab-style';
 const FAB_ID   = 'inbox-fab';
 const BADGE_ID = 'inbox-fab-badge';
+const LABEL_ID = 'inbox-fab-lbl';
 
 // Skip on pages that shouldn't show the FAB (public/redirect-only/login)
 function shouldSkipFab(){
@@ -38,7 +39,7 @@ function ensureStyle(){
       box-shadow:0 4px 16px rgba(74,142,245,.42);
       transition:transform .15s ease,box-shadow .15s ease;
       font-family:inherit;display:flex;align-items:center;justify-content:center;
-      text-decoration:none;}
+      text-decoration:none;gap:0;}
     #${FAB_ID}:hover{transform:scale(1.08);box-shadow:0 6px 22px rgba(124,92,255,.55);}
     #${FAB_ID}:active{transform:scale(.96);}
     #${BADGE_ID}{position:absolute;top:-3px;right:-3px;background:var(--r);color:#fff;
@@ -46,8 +47,13 @@ function ensureStyle(){
       text-align:center;border:2px solid #07080f;
       box-shadow:0 0 0 1px rgba(255,61,110,.4);line-height:1;}
     #${BADGE_ID}.hidden{display:none;}
+    #${LABEL_ID}{display:none;font-size:13px;font-weight:700;letter-spacing:.2px;}
     @media (max-width:768px){
-      #${FAB_ID}{bottom:80px;left:14px;width:50px;height:50px;font-size:var(--fs-3xl);}
+      #${FAB_ID}{
+        bottom:calc(var(--mob-nav-h,64px) + 14px + env(safe-area-inset-bottom,0px));
+        left:14px;width:auto;height:50px;
+        border-radius:25px;padding:0 16px 0 12px;gap:7px;font-size:22px;}
+      #${LABEL_ID}{display:inline;}
     }
   `;
   document.head.appendChild(s);
@@ -62,7 +68,7 @@ function injectFab(){
   a.href='inbox.html';
   a.title='المحادثات الداخلية';
   a.setAttribute('aria-label','المحادثات الداخلية');
-  a.innerHTML=`<span style="line-height:1">💬</span><span id="${BADGE_ID}" class="hidden">0</span>`;
+  a.innerHTML=`<span style="line-height:1">💬</span><span id="${LABEL_ID}">رسائل</span><span id="${BADGE_ID}" class="hidden">0</span>`;
   document.body.appendChild(a);
   return a;
 }
