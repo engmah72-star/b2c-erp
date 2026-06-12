@@ -446,57 +446,26 @@ window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';
 /* ═══════════════════════════════════════════════════
    COST TEMPLATE ENGINE
    ═══════════════════════════════════════════════════ */
-const PRINT_TMPL = {
-  'offset':    ['زنكات','طباعة أوفست','ورق','قص'],
-  'أوفست':    ['زنكات','طباعة أوفست','ورق','قص'],
-  'digital':   ['طباعة ديجيتال'],
-  'ديجيتال':  ['طباعة ديجيتال'],
-  'uv':        ['طباعة UV'],
-  'flex':      ['طباعة فليكس'],
-  'فليكس':    ['طباعة فليكس'],
-  'screen':    ['طباعة سيلك'],
-  'سيلك':     ['طباعة سيلك'],
-  'riso':      ['طباعة ريزو','ورق'],
-  'ريزو':     ['طباعة ريزو','ورق'],
-};
-const EXTRAS_MAP = {
-  'سلفنة':'سلفنة','لامينيشن':'سلفنة','بطاقة':'سلفنة',
-  'يوفي':'يوفي','حفر':'حفر','قص':'قص',
-  'تجميع':'تجميع','خيط':'تجميع/خيط',
-  'ذهب':'طباعة ذهبية','فضة':'طباعة فضية',
-  'تغليف':'تغليف','كرتون':'كرتون/علب',
-};
-
 function getExpectedTypes(order){
+  if(!masterCategories.length)return[];
   const types=new Set();
   (order.products||[]).forEach(p=>{
     const pt=(p.printType||'').toLowerCase();
-    const key=Object.keys(PRINT_TMPL).find(k=>pt===k||pt.includes(k));
-    (key?PRINT_TMPL[key]:['طباعة']).forEach(t=>types.add(t));
-    if(p.paper||p.weight)types.add('ورق');
-    (p.extras||[]).forEach(e=>{
-      const eL=e.toLowerCase();
-      for(const[k,v]of Object.entries(EXTRAS_MAP)){if(eL.includes(k)){types.add(v);break;}}
-    });
+    if(!pt)return;
+    // derive expected types from masterCategories using printTypes[] field set in settings
+    masterCategories
+      .filter(c=>c.isCostItem&&(c.printTypes||[]).some(x=>x===pt||pt.includes(x)||x.includes(pt)))
+      .forEach(c=>types.add(c.label));
   });
   return[...types];
 }
 
-// fuzzy: expected "طباعة ديجيتال" matches recorded "مطبعة ديجيتال" via shared keyword "ديجيتال"
-function _typeSatisfied(expected, recordedArr){
-  const e=expected.trim();
-  if(recordedArr.some(r=>r===e))return true;
-  if(recordedArr.some(r=>r.includes(e)||e.includes(r)))return true;
-  const eWords=e.split(/\s+/).filter(w=>w.length>2);
-  return eWords.length>0&&recordedArr.some(r=>eWords.some(w=>r.includes(w)));
-}
-
 function getCompleteness(order){
   const expected=getExpectedTypes(order);
-  const recorded=(order.costItems||[]).map(c=>(c.type||'').trim());
-  const done=expected.filter(t=>_typeSatisfied(t,recorded));
-  const missing=expected.filter(t=>!_typeSatisfied(t,recorded));
-  const pct=expected.length?Math.round(done.length/expected.length*100):(recorded.length>0?100:0);
+  const recorded=new Set((order.costItems||[]).map(c=>(c.type||'').trim()));
+  const done=expected.filter(t=>recorded.has(t));
+  const missing=expected.filter(t=>!recorded.has(t));
+  const pct=expected.length?Math.round(done.length/expected.length*100):((order.costItems||[]).length>0?100:0);
   return{expected,done,missing,pct};
 }
 
