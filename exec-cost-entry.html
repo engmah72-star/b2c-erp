@@ -56,12 +56,90 @@
 
     <!-- View tabs -->
     <div class="view-tabs">
-      <button type="button" class="vtab active" id="vtab-queue" onclick="setView('queue',this)">📋 قائمة الأوردرات</button>
-      <button type="button" class="vtab" id="vtab-register" onclick="setView('register',this)">📊 سجل التكاليف الكاملة</button>
+      <button type="button" class="vtab active" id="vtab-library" onclick="setView('library',this)">📚 مكتبة التكاليف</button>
+      <button type="button" class="vtab" id="vtab-queue" onclick="setView('queue',this)">📋 قائمة الأوردرات</button>
+      <button type="button" class="vtab" id="vtab-register" onclick="setView('register',this)">📊 السجل الكامل</button>
     </div>
 
+    <!-- ══════════════ LIBRARY VIEW (default) ══════════════ -->
+    <div id="view-library">
+
+      <!-- Hero search -->
+      <div class="lib-hero">
+        <input type="search" id="lib-q" class="inp lib-search-inp"
+          placeholder="🔍 ابحث عن أي منتج، نوع بند، أو مورد من التاريخ الكامل..."
+          oninput="onLibSearch(this.value)" autocomplete="off">
+      </div>
+
+      <!-- Search results (shown while searching) -->
+      <div id="lib-search-results" hidden></div>
+
+      <!-- Default browse (shown when not searching) -->
+      <div id="lib-default-view">
+
+        <!-- Stats strip -->
+        <div class="lib-stats-row" id="lib-stats"></div>
+
+        <!-- Product templates -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">📦 قوالب المنتجات (مكتشفة تلقائياً)</span>
+            <span class="lib-section-meta" id="lib-profiles-meta"></span>
+          </div>
+          <div class="lib-profiles-grid" id="lib-profiles"></div>
+        </div>
+
+        <!-- Profile expanded detail -->
+        <div class="lib-profile-detail" id="lib-profile-detail" hidden>
+          <div class="lib-pd-head">
+            <div>
+              <div class="lib-pd-name" id="lib-pd-name"></div>
+              <div class="lib-pd-stats" id="lib-pd-stats"></div>
+            </div>
+            <button type="button" class="lib-pd-close" onclick="closeProfileDetail()">✕</button>
+          </div>
+          <div class="lib-pd-table-wrap">
+            <table class="lib-pd-table">
+              <thead><tr>
+                <th>نوع البند</th>
+                <th>أفضل مورد</th>
+                <th>متوسط السعر</th>
+                <th>آخر سعر</th>
+                <th>× استُخدم</th>
+                <th></th>
+              </tr></thead>
+              <tbody id="lib-pd-tbody"></tbody>
+            </table>
+          </div>
+          <div class="lib-pd-footer">
+            <div class="lib-pd-total">الإجمالي المتوقع: <strong id="lib-pd-total">—</strong></div>
+            <button type="button" class="btn lib-pd-apply-btn" id="lib-pd-apply-all" onclick="applyBundleToWorkspace()">
+              ⚡ تطبيق الكل على الأوردر الحالي
+            </button>
+          </div>
+        </div>
+
+        <!-- Active suppliers last 30 days -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">🏭 الموردين النشطين (آخر 30 يوم)</span>
+          </div>
+          <div class="lib-sup-cards" id="lib-sup-cards"></div>
+        </div>
+
+        <!-- Most used cost types -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">🏷️ أكثر أنواع البنود استخداماً — اضغط للبحث</span>
+          </div>
+          <div class="lib-type-chips" id="lib-type-chips"></div>
+        </div>
+
+      </div><!-- /lib-default-view -->
+    </div><!-- /view-library -->
+
     <!-- Split layout: queue (left) + workspace (right) -->
-    <div class="split-layout" id="view-queue">
+    <div class="split-layout" id="view-queue" hidden>
 
       <!-- ══════════════ LEFT: Order Queue ══════════════ -->
       <div class="order-queue" id="order-queue">
@@ -401,6 +479,7 @@ onAuthStateChanged(auth,async u=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     renderList();
     if(!document.getElementById('view-register')?.hidden)renderRegister();
+    if(!document.getElementById('view-library')?.hidden)renderLibraryTab();
     // Refresh active workspace if open
     if(activeId){
       const fresh=orders.find(x=>x._id===activeId);
@@ -1094,12 +1173,14 @@ window.openCostModal=window.openWorkspace;
    VIEW TOGGLE
    ═══════════════════════════════════════════════════ */
 window.setView=function(v,btn){
-  const isQueue=v==='queue';
-  document.getElementById('view-queue').hidden=!isQueue;
-  document.getElementById('view-register').hidden=isQueue;
+  ['queue','register','library'].forEach(name=>{
+    const el=document.getElementById('view-'+name);
+    if(el)el.hidden=name!==v;
+  });
   document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));
   (btn||document.getElementById('vtab-'+v))?.classList.add('active');
-  if(!isQueue){_buildRegisterFilters();renderRegister();}
+  if(v==='register'){_buildRegisterFilters();renderRegister();}
+  if(v==='library')renderLibraryTab();
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1274,6 +1355,260 @@ window.exportByProduct=function(){
   _downloadCSV(rows,`تكاليف-حسب-المنتج-${new Date().toISOString().slice(0,10)}.csv`);
   toast('📦 تم التصدير حسب المنتج','ok');
 };
+
+/* ═══════════════════════════════════════════════════
+   📚 COST LIBRARY TAB — intelligence engine
+   ═══════════════════════════════════════════════════ */
+let _libProfiles=[],_activeBundleForApply=null;
+
+function _normProdName(name){
+  return(name||'')
+    .replace(/[\d٠-٩,،]+\s*(?:قطعة|نسخة|طبعة|حبة|ألف|k|K|x|X)?/gi,' ')
+    .replace(/\s+/g,' ').trim().toLowerCase().substring(0,35);
+}
+
+function _buildProductProfiles(){
+  const profiles={};
+  orders.forEach(o=>{
+    const prods=o.products||[];
+    (o.costItems||[]).forEach(c=>{
+      if(c.prodIdx==null||c.prodIdx<0)return;
+      const prod=prods[c.prodIdx];
+      if(!prod?.name)return;
+      const key=_normProdName(prod.name);
+      if(!key||key.length<2)return;
+      if(!profiles[key])profiles[key]={key,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
+      const ts=c.addedAtMs||(c.addedAt?new Date(c.addedAt).getTime():0);
+      profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
+      profiles[key].orderIds.add(o._id);
+      if(ts>profiles[key].lastTs){profiles[key].lastTs=ts;profiles[key].displayName=prod.name;}
+    });
+  });
+  _libProfiles=Object.values(profiles)
+    .filter(p=>p.items.length>=2)
+    .map(p=>{
+      const byType={};
+      p.items.forEach(item=>{
+        if(!item.type)return;
+        if(!byType[item.type])byType[item.type]={type:item.type,prices:[],supUsage:{},lastPrice:0,lastTs:0,lastSupId:'',lastSupName:''};
+        const t=byType[item.type];
+        if(item.total>0)t.prices.push(item.total);
+        if(item.supplierId)t.supUsage[item.supplierId]=(t.supUsage[item.supplierId]||0)+1;
+        if(item.ts>=t.lastTs){t.lastTs=item.ts;t.lastPrice=item.total;t.lastSupId=item.supplierId;t.lastSupName=item.supplierName;}
+      });
+      const bundle=Object.values(byType).map(t=>{
+        const bestSupId=Object.entries(t.supUsage).sort((a,b)=>b[1]-a[1])[0]?.[0]||t.lastSupId;
+        const bestSup=suppliers.find(s=>s._id===bestSupId);
+        return{type:t.type,avgPrice:t.prices.length?Math.round(t.prices.reduce((s,v)=>s+v,0)/t.prices.length):0,
+          lastPrice:t.lastPrice,lastTs:t.lastTs,
+          bestSupplierId:bestSupId,bestSupplierName:bestSup?.name||t.lastSupName||'',useCount:t.prices.length};
+      }).filter(b=>b.type).sort((a,b)=>b.useCount-a.useCount);
+      return{key:p.key,displayName:p.displayName,usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,
+        totalEstimate:bundle.reduce((s,b)=>s+(b.lastPrice||b.avgPrice||0),0)};
+    })
+    .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
+    .slice(0,24);
+}
+
+window.renderLibraryTab=function(){
+  _buildProductProfiles();
+  _renderLibStats();_renderLibProfiles();_renderLibSuppliers();_renderLibTypes();
+};
+
+function _renderLibStats(){
+  const el=document.getElementById('lib-stats');if(!el)return;
+  const items=_getAllCostItemsExtended();
+  const totalCost=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const uProds=new Set(items.map(c=>_normProdName(c._prodName)).filter(k=>k&&!k.includes('عام'))).size;
+  const uSups=new Set(items.map(c=>c.supplierId).filter(Boolean)).size;
+  el.innerHTML=`
+    <div class="lib-stat"><div class="lib-stat-val">${items.length}</div><div class="lib-stat-lbl">بند مسجّل</div></div>
+    <div class="lib-stat"><div class="lib-stat-val">${_libProfiles.length}</div><div class="lib-stat-lbl">قالب مكتشف</div></div>
+    <div class="lib-stat"><div class="lib-stat-val">${uProds}</div><div class="lib-stat-lbl">منتج فريد</div></div>
+    <div class="lib-stat"><div class="lib-stat-val">${uSups}</div><div class="lib-stat-lbl">مورد نشط</div></div>
+    <div class="lib-stat"><div class="lib-stat-val">${fn(totalCost)} ج</div><div class="lib-stat-lbl">إجمالي التكاليف</div></div>`;
+}
+
+function _dAgo(ts){
+  if(!ts)return'';
+  const d=Math.floor((Date.now()-ts)/86400000);
+  return d===0?'اليوم':d===1?'أمس':`${d} أيام`;
+}
+
+function _renderLibProfiles(){
+  const el=document.getElementById('lib-profiles');if(!el)return;
+  const meta=document.getElementById('lib-profiles-meta');
+  if(meta)meta.textContent=`${_libProfiles.length} قالب`;
+  if(!_libProfiles.length){
+    el.innerHTML='<div class="lib-empty">سيتم اكتشاف القوالب تلقائياً بعد تسجيل بنود تكلفة مرتبطة بمنتجات</div>';return;
+  }
+  el.innerHTML=_libProfiles.map(p=>`
+    <div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
+      <div class="lib-pc-name">${p.displayName}</div>
+      <div class="lib-pc-meta">${p.bundle.length} بنود · ${p.usageCount} أوردر</div>
+      <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
+      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
+      <div class="lib-pc-badge">${p.bundle.slice(0,3).map(b=>`<span>${b.type}</span>`).join('')}</div>
+    </div>`).join('');
+}
+
+window.openProfileDetail=function(key){
+  const p=_libProfiles.find(x=>x.key===key);if(!p)return;
+  _activeBundleForApply=p;
+  const el=document.getElementById('lib-profile-detail');if(!el)return;
+  setText('lib-pd-name',p.displayName);
+  const lastStr=p.lastTs?new Date(p.lastTs).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
+  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
+  const tbody=document.getElementById('lib-pd-tbody');
+  if(tbody){
+    tbody.innerHTML=p.bundle.map(b=>`<tr>
+      <td><span class="reg-type-chip">${b.type}</span></td>
+      <td>${b.bestSupplierName?`🏭 ${b.bestSupplierName}`:'—'}</td>
+      <td class="reg-num">${fn(b.avgPrice)} ج</td>
+      <td class="reg-num">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
+      <td class="reg-num">${b.useCount}×</td>
+      <td><button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.bestSupplierId||'').replace(/'/g,'&#39;')}','${(b.bestSupplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||b.avgPrice||0})">استخدم</button></td>
+    </tr>`).join('');
+  }
+  const total=p.bundle.reduce((s,b)=>s+((b.lastPrice||b.avgPrice)||0),0);
+  setText('lib-pd-total',`${fn(total)} ج`);
+  const applyBtn=document.getElementById('lib-pd-apply-all');
+  if(applyBtn){applyBtn.disabled=!activeId;if(!activeId)applyBtn.title='افتح أوردر من تاب قائمة الأوردرات أولاً';}
+  el.hidden=false;el.scrollIntoView({behavior:'smooth',block:'nearest'});
+};
+
+window.closeProfileDetail=function(){
+  document.getElementById('lib-profile-detail').hidden=true;_activeBundleForApply=null;
+};
+
+window.applyOneItem=function(type,supplierId,supplierName,amount){
+  if(!activeId){
+    // No workspace open — switch to queue tab so user can pick an order
+    setView('queue');toast('اختر أوردر من القائمة ثم عُد للمكتبة أو ابحث مجدداً','');return;
+  }
+  setView('queue');
+  setTimeout(()=>{
+    const tEl=document.getElementById('ac-type');
+    if(tEl){
+      let opt=[...tEl.options].find(o=>o.value===type)||[...tEl.options].find(o=>o.value.includes(type.split(' ').pop()||type));
+      if(opt){tEl.value=opt.value;}
+      else{const no=document.createElement('option');no.value=type;no.textContent=type;tEl.appendChild(no);tEl.value=type;}
+      onTypeChange();
+    }
+    setTimeout(()=>{
+      const sup=document.getElementById('ac-sup');
+      if(sup&&supplierId&&[...sup.options].some(o=>o.value===supplierId))sup.value=supplierId;
+      if(amount)sv('ac-total',Math.round(amount));
+      onCostInputChange();
+      document.getElementById('ac-total')?.focus();
+      toast(`✅ تم تعبئة: ${type}${supplierName?' — '+supplierName:''}${amount?' · '+fn(amount)+' ج':''}`, 'ok');
+    },80);
+  },80);
+};
+
+window.applyBundleToWorkspace=function(){
+  if(!activeId||!_activeBundleForApply)return;
+  const bundle=_activeBundleForApply.bundle;if(!bundle.length)return;
+  const first=bundle[0];
+  applyOneItem(first.type,first.bestSupplierId,first.bestSupplierName,first.lastPrice||first.avgPrice);
+  if(bundle.length>1)toast(`⚡ "${first.type}" جاهز — سجّله ثم كرّر للبنود الباقية (${bundle.length-1} بند)`,'');
+};
+
+function _renderLibSuppliers(){
+  const el=document.getElementById('lib-sup-cards');if(!el)return;
+  const cutoff=Date.now()-30*86400000;
+  const items=_getAllCostItemsExtended().filter(c=>c._ts>=cutoff&&c.supplierId);
+  const supMap={};
+  items.forEach(c=>{
+    if(!supMap[c.supplierId])supMap[c.supplierId]={id:c.supplierId,name:c.supplierName,types:new Set(),count:0,total:0,lastTs:0};
+    supMap[c.supplierId].types.add(c.type);supMap[c.supplierId].count++;
+    supMap[c.supplierId].total+=parseFloat(c.total)||0;
+    if(c._ts>supMap[c.supplierId].lastTs)supMap[c.supplierId].lastTs=c._ts;
+  });
+  const sups=Object.values(supMap).sort((a,b)=>b.count-a.count).slice(0,8);
+  if(!sups.length){el.innerHTML='<div class="lib-empty">لا يوجد بنود آخر 30 يوم</div>';return;}
+  el.innerHTML=sups.map(s=>`
+    <div class="lib-sup-card" onclick="libSearchByType('${(s.name||'').replace(/'/g,'&#39;')}')">
+      <div class="lib-sup-name">🏭 ${s.name||'—'}</div>
+      <div class="lib-sup-meta">${s.count} بند · ${fn(s.total)} ج</div>
+      <div class="lib-sup-last">${_dAgo(s.lastTs)}</div>
+      <div class="lib-sup-types">${[...s.types].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
+    </div>`).join('');
+}
+
+function _renderLibTypes(){
+  const el=document.getElementById('lib-type-chips');if(!el)return;
+  const items=_getAllCostItemsExtended();
+  const typeMap={};
+  items.forEach(c=>{
+    if(!c.type)return;
+    if(!typeMap[c.type])typeMap[c.type]={type:c.type,count:0,prices:[]};
+    typeMap[c.type].count++;
+    if(parseFloat(c.total)>0)typeMap[c.type].prices.push(parseFloat(c.total));
+  });
+  const types=Object.values(typeMap).sort((a,b)=>b.count-a.count).slice(0,18);
+  el.innerHTML=types.map(t=>{
+    const avg=t.prices.length?Math.round(t.prices.reduce((s,v)=>s+v,0)/t.prices.length):0;
+    return`<div class="lib-type-chip" onclick="libSearchByType('${t.type.replace(/'/g,'&#39;')}')">
+      <span class="lib-type-name">${t.type}</span>
+      <span class="lib-type-count">${t.count}×</span>
+      ${avg?`<span class="lib-type-avg">~${fn(avg)} ج`:''}
+    </div>`;
+  }).join('');
+}
+
+window.onLibSearch=function(q){
+  const resultsEl=document.getElementById('lib-search-results');
+  const defaultEl=document.getElementById('lib-default-view');
+  if(!q.trim()){resultsEl.hidden=true;defaultEl.hidden=false;return;}
+  resultsEl.hidden=false;defaultEl.hidden=true;
+  _renderSearchResults(q.trim());
+};
+
+function _renderSearchResults(q){
+  const el=document.getElementById('lib-search-results');if(!el)return;
+  const qL=q.toLowerCase();
+  const items=_getAllCostItemsExtended()
+    .filter(c=>[c._clientName,c._orderShortId,c.type,c.supplierName,c.note,c._prodName].join(' ').toLowerCase().includes(qL))
+    .slice(0,80);
+  if(!items.length){el.innerHTML=`<div class="lib-empty">لا توجد نتائج لـ "${q}"</div>`;return;}
+  // Group by type
+  const byType={};
+  items.forEach(c=>{if(!byType[c.type])byType[c.type]=[];byType[c.type].push(c);});
+  let html=`<div class="lib-sr-header">${items.length} نتيجة لـ "<strong>${q}</strong>"</div>`;
+  for(const[type,grpItems]of Object.entries(byType)){
+    const prices=grpItems.map(c=>parseFloat(c.total)||0).filter(v=>v>0);
+    const avg=prices.length?Math.round(prices.reduce((s,v)=>s+v,0)/prices.length):0;
+    const minP=prices.length?Math.min(...prices):0,maxP=prices.length?Math.max(...prices):0;
+    html+=`<div class="lib-sr-group">
+      <div class="lib-sr-type-hdr">
+        <span class="reg-type-chip">${type}</span>
+        <span class="lib-sr-stats">${grpItems.length} بند · متوسط ${fn(avg)} ج · (${fn(minP)}–${fn(maxP)} ج)</span>
+      </div>
+      <div class="lib-sr-items">
+        ${grpItems.slice(0,10).map(c=>{
+          const dateStr=c._ts?new Date(c._ts).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
+          return`<div class="lib-sr-item">
+            <div class="lib-sri-info">
+              <div class="lib-sri-prod">${c._prodName}</div>
+              <div class="lib-sri-meta">
+                <span>#${c._orderShortId}</span>
+                ${c._clientName&&c._clientName!=='—'?`<span>· ${c._clientName}</span>`:''}
+                ${c.supplierName?`<span>· 🏭 ${c.supplierName}</span>`:''}
+                <span>· ${dateStr}</span>
+              </div>
+            </div>
+            <div class="lib-sri-price">${fn(c.total||0)} ج</div>
+            <button type="button" class="lib-use-btn" onclick="applyOneItem('${(c.type||'').replace(/'/g,"&#39;")}','${(c.supplierId||'').replace(/'/g,"&#39;")}','${(c.supplierName||'').replace(/'/g,"&#39;")}',${parseFloat(c.total)||0})">استخدم</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  el.innerHTML=html;
+}
+
+window.libSearchByType=function(t){const inp=document.getElementById('lib-q');if(inp)inp.value=t;onLibSearch(t);};
 
 function _downloadCSV(rows,filename){
   const bom='﻿';
