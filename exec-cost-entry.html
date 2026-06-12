@@ -118,6 +118,15 @@
           </div>
         </div>
 
+        <!-- Fixed Cost Templates -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">⚡ قوالب التكلفة الثابتة</span>
+            <button type="button" class="btn btn-sm btn-r" onclick="openTmplModal()">＋ قالب جديد</button>
+          </div>
+          <div id="lib-templates-grid"></div>
+        </div>
+
         <!-- Active suppliers last 30 days -->
         <div class="lib-section">
           <div class="lib-section-hdr">
@@ -206,6 +215,9 @@
 
           <!-- Completeness bar -->
           <div class="ws-completeness" id="ws-completeness"></div>
+
+          <!-- Fixed template apply (one-click batch) -->
+          <div id="ws-tmpl-apply" hidden></div>
 
           <!-- Library profile match for this order's products -->
           <div id="ws-lib-profile-suggest" hidden></div>
@@ -353,6 +365,29 @@
 </div><!-- /main -->
 </div><!-- /app-shell -->
 
+<!-- ══ COST TEMPLATE MODAL ══ -->
+<div class="tmpl-modal-ov" id="tmpl-modal" hidden onclick="if(event.target===this)closeTmplModal()">
+  <div class="tmpl-modal-box">
+    <div class="modal-head"><span class="modal-title" id="tmpl-modal-title">⚡ قالب جديد</span><button type="button" class="modal-x" onclick="closeTmplModal()">✕</button></div>
+    <div class="modal-body" style="padding:16px 20px">
+      <input type="hidden" id="tmpl-id">
+      <div class="fg"><label>📦 اسم المنتج <span class="text-r">*</span></label>
+        <input class="inp" id="tmpl-name" placeholder="ملف محامي / كارت شخصي / بروشور...">
+      </div>
+      <div class="fg"><label>🔢 الكمية (اختياري — اتركه فارغاً لكل الكميات)</label>
+        <input class="inp" id="tmpl-qty" type="number" placeholder="300">
+      </div>
+      <div class="tmpl-items-label">📋 بنود التكلفة <span class="text-r">*</span></div>
+      <div id="tmpl-items-list"></div>
+      <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addTmplItem()">＋ إضافة بند</button>
+    </div>
+    <div class="tmpl-modal-foot">
+      <button type="button" class="btn btn-ghost" onclick="closeTmplModal()">إلغاء</button>
+      <button type="button" class="btn btn-r" onclick="saveTmplModal()">✓ حفظ القالب</button>
+    </div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 
 <script type="module">
@@ -467,6 +502,7 @@ onAuthStateChanged(auth,async u=>{
   userName=ud.name||u.email;
   buildSidebar(ud,'exec-cost-entry.html');
   buildMobNav(role,'exec-cost-entry.html');
+  _loadCostTemplates();
   setText('nav-name',userName);
   document.getElementById('nav-av').textContent=userName[0]?.toUpperCase()||'م';
   document.getElementById('role-badge').textContent=role==='production_agent'?'مندوب تنفيذ':(role==='admin'?'أدمن':'مدير');
@@ -613,6 +649,7 @@ window.openWorkspace=function(orderId){
   document.getElementById('ws-content').hidden=false;
 
   _populateWorkspace(o);
+  _renderTmplApply(o);
   _renderLibProfileSuggest(o);
   clearForm();
   _triggerLibSuggestions('');
@@ -1546,6 +1583,7 @@ function _buildProductProfiles(){
 window.renderLibraryTab=function(){
   _buildProductProfiles();
   _renderLibStats();_renderLibProfiles();_renderLibSuppliers();_renderLibTypes();
+  _renderLibTemplates();
 };
 
 function _renderLibStats(){
@@ -1774,6 +1812,154 @@ function _downloadCSV(rows,filename){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
 }
+
+/* ═══════════════════════════════════════════════════
+   ⚡ FIXED COST TEMPLATES
+   ═══════════════════════════════════════════════════ */
+let costTemplates=[];
+let _tmplItems=[];
+
+async function _loadCostTemplates(){
+  try{
+    const{getCostTemplates}=await import('./core/cost-template-actions.js');
+    costTemplates=await getCostTemplates(db);
+    _renderLibTemplates();
+    if(activeId){const o=orders.find(x=>x._id===activeId);if(o)_renderTmplApply(o);}
+  }catch(e){console.warn('templates load:',e);}
+}
+
+function _getTmplMatch(o){
+  if(!costTemplates.length)return null;
+  for(const prod of(o.products||[])){
+    const base=_normBaseName(prod.name);
+    const qty=_extractQty(prod);
+    const t=costTemplates.find(t=>{
+      const tBase=_normBaseName(t.name);
+      const qOk=!t.qty||!qty||String(t.qty)===String(qty);
+      return tBase===base&&qOk;
+    });
+    if(t)return{template:t,prod,prodIdx:(o.products||[]).indexOf(prod)};
+  }
+  return null;
+}
+
+function _renderTmplApply(o){
+  const el=document.getElementById('ws-tmpl-apply');if(!el)return;
+  const match=_getTmplMatch(o);
+  if(!match){el.hidden=true;el.innerHTML='';return;}
+  const{template:t,prodIdx}=match;
+  el.hidden=false;
+  const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  el.innerHTML=`<div class="tmpl-apply-box">
+    <div class="tmpl-apply-hdr">
+      <span class="tmpl-apply-label">⚡ قالب ثابت</span>
+      <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
+      <span class="tmpl-apply-total">${fn(total)} ج</span>
+    </div>
+    <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+    <button type="button" class="btn btn-r tmpl-apply-btn" id="tmpl-apply-btn" onclick="applyFullTemplate('${t.id}',${prodIdx})">⚡ تطبيق الكل دفعة واحدة</button>
+  </div>`;
+}
+
+window.applyFullTemplate=async function(templateId,prodIdx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const t=costTemplates.find(x=>x.id===templateId);if(!t||!t.costItems.length)return;
+  const btn=document.getElementById('tmpl-apply-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ التطبيق...';}
+  let done=0,failed=0;
+  for(const item of t.costItems){
+    try{
+      const r=await orderActions.recordCostItem({
+        db,orderId:activeId,prodIdx:prodIdx>=0?prodIdx:-1,
+        payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId,supplierName:item.supplierName||'',note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)done++;else{failed++;console.warn('tmpl item fail:',r.errors);}
+    }catch(e){failed++;console.error(e);}
+  }
+  if(btn){btn.disabled=false;btn.textContent='⚡ تطبيق الكل دفعة واحدة';}
+  toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم تطبيق ${done} بنود من القالب`,failed?'err':'ok');
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);}},300);
+};
+
+function _renderLibTemplates(){
+  const el=document.getElementById('lib-templates-grid');if(!el)return;
+  if(!costTemplates.length){el.innerHTML='<div class="lib-empty">لا توجد قوالب ثابتة — أضف قالباً للمنتجات المتكررة مثل "ملف محامي" أو "كارت 300"</div>';return;}
+  el.innerHTML=`<div class="lib-tmpl-grid">${costTemplates.map(t=>{
+    const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    return`<div class="lib-tmpl-card">
+      <div class="lib-tmpl-hdr">
+        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</div>
+        <div class="lib-tmpl-acts">
+          <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
+          <button type="button" class="item-act-btn danger" onclick="deleteTmpl('${t.id}')">🗑️</button>
+        </div>
+      </div>
+      <div class="lib-tmpl-items">${t.costItems.map(c=>`<span class="lib-tmpl-chip"><span>${c.type}</span><span class="lib-tmpl-sup"> · ${c.supplierName||'—'}</span><strong> · ${fn(c.amount)} ج</strong></span>`).join('')}</div>
+      <div class="lib-tmpl-total">الإجمالي: <strong>${fn(total)} ج</strong></div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+window.openTmplModal=function(id){
+  const t=id?costTemplates.find(x=>x.id===id):null;
+  setText('tmpl-modal-title',id?'✏️ تعديل القالب':'⚡ قالب جديد');
+  sv('tmpl-id',id||'');sv('tmpl-name',t?.name||'');sv('tmpl-qty',t?.qty||'');
+  _tmplItems=t?t.costItems.map(c=>({...c})):[{type:'',supplierId:'',supplierName:'',amount:''}];
+  _renderTmplItems();
+  document.getElementById('tmpl-modal').hidden=false;
+};
+window.closeTmplModal=function(){document.getElementById('tmpl-modal').hidden=true;_tmplItems=[];};
+window.addTmplItem=function(){_tmplItems.push({type:'',supplierId:'',supplierName:'',amount:''});_renderTmplItems();};
+window.removeTmplItem=function(i){_tmplItems.splice(i,1);if(!_tmplItems.length)_tmplItems.push({type:'',supplierId:'',supplierName:'',amount:''});_renderTmplItems();};
+window.updateTmplItem=function(i,field,val){if(_tmplItems[i])_tmplItems[i][field]=val;};
+window.updateTmplItemSup=function(i,sel){
+  if(!_tmplItems[i])return;
+  const opt=sel.options[sel.selectedIndex];
+  _tmplItems[i].supplierId=opt.value;
+  _tmplItems[i].supplierName=(opt.dataset?.name||opt.textContent||'').split(' · ')[0].trim();
+};
+
+function _buildTmplTypeOpts(sel){
+  const types=masterCategories.length?masterCategories.map(c=>c.label):['طباعة','ورق','زنكات','سلفنة','قص','تجميع','شحن','تصميم','أخرى'];
+  return`<option value="">— نوع البند —</option>`+types.map(t=>`<option value="${t}"${t===sel?' selected':''}>${t}</option>`).join('');
+}
+function _buildTmplSupOpts(selId){
+  return`<option value="">— المورد —</option>`+suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"${s._id===selId?' selected':''}>${s.name||'—'}${s.phone?' · '+s.phone:''}</option>`).join('');
+}
+function _renderTmplItems(){
+  const el=document.getElementById('tmpl-items-list');if(!el)return;
+  el.innerHTML=_tmplItems.map((item,i)=>`
+    <div class="tmpl-item-row">
+      <select class="inp tmpl-inp" onchange="updateTmplItem(${i},'type',this.value)">${_buildTmplTypeOpts(item.type)}</select>
+      <select class="inp tmpl-inp" onchange="updateTmplItemSup(${i},this)">${_buildTmplSupOpts(item.supplierId)}</select>
+      <input class="inp tmpl-inp tmpl-amt" type="number" placeholder="المبلغ (ج)" value="${item.amount||''}" oninput="updateTmplItem(${i},'amount',this.value)">
+      <button type="button" class="item-act-btn danger" onclick="removeTmplItem(${i})">🗑️</button>
+    </div>`).join('');
+}
+window.saveTmplModal=async function(){
+  const name=gv('tmpl-name').trim(),qty=gv('tmpl-qty').trim(),id=gv('tmpl-id')||null;
+  if(!name)return toast('⚠️ أدخل اسم المنتج','err');
+  const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
+  if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
+  try{
+    const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+    const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    await _loadCostTemplates();
+    closeTmplModal();
+    toast('✅ تم حفظ القالب','ok');
+  }catch(e){toast('❌ '+(e.message||'فشل الحفظ'),'err');}
+};
+window.deleteTmpl=async function(id){
+  if(!confirm('حذف هذا القالب؟'))return;
+  try{
+    const{deleteCostTemplate}=await import('./core/cost-template-actions.js');
+    await deleteCostTemplate(db,id);
+    await _loadCostTemplates();
+    toast('🗑️ تم حذف القالب','ok');
+  }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
+};
 </script>
 </body>
 </html>
