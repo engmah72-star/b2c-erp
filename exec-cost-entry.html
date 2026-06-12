@@ -118,6 +118,15 @@
           </div>
         </div>
 
+        <!-- Fixed Cost Templates -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">⚡ قوالب التكلفة الثابتة</span>
+            <button type="button" class="btn btn-sm btn-r" onclick="openTmplModal()">＋ قالب جديد</button>
+          </div>
+          <div id="lib-templates-grid"></div>
+        </div>
+
         <!-- Active suppliers last 30 days -->
         <div class="lib-section">
           <div class="lib-section-hdr">
@@ -206,6 +215,9 @@
 
           <!-- Completeness bar -->
           <div class="ws-completeness" id="ws-completeness"></div>
+
+          <!-- Fixed template apply (one-click batch) -->
+          <div id="ws-tmpl-apply" hidden></div>
 
           <!-- Library profile match for this order's products -->
           <div id="ws-lib-profile-suggest" hidden></div>
@@ -297,6 +309,12 @@
         <div class="reg-filters">
           <select class="inp reg-sel" id="reg-type" onchange="renderRegister()"><option value="">كل الأنواع</option></select>
           <select class="inp reg-sel" id="reg-sup" onchange="renderRegister()"><option value="">كل الموردين</option></select>
+          <div class="reg-date-range">
+            <input class="inp reg-date-inp" type="date" id="reg-from" onchange="renderRegister()" title="من تاريخ">
+            <span class="reg-date-sep">←</span>
+            <input class="inp reg-date-inp" type="date" id="reg-to" onchange="renderRegister()" title="إلى تاريخ">
+            <button type="button" class="reg-date-clr" onclick="clearRegDates()" title="مسح نطاق التاريخ">✕</button>
+          </div>
           <select class="inp reg-sel" id="reg-stage" onchange="renderRegister()">
             <option value="">كل المراحل</option>
             <option value="design">✏️ تصميم</option>
@@ -332,6 +350,7 @@
               <th onclick="regSort('type')" class="reg-th-sort">نوع البند <span class="reg-sort-ico" id="rsi-type"></span></th>
               <th onclick="regSort('supplier')" class="reg-th-sort">المورد <span class="reg-sort-ico" id="rsi-supplier"></span></th>
               <th onclick="regSort('total')" class="reg-th-sort reg-col-amount">التكلفة <span class="reg-sort-ico" id="rsi-total"></span></th>
+              <th onclick="regSort('margin')" class="reg-th-sort">الهامش <span class="reg-sort-ico" id="rsi-margin"></span></th>
               <th>المرحلة</th>
               <th onclick="regSort('date')" class="reg-th-sort">التاريخ <span class="reg-sort-ico" id="rsi-date"></span></th>
               <th class="reg-col-note">ملاحظة</th>
@@ -345,6 +364,29 @@
   </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /app-shell -->
+
+<!-- ══ COST TEMPLATE MODAL ══ -->
+<div class="tmpl-modal-ov" id="tmpl-modal" hidden onclick="if(event.target===this)closeTmplModal()">
+  <div class="tmpl-modal-box">
+    <div class="modal-head"><span class="modal-title" id="tmpl-modal-title">⚡ قالب جديد</span><button type="button" class="modal-x" onclick="closeTmplModal()">✕</button></div>
+    <div class="modal-body" style="padding:16px 20px">
+      <input type="hidden" id="tmpl-id">
+      <div class="fg"><label>📦 اسم المنتج <span class="text-r">*</span></label>
+        <input class="inp" id="tmpl-name" placeholder="ملف محامي / كارت شخصي / بروشور...">
+      </div>
+      <div class="fg"><label>🔢 الكمية (اختياري — اتركه فارغاً لكل الكميات)</label>
+        <input class="inp" id="tmpl-qty" type="number" placeholder="300">
+      </div>
+      <div class="tmpl-items-label">📋 بنود التكلفة <span class="text-r">*</span></div>
+      <div id="tmpl-items-list"></div>
+      <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addTmplItem()">＋ إضافة بند</button>
+    </div>
+    <div class="tmpl-modal-foot">
+      <button type="button" class="btn btn-ghost" onclick="closeTmplModal()">إلغاء</button>
+      <button type="button" class="btn btn-r" onclick="saveTmplModal()">✓ حفظ القالب</button>
+    </div>
+  </div>
+</div>
 
 <div class="toasts" id="toasts"></div>
 
@@ -460,6 +502,7 @@ onAuthStateChanged(auth,async u=>{
   userName=ud.name||u.email;
   buildSidebar(ud,'exec-cost-entry.html');
   buildMobNav(role,'exec-cost-entry.html');
+  _loadCostTemplates();
   setText('nav-name',userName);
   document.getElementById('nav-av').textContent=userName[0]?.toUpperCase()||'م';
   document.getElementById('role-badge').textContent=role==='production_agent'?'مندوب تنفيذ':(role==='admin'?'أدمن':'مدير');
@@ -494,6 +537,21 @@ onAuthStateChanged(auth,async u=>{
       if(urlId&&orders.find(o=>o._id===urlId)){
         __deepLinkDone=true;
         setTimeout(()=>openWorkspace(urlId),200);
+      }
+    }
+    // Deep-link: ?tab=register&q=QUERY or ?tab=library
+    if(!__deepLinkDone){
+      const p2=new URLSearchParams(location.search);
+      const tabP=p2.get('tab'),qP=p2.get('q')||p2.get('query');
+      if(tabP==='register'){
+        __deepLinkDone=true;
+        setTimeout(()=>{
+          setView('register');
+          if(qP){const el=document.getElementById('reg-search');if(el){el.value=qP;renderRegister();}}
+        },300);
+      } else if(tabP==='library'){
+        __deepLinkDone=true;
+        setTimeout(()=>setView('library'),200);
       }
     }
   });
@@ -591,6 +649,7 @@ window.openWorkspace=function(orderId){
   document.getElementById('ws-content').hidden=false;
 
   _populateWorkspace(o);
+  _renderTmplApply(o);
   _renderLibProfileSuggest(o);
   clearForm();
   _triggerLibSuggestions('');
@@ -912,7 +971,8 @@ function renderItemsBox(o){
           <button type="button" class="item-act-btn danger" onclick="deleteCost(${i})" title="حذف">🗑️</button>
         </div>
       </div>`;
-    }).join('');
+    }).join('')
+    +`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate()" title="احفظ هذه البنود كقالب لاستخدامه مستقبلاً">💾 حفظ كقالب</button>`;
 }
 
 function renderProductsSummary(o,selectedIdx){
@@ -1211,6 +1271,8 @@ function _getAllCostItemsExtended(){
         _prodName:prod?.name||'— (عام للأوردر)',
         _qty:prod?.qty!=null?String(prod.qty):'—',
         _ts:c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0,
+        _salePrice:parseFloat(o.totalPrice)||parseFloat(o.price)||0,
+        _orderTotalCost:(o.costItems||[]).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0),
       });
     });
   });
@@ -1228,6 +1290,10 @@ function _buildRegisterFilters(){
   const sSel=document.getElementById('reg-sup');
   if(sSel){const prev=sSel.value;sSel.innerHTML='<option value="">كل الموردين</option>'+sups.map(([id,name])=>`<option value="${id}"${id===prev?' selected':''}>${name}</option>`).join('');}
 }
+window.clearRegDates=function(){
+  const f=document.getElementById('reg-from'),t=document.getElementById('reg-to');
+  if(f)f.value='';if(t)t.value='';renderRegister();
+};
 
 function _getRegFiltered(){
   let items=_getAllCostItemsExtended();
@@ -1239,6 +1305,10 @@ function _getRegFiltered(){
   if(type)items=items.filter(c=>c.type===type);
   if(sup)items=items.filter(c=>c.supplierId===sup);
   if(stage)items=items.filter(c=>c._stage===stage);
+  const fromV=document.getElementById('reg-from')?.value;
+  const toV=document.getElementById('reg-to')?.value;
+  if(fromV)items=items.filter(c=>c._ts>=new Date(fromV).getTime());
+  if(toV)items=items.filter(c=>c._ts<=new Date(toV+'T23:59:59').getTime());
   // Sort
   items.sort((a,b)=>{
     let va,vb;
@@ -1249,6 +1319,10 @@ function _getRegFiltered(){
     else if(_regSortCol==='product'){va=a._prodName;vb=b._prodName;}
     else if(_regSortCol==='type'){va=a.type||'';vb=b.type||'';}
     else if(_regSortCol==='supplier'){va=a.supplierName||'';vb=b.supplierName||'';}
+    else if(_regSortCol==='margin'){
+      const mp=(c)=>c._salePrice>0&&c._orderTotalCost>0?(c._salePrice-c._orderTotalCost)/c._salePrice:-1;
+      va=mp(a);vb=mp(b);
+    }
     else{va=a._ts;vb=b._ts;}
     if(typeof va==='string')return _regSortAsc?va.localeCompare(vb):vb.localeCompare(va);
     return _regSortAsc?va-vb:vb-va;
@@ -1260,7 +1334,7 @@ window.regSort=function(col){
   if(_regSortCol===col)_regSortAsc=!_regSortAsc;
   else{_regSortCol=col;_regSortAsc=col!=='date'&&col!=='total';}
   // Update icons
-  ['order','product','qty','type','supplier','total','date'].forEach(c=>{
+  ['order','product','qty','type','supplier','total','margin','date'].forEach(c=>{
     const el=document.getElementById('rsi-'+c);
     if(!el)return;
     el.textContent=c===_regSortCol?(_regSortAsc?'↑':'↓'):'';
@@ -1274,11 +1348,20 @@ window.renderRegister=function(){
   // Summary KPIs
   const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const uniqueSups=new Set(items.map(c=>c.supplierId).filter(Boolean)).size;
-  const uniqueOrds=new Set(items.map(c=>c._orderId)).size;
+  const uniqueOrderIds=[...new Set(items.map(c=>c._orderId))];
+  const uniqueOrds=uniqueOrderIds.length;
   const topType=Object.entries(items.reduce((m,c)=>{m[c.type||'—']=(m[c.type||'—']||0)+1;return m;},{})).sort((a,b)=>b[1]-a[1])[0]?.[0]||'—';
+  // Revenue + margin (deduplicated per order)
+  const seenOrds=new Set();
+  let totalRevenue=0;
+  items.forEach(c=>{if(!seenOrds.has(c._orderId)){seenOrds.add(c._orderId);totalRevenue+=c._salePrice||0;}});
+  const netMarginPct=totalRevenue>0?Math.round((totalRevenue-total)/totalRevenue*100):null;
+  const mCol=netMarginPct===null?'var(--dim2)':netMarginPct>=35?'var(--g)':netMarginPct>=20?'var(--y)':'var(--r)';
   const sumEl=document.getElementById('reg-summary');
   if(sumEl)sumEl.innerHTML=`
     <div class="reg-kpi"><div class="reg-kpi-val">${fn(total)} ج</div><div class="reg-kpi-lbl">إجمالي التكاليف</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val" style="color:var(--b)">${totalRevenue?fn(totalRevenue)+' ج':'—'}</div><div class="reg-kpi-lbl">إجمالي المبيعات</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val" style="color:${mCol}">${netMarginPct!==null?netMarginPct+'%':'—'}</div><div class="reg-kpi-lbl">صافي الهامش</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${items.length}</div><div class="reg-kpi-lbl">عدد البنود</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${uniqueOrds}</div><div class="reg-kpi-lbl">أوردر</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${uniqueSups}</div><div class="reg-kpi-lbl">مورد نشط</div></div>
@@ -1304,7 +1387,7 @@ window.renderRegister=function(){
   let html='';
   for(const grpItems of Object.values(grouped)){
     const grpTotal=grpItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fn(grpTotal)} ج</td><td colspan="3"></td></tr>`;
+    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fn(grpTotal)} ج</td><td colspan="4"></td></tr>`;
     html+=grpItems.map(c=>_regRow(c,SM)).join('');
   }
   tbody.innerHTML=html;
@@ -1313,6 +1396,10 @@ window.renderRegister=function(){
 function _regRow(c,SM){
   const dateStr=c._ts?new Date(c._ts).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
   const paid=c.walletId?'<span class="item-paid" title="مدفوع من محفظة">💼</span> ':'';
+  const saleP=c._salePrice||0;const ordCost=c._orderTotalCost||0;
+  const mPct=(saleP>0&&ordCost>0)?Math.round((saleP-ordCost)/saleP*100):null;
+  const mCls=mPct===null?'margin-na':mPct>=35?'margin-pos':mPct>=20?'margin-mid':mPct>=5?'margin-low':'margin-neg';
+  const marginCell=mPct!==null?`<span class="profit-margin ${mCls}" style="font-size:var(--fs-xs)">${mPct}%</span>`:'<span class="reg-dim">—</span>';
   return`<tr class="reg-row" onclick="openWorkspaceFromReg('${c._orderId}')">
     <td><span class="reg-ord-id">#${c._orderShortId}</span></td>
     <td class="reg-client">${c._clientName}</td>
@@ -1321,6 +1408,7 @@ function _regRow(c,SM){
     <td>${paid}<span class="reg-type-chip">${c.type||'—'}</span></td>
     <td>${c.supplierName?`🏭 ${c.supplierName}`:'<span class="reg-no-sup">⚠️ بدون مورد</span>'}</td>
     <td class="reg-amount">${fn(c.total||0)} ج</td>
+    <td class="reg-margin">${marginCell}</td>
     <td class="reg-stage">${SM[c._stage]||''} ${c._stage}</td>
     <td class="reg-date">${dateStr}</td>
     <td class="reg-note" title="${(c.note||'').replace(/"/g,'&quot;')}">${c.note||'—'}</td>
@@ -1442,10 +1530,14 @@ function _buildProductProfiles(){
       if(!baseName||baseName.length<2)return;
       const qty=_extractQty(prod);
       const key=qty?`${baseName}::${qty}`:baseName;
-      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
+      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
       const ts=c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0;
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
-      profiles[key].orderIds.add(o._id);
+      if(!profiles[key].orderIds.has(o._id)){
+        profiles[key].orderIds.add(o._id);
+        const sp=parseFloat(o.totalPrice)||parseFloat(o.price)||0;
+        if(sp>0)profiles[key].salePrices.push(sp);
+      }
       if(ts>profiles[key].lastTs){profiles[key].lastTs=ts;profiles[key].displayName=prod.name;}
     });
   });
@@ -1478,9 +1570,12 @@ function _buildProductProfiles(){
       coreBundle.forEach(b=>{
         if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
       });
+      const totalEstimate=Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0);
+      const avgSalePrice=p.salePrices.length?p.salePrices.reduce((s,v)=>s+v,0)/p.salePrices.length:0;
+      const estMarginPct=(avgSalePrice>0&&totalEstimate>0)?Math.round((avgSalePrice-totalEstimate)/avgSalePrice*100):null;
       return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
         usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,coreBundle,addons,
-        totalEstimate:Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0)};
+        totalEstimate,avgSalePrice,estMarginPct};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
     .slice(0,40);
@@ -1489,6 +1584,7 @@ function _buildProductProfiles(){
 window.renderLibraryTab=function(){
   _buildProductProfiles();
   _renderLibStats();_renderLibProfiles();_renderLibSuppliers();_renderLibTypes();
+  _renderLibTemplates();
 };
 
 function _renderLibStats(){
@@ -1528,7 +1624,7 @@ function _renderLibProfiles(){
       </div>
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
-      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
+      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج${p.estMarginPct!==null?` <span class="lib-pc-margin ${p.estMarginPct>=35?'lib-margin-g':p.estMarginPct>=20?'lib-margin-y':'lib-margin-r'}">${p.estMarginPct}% هامش</span>`:''}</div>
       <div class="lib-pc-badge">${[...new Set(p.coreBundle.map(b=>b.type))].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
       ${addonsHtml}
     </div>`;
@@ -1545,7 +1641,8 @@ window.openProfileDetail=function(key){
     pdNameEl.innerHTML=`${p.baseName||p.displayName}${qtyBadge}`;
   }
   const lastStr=p.lastTs?new Date(p.lastTs).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
-  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
+  const marginHint=p.estMarginPct!==null?` · هامش متوقع ${p.estMarginPct}% (سعر بيع ~${fn(Math.round(p.avgSalePrice))} ج)`:'';
+  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}${marginHint}`);
   const tbody=document.getElementById('lib-pd-tbody');
   if(tbody){
     // build rows grouped by type — each (type,supplier) is its own row
@@ -1716,6 +1813,170 @@ function _downloadCSV(rows,filename){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
 }
+
+/* ═══════════════════════════════════════════════════
+   ⚡ FIXED COST TEMPLATES
+   ═══════════════════════════════════════════════════ */
+let costTemplates=[];
+let _tmplItems=[];
+
+async function _loadCostTemplates(){
+  try{
+    const{getCostTemplates}=await import('./core/cost-template-actions.js');
+    costTemplates=await getCostTemplates(db);
+    _renderLibTemplates();
+    if(activeId){const o=orders.find(x=>x._id===activeId);if(o)_renderTmplApply(o);}
+  }catch(e){console.warn('templates load:',e);}
+}
+
+function _getTmplMatch(o){
+  if(!costTemplates.length)return null;
+  for(const prod of(o.products||[])){
+    const base=_normBaseName(prod.name);
+    const qty=_extractQty(prod);
+    const t=costTemplates.find(t=>{
+      const tBase=_normBaseName(t.name);
+      const qOk=!t.qty||!qty||String(t.qty)===String(qty);
+      return tBase===base&&qOk;
+    });
+    if(t)return{template:t,prod,prodIdx:(o.products||[]).indexOf(prod)};
+  }
+  return null;
+}
+
+function _renderTmplApply(o){
+  const el=document.getElementById('ws-tmpl-apply');if(!el)return;
+  const match=_getTmplMatch(o);
+  if(!match){el.hidden=true;el.innerHTML='';return;}
+  const{template:t,prodIdx}=match;
+  el.hidden=false;
+  const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  el.innerHTML=`<div class="tmpl-apply-box">
+    <div class="tmpl-apply-hdr">
+      <span class="tmpl-apply-label">⚡ قالب ثابت</span>
+      <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
+      <span class="tmpl-apply-total">${fn(total)} ج</span>
+    </div>
+    <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+    <button type="button" class="btn btn-r tmpl-apply-btn" id="tmpl-apply-btn" onclick="applyFullTemplate('${t.id}',${prodIdx})">⚡ تطبيق الكل دفعة واحدة</button>
+  </div>`;
+}
+
+window.applyFullTemplate=async function(templateId,prodIdx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const t=costTemplates.find(x=>x.id===templateId);if(!t||!t.costItems.length)return;
+  const btn=document.getElementById('tmpl-apply-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ التطبيق...';}
+  let done=0,failed=0;
+  for(const item of t.costItems){
+    try{
+      const r=await orderActions.recordCostItem({
+        db,orderId:activeId,prodIdx:prodIdx>=0?prodIdx:-1,
+        payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId,supplierName:item.supplierName||'',note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)done++;else{failed++;console.warn('tmpl item fail:',r.errors);}
+    }catch(e){failed++;console.error(e);}
+  }
+  if(btn){btn.disabled=false;btn.textContent='⚡ تطبيق الكل دفعة واحدة';}
+  toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم تطبيق ${done} بنود من القالب`,failed?'err':'ok');
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);}},300);
+};
+
+function _renderLibTemplates(){
+  const el=document.getElementById('lib-templates-grid');if(!el)return;
+  if(!costTemplates.length){el.innerHTML='<div class="lib-empty">لا توجد قوالب ثابتة — أضف قالباً للمنتجات المتكررة مثل "ملف محامي" أو "كارت 300"</div>';return;}
+  el.innerHTML=`<div class="lib-tmpl-grid">${costTemplates.map(t=>{
+    const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    return`<div class="lib-tmpl-card">
+      <div class="lib-tmpl-hdr">
+        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</div>
+        <div class="lib-tmpl-acts">
+          <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
+          <button type="button" class="item-act-btn danger" onclick="deleteTmpl('${t.id}')">🗑️</button>
+        </div>
+      </div>
+      <div class="lib-tmpl-items">${t.costItems.map(c=>`<span class="lib-tmpl-chip"><span>${c.type}</span><span class="lib-tmpl-sup"> · ${c.supplierName||'—'}</span><strong> · ${fn(c.amount)} ج</strong></span>`).join('')}</div>
+      <div class="lib-tmpl-total">الإجمالي: <strong>${fn(total)} ج</strong></div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+window.openTmplModal=function(id){
+  const t=id?costTemplates.find(x=>x.id===id):null;
+  setText('tmpl-modal-title',id?'✏️ تعديل القالب':'⚡ قالب جديد');
+  sv('tmpl-id',id||'');sv('tmpl-name',t?.name||'');sv('tmpl-qty',t?.qty||'');
+  _tmplItems=t?t.costItems.map(c=>({...c})):[{type:'',supplierId:'',supplierName:'',amount:''}];
+  _renderTmplItems();
+  document.getElementById('tmpl-modal').hidden=false;
+};
+window.closeTmplModal=function(){document.getElementById('tmpl-modal').hidden=true;_tmplItems=[];};
+window.addTmplItem=function(){_tmplItems.push({type:'',supplierId:'',supplierName:'',amount:''});_renderTmplItems();};
+window.removeTmplItem=function(i){_tmplItems.splice(i,1);if(!_tmplItems.length)_tmplItems.push({type:'',supplierId:'',supplierName:'',amount:''});_renderTmplItems();};
+window.updateTmplItem=function(i,field,val){if(_tmplItems[i])_tmplItems[i][field]=val;};
+window.updateTmplItemSup=function(i,sel){
+  if(!_tmplItems[i])return;
+  const opt=sel.options[sel.selectedIndex];
+  _tmplItems[i].supplierId=opt.value;
+  _tmplItems[i].supplierName=(opt.dataset?.name||opt.textContent||'').split(' · ')[0].trim();
+};
+
+function _buildTmplTypeOpts(sel){
+  const types=masterCategories.length?masterCategories.map(c=>c.label):['طباعة','ورق','زنكات','سلفنة','قص','تجميع','شحن','تصميم','أخرى'];
+  return`<option value="">— نوع البند —</option>`+types.map(t=>`<option value="${t}"${t===sel?' selected':''}>${t}</option>`).join('');
+}
+function _buildTmplSupOpts(selId){
+  return`<option value="">— المورد —</option>`+suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"${s._id===selId?' selected':''}>${s.name||'—'}${s.phone?' · '+s.phone:''}</option>`).join('');
+}
+function _renderTmplItems(){
+  const el=document.getElementById('tmpl-items-list');if(!el)return;
+  el.innerHTML=_tmplItems.map((item,i)=>`
+    <div class="tmpl-item-row">
+      <select class="inp tmpl-inp" onchange="updateTmplItem(${i},'type',this.value)">${_buildTmplTypeOpts(item.type)}</select>
+      <select class="inp tmpl-inp" onchange="updateTmplItemSup(${i},this)">${_buildTmplSupOpts(item.supplierId)}</select>
+      <input class="inp tmpl-inp tmpl-amt" type="number" placeholder="المبلغ (ج)" value="${item.amount||''}" oninput="updateTmplItem(${i},'amount',this.value)">
+      <button type="button" class="item-act-btn danger" onclick="removeTmplItem(${i})">🗑️</button>
+    </div>`).join('');
+}
+window.saveTmplModal=async function(){
+  const name=gv('tmpl-name').trim(),qty=gv('tmpl-qty').trim(),id=gv('tmpl-id')||null;
+  if(!name)return toast('⚠️ أدخل اسم المنتج','err');
+  const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
+  if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
+  try{
+    const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+    const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    await _loadCostTemplates();
+    closeTmplModal();
+    toast('✅ تم حفظ القالب','ok');
+  }catch(e){toast('❌ '+(e.message||'فشل الحفظ'),'err');}
+};
+window.deleteTmpl=async function(id){
+  if(!confirm('حذف هذا القالب؟'))return;
+  try{
+    const{deleteCostTemplate}=await import('./core/cost-template-actions.js');
+    await deleteCostTemplate(db,id);
+    await _loadCostTemplates();
+    toast('🗑️ تم حذف القالب','ok');
+  }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
+};
+
+window.saveCurrentCostAsTemplate=function(){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o||(o.costItems||[]).length===0)return toast('⚠️ لا توجد بنود مسجلة لحفظها','err');
+  const firstProd=(o.products||[])[0];
+  setText('tmpl-modal-title','💾 حفظ البنود كقالب');
+  sv('tmpl-id','');
+  sv('tmpl-name',firstProd?.name||'');
+  sv('tmpl-qty',firstProd?.qty!=null?String(firstProd.qty):'');
+  _tmplItems=o.costItems
+    .map(c=>({type:c.type||'',supplierId:c.supplierId||'',supplierName:c.supplierName||'',amount:parseFloat(c.total)||0}))
+    .filter(c=>c.type&&c.supplierId&&c.amount>0);
+  if(!_tmplItems.length)_tmplItems=[{type:'',supplierId:'',supplierName:'',amount:''}];
+  _renderTmplItems();
+  document.getElementById('tmpl-modal').hidden=false;
+};
 </script>
 </body>
 </html>
