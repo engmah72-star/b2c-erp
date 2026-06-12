@@ -161,6 +161,7 @@
           <button type="button" class="ftab" onclick="setFilter('printing',this)">🖨️ (<span id="cnt-printing">0</span>)</button>
           <button type="button" class="ftab" onclick="setFilter('design',this)">✏️ (<span id="cnt-design">0</span>)</button>
           <button type="button" class="ftab" onclick="setFilter('archived',this)">📁 (<span id="cnt-archived">0</span>)</button>
+          <button type="button" class="ftab ftab-lib" onclick="setFilter('has-lib',this)">📚 في المكتبة (<span id="cnt-has-lib">0</span>)</button>
         </div>
 
         <div class="sort-bar">
@@ -205,6 +206,9 @@
 
           <!-- Completeness bar -->
           <div class="ws-completeness" id="ws-completeness"></div>
+
+          <!-- Library profile match for this order's products -->
+          <div id="ws-lib-profile-suggest" hidden></div>
 
           <!-- Template / missing costs -->
           <div id="ws-template"></div>
@@ -476,9 +480,10 @@ onAuthStateChanged(auth,async u=>{
   let __deepLinkDone=false;
   onSnapshot(query(collection(db,'orders'),where('stage','in',['design','production','printing','shipping','archived']),limit(3000)),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    _buildProductProfiles();   // keep profiles current for all tabs
     renderList();
     if(!document.getElementById('view-register')?.hidden)renderRegister();
-    if(!document.getElementById('view-library')?.hidden)renderLibraryTab();
+    if(!document.getElementById('view-library')?.hidden){_renderLibStats();_renderLibProfiles();_renderLibSuppliers();_renderLibTypes();}
     // Refresh active workspace if open
     if(activeId){
       const fresh=orders.find(x=>x._id===activeId);
@@ -522,9 +527,13 @@ function renderList(){
   setText('cnt-all',data.length);setText('cnt-production',byStage.production||0);
   setText('cnt-shipping',byStage.shipping||0);setText('cnt-printing',byStage.printing||0);
   setText('cnt-design',byStage.design||0);setText('cnt-archived',byStage.archived||0);
+  const libCount=data.filter(o=>_getMatchingProfile(o)!=null).length;
+  setText('cnt-has-lib',libCount);
   renderSmartKpis();
 
-  let filtered=currentFilter==='all'?data:data.filter(o=>o.stage===currentFilter);
+  let filtered=currentFilter==='all'?data
+    :currentFilter==='has-lib'?data.filter(o=>_getMatchingProfile(o)!=null)
+    :data.filter(o=>o.stage===currentFilter);
   filtered=applySort(filtered);
 
   const el=document.getElementById('list');
@@ -582,6 +591,7 @@ window.openWorkspace=function(orderId){
   document.getElementById('ws-content').hidden=false;
 
   _populateWorkspace(o);
+  _renderLibProfileSuggest(o);
   clearForm();
   _triggerLibSuggestions('');
 
@@ -1359,6 +1369,43 @@ window.exportByProduct=function(){
    📚 COST LIBRARY TAB — intelligence engine
    ═══════════════════════════════════════════════════ */
 let _libProfiles=[],_activeBundleForApply=null;
+
+function _getMatchingProfile(o){
+  if(!_libProfiles.length)return null;
+  for(const prod of(o.products||[])){
+    if(!prod?.name)continue;
+    const base=_normBaseName(prod.name);if(!base||base.length<2)continue;
+    const qty=_extractQty(prod);
+    const key=qty?`${base}::${qty}`:base;
+    const p=_libProfiles.find(x=>x.key===key);
+    if(p)return{profile:p,prod};
+  }
+  return null;
+}
+
+function _renderLibProfileSuggest(o){
+  const el=document.getElementById('ws-lib-profile-suggest');if(!el)return;
+  const match=_getMatchingProfile(o);
+  if(!match){el.hidden=true;el.innerHTML='';return;}
+  const{profile:p}=match;
+  el.hidden=false;
+  const mkBtn=(b,isAddon=false)=>`<button type="button" class="ws-lcb${isAddon?' ws-lcb-addon':''}" onclick="applyOneItem('${b.type.replace(/'/g,"&#39;")}','${(b.supplierId||'').replace(/'/g,"&#39;")}','${(b.supplierName||'').replace(/'/g,"&#39;")}',${b.lastPrice||0})">
+    <span class="ws-lcb-type">${b.type}</span>
+    ${b.supplierName?`<span class="ws-lcb-sup">🏭 ${b.supplierName}</span>`:''}
+    <span class="ws-lcb-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}</span>
+  </button>`;
+  const coreBtns=p.coreBundle.slice(0,5).map(b=>mkBtn(b,false)).join('');
+  const addonBtns=p.addons.length?`<div class="ws-lpb-addons-row">+ ${p.addons.slice(0,3).map(b=>mkBtn(b,true)).join('')}</div>`:'';
+  el.innerHTML=`<div class="ws-lib-profile-box">
+    <div class="ws-lpb-hdr">
+      <span class="ws-lpb-label">📚 قالب من المكتبة</span>
+      <div class="ws-lpb-name">${p.baseName||p.displayName}${p.qty?` <span class="lib-pc-qty">${p.qty}</span>`:''}</div>
+      <div class="ws-lpb-meta">${p.usageCount} أوردر سابق · ~${fn(p.totalEstimate)} ج</div>
+    </div>
+    <div class="ws-lcb-row">${coreBtns}</div>
+    ${addonBtns}
+  </div>`;
+}
 
 function _normProdName(name){
   return(name||'')
