@@ -102,9 +102,8 @@
             <table class="lib-pd-table">
               <thead><tr>
                 <th>نوع البند</th>
-                <th>أفضل مورد</th>
-                <th>متوسط السعر</th>
-                <th>آخر سعر</th>
+                <th>المورد</th>
+                <th>السعر</th>
                 <th>× استُخدم</th>
                 <th></th>
               </tr></thead>
@@ -1366,6 +1365,15 @@ function _normProdName(name){
     .replace(/[\d٠-٩,،]+\s*(?:قطعة|نسخة|طبعة|حبة|ألف|k|K|x|X)?/gi,' ')
     .replace(/\s+/g,' ').trim().toLowerCase().substring(0,35);
 }
+// Extras that appear in product names — strip them to get the true base product name
+const _EXTRA_TERMS=['سلوفان','سلفنة','لامينيشن','يوفي','حفر','جيب داخلي','جيب','تجميع','خيط','ذهبي','فضي','تغليف'];
+function _normBaseName(name){
+  let n=(name||'')
+    .replace(/[\d٠-٩,،]+\s*(?:قطعة|نسخة|طبعة|حبة|ألف|k|K|x|X)?/gi,' ');
+  _EXTRA_TERMS.forEach(k=>{n=n.replace(new RegExp(k,'gi'),' ');});
+  return n.replace(/\s+(?:مع|بـ|وبـ|و)\s+|\s+(?:مع|بـ|وبـ|و)$/gi,' ')
+    .replace(/\s+/g,' ').trim().toLowerCase().substring(0,35);
+}
 
 function _extractQty(prod){
   // prefer explicit qty field on the product
@@ -1383,7 +1391,7 @@ function _buildProductProfiles(){
       if(c.prodIdx==null||c.prodIdx<0)return;
       const prod=prods[c.prodIdx];
       if(!prod?.name)return;
-      const baseName=_normProdName(prod.name);
+      const baseName=_normBaseName(prod.name);  // strips extras + qty
       if(!baseName||baseName.length<2)return;
       const qty=_extractQty(prod);
       const key=qty?`${baseName}::${qty}`:baseName;
@@ -1406,16 +1414,33 @@ function _buildProductProfiles(){
         if(item.supplierId)t.supUsage[item.supplierId]=(t.supUsage[item.supplierId]||0)+1;
         if(item.ts>=t.lastTs){t.lastTs=item.ts;t.lastPrice=item.total;t.lastSupId=item.supplierId;t.lastSupName=item.supplierName;}
       });
-      const bundle=Object.values(byType).map(t=>{
-        const bestSupId=Object.entries(t.supUsage).sort((a,b)=>b[1]-a[1])[0]?.[0]||t.lastSupId;
-        const bestSup=suppliers.find(s=>s._id===bestSupId);
-        return{type:t.type,avgPrice:t.prices.length?Math.round(t.prices.reduce((s,v)=>s+v,0)/t.prices.length):0,
-          lastPrice:t.lastPrice,lastTs:t.lastTs,
-          bestSupplierId:bestSupId,bestSupplierName:bestSup?.name||t.lastSupName||'',useCount:t.prices.length};
-      }).filter(b=>b.type).sort((a,b)=>b.useCount-a.useCount);
+      // Group by (type, supplierId) — each supplier's price shown separately
+      const byTS={};
+      p.items.forEach(item=>{
+        if(!item.type)return;
+        const tsKey=`${item.type}__${item.supplierId||''}`;
+        if(!byTS[tsKey])byTS[tsKey]={type:item.type,supplierId:item.supplierId||'',supplierName:item.supplierName||'',
+          prices:[],lastPrice:0,lastTs:0,useCount:0};
+        const e=byTS[tsKey];
+        if(item.total>0){e.prices.push(item.total);e.useCount++;}
+        if(item.ts>=e.lastTs){e.lastTs=item.ts;e.lastPrice=item.total;}
+      });
+      // type-level frequency for isAddon classification
+      const typeFreq={};
+      Object.values(byTS).forEach(e=>{typeFreq[e.type]=(typeFreq[e.type]||0)+e.useCount;});
+      const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.35));
+      const bundle=Object.values(byTS).map(e=>({...e,isAddon:typeFreq[e.type]<threshold}))
+        .sort((a,b)=>(typeFreq[b.type]-typeFreq[a.type])||a.type.localeCompare(b.type));
+      const coreBundle=bundle.filter(b=>!b.isAddon);
+      const addons=bundle.filter(b=>b.isAddon);
+      // totalEstimate: last price of most-used supplier per type (core only)
+      const bestPerType={};
+      coreBundle.forEach(b=>{
+        if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
+      });
       return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
-        usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,
-        totalEstimate:bundle.reduce((s,b)=>s+(b.lastPrice||b.avgPrice||0),0)};
+        usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,coreBundle,addons,
+        totalEstimate:Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0)};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
     .slice(0,40);
@@ -1453,17 +1478,21 @@ function _renderLibProfiles(){
   if(!_libProfiles.length){
     el.innerHTML='<div class="lib-empty">سيتم اكتشاف القوالب تلقائياً بعد تسجيل بنود تكلفة مرتبطة بمنتجات</div>';return;
   }
-  el.innerHTML=_libProfiles.map(p=>`
-    <div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
+  el.innerHTML=_libProfiles.map(p=>{
+    const addonsHtml=p.addons.length
+      ?`<div class="lib-pc-addons">+ ${p.addons.slice(0,3).map(a=>`<span>${a.type}</span>`).join('')}</div>`:'';
+    return`<div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
       <div class="lib-pc-top">
         <div class="lib-pc-name">${p.baseName||p.displayName}</div>
         ${p.qty?`<span class="lib-pc-qty">${Number(p.qty).toLocaleString('ar-EG')||p.qty}</span>`:''}
       </div>
-      <div class="lib-pc-meta">${p.bundle.length} بنود · ${p.usageCount} أوردر</div>
+      <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
       <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
-      <div class="lib-pc-badge">${p.bundle.slice(0,3).map(b=>`<span>${b.type}</span>`).join('')}</div>
-    </div>`).join('');
+      <div class="lib-pc-badge">${[...new Set(p.coreBundle.map(b=>b.type))].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
+      ${addonsHtml}
+    </div>`;
+  }).join('');
 }
 
 window.openProfileDetail=function(key){
@@ -1479,14 +1508,26 @@ window.openProfileDetail=function(key){
   setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
   const tbody=document.getElementById('lib-pd-tbody');
   if(tbody){
-    tbody.innerHTML=p.bundle.map(b=>`<tr>
-      <td><span class="reg-type-chip">${b.type}</span></td>
-      <td>${b.bestSupplierName?`🏭 ${b.bestSupplierName}`:'—'}</td>
-      <td class="reg-num">${fn(b.avgPrice)} ج</td>
-      <td class="reg-num">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
-      <td class="reg-num">${b.useCount}×</td>
-      <td><button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.bestSupplierId||'').replace(/'/g,'&#39;')}','${(b.bestSupplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||b.avgPrice||0})">استخدم</button></td>
-    </tr>`).join('');
+    // build rows grouped by type — each (type,supplier) is its own row
+    const renderGroup=(entries,isAddon=false)=>{
+      const byType={};
+      entries.forEach(b=>{if(!byType[b.type])byType[b.type]=[];byType[b.type].push(b);});
+      return Object.entries(byType).map(([type,rows])=>
+        rows.map((b,idx)=>`<tr${isAddon?' class="lib-pd-addon-row"':idx>0?' class="lib-pd-sub-row"':''}>
+          <td>${idx===0?`<span class="reg-type-chip">${type}</span>`:'<span class="lib-pd-sub-ico">↳</span>'}</td>
+          <td>${b.supplierName?`🏭 ${b.supplierName}`:'—'}</td>
+          <td class="reg-num lib-pd-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
+          <td class="reg-num">${b.useCount}×</td>
+          <td><button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.supplierId||'').replace(/'/g,'&#39;')}','${(b.supplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||0})">استخدم</button></td>
+        </tr>`).join('')
+      ).join('');
+    };
+    let html=renderGroup(p.coreBundle,false);
+    if(p.addons.length){
+      html+=`<tr class="lib-pd-addon-hdr"><td colspan="5">➕ الإضافات الاختيارية</td></tr>`;
+      html+=renderGroup(p.addons,true);
+    }
+    tbody.innerHTML=html;
   }
   const total=p.bundle.reduce((s,b)=>s+((b.lastPrice||b.avgPrice)||0),0);
   setText('lib-pd-total',`${fn(total)} ج`);
