@@ -297,6 +297,12 @@
         <div class="reg-filters">
           <select class="inp reg-sel" id="reg-type" onchange="renderRegister()"><option value="">كل الأنواع</option></select>
           <select class="inp reg-sel" id="reg-sup" onchange="renderRegister()"><option value="">كل الموردين</option></select>
+          <div class="reg-date-range">
+            <input class="inp reg-date-inp" type="date" id="reg-from" onchange="renderRegister()" title="من تاريخ">
+            <span class="reg-date-sep">←</span>
+            <input class="inp reg-date-inp" type="date" id="reg-to" onchange="renderRegister()" title="إلى تاريخ">
+            <button type="button" class="reg-date-clr" onclick="clearRegDates()" title="مسح نطاق التاريخ">✕</button>
+          </div>
           <select class="inp reg-sel" id="reg-stage" onchange="renderRegister()">
             <option value="">كل المراحل</option>
             <option value="design">✏️ تصميم</option>
@@ -332,6 +338,7 @@
               <th onclick="regSort('type')" class="reg-th-sort">نوع البند <span class="reg-sort-ico" id="rsi-type"></span></th>
               <th onclick="regSort('supplier')" class="reg-th-sort">المورد <span class="reg-sort-ico" id="rsi-supplier"></span></th>
               <th onclick="regSort('total')" class="reg-th-sort reg-col-amount">التكلفة <span class="reg-sort-ico" id="rsi-total"></span></th>
+              <th onclick="regSort('margin')" class="reg-th-sort">الهامش <span class="reg-sort-ico" id="rsi-margin"></span></th>
               <th>المرحلة</th>
               <th onclick="regSort('date')" class="reg-th-sort">التاريخ <span class="reg-sort-ico" id="rsi-date"></span></th>
               <th class="reg-col-note">ملاحظة</th>
@@ -494,6 +501,21 @@ onAuthStateChanged(auth,async u=>{
       if(urlId&&orders.find(o=>o._id===urlId)){
         __deepLinkDone=true;
         setTimeout(()=>openWorkspace(urlId),200);
+      }
+    }
+    // Deep-link: ?tab=register&q=QUERY or ?tab=library
+    if(!__deepLinkDone){
+      const p2=new URLSearchParams(location.search);
+      const tabP=p2.get('tab'),qP=p2.get('q')||p2.get('query');
+      if(tabP==='register'){
+        __deepLinkDone=true;
+        setTimeout(()=>{
+          setView('register');
+          if(qP){const el=document.getElementById('reg-search');if(el){el.value=qP;renderRegister();}}
+        },300);
+      } else if(tabP==='library'){
+        __deepLinkDone=true;
+        setTimeout(()=>setView('library'),200);
       }
     }
   });
@@ -1211,6 +1233,8 @@ function _getAllCostItemsExtended(){
         _prodName:prod?.name||'— (عام للأوردر)',
         _qty:prod?.qty!=null?String(prod.qty):'—',
         _ts:c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0,
+        _salePrice:parseFloat(o.totalPrice)||parseFloat(o.price)||0,
+        _orderTotalCost:(o.costItems||[]).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0),
       });
     });
   });
@@ -1228,6 +1252,10 @@ function _buildRegisterFilters(){
   const sSel=document.getElementById('reg-sup');
   if(sSel){const prev=sSel.value;sSel.innerHTML='<option value="">كل الموردين</option>'+sups.map(([id,name])=>`<option value="${id}"${id===prev?' selected':''}>${name}</option>`).join('');}
 }
+window.clearRegDates=function(){
+  const f=document.getElementById('reg-from'),t=document.getElementById('reg-to');
+  if(f)f.value='';if(t)t.value='';renderRegister();
+};
 
 function _getRegFiltered(){
   let items=_getAllCostItemsExtended();
@@ -1239,6 +1267,10 @@ function _getRegFiltered(){
   if(type)items=items.filter(c=>c.type===type);
   if(sup)items=items.filter(c=>c.supplierId===sup);
   if(stage)items=items.filter(c=>c._stage===stage);
+  const fromV=document.getElementById('reg-from')?.value;
+  const toV=document.getElementById('reg-to')?.value;
+  if(fromV)items=items.filter(c=>c._ts>=new Date(fromV).getTime());
+  if(toV)items=items.filter(c=>c._ts<=new Date(toV+'T23:59:59').getTime());
   // Sort
   items.sort((a,b)=>{
     let va,vb;
@@ -1249,6 +1281,10 @@ function _getRegFiltered(){
     else if(_regSortCol==='product'){va=a._prodName;vb=b._prodName;}
     else if(_regSortCol==='type'){va=a.type||'';vb=b.type||'';}
     else if(_regSortCol==='supplier'){va=a.supplierName||'';vb=b.supplierName||'';}
+    else if(_regSortCol==='margin'){
+      const mp=(c)=>c._salePrice>0&&c._orderTotalCost>0?(c._salePrice-c._orderTotalCost)/c._salePrice:-1;
+      va=mp(a);vb=mp(b);
+    }
     else{va=a._ts;vb=b._ts;}
     if(typeof va==='string')return _regSortAsc?va.localeCompare(vb):vb.localeCompare(va);
     return _regSortAsc?va-vb:vb-va;
@@ -1260,7 +1296,7 @@ window.regSort=function(col){
   if(_regSortCol===col)_regSortAsc=!_regSortAsc;
   else{_regSortCol=col;_regSortAsc=col!=='date'&&col!=='total';}
   // Update icons
-  ['order','product','qty','type','supplier','total','date'].forEach(c=>{
+  ['order','product','qty','type','supplier','total','margin','date'].forEach(c=>{
     const el=document.getElementById('rsi-'+c);
     if(!el)return;
     el.textContent=c===_regSortCol?(_regSortAsc?'↑':'↓'):'';
@@ -1274,11 +1310,20 @@ window.renderRegister=function(){
   // Summary KPIs
   const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const uniqueSups=new Set(items.map(c=>c.supplierId).filter(Boolean)).size;
-  const uniqueOrds=new Set(items.map(c=>c._orderId)).size;
+  const uniqueOrderIds=[...new Set(items.map(c=>c._orderId))];
+  const uniqueOrds=uniqueOrderIds.length;
   const topType=Object.entries(items.reduce((m,c)=>{m[c.type||'—']=(m[c.type||'—']||0)+1;return m;},{})).sort((a,b)=>b[1]-a[1])[0]?.[0]||'—';
+  // Revenue + margin (deduplicated per order)
+  const seenOrds=new Set();
+  let totalRevenue=0;
+  items.forEach(c=>{if(!seenOrds.has(c._orderId)){seenOrds.add(c._orderId);totalRevenue+=c._salePrice||0;}});
+  const netMarginPct=totalRevenue>0?Math.round((totalRevenue-total)/totalRevenue*100):null;
+  const mCol=netMarginPct===null?'var(--dim2)':netMarginPct>=35?'var(--g)':netMarginPct>=20?'var(--y)':'var(--r)';
   const sumEl=document.getElementById('reg-summary');
   if(sumEl)sumEl.innerHTML=`
     <div class="reg-kpi"><div class="reg-kpi-val">${fn(total)} ج</div><div class="reg-kpi-lbl">إجمالي التكاليف</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val" style="color:var(--b)">${totalRevenue?fn(totalRevenue)+' ج':'—'}</div><div class="reg-kpi-lbl">إجمالي المبيعات</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val" style="color:${mCol}">${netMarginPct!==null?netMarginPct+'%':'—'}</div><div class="reg-kpi-lbl">صافي الهامش</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${items.length}</div><div class="reg-kpi-lbl">عدد البنود</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${uniqueOrds}</div><div class="reg-kpi-lbl">أوردر</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${uniqueSups}</div><div class="reg-kpi-lbl">مورد نشط</div></div>
@@ -1304,7 +1349,7 @@ window.renderRegister=function(){
   let html='';
   for(const grpItems of Object.values(grouped)){
     const grpTotal=grpItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fn(grpTotal)} ج</td><td colspan="3"></td></tr>`;
+    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fn(grpTotal)} ج</td><td colspan="4"></td></tr>`;
     html+=grpItems.map(c=>_regRow(c,SM)).join('');
   }
   tbody.innerHTML=html;
@@ -1313,6 +1358,10 @@ window.renderRegister=function(){
 function _regRow(c,SM){
   const dateStr=c._ts?new Date(c._ts).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
   const paid=c.walletId?'<span class="item-paid" title="مدفوع من محفظة">💼</span> ':'';
+  const saleP=c._salePrice||0;const ordCost=c._orderTotalCost||0;
+  const mPct=(saleP>0&&ordCost>0)?Math.round((saleP-ordCost)/saleP*100):null;
+  const mCls=mPct===null?'margin-na':mPct>=35?'margin-pos':mPct>=20?'margin-mid':mPct>=5?'margin-low':'margin-neg';
+  const marginCell=mPct!==null?`<span class="profit-margin ${mCls}" style="font-size:var(--fs-xs)">${mPct}%</span>`:'<span class="reg-dim">—</span>';
   return`<tr class="reg-row" onclick="openWorkspaceFromReg('${c._orderId}')">
     <td><span class="reg-ord-id">#${c._orderShortId}</span></td>
     <td class="reg-client">${c._clientName}</td>
@@ -1321,6 +1370,7 @@ function _regRow(c,SM){
     <td>${paid}<span class="reg-type-chip">${c.type||'—'}</span></td>
     <td>${c.supplierName?`🏭 ${c.supplierName}`:'<span class="reg-no-sup">⚠️ بدون مورد</span>'}</td>
     <td class="reg-amount">${fn(c.total||0)} ج</td>
+    <td class="reg-margin">${marginCell}</td>
     <td class="reg-stage">${SM[c._stage]||''} ${c._stage}</td>
     <td class="reg-date">${dateStr}</td>
     <td class="reg-note" title="${(c.note||'').replace(/"/g,'&quot;')}">${c.note||'—'}</td>
@@ -1442,10 +1492,14 @@ function _buildProductProfiles(){
       if(!baseName||baseName.length<2)return;
       const qty=_extractQty(prod);
       const key=qty?`${baseName}::${qty}`:baseName;
-      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
+      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
       const ts=c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0;
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
-      profiles[key].orderIds.add(o._id);
+      if(!profiles[key].orderIds.has(o._id)){
+        profiles[key].orderIds.add(o._id);
+        const sp=parseFloat(o.totalPrice)||parseFloat(o.price)||0;
+        if(sp>0)profiles[key].salePrices.push(sp);
+      }
       if(ts>profiles[key].lastTs){profiles[key].lastTs=ts;profiles[key].displayName=prod.name;}
     });
   });
@@ -1478,9 +1532,12 @@ function _buildProductProfiles(){
       coreBundle.forEach(b=>{
         if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
       });
+      const totalEstimate=Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0);
+      const avgSalePrice=p.salePrices.length?p.salePrices.reduce((s,v)=>s+v,0)/p.salePrices.length:0;
+      const estMarginPct=(avgSalePrice>0&&totalEstimate>0)?Math.round((avgSalePrice-totalEstimate)/avgSalePrice*100):null;
       return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
         usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,coreBundle,addons,
-        totalEstimate:Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0)};
+        totalEstimate,avgSalePrice,estMarginPct};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
     .slice(0,40);
@@ -1528,7 +1585,7 @@ function _renderLibProfiles(){
       </div>
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
-      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
+      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج${p.estMarginPct!==null?` <span class="lib-pc-margin ${p.estMarginPct>=35?'lib-margin-g':p.estMarginPct>=20?'lib-margin-y':'lib-margin-r'}">${p.estMarginPct}% هامش</span>`:''}</div>
       <div class="lib-pc-badge">${[...new Set(p.coreBundle.map(b=>b.type))].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
       ${addonsHtml}
     </div>`;
@@ -1545,7 +1602,8 @@ window.openProfileDetail=function(key){
     pdNameEl.innerHTML=`${p.baseName||p.displayName}${qtyBadge}`;
   }
   const lastStr=p.lastTs?new Date(p.lastTs).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
-  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
+  const marginHint=p.estMarginPct!==null?` · هامش متوقع ${p.estMarginPct}% (سعر بيع ~${fn(Math.round(p.avgSalePrice))} ج)`:'';
+  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}${marginHint}`);
   const tbody=document.getElementById('lib-pd-tbody');
   if(tbody){
     // build rows grouped by type — each (type,supplier) is its own row
