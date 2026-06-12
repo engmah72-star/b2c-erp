@@ -2132,14 +2132,17 @@ function _renderAnomalies(o){
    ═══════════════════════════════════════════════════ */
 function _buildSmartSuggestions(o){
   const existTypes=new Set((o.costItems||[]).map(c=>c.type));
-  const prods=(o.products||[]).map((p,i)=>({base:_normBaseName(p.name),idx:i})).filter(x=>x.base.length>=2);
+  // include qty so we only match same-quantity orders
+  const prods=(o.products||[]).map((p,i)=>({base:_normBaseName(p.name),idx:i,qty:_extractQty(p)})).filter(x=>x.base.length>=2);
   if(!prods.length)return[];
   const byType={};
   orders.forEach(ord=>{
     if(ord._id===o._id||!(ord.costItems||[]).length)return;
     (ord.products||[]).forEach((p,pi)=>{
       const base=_normBaseName(p.name);
-      const match=prods.find(x=>x.base===base);
+      const srcQty=_extractQty(p);
+      // only accept same base name AND same quantity — avoids cross-qty price errors
+      const match=prods.find(x=>x.base===base&&((!x.qty||!srcQty)||x.qty===srcQty));
       if(!match)return;
       (ord.costItems||[])
         .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!existTypes.has(c.type))
@@ -2151,6 +2154,7 @@ function _buildSmartSuggestions(o){
     });
   });
   return Object.values(byType)
+    .filter(s=>s.count>=2)
     .map(s=>({...s,avgAmt:Math.round(s.total/s.count)}))
     .sort((a,b)=>b.count-a.count).slice(0,6);
 }
