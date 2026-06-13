@@ -27,6 +27,7 @@
 <link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
 <link rel="stylesheet" href="./print-control-center.css">
 <script type="module" src="./print-control-center.js"></script>
+<script type="module" src="./print-workspace.js"></script>
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -74,6 +75,10 @@
         <option value="readiness">✅ الأعلى جاهزية</option>
         <option value="deadline">📅 الميعاد</option>
       </select>
+      <div style="display:flex;gap:3px;border:1px solid var(--line);border-radius:9px;padding:3px;background:var(--bg2);flex-shrink:0" title="طريقة العرض">
+        <button id="vb-list" type="button" onclick="setViewMode('list')" class="vbtn vbtn-on" title="قائمة">☰</button>
+        <button id="vb-board" type="button" onclick="setViewMode('board')" class="vbtn" title="لوحة كانبان">⊞</button>
+      </div>
     </div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-top" style="background:var(--b)"></div><div class="kpi-val text-b" id="k-total">—</div><div class="kpi-lbl">🖨️ أوردرات</div></div>
@@ -445,7 +450,7 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 // State
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
-let statusFilter='all',sortBy='newest';
+let statusFilter='all',sortBy='newest',viewMode=localStorage.getItem('print.viewMode')||'list';
 const STATUS_FILTERS=[
   {id:'all',     label:'📋 الكل',          col:'var(--b)'},
   {id:'waiting', label:'⚠️ ينتظر ملف',     col:'var(--r)'},
@@ -526,6 +531,10 @@ function updateKPIs(){
   set('sub',orders.length+' أوردر طباعة');
   renderStatusChips();
   renderPrintSchedule();
+  // sync view-mode buttons with persisted state
+  const _lb=document.getElementById('vb-list'),_bb=document.getElementById('vb-board');
+  if(_lb){_lb.classList.toggle('vbtn-on',viewMode==='list');}
+  if(_bb){_bb.classList.toggle('vbtn-on',viewMode==='board');}
 }
 
 // Filter
@@ -643,6 +652,33 @@ function renderPrintSchedule(){
 
 window.setStatusFilter=function(id){statusFilter=id;renderStatusChips();renderList();};
 window.setSortBy=function(val){sortBy=val;renderList();};
+window.setViewMode=function(mode){
+  viewMode=mode;
+  localStorage.setItem('print.viewMode',mode);
+  const lb=document.getElementById('vb-list'),bb=document.getElementById('vb-board');
+  if(lb){lb.classList.toggle('vbtn-on',mode==='list');}
+  if(bb){bb.classList.toggle('vbtn-on',mode==='board');}
+  renderList();
+};
+// expose helpers needed by print-workspace.js kanban cards
+window.getStatusCategory=getStatusCategory;
+window.computeOrderReadyScore=computeOrderReadyScore;
+// Mark all products of an order as printed without opening the panel
+window.markOrderAllPrinted=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const prods=o.products||[];
+  const toPrint=prods.filter(p=>p.productStatus!=='printed'&&p.productStatus!=='done');
+  if(!toPrint.length){toast('✅ كل المنتجات مطبوعة بالفعل','ok');return;}
+  if(!confirm(`تأكيد: تمت طباعة ${toPrint.length} منتج(ات) في أوردر ${o.clientName||o.orderId}؟`))return;
+  const uid=auth?.currentUser?.uid||'';
+  let ok=0;
+  for(const [idx,p] of prods.entries()){
+    if(p.productStatus==='printed'||p.productStatus==='done')continue;
+    const r=await orderActions.setProductCatalogStatus({db,orderId,prodIdx:idx,status:'printed',userId:uid,userName});
+    if(r.ok)ok++;
+  }
+  if(ok>0)toast(`✅ تم تسجيل ${ok} منتجات مطبوعة`,'ok');
+};
 
 function renderList(){
   const el=document.getElementById('list');if(!el)return;
@@ -665,6 +701,12 @@ function renderList(){
       :emptyState({ico:'🖨️',title:'لا توجد أوردرات في الطباعة',sub:'الأوردرات المعتمدة من التصميم ستظهر هنا'});
     return;
   }
+  // ── Kanban board view ────────────────────────────────────────────────
+  if(viewMode==='board'&&window.printWorkspace?.renderKanban){
+    el.innerHTML=window.printWorkspace.renderKanban(list,{getStatusCategory,computeOrderReadyScore});
+    return;
+  }
+  // ── List view ────────────────────────────────────────────────────────
   el.innerHTML=list.map(o=>{
     const d=delay(o.deadline);
     const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
@@ -677,6 +719,8 @@ function renderList(){
     const extrasHtml=(p0?.extras||[]).map(e=>`<span style="display:inline-flex;padding:1px 6px;border-radius:var(--rad);background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2);font-size:var(--fs-xs);font-weight:var(--fw-bold)">✓ ${e}</span>`).join('');
     const hasFinal=!!(o.printFinalUrl||(o.products||[]).some(p=>p.designImageUrl));
     const noOwner=!o.printerId;
+    const firstThumb=(()=>{const imgs=(o.products||[]).flatMap(p=>Array.isArray(p.designImages)&&p.designImages.length?p.designImages.filter(Boolean):p.designImageUrl?[p.designImageUrl]:[]);return imgs[0]||o.designImageUrl||'';})();
+    const ocat=getStatusCategory(o);
     const isSel=(window.__selectedOrders||new Set()).has(o._id);
     return`<div class="ocard-wrap" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" style="margin-bottom:10px">
       <div class="ocard-sel-row" onclick="event.stopPropagation();toggleOrderSelection('${o._id}')" style="display:flex;align-items:center;gap:8px;padding:5px 14px;cursor:pointer;border-radius:var(--rad) var(--rad) 0 0;border-bottom:1px solid var(--line);background:${isSel?'rgba(74,142,245,.1)':'var(--bg3)'}">
@@ -706,7 +750,9 @@ function renderList(){
       </div>`:''}
       <div class="ocard-footer">
         <div style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
-          ${hasFinal?'<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">📁 ملف ✅</span>':'<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">📁 لا يوجد ملف</span>'}
+          ${hasFinal
+            ?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">${firstThumb?`<img src="${firstThumb}" loading="lazy" onclick="event.stopPropagation();window.open('${firstThumb.replace(/'/g,"\\'")}','_blank')" style="width:22px;height:22px;border-radius:4px;object-fit:cover;background:var(--bg3);cursor:zoom-in" alt="">`:''} ✅ ملف</span>`
+            :'<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">📁 لا يوجد ملف</span>'}
           ${(()=>{const tq=(o.products||[]).reduce((s,p)=>s+(parseInt(p.qty)||1),0)||o.qty||0;return tq?`<span class="txt-meta-xs">📦${tq}ق</span>`:'';})()}
           ${(()=>{
             // 🎯 Phase 3: Ready Score badge — يعرض جاهزية الأوردر للتحويل
@@ -720,6 +766,11 @@ function renderList(){
         </div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
+      ${ocat==='ready'
+        ?`<div style="padding:0 14px 10px"><button type="button" onclick="event.stopPropagation();openProductionSheet('${o._id}')" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,217,126,.35);background:rgba(0,217,126,.07);color:var(--g);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🖨️ إرسال ملخص للمطبعة</button></div>`
+        :ocat==='at-press'
+        ?`<div style="padding:0 14px 10px"><button type="button" onclick="event.stopPropagation();markOrderAllPrinted('${o._id}')" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.07);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ تأكيد: تمت الطباعة الكلية</button></div>`
+        :''}
     </div></div>`;
   }).join('');
 }
