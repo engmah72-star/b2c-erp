@@ -594,6 +594,11 @@ function renderList(){
     const m=calcMargin(o);
     const comp=getCompleteness(o);
     const isActive=o._id===activeId;
+    const totalCost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const itemCount=(o.costItems||[]).length;
+    const costBadge=itemCount>0
+      ?`<span class="q-cost-badge">💰 ${fn(totalCost)} ج · ${itemCount} بند</span>`
+      :`<span class="q-cost-badge q-cost-empty">⚠️ لا توجد بنود</span>`;
     const compBar=comp.expected.length?`<div class="q-comp-bar"><div class="q-comp-fill" style="width:${comp.pct}%" title="${comp.pct}% مكتمل"></div></div><div class="q-comp-lbl">${comp.pct}% (${comp.done.length}/${comp.expected.length})</div>`:'';
     const marginPill=m.marginPct!==null?`<span class="profit-margin ${m.cls}" style="font-size:var(--fs-xs);padding:2px 7px">${m.estimated?'~':''}${m.marginPct}%</span>`:'';
     return`<div class="ord-card q-card ${isActive?'q-active':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}')">
@@ -610,6 +615,7 @@ function renderList(){
         <span class="stage-chip ${stg.cls}" style="flex-shrink:0">${stg.lbl} ${o.stage||'—'}</span>
       </div>
       <div style="padding:0 14px 10px">
+        ${costBadge}
         ${compBar}
         <div class="q-products">${prods.slice(0,2).map(p=>`<span class="q-prod-chip">${p.name||'منتج'} ×${p.qty||0}</span>`).join('')}${prods.length>2?`<span class="q-prod-more">+${prods.length-2}</span>`:''}</div>
       </div>
@@ -736,16 +742,25 @@ function _renderCompleteness(o){
     :hasAnyItems
       ?`<button type="button" class="ws-finish-btn ws-finish-partial" onclick="closeWorkspace()">← إنهاء والرجوع للقائمة</button>`
       :'';
+  // recorded types not in expected list — still show them as acknowledged
+  const recordedAll=(o.costItems||[]).map(c=>(c.type||'').trim()).filter(Boolean);
+  const expectedSet=new Set(comp.expected);
+  const extraDone=[...new Set(recordedAll.filter(t=>!expectedSet.has(t)))];
+  const totalCostDisp=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   el.innerHTML=`
     <div class="ws-comp-wrap">
       ${archiveBanner}
       <div class="ws-comp-header">
         <span class="ws-comp-title">🎯 اكتمال بنود التكلفة</span>
-        <span class="ws-comp-pct" style="color:${color}">${comp.pct}%</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          ${totalCostDisp>0?`<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-heavy)">💰 ${fn(totalCostDisp)} ج</span>`:''}
+          <span class="ws-comp-pct" style="color:${color}">${comp.pct}%</span>
+        </div>
       </div>
       <div class="ws-comp-track"><div class="ws-comp-fill" style="width:${comp.pct}%;background:${color}"></div></div>
       <div class="ws-comp-chips">
         ${comp.done.map(t=>`<span class="ws-comp-chip done">✅ ${t}</span>`).join('')}
+        ${extraDone.map(t=>`<span class="ws-comp-chip extra">✔ ${t}</span>`).join('')}
         ${comp.missing.map(t=>`<span class="ws-comp-chip miss" onclick="prefillType('${t.replace(/'/g,'&#39;')}')">+ ${t}</span>`).join('')}
       </div>
       ${finishBtn}
