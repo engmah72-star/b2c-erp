@@ -250,12 +250,12 @@ export function renderPrintCCHeader(o = {}, ctx = {}) {
     ctaIcon    = '📁';
     ctaLabel   = 'أضف ملف التصميم';
     ctaStyle   = 'background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.45);color:var(--r)';
-    ctaOnClick = `switchPrintPanelTab('files',null)`;
+    ctaOnClick = `switchPrintPanelTab('details',null)`;
   } else if (rs.score < 70) {
     ctaIcon    = '📝';
     ctaLabel   = `أكمل المواصفات (${rs.score}%)`;
     ctaStyle   = 'background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.45);color:var(--y)';
-    ctaOnClick = `switchPrintPanelTab('specs',null)`;
+    ctaOnClick = `switchPrintPanelTab('details',null)`;
   } else if (allPrinted) {
     ctaIcon    = '🏭';
     ctaLabel   = 'تحويل للإنتاج';
@@ -417,59 +417,92 @@ export function applyPrintCCHeader(o, ctx) {
   }
 }
 
-// ─── FILES TAB ──────────────────────────────────────────────────────
-function printFilesTabHTML(o = {}) {
+// ─── DETAILS TAB (files + specs merged per product) ─────────────────
+function printDetailsTabHTML(o = {}) {
   const products = o.products || [];
   if (!products.length) {
     return `<div class="pcc-empty"><div class="pcc-empty-ico">📦</div><div class="pcc-empty-txt">لا توجد منتجات في هذا الطلب</div></div>`;
   }
 
   const prodCards = products.map((p, idx) => {
+    // ── Images ──────────────────────────────────────────────────────
     const imgs = Array.isArray(p.designImages) ? p.designImages.filter(Boolean) : [];
     if (p.designImageUrl && !imgs.includes(p.designImageUrl)) imgs.unshift(p.designImageUrl);
-
-    const extraCount = imgs.length > 4 ? imgs.length - 4 : 0;
-    const thumbsHTML = imgs.slice(0, 4).map((img, i) => `
-      <div style="position:relative;width:56px;height:56px;flex-shrink:0">
+    const extraCount = imgs.length > 3 ? imgs.length - 3 : 0;
+    const thumbsHTML = imgs.slice(0, 3).map((img, i) => `
+      <div style="position:relative;width:52px;height:52px;flex-shrink:0">
         <img src="${escHtml(img)}" loading="lazy"
           onclick="event.stopPropagation();window.open('${img.replace(/'/g, "\\'")}','_blank')"
-          style="width:56px;height:56px;border-radius:8px;object-fit:cover;border:1px solid var(--line);cursor:zoom-in;display:block" alt="">
-        ${extraCount > 0 && i === 3
-          ? `<div style="position:absolute;inset:0;border-radius:8px;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:800">+${extraCount}</div>`
+          style="width:52px;height:52px;border-radius:8px;object-fit:cover;border:1px solid var(--line);cursor:zoom-in;display:block" alt="">
+        ${extraCount > 0 && i === 2
+          ? `<div style="position:absolute;inset:0;border-radius:8px;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">+${extraCount}</div>`
           : ''}
       </div>`).join('');
 
-    const emptyZone = `
-      <div onclick="openEditProds(${idx})" role="button" tabindex="0"
-           style="width:100%;padding:18px 12px;border:2px dashed var(--line2);border-radius:10px;text-align:center;cursor:pointer;background:rgba(239,68,68,.04)">
-        <div style="font-size:22px;margin-bottom:4px">📁</div>
-        <div style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)">أضف صور التصميم</div>
-        <div style="font-size:var(--fs-tiny);color:var(--dim2);margin-top:2px">اضغط لتعديل المنتج وإضافة الصور</div>
-      </div>`;
+    const filesSection = imgs.length
+      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+           ${thumbsHTML}
+           <button type="button" onclick="openEditProds(${idx})"
+                   style="width:52px;height:52px;border-radius:8px;border:1px dashed var(--line2);background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0" title="إضافة صورة">＋</button>
+         </div>`
+      : `<div onclick="openEditProds(${idx})" role="button" tabindex="0"
+              style="padding:14px;border:2px dashed var(--line2);border-radius:10px;text-align:center;cursor:pointer;background:rgba(239,68,68,.04)">
+           <div style="font-size:20px;margin-bottom:3px">📁</div>
+           <div style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)">أضف صور التصميم</div>
+         </div>`;
+
+    // ── Specs ────────────────────────────────────────────────────────
+    const isOffset  = (p.printType || '').includes('offset');
+    const isDigital = (p.printType || '').includes('digital');
+    const ptCol     = isOffset ? 'var(--y)' : isDigital ? 'var(--b)' : 'var(--dim)';
+    const ptLabel   = isOffset && isDigital ? 'مختلط' : isOffset ? 'أوفست' : isDigital ? 'ديجيتال' : '';
+
+    const rr    = (typeof window.computeProductReadiness === 'function') ? window.computeProductReadiness(o, p) : { pct: 0, ready: false, critical: [] };
+    const rrCol = rr.ready ? 'var(--g)' : rr.pct >= 60 ? 'var(--y)' : 'var(--r)';
+
+    const specRows = [
+      p.paper        ? `${escHtml(p.paper)}${p.weight ? ' ' + p.weight + 'جم' : ''}` : null,
+      (p.printSize || p.size) ? escHtml(p.printSize || p.size) : null,
+      p.lamination && p.lamination !== 'بلا' ? escHtml(p.lamination) : null,
+      isOffset && p.zinkType ? escHtml(p.zinkType) : null,
+      isOffset && p.cutSize  ? `قطع: ${escHtml(p.cutSize)}` : null,
+      p.pressName    ? `🖨️ ${escHtml(p.pressName)}` : null,
+      p.pressDeadline ? `📅 ${escHtml(p.pressDeadline)}` : null,
+      p.briefSentAt  ? `<span style="color:var(--g)">✅ بُعث البريف</span>` : null,
+    ].filter(Boolean);
+
+    const specsSection = specRows.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px">
+           ${specRows.map(v => `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:12px;background:var(--bg3);border:1px solid var(--line);color:var(--snow-soft)">${v}</span>`).join('')}
+         </div>`
+      : `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:8px">لم تُضَف مواصفات — <button type="button" onclick="openEditProds(${idx})" style="color:var(--b);background:none;border:none;cursor:pointer;font-family:inherit;font-size:inherit;padding:0;font-weight:var(--fw-bold)">أضفها الآن</button></div>`;
+
+    const criticalBadge = rr.critical && rr.critical.length && !rr.ready
+      ? `<span style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)"> · ⚠️ ${rr.critical.slice(0,2).map(c=>escHtml(c)).join(' · ')}</span>`
+      : '';
 
     return `
       <div style="padding:12px 14px;border-bottom:1px solid var(--line)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div>
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex:1;min-width:0">
             <span style="font-size:var(--fs-sm);font-weight:var(--fw-heavy)">${escHtml(p.name || 'منتج')}</span>
-            <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold);margin-right:6px">×${escHtml(String(p.qty || '?'))}</span>
+            <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${escHtml(String(p.qty || '?'))}</span>
+            ${ptLabel ? `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${ptCol}18;color:${ptCol};border:1px solid ${ptCol}33;font-weight:800">${ptLabel}</span>` : ''}
+            <span style="font-size:var(--fs-xs);color:${rrCol};font-weight:var(--fw-bold)">${rr.ready ? '✅' : `${rr.pct}%`}</span>${criticalBadge}
           </div>
           <button type="button" onclick="openEditProds(${idx})"
-                  style="font-size:var(--fs-xs);padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;cursor:pointer;font-weight:var(--fw-bold)">
+                  style="font-size:var(--fs-xs);padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;cursor:pointer;font-weight:var(--fw-bold);flex-shrink:0">
             ✏️ تعديل
           </button>
         </div>
-        ${imgs.length
-          ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${thumbsHTML}</div>
-             <button type="button" onclick="openEditProds(${idx})"
-                     style="margin-top:8px;font-size:var(--fs-xs);color:var(--b);background:none;border:none;cursor:pointer;font-family:inherit;font-weight:var(--fw-bold);padding:0">+ إضافة صورة</button>`
-          : emptyZone}
+        ${filesSection}
+        ${specsSection}
       </div>`;
   }).join('');
 
   const noteHTML = o.designNote
     ? `<div style="padding:12px 14px">
-         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:6px">📋 ملاحظة التصميم</div>
+         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">📋 ملاحظة</div>
          <div style="font-size:var(--fs-sm);color:var(--snow-soft);line-height:1.5;white-space:pre-wrap">${escHtml(o.designNote)}</div>
        </div>`
     : '';
@@ -477,111 +510,31 @@ function printFilesTabHTML(o = {}) {
   return `<div>${prodCards}${noteHTML}</div>`;
 }
 
-// ─── SPECS TAB ──────────────────────────────────────────────────────
-function printSpecsTabHTML(o = {}) {
-  const products = o.products || [];
-  if (!products.length) {
-    return `<div class="pcc-empty"><div class="pcc-empty-ico">📋</div><div class="pcc-empty-txt">لا توجد منتجات في هذا الطلب</div></div>`;
-  }
-
-  const prodCards = products.map((p, idx) => {
-    const isOffset  = (p.printType || '').includes('offset');
-    const isDigital = (p.printType || '').includes('digital');
-    const ptLabel   = isOffset && isDigital ? 'مختلط' : isOffset ? 'أوفست' : isDigital ? 'ديجيتال' : '';
-    const ptCol     = isOffset ? 'var(--y)' : isDigital ? 'var(--b)' : 'var(--dim)';
-
-    const rr    = (typeof window.computeProductReadiness === 'function') ? window.computeProductReadiness(o, p) : { pct: 0, ready: false, critical: [], warnings: [] };
-    const rrCol = rr.ready ? 'var(--g)' : rr.pct >= 60 ? 'var(--y)' : 'var(--r)';
-
-    const specRows = [
-      p.paper ? ['الورق', `${escHtml(p.paper)}${p.weight ? ' ' + escHtml(String(p.weight)) + 'جم' : ''}`] : null,
-      (p.printSize || p.size) ? ['المقاس', escHtml(p.printSize || p.size)] : null,
-      p.lamination && p.lamination !== 'بلا' ? ['التشطيب', escHtml(p.lamination)] : null,
-      isOffset && p.zinkType  ? ['الزنك', escHtml(p.zinkType)]  : null,
-      isOffset && p.colorCount ? ['الألوان', escHtml(String(p.colorCount))] : null,
-      isOffset && p.cutSize   ? ['القطع', escHtml(p.cutSize)]   : null,
-      p.pressName     ? ['المطبعة', escHtml(p.pressName)] : null,
-      p.pressDeadline ? ['موعد المطبعة', escHtml(p.pressDeadline)] : null,
-      p.briefSentAt
-        ? ['البريف', `<span style="color:var(--g);font-weight:800">✅ أُرسل${p.briefSentByName ? ' · ' + escHtml(p.briefSentByName) : ''}</span>`]
-        : null,
-    ].filter(Boolean);
-
-    const criticalHTML = rr.critical && rr.critical.length
-      ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2)">
-           <div style="font-size:var(--fs-tiny);color:var(--r);font-weight:var(--fw-bold)">⚠️ ناقص: ${rr.critical.slice(0, 5).map(c => escHtml(c)).join(' · ')}</div>
-         </div>`
-      : '';
-
-    return `
-      <div style="padding:12px 14px;border-bottom:1px solid var(--line)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span style="font-size:var(--fs-sm);font-weight:var(--fw-heavy)">${escHtml(p.name || 'منتج')}</span>
-            <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${escHtml(String(p.qty || '?'))}</span>
-            ${ptLabel ? `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${ptCol}18;color:${ptCol};border:1px solid ${ptCol}33;font-weight:800">${ptLabel}</span>` : ''}
-            <span style="font-size:var(--fs-xs);color:${rrCol};font-weight:var(--fw-bold)">${rr.ready ? '✅' : `${rr.pct}%`}</span>
-          </div>
-          <button type="button" onclick="openEditProds(${idx})"
-                  style="font-size:var(--fs-xs);padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;cursor:pointer;font-weight:var(--fw-bold);flex-shrink:0">
-            ✏️ تعديل
-          </button>
-        </div>
-        ${specRows.length
-          ? `<div style="display:flex;flex-direction:column;gap:4px">
-               ${specRows.map(([label, val]) => `
-                 <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:5px 8px;background:var(--bg3);border-radius:7px;font-size:var(--fs-sm);gap:10px">
-                   <span style="color:var(--dim2);flex-shrink:0">${label}</span>
-                   <span style="font-weight:var(--fw-bold);text-align:start">${val}</span>
-                 </div>`).join('')}
-             </div>`
-          : `<div style="font-size:var(--fs-xs);color:var(--dim2);text-align:center;padding:12px 0">لم تُضَف مواصفات بعد</div>`}
-        ${criticalHTML}
-      </div>`;
-  }).join('');
-
-  return `<div>${prodCards}</div>`;
-}
-
 // ─── TAB SHELL — wraps existing panel body content ─────────────────
 /**
  * wrapPrintPanelInTabs(order, productionBodyHTML)
  *
- * يأخذ الـ HTML الموجود من renderPanel ويلفّه في 4-tab structure.
- * Tab 1 (الملفات) — صور التصميم لكل منتج، افتراضي.
- * Tab 2 (المواصفات) — مواصفات الطباعة لكل منتج + readiness.
- * Tab 3 (الطلب) — المحتوى القديم من renderPanel (untouched handlers).
- * Tab 4 (السجل) — timeline موحّد.
+ * يأخذ الـ HTML الموجود من renderPanel ويلفّه في 2-tab structure.
+ * Tab 1 (التفاصيل) — الملفات + المواصفات معاً لكل منتج، افتراضي.
+ * Tab 2 (السجل) — timeline موحّد.
+ * محتوى productionBodyHTML متاح من زر «المزيد» في الـ action sheet.
  */
 export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts = {}) {
-  // Count missing design files for badge warning
   const missingFiles = (order.products || []).filter(p => {
     const imgs = Array.isArray(p.designImages) ? p.designImages.filter(Boolean).length : 0;
     return imgs === 0 && !p.designImageUrl;
   }).length;
-  const totalFiles = (order.products || []).reduce((n, p) => {
-    const imgs = Array.isArray(p.designImages) ? p.designImages.filter(Boolean).length : 0;
-    return n + imgs + (p.designImageUrl ? 1 : 0);
-  }, 0);
 
   const tlEvents = buildPrintTimeline(order);
 
   return `
     <div class="pcc-tabs" id="pcc-tabs">
-      <button type="button" class="pcc-tab on" data-pcctab="files" onclick="switchPrintPanelTab('files',this)">
-        <span class="pcc-tab-ico">🖼️</span>
-        <span class="pcc-tab-lbl">الملفات</span>
+      <button type="button" class="pcc-tab on" data-pcctab="details" onclick="switchPrintPanelTab('details',this)">
+        <span class="pcc-tab-ico">📁</span>
+        <span class="pcc-tab-lbl">التفاصيل</span>
         ${missingFiles > 0
           ? `<span class="pcc-tab-cnt" style="background:rgba(239,68,68,.18);color:var(--r)">⚠${missingFiles}</span>`
-          : (totalFiles > 0 ? `<span class="pcc-tab-cnt">${totalFiles}</span>` : '')}
-      </button>
-      <button type="button" class="pcc-tab" data-pcctab="specs" onclick="switchPrintPanelTab('specs',this)">
-        <span class="pcc-tab-ico">🖨️</span>
-        <span class="pcc-tab-lbl">المواصفات</span>
-      </button>
-      <button type="button" class="pcc-tab" data-pcctab="order" onclick="switchPrintPanelTab('order',this)">
-        <span class="pcc-tab-ico">📋</span>
-        <span class="pcc-tab-lbl">الطلب</span>
+          : ''}
       </button>
       <button type="button" class="pcc-tab" data-pcctab="history" onclick="switchPrintPanelTab('history',this)">
         <span class="pcc-tab-ico">⏱</span>
@@ -590,9 +543,7 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts =
       </button>
     </div>
 
-    <div class="pcc-pane" id="pcc-pane-files"   style="display:block">${printFilesTabHTML(order)}</div>
-    <div class="pcc-pane" id="pcc-pane-specs"   style="display:none">${printSpecsTabHTML(order)}</div>
-    <div class="pcc-pane" id="pcc-pane-order"   style="display:none">${productionBodyHTML}</div>
+    <div class="pcc-pane" id="pcc-pane-details" style="display:block">${printDetailsTabHTML(order)}</div>
     <div class="pcc-pane" id="pcc-pane-history" style="display:none">
       <div class="pcc-tl-group" style="padding-bottom:24px">${printTimelineHTML(tlEvents)}</div>
     </div>`;
@@ -603,7 +554,7 @@ export function switchPrintPanelTab(tab, btn) {
   document.querySelectorAll('.pcc-tab').forEach(b => b.classList.remove('on'));
   const target = btn || document.querySelector(`.pcc-tab[data-pcctab="${tab}"]`);
   if (target) target.classList.add('on');
-  ['files', 'specs', 'order', 'history'].forEach(t => {
+  ['details', 'history'].forEach(t => {
     const pane = document.getElementById('pcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });

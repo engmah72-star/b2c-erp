@@ -824,6 +824,15 @@ function renderList(){
         </div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
+      ${(()=>{
+        // مطابع مخصّصة — تظهر على الكارت مباشرة بدون فتح البانل
+        const presses=[...new Set((o.products||[]).map(p=>p.pressName).filter(Boolean))];
+        return presses.length
+          ?`<div style="padding:0 14px 6px;display:flex;gap:5px;flex-wrap:wrap">
+              ${presses.map(n=>`<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:12px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-weight:var(--fw-bold)">🖨️ ${n}</span>`).join('')}
+            </div>`
+          :'';
+      })()}
       ${ocat==='ready'
         ?`<div style="padding:0 14px 10px"><button type="button" onclick="event.stopPropagation();openProductionSheet('${o._id}')" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,217,126,.35);background:rgba(0,217,126,.07);color:var(--g);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🖨️ إرسال ملخص للمطبعة</button></div>`
         :ocat==='at-press'
@@ -2413,12 +2422,17 @@ function renderEditProdsList() {
 
     // الإضافات — تُحقن داخل «بيانات الطباعة» (جزء منها حسب طلب المستخدم)
     const extrasHTML = (()=>{
-      // المصدر الأساسي: printExtras من الإعدادات (settings/main) — يُدار من صفحة الإعدادات
-      const _settings = Array.isArray(appSettings.printExtras) ? appSettings.printExtras.filter(Boolean) : [];
+      // المصدر الأساسي: printExtrasOffset / printExtrasDigital من الإعدادات (مُدار من صفحة الإعدادات)
+      const isOff = (p.printType||'').includes('offset');
+      const isDig = (p.printType||'').includes('digital');
+      const _offset  = Array.isArray(appSettings.printExtrasOffset)  ? appSettings.printExtrasOffset.filter(Boolean)  : [];
+      const _digital = Array.isArray(appSettings.printExtrasDigital) ? appSettings.printExtrasDigital.filter(Boolean) : [];
+      const _settings = isOff && isDig ? [..._offset,..._digital].filter((v,i,a)=>a.indexOf(v)===i)
+                      : isOff ? _offset : isDig ? _digital : [..._offset,..._digital].filter((v,i,a)=>a.indexOf(v)===i);
       // Fallback 1: production services من master_lists/supplier_categories
       const _unified  = productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
       // Fallback 2: legacy costTypes من settings
-      const _legacy   = p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
+      const _legacy   = isDig?(appSettings.costTypesDigital||[]):isOff?(appSettings.costTypesOffset||[]):[];
       const extrasList = _settings.length ? _settings : _unified.length ? _unified : _legacy;
       if(!extrasList.length)return'';
       const sel=p.extras||[];
