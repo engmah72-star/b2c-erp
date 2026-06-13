@@ -469,6 +469,32 @@ function getCompleteness(order){
   return{expected,done,missing,pct};
 }
 
+function getExpectedTypesForProduct(prod){
+  if(!masterCategories.length||!prod)return[];
+  const pt=(prod.printType||'').toLowerCase();
+  if(!pt)return[];
+  const types=new Set();
+  masterCategories
+    .filter(c=>c.isCostItem&&(c.printTypes||[]).some(x=>x===pt||pt.includes(x)||x.includes(pt)))
+    .forEach(c=>types.add(c.label));
+  return[...types];
+}
+function getProductCostItems(o,prodIdx){
+  if(prodIdx<0)return o.costItems||[];
+  return(o.costItems||[]).filter(c=>c.prodIdx===prodIdx);
+}
+function getProductCompleteness(o,prodIdx){
+  if(prodIdx<0)return getCompleteness(o);
+  const prod=(o.products||[])[prodIdx];
+  const expected=getExpectedTypesForProduct(prod);
+  const items=getProductCostItems(o,prodIdx);
+  const recorded=new Set(items.map(c=>(c.type||'').trim()));
+  const done=expected.filter(t=>recorded.has(t));
+  const missing=expected.filter(t=>!recorded.has(t));
+  const pct=expected.length?Math.round(done.length/expected.length*100):(items.length>0?100:0);
+  return{expected,done,missing,pct};
+}
+
 /* ═══════════════════════════════════════════════════
    AUTH + DATA BOOTSTRAP
    ═══════════════════════════════════════════════════ */
@@ -559,23 +585,45 @@ function getMissingCostOrders(){
   });
 }
 
+function getMissingProductEntries(){
+  const seeAll=['admin','operation_manager','production_agent'].includes(currentRole);
+  const uid=currentUser?.uid||'';
+  const entries=[];
+  orders.forEach(o=>{
+    if(o.stage==='cancelled')return;
+    const canSee=seeAll||(o.productionAgent===uid)||(!o.productionAgent&&['production','shipping','archived'].includes(o.stage));
+    if(!canSee)return;
+    const prods=o.products||[];
+    if(!prods.length){
+      const hasItems=(o.costItems||[]).length>0;
+      if(!hasItems||o.awaitingFinalArchive)entries.push({o,prodIdx:-1,prod:null});
+      return;
+    }
+    prods.forEach((prod,i)=>{
+      const prodItems=(o.costItems||[]).filter(c=>c.prodIdx===i);
+      if(!prodItems.length||o.awaitingFinalArchive)entries.push({o,prodIdx:i,prod});
+    });
+  });
+  return entries;
+}
+
 function renderList(){
-  const data=getMissingCostOrders();
+  const data=getMissingProductEntries();
   const byStage={design:0,printing:0,production:0,shipping:0,archived:0};
-  data.forEach(o=>{const s=o.stage||'other';if(byStage[s]!=null)byStage[s]++;});
+  data.forEach(({o})=>{const s=o.stage||'other';if(byStage[s]!=null)byStage[s]++;});
   setText('k-total',data.length);setText('k-production',byStage.production||0);
   setText('k-shipping',byStage.shipping||0);
   setText('k-other',(byStage.design||0)+(byStage.printing||0)+(byStage.archived||0));
   setText('cnt-all',data.length);setText('cnt-production',byStage.production||0);
   setText('cnt-shipping',byStage.shipping||0);setText('cnt-printing',byStage.printing||0);
   setText('cnt-design',byStage.design||0);setText('cnt-archived',byStage.archived||0);
-  const libCount=data.filter(o=>_getMatchingProfile(o)!=null).length;
+  const libCount=data.filter(({o})=>_getMatchingProfile(o)!=null).length;
   setText('cnt-has-lib',libCount);
   renderSmartKpis();
 
   let filtered=currentFilter==='all'?data
-    :currentFilter==='has-lib'?data.filter(o=>_getMatchingProfile(o)!=null)
-    :data.filter(o=>o.stage===currentFilter);
+    :currentFilter==='has-lib'?data.filter(({o})=>_getMatchingProfile(o)!=null)
+    :data.filter(({o})=>o.stage===currentFilter);
   filtered=applySort(filtered);
 
   const el=document.getElementById('list');
@@ -585,39 +633,41 @@ function renderList(){
   }
 
   const SM={design:{cls:'st-design',lbl:'✏️'},printing:{cls:'st-printing',lbl:'🖨️'},production:{cls:'st-production',lbl:'🏭'},shipping:{cls:'st-shipping',lbl:'🚚'},archived:{cls:'st-archived',lbl:'📁'}};
-  el.innerHTML=filtered.map(o=>{
+  el.innerHTML=filtered.map(({o,prodIdx,prod})=>{
     const stg=SM[o.stage]||{cls:'st-design',lbl:'—'};
-    const prods=o.products||[];
     const days=o.createdAt?.seconds?Math.floor((Date.now()/1000-o.createdAt.seconds)/86400):0;
     const pScore=calcPriority(o);
     const prio=prioBucket(pScore);
     const m=calcMargin(o);
-    const comp=getCompleteness(o);
-    const isActive=o._id===activeId;
-    const totalCost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    const itemCount=(o.costItems||[]).length;
+    const comp=getProductCompleteness(o,prodIdx);
+    const isActive=o._id===activeId&&(activeId!==null);
+    const prodCostItems=getProductCostItems(o,prodIdx);
+    const totalCost=prodCostItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const itemCount=prodCostItems.length;
     const costBadge=itemCount>0
       ?`<span class="q-cost-badge">💰 ${fn(totalCost)} ج · ${itemCount} بند</span>`
       :`<span class="q-cost-badge q-cost-empty">⚠️ لا توجد بنود</span>`;
     const compBar=comp.expected.length?`<div class="q-comp-bar"><div class="q-comp-fill" style="width:${comp.pct}%" title="${comp.pct}% مكتمل"></div></div><div class="q-comp-lbl">${comp.pct}% (${comp.done.length}/${comp.expected.length})</div>`:'';
     const marginPill=m.marginPct!==null?`<span class="profit-margin ${m.cls}" style="font-size:var(--fs-xs);padding:2px 7px">${m.estimated?'~':''}${m.marginPct}%</span>`:'';
-    return`<div class="ord-card q-card ${isActive?'q-active':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}')">
+    const prodName=prod?prod.name||'منتج':'—';
+    const prodQty=prod?prod.qty||0:'';
+    return`<div class="ord-card q-card ${isActive?'q-active':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}',${prodIdx})">
       <span class="prio-badge ${prio.cls}">${prio.lbl}</span>
       <div class="ord-head" style="padding:12px 14px 8px">
         <div class="ord-head-main">
-          <div class="ord-client">#${o.orderId||o._id.slice(-6)}</div>
+          <div class="ord-client">${prodName}${prodQty?` <span class="q-prod-qty">×${prodQty}</span>`:''}</div>
           <div class="ord-meta">
+            <span class="ord-meta-pill">#${o.orderId||o._id.slice(-6)}</span>
             <span class="q-client-sub">👤 ${o.clientName||'—'}</span>
             ${days>0?`<span class="day-chip ${days<=2?'day-ok':days<=5?'day-warn':'day-late'}">⏱️ ${days}ي</span>`:''}
             ${marginPill}
           </div>
         </div>
-        <span class="stage-chip ${stg.cls}" style="flex-shrink:0">${stg.lbl} ${o.stage||'—'}</span>
+        <span class="stage-chip ${stg.cls}" style="flex-shrink:0">${stg.lbl}</span>
       </div>
       <div style="padding:0 14px 10px">
         ${costBadge}
         ${compBar}
-        <div class="q-products">${prods.slice(0,2).map(p=>`<span class="q-prod-chip">${p.name||'منتج'} ×${p.qty||0}</span>`).join('')}${prods.length>2?`<span class="q-prod-more">+${prods.length-2}</span>`:''}</div>
       </div>
     </div>`;
   }).join('');
@@ -626,7 +676,7 @@ function renderList(){
 /* ═══════════════════════════════════════════════════
    WORKSPACE
    ═══════════════════════════════════════════════════ */
-window.openWorkspace=function(orderId){
+window.openWorkspace=function(orderId,prodIdx=-1){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
   activeId=orderId;
   editCostIdx=-1;
@@ -639,6 +689,11 @@ window.openWorkspace=function(orderId){
   document.getElementById('ws-content').hidden=false;
 
   _populateWorkspace(o);
+  // Pre-select the product that was clicked
+  if(prodIdx>=0){
+    const sel=document.getElementById('cost-prod-idx');
+    if(sel){sel.value=String(prodIdx);sel.dispatchEvent(new Event('change'));}
+  }
   _renderTmplApply(o);
   _renderLibProfileSuggest(o);
   clearForm();
@@ -893,10 +948,10 @@ function renderSmartKpis(){
 
 function renderProdStrip(todayItems,weekItems){
   const el=document.getElementById('prod-strip-msg');if(!el)return;
-  const t=todayItems.length,pending=getMissingCostOrders().length;
+  const t=todayItems.length,pending=getMissingProductEntries().length;
   const dailyAvg=weekItems.length/7;
   let msg='';
-  if(t===0&&pending>0)msg=`<span>يوجد</span> <strong>${pending}</strong> أوردر بانتظار تسجيل بنود التكلفة`;
+  if(t===0&&pending>0)msg=`<span>يوجد</span> <strong>${pending}</strong> منتج بانتظار تسجيل بنود التكلفة`;
   else if(t>0&&dailyAvg>0){
     if(t>=Math.ceil(dailyAvg))msg=`أداء ممتاز ⭐ · <strong>${t}</strong> بند اليوم · <span>${pending} متبقي</span>`;
     else msg=`<span>اليوم:</span> <strong>${t}</strong> بند · المعتاد <strong>${Math.round(dailyAvg)}</strong>/يوم · <span>${pending} متبقي</span>`;
@@ -950,10 +1005,10 @@ window.setSort=function(s,btn){
 };
 function applySort(arr){
   const a=[...arr];
-  if(currentSort==='priority')a.sort((x,y)=>calcPriority(y)-calcPriority(x));
-  else if(currentSort==='oldest')a.sort((x,y)=>(x.createdAt?.seconds||0)-(y.createdAt?.seconds||0));
-  else if(currentSort==='value')a.sort((x,y)=>(parseFloat(y.totalPrice)||0)-(parseFloat(x.totalPrice)||0));
-  else if(currentSort==='complete')a.sort((x,y)=>getCompleteness(x).pct-getCompleteness(y).pct);
+  if(currentSort==='priority')a.sort((x,y)=>calcPriority(y.o)-calcPriority(x.o));
+  else if(currentSort==='oldest')a.sort((x,y)=>(x.o.createdAt?.seconds||0)-(y.o.createdAt?.seconds||0));
+  else if(currentSort==='value')a.sort((x,y)=>(parseFloat(y.o.totalPrice)||0)-(parseFloat(x.o.totalPrice)||0));
+  else if(currentSort==='complete')a.sort((x,y)=>getProductCompleteness(x.o,x.prodIdx).pct-getProductCompleteness(y.o,y.prodIdx).pct);
   return a;
 }
 window.setFilter=function(f,btn){
