@@ -2122,30 +2122,34 @@ function _renderAnomalies(o){
    ═══════════════════════════════════════════════════ */
 function _buildSmartSuggestions(o){
   const existTypes=new Set((o.costItems||[]).map(c=>c.type));
-  // include qty so we only match same-quantity orders
   const prods=(o.products||[]).map((p,i)=>({base:_normBaseName(p.name),idx:i,qty:_extractQty(p)})).filter(x=>x.base.length>=2);
   if(!prods.length)return[];
+  // sort newest first so first match per type = most recent price
+  const sorted=[...orders].sort((a,b)=>{
+    const da=a.createdAt?.seconds||0,db2=b.createdAt?.seconds||0;
+    return db2-da;
+  });
   const byType={};
-  orders.forEach(ord=>{
+  sorted.forEach(ord=>{
     if(ord._id===o._id||!(ord.costItems||[]).length)return;
     (ord.products||[]).forEach((p,pi)=>{
       const base=_normBaseName(p.name);
       const srcQty=_extractQty(p);
-      // only accept same base name AND same quantity — avoids cross-qty price errors
       const match=prods.find(x=>x.base===base&&((!x.qty||!srcQty)||x.qty===srcQty));
       if(!match)return;
       (ord.costItems||[])
         .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!existTypes.has(c.type))
         .forEach(c=>{
-          if(!byType[c.type])byType[c.type]={type:c.type,supplierId:c.supplierId,supplierName:c.supplierName||'',count:0,total:0,prodIdx:match.idx};
-          byType[c.type].count++;
-          byType[c.type].total+=parseFloat(c.total)||0;
+          if(!byType[c.type]){
+            // first seen = most recent order = last recorded price (no averaging)
+            byType[c.type]={type:c.type,supplierId:c.supplierId,supplierName:c.supplierName||'',count:1,avgAmt:parseFloat(c.total)||0,prodIdx:match.idx};
+          }else{
+            byType[c.type].count++;
+          }
         });
     });
   });
   return Object.values(byType)
-    .filter(s=>s.count>=2)
-    .map(s=>({...s,avgAmt:Math.round(s.total/s.count)}))
     .sort((a,b)=>b.count-a.count).slice(0,6);
 }
 
@@ -2163,8 +2167,8 @@ function _renderSmartSuggest(o){
     </div>`).join('');
   el.innerHTML=`<div class="smart-suggest-box">
     <div class="smart-suggest-hdr">
-      <span class="smart-suggest-lbl">🤖 اقتراح ذكي</span>
-      <span class="smart-suggest-sub">بناءً على ${suggs[0]?.count||0}+ أوردر مشابه</span>
+      <span class="smart-suggest-lbl">🤖 آخر سعر مسجّل</span>
+      <span class="smart-suggest-sub">من ${suggs[0]?.count||0}+ أوردر مشابه</span>
       <button type="button" class="btn btn-sm btn-r smart-apply-all" onclick="applyAllSmartSuggestions()">⚡ تطبيق الكل</button>
     </div>
     <div class="smart-chip-grid">${chips}</div>
