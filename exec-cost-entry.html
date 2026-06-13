@@ -1580,13 +1580,15 @@ let _libProfiles=[],_activeBundleForApply=null;
 
 function _getMatchingProfile(o){
   if(!_libProfiles.length)return null;
-  for(const prod of(o.products||[])){
+  const prods=o.products||[];
+  for(let i=0;i<prods.length;i++){
+    const prod=prods[i];
     if(!prod?.name)continue;
     const base=_normBaseName(prod.name);if(!base||base.length<2)continue;
     const qty=_extractQty(prod);
     const key=qty?`${base}::${qty}`:base;
     const p=_libProfiles.find(x=>x.key===key);
-    if(p)return{profile:p,prod};
+    if(p)return{profile:p,prod,prodIdx:i};
   }
   return null;
 }
@@ -1595,9 +1597,9 @@ function _renderLibProfileSuggest(o){
   const el=document.getElementById('ws-lib-profile-suggest');if(!el)return;
   const match=_getMatchingProfile(o);
   if(!match){el.hidden=true;el.innerHTML='';return;}
-  const{profile:p}=match;
+  const{profile:p,prodIdx:matchProdIdx=-1}=match;
   el.hidden=false;
-  const mkBtn=(b,isAddon=false)=>`<button type="button" class="ws-lcb${isAddon?' ws-lcb-addon':''}" onclick="applyOneItem('${b.type.replace(/'/g,"&#39;")}','${(b.supplierId||'').replace(/'/g,"&#39;")}','${(b.supplierName||'').replace(/'/g,"&#39;")}',${b.lastPrice||0})">
+  const mkBtn=(b,isAddon=false)=>`<button type="button" class="ws-lcb${isAddon?' ws-lcb-addon':''}" onclick="applyOneItem('${b.type.replace(/'/g,"&#39;")}','${(b.supplierId||'').replace(/'/g,"&#39;")}','${(b.supplierName||'').replace(/'/g,"&#39;")}',${b.lastPrice||0},${matchProdIdx})">
     <span class="ws-lcb-type">${b.type}</span>
     ${b.supplierName?`<span class="ws-lcb-sup">🏭 ${b.supplierName}</span>`:''}
     <span class="ws-lcb-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}</span>
@@ -1797,12 +1799,24 @@ window.closeProfileDetail=function(){
   document.getElementById('lib-profile-detail').hidden=true;_activeBundleForApply=null;
 };
 
-window.applyOneItem=function(type,supplierId,supplierName,amount){
+window.applyOneItem=function(type,supplierId,supplierName,amount,prodIdx=-1){
   if(!activeId){
-    // No workspace open — switch to queue tab so user can pick an order
     setView('queue');toast('اختر أوردر من القائمة ثم عُد للمكتبة أو ابحث مجدداً','');return;
   }
   setView('queue');
+  // Auto-assign to the right product
+  const _o=orders.find(x=>x._id===activeId);
+  if(_o){
+    const _prods=_o.products||[];
+    const sel=document.getElementById('cost-prod-idx');
+    if(sel){
+      const cur=parseInt(sel.value);
+      if(prodIdx>=0){sel.value=String(prodIdx);}           // caller knows which product
+      else if(_prods.length===1&&cur<0){sel.value='0';}   // single product — always auto-select
+      // multi-product + no hint: keep current selection
+      onCostInputChange();
+    }
+  }
   setTimeout(()=>{
     const tEl=document.getElementById('ac-type');
     if(tEl){
