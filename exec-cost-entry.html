@@ -2289,36 +2289,34 @@ function _buildSmartSuggestions(o){
 function _buildQuickEntryItems(o){
   const prods=o.products||[];
   if(!prods.length)return[];
-  // Build price+supplier lookup from historical orders (newest first)
-  const priceLookup={};
-  [...orders].filter(x=>x._id!==o._id&&(x.costItems||[]).length)
+  // Build history map: baseName → { type → {supplierId, supplierName, lastPrice} }
+  // Purely driven by past recorded cost items — no masterCategories matching needed.
+  const histByBase={};
+  [...orders]
+    .filter(x=>x._id!==o._id&&(x.costItems||[]).length)
     .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
     .forEach(ord=>{
       (ord.products||[]).forEach((p,pi)=>{
         const base=_normBaseName(p.name);
-        const qty=_extractQty(p);
+        if(!base||base.length<2)return;
+        if(!histByBase[base])histByBase[base]={};
         (ord.costItems||[]).filter(c=>c.prodIdx===pi&&c.type&&c.supplierId).forEach(c=>{
-          const k1=base+'::'+qty+'::'+c.type;
-          const k2=base+'::'+c.type;
-          const val={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0};
-          if(!priceLookup[k1])priceLookup[k1]=val;
-          if(!priceLookup[k2])priceLookup[k2]=val;
+          const t=c.type.trim();
+          if(!histByBase[base][t])
+            histByBase[base][t]={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0};
         });
       });
     });
   const recordedSet=new Set((o.costItems||[]).map(c=>c.prodIdx+'::'+c.type));
   const result=[];
   prods.forEach((prod,i)=>{
-    const expected=getExpectedTypesForProduct(prod);
-    if(!expected.length)return;
     const base=_normBaseName(prod.name);
-    const qty=_extractQty(prod);
-    const entries=expected
-      .filter(type=>!recordedSet.has(i+'::'+type))
-      .map(type=>{
-        const info=priceLookup[base+'::'+qty+'::'+type]||priceLookup[base+'::'+type]||null;
-        return{type,supplierId:info?.supplierId||'',supplierName:info?.supplierName||'',lastPrice:info?.lastPrice||0};
-      });
+    if(!base||base.length<2)return;
+    const byType=histByBase[base];
+    if(!byType||!Object.keys(byType).length)return;
+    const entries=Object.entries(byType)
+      .filter(([type])=>!recordedSet.has(i+'::'+type))
+      .map(([type,info])=>({type,supplierId:info.supplierId,supplierName:info.supplierName,lastPrice:info.lastPrice}));
     if(entries.length)result.push({prodIdx:i,prodName:prod.name||'منتج',prodQty:prod.qty||0,entries});
   });
   return result;
