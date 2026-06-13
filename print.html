@@ -76,8 +76,9 @@
         <option value="deadline">📅 الميعاد</option>
       </select>
       <div style="display:flex;gap:3px;border:1px solid var(--line);border-radius:9px;padding:3px;background:var(--bg2);flex-shrink:0" title="طريقة العرض">
-        <button id="vb-list" type="button" onclick="setViewMode('list')" class="vbtn vbtn-on" title="قائمة">☰</button>
-        <button id="vb-board" type="button" onclick="setViewMode('board')" class="vbtn" title="لوحة كانبان">⊞</button>
+        <button id="vb-list"  type="button" onclick="setViewMode('list')"  class="vbtn vbtn-on" title="قائمة">☰</button>
+        <button id="vb-board" type="button" onclick="setViewMode('board')" class="vbtn" title="لوحة الحالة">⊞</button>
+        <button id="vb-press" type="button" onclick="setViewMode('press')" class="vbtn" title="لوحة المطابع">🏭</button>
       </div>
     </div>
     <div class="kpi-row">
@@ -532,9 +533,10 @@ function updateKPIs(){
   renderStatusChips();
   renderPrintSchedule();
   // sync view-mode buttons with persisted state
-  const _lb=document.getElementById('vb-list'),_bb=document.getElementById('vb-board');
-  if(_lb){_lb.classList.toggle('vbtn-on',viewMode==='list');}
-  if(_bb){_bb.classList.toggle('vbtn-on',viewMode==='board');}
+  ['list','board','press'].forEach(m=>{
+    const b=document.getElementById('vb-'+m);
+    if(b) b.classList.toggle('vbtn-on',m===viewMode);
+  });
 }
 
 // Filter
@@ -655,14 +657,65 @@ window.setSortBy=function(val){sortBy=val;renderList();};
 window.setViewMode=function(mode){
   viewMode=mode;
   localStorage.setItem('print.viewMode',mode);
-  const lb=document.getElementById('vb-list'),bb=document.getElementById('vb-board');
-  if(lb){lb.classList.toggle('vbtn-on',mode==='list');}
-  if(bb){bb.classList.toggle('vbtn-on',mode==='board');}
+  ['list','board','press'].forEach(m=>{
+    const b=document.getElementById('vb-'+m);
+    if(b) b.classList.toggle('vbtn-on',m===mode);
+  });
   renderList();
 };
-// expose helpers needed by print-workspace.js kanban cards
+// expose helpers needed by print-workspace.js
 window.getStatusCategory=getStatusCategory;
 window.computeOrderReadyScore=computeOrderReadyScore;
+window.computeProductReadiness=computeProductReadiness;
+// ── Mark single product as printed from press kanban (no panel needed) ──────
+window.markPressJobPrinted=async function(orderId,prodIdx){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const p=(o.products||[])[prodIdx];if(!p)return;
+  if(!confirm(`تأكيد: تمت طباعة "${p.name||'المنتج'}" في أوردر ${o.orderId||orderId.slice(-6)}؟`))return;
+  const uid=auth?.currentUser?.uid||'';
+  const r=await orderActions.setProductCatalogStatus({db,orderId,prodIdx,status:'printed',userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ ${p.name||'المنتج'}: مطبوع`,'ok');
+};
+// ── Batch WhatsApp brief for all ready jobs of a press company ───────────────
+window.sendBatchBrief=function(pressId,pressName){
+  const readyJobs=[];
+  orders.forEach(o=>{
+    (o.products||[]).forEach((p,idx)=>{
+      if(p.productStatus==='printed'||p.productStatus==='done')return;
+      if((p.pressId||'__none__')!==pressId)return;
+      const rr=(typeof computeProductReadiness==='function')?computeProductReadiness(o,p):{pct:0,ready:false};
+      if(!rr.ready&&!p.briefSentAt)return; // skip incomplete jobs
+      readyJobs.push({order:o,product:p,prodIdx:idx});
+    });
+  });
+  if(!readyJobs.length){toast('لا توجد جوبات جاهزة للإرسال لهذه المطبعة','err');return;}
+  const today=new Date().toLocaleDateString('ar-EG',{weekday:'long',day:'numeric',month:'long'});
+  const lines=readyJobs.map((j,i)=>{
+    const p=j.product,o=j.order;
+    const isOff=(p.printType||'').includes('offset');
+    const ptLbl=isOff?'أوفست':((p.printType||'').includes('digital')?'ديجيتال':'—');
+    const specs=[
+      p.paper?`الورق: ${p.paper}${p.weight?' '+p.weight+'جم':''}`:null,
+      p.printSize||p.size?`الحجم: ${p.printSize||p.size}`:null,
+      isOff&&p.zinkType?`الزنك: ${p.zinkType}`:null,
+      isOff&&p.paperSheets?`الورقات: ${p.paperSheets}`:null,
+      isOff&&p.cutSize?`القطع: ${p.cutSize}`:null,
+      p.lamination&&p.lamination!=='بلا'?`التشطيب: ${p.lamination}`:null,
+      p.briefNotes?`ملاحظة: ${p.briefNotes}`:null,
+    ].filter(Boolean).join(' | ');
+    const pd=p.pressDeadline?`📅 ${new Date(p.pressDeadline).toLocaleDateString('ar-EG',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`:null;
+    return`${i+1}. *${p.name||'—'}* — ${ptLbl} — ${p.qty||0} قطعة\n${specs?'   '+specs+'\n':''}${pd?'   '+pd+'\n':''}   [${o.orderId||o._id.slice(-6)} — ${o.clientName||'—'}]`;
+  });
+  const text=`🖨️ *${pressName} — جوبات الطباعة*\n*${today}*\n\n${lines.join('\n\n')}`;
+  window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
+  // Mark briefs as sent (best-effort, after WhatsApp window opens)
+  const uid=auth?.currentUser?.uid||'';
+  readyJobs.forEach(async j=>{
+    if(j.product.briefSentAt)return;
+    await orderActions.markProductBriefSent({db,orderId:j.order._id,prodIdx:j.prodIdx,pressName:j.product.pressName||'',userId:uid,userName});
+  });
+};
 // Mark all products of an order as printed without opening the panel
 window.markOrderAllPrinted=async function(orderId){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
@@ -701,9 +754,14 @@ function renderList(){
       :emptyState({ico:'🖨️',title:'لا توجد أوردرات في الطباعة',sub:'الأوردرات المعتمدة من التصميم ستظهر هنا'});
     return;
   }
-  // ── Kanban board view ────────────────────────────────────────────────
+  // ── Kanban: status view ──────────────────────────────────────────────
   if(viewMode==='board'&&window.printWorkspace?.renderKanban){
     el.innerHTML=window.printWorkspace.renderKanban(list,{getStatusCategory,computeOrderReadyScore});
+    return;
+  }
+  // ── Kanban: press-centric view ───────────────────────────────────────
+  if(viewMode==='press'&&window.printWorkspace?.renderPressKanban){
+    el.innerHTML=window.printWorkspace.renderPressKanban(list,{computeProductReadiness});
     return;
   }
   // ── List view ────────────────────────────────────────────────────────
