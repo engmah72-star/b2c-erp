@@ -596,6 +596,7 @@ export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts =
     <div class="pcc-pane" id="pcc-pane-history" style="display:none">
       <div class="pcc-tl-group" style="padding-bottom:24px">${printTimelineHTML(tlEvents)}</div>
     </div>`;
+}
 
 // ─── INTERACTIVE ────────────────────────────────────────────────────
 export function switchPrintPanelTab(tab, btn) {
