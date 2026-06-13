@@ -64,12 +64,24 @@
       <button type="button" id="btn-bulk-waybill" onclick="printBulkWaybills()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap" title="طباعة بوليصة لكل أوردر ظاهر">🧾 طباعة الكل <span class="cnt" style="background:var(--b);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
       <button type="button" id="btn-clear-sel" onclick="clearSelection()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.07);color:var(--r);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">✕ إلغاء التحديد <span id="sel-cnt-badge" style="background:var(--r);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
     </div>
+    <!-- Smart Status Filters + Sort Controls -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+      <div id="sf-chips" style="display:flex;gap:5px;flex:1;flex-wrap:wrap"></div>
+      <select id="sort-sel" onchange="setSortBy(this.value)" style="padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);font-family:inherit;cursor:pointer;flex-shrink:0">
+        <option value="newest">⬇️ الأحدث</option>
+        <option value="oldest">⬆️ الأقدم</option>
+        <option value="urgent">⚠️ الأكثر تأخراً</option>
+        <option value="readiness">✅ الأعلى جاهزية</option>
+        <option value="deadline">📅 الميعاد</option>
+      </select>
+    </div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-top" style="background:var(--b)"></div><div class="kpi-val text-b" id="k-total">—</div><div class="kpi-lbl">🖨️ أوردرات</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--r)"></div><div class="kpi-val text-r" id="k-late">—</div><div class="kpi-lbl">⚠️ متأخرة</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--g)"></div><div class="kpi-val" id="k-rev" style="color:var(--g);font-size:var(--fs-lg)">—</div><div class="kpi-lbl">💰 إجمالي</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--y)"></div><div class="kpi-val" id="k-rem" style="color:var(--y);font-size:var(--fs-lg)">—</div><div class="kpi-lbl">⏳ باقي</div></div>
     </div>
+    <div id="print-schedule-wrap" style="margin-bottom:10px"></div>
     <div id="list"></div>
   </div>
 </div>
@@ -433,6 +445,14 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 // State
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
+let statusFilter='all',sortBy='newest';
+const STATUS_FILTERS=[
+  {id:'all',     label:'📋 الكل',          col:'var(--b)'},
+  {id:'waiting', label:'⚠️ ينتظر ملف',     col:'var(--r)'},
+  {id:'ready',   label:'✅ جاهز للإرسال',  col:'var(--g)'},
+  {id:'at-press',label:'🖨️ عند المطبعة', col:'var(--y)'},
+  {id:'printed', label:'📦 مطبوع',         col:'var(--p)'},
+];
 if(!window.__selectedOrders)window.__selectedOrders=new Set();
 
 // RULE 8.1 — رقم تليفون العميل: CS + Admin + Ops + Shipping فقط.
@@ -504,6 +524,8 @@ function updateKPIs(){
   set('k-rev',fn(totalSale)+' ج');
   set('k-rem',fn(totalRem)+' ج');
   set('sub',orders.length+' أوردر طباعة');
+  renderStatusChips();
+  renderPrintSchedule();
 }
 
 // Filter
@@ -523,14 +545,104 @@ window.setMineFilter=function(val,btn){
   renderList();
 };
 
+// ── حالة الطباعة لأوردر واحد — تُستخدم في الفلاتر الذكية ──────────────────
+// الأولوية: ينتظر ملف → مطبوع → عند المطبعة → جاهز للإرسال → other
+function getStatusCategory(o){
+  const prods=o.products||[];
+  const hasFile=!!(o.printFinalUrl||o.designImageUrl||prods.some(p=>
+    p.designImageUrl||(Array.isArray(p.designImages)&&p.designImages.length)));
+  if(!hasFile) return 'waiting';
+  if(prods.length&&prods.every(p=>p.productStatus==='printed'||p.productStatus==='done'))
+    return 'printed';
+  if(prods.some(p=>!!p.briefSentAt)) return 'at-press';
+  // جاهز = ملف + درجة جاهزية ≥ 70%
+  const rs=(typeof computeOrderReadyScore==='function')?computeOrderReadyScore(o):{score:0};
+  if(rs.score>=70) return 'ready';
+  return 'other';
+}
+
 function getFilteredOrders(){
   const isAdm=['admin','operation_manager'].includes(currentRole);
-  // Admin يرى الكل افتراضياً، الموظف يرى أوردراته فقط
-  if(!mineOnly||isAdm&&!mineOnly)return orders;
-  const uid=auth?.currentUser?.uid;
-  if(!uid)return orders;
-  return orders.filter(o=>o.printerId===uid||(!o.printerId&&!isAdm));
+  // Mine/All filter
+  let list=(!mineOnly||isAdm&&!mineOnly)?orders:(()=>{
+    const uid=auth?.currentUser?.uid;
+    return !uid?orders:orders.filter(o=>o.printerId===uid||(!o.printerId&&!isAdm));
+  })();
+  // Status filter
+  if(statusFilter!=='all') list=list.filter(o=>getStatusCategory(o)===statusFilter);
+  // Sort
+  if(sortBy==='oldest') return [...list].sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+  if(sortBy==='urgent') return [...list].sort((a,b)=>delay(b.deadline)-delay(a.deadline)||(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  if(sortBy==='readiness') return [...list].sort((a,b)=>computeOrderReadyScore(b).score-computeOrderReadyScore(a).score);
+  if(sortBy==='deadline') return [...list].sort((a,b)=>{
+    const da=a.deadline?new Date(a.deadline).getTime():9e15;
+    const db=b.deadline?new Date(b.deadline).getTime():9e15;
+    return da-db;
+  });
+  return list; // newest = default (onSnapshot already sorts desc)
 }
+
+// ── Status Chips Renderer ─────────────────────────────────────────────────
+function renderStatusChips(){
+  const el=document.getElementById('sf-chips');if(!el)return;
+  const counts={all:orders.length};
+  STATUS_FILTERS.forEach(f=>{if(f.id!=='all')counts[f.id]=0;});
+  orders.forEach(o=>{const c=getStatusCategory(o);if(c in counts)counts[c]++;});
+  el.innerHTML=STATUS_FILTERS.map(f=>{
+    const n=counts[f.id]||0;
+    const active=statusFilter===f.id;
+    return`<button type="button" class="status-chip" data-sfid="${f.id}" onclick="setStatusFilter('${f.id}')"
+      style="padding:5px 12px;border-radius:20px;font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;white-space:nowrap;transition:all .15s;border:1px solid ${active?f.col:'var(--line)'};background:${active?f.col+'18':'var(--bg2)'};color:${active?f.col:'var(--dim2)'}">${f.label} <span style="opacity:.7">(${n})</span>
+    </button>`;
+  }).join('');
+}
+
+// ── Print Schedule Renderer (جدول طباعة اليوم + الأسبوع) ─────────────────
+function renderPrintSchedule(){
+  const el=document.getElementById('print-schedule-wrap');if(!el)return;
+  const now=new Date();
+  const todayEnd=new Date(now);todayEnd.setHours(23,59,59,999);
+  const weekEnd=new Date(now);weekEnd.setDate(now.getDate()+7);
+  const todayItems=[],weekItems=[];
+  orders.forEach(o=>{
+    (o.products||[]).forEach(p=>{
+      if(!p.pressDeadline)return;
+      const d=new Date(p.pressDeadline);if(isNaN(d))return;
+      const item={o,p,d};
+      if(d<=todayEnd)todayItems.push(item);
+      else if(d<=weekEnd)weekItems.push(item);
+    });
+  });
+  if(!todayItems.length&&!weekItems.length){el.innerHTML='';return;}
+  todayItems.sort((a,b)=>a.d-b.d);weekItems.sort((a,b)=>a.d-b.d);
+  const ri=({o,p,d})=>`<div onclick="openOrder('${o._id}')" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);margin-bottom:4px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.clientName||'—'} · ${p.name||'—'} <span style="color:var(--y);font-size:var(--fs-xs)">×${p.qty||1}</span></div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2)">${p.pressName||'مطبعة غير محددة'} · ${o.orderId||o._id.slice(-6)}</div>
+    </div>
+    <div style="text-align:left;flex-shrink:0">
+      <div style="font-size:var(--fs-xs);color:${d<now?'var(--r)':'var(--dim2)'}">${d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}</div>
+      <div style="font-size:var(--fs-xs);margin-top:2px">${p.briefSentAt?'<span style="color:var(--g)">✅ أُرسل</span>':'<span style="color:var(--y)">⏳ لم يُرسل</span>'}</div>
+    </div>
+  </div>`;
+  const k='__schOpen';
+  const open=window[k]!==false;
+  el.innerHTML=`<details ${open?'open':''} ontoggle="window['${k}']=this.open" style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden">
+    <summary style="padding:10px 14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);-webkit-tap-highlight-color:transparent">
+      <span>📅 جدول الطباعة</span>
+      ${todayItems.length?`<span style="background:var(--r);color:#fff;padding:1px 8px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-heavy)">${todayItems.length} اليوم</span>`:''}
+      ${weekItems.length?`<span style="background:rgba(255,170,0,.15);color:var(--y);border:1px solid rgba(255,170,0,.3);padding:1px 8px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-heavy)">${weekItems.length} هذا الأسبوع</span>`:''}
+      <span style="margin-inline-start:auto">⌄</span>
+    </summary>
+    <div style="padding:8px 12px 10px">
+      ${todayItems.length?`<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--r);margin-bottom:6px">🔴 اليوم (${todayItems.length})</div>${todayItems.map(ri).join('')}`:''}
+      ${weekItems.length?`<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--y);margin-top:${todayItems.length?8:0}px;margin-bottom:6px">🟡 هذا الأسبوع (${weekItems.length})</div>${weekItems.map(ri).join('')}`:''}
+    </div>
+  </details>`;
+}
+
+window.setStatusFilter=function(id){statusFilter=id;renderStatusChips();renderList();};
+window.setSortBy=function(val){sortBy=val;renderList();};
 
 function renderList(){
   const el=document.getElementById('list');if(!el)return;
