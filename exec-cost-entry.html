@@ -228,6 +228,9 @@
           <!-- Library profile match for this order's products -->
           <div id="ws-lib-profile-suggest" hidden></div>
 
+          <!-- ⚡ Quick Entry Strip — all expected items across all products -->
+          <div id="ws-quick-entry" hidden></div>
+
           <!-- Template / missing costs -->
           <div id="ws-template"></div>
 
@@ -733,6 +736,9 @@ function _populateWorkspace(o){
 
   // Template / missing costs
   _renderTemplate(o);
+
+  // Quick Entry Strip
+  _renderQuickEntry(o);
 
   // AI Smart suggestions
   _renderSmartSuggest(o);
@@ -1351,7 +1357,7 @@ window.saveCost=async function(){
     // Refresh workspace after snapshot arrives
     setTimeout(()=>{
       const fresh=orders.find(x=>x._id===activeId);
-      if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderAnomalies(fresh);_renderSmartSuggest(fresh);}
+      if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}
     },350);
   }catch(e){toast('❌ '+(e.message||'فشل الحفظ'),'err');}
 };
@@ -2018,7 +2024,7 @@ window.applyFullTemplate=async function(templateId,prodIdx,btnId){
   }
   if(btn){btn.disabled=false;btn.textContent='⚡ تطبيق الكل دفعة واحدة';}
   toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم تطبيق ${done} بنود من القالب`,failed?'err':'ok');
-  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderTmplApply(fresh);_renderAnomalies(fresh);_renderSmartSuggest(fresh);}},300);
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderTmplApply(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
 };
 
 function _renderLibTemplates(){
@@ -2237,6 +2243,135 @@ function _buildSmartSuggestions(o){
     .sort((a,b)=>b.count-a.count).slice(0,6);
 }
 
+/* ═══════════════════════════════════════════════════
+   ⚡ QUICK ENTRY STRIP
+   ═══════════════════════════════════════════════════ */
+function _buildQuickEntryItems(o){
+  const prods=o.products||[];
+  if(!prods.length)return[];
+  // Build price+supplier lookup from historical orders (newest first)
+  const priceLookup={};
+  [...orders].filter(x=>x._id!==o._id&&(x.costItems||[]).length)
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
+    .forEach(ord=>{
+      (ord.products||[]).forEach((p,pi)=>{
+        const base=_normBaseName(p.name);
+        const qty=_extractQty(p);
+        (ord.costItems||[]).filter(c=>c.prodIdx===pi&&c.type&&c.supplierId).forEach(c=>{
+          const k1=base+'::'+qty+'::'+c.type;
+          const k2=base+'::'+c.type;
+          const val={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0};
+          if(!priceLookup[k1])priceLookup[k1]=val;
+          if(!priceLookup[k2])priceLookup[k2]=val;
+        });
+      });
+    });
+  const recordedSet=new Set((o.costItems||[]).map(c=>c.prodIdx+'::'+c.type));
+  const result=[];
+  prods.forEach((prod,i)=>{
+    const expected=getExpectedTypesForProduct(prod);
+    if(!expected.length)return;
+    const base=_normBaseName(prod.name);
+    const qty=_extractQty(prod);
+    const entries=expected
+      .filter(type=>!recordedSet.has(i+'::'+type))
+      .map(type=>{
+        const info=priceLookup[base+'::'+qty+'::'+type]||priceLookup[base+'::'+type]||null;
+        return{type,supplierId:info?.supplierId||'',supplierName:info?.supplierName||'',lastPrice:info?.lastPrice||0};
+      });
+    if(entries.length)result.push({prodIdx:i,prodName:prod.name||'منتج',prodQty:prod.qty||0,entries});
+  });
+  return result;
+}
+
+function _renderQuickEntry(o){
+  const el=document.getElementById('ws-quick-entry');if(!el)return;
+  const groups=_buildQuickEntryItems(o);
+  if(!groups.length){el.hidden=true;el.innerHTML='';return;}
+  el.hidden=false;
+  let totalEst=0,totalRows=0;
+  groups.forEach(g=>{g.entries.forEach(e=>{totalEst+=e.lastPrice;totalRows++;});});
+  let html=`<div class="qe-box">
+    <div class="qe-hdr">
+      <span class="qe-label">⚡ إدخال سريع</span>
+      <span class="qe-sub">راجع الأسعار واحفظ الكل دفعة واحدة</span>
+    </div>`;
+  groups.forEach(({prodIdx,prodName,prodQty,entries})=>{
+    html+=`<div class="qe-prod-group">
+      <div class="qe-prod-hdr">📦 ${prodName} <span class="qe-prod-qty">× ${prodQty}</span></div>`;
+    entries.forEach(e=>{
+      html+=`<div class="qe-row" data-prod="${prodIdx}" data-type="${e.type.replace(/"/g,'&quot;')}" data-sup-id="${e.supplierId}" data-sup-name="${(e.supplierName||'').replace(/"/g,'&quot;')}">
+        <span class="qe-type">${e.type}</span>
+        <span class="qe-sup">${e.supplierName||'<span class="qe-no-sup">⚠️ بدون مورد</span>'}</span>
+        <input class="inp qe-amount" type="number" placeholder="السعر" value="${e.lastPrice||''}" min="0" step="0.5" oninput="_qeUpdateTotal()">
+        <button type="button" class="qe-save-one" title="حفظ هذا البند فقط" onclick="_qeSaveOne(this)">✔</button>
+      </div>`;
+    });
+    html+=`</div>`;
+  });
+  html+=`<div class="qe-footer">
+    <span class="qe-total-lbl" id="qe-total-lbl">💰 ${fn(totalEst)} ج · ${totalRows} بند</span>
+    <button type="button" class="btn btn-r qe-save-all-btn" onclick="saveQuickEntry()">💾 حفظ الكل</button>
+  </div></div>`;
+  el.innerHTML=html;
+}
+
+window._qeUpdateTotal=function(){
+  let total=0,count=0;
+  document.querySelectorAll('#ws-quick-entry .qe-row:not(.qe-row-done)').forEach(r=>{
+    const v=parseFloat(r.querySelector('.qe-amount')?.value)||0;
+    if(v>0){total+=v;count++;}
+  });
+  const lbl=document.getElementById('qe-total-lbl');
+  if(lbl)lbl.textContent=`💰 ${fn(total)} ج · ${count} بند`;
+};
+
+window._qeSaveOne=async function(btn){
+  const row=btn.closest('.qe-row');if(!row)return;
+  const amount=parseFloat(row.querySelector('.qe-amount')?.value)||0;
+  if(!amount)return toast('أدخل السعر أولاً','err');
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  btn.disabled=true;btn.textContent='⏳';
+  try{
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx:parseInt(row.dataset.prod),
+      payload:{type:row.dataset.type,total:amount,supplierId:row.dataset.supId,supplierName:row.dataset.supName,note:'',walletId:'',paperMeta:{}},
+      role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+    });
+    if(r.ok){
+      btn.textContent='✅';row.classList.add('qe-row-done');_qeUpdateTotal();
+      setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
+    }else{btn.disabled=false;btn.textContent='✔';toast('❌ '+(r.errors||[]).join(' · '),'err');}
+  }catch(e){btn.disabled=false;btn.textContent='✔';toast('❌ '+(e.message||'فشل'),'err');}
+};
+
+window.saveQuickEntry=async function(){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const toSave=[];
+  document.querySelectorAll('#ws-quick-entry .qe-row:not(.qe-row-done)').forEach(r=>{
+    const amount=parseFloat(r.querySelector('.qe-amount')?.value)||0;
+    if(!amount)return;
+    toSave.push({prodIdx:parseInt(r.dataset.prod),type:r.dataset.type,supplierId:r.dataset.supId,supplierName:r.dataset.supName,amount});
+  });
+  if(!toSave.length)return toast('لا توجد بنود لحفظها — أدخل سعراً على الأقل','err');
+  const btn=document.querySelector('.qe-save-all-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ الحفظ...';}
+  let done=0,failed=0;
+  for(const item of toSave){
+    try{
+      const r=await orderActions.recordCostItem({
+        db,orderId:activeId,prodIdx:item.prodIdx,
+        payload:{type:item.type,total:item.amount,supplierId:item.supplierId,supplierName:item.supplierName,note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)done++;else failed++;
+    }catch(e){failed++;}
+  }
+  if(btn){btn.disabled=false;btn.textContent='💾 حفظ الكل';}
+  toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم حفظ ${done} بنود`,'ok');
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
+};
+
 function _renderSmartSuggest(o){
   const el=document.getElementById('ws-smart-suggest');if(!el)return;
   const suggs=_buildSmartSuggestions(o);
@@ -2272,7 +2407,7 @@ window.applySmartItem=async function(idx){
     });
     if(r.ok){toast(`✅ ${s.type} · ${fn(s.avgAmt)} ج`,'ok');}
     else toast('❌ '+(r.errors||[]).join(' · '),'err');
-    setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderAnomalies(fresh);_renderSmartSuggest(fresh);}},300);
+    setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
   }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
 };
 
@@ -2291,7 +2426,7 @@ window.applyAllSmartSuggestions=async function(){
     }catch(e){failed++;}
   }
   toast(failed?`✅ ${done} · ❌ ${failed}`:`✅ تم تطبيق ${done} اقتراح`,failed?'err':'ok');
-  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderAnomalies(fresh);_renderSmartSuggest(fresh);}},300);
+  setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
 };
 </script>
 </body>
