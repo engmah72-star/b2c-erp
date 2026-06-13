@@ -399,6 +399,43 @@
 
 <div class="toasts" id="toasts"></div>
 
+<!-- ══ MULTI-APPLY MODAL ══ -->
+<div class="ma-overlay" id="ma-modal" hidden onclick="if(event.target===this)closeMultiApply()">
+  <div class="ma-box">
+    <div class="modal-head">
+      <div>
+        <span class="modal-title" id="ma-title">تطبيق على أوردرات متعددة</span>
+        <div class="ma-type-row" id="ma-type-row"></div>
+      </div>
+      <button type="button" class="modal-x" onclick="closeMultiApply()">✕</button>
+    </div>
+    <div class="ma-body">
+      <!-- Price mode toggle -->
+      <div class="ma-mode-bar">
+        <button type="button" class="ma-mode-btn active" id="ma-mode-unified" onclick="setMaPriceMode('unified')">💰 سعر موحد للكل</button>
+        <button type="button" class="ma-mode-btn" id="ma-mode-per" onclick="setMaPriceMode('per')">📋 سعر مختلف لكل أوردر</button>
+      </div>
+      <!-- Unified price input -->
+      <div class="ma-unified-row" id="ma-unified-row">
+        <span class="ma-unified-lbl">سعر موحد:</span>
+        <input class="inp ma-unified-inp" type="number" id="ma-unified-val" min="0" step="0.5" oninput="_maApplyUnified()">
+        <span class="ma-unified-unit">ج</span>
+      </div>
+      <!-- Select all -->
+      <div class="ma-sel-bar">
+        <label class="ma-chk-lbl"><input type="checkbox" id="ma-chk-all" onchange="_maToggleAll(this.checked)"> تحديد الكل</label>
+        <span class="ma-sel-count" id="ma-sel-count">0 محدد</span>
+      </div>
+      <!-- Orders list -->
+      <div class="ma-orders-list" id="ma-orders-list"></div>
+    </div>
+    <div class="ma-footer">
+      <button type="button" class="btn btn-ghost" onclick="closeMultiApply()">إلغاء</button>
+      <button type="button" class="btn btn-r" id="ma-save-btn" onclick="saveMultiApply()">✔ تطبيق على المحددين</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { setText, gv } from "./core/dom-utils.js";
@@ -1783,7 +1820,10 @@ window.openProfileDetail=function(key){
           <td>${b.supplierName?`🏭 ${b.supplierName}`:'—'}</td>
           <td class="reg-num lib-pd-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
           <td class="reg-num">${b.useCount}×</td>
-          <td><button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.supplierId||'').replace(/'/g,'&#39;')}','${(b.supplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||0})">استخدم</button></td>
+          <td style="display:flex;gap:4px">
+            <button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.supplierId||'').replace(/'/g,'&#39;')}','${(b.supplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||0})">استخدم</button>
+            <button type="button" class="lib-use-btn lib-multi-btn" title="تطبيق على أوردرات متعددة" onclick="openMultiApply('${b.type.replace(/'/g,'&#39;')}','${(b.supplierId||'').replace(/'/g,'&#39;')}','${(b.supplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||0})">×n</button>
+          </td>
         </tr>`).join('')
       ).join('');
     };
@@ -2370,6 +2410,112 @@ window.saveQuickEntry=async function(){
   if(btn){btn.disabled=false;btn.textContent='💾 حفظ الكل';}
   toast(failed?`✅ ${done} بند تم · ❌ ${failed} فشل`:`✅ تم حفظ ${done} بنود`,'ok');
   setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
+};
+
+/* ═══════════════════════════════════════════════════
+   MULTI-APPLY — apply one cost item to N orders
+   ═══════════════════════════════════════════════════ */
+let _maState={type:'',supplierId:'',supplierName:'',defaultPrice:0,mode:'unified'};
+
+window.openMultiApply=function(type,supplierId,supplierName,defaultPrice){
+  _maState={type,supplierId,supplierName,defaultPrice:parseFloat(defaultPrice)||0,mode:'unified'};
+  const modal=document.getElementById('ma-modal');if(!modal)return;
+  document.getElementById('ma-title').textContent='تطبيق على أوردرات متعددة';
+  document.getElementById('ma-type-row').innerHTML=`<span class="reg-type-chip">${type}</span>${supplierName?` 🏭 <strong>${supplierName}</strong>`:''}`;
+  document.getElementById('ma-unified-val').value=defaultPrice||'';
+  setMaPriceMode('unified');
+  _renderMultiApplyOrders();
+  modal.hidden=false;
+};
+window.closeMultiApply=function(){const el=document.getElementById('ma-modal');if(el)el.hidden=true;};
+
+window.setMaPriceMode=function(mode){
+  _maState.mode=mode;
+  document.getElementById('ma-mode-unified')?.classList.toggle('active',mode==='unified');
+  document.getElementById('ma-mode-per')?.classList.toggle('active',mode==='per');
+  document.getElementById('ma-unified-row').hidden=mode==='per';
+  // sync inputs
+  if(mode==='unified')_maApplyUnified();
+};
+
+window._maApplyUnified=function(){
+  const v=parseFloat(document.getElementById('ma-unified-val')?.value)||0;
+  document.querySelectorAll('#ma-orders-list .ma-amt').forEach(inp=>{inp.value=v||'';});
+};
+
+window._maToggleAll=function(checked){
+  document.querySelectorAll('#ma-orders-list .ma-chk').forEach(c=>{c.checked=checked;});
+  _maUpdateCount();
+};
+
+window._maUpdateCount=function(){
+  const total=document.querySelectorAll('#ma-orders-list .ma-chk').length;
+  const sel=document.querySelectorAll('#ma-orders-list .ma-chk:checked').length;
+  const el=document.getElementById('ma-sel-count');if(el)el.textContent=`${sel} / ${total} محدد`;
+  const btn=document.getElementById('ma-save-btn');if(btn)btn.textContent=`✔ تطبيق على ${sel} أوردر`;
+};
+
+function _renderMultiApplyOrders(){
+  const list=document.getElementById('ma-orders-list');if(!list)return;
+  const {type,supplierId,supplierName,defaultPrice}=_maState;
+  // Find all product entries missing this cost type
+  const entries=getMissingProductEntries().filter(({o,prodIdx})=>{
+    const has=(o.costItems||[]).some(c=>c.prodIdx===prodIdx&&c.type===type);
+    return!has;
+  });
+  if(!entries.length){list.innerHTML='<div class="ma-empty">✅ لا يوجد أوردرات تحتاج هذا البند</div>';_maUpdateCount();return;}
+  list.innerHTML=entries.map(({o,prodIdx,prod})=>{
+    const prodName=prod?prod.name||'منتج':'—';
+    const prodQty=prod?prod.qty||'':'';
+    const oid=o._id;
+    return`<div class="ma-row">
+      <label class="ma-row-label">
+        <input type="checkbox" class="ma-chk" data-oid="${oid}" data-prod="${prodIdx}" checked onchange="_maUpdateCount()">
+        <div class="ma-row-info">
+          <span class="ma-ord-id">#${o.orderId||o._id.slice(-6)}</span>
+          <span class="ma-client">${o.clientName||'—'}</span>
+          <span class="ma-prod">${prodName}${prodQty?' × '+prodQty:''}</span>
+        </div>
+      </label>
+      <input class="inp ma-amt" type="number" value="${defaultPrice||''}" min="0" step="0.5" placeholder="السعر">
+    </div>`;
+  }).join('');
+  _maUpdateCount();
+  if(_maState.mode==='unified')_maApplyUnified();
+}
+
+window.saveMultiApply=async function(){
+  const {type,supplierId,supplierName}=_maState;
+  const rows=[...document.querySelectorAll('#ma-orders-list .ma-row')];
+  const toSave=[];
+  rows.forEach(row=>{
+    const chk=row.querySelector('.ma-chk');
+    if(!chk?.checked)return;
+    const amount=parseFloat(row.querySelector('.ma-amt')?.value)||0;
+    if(!amount)return;
+    toSave.push({orderId:chk.dataset.oid,prodIdx:parseInt(chk.dataset.prod),amount});
+  });
+  if(!toSave.length)return toast('حدد أوردر واحد على الأقل وأدخل السعر','err');
+  const btn=document.getElementById('ma-save-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ الحفظ...';}
+  let done=0,failed=0;
+  for(const item of toSave){
+    try{
+      const r=await orderActions.recordCostItem({
+        db,orderId:item.orderId,prodIdx:item.prodIdx,
+        payload:{type,total:item.amount,supplierId,supplierName,note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)done++;else failed++;
+    }catch(e){failed++;}
+  }
+  if(btn){btn.disabled=false;}
+  toast(failed?`✅ ${done} تم · ❌ ${failed} فشل`:`✅ تم تطبيق البند على ${done} أوردر`,'ok');
+  closeMultiApply();
+  renderList();
+  // Refresh workspace if open
+  const fresh=orders.find(x=>x._id===activeId);
+  if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);}
 };
 
 function _renderSmartSuggest(o){
