@@ -37,14 +37,19 @@ export function Stepper(stage) {
 /**
  * نداء الفعل المطلوب من العميل الآن (قراءة حقول الطلب → عرض).
  * يُرجع { label, hint, action } أو null إن لا يلزم فعل.
+ *
+ * مصدر حقيقة اعتماد التصميم = order.clientApproval.status (تكتبه الـ Cloud
+ * Function requestDesignApproval) — وليس order.approvalStatus (حقل مالي
+ * للمعاملات: pending|confirmed|approved|rejected). الفعل يظهر فقط متى:
+ * المرحلة design · توجد بروفة مرفوعة فعلاً · ولم يعتمد العميل بعد.
  */
 export function nextActionOf(order) {
-  if (order.stage === 'cancelled' || order.stage === 'archived') return null;
-  const ap = order.approvalStatus;
-  if (order.stage === 'design' && (ap === 'pending' || ap === 'awaiting' || !ap)) {
-    return { label: 'اعتمِد التصميم', hint: 'بانتظار موافقتك على البروفة', action: 'approve' };
-  }
-  return null;
+  if (order.stage !== 'design') return null;
+  if (order.clientApproval && order.clientApproval.status === 'approved') return null;
+  const hasProof = !!(order.printFinalUrl || order.designFileUrl || order.mockupUrl
+    || (Array.isArray(order.designFiles) && order.designFiles[0]));
+  if (!hasProof) return null;
+  return { label: 'اعتمِد التصميم', hint: 'بانتظار موافقتك على البروفة', action: 'approve' };
 }
 
 /** لافتة نداء الفعل (تُعرض أعلى الشاشة عند وجود فعل مطلوب). */

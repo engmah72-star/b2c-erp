@@ -52,7 +52,7 @@ export function create(ctx) {
     const paidAt = o.paidAt ? shortTime(o.paidAt) : '';
     const body = `<div class="cp-stack cp-stack--sm">
       <div class="cp-row cp-row--between">
-        <strong>فاتورة #${escapeHtml(o.serial || o._id.slice(0, 6))}</strong>
+        <strong>فاتورة #${escapeHtml(o.orderId || o._id.slice(0, 6))}</strong>
         ${Badge(st)}
       </div>
       ${kv('إجمالي الطلب', money(inv.gross) + ' ج')}

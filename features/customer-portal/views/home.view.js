@@ -59,7 +59,7 @@ export function create(ctx) {
     ].filter(Boolean).join('');
     const body = `<div class="cp-stack cp-stack--sm">
       <div class="cp-row cp-row--between">
-        <strong>طلب #${escapeHtml(o.serial || o._id.slice(0, 6))}</strong>
+        <strong>طلب #${escapeHtml(o.orderId || o._id.slice(0, 6))}</strong>
         ${stageBadge(o.stage)}
       </div>
       ${Stepper(o.stage)}
