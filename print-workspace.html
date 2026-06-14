@@ -649,54 +649,78 @@ function pwRenderSpecs(o){
       ?`<div style="margin-top:10px"><div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">✓ إضافات</div><div style="display:flex;flex-wrap:wrap;gap:6px">${extrasList.map(ex=>{const sel=(p.extras||[]).includes(ex);return`<button type="button" onclick="toggleExtra('${o._id}',${idx},'${ex.replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px solid ${sel?'var(--g)':'var(--line)'};background:${sel?'rgba(0,217,126,.12)':'var(--bg3)'};color:${sel?'var(--g)':'var(--dim2)'}">${sel?'✓ ':''} ${escH(ex)}</button>`;}).join('')}</div></div>`
       :`<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">✦ الإضافات تُدار من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`;
 
-    // ── حساب تكلفة الأوفست ────────────────────────────────────
+    // ── حساب الإنتاج (فروخ + زنكات) ─────────────────────────
     const eng=window.offsetCostEngine;
     const paperMeta=getPaperTypeData(p.paper||'');
-    let costCalcHtml='';
+    const allPapersData=Array.isArray(appSettings.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
+    let prodCalcHtml='';
     if(isOffset&&eng){
-      const pcs=eng.fitPiecesPerSheet(p.printSize||p.size||'',paperMeta?.originalSize||'');
-      const sc=eng.sheetsCalc(pcs,parseInt(p.qty)||0);
+      const printSize=p.printSize||p.size||'';
+      const qty=parseInt(p.qty)||0;
+      // Rank all available papers by pieces/sheet
+      const rankings=allPapersData
+        .map(pm=>({...pm,pcs:eng.fitPiecesPerSheet(printSize,pm.originalSize||'')}))
+        .filter(pm=>pm.pcs>0)
+        .sort((a,b)=>b.pcs-a.pcs);
+      // Calculate for selected paper
+      const selMeta=paperMeta;
+      const selPcs=selMeta?eng.fitPiecesPerSheet(printSize,selMeta.originalSize||''):0;
+      const sc=selMeta&&qty>0?eng.sheetsCalc(selPcs,qty):{sheetsNet:0,wasteSheets:0,sheetsTotal:0};
       const zinkCnt=eng.calcZincCount(p.frontColors,p.backColors);
-      const zinkUnitCost=parseFloat(p.zinkUnitCost)||0;
-      const paperCost=paperMeta?eng.calcPaperCost(sc.sheetsTotal,paperMeta.costPerSheet):0;
-      const zinkCost=eng.calcZincCost(p.frontColors,p.backColors,zinkUnitCost);
-      const grandTotal=paperCost+zinkCost;
-      const hasMeta=!!paperMeta;
-      const hasCalc=pcs>0&&sc.sheetsTotal>0;
-      costCalcHtml=`
+      const bestPcs=rankings[0]?.pcs||0;
+      const isOptimal=selMeta&&selPcs===bestPcs;
+
+      const rankingHTML=rankings.length?`
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">📊 مقارنة الفروخ المتاحة</div>
+          ${rankings.map((pm,ri)=>{
+            const isBest=ri===0;const isSelected=pm.name===p.paper;
+            return`<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;margin-bottom:3px;background:${isSelected?'rgba(0,122,255,.08)':isBest?'rgba(0,217,126,.05)':'var(--bg2)'};border:1px solid ${isSelected?'rgba(0,122,255,.3)':isBest?'rgba(0,217,126,.2)':'var(--line)'}">
+              <div style="flex:1;min-width:0">
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSelected?'var(--b)':isBest?'var(--g)':'var(--snow)'}">${escH(pm.name)}</span>
+                <span style="font-size:9px;color:var(--dim2);margin-right:6px">${escH(pm.originalSize||'')} سم</span>
+              </div>
+              <div style="text-align:left;flex-shrink:0">
+                <span style="font-size:12px;font-weight:var(--fw-bold);color:${isBest?'var(--g)':'var(--snow)'}">${pm.pcs}</span>
+                <span style="font-size:9px;color:var(--dim2)"> قطعة/فرخة</span>
+                ${qty>0?`<div style="font-size:9px;color:var(--dim2)">${eng.sheetsCalc(pm.pcs,qty).sheetsTotal} فرخة للكمية</div>`:''}
+              </div>
+              ${isBest?`<span style="font-size:9px;background:rgba(0,217,126,.15);color:var(--g);padding:2px 5px;border-radius:5px;flex-shrink:0">الأفضل</span>`:''}
+              ${isSelected&&!isBest?`<span style="font-size:9px;background:rgba(0,122,255,.1);color:var(--b);padding:2px 5px;border-radius:5px;flex-shrink:0">مختار</span>`:''}
+            </div>`;
+          }).join('')}
+          ${!isOptimal&&selMeta&&bestPcs>selPcs?`<div style="font-size:10px;color:var(--y);padding:5px 8px;background:rgba(255,170,0,.07);border-radius:7px;border:1px solid rgba(255,170,0,.2);margin-top:4px">💡 "${escH(rankings[0].name)}" يُعطيك ${rankings[0].pcs} قطعة/فرخة — استغلال أفضل</div>`:''}
+          ${!allPapersData.length?`<div style="font-size:var(--fs-xs);color:var(--dim2);padding:5px 0">لا توجد أوراق مُعرَّفة بعد — أضف مواصفاتها من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`:''}
+        </div>`:'';
+
+      const sheetsHTML=selMeta&&sc.sheetsTotal>0?`
+        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:7px">📄 ${escH(selMeta.name)} · ${escH(selMeta.originalSize||'')} سم${selMeta.supplierName?' · '+escH(selMeta.supplierName):''}</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center">
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--b)">${selPcs}</div><div style="font-size:9px;color:var(--dim2)">قطعة/فرخة</div></div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--snow)">${sc.sheetsNet}</div><div style="font-size:9px;color:var(--dim2)">فروخ صافية</div></div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--r)">${sc.wasteSheets}</div><div style="font-size:9px;color:var(--dim2)">هالك 5%</div></div>
+            <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.25);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--g)">${sc.sheetsTotal}</div><div style="font-size:9px;color:var(--g)">الإجمالي</div></div>
+          </div>
+          <button type="button" onclick="saveCalcSheets('${o._id}',${idx},${sc.sheetsTotal})" class="pw-btn" style="width:100%;margin-top:8px;font-size:var(--fs-xs)">💾 حفظ عدد الفروخ (${sc.sheetsTotal}) في المنتج</button>
+        </div>`:'';
+
+      const zinkHTML=`
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">🟨 الزنكات</div>
+          <div class="pw-grid2">
+            <div class="pw-field"><label>ألوان الوجه</label><input class="pw-inp" type="number" min="0" max="6" value="${p.frontColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'frontColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="4"></div>
+            <div class="pw-field"><label>ألوان الظهر</label><input class="pw-inp" type="number" min="0" max="6" value="${p.backColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'backColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="0"></div>
+          </div>
+          ${zinkCnt>0?`<div style="padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin-top:5px;display:flex;align-items:center;gap:8px"><span style="font-size:var(--fs-xs);color:var(--snow);font-weight:var(--fw-bold)">إجمالي ألواح الزنك:</span><span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:var(--y)">${zinkCnt} لوح</span><span style="font-size:10px;color:var(--dim2)">(${p.frontColors||0} وجه + ${p.backColors||0} ظهر)</span></div>`:''}
+        </div>`;
+
+      prodCalcHtml=!printSize?`<div style="margin-top:12px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">ℹ️ أدخل مقاس الطباعة لحساب عدد الفروخ</div>`:`
       <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
-        <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:8px">🧮 حساب التكلفة</div>
-        ${!hasMeta?`<div style="font-size:var(--fs-xs);color:var(--y);padding:7px 10px;background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.2);border-radius:8px;margin-bottom:8px">⚠️ أضف مواصفات الورق (مقاس + سعر) من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`:''}
-        ${hasMeta?`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
-          <div style="font-size:10px;color:var(--dim2);margin-bottom:6px">📄 ${escH(paperMeta.name)} · ${escH(paperMeta.originalSize||'')} سم · ${paperMeta.costPerSheet||0} جنيه/فرخة${paperMeta.supplierName?' · '+escH(paperMeta.supplierName):''}</div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;text-align:center;margin-bottom:6px">
-            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--snow)">${pcs||'—'}</div><div style="font-size:9px;color:var(--dim2)">قطعة/فرخة</div></div>
-            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--snow)">${sc.sheetsNet||'—'}</div><div style="font-size:9px;color:var(--dim2)">فروخ صافية</div></div>
-            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--r)">${sc.wasteSheets||0}</div><div style="font-size:9px;color:var(--dim2)">هالك 5%</div></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--line)">
-            <span style="font-size:var(--fs-xs);color:var(--dim2)">إجمالي: <strong style="color:var(--snow)">${sc.sheetsTotal}</strong> فرخة</span>
-            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">${paperCost.toFixed(2)} جنيه</span>
-          </div>
-        </div>`:''}
-        <!-- ألوان الزنكات -->
-        <div class="pw-grid2" style="margin-bottom:8px">
-          <div class="pw-field"><label>🟨 ألوان الوجه</label><input class="pw-inp" type="number" min="0" max="6" value="${p.frontColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'frontColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="4"></div>
-          <div class="pw-field"><label>🟦 ألوان الظهر</label><input class="pw-inp" type="number" min="0" max="6" value="${p.backColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'backColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="0"></div>
-        </div>
-        ${zinkCnt>0?`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
-            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">🟨 ${zinkCnt} لوح زنك</span>
-            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">${zinkCost.toFixed(2)} جنيه</span>
-          </div>
-          <div class="pw-field"><label style="font-size:10px">سعر اللوح (جنيه)</label><input class="pw-inp" type="number" min="0" step="0.01" value="${p.zinkUnitCost||''}" oninput="updateProductBriefField('${o._id}',${idx},'zinkUnitCost',parseFloat(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="0.00" style="margin-top:3px"></div>
-        </div>`:''}
-        ${grandTotal>0?`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.25);border-radius:9px;margin-bottom:10px">
-          <span style="font-size:var(--fs-xs);color:var(--g);font-weight:var(--fw-bold)">إجمالي تكلفة الأوفست</span>
-          <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:var(--g)">${grandTotal.toFixed(2)} جنيه</span>
-        </div>
-        <button type="button" onclick="applyOffsetCostItems('${o._id}',${idx})" class="pw-btn pw-btn-p" style="width:100%;margin-bottom:8px">📋 تطبيق التكلفة في الأوردر</button>`:''}
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:10px">📐 حساب الإنتاج</div>
+        ${rankingHTML}
+        ${sheetsHTML}
+        ${zinkHTML}
       </div>`;
     }
 
@@ -711,7 +735,7 @@ function pwRenderSpecs(o){
       <div class="pw-field" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"><label>🏭 المطبعة</label><select class="pw-inp" onchange="updateProductBriefField('${o._id}',${idx},'press',this)">${pressOpts}</select></div>
       <div class="pw-field"><label>📅 ميعاد المطبعة</label><input class="pw-inp" type="datetime-local" value="${toLocalDT(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')"></div>
       <div class="pw-field"><label>📝 ملاحظات الشغل</label><input class="pw-inp" type="text" value="${escAttr(p.briefNotes||'')}" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="ملاحظات خاصة بالمطبعة..."></div>
-      ${costCalcHtml}
+      ${prodCalcHtml}
       <div style="margin-top:10px">
         <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} class="pw-btn ${r.ready?'pw-btn-wa':''}" style="width:100%;${!r.ready?'cursor:not-allowed;opacity:.6':''}">
           💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
@@ -949,6 +973,14 @@ window.applyOffsetCostItems=async function(orderId,idx){
   }
   if(ok)toast(`✅ تم تسجيل ${lines.length} بند تكلفة`,'ok');
   else toast('⚠️ '+msgs.join(' · '),'err');
+};
+
+// حفظ عدد الفروخ المحسوب في حقل paperSheets للمنتج
+window.saveCalcSheets=async function(orderId,idx,sheetsTotal){
+  if(!sheetsTotal)return;
+  if(activeOrder){const p=(activeOrder.products||[])[idx];if(p)p.paperSheets=sheetsTotal;}
+  await commitBriefSave(orderId,idx,{paperSheets:sheetsTotal});
+  toast(`✅ عدد الفروخ (${sheetsTotal}) حُفظ`,'ok');
 };
 
 window.openProductionSheet=function(id){const oid=id||activeId;if(!oid)return;window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=production','_blank','noopener');};
