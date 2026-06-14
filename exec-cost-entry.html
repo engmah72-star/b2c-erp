@@ -824,44 +824,38 @@ function _populateWorkspace(o){
 
 function _renderCompleteness(o){
   const el=document.getElementById('ws-completeness');if(!el)return;
-  const comp=getCompleteness(o);
-  const hasAnyItems=(o.costItems||[]).length>0;
-  if(!comp.expected.length){
-    // no expected types configured — show finish button if items exist
-    el.innerHTML=hasAnyItems
-      ?`<div class="ws-comp-wrap"><button type="button" class="ws-finish-btn ws-finish-done" onclick="closeWorkspace()">✅ إنهاء التسجيل</button></div>`
-      :'';
-    return;
+  const allItems=o.costItems||[];
+  const prods=o.products||[];
+  const hasItems=allItems.length>0;
+  const totalCost=allItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+
+  // Completion = every product has at least one cost item (no masterCategories dependency)
+  let prodsWithItems=0;
+  if(prods.length){
+    prods.forEach((_,i)=>{if(allItems.some(c=>c.prodIdx===i))prodsWithItems++;});
   }
-  const color=comp.pct>=100?'var(--g)':comp.pct>=60?'var(--y)':'var(--r)';
-  const archiveBanner=o.awaitingFinalArchive&&comp.pct<100
-    ?`<div class="ws-archive-gate">🚨 الأوردر في انتظار الأرشفة — يجب إكمال البنود الناقصة أولاً</div>`:'';
-  const finishBtn=comp.pct>=100
+  const allDone=prods.length?prodsWithItems===prods.length:hasItems;
+
+  const archiveBanner=o.awaitingFinalArchive&&!allDone
+    ?`<div class="ws-archive-gate">🚨 الأوردر في انتظار الأرشفة — سجّل بنوداً لكل منتج أولاً</div>`:'';
+  const finishBtn=allDone&&hasItems
     ?`<button type="button" class="ws-finish-btn ws-finish-done" onclick="closeWorkspace()">✅ اكتملت البنود — إنهاء</button>`
-    :hasAnyItems
+    :hasItems
       ?`<button type="button" class="ws-finish-btn ws-finish-partial" onclick="closeWorkspace()">← إنهاء والرجوع للقائمة</button>`
       :'';
-  // recorded types not in expected list — still show them as acknowledged
-  const recordedAll=(o.costItems||[]).map(c=>(c.type||'').trim()).filter(Boolean);
-  const expectedSet=new Set(comp.expected);
-  const extraDone=[...new Set(recordedAll.filter(t=>!expectedSet.has(t)))];
-  const totalCostDisp=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+
+  // Show only recorded types — no "expected" categories from settings
+  const recordedTypes=[...new Set(allItems.map(c=>(c.type||'').trim()).filter(Boolean))];
+  const prodStat=prods.length?`<span class="ws-comp-stat">${prodsWithItems}/${prods.length} منتج</span>`:'';
+
   el.innerHTML=`
     <div class="ws-comp-wrap">
       ${archiveBanner}
       <div class="ws-comp-header">
-        <span class="ws-comp-title">🎯 اكتمال بنود التكلفة</span>
-        <div style="display:flex;align-items:center;gap:8px">
-          ${totalCostDisp>0?`<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-heavy)">💰 ${fn(totalCostDisp)} ج</span>`:''}
-          <span class="ws-comp-pct" style="color:${color}">${comp.pct}%</span>
-        </div>
+        <span class="ws-comp-title">${hasItems?`💰 ${fn(totalCost)} ج · ${allItems.length} بند`:'لم تُسجَّل بنود بعد'}</span>
+        ${prodStat}
       </div>
-      <div class="ws-comp-track"><div class="ws-comp-fill" style="width:${comp.pct}%;background:${color}"></div></div>
-      <div class="ws-comp-chips">
-        ${comp.done.map(t=>`<span class="ws-comp-chip done">✅ ${t}</span>`).join('')}
-        ${extraDone.map(t=>`<span class="ws-comp-chip extra">✔ ${t}</span>`).join('')}
-        ${comp.missing.map(t=>`<span class="ws-comp-chip miss" onclick="prefillType('${t.replace(/'/g,'&#39;')}')">+ ${t}</span>`).join('')}
-      </div>
+      ${recordedTypes.length?`<div class="ws-comp-chips">${recordedTypes.map(t=>`<span class="ws-chip ws-chip-done">✓ ${t}</span>`).join('')}</div>`:''}
       ${finishBtn}
     </div>`;
 }
@@ -2392,11 +2386,13 @@ function _renderQuickEntry(o){
   el.hidden=false;
   let totalEst=0,totalRows=0;
   groups.forEach(g=>{g.entries.forEach(e=>{totalEst+=e.lastPrice;totalRows++;});});
+  // Collapsed by default — user taps header to expand
   let html=`<div class="qe-box">
-    <div class="qe-hdr">
-      <span class="qe-label">⚡ إدخال سريع</span>
-      <span class="qe-sub">راجع الأسعار واحفظ الكل دفعة واحدة</span>
-    </div>`;
+    <div class="qe-hdr qe-hdr-toggle" onclick="this.closest('.qe-box').classList.toggle('qe-open')" role="button">
+      <span class="qe-label">⚡ إدخال سريع <span class="qe-count-badge">${totalRows} بند</span></span>
+      <span class="qe-toggle-ico">▼</span>
+    </div>
+    <div class="qe-body">`;
   groups.forEach(({prodIdx,prodName,prodQty,entries})=>{
     html+=`<div class="qe-prod-group">
       <div class="qe-prod-hdr">📦 ${prodName} <span class="qe-prod-qty">× ${prodQty}</span></div>`;
@@ -2413,7 +2409,7 @@ function _renderQuickEntry(o){
   html+=`<div class="qe-footer">
     <span class="qe-total-lbl" id="qe-total-lbl">💰 ${fn(totalEst)} ج · ${totalRows} بند</span>
     <button type="button" class="btn btn-r qe-save-all-btn" onclick="saveQuickEntry()">💾 حفظ الكل</button>
-  </div></div>`;
+  </div></div></div>`;
   el.innerHTML=html;
 }
 
