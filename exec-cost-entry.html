@@ -234,6 +234,9 @@
           <!-- Template / missing costs -->
           <div id="ws-template"></div>
 
+          <!-- Product filter bar (multi-product orders) -->
+          <div id="prod-filter-bar" hidden></div>
+
           <!-- Products summary (clickable — picks prodIdx) -->
           <div id="cost-products-summary" style="margin-bottom:14px"></div>
 
@@ -306,7 +309,38 @@
             </div>
           </div><!-- /form-section -->
 
+          <!-- Floating bulk-add bar (appears when ≥1 product selected) -->
+          <div id="bulk-action-bar" hidden></div>
+
         </div><!-- /ws-content -->
+
+        <!-- Bulk add modal -->
+        <div id="bulk-add-modal" class="bulk-modal-overlay" hidden>
+          <div class="bulk-modal">
+            <div class="bulk-modal-hdr">
+              <span class="bulk-modal-title">➕ إضافة بند لمنتجات محددة</span>
+              <button type="button" class="bulk-modal-close" onclick="closeBulkModal()">✕</button>
+            </div>
+            <div class="bulk-modal-prods" id="bulk-modal-prods"></div>
+            <div class="fg"><label>🏷️ نوع البند</label>
+              <select class="inp" id="bulk-type-sel"></select>
+            </div>
+            <div class="fg"><label>🏭 المورد</label>
+              <select class="inp" id="bulk-sup-sel"></select>
+            </div>
+            <div class="fg"><label>💰 التكلفة (ج)</label>
+              <input class="inp" id="bulk-total" type="number" placeholder="0" inputmode="numeric">
+            </div>
+            <div class="fg"><label>📝 ملاحظة (اختياري)</label>
+              <input class="inp" id="bulk-note" type="text" placeholder="">
+            </div>
+            <div class="bulk-modal-foot">
+              <button type="button" class="btn btn-ghost" onclick="closeBulkModal()">إلغاء</button>
+              <button type="button" class="btn btn-r" onclick="saveBulkCost()">＋ إضافة للكل</button>
+            </div>
+          </div>
+        </div>
+
       </div><!-- /workspace-panel -->
 
     </div><!-- /split-layout -->
@@ -472,6 +506,8 @@ import { orderActions } from "./order-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
+let _prodFilter=-1; // -1=all, >=0 show only this product's card
+let _selectedProds=new Set(); // prodIdxes checked for bulk add
 let _libCache={},_libLoading=false;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
@@ -721,6 +757,10 @@ window.openWorkspace=function(orderId,prodIdx=-1){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
   activeId=orderId;
   editCostIdx=-1;
+  _prodFilter=-1;
+  _selectedProds.clear();
+  const bulkBar=document.getElementById('bulk-action-bar');
+  if(bulkBar)bulkBar.hidden=true;
 
   // Mobile: hide queue, show workspace
   document.getElementById('order-queue').classList.add('mob-hidden');
@@ -1057,6 +1097,177 @@ window.setFilter=function(f,btn){
 };
 
 /* ═══════════════════════════════════════════════════
+   PRODUCT FILTER BAR & BULK ADD
+   ═══════════════════════════════════════════════════ */
+function _renderProdFilterBar(o){
+  const el=document.getElementById('prod-filter-bar');
+  if(!el)return;
+  const prods=o.products||[];
+  if(prods.length<=1){el.hidden=true;return;}
+  el.hidden=false;
+  const allItems=o.costItems||[];
+  // Group similar products by baseName for visual tinting
+  const baseGroups={};
+  prods.forEach((p,i)=>{const b=_normBaseName(p.name)||`_${i}`;(baseGroups[b]||(baseGroups[b]=[])).push(i);});
+  const groupTints=['','pfg-b','pfg-c','pfg-d'];
+  const idxTint={};
+  Object.values(baseGroups).forEach((idxs,gi)=>idxs.forEach(i=>idxTint[i]=groupTints[gi%groupTints.length]));
+  let html=`<div class="pf-bar">`;
+  html+=`<button class="pf-chip${_prodFilter===-1?' pf-active':''}" onclick="setProdFilter(-1)">الكل <span class="pf-badge">${prods.length}</span></button>`;
+  prods.forEach((p,i)=>{
+    const hasItems=allItems.some(c=>c.prodIdx===i);
+    const dot=hasItems?'<span class="pf-dot pf-dot-ok"></span>':'<span class="pf-dot pf-dot-miss"></span>';
+    const short=(p.name||`منتج ${i+1}`).slice(0,16);
+    html+=`<button class="pf-chip ${idxTint[i]||''}${_prodFilter===i?' pf-active':''}" onclick="setProdFilter(${i})">${dot}${short}</button>`;
+  });
+  html+=`</div>`;
+  el.innerHTML=html;
+}
+
+window.setProdFilter=function(idx){
+  _prodFilter=idx;
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  _renderProdFilterBar(o);
+  _renderProductsCostView(o);
+};
+
+window.toggleProdSelect=function(idx,checked){
+  if(checked)_selectedProds.add(idx);
+  else _selectedProds.delete(idx);
+  _renderBulkBar(orders.find(x=>x._id===activeId));
+};
+
+window.clearProdSelection=function(){
+  _selectedProds.clear();
+  document.querySelectorAll('.prod-sel-cb').forEach(cb=>{cb.checked=false;});
+  _renderBulkBar(null);
+};
+
+function _renderBulkBar(o){
+  const el=document.getElementById('bulk-action-bar');
+  if(!el)return;
+  const n=_selectedProds.size;
+  if(!n){el.hidden=true;return;}
+  el.hidden=false;
+  el.innerHTML=`<div class="bulk-bar-inner">
+    <span class="bulk-bar-count">✓ ${n} ${n===1?'منتج':'منتجات'} محددة</span>
+    <button type="button" class="bulk-bar-add" onclick="openBulkAdd()">➕ إضافة بند للكل</button>
+    <button type="button" class="bulk-bar-clear" onclick="clearProdSelection()">✕</button>
+  </div>`;
+}
+
+window.openBulkAdd=function(){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const modal=document.getElementById('bulk-add-modal');
+  if(!modal)return;
+  // Pre-fill type and supplier from the active form if set
+  const curType=gv('ac-type');
+  const curSup=gv('ac-sup');
+  const curTotal=gv('ac-total');
+  // Type options
+  const typeOpts=masterCategories.filter(c=>c.isCostItem!==false)
+    .map(c=>`<option value="${c.label}"${c.label===curType?'selected':''}>${c.label}</option>`).join('');
+  document.getElementById('bulk-type-sel').innerHTML='<option value="">— اختر النوع —</option>'+typeOpts;
+  // Supplier options
+  const supOpts=suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"${s._id===curSup?'selected':''}>${s.name||s._id}</option>`).join('');
+  document.getElementById('bulk-sup-sel').innerHTML='<option value="">— اختر المورد —</option>'+supOpts;
+  // Pre-fill total
+  const totalEl=document.getElementById('bulk-total');
+  if(totalEl&&curTotal)totalEl.value=curTotal;
+  // Show selected product names
+  const prods=o.products||[];
+  const chips=[..._selectedProds].map(i=>{const p=prods[i];return`<span class="bulk-prod-chip">${p?.name||'منتج'} ×${p?.qty||1}</span>`;}).join('');
+  const prodsEl=document.getElementById('bulk-modal-prods');
+  if(prodsEl)prodsEl.innerHTML=chips;
+  modal.hidden=false;
+  document.getElementById('bulk-type-sel')?.focus();
+};
+
+window.closeBulkModal=function(){
+  const modal=document.getElementById('bulk-add-modal');
+  if(modal)modal.hidden=true;
+};
+
+window.saveBulkCost=async function(){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const type=(document.getElementById('bulk-type-sel')?.value||'').trim();
+  const supSel=document.getElementById('bulk-sup-sel');
+  const supplierId=supSel?.value||'';
+  const supOpt=supSel?.options[supSel.selectedIndex];
+  const supplierName=supOpt?.dataset?.name||'';
+  const total=parseFloat(document.getElementById('bulk-total')?.value||'0');
+  const note=(document.getElementById('bulk-note')?.value||'').trim();
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!supplierId)return toast('⚠️ اختر المورد','err');
+  if(!total)return toast('⚠️ أدخل التكلفة','err');
+  const idxs=[..._selectedProds];
+  const btn=document.querySelector('#bulk-add-modal .btn-r');
+  if(btn){btn.disabled=true;btn.textContent='جاري الحفظ...';}
+  let saved=0;
+  for(const prodIdx of idxs){
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx,
+      payload:{type,total,supplierId,supplierName,note,walletId:'',paperMeta:{}},
+      role:currentRole,userId:currentUser?.uid||'',userName,
+      wallets,isEdit:false,editIdx:-1,
+    });
+    if(r.ok)saved++;
+  }
+  closeBulkModal();
+  clearProdSelection();
+  toast(`✅ "${type}" أُضيف لـ ${saved}/${idxs.length} منتج`,'ok');
+  setTimeout(()=>{
+    const fresh=orders.find(x=>x._id===activeId);
+    if(fresh){renderItemsBox(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderProdFilterBar(fresh);}
+  },350);
+};
+
+// Show "apply to similar products" suggestion after a single-product save
+function _suggestSimilarApply(o,type,supplierId,supplierName,total,savedProdIdx){
+  const prods=o.products||[];
+  if(prods.length<=1||savedProdIdx<0)return;
+  const savedBase=_normBaseName(prods[savedProdIdx]?.name);
+  if(!savedBase||savedBase.length<2)return;
+  const typedIdxs=new Set((o.costItems||[]).filter(c=>c.type===type).map(c=>c.prodIdx));
+  const targets=prods.map((_,i)=>i).filter(i=>i!==savedProdIdx&&!typedIdxs.has(i)&&_normBaseName(prods[i]?.name)===savedBase);
+  if(!targets.length)return;
+  const c=document.getElementById('toasts');if(!c)return;
+  const el=document.createElement('div');
+  el.className='toast toast-action';
+  const safeType=type.replace(/'/g,"\\'");
+  const safeSup=supplierId.replace(/'/g,"\\'");
+  const safeSupName=supplierName.replace(/'/g,"\\'");
+  el.innerHTML=`<div class="toast-action-msg">تطبيق "${type}" على ${targets.length} منتج مشابه؟</div>
+    <div class="toast-action-btns">
+      <button onclick="applyToSimilar([${targets.join(',')}],'${safeType}','${safeSup}','${safeSupName}',${total});this.closest('.toast').remove()">تطبيق →</button>
+      <button onclick="this.closest('.toast').remove()">تجاهل</button>
+    </div>`;
+  c.appendChild(el);
+  setTimeout(()=>el.remove(),9000);
+}
+
+window.applyToSimilar=async function(targets,type,supplierId,supplierName,total){
+  let saved=0;
+  for(const prodIdx of targets){
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx,
+      payload:{type,total,supplierId,supplierName,note:'',walletId:'',paperMeta:{}},
+      role:currentRole,userId:currentUser?.uid||'',userName,
+      wallets,isEdit:false,editIdx:-1,
+    });
+    if(r.ok)saved++;
+  }
+  toast(`✅ "${type}" طُبّق على ${saved} منتج إضافي`,'ok');
+  setTimeout(()=>{
+    const fresh=orders.find(x=>x._id===activeId);
+    if(fresh){renderItemsBox(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderProdFilterBar(fresh);}
+  },350);
+};
+
+/* ═══════════════════════════════════════════════════
    RENDER HELPERS (workspace inner sections)
    ═══════════════════════════════════════════════════ */
 function renderDrawerProfit(o){
@@ -1092,13 +1303,20 @@ function _renderProductsCostView(o){
   const el=document.getElementById('cost-products-summary');if(!el)return;
   const prods=o.products||[];
   const allItems=o.costItems||[];
+  _renderProdFilterBar(o);
   let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
   prods.forEach((p,i)=>{
+    // Apply filter: if a specific product is selected, hide others
+    if(_prodFilter>=0&&_prodFilter!==i)return;
     const pItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx===i);
     const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
+    const isChecked=_selectedProds.has(i);
     html+=`<div class="prod-cost-card">
       <div class="prod-cc-hdr">
+        <label class="prod-sel-wrap" title="تحديد للإضافة الجماعية">
+          <input type="checkbox" class="prod-sel-cb" ${isChecked?'checked':''} onchange="toggleProdSelect(${i},this.checked)">
+        </label>
         <div class="prod-cc-info">
           <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
           <span class="qty-big">× ${p.qty||0}</span>
@@ -1413,6 +1631,14 @@ window.saveCost=async function(){
     }else{
       const supTotal=(o.costItems||[]).filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0)+total;
       toast(`✅ ${type} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
+    }
+
+    // Suggest applying to similar products (same baseName, same cost type missing)
+    if(!isEdit&&prodIdx>=0){
+      setTimeout(()=>{
+        const fresh2=orders.find(x=>x._id===activeId);
+        if(fresh2)_suggestSimilarApply(fresh2,type,supplierId,supplierName,total,prodIdx);
+      },400);
     }
 
     clearForm();
