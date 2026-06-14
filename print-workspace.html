@@ -655,44 +655,47 @@ function pwRenderSpecs(o){
       const printSize=p.printSize||p.size||'';
       const qty=parseInt(p.qty)||0;
       // Rank all available papers by pieces/sheet
-      const rankings=allPapersData
-        .map(pm=>({...pm,pcs:eng.fitPiecesPerSheet(printSize,pm.originalSize||'')}))
-        .filter(pm=>pm.pcs>0)
-        .sort((a,b)=>b.pcs-a.pcs);
-      // Calculate for selected paper
-      const selMeta=paperMeta;
-      const selPcs=selMeta?eng.fitPiecesPerSheet(printSize,selMeta.originalSize||''):0;
-      const sc=selMeta&&qty>0?eng.sheetsCalc(selPcs,qty):{sheetsNet:0,wasteSheets:0,sheetsTotal:0};
+      // rankAllSizes: يجمع المقاسات القياسية + المُعرَّفة في الإعدادات
+      const rankings=eng.rankAllSizes(printSize,qty,allPapersData);
+      // Calculate for selected paper (from rankings)
+      const selRank=rankings.find(pm=>pm.name===p.paper)||null;
+      const selPcs=selRank?selRank.pcs:0;
+      const sc=selRank?{sheetsNet:selRank.sheetsNet,wasteSheets:selRank.wasteSheets,sheetsTotal:selRank.sheetsTotal}:{sheetsNet:0,wasteSheets:0,sheetsTotal:0};
+      const selMeta=selRank||(p.paper?{name:p.paper,originalSize:'',supplierName:''}:null);
       const zinkCnt=eng.calcZincCount(p.frontColors,p.backColors);
       const bestPcs=rankings[0]?.pcs||0;
-      const isOptimal=selMeta&&selPcs===bestPcs;
+      const isOptimal=selRank&&selPcs===bestPcs;
 
       const rankingHTML=rankings.length?`
         <div style="margin-bottom:8px">
-          <div style="font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">📊 مقارنة الفروخ المتاحة</div>
+          <div style="font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">📊 مقارنة المقاسات${qty>0?` (للكمية ${qty})`:''}
+            <span style="font-weight:400;margin-right:6px">— قياسية تلقائياً + مُعرَّفة بالإعدادات</span></div>
           ${rankings.map((pm,ri)=>{
             const isBest=ri===0;const isSelected=pm.name===p.paper;
-            return`<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;margin-bottom:3px;background:${isSelected?'rgba(0,122,255,.08)':isBest?'rgba(0,217,126,.05)':'var(--bg2)'};border:1px solid ${isSelected?'rgba(0,122,255,.3)':isBest?'rgba(0,217,126,.2)':'var(--line)'}">
+            const machBadge=pm.machine?`<span style="font-size:9px;color:var(--dim2);background:var(--bg3);padding:1px 5px;border-radius:4px;margin-right:4px">${pm.machine}</span>`:'';
+            const priceBadge=pm.hasPrice?`<span style="font-size:9px;color:var(--g)">💰</span>`:'';
+            return`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;margin-bottom:3px;background:${isSelected?'rgba(0,122,255,.08)':isBest?'rgba(0,217,126,.05)':'var(--bg2)'};border:1px solid ${isSelected?'rgba(0,122,255,.3)':isBest?'rgba(0,217,126,.2)':'var(--line)'}">
               <div style="flex:1;min-width:0">
-                <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSelected?'var(--b)':isBest?'var(--g)':'var(--snow)'}">${escH(pm.name)}</span>
-                <span style="font-size:9px;color:var(--dim2);margin-right:6px">${escH(pm.originalSize||'')} سم</span>
+                <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                  <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSelected?'var(--b)':isBest?'var(--g)':'var(--snow)'}">${escH(pm.name)}</span>
+                  ${machBadge}${priceBadge}
+                </div>
+                <span style="font-size:9px;color:var(--dim2)">${escH(pm.originalSize||'')} سم</span>
               </div>
               <div style="text-align:left;flex-shrink:0">
-                <span style="font-size:12px;font-weight:var(--fw-bold);color:${isBest?'var(--g)':'var(--snow)'}">${pm.pcs}</span>
-                <span style="font-size:9px;color:var(--dim2)"> قطعة/فرخة</span>
-                ${qty>0?`<div style="font-size:9px;color:var(--dim2)">${eng.sheetsCalc(pm.pcs,qty).sheetsTotal} فرخة للكمية</div>`:''}
+                <div style="font-size:13px;font-weight:var(--fw-bold);color:${isBest?'var(--g)':'var(--snow)'}">${pm.pcs} <span style="font-size:9px;color:var(--dim2);font-weight:400">قطعة/فرخة</span></div>
+                ${qty>0?`<div style="font-size:9px;color:var(--dim2)">${pm.sheetsTotal} فرخة للكمية</div>`:''}
               </div>
-              ${isBest?`<span style="font-size:9px;background:rgba(0,217,126,.15);color:var(--g);padding:2px 5px;border-radius:5px;flex-shrink:0">الأفضل</span>`:''}
-              ${isSelected&&!isBest?`<span style="font-size:9px;background:rgba(0,122,255,.1);color:var(--b);padding:2px 5px;border-radius:5px;flex-shrink:0">مختار</span>`:''}
+              ${isBest&&!isSelected?`<span style="font-size:9px;background:rgba(0,217,126,.15);color:var(--g);padding:2px 6px;border-radius:5px;flex-shrink:0">الأفضل</span>`:''}
+              ${isSelected?`<span style="font-size:9px;background:${isBest?'rgba(0,217,126,.2)':'rgba(0,122,255,.12)'};color:${isBest?'var(--g)':'var(--b)'};padding:2px 6px;border-radius:5px;flex-shrink:0">${isBest?'✅ مختار':'مختار'}</span>`:''}
             </div>`;
           }).join('')}
-          ${!isOptimal&&selMeta&&bestPcs>selPcs?`<div style="font-size:10px;color:var(--y);padding:5px 8px;background:rgba(255,170,0,.07);border-radius:7px;border:1px solid rgba(255,170,0,.2);margin-top:4px">💡 "${escH(rankings[0].name)}" يُعطيك ${rankings[0].pcs} قطعة/فرخة — استغلال أفضل</div>`:''}
-          ${!allPapersData.length?`<div style="font-size:var(--fs-xs);color:var(--dim2);padding:5px 0">لا توجد أوراق مُعرَّفة بعد — أضف مواصفاتها من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`:''}
-        </div>`:'';
+          ${!isOptimal&&selRank&&bestPcs>selPcs?`<div style="font-size:10px;color:var(--y);padding:5px 8px;background:rgba(255,170,0,.07);border-radius:7px;border:1px solid rgba(255,170,0,.2);margin-top:4px">💡 "${escH(rankings[0].name)}" يُعطيك ${rankings[0].pcs} قطعة/فرخة — استغلال أفضل</div>`:''}
+        </div>`:'<div style="font-size:var(--fs-xs);color:var(--dim2);padding:6px 0">ℹ️ أدخل مقاس الطباعة لتظهر المقارنة</div>';
 
-      const sheetsHTML=selMeta&&sc.sheetsTotal>0?`
+      const sheetsHTML=selRank&&sc.sheetsTotal>0?`
         <div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
-          <div style="font-size:10px;color:var(--dim2);margin-bottom:7px">📄 ${escH(selMeta.name)} · ${escH(selMeta.originalSize||'')} سم${selMeta.supplierName?' · '+escH(selMeta.supplierName):''}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:7px">📄 ${escH(selRank.name)} · ${escH(selRank.originalSize||'')} سم${selRank.machine?' · '+escH(selRank.machine):''}${selRank.supplierName?' · '+escH(selRank.supplierName):''}</div>
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center">
             <div style="background:var(--bg3);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--b)">${selPcs}</div><div style="font-size:9px;color:var(--dim2)">قطعة/فرخة</div></div>
             <div style="background:var(--bg3);border-radius:6px;padding:6px 2px"><div style="font-size:14px;font-weight:var(--fw-bold);color:var(--snow)">${sc.sheetsNet}</div><div style="font-size:9px;color:var(--dim2)">فروخ صافية</div></div>
