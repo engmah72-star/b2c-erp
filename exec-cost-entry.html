@@ -180,6 +180,9 @@
           <button type="button" class="sort-tab" onclick="setSort('complete',this)">✅ اكتمال</button>
         </div>
 
+        <!-- Product name filter chips (dynamically populated) -->
+        <div id="prod-name-filter-bar" hidden></div>
+
         <div id="list"></div>
       </div><!-- /order-queue -->
 
@@ -506,8 +509,9 @@ import { orderActions } from "./order-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
-let _prodFilter=-1; // -1=all, >=0 show only this product's card
+let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
 let _selectedProds=new Set(); // prodIdxes checked for bulk add
+let _prodNameFilter=''; // filter order list by product base name
 let _libCache={},_libLoading=false;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
@@ -698,9 +702,18 @@ function renderList(){
   setText('cnt-has-lib',libCount);
   renderSmartKpis();
 
+  // Build product name chips from full data (before stage filter)
+  _renderProdNameFilterBar(data);
+
   let filtered=currentFilter==='all'?data
     :currentFilter==='has-lib'?data.filter(({o})=>_getMatchingProfile(o)!=null)
     :data.filter(({o})=>o.stage===currentFilter);
+
+  // Apply product name filter
+  if(_prodNameFilter){
+    filtered=filtered.filter(({prod})=>prod&&_normBaseName(prod.name)===_prodNameFilter);
+  }
+
   filtered=applySort(filtered);
 
   const el=document.getElementById('list');
@@ -1093,6 +1106,34 @@ window.setFilter=function(f,btn){
   currentFilter=f;
   document.querySelectorAll('#stage-filter-bar .ftab').forEach(b=>b.classList.remove('active'));
   btn?.classList.add('active');
+  renderList();
+};
+
+function _renderProdNameFilterBar(data){
+  const el=document.getElementById('prod-name-filter-bar');
+  if(!el)return;
+  // Collect unique base names with counts
+  const counts={};
+  data.forEach(({prod})=>{
+    if(!prod)return;
+    const b=_normBaseName(prod.name);
+    if(b&&b.length>=2)counts[b]=(counts[b]||0)+1;
+  });
+  const names=Object.entries(counts).sort((a,b)=>b[1]-a[1]); // sort by frequency
+  if(names.length<=1){el.hidden=true;return;}
+  el.hidden=false;
+  let html=`<div class="pnf-bar">
+    <span class="pnf-label">📦</span>
+    <button class="pnf-chip${!_prodNameFilter?' pnf-active':''}" onclick="setProdNameFilter('')">الكل</button>`;
+  names.forEach(([name,cnt])=>{
+    html+=`<button class="pnf-chip${_prodNameFilter===name?' pnf-active':''}" onclick="setProdNameFilter('${name.replace(/'/g,"\\'")}')">${name} <span class="pnf-cnt">${cnt}</span></button>`;
+  });
+  html+=`</div>`;
+  el.innerHTML=html;
+}
+
+window.setProdNameFilter=function(name){
+  _prodNameFilter=name;
   renderList();
 };
 
