@@ -167,6 +167,7 @@
           <button class="pw-tab" data-tab="specs" onclick="pwTab('specs',this)">🖨️ الطباعة</button>
           <button class="pw-tab" data-tab="production" onclick="pwTab('production',this)">🏭 التنفيذ</button>
           <button class="pw-tab" data-tab="shipping" onclick="pwTab('shipping',this)">🚚 الشحن</button>
+          <button class="pw-tab" data-tab="costs" onclick="pwTab('costs',this)">💰 التكلفة</button>
         </div>
 
         <!-- Pane 1: الأسعار والصور -->
@@ -180,6 +181,7 @@
 
         <!-- Pane 4: الشحن -->
         <div class="pw-pane" id="pw-pane-shipping"></div>
+        <div class="pw-pane" id="pw-pane-costs"></div>
 
         <!-- Sticky footer actions -->
         <div class="pw-actions" id="pw-footer-actions"></div>
@@ -525,6 +527,7 @@ function renderTab(tab,o){
   else if(tab==='specs')pwRenderSpecs(o);
   else if(tab==='production')pwRenderProduction(o);
   else if(tab==='shipping')pwRenderShipping(o);
+  else if(tab==='costs')pwRenderCosts(o);
 }
 
 function renderHeader(o){
@@ -1041,6 +1044,107 @@ window.setPrintProductStatus=async function(idx,status){
   if(!r.ok){if(((r.errors||[])[0]||'')==='⚠️ نفس الحالة')return;return toast('❌ '+(r.errors||[]).join(' · '),'err');}
   toast(`✅ ${(o.products||[])[idx]?.name||''}: ${status}`,'ok');
 };
+
+// ── تاب التكلفة ─────────────────────────────────────────────────────────────
+function pwRenderCosts(o){
+  const el=document.getElementById('pw-pane-costs');if(!el||!el.classList.contains('on'))return;
+  const eng=window.offsetCostEngine;
+  const rates=appSettings.offsetMachineRates||{};
+  const offProds=(o.products||[]).filter(p=>(p.printType||'').includes('offset'));
+  if(!offProds.length){el.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد منتجات أوفست في هذا الأوردر</div>`;return;}
+
+  const cardsHTML=offProds.map((p,piRaw)=>{
+    const idx=(o.products||[]).indexOf(p);
+    const paperMeta=getPaperTypeData(p.paper||'');
+    const printSize=p.printSize||p.size||'';
+    const qty=parseInt(p.qty)||0;
+    const pcs=eng?eng.fitPiecesPerSheet(printSize,paperMeta?.originalSize||''):0;
+    const sc=eng&&pcs>0?eng.sheetsCalc(pcs,qty):{sheetsNet:0,wasteSheets:0,sheetsTotal:parseInt(p.paperSheets)||0};
+    const sheetsTotal=sc.sheetsTotal||parseInt(p.paperSheets)||0;
+    const frontC=parseInt(p.frontColors)||0;
+    const backC=parseInt(p.backColors)||0;
+    const totalPasses=sheetsTotal*(frontC+backC);
+    const trajs=totalPasses>0?Math.ceil(totalPasses/1000):0;
+    const billingPasses=trajs*1000;
+
+    // Find machine from selected paper's rank entry
+    const allPapersData=Array.isArray(appSettings.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
+    const selRank=eng?eng.rankAllSizes(printSize,qty,allPapersData).find(pm=>pm.name===p.paper):null;
+    const machine=selRank?.machine||paperMeta?.machine||'';
+    const machineRate=parseFloat(rates[machine])||0;
+    const machineCost=trajs*machineRate;
+
+    const paperCost=paperMeta&&sheetsTotal>0?(sheetsTotal*(parseFloat(paperMeta.costPerSheet)||0)):0;
+
+    // Extras from productionServices
+    const isOff=true,isDig=(p.printType||'').includes('digital');
+    const extras=productionServices.filter(s=>s.isCostItem&&s.isActive!==false&&(!s.printTypes?.length||s.printTypes.some(pt=>(isOff&&pt==='offset')||(isDig&&pt==='digital'))));
+
+    const totalCost=paperCost+machineCost;
+    const hasData=sheetsTotal>0||(frontC+backC)>0;
+
+    return`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px">
+      <div style="padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px">
+        <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">${escH(p.name||'منتج')}</span>
+        <span style="font-size:10px;color:var(--y)">×${qty}</span>
+        <span style="margin-right:auto;font-size:10px;color:var(--y);background:rgba(255,200,0,.1);padding:1px 7px;border-radius:6px">أوفست</span>
+      </div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+
+        <!-- الورق -->
+        <div style="border-radius:8px;border:1px solid var(--line);overflow:hidden">
+          <div style="padding:6px 10px;background:var(--bg3);font-size:10px;font-weight:var(--fw-bold);color:var(--dim2)">📄 الورق</div>
+          <div style="padding:8px 10px">
+            ${p.paper?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:var(--fs-xs);color:var(--snow)">${escH(p.paper)}${paperMeta?.originalSize?' · '+escH(paperMeta.originalSize)+' سم':''}</span>
+              ${paperMeta?.costPerSheet?`<span style="font-size:var(--fs-xs);color:var(--dim2)">${sheetsTotal} فرخة × ${paperMeta.costPerSheet} ج</span>`:'<span style="font-size:10px;color:var(--r)">لا يوجد سعر</span>'}
+            </div>
+            ${paperMeta?.costPerSheet?`<div style="text-align:left;font-size:14px;font-weight:var(--fw-bold);color:var(--g)">${paperCost.toFixed(2)} ج</div>`:''}`:
+            `<div style="font-size:10px;color:var(--r)">⚠️ لم يُحدد نوع الورق</div>`}
+          </div>
+        </div>
+
+        <!-- الطباعة -->
+        <div style="border-radius:8px;border:1px solid var(--line);overflow:hidden">
+          <div style="padding:6px 10px;background:var(--bg3);font-size:10px;font-weight:var(--fw-bold);color:var(--dim2)">⚙️ الطباعة</div>
+          <div style="padding:8px 10px">
+            ${machine?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:var(--fs-xs);color:var(--snow)">${escH(machine)}</span>
+              <span style="font-size:10px;color:var(--dim2)">${frontC}+${backC} · ${totalPasses} سحبة · ${trajs} تراج</span>
+            </div>
+            ${machineRate>0
+              ?`<div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:10px;color:var(--dim2)">${trajs} تراج × ${machineRate} ج</span>
+                  <span style="font-size:14px;font-weight:var(--fw-bold);color:var(--g)">${machineCost.toFixed(2)} ج</span>
+                </div>`
+              :`<div style="font-size:10px;color:var(--r)">⚠️ سعر هذه الماكينة غير محدد في الإعدادات</div>`}`
+            :`<div style="font-size:10px;color:var(--dim2)">⚠️ يجب تحديد مقاس الورق والزنكات أولاً</div>`}
+          </div>
+        </div>
+
+        ${extras.length?`<!-- الإضافات -->
+        <div style="border-radius:8px;border:1px solid var(--line);overflow:hidden">
+          <div style="padding:6px 10px;background:var(--bg3);font-size:10px;font-weight:var(--fw-bold);color:var(--dim2)">➕ الإضافات</div>
+          <div style="padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px">
+            ${extras.map(s=>`<span style="font-size:10px;padding:3px 9px;border-radius:7px;background:var(--bg3);border:1px solid var(--line);color:var(--dim2)">${escH(s.label||'')}</span>`).join('')}
+          </div>
+        </div>`:''}
+
+        <!-- الإجمالي -->
+        ${totalCost>0?`<div style="padding:10px 12px;background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.2);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">إجمالي تكلفة الطباعة</span>
+          <span style="font-size:18px;font-weight:var(--fw-heavy);color:var(--g)">${totalCost.toFixed(2)} ج</span>
+        </div>`:''}
+
+        <button type="button" onclick="applyOffsetCostItems('${o._id}',${idx})" class="pw-btn pw-btn-wa" style="width:100%;font-size:var(--fs-xs)">
+          💾 تسجيل بنود التكلفة في الأوردر
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=cardsHTML;
+}
 
 // ── تطبيق تكلفة الأوفست كبنود في الأوردر ────────────────────
 window.applyOffsetCostItems=async function(orderId,idx){
