@@ -1127,7 +1127,10 @@ function _renderProductsCostView(o){
             <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
           </div>
         </div>`).join('')}</div>`:`<div class="prod-no-cost">لا توجد بنود تكلفة لهذا المنتج بعد</div>`}
-      <button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>
+      <div class="prod-card-foot">
+        <button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>
+        ${pItems.length?`<button type="button" class="save-as-tmpl-btn prod-tmpl-btn" onclick="saveCurrentCostAsTemplate(${i})">💾 حفظ كقالب</button>`:''}
+      </div>
     </div>`;
   });
   const genItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx==null||c.prodIdx<0);
@@ -1148,7 +1151,7 @@ function _renderProductsCostView(o){
         </div>`).join('')}</div>
     </div>`;
   }
-  if(allItems.length) html+=`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate()">💾 حفظ كقالب</button>`;
+  if(genItems.length) html+=`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate(-1)">💾 حفظ البنود العامة كقالب</button>`;
   el.innerHTML=html;
   const box=document.getElementById('items-box');if(box)box.innerHTML='';
 }
@@ -2196,15 +2199,21 @@ window.deleteTmpl=async function(id){
   }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
 };
 
-window.saveCurrentCostAsTemplate=function(){
+window.saveCurrentCostAsTemplate=function(prodIdx=-1){
   const o=orders.find(x=>x._id===activeId);
-  if(!o||(o.costItems||[]).length===0)return toast('⚠️ لا توجد بنود مسجلة لحفظها','err');
-  const firstProd=(o.products||[])[0];
+  if(!o)return toast('⚠️ لا يوجد أوردر محدد','err');
+  const allItems=o.costItems||[];
+  // Filter by prodIdx: prodIdx>=0 → items for that product; -1 → general items (no prodIdx)
+  const scopedItems=prodIdx>=0
+    ?allItems.filter(c=>c.prodIdx===prodIdx)
+    :allItems.filter(c=>c.prodIdx==null||c.prodIdx<0);
+  if(!scopedItems.length)return toast('⚠️ لا توجد بنود مسجلة لهذا المنتج','err');
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:null;
   setText('tmpl-modal-title','💾 حفظ البنود كقالب');
   sv('tmpl-id','');
-  sv('tmpl-name',firstProd?.name||'');
-  sv('tmpl-qty',firstProd?.qty!=null?String(firstProd.qty):'');
-  _tmplItems=o.costItems
+  sv('tmpl-name',prod?.name||'');
+  sv('tmpl-qty',prod?.qty!=null?String(prod.qty):'');
+  _tmplItems=scopedItems
     .map(c=>({type:c.type||'',supplierId:c.supplierId||'',supplierName:c.supplierName||'',amount:parseFloat(c.total)||0}))
     .filter(c=>c.type&&c.supplierId&&c.amount>0);
   if(!_tmplItems.length)_tmplItems=[{type:'',supplierId:'',supplierName:'',amount:''}];
