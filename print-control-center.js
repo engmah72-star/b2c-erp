@@ -208,61 +208,103 @@ function printMoreTabHTML(order = {}) {
 
 // ─── STICKY CC HEADER ──────────────────────────────────────────────
 /**
- * renderPrintCCHeader(o, ctx) — builds the new sticky panel header.
- * Replaces the legacy inline header (#pn-id / #pn-name / #pn-phone +
- * call/wa/reject/close + 4 quick-action buttons) with a compact
- * critical-info strip + 4 primary actions.
+ * renderPrintCCHeader(o, ctx) — compact order-centric header.
+ * Row 1: product summary (what needs printing) + close button
+ * Row 2: order ID · client name · delay (small metadata)
+ * Row 3: 4 stat badges
+ * Row 4: dynamic primary CTA (context-aware next action) + secondary btns
  *
- * ctx = { canSeePhone, currentRole, getRem, getNet, getPaid, readyScore }
+ * ctx = { canSeePhone, currentRole, getRem, getNet, getPaid }
  */
 export function renderPrintCCHeader(o = {}, ctx = {}) {
   const canSeePhone = typeof ctx.canSeePhone === 'function' ? ctx.canSeePhone() : false;
-  const role = ctx.currentRole || '';
   const sale = typeof ctx.getNet === 'function' ? ctx.getNet(o) : (parseFloat(o.salePrice) || 0);
   const paid = typeof ctx.getPaid === 'function' ? ctx.getPaid(o) : (parseFloat(o.totalPaid) || 0);
-  const rem = typeof ctx.getRem === 'function' ? ctx.getRem(o) : Math.max(0, sale - paid);
+  const rem  = typeof ctx.getRem === 'function' ? ctx.getRem(o) : Math.max(0, sale - paid);
   const dLate = daysOverDeadline(o.deadline);
-  const isAdmin = role === 'admin' || role === 'operation_manager' || role === 'customer_service';
-  const products = o.products || [];
-  const totalCount = products.length;
-  const readyCount = products.filter(p => (p.productStatus || 'pending') === 'ready' || p.productStatus === 'printed' || p.productStatus === 'done').length;
+
+  const products     = o.products || [];
+  const totalCount   = products.length;
   const printedCount = products.filter(p => p.productStatus === 'printed' || p.productStatus === 'done').length;
-  const hasFinal = !!(o.printFinalUrl || (o.products || []).some(p => p.designImageUrl));
-  // Ready Score: prefer global helper if exposed (print.html → computeOrderReadyScore)
-  const rs = (typeof window.computeOrderReadyScore === 'function')
-    ? window.computeOrderReadyScore(o)
-    : { score: 0, missing: [] };
+  const anyAtPress   = products.some(p => p.productStatus === 'at-press' || !!p.briefSentAt);
+  const allPrinted   = totalCount > 0 && printedCount === totalCount;
+
+  // Products summary — the real subject of work in print stage
+  const prodSummary = products.slice(0, 3)
+    .map(p => escHtml(`${p.name || '?'}${p.qty ? ' ×' + p.qty : ''}`))
+    .join(' · ') + (products.length > 3 ? ` +${products.length - 3}` : '');
+
+  // Ready score
+  const rs    = (typeof window.computeOrderReadyScore === 'function') ? window.computeOrderReadyScore(o) : { score: 0, missing: [] };
   const rsCol = rs.score >= 90 ? 'var(--g)' : rs.score >= 60 ? 'var(--y)' : 'var(--r)';
   const rsIco = rs.score >= 90 ? '✅' : rs.score >= 60 ? '🟡' : '🔴';
-  const phMasked = (typeof window.showPhone === 'function') ? window.showPhone(o.clientPhone) : (o.clientPhone || '');
+
+  // File status
+  const hasFinal = !!(o.printFinalUrl || products.some(p =>
+    p.designImageUrl || (Array.isArray(p.designImages) && p.designImages.filter(Boolean).length > 0)
+  ));
+
+  // Dynamic primary CTA — one clear next action
+  let ctaIcon, ctaLabel, ctaStyle, ctaOnClick;
+  if (!hasFinal) {
+    ctaIcon    = '📁';
+    ctaLabel   = 'أضف ملف التصميم';
+    ctaStyle   = 'background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.45);color:var(--r)';
+    ctaOnClick = `switchPrintPanelTab('details',null)`;
+  } else if (rs.score < 70) {
+    ctaIcon    = '📝';
+    ctaLabel   = `أكمل المواصفات (${rs.score}%)`;
+    ctaStyle   = 'background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.45);color:var(--y)';
+    ctaOnClick = `switchPrintPanelTab('details',null)`;
+  } else if (allPrinted) {
+    ctaIcon    = '🏭';
+    ctaLabel   = 'تحويل للإنتاج';
+    ctaStyle   = 'background:rgba(59,158,255,.15);border-color:rgba(59,158,255,.45);color:var(--b)';
+    ctaOnClick = `moveTo('production')`;
+  } else if (anyAtPress) {
+    ctaIcon    = '✅';
+    ctaLabel   = 'تأكيد: تمت الطباعة الكلية';
+    ctaStyle   = 'background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.45);color:var(--p)';
+    ctaOnClick = `markOrderAllPrinted('${escHtml(o._id || '')}')`;
+  } else {
+    ctaIcon    = '🖨️';
+    ctaLabel   = 'إرسال ملخص للمطبعة';
+    ctaStyle   = 'background:rgba(37,211,102,.12);border-color:rgba(37,211,102,.35);color:#25D366';
+    ctaOnClick = `openProductionSheet('${escHtml(o._id || '')}')`;
+  }
+
+  const phoneBtn = canSeePhone && o.clientPhone
+    ? `<button type="button" class="pcc-hdr-btn-sm" onclick="openPrintOrderContactSheet('${escHtml(o._id)}')">
+         <span>📞</span><span>تواصل</span>
+       </button>`
+    : '';
 
   return `
     <div class="pcc-hdr">
-      <div class="pcc-hdr-top">
-        <div class="pcc-hdr-id">🖨️ ${escHtml(o.orderId || (o._id || '').slice(-6))} · <span class="pcc-hdr-stage">طباعة</span></div>
-        <div class="pcc-hdr-name">${escHtml(o.clientName || '—')}</div>
-        <div class="pcc-hdr-meta">
-          ${canSeePhone && o.clientPhone
-            ? `<a href="tel:${escHtml(o.clientPhone)}" class="pcc-hdr-phone">📞 ${escHtml(o.clientPhone)}</a>`
-            : (o.clientPhone ? `<span class="pcc-hdr-phone-masked">📞 ${escHtml(phMasked)}</span>` : '')}
-        </div>
+      <div class="pcc-hdr-row1">
+        <div class="pcc-hdr-prods">${prodSummary || '—'}</div>
+        <button type="button" class="pcc-hdr-close-btn" onclick="closePanel()" aria-label="إغلاق">✕</button>
       </div>
-
+      <div class="pcc-hdr-row2">
+        <span class="pcc-hdr-id2">${escHtml(o.orderId || (o._id || '').slice(-6))}</span>
+        <span class="pcc-hdr-dot">·</span>
+        <span class="pcc-hdr-client">${escHtml(o.clientName || '—')}</span>
+        ${dLate > 0 ? `<span class="pcc-hdr-dot">·</span><span style="color:var(--r);font-size:var(--fs-xs)">⚠️ ${dLate}ي</span>` : ''}
+      </div>
       <div class="pcc-hdr-stats">
-        <span class="pcc-hdr-stat" style="background:${rsCol}18;color:${rsCol};border-color:${rsCol}44" title="${escHtml(rs.missing.length ? 'ناقص: '+rs.missing.join(' · ') : 'جاهز للتنفيذ')}">${rsIco} ${rs.score}%</span>
+        <span class="pcc-hdr-stat" style="background:${rsCol}18;color:${rsCol};border-color:${rsCol}44">${rsIco} ${rs.score}%</span>
         <span class="pcc-hdr-stat ${hasFinal ? 'pcc-hdr-stat-ok' : 'pcc-hdr-stat-bad'}">📁 ${hasFinal ? 'ملف ✓' : 'بدون ملف'}</span>
-        ${totalCount > 0 ? `<span class="pcc-hdr-stat">📦 ${totalCount} منتج${printedCount ? ` · ${printedCount} مطبوع` : (readyCount ? ` · ${readyCount} جاهز` : '')}</span>` : ''}
-        ${o.deadline ? `<span class="pcc-hdr-stat ${dLate > 0 ? 'pcc-hdr-stat-bad' : ''}">📅 ${escHtml(o.deadline)}${dLate > 0 ? ` · متأخر ${dLate}ي` : ''}</span>` : ''}
-        ${sale > 0 ? `<span class="pcc-hdr-stat ${rem > 0 ? 'pcc-hdr-stat-warn' : 'pcc-hdr-stat-ok'}">💰 ${rem > 0 ? `باقي ${fmtNum(rem)}ج` : 'مكتمل'}</span>` : ''}
+        ${o.deadline ? `<span class="pcc-hdr-stat ${dLate > 0 ? 'pcc-hdr-stat-bad' : ''}">📅 ${escHtml(o.deadline)}</span>` : ''}
+        ${sale > 0 ? `<span class="pcc-hdr-stat ${rem > 0 ? 'pcc-hdr-stat-warn' : 'pcc-hdr-stat-ok'}">💰 ${rem > 0 ? `${fmtNum(rem)}ج` : 'مكتمل'}</span>` : ''}
       </div>
-
-      <div class="pcc-hdr-actions">
-        ${canSeePhone && o.clientPhone
-          ? `<button type="button" class="pcc-hdr-btn pcc-hdr-btn-primary" onclick="openPrintOrderContactSheet('${escHtml(o._id)}')"><span class="pcc-hdr-btn-ico">📞</span><span class="pcc-hdr-btn-lbl">تواصل</span></button>`
-          : ''}
-        <button type="button" class="pcc-hdr-btn pcc-hdr-btn-success" onclick="moveTo('production')"><span class="pcc-hdr-btn-ico">🏭</span><span class="pcc-hdr-btn-lbl">تحويل</span></button>
-        <button type="button" class="pcc-hdr-btn" onclick="openPrintOrderActionSheet('${escHtml(o._id)}')"><span class="pcc-hdr-btn-ico">⋯</span><span class="pcc-hdr-btn-lbl">المزيد</span></button>
-        <button type="button" class="pcc-hdr-btn pcc-hdr-btn-close" onclick="closePanel()" title="إغلاق"><span class="pcc-hdr-btn-ico">✕</span></button>
+      <div class="pcc-hdr-cta-row">
+        <button type="button" class="pcc-hdr-cta" onclick="${ctaOnClick}" style="${ctaStyle}">${ctaIcon} ${ctaLabel}</button>
+        <div class="pcc-hdr-sec">
+          ${phoneBtn}
+          <button type="button" class="pcc-hdr-btn-sm" onclick="openPrintOrderActionSheet('${escHtml(o._id || '')}')">
+            <span>⋯</span><span>المزيد</span>
+          </button>
+        </div>
       </div>
     </div>`;
 }
@@ -375,47 +417,144 @@ export function applyPrintCCHeader(o, ctx) {
   }
 }
 
+// ─── DETAILS TAB (files + specs merged per product) ─────────────────
+function printDetailsTabHTML(o = {}) {
+  const products = o.products || [];
+  if (!products.length) {
+    return `<div class="pcc-empty"><div class="pcc-empty-ico">📦</div><div class="pcc-empty-txt">لا توجد منتجات في هذا الطلب</div></div>`;
+  }
+
+  const prodCards = products.map((p, idx) => {
+    // ── Images ──────────────────────────────────────────────────────
+    const imgs = Array.isArray(p.designImages) ? p.designImages.filter(Boolean) : [];
+    if (p.designImageUrl && !imgs.includes(p.designImageUrl)) imgs.unshift(p.designImageUrl);
+    const extraCount = imgs.length > 3 ? imgs.length - 3 : 0;
+    const thumbsHTML = imgs.slice(0, 3).map((img, i) => `
+      <div style="position:relative;width:52px;height:52px;flex-shrink:0">
+        <img src="${escHtml(img)}" loading="lazy"
+          onclick="event.stopPropagation();window.open('${img.replace(/'/g, "\\'")}','_blank')"
+          style="width:52px;height:52px;border-radius:8px;object-fit:cover;border:1px solid var(--line);cursor:zoom-in;display:block" alt="">
+        ${extraCount > 0 && i === 2
+          ? `<div style="position:absolute;inset:0;border-radius:8px;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">+${extraCount}</div>`
+          : ''}
+      </div>`).join('');
+
+    const filesSection = imgs.length
+      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+           ${thumbsHTML}
+           <button type="button" onclick="openEditProds(${idx})"
+                   style="width:52px;height:52px;border-radius:8px;border:1px dashed var(--line2);background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0" title="إضافة صورة">＋</button>
+         </div>`
+      : `<div onclick="openEditProds(${idx})" role="button" tabindex="0"
+              style="padding:14px;border:2px dashed var(--line2);border-radius:10px;text-align:center;cursor:pointer;background:rgba(239,68,68,.04)">
+           <div style="font-size:20px;margin-bottom:3px">📁</div>
+           <div style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)">أضف صور التصميم</div>
+         </div>`;
+
+    // ── Specs ────────────────────────────────────────────────────────
+    const isOffset  = (p.printType || '').includes('offset');
+    const isDigital = (p.printType || '').includes('digital');
+    const ptCol     = isOffset ? 'var(--y)' : isDigital ? 'var(--b)' : 'var(--dim)';
+    const ptLabel   = isOffset && isDigital ? 'مختلط' : isOffset ? 'أوفست' : isDigital ? 'ديجيتال' : '';
+
+    const rr    = (typeof window.computeProductReadiness === 'function') ? window.computeProductReadiness(o, p) : { pct: 0, ready: false, critical: [] };
+    const rrCol = rr.ready ? 'var(--g)' : rr.pct >= 60 ? 'var(--y)' : 'var(--r)';
+
+    const specRows = [
+      p.paper        ? `${escHtml(p.paper)}${p.weight ? ' ' + p.weight + 'جم' : ''}` : null,
+      (p.printSize || p.size) ? escHtml(p.printSize || p.size) : null,
+      p.lamination && p.lamination !== 'بلا' ? escHtml(p.lamination) : null,
+      isOffset && p.zinkType ? escHtml(p.zinkType) : null,
+      isOffset && p.cutSize  ? `قطع: ${escHtml(p.cutSize)}` : null,
+      p.pressName    ? `🖨️ ${escHtml(p.pressName)}` : null,
+      p.pressDeadline ? `📅 ${escHtml(p.pressDeadline)}` : null,
+      p.briefSentAt  ? `<span style="color:var(--g)">✅ بُعث البريف</span>` : null,
+    ].filter(Boolean);
+
+    const specsSection = specRows.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px">
+           ${specRows.map(v => `<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:12px;background:var(--bg3);border:1px solid var(--line);color:var(--snow-soft)">${v}</span>`).join('')}
+         </div>`
+      : `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:8px">لم تُضَف مواصفات — <button type="button" onclick="openEditProds(${idx})" style="color:var(--b);background:none;border:none;cursor:pointer;font-family:inherit;font-size:inherit;padding:0;font-weight:var(--fw-bold)">أضفها الآن</button></div>`;
+
+    const criticalBadge = rr.critical && rr.critical.length && !rr.ready
+      ? `<span style="font-size:var(--fs-xs);color:var(--r);font-weight:var(--fw-bold)"> · ⚠️ ${rr.critical.slice(0,2).map(c=>escHtml(c)).join(' · ')}</span>`
+      : '';
+
+    return `
+      <div style="padding:12px 14px;border-bottom:1px solid var(--line)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex:1;min-width:0">
+            <span style="font-size:var(--fs-sm);font-weight:var(--fw-heavy)">${escHtml(p.name || 'منتج')}</span>
+            <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${escHtml(String(p.qty || '?'))}</span>
+            ${ptLabel ? `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${ptCol}18;color:${ptCol};border:1px solid ${ptCol}33;font-weight:800">${ptLabel}</span>` : ''}
+            <span style="font-size:var(--fs-xs);color:${rrCol};font-weight:var(--fw-bold)">${rr.ready ? '✅' : `${rr.pct}%`}</span>${criticalBadge}
+          </div>
+          <button type="button" onclick="openEditProds(${idx})"
+                  style="font-size:var(--fs-xs);padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-family:inherit;cursor:pointer;font-weight:var(--fw-bold);flex-shrink:0">
+            ✏️ تعديل
+          </button>
+        </div>
+        ${filesSection}
+        ${specsSection}
+      </div>`;
+  }).join('');
+
+  const noteHTML = o.designNote
+    ? `<div style="padding:12px 14px">
+         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px">📋 ملاحظة</div>
+         <div style="font-size:var(--fs-sm);color:var(--snow-soft);line-height:1.5;white-space:pre-wrap">${escHtml(o.designNote)}</div>
+       </div>`
+    : '';
+
+  return `<div>${prodCards}${noteHTML}</div>`;
+}
+
 // ─── TAB SHELL — wraps existing panel body content ─────────────────
 /**
  * wrapPrintPanelInTabs(order, productionBodyHTML)
  *
- * يأخذ الـ HTML الموجود من renderPanel ويلفّه في 3-tab structure.
- * Tab 1 (الإنتاج) يحتوي على نفس المحتوى القديم — كل الـ handlers
- * (uploadPrintFinal, openEditProds, setProductStatus...) تشتغل كما هي.
+ * يأخذ الـ HTML الموجود من renderPanel ويلفّه في 2-tab structure.
+ * Tab 1 (التفاصيل) — الملفات + المواصفات معاً لكل منتج، افتراضي.
+ * Tab 2 (السجل) — timeline موحّد.
+ * محتوى productionBodyHTML متاح من زر «المزيد» في الـ action sheet.
  */
 export function wrapPrintPanelInTabs(order = {}, productionBodyHTML = '', opts = {}) {
-  // ملاحظة: السجل الزمني للأوردر يظهر فقط في صفحة تتبع الأوردر (order-tracking.html).
-  // opts.shippingHTML (اختياري): لو موجود، نعرض تاب «🚚 الشحن» منفصل بمحتواه.
-  const shippingHTML = opts && opts.shippingHTML ? opts.shippingHTML : '';
-  const shipTabBtn = shippingHTML
-    ? `<button type="button" class="pcc-tab" data-pcctab="shipping" onclick="switchPrintPanelTab('shipping',this)">
-        <span class="pcc-tab-ico">🚚</span><span class="pcc-tab-lbl">الشحن</span>
-      </button>`
-    : '';
-  const shipPane = shippingHTML
-    ? `<div class="pcc-pane" id="pcc-pane-shipping" style="display:none">${shippingHTML}</div>`
-    : '';
+  const missingFiles = (order.products || []).filter(p => {
+    const imgs = Array.isArray(p.designImages) ? p.designImages.filter(Boolean).length : 0;
+    return imgs === 0 && !p.designImageUrl;
+  }).length;
+
+  const tlEvents = buildPrintTimeline(order);
+
   return `
     <div class="pcc-tabs" id="pcc-tabs">
-      <button type="button" class="pcc-tab on" data-pcctab="production" onclick="switchPrintPanelTab('production',this)">
-        <span class="pcc-tab-ico">🖨</span><span class="pcc-tab-lbl">الإنتاج</span>
+      <button type="button" class="pcc-tab on" data-pcctab="details" onclick="switchPrintPanelTab('details',this)">
+        <span class="pcc-tab-ico">📁</span>
+        <span class="pcc-tab-lbl">التفاصيل</span>
+        ${missingFiles > 0
+          ? `<span class="pcc-tab-cnt" style="background:rgba(239,68,68,.18);color:var(--r)">⚠${missingFiles}</span>`
+          : ''}
       </button>
-      ${shipTabBtn}
-      <button type="button" class="pcc-tab" data-pcctab="more" onclick="switchPrintPanelTab('more',this)">
-        <span class="pcc-tab-ico">⚙️</span><span class="pcc-tab-lbl">المزيد</span>
+      <button type="button" class="pcc-tab" data-pcctab="history" onclick="switchPrintPanelTab('history',this)">
+        <span class="pcc-tab-ico">⏱</span>
+        <span class="pcc-tab-lbl">السجل</span>
+        ${tlEvents.length > 0 ? `<span class="pcc-tab-cnt">${tlEvents.length}</span>` : ''}
       </button>
     </div>
 
-    <div class="pcc-pane" id="pcc-pane-production" style="display:block">${productionBodyHTML}</div>
-    ${shipPane}
-    <div class="pcc-pane" id="pcc-pane-more" style="display:none">${printMoreTabHTML(order)}</div>`;
+    <div class="pcc-pane" id="pcc-pane-details" style="display:block">${printDetailsTabHTML(order)}</div>
+    <div class="pcc-pane" id="pcc-pane-history" style="display:none">
+      <div class="pcc-tl-group" style="padding-bottom:24px">${printTimelineHTML(tlEvents)}</div>
+    </div>`;
 }
 
 // ─── INTERACTIVE ────────────────────────────────────────────────────
 export function switchPrintPanelTab(tab, btn) {
   document.querySelectorAll('.pcc-tab').forEach(b => b.classList.remove('on'));
-  if (btn) btn.classList.add('on');
-  ['production', 'shipping', 'more'].forEach(t => {
+  const target = btn || document.querySelector(`.pcc-tab[data-pcctab="${tab}"]`);
+  if (target) target.classList.add('on');
+  ['details', 'history'].forEach(t => {
     const pane = document.getElementById('pcc-pane-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
   });

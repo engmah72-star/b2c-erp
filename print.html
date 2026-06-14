@@ -27,6 +27,7 @@
 <link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
 <link rel="stylesheet" href="./print-control-center.css">
 <script type="module" src="./print-control-center.js"></script>
+<script type="module" src="./print-workspace.js"></script>
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -64,12 +65,29 @@
       <button type="button" id="btn-bulk-waybill" onclick="printBulkWaybills()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(59,158,255,.4);background:rgba(59,158,255,.1);color:var(--b);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap" title="طباعة بوليصة لكل أوردر ظاهر">🧾 طباعة الكل <span class="cnt" style="background:var(--b);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
       <button type="button" id="btn-clear-sel" onclick="clearSelection()" style="display:none;align-items:center;gap:5px;padding:7px 12px;border-radius:9px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.07);color:var(--r);font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap">✕ إلغاء التحديد <span id="sel-cnt-badge" style="background:var(--r);color:#fff;padding:1px 8px;border-radius:20px;font-size:var(--fs-xs)">0</span></button>
     </div>
+    <!-- Smart Status Filters + Sort Controls -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+      <div id="sf-chips" style="display:flex;gap:5px;flex:1;flex-wrap:wrap"></div>
+      <select id="sort-sel" onchange="setSortBy(this.value)" style="padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-weight:var(--fw-bold);font-family:inherit;cursor:pointer;flex-shrink:0">
+        <option value="newest">⬇️ الأحدث</option>
+        <option value="oldest">⬆️ الأقدم</option>
+        <option value="urgent">⚠️ الأكثر تأخراً</option>
+        <option value="readiness">✅ الأعلى جاهزية</option>
+        <option value="deadline">📅 الميعاد</option>
+      </select>
+      <div style="display:flex;gap:3px;border:1px solid var(--line);border-radius:9px;padding:3px;background:var(--bg2);flex-shrink:0" title="طريقة العرض">
+        <button id="vb-list"  type="button" onclick="setViewMode('list')"  class="vbtn vbtn-on" title="قائمة">☰</button>
+        <button id="vb-board" type="button" onclick="setViewMode('board')" class="vbtn" title="لوحة الحالة">⊞</button>
+        <button id="vb-press" type="button" onclick="setViewMode('press')" class="vbtn" title="لوحة المطابع">🏭</button>
+      </div>
+    </div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-top" style="background:var(--b)"></div><div class="kpi-val text-b" id="k-total">—</div><div class="kpi-lbl">🖨️ أوردرات</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--r)"></div><div class="kpi-val text-r" id="k-late">—</div><div class="kpi-lbl">⚠️ متأخرة</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--g)"></div><div class="kpi-val" id="k-rev" style="color:var(--g);font-size:var(--fs-lg)">—</div><div class="kpi-lbl">💰 إجمالي</div></div>
       <div class="kpi"><div class="kpi-top" style="background:var(--y)"></div><div class="kpi-val" id="k-rem" style="color:var(--y);font-size:var(--fs-lg)">—</div><div class="kpi-lbl">⏳ باقي</div></div>
     </div>
+    <div id="print-schedule-wrap" style="margin-bottom:10px"></div>
     <div id="list"></div>
   </div>
 </div>
@@ -433,6 +451,14 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 // State
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
+let statusFilter='all',sortBy='newest',viewMode=localStorage.getItem('print.viewMode')||'list';
+const STATUS_FILTERS=[
+  {id:'all',     label:'📋 الكل',          col:'var(--b)'},
+  {id:'waiting', label:'⚠️ ينتظر ملف',     col:'var(--r)'},
+  {id:'ready',   label:'✅ جاهز للإرسال',  col:'var(--g)'},
+  {id:'at-press',label:'🖨️ عند المطبعة', col:'var(--y)'},
+  {id:'printed', label:'📦 مطبوع',         col:'var(--p)'},
+];
 if(!window.__selectedOrders)window.__selectedOrders=new Set();
 
 // RULE 8.1 — رقم تليفون العميل: CS + Admin + Ops + Shipping فقط.
@@ -504,6 +530,13 @@ function updateKPIs(){
   set('k-rev',fn(totalSale)+' ج');
   set('k-rem',fn(totalRem)+' ج');
   set('sub',orders.length+' أوردر طباعة');
+  renderStatusChips();
+  renderPrintSchedule();
+  // sync view-mode buttons with persisted state
+  ['list','board','press'].forEach(m=>{
+    const b=document.getElementById('vb-'+m);
+    if(b) b.classList.toggle('vbtn-on',m===viewMode);
+  });
 }
 
 // Filter
@@ -523,14 +556,182 @@ window.setMineFilter=function(val,btn){
   renderList();
 };
 
+// ── حالة الطباعة لأوردر واحد — تُستخدم في الفلاتر الذكية ──────────────────
+// الأولوية: ينتظر ملف → مطبوع → عند المطبعة → جاهز للإرسال → other
+function getStatusCategory(o){
+  const prods=o.products||[];
+  const hasFile=!!(o.printFinalUrl||o.designImageUrl||prods.some(p=>
+    p.designImageUrl||(Array.isArray(p.designImages)&&p.designImages.length)));
+  if(!hasFile) return 'waiting';
+  if(prods.length&&prods.every(p=>p.productStatus==='printed'||p.productStatus==='done'))
+    return 'printed';
+  if(prods.some(p=>!!p.briefSentAt)) return 'at-press';
+  // جاهز = ملف + درجة جاهزية ≥ 70%
+  const rs=(typeof computeOrderReadyScore==='function')?computeOrderReadyScore(o):{score:0};
+  if(rs.score>=70) return 'ready';
+  return 'other';
+}
+
 function getFilteredOrders(){
   const isAdm=['admin','operation_manager'].includes(currentRole);
-  // Admin يرى الكل افتراضياً، الموظف يرى أوردراته فقط
-  if(!mineOnly||isAdm&&!mineOnly)return orders;
-  const uid=auth?.currentUser?.uid;
-  if(!uid)return orders;
-  return orders.filter(o=>o.printerId===uid||(!o.printerId&&!isAdm));
+  // Mine/All filter
+  let list=(!mineOnly||isAdm&&!mineOnly)?orders:(()=>{
+    const uid=auth?.currentUser?.uid;
+    return !uid?orders:orders.filter(o=>o.printerId===uid||(!o.printerId&&!isAdm));
+  })();
+  // Status filter
+  if(statusFilter!=='all') list=list.filter(o=>getStatusCategory(o)===statusFilter);
+  // Sort
+  if(sortBy==='oldest') return [...list].sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+  if(sortBy==='urgent') return [...list].sort((a,b)=>delay(b.deadline)-delay(a.deadline)||(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  if(sortBy==='readiness') return [...list].sort((a,b)=>computeOrderReadyScore(b).score-computeOrderReadyScore(a).score);
+  if(sortBy==='deadline') return [...list].sort((a,b)=>{
+    const da=a.deadline?new Date(a.deadline).getTime():9e15;
+    const db=b.deadline?new Date(b.deadline).getTime():9e15;
+    return da-db;
+  });
+  return list; // newest = default (onSnapshot already sorts desc)
 }
+
+// ── Status Chips Renderer ─────────────────────────────────────────────────
+function renderStatusChips(){
+  const el=document.getElementById('sf-chips');if(!el)return;
+  const counts={all:orders.length};
+  STATUS_FILTERS.forEach(f=>{if(f.id!=='all')counts[f.id]=0;});
+  orders.forEach(o=>{const c=getStatusCategory(o);if(c in counts)counts[c]++;});
+  el.innerHTML=STATUS_FILTERS.map(f=>{
+    const n=counts[f.id]||0;
+    const active=statusFilter===f.id;
+    return`<button type="button" class="status-chip" data-sfid="${f.id}" onclick="setStatusFilter('${f.id}')"
+      style="padding:5px 12px;border-radius:20px;font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;white-space:nowrap;transition:all .15s;border:1px solid ${active?f.col:'var(--line)'};background:${active?f.col+'18':'var(--bg2)'};color:${active?f.col:'var(--dim2)'}">${f.label} <span style="opacity:.7">(${n})</span>
+    </button>`;
+  }).join('');
+}
+
+// ── Print Schedule Renderer (جدول طباعة اليوم + الأسبوع) ─────────────────
+function renderPrintSchedule(){
+  const el=document.getElementById('print-schedule-wrap');if(!el)return;
+  const now=new Date();
+  const todayEnd=new Date(now);todayEnd.setHours(23,59,59,999);
+  const weekEnd=new Date(now);weekEnd.setDate(now.getDate()+7);
+  const todayItems=[],weekItems=[];
+  orders.forEach(o=>{
+    (o.products||[]).forEach(p=>{
+      if(!p.pressDeadline)return;
+      const d=new Date(p.pressDeadline);if(isNaN(d))return;
+      const item={o,p,d};
+      if(d<=todayEnd)todayItems.push(item);
+      else if(d<=weekEnd)weekItems.push(item);
+    });
+  });
+  if(!todayItems.length&&!weekItems.length){el.innerHTML='';return;}
+  todayItems.sort((a,b)=>a.d-b.d);weekItems.sort((a,b)=>a.d-b.d);
+  const ri=({o,p,d})=>`<div onclick="openOrder('${o._id}')" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);margin-bottom:4px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.clientName||'—'} · ${p.name||'—'} <span style="color:var(--y);font-size:var(--fs-xs)">×${p.qty||1}</span></div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2)">${p.pressName||'مطبعة غير محددة'} · ${o.orderId||o._id.slice(-6)}</div>
+    </div>
+    <div style="text-align:left;flex-shrink:0">
+      <div style="font-size:var(--fs-xs);color:${d<now?'var(--r)':'var(--dim2)'}">${d.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}</div>
+      <div style="font-size:var(--fs-xs);margin-top:2px">${p.briefSentAt?'<span style="color:var(--g)">✅ أُرسل</span>':'<span style="color:var(--y)">⏳ لم يُرسل</span>'}</div>
+    </div>
+  </div>`;
+  const k='__schOpen';
+  const open=window[k]!==false;
+  el.innerHTML=`<details ${open?'open':''} ontoggle="window['${k}']=this.open" style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden">
+    <summary style="padding:10px 14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);-webkit-tap-highlight-color:transparent">
+      <span>📅 جدول الطباعة</span>
+      ${todayItems.length?`<span style="background:var(--r);color:#fff;padding:1px 8px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-heavy)">${todayItems.length} اليوم</span>`:''}
+      ${weekItems.length?`<span style="background:rgba(255,170,0,.15);color:var(--y);border:1px solid rgba(255,170,0,.3);padding:1px 8px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-heavy)">${weekItems.length} هذا الأسبوع</span>`:''}
+      <span style="margin-inline-start:auto">⌄</span>
+    </summary>
+    <div style="padding:8px 12px 10px">
+      ${todayItems.length?`<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--r);margin-bottom:6px">🔴 اليوم (${todayItems.length})</div>${todayItems.map(ri).join('')}`:''}
+      ${weekItems.length?`<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--y);margin-top:${todayItems.length?8:0}px;margin-bottom:6px">🟡 هذا الأسبوع (${weekItems.length})</div>${weekItems.map(ri).join('')}`:''}
+    </div>
+  </details>`;
+}
+
+window.setStatusFilter=function(id){statusFilter=id;renderStatusChips();renderList();};
+window.setSortBy=function(val){sortBy=val;renderList();};
+window.setViewMode=function(mode){
+  viewMode=mode;
+  localStorage.setItem('print.viewMode',mode);
+  ['list','board','press'].forEach(m=>{
+    const b=document.getElementById('vb-'+m);
+    if(b) b.classList.toggle('vbtn-on',m===mode);
+  });
+  renderList();
+};
+// expose helpers needed by print-workspace.js
+window.getStatusCategory=getStatusCategory;
+window.computeOrderReadyScore=computeOrderReadyScore;
+window.computeProductReadiness=computeProductReadiness;
+// ── Mark single product as printed from press kanban (no panel needed) ──────
+window.markPressJobPrinted=async function(orderId,prodIdx){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const p=(o.products||[])[prodIdx];if(!p)return;
+  if(!confirm(`تأكيد: تمت طباعة "${p.name||'المنتج'}" في أوردر ${o.orderId||orderId.slice(-6)}؟`))return;
+  const uid=auth?.currentUser?.uid||'';
+  const r=await orderActions.setProductCatalogStatus({db,orderId,prodIdx,status:'printed',userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ ${p.name||'المنتج'}: مطبوع`,'ok');
+};
+// ── Batch WhatsApp brief for all ready jobs of a press company ───────────────
+window.sendBatchBrief=function(pressId,pressName){
+  const readyJobs=[];
+  orders.forEach(o=>{
+    (o.products||[]).forEach((p,idx)=>{
+      if(p.productStatus==='printed'||p.productStatus==='done')return;
+      if((p.pressId||'__none__')!==pressId)return;
+      const rr=(typeof computeProductReadiness==='function')?computeProductReadiness(o,p):{pct:0,ready:false};
+      if(!rr.ready&&!p.briefSentAt)return; // skip incomplete jobs
+      readyJobs.push({order:o,product:p,prodIdx:idx});
+    });
+  });
+  if(!readyJobs.length){toast('لا توجد جوبات جاهزة للإرسال لهذه المطبعة','err');return;}
+  const today=new Date().toLocaleDateString('ar-EG',{weekday:'long',day:'numeric',month:'long'});
+  const lines=readyJobs.map((j,i)=>{
+    const p=j.product,o=j.order;
+    const isOff=(p.printType||'').includes('offset');
+    const ptLbl=isOff?'أوفست':((p.printType||'').includes('digital')?'ديجيتال':'—');
+    const specs=[
+      p.paper?`الورق: ${p.paper}${p.weight?' '+p.weight+'جم':''}`:null,
+      p.printSize||p.size?`الحجم: ${p.printSize||p.size}`:null,
+      isOff&&p.zinkType?`الزنك: ${p.zinkType}`:null,
+      isOff&&p.paperSheets?`الورقات: ${p.paperSheets}`:null,
+      isOff&&p.cutSize?`القطع: ${p.cutSize}`:null,
+      p.lamination&&p.lamination!=='بلا'?`التشطيب: ${p.lamination}`:null,
+      p.briefNotes?`ملاحظة: ${p.briefNotes}`:null,
+    ].filter(Boolean).join(' | ');
+    const pd=p.pressDeadline?`📅 ${new Date(p.pressDeadline).toLocaleDateString('ar-EG',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`:null;
+    return`${i+1}. *${p.name||'—'}* — ${ptLbl} — ${p.qty||0} قطعة\n${specs?'   '+specs+'\n':''}${pd?'   '+pd+'\n':''}   [${o.orderId||o._id.slice(-6)} — ${o.clientName||'—'}]`;
+  });
+  const text=`🖨️ *${pressName} — جوبات الطباعة*\n*${today}*\n\n${lines.join('\n\n')}`;
+  window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
+  // Mark briefs as sent (best-effort, after WhatsApp window opens)
+  const uid=auth?.currentUser?.uid||'';
+  readyJobs.forEach(async j=>{
+    if(j.product.briefSentAt)return;
+    await orderActions.markProductBriefSent({db,orderId:j.order._id,prodIdx:j.prodIdx,pressName:j.product.pressName||'',userId:uid,userName});
+  });
+};
+// Mark all products of an order as printed without opening the panel
+window.markOrderAllPrinted=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  const prods=o.products||[];
+  const toPrint=prods.filter(p=>p.productStatus!=='printed'&&p.productStatus!=='done');
+  if(!toPrint.length){toast('✅ كل المنتجات مطبوعة بالفعل','ok');return;}
+  if(!confirm(`تأكيد: تمت طباعة ${toPrint.length} منتج(ات) في أوردر ${o.clientName||o.orderId}؟`))return;
+  const uid=auth?.currentUser?.uid||'';
+  let ok=0;
+  for(const [idx,p] of prods.entries()){
+    if(p.productStatus==='printed'||p.productStatus==='done')continue;
+    const r=await orderActions.setProductCatalogStatus({db,orderId,prodIdx:idx,status:'printed',userId:uid,userName});
+    if(r.ok)ok++;
+  }
+  if(ok>0)toast(`✅ تم تسجيل ${ok} منتجات مطبوعة`,'ok');
+};
 
 function renderList(){
   const el=document.getElementById('list');if(!el)return;
@@ -553,6 +754,17 @@ function renderList(){
       :emptyState({ico:'🖨️',title:'لا توجد أوردرات في الطباعة',sub:'الأوردرات المعتمدة من التصميم ستظهر هنا'});
     return;
   }
+  // ── Kanban: status view ──────────────────────────────────────────────
+  if(viewMode==='board'&&window.printWorkspace?.renderKanban){
+    el.innerHTML=window.printWorkspace.renderKanban(list,{getStatusCategory,computeOrderReadyScore});
+    return;
+  }
+  // ── Kanban: press-centric view ───────────────────────────────────────
+  if(viewMode==='press'&&window.printWorkspace?.renderPressKanban){
+    el.innerHTML=window.printWorkspace.renderPressKanban(list,{computeProductReadiness});
+    return;
+  }
+  // ── List view ────────────────────────────────────────────────────────
   el.innerHTML=list.map(o=>{
     const d=delay(o.deadline);
     const prods=(o.products||[]).map(p=>p.name+(p.qty?'×'+p.qty:'')).join(' · ')||o.product||'—';
@@ -565,6 +777,8 @@ function renderList(){
     const extrasHtml=(p0?.extras||[]).map(e=>`<span style="display:inline-flex;padding:1px 6px;border-radius:var(--rad);background:rgba(0,217,126,.1);color:var(--g);border:1px solid rgba(0,217,126,.2);font-size:var(--fs-xs);font-weight:var(--fw-bold)">✓ ${e}</span>`).join('');
     const hasFinal=!!(o.printFinalUrl||(o.products||[]).some(p=>p.designImageUrl));
     const noOwner=!o.printerId;
+    const firstThumb=(()=>{const imgs=(o.products||[]).flatMap(p=>Array.isArray(p.designImages)&&p.designImages.length?p.designImages.filter(Boolean):p.designImageUrl?[p.designImageUrl]:[]);return imgs[0]||o.designImageUrl||'';})();
+    const ocat=getStatusCategory(o);
     const isSel=(window.__selectedOrders||new Set()).has(o._id);
     return`<div class="ocard-wrap" data-client="${o.clientName||''}" data-id="${o.orderId||o._id}" style="margin-bottom:10px">
       <div class="ocard-sel-row" onclick="event.stopPropagation();toggleOrderSelection('${o._id}')" style="display:flex;align-items:center;gap:8px;padding:5px 14px;cursor:pointer;border-radius:var(--rad) var(--rad) 0 0;border-bottom:1px solid var(--line);background:${isSel?'rgba(74,142,245,.1)':'var(--bg3)'}">
@@ -594,7 +808,9 @@ function renderList(){
       </div>`:''}
       <div class="ocard-footer">
         <div style="display:flex;gap:var(--space-sm);align-items:center;flex-wrap:wrap">
-          ${hasFinal?'<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">📁 ملف ✅</span>':'<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">📁 لا يوجد ملف</span>'}
+          ${hasFinal
+            ?`<span style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">${firstThumb?`<img src="${firstThumb}" loading="lazy" onclick="event.stopPropagation();window.open('${firstThumb.replace(/'/g,"\\'")}','_blank')" style="width:22px;height:22px;border-radius:4px;object-fit:cover;background:var(--bg3);cursor:zoom-in" alt="">`:''} ✅ ملف</span>`
+            :'<span style="font-size:var(--fs-sm);color:var(--r);font-weight:var(--fw-bold)">📁 لا يوجد ملف</span>'}
           ${(()=>{const tq=(o.products||[]).reduce((s,p)=>s+(parseInt(p.qty)||1),0)||o.qty||0;return tq?`<span class="txt-meta-xs">📦${tq}ق</span>`:'';})()}
           ${(()=>{
             // 🎯 Phase 3: Ready Score badge — يعرض جاهزية الأوردر للتحويل
@@ -608,6 +824,20 @@ function renderList(){
         </div>
         <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${pct>=100?'var(--g)':'var(--y)'}">${Math.round(pct)}%</span>
       </div>
+      ${(()=>{
+        // مطابع مخصّصة — تظهر على الكارت مباشرة بدون فتح البانل
+        const presses=[...new Set((o.products||[]).map(p=>p.pressName).filter(Boolean))];
+        return presses.length
+          ?`<div style="padding:0 14px 6px;display:flex;gap:5px;flex-wrap:wrap">
+              ${presses.map(n=>`<span style="font-size:var(--fs-xs);padding:2px 8px;border-radius:12px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-weight:var(--fw-bold)">🖨️ ${n}</span>`).join('')}
+            </div>`
+          :'';
+      })()}
+      ${ocat==='ready'
+        ?`<div style="padding:0 14px 10px"><button type="button" onclick="event.stopPropagation();openProductionSheet('${o._id}')" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,217,126,.35);background:rgba(0,217,126,.07);color:var(--g);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🖨️ إرسال ملخص للمطبعة</button></div>`
+        :ocat==='at-press'
+        ?`<div style="padding:0 14px 10px"><button type="button" onclick="event.stopPropagation();markOrderAllPrinted('${o._id}')" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.07);color:var(--p);font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">✅ تأكيد: تمت الطباعة الكلية</button></div>`
+        :''}
     </div></div>`;
   }).join('');
 }
@@ -686,6 +916,7 @@ window.openOrder=function(id){
     prodBtn.title=!hasDesignImg?'⚠️ يجب رفع صورة أو ملف التصميم أولاً':'';
   }
   document.getElementById('panel-ov').classList.add('open');
+  document.querySelector('.main')?.classList.add('panel-open-desktop');
 
   // Print CC sticky header (Phase 2 completion). Replaces the legacy
   // inline header with a compact critical-info + 4 actions header.
@@ -713,7 +944,11 @@ window.openOrder=function(id){
   renderPanel(o);
 };
 
-window.closePanel=function(){document.getElementById('panel-ov').classList.remove('open');activeId=null;activeOrder=null;window.AppState?.clearOpenEntity?.();};
+window.closePanel=function(){
+  document.getElementById('panel-ov').classList.remove('open');
+  document.querySelector('.main')?.classList.remove('panel-open-desktop');
+  activeId=null;activeOrder=null;window.AppState?.clearOpenEntity?.();
+};
 
 // ── أقسام مطوية ثانوية (تقلّل زحمة الصفحة). الحالة محفوظة في window.__openSec
 // عشان تفضل ثابتة عبر re-render البانل المتكرر (ontoggle يحدّثها بدون رسم). ──
@@ -2187,9 +2422,18 @@ function renderEditProdsList() {
 
     // الإضافات — تُحقن داخل «بيانات الطباعة» (جزء منها حسب طلب المستخدم)
     const extrasHTML = (()=>{
-      const _unified=productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
-      const _legacy=p.printType==='digital'?(appSettings.costTypesDigital||[]):p.printType==='offset'?(appSettings.costTypesOffset||[]):[];
-      const extrasList=_unified.length?_unified:_legacy;
+      // المصدر الأساسي: printExtrasOffset / printExtrasDigital من الإعدادات (مُدار من صفحة الإعدادات)
+      const isOff = (p.printType||'').includes('offset');
+      const isDig = (p.printType||'').includes('digital');
+      const _offset  = Array.isArray(appSettings.printExtrasOffset)  ? appSettings.printExtrasOffset.filter(Boolean)  : [];
+      const _digital = Array.isArray(appSettings.printExtrasDigital) ? appSettings.printExtrasDigital.filter(Boolean) : [];
+      const _settings = isOff && isDig ? [..._offset,..._digital].filter((v,i,a)=>a.indexOf(v)===i)
+                      : isOff ? _offset : isDig ? _digital : [..._offset,..._digital].filter((v,i,a)=>a.indexOf(v)===i);
+      // Fallback 1: production services من master_lists/supplier_categories
+      const _unified  = productionServices.filter(s=>s.isCostItem && (s.printTypes||[]).includes(p.printType)).map(s=>s.label);
+      // Fallback 2: legacy costTypes من settings
+      const _legacy   = isDig?(appSettings.costTypesDigital||[]):isOff?(appSettings.costTypesOffset||[]):[];
+      const extrasList = _settings.length ? _settings : _unified.length ? _unified : _legacy;
       if(!extrasList.length)return'';
       const sel=p.extras||[];
       return `<div style="margin-top:10px">

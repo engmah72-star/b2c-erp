@@ -84,6 +84,7 @@ try {
     // معرض التصاميم/تصميمات البوابة: مدخل واحد يُضاف أدناه (flag-gated) — gallery.html
     // الواجهة المصقولة، وportal-designs المحرّر التفصيلي المتاح منها. (توحيد المعرض)
     { file:'print.html',             label:'الطباعة',          ico:'🖨️', group:'orders', perm:'print' },
+    { file:'print-workspace.html',   label:'مركز الطباعة',    ico:'🗂️', group:'orders', perm:'print' },
     { file:'production.html',        label:'التنفيذ',          ico:'🏭', group:'orders', perm:'production' },
     { file:'exec-cost-entry.html',   label:'بنود التكلفة',    ico:'💰', group:'orders', perm:'production' },
     { file:'supplier-requests.html', label:'طلبات الموردين',   ico:'🏭', group:'orders', perm:'production' },
