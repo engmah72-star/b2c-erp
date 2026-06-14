@@ -183,8 +183,23 @@
         <!-- Product name filter chips (dynamically populated) -->
         <div id="prod-name-filter-bar" hidden></div>
 
+        <!-- Order-level bulk bar (appears when ≥1 order selected) -->
+        <div id="order-bulk-bar" hidden></div>
+
         <div id="list"></div>
       </div><!-- /order-queue -->
+
+      <!-- Order-level bulk apply modal -->
+      <div id="order-bulk-modal" class="bulk-modal-overlay" onclick="if(event.target===this)closeOrderBulkModal()">
+        <div class="bulk-modal obm">
+          <div class="bulk-modal-hdr">
+            <span class="bulk-modal-title" id="obm-title">تطبيق على أوردرات محددة</span>
+            <button type="button" class="bulk-modal-close" onclick="closeOrderBulkModal()">✕</button>
+          </div>
+          <div id="obm-body"></div>
+          <div class="bulk-modal-foot" id="obm-foot"></div>
+        </div>
+      </div>
 
       <!-- ══════════════ RIGHT: Workspace ══════════════ -->
       <div class="workspace-panel" id="workspace-panel">
@@ -512,6 +527,9 @@ let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
 let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
 let _selectedProds=new Set(); // prodIdxes checked for bulk add
 let _prodNameFilter=''; // filter order list by product base name
+let _selectedOrders=new Map(); // orderId→{prodIdx,baseName,qty,prodName} for cross-order bulk
+let _selRefBase=''; // lock: first selected order's baseName (others must match)
+let _selRefQty=null; // lock: first selected order's qty (others must match)
 let _libCache={},_libLoading=false;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
@@ -741,8 +759,20 @@ function renderList(){
     const marginPill=m.marginPct!==null?`<span class="profit-margin ${m.cls}" style="font-size:var(--fs-xs);padding:2px 7px">${m.estimated?'~':''}${m.marginPct}%</span>`:'';
     const prodName=prod?prod.name||'منتج':'—';
     const prodQty=prod?prod.qty||0:'';
-    return`<div class="ord-card q-card ${isActive?'q-active':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}',${prodIdx})">
-      <span class="prio-badge ${prio.cls}">${prio.lbl}</span>
+    // Multi-select: show checkboxes when product filter is active
+    const baseName=prod?_normBaseName(prod.name):'';
+    const qty=prod?_extractQty(prod):null;
+    const isSelected=_selectedOrders.has(o._id+'::'+prodIdx);
+    // Dim cards that don't match the locked selection criteria
+    const isLocked=_selRefBase&&(baseName!==_selRefBase||(_selRefQty!=null&&qty!=null&&String(qty)!==String(_selRefQty)));
+    const showCb=!!_prodNameFilter&&!!prod;
+    const cbHtml=showCb
+      ?`<label class="ord-sel-wrap" onclick="event.stopPropagation()">
+          <input type="checkbox" class="ord-sel-cb" ${isSelected?'checked':''} ${isLocked?'disabled':''} onchange="toggleOrderSelect('${o._id}',${prodIdx},'${baseName.replace(/'/g,"\\'")}',${qty},'${prodName.replace(/'/g,"\\'")}',this.checked)">
+        </label>`
+      :'';
+    return`<div class="ord-card q-card ${isActive?'q-active':''} ${isSelected?'ord-selected':''} ${isLocked?'ord-locked':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}',${prodIdx})">
+      ${cbHtml}<span class="prio-badge ${prio.cls}">${prio.lbl}</span>
       <div class="ord-head" style="padding:12px 14px 8px">
         <div class="ord-head-main">
           <div class="ord-client">${prodName}${prodQty?` <span class="q-prod-qty">×${prodQty}</span>`:''}</div>
@@ -761,6 +791,181 @@ function renderList(){
       </div>
     </div>`;
   }).join('');
+  _renderOrderBulkBar();
+}
+
+/* ═══════════════════════════════════════════════════
+   ORDER-LEVEL MULTI-SELECT & BULK APPLY
+   ═══════════════════════════════════════════════════ */
+window.toggleOrderSelect=function(orderId,prodIdx,baseName,qty,prodName,checked){
+  const key=orderId+'::'+prodIdx;
+  if(checked){
+    // Lock criteria to first selection
+    if(!_selectedOrders.size){_selRefBase=baseName;_selRefQty=qty;}
+    // Guard: only allow same baseName+qty
+    if(baseName!==_selRefBase||(_selRefQty!=null&&qty!=null&&String(qty)!==String(_selRefQty))){
+      toast('⚠️ يمكن تحديد أوردرات بنفس المنتج والكمية فقط','err');
+      // uncheck visually
+      setTimeout(()=>{document.querySelectorAll('.ord-sel-cb').forEach(cb=>{if(cb.closest('.ord-card')&&cb.checked&&!_selectedOrders.has(orderId+'::'+prodIdx))cb.checked=false;});},50);
+      return;
+    }
+    _selectedOrders.set(key,{orderId,prodIdx,baseName,qty,prodName});
+  }else{
+    _selectedOrders.delete(key);
+    if(!_selectedOrders.size){_selRefBase='';_selRefQty=null;}
+  }
+  _renderOrderBulkBar();
+  renderList();
+};
+
+window.clearOrderSelection=function(){
+  _selectedOrders.clear();_selRefBase='';_selRefQty=null;
+  _renderOrderBulkBar();
+  renderList();
+};
+
+function _renderOrderBulkBar(){
+  const el=document.getElementById('order-bulk-bar');if(!el)return;
+  const n=_selectedOrders.size;
+  if(!n){el.hidden=true;return;}
+  el.hidden=false;
+  const ref=[..._selectedOrders.values()][0];
+  el.innerHTML=`<div class="obbar-inner">
+    <span class="obbar-info">✓ ${n} أوردر · <strong>${ref.prodName||ref.baseName}</strong>${ref.qty?` ×${ref.qty}`:''}</span>
+    <button type="button" class="obbar-apply" onclick="openOrderBulkApply()">📚 تطبيق تكاليف →</button>
+    <button type="button" class="obbar-clear" onclick="clearOrderSelection()" title="مسح التحديد">✕</button>
+  </div>`;
+}
+
+window.closeOrderBulkModal=function(){
+  document.getElementById('order-bulk-modal')?.classList.remove('open');
+};
+
+window.openOrderBulkApply=function(){
+  if(!_selectedOrders.size)return;
+  const ref=[..._selectedOrders.values()][0];
+  const modal=document.getElementById('order-bulk-modal');if(!modal)return;
+  const n=_selectedOrders.size;
+  setText('obm-title',`📦 ${ref.prodName||ref.baseName}${ref.qty?` ×${ref.qty}`:''} · ${n} أوردر`);
+
+  // Find matching library profile
+  const profile=_libProfiles.find(p=>p.baseName===ref.baseName&&(!ref.qty||!p.qty||String(p.qty)===String(ref.qty)));
+  // Find matching templates
+  const matchTmpls=costTemplates.filter(t=>{
+    const base=_normBaseName(t.name);
+    const qOk=!t.qty||!ref.qty||String(t.qty)===String(ref.qty);
+    return base===ref.baseName&&qOk;
+  });
+
+  // Build supplier options for manual entry
+  const supOpts=suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}">${s.name||s._id}</option>`).join('');
+  const typeOpts=masterCategories.filter(c=>c.isCostItem!==false).map(c=>`<option value="${c.label}">${c.label}</option>`).join('');
+
+  let html='';
+
+  // Section 1: Library profile
+  if(profile&&profile.coreBundle.length){
+    html+=`<div class="obm-section">
+      <div class="obm-sec-hdr">📚 من المكتبة <span class="obm-sec-sub">(${profile.usageCount} أوردر سابق)</span></div>
+      <div class="obm-lib-items" id="obm-lib-items">`;
+    profile.coreBundle.forEach((b,bi)=>{
+      html+=`<label class="obm-lib-row">
+        <input type="checkbox" class="obm-lib-cb" checked data-idx="${bi}" data-type="${b.type}" data-sup="${b.supplierId}" data-supname="${(b.supplierName||'').replace(/"/g,'&quot;')}" data-price="${b.lastPrice||0}">
+        <span class="obm-lib-type">${b.type}</span>
+        <span class="obm-lib-sup">${b.supplierName||'—'}</span>
+        <input type="number" class="obm-lib-price inp" value="${b.lastPrice||0}" style="width:90px;text-align:center" placeholder="0">
+        <span class="obm-lib-cur">ج</span>
+      </label>`;
+    });
+    html+=`</div>
+      <button type="button" class="btn btn-r obm-lib-apply" onclick="applyOrderBulkFromLib()">✅ تطبيق المحدد على ${n} أوردر</button>
+    </div>`;
+  }
+
+  // Section 2: Templates
+  if(matchTmpls.length){
+    html+=`<div class="obm-section">
+      <div class="obm-sec-hdr">📋 من القوالب</div>
+      <div class="obm-tmpl-list">`;
+    matchTmpls.forEach(t=>{
+      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      html+=`<div class="obm-tmpl-card">
+        <div class="obm-tmpl-info">
+          <span class="obm-tmpl-name">${t.name}${t.qty?` ×${t.qty}`:''}</span>
+          <span class="obm-tmpl-total">${fn(total)} ج</span>
+        </div>
+        <div class="obm-tmpl-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+        <button type="button" class="btn btn-r obm-tmpl-apply-btn" onclick="applyOrderBulkTemplate('${t.id}')">⚡ تطبيق على ${n} أوردر</button>
+      </div>`;
+    });
+    html+=`</div></div>`;
+  }
+
+  // Section 3: Manual entry
+  html+=`<div class="obm-section">
+    <div class="obm-sec-hdr">✏️ بند يدوي</div>
+    <div class="fg"><label>النوع</label><select class="inp" id="obm-type"><option value="">— اختر —</option>${typeOpts}</select></div>
+    <div class="fg"><label>المورد</label><select class="inp" id="obm-sup"><option value="">— اختر —</option>${supOpts}</select></div>
+    <div class="fg"><label>التكلفة (ج)</label><input class="inp" id="obm-total" type="number" placeholder="0"></div>
+    <button type="button" class="btn btn-r" onclick="applyOrderBulkManual()">➕ إضافة لـ ${n} أوردر</button>
+  </div>`;
+
+  document.getElementById('obm-body').innerHTML=html;
+  document.getElementById('obm-foot').innerHTML='';
+  modal.classList.add('open');
+};
+
+window.applyOrderBulkFromLib=async function(){
+  // Collect checked rows and their (possibly edited) prices
+  const rows=document.querySelectorAll('#obm-lib-items .obm-lib-row');
+  const items=[];
+  rows.forEach(row=>{
+    const cb=row.querySelector('.obm-lib-cb');if(!cb||!cb.checked)return;
+    const priceInput=row.querySelector('.obm-lib-price');
+    const total=parseFloat(priceInput?.value||cb.dataset.price)||0;
+    if(!cb.dataset.type||!cb.dataset.sup||!total)return;
+    items.push({type:cb.dataset.type,supplierId:cb.dataset.sup,supplierName:cb.dataset.supname,total});
+  });
+  if(!items.length)return toast('⚠️ لم تختر أي بند','err');
+  await _doOrderBulkApply(items);
+};
+
+window.applyOrderBulkTemplate=async function(templateId){
+  const t=costTemplates.find(x=>x.id===templateId);
+  if(!t||!t.costItems.length)return;
+  const items=t.costItems.map(c=>({type:c.type,supplierId:c.supplierId,supplierName:c.supplierName,total:parseFloat(c.amount)||0})).filter(c=>c.type&&c.supplierId&&c.total);
+  if(!items.length)return toast('⚠️ القالب فارغ','err');
+  await _doOrderBulkApply(items);
+};
+
+window.applyOrderBulkManual=async function(){
+  const type=(document.getElementById('obm-type')?.value||'').trim();
+  const supSel=document.getElementById('obm-sup');
+  const supplierId=supSel?.value||'';
+  const supplierName=supSel?.options[supSel.selectedIndex]?.dataset?.name||'';
+  const total=parseFloat(document.getElementById('obm-total')?.value||'0');
+  if(!type||!supplierId||!total)return toast('⚠️ اكمل النوع والمورد والتكلفة','err');
+  await _doOrderBulkApply([{type,supplierId,supplierName,total}]);
+};
+
+async function _doOrderBulkApply(items){
+  const entries=[..._selectedOrders.values()];
+  let saved=0;
+  for(const {orderId,prodIdx} of entries){
+    for(const item of items){
+      const r=await orderActions.recordCostItem({
+        db,orderId,prodIdx,
+        payload:{type:item.type,total:item.total,supplierId:item.supplierId,supplierName:item.supplierName,note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,
+        wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)saved++;
+    }
+  }
+  closeOrderBulkModal();
+  clearOrderSelection();
+  toast(`✅ أُضيفت ${saved} بند على ${entries.length} أوردر`,'ok');
+  setTimeout(renderList,400);
 }
 
 /* ═══════════════════════════════════════════════════
