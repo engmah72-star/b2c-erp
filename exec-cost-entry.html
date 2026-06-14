@@ -254,6 +254,7 @@
 
             <div class="fg"><label>🏷️ نوع البند <span class="text-r">*</span></label>
               <select class="inp" id="ac-type" onchange="onTypeChange()"></select>
+              <div id="dup-type-warn" class="dup-type-warn" hidden></div>
             </div>
 
             <div class="fg"><label>🏭 المورد <span class="text-r">*</span></label>
@@ -1261,6 +1262,22 @@ window.onCostInputChange=function(){
   }else{icoEl.textContent='💡';titleEl.textContent='اقتراح ذكي';}
   bodyEl.innerHTML=body;
 
+  // Duplicate type indicator — highlight if same type already exists for selected product
+  const typeVal=gv('ac-type').trim();
+  const prodIdxVal=parseInt(gv('cost-prod-idx')??'-1');
+  const isEditMode=editCostIdx>=0;
+  const dupWarn=document.getElementById('dup-type-warn');
+  if(dupWarn){
+    if(typeVal&&!isEditMode&&activeId){
+      const _o=orders.find(x=>x._id===activeId);
+      const dup=(_o?.costItems||[]).find(c=>
+        c.type===typeVal&&(prodIdxVal<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdxVal)
+      );
+      if(dup){dupWarn.hidden=false;dupWarn.textContent=`⚠️ "${typeVal}" مسجّل بالفعل بمبلغ ${fn(dup.total)} ج — هل تريد تعديله بدلاً من الإضافة؟`;}
+      else dupWarn.hidden=true;
+    }else dupWarn.hidden=true;
+  }
+
   // Live profitability refresh
   if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderDrawerProfit(o);}
 };
@@ -1361,6 +1378,17 @@ window.saveCost=async function(){
   if(walletId&&!isEdit){
     const w=wallets.find(x=>x._id===walletId);
     if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
+  }
+
+  // Duplicate guard: warn if same type already recorded for this product
+  if(!isEdit){
+    const existing=(o.costItems||[]).find(c=>
+      c.type===type&&(prodIdx<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdx)
+    );
+    if(existing){
+      const confirmed=confirm(`⚠️ "${type}" موجود بالفعل لهذا المنتج (${fn(existing.total)} ج).\n\nاستمر فقط لو محتاج بندين مختلفين لنفس النوع.\nلو تريد تعديل البند الموجود اضغط إلغاء وعدّله.`);
+      if(!confirmed)return;
+    }
   }
 
   try{
@@ -2331,10 +2359,13 @@ function _buildQuickEntryItems(o){
         const base=_normBaseName(p.name);
         if(!base||base.length<2)return;
         if(!histByBase[base])histByBase[base]={};
+        const srcRef=ord.orderId||ord._id.slice(-6)||'';
+        const srcDays=ord.createdAt?.seconds?Math.floor((Date.now()/1000-ord.createdAt.seconds)/86400):null;
+        const srcLabel=srcDays===0?'اليوم':srcDays===1?'أمس':srcDays!=null?`${srcDays} أيام`:srcRef;
         (ord.costItems||[]).filter(c=>c.prodIdx===pi&&c.type&&c.supplierId).forEach(c=>{
           const t=c.type.trim();
           if(!histByBase[base][t])
-            histByBase[base][t]={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0};
+            histByBase[base][t]={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0,srcLabel};
         });
       });
     });
@@ -2348,7 +2379,7 @@ function _buildQuickEntryItems(o){
     const byType=_dedupeTypes(raw);
     const entries=Object.entries(byType)
       .filter(([type])=>!recordedSet.has(i+'::'+type))
-      .map(([type,info])=>({type,supplierId:info.supplierId,supplierName:info.supplierName,lastPrice:info.lastPrice}));
+      .map(([type,info])=>({type,supplierId:info.supplierId,supplierName:info.supplierName,lastPrice:info.lastPrice,srcLabel:info.srcLabel||''}));
     if(entries.length)result.push({prodIdx:i,prodName:prod.name||'منتج',prodQty:prod.qty||0,entries});
   });
   return result;
@@ -2372,7 +2403,7 @@ function _renderQuickEntry(o){
     entries.forEach(e=>{
       html+=`<div class="qe-row" data-prod="${prodIdx}" data-type="${e.type.replace(/"/g,'&quot;')}" data-sup-id="${e.supplierId}" data-sup-name="${(e.supplierName||'').replace(/"/g,'&quot;')}">
         <span class="qe-type">${e.type}</span>
-        <span class="qe-sup">${e.supplierName||'<span class="qe-no-sup">⚠️ بدون مورد</span>'}</span>
+        <span class="qe-sup">${e.supplierName?`${e.supplierName}${e.srcLabel?`<span class="qe-src"> · ${e.srcLabel}</span>`:''}` :'<span class="qe-no-sup">⚠️ بدون مورد</span>'}</span>
         <input class="inp qe-amount" type="number" placeholder="السعر" value="${e.lastPrice||''}" min="0" step="0.5" oninput="_qeUpdateTotal()">
         <button type="button" class="qe-save-one" title="حفظ هذا البند فقط" onclick="_qeSaveOne(this)">✔</button>
       </div>`;
