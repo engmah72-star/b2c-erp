@@ -16,6 +16,7 @@
 <script src="sidebar.js"></script>
 <script src="finance-core.js"></script>
 <script src="financial-guard.js"></script>
+<script type="module" src="core/offset-cost-engine.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
@@ -441,6 +442,10 @@ function getPressOptions(){
 function getPaperOptions(){
   return Array.isArray(appSettings.paperTypes)?appSettings.paperTypes.filter(Boolean):[];
 }
+function getPaperTypeData(name){
+  // Returns the detailed record from paperTypesData or null
+  return (Array.isArray(appSettings.paperTypesData)?appSettings.paperTypesData:[]).find(p=>p.name===name)||null;
+}
 function getProductImages(p){
   const arr=Array.isArray(p.designImages)?p.designImages.filter(Boolean):[];
   if(p.designImageUrl&&!arr.includes(p.designImageUrl))arr.unshift(p.designImageUrl);
@@ -644,6 +649,57 @@ function pwRenderSpecs(o){
       ?`<div style="margin-top:10px"><div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">✓ إضافات</div><div style="display:flex;flex-wrap:wrap;gap:6px">${extrasList.map(ex=>{const sel=(p.extras||[]).includes(ex);return`<button type="button" onclick="toggleExtra('${o._id}',${idx},'${ex.replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px solid ${sel?'var(--g)':'var(--line)'};background:${sel?'rgba(0,217,126,.12)':'var(--bg3)'};color:${sel?'var(--g)':'var(--dim2)'}">${sel?'✓ ':''} ${escH(ex)}</button>`;}).join('')}</div></div>`
       :`<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">✦ الإضافات تُدار من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`;
 
+    // ── حساب تكلفة الأوفست ────────────────────────────────────
+    const eng=window.offsetCostEngine;
+    const paperMeta=getPaperTypeData(p.paper||'');
+    let costCalcHtml='';
+    if(isOffset&&eng){
+      const pcs=eng.fitPiecesPerSheet(p.printSize||p.size||'',paperMeta?.originalSize||'');
+      const sc=eng.sheetsCalc(pcs,parseInt(p.qty)||0);
+      const zinkCnt=eng.calcZincCount(p.frontColors,p.backColors);
+      const zinkUnitCost=parseFloat(p.zinkUnitCost)||0;
+      const paperCost=paperMeta?eng.calcPaperCost(sc.sheetsTotal,paperMeta.costPerSheet):0;
+      const zinkCost=eng.calcZincCost(p.frontColors,p.backColors,zinkUnitCost);
+      const grandTotal=paperCost+zinkCost;
+      const hasMeta=!!paperMeta;
+      const hasCalc=pcs>0&&sc.sheetsTotal>0;
+      costCalcHtml=`
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:8px">🧮 حساب التكلفة</div>
+        ${!hasMeta?`<div style="font-size:var(--fs-xs);color:var(--y);padding:7px 10px;background:rgba(255,170,0,.07);border:1px solid rgba(255,170,0,.2);border-radius:8px;margin-bottom:8px">⚠️ أضف مواصفات الورق (مقاس + سعر) من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات</a></div>`:''}
+        ${hasMeta?`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:10px;color:var(--dim2);margin-bottom:6px">📄 ${escH(paperMeta.name)} · ${escH(paperMeta.originalSize||'')} سم · ${paperMeta.costPerSheet||0} جنيه/فرخة${paperMeta.supplierName?' · '+escH(paperMeta.supplierName):''}</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;text-align:center;margin-bottom:6px">
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--snow)">${pcs||'—'}</div><div style="font-size:9px;color:var(--dim2)">قطعة/فرخة</div></div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--snow)">${sc.sheetsNet||'—'}</div><div style="font-size:9px;color:var(--dim2)">فروخ صافية</div></div>
+            <div style="background:var(--bg3);border-radius:6px;padding:6px 4px"><div style="font-size:13px;font-weight:var(--fw-bold);color:var(--r)">${sc.wasteSheets||0}</div><div style="font-size:9px;color:var(--dim2)">هالك 5%</div></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--line)">
+            <span style="font-size:var(--fs-xs);color:var(--dim2)">إجمالي: <strong style="color:var(--snow)">${sc.sheetsTotal}</strong> فرخة</span>
+            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">${paperCost.toFixed(2)} جنيه</span>
+          </div>
+        </div>`:''}
+        <!-- ألوان الزنكات -->
+        <div class="pw-grid2" style="margin-bottom:8px">
+          <div class="pw-field"><label>🟨 ألوان الوجه</label><input class="pw-inp" type="number" min="0" max="6" value="${p.frontColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'frontColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="4"></div>
+          <div class="pw-field"><label>🟦 ألوان الظهر</label><input class="pw-inp" type="number" min="0" max="6" value="${p.backColors||''}" oninput="updateProductBriefField('${o._id}',${idx},'backColors',parseInt(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="0"></div>
+        </div>
+        ${zinkCnt>0?`<div style="background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">🟨 ${zinkCnt} لوح زنك</span>
+            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">${zinkCost.toFixed(2)} جنيه</span>
+          </div>
+          <div class="pw-field"><label style="font-size:10px">سعر اللوح (جنيه)</label><input class="pw-inp" type="number" min="0" step="0.01" value="${p.zinkUnitCost||''}" oninput="updateProductBriefField('${o._id}',${idx},'zinkUnitCost',parseFloat(this.value)||0);pwRenderSpecs(activeOrder)" placeholder="0.00" style="margin-top:3px"></div>
+        </div>`:''}
+        ${grandTotal>0?`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.25);border-radius:9px;margin-bottom:10px">
+          <span style="font-size:var(--fs-xs);color:var(--g);font-weight:var(--fw-bold)">إجمالي تكلفة الأوفست</span>
+          <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:var(--g)">${grandTotal.toFixed(2)} جنيه</span>
+        </div>
+        <button type="button" onclick="applyOffsetCostItems('${o._id}',${idx})" class="pw-btn pw-btn-p" style="width:100%;margin-bottom:8px">📋 تطبيق التكلفة في الأوردر</button>`:''}
+      </div>`;
+    }
+
     const offsetHtml=!isOffset?'':(`
       <div class="pw-grid2" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
         <div class="pw-field"><label>🟨 نوع الزنكات</label><input class="pw-inp" type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="4 ألوان"></div>
@@ -655,6 +711,7 @@ function pwRenderSpecs(o){
       <div class="pw-field" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"><label>🏭 المطبعة</label><select class="pw-inp" onchange="updateProductBriefField('${o._id}',${idx},'press',this)">${pressOpts}</select></div>
       <div class="pw-field"><label>📅 ميعاد المطبعة</label><input class="pw-inp" type="datetime-local" value="${toLocalDT(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')"></div>
       <div class="pw-field"><label>📝 ملاحظات الشغل</label><input class="pw-inp" type="text" value="${escAttr(p.briefNotes||'')}" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="ملاحظات خاصة بالمطبعة..."></div>
+      ${costCalcHtml}
       <div style="margin-top:10px">
         <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} class="pw-btn ${r.ready?'pw-btn-wa':''}" style="width:100%;${!r.ready?'cursor:not-allowed;opacity:.6':''}">
           💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
@@ -863,6 +920,37 @@ window.setPrintProductStatus=async function(idx,status){
   toast(`✅ ${(o.products||[])[idx]?.name||''}: ${status}`,'ok');
 };
 
+// ── تطبيق تكلفة الأوفست كبنود في الأوردر ────────────────────
+window.applyOffsetCostItems=async function(orderId,idx){
+  const o=orders.find(x=>x._id===orderId)||activeOrder;if(!o)return;
+  const p=(o.products||[])[idx];if(!p)return;
+  const eng=window.offsetCostEngine;if(!eng)return toast('⚠️ محرك الحساب لم يُحمَّل بعد','warn');
+  const paperMeta=getPaperTypeData(p.paper||'');
+  const pcs=eng.fitPiecesPerSheet(p.printSize||p.size||'',paperMeta?.originalSize||'');
+  const sc=eng.sheetsCalc(pcs,parseInt(p.qty)||0);
+  const zinkCnt=eng.calcZincCount(p.frontColors,p.backColors);
+  const zinkUnitCost=parseFloat(p.zinkUnitCost)||0;
+  const paperCost=paperMeta?eng.calcPaperCost(sc.sheetsTotal,paperMeta.costPerSheet):0;
+  const zinkCost=eng.calcZincCost(p.frontColors,p.backColors,zinkUnitCost);
+
+  const uid=auth?.currentUser?.uid||'';
+  const lines=[];
+  if(paperMeta&&sc.sheetsTotal>0&&paperCost>0){
+    lines.push({type:'ورق',total:paperCost,supplierId:paperMeta.supplierId||'',supplierName:paperMeta.supplierName||'',note:`${paperMeta.name} ${paperMeta.originalSize||''} — ${sc.sheetsTotal} فرخة`.trim()});
+  }
+  if(zinkCnt>0&&zinkCost>0){
+    lines.push({type:'زنكات',total:zinkCost,supplierId:'',supplierName:'',note:`${zinkCnt} لوح × ${zinkUnitCost} جنيه`});
+  }
+  if(!lines.length)return toast('⚠️ لا توجد بنود محسوبة — تأكد من إدخال بيانات الورق والزنكات','warn');
+  let ok=true,msgs=[];
+  for(const line of lines){
+    const r=await orderActions.recordCostItem({db,orderId,prodIdx:idx,payload:line,role:currentRole,userId:uid,userName,wallets:[]});
+    if(!r.ok){ok=false;msgs.push(...(r.errors||[]));}
+  }
+  if(ok)toast(`✅ تم تسجيل ${lines.length} بند تكلفة`,'ok');
+  else toast('⚠️ '+msgs.join(' · '),'err');
+};
+
 window.openProductionSheet=function(id){const oid=id||activeId;if(!oid)return;window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=production','_blank','noopener');};
 window.openDeliverySheet=function(id){const oid=id||activeId;if(!oid)return;window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=delivery','_blank','noopener');};
 
@@ -982,6 +1070,7 @@ window.sendProductBrief=async function(orderId,idx){
   if(p.paper)lines.push(`الورق: ${p.paper}${p.weight?' '+p.weight+'جم':''}`);
   if(p.printSize||p.size)lines.push(`المقاس: ${p.printSize||p.size}`);
   if(isOff&&p.zinkType)lines.push(`الزنكات: ${p.zinkType}`);
+  if(isOff&&(p.frontColors||p.backColors))lines.push(`ألوان: ${p.frontColors||0} وجه + ${p.backColors||0} ظهر`);
   if(isOff&&p.paperSheets)lines.push(`الفروخ: ${p.paperSheets}`);
   if(isOff&&p.cutSize)lines.push(`القص: ${p.cutSize}`);
   if(p.lamination&&p.lamination!=='بلا'){const sides=p.laminationSides===2?'وجهين':'وجه واحد';lines.push(`التشطيب: ${p.lamination} ${sides}`);}

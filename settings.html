@@ -232,6 +232,30 @@
               </div>
             </div>
 
+            <!-- 📐 مواصفات الورق التفصيلية (مقاس + سعر + مورد) — مصدر حساب تكلفة الأوفست -->
+            <div class="subsec" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+              <div class="subsec-hd"><span class="dot" style="background:var(--b)"></span>مواصفات الورق التفصيلية <span style="margin-right:auto;font-weight:var(--fw-semi);color:var(--dim2);text-transform:none;letter-spacing:0" id="ptd-count">0</span></div>
+              <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px">المقاس الأصلي للفرخة + السعر + المورد — يستخدمها نظام حساب تكلفة الأوفست تلقائياً.</div>
+              <div id="ptd-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+              <!-- Add form -->
+              <div id="ptd-form" style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px">
+                <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:2px">➕ إضافة نوع ورق</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                  <div><label style="font-size:10px;color:var(--dim2)">اسم الورق *</label>
+                    <select class="inp" id="ptd-name" style="width:100%;margin-top:2px"><option value="">— اختر —</option></select></div>
+                  <div><label style="font-size:10px;color:var(--dim2)">سعر الفرخة (جنيه)</label>
+                    <input class="inp" id="ptd-cost" type="number" min="0" step="0.01" placeholder="2.50" style="width:100%;margin-top:2px"></div>
+                  <div><label style="font-size:10px;color:var(--dim2)">عرض الفرخة (سم)</label>
+                    <input class="inp" id="ptd-w" type="number" min="1" placeholder="70" style="width:100%;margin-top:2px"></div>
+                  <div><label style="font-size:10px;color:var(--dim2)">طول الفرخة (سم)</label>
+                    <input class="inp" id="ptd-h" type="number" min="1" placeholder="100" style="width:100%;margin-top:2px"></div>
+                  <div style="grid-column:1/-1"><label style="font-size:10px;color:var(--dim2)">اسم المورد</label>
+                    <input class="inp" id="ptd-supplier" type="text" placeholder="مثال: ورق النيل" style="width:100%;margin-top:2px"></div>
+                </div>
+                <button type="button" class="btn btn-b btn-sm" onclick="addPaperTypeData()">＋ إضافة</button>
+              </div>
+            </div>
+
             <!-- ➕ إضافات الأوفست — تظهر عند تعديل منتج نوعه offset -->
             <div class="subsec" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
               <div class="subsec-hd"><span class="dot" style="background:var(--y)"></span>إضافات الأوفست <span style="margin-right:auto;font-weight:var(--fw-semi);color:var(--dim2);text-transform:none;letter-spacing:0" id="peo-count">0</span></div>
@@ -787,6 +811,9 @@ let settings = {
   costTypesOffset: [],
   // أنواع الورق — تظهر كقائمة اختيار في مرحلة الطباعة (print.html → نوع الورق).
   paperTypes: ['كوشيه','دوبلكس','بريستول','مقوى','ستيكر','عادي'],
+  // مواصفات الورق التفصيلية — مصدر بيانات حساب التكلفة (offset-cost-engine).
+  // [{id, name, originalSize, costPerSheet, supplierId, supplierName, updatedAt}]
+  paperTypesData: [],
   // معايير زمن المراحل (ساعات) — يقرأها orders.js عبر slaTable (override لـ STAGE_SLA_DEFAULTS).
   // التنفيذ كائن {offset, digital}؛ الباقي رقم. القيم الافتراضية تطابق STAGE_SLA_DEFAULTS.
   stageSla: { design: 48, printing: 24, production: { offset: 72, digital: 48 }, shipping: 48 },
@@ -893,12 +920,14 @@ function renderSettings() {
   renderTagList('pt',  settings.paperTypes,             'pt');
   renderTagList('peo', settings.printExtrasOffset || [], 'peo');
   renderTagList('ped', settings.printExtrasDigital || [],'ped');
+  renderPaperTypesData();
 
   const ccEl=document.getElementById('cc-count'); if(ccEl)ccEl.textContent=settings.clientCategories?.length||0;
   const csEl=document.getElementById('cs-count'); if(csEl)csEl.textContent=settings.clientSources?.length||0;
   const ptEl=document.getElementById('pt-count'); if(ptEl)ptEl.textContent=settings.paperTypes?.length||0;
   const peoEl=document.getElementById('peo-count');if(peoEl)peoEl.textContent=settings.printExtrasOffset?.length||0;
   const pedEl=document.getElementById('ped-count');if(pedEl)pedEl.textContent=settings.printExtrasDigital?.length||0;
+  const ptdEl=document.getElementById('ptd-count');if(ptdEl)ptdEl.textContent=settings.paperTypesData?.length||0;
 
   // معايير زمن المراحل
   const sla = settings.stageSla || {};
@@ -1500,6 +1529,89 @@ window.syncClientCatalog = async () => {
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = '🔄 مزامنة كتالوج العميل'; }
   }
+};
+
+// ── مواصفات الورق التفصيلية ──────────────────────────────────────────────────
+function renderPaperTypesData() {
+  const list = document.getElementById('ptd-list');
+  if (!list) return;
+  const data = settings.paperTypesData || [];
+  if (!data.length) {
+    list.innerHTML = '<div style="font-size:var(--fs-xs);color:var(--dim2);padding:6px 0">لا توجد مواصفات بعد — أضف نوع ورق من الأسفل.</div>';
+  } else {
+    list.innerHTML = data.map((p, i) => `
+      <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:10px 12px">
+        <div>
+          <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--snow)">${p.name||'—'}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:3px">
+            📐 ${p.originalSize||'—'} سم &nbsp;·&nbsp; 💰 ${parseFloat(p.costPerSheet)||0} جنيه/فرخة
+            ${p.supplierName?` &nbsp;·&nbsp; 🏭 ${p.supplierName}`:''}
+            ${p.updatedAt?` &nbsp;·&nbsp; 🕐 ${p.updatedAt}`:''}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+            <div><div style="font-size:10px;color:var(--dim2)">سعر الفرخة</div>
+              <input class="inp" type="number" min="0" step="0.01" value="${p.costPerSheet||''}" placeholder="0.00"
+                onchange="updatePaperTypeField(${i},'costPerSheet',parseFloat(this.value)||0)"
+                style="width:100%;margin-top:2px;padding:5px 8px;font-size:var(--fs-xs)"></div>
+            <div><div style="font-size:10px;color:var(--dim2)">اسم المورد</div>
+              <input class="inp" type="text" value="${p.supplierName||''}" placeholder="المورد"
+                onchange="updatePaperTypeField(${i},'supplierName',this.value.trim())"
+                style="width:100%;margin-top:2px;padding:5px 8px;font-size:var(--fs-xs)"></div>
+          </div>
+        </div>
+        <button type="button" onclick="removePaperTypeData(${i})" class="btn btn-r btn-sm" style="padding:4px 8px;font-size:10px;flex-shrink:0">✕</button>
+      </div>`).join('');
+  }
+  // populate name dropdown
+  const sel = document.getElementById('ptd-name');
+  if (sel) {
+    const existing = new Set((settings.paperTypesData||[]).map(p=>p.name));
+    const opts = (settings.paperTypes||[]).filter(n=>!existing.has(n));
+    sel.innerHTML = '<option value="">— اختر —</option>' + opts.map(n=>`<option value="${n}">${n}</option>`).join('');
+  }
+  const cnt = document.getElementById('ptd-count'); if (cnt) cnt.textContent = data.length;
+}
+
+window.addPaperTypeData = async function() {
+  const name = document.getElementById('ptd-name')?.value.trim();
+  if (!name) return toast('⚠️ اختر اسم الورق أولاً', 'warn');
+  const w    = parseFloat(document.getElementById('ptd-w')?.value) || 0;
+  const h    = parseFloat(document.getElementById('ptd-h')?.value) || 0;
+  if (!w || !h) return toast('⚠️ أدخل عرض وطول الفرخة', 'warn');
+  const cost = parseFloat(document.getElementById('ptd-cost')?.value) || 0;
+  const sup  = document.getElementById('ptd-supplier')?.value.trim() || '';
+  const data = [...(settings.paperTypesData || [])];
+  if (data.some(p => p.name === name)) return toast('⚠️ هذا النوع موجود بالفعل', 'warn');
+  data.push({
+    id: Date.now().toString(36),
+    name,
+    originalSize: `${w}×${h}`,
+    costPerSheet: cost,
+    supplierId:   '',
+    supplierName: sup,
+    updatedAt:    new Date().toLocaleDateString('ar-EG'),
+  });
+  settings.paperTypesData = data;
+  await saveSettings();
+  renderPaperTypesData();
+  ['ptd-name','ptd-w','ptd-h','ptd-cost','ptd-supplier'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+};
+
+window.removePaperTypeData = async function(idx) {
+  const data = [...(settings.paperTypesData || [])];
+  data.splice(idx, 1);
+  settings.paperTypesData = data;
+  await saveSettings();
+  renderPaperTypesData();
+};
+
+window.updatePaperTypeField = async function(idx, field, value) {
+  const data = [...(settings.paperTypesData || [])];
+  if (!data[idx]) return;
+  data[idx] = { ...data[idx], [field]: value, updatedAt: new Date().toLocaleDateString('ar-EG') };
+  settings.paperTypesData = data;
+  await saveSettings();
+  renderPaperTypesData();
 };
 
 // EXPOSE
