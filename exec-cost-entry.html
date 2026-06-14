@@ -1694,11 +1694,16 @@ function _buildProductProfiles(){
       if(c.prodIdx==null||c.prodIdx<0)return;
       const prod=prods[c.prodIdx];
       if(!prod?.name)return;
-      const baseName=_normBaseName(prod.name);  // strips extras + qty
+      const baseName=_normBaseName(prod.name);
       if(!baseName||baseName.length<2)return;
       const qty=_extractQty(prod);
-      const key=qty?`${baseName}::${qty}`:baseName;
-      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
+      // Precise key: base name + printType + size + qty — separates digital vs offset,
+      // different paper sizes, and different quantities into distinct profiles.
+      const pt=(prod.printType||'').toLowerCase().trim();
+      const sz=(prod.size||'').trim();
+      const keyParts=[baseName,pt,sz,qty].filter(Boolean);
+      const key=keyParts.join('::');
+      if(!profiles[key])profiles[key]={key,baseName,qty,printType:pt,size:sz,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
       const ts=c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0;
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
       if(!profiles[key].orderIds.has(o._id)){
@@ -1710,7 +1715,7 @@ function _buildProductProfiles(){
     });
   });
   _libProfiles=Object.values(profiles)
-    .filter(p=>p.items.length>=2)
+    .filter(p=>p.orderIds.size>=2)  // at least 2 distinct orders — not just 2 items
     .map(p=>{
       // Group by (type, supplierId) — each supplier's price shown separately
       const byTS={};
@@ -1725,15 +1730,14 @@ function _buildProductProfiles(){
           if(item.ts>=e.lastTs){e.lastTs=item.ts;e.lastPrice=item.total;}
         }
       });
-      // type-level frequency for isAddon classification
+      // A cost type is "core" only if it appears in ≥50% of orders (raised from 35%)
       const typeFreq={};
       Object.values(byTS).forEach(e=>{typeFreq[e.type]=(typeFreq[e.type]||0)+e.useCount;});
-      const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.35));
+      const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.5));
       const bundle=Object.values(byTS).map(e=>({...e,isAddon:typeFreq[e.type]<threshold}))
         .sort((a,b)=>(typeFreq[b.type]-typeFreq[a.type])||a.type.localeCompare(b.type));
       const coreBundle=bundle.filter(b=>!b.isAddon);
       const addons=bundle.filter(b=>b.isAddon);
-      // totalEstimate: last price of most-used supplier per type (core only)
       const bestPerType={};
       coreBundle.forEach(b=>{
         if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
@@ -1741,12 +1745,12 @@ function _buildProductProfiles(){
       const totalEstimate=Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0);
       const avgSalePrice=p.salePrices.length?p.salePrices.reduce((s,v)=>s+v,0)/p.salePrices.length:0;
       const estMarginPct=(avgSalePrice>0&&totalEstimate>0)?Math.round((avgSalePrice-totalEstimate)/avgSalePrice*100):null;
-      return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
-        usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,coreBundle,addons,
-        totalEstimate,avgSalePrice,estMarginPct};
+      return{key:p.key,baseName:p.baseName,qty:p.qty,printType:p.printType,size:p.size,
+        displayName:p.displayName,usageCount:p.orderIds.size,lastTs:p.lastTs,
+        bundle,coreBundle,addons,totalEstimate,avgSalePrice,estMarginPct};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
-    .slice(0,40);
+    .slice(0,60);
 }
 
 window.renderLibraryTab=function(){
@@ -1785,11 +1789,14 @@ function _renderLibProfiles(){
   el.innerHTML=_libProfiles.map(p=>{
     const addonsHtml=p.addons.length
       ?`<div class="lib-pc-addons">+ ${p.addons.slice(0,3).map(a=>`<span>${a.type}</span>`).join('')}</div>`:'';
+    const ptLabel=p.printType==='digital'?'ديجيتال':p.printType==='offset'?'أوفست':(p.printType||'');
+    const specTags=[ptLabel?`<span class="lib-pc-pt">${ptLabel}</span>`:'',p.size?`<span class="lib-pc-sz">${p.size}</span>`:''].filter(Boolean).join('');
     return`<div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
       <div class="lib-pc-top">
         <div class="lib-pc-name">${p.baseName||p.displayName}</div>
         ${p.qty?`<span class="lib-pc-qty">${Number(p.qty).toLocaleString('ar-EG')||p.qty}</span>`:''}
       </div>
+      ${specTags?`<div class="lib-pc-specs">${specTags}</div>`:''}
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
       <div class="lib-pc-total">~${fn(p.totalEstimate)} ج${p.estMarginPct!==null?` <span class="lib-pc-margin ${p.estMarginPct>=35?'lib-margin-g':p.estMarginPct>=20?'lib-margin-y':'lib-margin-r'}">${p.estMarginPct}% هامش</span>`:''}</div>
