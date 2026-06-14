@@ -44,6 +44,26 @@ export function fitPiecesPerSheet(printSize, paperSize) {
 }
 
 /**
+ * تخطيط القص: كام عمود × كام صف + هل مقلوب؟
+ * @returns {{ cols, rows, pcs, rotated, efficiency }} أو null
+ */
+export function fitLayout(printSize, paperSize) {
+  const ps    = parseSizePair(printSize);
+  const paper = parseSizePair(paperSize);
+  if (!ps || !paper || ps.w <= 0 || ps.h <= 0) return null;
+  const nCols = Math.floor(paper.w / ps.w), nRows = Math.floor(paper.h / ps.h);
+  const rCols = Math.floor(paper.w / ps.h), rRows = Math.floor(paper.h / ps.w);
+  const nPcs = nCols * nRows, rPcs = rCols * rRows;
+  const best = nPcs >= rPcs
+    ? { cols: nCols, rows: nRows, pcs: nPcs, rotated: false }
+    : { cols: rCols, rows: rRows, pcs: rPcs, rotated: true  };
+  const usedW = best.rotated ? best.cols * ps.h : best.cols * ps.w;
+  const usedH = best.rotated ? best.rows * ps.w : best.rows * ps.h;
+  best.efficiency = Math.round(usedW * usedH / (paper.w * paper.h) * 100);
+  return best;
+}
+
+/**
  * حساب الفروخ مع الهالك 5%.
  */
 export function sheetsCalc(piecesPerSheet, qty) {
@@ -141,7 +161,7 @@ export function buildOffsetCostBreakdown({ product, paperMeta, zincCostPerPlate 
 if (typeof window !== 'undefined') {
   window.offsetCostEngine = {
     OFFSET_WASTE_PCT, STANDARD_PAPER_SIZES,
-    parseSizePair, fitPiecesPerSheet, sheetsCalc,
+    parseSizePair, fitPiecesPerSheet, fitLayout, sheetsCalc,
     rankAllSizes,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
@@ -150,7 +170,7 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {
     OFFSET_WASTE_PCT, STANDARD_PAPER_SIZES,
-    parseSizePair, fitPiecesPerSheet, sheetsCalc,
+    parseSizePair, fitPiecesPerSheet, fitLayout, sheetsCalc,
     rankAllSizes,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
