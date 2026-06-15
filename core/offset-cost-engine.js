@@ -16,20 +16,21 @@ export const SHEET_MARGIN_H = 0;   // سم — لا خصم من الطول (ال
 // • إذا اختلفا يُشرح السبب في الواجهة.
 export const KNOWN_MARKET_CUTS = [
   // ───── من ستاندر كامل 70×100 ─────
-  { sizes:['50×70'],           name:'نصف فرخ (نص)',  marketCount:2,  calcCount:2,  sheet:'70×100' },
-  { sizes:['35×50'],           name:'ربع فرخ',        marketCount:4,  calcCount:4,  sheet:'70×100' },
-  { sizes:['25×35'],           name:'ثمن فرخ',        marketCount:8,  calcCount:8,  sheet:'70×100' },
-  { sizes:['17.5×25'],         name:'ستاشر',          marketCount:16, calcCount:16, sheet:'70×100' },
-  { sizes:['23×33','21×29'],   name:'تسعات',          marketCount:9,  calcCount:9,  sheet:'70×100' },
-  { sizes:['20×35'],           name:'عشرات',          marketCount:10, calcCount:10, sheet:'70×100' },
-  // حداشر: التسمية السوقية 11 — الحساب الهندسي 10 (2 عمود×5 صف عرضي)
-  // الفرق لأن 70÷600سم²×100≈11.67 يُقرَّب لـ 11 في الأذهان، لكن القطع الفعلي 10
-  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100',
+  { sizes:['50×70'],           name:'نصف فرخ (نص)',  marketCount:2,  calcCount:2,  sheet:'70×100', tier:'nus'  },
+  { sizes:['35×50'],           name:'ربع فرخ',        marketCount:4,  calcCount:4,  sheet:'70×100', tier:'rub3' },
+  { sizes:['25×35'],           name:'ثمن فرخ',        marketCount:8,  calcCount:8,  sheet:'70×100', tier:'tumn' },
+  { sizes:['17.5×25'],         name:'ستاشر',          marketCount:16, calcCount:16, sheet:'70×100', tier:'tumn' },
+  { sizes:['23×33','21×29'],   name:'تسعات',          marketCount:9,  calcCount:9,  sheet:'70×100', tier:'rub3' },
+  { sizes:['20×35'],           name:'عشرات',          marketCount:10, calcCount:10, sheet:'70×100', tier:'rub3' },
+  // حداشر: المقاس (20×30) يُصنَّف ضمن ماكينة التمن في السوق المصري.
+  // التسمية السوقية "حداشر" (11) مشتقة من تقريب المساحة (7000÷600≈11.67).
+  // التوزيع الفعلي الأمثل على ستاندر كامل: 2 عمود × 5 صف عرضي = 10 قطع.
+  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100', tier:'tumn',
     note:'التسمية السوقية "حداشر" (11) مبنية على تقريب المساحة (7000÷600≈11.67). التوزيع الفعلي الأمثل: 2 عمود × 5 صف عرضي = 10 قطع.' },
   // ───── من جاير كامل 66×88 ─────
-  { sizes:['44×66'],           name:'نصف جاير',      marketCount:2,  calcCount:2,  sheet:'66×88' },
-  { sizes:['33×44'],           name:'ربع جاير',       marketCount:4,  calcCount:4,  sheet:'66×88' },
-  { sizes:['22×33'],           name:'ثمن جاير',       marketCount:8,  calcCount:8,  sheet:'66×88' },
+  { sizes:['44×66'],           name:'نصف جاير',      marketCount:2,  calcCount:2,  sheet:'66×88',  tier:'nus'  },
+  { sizes:['33×44'],           name:'ربع جاير',       marketCount:4,  calcCount:4,  sheet:'66×88',  tier:'rub3' },
+  { sizes:['22×33'],           name:'ثمن جاير',       marketCount:8,  calcCount:8,  sheet:'66×88',  tier:'tumn' },
 ];
 
 /**
