@@ -22,11 +22,11 @@ export const KNOWN_MARKET_CUTS = [
   { sizes:['17.5×25'],         name:'ستاشر',          marketCount:16, calcCount:16, sheet:'70×100', tier:'tumn' },
   { sizes:['23×33','21×29'],   name:'تسعات',          marketCount:9,  calcCount:9,  sheet:'70×100', tier:'rub3' },
   { sizes:['20×35'],           name:'عشرات',          marketCount:10, calcCount:10, sheet:'70×100', tier:'rub3' },
-  // حداشر: المقاس (20×30) يُصنَّف ضمن ماكينة التمن في السوق المصري.
+  // حداشر: القصة 20×30 تُستخرج من فرخة كامل 70×100 (10 قطع فعلياً).
   // التسمية السوقية "حداشر" (11) مشتقة من تقريب المساحة (7000÷600≈11.67).
-  // التوزيع الفعلي الأمثل على ستاندر كامل: 2 عمود × 5 صف عرضي = 10 قطع.
-  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100', tier:'tumn',
-    note:'التسمية السوقية "حداشر" (11) مبنية على تقريب المساحة (7000÷600≈11.67). التوزيع الفعلي الأمثل: 2 عمود × 5 صف عرضي = 10 قطع.' },
+  // الماكينة = كامل (لأن الورق المشترى فعلاً هو 70×100 ويُغذَّى مباشرة).
+  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100', tier:'kaml',
+    note:'التسمية السوقية "حداشر" (11) مبنية على تقريب المساحة (7000÷600≈11.67). التوزيع الفعلي الأمثل: 2 عمود × 5 صف عرضي = 10 قطع من فرخة كامل 70×100.' },
   // ───── من جاير كامل 66×88 ─────
   { sizes:['44×66'],           name:'نصف جاير',      marketCount:2,  calcCount:2,  sheet:'66×88',  tier:'nus'  },
   { sizes:['33×44'],           name:'ربع جاير',       marketCount:4,  calcCount:4,  sheet:'66×88',  tier:'rub3' },
@@ -100,14 +100,6 @@ export function fitPiecesPerSheet(printSize, paperSize) {
   const ps  = parseSizePair(printSize);
   const eff = effectivePaperSize(paperSize);
   if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return 0;
-  // قص مباشر: الورق ≈ مقاس الطباعة (فرق ≤ 2 سم) → قطعة واحدة بالضرورة
-  const pap = parseSizePair(paperSize);
-  if (pap) {
-    const tol = 2;
-    const isDirect = (Math.abs(pap.w - ps.w) <= tol && Math.abs(pap.h - ps.h) <= tol) ||
-                     (Math.abs(pap.w - ps.h) <= tol && Math.abs(pap.h - ps.w) <= tol);
-    if (isDirect) return 1;
-  }
   const normal  = Math.floor(eff.w / ps.w) * Math.floor(eff.h / ps.h);
   const rotated = Math.floor(eff.w / ps.h) * Math.floor(eff.h / ps.w);
   return Math.max(normal, rotated, 0);
@@ -123,15 +115,6 @@ export function fitLayout(printSize, paperSize) {
   const ps  = parseSizePair(printSize);
   const eff = effectivePaperSize(paperSize);
   if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return null;
-
-  // قص مباشر: الورق ≈ مقاس الطباعة → تخطيط 1×1، لا قصات داخلية
-  const pap = parseSizePair(paperSize);
-  if (pap) {
-    const tol = 2;
-    const isDirect = (Math.abs(pap.w - ps.w) <= tol && Math.abs(pap.h - ps.h) <= tol) ||
-                     (Math.abs(pap.w - ps.h) <= tol && Math.abs(pap.h - ps.w) <= tol);
-    if (isDirect) return { cols:1, rows:1, pcs:1, rotated:false, cuts:0, efficiency:100, effectiveW:eff.w, effectiveH:eff.h };
-  }
 
   const nCols = Math.floor(eff.w / ps.w), nRows = Math.floor(eff.h / ps.h);
   const rCols = Math.floor(eff.w / ps.h), rRows = Math.floor(eff.h / ps.w);
