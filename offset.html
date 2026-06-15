@@ -365,34 +365,28 @@ function renderHeader(o){
     </div>`;
 }
 
-// ── Tab 1: الحاسبة ──
-function renderCalcTab(o){
-  const el=$('off-pane-calc');if(!el)return;
-  const offProds=(o.products||[]).map((p,i)=>({...p,_i:i})).filter(p=>(p.printType||'').includes('offset'));
-  if(!offProds.length){el.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد منتجات أوفست</div>`;return;}
-
-  // تصحيح activeProdIdx لو خرج من النطاق
-  if(activeProdIdx>=(o.products||[]).length)activeProdIdx=offProds[0]._i;
-
-  const navHtml=offProds.length>1?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">
-    ${offProds.map(p=>`<button class="off-prod-btn${p._i===activeProdIdx?' on':''}" onclick="offSelProd(${p._i})">${escH(p.name||('منتج '+(p._i+1)))}</button>`).join('')}
-  </div>`:'';
-
-  const p=(o.products||[])[activeProdIdx]||offProds[0];
-  const idx=activeProdIdx;
+// ── حساب نتائج الحاسبة (منفصلة عن الـ inputs) ──
+function buildCalcResults(o, idx){
+  const p=(o.products||[])[idx];if(!p)return'';
   const eng=window.offsetCostEngine;
   const paperMeta=getPaperMeta(p.paper||'');
   const allPapersData=Array.isArray(appSettings.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
   const printSize=p.printSize||p.size||'';
   const qty=parseInt(p.qty)||0;
   const frontC=parseInt(p.frontColors)||0, backC=parseInt(p.backColors)||0;
+  const prefTier=p.machineSize||'rub3';
+  // readiness
   const r=computeOffsetReadiness(p);
   const barCol=r.ready?'var(--g)':r.pct>=60?'var(--y)':'var(--r)';
+  const readinessHtml=`
+    <div id="off-readiness-${o._id}-${idx}" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="flex:1;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden">
+        <div style="width:${r.pct}%;height:100%;background:${barCol};border-radius:3px;transition:width .3s"></div>
+      </div>
+      <span style="font-size:10px;color:${barCol};font-weight:var(--fw-bold)">${r.pct}%</span>
+    </div>
+    ${r.crit.filter(c=>!c.ok).length?`<div style="font-size:10px;color:var(--r);margin-bottom:8px">${r.crit.filter(c=>!c.ok).map(c=>`❌ ${c.label}`).join(' · ')}</div>`:''}`;
 
-  // الماكينة المختارة (افتراضي: ربع)
-  const prefTier=p.machineSize||'rub3';
-
-  // حساب الفروخ والتكلفة
   let rankCards='', costSummary='', analysisCard='';
   if(eng&&printSize&&qty>0){
     const allRankings=eng.rankAllSizes(printSize,qty,allPapersData);
@@ -411,12 +405,9 @@ function renderCalcTab(o){
     const mc=trajs*machRate;
     const zc=eng.calcZincCost(frontC,backC,zincCPP);
     const totalCalc=paperCost+mc+zc;
-
-    // بطاقات الورق — مقاسات التير المختار (ستاندر + جاير)
     const upgradeWarn=upgraded?`<div style="font-size:9px;padding:5px 8px;background:rgba(255,170,0,.1);border-radius:6px;border-right:2px solid var(--y);margin-bottom:8px">
       ⚠️ المقاس أكبر من ماكينة ${getTierLabel(prefTier)} — تم التصعيد تلقائياً لماكينة <strong style="color:var(--y)">${getTierLabel(tierId)}</strong>
     </div>`:'';
-    const rec=tierPapers[0];
     rankCards=`<div class="off-card">
       <div class="off-sec-hd">📄 مقارنة الورق — ${getTierLabel(tierId)}</div>
       ${upgradeWarn}
@@ -453,9 +444,7 @@ function renderCalcTab(o){
         </div>`;
       }).join(''):`<div style="padding:12px;text-align:center;color:var(--dim2);font-size:var(--fs-xs)">لا توجد مقاسات مناسبة لهذه الماكينة</div>`}
     </div>`;
-
-    // ── تحليل التشغيل ──
-    if(tierPapers.length&&printSize&&qty>0){
+    if(tierPapers.length){
       const stdPaper=tierPapers.find(pm=>(pm.family||'').includes('ستاندر'));
       const jayPaper=tierPapers.find(pm=>(pm.family||'').includes('جاير'));
       const stdLayout=stdPaper?eng.fitLayout(printSize,stdPaper.originalSize||''):null;
@@ -464,15 +453,12 @@ function renderCalcTab(o){
       const stdPcs=stdPaper?.pcs||0, jayPcs=jayPaper?.pcs||0;
       const stdCost=stdPaper?.hasPrice?eng.calcPaperCost(stdPaper.sheetsTotal,stdPaper.costPerSheet):0;
       const jayCost=jayPaper?.hasPrice?eng.calcPaperCost(jayPaper.sheetsTotal,jayPaper.costPerSheet):0;
-      // هل ماكينة أصغر كانت ممكنة؟
       const tierOrder=['tumn','rub3','nus','kaml'];
       const ti=tierOrder.indexOf(tierId);
       const smallerTid=ti>0?tierOrder[ti-1]:null;
       const smallerFits=smallerTid?allRankings.some(pm=>pmMatchesTier(pm,smallerTid)):false;
-      // winner
       const stdWins=stdEff>=jayEff||(stdEff===jayEff&&stdPcs>=jayPcs);
       const winnerName=stdWins?(stdPaper?.name||'ستاندر'):(jayPaper?.name||'جاير');
-      const loserName=stdWins?(jayPaper?.name||'جاير'):(stdPaper?.name||'ستاندر');
       const winnerEff=stdWins?stdEff:jayEff, loserEff=stdWins?jayEff:stdEff;
       const effDiff=winnerEff-loserEff;
       const rows=[];
@@ -503,8 +489,6 @@ function renderCalcTab(o){
         </div>`;
       }
     }
-
-    // ملخص التكلفة
     const selPaperName=selRank?.name||p.paper||'';
     const selSz=selRank?.originalSize||paperMeta?.originalSize||'';
     if(totalCalc>0||paperCost>0){
@@ -532,7 +516,32 @@ function renderCalcTab(o){
       </div>`;
     }
   }
+  return readinessHtml+rankCards+analysisCard+costSummary;
+}
 
+// يُحدِّث فقط قسم النتائج دون المساس بالـ inputs (يحافظ على focus)
+function refreshCalcResults(o){
+  if(!o)return;
+  const el=document.getElementById(`off-res-${o._id}-${activeProdIdx}`);
+  if(!el)return;
+  el.innerHTML=buildCalcResults(o,activeProdIdx);
+}
+
+// ── Tab 1: الحاسبة ──
+function renderCalcTab(o){
+  const el=$('off-pane-calc');if(!el)return;
+  const offProds=(o.products||[]).map((p,i)=>({...p,_i:i})).filter(p=>(p.printType||'').includes('offset'));
+  if(!offProds.length){el.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد منتجات أوفست</div>`;return;}
+  if(activeProdIdx>=(o.products||[]).length)activeProdIdx=offProds[0]._i;
+
+  const navHtml=offProds.length>1?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">
+    ${offProds.map(p=>`<button class="off-prod-btn${p._i===activeProdIdx?' on':''}" onclick="offSelProd(${p._i})">${escH(p.name||('منتج '+(p._i+1)))}</button>`).join('')}
+  </div>`:'';
+
+  const p=(o.products||[])[activeProdIdx]||offProds[0];
+  const idx=activeProdIdx;
+  const prefTier=p.machineSize||'rub3';
+  const frontC=parseInt(p.frontColors)||0, backC=parseInt(p.backColors)||0;
   const papers=Array.isArray(appSettings.paperTypes)?appSettings.paperTypes.filter(Boolean):[];
   const paperOpts='<option value="">— نوع الورق —</option>'+papers.map(v=>`<option value="${escAttr(v)}"${v===p.paper?' selected':''}>${escAttr(v)}</option>`).join('');
   const zinkPresets=[{l:'4+0',f:4,b:0},{l:'4+4',f:4,b:4},{l:'1+0',f:1,b:0},{l:'1+1',f:1,b:1}];
@@ -542,14 +551,7 @@ function renderCalcTab(o){
     <!-- المواصفات -->
     <div class="off-card">
       <div class="off-sec-hd">📋 المواصفات · ${escH(p.name||'منتج')}</div>
-      <!-- شريط الجاهزية -->
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <div style="flex:1;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden">
-          <div style="width:${r.pct}%;height:100%;background:${barCol};border-radius:3px;transition:width .3s"></div>
-        </div>
-        <span style="font-size:10px;color:${barCol};font-weight:var(--fw-bold)">${r.pct}%</span>
-      </div>
-      ${r.crit.filter(c=>!c.ok).length?`<div style="font-size:10px;color:var(--r);margin-bottom:8px">${r.crit.filter(c=>!c.ok).map(c=>`❌ ${c.label}`).join(' · ')}</div>`:''}
+      <div id="off-res-${o._id}-${idx}-top"></div>
       <!-- اختيار الماكينة -->
       <div class="off-field">
         <label class="off-label">⚙️ الماكينة (افتراضي: ربع)</label>
@@ -602,10 +604,12 @@ function renderCalcTab(o){
       </div>
     </div>
 
-    ${rankCards}
-    ${analysisCard}
-    ${costSummary}
+    <!-- النتائج الحية — تتحدث دون المساس بالـ inputs أعلاه -->
+    <div id="off-res-${o._id}-${idx}"></div>
   `;
+
+  // ملء النتائج مباشرة بعد بناء الـ DOM
+  refreshCalcResults(o);
 }
 
 window.offSelProd=function(idx){activeProdIdx=idx;if(activeOrder)renderCalcTab(activeOrder);};
@@ -736,17 +740,19 @@ function renderPressTab(o){
 const _debTimers=new Map();
 function debSave(key,fn,ms=700){clearTimeout(_debTimers.get(key));_debTimers.set(key,setTimeout(fn,ms));}
 
+// الحقول التي تؤثر على الحسابات وتستوجب تحديث النتائج فوراً
+const CALC_FIELDS=new Set(['qty','frontColors','backColors','paper','paperSheets']);
+
 window.offUpd=function(orderId,idx,field,value){
   if(activeOrder&&activeOrder._id===orderId){const p=(activeOrder.products||[])[idx];if(p)p[field]=value;}
   debSave(`${orderId}|${idx}|${field}`,async()=>{
     const r=await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{[field]:value},userId:currentUid,userName});
     if(r&&!r.ok)toast('❌ '+(r.errors||[]).join(' · '),'err');
   });
-  // إعادة حساب الورق عند تغيير الكمية
-  if(field==='qty'){
-    debSave(`${orderId}|${idx}|qty-ui`,()=>{
-      if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
-    },350);
+  if(CALC_FIELDS.has(field)){
+    debSave(`${orderId}|${idx}|${field}-ui`,()=>{
+      if(activeOrder&&activeOrder._id===orderId)refreshCalcResults(activeOrder);
+    },300);
   }
 };
 
@@ -758,9 +764,9 @@ window.offUpdSz=function(orderId,idx,dim,val){
   debSave(`${orderId}|${idx}|size`,async()=>{
     await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{printSize:newSize},userId:currentUid,userName});
   });
-  // debounce الرسم لتجنب فقدان focus أثناء الكتابة — 350ms بعد آخر تعديل
+  // debounce النتائج فقط — الـ inputs تبقى ثابتة، المستخدم لا يفقد focus
   debSave(`${orderId}|${idx}|size-ui`,()=>{
-    if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
+    if(activeOrder&&activeOrder._id===orderId)refreshCalcResults(activeOrder);
   },350);
 };
 
@@ -769,7 +775,7 @@ window.offUpdZink=function(orderId,idx,f,b){
   debSave(`${orderId}|${idx}|zink`,async()=>{
     await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{frontColors:f,backColors:b},userId:currentUid,userName});
   });
-  if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
+  if(activeOrder&&activeOrder._id===orderId)refreshCalcResults(activeOrder);
 };
 
 window.offUpdPress=function(orderId,idx,sel){
@@ -785,7 +791,7 @@ window.offSelPaper=function(orderId,idx,name,sheets){
   if(activeOrder){const p=(activeOrder.products||[])[idx];if(p){p.paper=name;p.paperSheets=sheets;}}
   orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{paper:name,paperSheets:sheets},userId:currentUid,userName})
     .then(r=>{if(r&&!r.ok)toast('❌ '+(r.errors||[]).join(' · '),'err');});
-  if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
+  if(activeOrder&&activeOrder._id===orderId)refreshCalcResults(activeOrder);
 };
 
 window.offSelMachine=function(orderId,idx,tierId){
