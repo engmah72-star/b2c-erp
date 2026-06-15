@@ -523,7 +523,7 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { orderActions } from "./order-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
-let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
+let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
 let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
 let _selectedProds=new Set(); // prodIdxes checked for bulk add
 let _prodNameFilter=new Set(); // filter order list by product base names (multi-select)
@@ -723,9 +723,14 @@ function renderList(){
   // Build product name chips from full data (before stage filter)
   _renderProdNameFilterBar(data);
 
-  let filtered=currentFilter==='all'?data
-    :currentFilter==='has-lib'?data.filter(({o})=>_getMatchingProfile(o)!=null)
-    :data.filter(({o})=>o.stage===currentFilter);
+  // Stage filter (multi-select): empty set = show all
+  let filtered=data;
+  if(currentStageFilters.size){
+    filtered=filtered.filter(({o})=>{
+      if(currentStageFilters.has('has-lib')&&_getMatchingProfile(o)!=null)return true;
+      return currentStageFilters.has(o.stage||'');
+    });
+  }
 
   // Apply product name filter (multi-select)
   if(_prodNameFilter.size){
@@ -1308,9 +1313,19 @@ function applySort(arr){
   return a;
 }
 window.setFilter=function(f,btn){
-  currentFilter=f;
-  document.querySelectorAll('#stage-filter-bar .ftab').forEach(b=>b.classList.remove('active'));
-  btn?.classList.add('active');
+  if(f==='all'){
+    // "الكل" clears all stage selections
+    currentStageFilters.clear();
+  }else{
+    if(currentStageFilters.has(f))currentStageFilters.delete(f);
+    else currentStageFilters.add(f);
+  }
+  // Update active state on all tabs
+  document.querySelectorAll('#stage-filter-bar .ftab').forEach(b=>{
+    const fv=b.getAttribute('onclick')?.match(/setFilter\('([^']+)'/)?.[1]||'';
+    if(fv==='all')b.classList.toggle('active',currentStageFilters.size===0);
+    else b.classList.toggle('active',currentStageFilters.has(fv));
+  });
   renderList();
 };
 
