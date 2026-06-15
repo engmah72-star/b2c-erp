@@ -451,6 +451,57 @@ function renderCalcTab(o){
       }).join(''):`<div style="padding:12px;text-align:center;color:var(--dim2);font-size:var(--fs-xs)">لا توجد مقاسات مناسبة لهذه الماكينة</div>`}
     </div>`;
 
+    // ── تحليل التشغيل ──
+    let analysisCard='';
+    if(tierPapers.length&&printSize&&qty>0){
+      const stdPaper=tierPapers.find(pm=>(pm.family||'').includes('ستاندر'));
+      const jayPaper=tierPapers.find(pm=>(pm.family||'').includes('جاير'));
+      const stdLayout=stdPaper?eng.fitLayout(printSize,stdPaper.originalSize||''):null;
+      const jayLayout=jayPaper?eng.fitLayout(printSize,jayPaper.originalSize||''):null;
+      const stdEff=stdLayout?.efficiency||0, jayEff=jayLayout?.efficiency||0;
+      const stdPcs=stdPaper?.pcs||0, jayPcs=jayPaper?.pcs||0;
+      const stdCost=stdPaper?.hasPrice?eng.calcPaperCost(stdPaper.sheetsTotal,stdPaper.costPerSheet):0;
+      const jayCost=jayPaper?.hasPrice?eng.calcPaperCost(jayPaper.sheetsTotal,jayPaper.costPerSheet):0;
+      // هل ماكينة أصغر كانت ممكنة؟
+      const tierOrder=['tumn','rub3','nus','kaml'];
+      const ti=tierOrder.indexOf(tierId);
+      const smallerTid=ti>0?tierOrder[ti-1]:null;
+      const smallerFits=smallerTid?allRankings.some(pm=>pmMatchesTier(pm,smallerTid)):false;
+      // winner
+      const stdWins=stdEff>=jayEff||(stdEff===jayEff&&stdPcs>=jayPcs);
+      const winnerName=stdWins?(stdPaper?.name||'ستاندر'):(jayPaper?.name||'جاير');
+      const loserName=stdWins?(jayPaper?.name||'جاير'):(stdPaper?.name||'ستاندر');
+      const winnerEff=stdWins?stdEff:jayEff, loserEff=stdWins?jayEff:stdEff;
+      const effDiff=winnerEff-loserEff;
+      const rows=[];
+      if(stdPaper&&jayPaper){
+        rows.push(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:7px 10px;background:rgba(0,217,126,.06);border-radius:8px;border:1px solid rgba(0,217,126,.2)">
+          <div style="flex:1;font-size:var(--fs-xs)">
+            <strong style="color:var(--g)">✅ الأوفر: ${escH(winnerName)}</strong> (${escH(stdPaper?.originalSize||'')} vs ${escH(jayPaper?.originalSize||'')} سم)
+            <div style="font-size:9px;color:var(--dim2);margin-top:2px">استغلال ${winnerEff}% مقابل ${loserEff}% ${effDiff>0?`(أفضل بـ ${effDiff}%)`:''} · ${stdPcs>=jayPcs?stdPcs:jayPcs} ق/فرخة</div>
+            ${stdCost>0&&jayCost>0?`<div style="font-size:9px;color:var(--dim2)">تكلفة ورق: ${stdWins?fmt(stdCost):fmt(jayCost)} ج مقابل ${stdWins?fmt(jayCost):fmt(stdCost)} ج</div>`:''}
+          </div>
+        </div>`);
+      }
+      if(smallerFits&&smallerTid){
+        rows.push(`<div style="font-size:9px;padding:6px 10px;background:rgba(59,158,255,.07);border-radius:8px;border:1px solid rgba(59,158,255,.2)">
+          💡 <strong style="color:#3b9eff">اقتراح:</strong> المنتج يتناسب أيضاً مع ماكينة <strong>${getTierLabel(smallerTid)}</strong> — قد تكون أرخص في التشغيل لو المطبعة تقدّر.
+          <button onclick="offSelMachine('${o._id}',${idx},'${smallerTid}')" class="off-btn" style="font-size:9px;padding:2px 8px;margin-right:6px;margin-top:3px">تجربة ${getTierLabel(smallerTid)}</button>
+        </div>`);
+      }
+      if(upgraded){
+        rows.push(`<div style="font-size:9px;padding:6px 10px;background:rgba(255,170,0,.08);border-radius:8px;border:1px solid rgba(255,170,0,.2)">
+          ⚠️ <strong style="color:var(--y)">تصعيد تلقائي:</strong> المنتج (${escH(printSize)} سم) أكبر من ماكينة ${getTierLabel(prefTier)} — تم الانتقال لماكينة ${getTierLabel(tierId)}.
+        </div>`);
+      }
+      if(rows.length){
+        analysisCard=`<div class="off-card" style="border-color:rgba(0,217,126,.2)">
+          <div class="off-sec-hd">💡 تحليل التشغيل</div>
+          ${rows.join('')}
+        </div>`;
+      }
+    }
+
     // ملخص التكلفة
     const selPaperName=selRank?.name||p.paper||'';
     const selSz=selRank?.originalSize||paperMeta?.originalSize||'';
@@ -550,6 +601,7 @@ function renderCalcTab(o){
     </div>
 
     ${rankCards}
+    ${analysisCard}
     ${costSummary}
   `;
 }
