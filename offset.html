@@ -114,14 +114,14 @@
 <script type="module">
 import { auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, getDoc, onSnapshot, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, getDoc, onSnapshot, query, where, limit, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { productionActions } from "./production-actions.js";
 import { productStatusBadge } from "./orders.js";
 
 // ── حالة ──
 let orders=[], activeId='', activeOrder=null, activeProdIdx=0;
-let suppliers=[], appSettings={}, wallets=[], briefTemplates=[];
+let suppliers=[], appSettings={}, briefTemplates=[];
 let currentRole='', userName='', currentUid='';
 let _listFilter='all', _listSearch='';
 
@@ -221,24 +221,19 @@ onAuthStateChanged(auth,async u=>{
 
 // ── Listeners ──
 function startListeners(){
-  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),limit(500)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    orders=raw
-      .filter(o=>(o.products||[]).some(p=>(p.printType||'').includes('offset')))
-      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),orderBy('createdAt','desc'),limit(150)),snap=>{
+    orders=snap.docs
+      .map(d=>({...d.data(),_id:d.id}))
+      .filter(o=>(o.products||[]).some(p=>(p.printType||'').includes('offset')));
     if($('off-count'))$('off-count').textContent=orders.length+' أوردر';
     renderList();
     if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderWorkspace(o);}}
   });
   onSnapshot(doc(db,'settings','main'),snap=>{
     if(snap.exists())appSettings=snap.data();
-    if(activeOrder)renderWorkspace(activeOrder);
   });
-  onSnapshot(query(collection(db,'suppliers'),limit(200)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(s=>s.active!==false);
-  });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  onSnapshot(query(collection(db,'suppliers'),where('active','!=',false),limit(100)),snap=>{
+    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
   onSnapshot(doc(db,'master_lists','print_brief_templates'),snap=>{
     briefTemplates=snap.exists()?(snap.data()?.items||[]):[];
