@@ -67,7 +67,7 @@ export const STANDARD_PAPER_SIZES = [
   { id:'ts-a',    name:'تسعات',          originalSize:'23×33',  machine:'',                  family:'تسعات'  },
   { id:'ts-b',    name:'تسعات A4',       originalSize:'21×29',  machine:'',                  family:'تسعات'  },
   { id:'ashr',    name:'عشرات',          originalSize:'20×35',  machine:'',                  family:'عشرات'  },
-  { id:'hdsh',    name:'حدشرات',         originalSize:'20×30',  machine:'',                  family:'عشرات'  },
+  { id:'hdsh',    name:'حداشر',           originalSize:'20×30',  machine:'',                  family:'عشرات'  },
 ];
 
 /**
@@ -100,6 +100,14 @@ export function fitPiecesPerSheet(printSize, paperSize) {
   const ps  = parseSizePair(printSize);
   const eff = effectivePaperSize(paperSize);
   if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return 0;
+  // قص مباشر: الورق ≈ مقاس الطباعة (فرق ≤ 2 سم) → قطعة واحدة بالضرورة
+  const pap = parseSizePair(paperSize);
+  if (pap) {
+    const tol = 2;
+    const isDirect = (Math.abs(pap.w - ps.w) <= tol && Math.abs(pap.h - ps.h) <= tol) ||
+                     (Math.abs(pap.w - ps.h) <= tol && Math.abs(pap.h - ps.w) <= tol);
+    if (isDirect) return 1;
+  }
   const normal  = Math.floor(eff.w / ps.w) * Math.floor(eff.h / ps.h);
   const rotated = Math.floor(eff.w / ps.h) * Math.floor(eff.h / ps.w);
   return Math.max(normal, rotated, 0);
@@ -115,6 +123,15 @@ export function fitLayout(printSize, paperSize) {
   const ps  = parseSizePair(printSize);
   const eff = effectivePaperSize(paperSize);
   if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return null;
+
+  // قص مباشر: الورق ≈ مقاس الطباعة → تخطيط 1×1، لا قصات داخلية
+  const pap = parseSizePair(paperSize);
+  if (pap) {
+    const tol = 2;
+    const isDirect = (Math.abs(pap.w - ps.w) <= tol && Math.abs(pap.h - ps.h) <= tol) ||
+                     (Math.abs(pap.w - ps.h) <= tol && Math.abs(pap.h - ps.w) <= tol);
+    if (isDirect) return { cols:1, rows:1, pcs:1, rotated:false, cuts:0, efficiency:100, effectiveW:eff.w, effectiveH:eff.h };
+  }
 
   const nCols = Math.floor(eff.w / ps.w), nRows = Math.floor(eff.h / ps.h);
   const rCols = Math.floor(eff.w / ps.h), rRows = Math.floor(eff.h / ps.w);
