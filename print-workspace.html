@@ -291,6 +291,7 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { buildOrderSplit, productStatusBadge, PRODUCT_STATUS, dedupEmployees } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { shippingActions } from "./shipping-actions.js";
+import { productionActions } from "./production-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
@@ -823,6 +824,52 @@ function pwRenderSpecs(o){
       </div>`;
     }
 
+    // بنود التكلفة المسجلة لهذا المنتج
+    const prodCostItems=(o.costItems||[]).reduce((arr,ci,ciIdx)=>{if(Number(ci.prodIdx)===idx)arr.push({...ci,_ciIdx:ciIdx});return arr;},[]);
+    const totalProdCost=prodCostItems.reduce((s,ci)=>s+(parseFloat(ci.total)||0),0);
+    const canReqPay=['admin','operation_manager','production_agent'].includes(currentRole);
+    const allOrderCostTotal=(o.costItems||[]).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0);
+    const orderSale=parseFloat(o.salePrice)||0;
+    const orderMargin=orderSale-allOrderCostTotal;
+    const marginColor=orderMargin>=0?'var(--g)':'var(--r)';
+
+    const costItemsPanel=prodCostItems.length?`
+      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2)">💰 بنود التكلفة</div>
+          <div style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--y)">${totalProdCost.toLocaleString('ar-EG')} ج</div>
+        </div>
+        ${prodCostItems.map(ci=>{
+          const isPaid=!!ci.paid;
+          const isPending=!isPaid&&!!ci.pendingPaymentRequestId;
+          const badge=isPaid
+            ?'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(0,217,126,.15);color:var(--g);border:1px solid rgba(0,217,126,.3)">✓ مدفوع</span>'
+            :isPending
+            ?'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(255,170,0,.12);color:var(--y);border:1px solid rgba(255,170,0,.3)">⏳ في انتظار الاعتماد</span>'
+            :'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(255,80,80,.1);color:var(--r);border:1px solid rgba(255,80,80,.25)">غير مدفوع</span>';
+          const payBtn=(!isPaid&&!isPending&&canReqPay&&ci.supplierId)
+            ?`<button type="button" onclick="requestPaymentForCostItem('${o._id}',${ci._ciIdx})" class="pw-btn" style="font-size:9px;padding:2px 8px;border-radius:8px">💸 طلب دفع</button>`:'';
+          return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border:1px solid var(--line);border-radius:8px;margin-bottom:4px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold)">${escH(ci.type||'—')}</span>
+                ${badge}
+              </div>
+              ${ci.note?`<div style="font-size:9px;color:var(--dim2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escH(ci.note)}</div>`:''}
+              ${ci.supplierName?`<div style="font-size:9px;color:var(--dim2)">🏭 ${escH(ci.supplierName)}</div>`:''}
+            </div>
+            <div style="text-align:left;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+              <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--snow)">${(parseFloat(ci.total)||0).toLocaleString('ar-EG')} ج</div>
+              ${payBtn}
+            </div>
+          </div>`;
+        }).join('')}
+        ${orderSale>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(0,0,0,.15);border-radius:8px;margin-top:4px">
+          <span style="font-size:10px;color:var(--dim2)">الهامش (البيع − إجمالي التكلفة)</span>
+          <span style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${marginColor}">${orderMargin>=0?'+':''}${orderMargin.toLocaleString('ar-EG')} ج</span>
+        </div>`:''}
+      </div>`:'';
+
     const offsetHtml=!isOffset?'':(`
       <div class="pw-grid2" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
         <div class="pw-field"><label>🟨 نوع الزنكات</label><input class="pw-inp" type="text" value="${escAttr(p.zinkType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'zinkType',this.value)" placeholder="4 ألوان"></div>
@@ -835,6 +882,7 @@ function pwRenderSpecs(o){
       <div class="pw-field"><label>📅 ميعاد المطبعة</label><input class="pw-inp" type="datetime-local" value="${toLocalDT(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')"></div>
       <div class="pw-field"><label>📝 ملاحظات الشغل</label><input class="pw-inp" type="text" value="${escAttr(p.briefNotes||'')}" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="ملاحظات خاصة بالمطبعة..."></div>
       ${prodCalcHtml}
+      ${costItemsPanel}
       <div style="margin-top:10px">
         <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} class="pw-btn ${r.ready?'pw-btn-wa':''}" style="width:100%;${!r.ready?'cursor:not-allowed;opacity:.6':''}">
           💬 ${p.briefSentAt?'إعادة إرسال للمطبعة':'إرسال للمطبعة عبر واتساب'}
@@ -1072,7 +1120,13 @@ window.applyOffsetCostItems=async function(orderId,idx){
     lines.push({type:'ورق',total:paperCost,supplierId:paperMeta.supplierId||'',supplierName:paperMeta.supplierName||'',note:`${paperMeta.name} ${paperMeta.originalSize||''} — ${sc.sheetsTotal} فرخة`.trim()});
   }
   if(machine&&machineCost>0){
-    lines.push({type:'طباعة',total:machineCost,supplierId:'',supplierName:'',note:`${machine} — ${trajs} تراج × ${machineRate} ج`});
+    lines.push({type:'طباعة',total:machineCost,supplierId:p.pressId||'',supplierName:p.pressName||'',note:`${machine} — ${trajs} تراج × ${machineRate} ج`});
+  }
+  const zincCostPerPlate=parseFloat(appSettings?.zincCostPerPlate)||0;
+  const zinkCount=eng.calcZincCount(frontC,backC);
+  if(zinkCount>0&&zincCostPerPlate>0){
+    const zincTotal=eng.calcZincCost(frontC,backC,zincCostPerPlate);
+    lines.push({type:'زنكات',total:zincTotal,supplierId:p.pressId||'',supplierName:p.pressName||'',note:`${zinkCount} لوح (${frontC} وجه + ${backC} ظهر) × ${zincCostPerPlate} ج`});
   }
   if(!lines.length)return toast('⚠️ لا توجد بنود محسوبة — تأكد من إدخال بيانات الورق والطباعة','warn');
   let ok=true,msgs=[];
@@ -1082,6 +1136,17 @@ window.applyOffsetCostItems=async function(orderId,idx){
   }
   if(ok)toast(`✅ تم تسجيل ${lines.length} بند تكلفة`,'ok');
   else toast('⚠️ '+msgs.join(' · '),'err');
+};
+
+// ── طلب دفع بند تكلفة أوفست ────────────────────────────────
+window.requestPaymentForCostItem=async function(orderId,ciIdx){
+  const o=orders.find(x=>x._id===orderId)||activeOrder;if(!o)return;
+  const ci=(o.costItems||[])[ciIdx];if(!ci)return;
+  if(!ci.supplierId)return toast('⚠️ البند بدون مورد — حدّد المورد أولاً','warn');
+  const uid=auth?.currentUser?.uid||'';
+  const r=await productionActions.requestSupplierPayment({db,orderId,costItemIdx:ciIdx,order:o,role:currentRole,userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast(`✅ تم إرسال طلب الدفع: ${ci.type} — ${parseFloat(ci.total).toLocaleString('ar-EG')} ج`,'ok');
 };
 
 window.setZinkFromSelect=function(orderId,idx,val){
