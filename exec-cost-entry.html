@@ -526,7 +526,7 @@ let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userN
 let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
 let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
 let _selectedProds=new Set(); // prodIdxes checked for bulk add
-let _prodNameFilter=''; // filter order list by product base name
+let _prodNameFilter=new Set(); // filter order list by product base names (multi-select)
 let _selectedOrders=new Map(); // orderId→{prodIdx,baseName,qty,prodName} for cross-order bulk
 let _selRefBase=''; // lock: first selected order's baseName (others must match)
 let _selRefQty=null; // lock: first selected order's qty (others must match)
@@ -727,9 +727,9 @@ function renderList(){
     :currentFilter==='has-lib'?data.filter(({o})=>_getMatchingProfile(o)!=null)
     :data.filter(({o})=>o.stage===currentFilter);
 
-  // Apply product name filter
-  if(_prodNameFilter){
-    filtered=filtered.filter(({prod})=>prod&&_normBaseName(prod.name)===_prodNameFilter);
+  // Apply product name filter (multi-select)
+  if(_prodNameFilter.size){
+    filtered=filtered.filter(({prod})=>prod&&_prodNameFilter.has(_normBaseName(prod.name)));
   }
 
   filtered=applySort(filtered);
@@ -765,7 +765,7 @@ function renderList(){
     const isSelected=_selectedOrders.has(o._id+'::'+prodIdx);
     // Dim cards that don't match the locked selection criteria
     const isLocked=_selRefBase&&(baseName!==_selRefBase||(_selRefQty!=null&&qty!=null&&String(qty)!==String(_selRefQty)));
-    const showCb=!!_prodNameFilter&&!!prod;
+    const showCb=_prodNameFilter.size>0&&!!prod;
     const cbHtml=showCb
       ?`<label class="ord-sel-wrap" onclick="event.stopPropagation()">
           <input type="checkbox" class="ord-sel-cb" ${isSelected?'checked':''} ${isLocked?'disabled':''} onchange="toggleOrderSelect('${o._id}',${prodIdx},'${baseName.replace(/'/g,"\\'")}',${qty},'${prodName.replace(/'/g,"\\'")}',this.checked)">
@@ -1327,18 +1327,26 @@ function _renderProdNameFilterBar(data){
   const names=Object.entries(counts).sort((a,b)=>b[1]-a[1]); // sort by frequency
   if(names.length<=1){el.hidden=true;return;}
   el.hidden=false;
+  const noneActive=!_prodNameFilter.size;
   let html=`<div class="pnf-bar">
     <span class="pnf-label">📦</span>
-    <button class="pnf-chip${!_prodNameFilter?' pnf-active':''}" onclick="setProdNameFilter('')">الكل</button>`;
+    <button class="pnf-chip${noneActive?' pnf-active':''}" onclick="clearProdNameFilter()">الكل</button>`;
   names.forEach(([name,cnt])=>{
-    html+=`<button class="pnf-chip${_prodNameFilter===name?' pnf-active':''}" onclick="setProdNameFilter('${name.replace(/'/g,"\\'")}')">${name} <span class="pnf-cnt">${cnt}</span></button>`;
+    const active=_prodNameFilter.has(name);
+    html+=`<button class="pnf-chip${active?' pnf-active':''}" onclick="toggleProdNameFilter('${name.replace(/'/g,"\\'")}')">${name} <span class="pnf-cnt">${cnt}</span></button>`;
   });
   html+=`</div>`;
   el.innerHTML=html;
 }
 
-window.setProdNameFilter=function(name){
-  _prodNameFilter=name;
+window.toggleProdNameFilter=function(name){
+  if(_prodNameFilter.has(name))_prodNameFilter.delete(name);
+  else _prodNameFilter.add(name);
+  renderList();
+};
+
+window.clearProdNameFilter=function(){
+  _prodNameFilter.clear();
   renderList();
 };
 
