@@ -782,11 +782,25 @@ window.offSelPaper=function(orderId,idx,name,sheets){
 };
 
 window.offSelMachine=function(orderId,idx,tierId){
+  const o=activeOrder;if(!o)return;
+  const p=(o.products||[])[idx];if(!p)return;
+  const eng=window.offsetCostEngine;
   const tier=MACHINE_TIERS.find(t=>t.id===tierId)||MACHINE_TIERS[1];
+  const printSize=p.printSize||p.size||'';
+  // تحقق إن المنتج بيتناسب مع الماكينة قبل الحفظ
+  if(eng&&printSize){
+    const fits=tier.sizes.some(s=>eng.fitPiecesPerSheet(printSize,`${s.w}×${s.h}`)>0);
+    if(!fits){
+      toast(`❌ المنتج (${printSize} سم) أكبر من ماكينة ${getTierLabel(tierId)} (${tier.sizes[0].w}×${tier.sizes[0].h} سم)`,'err');
+      return;
+    }
+  }
+  const CUTS={tumn:8,rub3:4,nus:2,kaml:1};
+  const paperCuts=CUTS[tierId]||4;
   const stdSize=`${tier.sizes[0].w}×${tier.sizes[0].h}`;
-  if(activeOrder){const p=(activeOrder.products||[])[idx];if(p){p.machineSize=tierId;p.cutSize=stdSize;}}
-  orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{machineSize:tierId,cutSize:stdSize},userId:currentUid,userName});
-  if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
+  p.machineSize=tierId;p.cutSize=stdSize;p.paperCuts=paperCuts;
+  orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{machineSize:tierId,cutSize:stdSize,paperCuts},userId:currentUid,userName});
+  if(o._id===orderId)renderCalcTab(o);
 };
 
 window.offApplyCost=async function(orderId,idx){
