@@ -2,7 +2,56 @@
 
 export const OFFSET_WASTE_PCT = 0.05; // 5% هالك ثابت
 
-// ── المقاسات القياسية في السوق المصري ───────────────────────────
+// ── هوامش الطباعة الفعلية ────────────────────────────────────────
+// هامش العرض فقط (الجانبان الأيمن والأيسر — علامات قص وتسجيل).
+// هامش الطول = 0: الماسكة تأكل الحافة الأولى من الورق لكنها لا تُقلّص
+// عدد الصفوف — القطع تُوزَّع على كامل الطول والهدر يُقطَّع في النهاية.
+export const SHEET_MARGIN_W = 1.0; // سم — إجمالي الجانبين (يمين + يسار)
+export const SHEET_MARGIN_H = 0;   // سم — لا خصم من الطول (الماسكة = هدر منفصل)
+
+// ── قصات السوق المصري المعروفة ────────────────────────────────────
+// مرجع خبرة السوق — يُعرض كتسمية بجانب الحساب الفعلي.
+// • calcCount: العدد الهندسي الصحيح (مصدر القرار).
+// • marketCount: التسمية التجارية المتعارف عليها.
+// • إذا اختلفا يُشرح السبب في الواجهة.
+export const KNOWN_MARKET_CUTS = [
+  // ───── من ستاندر كامل 70×100 ─────
+  { sizes:['50×70'],           name:'نصف فرخ (نص)',  marketCount:2,  calcCount:2,  sheet:'70×100', tier:'nus'  },
+  { sizes:['35×50'],           name:'ربع فرخ',        marketCount:4,  calcCount:4,  sheet:'70×100', tier:'rub3' },
+  { sizes:['25×35'],           name:'ثمن فرخ',        marketCount:8,  calcCount:8,  sheet:'70×100', tier:'tumn' },
+  { sizes:['17.5×25'],         name:'ستاشر',          marketCount:16, calcCount:16, sheet:'70×100', tier:'tumn' },
+  { sizes:['23×33','21×29'],   name:'تسعات',          marketCount:9,  calcCount:9,  sheet:'70×100', tier:'rub3' },
+  { sizes:['20×35'],           name:'عشرات',          marketCount:10, calcCount:10, sheet:'70×100', tier:'rub3' },
+  // حداشر: القطعة 20×30 — حجمها ثمن فرخة تقريباً فتُطبع على ماكينة التمن.
+  // الاسم السوقي "حداشر" (11) مشتق من تقريب المساحة (7000÷600≈11.67).
+  // الشراء: فرخ كامل 70×100 تُقصّ جيوتين إلى 20×30 → 10 قطع فعلياً.
+  // الطباعة: كل قطعة 20×30 تدخل ماكينة التمن (تستوعب حتى 22×33 أو 25×35).
+  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100', tier:'tumn',
+    note:'التسمية السوقية "حداشر" (11) مبنية على تقريب المساحة. الفرخة 70×100 تُعطي 10 قطع جيوتين (2 عمود × 5 صف عرضي). كل قطعة تُطبع منفردة على ماكينة التمن.' },
+  // ───── من جاير كامل 66×88 ─────
+  { sizes:['44×66'],           name:'نصف جاير',      marketCount:2,  calcCount:2,  sheet:'66×88',  tier:'nus'  },
+  { sizes:['33×44'],           name:'ربع جاير',       marketCount:4,  calcCount:4,  sheet:'66×88',  tier:'rub3' },
+  { sizes:['22×33'],           name:'ثمن جاير',       marketCount:8,  calcCount:8,  sheet:'66×88',  tier:'tumn' },
+];
+
+/**
+ * يبحث عن اسم القصة السوقية لمقاس طباعة معيّن.
+ * يجرّب الاتجاهين (طولي + عرضي).
+ */
+export function lookupMarketCut(printSize) {
+  const ps = parseSizePair(printSize);
+  if (!ps) return null;
+  return KNOWN_MARKET_CUTS.find(cut =>
+    cut.sizes.some(s => {
+      const sz = parseSizePair(s);
+      if (!sz) return false;
+      const tol = 0.6; // تسامح 6mm
+      return (Math.abs(sz.w - ps.w) < tol && Math.abs(sz.h - ps.h) < tol) ||
+             (Math.abs(sz.w - ps.h) < tol && Math.abs(sz.h - ps.w) < tol);
+    })
+  ) || null;
+}
+
 export const STANDARD_PAPER_SIZES = [
   // ستاندر
   { id:'s-full',  name:'ستاندر كامل',    originalSize:'70×100', machine:'ماكينة فرخ كامل',  family:'ستاندر' },
@@ -19,7 +68,7 @@ export const STANDARD_PAPER_SIZES = [
   { id:'ts-a',    name:'تسعات',          originalSize:'23×33',  machine:'',                  family:'تسعات'  },
   { id:'ts-b',    name:'تسعات A4',       originalSize:'21×29',  machine:'',                  family:'تسعات'  },
   { id:'ashr',    name:'عشرات',          originalSize:'20×35',  machine:'',                  family:'عشرات'  },
-  { id:'hdsh',    name:'حدشرات',         originalSize:'20×30',  machine:'',                  family:'عشرات'  },
+  { id:'hdsh',    name:'حداشر',           originalSize:'20×30',  machine:'',                  family:'عشرات'  },
 ];
 
 /**
@@ -32,34 +81,58 @@ export function parseSizePair(str) {
 }
 
 /**
- * عدد القطع داخل فرخة الورق — يجرّب الاتجاهين.
+ * المقاس الفعلي القابل للطباعة بعد خصم الماسكة والعلامات الفنية.
+ * الماكينة تأكل هامشاً من كل حافة — النتيجة هي المساحة الصالحة فعلاً للتوزيع.
+ */
+export function effectivePaperSize(paperSizeStr) {
+  const p = parseSizePair(paperSizeStr);
+  if (!p) return null;
+  return {
+    w: Math.max(p.w - SHEET_MARGIN_W, 0),
+    h: Math.max(p.h - SHEET_MARGIN_H, 0),
+  };
+}
+
+/**
+ * عدد القطع داخل فرخة الورق.
+ * يجرّب الاتجاهين (طبيعي + مقلوب) على المقاس الفعلي بعد خصم الهوامش.
  */
 export function fitPiecesPerSheet(printSize, paperSize) {
-  const ps    = parseSizePair(printSize);
-  const paper = parseSizePair(paperSize);
-  if (!ps || !paper || ps.w <= 0 || ps.h <= 0) return 0;
-  const normal  = Math.floor(paper.w / ps.w) * Math.floor(paper.h / ps.h);
-  const rotated = Math.floor(paper.w / ps.h) * Math.floor(paper.h / ps.w);
+  const ps  = parseSizePair(printSize);
+  const eff = effectivePaperSize(paperSize);
+  if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return 0;
+  const normal  = Math.floor(eff.w / ps.w) * Math.floor(eff.h / ps.h);
+  const rotated = Math.floor(eff.w / ps.h) * Math.floor(eff.h / ps.w);
   return Math.max(normal, rotated, 0);
 }
 
 /**
- * تخطيط القص: كام عمود × كام صف + هل مقلوب؟
- * @returns {{ cols, rows, pcs, rotated, efficiency }} أو null
+ * تخطيط القص التفصيلي: كام عمود × كام صف + هل مقلوب؟
+ * الكفاءة تُحسب نسبة المساحة المستخدمة من المساحة الفعلية للطباعة (لا المقاس النظري).
+ * cuts = عدد مراحل القص بالمقصّ الغيوتيني = (cols-1) + (rows-1)
+ * @returns {{ cols, rows, pcs, rotated, cuts, efficiency, effectiveW, effectiveH }} أو null
  */
 export function fitLayout(printSize, paperSize) {
-  const ps    = parseSizePair(printSize);
-  const paper = parseSizePair(paperSize);
-  if (!ps || !paper || ps.w <= 0 || ps.h <= 0) return null;
-  const nCols = Math.floor(paper.w / ps.w), nRows = Math.floor(paper.h / ps.h);
-  const rCols = Math.floor(paper.w / ps.h), rRows = Math.floor(paper.h / ps.w);
-  const nPcs = nCols * nRows, rPcs = rCols * rRows;
+  const ps  = parseSizePair(printSize);
+  const eff = effectivePaperSize(paperSize);
+  if (!ps || !eff || ps.w <= 0 || ps.h <= 0 || eff.w <= 0 || eff.h <= 0) return null;
+
+  const nCols = Math.floor(eff.w / ps.w), nRows = Math.floor(eff.h / ps.h);
+  const rCols = Math.floor(eff.w / ps.h), rRows = Math.floor(eff.h / ps.w);
+  const nPcs  = nCols * nRows, rPcs = rCols * rRows;
+
   const best = nPcs >= rPcs
     ? { cols: nCols, rows: nRows, pcs: nPcs, rotated: false }
     : { cols: rCols, rows: rRows, pcs: rPcs, rotated: true  };
+
   const usedW = best.rotated ? best.cols * ps.h : best.cols * ps.w;
   const usedH = best.rotated ? best.rows * ps.w : best.rows * ps.h;
-  best.efficiency = Math.round(usedW * usedH / (paper.w * paper.h) * 100);
+  // الكفاءة نسبة لمساحة الطباعة الفعلية (وليس المقاس النظري)
+  best.efficiency   = eff.w * eff.h > 0 ? Math.round(usedW * usedH / (eff.w * eff.h) * 100) : 0;
+  best.effectiveW   = eff.w;
+  best.effectiveH   = eff.h;
+  // مراحل القص الغيوتيني: (عدد الأعمدة - 1) + (عدد الصفوف - 1)
+  best.cuts = Math.max(0, (best.cols - 1) + (best.rows - 1));
   return best;
 }
 
@@ -85,20 +158,17 @@ export function sheetsCalc(piecesPerSheet, qty) {
  * @returns {Array<{name, originalSize, machine, family, pcs, sheetsTotal, sheetsNet, wasteSheets, costPerSheet?, supplierName?, hasPrice}>}
  */
 export function rankAllSizes(printSize, qty, customSizes = []) {
-  // فهرسة custom بالمقاس للدمج السريع
   const customBySize = new Map();
   for (const cp of customSizes) {
     if (cp.originalSize) customBySize.set(cp.originalSize, cp);
   }
 
-  // دمج القياسية مع الـ custom
   const combined = STANDARD_PAPER_SIZES.map(std => {
     const c = customBySize.get(std.originalSize);
     return c ? { ...std, ...c, isStandard: true, hasPrice: !!c.costPerSheet }
              : { ...std, isStandard: true, hasPrice: false };
   });
 
-  // أضف custom غير موجودة في القياسية
   for (const cp of customSizes) {
     if (!STANDARD_PAPER_SIZES.some(s => s.originalSize === cp.originalSize)) {
       combined.push({ ...cp, isStandard: false, hasPrice: !!cp.costPerSheet });
@@ -109,10 +179,13 @@ export function rankAllSizes(printSize, qty, customSizes = []) {
     .map(pm => {
       const pcs = fitPiecesPerSheet(printSize, pm.originalSize || '');
       const sc  = pcs > 0 && qty > 0 ? sheetsCalc(pcs, qty) : { sheetsNet:0, wasteSheets:0, sheetsTotal:0 };
-      return { ...pm, pcs, ...sc };
+      const szPair = parseSizePair(pm.originalSize || '');
+      const _area  = szPair ? szPair.w * szPair.h : Infinity;
+      return { ...pm, pcs, ...sc, _area };
     })
     .filter(pm => pm.pcs > 0)
-    .sort((a, b) => b.pcs - a.pcs);
+    // القاعدة: أصغر مقاس يستوعب الشغلانة أولاً — لتقليل التكلفة والهالك
+    .sort((a, b) => a._area - b._area);
 }
 
 export function calcZincCount(frontColors, backColors) {
@@ -160,18 +233,20 @@ export function buildOffsetCostBreakdown({ product, paperMeta, zincCostPerPlate 
 // ── Browser global ──────────────────────────────────────────
 if (typeof window !== 'undefined') {
   window.offsetCostEngine = {
-    OFFSET_WASTE_PCT, STANDARD_PAPER_SIZES,
-    parseSizePair, fitPiecesPerSheet, fitLayout, sheetsCalc,
-    rankAllSizes,
+    OFFSET_WASTE_PCT, SHEET_MARGIN_W, SHEET_MARGIN_H, STANDARD_PAPER_SIZES,
+    KNOWN_MARKET_CUTS,
+    parseSizePair, effectivePaperSize, fitPiecesPerSheet, fitLayout, sheetsCalc,
+    rankAllSizes, lookupMarketCut,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
   };
 }
 if (typeof module !== 'undefined') {
   module.exports = {
-    OFFSET_WASTE_PCT, STANDARD_PAPER_SIZES,
-    parseSizePair, fitPiecesPerSheet, fitLayout, sheetsCalc,
-    rankAllSizes,
+    OFFSET_WASTE_PCT, SHEET_MARGIN_W, SHEET_MARGIN_H, STANDARD_PAPER_SIZES,
+    KNOWN_MARKET_CUTS,
+    parseSizePair, effectivePaperSize, fitPiecesPerSheet, fitLayout, sheetsCalc,
+    rankAllSizes, lookupMarketCut,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
   };
