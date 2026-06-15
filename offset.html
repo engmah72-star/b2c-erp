@@ -419,7 +419,10 @@ function buildCalcResults(o, idx){
       }
     }
     const selRank=tierPapers.find(pm=>pm.name===p.paper)||tierPapers[0]||null;
+    // selSheets = الإنتاج + الهالك (للضربات/التراج)
     const selSheets=selRank?.sheetsTotal||parseInt(p.paperSheets)||0;
+    // selPurchased = الأفرخ المُشتراة فعليًا (مُقرَّبة للرزمة — القاعدة: تكلفة الورق = purchasedSheets × سعر الفرخة)
+    const selPurchased=selRank?.purchasedSheets||selSheets;
     const machine=selRank?.machine||paperMeta?.machine||'';
     const machRates=appSettings.offsetMachineRates||{};
     const machRate=parseFloat(machRates[machine])||0;
@@ -428,7 +431,7 @@ function buildCalcResults(o, idx){
     const totalPasses=selSheets*(frontC+backC);
     const trajs=totalPasses>0?Math.ceil(totalPasses/1000):0;
     const selMeta=selRank?.hasPrice?selRank:paperMeta;
-    const paperCost=selMeta&&selSheets>0?eng.calcPaperCost(selSheets,selMeta.costPerSheet):0;
+    const paperCost=selMeta&&selPurchased>0?eng.calcPaperCost(selPurchased,selMeta.costPerSheet):0;
     const mc=trajs*machRate;
     const zc=eng.calcZincCost(frontC,backC,zincCPP);
     const totalCalc=paperCost+mc+zc;
@@ -444,13 +447,16 @@ function buildCalcResults(o, idx){
         const layout=eng.fitLayout(printSize,pm.originalSize||'');
         const eff=layout?.efficiency||0;
         const effCol=eff>=80?'var(--g)':eff>=60?'var(--y)':'var(--r)';
-        const pc=pm.hasPrice&&pm.costPerSheet?eng.calcPaperCost(pm.sheetsTotal,pm.costPerSheet):0;
+        const purchSh=pm.purchasedSheets||pm.sheetsTotal||0;
+        const pc=pm.hasPrice&&pm.costPerSheet?eng.calcPaperCost(purchSh,pm.costPerSheet):0;
         const border=isSel?'var(--y)':isRec?'#3b9eff':'var(--line)';
         const bg=isSel?'rgba(255,170,0,.07)':isRec?'rgba(59,158,255,.05)':'var(--bg3)';
         const family=pm.family||'';
-        const layoutStr=layout?`${layout.cols} عمود × ${layout.rows} صف${layout.rotated?' (مقلوب)':''}`:'' ;
+        const cutsStr=layout?.cuts>0?` · ${layout.cuts} مراحل قص`:'';
+        const layoutStr=layout?`${layout.cols} عمود × ${layout.rows} صف${layout.rotated?' (مقلوب)':''}${cutsStr}`:'' ;
         const effArea=layout?`طباعة فعلية ${layout.effectiveW}×${layout.effectiveH} سم`:'';
-        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal})"
+        const purchExtra=purchSh>pm.sheetsTotal?` (شراء: ${purchSh})`:'';
+        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${purchSh})"
           style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:2px solid ${border};background:${bg};cursor:pointer;margin-bottom:5px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
@@ -463,7 +469,7 @@ function buildCalcResults(o, idx){
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
             <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--b)">${pm.pcs}</div><div style="font-size:9px;color:var(--dim2)">ق/فرخة</div></div>
-            <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--g)">${pm.sheetsTotal}</div><div style="font-size:9px;color:var(--dim2)">فرخة</div></div>
+            <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--g)">${pm.sheetsTotal}</div><div style="font-size:9px;color:var(--dim2)">إنتاج${purchExtra}</div></div>
             ${pc>0?`<div style="text-align:center"><div style="font-size:13px;font-weight:var(--fw-heavy);color:var(--y)">${fmt(pc)}</div><div style="font-size:9px;color:var(--dim2)">ج</div></div>`:''}
             <div style="text-align:center;background:${effCol}18;border-radius:5px;padding:2px 5px"><div style="font-size:12px;font-weight:var(--fw-bold);color:${effCol}">${eff}%</div><div style="font-size:9px;color:var(--dim2)">كفاءة</div></div>
           </div>
@@ -522,9 +528,12 @@ function buildCalcResults(o, idx){
       costSummary=`<div class="off-card" style="border-color:rgba(255,170,0,.35)">
         <div class="off-sec-hd">💰 ملخص التكلفة التقديرية</div>
         <div style="display:flex;flex-direction:column;gap:7px">
-          ${paperCost>0?`<div style="display:flex;justify-content:space-between;font-size:var(--fs-xs)">
-            <span style="color:var(--dim2)">📄 ورق · ${escH(selPaperName)} · ${selSheets} فرخة${selSz?' ('+selSz+' سم)':''}</span>
-            <span style="font-weight:var(--fw-bold)">${fmt(paperCost)} ج</span></div>`:''}
+          ${paperCost>0?`<div style="display:flex;justify-content:space-between;align-items:flex-start;font-size:var(--fs-xs)">
+            <span style="color:var(--dim2)">📄 ورق · ${escH(selPaperName)}${selSz?' ('+selSz+' سم)':''}
+              <span style="display:block;font-size:9px">إنتاج: ${selSheets} فرخة${selPurchased>selSheets?` · شراء: <strong style="color:var(--y)">${selPurchased} فرخة</strong>`:''}${selRank?.repackSize?` (رزمة ${selRank.repackSize})`:''}
+              </span>
+            </span>
+            <span style="font-weight:var(--fw-bold);white-space:nowrap">${fmt(paperCost)} ج</span></div>`:''}
           ${mc>0?`<div style="display:flex;justify-content:space-between;font-size:var(--fs-xs)">
             <span style="color:var(--dim2)">⚙️ طباعة · ${escH(machine||getTierLabel(tierId))} · ${trajs} تراج × ${machRate} ج</span>
             <span style="font-weight:var(--fw-bold)">${fmt(mc)} ج</span></div>`:''}

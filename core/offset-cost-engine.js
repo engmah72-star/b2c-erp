@@ -108,7 +108,8 @@ export function fitPiecesPerSheet(printSize, paperSize) {
 /**
  * تخطيط القص التفصيلي: كام عمود × كام صف + هل مقلوب؟
  * الكفاءة تُحسب نسبة المساحة المستخدمة من المساحة الفعلية للطباعة (لا المقاس النظري).
- * @returns {{ cols, rows, pcs, rotated, efficiency, effectiveW, effectiveH }} أو null
+ * cuts = عدد مراحل القص بالمقصّ الغيوتيني = (cols-1) + (rows-1)
+ * @returns {{ cols, rows, pcs, rotated, cuts, efficiency, effectiveW, effectiveH }} أو null
  */
 export function fitLayout(printSize, paperSize) {
   const ps  = parseSizePair(printSize);
@@ -129,20 +130,28 @@ export function fitLayout(printSize, paperSize) {
   best.efficiency   = eff.w * eff.h > 0 ? Math.round(usedW * usedH / (eff.w * eff.h) * 100) : 0;
   best.effectiveW   = eff.w;
   best.effectiveH   = eff.h;
+  // مراحل القص الغيوتيني: (عدد الأعمدة - 1) + (عدد الصفوف - 1)
+  best.cuts = Math.max(0, (best.cols - 1) + (best.rows - 1));
   return best;
 }
 
 /**
  * حساب الفروخ مع الهالك 5%.
+ * repackSize: حجم الرزمة/المجموعة التي يبيعها المورد (0 = بلا حد أدنى).
+ * purchasedSheets: الفروخ التي ستُشترى فعليًا (مُقرَّبة لأقرب رزمة).
+ * القاعدة: تكلفة الورق = purchasedSheets × سعر الفرخة، لا sheetsTotal.
  */
-export function sheetsCalc(piecesPerSheet, qty) {
+export function sheetsCalc(piecesPerSheet, qty, repackSize = 0) {
   if (!piecesPerSheet || !qty || piecesPerSheet <= 0 || qty <= 0) {
-    return { sheetsNet: 0, wasteSheets: 0, sheetsTotal: 0, piecesPerSheet: 0 };
+    return { sheetsNet: 0, wasteSheets: 0, sheetsTotal: 0, purchasedSheets: 0, piecesPerSheet: 0 };
   }
-  const sheetsNet   = Math.ceil(qty / piecesPerSheet);
-  const wasteSheets = Math.ceil(sheetsNet * OFFSET_WASTE_PCT);
-  const sheetsTotal = sheetsNet + wasteSheets;
-  return { sheetsNet, wasteSheets, sheetsTotal, piecesPerSheet };
+  const sheetsNet      = Math.ceil(qty / piecesPerSheet);
+  const wasteSheets    = Math.ceil(sheetsNet * OFFSET_WASTE_PCT);
+  const sheetsTotal    = sheetsNet + wasteSheets;
+  const purchasedSheets = repackSize > 0
+    ? Math.ceil(sheetsTotal / repackSize) * repackSize
+    : sheetsTotal;
+  return { sheetsNet, wasteSheets, sheetsTotal, purchasedSheets, piecesPerSheet };
 }
 
 /**
@@ -174,7 +183,9 @@ export function rankAllSizes(printSize, qty, customSizes = []) {
   return combined
     .map(pm => {
       const pcs = fitPiecesPerSheet(printSize, pm.originalSize || '');
-      const sc  = pcs > 0 && qty > 0 ? sheetsCalc(pcs, qty) : { sheetsNet:0, wasteSheets:0, sheetsTotal:0 };
+      const sc  = pcs > 0 && qty > 0
+        ? sheetsCalc(pcs, qty, pm.repackSize || 0)
+        : { sheetsNet:0, wasteSheets:0, sheetsTotal:0, purchasedSheets:0 };
       const szPair = parseSizePair(pm.originalSize || '');
       const _area  = szPair ? szPair.w * szPair.h : Infinity;
       return { ...pm, pcs, ...sc, _area };
