@@ -109,10 +109,13 @@ export function rankAllSizes(printSize, qty, customSizes = []) {
     .map(pm => {
       const pcs = fitPiecesPerSheet(printSize, pm.originalSize || '');
       const sc  = pcs > 0 && qty > 0 ? sheetsCalc(pcs, qty) : { sheetsNet:0, wasteSheets:0, sheetsTotal:0 };
-      return { ...pm, pcs, ...sc };
+      const szPair = parseSizePair(pm.originalSize || '');
+      const _area = szPair ? szPair.w * szPair.h : Infinity;
+      return { ...pm, pcs, ...sc, _area };
     })
     .filter(pm => pm.pcs > 0)
-    .sort((a, b) => b.pcs - a.pcs);
+    // القاعدة: أصغر مقاس يستوعب الشغلانة أولاً — لتقليل التكلفة والهالك
+    .sort((a, b) => a._area - b._area);
 }
 
 export function calcZincCount(frontColors, backColors) {
