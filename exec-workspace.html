@@ -216,6 +216,23 @@
 .t-ok{background:rgba(0,217,126,.15);border:1px solid rgba(0,217,126,.4);color:var(--g)}
 .t-err{background:rgba(255,61,110,.15);border:1px solid rgba(255,61,110,.4);color:var(--r)}
 .t-warn{background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.35);color:var(--y)}
+
+/* قالب التكلفة */
+.cost-tmpl-box{background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.22);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.cost-tmpl-hdr{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px}
+.cost-tmpl-label{font-size:10px;font-weight:var(--fw-heavy);padding:1px 7px;border-radius:20px;background:rgba(139,92,246,.2);color:#a78bfa;flex-shrink:0}
+.cost-tmpl-name{font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--snow);flex:1;min-width:0}
+.cost-tmpl-total{font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--y);white-space:nowrap}
+.cost-tmpl-prod{font-size:var(--fs-xs);color:var(--dim2);width:100%}
+.cost-tmpl-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.ctc{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:20px;font-size:11px}
+.ctc-type{color:var(--snow);font-weight:var(--fw-extra)}
+.ctc-sep{color:var(--dim2)}
+.ctc-sup{color:var(--dim2)}
+.ctc-amt{color:var(--y);font-weight:var(--fw-heavy)}
+.cost-mini-sum{font-size:var(--fs-xs);color:var(--dim2);padding:5px 0;border-top:1px solid var(--line);margin-top:4px}
+.cost-full-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:9px;border-radius:10px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-extra);font-family:inherit;cursor:pointer;margin-top:4px;transition:background .15s}
+.cost-full-btn:hover{background:rgba(59,158,255,.14)}
 </style>
 </head>
 <body>
@@ -323,6 +340,7 @@ import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
+import { getCostTemplates } from "./core/cost-template-actions.js";
 
 // ── Constants ──────────────────────────────────────────────────────
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -346,7 +364,7 @@ const STATUS_LABELS={wip:'🔄 جاري',done:'✅ تم',problem:'⚠️ مشك�
 
 // ── State ──────────────────────────────────────────────────────────
 let me={uid:'',name:'',role:'',perms:null};
-let orders=[], suppliers=[], prodAgents=[];
+let orders=[], suppliers=[], prodAgents=[], costTemplates=[];
 let loaded=false, selectedId=null, detailTab='main';
 let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
@@ -366,6 +384,23 @@ const designUrl=o=>o.printFinalUrl||o.designFileUrl||(o.designFiles||[])[0]?.url
 
 // urgency score (5 = late, 3 = no-sup, 1 = no-cost)
 const urgency=o=>{let s=0;if(o.deadline&&new Date(o.deadline)<new Date())s+=5;if(hasNoSup(o))s+=3;if(hasNoCost(o))s+=1;return s;};
+
+// ── Template matching (same logic as exec-cost-entry) ──────────────
+const _normBaseName=s=>(s||'').replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
+const _extractQty=p=>String(p.qty||'').replace(/[^0-9]/g,'')||'';
+function _getTmplMatches(o){
+  if(!costTemplates.length)return[];
+  const matches=[];
+  (o.products||[]).forEach((prod,prodIdx)=>{
+    const base=_normBaseName(prod.name),qty=_extractQty(prod);
+    const t=costTemplates.find(t=>{
+      const qOk=!t.qty||!qty||String(t.qty)===qty;
+      return _normBaseName(t.name)===base&&qOk;
+    });
+    if(t)matches.push({template:t,prod,prodIdx});
+  });
+  return matches;
+}
 
 function toast(msg,type='ok'){const c=document.getElementById('toasts');const el=document.createElement('div');el.className=`ti t-${type}`;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
 
@@ -390,6 +425,7 @@ onAuthStateChanged(auth,async u=>{
     if(typeof B2CSidebar!=='undefined') B2CSidebar.build(d,'exec-workspace.html');
     if(role==='production_agent'){mineOnly=true;syncMine();}
   }
+  getCostTemplates(db).then(t=>{costTemplates=t;if(selectedId)renderDetail();}).catch(e=>console.warn('[exec-ws] templates',e));
   const urlId=new URLSearchParams(location.search).get('orderId')||'';let urlOpened=false;
   onSnapshot(query(collection(db,'orders'),where('stage','==','production'),limit(1000)),s=>{
     orders=s.docs.map(x=>({...x.data(),_id:x.id}));loaded=true;
@@ -616,8 +652,10 @@ function renderDetail(){
   const imgSrc=designUrl(o);
 
   // ── tabs HTML ──
+  const costBadge=canCost()?(costs.length?` <span style="font-size:10px;background:var(--y);color:#000;border-radius:8px;padding:0 5px">${costs.length}</span>`:hasNoCost(o)?` <span style="font-size:10px;background:var(--r);color:#fff;border-radius:8px;padding:0 5px">!</span>`:''):'';
   const tabsHTML=`<div class="wd-tabs">
     <button type="button" class="wdt${detailTab==='main'?' on':''}" onclick="switchDetailTab('main')">📦 التفاصيل</button>
+    ${canCost()?`<button type="button" class="wdt${detailTab==='cost'?' on':''}" onclick="switchDetailTab('cost')">💰 التكاليف${costBadge}</button>`:''}
     <button type="button" class="wdt${detailTab==='timeline'?' on':''}" onclick="switchDetailTab('timeline')">📋 السجل (${(o.timeline||[]).length})</button>
   </div>`;
 
@@ -635,9 +673,64 @@ function renderDetail(){
     </div>
     <div class="wd-links">
       <a href="order.html?id=${esc(o._id)}" class="wd-link">📋 تتبع</a>
-      ${canCost()?`<a href="exec-cost-entry.html?orderId=${esc(o._id)}" class="wd-link">💰 تكاليف</a>`:''}
     </div>
   </div>`;
+
+  // ── تاب التكاليف ──────────────────────────────────────────────
+  if(detailTab==='cost'&&canCost()){
+    // قوالب مطابقة (نفس منطق exec-cost-entry)
+    const tmplMatches=_getTmplMatches(o);
+    const tmplHTML=tmplMatches.length?tmplMatches.map(({template:t,prod,prodIdx})=>{
+      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      const uid=`tap-${esc(t.id)}-${prodIdx}`;
+      return`<div class="cost-tmpl-box">
+        <div class="cost-tmpl-hdr">
+          <span class="cost-tmpl-label">⚡ قالب</span>
+          <span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span>
+          <span class="cost-tmpl-total">${fn(total)} ج</span>
+          <span class="cost-tmpl-prod">📦 ${esc(prod.name||'')}</span>
+        </div>
+        <div class="cost-tmpl-chips">${t.costItems.map(c=>`<span class="ctc"><span class="ctc-type">${esc(c.type)}</span><span class="ctc-sep">·</span><span class="ctc-sup">${esc(c.supplierName||'—')}</span><span class="ctc-sep">·</span><strong class="ctc-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+        <button type="button" class="act act-add act-full" id="${uid}" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${prodIdx}">⚡ تطبيق الكل دفعة واحدة</button>
+      </div>`;
+    }).join(''):'';
+    // قائمة البنود الحالية
+    const rows=costs.length?costs.map((c,i)=>{
+      const prodLabel=products[c.prodIdx]?`<div class="cost-meta">📦 ${esc(products[c.prodIdx].name)}</div>`:'';
+      return`<div class="cost-item">
+        <div style="flex:1;min-width:0"><div class="cost-type">${esc(c.type||'—')}</div>${c.supplierName||c.note?`<div class="cost-meta">${[c.supplierName,c.note].filter(Boolean).map(esc).join(' · ')}</div>`:''} ${prodLabel}</div>
+        <div class="cost-amt">${fn(c.total)} ج ${c.paid?`<span class="paid-pill">مدفوع</span>`:`<button type="button" class="del-btn" data-act="delcost" data-idx="${i}">✕</button>`}</div>
+      </div>`;
+    }).join(''):`<div style="color:var(--dim2);font-size:var(--fs-sm);padding:10px 0;text-align:center">لا توجد تكاليف بعد</div>`;
+    // منتج مرتبط (للأوردرات متعددة المنتجات)
+    const prodOpts=products.map((p,i)=>`<option value="${i}">${esc(p.name||('منتج '+(i+1)))}</option>`).join('');
+    const costContent=`
+      ${tmplHTML}
+      <div class="wd-sec">
+        <div class="wd-sec-hdr">💰 بنود التكلفة <span style="color:var(--y);font-weight:var(--fw-heavy)">${fn(orderCost(o))} ج</span></div>
+        <div class="wd-sec-body">${rows}</div>
+      </div>
+      <div class="wd-sec">
+        <div class="wd-sec-hdr">➕ إضافة سريعة</div>
+        <div class="wd-sec-body">
+          <div class="cost-form">
+            <div><div class="cf-lbl">نوع التكلفة *</div><input type="text" class="cf-inp" id="c-type" placeholder="ورق · طباعة · تجليد…" autocomplete="off"></div>
+            <div><div class="cf-lbl">المبلغ (ج) *</div><input type="number" class="cf-inp" id="c-total" min="0" value="0" inputmode="numeric"></div>
+            <div class="cf-full"><div class="cf-lbl">المورد</div>
+              <select class="cf-inp" id="c-supplier"><option value="">— بدون —</option>${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}">${esc(s.name||s._id)}</option>`).join('')}</select>
+            </div>
+            ${products.length>1?`<div class="cf-full"><div class="cf-lbl">المنتج المرتبط</div>
+              <select class="cf-inp" id="c-prodidx"><option value="-1">— عام للأوردر —</option>${prodOpts}</select>
+            </div>`:`<input type="hidden" id="c-prodidx" value="-1">`}
+            <div class="cf-full"><button type="button" class="act act-add act-full" data-act="addcost">➕ تسجيل</button></div>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="cost-full-btn" onclick="(window.navigatePage||function(u){window.location.href=u;})('exec-cost-entry.html?orderId=${esc(o._id)}')">💰 فتح مركز التكاليف الكامل ↗</button>
+    `;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${costContent}</div>`;
+    return;
+  }
 
   // ── 9. تاب السجل ──────────────────────────────────────────────
   if(detailTab==='timeline'){
@@ -665,27 +758,13 @@ function renderDetail(){
     </div>`;
   }).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد منتجات</div>';
 
-  // ── التكاليف ──
-  let costsHTML='';
-  if(canCost()){
-    const rows=costs.length?costs.map((c,i)=>`<div class="cost-item">
-      <div style="flex:1;min-width:0"><div class="cost-type">${esc(c.type||'—')}</div>${c.supplierName||c.note?`<div class="cost-meta">${[c.supplierName,c.note].filter(Boolean).map(esc).join(' · ')}</div>`:''}</div>
-      <div class="cost-amt">${fn(c.total)} ج ${c.paid?`<span class="paid-pill">مدفوع</span>`:`<button type="button" class="del-btn" data-act="delcost" data-idx="${i}">✕</button>`}</div>
-    </div>`).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد تكاليف</div>';
-    costsHTML=`<div class="wd-sec">
-      <div class="wd-sec-hdr">💰 بنود التكلفة <span style="color:var(--y);font-weight:var(--fw-heavy)">${fn(orderCost(o))} ج</span></div>
-      <div class="wd-sec-body">${rows}
-        <div class="cost-form">
-          <div><div class="cf-lbl">نوع التكلفة</div><input type="text" class="cf-inp" id="c-type" placeholder="ورق · طباعة…"></div>
-          <div><div class="cf-lbl">المبلغ (ج)</div><input type="number" class="cf-inp" id="c-total" min="0" value="0"></div>
-          <div class="cf-full"><div class="cf-lbl">المورد (اختياري)</div>
-            <select class="cf-inp" id="c-supplier"><option value="">— بدون —</option>${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}">${esc(s.name||s._id)}</option>`).join('')}</select>
-          </div>
-          <div class="cf-full"><button type="button" class="act act-add act-full" data-act="addcost">➕ تسجيل تكلفة</button></div>
-        </div>
-        <div style="text-align:center;padding-top:4px"><a href="exec-cost-entry.html?orderId=${esc(o._id)}" style="font-size:var(--fs-xs);color:var(--b);text-decoration:none">📊 مركز التكاليف الكامل ↗</a></div>
-      </div></div>`;
-  }
+  // ── ملخص التكاليف (main tab — قراءة فقط، التعديل في تاب التكاليف) ──
+  const costsHTML=canCost()?`<div class="wd-sec">
+    <div class="wd-sec-hdr">💰 التكاليف <span style="color:var(--y);font-weight:var(--fw-heavy)">${fn(orderCost(o))} ج</span>
+      <button type="button" class="act act-ghost" style="font-size:10px;padding:2px 9px;margin-right:auto" onclick="switchDetailTab('cost')">إدارة ←</button>
+    </div>
+    ${costs.length?`<div class="wd-sec-body">${costs.slice(0,3).map(c=>`<div class="cost-mini-sum">${esc(c.type||'—')} — <span style="color:var(--y)">${fn(c.total)} ج</span></div>`).join('')}${costs.length>3?`<div class="cost-mini-sum" style="color:var(--dim2)">+ ${costs.length-3} بنود أخرى…</div>`:''}</div>`:`<div style="color:var(--dim2);font-size:var(--fs-sm);padding:4px 0">لا توجد تكاليف — <button type="button" class="act act-add" style="font-size:10px;padding:2px 9px" onclick="switchDetailTab('cost')">أضف الآن</button></div>`}
+  </div>`:'';
 
   // ── مندوب ──
   const agentHTML=`<div class="wd-sec">
@@ -731,11 +810,24 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       const prodIdx=parseInt(btn.dataset.pidx,10),status=btn.dataset.status;
       const np=(o.products||[]).map((p,i)=>i===prodIdx?{...p,execStatus:status}:p);
       r=await orderActions.setProductExecStatus({db,orderId,prodIdx,execStatus:status,derivedProdStatus:deriveSt({...o,products:np}),statusLabel:(EXEC.find(e=>e.k===status)||{}).lbl||status,userId:me.uid,userName:me.name});
+    } else if(act==='applytmpl'){
+      const templateId=btn.dataset.tmplId,prodIdx=parseInt(btn.dataset.prodIdx,10);
+      const t=costTemplates.find(x=>x.id===templateId);
+      if(!t||!t.costItems.length){toast('القالب فارغ','warn');btn.disabled=false;return;}
+      let ok=0,fail=0;
+      for(const item of t.costItems){
+        const ri=await orderActions.recordCostItem({...base,prodIdx,payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId||'',supplierName:item.supplierName||'',note:item.note||''},wallets:[]});
+        if(ri?.ok)ok++;else fail++;
+      }
+      toast(ok?`✓ أُضيف ${ok} بند${fail?` (${fail} فشل)`:''}`:' تعذّر تطبيق القالب',ok?'ok':'err');
+      btn.disabled=false;return;
     } else if(act==='addcost'){
       const type=document.getElementById('c-type')?.value.trim(),total=parseFloat(document.getElementById('c-total')?.value)||0;
       if(!type||total<=0){toast('اكتب النوع والمبلغ','warn');btn.disabled=false;return;}
       const sup=document.getElementById('c-supplier');
-      r=await orderActions.recordCostItem({...base,prodIdx:-1,payload:{type,total,supplierId:sup?.value||'',supplierName:sup?.value?(sup.options[sup.selectedIndex]?.dataset.name||''):'',note:''},wallets:[]});
+      const pidxEl=document.getElementById('c-prodidx');
+      const prodIdx=pidxEl?parseInt(pidxEl.value,10):-1;
+      r=await orderActions.recordCostItem({...base,prodIdx,payload:{type,total,supplierId:sup?.value||'',supplierName:sup?.value?(sup.options[sup.selectedIndex]?.dataset.name||''):'',note:''},wallets:[]});
     } else if(act==='delcost'){
       if(!confirm('حذف هذه التكلفة؟')){btn.disabled=false;return;}
       r=await orderActions.removeUnpaidCostItem({db,orderId,itemIndex:parseInt(btn.dataset.idx,10),userId:me.uid,userName:me.name});
