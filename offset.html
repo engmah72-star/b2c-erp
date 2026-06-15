@@ -125,6 +125,32 @@ let suppliers=[], appSettings={}, wallets=[], briefTemplates=[];
 let currentRole='', userName='', currentUid='';
 let _listFilter='all', _listSearch='';
 
+// ── مقاسات الماكينات (ستاندر + جاير لكل تير) ──
+const MACHINE_TIERS=[
+  {id:'tumn', label:'تمن',       sizes:[{w:25,h:35},{w:22,h:33}]},
+  {id:'rub3', label:'ربع',       sizes:[{w:35,h:50},{w:33,h:44}]},
+  {id:'nus',  label:'نصف',       sizes:[{w:50,h:70},{w:44,h:66}]},
+  {id:'kaml', label:'كامل',      sizes:[{w:70,h:100},{w:66,h:88}]},
+];
+function getTierLabel(id){return MACHINE_TIERS.find(t=>t.id===id)?.label||id;}
+function pmMatchesTier(pm,tierId){
+  const eng=window.offsetCostEngine;
+  const tSizes=(MACHINE_TIERS.find(t=>t.id===tierId)||{}).sizes||[];
+  const sz=eng?.parseSizePair(pm.originalSize||'');
+  if(!sz)return false;
+  return tSizes.some(s=>(Math.abs(s.w-sz.w)<3&&Math.abs(s.h-sz.h)<3)||(Math.abs(s.w-sz.h)<3&&Math.abs(s.h-sz.w)<3));
+}
+function getActiveTier(allRankings,preferredTier){
+  const tierOrder=['tumn','rub3','nus','kaml'];
+  const pi=tierOrder.indexOf(preferredTier);
+  for(let i=pi;i<tierOrder.length;i++){
+    const t=tierOrder[i];
+    const papers=allRankings.filter(pm=>pmMatchesTier(pm,t));
+    if(papers.length)return{tierId:t,papers,upgraded:i>pi};
+  }
+  return{tierId:preferredTier,papers:[],upgraded:false};
+}
+
 // ── مساعدات ──
 const $  = id => document.getElementById(id);
 const escH = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -363,11 +389,15 @@ function renderCalcTab(o){
   const r=computeOffsetReadiness(p);
   const barCol=r.ready?'var(--g)':r.pct>=60?'var(--y)':'var(--r)';
 
+  // الماكينة المختارة (افتراضي: ربع)
+  const prefTier=p.machineSize||'rub3';
+
   // حساب الفروخ والتكلفة
   let rankCards='', costSummary='';
   if(eng&&printSize&&qty>0){
-    const rankings=eng.rankAllSizes(printSize,qty,allPapersData);
-    const selRank=rankings.find(pm=>pm.name===p.paper);
+    const allRankings=eng.rankAllSizes(printSize,qty,allPapersData);
+    const {tierId,papers:tierPapers,upgraded}=getActiveTier(allRankings,prefTier);
+    const selRank=tierPapers.find(pm=>pm.name===p.paper)||tierPapers[0]||null;
     const selSheets=selRank?.sheetsTotal||parseInt(p.paperSheets)||0;
     const machine=selRank?.machine||paperMeta?.machine||'';
     const machRates=appSettings.offsetMachineRates||{};
@@ -376,20 +406,22 @@ function renderCalcTab(o){
     const zinkCnt=eng.calcZincCount(frontC,backC);
     const totalPasses=selSheets*(frontC+backC);
     const trajs=totalPasses>0?Math.ceil(totalPasses/1000):0;
-    const paperCost=paperMeta&&selSheets>0?eng.calcPaperCost(selSheets,paperMeta.costPerSheet):0;
+    const selMeta=selRank?.hasPrice?selRank:paperMeta;
+    const paperCost=selMeta&&selSheets>0?eng.calcPaperCost(selSheets,selMeta.costPerSheet):0;
     const mc=trajs*machRate;
     const zc=eng.calcZincCost(frontC,backC,zincCPP);
     const totalCalc=paperCost+mc+zc;
 
-    // بطاقات الورق — كل المقاسات المناسبة، مرتّبة من الأصغر للأكبر
-    const rec=rankings[0]; // الأول = الأصغر مناسب = الموصى به
+    // بطاقات الورق — مقاسات التير المختار (ستاندر + جاير)
+    const upgradeWarn=upgraded?`<div style="font-size:9px;padding:5px 8px;background:rgba(255,170,0,.1);border-radius:6px;border-right:2px solid var(--y);margin-bottom:8px">
+      ⚠️ المقاس أكبر من ماكينة ${getTierLabel(prefTier)} — تم التصعيد تلقائياً لماكينة <strong style="color:var(--y)">${getTierLabel(tierId)}</strong>
+    </div>`:'';
+    const rec=tierPapers[0];
     rankCards=`<div class="off-card">
-      <div class="off-sec-hd">📄 مقاس الورق — من الأصغر للأكبر (القاعدة: أصغر مناسب أولاً)</div>
-      <div style="font-size:9px;color:var(--dim2);margin-bottom:8px;padding:5px 8px;background:rgba(59,158,255,.07);border-radius:6px;border-right:2px solid #3b9eff">
-        🎯 الموصى به: <strong style="color:#3b9eff">${escH(rec?.name||'—')}</strong> — أصغر مقاس يستوعب الشغلانة لتقليل التكلفة والهالك
-      </div>
-      ${rankings.map((pm,ri)=>{
-        const isSel=pm.name===p.paper;
+      <div class="off-sec-hd">📄 مقارنة الورق — ${getTierLabel(tierId)}</div>
+      ${upgradeWarn}
+      ${tierPapers.length?tierPapers.map((pm,ri)=>{
+        const isSel=pm.name===p.paper||(ri===0&&!p.paper);
         const isRec=ri===0&&!isSel;
         const layout=eng.fitLayout(printSize,pm.originalSize||'');
         const eff=layout?.efficiency||0;
@@ -397,36 +429,40 @@ function renderCalcTab(o){
         const pc=pm.hasPrice&&pm.costPerSheet?eng.calcPaperCost(pm.sheetsTotal,pm.costPerSheet):0;
         const border=isSel?'var(--y)':isRec?'#3b9eff':'var(--line)';
         const bg=isSel?'rgba(255,170,0,.07)':isRec?'rgba(59,158,255,.05)':'var(--bg3)';
+        const family=pm.family||'';
         return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal})"
           style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:2px solid ${border};background:${bg};cursor:pointer;margin-bottom:5px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
               <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSel?'var(--y)':isRec?'#3b9eff':'var(--snow)'}">${escH(pm.name)}</span>
               ${isRec?`<span style="font-size:9px;padding:0 5px;border-radius:5px;background:rgba(59,158,255,.15);color:#3b9eff">🎯 موصى به</span>`:''}
+              <span style="font-size:9px;color:var(--dim2)">${escH(pm.originalSize||'')} سم</span>
             </div>
-            ${pm.machine?`<div style="font-size:9px;color:var(--dim2)">${escH(pm.machine)} · ${escH(pm.originalSize||'')} سم</div>`:''}
+            ${family?`<div style="font-size:9px;color:var(--dim2)">عائلة ${escH(family)}${pm.machine?' · '+escH(pm.machine):''}</div>`:''}
           </div>
-          <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
+          <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
             <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--b)">${pm.pcs}</div><div style="font-size:9px;color:var(--dim2)">ق/فرخة</div></div>
             <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--g)">${pm.sheetsTotal}</div><div style="font-size:9px;color:var(--dim2)">فرخة</div></div>
-            ${pc>0?`<div style="text-align:center"><div style="font-size:13px;font-weight:var(--fw-heavy);color:var(--y)">${fmt(pc)}</div><div style="font-size:9px;color:var(--dim2)">ج ورق</div></div>`:''}
+            ${pc>0?`<div style="text-align:center"><div style="font-size:13px;font-weight:var(--fw-heavy);color:var(--y)">${fmt(pc)}</div><div style="font-size:9px;color:var(--dim2)">ج</div></div>`:''}
             <div style="text-align:center;background:${effCol}18;border-radius:5px;padding:2px 5px"><div style="font-size:12px;font-weight:var(--fw-bold);color:${effCol}">${eff}%</div><div style="font-size:9px;color:var(--dim2)">كفاءة</div></div>
           </div>
           ${isSel?`<span style="color:var(--y);font-size:16px;flex-shrink:0">✓</span>`:''}
         </div>`;
-      }).join('')}
+      }).join(''):`<div style="padding:12px;text-align:center;color:var(--dim2);font-size:var(--fs-xs)">لا توجد مقاسات مناسبة لهذه الماكينة</div>`}
     </div>`;
 
     // ملخص التكلفة
-    if(totalCalc>0){
+    const selPaperName=selRank?.name||p.paper||'';
+    const selSz=selRank?.originalSize||paperMeta?.originalSize||'';
+    if(totalCalc>0||paperCost>0){
       costSummary=`<div class="off-card" style="border-color:rgba(255,170,0,.35)">
         <div class="off-sec-hd">💰 ملخص التكلفة التقديرية</div>
         <div style="display:flex;flex-direction:column;gap:7px">
           ${paperCost>0?`<div style="display:flex;justify-content:space-between;font-size:var(--fs-xs)">
-            <span style="color:var(--dim2)">📄 ورق · ${escH(p.paper||'')} · ${selSheets} فرخة${paperMeta?.originalSize?' ('+paperMeta.originalSize+' سم)':''}</span>
+            <span style="color:var(--dim2)">📄 ورق · ${escH(selPaperName)} · ${selSheets} فرخة${selSz?' ('+selSz+' سم)':''}</span>
             <span style="font-weight:var(--fw-bold)">${fmt(paperCost)} ج</span></div>`:''}
           ${mc>0?`<div style="display:flex;justify-content:space-between;font-size:var(--fs-xs)">
-            <span style="color:var(--dim2)">⚙️ طباعة · ${escH(machine)} · ${trajs} تراج × ${machRate} ج</span>
+            <span style="color:var(--dim2)">⚙️ طباعة · ${escH(machine||getTierLabel(tierId))} · ${trajs} تراج × ${machRate} ج</span>
             <span style="font-weight:var(--fw-bold)">${fmt(mc)} ج</span></div>`:''}
           ${zc>0?`<div style="display:flex;justify-content:space-between;font-size:var(--fs-xs)">
             <span style="color:var(--dim2)">🟨 زنكات · ${zinkCnt} لوح (${frontC}+${backC}) × ${zincCPP} ج</span>
@@ -453,6 +489,7 @@ function renderCalcTab(o){
     <!-- المواصفات -->
     <div class="off-card">
       <div class="off-sec-hd">📋 المواصفات · ${escH(p.name||'منتج')}</div>
+      <!-- شريط الجاهزية -->
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <div style="flex:1;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden">
           <div style="width:${r.pct}%;height:100%;background:${barCol};border-radius:3px;transition:width .3s"></div>
@@ -460,6 +497,16 @@ function renderCalcTab(o){
         <span style="font-size:10px;color:${barCol};font-weight:var(--fw-bold)">${r.pct}%</span>
       </div>
       ${r.crit.filter(c=>!c.ok).length?`<div style="font-size:10px;color:var(--r);margin-bottom:8px">${r.crit.filter(c=>!c.ok).map(c=>`❌ ${c.label}`).join(' · ')}</div>`:''}
+      <!-- اختيار الماكينة -->
+      <div class="off-field">
+        <label class="off-label">⚙️ الماكينة (افتراضي: ربع)</label>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">
+          ${MACHINE_TIERS.map(t=>`<button onclick="offUpd('${o._id}',${idx},'machineSize','${t.id}');if(activeOrder)renderCalcTab(activeOrder)" class="off-btn${prefTier===t.id?' off-btn-y':''}" style="padding:6px 4px;font-size:10px;text-align:center">
+            <div>${t.label}</div>
+            <div style="font-size:9px;opacity:.7">${t.sizes[0].w}×${t.sizes[0].h}</div>
+          </button>`).join('')}
+        </div>
+      </div>
       <div class="off-g2">
         <div class="off-field">
           <label class="off-label">📐 مقاس الطباعة</label>
@@ -673,10 +720,12 @@ window.offApplyCost=async function(orderId,idx){
   const o=orders.find(x=>x._id===orderId)||activeOrder;if(!o)return;
   const p=(o.products||[])[idx];if(!p)return;
   const eng=window.offsetCostEngine;if(!eng)return toast('⚠️ محرك الحساب لم يُحمَّل','warn');
-  const paperMeta=getPaperMeta(p.paper||'');
   const printSize=p.printSize||p.size||'';const qty=parseInt(p.qty)||0;
   const allPapersData=Array.isArray(appSettings?.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
-  const selRank=eng.rankAllSizes(printSize,qty,allPapersData).find(pm=>pm.name===(p.paper||''));
+  const allRankings=eng.rankAllSizes(printSize,qty,allPapersData);
+  const {tierId,papers:tierPapers}=getActiveTier(allRankings,p.machineSize||'rub3');
+  const selRank=tierPapers.find(pm=>pm.name===(p.paper||''))||tierPapers[0]||null;
+  const paperMeta=getPaperMeta(selRank?.name||p.paper||'');
   const selSheets=selRank?.sheetsTotal||parseInt(p.paperSheets)||0;
   const machine=selRank?.machine||paperMeta?.machine||'';
   const machRate=parseFloat(appSettings?.offsetMachineRates?.[machine])||0;
