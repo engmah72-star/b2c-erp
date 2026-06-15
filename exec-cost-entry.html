@@ -180,8 +180,26 @@
           <button type="button" class="sort-tab" onclick="setSort('complete',this)">✅ اكتمال</button>
         </div>
 
+        <!-- Product name filter chips (dynamically populated) -->
+        <div id="prod-name-filter-bar" hidden></div>
+
+        <!-- Order-level bulk bar (appears when ≥1 order selected) -->
+        <div id="order-bulk-bar" hidden></div>
+
         <div id="list"></div>
       </div><!-- /order-queue -->
+
+      <!-- Order-level bulk apply modal -->
+      <div id="order-bulk-modal" class="bulk-modal-overlay" onclick="if(event.target===this)closeOrderBulkModal()">
+        <div class="bulk-modal obm">
+          <div class="bulk-modal-hdr">
+            <span class="bulk-modal-title" id="obm-title">تطبيق على أوردرات محددة</span>
+            <button type="button" class="bulk-modal-close" onclick="closeOrderBulkModal()">✕</button>
+          </div>
+          <div id="obm-body"></div>
+          <div class="bulk-modal-foot" id="obm-foot"></div>
+        </div>
+      </div>
 
       <!-- ══════════════ RIGHT: Workspace ══════════════ -->
       <div class="workspace-panel" id="workspace-panel">
@@ -234,6 +252,9 @@
           <!-- Template / missing costs -->
           <div id="ws-template"></div>
 
+          <!-- Product filter bar (multi-product orders) -->
+          <div id="prod-filter-bar" hidden></div>
+
           <!-- Products summary (clickable — picks prodIdx) -->
           <div id="cost-products-summary" style="margin-bottom:14px"></div>
 
@@ -254,6 +275,7 @@
 
             <div class="fg"><label>🏷️ نوع البند <span class="text-r">*</span></label>
               <select class="inp" id="ac-type" onchange="onTypeChange()"></select>
+              <div id="dup-type-warn" class="dup-type-warn" hidden></div>
             </div>
 
             <div class="fg"><label>🏭 المورد <span class="text-r">*</span></label>
@@ -305,7 +327,38 @@
             </div>
           </div><!-- /form-section -->
 
+          <!-- Floating bulk-add bar (appears when ≥1 product selected) -->
+          <div id="bulk-action-bar" hidden></div>
+
         </div><!-- /ws-content -->
+
+        <!-- Bulk add modal (toggle with .open class) -->
+        <div id="bulk-add-modal" class="bulk-modal-overlay" onclick="if(event.target===this)closeBulkModal()">
+          <div class="bulk-modal">
+            <div class="bulk-modal-hdr">
+              <span class="bulk-modal-title">➕ إضافة بند لمنتجات محددة</span>
+              <button type="button" class="bulk-modal-close" onclick="closeBulkModal()">✕</button>
+            </div>
+            <div class="bulk-modal-prods" id="bulk-modal-prods"></div>
+            <div class="fg"><label>🏷️ نوع البند</label>
+              <select class="inp" id="bulk-type-sel"></select>
+            </div>
+            <div class="fg"><label>🏭 المورد</label>
+              <select class="inp" id="bulk-sup-sel"></select>
+            </div>
+            <div class="fg"><label>💰 التكلفة (ج)</label>
+              <input class="inp" id="bulk-total" type="number" placeholder="0" inputmode="numeric">
+            </div>
+            <div class="fg"><label>📝 ملاحظة (اختياري)</label>
+              <input class="inp" id="bulk-note" type="text" placeholder="">
+            </div>
+            <div class="bulk-modal-foot">
+              <button type="button" class="btn btn-ghost" onclick="closeBulkModal()">إلغاء</button>
+              <button type="button" class="btn btn-r" onclick="saveBulkCost()">＋ إضافة للكل</button>
+            </div>
+          </div>
+        </div>
+
       </div><!-- /workspace-panel -->
 
     </div><!-- /split-layout -->
@@ -470,7 +523,13 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { orderActions } from "./order-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
-let activeId=null,currentFilter='all',currentSort='priority',editCostIdx=-1;
+let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
+let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
+let _selectedProds=new Set(); // prodIdxes checked for bulk add
+let _prodNameFilter=new Set(); // filter order list by product base names (multi-select)
+let _selectedOrders=new Map(); // orderId→{prodIdx,baseName,qty,prodName} for cross-order bulk
+let _selRefBase=''; // lock: first selected order's baseName (others must match)
+let _selRefQty=null; // lock: first selected order's qty (others must match)
 let _libCache={},_libLoading=false;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
@@ -661,9 +720,23 @@ function renderList(){
   setText('cnt-has-lib',libCount);
   renderSmartKpis();
 
-  let filtered=currentFilter==='all'?data
-    :currentFilter==='has-lib'?data.filter(({o})=>_getMatchingProfile(o)!=null)
-    :data.filter(({o})=>o.stage===currentFilter);
+  // Build product name chips from full data (before stage filter)
+  _renderProdNameFilterBar(data);
+
+  // Stage filter (multi-select): empty set = show all
+  let filtered=data;
+  if(currentStageFilters.size){
+    filtered=filtered.filter(({o})=>{
+      if(currentStageFilters.has('has-lib')&&_getMatchingProfile(o)!=null)return true;
+      return currentStageFilters.has(o.stage||'');
+    });
+  }
+
+  // Apply product name filter (multi-select)
+  if(_prodNameFilter.size){
+    filtered=filtered.filter(({prod})=>prod&&_prodNameFilter.has(_normBaseName(prod.name)));
+  }
+
   filtered=applySort(filtered);
 
   const el=document.getElementById('list');
@@ -691,8 +764,20 @@ function renderList(){
     const marginPill=m.marginPct!==null?`<span class="profit-margin ${m.cls}" style="font-size:var(--fs-xs);padding:2px 7px">${m.estimated?'~':''}${m.marginPct}%</span>`:'';
     const prodName=prod?prod.name||'منتج':'—';
     const prodQty=prod?prod.qty||0:'';
-    return`<div class="ord-card q-card ${isActive?'q-active':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}',${prodIdx})">
-      <span class="prio-badge ${prio.cls}">${prio.lbl}</span>
+    // Multi-select: show checkboxes when product filter is active
+    const baseName=prod?_normBaseName(prod.name):'';
+    const qty=prod?_extractQty(prod):null;
+    const isSelected=_selectedOrders.has(o._id+'::'+prodIdx);
+    // Dim cards that don't match the locked selection criteria
+    const isLocked=_selRefBase&&(baseName!==_selRefBase||(_selRefQty!=null&&qty!=null&&String(qty)!==String(_selRefQty)));
+    const showCb=_prodNameFilter.size>0&&!!prod;
+    const cbHtml=showCb
+      ?`<label class="ord-sel-wrap" onclick="event.stopPropagation()">
+          <input type="checkbox" class="ord-sel-cb" ${isSelected?'checked':''} ${isLocked?'disabled':''} onchange="toggleOrderSelect('${o._id}',${prodIdx},'${baseName.replace(/'/g,"\\'")}',${qty},'${prodName.replace(/'/g,"\\'")}',this.checked)">
+        </label>`
+      :'';
+    return`<div class="ord-card q-card ${isActive?'q-active':''} ${isSelected?'ord-selected':''} ${isLocked?'ord-locked':''} ${prio.cardClass} stg-${o.stage}" onclick="openWorkspace('${o._id}',${prodIdx})">
+      ${cbHtml}<span class="prio-badge ${prio.cls}">${prio.lbl}</span>
       <div class="ord-head" style="padding:12px 14px 8px">
         <div class="ord-head-main">
           <div class="ord-client">${prodName}${prodQty?` <span class="q-prod-qty">×${prodQty}</span>`:''}</div>
@@ -711,6 +796,181 @@ function renderList(){
       </div>
     </div>`;
   }).join('');
+  _renderOrderBulkBar();
+}
+
+/* ═══════════════════════════════════════════════════
+   ORDER-LEVEL MULTI-SELECT & BULK APPLY
+   ═══════════════════════════════════════════════════ */
+window.toggleOrderSelect=function(orderId,prodIdx,baseName,qty,prodName,checked){
+  const key=orderId+'::'+prodIdx;
+  if(checked){
+    // Lock criteria to first selection
+    if(!_selectedOrders.size){_selRefBase=baseName;_selRefQty=qty;}
+    // Guard: only allow same baseName+qty
+    if(baseName!==_selRefBase||(_selRefQty!=null&&qty!=null&&String(qty)!==String(_selRefQty))){
+      toast('⚠️ يمكن تحديد أوردرات بنفس المنتج والكمية فقط','err');
+      // uncheck visually
+      setTimeout(()=>{document.querySelectorAll('.ord-sel-cb').forEach(cb=>{if(cb.closest('.ord-card')&&cb.checked&&!_selectedOrders.has(orderId+'::'+prodIdx))cb.checked=false;});},50);
+      return;
+    }
+    _selectedOrders.set(key,{orderId,prodIdx,baseName,qty,prodName});
+  }else{
+    _selectedOrders.delete(key);
+    if(!_selectedOrders.size){_selRefBase='';_selRefQty=null;}
+  }
+  _renderOrderBulkBar();
+  renderList();
+};
+
+window.clearOrderSelection=function(){
+  _selectedOrders.clear();_selRefBase='';_selRefQty=null;
+  _renderOrderBulkBar();
+  renderList();
+};
+
+function _renderOrderBulkBar(){
+  const el=document.getElementById('order-bulk-bar');if(!el)return;
+  const n=_selectedOrders.size;
+  if(!n){el.hidden=true;return;}
+  el.hidden=false;
+  const ref=[..._selectedOrders.values()][0];
+  el.innerHTML=`<div class="obbar-inner">
+    <span class="obbar-info">✓ ${n} أوردر · <strong>${ref.prodName||ref.baseName}</strong>${ref.qty?` ×${ref.qty}`:''}</span>
+    <button type="button" class="obbar-apply" onclick="openOrderBulkApply()">📚 تطبيق تكاليف →</button>
+    <button type="button" class="obbar-clear" onclick="clearOrderSelection()" title="مسح التحديد">✕</button>
+  </div>`;
+}
+
+window.closeOrderBulkModal=function(){
+  document.getElementById('order-bulk-modal')?.classList.remove('open');
+};
+
+window.openOrderBulkApply=function(){
+  if(!_selectedOrders.size)return;
+  const ref=[..._selectedOrders.values()][0];
+  const modal=document.getElementById('order-bulk-modal');if(!modal)return;
+  const n=_selectedOrders.size;
+  setText('obm-title',`📦 ${ref.prodName||ref.baseName}${ref.qty?` ×${ref.qty}`:''} · ${n} أوردر`);
+
+  // Find matching library profile
+  const profile=_libProfiles.find(p=>p.baseName===ref.baseName&&(!ref.qty||!p.qty||String(p.qty)===String(ref.qty)));
+  // Find matching templates
+  const matchTmpls=costTemplates.filter(t=>{
+    const base=_normBaseName(t.name);
+    const qOk=!t.qty||!ref.qty||String(t.qty)===String(ref.qty);
+    return base===ref.baseName&&qOk;
+  });
+
+  // Build supplier options for manual entry
+  const supOpts=suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}">${s.name||s._id}</option>`).join('');
+  const typeOpts=masterCategories.filter(c=>c.isCostItem!==false).map(c=>`<option value="${c.label}">${c.label}</option>`).join('');
+
+  let html='';
+
+  // Section 1: Library profile
+  if(profile&&profile.coreBundle.length){
+    html+=`<div class="obm-section">
+      <div class="obm-sec-hdr">📚 من المكتبة <span class="obm-sec-sub">(${profile.usageCount} أوردر سابق)</span>${profile.qty?`<span class="obm-qty-ref">مرجع: ×${profile.qty}</span>`:''}</div>
+      <div class="obm-lib-items" id="obm-lib-items">`;
+    profile.coreBundle.forEach((b,bi)=>{
+      html+=`<label class="obm-lib-row">
+        <input type="checkbox" class="obm-lib-cb" checked data-idx="${bi}" data-type="${b.type}" data-sup="${b.supplierId}" data-supname="${(b.supplierName||'').replace(/"/g,'&quot;')}" data-price="${b.lastPrice||0}">
+        <span class="obm-lib-type">${b.type}</span>
+        <span class="obm-lib-sup">${b.supplierName||'—'}</span>
+        <input type="number" class="obm-lib-price inp" value="${b.lastPrice||0}" style="width:90px;text-align:center" placeholder="0">
+        <span class="obm-lib-cur">ج</span>
+      </label>`;
+    });
+    html+=`</div>
+      <button type="button" class="btn btn-r obm-lib-apply" onclick="applyOrderBulkFromLib()">✅ تطبيق المحدد على ${n} أوردر</button>
+    </div>`;
+  }
+
+  // Section 2: Templates
+  if(matchTmpls.length){
+    html+=`<div class="obm-section">
+      <div class="obm-sec-hdr">📋 من القوالب</div>
+      <div class="obm-tmpl-list">`;
+    matchTmpls.forEach(t=>{
+      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      html+=`<div class="obm-tmpl-card">
+        <div class="obm-tmpl-info">
+          <span class="obm-tmpl-name">${t.name}${t.qty?` ×${t.qty}`:''}</span>
+          <span class="obm-tmpl-total">${fn(total)} ج</span>
+        </div>
+        <div class="obm-tmpl-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+        <button type="button" class="btn btn-r obm-tmpl-apply-btn" onclick="applyOrderBulkTemplate('${t.id}')">⚡ تطبيق على ${n} أوردر</button>
+      </div>`;
+    });
+    html+=`</div></div>`;
+  }
+
+  // Section 3: Manual entry
+  html+=`<div class="obm-section">
+    <div class="obm-sec-hdr">✏️ بند يدوي</div>
+    <div class="fg"><label>النوع</label><select class="inp" id="obm-type"><option value="">— اختر —</option>${typeOpts}</select></div>
+    <div class="fg"><label>المورد</label><select class="inp" id="obm-sup"><option value="">— اختر —</option>${supOpts}</select></div>
+    <div class="fg"><label>التكلفة (ج)</label><input class="inp" id="obm-total" type="number" placeholder="0"></div>
+    <button type="button" class="btn btn-r" onclick="applyOrderBulkManual()">➕ إضافة لـ ${n} أوردر</button>
+  </div>`;
+
+  document.getElementById('obm-body').innerHTML=html;
+  document.getElementById('obm-foot').innerHTML='';
+  modal.classList.add('open');
+};
+
+window.applyOrderBulkFromLib=async function(){
+  // Collect checked rows and their (possibly edited) prices
+  const rows=document.querySelectorAll('#obm-lib-items .obm-lib-row');
+  const items=[];
+  rows.forEach(row=>{
+    const cb=row.querySelector('.obm-lib-cb');if(!cb||!cb.checked)return;
+    const priceInput=row.querySelector('.obm-lib-price');
+    const total=parseFloat(priceInput?.value||cb.dataset.price)||0;
+    if(!cb.dataset.type||!cb.dataset.sup||!total)return;
+    items.push({type:cb.dataset.type,supplierId:cb.dataset.sup,supplierName:cb.dataset.supname,total});
+  });
+  if(!items.length)return toast('⚠️ لم تختر أي بند','err');
+  await _doOrderBulkApply(items);
+};
+
+window.applyOrderBulkTemplate=async function(templateId){
+  const t=costTemplates.find(x=>x.id===templateId);
+  if(!t||!t.costItems.length)return;
+  const items=t.costItems.map(c=>({type:c.type,supplierId:c.supplierId,supplierName:c.supplierName,total:parseFloat(c.amount)||0})).filter(c=>c.type&&c.supplierId&&c.total);
+  if(!items.length)return toast('⚠️ القالب فارغ','err');
+  await _doOrderBulkApply(items);
+};
+
+window.applyOrderBulkManual=async function(){
+  const type=(document.getElementById('obm-type')?.value||'').trim();
+  const supSel=document.getElementById('obm-sup');
+  const supplierId=supSel?.value||'';
+  const supplierName=supSel?.options[supSel.selectedIndex]?.dataset?.name||'';
+  const total=parseFloat(document.getElementById('obm-total')?.value||'0');
+  if(!type||!supplierId||!total)return toast('⚠️ اكمل النوع والمورد والتكلفة','err');
+  await _doOrderBulkApply([{type,supplierId,supplierName,total}]);
+};
+
+async function _doOrderBulkApply(items){
+  const entries=[..._selectedOrders.values()];
+  let saved=0;
+  for(const {orderId,prodIdx} of entries){
+    for(const item of items){
+      const r=await orderActions.recordCostItem({
+        db,orderId,prodIdx,
+        payload:{type:item.type,total:item.total,supplierId:item.supplierId,supplierName:item.supplierName,note:'',walletId:'',paperMeta:{}},
+        role:currentRole,userId:currentUser?.uid||'',userName,
+        wallets,isEdit:false,editIdx:-1,
+      });
+      if(r.ok)saved++;
+    }
+  }
+  closeOrderBulkModal();
+  clearOrderSelection();
+  toast(`✅ أُضيفت ${saved} بند على ${entries.length} أوردر`,'ok');
+  setTimeout(renderList,400);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -720,6 +980,10 @@ window.openWorkspace=function(orderId,prodIdx=-1){
   const o=orders.find(x=>x._id===orderId);if(!o)return;
   activeId=orderId;
   editCostIdx=-1;
+  _prodFilter=-1;
+  _selectedProds.clear();
+  const bulkBar=document.getElementById('bulk-action-bar');
+  if(bulkBar)bulkBar.hidden=true;
 
   // Mobile: hide queue, show workspace
   document.getElementById('order-queue').classList.add('mob-hidden');
@@ -823,44 +1087,38 @@ function _populateWorkspace(o){
 
 function _renderCompleteness(o){
   const el=document.getElementById('ws-completeness');if(!el)return;
-  const comp=getCompleteness(o);
-  const hasAnyItems=(o.costItems||[]).length>0;
-  if(!comp.expected.length){
-    // no expected types configured — show finish button if items exist
-    el.innerHTML=hasAnyItems
-      ?`<div class="ws-comp-wrap"><button type="button" class="ws-finish-btn ws-finish-done" onclick="closeWorkspace()">✅ إنهاء التسجيل</button></div>`
-      :'';
-    return;
+  const allItems=o.costItems||[];
+  const prods=o.products||[];
+  const hasItems=allItems.length>0;
+  const totalCost=allItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+
+  // Completion = every product has at least one cost item (no masterCategories dependency)
+  let prodsWithItems=0;
+  if(prods.length){
+    prods.forEach((_,i)=>{if(allItems.some(c=>c.prodIdx===i))prodsWithItems++;});
   }
-  const color=comp.pct>=100?'var(--g)':comp.pct>=60?'var(--y)':'var(--r)';
-  const archiveBanner=o.awaitingFinalArchive&&comp.pct<100
-    ?`<div class="ws-archive-gate">🚨 الأوردر في انتظار الأرشفة — يجب إكمال البنود الناقصة أولاً</div>`:'';
-  const finishBtn=comp.pct>=100
+  const allDone=prods.length?prodsWithItems===prods.length:hasItems;
+
+  const archiveBanner=o.awaitingFinalArchive&&!allDone
+    ?`<div class="ws-archive-gate">🚨 الأوردر في انتظار الأرشفة — سجّل بنوداً لكل منتج أولاً</div>`:'';
+  const finishBtn=allDone&&hasItems
     ?`<button type="button" class="ws-finish-btn ws-finish-done" onclick="closeWorkspace()">✅ اكتملت البنود — إنهاء</button>`
-    :hasAnyItems
+    :hasItems
       ?`<button type="button" class="ws-finish-btn ws-finish-partial" onclick="closeWorkspace()">← إنهاء والرجوع للقائمة</button>`
       :'';
-  // recorded types not in expected list — still show them as acknowledged
-  const recordedAll=(o.costItems||[]).map(c=>(c.type||'').trim()).filter(Boolean);
-  const expectedSet=new Set(comp.expected);
-  const extraDone=[...new Set(recordedAll.filter(t=>!expectedSet.has(t)))];
-  const totalCostDisp=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+
+  // Show only recorded types — no "expected" categories from settings
+  const recordedTypes=[...new Set(allItems.map(c=>(c.type||'').trim()).filter(Boolean))];
+  const prodStat=prods.length?`<span class="ws-comp-stat">${prodsWithItems}/${prods.length} منتج</span>`:'';
+
   el.innerHTML=`
     <div class="ws-comp-wrap">
       ${archiveBanner}
       <div class="ws-comp-header">
-        <span class="ws-comp-title">🎯 اكتمال بنود التكلفة</span>
-        <div style="display:flex;align-items:center;gap:8px">
-          ${totalCostDisp>0?`<span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-heavy)">💰 ${fn(totalCostDisp)} ج</span>`:''}
-          <span class="ws-comp-pct" style="color:${color}">${comp.pct}%</span>
-        </div>
+        <span class="ws-comp-title">${hasItems?`💰 ${fn(totalCost)} ج · ${allItems.length} بند`:'لم تُسجَّل بنود بعد'}</span>
+        ${prodStat}
       </div>
-      <div class="ws-comp-track"><div class="ws-comp-fill" style="width:${comp.pct}%;background:${color}"></div></div>
-      <div class="ws-comp-chips">
-        ${comp.done.map(t=>`<span class="ws-comp-chip done">✅ ${t}</span>`).join('')}
-        ${extraDone.map(t=>`<span class="ws-comp-chip extra">✔ ${t}</span>`).join('')}
-        ${comp.missing.map(t=>`<span class="ws-comp-chip miss" onclick="prefillType('${t.replace(/'/g,'&#39;')}')">+ ${t}</span>`).join('')}
-      </div>
+      ${recordedTypes.length?`<div class="ws-comp-chips">${recordedTypes.map(t=>`<span class="ws-chip ws-chip-done">✓ ${t}</span>`).join('')}</div>`:''}
       ${finishBtn}
     </div>`;
 }
@@ -1055,10 +1313,226 @@ function applySort(arr){
   return a;
 }
 window.setFilter=function(f,btn){
-  currentFilter=f;
-  document.querySelectorAll('#stage-filter-bar .ftab').forEach(b=>b.classList.remove('active'));
-  btn?.classList.add('active');
+  if(f==='all'){
+    // "الكل" clears all stage selections
+    currentStageFilters.clear();
+  }else{
+    if(currentStageFilters.has(f))currentStageFilters.delete(f);
+    else currentStageFilters.add(f);
+  }
+  // Update active state on all tabs
+  document.querySelectorAll('#stage-filter-bar .ftab').forEach(b=>{
+    const fv=b.getAttribute('onclick')?.match(/setFilter\('([^']+)'/)?.[1]||'';
+    if(fv==='all')b.classList.toggle('active',currentStageFilters.size===0);
+    else b.classList.toggle('active',currentStageFilters.has(fv));
+  });
   renderList();
+};
+
+function _renderProdNameFilterBar(data){
+  const el=document.getElementById('prod-name-filter-bar');
+  if(!el)return;
+  // Collect unique base names with counts
+  const counts={};
+  data.forEach(({prod})=>{
+    if(!prod)return;
+    const b=_normBaseName(prod.name);
+    if(b&&b.length>=2)counts[b]=(counts[b]||0)+1;
+  });
+  const names=Object.entries(counts).sort((a,b)=>b[1]-a[1]); // sort by frequency
+  if(names.length<=1){el.hidden=true;return;}
+  el.hidden=false;
+  const noneActive=!_prodNameFilter.size;
+  let html=`<div class="pnf-bar">
+    <span class="pnf-label">📦</span>
+    <button class="pnf-chip${noneActive?' pnf-active':''}" onclick="clearProdNameFilter()">الكل</button>`;
+  names.forEach(([name,cnt])=>{
+    const active=_prodNameFilter.has(name);
+    html+=`<button class="pnf-chip${active?' pnf-active':''}" onclick="toggleProdNameFilter('${name.replace(/'/g,"\\'")}')">${name} <span class="pnf-cnt">${cnt}</span></button>`;
+  });
+  html+=`</div>`;
+  el.innerHTML=html;
+}
+
+window.toggleProdNameFilter=function(name){
+  if(_prodNameFilter.has(name))_prodNameFilter.delete(name);
+  else _prodNameFilter.add(name);
+  renderList();
+};
+
+window.clearProdNameFilter=function(){
+  _prodNameFilter.clear();
+  renderList();
+};
+
+/* ═══════════════════════════════════════════════════
+   PRODUCT FILTER BAR & BULK ADD
+   ═══════════════════════════════════════════════════ */
+function _renderProdFilterBar(o){
+  const el=document.getElementById('prod-filter-bar');
+  if(!el)return;
+  const prods=o.products||[];
+  if(prods.length<=1){el.hidden=true;return;}
+  el.hidden=false;
+  const allItems=o.costItems||[];
+  // Group similar products by baseName for visual tinting
+  const baseGroups={};
+  prods.forEach((p,i)=>{const b=_normBaseName(p.name)||`_${i}`;(baseGroups[b]||(baseGroups[b]=[])).push(i);});
+  const groupTints=['','pfg-b','pfg-c','pfg-d'];
+  const idxTint={};
+  Object.values(baseGroups).forEach((idxs,gi)=>idxs.forEach(i=>idxTint[i]=groupTints[gi%groupTints.length]));
+  let html=`<div class="pf-bar">`;
+  html+=`<button class="pf-chip${_prodFilter===-1?' pf-active':''}" onclick="setProdFilter(-1)">الكل <span class="pf-badge">${prods.length}</span></button>`;
+  prods.forEach((p,i)=>{
+    const hasItems=allItems.some(c=>c.prodIdx===i);
+    const dot=hasItems?'<span class="pf-dot pf-dot-ok"></span>':'<span class="pf-dot pf-dot-miss"></span>';
+    const short=(p.name||`منتج ${i+1}`).slice(0,16);
+    html+=`<button class="pf-chip ${idxTint[i]||''}${_prodFilter===i?' pf-active':''}" onclick="setProdFilter(${i})">${dot}${short}</button>`;
+  });
+  html+=`</div>`;
+  el.innerHTML=html;
+}
+
+window.setProdFilter=function(idx){
+  _prodFilter=idx;
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  _renderProdFilterBar(o);
+  _renderProductsCostView(o);
+};
+
+window.toggleProdSelect=function(idx,checked){
+  if(checked)_selectedProds.add(idx);
+  else _selectedProds.delete(idx);
+  _renderBulkBar(orders.find(x=>x._id===activeId));
+};
+
+window.clearProdSelection=function(){
+  _selectedProds.clear();
+  document.querySelectorAll('.prod-sel-cb').forEach(cb=>{cb.checked=false;});
+  _renderBulkBar(null);
+};
+
+function _renderBulkBar(o){
+  const el=document.getElementById('bulk-action-bar');
+  if(!el)return;
+  const n=_selectedProds.size;
+  if(!n){el.hidden=true;return;}
+  el.hidden=false;
+  el.innerHTML=`<div class="bulk-bar-inner">
+    <span class="bulk-bar-count">✓ ${n} ${n===1?'منتج':'منتجات'} محددة</span>
+    <button type="button" class="bulk-bar-add" onclick="openBulkAdd()">➕ إضافة بند للكل</button>
+    <button type="button" class="bulk-bar-clear" onclick="clearProdSelection()">✕</button>
+  </div>`;
+}
+
+window.openBulkAdd=function(){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const modal=document.getElementById('bulk-add-modal');
+  if(!modal)return;
+  // Pre-fill type and supplier from the active form if set
+  const curType=gv('ac-type');
+  const curSup=gv('ac-sup');
+  const curTotal=gv('ac-total');
+  // Type options
+  const typeOpts=masterCategories.filter(c=>c.isCostItem!==false)
+    .map(c=>`<option value="${c.label}"${c.label===curType?'selected':''}>${c.label}</option>`).join('');
+  document.getElementById('bulk-type-sel').innerHTML='<option value="">— اختر النوع —</option>'+typeOpts;
+  // Supplier options
+  const supOpts=suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"${s._id===curSup?'selected':''}>${s.name||s._id}</option>`).join('');
+  document.getElementById('bulk-sup-sel').innerHTML='<option value="">— اختر المورد —</option>'+supOpts;
+  // Pre-fill total
+  const totalEl=document.getElementById('bulk-total');
+  if(totalEl&&curTotal)totalEl.value=curTotal;
+  // Show selected product names
+  const prods=o.products||[];
+  const chips=[..._selectedProds].map(i=>{const p=prods[i];return`<span class="bulk-prod-chip">${p?.name||'منتج'} ×${p?.qty||1}</span>`;}).join('');
+  const prodsEl=document.getElementById('bulk-modal-prods');
+  if(prodsEl)prodsEl.innerHTML=chips;
+  modal.classList.add('open');
+  document.getElementById('bulk-type-sel')?.focus();
+};
+
+window.closeBulkModal=function(){
+  document.getElementById('bulk-add-modal')?.classList.remove('open');
+};
+
+window.saveBulkCost=async function(){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const type=(document.getElementById('bulk-type-sel')?.value||'').trim();
+  const supSel=document.getElementById('bulk-sup-sel');
+  const supplierId=supSel?.value||'';
+  const supOpt=supSel?.options[supSel.selectedIndex];
+  const supplierName=supOpt?.dataset?.name||'';
+  const total=parseFloat(document.getElementById('bulk-total')?.value||'0');
+  const note=(document.getElementById('bulk-note')?.value||'').trim();
+  if(!type)return toast('⚠️ اختر نوع البند','err');
+  if(!supplierId)return toast('⚠️ اختر المورد','err');
+  if(!total)return toast('⚠️ أدخل التكلفة','err');
+  const idxs=[..._selectedProds];
+  const btn=document.querySelector('#bulk-add-modal .btn-r');
+  if(btn){btn.disabled=true;btn.textContent='جاري الحفظ...';}
+  let saved=0;
+  for(const prodIdx of idxs){
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx,
+      payload:{type,total,supplierId,supplierName,note,walletId:'',paperMeta:{}},
+      role:currentRole,userId:currentUser?.uid||'',userName,
+      wallets,isEdit:false,editIdx:-1,
+    });
+    if(r.ok)saved++;
+  }
+  closeBulkModal();
+  clearProdSelection();
+  toast(`✅ "${type}" أُضيف لـ ${saved}/${idxs.length} منتج`,'ok');
+  setTimeout(()=>{
+    const fresh=orders.find(x=>x._id===activeId);
+    if(fresh){renderItemsBox(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderProdFilterBar(fresh);}
+  },350);
+};
+
+// Show "apply to similar products" suggestion after a single-product save
+function _suggestSimilarApply(o,type,supplierId,supplierName,total,savedProdIdx){
+  const prods=o.products||[];
+  if(prods.length<=1||savedProdIdx<0)return;
+  const savedBase=_normBaseName(prods[savedProdIdx]?.name);
+  if(!savedBase||savedBase.length<2)return;
+  const typedIdxs=new Set((o.costItems||[]).filter(c=>c.type===type).map(c=>c.prodIdx));
+  const targets=prods.map((_,i)=>i).filter(i=>i!==savedProdIdx&&!typedIdxs.has(i)&&_normBaseName(prods[i]?.name)===savedBase);
+  if(!targets.length)return;
+  const c=document.getElementById('toasts');if(!c)return;
+  const el=document.createElement('div');
+  el.className='toast toast-action';
+  const safeType=type.replace(/'/g,"\\'");
+  const safeSup=supplierId.replace(/'/g,"\\'");
+  const safeSupName=supplierName.replace(/'/g,"\\'");
+  el.innerHTML=`<div class="toast-action-msg">تطبيق "${type}" على ${targets.length} منتج مشابه؟</div>
+    <div class="toast-action-btns">
+      <button onclick="applyToSimilar([${targets.join(',')}],'${safeType}','${safeSup}','${safeSupName}',${total});this.closest('.toast').remove()">تطبيق →</button>
+      <button onclick="this.closest('.toast').remove()">تجاهل</button>
+    </div>`;
+  c.appendChild(el);
+  setTimeout(()=>el.remove(),9000);
+}
+
+window.applyToSimilar=async function(targets,type,supplierId,supplierName,total){
+  let saved=0;
+  for(const prodIdx of targets){
+    const r=await orderActions.recordCostItem({
+      db,orderId:activeId,prodIdx,
+      payload:{type,total,supplierId,supplierName,note:'',walletId:'',paperMeta:{}},
+      role:currentRole,userId:currentUser?.uid||'',userName,
+      wallets,isEdit:false,editIdx:-1,
+    });
+    if(r.ok)saved++;
+  }
+  toast(`✅ "${type}" طُبّق على ${saved} منتج إضافي`,'ok');
+  setTimeout(()=>{
+    const fresh=orders.find(x=>x._id===activeId);
+    if(fresh){renderItemsBox(fresh);_renderCompleteness(fresh);_renderQuickEntry(fresh);_renderProdFilterBar(fresh);}
+  },350);
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1097,13 +1571,20 @@ function _renderProductsCostView(o){
   const el=document.getElementById('cost-products-summary');if(!el)return;
   const prods=o.products||[];
   const allItems=o.costItems||[];
+  _renderProdFilterBar(o);
   let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
   prods.forEach((p,i)=>{
+    // Apply filter: if a specific product is selected, hide others
+    if(_prodFilter>=0&&_prodFilter!==i)return;
     const pItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx===i);
     const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
+    const isChecked=_selectedProds.has(i);
     html+=`<div class="prod-cost-card">
       <div class="prod-cc-hdr">
+        <label class="prod-sel-wrap" title="تحديد للإضافة الجماعية">
+          <input type="checkbox" class="prod-sel-cb" ${isChecked?'checked':''} onchange="toggleProdSelect(${i},this.checked)">
+        </label>
         <div class="prod-cc-info">
           <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
           <span class="qty-big">× ${p.qty||0}</span>
@@ -1261,6 +1742,22 @@ window.onCostInputChange=function(){
   }else{icoEl.textContent='💡';titleEl.textContent='اقتراح ذكي';}
   bodyEl.innerHTML=body;
 
+  // Duplicate type indicator — highlight if same type already exists for selected product
+  const typeVal=gv('ac-type').trim();
+  const prodIdxVal=parseInt(gv('cost-prod-idx')??'-1');
+  const isEditMode=editCostIdx>=0;
+  const dupWarn=document.getElementById('dup-type-warn');
+  if(dupWarn){
+    if(typeVal&&!isEditMode&&activeId){
+      const _o=orders.find(x=>x._id===activeId);
+      const dup=(_o?.costItems||[]).find(c=>
+        c.type===typeVal&&(prodIdxVal<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdxVal)
+      );
+      if(dup){dupWarn.hidden=false;dupWarn.textContent=`⚠️ "${typeVal}" مسجّل بالفعل بمبلغ ${fn(dup.total)} ج — هل تريد تعديله بدلاً من الإضافة؟`;}
+      else dupWarn.hidden=true;
+    }else dupWarn.hidden=true;
+  }
+
   // Live profitability refresh
   if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderDrawerProfit(o);}
 };
@@ -1363,6 +1860,17 @@ window.saveCost=async function(){
     if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
   }
 
+  // Duplicate guard: warn if same type already recorded for this product
+  if(!isEdit){
+    const existing=(o.costItems||[]).find(c=>
+      c.type===type&&(prodIdx<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdx)
+    );
+    if(existing){
+      const confirmed=confirm(`⚠️ "${type}" موجود بالفعل لهذا المنتج (${fn(existing.total)} ج).\n\nاستمر فقط لو محتاج بندين مختلفين لنفس النوع.\nلو تريد تعديل البند الموجود اضغط إلغاء وعدّله.`);
+      if(!confirmed)return;
+    }
+  }
+
   try{
     const r=await orderActions.recordCostItem({
       db,orderId:activeId,prodIdx,
@@ -1391,6 +1899,14 @@ window.saveCost=async function(){
     }else{
       const supTotal=(o.costItems||[]).filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0)+total;
       toast(`✅ ${type} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
+    }
+
+    // Suggest applying to similar products (same baseName, same cost type missing)
+    if(!isEdit&&prodIdx>=0){
+      setTimeout(()=>{
+        const fresh2=orders.find(x=>x._id===activeId);
+        if(fresh2)_suggestSimilarApply(fresh2,type,supplierId,supplierName,total,prodIdx);
+      },400);
     }
 
     clearForm();
@@ -1694,11 +2210,16 @@ function _buildProductProfiles(){
       if(c.prodIdx==null||c.prodIdx<0)return;
       const prod=prods[c.prodIdx];
       if(!prod?.name)return;
-      const baseName=_normBaseName(prod.name);  // strips extras + qty
+      const baseName=_normBaseName(prod.name);
       if(!baseName||baseName.length<2)return;
       const qty=_extractQty(prod);
-      const key=qty?`${baseName}::${qty}`:baseName;
-      if(!profiles[key])profiles[key]={key,baseName,qty,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
+      // Precise key: base name + printType + size + qty — separates digital vs offset,
+      // different paper sizes, and different quantities into distinct profiles.
+      const pt=(prod.printType||'').toLowerCase().trim();
+      const sz=(prod.size||'').trim();
+      const keyParts=[baseName,pt,sz,qty].filter(Boolean);
+      const key=keyParts.join('::');
+      if(!profiles[key])profiles[key]={key,baseName,qty,printType:pt,size:sz,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
       const ts=c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0;
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
       if(!profiles[key].orderIds.has(o._id)){
@@ -1710,7 +2231,7 @@ function _buildProductProfiles(){
     });
   });
   _libProfiles=Object.values(profiles)
-    .filter(p=>p.items.length>=2)
+    .filter(p=>p.orderIds.size>=2)  // at least 2 distinct orders — not just 2 items
     .map(p=>{
       // Group by (type, supplierId) — each supplier's price shown separately
       const byTS={};
@@ -1725,15 +2246,14 @@ function _buildProductProfiles(){
           if(item.ts>=e.lastTs){e.lastTs=item.ts;e.lastPrice=item.total;}
         }
       });
-      // type-level frequency for isAddon classification
+      // A cost type is "core" only if it appears in ≥50% of orders (raised from 35%)
       const typeFreq={};
       Object.values(byTS).forEach(e=>{typeFreq[e.type]=(typeFreq[e.type]||0)+e.useCount;});
-      const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.35));
+      const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.5));
       const bundle=Object.values(byTS).map(e=>({...e,isAddon:typeFreq[e.type]<threshold}))
         .sort((a,b)=>(typeFreq[b.type]-typeFreq[a.type])||a.type.localeCompare(b.type));
       const coreBundle=bundle.filter(b=>!b.isAddon);
       const addons=bundle.filter(b=>b.isAddon);
-      // totalEstimate: last price of most-used supplier per type (core only)
       const bestPerType={};
       coreBundle.forEach(b=>{
         if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
@@ -1741,12 +2261,12 @@ function _buildProductProfiles(){
       const totalEstimate=Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0);
       const avgSalePrice=p.salePrices.length?p.salePrices.reduce((s,v)=>s+v,0)/p.salePrices.length:0;
       const estMarginPct=(avgSalePrice>0&&totalEstimate>0)?Math.round((avgSalePrice-totalEstimate)/avgSalePrice*100):null;
-      return{key:p.key,baseName:p.baseName,qty:p.qty,displayName:p.displayName,
-        usageCount:p.orderIds.size,lastTs:p.lastTs,bundle,coreBundle,addons,
-        totalEstimate,avgSalePrice,estMarginPct};
+      return{key:p.key,baseName:p.baseName,qty:p.qty,printType:p.printType,size:p.size,
+        displayName:p.displayName,usageCount:p.orderIds.size,lastTs:p.lastTs,
+        bundle,coreBundle,addons,totalEstimate,avgSalePrice,estMarginPct};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
-    .slice(0,40);
+    .slice(0,60);
 }
 
 window.renderLibraryTab=function(){
@@ -1785,11 +2305,14 @@ function _renderLibProfiles(){
   el.innerHTML=_libProfiles.map(p=>{
     const addonsHtml=p.addons.length
       ?`<div class="lib-pc-addons">+ ${p.addons.slice(0,3).map(a=>`<span>${a.type}</span>`).join('')}</div>`:'';
+    const ptLabel=p.printType==='digital'?'ديجيتال':p.printType==='offset'?'أوفست':(p.printType||'');
+    const specTags=[ptLabel?`<span class="lib-pc-pt">${ptLabel}</span>`:'',p.size?`<span class="lib-pc-sz">${p.size}</span>`:''].filter(Boolean).join('');
     return`<div class="lib-profile-card" onclick="openProfileDetail('${p.key.replace(/'/g,'&#39;')}')">
       <div class="lib-pc-top">
         <div class="lib-pc-name">${p.baseName||p.displayName}</div>
         ${p.qty?`<span class="lib-pc-qty">${Number(p.qty).toLocaleString('ar-EG')||p.qty}</span>`:''}
       </div>
+      ${specTags?`<div class="lib-pc-specs">${specTags}</div>`:''}
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
       <div class="lib-pc-total">~${fn(p.totalEstimate)} ج${p.estMarginPct!==null?` <span class="lib-pc-margin ${p.estMarginPct>=35?'lib-margin-g':p.estMarginPct>=20?'lib-margin-y':'lib-margin-r'}">${p.estMarginPct}% هامش</span>`:''}</div>
@@ -2281,7 +2804,7 @@ function _buildSmartSuggestions(o){
         .forEach(c=>{
           if(!byType[c.type]){
             // first seen = most recent order = last recorded price (no averaging)
-            byType[c.type]={type:c.type,supplierId:c.supplierId,supplierName:c.supplierName||'',count:1,avgAmt:parseFloat(c.total)||0,prodIdx:match.idx};
+            byType[c.type]={type:c.type,supplierId:c.supplierId,supplierName:c.supplierName||'',count:1,avgAmt:parseFloat(c.total)||0,prodIdx:match.idx,srcQty:srcQty||match.qty||null};
           }else{
             byType[c.type].count++;
           }
@@ -2324,24 +2847,35 @@ function _buildQuickEntryItems(o){
         const base=_normBaseName(p.name);
         if(!base||base.length<2)return;
         if(!histByBase[base])histByBase[base]={};
+        const srcRef=ord.orderId||ord._id.slice(-6)||'';
+        const srcDays=ord.createdAt?.seconds?Math.floor((Date.now()/1000-ord.createdAt.seconds)/86400):null;
+        const srcLabel=srcDays===0?'اليوم':srcDays===1?'أمس':srcDays!=null?`${srcDays} أيام`:srcRef;
         (ord.costItems||[]).filter(c=>c.prodIdx===pi&&c.type&&c.supplierId).forEach(c=>{
           const t=c.type.trim();
           if(!histByBase[base][t])
-            histByBase[base][t]={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0};
+            histByBase[base][t]={supplierId:c.supplierId,supplierName:c.supplierName||'',lastPrice:parseFloat(c.total)||0,srcLabel};
         });
       });
     });
   const recordedSet=new Set((o.costItems||[]).map(c=>c.prodIdx+'::'+c.type));
+  // Only suggest types that exist in the official masterCategories list.
+  // If masterCategories not loaded yet, fall back to all historical types.
+  const validTypes=masterCategories.length?new Set(masterCategories.map(c=>c.label)):null;
   const result=[];
   prods.forEach((prod,i)=>{
     const base=_normBaseName(prod.name);
     if(!base||base.length<2)return;
     const raw=histByBase[base];
     if(!raw||!Object.keys(raw).length)return;
-    const byType=_dedupeTypes(raw);
+    // Filter to official types before dedup, so dedup works on the right set
+    const officialOnly=validTypes
+      ?Object.fromEntries(Object.entries(raw).filter(([t])=>validTypes.has(t)))
+      :raw;
+    if(!Object.keys(officialOnly).length)return;
+    const byType=_dedupeTypes(officialOnly);
     const entries=Object.entries(byType)
       .filter(([type])=>!recordedSet.has(i+'::'+type))
-      .map(([type,info])=>({type,supplierId:info.supplierId,supplierName:info.supplierName,lastPrice:info.lastPrice}));
+      .map(([type,info])=>({type,supplierId:info.supplierId,supplierName:info.supplierName,lastPrice:info.lastPrice,srcLabel:info.srcLabel||''}));
     if(entries.length)result.push({prodIdx:i,prodName:prod.name||'منتج',prodQty:prod.qty||0,entries});
   });
   return result;
@@ -2354,18 +2888,20 @@ function _renderQuickEntry(o){
   el.hidden=false;
   let totalEst=0,totalRows=0;
   groups.forEach(g=>{g.entries.forEach(e=>{totalEst+=e.lastPrice;totalRows++;});});
+  // Collapsed by default — user taps header to expand
   let html=`<div class="qe-box">
-    <div class="qe-hdr">
-      <span class="qe-label">⚡ إدخال سريع</span>
-      <span class="qe-sub">راجع الأسعار واحفظ الكل دفعة واحدة</span>
-    </div>`;
+    <div class="qe-hdr qe-hdr-toggle" onclick="this.closest('.qe-box').classList.toggle('qe-open')" role="button">
+      <span class="qe-label">⚡ إدخال سريع <span class="qe-count-badge">${totalRows} بند</span></span>
+      <span class="qe-toggle-ico">▼</span>
+    </div>
+    <div class="qe-body">`;
   groups.forEach(({prodIdx,prodName,prodQty,entries})=>{
     html+=`<div class="qe-prod-group">
       <div class="qe-prod-hdr">📦 ${prodName} <span class="qe-prod-qty">× ${prodQty}</span></div>`;
     entries.forEach(e=>{
       html+=`<div class="qe-row" data-prod="${prodIdx}" data-type="${e.type.replace(/"/g,'&quot;')}" data-sup-id="${e.supplierId}" data-sup-name="${(e.supplierName||'').replace(/"/g,'&quot;')}">
         <span class="qe-type">${e.type}</span>
-        <span class="qe-sup">${e.supplierName||'<span class="qe-no-sup">⚠️ بدون مورد</span>'}</span>
+        <span class="qe-sup">${e.supplierName?`${e.supplierName}${e.srcLabel?`<span class="qe-src"> · ${e.srcLabel}</span>`:''}` :'<span class="qe-no-sup">⚠️ بدون مورد</span>'}</span>
         <input class="inp qe-amount" type="number" placeholder="السعر" value="${e.lastPrice||''}" min="0" step="0.5" oninput="_qeUpdateTotal()">
         <button type="button" class="qe-save-one" title="حفظ هذا البند فقط" onclick="_qeSaveOne(this)">✔</button>
       </div>`;
@@ -2375,7 +2911,7 @@ function _renderQuickEntry(o){
   html+=`<div class="qe-footer">
     <span class="qe-total-lbl" id="qe-total-lbl">💰 ${fn(totalEst)} ج · ${totalRows} بند</span>
     <button type="button" class="btn btn-r qe-save-all-btn" onclick="saveQuickEntry()">💾 حفظ الكل</button>
-  </div></div>`;
+  </div></div></div>`;
   el.innerHTML=html;
 }
 
@@ -2551,7 +3087,7 @@ function _renderSmartSuggest(o){
       <span class="smart-chip-type">${s.type}</span>
       <span class="smart-chip-sup">${s.supplierName||'—'}</span>
       <strong class="smart-chip-amt">${fn(s.avgAmt)} ج</strong>
-      <span class="smart-chip-count">${s.count}×</span>
+      ${s.srcQty?`<span class="smart-chip-qty">×${s.srcQty}</span>`:`<span class="smart-chip-count">${s.count}×</span>`}
     </div>`).join('');
   el.innerHTML=`<div class="smart-suggest-box">
     <div class="smart-suggest-hdr">
