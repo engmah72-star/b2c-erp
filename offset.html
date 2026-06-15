@@ -236,17 +236,48 @@ function renderList(){
   if(!list.length){el.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dim2)">لا توجد أوردرات</div>`;return;}
   el.innerHTML=list.map(o=>{
     const st=getOffsetStatus(o);
-    const stCol=st==='printed'?'var(--g)':st==='at-press'?'var(--b)':st==='ready'?'var(--y)':st==='no-cost'?'var(--r)':'var(--dim2)';
-    const stLbl=st==='printed'?'✓ مطبوع':st==='at-press'?'بالمطبعة':st==='ready'?'جاهز':st==='no-cost'?'بدون تكلفة':'قيد التجهيز';
+    const stCol=st==='printed'?'var(--g)':st==='at-press'?'#3b9eff':st==='ready'?'var(--y)':st==='no-cost'?'var(--r)':'var(--dim2)';
+    const stLbl=st==='printed'?'✓ مطبوع':st==='at-press'?'🏭 بالمطبعة':st==='ready'?'⚡ جاهز':st==='no-cost'?'⚠️ بدون تكلفة':'⏳ قيد التجهيز';
     const offProds=(o.products||[]).filter(p=>(p.printType||'').includes('offset'));
     const totalCost=(o.costItems||[]).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0);
+    const sale=parseFloat(o.salePrice)||0;
+    const margin=sale>0&&totalCost>0?Math.round((sale-totalCost)/sale*100):null;
+    // أول منتج أوفست للمواصفات السريعة
+    const p0=offProds[0]||{};
+    const r0=computeOffsetReadiness(p0);
+    const barCol=r0.ready?'var(--g)':r0.pct>=60?'var(--y)':'var(--r)';
+    const zinkStr=p0.zinkType||(p0.frontColors!=null?(p0.frontColors+'+'+(p0.backColors||0)):null);
+    const deadline=p0.pressDeadline?new Date(p0.pressDeadline):null;
+    const deadlineTxt=deadline?deadline.toLocaleDateString('ar-EG',{month:'short',day:'numeric'}):null;
+    const isOverdue=deadline&&deadline<new Date()&&!['printed','done'].includes(p0.productStatus||'');
     return`<div class="off-ocard${o._id===activeId?' active':''}" onclick="offSelect('${o._id}')">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-        <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escH(o.clientName||'—')}</div>
+      <!-- الرأس -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:5px">
+        <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(o.clientName||'—')}</div>
         <span style="font-size:9px;padding:1px 7px;border-radius:8px;border:1px solid;color:${stCol};border-color:${stCol};white-space:nowrap;flex-shrink:0">${stLbl}</span>
       </div>
-      <div style="font-size:10px;color:var(--dim2);margin-top:2px">${escH(o.orderId||o._id.slice(-6))} · ${offProds.length} منتج أوفست</div>
-      ${totalCost>0?`<div style="font-size:10px;color:var(--y);margin-top:3px">💰 ${fmt(totalCost)} ج تكلفة</div>`:''}
+      <!-- شريط الجاهزية -->
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">
+        <div style="flex:1;height:3px;border-radius:2px;background:var(--bg3);overflow:hidden">
+          <div style="width:${r0.pct}%;height:100%;background:${barCol};border-radius:2px"></div>
+        </div>
+        <span style="font-size:9px;color:${barCol};font-weight:var(--fw-bold);flex-shrink:0">${r0.pct}%</span>
+      </div>
+      <!-- المواصفات السريعة -->
+      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px">
+        ${p0.paper?`<span style="font-size:9px;background:var(--bg3);border-radius:5px;padding:1px 6px;color:var(--dim2)">📄 ${escH(p0.paper)}</span>`:''}
+        ${zinkStr?`<span style="font-size:9px;background:rgba(255,200,0,.1);border-radius:5px;padding:1px 6px;color:var(--y)">🟨 ${escH(zinkStr)}</span>`:''}
+        ${p0.pressName?`<span style="font-size:9px;background:rgba(59,158,255,.08);border-radius:5px;padding:1px 6px;color:#3b9eff">🏭 ${escH(p0.pressName)}</span>`:''}
+        ${deadlineTxt?`<span style="font-size:9px;background:${isOverdue?'rgba(255,80,80,.12)':'var(--bg3)'};border-radius:5px;padding:1px 6px;color:${isOverdue?'var(--r)':'var(--dim2)'}">📅 ${deadlineTxt}${isOverdue?' ⚠️':''}</span>`:''}
+      </div>
+      <!-- التكلفة والهامش -->
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:9px;color:var(--dim2)">${escH(o.orderId||o._id.slice(-6))} · ${offProds.length} منتج</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${totalCost>0?`<span style="font-size:9px;color:var(--y);font-weight:var(--fw-bold)">💰 ${fmt(totalCost)} ج</span>`:''}
+          ${margin!=null?`<span style="font-size:9px;color:${margin>=0?'var(--g)':'var(--r)'};font-weight:var(--fw-bold)">${margin>=0?'+':''}${margin}%</span>`:''}
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
