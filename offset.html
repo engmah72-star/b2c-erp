@@ -461,7 +461,7 @@ function buildCalcResults(o, idx){
         const cutsStr=layout?.cuts>0?` · ${layout.cuts} مراحل قص`:'';
         const layoutStr=layout?`${layout.cols} عمود × ${layout.rows} صف${layout.rotated?' (مقلوب)':''}${cutsStr}`:'' ;
         const effArea=layout?`طباعة فعلية ${layout.effectiveW}×${layout.effectiveH} سم`:'';
-        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal})"
+        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal},'${escAttr(pm.originalSize||'')}',${pm.pcs||0})"
           style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:2px solid ${border};background:${bg};cursor:pointer;margin-bottom:5px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
@@ -669,15 +669,29 @@ function renderCalcTab(o){
         <div class="off-field"><label class="off-label">⚖️ وزن الورق (جم)</label><input class="off-inp" type="number" min="0" value="${escAttr(String(p.weight||''))}" oninput="offUpd('${o._id}',${idx},'weight',parseFloat(this.value)||0)" placeholder="150"></div>
         <div class="off-field">
           <label class="off-label">📏 مقاس القص</label>
-          <input class="off-inp" type="text" value="${escAttr(p.cutSize||'')}" oninput="offUpd('${o._id}',${idx},'cutSize',this.value)" placeholder="${(MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1]).sizes[0].w}×${(MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1]).sizes[0].h}">
+          <input class="off-inp" type="text" value="${escAttr(p.cutSize||'')}" oninput="offUpdCutSize('${o._id}',${idx},this.value)" placeholder="${(MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1]).sizes[0].w}×${(MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1]).sizes[0].h}">
           <div style="display:flex;gap:3px;margin-top:4px;flex-wrap:wrap">
-            ${(MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1]).sizes.map((s,si)=>{
-              const sz=`${s.w}×${s.h}`;const isSel=p.cutSize===sz;
-              return`<button onclick="offUpd('${o._id}',${idx},'cutSize','${sz}');if(activeOrder){(activeOrder.products||[])[${idx}]&&((activeOrder.products||[])[${idx}].cutSize='${sz}');renderCalcTab(activeOrder);}" class="off-btn${isSel?' off-btn-y':''}" style="padding:2px 8px;font-size:9px">${si===0?'ستاندر':'جاير'}: ${sz}</button>`;
-            }).join('')}
+            ${(()=>{
+              const eng2=window.offsetCostEngine;
+              const td=MACHINE_TIERS.find(t=>t.id===prefTier)||MACHINE_TIERS[1];
+              const seen=new Set();const btns=[];
+              td.sizes.forEach((s,si)=>{
+                const sz=`${s.w}×${s.h}`;seen.add(sz);
+                const isSel=p.cutSize===sz;
+                btns.push(`<button onclick="offSelCutSize('${o._id}',${idx},'${sz}')" class="off-btn${isSel?' off-btn-y':''}" style="padding:2px 8px;font-size:9px">${si===0?'ستاندر':'جاير'}: ${sz}</button>`);
+              });
+              (eng2?.KNOWN_MARKET_CUTS||[]).filter(kc=>kc.tier===prefTier).forEach(kc=>{
+                const sz=kc.sizes[0];
+                if(!seen.has(sz)){seen.add(sz);
+                  const isSel=p.cutSize===sz;
+                  btns.push(`<button onclick="offSelCutSize('${o._id}',${idx},'${sz}')" class="off-btn${isSel?' off-btn-y':''}" style="padding:2px 8px;font-size:9px">${kc.name}: ${sz}</button>`);
+                }
+              });
+              return btns.join('');
+            })()}
           </div>
         </div>
-        <div class="off-field"><label class="off-label">✂️ عدد التقطيع</label><input class="off-inp" type="number" min="0" value="${escAttr(String(p.paperCuts||''))}" oninput="offUpd('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0"></div>
+        <div class="off-field"><label class="off-label">✂️ عدد التقطيع</label><input id="off-pc-${o._id}-${idx}" class="off-inp" type="number" min="0" value="${escAttr(String(p.paperCuts||''))}" oninput="offUpd('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0"></div>
       </div>
       <div class="off-field">
         <label class="off-label">✨ السلوفان</label>
@@ -860,6 +874,12 @@ window.offUpdSz=function(orderId,idx,dim,val){
   const parts=(p.printSize||p.size||'').split('×');
   const newSize=`${dim==='w'?val:(parts[0]||'')}×${dim==='h'?val:(parts[1]||'')}`;
   p.printSize=newSize;
+  // تحديث عدد التقطيع مباشرة في الـ DOM (بدون إعادة رندر كاملة)
+  const eng=window.offsetCostEngine;
+  if(eng&&p.cutSize){
+    const pcs=eng.fitPiecesPerSheet(newSize,p.cutSize)||0;
+    if(pcs>0){p.paperCuts=pcs;const pcEl=document.getElementById(`off-pc-${orderId}-${idx}`);if(pcEl)pcEl.value=pcs;}
+  }
   debSave(`${orderId}|${idx}|size`,async()=>{
     await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{printSize:newSize},userId:currentUid,userName});
   });
@@ -886,11 +906,52 @@ window.offUpdPress=function(orderId,idx,sel){
   });
 };
 
-window.offSelPaper=function(orderId,idx,name,sheets){
-  if(activeOrder){const p=(activeOrder.products||[])[idx];if(p){p.paper=name;p.paperSheets=sheets;}}
-  orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch:{paper:name,paperSheets:sheets},userId:currentUid,userName})
+window.offSelPaper=function(orderId,idx,name,sheets,origSize,pcs){
+  const patch={paper:name,paperSheets:sheets};
+  if(activeOrder){
+    const p=(activeOrder.products||[])[idx];
+    if(p){
+      p.paper=name;p.paperSheets=sheets;
+      // تزامن مقاس القص وعدد التقطيع مع الورقة المختارة
+      if(origSize){p.cutSize=origSize;patch.cutSize=origSize;}
+      const actualPcs=pcs||0;
+      if(actualPcs>0){p.paperCuts=actualPcs;patch.paperCuts=actualPcs;}
+    }
+  }
+  orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch,userId:currentUid,userName})
     .then(r=>{if(r&&!r.ok)toast('❌ '+(r.errors||[]).join(' · '),'err');});
-  if(activeOrder&&activeOrder._id===orderId)refreshCalcResults(activeOrder);
+  if(activeOrder&&activeOrder._id===orderId)renderCalcTab(activeOrder);
+};
+
+// اختيار مقاس القص من أزرار الاختصار (يُحدّث عدد التقطيع تلقائياً)
+window.offSelCutSize=function(orderId,idx,size){
+  const eng=window.offsetCostEngine;
+  const o=activeOrder;if(!o||o._id!==orderId)return;
+  const p=(o.products||[])[idx];if(!p)return;
+  const printSize=p.printSize||p.size||'';
+  const pcs=eng?.fitPiecesPerSheet(printSize,size)||0;
+  p.cutSize=size;if(pcs>0)p.paperCuts=pcs;
+  const patch={cutSize:size};if(pcs>0)patch.paperCuts=pcs;
+  orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch,userId:currentUid,userName});
+  renderCalcTab(o);
+};
+
+// كتابة مقاس القص يدوياً — يُحدّث عدد التقطيع دون فقد الـ focus
+window.offUpdCutSize=function(orderId,idx,value){
+  const eng=window.offsetCostEngine;
+  const p=(activeOrder?.products||[])[idx];if(!p)return;
+  p.cutSize=value;
+  const printSize=p.printSize||p.size||'';
+  const pcs=eng?.fitPiecesPerSheet(printSize,value)||0;
+  if(pcs>0){
+    p.paperCuts=pcs;
+    const pcEl=document.getElementById(`off-pc-${orderId}-${idx}`);
+    if(pcEl)pcEl.value=pcs;
+  }
+  debSave(`${orderId}|${idx}|cutSize`,async()=>{
+    const patch={cutSize:value};if(pcs>0)patch.paperCuts=pcs;
+    await orderActions.applyProductBriefPatch({db,orderId,prodIdx:idx,patch,userId:currentUid,userName});
+  });
 };
 
 window.offSelMachine=function(orderId,idx,tierId){
