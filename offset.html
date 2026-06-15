@@ -97,9 +97,9 @@
         <button onclick="offBack()" class="off-btn" style="display:none;margin-bottom:8px;padding:5px 12px;font-size:var(--fs-xs)" id="off-back-btn">→ رجوع للقائمة</button>
       </div>
       <div class="off-tabs">
-        <button class="off-tab on" onclick="offTab('calc',this)">📐 الحاسبة</button>
-        <button class="off-tab"    onclick="offTab('cost',this)">💰 التكلفة</button>
-        <button class="off-tab"    onclick="offTab('press',this)">🏭 المطبعة</button>
+        <button class="off-tab on" onclick="offTab('calc',this)">📐 الحاسبة<span id="off-tbadge-calc"></span></button>
+        <button class="off-tab"    onclick="offTab('cost',this)">💰 التكلفة<span id="off-tbadge-cost"></span></button>
+        <button class="off-tab"    onclick="offTab('press',this)">🏭 المطبعة<span id="off-tbadge-press"></span></button>
       </div>
       <div class="off-pane on" id="off-pane-calc"></div>
       <div class="off-pane"    id="off-pane-cost"></div>
@@ -124,6 +124,7 @@ let orders=[], activeId='', activeOrder=null, activeProdIdx=0;
 let suppliers=[], appSettings={}, briefTemplates=[];
 let currentRole='', userName='', currentUid='';
 let _listFilter='all', _listSearch='';
+let _calcState=null; // الحالة المشتركة بين التابات — تُحسب مرة واحدة وتُعرض في الثلاثة
 
 // ── مقاسات الماكينات (ستاندر + جاير لكل تير) ──
 const MACHINE_TIERS=[
@@ -335,8 +336,8 @@ window.offTab=function(name,btn){
   $('off-pane-'+name)?.classList.add('on');
   if(activeOrder){
     if(name==='calc')renderCalcTab(activeOrder);
-    else if(name==='cost')renderCostTab(activeOrder);
-    else if(name==='press')renderPressTab(activeOrder);
+    else if(name==='cost'){renderCostTab(activeOrder);propagateCalcState(activeOrder);}
+    else if(name==='press'){renderPressTab(activeOrder);propagateCalcState(activeOrder);}
   }
 };
 window.switchTab=name=>window.offTab(name,null);
@@ -432,6 +433,8 @@ function buildCalcResults(o, idx){
     const mc=trajs*machRate;
     const zc=eng.calcZincCost(frontC,backC,zincCPP);
     const totalCalc=paperCost+mc+zc;
+    // ── حفظ الحالة المشتركة (تُقرأ من propagateCalcState لتحديث التابات الأخرى) ──
+    _calcState={ready:true,orderId:o._id,idx,printSize,qty,prefTier,tierId,upgraded,frontC,backC,selRank,selSheets,machine,machRate,zincCPP,zinkCnt,totalPasses,trajs,selMeta,paperCost,mc,zc,totalCalc,readiness:r};
     const upgradeWarn=upgraded?`<div style="font-size:9px;padding:5px 8px;background:rgba(255,170,0,.1);border-radius:6px;border-right:2px solid var(--y);margin-bottom:8px">
       ⚠️ المقاس أكبر من ماكينة ${getTierLabel(prefTier)} — تم التصعيد تلقائياً لماكينة <strong style="color:var(--y)">${getTierLabel(tierId)}</strong>
     </div>`:'';
@@ -553,6 +556,65 @@ function refreshCalcResults(o){
   const el=document.getElementById(`off-res-${o._id}-${activeProdIdx}`);
   if(!el)return;
   el.innerHTML=buildCalcResults(o,activeProdIdx);
+  propagateCalcState(o); // نشر الحالة لباقي التابات
+}
+
+// ── الترابط الديناميكي: نشر نتيجة الحاسبة للتابات الأخرى ──────────────────
+function propagateCalcState(o){
+  if(!_calcState)return;
+  const cs=_calcState;
+  // 1) شارات التابات
+  const bc=document.getElementById('off-tbadge-calc');
+  if(bc){const pct=cs.readiness?.pct||0;const col=pct===100?'var(--g)':pct>=60?'var(--y)':'var(--dim2)';bc.textContent=pct+'%';bc.style.cssText=`font-size:8px;margin-right:4px;color:${col};font-weight:700;opacity:.9`;}
+  const bk=document.getElementById('off-tbadge-cost');
+  if(bk&&cs.totalCalc>0){const k=cs.totalCalc>=1000?(Math.round(cs.totalCalc/100)/10)+'k':Math.round(cs.totalCalc)+'';bk.textContent=k+'ج';bk.style.cssText='font-size:8px;margin-right:4px;color:var(--y);font-weight:700;opacity:.9';}
+  const bp=document.getElementById('off-tbadge-press');
+  if(bp){const prod=(o.products||[])[cs.idx];bp.textContent=prod?.pressId?'✓':'';bp.style.cssText='font-size:9px;margin-right:4px;color:var(--g);font-weight:700';}
+  // 2) بطاقة البريف في تاب المطبعة
+  const pe=document.getElementById(`off-press-brief-${cs.idx}`);
+  if(pe)pe.innerHTML=_buildCalcBriefBlock();
+  // 3) بطاقة "من الحاسبة" في تاب التكلفة
+  const ce=document.getElementById('off-cost-from-calc');
+  if(ce)ce.innerHTML=_buildCostFromCalcBlock(o);
+}
+
+function _buildCalcBriefBlock(){
+  const cs=_calcState;
+  if(!cs?.ready)return'';
+  const eng=window.offsetCostEngine;
+  const layout=cs.selRank&&eng?eng.fitLayout(cs.printSize,cs.selRank.originalSize||''):null;
+  const layoutStr=layout?`${layout.cols}×${layout.rows}${layout.rotated?' م':''}${layout.cuts>0?' · '+layout.cuts+' قص':''}`:'' ;
+  return`<div style="padding:8px 10px;background:rgba(59,158,255,.07);border-radius:8px;border:1px solid rgba(59,158,255,.2);margin-bottom:10px">
+    <div style="font-size:10px;font-weight:var(--fw-bold);color:#3b9eff;margin-bottom:5px">📋 مواصفات من الحاسبة</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:9px;color:var(--dim2)">
+      <span>📏 ${escH(cs.printSize)} سم</span>
+      <span>⚙️ ${getTierLabel(cs.tierId)}</span>
+      ${cs.selRank?`<span>📄 ${escH(cs.selRank.name||'')} · ${cs.selSheets} فرخة</span>`:''}
+      ${layoutStr?`<span>🔲 ${layoutStr}</span>`:''}
+      <span>🖌️ ${cs.frontC+cs.backC} زنكة</span>
+      ${cs.totalCalc>0?`<span style="color:var(--y);font-weight:700">💰 ${fmt(cs.totalCalc)} ج</span>`:''}
+    </div>
+  </div>`;
+}
+
+function _buildCostFromCalcBlock(o){
+  const cs=_calcState;
+  if(!cs?.ready||cs.totalCalc<=0)return'';
+  const alreadySaved=(o.costItems||[]).some(ci=>ci.prodIdx===cs.idx&&ci.type==='ورق');
+  return`<div style="padding:10px 12px;background:rgba(0,217,126,.06);border-radius:10px;border:1px solid rgba(0,217,126,.2);margin-bottom:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+      <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--g)">📊 نتيجة الحاسبة</span>
+      <span style="font-size:18px;font-weight:var(--fw-heavy);color:var(--y)">${fmt(cs.totalCalc)} ج</span>
+    </div>
+    <div style="display:flex;gap:10px;font-size:9px;color:var(--dim2);flex-wrap:wrap;margin-bottom:8px">
+      ${cs.paperCost>0?`<span>📄 ورق ${fmt(cs.paperCost)}</span>`:''}
+      ${cs.mc>0?`<span>⚙️ طباعة ${fmt(cs.mc)}</span>`:''}
+      ${cs.zc>0?`<span>🟨 زنك ${fmt(cs.zc)}</span>`:''}
+    </div>
+    ${!alreadySaved
+      ?`<button onclick="offApplyCost('${o._id}',${cs.idx})" class="off-btn off-btn-g" style="width:100%;padding:8px">💾 تسجيل في بنود التكلفة</button>`
+      :`<div style="font-size:10px;color:var(--g);text-align:center">✓ تم التسجيل سابقاً</div>`}
+  </div>`;
 }
 
 // ── Tab 1: الحاسبة ──
@@ -696,6 +758,7 @@ function renderCostTab(o){
   }).join(''):`<div style="text-align:center;padding:40px;color:var(--dim2)">⚠️ لا توجد بنود تكلفة — استخدم تبويب الحاسبة لتسجيلها</div>`;
 
   el.innerHTML=`
+    <div id="off-cost-from-calc"></div>
     <!-- KPIs -->
     <div style="display:grid;grid-template-columns:repeat(${sale>0?3:1},1fr);gap:8px;margin-bottom:14px">
       <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:10px;padding:10px 12px;text-align:center">
@@ -743,6 +806,7 @@ function renderPressTab(o){
       <div style="height:4px;border-radius:2px;background:var(--bg3);overflow:hidden;margin-bottom:10px">
         <div style="width:${r.pct}%;height:100%;background:${barCol};border-radius:2px"></div>
       </div>
+      <div id="off-press-brief-${idx}"></div>
       <div class="off-field"><label class="off-label">🏭 المطبعة</label>
         <select class="off-inp" onchange="offUpdPress('${o._id}',${idx},this)">${buildPressOpts(p.pressId||'')}</select>
       </div>
