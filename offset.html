@@ -135,6 +135,7 @@ const MACHINE_TIERS=[
 ];
 function getTierLabel(id){return MACHINE_TIERS.find(t=>t.id===id)?.label||id;}
 function pmMatchesTier(pm,tierId){
+  if(pm._tier)return pm._tier===tierId; // ورقة أم لقصة سوقية — تير صريح
   const eng=window.offsetCostEngine;
   const tier=MACHINE_TIERS.find(t=>t.id===tierId);
   if(!tier||!eng)return false;
@@ -401,16 +402,30 @@ function buildCalcResults(o, idx){
   let rankCards='', costSummary='', analysisCard='', marketCutBadge='';
   if(eng&&printSize&&qty>0){
     const allRankings=eng.rankAllSizes(printSize,qty,allPapersData);
+    // ── ورقة الشراء للقصات السوقية — تُحقن في allRankings قبل getActiveTier ──
+    // مثال حداشر: printSize=20×30 → parent sheet 70×100 → pcs=11 (سوق) لا 10 (هندسي)
+    const _activeCut=eng.lookupMarketCut?.(printSize)||null;
+    if(_activeCut&&_activeCut.sheet&&_activeCut.marketCount&&_activeCut.tier&&qty>0){
+      const csz=eng.parseSizePair(_activeCut.sheet);
+      allRankings.forEach(pm=>{
+        const sz=eng.parseSizePair(pm.originalSize||'');
+        if(!sz||!csz)return;
+        if(Math.abs(sz.w-csz.w)<1&&Math.abs(sz.h-csz.h)<1){
+          const sc=eng.sheetsCalc(_activeCut.marketCount,qty);
+          pm.pcs=_activeCut.marketCount;
+          pm.sheetsNet=sc.sheetsNet; pm.wasteSheets=sc.wasteSheets; pm.sheetsTotal=sc.sheetsTotal;
+          pm._tier=_activeCut.tier; pm._marketCutSrc=true; pm._marketCut=_activeCut;
+        }
+      });
+    }
     const {tierId,papers:tierPapers,upgraded}=getActiveTier(allRankings,prefTier);
-    // القصة السوقية المصرية — تُحسب بعد معرفة التير الحالي
-    if(eng.lookupMarketCut){
-      const cut=eng.lookupMarketCut(printSize);
-      if(cut){
-        const mismatch=cut.marketCount!==cut.calcCount;
-        // التير المناسب: يُستخدم مباشرةً من بيانات القصة السوقية إن وُجد
-        const cutTierId=cut.tier||'kaml';
-        const isCurrentTier=cutTierId===tierId;
-        marketCutBadge=`<div class="off-card" style="border-color:rgba(59,158,255,.3)">
+    // القصة السوقية — تُعرض بعد معرفة التير الفعلي
+    if(_activeCut){
+      const cut=_activeCut;
+      const mismatch=cut.marketCount!==cut.calcCount;
+      const cutTierId=cut.tier||'kaml';
+      const isCurrentTier=cutTierId===tierId;
+      marketCutBadge=`<div class="off-card" style="border-color:rgba(59,158,255,.3)">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-size:11px;padding:3px 8px;border-radius:6px;background:rgba(59,158,255,.15);color:#3b9eff;font-weight:var(--fw-bold)">🏷️ ${escH(cut.name)}</span>
             <span style="font-size:10px;color:var(--dim2)">ماكينة ${getTierLabel(cutTierId)}</span>
@@ -425,11 +440,11 @@ function buildCalcResults(o, idx){
             <button onclick="offSelMachine('${o._id}',${idx},'${cutTierId}')" class="off-btn" style="font-size:9px;padding:2px 8px;margin-right:4px;margin-top:4px;display:inline-block">جرّب ماكينة ${getTierLabel(cutTierId)}</button>
           </div>`:''}
         </div>`;
-      }
     }
-    const selRank=tierPapers.find(pm=>pm.name===p.paper)||tierPapers[0]||null;
+    const tierMachineMap={tumn:'ماكينة ثمن فرخ',rub3:'ماكينة ربع فرخ',nus:'ماكينة نصف فرخ',kaml:'ماكينة فرخ كامل'};
+    const selRank=tierPapers.find(pm=>pm.name===p.paper)||(p.paper?allRankings.find(pm=>pm.name===p.paper&&pm._marketCutSrc):null)||tierPapers[0]||null;
     const selSheets=selRank?.sheetsTotal||parseInt(p.paperSheets)||0;
-    const machine=selRank?.machine||paperMeta?.machine||'';
+    const machine=selRank?._marketCutSrc?(tierMachineMap[selRank._marketCut?.tier||'']||selRank.machine||paperMeta?.machine||''):(selRank?.machine||paperMeta?.machine||'');
     const machRates=appSettings.offsetMachineRates||{};
     const machRate=parseFloat(machRates[machine])||0;
     const zincCPP=parseFloat(appSettings.zincCostPerPlate)||0;
@@ -462,16 +477,20 @@ function buildCalcResults(o, idx){
         const cutsStr=layout?.cuts>0?` · ${layout.cuts} مراحل قص`:'';
         const layoutStr=layout?`${layout.cols} عمود × ${layout.rows} صف${layout.rotated?' (مقلوب)':''}${cutsStr}`:'' ;
         const effArea=layout?`طباعة فعلية ${layout.effectiveW}×${layout.effectiveH} سم`:'';
-        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal},'${escAttr(pm.originalSize||'')}',${pm.pcs||0})"
+        const origSizeForSel=pm._marketCutSrc?(pm._marketCut?.sizes?.[0]||pm.originalSize||''):(pm.originalSize||'');
+        return`<div onclick="offSelPaper('${o._id}',${idx},'${escAttr(pm.name)}',${pm.sheetsTotal},'${escAttr(origSizeForSel)}',${pm.pcs||0})"
           style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:2px solid ${border};background:${bg};cursor:pointer;margin-bottom:5px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
               <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSel?'var(--y)':isRec?'#3b9eff':'var(--snow)'}">${escH(pm.name)}</span>
               ${isRec?`<span style="font-size:9px;padding:0 5px;border-radius:5px;background:rgba(59,158,255,.15);color:#3b9eff">🎯 موصى به</span>`:''}
+              ${pm._marketCutSrc?`<span style="font-size:9px;padding:0 5px;border-radius:5px;background:rgba(0,217,126,.12);color:var(--g)">📦 ورقة شراء</span>`:''}
               <span style="font-size:9px;color:var(--dim2)">${escH(pm.originalSize||'')} سم</span>
             </div>
-            ${layoutStr?`<div style="font-size:9px;color:var(--dim2)">${layoutStr}${effArea?' · '+effArea:''}</div>`:''}
-            ${family?`<div style="font-size:9px;color:var(--dim2)">عائلة ${escH(family)}${pm.machine?' · '+escH(pm.machine):''}</div>`:''}
+            ${pm._marketCutSrc
+              ?`<div style="font-size:9px;color:var(--dim2)">يُقصّ جيوتين إلى ${escH(pm._marketCut?.sizes?.[0]||'')} · ${pm.pcs} ق/فرخة · طباعة على ماكينة ${getTierLabel(pm._marketCut?.tier||'')}</div>`
+              :(layoutStr?`<div style="font-size:9px;color:var(--dim2)">${layoutStr}${effArea?' · '+effArea:''}</div>`:'')}
+            ${family?`<div style="font-size:9px;color:var(--dim2)">عائلة ${escH(family)}${pm._marketCutSrc?'':pm.machine?' · '+escH(pm.machine):''}</div>`:''}
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
             <div style="text-align:center"><div style="font-size:15px;font-weight:var(--fw-heavy);color:var(--b)">${pm.pcs}</div><div style="font-size:9px;color:var(--dim2)">ق/فرخة</div></div>
@@ -984,11 +1003,25 @@ window.offApplyCost=async function(orderId,idx){
   const printSize=p.printSize||p.size||'';const qty=parseInt(p.qty)||0;
   const allPapersData=Array.isArray(appSettings?.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
   const allRankings=eng.rankAllSizes(printSize,qty,allPapersData);
+  const _ac=eng.lookupMarketCut?.(printSize)||null;
+  if(_ac&&_ac.sheet&&_ac.marketCount&&_ac.tier&&qty>0){
+    const csz=eng.parseSizePair(_ac.sheet);
+    allRankings.forEach(pm=>{
+      const sz=eng.parseSizePair(pm.originalSize||'');
+      if(!sz||!csz)return;
+      if(Math.abs(sz.w-csz.w)<1&&Math.abs(sz.h-csz.h)<1){
+        const sc=eng.sheetsCalc(_ac.marketCount,qty);
+        pm.pcs=_ac.marketCount; pm.sheetsNet=sc.sheetsNet; pm.wasteSheets=sc.wasteSheets; pm.sheetsTotal=sc.sheetsTotal;
+        pm._tier=_ac.tier; pm._marketCutSrc=true; pm._marketCut=_ac;
+      }
+    });
+  }
   const {tierId,papers:tierPapers}=getActiveTier(allRankings,p.machineSize||'rub3');
-  const selRank=tierPapers.find(pm=>pm.name===(p.paper||''))||tierPapers[0]||null;
+  const selRank=tierPapers.find(pm=>pm.name===(p.paper||''))||(p.paper?allRankings.find(pm=>pm.name===p.paper&&pm._marketCutSrc):null)||tierPapers[0]||null;
   const paperMeta=getPaperMeta(selRank?.name||p.paper||'');
   const selSheets=selRank?.sheetsTotal||parseInt(p.paperSheets)||0;
-  const machine=selRank?.machine||paperMeta?.machine||'';
+  const _tmMap={tumn:'ماكينة ثمن فرخ',rub3:'ماكينة ربع فرخ',nus:'ماكينة نصف فرخ',kaml:'ماكينة فرخ كامل'};
+  const machine=selRank?._marketCutSrc?(_tmMap[selRank._marketCut?.tier||'']||selRank.machine||paperMeta?.machine||''):(selRank?.machine||paperMeta?.machine||'');
   const machRate=parseFloat(appSettings?.offsetMachineRates?.[machine])||0;
   const frontC=parseInt(p.frontColors)||0,backC=parseInt(p.backColors)||0;
   const trajs=selSheets*(frontC+backC)>0?Math.ceil(selSheets*(frontC+backC)/1000):0;
