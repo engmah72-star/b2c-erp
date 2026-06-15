@@ -3,14 +3,53 @@
 export const OFFSET_WASTE_PCT = 0.05; // 5% هالك ثابت
 
 // ── هوامش الطباعة الفعلية ────────────────────────────────────────
-// هامش العرض فقط (الجانبان الأيمن والأيسر — علامات قص وتسجيل):
-//   يؤثر على عدد الأعمدة لأن الورقة ضيّقت فعلاً من الجانبين.
+// هامش العرض فقط (الجانبان الأيمن والأيسر — علامات قص وتسجيل).
 // هامش الطول = 0: الماسكة تأكل الحافة الأولى من الورق لكنها لا تُقلّص
-//   عدد الصفوف في الحساب — القطع تُوزَّع على كامل الطول والهدر يُقطَّع في النهاية.
+// عدد الصفوف — القطع تُوزَّع على كامل الطول والهدر يُقطَّع في النهاية.
 export const SHEET_MARGIN_W = 1.5; // سم — إجمالي الجانبين (يمين + يسار)
 export const SHEET_MARGIN_H = 0;   // سم — لا خصم من الطول (الماسكة = هدر منفصل)
 
-// ── المقاسات القياسية في السوق المصري ───────────────────────────
+// ── قصات السوق المصري المعروفة ────────────────────────────────────
+// مرجع خبرة السوق — يُعرض كتسمية بجانب الحساب الفعلي.
+// • calcCount: العدد الهندسي الصحيح (مصدر القرار).
+// • marketCount: التسمية التجارية المتعارف عليها.
+// • إذا اختلفا يُشرح السبب في الواجهة.
+export const KNOWN_MARKET_CUTS = [
+  // ───── من ستاندر كامل 70×100 ─────
+  { sizes:['50×70'],           name:'نصف فرخ (نص)',  marketCount:2,  calcCount:2,  sheet:'70×100' },
+  { sizes:['35×50'],           name:'ربع فرخ',        marketCount:4,  calcCount:4,  sheet:'70×100' },
+  { sizes:['25×35'],           name:'ثمن فرخ',        marketCount:8,  calcCount:8,  sheet:'70×100' },
+  { sizes:['17.5×25'],         name:'ستاشر',          marketCount:16, calcCount:16, sheet:'70×100' },
+  { sizes:['23×33','21×29'],   name:'تسعات',          marketCount:9,  calcCount:9,  sheet:'70×100' },
+  { sizes:['20×35'],           name:'عشرات',          marketCount:10, calcCount:10, sheet:'70×100' },
+  // حداشر: التسمية السوقية 11 — الحساب الهندسي 10 (2 عمود×5 صف عرضي)
+  // الفرق لأن 70÷600سم²×100≈11.67 يُقرَّب لـ 11 في الأذهان، لكن القطع الفعلي 10
+  { sizes:['20×30'],           name:'حداشر',          marketCount:11, calcCount:10, sheet:'70×100',
+    note:'التسمية السوقية "حداشر" (11) مبنية على تقريب المساحة (7000÷600≈11.67). التوزيع الفعلي الأمثل: 2 عمود × 5 صف عرضي = 10 قطع.' },
+  // ───── من جاير كامل 66×88 ─────
+  { sizes:['44×66'],           name:'نصف جاير',      marketCount:2,  calcCount:2,  sheet:'66×88' },
+  { sizes:['33×44'],           name:'ربع جاير',       marketCount:4,  calcCount:4,  sheet:'66×88' },
+  { sizes:['22×33'],           name:'ثمن جاير',       marketCount:8,  calcCount:8,  sheet:'66×88' },
+];
+
+/**
+ * يبحث عن اسم القصة السوقية لمقاس طباعة معيّن.
+ * يجرّب الاتجاهين (طولي + عرضي).
+ */
+export function lookupMarketCut(printSize) {
+  const ps = parseSizePair(printSize);
+  if (!ps) return null;
+  return KNOWN_MARKET_CUTS.find(cut =>
+    cut.sizes.some(s => {
+      const sz = parseSizePair(s);
+      if (!sz) return false;
+      const tol = 0.6; // تسامح 6mm
+      return (Math.abs(sz.w - ps.w) < tol && Math.abs(sz.h - ps.h) < tol) ||
+             (Math.abs(sz.w - ps.h) < tol && Math.abs(sz.h - ps.w) < tol);
+    })
+  ) || null;
+}
+
 export const STANDARD_PAPER_SIZES = [
   // ستاندر
   { id:'s-full',  name:'ستاندر كامل',    originalSize:'70×100', machine:'ماكينة فرخ كامل',  family:'ستاندر' },
@@ -190,8 +229,9 @@ export function buildOffsetCostBreakdown({ product, paperMeta, zincCostPerPlate 
 if (typeof window !== 'undefined') {
   window.offsetCostEngine = {
     OFFSET_WASTE_PCT, SHEET_MARGIN_W, SHEET_MARGIN_H, STANDARD_PAPER_SIZES,
+    KNOWN_MARKET_CUTS,
     parseSizePair, effectivePaperSize, fitPiecesPerSheet, fitLayout, sheetsCalc,
-    rankAllSizes,
+    rankAllSizes, lookupMarketCut,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
   };
@@ -199,8 +239,9 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {
     OFFSET_WASTE_PCT, SHEET_MARGIN_W, SHEET_MARGIN_H, STANDARD_PAPER_SIZES,
+    KNOWN_MARKET_CUTS,
     parseSizePair, effectivePaperSize, fitPiecesPerSheet, fitLayout, sheetsCalc,
-    rankAllSizes,
+    rankAllSizes, lookupMarketCut,
     calcZincCount, calcPaperCost, calcZincCost,
     buildOffsetCostBreakdown,
   };
