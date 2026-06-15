@@ -364,7 +364,7 @@ const STATUS_LABELS={wip:'🔄 جاري',done:'✅ تم',problem:'⚠️ مشك�
 
 // ── State ──────────────────────────────────────────────────────────
 let me={uid:'',name:'',role:'',perms:null};
-let orders=[], suppliers=[], prodAgents=[], costTemplates=[];
+let orders=[], suppliers=[], prodAgents=[], costTemplates=[], masterCategories=[];
 let loaded=false, selectedId=null, detailTab='main';
 let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
@@ -384,6 +384,19 @@ const designUrl=o=>o.printFinalUrl||o.designFileUrl||(o.designFiles||[])[0]?.url
 
 // urgency score (5 = late, 3 = no-sup, 1 = no-cost)
 const urgency=o=>{let s=0;if(o.deadline&&new Date(o.deadline)<new Date())s+=5;if(hasNoSup(o))s+=3;if(hasNoCost(o))s+=1;return s;};
+
+// ── Cost type select options (same source as exec-cost-entry: master_lists/supplier_categories) ──
+function _buildTypeOptions(){
+  if(masterCategories.length){
+    const groups={};
+    masterCategories.forEach(c=>{const g=c.group||'أخرى';if(!groups[g])groups[g]=[];groups[g].push(c.label);});
+    let h='<option value="">— اختر النوع —</option>';
+    for(const[g,labels]of Object.entries(groups)){h+=`<optgroup label="${esc(g)}">`;labels.forEach(l=>{h+=`<option value="${esc(l)}">${esc(l)}</option>`;});h+='</optgroup>';}
+    return h;
+  }
+  const def=['طباعة','ورق','زنكات','سلفنة','قص','تجميع','تصميم','شحن','أخرى'];
+  return '<option value="">— اختر النوع —</option>'+def.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+}
 
 // ── Template matching (same logic as exec-cost-entry) ──────────────
 const _normBaseName=s=>(s||'').replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
@@ -426,6 +439,10 @@ onAuthStateChanged(auth,async u=>{
     if(role==='production_agent'){mineOnly=true;syncMine();}
   }
   getCostTemplates(db).then(t=>{costTemplates=t;if(selectedId)renderDetail();}).catch(e=>console.warn('[exec-ws] templates',e));
+  getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
+    if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false&&c.isSupplierService!==false&&c.isCostItem!==false);
+    if(selectedId)renderDetail();
+  }).catch(e=>console.warn('[exec-ws] categories',e));
   const urlId=new URLSearchParams(location.search).get('orderId')||'';let urlOpened=false;
   onSnapshot(query(collection(db,'orders'),where('stage','==','production'),limit(1000)),s=>{
     orders=s.docs.map(x=>({...x.data(),_id:x.id}));loaded=true;
@@ -714,8 +731,8 @@ function renderDetail(){
         <div class="wd-sec-hdr">➕ إضافة سريعة</div>
         <div class="wd-sec-body">
           <div class="cost-form">
-            <div><div class="cf-lbl">نوع التكلفة *</div><input type="text" class="cf-inp" id="c-type" placeholder="ورق · طباعة · تجليد…" autocomplete="off"></div>
-            <div><div class="cf-lbl">المبلغ (ج) *</div><input type="number" class="cf-inp" id="c-total" min="0" value="0" inputmode="numeric"></div>
+            <div class="cf-full"><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="c-type">${_buildTypeOptions()}</select></div>
+            <div class="cf-full"><div class="cf-lbl">المبلغ (ج) *</div><input type="number" class="cf-inp" id="c-total" min="0" value="0" inputmode="numeric"></div>
             <div class="cf-full"><div class="cf-lbl">المورد</div>
               <select class="cf-inp" id="c-supplier"><option value="">— بدون —</option>${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}">${esc(s.name||s._id)}</option>`).join('')}</select>
             </div>
@@ -822,8 +839,8 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       toast(ok?`✓ أُضيف ${ok} بند${fail?` (${fail} فشل)`:''}`:' تعذّر تطبيق القالب',ok?'ok':'err');
       btn.disabled=false;return;
     } else if(act==='addcost'){
-      const type=document.getElementById('c-type')?.value.trim(),total=parseFloat(document.getElementById('c-total')?.value)||0;
-      if(!type||total<=0){toast('اكتب النوع والمبلغ','warn');btn.disabled=false;return;}
+      const type=(document.getElementById('c-type')?.value||'').trim(),total=parseFloat(document.getElementById('c-total')?.value)||0;
+      if(!type||total<=0){toast('اختر النوع وأدخل المبلغ','warn');btn.disabled=false;return;}
       const sup=document.getElementById('c-supplier');
       const pidxEl=document.getElementById('c-prodidx');
       const prodIdx=pidxEl?parseInt(pidxEl.value,10):-1;
