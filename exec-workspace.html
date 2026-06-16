@@ -399,7 +399,7 @@ import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
-import { getCostTemplates } from "./core/cost-template-actions.js";
+import { getCostTemplates, saveCostTemplate } from "./core/cost-template-actions.js";
 
 // ── Constants ──────────────────────────────────────────────────────
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -950,6 +950,17 @@ function renderDetail(){
           </div>
         </div>
       </div>
+      ${costs.length?`<div class="wd-sec">
+        <div class="wd-sec-hdr">💾 حفظ كقالب في المكتبة</div>
+        <div class="wd-sec-body">
+          <div style="font-size:11px;color:var(--dim2);margin-bottom:8px">سيُحفظ ${costs.filter(c=>c.supplierId&&c.type).length} بند${costs.some(c=>!c.supplierId)?` <span style="color:var(--y)">(${costs.filter(c=>!c.supplierId).length} بدون مورد — لن تُحفظ)</span>`:''}</div>
+          <div class="cost-form" style="margin:0">
+            <div class="cf-full"><div class="cf-lbl">اسم القالب *</div><input type="text" class="cf-inp" id="tmpl-name" value="${esc(products[0]?.name||'')}" placeholder="مثال: كارت شخصي ديجيتال"></div>
+            <div class="cf-full"><div class="cf-lbl">الكمية <span style="opacity:.5">(اختياري)</span></div><input type="text" class="cf-inp" id="tmpl-qty" value="${esc(products[0]?.qty||'')}" placeholder="مثال: 500"></div>
+            <div class="cf-full"><button type="button" class="act act-save act-full" data-act="savetmpl">💾 حفظ في المكتبة</button></div>
+          </div>
+        </div>
+      </div>`:''}
     </div>`;
     return;
   }
@@ -1091,6 +1102,21 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       r=await orderActions.assignProductionAgent({db,orderId,agentId:me.uid,agentName:me.name,userId:me.uid,userName:me.name,pickup:true});
     } else if(act==='savenote'){
       r=await orderActions.updateProductionNote({db,orderId,note:(document.getElementById('prod-note')?.value||'').trim()});
+    } else if(act==='savetmpl'){
+      const name=(document.getElementById('tmpl-name')?.value||'').trim();
+      const qty=(document.getElementById('tmpl-qty')?.value||'').trim();
+      if(!name){toast('أدخل اسم القالب','warn');btn.disabled=false;return;}
+      const o2=orders.find(x=>x._id===orderId);
+      const items=(o2?.costItems||[]).filter(c=>c.supplierId&&c.type&&parseFloat(c.total)>0)
+        .map(c=>({type:c.type,supplierId:c.supplierId,supplierName:c.supplierName||'',amount:parseFloat(c.total)||0}));
+      if(!items.length){toast('لا توجد بنود صالحة — كل بند يحتاج مورداً','warn');btn.disabled=false;return;}
+      const sr=await saveCostTemplate(db,{name,qty:qty||null,costItems:items},me.name);
+      if(sr?.ok){
+        costTemplates=await getCostTemplates(db);
+        toast('تم الحفظ في المكتبة ✓','ok');
+        btn.disabled=false;return;
+      }
+      toast((sr?.errors||[])[0]||'تعذر الحفظ','err');btn.disabled=false;return;
     }
     if(r?.ok){toast(r.warnings?.length?'تم ✓ · '+r.warnings[0]:'تم ✓','ok');if(act==='toShip'){selectedId=null;document.body.classList.remove('detail-open');renderList();}}
     else toast((r?.errors||[])[0]||'تعذّر','err');
