@@ -56,6 +56,33 @@
 
 <main class="main">
   <div class="container">
+    <!-- لوحة KPIs — إحصائيات حية -->
+    <div class="kpi-row" id="kpi-row">
+      <div class="kpi-card" style="--kpi-c:var(--p)">
+        <div class="kpi-ico">💸</div>
+        <div class="kpi-val" id="kv-queue">—</div>
+        <div class="kpi-lbl">قيد الاعتماد</div>
+      </div>
+      <div class="kpi-card" style="--kpi-c:var(--y)">
+        <div class="kpi-ico">💰</div>
+        <div class="kpi-val" id="kv-amount">—</div>
+        <div class="kpi-lbl">إجمالي المبالغ</div>
+      </div>
+      <div class="kpi-card" style="--kpi-c:var(--g)">
+        <div class="kpi-ico">🏦</div>
+        <div class="kpi-val" id="kv-wallets">—</div>
+        <div class="kpi-lbl">رصيد المحافظ</div>
+        <div class="kpi-sub" id="kv-wallets-count"></div>
+      </div>
+      <div class="kpi-card" id="kpi-stale">
+        <div class="kpi-ico">⏳</div>
+        <div class="kpi-val" id="kv-stale">0</div>
+        <div class="kpi-lbl">طلبات متأخرة</div>
+        <div class="kpi-sub" id="kv-stale-sub"></div>
+      </div>
+    </div>
+    <!-- شريط أرصدة المحافظ -->
+    <div class="wallets-strip" id="wallets-strip"></div>
       <!-- شريط التقدم المرئي — يوضح موقع التبويب الحالي في دورة الاعتماد -->
       <div class="workflow-bar" id="workflow-bar">
         <div class="wf-step" data-tab="requested" onclick="setTab('requested')">💸 طلب</div>
@@ -78,8 +105,45 @@
       <button type="button" class="tab" id="tab-suppliers_due" onclick="setTab('suppliers_due')" style="margin-right:auto">🏭 أرصدة الموردين <span class="badge" id="cnt-suppliers_due" style="background:var(--y)">0</span></button>
     </div>
 
-    <div class="search-wrap" id="search-wrap">
-      <input class="search-inp" id="list-search" type="search" placeholder="🔍 بحث — اسم / مبلغ / رقم أوردر...">
+    <div class="adv-filter-bar" id="ctrl-bar">
+      <input class="search-inp" id="list-search" type="search" placeholder="🔍 بحث سريع — اسم / مبلغ / أوردر..." style="flex:1;min-width:180px">
+      <button type="button" class="adv-filter-btn" id="adv-filter-toggle" onclick="toggleFilters()">⚙️ فلترة</button>
+      <button type="button" class="compact-btn" id="compact-toggle" onclick="setCompact(!compactMode)" title="عرض مدمج">⊟ مدمج</button>
+    </div>
+    <!-- لوحة الفلاتر المتقدمة -->
+    <div id="filter-panel" style="display:none" class="filter-panel">
+      <div class="filter-grid">
+        <div class="filter-group">
+          <label>نوع الطلب</label>
+          <select class="filter-inp" id="f-type" onchange="applyAdvFilter()">
+            <option value="">الكل</option>
+            <option value="supplier_payment">🏭 دفعة مورد</option>
+            <option value="salary">👤 مرتب/سلفة</option>
+            <option value="client_refund">↩️ استرداد عميل</option>
+            <option value="general">💸 مصروف عام</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>المبلغ من (ج)</label>
+          <input class="filter-inp" id="f-min" type="number" placeholder="0" oninput="applyAdvFilter()">
+        </div>
+        <div class="filter-group">
+          <label>المبلغ إلى (ج)</label>
+          <input class="filter-inp" id="f-max" type="number" placeholder="∞" oninput="applyAdvFilter()">
+        </div>
+        <div class="filter-group">
+          <label>من تاريخ</label>
+          <input class="filter-inp" id="f-from" type="date" onchange="applyAdvFilter()">
+        </div>
+        <div class="filter-group">
+          <label>إلى تاريخ</label>
+          <input class="filter-inp" id="f-to" type="date" onchange="applyAdvFilter()">
+        </div>
+        <div class="filter-group" style="justify-content:flex-end">
+          <button type="button" class="btn btn-ghost" style="font-size:var(--fs-sm);padding:7px 14px" onclick="clearAdvFilters()">✕ مسح الفلاتر</button>
+        </div>
+      </div>
+      <div id="active-filters-chips" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>
     </div>
     <div class="list-summary" id="list-summary" style="display:none"></div>
 
@@ -256,6 +320,8 @@ import { requiresStrictSeparation, resolveFinancialPolicy } from "./core/financi
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let searchQuery = '';
+let compactMode = false;
+let filterType='', filterMin=null, filterMax=null, filterFrom='', filterTo='';
 
 // RULE 8 — حماية رقم العميل: إظهار للأدوار المصرّحة فقط (admin/cs/ops/shipping)،
 // والباقي يرى رقم مُقنَّع. canSee/maskPhone مستوردة من shared.js (مصدر واحد).
@@ -331,6 +397,7 @@ onAuthStateChanged(auth, async u=>{
     updateRoleBanner();
     setTab(smartLandingTab());
     startListeners();
+    updateWalletsStrip();
   }catch(e){
     console.error('[approvals] init error:', e);
     document.getElementById('list-content').innerHTML = `<div class="empty-pl text-r">⛔ خطأ التحميل: ${e.message}</div>`;
@@ -406,6 +473,8 @@ function startListeners(){
       walletsMap.clear();
       walletsArr = snap.docs.map(d=>({...d.data(),_id:d.id}));
       walletsArr.forEach(w=>walletsMap.set(w._id, w.name||w._id));
+      updateWalletsStrip();
+      updateKPIs();
     },
     err=>console.error('[approvals] wallets:', err)
   );
@@ -520,6 +589,114 @@ function _renderStaleBanner(){
   }
 }
 
+// ═══════════ KPI Dashboard ═══════════
+function updateKPIs(){
+  const pendingReqs = requests.filter(r=>['requested','awaiting_receipt','pending','confirmed'].includes(r.status));
+  const pendingTxs = txs.filter(t=>['pending','confirmed'].includes(t.approvalStatus));
+  const totalQueue = pendingReqs.length + pendingTxs.length;
+  const totalAmt = [...pendingReqs,...pendingTxs].reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+  const walletTotal = walletsArr.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
+  const { staleCount, oldestHours } = _summarizeStaleRequests(requests,{staleHours:_staleHours()});
+
+  const qEl=document.getElementById('kv-queue'); if(qEl) qEl.textContent = totalQueue;
+  const aEl=document.getElementById('kv-amount'); if(aEl) aEl.textContent = fn(totalAmt)+' ج';
+  const wEl=document.getElementById('kv-wallets'); if(wEl) wEl.textContent = fn(walletTotal)+' ج';
+  const wcEl=document.getElementById('kv-wallets-count'); if(wcEl) wcEl.textContent = walletsArr.length+' محفظة';
+  const sEl=document.getElementById('kv-stale'); if(sEl) sEl.textContent = staleCount;
+  const ssEl=document.getElementById('kv-stale-sub'); if(ssEl) ssEl.textContent = staleCount ? 'أقدمها '+_fmtAge(oldestHours) : 'كل الطلبات في الوقت';
+  const sc=document.getElementById('kpi-stale');
+  if(sc) sc.style.setProperty('--kpi-c', staleCount>0?'var(--r)':'var(--g)');
+}
+
+// ═══════════ شريط المحافظ ═══════════
+function updateWalletsStrip(){
+  const el=document.getElementById('wallets-strip');
+  if(!el) return;
+  if(!walletsArr.length){ el.style.display='none'; return; }
+  el.style.display='flex';
+  el.innerHTML = walletsArr.map(w=>{
+    const bal = parseFloat(w.balance)||0;
+    return `<div class="wallet-chip">
+      <span class="wallet-chip-ico">🏦</span>
+      <span class="wallet-chip-name">${escapeHtml(w.name||w._id)}</span>
+      <span class="wallet-chip-bal" style="color:${bal<0?'var(--r)':bal===0?'var(--dim2)':'var(--g)'}">${fn(bal)} ج</span>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════ فلاتر متقدمة ═══════════
+window.toggleFilters = function(){
+  const p=document.getElementById('filter-panel');
+  const b=document.getElementById('adv-filter-toggle');
+  if(!p) return;
+  const open = p.style.display==='none';
+  p.style.display = open ? '' : 'none';
+  if(b) b.classList.toggle('active', open);
+};
+
+window.applyAdvFilter = function(){
+  filterType = document.getElementById('f-type')?.value||'';
+  filterMin  = parseFloat(document.getElementById('f-min')?.value)||null;
+  filterMax  = parseFloat(document.getElementById('f-max')?.value)||null;
+  filterFrom = document.getElementById('f-from')?.value||'';
+  filterTo   = document.getElementById('f-to')?.value||'';
+  _renderFilterChips();
+  render();
+};
+
+window.clearAdvFilters = function(){
+  filterType=filterFrom=filterTo=''; filterMin=filterMax=null;
+  ['f-type','f-min','f-max','f-from','f-to'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
+  _renderFilterChips();
+  render();
+};
+
+function _hasActiveFilters(){
+  return !!(filterType||filterMin||filterMax||filterFrom||filterTo);
+}
+
+function _renderFilterChips(){
+  const el=document.getElementById('active-filters-chips'); if(!el) return;
+  const chips=[];
+  if(filterType) chips.push(`نوع: ${REQ_TYPE_LBL[filterType]||filterType}`);
+  if(filterMin)  chips.push(`مبلغ ≥ ${fn(filterMin)} ج`);
+  if(filterMax)  chips.push(`مبلغ ≤ ${fn(filterMax)} ج`);
+  if(filterFrom) chips.push(`من: ${filterFrom}`);
+  if(filterTo)   chips.push(`إلى: ${filterTo}`);
+  el.innerHTML = chips.map(c=>`<span class="filter-active-chip">${c}</span>`).join('');
+  const b=document.getElementById('adv-filter-toggle');
+  if(b) b.classList.toggle('active', chips.length>0);
+}
+
+function _applyAdvFilters(items){
+  if(!_hasActiveFilters()) return items;
+  return items.filter(x=>{
+    if(filterType && x.type!==filterType) return false;
+    const amt=parseFloat(x.amount)||0;
+    if(filterMin!==null && amt<filterMin) return false;
+    if(filterMax!==null && amt>filterMax) return false;
+    if(filterFrom||filterTo){
+      const ts=x.requestedAt?.seconds||x.createdAt?.seconds;
+      if(ts){
+        const d=new Date(ts*1000).toISOString().slice(0,10);
+        if(filterFrom && d<filterFrom) return false;
+        if(filterTo   && d>filterTo)   return false;
+      }
+    }
+    return true;
+  });
+}
+
+// ═══════════ الوضع المدمج ═══════════
+window.setCompact = function(on){
+  compactMode = on;
+  const b=document.getElementById('compact-toggle');
+  if(b) b.classList.toggle('active', on);
+  render();
+};
+
 function _applySearch(items){
   if(!searchQuery) return items;
   const q = searchQuery;
@@ -550,10 +727,11 @@ function render(){
   const el = document.getElementById('list-content');
   if(!el) return;
   _renderStaleBanner();
+  updateKPIs();
 
-  // إخفاء البحث في تبويب الموردين (لا ينطبق)
-  const sw = document.getElementById('search-wrap');
-  if(sw) sw.style.display = activeTab === 'suppliers_due' ? 'none' : '';
+  // إخفاء شريط البحث/الفلاتر في تبويب الموردين
+  const ctrlBar = document.getElementById('ctrl-bar');
+  if(ctrlBar) ctrlBar.style.display = activeTab === 'suppliers_due' ? 'none' : '';
 
   if(activeTab === 'suppliers_due'){
     _updateSummary([]);
@@ -563,13 +741,12 @@ function render(){
 
   if(activeTab === 'requested' || activeTab === 'awaiting_receipt'){
     let filtered = requests.filter(r=>r.status === activeTab);
-    // الطالب يرى طلباته فقط في awaiting_receipt (للاستلام)؛ المحاسب يرى الكل في requested
     if(activeTab === 'awaiting_receipt') filtered = filtered.filter(r => r.requestedBy === currentUid);
-    filtered = _applySearch(filtered);
+    filtered = _applyAdvFilters(_applySearch(filtered));
     _updateSummary(filtered);
     if(!filtered.length){
       const msg = activeTab==='requested' ? '✨ لا توجد طلبات للتنفيذ' : '✨ لا توجد طلبات بانتظار استلامك';
-      el.innerHTML = `<div class="empty-pl">${msg}${searchQuery?' — لا نتائج للبحث':''}</div>`;
+      el.innerHTML = `<div class="empty-pl">${msg}${searchQuery||_hasActiveFilters()?' — لا نتائج بالفلاتر الحالية':''}</div>`;
       return;
     }
     el.innerHTML = filtered.map(r => renderRequestCard(r)).join('');
@@ -579,12 +756,11 @@ function render(){
   // تبويبات tx (pending/confirmed/approved/rejected)
   let filtered = txs.filter(t=>t.approvalStatus === activeTab);
   if(activeDir !== 'all') filtered = filtered.filter(t=>t.type === activeDir);
-  filtered = _applySearch(filtered);
+  filtered = _applyAdvFilters(_applySearch(filtered));
 
-  // أضف الـ requests المعتمدة/المرفوضة لتبويب approved/rejected
   let extraRequests = [];
-  if(activeTab === 'approved') extraRequests = _applySearch(requests.filter(r=>r.status==='approved'));
-  if(activeTab === 'rejected') extraRequests = _applySearch(requests.filter(r=>r.status==='rejected'));
+  if(activeTab === 'approved') extraRequests = _applyAdvFilters(_applySearch(requests.filter(r=>r.status==='approved')));
+  if(activeTab === 'rejected') extraRequests = _applyAdvFilters(_applySearch(requests.filter(r=>r.status==='rejected')));
 
   _updateSummary([...filtered, ...extraRequests]);
 
@@ -593,7 +769,7 @@ function render(){
                 activeTab==='confirmed' ? '✨ لا توجد عمليات بانتظار الاعتماد' :
                 activeTab==='approved' ? '📁 لا توجد عمليات مؤرشَفة بعد' :
                 '✨ لا توجد عمليات مرفوضة';
-    el.innerHTML = `<div class="empty-pl">${msg}${searchQuery?' — لا نتائج للبحث':''}</div>`;
+    el.innerHTML = `<div class="empty-pl">${msg}${searchQuery||_hasActiveFilters()?' — لا نتائج بالفلاتر الحالية':''}</div>`;
     return;
   }
   el.innerHTML = [
@@ -963,7 +1139,7 @@ function renderRequestCard(r){
   }
 
   return `
-    <div class="approval-card card-${r.status}">
+    <div class="approval-card card-${r.status}${compactMode?' compact':''}">
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
           <div class="ac-title">${typeLbl} — ${escapeHtml(beneficiary)}</div>
@@ -1240,7 +1416,7 @@ function renderCard(t){
     </div>` : '';
 
   return `
-    <div class="approval-card card-${t.approvalStatus}${isRecovery?' recovery-card':''}">
+    <div class="approval-card card-${t.approvalStatus}${isRecovery?' recovery-card':''}${compactMode?' compact':''}">
       ${recoveryBanner}
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
