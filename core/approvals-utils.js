@@ -29,10 +29,11 @@ import { resolveFinancialPolicy } from './financial-policy.js';
 export function computeWalletState(tx, { wallets = [], transactions = [] } = {}) {
   if (!tx) return null;
   if (tx.balanceBefore != null && tx.balanceAfter != null) {
+    const wallet = wallets.find(w => w._id === tx.walletId);
     return {
       before: parseFloat(tx.balanceBefore) || 0,
       after: parseFloat(tx.balanceAfter) || 0,
-      walletCurrent: null,
+      walletCurrent: wallet != null ? (parseFloat(wallet.balance) || 0) : null,
     };
   }
   if (!tx.walletId) return null;
