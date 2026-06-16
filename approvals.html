@@ -111,6 +111,7 @@
       <button type="button" class="tab" id="tab-suppliers_due" onclick="setTab('suppliers_due')" style="margin-right:auto">🏭 أرصدة الموردين <span class="badge" id="cnt-suppliers_due" style="background:var(--y)">0</span></button>
     </div>
 
+    <div class="entity-bar" id="entity-bar"><button class="entity-btn on" data-entity="" onclick="setEntity('')">🔵 الكل</button><button class="entity-btn" data-entity="suppliers" onclick="setEntity('suppliers')">🏭 موردون</button><button class="entity-btn" data-entity="employees" onclick="setEntity('employees')">👤 موظفون</button><button class="entity-btn" data-entity="clients" onclick="setEntity('clients')">👥 عملاء</button><button class="entity-btn" data-entity="expense" onclick="setEntity('expense')">🏷 مصاريف</button></div>
     <div class="adv-filter-bar" id="ctrl-bar">
       <input class="search-inp" id="list-search" type="search" placeholder="🔍 بحث سريع — اسم / مبلغ / أوردر..." style="flex:1;min-width:180px">
       <button type="button" class="adv-filter-btn" id="adv-filter-toggle" onclick="toggleFilters()">⚙️ فلترة</button>
@@ -349,6 +350,7 @@ let allTxs = [];
 let requests = [];      // payment_requests collection
 let selectedTxIds = new Set();   // bulk selection
 let selectionMode  = false;
+let activeEntity   = '';          // '' | 'suppliers' | 'employees' | 'clients' | 'expense'
 let activeTab = 'requested';
 let activeDir = 'all';
 let walletsMap = new Map();
@@ -367,9 +369,9 @@ const CAT_AR = { client_payment:'دفعة عميل', refund:'استرداد عم
 const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب', advance:'💵 سلفة', bonus:'🎁 مكافأة', general:'💸 مصروف عام', client_refund:'↩️ استرداد عميل' };
 // مجموعات دلالية: موردون | موظفون | عملاء | مصاريف
 const SEM_GROUPS=[
-  {k:'suppliers',l:'🏭 موردون',c:'var(--y)',       m:x=>/(supplier)/.test(x.type||'')},
-  {k:'employees',l:'👤 موظفون',c:'var(--b-bright)',m:x=>/(salary|bonus|advance|payroll|penalty)/.test(x.type||x.category||'')},
-  {k:'clients',  l:'👥 عملاء', c:'var(--p)',       m:x=>/(client_refund|refund)/.test(x.type||x.category||'')},
+  {k:'suppliers',l:'🏭 موردون',c:'var(--y)',       m:x=>/(supplier|printer_payment|shipper_payment)/.test(x.type||x.category||'')},
+  {k:'employees',l:'👤 موظفون',c:'var(--b-bright)',m:x=>/(salary|bonus|advance|payroll|penalty|deduction)/.test(x.type||x.category||'')},
+  {k:'clients',  l:'👥 عملاء', c:'var(--p)',       m:x=>/(client_refund|refund|client_payment|client_advance)/.test(x.type||x.category||'')},
   {k:'expense',  l:'🏷 مصاريف',c:'var(--dim)',     m:()=>true},
 ];
 const _semGrp=x=>SEM_GROUPS.find(g=>g.m(x))||SEM_GROUPS[SEM_GROUPS.length-1];
@@ -423,6 +425,7 @@ onAuthStateChanged(auth, async u=>{
     buildSidebar();
     updateRoleBanner();
     setTab(smartLandingTab());
+    (activeEntity=new URLSearchParams(location.search).get('entity')||'')&&document.querySelectorAll('.entity-btn').forEach(b=>b.classList.toggle('on',b.dataset.entity===activeEntity));
     startListeners();
     updateWalletsStrip();
   }catch(e){
@@ -707,6 +710,13 @@ function _renderFilterChips(){
   if(b) b.classList.toggle('active', chips.length>0);
 }
 
+const _applyEntityFilter=i=>activeEntity?i.filter(x=>_semGrp(x).k===activeEntity):i;
+window.setEntity=function(ent){
+  activeEntity=ent;
+  const u=new URL(location.href);ent?u.searchParams.set('entity',ent):u.searchParams.delete('entity');history.replaceState(null,'',u);
+  document.querySelectorAll('.entity-btn').forEach(b=>b.classList.toggle('on',b.dataset.entity===ent));
+  render();
+};
 function _applyAdvFilters(items){
   if(!_hasActiveFilters()) return items;
   return items.filter(x=>{
@@ -880,6 +890,7 @@ function render(){
   const isDue = activeTab === 'suppliers_due';
   if(ctrlBar) ctrlBar.style.display = isDue ? 'none' : '';
   if(sortBar) sortBar.style.display = isDue ? 'none' : '';
+  document.getElementById('entity-bar')?.style.setProperty('display', isDue ? 'none' : '');
 
   if(isDue){
     _updateSummary([]);
@@ -888,7 +899,7 @@ function render(){
   }
 
   if(activeTab === 'requested' || activeTab === 'awaiting_receipt'){
-    let filtered = requests.filter(r=>r.status === activeTab);
+    let filtered = _applyEntityFilter(requests.filter(r=>r.status === activeTab));
     if(activeTab === 'awaiting_receipt') filtered = filtered.filter(r => r.requestedBy === currentUid);
     filtered = _sortItems(_applyAdvFilters(_applySearch(filtered)));
     _updateSummary(filtered);
@@ -905,7 +916,7 @@ function render(){
   }
 
   // تبويبات tx (pending/confirmed/approved/rejected)
-  let filtered = txs.filter(t=>t.approvalStatus === activeTab);
+  let filtered = _applyEntityFilter(txs.filter(t=>t.approvalStatus === activeTab));
   if(activeDir !== 'all') filtered = filtered.filter(t=>t.type === activeDir);
   filtered = _sortItems(_applyAdvFilters(_applySearch(filtered)));
 
