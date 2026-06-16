@@ -812,8 +812,26 @@ function renderDetail(){
       ${paidTotal>0?`<span class="cs-sep">·</span><span class="cs-paid">✅ مدفوع: ${fn(paidTotal)} ج</span>`:''}
       ${unpaidTotal>0?`<span class="cs-sep">·</span><span class="cs-unpaid">⏳ متبقي: ${fn(unpaidTotal)} ج</span>`:''}
     </div>`:'';
+    // قوالب ذكية: مطابقة أولاً، مكتبة مفلترة ثانياً
     const tmplMatches=_getTmplMatches(o);
     const matchedIds=new Set(tmplMatches.map(m=>m.template.id));
+    const multiProd=products.length>1;
+    // دالة بناء بطاقة المكتبة مع selector للمنتج
+    const _libItem=t=>{
+      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      const prodSel=multiProd?`<select class="cf-inp" id="lp-${esc(t.id)}" style="font-size:11px;padding:3px 8px;max-width:130px;height:auto"><option value="0">— المنتج —</option>${products.map((p,i)=>`<option value="${i}">${esc(p.name||('منتج '+(i+1)))}</option>`).join('')}</select>`:'';
+      return`<div class="cost-lib-item">
+        <div style="flex:1;min-width:0">
+          <div class="cost-lib-name">${esc(t.name)}${t.qty?` <span style="color:var(--dim2)">×${esc(t.qty)}</span>`:''} <span class="cost-lib-total">${fn(total)} ج</span></div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.costItems.map(c=>esc(c.type)).join(' · ')}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+          ${prodSel}
+          <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="0"${multiProd?` data-pidx-sel="lp-${esc(t.id)}"`:''}>تطبيق</button>
+        </div>
+      </div>`;
+    };
+    // القوالب المقترحة المطابقة
     const tmplHTML=tmplMatches.map(({template:t,prod,prodIdx,score})=>{
       const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
       const lbl=score>=0.9?'⚡ تطابق':'💡 مقترح';
@@ -823,17 +841,22 @@ function renderDetail(){
         <button type="button" class="act act-add act-full" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${prodIdx}">⚡ تطبيق الكل دفعة واحدة</button>
       </div>`;
     }).join('');
-    const libHTML=costTemplates.length?`<details class="cost-lib"${!tmplMatches.length?' open':''}>
-      <summary>${matchedIds.size?'📚 المكتبة الكاملة':'📚 المكتبة'} <span style="color:var(--b)">${costTemplates.length} قالب</span> <span style="margin-right:auto;font-size:11px">▾</span></summary>
-      ${costTemplates.map(t=>{
-        const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
-        return`<div class="cost-lib-item">
-          <div style="flex:1;min-width:0"><div class="cost-lib-name">${esc(t.name)}${t.qty?` <span style="color:var(--dim2)">×${esc(t.qty)}</span>`:''} <span class="cost-lib-total">${fn(total)} ج</span></div>
-          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.costItems.map(c=>esc(c.type)).join(' · ')}</div></div>
-          <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="0">تطبيق</button>
-        </div>`;
-      }).join('')}
-    </details>`:'';
+    // المكتبة: تظهر فقط لو مافيش match، مفلترة بأسماء منتجات الأوردر
+    let libHTML='';
+    if(!tmplMatches.length&&costTemplates.length){
+      const rel=costTemplates.filter(t=>products.some(p=>_similarity(_normAr(t.name),_normAr(p.name))>=0.25));
+      const toShow=rel.length?rel:costTemplates;
+      libHTML=`<details class="cost-lib" open>
+        <summary>📚 قوالب مشابهة <span style="color:var(--b)">${toShow.length}</span> ▾</summary>
+        ${toShow.map(_libItem).join('')}
+      </details>`;
+    } else if(tmplMatches.length&&costTemplates.length>matchedIds.size){
+      // فيه match → فقط رابط صغير للمكتبة
+      libHTML=`<details class="cost-lib">
+        <summary>📚 المكتبة <span style="color:var(--dim2)">${costTemplates.length} قالب</span> ▾</summary>
+        ${costTemplates.filter(t=>!matchedIds.has(t.id)).map(_libItem).join('')}
+      </details>`;
+    }
     const costRows=costs.length?costs.map((c,i)=>{
       const pLabel=products[c.prodIdx]?`<span style="opacity:.5;font-size:11px;font-weight:normal"> · 📦 ${esc(products[c.prodIdx].name)}</span>`:'';
       const isEditing=editCostIdx===i;
@@ -971,7 +994,10 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       const np=(o.products||[]).map((p,i)=>i===prodIdx?{...p,execStatus:status}:p);
       r=await orderActions.setProductExecStatus({db,orderId,prodIdx,execStatus:status,derivedProdStatus:deriveSt({...o,products:np}),statusLabel:(EXEC.find(e=>e.k===status)||{}).lbl||status,userId:me.uid,userName:me.name});
     } else if(act==='applytmpl'){
-      const templateId=btn.dataset.tmplId,prodIdx=parseInt(btn.dataset.prodIdx,10);
+      const templateId=btn.dataset.tmplId;
+      // لو أكثر من منتج → اقرأ من الـ select المخصص
+      const pidxSel=btn.dataset.pidxSel?document.getElementById(btn.dataset.pidxSel):null;
+      const prodIdx=pidxSel?parseInt(pidxSel.value,10):parseInt(btn.dataset.prodIdx,10);
       const t=costTemplates.find(x=>x.id===templateId);
       if(!t||!t.costItems.length){toast('القالب فارغ','warn');btn.disabled=false;return;}
       let ok=0,fail=0;
