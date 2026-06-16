@@ -281,6 +281,71 @@ function _shippingCos({ allOrders, fn, ORDER_STAGES }) {
   return { html: rows, total };
 }
 
+// ── KPI Bar (4 أرقام في الأعلى) ───────────────────────────
+function _kpiBar({ totalBal, totalCollect, totalPay, periodRevenue, activePeriod, PERIOD_NAMES_AR, fn }) {
+  const items = [
+    { ico: '💼', val: fn(totalBal),      lbl: 'إجمالي الأرصدة',                              col: 'var(--g)' },
+    { ico: '⏳', val: fn(totalCollect),  lbl: 'تحصيلات معلقة',                               col: 'var(--y)' },
+    { ico: '🏭', val: fn(totalPay),      lbl: 'مستحق للموردين',                              col: 'var(--r)' },
+    { ico: '📥', val: fn(periodRevenue), lbl: `إيرادات ${PERIOD_NAMES_AR[activePeriod]||'الفترة'}`, col: 'var(--b)' },
+  ];
+  return `<div class="kpi-bar">
+    ${items.map(x => `<div class="kpi-bar-item" style="--kc:${x.col}">
+      <div class="kpi-bar-ico">${x.ico}</div>
+      <div class="kpi-bar-val">${x.val} <span class="kpi-bar-unit">ج</span></div>
+      <div class="kpi-bar-lbl">${x.lbl}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── Period picker (مُختار الفترة داخل لوحة التشغيل) ────────
+// Reuses .period-btn class so setPeriod() syncs is-active automatically.
+function _periodPicker({ activePeriod, PERIOD_NAMES_AR }) {
+  return `<div class="period-dash-bar">
+    ${Object.entries(PERIOD_NAMES_AR).map(([k, v]) => `
+      <button type="button" class="period-btn period-dash-btn${k === activePeriod ? ' is-active' : ''}"
+        data-period="${k}" onclick="setPeriod('${k}')">
+        ${v}
+      </button>`).join('')}
+  </div>`;
+}
+
+// ── Pipeline (قيمة الأوردرات في كل مرحلة) ──────────────────
+function _pipeline({ allOrders, ORDER_STAGES, fn }) {
+  const stages = [
+    { key: ORDER_STAGES.DESIGN,     ico: '✏️',  lbl: 'تصميم',  col: 'var(--p)', link: 'design.html' },
+    { key: ORDER_STAGES.PRINTING,   ico: '🖨️', lbl: 'طباعة',  col: 'var(--b)', link: 'print.html' },
+    { key: ORDER_STAGES.PRODUCTION, ico: '🏭',  lbl: 'تنفيذ',  col: 'var(--r)', link: 'production.html' },
+    { key: ORDER_STAGES.SHIPPING,   ico: '🚚',  lbl: 'شحن',    col: 'var(--c)', link: 'shipping.html' },
+  ];
+  const active   = allOrders.filter(o => o.stage !== ORDER_STAGES.ARCHIVED && o.stage !== ORDER_STAGES.CANCELLED);
+  const totalVal = active.reduce((s, o) => s + (parseFloat(o.salePrice)||0), 0);
+
+  const data = stages.map(st => {
+    const ords = active.filter(o => o.stage === st.key);
+    const val  = ords.reduce((s, o) => s + (parseFloat(o.salePrice)||0), 0);
+    return { ...st, count: ords.length, val, pct: totalVal > 0 ? val / totalVal * 100 : 0 };
+  });
+
+  return `<div class="dash-panel">
+    <div class="dash-panel-head">
+      <div class="dash-panel-title">🔄 Pipeline الأوردرات</div>
+      <span class="dash-panel-badge" style="background:var(--tint-b-soft);color:var(--b)">
+        ${active.length} طلب · ${fn(totalVal)} ج
+      </span>
+    </div>
+    <div class="pip-grid">
+      ${data.map(st => `
+        <a href="${st.link}" class="pip-stage" style="--pc:${st.col}">
+          <div class="pip-stage-ico">${st.ico}</div>
+          <div class="pip-stage-val">${fn(st.val)} <span class="kpi-bar-unit">ج</span></div>
+          <div class="pip-stage-lbl">${st.lbl} · ${st.count} طلب</div>
+          <div class="pip-bar"><div class="pip-bar-fill" style="width:${st.pct.toFixed(1)}%"></div></div>
+        </a>`).join('')}
+    </div>
+  </div>`;
+}
+
 // ════════════════════════════════════════════════════════════
 // renderDashboard — المُصدِّر الرئيسي
 // ════════════════════════════════════════════════════════════
@@ -292,6 +357,9 @@ export function renderDashboard({
 }) {
   const totalBal       = wallets.reduce((s, w) => s + (parseFloat(w.balance)||0), 0);
   const totalCollected = shippingSettlements.reduce((s, r) => s + (parseFloat(r.amount)||0), 0);
+  const periodRevenue  = transactions
+    .filter(t => t.type === 'in' && isInPeriod(t.createdAt))
+    .reduce((s, t) => s + (parseFloat(t.amount)||0), 0);
 
   // Compute all panels
   const alertStrip  = _alertStrip({ allOrders, wallets, calcRem, fn, ORDER_STAGES });
@@ -302,7 +370,10 @@ export function renderDashboard({
     countCollect, countPay,
     totalCollect, totalPay,
   } = _actionQueue({ allOrders, suppliers, supplierPays, calcRem, fn, ORDER_STAGES, SPCOL });
-  const txFeedHtml = _txFeed({ transactions, wallets, CAT, fn });
+  const txFeedHtml  = _txFeed({ transactions, wallets, CAT, fn });
+  const kpiBarHtml  = _kpiBar({ totalBal, totalCollect, totalPay, periodRevenue, activePeriod, PERIOD_NAMES_AR, fn });
+  const periodHtml  = _periodPicker({ activePeriod, PERIOD_NAMES_AR });
+  const pipelineHtml = _pipeline({ allOrders, ORDER_STAGES, fn });
 
   // Collection efficiency (total paid / total sale across ALL orders)
   const totalSale = allOrders.reduce((s, o) => s + (parseFloat(o.salePrice)||0), 0);
@@ -311,6 +382,8 @@ export function renderDashboard({
   const collEffCol = collEff >= 80 ? 'var(--g)' : collEff >= 50 ? 'var(--y)' : 'var(--r)';
 
   return `
+    ${kpiBarHtml}
+    ${periodHtml}
     ${alertStrip}
 
     <div class="dash-grid">
@@ -392,6 +465,9 @@ export function renderDashboard({
       </div>
 
     </div>
+
+    <!-- ═══ Pipeline الأوردرات ═══ -->
+    ${pipelineHtml}
 
     <!-- ═══ آخر الحركات المالية (full width, 2-col grid) ═══ -->
     <div class="dash-panel">
