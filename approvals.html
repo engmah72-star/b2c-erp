@@ -347,6 +347,8 @@ const displayPhone = (phone) => maskPhone(phone, canSeeClientPhone());
 let txs = [];
 let allTxs = [];
 let requests = [];      // payment_requests collection
+let selectedTxIds = new Set();   // bulk selection
+let selectionMode  = false;
 let activeTab = 'requested';
 let activeDir = 'all';
 let walletsMap = new Map();
@@ -363,6 +365,14 @@ const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const ICONS = { client_payment:'💰', refund:'↩️', salary:'👤', bonus:'🎁', deduction:'✂️', printer_payment:'🏭', shipper_payment:'🚚', shipping_cost:'🚚', shipping_settlement:'📦', transfer:'🔄', opening_balance:'🏦', adjustment:'⚖️', expense:'💸' };
 const CAT_AR = { client_payment:'دفعة عميل', refund:'استرداد عميل', salary:'راتب', bonus:'مكافأة', deduction:'خصم', printer_payment:'دفعة مطبعة', shipper_payment:'دفعة شركة شحن', shipping_cost:'تكلفة شحن', shipping_settlement:'تسوية شحن', transfer:'تحويل بين محافظ', opening_balance:'رصيد افتتاحي', adjustment:'تسوية رصيد', expense:'مصروف', admin_edit:'تعديل أدمن', transfer_fee:'رسوم تحويل', withdrawal:'سحب', withdrawal_fee:'رسوم سحب' };
 const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب', advance:'💵 سلفة', bonus:'🎁 مكافأة', general:'💸 مصروف عام', client_refund:'↩️ استرداد عميل' };
+// مجموعات دلالية: موردون | موظفون | عملاء | مصاريف
+const SEM_GROUPS=[
+  {k:'suppliers',l:'🏭 موردون',c:'var(--y)',       m:x=>/(supplier)/.test(x.type||'')},
+  {k:'employees',l:'👤 موظفون',c:'var(--b-bright)',m:x=>/(salary|bonus|advance|payroll|penalty)/.test(x.type||x.category||'')},
+  {k:'clients',  l:'👥 عملاء', c:'var(--p)',       m:x=>/(client_refund|refund)/.test(x.type||x.category||'')},
+  {k:'expense',  l:'🏷 مصاريف',c:'var(--dim)',     m:()=>true},
+];
+const _semGrp=x=>SEM_GROUPS.find(g=>g.m(x))||SEM_GROUPS[SEM_GROUPS.length-1];
 
 function buildSidebar(){
   B2CSidebar.build({ role: currentRole, permissions: currentPerms || {} }, 'approvals.html');
@@ -887,8 +897,9 @@ function render(){
       el.innerHTML = `<div class="empty-pl">${msg}${searchQuery||_hasActiveFilters()?' — لا نتائج بالفلاتر الحالية':''}</div>`;
       return;
     }
-    el.innerHTML = groupByType
-      ? _renderGrouped(filtered, r=>renderRequestCard(r))
+    // requested: تجميع دلالي دايم (موردون|موظفون|عملاء|مصاريف) — groupByType يُبدّل بين الدلالي والمسطّح
+    el.innerHTML = (groupByType || activeTab === 'requested')
+      ? _renderSemanticGrouped(filtered, r=>renderRequestCard(r))
       : filtered.map(r => renderRequestCard(r)).join('');
     return;
   }
@@ -933,8 +944,10 @@ function _bulkBar(visibleTxs){
     action = 'approve'; fn = 'bulkApprove()'; label = '✅ اعتماد الكل';
   } else { return ''; }
   const n = _selectBulkEligible(visibleTxs, { action, userId: currentUid, strict }).length;
-  if(n < 2) return ''; // الإجراء الجماعي يظهر فقط عند ≥2 مؤهَّلة
-  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+  if(n < 2) return '';
+  const selLbl = selectionMode ? '☑ إلغاء التحديد' : '☑ تحديد فردي';
+  return `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <button type="button" class="btn btn-ghost" onclick="toggleSelMode()" style="font-size:var(--fs-sm);padding:6px 12px">${selLbl}</button>
     <button type="button" class="btn-approve" onclick="${fn}">${label} (${n})</button>
   </div>`;
 }
@@ -1577,9 +1590,11 @@ function renderCard(t){
       </div>
     </div>` : '';
 
+  const isSel = selectionMode && (t.approvalStatus==='pending'||t.approvalStatus==='confirmed');
+  const cbHtml = isSel ? `<input type="checkbox" class="bulk-cb" ${selectedTxIds.has(t._id)?'checked':''} onchange="toggleSelTx('${t._id}',this)" title="تحديد">` : '';
   return `
-    <div class="approval-card card-${t.approvalStatus}${isRecovery?' recovery-card':''}${compactMode?' compact':''}">
-      ${recoveryBanner}
+    <div class="approval-card card-${t.approvalStatus}${isRecovery?' recovery-card':''}${compactMode?' compact':''}${selectedTxIds.has(t._id)?' selected':''}">
+      ${cbHtml}${recoveryBanner}
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
           <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}${isRecovery?' <span style="background:rgba(255,61,110,.2);color:var(--r);padding:2px 8px;border-radius:8px;font-size:var(--fs-tiny);margin-right:6px">🔧 استرداد</span>':''} ${_priorityBadge(t)}</div>
@@ -2313,6 +2328,61 @@ window.approveTx = async function(txId){
   showToast('🔒 تم الاعتماد والأرشفة' + (result.clientLogged ? ' + سُجِّل في كارت العميل' : ''),'ok');
 };
 
+// ═══════════ التجميع الدلالي ═══════════
+function _renderSemanticGrouped(items, renderFn){
+  if(!items.length) return '';
+  const grps={};
+  items.forEach(x=>{const g=_semGrp(x);if(!grps[g.k])grps[g.k]={g,items:[]};grps[g.k].items.push(x);});
+  return Object.values(grps).map(({g,items:gi})=>{
+    const tot=gi.reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+    return `<div class="group-header" style="border-right-color:${g.c}"><span style="color:${g.c}">${g.l} <b>(${gi.length})</b></span><span class="group-amt">${fn(tot)} ج</span></div>`
+      +gi.map(renderFn).join('');
+  }).join('');
+}
+
+// ═══════════ التحديد الفردي (Bulk Selection) ═══════════
+window.toggleSelMode=function(){selectionMode=!selectionMode;if(!selectionMode){selectedTxIds.clear();_updateSelBar();}render();};
+window.toggleSelTx=function(id,el){selectedTxIds.has(id)?selectedTxIds.delete(id):selectedTxIds.add(id);el?.closest?.('.approval-card')?.classList.toggle('selected',selectedTxIds.has(id));_updateSelBar();};
+window.clearSelTx=function(){selectedTxIds.clear();selectionMode=false;_updateSelBar();render();};
+
+function _updateSelBar(){
+  const bar=document.getElementById('sel-bar');
+  if(!bar) return;
+  if(!selectedTxIds.size){bar.style.display='none';return;}
+  bar.style.display='flex';
+  const sel=allTxs.filter(t=>selectedTxIds.has(t._id));
+  const tot=sel.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+  const wAgg={};
+  sel.forEach(t=>{if(!t.walletId)return;if(!wAgg[t.walletId])wAgg[t.walletId]={n:t.walletName||walletsMap.get(t.walletId)||'?',s:0};wAgg[t.walletId].s+=(t.type==='out'?-1:1)*(parseFloat(t.amount)||0);});
+  const wLines=Object.entries(wAgg).map(([id,w])=>{const cur=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;const aft=cur+w.s;return `<span>${escapeHtml(w.n)}: <b style="font-family:monospace">${fn(cur)} → <span style="color:${aft<0?'var(--r)':'var(--g)'}">${fn(aft)}</span> ج</b></span>`;}).join('');
+  document.getElementById('sel-count').textContent=selectedTxIds.size+' محدد';
+  document.getElementById('sel-total').textContent=fn(tot)+' ج';
+  document.getElementById('sel-wallets').innerHTML=wLines;
+  const hasPend=sel.some(t=>t.approvalStatus==='pending');
+  const hasConf=sel.some(t=>t.approvalStatus==='confirmed');
+  const cC=canDo('execute_payments',currentRole,currentPerms);
+  const cA=canDo('final_approve_payments',currentRole,currentPerms);
+  const bc=document.getElementById('sel-confirm-btn');const ba=document.getElementById('sel-approve-btn');
+  if(bc) bc.style.display=cC&&hasPend?'':'none';
+  if(ba) ba.style.display=cA&&hasConf?'':'none';
+}
+
+async function _runSelBulk(action){
+  const strict=requiresStrictSeparation(financialPolicy);
+  const eligible=_selectBulkEligible(allTxs.filter(t=>selectedTxIds.has(t._id)),{action,userId:currentUid,strict});
+  if(!eligible.length) return showToast('لا عمليات مؤهَّلة للتنفيذ','err');
+  const wSum={};eligible.forEach(t=>{if(!t.walletId)return;if(!wSum[t.walletId])wSum[t.walletId]={n:t.walletName||'?',s:0};wSum[t.walletId].s+=(t.type==='out'?-1:1)*(parseFloat(t.amount)||0);});
+  const wMsg=Object.entries(wSum).map(([id,w])=>{const c=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;return `${w.n}: ${fn(c)} → ${fn(c+w.s)} ج`;}).join('\n');
+  const verb=action==='confirm'?'تأكيد':'اعتماد';
+  if(!confirm(`${verb} ${eligible.length} عملية؟\n\nتأثير المحافظ:\n${wMsg||'—'}`)) return;
+  let ok=0,fail=0;
+  for(const t of eligible){try{const r=action==='confirm'?await approvalActions.confirmTransaction({db,tx:t,userId:currentUid,userName:currentUserName}):await approvalActions.approveTransaction({db,tx:t,userId:currentUid,userName:currentUserName,policy:financialPolicy});if(r?.ok)ok++;else fail++;}catch(_){fail++;}}
+  showToast(`✅ ${verb} ${ok}${fail?` · تعذّر ${fail}`:''}`,fail?'err':'ok');
+  selectedTxIds.clear();_updateSelBar();
+}
+window.bulkSelConfirm=()=>_runSelBulk('confirm');
+window.bulkSelApprove=()=>_runSelBulk('approve');
+
 // ═══════════ الإجراء الجماعي (Bulk) — تأكيد/اعتماد عدة عمليات ═══════════
 function _visibleTxs(){
   let f = txs.filter(t=>t.approvalStatus === activeTab);
@@ -2375,6 +2445,20 @@ window.closeLb = function(){
 };
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeLb(); });
 </script>
+
+<!-- شريط التحديد الفردي (Bulk Selection Bar) -->
+<div id="sel-bar" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg2);border:2px solid var(--p);border-radius:14px;padding:12px 18px;z-index:9100;box-shadow:0 8px 40px rgba(0,0,0,.6);flex-direction:column;gap:8px;min-width:340px;max-width:92vw">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span id="sel-count" style="font-weight:var(--fw-heavy);color:var(--p);min-width:60px"></span>
+    <span style="color:var(--dim2)">·</span>
+    <span id="sel-total" style="font-weight:var(--fw-bold);font-family:monospace;color:var(--snow)"></span>
+    <div style="flex:1"></div>
+    <button id="sel-confirm-btn" type="button" onclick="bulkSelConfirm()" style="display:none;padding:6px 14px;border-radius:6px;background:rgba(59,158,255,.2);color:var(--b-bright);border:1px solid var(--b-bright);cursor:pointer;font-weight:var(--fw-bold);font-family:inherit;font-size:var(--fs-sm)">✓ تأكيد المحدد</button>
+    <button id="sel-approve-btn" type="button" onclick="bulkSelApprove()" style="display:none;padding:6px 14px;border-radius:6px;background:rgba(0,217,126,.2);color:var(--g);border:1px solid var(--g);cursor:pointer;font-weight:var(--fw-bold);font-family:inherit;font-size:var(--fs-sm)">✅ اعتماد المحدد</button>
+    <button type="button" onclick="clearSelTx()" style="padding:6px 12px;border-radius:6px;background:rgba(255,255,255,.08);color:var(--dim);border:none;cursor:pointer;font-family:inherit;font-size:var(--fs-sm)">✕ إلغاء</button>
+  </div>
+  <div id="sel-wallets" style="font-size:var(--fs-xs);color:var(--dim2);display:flex;flex-wrap:wrap;gap:10px"></div>
+</div>
 
 <!-- Lightbox صور الإيصالات -->
 <div id="img-lb" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:99999;align-items:center;justify-content:center;cursor:zoom-out" onclick="if(event.target===this)closeLb()">
