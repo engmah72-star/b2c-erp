@@ -80,6 +80,12 @@
         <div class="kpi-lbl">طلبات متأخرة</div>
         <div class="kpi-sub" id="kv-stale-sub"></div>
       </div>
+      <div class="kpi-card" style="--kpi-c:var(--b-bright);cursor:pointer" onclick="setTab('approved')">
+        <div class="kpi-ico">🔒</div>
+        <div class="kpi-val" id="kv-month-approved">—</div>
+        <div class="kpi-lbl">معتمد هذا الشهر</div>
+        <div class="kpi-sub" id="kv-month-sub"></div>
+      </div>
     </div>
     <!-- شريط أرصدة المحافظ -->
     <div class="wallets-strip" id="wallets-strip"></div>
@@ -108,7 +114,18 @@
     <div class="adv-filter-bar" id="ctrl-bar">
       <input class="search-inp" id="list-search" type="search" placeholder="🔍 بحث سريع — اسم / مبلغ / أوردر..." style="flex:1;min-width:180px">
       <button type="button" class="adv-filter-btn" id="adv-filter-toggle" onclick="toggleFilters()">⚙️ فلترة</button>
+      <button type="button" class="adv-filter-btn" id="group-toggle" onclick="setGroupBy(!groupByType)" title="تجميع بالنوع">⊞ تجميع</button>
       <button type="button" class="compact-btn" id="compact-toggle" onclick="setCompact(!compactMode)" title="عرض مدمج">⊟ مدمج</button>
+      <button type="button" class="compact-btn" onclick="exportCSV()" title="تصدير CSV">📥 CSV</button>
+      <button type="button" class="compact-btn" onclick="window.print()" title="طباعة">🖨️</button>
+    </div>
+    <!-- شريط الترتيب -->
+    <div class="sort-bar" id="sort-bar">
+      <span class="sort-lbl">ترتيب:</span>
+      <button type="button" class="sort-btn active" data-sort="date" onclick="setSortField('date')"><span>التاريخ</span><span class="sort-dir" id="sd-date">↓</span></button>
+      <button type="button" class="sort-btn" data-sort="amount" onclick="setSortField('amount')"><span>المبلغ</span><span class="sort-dir" id="sd-amount">↓</span></button>
+      <button type="button" class="sort-btn" data-sort="priority" onclick="setSortField('priority')"><span>🔴 الأولوية</span><span class="sort-dir" id="sd-priority">↓</span></button>
+      <button type="button" class="sort-btn" data-sort="type" onclick="setSortField('type')"><span>النوع</span><span class="sort-dir" id="sd-type">↓</span></button>
     </div>
     <!-- لوحة الفلاتر المتقدمة -->
     <div id="filter-panel" style="display:none" class="filter-panel">
@@ -597,6 +614,15 @@ function updateKPIs(){
   const totalAmt = [...pendingReqs,...pendingTxs].reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
   const walletTotal = walletsArr.reduce((s,w)=>s+(parseFloat(w.balance)||0),0);
   const { staleCount, oldestHours } = _summarizeStaleRequests(requests,{staleHours:_staleHours()});
+  // إحصائيات الشهر الحالي
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()/1000;
+  const thisMonthApproved = [...txs,...requests].filter(x=>{
+    const ts = x.approvedAt?.seconds||x.confirmedAt?.seconds||0;
+    return (x.approvalStatus==='approved'||x.status==='approved') && ts>=monthStart;
+  });
+  const monthAmt = thisMonthApproved.reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+  const monthRejected = [...txs,...requests].filter(x=>(x.approvalStatus==='rejected'||x.status==='rejected')&&(x.rejectedAt?.seconds||0)>=monthStart).length;
 
   const qEl=document.getElementById('kv-queue'); if(qEl) qEl.textContent = totalQueue;
   const aEl=document.getElementById('kv-amount'); if(aEl) aEl.textContent = fn(totalAmt)+' ج';
@@ -604,8 +630,9 @@ function updateKPIs(){
   const wcEl=document.getElementById('kv-wallets-count'); if(wcEl) wcEl.textContent = walletsArr.length+' محفظة';
   const sEl=document.getElementById('kv-stale'); if(sEl) sEl.textContent = staleCount;
   const ssEl=document.getElementById('kv-stale-sub'); if(ssEl) ssEl.textContent = staleCount ? 'أقدمها '+_fmtAge(oldestHours) : 'كل الطلبات في الوقت';
-  const sc=document.getElementById('kpi-stale');
-  if(sc) sc.style.setProperty('--kpi-c', staleCount>0?'var(--r)':'var(--g)');
+  const sc=document.getElementById('kpi-stale'); if(sc) sc.style.setProperty('--kpi-c', staleCount>0?'var(--r)':'var(--g)');
+  const maEl=document.getElementById('kv-month-approved'); if(maEl) maEl.textContent = fn(monthAmt)+' ج';
+  const msEl=document.getElementById('kv-month-sub'); if(msEl) msEl.textContent = `${thisMonthApproved.length} معتمد · ${monthRejected} مرفوض`;
 }
 
 // ═══════════ شريط المحافظ ═══════════
@@ -697,6 +724,107 @@ window.setCompact = function(on){
   render();
 };
 
+// ═══════════ الترتيب الذكي ═══════════
+let sortField='date', sortDir='desc';
+
+window.setSortField = function(f){
+  if(sortField===f) sortDir = sortDir==='asc'?'desc':'asc';
+  else { sortField=f; sortDir='desc'; }
+  document.querySelectorAll('.sort-btn').forEach(b=>b.classList.toggle('active', b.dataset.sort===f));
+  document.querySelectorAll('.sort-dir').forEach(el=>el.textContent='↓');
+  const sdEl=document.getElementById('sd-'+f);
+  if(sdEl) sdEl.textContent = sortDir==='asc'?'↑':'↓';
+  render();
+};
+
+function _sortItems(items){
+  return [...items].sort((a,b)=>{
+    let va, vb;
+    if(sortField==='amount'){ va=parseFloat(a.amount)||0; vb=parseFloat(b.amount)||0; }
+    else if(sortField==='priority'){ va=_priorityScore(a); vb=_priorityScore(b); }
+    else if(sortField==='type'){ va=a.type||a.category||''; vb=b.type||b.category||''; return sortDir==='asc'?va.localeCompare(vb):vb.localeCompare(va); }
+    else { va=a.requestedAt?.seconds||a.createdAt?.seconds||0; vb=b.requestedAt?.seconds||b.createdAt?.seconds||0; }
+    return sortDir==='asc'? va-vb : vb-va;
+  });
+}
+
+// ═══════════ نظام الأولوية ═══════════
+function _priorityScore(x){
+  const amt=parseFloat(x.amount)||0;
+  const now=Date.now()/1000;
+  const ts=x.requestedAt?.seconds||x.createdAt?.seconds||now;
+  const ageH=(now-ts)/3600;
+  let s=0;
+  if(amt>5000) s+=3; else if(amt>1000) s+=1;
+  if(ageH>48) s+=3; else if(ageH>24) s+=1;
+  return s;
+}
+
+function _priorityBadge(x){
+  const s=_priorityScore(x);
+  if(s>=4) return '<span class="pri-urgent">🔴 عاجل</span>';
+  if(s>=2) return '<span class="pri-medium">🟡 متوسط</span>';
+  return '';
+}
+
+// ═══════════ التجميع بالنوع ═══════════
+let groupByType=false;
+
+window.setGroupBy=function(on){
+  groupByType=on;
+  const b=document.getElementById('group-toggle');
+  if(b) b.classList.toggle('active',on);
+  render();
+};
+
+function _renderGrouped(items, renderFn, bulkHtml=''){
+  if(!items.length) return '';
+  const groups={};
+  items.forEach(x=>{
+    const k=x.type||x.category||'أخرى';
+    if(!groups[k]) groups[k]=[];
+    groups[k].push(x);
+  });
+  return bulkHtml + Object.entries(groups).map(([k,grpItems])=>{
+    const total=grpItems.reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+    const lbl=REQ_TYPE_LBL[k]||CAT_AR[k]||k;
+    return `<div class="group-header"><span>${lbl} <b>(${grpItems.length})</b></span><span class="group-amt">${fn(total)} ج</span></div>`
+      + grpItems.map(renderFn).join('');
+  }).join('');
+}
+
+// ═══════════ تصدير CSV ═══════════
+window.exportCSV=function(){
+  let items=[];
+  if(['requested','awaiting_receipt'].includes(activeTab)){
+    items=_applyAdvFilters(_applySearch(requests.filter(r=>r.status===activeTab)));
+  } else if(activeTab==='suppliers_due'){
+    return showToast('التصدير غير متاح لأرصدة الموردين','err');
+  } else {
+    items=_applyAdvFilters(_applySearch(txs.filter(t=>t.approvalStatus===activeTab)));
+  }
+  if(!items.length) return showToast('لا توجد عناصر للتصدير','err');
+  const HDR=['النوع','المبلغ','المستفيد','السبب/الوصف','الطالب','التاريخ','الحالة','الأوردر','المحفظة'];
+  const rows=items.map(x=>[
+    REQ_TYPE_LBL[x.type||x.category]||x.type||x.category||'',
+    x.amount||0,
+    x.supplierName||x.employeeName||x.clientName||'',
+    x.reason||x.description||'',
+    x.requestedByName||x.createdByName||'',
+    x.requestedAt?.seconds ? new Date(x.requestedAt.seconds*1000).toLocaleDateString('ar-EG') :
+      x.createdAt?.seconds ? new Date(x.createdAt.seconds*1000).toLocaleDateString('ar-EG') : '',
+    x.status||x.approvalStatus||'',
+    x.orderRefId||x.orderId||'',
+    x.sourceWalletName||x.walletName||'',
+  ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+  const csv='﻿'+[HDR.join(','),...rows].join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`approvals-${activeTab}-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  showToast(`✅ تم تصدير ${items.length} عنصر`,'ok');
+};
+
 function _applySearch(items){
   if(!searchQuery) return items;
   const q = searchQuery;
@@ -715,11 +843,18 @@ function _updateSummary(items){
   if(!el) return;
   if(!items.length){ el.style.display = 'none'; return; }
   const total = items.reduce((s,x)=>s+(parseFloat(x.amount)||0), 0);
+  // تفصيل بالنوع
+  const byType={};
+  items.forEach(x=>{ const k=x.type||x.category||'أخرى'; byType[k]=(byType[k]||0)+1; });
+  const typeChips = Object.entries(byType).slice(0,4)
+    .map(([k,n])=>`<span class="summary-chip"><span style="color:var(--dim2)">${REQ_TYPE_LBL[k]||CAT_AR[k]||k}:</span> <b>${n}</b></span>`).join('');
+  const hasFilters = searchQuery||_hasActiveFilters();
   el.style.display = 'flex';
   el.innerHTML = `
     <div class="summary-chip summary-amount"><b>${fn(total)} ج</b></div>
-    <div class="summary-chip">(${items.length} عنصر${searchQuery?' · نتائج البحث':''})</div>
-    ${searchQuery?`<button type="button" onclick="clearSearch()" style="margin-right:auto;padding:2px 10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:var(--fs-xs)">✕ مسح البحث</button>`:''}
+    <div class="summary-chip">${items.length} عنصر</div>
+    ${typeChips}
+    ${hasFilters?`<button type="button" onclick="clearSearch();clearAdvFilters()" style="margin-right:auto;padding:2px 10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:var(--fs-xs)">✕ مسح الكل</button>`:''}
   `;
 }
 
@@ -729,11 +864,14 @@ function render(){
   _renderStaleBanner();
   updateKPIs();
 
-  // إخفاء شريط البحث/الفلاتر في تبويب الموردين
+  // إخفاء شريط التحكم/الترتيب في تبويب الموردين
   const ctrlBar = document.getElementById('ctrl-bar');
-  if(ctrlBar) ctrlBar.style.display = activeTab === 'suppliers_due' ? 'none' : '';
+  const sortBar = document.getElementById('sort-bar');
+  const isDue = activeTab === 'suppliers_due';
+  if(ctrlBar) ctrlBar.style.display = isDue ? 'none' : '';
+  if(sortBar) sortBar.style.display = isDue ? 'none' : '';
 
-  if(activeTab === 'suppliers_due'){
+  if(isDue){
     _updateSummary([]);
     el.innerHTML = renderSuppliersDue();
     return;
@@ -742,25 +880,27 @@ function render(){
   if(activeTab === 'requested' || activeTab === 'awaiting_receipt'){
     let filtered = requests.filter(r=>r.status === activeTab);
     if(activeTab === 'awaiting_receipt') filtered = filtered.filter(r => r.requestedBy === currentUid);
-    filtered = _applyAdvFilters(_applySearch(filtered));
+    filtered = _sortItems(_applyAdvFilters(_applySearch(filtered)));
     _updateSummary(filtered);
     if(!filtered.length){
       const msg = activeTab==='requested' ? '✨ لا توجد طلبات للتنفيذ' : '✨ لا توجد طلبات بانتظار استلامك';
       el.innerHTML = `<div class="empty-pl">${msg}${searchQuery||_hasActiveFilters()?' — لا نتائج بالفلاتر الحالية':''}</div>`;
       return;
     }
-    el.innerHTML = filtered.map(r => renderRequestCard(r)).join('');
+    el.innerHTML = groupByType
+      ? _renderGrouped(filtered, r=>renderRequestCard(r))
+      : filtered.map(r => renderRequestCard(r)).join('');
     return;
   }
 
   // تبويبات tx (pending/confirmed/approved/rejected)
   let filtered = txs.filter(t=>t.approvalStatus === activeTab);
   if(activeDir !== 'all') filtered = filtered.filter(t=>t.type === activeDir);
-  filtered = _applyAdvFilters(_applySearch(filtered));
+  filtered = _sortItems(_applyAdvFilters(_applySearch(filtered)));
 
   let extraRequests = [];
-  if(activeTab === 'approved') extraRequests = _applyAdvFilters(_applySearch(requests.filter(r=>r.status==='approved')));
-  if(activeTab === 'rejected') extraRequests = _applyAdvFilters(_applySearch(requests.filter(r=>r.status==='rejected')));
+  if(activeTab === 'approved') extraRequests = _sortItems(_applyAdvFilters(_applySearch(requests.filter(r=>r.status==='approved'))));
+  if(activeTab === 'rejected') extraRequests = _sortItems(_applyAdvFilters(_applySearch(requests.filter(r=>r.status==='rejected'))));
 
   _updateSummary([...filtered, ...extraRequests]);
 
@@ -772,11 +912,15 @@ function render(){
     el.innerHTML = `<div class="empty-pl">${msg}${searchQuery||_hasActiveFilters()?' — لا نتائج بالفلاتر الحالية':''}</div>`;
     return;
   }
-  el.innerHTML = [
-    _bulkBar(filtered),
-    ...extraRequests.map(r => renderRequestCard(r)),
-    ...filtered.map(t => renderCard(t))
-  ].join('');
+  if(groupByType){
+    el.innerHTML = _renderGrouped([...extraRequests,...filtered], x=>'type' in x&&!x.approvalStatus ? renderRequestCard(x) : renderCard(x), _bulkBar(filtered));
+  } else {
+    el.innerHTML = [
+      _bulkBar(filtered),
+      ...extraRequests.map(r => renderRequestCard(r)),
+      ...filtered.map(t => renderCard(t))
+    ].join('');
+  }
 }
 
 // شريط الإجراء الجماعي (تأكيد الكل / اعتماد الكل) — يحترم القدرات والضوابط.
@@ -1142,7 +1286,7 @@ function renderRequestCard(r){
     <div class="approval-card card-${r.status}${compactMode?' compact':''}">
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
-          <div class="ac-title">${typeLbl} — ${escapeHtml(beneficiary)}</div>
+          <div class="ac-title">${typeLbl} — ${escapeHtml(beneficiary)} ${_priorityBadge(r)}</div>
           <div class="ac-status ${stCls}">${stLbl}</div>
           ${_ageBadge}
         </div>
@@ -1420,7 +1564,7 @@ function renderCard(t){
       ${recoveryBanner}
       <div class="ac-head">
         <div style="flex:1;min-width:200px">
-          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}${isRecovery?' <span style="background:rgba(255,61,110,.2);color:var(--r);padding:2px 8px;border-radius:8px;font-size:var(--fs-tiny);margin-right:6px">🔧 استرداد</span>':''}</div>
+          <div class="ac-title">${icon} ${cat}${entityName!=='—'?' — '+escapeHtml(entityName):''}${isRecovery?' <span style="background:rgba(255,61,110,.2);color:var(--r);padding:2px 8px;border-radius:8px;font-size:var(--fs-tiny);margin-right:6px">🔧 استرداد</span>':''} ${_priorityBadge(t)}</div>
           <div class="ac-meta">${escapeHtml(t.description || '—')}</div>
           <div class="ac-status ${stCls}">${stLbl}</div>
         </div>
