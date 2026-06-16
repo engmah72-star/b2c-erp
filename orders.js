@@ -1196,13 +1196,16 @@ export function validateStageRequirements(order, fromStage) {
     // B4 (Phase 2): يسد فجوة G2 من PHASE_2_DIAGNOSIS.
     // المنتجات في حالة pending/in_progress كانت تصل لمرحلة الشحن بسبب غياب
     // فحص productStatus في الـ gate. هنا نمنع الانتقال صلباً، ونحذّر للـ on_hold.
+    // استثناء: لو الأوردر وصل مرحلة production فعلاً، فالمراحل السابقة مكتملة
+    // بالضرورة — productStatus=pending/in_progress هنا يعني مجرد عدم تحديث الحقل.
     const products = order.products || [];
+    const inProduction = order.stage === ORDER_STAGES.PRODUCTION;
     if (products.length > 0) {
       const stuck = products.filter(p => {
         const ps = p.productStatus || PRODUCT_STATUSES.PENDING;
         return ps === PRODUCT_STATUSES.PENDING || ps === PRODUCT_STATUSES.IN_PROGRESS;
       });
-      if (stuck.length > 0) {
+      if (stuck.length > 0 && !inProduction) {
         errors.push(
           `⛔ ${stuck.length} منتج لم يكتمل تصميمه/طباعته بعد — لا يمكن التحويل للشحن`
         );
