@@ -458,13 +458,12 @@ function _buildTypeOptions(sel=''){
   return '<option value="">— اختر النوع —</option>'+def.map(t=>`<option value="${esc(t)}"${selAttr(t)}>${esc(t)}</option>`).join('');
 }
 
-// ── Template matching — Arabic-aware fuzzy ─────────────────────────
-// يطبّع الحروف العربية المتشابهة قبل المقارنة
+// ── Template matching — Multi-signal intelligence ──────────────────
 const _normAr=s=>(s||'')
   .replace(/[أإآ]/g,'ا').replace(/[ةه]/g,'ه').replace(/[يى]/g,'ي')
   .replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
 const _extractQty=p=>String(p.qty||'').replace(/[^0-9]/g,'')||'';
-// حساب نسبة التشابه بين نصين (كلمات مشتركة)
+
 function _similarity(a,b){
   if(!a||!b)return 0;
   if(a===b)return 1;
@@ -473,21 +472,63 @@ function _similarity(a,b){
   const shared=wa.filter(w=>wb.some(x=>x.includes(w)||w.includes(x)));
   return wa.length?shared.length/Math.max(wa.length,wb.length):0;
 }
+
+// يحسب score + أسباب التوصية لقالب + منتج
+function _scoreTmpl(t,p){
+  let score=0;const reasons=[];
+  // 1. اسم (40%)
+  const ns=_similarity(_normAr(p.name),_normAr(t.name));
+  score+=ns*0.4;
+  if(ns>=0.85)reasons.push('اسم مطابق');
+  else if(ns>=0.5)reasons.push('اسم مشابه');
+  // 2. كمية (30%)
+  const pQty=parseInt(_extractQty(p))||0;
+  const tQty=parseInt(t.qty||0);
+  if(pQty&&tQty){
+    const r=Math.min(pQty,tQty)/Math.max(pQty,tQty);
+    score+=r*0.3;
+    if(r===1)reasons.push(`كمية ×${pQty} مطابقة`);
+    else if(r>=0.6)reasons.push('كمية قريبة');
+  }else if(!tQty){score+=0.12;}
+  // 3. تغطية الإضافات (25%)
+  const extras=(p.extras||[]);
+  if(extras.length){
+    const ctypes=(t.costItems||[]).map(c=>_normAr(c.type||''));
+    const covered=extras.filter(e=>ctypes.some(ct=>ct.includes(_normAr(e))||_normAr(e).includes(ct)));
+    score+=covered.length/extras.length*0.25;
+    if(covered.length)reasons.push('يشمل '+covered.join('+'));
+  }
+  // 4. نوع الطباعة (5%)
+  if(p.printType){
+    const ptn=p.printType==='digital'?'ديجيتال':'اوفست';
+    if((t.costItems||[]).some(c=>_normAr(c.type||'').includes(_normAr(ptn)))){
+      score+=0.05;reasons.push(p.printType==='digital'?'ديجيتال':'أوفست');
+    }
+  }
+  return{score,reasons};
+}
+
+// يعيد {matched:[],library:[]} مرتبة بالـ score
 function _getTmplMatches(o){
-  if(!costTemplates.length)return[];
-  const matches=[];
+  if(!costTemplates.length)return{matched:[],library:[]};
+  const all=[];
+  const seen=new Set();
   (o.products||[]).forEach((prod,prodIdx)=>{
-    const base=_normAr(prod.name),qty=_extractQty(prod);
-    let best=null,bestScore=0;
     costTemplates.forEach(t=>{
-      const qOk=!t.qty||!qty||String(t.qty)===qty;
-      if(!qOk)return;
-      const score=_similarity(base,_normAr(t.name));
-      if(score>bestScore){bestScore=score;best=t;}
+      const key=t.id+'|'+prodIdx;
+      if(seen.has(key))return; seen.add(key);
+      const{score,reasons}=_scoreTmpl(t,prod);
+      all.push({template:t,prod,prodIdx,score,reasons});
     });
-    if(best&&bestScore>=0.5)matches.push({template:best,prod,prodIdx,score:bestScore});
   });
-  return matches;
+  // إزالة التكرار (أفضل score لكل قالب)
+  const byId={};
+  all.forEach(r=>{if(!byId[r.template.id]||r.score>byId[r.template.id].score)byId[r.template.id]=r;});
+  const ranked=Object.values(byId).sort((a,b)=>b.score-a.score);
+  return{
+    matched:ranked.filter(r=>r.score>=0.55),   // اقتراح قوي
+    library:ranked.filter(r=>r.score>=0.15&&r.score<0.55), // مكتبة ذات صلة
+  };
 }
 
 function toast(msg,type='ok'){const c=document.getElementById('toasts');const el=document.createElement('div');el.className=`ti t-${type}`;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
@@ -812,49 +853,58 @@ function renderDetail(){
       ${paidTotal>0?`<span class="cs-sep">·</span><span class="cs-paid">✅ مدفوع: ${fn(paidTotal)} ج</span>`:''}
       ${unpaidTotal>0?`<span class="cs-sep">·</span><span class="cs-unpaid">⏳ متبقي: ${fn(unpaidTotal)} ج</span>`:''}
     </div>`:'';
-    // قوالب ذكية: مطابقة أولاً، مكتبة مفلترة ثانياً
-    const tmplMatches=_getTmplMatches(o);
-    const matchedIds=new Set(tmplMatches.map(m=>m.template.id));
+    // نظام التوصية الذكي
+    const{matched,library}=_getTmplMatches(o);
+    const matchedIds=new Set(matched.map(r=>r.template.id));
     const multiProd=products.length>1;
-    // دالة بناء بطاقة المكتبة مع selector للمنتج
-    const _libItem=t=>{
-      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
-      const prodSel=multiProd?`<select class="cf-inp" id="lp-${esc(t.id)}" style="font-size:11px;padding:3px 8px;max-width:130px;height:auto"><option value="0">— المنتج —</option>${products.map((p,i)=>`<option value="${i}">${esc(p.name||('منتج '+(i+1)))}</option>`).join('')}</select>`:'';
+    // ألرت الإضافات غير المغطاة
+    const uncoveredExtras=[];
+    products.forEach((p,pi)=>{
+      (p.extras||[]).forEach(e=>{
+        const hasCost=costs.some(c=>(c.prodIdx===pi||c.prodIdx==null)&&_normAr(c.type||'').includes(_normAr(e)));
+        if(!hasCost)uncoveredExtras.push(`${esc(p.name||('منتج '+(pi+1)))}: ${esc(e)}`);
+      });
+    });
+    const extrasAlert=uncoveredExtras.length&&costs.length?`<div style="background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.2);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--y);margin-bottom:8px">⚠️ إضافات لم تُسجَّل تكلفتها: ${uncoveredExtras.join(' · ')}</div>`:'' ;
+    // دالة بطاقة المكتبة
+    const _libItem=(r)=>{
+      const t=r.template||r,total=(t.costItems||[]).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      const pidx=r.prodIdx??0;
+      const prodSel=multiProd?`<select class="cf-inp" id="lp-${esc(t.id)}" style="font-size:11px;padding:3px 8px;max-width:130px;height:auto"><option value="${pidx}">📦 ${esc((r.prod||products[pidx]||{}).name||'')}</option>${products.map((p,i)=>i===pidx?'':`<option value="${i}">${esc(p.name||('منتج '+(i+1)))}</option>`).join('')}</select>`:'';
+      const reasonsHtml=r.reasons?.length?`<div style="font-size:9px;color:var(--b);margin-top:2px">${r.reasons.map(x=>`<span style="background:rgba(59,158,255,.1);padding:0 5px;border-radius:10px;margin-left:3px">${esc(x)}</span>`).join('')}</div>`:'';
       return`<div class="cost-lib-item">
         <div style="flex:1;min-width:0">
           <div class="cost-lib-name">${esc(t.name)}${t.qty?` <span style="color:var(--dim2)">×${esc(t.qty)}</span>`:''} <span class="cost-lib-total">${fn(total)} ج</span></div>
-          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.costItems.map(c=>esc(c.type)).join(' · ')}</div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${(t.costItems||[]).map(c=>esc(c.type)).join(' · ')}</div>
+          ${reasonsHtml}
         </div>
         <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
           ${prodSel}
-          <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="0"${multiProd?` data-pidx-sel="lp-${esc(t.id)}"`:''}>تطبيق</button>
+          <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${pidx}"${multiProd?` data-pidx-sel="lp-${esc(t.id)}"`:''}>تطبيق</button>
         </div>
       </div>`;
     };
-    // القوالب المقترحة المطابقة
-    const tmplHTML=tmplMatches.map(({template:t,prod,prodIdx,score})=>{
-      const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
-      const lbl=score>=0.9?'⚡ تطابق':'💡 مقترح';
+    // بطاقات الاقتراح القوي (score ≥ 0.55)
+    const tmplHTML=matched.map(r=>{
+      const t=r.template,total=(t.costItems||[]).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      const lbl=r.score>=0.85?'⚡ تطابق قوي':'💡 مقترح';
+      const reasonsHtml=r.reasons.length?`<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px">${r.reasons.map(x=>`<span style="font-size:9px;background:rgba(139,92,246,.15);color:#c4b5fd;padding:1px 6px;border-radius:10px">${esc(x)}</span>`).join('')}</div>`:'';
       return`<div class="cost-tmpl-box">
-        <div class="cost-tmpl-hdr"><span class="cost-tmpl-label">${lbl}</span><span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span><span class="cost-tmpl-total">${fn(total)} ج</span><span class="cost-tmpl-prod">📦 ${esc(prod.name||'')}</span></div>
-        <div class="cost-tmpl-chips">${t.costItems.map(c=>`<span class="ctc"><span class="ctc-type">${esc(c.type)}</span><span class="ctc-sep">·</span><span class="ctc-sup">${esc(c.supplierName||'—')}</span><span class="ctc-sep">·</span><strong class="ctc-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
-        <button type="button" class="act act-add act-full" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${prodIdx}">⚡ تطبيق الكل دفعة واحدة</button>
+        <div class="cost-tmpl-hdr"><span class="cost-tmpl-label">${lbl}</span><span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span><span class="cost-tmpl-total">${fn(total)} ج</span><span class="cost-tmpl-prod">📦 ${esc(r.prod.name||'')}</span></div>
+        ${reasonsHtml}
+        <div class="cost-tmpl-chips">${(t.costItems||[]).map(c=>`<span class="ctc"><span class="ctc-type">${esc(c.type)}</span><span class="ctc-sep">·</span><span class="ctc-sup">${esc(c.supplierName||'—')}</span><span class="ctc-sep">·</span><strong class="ctc-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+        <button type="button" class="act act-add act-full" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${r.prodIdx}">⚡ تطبيق الكل دفعة واحدة</button>
       </div>`;
     }).join('');
-    // المكتبة: تظهر فقط لو مافيش match، مفلترة بأسماء منتجات الأوردر
+    // المكتبة: قوالب ذات صلة (0.15-0.55)، مغلقة لو فيه match
     let libHTML='';
-    if(!tmplMatches.length&&costTemplates.length){
-      const rel=costTemplates.filter(t=>products.some(p=>_similarity(_normAr(t.name),_normAr(p.name))>=0.25));
-      const toShow=rel.length?rel:costTemplates;
-      libHTML=`<details class="cost-lib" open>
-        <summary>📚 قوالب مشابهة <span style="color:var(--b)">${toShow.length}</span> ▾</summary>
-        ${toShow.map(_libItem).join('')}
-      </details>`;
-    } else if(tmplMatches.length&&costTemplates.length>matchedIds.size){
-      // فيه match → فقط رابط صغير للمكتبة
-      libHTML=`<details class="cost-lib">
-        <summary>📚 المكتبة <span style="color:var(--dim2)">${costTemplates.length} قالب</span> ▾</summary>
-        ${costTemplates.filter(t=>!matchedIds.has(t.id)).map(_libItem).join('')}
+    const libItems=library.length?library:(matched.length?[]:Object.values(
+      costTemplates.reduce((acc,t)=>{const{score,reasons}=_scoreTmpl(t,products[0]||{});if(!acc[t.id])acc[t.id]={template:t,prod:products[0]||{},prodIdx:0,score,reasons};return acc;},{})
+    ).sort((a,b)=>b.score-a.score));
+    if(libItems.length){
+      libHTML=`<details class="cost-lib"${!matched.length?' open':''}>
+        <summary>${matched.length?'📚 قوالب أخرى':'📚 قوالب ذات صلة'} <span style="color:var(--b)">${libItems.length}</span> ▾</summary>
+        ${libItems.map(_libItem).join('')}
       </details>`;
     }
     const costRows=costs.length?costs.map((c,i)=>{
@@ -883,7 +933,7 @@ function renderDetail(){
       <button type="button" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:12px" data-act="canceledit">إلغاء ✕</button>
     </div>`:'';
     panel.innerHTML=hdrHTML+tabsHTML+costSummaryBar+`<div class="wd">
-      ${tmplHTML}${libHTML}
+      ${extrasAlert}${tmplHTML}${libHTML}
       <div class="wd-sec">
         <div class="wd-sec-hdr">📋 البنود <a href="exec-cost-entry.html?orderId=${esc(o._id)}" class="wd-link" style="margin-right:auto;font-size:10px">أرشيف ↗</a></div>
         <div class="wd-sec-body">
