@@ -958,10 +958,8 @@ function renderWalletState(t, wName, isIn){
   const delta = after - before;
   const deltaSign = delta >= 0 ? '+' : '−';
   const deltaColor = delta >= 0 ? 'var(--g)' : 'var(--r)';
-  // Drift: الفرق بين الرصيد المحسوب الآن (after للأحدث = walletCurrent يجب يطابق) والرصيد المحفوظ
-  // نفحص drift فقط لو هذه الـ tx هي آخر tx على المحفظة (بهذا تكون after يجب تطابق walletCurrent)
   const isLastOnWallet = (() => {
-    if(!walletCurrent && walletCurrent !== 0) return false;
+    if(walletCurrent == null) return false;
     for(let i = allTxs.length - 1; i >= 0; i--){
       const x = allTxs[i];
       if(x.walletId === t.walletId) return x._id === t._id;
@@ -972,12 +970,26 @@ function renderWalletState(t, wName, isIn){
   const hasDrift = Math.abs(drift) > 0.01;
   const canAdjust = canDo('execute_payments', currentRole, currentPerms);
 
+  // فرق الرصيد الحالي عن snapshot التنفيذ (حركات أخرى حدثت بعده)
+  const liveDiff = walletCurrent != null ? walletCurrent - after : null;
+  const hasLiveDiff = liveDiff != null && Math.abs(liveDiff) > 0.01;
+  const liveDiffSign = liveDiff >= 0 ? '+' : '';
+  const liveDiffCol = liveDiff >= 0 ? 'var(--g)' : 'var(--r)';
+
+  const liveRow = walletCurrent != null ? `
+    <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.22);border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:2px">💰 الرصيد الحالي للمحفظة الآن</div>
+        <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);font-family:monospace;color:${walletCurrent<0?'var(--r)':'var(--g)'}">${fn(walletCurrent)} ج</div>
+      </div>
+      ${hasLiveDiff ? `<div style="text-align:left;font-size:var(--fs-xs);color:var(--dim2)">الفرق عن وقت التنفيذ<br><b style="color:${liveDiffCol};font-family:monospace">${liveDiffSign}${fn(liveDiff)} ج</b><br><span style="color:var(--dim2)">(حركات أخرى حدثت بعده)</span></div>` : ''}
+    </div>` : '';
+
   return `
     <div style="background:rgba(59,158,255,.08);border:1px solid rgba(59,158,255,.25);border-radius:var(--rad);padding:10px 12px;margin-top:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:var(--space-sm)">
-        <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold)">💼 حركة المحفظة — ${escapeHtml(wName)}</div>
-        ${walletCurrent != null ? `<div class="txt-meta-xs">الرصيد الحالي للمحفظة الآن: <b style="color:${walletCurrent<0?'var(--r)':'var(--snow)'};font-family:monospace">${fn(walletCurrent)} ج</b></div>` : ''}
-      </div>
+      <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:8px">💼 حركة المحفظة — ${escapeHtml(wName)}</div>
+      ${liveRow}
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:6px">📸 snapshot وقت التنفيذ:</div>
       <div style="display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:var(--space-sm);align-items:center;font-size:var(--fs-base)">
         <div class="text-center"><div style="color:var(--dim2);font-size:var(--fs-xs);margin-bottom:2px">الرصيد قبل</div><div style="font-weight:var(--fw-heavy);color:var(--snow);font-size:var(--fs-lg)">${fn(before)} ج</div></div>
         <div style="color:var(--dim2);font-size:var(--fs-lg)">→</div>
@@ -1176,12 +1188,18 @@ function renderRequestCard(r){
   if(r.executedByName){
     const wState = r.txId ? (allTxs.find(t=>t._id===r.txId)) : null;
     const ws = wState ? computeWalletState(wState) : null;
+    const liveWalletBal = ws?.walletCurrent;
     sectionExec = `
       <div style="background:rgba(59,158,255,.05);border:1px solid rgba(59,158,255,.2);border-radius:8px;padding:10px 12px;margin-top:8px">
         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-extra);margin-bottom:6px">💸 التنفيذ</div>
         <div style="font-size:var(--fs-base)"><b>${escapeHtml(r.executedByName)}</b> — <span class="text-muted">${fmtDate(r.executedAt)}</span></div>
-        <div style="font-size:var(--fs-sm);color:var(--dim);margin-top:4px">📤 المحفظة: <b>${escapeHtml(r.sourceWalletName||'—')}</b>${ws?` <span class="text-muted">(${fn(ws.before)} → ${fn(ws.after)} ج)</span>`:''}</div>
-        ${r.transferRef?`<div style="font-size:var(--fs-sm);margin-top:2px">📋 رقم التحويل: <b style="font-family:monospace;color:var(--p)">${escapeHtml(r.transferRef)}</b></div>`:''}
+        <div style="font-size:var(--fs-sm);color:var(--dim);margin-top:4px">📤 المحفظة: <b>${escapeHtml(r.sourceWalletName||'—')}</b>${ws?` <span class="text-muted">snapshot: (${fn(ws.before)} → ${fn(ws.after)} ج)</span>`:''}</div>
+        ${liveWalletBal != null ? `
+        <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);border-radius:6px;padding:6px 10px;margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:var(--fs-xs);color:var(--dim2)">💰 الرصيد الحالي للمحفظة الآن:</span>
+          <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);font-family:monospace;color:${liveWalletBal<0?'var(--r)':'var(--g)'}">${fn(liveWalletBal)} ج</span>
+        </div>` : ''}
+        ${r.transferRef?`<div style="font-size:var(--fs-sm);margin-top:6px">📋 رقم التحويل: <b style="font-family:monospace;color:var(--p)">${escapeHtml(r.transferRef)}</b></div>`:''}
         ${r.executeNote?`<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px">ملاحظة: ${escapeHtml(r.executeNote)}</div>`:''}
       </div>`;
   }
