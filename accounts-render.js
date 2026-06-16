@@ -166,8 +166,12 @@ function _actionQueue({ allOrders, suppliers, supplierPays, calcRem, fn, ORDER_S
     };
   }
 
-  const rows = all.slice(0, cap).map(item => `
-    <div class="aq-row">
+  const rows = all.slice(0, cap).map(item => {
+    const tier = item.score >= 5000 ? ' aq-row--critical'
+               : item.score >= 1000 ? ' aq-row--high'
+               : '';
+    return `
+    <div class="aq-row${tier}">
       <div class="aq-badge" style="color:${item.color};border-color:${item.color}50;background:${item.color}12">
         ${item.badge}
       </div>
@@ -185,8 +189,8 @@ function _actionQueue({ allOrders, suppliers, supplierPays, calcRem, fn, ORDER_S
         class="btn ${item.btnClass} btn-xs" style="flex-shrink:0">
         ${item.btnIcon}
       </button>
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
 
   const more = all.length > cap
     ? `<div class="empty-sm">+${all.length - cap} إجراءات أخرى — <button type="button" class="btn btn-ghost btn-xs"
@@ -394,7 +398,9 @@ export function renderDashboard({
         <!-- المحافظ -->
         <div class="dash-panel">
           <div class="dash-panel-head">
-            <div class="dash-panel-title">💼 الحسابات والمحافظ</div>
+            <div class="dash-panel-title" style="display:flex;align-items:center;gap:6px">
+              💼 الحسابات والمحافظ <span class="live-dot" title="بيانات محدّثة مباشرة"></span>
+            </div>
             <div style="display:flex;align-items:center;gap:6px">
               <span class="dash-panel-badge" style="background:var(--tint-g-soft);color:var(--g)">${fn(totalBal)} ج</span>
               <button type="button" class="btn btn-g btn-xs" onclick="oM('new-wallet')" title="إضافة حساب">＋</button>
@@ -459,7 +465,7 @@ export function renderDashboard({
               📤 ${countPay} · ${fn(totalPay)} ج</span>
           </div>
         </div>
-        <div style="flex:1;overflow-y:auto;max-height:480px">
+        <div class="aq-scroll-wrap" style="flex:1;overflow-y:auto;max-height:480px;padding:0 10px;margin:0 -10px">
           ${aqHtml}
         </div>
       </div>
@@ -483,5 +489,28 @@ export function renderDashboard({
       </div>
       <div class="txf-grid">${txFeedHtml}</div>
     </div>
+  `;
+}
+
+// ── Skeleton loading (shimmer placeholders while data loads) ──
+export function renderSkeleton() {
+  const skelRow = `<div class="skel skel-h" style="margin-bottom:9px"></div>`;
+  return `
+    <div class="kpi-bar">
+      ${[0,1,2,3].map(() => `
+        <div class="kpi-bar-item" style="--kc:var(--line);pointer-events:none">
+          <div class="skel skel-num" style="margin:0 auto 6px"></div>
+          <div class="skel skel-sm" style="margin:0 auto"></div>
+        </div>`).join('')}
+    </div>
+    <div class="skel skel-h" style="width:260px;margin-bottom:var(--space-md)"></div>
+    <div class="dash-grid">
+      <div style="display:flex;flex-direction:column;gap:var(--space-md)">
+        <div class="dash-panel">${skelRow.repeat(4)}</div>
+        <div class="dash-panel">${skelRow.repeat(3)}</div>
+      </div>
+      <div class="dash-panel">${skelRow.repeat(8)}</div>
+    </div>
+    <div class="dash-panel" style="margin-top:var(--space-md)">${skelRow.repeat(3)}</div>
   `;
 }
