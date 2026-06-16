@@ -265,13 +265,22 @@
 .cost-item.editing{background:rgba(59,158,255,.06);border-radius:8px;margin:0 -4px;padding:8px 4px}
 .edit-btn{font-size:11px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit}
 .edit-btn:hover{border-color:var(--b);color:var(--b)}
-.cost-tmpl-box{background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.22);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.cost-tmpl-box{background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.22);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .cost-tmpl-hdr{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px}
 .cost-tmpl-label{font-size:10px;font-weight:var(--fw-heavy);padding:1px 7px;border-radius:20px;background:rgba(139,92,246,.2);color:#a78bfa;flex-shrink:0}
 .cost-tmpl-name{font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--snow);flex:1;min-width:0}
 .cost-tmpl-total{font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--y);white-space:nowrap}
 .cost-tmpl-prod{font-size:var(--fs-xs);color:var(--dim2);width:100%}
 .cost-tmpl-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+/* مكتبة القوالب (fallback + browse) */
+.cost-lib{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:10px}
+.cost-lib-hdr{padding:9px 12px;background:var(--bg2);font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none}
+.cost-lib-hdr:hover{color:var(--snow)}
+.cost-lib summary{padding:9px 12px;background:var(--bg2);font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none}
+.cost-lib summary:hover{color:var(--snow)}
+.cost-lib-item{padding:8px 12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cost-lib-name{font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--snow);flex:1;min-width:0}
+.cost-lib-total{font-size:10px;color:var(--y);font-weight:var(--fw-heavy)}
 .ctc{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--bg2);border:1px solid var(--line);border-radius:20px;font-size:11px}
 .ctc-type{color:var(--snow);font-weight:var(--fw-extra)}
 .ctc-sep{color:var(--dim2)}
@@ -449,19 +458,34 @@ function _buildTypeOptions(sel=''){
   return '<option value="">— اختر النوع —</option>'+def.map(t=>`<option value="${esc(t)}"${selAttr(t)}>${esc(t)}</option>`).join('');
 }
 
-// ── Template matching (same logic as exec-cost-entry) ──────────────
-const _normBaseName=s=>(s||'').replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
+// ── Template matching — Arabic-aware fuzzy ─────────────────────────
+// يطبّع الحروف العربية المتشابهة قبل المقارنة
+const _normAr=s=>(s||'')
+  .replace(/[أإآ]/g,'ا').replace(/[ةه]/g,'ه').replace(/[يى]/g,'ي')
+  .replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
 const _extractQty=p=>String(p.qty||'').replace(/[^0-9]/g,'')||'';
+// حساب نسبة التشابه بين نصين (كلمات مشتركة)
+function _similarity(a,b){
+  if(!a||!b)return 0;
+  if(a===b)return 1;
+  if(a.includes(b)||b.includes(a))return 0.9;
+  const wa=a.match(/.{2,}/g)||[];const wb=b.match(/.{2,}/g)||[];
+  const shared=wa.filter(w=>wb.some(x=>x.includes(w)||w.includes(x)));
+  return wa.length?shared.length/Math.max(wa.length,wb.length):0;
+}
 function _getTmplMatches(o){
   if(!costTemplates.length)return[];
   const matches=[];
   (o.products||[]).forEach((prod,prodIdx)=>{
-    const base=_normBaseName(prod.name),qty=_extractQty(prod);
-    const t=costTemplates.find(t=>{
+    const base=_normAr(prod.name),qty=_extractQty(prod);
+    let best=null,bestScore=0;
+    costTemplates.forEach(t=>{
       const qOk=!t.qty||!qty||String(t.qty)===qty;
-      return _normBaseName(t.name)===base&&qOk;
+      if(!qOk)return;
+      const score=_similarity(base,_normAr(t.name));
+      if(score>bestScore){bestScore=score;best=t;}
     });
-    if(t)matches.push({template:t,prod,prodIdx});
+    if(best&&bestScore>=0.5)matches.push({template:best,prod,prodIdx,score:bestScore});
   });
   return matches;
 }
@@ -831,16 +855,34 @@ function renderDetail(){
       ${paidTotal>0?`<span class="cs-sep">·</span><span class="cs-paid">✅ مدفوع: ${fn(paidTotal)} ج</span>`:''}
       ${unpaidTotal>0?`<span class="cs-sep">·</span><span class="cs-unpaid">⏳ متبقي: ${fn(unpaidTotal)} ج</span>`:''}
     </div>`:'';
-    // قوالب
+    // قوالب — مطابقة ذكية + مكتبة كاملة
     const tmplMatches=_getTmplMatches(o);
-    const tmplHTML=tmplMatches.length?tmplMatches.map(({template:t,prod,prodIdx})=>{
+    const matchedIds=new Set(tmplMatches.map(m=>m.template.id));
+    // القوالب المقترحة (متطابقة)
+    const tmplHTML=tmplMatches.map(({template:t,prod,prodIdx,score})=>{
       const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+      const lbl=score>=0.9?'⚡ تطابق':'💡 مقترح';
       return`<div class="cost-tmpl-box">
-        <div class="cost-tmpl-hdr"><span class="cost-tmpl-label">⚡ قالب</span><span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span><span class="cost-tmpl-total">${fn(total)} ج</span><span class="cost-tmpl-prod">📦 ${esc(prod.name||'')}</span></div>
+        <div class="cost-tmpl-hdr"><span class="cost-tmpl-label">${lbl}</span><span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span><span class="cost-tmpl-total">${fn(total)} ج</span><span class="cost-tmpl-prod">📦 ${esc(prod.name||'')}</span></div>
         <div class="cost-tmpl-chips">${t.costItems.map(c=>`<span class="ctc"><span class="ctc-type">${esc(c.type)}</span><span class="ctc-sep">·</span><span class="ctc-sup">${esc(c.supplierName||'—')}</span><span class="ctc-sep">·</span><strong class="ctc-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
         <button type="button" class="act act-add act-full" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${prodIdx}">⚡ تطبيق الكل دفعة واحدة</button>
       </div>`;
-    }).join(''):'';
+    }).join('');
+    // مكتبة القوالب الكاملة (collapsible) — تُعرض دائماً
+    const libTmpls=costTemplates.filter(t=>!matchedIds.has(t.id));
+    const libHTML=costTemplates.length?`<details class="cost-lib">
+      <summary>${matchedIds.size?'📚 المكتبة الكاملة':'📚 المكتبة'} <span style="color:var(--b)">${costTemplates.length} قالب</span> <span style="margin-right:auto;font-size:11px">▾</span></summary>
+      ${costTemplates.map(t=>{
+        const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+        return`<div class="cost-lib-item">
+          <div style="flex:1;min-width:0"><div class="cost-lib-name">${esc(t.name)}${t.qty?` <span style="color:var(--dim2)">×${esc(t.qty)}</span>`:''} <span class="cost-lib-total">${fn(total)} ج</span></div>
+          <div style="font-size:10px;color:var(--dim2);margin-top:2px">${t.costItems.map(c=>esc(c.type)).join(' · ')}</div></div>
+          <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="0">تطبيق</button>
+        </div>`;
+      }).join('')}
+    </details>`:'';
+    // إذا فيه قوالب بس مفيش match → افتح المكتبة تلقائياً
+    const libAutoOpen=costTemplates.length&&!tmplMatches.length;
     // بنود مسجلة
     const costRows=costs.length?costs.map((c,i)=>{
       const pLabel=products[c.prodIdx]?`<span style="opacity:.5;font-size:11px;font-weight:normal"> · 📦 ${esc(products[c.prodIdx].name)}</span>`:'';
@@ -875,6 +917,8 @@ function renderDetail(){
       ${costSummaryBar}
       <div class="wd-sec-body">
         ${tmplHTML}
+        <div id="cost-lib-wrap">${libHTML}</div>
+        ${libAutoOpen?`<script>document.getElementById('cost-lib-wrap')?.querySelector('details')?.setAttribute('open','');<\/script>`:''}
         ${costRows}
         <div class="cost-form" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
           ${editBanner}
