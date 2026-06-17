@@ -129,7 +129,6 @@ test('cachedQuery with in produces different key than == query', () => {
   const k2 = JSON.stringify(s2.descriptors);
   assert(k1 !== k2, 'in vs == should produce different keys');
 });
-
 // ── dataCache API existence ──
 
 test('dataCache exports required methods', () => {
