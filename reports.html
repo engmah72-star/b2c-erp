@@ -5,7 +5,7 @@
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Business2Card — التقارير</title>
+<title>Business2Card — مركز التقارير</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://www.gstatic.com">
@@ -43,9 +43,10 @@
   <div class="topbar">
     <div class="topbar-left">
       <button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button>
-      <div><h1>📊 التقارير والأداء</h1><p id="rep-sub" class="txt-meta-base">جاري التحميل...</p></div>
+      <div><h1>📊 مركز التقارير</h1><p id="rep-sub" class="txt-meta-base">جاري التحميل...</p></div>
     </div>
     <div class="topbar-right">
+      <span id="rp-live-dot" style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);color:var(--g);font-weight:var(--fw-extra);margin-left:10px"><span style="width:6px;height:6px;border-radius:50%;background:var(--g);animation:pulse-crit 2s ease-in-out infinite"></span>مباشر</span>
       <button type="button" class="btn btn-ghost btn-sm" onclick="exportExcel()">📥 تصدير</button>
     </div>
   </div>
@@ -67,10 +68,21 @@
         </div>
       </div>
 
+      <!-- Masthead (live summary) -->
+      <div class="rp-masthead" id="rp-masthead">
+        <div class="rp-masthead-row">
+          <div>
+            <div class="rp-masthead-title" id="rp-mast-title">مركز التقارير</div>
+            <div class="rp-masthead-sub" id="rp-mast-sub">جاري التحميل...</div>
+          </div>
+          <div class="rp-masthead-metrics" id="rp-mast-metrics"></div>
+        </div>
+      </div>
+
       <!-- Command center strip (health + critical alerts) -->
       <div id="rp-command" class="rp-command-strip"></div>
 
-      <!-- Domain navigation (replaces tabs) -->
+      <!-- Domain navigation -->
       <div class="rp-domain-nav" id="rp-domain-nav">
         <button type="button" class="rp-domain-btn" data-domain="home" onclick="switchDomain('home',this)">
           <span>🏠</span> القرار <span class="rp-domain-status" id="dom-status-home"></span>
@@ -627,6 +639,27 @@ function renderSkeleton(){
     </div>`;
 }
 
+function updateMasthead(filtered, range) {
+  const mast = document.getElementById('rp-masthead');
+  if (!mast) return;
+  if (!__loaded.orders || !__loaded.transactions) return;
+  const PER = filterMode === 'today' ? 'اليوم' : filterMode === 'week' ? 'الأسبوع' : filterMode === 'year' ? 'السنة' : 'الشهر';
+  const {periodIn, periodOut, profit} = calcPeriodFlow(transactions, range);
+  const orderStats = calcOrderStats(orders, calcRem);
+  const {activeCount, totalRem} = orderStats;
+  const titleEl = document.getElementById('rp-mast-title');
+  const subEl = document.getElementById('rp-mast-sub');
+  const metricsEl = document.getElementById('rp-mast-metrics');
+  if (titleEl) titleEl.textContent = 'مركز التقارير';
+  if (subEl) subEl.textContent = `${filtered.length} أوردر في الفترة · ${orders.length} إجمالي · ${activeCount} نشط`;
+  if (metricsEl) metricsEl.innerHTML = `
+    <div class="rp-masthead-metric"><div class="v" style="color:var(--g)">${fn(periodIn)}<span style="font-size:var(--fs-xs);color:var(--dim2)"> ج</span></div><div class="l">إيرادات ${PER}</div></div>
+    <div class="rp-masthead-metric"><div class="v" style="color:var(--r)">${fn(periodOut)}<span style="font-size:var(--fs-xs);color:var(--dim2)"> ج</span></div><div class="l">مصروفات ${PER}</div></div>
+    <div class="rp-masthead-metric"><div class="v" style="color:${profit>=0?'var(--g)':'var(--r)'}">${fn(profit)}<span style="font-size:var(--fs-xs);color:var(--dim2)"> ج</span></div><div class="l">صافي ${PER}</div></div>
+    <div class="rp-masthead-metric"><div class="v" style="color:var(--y)">${fn(totalRem)}<span style="font-size:var(--fs-xs);color:var(--dim2)"> ج</span></div><div class="l">باقي تحصيل</div></div>
+  `;
+}
+
 function updateCommandCenter(filtered, range) {
   const el = document.getElementById('rp-command');
   if (!el) return;
@@ -643,10 +676,13 @@ function updateCommandCenter(filtered, range) {
   if (stale.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('data');switchDataView('collection')">💸 ${fn(stale.length)} راكد</button>`);
   if (noCost.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('financial')">❓ ${fn(noCost.length)} بدون تكلفة</button>`);
   if (supDue > 0) chips.push(`<button class="rp-alert-chip info" onclick="switchDomain('financial')">🏭 ${fn(Math.round(supDue))} ج موردين</button>`);
+  const now = new Date();
+  const ts = now.toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
   el.innerHTML = `
     <div class="rp-health-pill ${healthClass}">${healthLabel}</div>
+    ${chips.length ? '<div class="rp-cmd-sep"></div>' : ''}
     ${chips.join('')}
-    ${!chips.length && issues === 0 ? '<span style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold)">لا تنبيهات حرجة</span>' : ''}
+    <div class="rp-cmd-ts">🕐 ${ts}</div>
   `;
 }
 
@@ -677,14 +713,16 @@ function render(){
     el.innerHTML=renderSkeleton();
     updateCommandCenter([], null);
     setText('rep-sub','جاري التحميل...');
+    const mSub = document.getElementById('rp-mast-sub');
+    if (mSub) mSub.textContent = 'جاري تحميل البيانات...';
     return;
   }
   const range=getRange(filterMode);
   const prev=getPrevRange(filterMode);
   const filtered=orders.filter(o=>inRange(o,range));
   const prevFiltered=orders.filter(o=>inRange(o,prev));
-  setText('rep-sub',`${filtered.length} أوردر في الفترة المحددة`);
-  // Always update command center and domain statuses
+  setText('rep-sub',`${filtered.length} أوردر · ${orders.length} إجمالي`);
+  updateMasthead(filtered, range);
   updateCommandCenter(filtered, range);
   updateDomainStatuses(filtered, range);
   // Route to domain
@@ -889,16 +927,44 @@ function renderExec(f, prev, range){
   return kpiGrid + targetCard + pipeline + topPerformers + alertsHtml + trend;
 }
 
+// ══ Smart Insights Generator ══
+function generateInsights(f, range) {
+  const insights = [];
+  const {periodIn, periodOut, profit} = calcPeriodFlow(transactions, range);
+  const prevRange = getPrevRange(filterMode);
+  const {periodIn:prevIn} = calcPeriodFlow(transactions, prevRange);
+  const orderStats = calcOrderStats(orders, calcRem);
+  const {lateOrders, totalRem, activeOrders} = orderStats;
+  const stale = orders.filter(o => isStaleOrder(o) && (parseFloat(calcRem(o)) || 0) > 0);
+  const noCost = f.filter(isMissingCost);
+  const postDesRem = f.filter(o => isPostDesignWithRem(o));
+  const postDesAmt = postDesRem.reduce((s,o) => s + calcRem(o), 0);
+
+  if (prevIn > 0) {
+    const revChange = Math.round((periodIn - prevIn) / prevIn * 100);
+    if (revChange > 15) insights.push({type:'good',ico:'📈',text:`الإيرادات <b>ارتفعت ${revChange}%</b> مقارنة بالفترة السابقة`,act:'switchDomain("financial")',actLabel:'المالية'});
+    else if (revChange < -15) insights.push({type:'bad',ico:'📉',text:`الإيرادات <b>انخفضت ${Math.abs(revChange)}%</b> مقارنة بالفترة السابقة — راجع مصادر الدخل`,act:'switchDomain("financial")',actLabel:'المالية'});
+  }
+  if (profit < 0) insights.push({type:'bad',ico:'🔴',text:`صافي الفترة <b>خسارة ${fn(Math.abs(profit))} ج</b> — المصروفات أعلى من الإيرادات`,act:'openExpenseDrawer()',actLabel:'المصروفات'});
+  if (lateOrders.length > 0) insights.push({type:'bad',ico:'⏰',text:`<b>${lateOrders.length} أوردر متأخر</b> عن الموعد — يحتاج متابعة فورية`,act:'switchDomain("operations")',actLabel:'التشغيل'});
+  if (postDesRem.length > 0) insights.push({type:'bad',ico:'⚠️',text:`<b>${fn(Math.round(postDesAmt))} ج</b> متبقي على ${postDesRem.length} أوردر بعد التصميم — الشركة تحملت التكلفة`,act:'switchDomain("data");switchDataView("collection")',actLabel:'التحصيل'});
+  if (stale.length > 3) insights.push({type:'warn',ico:'💤',text:`<b>${stale.length} أوردر راكد</b> (بدون تحديث أكثر من 14 يوم) — يحتاج تنشيط`,act:'switchDomain("data");switchDataView("collection")',actLabel:'التحصيل'});
+  if (noCost.length > 0) insights.push({type:'warn',ico:'❓',text:`<b>${noCost.length} أوردر</b> في مراحل متقدمة بدون تكلفة مسجلة — حساب الربح غير دقيق`,act:'switchDomain("financial")',actLabel:'المالية'});
+  if (totalRem > periodIn * 2 && periodIn > 0) insights.push({type:'warn',ico:'📊',text:`باقي التحصيل (${fn(totalRem)} ج) يتجاوز <b>ضعف إيرادات الفترة</b> — نسبة التحصيل تحتاج تحسين`});
+  if (!insights.length) insights.push({type:'good',ico:'✅',text:'<b>كل شيء على ما يرام</b> — لا تنبيهات حرجة في الفترة الحالية'});
+  return insights;
+}
+
 // ══ Domain: القرار (Home) ══
 function renderDomainHome(f, prevFiltered, range) {
   const PER = filterMode === 'today' ? 'اليوم' : filterMode === 'week' ? 'الأسبوع' : filterMode === 'year' ? 'السنة' : 'الشهر';
   const prevRange = getPrevRange(filterMode);
   const {periodIn, periodOut, profit} = calcPeriodFlow(transactions, range);
+  const {periodIn:prevIn, periodOut:prevOut} = calcPeriodFlow(transactions, prevRange);
   const orderStats = calcOrderStats(orders, calcRem);
   const {activeOrders, totalRem, lateOrders} = orderStats;
 
   // Today's collection
-  const t0 = new Date(); t0.setHours(0,0,0,0);
   const isIn = t => (t.type==='in'||['collection','advance','deposit'].includes(t.category));
   const last7 = dailySeries(7, isIn, t => parseFloat(t.amount)||0);
   const avg7 = last7.reduce((a,b) => a+b, 0) / 7;
@@ -916,41 +982,73 @@ function renderDomainHome(f, prevFiltered, range) {
   });
   const showTargets = (filterMode === 'month' || filterMode === 'lastmonth') && tgt.hasTargets;
 
-  // KPI strip
+  // Smart insights
+  const insights = generateInsights(f, range);
+  const insightsHtml = `
+    <div class="rp-insights">
+      <div class="rp-insights-hdr">
+        <h3>💡 رؤى تلقائية</h3>
+        <span class="badge">${insights.length} رؤية</span>
+      </div>
+      ${insights.map(i => `
+        <div class="rp-insight ${i.type}">
+          <div class="ico">${i.ico}</div>
+          <div class="txt">${i.text}</div>
+          ${i.act ? `<button class="act" onclick="${i.act}">${i.actLabel||'عرض'} ›</button>` : ''}
+        </div>`).join('')}
+    </div>`;
+
+  // KPI strip with comparisons
+  const kpiDiff = (cur, prev) => {
+    if (!prev) return '';
+    const pct = Math.round((cur - prev) / Math.max(prev, 1) * 100);
+    if (pct === 0) return '';
+    const cls = pct > 0 ? 'color:var(--g)' : 'color:var(--r)';
+    const arrow = pct > 0 ? '↑' : '↓';
+    return `<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);${cls};margin-top:3px">${arrow} ${Math.abs(pct)}%</div>`;
+  };
   const kpiStripHtml = `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px">
       ${[
-        {ico:'💰', val:periodIn, lbl:`إيرادات ${PER}`, col:'var(--g)'},
-        {ico:'📤', val:periodOut, lbl:`مصروفات ${PER}`, col:'var(--r)'},
+        {ico:'💰', val:periodIn, lbl:`إيرادات ${PER}`, col:'var(--g)', prev:prevIn},
+        {ico:'📤', val:periodOut, lbl:`مصروفات ${PER}`, col:'var(--r)', prev:prevOut},
         {ico:'💹', val:profit, lbl:`صافي ${PER}`, col:profit>=0?'var(--g)':'var(--r)'},
         {ico:'📦', val:f.length, lbl:`أوردرات ${PER}`, col:'var(--b)', hint:`${activeOrders.length} نشط`},
         {ico:'⏳', val:totalRem, lbl:'باقي التحصيل', col:'var(--y)', hint:`${activeOrders.filter(o=>calcRem(o)>0).length} أوردر`},
-      ].map(({ico,val,lbl,col,hint}) => `
+      ].map(({ico,val,lbl,col,hint,prev}) => `
         <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;position:relative;overflow:hidden">
           <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${col}"></div>
-          <div style="font-size:22px;margin-bottom:6px">${ico}</div>
-          <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${col};line-height:1">${fn(val)}<span style="font-size:var(--fs-sm);margin-right:4px;color:var(--dim2)">ج</span></div>
+          <div style="display:flex;align-items:flex-start;justify-content:space-between">
+            <div style="font-size:22px">${ico}</div>
+          </div>
+          <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${col};line-height:1;margin-top:6px">${fn(val)}<span style="font-size:var(--fs-sm);margin-right:4px;color:var(--dim2)">ج</span></div>
           <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-top:4px">${lbl}</div>
           ${hint ? `<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:2px;opacity:.8">${hint}</div>` : ''}
+          ${prev !== undefined ? kpiDiff(val, prev) : ''}
         </div>`).join('')}
     </div>`;
 
   // 7-day trend bar chart
   const maxD = Math.max(1, ...last7);
   const dayLabels = Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));return d.toLocaleDateString('ar-EG',{weekday:'short'});});
+  const week7Total = last7.reduce((s,v)=>s+v,0);
   const trendChart = `
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow)">📈 إيرادات آخر 7 أيام</span>
-        <span style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-extra)">${fn(last7.reduce((s,v)=>s+v,0))} ج</span>
+        <div style="display:flex;align-items:baseline;gap:var(--space-sm)">
+          <span style="font-size:var(--fs-sm);color:var(--dim2)">متوسط: ${fn(Math.round(avg7))} ج</span>
+          <span style="font-size:var(--fs-base);color:var(--g);font-weight:var(--fw-extra)">${fn(Math.round(week7Total))} ج</span>
+        </div>
       </div>
       <div style="display:flex;align-items:flex-end;gap:6px;height:80px">
         ${last7.map((v,i) => {
           const h = Math.max(4, (v/maxD)*70);
+          const isToday = i === 6;
           return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
             <div style="font-size:10px;color:var(--g);font-weight:700;opacity:${v>0?1:.3}">${v>0?fn(Math.round(v)):''}</div>
-            <div style="width:100%;height:${h}px;background:linear-gradient(180deg,var(--g),rgba(0,217,126,.3));border-radius:4px 4px 0 0"></div>
-            <div style="font-size:10px;color:var(--dim2)">${dayLabels[i]}</div>
+            <div style="width:100%;height:${h}px;background:linear-gradient(180deg,${isToday?'var(--b)':'var(--g)'},${isToday?'rgba(74,142,245,.3)':'rgba(0,217,126,.3)'});border-radius:4px 4px 0 0;${isToday?'box-shadow:0 0 8px rgba(74,142,245,.3)':''}"></div>
+            <div style="font-size:10px;color:${isToday?'var(--b)':'var(--dim2)'};font-weight:${isToday?'700':'400'}">${dayLabels[i]}</div>
           </div>`;
         }).join('')}
       </div>
@@ -991,7 +1089,7 @@ function renderDomainHome(f, prevFiltered, range) {
   // Target progress
   const tgtHtml = showTargets ? `
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px">
-      <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow);margin-bottom:12px">🎯 أهداف ${PER}</div>
+      <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow);margin-bottom:12px;display:flex;align-items:center;gap:6px">🎯 أهداف ${PER}</div>
       ${tgt.revenueTarget > 0 ? `<div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;font-size:var(--fs-sm);margin-bottom:5px">
           <span>💰 هدف الدخل</span>
@@ -1030,7 +1128,7 @@ function renderDomainHome(f, prevFiltered, range) {
         ${stages.map(s => {
           const c = orders.filter(o => o.stage === s.key).length;
           const pct = orders.length ? Math.round(c/orders.length*100) : 0;
-          return `<div style="background:${s.col}14;border:1px solid ${s.col}44;border-radius:var(--rad);padding:10px 6px;text-align:center">
+          return `<div style="background:${s.col}14;border:1px solid ${s.col}44;border-radius:var(--rad);padding:10px 6px;text-align:center;cursor:pointer;transition:transform .12s" onclick="switchDomain('operations')" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
             <div style="font-size:18px;margin-bottom:2px">${s.ico}</div>
             <div style="font-size:22px;font-weight:var(--fw-heavy);color:${s.col};line-height:1">${c}</div>
             <div style="font-size:10px;color:var(--dim2);margin-top:2px;font-weight:700">${s.label} · ${pct}%</div>
@@ -1039,15 +1137,21 @@ function renderDomainHome(f, prevFiltered, range) {
       </div>
     </div>`;
 
-  // Cross-links footer
-  const crossLinks = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px">
-      <button class="rp-cross-link" style="padding:12px 16px;border-radius:12px;background:var(--bg2);border:1.5px solid var(--line);display:flex;align-items:center;gap:8px;font-size:var(--fs-base)" onclick="switchDomain('financial')">💰 المالية والتحصيل</button>
-      <button class="rp-cross-link" style="padding:12px 16px;border-radius:12px;background:var(--bg2);border:1.5px solid var(--line);display:flex;align-items:center;gap:8px;font-size:var(--fs-base)" onclick="switchDomain('data');currentDataView='collection';render()">📋 جرد التحصيل</button>
-      <button class="rp-cross-link" style="padding:12px 16px;border-radius:12px;background:var(--bg2);border:1.5px solid var(--line);display:flex;align-items:center;gap:8px;font-size:var(--fs-base)" onclick="switchDomain('operations')">⚡ أداء التشغيل</button>
+  // Quick nav
+  const quickNav = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:16px">
+      ${[
+        {ico:'💰',label:'المالية والتحصيل',domain:'financial',col:'var(--g)'},
+        {ico:'📋',label:'جرد التحصيل',domain:'data',col:'var(--y)',extra:";currentDataView='collection';render()"},
+        {ico:'⚡',label:'أداء التشغيل',domain:'operations',col:'var(--b)'},
+        {ico:'🎨',label:'أداء الفريق',domain:'team',col:'var(--p)'},
+      ].map(n => `
+        <button class="rp-cross-link" style="padding:12px 14px;border-radius:12px;background:var(--bg2);border:1.5px solid var(--line);display:flex;align-items:center;gap:8px;font-size:var(--fs-base);width:100%;justify-content:flex-start;transition:transform .12s,border-color .15s" onclick="switchDomain('${n.domain}')${n.extra||''}" onmouseover="this.style.borderColor='${n.col}'" onmouseout="this.style.borderColor=''">
+          <span style="font-size:18px">${n.ico}</span>${n.label}
+        </button>`).join('')}
     </div>`;
 
-  return kpiStripHtml + trendChart + prioHtml + tgtHtml + pipeline + crossLinks;
+  return insightsHtml + kpiStripHtml + trendChart + prioHtml + tgtHtml + pipeline + quickNav;
 }
 
 // ══ Domain: المالية ══
@@ -1064,33 +1168,39 @@ function renderDomainFinancial(f, prevFiltered, range) {
   const colStats = buildCollectionStats({orders:f, calcRem, daysSince, isStaleOrder, isMissingCost, sortKey:'date', sortDir:'desc'});
   const aging = colStats?.aging || {};
 
+  const profitMargin = periodIn > 0 ? Math.round(profit / periodIn * 100) : 0;
   const domainKpiHtml = `
-    <div style="background:var(--bg2);border:1px solid rgba(0,217,126,.25);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--g)"></div>
-      <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
-        <span>💰 المالية والتحصيل</span>
-        <button class="rp-cross-link" onclick="openExpenseDrawer()">تفاصيل المصروفات ›</button>
+    <div class="rp-domain-hdr" style="--accent:var(--g)">
+      <div class="rp-domain-hdr-row">
+        <div>
+          <h2>💰 المالية والتحصيل</h2>
+          <div class="desc">إيرادات · مصروفات · أرباح · تقادم · موردين</div>
+        </div>
+        <div style="display:flex;gap:var(--space-sm);align-items:center">
+          <button class="rp-cross-link" onclick="openRevDrawer()">الإيرادات ›</button>
+          <button class="rp-cross-link" onclick="openExpenseDrawer()">المصروفات ›</button>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:14px">
         <div style="background:rgba(0,217,126,.08);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:12px;text-align:center">
           <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--g)">${fn(periodIn)}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">إيرادات الفترة · ج</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">إيرادات · ج</div>
         </div>
         <div style="background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.2);border-radius:var(--rad);padding:12px;text-align:center">
           <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--r)">${fn(periodOut)}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">مصروفات الفترة · ج</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">مصروفات · ج</div>
         </div>
         <div style="background:${profit>=0?'rgba(0,217,126,.08)':'rgba(255,61,110,.08)'};border:1px solid ${profit>=0?'rgba(0,217,126,.2)':'rgba(255,61,110,.2)'};border-radius:var(--rad);padding:12px;text-align:center">
           <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${profit>=0?'var(--g)':'var(--r)'}">${fn(profit)}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">صافي الربح · ج</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">صافي · ${profitMargin}% هامش</div>
         </div>
         <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:var(--rad);padding:12px;text-align:center">
           <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--y)">${fn(totalRem)}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">باقي التحصيل · ج</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">باقي تحصيل · ج</div>
         </div>
         <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);border-radius:var(--rad);padding:12px;text-align:center">
           <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--p)">${fn(Math.round(supDue))}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">مستحق الموردين · ج</div>
+          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">مستحق موردين · ج</div>
         </div>
       </div>
     </div>`;
@@ -1166,22 +1276,30 @@ function renderDomainOperations(f) {
   const stageCols = {design:'#a78bfa',printing:'var(--y)',production:'var(--p)',shipping:'var(--b)'};
   const maxStage = Math.max(1,...stages.map(s => f.filter(o=>o.stage===s).length));
 
+  const onTimePct = active.length > 0 ? Math.round((active.length - late.length) / active.length * 100) : 100;
   const domainHdr = `
-    <div style="background:var(--bg2);border:1px solid rgba(59,158,255,.25);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--b)"></div>
-      <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:14px">⚡ التشغيل والأداء</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
-        <div style="background:var(--bg3);border-radius:var(--rad);padding:10px;text-align:center">
-          <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--b)">${active.length}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">أوردر نشط</div>
+    <div class="rp-domain-hdr" style="--accent:var(--b)">
+      <div class="rp-domain-hdr-row">
+        <div>
+          <h2>⚡ التشغيل والأداء</h2>
+          <div class="desc">المراحل · التأخيرات · الكفاءة · SLA</div>
         </div>
-        <div style="background:${late.length>0?'rgba(255,61,110,.08)':'var(--bg3)'};border:1px solid ${late.length>0?'rgba(255,61,110,.25)':'var(--bg3)'};border-radius:var(--rad);padding:10px;text-align:center">
-          <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${late.length>0?'var(--r)':'var(--g)'}">${late.length}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">متأخر عن الميعاد</div>
+        <div style="display:flex;align-items:center;gap:var(--space-sm)">
+          <span style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:${onTimePct>=80?'var(--g)':onTimePct>=60?'var(--y)':'var(--r)'}">${onTimePct}% في الموعد</span>
         </div>
-        <div style="background:${stale.length>0?'rgba(255,170,0,.08)':'var(--bg3)'};border:1px solid ${stale.length>0?'rgba(255,170,0,.25)':'var(--bg3)'};border-radius:var(--rad);padding:10px;text-align:center">
-          <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:${stale.length>0?'var(--y)':'var(--dim2)'}">${stale.length}</div>
-          <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:3px;font-weight:700">راكد (14+ يوم)</div>
+      </div>
+      <div class="rp-domain-hdr-kpis" style="margin-top:14px">
+        <div class="rp-domain-hdr-kpi">
+          <div class="v" style="color:var(--b)">${active.length}</div>
+          <div class="l">أوردر نشط</div>
+        </div>
+        <div class="rp-domain-hdr-kpi" style="${late.length>0?'background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.25)':''}">
+          <div class="v" style="color:${late.length>0?'var(--r)':'var(--g)'}">${late.length}</div>
+          <div class="l">متأخر عن الميعاد</div>
+        </div>
+        <div class="rp-domain-hdr-kpi" style="${stale.length>0?'background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25)':''}">
+          <div class="v" style="color:${stale.length>0?'var(--y)':'var(--dim2)'}">${stale.length}</div>
+          <div class="l">راكد (14+ يوم)</div>
         </div>
       </div>
     </div>`;
@@ -1213,29 +1331,49 @@ function renderDomainTeam(f) {
   const durWithSla = (o) => getStageDurations(o, appSettings?.stageSla || null);
   const designHtml = buildDesignersTabHTML({ stats: buildDesignerStats(f, employees, resolveDesigner) });
   const perfHtml = buildStagePerformanceTabHTML({ stats: buildStagePerformanceStats(f, durWithSla, formatDurationAr, employees, resolveDesigner) });
-  return `<div style="background:var(--bg2);border:1px solid rgba(167,139,250,.25);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--p)"></div>
-    <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:4px">🎨 أداء الفريق</div>
-    <div style="font-size:var(--fs-sm);color:var(--dim2)">المصممون · المراحل · SLA</div>
+  return `<div class="rp-domain-hdr" style="--accent:var(--p)">
+    <div class="rp-domain-hdr-row">
+      <div>
+        <h2>🎨 أداء الفريق</h2>
+        <div class="desc">إنتاجية المصممين · مدة الإنجاز · التزام SLA</div>
+      </div>
+    </div>
   </div>` + designHtml + perfHtml;
 }
 
 // ══ Domain: الشحن ══
 function renderDomainShipping(f, prev) {
-  return `<div style="background:var(--bg2);border:1px solid rgba(59,158,255,.25);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--b)"></div>
-    <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:4px">🚚 أداء الشحن</div>
-    <div style="font-size:var(--fs-sm);color:var(--dim2)">الأداء · التسويات · المرتجعات</div>
-  </div>` + buildShippingTabHTML({ stats: buildShippingStats(f, prev, shippers, isDelivered), kpi, format: fn });
+  const shipStats = buildShippingStats(f, prev, shippers, isDelivered);
+  const returned = f.filter(o => o.shipStage === 'returned').length;
+  return `<div class="rp-domain-hdr" style="--accent:var(--c)">
+    <div class="rp-domain-hdr-row">
+      <div>
+        <h2>🚚 أداء الشحن</h2>
+        <div class="desc">معدل التوصيل · المرتجعات · أداء الشركات</div>
+      </div>
+      ${returned > 0 ? `<span style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--y);background:rgba(255,170,0,.1);padding:4px 10px;border-radius:99px;border:1px solid rgba(255,170,0,.25)">${returned} مرتجع</span>` : ''}
+    </div>
+  </div>` + buildShippingTabHTML({ stats: shipStats, kpi, format: fn });
 }
 
 // ══ Domain: المرتجعات ══
 function renderDomainReturns(f, range) {
-  return `<div style="background:var(--bg2);border:1px solid rgba(255,61,110,.25);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--r)"></div>
-    <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:4px">↩️ المرتجعات</div>
-    <div style="font-size:var(--fs-sm);color:var(--dim2)">معدلات · أسباب · SLA · تأثير مالي</div>
-  </div>` + buildReturnsTabHTML({ stats: buildReturnsStats(returns, f, range), format: fn });
+  const retStats = buildReturnsStats(returns, f, range);
+  const openTickets = returns.filter(t => !['cancelled','closed'].includes(t.status)).length;
+  return `<div class="rp-domain-hdr" style="--accent:var(--r)">
+    <div class="rp-domain-hdr-row">
+      <div>
+        <h2>↩️ المرتجعات</h2>
+        <div class="desc">معدلات الإرجاع · الأسباب · SLA · التأثير المالي</div>
+      </div>
+      <div class="rp-domain-hdr-kpis">
+        <div class="rp-domain-hdr-kpi">
+          <div class="v" style="color:${openTickets>0?'var(--y)':'var(--g)'}">${openTickets}</div>
+          <div class="l">تذكرة مفتوحة</div>
+        </div>
+      </div>
+    </div>
+  </div>` + buildReturnsTabHTML({ stats: retStats, format: fn });
 }
 
 // ══ Domain: البيانات (shell + sub-nav) ══
@@ -1247,10 +1385,13 @@ function renderDomainDataShell() {
     ...(userIsAdmin ? [{key:'control', label:'🎛️ التحكم الكامل'}] : []),
   ];
   return `
-    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--dim2)"></div>
-      <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:4px">📋 البيانات والجداول</div>
-      <div style="font-size:var(--fs-sm);color:var(--dim2)">تحصيل · يومية · اعتمادات · تحكم</div>
+    <div class="rp-domain-hdr" style="--accent:var(--dim)">
+      <div class="rp-domain-hdr-row">
+        <div>
+          <h2>📋 البيانات والجداول</h2>
+          <div class="desc">جرد التحصيل · التقارير اليومية · الاعتمادات · التحكم الكامل</div>
+        </div>
+      </div>
     </div>
     <div class="rp-data-nav">
       ${views.map(v => `<button type="button" class="rp-data-btn${currentDataView===v.key?' active':''}" data-view="${v.key}" onclick="switchDataView('${v.key}',this)">${v.label}</button>`).join('')}
