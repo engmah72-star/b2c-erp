@@ -861,7 +861,9 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
   // Orders
   if (!skip.has('orders')) {
     const builder = cachedQuery('orders');
-    if (opts.orderStage) {
+    if (opts.orderStages && Array.isArray(opts.orderStages)) {
+      builder.where('stage', 'in', opts.orderStages);
+    } else if (opts.orderStage) {
       builder.where('stage', '==', opts.orderStage);
     }
     const spec = builder
@@ -932,6 +934,79 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
       }
     });
     unsubs.push(unsub);
+  }
+
+  // Shippers
+  if (!skip.has('shippers')) {
+    const spec = cachedQuery('shippers_v2')
+      .limit(opts.shipperLimit || 200)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onShippers?.(docs, source);
+    }));
+  }
+
+  // Suppliers
+  if (!skip.has('suppliers')) {
+    const spec = cachedQuery('suppliers_v2')
+      .limit(opts.supplierLimit || 500)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onSuppliers?.(docs, source);
+    }));
+  }
+
+  // Employees (per-role queries — listener dedup across pages)
+  if (!skip.has('employees') && opts.employeeRoles?.length) {
+    for (const role of opts.employeeRoles) {
+      const spec = cachedQuery('employees')
+        .where('role', '==', role)
+        .limit(opts.employeeLimit || 100)
+        .build();
+      unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+        _onSource(source);
+        callbacks.onEmployees?.(docs, role, source);
+      }));
+    }
+  }
+
+  // Settlements
+  if (!skip.has('settlements')) {
+    const spec = cachedQuery('shipping_settlements')
+      .orderBy('createdAt', 'desc')
+      .limit(opts.settlementLimit || 50)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onSettlements?.(docs, source);
+    }));
+  }
+
+  // Master Lists (single docs from master_lists collection)
+  if (opts.masterListDocs?.length) {
+    for (const mlDocId of opts.masterListDocs) {
+      const mlKey = `master_lists/${mlDocId}`;
+      dataCache.getDoc('master_lists', mlDocId).then(result => {
+        if (result.data) callbacks.onMasterList?.(mlDocId, result.data, result.source);
+      });
+      const unsub = onSnapshot(doc(db, 'master_lists', mlDocId), snap => {
+        if (snap.exists()) {
+          const data = snap.data();
+          callbacks.onMasterList?.(mlDocId, data, 'server');
+          memSet(mlKey, data, 'master_lists');
+          idbPut(STORE_DOCS, {
+            _cacheKey: mlKey,
+            _collection: 'master_lists',
+            _id: mlDocId,
+            _syncedAt: Date.now(),
+            data: serializeDoc(data),
+          });
+        }
+      });
+      unsubs.push(unsub);
+    }
   }
 
   // تسجيل cleanup

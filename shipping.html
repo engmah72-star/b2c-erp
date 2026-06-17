@@ -314,6 +314,7 @@
 import {
   db, auth, AppState, initAuth, renderSidebar, initMobileMenu,
   startListeners, toast, canSee, maskPhone, fn,
+  dataCache, cachedQuery,
 } from './shared.js';
 import {
   onSnapshot, query, collection, where, orderBy, limit, doc, getDoc,
@@ -384,29 +385,15 @@ initAuth(async (state) => {
       }
     },
     onWallets: (list) => { wallets = list || []; populateWalletDropdowns(); },
-    // orderStage:'shipping' — نحمّل أوردرات مرحلة الشحن فقط، فلا يمتلئ الـ limit
-    // بأوردرات مؤرشفة قديمة وتختفي الأوردرات النشطة (كان سبب اختفاء الأوردر بعد التسليم).
-  }, { orderLimit: 500, orderStage: 'shipping', skip: ['clients', 'products'] });
+    onShippers: (list) => { shippers = list || []; populateCompanyDropdowns(); refreshAll(); },
+    onSettlements: (list) => { settlements = (list || []).filter(s => s.reversed !== true); },
+  }, { orderLimit: 500, orderStage: 'shipping', skip: ['clients', 'products', 'suppliers', 'employees'] });
 
-  // Shippers v2 (shipping companies registry)
-  onSnapshot(query(collection(db, 'shippers_v2'), limit(200)), (snap) => {
-    shippers = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    populateCompanyDropdowns();
-    refreshAll();
-  });
-
-  // 🔜 قادم من التنفيذ — أوردرات stage='production' (رؤية مبكرة، قراءة فقط).
+  // قادم من التنفيذ — أوردرات stage='production' (رؤية مبكرة، قراءة فقط).
   // bounded (G3). لا تغيّر order.stage — مجرد view مختلف (W1.1 + C1.8).
-  onSnapshot(query(collection(db, 'orders'), where('stage', '==', 'production'), limit(300)), (snap) => {
-    upcomingOrders = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    refreshAll();
-  });
-
-  // Recent settlements for reversal action
-  // PR-7-salvage G2: append-only — exclude reversed entries.
-  onSnapshot(
-    query(collection(db, 'shipping_settlements'), orderBy('createdAt', 'desc'), limit(50)),
-    (snap) => { settlements = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(s => s.reversed !== true); }
+  dataCache.subscribe(
+    cachedQuery('orders').where('stage', '==', 'production').limit(300).build(),
+    (list) => { upcomingOrders = list || []; refreshAll(); }
   );
 
   // ⏰ الحضور/الانصراف/الإجازات — widget مركزي موحّد (مصدر واحد لكل الصفحات)
