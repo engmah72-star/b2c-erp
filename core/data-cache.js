@@ -297,7 +297,9 @@ function deserializeDoc(stored) {
   const result = {};
   for (const [key, value] of Object.entries(stored)) {
     if (value && typeof value === 'object' && value.__ts) {
-      result[key] = new Date(value.v);
+      const d = new Date(value.v);
+      const sec = Math.floor(d.getTime() / 1000);
+      result[key] = { seconds: sec, nanoseconds: 0, toDate() { return d; }, toMillis() { return d.getTime(); } };
     } else if (Array.isArray(value)) {
       result[key] = value.map(item =>
         (item && typeof item === 'object' && !Array.isArray(item)) ? deserializeDoc(item) : item
@@ -487,7 +489,7 @@ export const dataCache = {
       collectionRegistry.markError(spec.collection, err);
     });
 
-    _activeListeners.set(queryKey, { queryKey, unsubscribe: unsub, subscribers, createdAt: Date.now() });
+    _activeListeners.set(queryKey, { queryKey, collection: spec.collection, unsubscribe: unsub, subscribers, createdAt: Date.now() });
     _stats.activeListeners = _activeListeners.size;
 
     return () => {
@@ -506,6 +508,7 @@ export const dataCache = {
       // L1 Memory
       const memHit = memGet(queryKey);
       if (memHit) {
+        if (_getQueryState(queryKey).state === 'synced') return;
         _stats.cacheHits++;
         _setQueryState(queryKey, 'cached', { source: 'memory', docCount: memHit.length });
         collectionRegistry.touch(collectionName);
@@ -513,8 +516,9 @@ export const dataCache = {
         return;
       }
 
-      // L2 IndexedDB
+      // L2 IndexedDB (async — server may arrive first)
       const idbHit = await idbGet(STORE_QUERIES, queryKey);
+      if (_getQueryState(queryKey).state === 'synced') return;
       if (idbHit && idbHit.docs && idbHit.docs.length > 0) {
         const docs = idbHit.docs.map(d => {
           const deserialized = deserializeDoc(d.data);
@@ -649,6 +653,11 @@ export const dataCache = {
   unsubscribeAll() {
     for (const [, entry] of _activeListeners) {
       entry.unsubscribe();
+      if (entry.collection) {
+        for (let i = 0; i < entry.subscribers.size; i++) {
+          collectionRegistry.removeSubscriber(entry.collection);
+        }
+      }
     }
     _activeListeners.clear();
     _stats.activeListeners = 0;
