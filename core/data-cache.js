@@ -297,7 +297,9 @@ function deserializeDoc(stored) {
   const result = {};
   for (const [key, value] of Object.entries(stored)) {
     if (value && typeof value === 'object' && value.__ts) {
-      result[key] = new Date(value.v);
+      const d = new Date(value.v);
+      const sec = Math.floor(d.getTime() / 1000);
+      result[key] = { seconds: sec, nanoseconds: 0, toDate() { return d; }, toMillis() { return d.getTime(); } };
     } else if (Array.isArray(value)) {
       result[key] = value.map(item =>
         (item && typeof item === 'object' && !Array.isArray(item)) ? deserializeDoc(item) : item
@@ -487,7 +489,7 @@ export const dataCache = {
       collectionRegistry.markError(spec.collection, err);
     });
 
-    _activeListeners.set(queryKey, { queryKey, unsubscribe: unsub, subscribers, createdAt: Date.now() });
+    _activeListeners.set(queryKey, { queryKey, collection: spec.collection, unsubscribe: unsub, subscribers, createdAt: Date.now() });
     _stats.activeListeners = _activeListeners.size;
 
     return () => {
@@ -506,6 +508,7 @@ export const dataCache = {
       // L1 Memory
       const memHit = memGet(queryKey);
       if (memHit) {
+        if (_getQueryState(queryKey).state === 'synced') return;
         _stats.cacheHits++;
         _setQueryState(queryKey, 'cached', { source: 'memory', docCount: memHit.length });
         collectionRegistry.touch(collectionName);
@@ -513,8 +516,9 @@ export const dataCache = {
         return;
       }
 
-      // L2 IndexedDB
+      // L2 IndexedDB (async — server may arrive first)
       const idbHit = await idbGet(STORE_QUERIES, queryKey);
+      if (_getQueryState(queryKey).state === 'synced') return;
       if (idbHit && idbHit.docs && idbHit.docs.length > 0) {
         const docs = idbHit.docs.map(d => {
           const deserialized = deserializeDoc(d.data);
@@ -649,6 +653,11 @@ export const dataCache = {
   unsubscribeAll() {
     for (const [, entry] of _activeListeners) {
       entry.unsubscribe();
+      if (entry.collection) {
+        for (let i = 0; i < entry.subscribers.size; i++) {
+          collectionRegistry.removeSubscriber(entry.collection);
+        }
+      }
     }
     _activeListeners.clear();
     _stats.activeListeners = 0;
@@ -861,7 +870,9 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
   // Orders
   if (!skip.has('orders')) {
     const builder = cachedQuery('orders');
-    if (opts.orderStage) {
+    if (opts.orderStages && Array.isArray(opts.orderStages)) {
+      builder.where('stage', 'in', opts.orderStages);
+    } else if (opts.orderStage) {
       builder.where('stage', '==', opts.orderStage);
     }
     const spec = builder
@@ -932,6 +943,79 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
       }
     });
     unsubs.push(unsub);
+  }
+
+  // Shippers
+  if (!skip.has('shippers')) {
+    const spec = cachedQuery('shippers_v2')
+      .limit(opts.shipperLimit || 200)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onShippers?.(docs, source);
+    }));
+  }
+
+  // Suppliers
+  if (!skip.has('suppliers')) {
+    const spec = cachedQuery('suppliers_v2')
+      .limit(opts.supplierLimit || 500)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onSuppliers?.(docs, source);
+    }));
+  }
+
+  // Employees (per-role queries — listener dedup across pages)
+  if (!skip.has('employees') && opts.employeeRoles?.length) {
+    for (const role of opts.employeeRoles) {
+      const spec = cachedQuery('employees')
+        .where('role', '==', role)
+        .limit(opts.employeeLimit || 100)
+        .build();
+      unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+        _onSource(source);
+        callbacks.onEmployees?.(docs, role, source);
+      }));
+    }
+  }
+
+  // Settlements
+  if (!skip.has('settlements')) {
+    const spec = cachedQuery('shipping_settlements')
+      .orderBy('createdAt', 'desc')
+      .limit(opts.settlementLimit || 50)
+      .build();
+    unsubs.push(dataCache.subscribe(spec, (docs, source) => {
+      _onSource(source);
+      callbacks.onSettlements?.(docs, source);
+    }));
+  }
+
+  // Master Lists (single docs from master_lists collection)
+  if (opts.masterListDocs?.length) {
+    for (const mlDocId of opts.masterListDocs) {
+      const mlKey = `master_lists/${mlDocId}`;
+      dataCache.getDoc('master_lists', mlDocId).then(result => {
+        if (result.data) callbacks.onMasterList?.(mlDocId, result.data, result.source);
+      });
+      const unsub = onSnapshot(doc(db, 'master_lists', mlDocId), snap => {
+        if (snap.exists()) {
+          const data = snap.data();
+          callbacks.onMasterList?.(mlDocId, data, 'server');
+          memSet(mlKey, data, 'master_lists');
+          idbPut(STORE_DOCS, {
+            _cacheKey: mlKey,
+            _collection: 'master_lists',
+            _id: mlDocId,
+            _syncedAt: Date.now(),
+            data: serializeDoc(data),
+          });
+        }
+      });
+      unsubs.push(unsub);
+    }
   }
 
   // تسجيل cleanup

@@ -101,6 +101,34 @@ test('same query params produce identical descriptor sets', () => {
   assertEq(k1, k2);
 });
 
+test('cachedQuery supports where with in operator for arrays', () => {
+  const spec = cachedQuery('orders')
+    .where('stage', 'in', ['production', 'shipping'])
+    .limit(1000)
+    .build();
+
+  assertEq(spec.collection, 'orders');
+  assertEq(spec.descriptors.length, 2);
+  assertEq(spec.descriptors[0][0], 'where');
+  assertEq(spec.descriptors[0][1], 'stage');
+  assertEq(spec.descriptors[0][2], 'in');
+  assertEq(spec.descriptors[0][3], 'production,shipping');
+  assertEq(spec.descriptors[1][0], 'limit');
+  assertEq(spec.descriptors[1][1], '1000');
+});
+
+test('cachedQuery with in produces different key than == query', () => {
+  const s1 = cachedQuery('orders')
+    .where('stage', 'in', ['production', 'shipping'])
+    .build();
+  const s2 = cachedQuery('orders')
+    .where('stage', '==', 'production')
+    .build();
+
+  const k1 = JSON.stringify(s1.descriptors);
+  const k2 = JSON.stringify(s2.descriptors);
+  assert(k1 !== k2, 'in vs == should produce different keys');
+});
 // ── dataCache API existence ──
 
 test('dataCache exports required methods', () => {
