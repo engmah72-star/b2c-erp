@@ -9,6 +9,12 @@
  * 3. عند وصول بيانات جديدة → تحديث الكاش + إعلام المشتركين
  * 4. Lazy loading — جلب البيانات المطلوبة فقط عند الحاجة
  *
+ * قدرات إضافية:
+ * - Read Dedup: منع القراءات المكررة خلال نافذة زمنية
+ * - LRU Eviction: إدارة ضغط الذاكرة تلقائياً
+ * - Data State Tracking: معرفة حالة كل query (idle/loading/synced/stale)
+ * - Collection Registry Integration: تتبع مركزي لكل البيانات المحمّلة
+ *
  * RULE G2: يعتمد على core/firebase-init.js فقط.
  * RULE G3: كل query بـ limit() إلزامي.
  */
@@ -18,6 +24,7 @@ import {
   collection, doc, getDoc, getDocs, onSnapshot,
   query, where, orderBy, limit,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { collectionRegistry } from './collection-registry.js';
 
 // ═══════════════════════════════════════
 // ثوابت
@@ -30,6 +37,9 @@ const STORE_META = 'meta';
 
 const DEFAULT_MAX_AGE = 30 * 60 * 1000;     // 30 دقيقة — بعدها الكاش stale (لا يُحذف، يُعرض مع revalidation)
 const DEFAULT_QUERY_LIMIT = 200;             // RULE G3
+const DEDUP_WINDOW_MS = 2000;               // نافذة منع القراءات المكررة (2 ثانية)
+const MAX_MEMORY_ENTRIES = 500;             // أقصى عدد مدخلات في L1 قبل الـ eviction
+const MAX_IDB_ENTRIES = 2000;               // أقصى عدد في IndexedDB قبل التنظيف
 
 // ═══════════════════════════════════════
 // IndexedDB Manager
@@ -153,22 +163,96 @@ const _memoryCache = new Map();
 const _memoryCacheMeta = new Map();
 
 function memGet(key) {
-  return _memoryCache.get(key) || null;
+  const val = _memoryCache.get(key);
+  if (val) _trackAccess(key);
+  return val || null;
 }
 
 function memSet(key, value, collectionName) {
   _memoryCache.set(key, value);
   _memoryCacheMeta.set(key, { syncedAt: Date.now(), collection: collectionName });
+  _trackAccess(key);
+  _evictIfNeeded();
 }
 
 function memInvalidate(key) {
   _memoryCache.delete(key);
   _memoryCacheMeta.delete(key);
+  const idx = _accessOrder.indexOf(key);
+  if (idx !== -1) _accessOrder.splice(idx, 1);
 }
 
 function memClear() {
   _memoryCache.clear();
   _memoryCacheMeta.clear();
+}
+
+// ═══════════════════════════════════════
+// Read Deduplication — منع القراءات المكررة
+// ═══════════════════════════════════════
+const _pendingReads = new Map();
+
+function dedupRead(key, fetchFn) {
+  const pending = _pendingReads.get(key);
+  if (pending && (Date.now() - pending.startedAt) < DEDUP_WINDOW_MS) {
+    _stats.dedupSaves++;
+    return pending.promise;
+  }
+  const promise = fetchFn();
+  _pendingReads.set(key, { promise, startedAt: Date.now() });
+  promise.finally(() => {
+    setTimeout(() => _pendingReads.delete(key), DEDUP_WINDOW_MS);
+  });
+  return promise;
+}
+
+// ═══════════════════════════════════════
+// LRU Eviction — إدارة ضغط الذاكرة
+// ═══════════════════════════════════════
+const _accessOrder = [];
+
+function _trackAccess(key) {
+  const idx = _accessOrder.indexOf(key);
+  if (idx !== -1) _accessOrder.splice(idx, 1);
+  _accessOrder.push(key);
+}
+
+function _evictIfNeeded() {
+  if (_memoryCache.size <= MAX_MEMORY_ENTRIES) return;
+  const toEvict = _accessOrder.length - MAX_MEMORY_ENTRIES;
+  if (toEvict <= 0) return;
+
+  const evicted = _accessOrder.splice(0, toEvict);
+  for (const key of evicted) {
+    // لا نحذف مدخلات لها listeners نشطة
+    const isActive = _activeListeners.has(key);
+    if (!isActive) {
+      _memoryCache.delete(key);
+      _memoryCacheMeta.delete(key);
+      _stats.evictions++;
+    }
+  }
+}
+
+// ═══════════════════════════════════════
+// Data State Tracking — حالة كل query
+// ═══════════════════════════════════════
+const _queryStates = new Map();
+
+/**
+ * حالات الـ query:
+ * - idle: لم يُطلب بعد
+ * - loading: جاري التحميل
+ * - cached: بيانات من الكاش (قد تكون قديمة)
+ * - synced: مزامَن مع السيرفر
+ * - error: خطأ في التحميل
+ */
+function _setQueryState(queryKey, state, extra = {}) {
+  _queryStates.set(queryKey, { state, updatedAt: Date.now(), ...extra });
+}
+
+function _getQueryState(queryKey) {
+  return _queryStates.get(queryKey) || { state: 'idle', updatedAt: 0 };
 }
 
 // ═══════════════════════════════════════
@@ -268,8 +352,8 @@ export const dataCache = {
       return { data: deserialized, source: 'cache' };
     }
 
-    // L3: Firestore
-    return this._fetchDoc(collectionName, docId, cacheKey);
+    // L3: Firestore (with dedup)
+    return dedupRead(cacheKey, () => this._fetchDoc(collectionName, docId, cacheKey));
   },
 
   async _fetchDoc(collectionName, docId, cacheKey) {
@@ -354,6 +438,11 @@ export const dataCache = {
       };
     }
 
+    // تسجيل الحالة
+    _setQueryState(queryKey, 'loading');
+    collectionRegistry.markLoading(spec.collection);
+    collectionRegistry.addSubscriber(spec.collection);
+
     // أولاً: عرض من الكاش
     this._hydrateFromCache(queryKey, spec.collection, callback);
 
@@ -378,6 +467,11 @@ export const dataCache = {
       // تحديث L2 (async — لا يحجب الـ render)
       this._persistQueryResult(queryKey, spec.collection, docs);
 
+      // تحديث حالة الـ query والـ collection registry
+      _setQueryState(queryKey, 'synced', { docCount: docs.length, source });
+      const estimatedKB = Math.round(JSON.stringify(docs).length / 1024);
+      collectionRegistry.markSynced(spec.collection, docs.length, estimatedKB);
+
       _stats.serverSyncs++;
       _stats.lastSyncAt = Date.now();
 
@@ -389,6 +483,8 @@ export const dataCache = {
       }
     }, (err) => {
       console.warn('[data-cache] onSnapshot error:', spec.collection, err);
+      _setQueryState(queryKey, 'error', { error: err?.message });
+      collectionRegistry.markError(spec.collection, err);
     });
 
     _activeListeners.set(queryKey, { queryKey, unsubscribe: unsub, subscribers, createdAt: Date.now() });
@@ -396,6 +492,7 @@ export const dataCache = {
 
     return () => {
       subscribers.delete(callback);
+      collectionRegistry.removeSubscriber(spec.collection);
       if (subscribers.size === 0) {
         unsub();
         _activeListeners.delete(queryKey);
@@ -410,6 +507,8 @@ export const dataCache = {
       const memHit = memGet(queryKey);
       if (memHit) {
         _stats.cacheHits++;
+        _setQueryState(queryKey, 'cached', { source: 'memory', docCount: memHit.length });
+        collectionRegistry.touch(collectionName);
         callback(memHit, 'memory');
         return;
       }
@@ -424,6 +523,8 @@ export const dataCache = {
         });
         memSet(queryKey, docs, collectionName);
         _stats.cacheHits++;
+        _setQueryState(queryKey, 'cached', { source: 'indexeddb', docCount: docs.length });
+        collectionRegistry.touch(collectionName);
         callback(docs, 'cache');
         return;
       }
@@ -554,10 +655,88 @@ export const dataCache = {
   },
 
   /**
+   * حالة query محدد
+   */
+  getQueryState(collectionName, descriptors) {
+    const queryKey = stableQueryKey(collectionName, descriptors);
+    return _getQueryState(queryKey);
+  },
+
+  /**
+   * كل حالات الـ queries النشطة
+   */
+  getAllQueryStates() {
+    const result = {};
+    for (const [key, state] of _queryStates) {
+      result[key] = state;
+    }
+    return result;
+  },
+
+  /**
+   * تنظيف IndexedDB من المدخلات القديمة (أكثر من maxAge)
+   * يُستدعى دورياً أو عند الحاجة لتوفير المساحة
+   */
+  async evictStaleEntries(maxAge) {
+    const cutoff = Date.now() - (maxAge || DEFAULT_MAX_AGE * 4);
+    try {
+      const allDocs = await idbGetAll(STORE_DOCS);
+      let evicted = 0;
+      for (const d of allDocs) {
+        if (d._syncedAt && d._syncedAt < cutoff) {
+          await idbDelete(STORE_DOCS, d._cacheKey);
+          evicted++;
+        }
+      }
+      const allQueries = await idbGetAll(STORE_QUERIES);
+      for (const q of allQueries) {
+        if (q.syncedAt && q.syncedAt < cutoff) {
+          await idbDelete(STORE_QUERIES, q.queryKey);
+          evicted++;
+        }
+      }
+      if (evicted > 0) _stats.evictions += evicted;
+      return evicted;
+    } catch (err) {
+      console.warn('[data-cache] evictStale error:', err);
+      return 0;
+    }
+  },
+
+  /**
+   * تنظيف IndexedDB عند تجاوز الحد الأقصى (LRU)
+   */
+  async enforceIDBLimit() {
+    try {
+      const allDocs = await idbGetAll(STORE_DOCS);
+      if (allDocs.length <= MAX_IDB_ENTRIES) return 0;
+      allDocs.sort((a, b) => (a._syncedAt || 0) - (b._syncedAt || 0));
+      const toRemove = allDocs.slice(0, allDocs.length - MAX_IDB_ENTRIES);
+      let removed = 0;
+      for (const d of toRemove) {
+        await idbDelete(STORE_DOCS, d._cacheKey);
+        removed++;
+      }
+      _stats.evictions += removed;
+      return removed;
+    } catch (err) {
+      console.warn('[data-cache] enforceIDBLimit error:', err);
+      return 0;
+    }
+  },
+
+  /**
    * إحصائيات الكاش — للمراقبة والتصحيح
    */
   getStats() {
-    return { ..._stats, activeListeners: _activeListeners.size };
+    return {
+      ..._stats,
+      activeListeners: _activeListeners.size,
+      memoryCacheSize: _memoryCache.size,
+      pendingReads: _pendingReads.size,
+      queryStates: _queryStates.size,
+      registry: collectionRegistry.getSummary(),
+    };
   },
 
   /**
@@ -577,6 +756,8 @@ const _stats = {
   serverSyncs: 0,
   activeListeners: 0,
   lastSyncAt: null,
+  dedupSaves: 0,
+  evictions: 0,
 };
 
 // ═══════════════════════════════════════
@@ -787,11 +968,27 @@ export async function prefetch(collectionName, constraintDescriptors, firestoreC
 }
 
 // ═══════════════════════════════════════
+// Periodic IDB Cleanup — تنظيف دوري كل 10 دقائق
+// ═══════════════════════════════════════
+let _cleanupInterval = null;
+if (typeof window !== 'undefined') {
+  _cleanupInterval = setInterval(() => {
+    dataCache.evictStaleEntries().then(n => {
+      if (n > 0) console.log(`[data-cache] evicted ${n} stale IDB entries`);
+    });
+    dataCache.enforceIDBLimit().then(n => {
+      if (n > 0) console.log(`[data-cache] evicted ${n} IDB entries (over limit)`);
+    });
+  }, 10 * 60 * 1000);
+}
+
+// ═══════════════════════════════════════
 // Cleanup عند إغلاق الصفحة
 // ═══════════════════════════════════════
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     dataCache.unsubscribeAll();
+    if (_cleanupInterval) clearInterval(_cleanupInterval);
   }, { once: true });
 }
 
@@ -803,4 +1000,7 @@ if (typeof window !== 'undefined') {
   window.__dataCacheStats = () => dataCache.getStats();
 }
 
-console.log('[data-cache] ✓ Cache & sync layer initialized');
+// Re-export collection registry for convenience
+export { collectionRegistry } from './collection-registry.js';
+
+console.log('[data-cache] ✓ Cache & sync layer initialized (v2: dedup + LRU + state)');

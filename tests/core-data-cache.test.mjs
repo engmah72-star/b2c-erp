@@ -3,10 +3,9 @@
  * Run: node --loader ./tests/_loaders/hooks.mjs tests/core-data-cache.test.mjs
  *
  * Pure logic tests — validates serialization, query key generation,
- * and the cachedQuery builder. IndexedDB and Firestore interactions
- * are covered by the stub layer.
+ * the cachedQuery builder, data state tracking, and stats.
  */
-import { cachedQuery } from '../core/data-cache.js';
+import { cachedQuery, dataCache, collectionRegistry } from '../core/data-cache.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -100,6 +99,64 @@ test('same query params produce identical descriptor sets', () => {
   const k1 = JSON.stringify(s1.descriptors);
   const k2 = JSON.stringify(s2.descriptors);
   assertEq(k1, k2);
+});
+
+// ── dataCache API existence ──
+
+test('dataCache exports required methods', () => {
+  assert(typeof dataCache.getDoc === 'function', 'getDoc');
+  assert(typeof dataCache.subscribe === 'function', 'subscribe');
+  assert(typeof dataCache.lazyLoad === 'function', 'lazyLoad');
+  assert(typeof dataCache.invalidateDoc === 'function', 'invalidateDoc');
+  assert(typeof dataCache.invalidateCollection === 'function', 'invalidateCollection');
+  assert(typeof dataCache.clearAll === 'function', 'clearAll');
+  assert(typeof dataCache.unsubscribeAll === 'function', 'unsubscribeAll');
+  assert(typeof dataCache.getStats === 'function', 'getStats');
+  assert(typeof dataCache.getQueryState === 'function', 'getQueryState');
+  assert(typeof dataCache.getAllQueryStates === 'function', 'getAllQueryStates');
+  assert(typeof dataCache.evictStaleEntries === 'function', 'evictStaleEntries');
+  assert(typeof dataCache.enforceIDBLimit === 'function', 'enforceIDBLimit');
+});
+
+// ── Stats structure ──
+
+test('getStats returns expected fields', () => {
+  const stats = dataCache.getStats();
+  assert('cacheHits' in stats, 'cacheHits');
+  assert('cacheMisses' in stats, 'cacheMisses');
+  assert('serverSyncs' in stats, 'serverSyncs');
+  assert('activeListeners' in stats, 'activeListeners');
+  assert('dedupSaves' in stats, 'dedupSaves');
+  assert('evictions' in stats, 'evictions');
+  assert('memoryCacheSize' in stats, 'memoryCacheSize');
+  assert('pendingReads' in stats, 'pendingReads');
+  assert('registry' in stats, 'registry');
+});
+
+// ── Query state ──
+
+test('getQueryState returns idle for unknown query', () => {
+  const state = dataCache.getQueryState('nonexistent', []);
+  assertEq(state.state, 'idle');
+});
+
+test('getAllQueryStates returns object', () => {
+  const states = dataCache.getAllQueryStates();
+  assert(typeof states === 'object');
+});
+
+// ── collectionRegistry re-export ──
+
+test('collectionRegistry is re-exported from data-cache', () => {
+  assert(collectionRegistry !== null);
+  assert(typeof collectionRegistry.markSynced === 'function');
+  assert(typeof collectionRegistry.getSummary === 'function');
+});
+
+// ── activeListenerCount ──
+
+test('activeListenerCount starts at 0', () => {
+  assertEq(dataCache.activeListenerCount, 0);
 });
 
 // ── Summary ──
