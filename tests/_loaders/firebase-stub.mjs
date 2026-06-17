@@ -36,6 +36,7 @@ export const query = () => ({});
 export const where = () => ({});
 export const orderBy = () => ({});
 export const limit = () => ({});
+export const startAfter = () => ({});
 export const arrayUnion = (...a) => a;
 export const arrayRemove = (...a) => a;
 export const Timestamp = { fromDate: () => null, now: () => null };
