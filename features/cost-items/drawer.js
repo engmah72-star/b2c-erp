@@ -32,11 +32,7 @@
   const ctx = () => window.__costItemsCtx;
   const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 
-  const DEFAULT_TYPES = [
-    'طباعة أوفست','طباعة ديجيتال','طباعة UV','طباعة فلكس','طباعة حريرية','طباعة ريزو',
-    'ورق','كرتون','زنكات','قص','سلفنة','تذهيب','نقر','كريز','تجليد','تجميع',
-    'تصميم','تصوير','موشن','شحن','أخرى',
-  ];
+  const DEFAULT_TYPES = [];
 
   const COST_ICO = {طباعة:'🖨️',ورق:'📄',قص:'✂️',سلفنة:'✨',زنكات:'🔵',تجميع:'📦',شحن:'🚚',تصميم:'✏️',أخرى:'📌'};
   function getCostIco(t){
@@ -699,12 +695,7 @@
             ${getCostIco(l)} <span>${escapeHtml(l)}</span>
           </div>`).join('');
     } else {
-      typeList = DEFAULT_TYPES;
-      bodyHtml = `<div class="cid-pop-section">الأنواع</div>`
-        + typeList.map(l => `
-          <div class="cid-pop-item ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
-            ${getCostIco(l)} <span>${escapeHtml(l)}</span>
-          </div>`).join('');
+      bodyHtml = `<div class="cid-pop-section" style="color:var(--err);padding:12px 8px">⚠️ لا توجد خدمات مُعرّفة — عرّف الخدمات من الإعدادات أولاً</div>`;
     }
 
     const pop = document.createElement('div');
@@ -933,6 +924,7 @@
     for(let i = 0; i < valid.length; i++){
       const row = valid[i];
       if(btn) btn.textContent = `⏳ ${i+1}/${valid.length}...`;
+      const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
       const res = await actions.recordCostItem({
         db, orderId: _orderId, prodIdx: _prodIdx,
         payload: {
@@ -941,6 +933,7 @@
           note: row.note||'', walletId:'', paperMeta: row.paperMeta||{},
         },
         role, userId, userName, wallets, isEdit:false, editIdx:-1,
+        allowedTypes: masterCats.map(x => x.label),
       });
       if(res.ok){
         okCount++;
@@ -970,6 +963,7 @@
     const { actions, db } = await _getActionsDb() || {};
     if(!actions) return;
     const wallets = c.getWallets ? c.getWallets() : [];
+    const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
     const res = await actions.recordCostItem({
       db, orderId: _orderId, prodIdx: _prodIdx,
       payload: {
@@ -982,6 +976,7 @@
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid)||'',
       userName: c.getUserName ? c.getUserName() : '',
       wallets, isEdit:true, editIdx: _editIdx,
+      allowedTypes: masterCats.map(x => x.label),
     });
     if(!res.ok){ toast('❌ '+(res.errors?.[0]||'فشل التعديل'), 'err'); return; }
     toast(`✅ تم التعديل — ${fn(total)} ج`, 'ok');

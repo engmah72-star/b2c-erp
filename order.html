@@ -1199,10 +1199,10 @@ onAuthStateChanged(auth, async u => {
       });
       getDoc(doc(db,'master_lists','supplier_categories')).then(s => {
         if (s.exists()) {
-          const items = (s.data().items || []).filter(c => c.isActive !== false && c.isSupplierService !== false);
+          const items = (s.data().items || []).filter(c => c.isActive !== false && c.isCostItem !== false);
           costCategoriesList = items.map(c => c.name || c.label || '').filter(Boolean);
         }
-      }).catch(()=>{});
+      }).catch(e => console.warn('[order] master_lists load failed:', e?.message));
       // Historical cost items من آخر 100 أوردر (RULE G3 — bounded query)
       // لاقتراح بنود مشابهة عند تسجيل بند جديد.
       try {
@@ -1301,13 +1301,13 @@ function refilterSuppliersByType() {
     filtered = suppliers;
   } else {
     filtered = suppliers.filter(s => {
-      const specs = Array.isArray(s.specialties) ? s.specialties : (s.printType ? [s.printType] : []);
+      const specs = Array.isArray(s.services) ? s.services : (Array.isArray(s.specialties) ? s.specialties : (s.printType ? [s.printType] : []));
       return specs.includes(t);
     });
   }
   supSel.innerHTML = '<option value="">— بدون مورد —</option>' +
     filtered.map(s => {
-      const specs = Array.isArray(s.specialties) ? s.specialties : (s.printType ? [s.printType] : []);
+      const specs = Array.isArray(s.services) ? s.services : (Array.isArray(s.specialties) ? s.specialties : (s.printType ? [s.printType] : []));
       const sec = specs.length ? '🏷️ ' + specs.slice(0,3).join(' · ') : '';
       return '<option value="'+esc(s._id)+'" data-name="'+esc(s.name||'')+'" data-secondary="'+esc(sec)+'">'+esc(s.name||'مورد')+'</option>';
     }).join('');
@@ -1511,6 +1511,7 @@ window.saveCostItem = async function() {
       payload: { type, total, supplierId: supId, supplierName: supName, note, isExternal: !!supId },
       role: currentRole, userId: currentUser?.uid || '', userName,
       wallets: [],
+      allowedTypes: costCategoriesList,
     });
     if (!r.ok) {
       toast('❌ ' + (r.errors || ['فشل الحفظ']).join(' · '), 'err');

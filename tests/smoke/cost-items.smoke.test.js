@@ -28,13 +28,15 @@ function section(title){ console.log('\n' + title); }
 //    Mirrors orders.js → validateCostItem. If the source changes, this
 //    mirror must also change (intentional drift detection).
 // ──────────────────────────────────────────────────────────
-function validateCostItem({ order, payload, role, wallets = [], isEdit = false }) {
+function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [] }) {
   const errors = []; const warnings = [];
   if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
   if (!payload) return { ok:false, errors:['بيانات البند ناقصة'], warnings:[] };
   const { type = '', total, walletId = '', supplierId = '' } = payload;
   const amt = parseFloat(total) || 0;
   if (!type || !type.trim()) errors.push('اختر نوع البند');
+  else if (allowedTypes.length && !allowedTypes.includes(type.trim()))
+    errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
   const cur = order.stage || '';
   if (cur === 'cancelled') errors.push('لا يمكن تسجيل تكلفة على أوردر ملغي');
@@ -154,6 +156,39 @@ test('graphic_designer cannot record cost items', () => {
     role:'graphic_designer',
   });
   assert.strictEqual(r.ok, false);
+});
+
+section('validateCostItem — allowedTypes enforcement');
+
+test('type not in allowedTypes is rejected', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'بند غير موجود', total:100, supplierId:'s1' },
+    role: 'admin',
+    allowedTypes: ['طباعة', 'ورق', 'سلفنة'],
+  });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some(e => e.includes('غير مُعرَّف')));
+});
+
+test('type in allowedTypes passes', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:100, supplierId:'s1' },
+    role: 'admin',
+    allowedTypes: ['طباعة', 'ورق', 'سلفنة'],
+  });
+  assert.strictEqual(r.ok, true);
+});
+
+test('empty allowedTypes skips type validation (backward compatible)', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'أي نوع', total:100, supplierId:'s1' },
+    role: 'admin',
+    allowedTypes: [],
+  });
+  assert.strictEqual(r.ok, true);
 });
 
 section('validateCostItem — warnings (non-blocking)');

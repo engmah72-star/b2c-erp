@@ -1571,11 +1571,12 @@ export const orderActions = {
     role, userId, userName,
     wallets = [],
     isEdit = false, editIdx = -1,
+    allowedTypes = [],
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
-    const v = validateCostItem({ order, payload, role, wallets, isEdit });
+    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes });
     if (!v.ok) return { ...v, orderId };
 
     const {
