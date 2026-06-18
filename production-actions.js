@@ -274,7 +274,9 @@ export async function adminDeletePaidCostItem({
               });
             }
           }
-        } catch (_) {}
+        } catch (notifErr) {
+          console.warn('[productionActions.deletePaidCostItem] wallet_manager notification failed:', notifErr?.message);
+        }
       }
       if (item.supplierId) {
         try {
@@ -295,7 +297,9 @@ export async function adminDeletePaidCostItem({
               seenAt: null,
             });
           }
-        } catch (_) {}
+        } catch (notifErr) {
+          console.warn('[productionActions.deletePaidCostItem] supplier notification failed:', notifErr?.message);
+        }
       }
 
       await batch.commit();

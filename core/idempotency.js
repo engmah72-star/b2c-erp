@@ -201,7 +201,9 @@ export async function withIdempotency(db, opMeta, fn) {
         error: e.message || String(e),
         completedAt: serverTimestamp(),
       });
-    } catch (_) {}
+    } catch (markErr) {
+      console.warn('[IDEMPOTENCY] failed to mark operation as failed:', operationId, markErr?.message);
+    }
     await finalize({ ok: false, errors: [e.message || String(e)], operationId });
     throw e;
   }
