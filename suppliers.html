@@ -18,7 +18,7 @@
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
-<link rel="stylesheet" href="suppliers.css?v=8">
+<link rel="stylesheet" href="suppliers.css?v=9">
 <script src="financial-guard.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -93,7 +93,51 @@
           <span class="tool-group-label">ترتيب</span>
           <button type="button" class="tool-btn active" id="sort-due" onclick="setSort('due',this)">💰 المستحق</button>
           <button type="button" class="tool-btn" id="sort-purchases" onclick="setSort('purchases',this)">📦 المشتريات</button>
+          <button type="button" class="tool-btn" id="sort-aging" onclick="setSort('aging',this)">⏳ عمر الدين</button>
           <button type="button" class="tool-btn" id="sort-name" onclick="setSort('name',this)">🔤 الاسم</button>
+        </div>
+        <button type="button" class="tool-btn-accent" onclick="toggleAdvFilter()">🔻 فلتر متقدم</button>
+        <button type="button" class="export-btn" onclick="exportCSV()">📥 تصدير CSV</button>
+      </div>
+      <!-- Advanced filter panel -->
+      <div class="adv-filter-panel" id="adv-filter-panel">
+        <div class="adv-filter-group">
+          <label>الحالة</label>
+          <select id="af-status" onchange="applyAdvFilter()">
+            <option value="">الكل</option>
+            <option value="active">نشط</option>
+            <option value="inactive">غير نشط</option>
+            <option value="suspended">موقوف</option>
+          </select>
+        </div>
+        <div class="adv-filter-group">
+          <label>المستحق</label>
+          <select id="af-due" onchange="applyAdvFilter()">
+            <option value="">الكل</option>
+            <option value="has-due">عليه مستحقات</option>
+            <option value="no-due">لا مستحقات</option>
+            <option value="over-credit">تجاوز الائتمان</option>
+          </select>
+        </div>
+        <div class="adv-filter-group">
+          <label>النشاط</label>
+          <select id="af-activity" onchange="applyAdvFilter()">
+            <option value="">الكل</option>
+            <option value="active-7">نشط (آخر 7 أيام)</option>
+            <option value="active-30">نشط (آخر 30 يوم)</option>
+            <option value="idle-30">خامل +30 يوم</option>
+            <option value="idle-90">خامل +90 يوم</option>
+          </select>
+        </div>
+        <div class="adv-filter-group">
+          <label>التقييم</label>
+          <select id="af-rating" onchange="applyAdvFilter()">
+            <option value="">الكل</option>
+            <option value="5">⭐⭐⭐⭐⭐</option>
+            <option value="4">⭐⭐⭐⭐+</option>
+            <option value="3">⭐⭐⭐+</option>
+            <option value="low">⭐⭐ أو أقل</option>
+          </select>
         </div>
       </div>
       <div id="category-filter" class="cat-bar">
@@ -112,6 +156,14 @@
       <input class="search-inp" oninput="debouncedRenderList()" placeholder="">
     </div>
 
+    <!-- Compare bar -->
+    <div class="compare-bar" id="compare-bar">
+      <span id="compare-count" style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--b)">0 محدد</span>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="tool-btn-accent" onclick="openCompareModal()">📊 مقارنة</button>
+        <button type="button" class="tool-btn" onclick="clearCompare()">✕ إلغاء</button>
+      </div>
+    </div>
     <div id="list" class="entity-list"></div>
   </div>
 </div>
@@ -158,6 +210,13 @@
       <div class="sup-pane" id="suptab-account" style="display:none">
         <div id="pn-balance"></div>
         <button type="button" class="btn btn-g btn-sm" style="margin:14px 0;width:100%;border-radius:10px;padding:10px" onclick="openPay()">💳 تسجيل دفعة</button>
+        <div class="date-filter-row" id="tx-date-filter">
+          <span class="date-lbl">من</span>
+          <input type="date" id="tx-date-from" onchange="filterTxByDate()">
+          <span class="date-lbl">إلى</span>
+          <input type="date" id="tx-date-to" onchange="filterTxByDate()">
+          <button type="button" class="date-clear" onclick="clearTxDateFilter()">مسح</button>
+        </div>
         <div id="pn-payments"></div>
       </div>
       <!-- Tab: الأوردرات -->
@@ -351,6 +410,7 @@
     <div class="modal-head"><span class="modal-title" id="pay-title">💳 تسجيل دفعة</span><button type="button" class="modal-x" onclick="cM('pay')">✕</button></div>
     <div class="modal-body">
       <div id="pay-balance-info" style="background:var(--bg3);border-radius:var(--rad);padding:var(--space-md);margin-bottom:14px;font-size:var(--fs-md)"></div>
+      <div class="pay-context" id="pay-context"></div>
       <div class="fg"><label>المبلغ (ج) *</label><input class="inp" id="pay-amount" type="number" placeholder="0"></div>
       <div class="fg"><label>المحفظة</label><select class="inp" id="pay-wallet"><option value="">— اختر —</option></select></div>
       <div class="fg"><label>ملاحظة</label><input class="inp" id="pay-note" placeholder="اختياري"></div>
@@ -362,6 +422,14 @@
   </div>
 </div>
 
+<!-- Modal: مقارنة الموردين -->
+<div class="overlay" id="ov-compare">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-head"><span class="modal-title">📊 مقارنة الموردين</span><button type="button" class="modal-x" onclick="cM('compare')">✕</button></div>
+    <div class="modal-body" id="compare-body" style="padding:0;overflow-x:auto"></div>
+    <div class="modal-foot"><button type="button" class="btn btn-ghost" onclick="cM('compare')">إغلاق</button></div>
+  </div>
+</div>
 <div id="toasts" class="toasts"></div>
 
 <script type="module">
@@ -382,6 +450,8 @@ console.log('[SUPPLIER] 🟢 SUPPLIER UI LOADED v2 — financial-sync-engine act
 let suppliers=[],shippers=[],payments=[],orders=[],wallets=[];
 let masterCategories=[];
 let currentTab='printers',activeId=null,activeSup=null,userName='',role='',userPerms={};
+let pageSize=20,compareSet=new Set(),advFilterOpen=false,txDateFrom='',txDateTo='';
+let prevMonthPayments=null;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
@@ -450,6 +520,89 @@ function getShipperStats(shipperId){
   return {total,delivered,returned,rate:total?Math.round(delivered/total*100):0,pendingSettlement:pending};
 }
 
+// ══ Maturity Helpers ══
+function getAgingDays(supId){
+  const {due}=getSupBalance(supId);
+  if(due<=0)return 0;
+  const relOrds=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===supId));
+  if(!relOrds.length)return 0;
+  const oldest=relOrds.reduce((min,o)=>{const t=o.createdAt?.seconds||0;return t&&t<min?t:min;},Infinity);
+  return oldest===Infinity?0:Math.floor((Date.now()/1000-oldest)/86400);
+}
+
+function getDueTrend(supId){
+  const now=Date.now()/1000;
+  const d30=now-30*86400,d60=now-60*86400;
+  const recent=orders.filter(o=>(o.createdAt?.seconds||0)>=d30&&(o.costItems||[]).some(c=>c.supplierId===supId)).reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===supId).reduce((ss,c)=>ss+(parseFloat(c.total)||0),0),0);
+  const prev=orders.filter(o=>{const t=o.createdAt?.seconds||0;return t>=d60&&t<d30&&(o.costItems||[]).some(c=>c.supplierId===supId);}).reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===supId).reduce((ss,c)=>ss+(parseFloat(c.total)||0),0),0);
+  if(recent>prev*1.1)return'up';
+  if(recent<prev*0.9)return'down';
+  return'flat';
+}
+
+function getAvgCost(supId){
+  const relOrds=orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===supId));
+  if(!relOrds.length)return 0;
+  const total=relOrds.reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===supId).reduce((ss,c)=>ss+(parseFloat(c.total)||0),0),0);
+  return Math.round(total/relOrds.length);
+}
+
+function getLateOrders(supId){
+  return orders.filter(o=>{
+    if(!(o.costItems||[]).some(c=>c.supplierId===supId))return false;
+    if(!o.dueDate)return false;
+    const due=new Date(o.dueDate);
+    const end=o.deliveredAt?.seconds?new Date(o.deliveredAt.seconds*1000):null;
+    return end?end>due:new Date()>due&&!['done','archive','archived'].includes(o.stage);
+  }).length;
+}
+
+function getLastActivity(supId){
+  let latest=0;
+  payments.filter(p=>p.supplierId===supId).forEach(p=>{const t=p.createdAt?.seconds||0;if(t>latest)latest=t;});
+  orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===supId)).forEach(o=>{const t=o.createdAt?.seconds||0;if(t>latest)latest=t;});
+  if(!latest)return{days:Infinity,label:'لا نشاط'};
+  const days=Math.floor((Date.now()/1000-latest)/86400);
+  if(days===0)return{days,label:'اليوم'};
+  if(days<=7)return{days,label:days+' يوم'};
+  if(days<=30)return{days,label:Math.ceil(days/7)+' أسبوع'};
+  return{days,label:Math.floor(days/30)+' شهر'};
+}
+
+function getPrevMonthTotals(){
+  if(prevMonthPayments!==null)return prevMonthPayments;
+  const now=Date.now()/1000;
+  const d30=now-30*86400,d60=now-60*86400;
+  const curDue=suppliers.reduce((s,sup)=>{
+    const ords=orders.filter(o=>(o.createdAt?.seconds||0)>=d30&&(o.costItems||[]).some(c=>c.supplierId===sup._id));
+    return s+ords.reduce((ss,o)=>ss+(o.costItems||[]).filter(c=>c.supplierId===sup._id).reduce((sss,c)=>sss+(parseFloat(c.total)||0),0),0);
+  },0);
+  const prevDue=suppliers.reduce((s,sup)=>{
+    const ords=orders.filter(o=>{const t=o.createdAt?.seconds||0;return t>=d60&&t<d30&&(o.costItems||[]).some(c=>c.supplierId===sup._id);});
+    return s+ords.reduce((ss,o)=>ss+(o.costItems||[]).filter(c=>c.supplierId===sup._id).reduce((sss,c)=>sss+(parseFloat(c.total)||0),0),0);
+  },0);
+  const curPaid=payments.filter(p=>(p.createdAt?.seconds||0)>=d30).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  const prevPaid=payments.filter(p=>{const t=p.createdAt?.seconds||0;return t>=d60&&t<d30;}).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  prevMonthPayments={curDue,prevDue,curPaid,prevPaid};
+  return prevMonthPayments;
+}
+
+function exportCSV(){
+  const list=currentTab==='printers'?suppliers:shippers;
+  const rows=[['الاسم','النوع','الحالة','مشتريات','مدفوع','مستحق','الهاتف','البريد'].join(',')];
+  list.forEach(s=>{
+    const {purchases,paid,due}=currentTab==='printers'?getSupBalance(s._id):{purchases:0,paid:0,due:0};
+    rows.push([s.name||'',s.supType||'',s.status||'active',purchases,paid,due,s.phone||'',s.email||''].map(v=>`"${v}"`).join(','));
+  });
+  const bom='﻿';
+  const blob=new Blob([bom+rows.join('\n')],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`suppliers_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  toast('✅ تم تصدير الملف','ok');
+}
+window.exportCSV=exportCSV;
+
 // ══ KPIs ══
 function updateKPIs(){
   const allSups=[...suppliers,...shippers];
@@ -466,6 +619,20 @@ function updateKPIs(){
   setText('ds-due',fn(totalDue)+' ج');
   setText('ds-paid',fn(totalPaid)+' ج');
   setText('ds-orders',linkedOrders.size);
+  // comparative deltas (vs previous 30 days)
+  document.querySelectorAll('.dash-cell-delta').forEach(e=>e.remove());
+  prevMonthPayments=null;
+  const pm=getPrevMonthTotals();
+  const deltaHtml=(cur,prev,invert=false)=>{
+    if(!prev)return'';
+    const pct=Math.round(((cur-prev)/prev)*100);
+    if(pct===0)return`<div class="dash-cell-delta delta-neutral">— ثابت</div>`;
+    const up=pct>0;
+    const cls=invert?(up?'delta-up':'delta-down'):(up?'delta-down':'delta-up');
+    return`<div class="dash-cell-delta ${cls}">${up?'↑':'↓'} ${Math.abs(pct)}% عن الشهر السابق</div>`;
+  };
+  document.getElementById('ds-due')?.insertAdjacentHTML('afterend',deltaHtml(pm.curDue,pm.prevDue,true));
+  document.getElementById('ds-paid')?.insertAdjacentHTML('afterend',deltaHtml(pm.curPaid,pm.prevPaid,false));
   // tab counts
   setText('tc-printers',suppliers.length);
   setText('tc-shippers',shippers.length);
@@ -479,6 +646,7 @@ function updateKPIs(){
 window.switchTab=function(tab,btn){
   currentTab=tab;
   currentCatFilter='';
+  pageSize=20;
   document.querySelectorAll('.tab-btn,.entity-tab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   buildCatFilter();
@@ -519,6 +687,7 @@ window.setSort=function(sort,btn){
 function sortSuppliers(data){
   if(currentSort==='due') return [...data].sort((a,b)=>getSupBalance(b._id).due-getSupBalance(a._id).due);
   if(currentSort==='purchases') return [...data].sort((a,b)=>getSupBalance(b._id).purchases-getSupBalance(a._id).purchases);
+  if(currentSort==='aging') return [...data].sort((a,b)=>getAgingDays(b._id)-getAgingDays(a._id));
   if(currentSort==='name') return [...data].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
   return data;
 }
@@ -546,14 +715,43 @@ function renderList(){
   else renderShippers(el);
 }
 
+function applyAdvFilterData(data){
+  const afStatus=document.getElementById('af-status')?.value||'';
+  const afDue=document.getElementById('af-due')?.value||'';
+  const afActivity=document.getElementById('af-activity')?.value||'';
+  const afRating=document.getElementById('af-rating')?.value||'';
+  if(afStatus) data=data.filter(s=>(s.status||'active')===afStatus);
+  if(afDue==='has-due') data=data.filter(s=>getSupBalance(s._id).due>0);
+  else if(afDue==='no-due') data=data.filter(s=>getSupBalance(s._id).due<=0);
+  else if(afDue==='over-credit') data=data.filter(s=>{const cl=parseFloat(s.creditLimit)||0;return cl>0&&getSupBalance(s._id).due>cl;});
+  if(afActivity==='active-7') data=data.filter(s=>getLastActivity(s._id).days<=7);
+  else if(afActivity==='active-30') data=data.filter(s=>getLastActivity(s._id).days<=30);
+  else if(afActivity==='idle-30') data=data.filter(s=>getLastActivity(s._id).days>30);
+  else if(afActivity==='idle-90') data=data.filter(s=>getLastActivity(s._id).days>90);
+  if(afRating==='5') data=data.filter(s=>parseInt(s.rating)===5);
+  else if(afRating==='4') data=data.filter(s=>parseInt(s.rating)>=4);
+  else if(afRating==='3') data=data.filter(s=>parseInt(s.rating)>=3);
+  else if(afRating==='low') data=data.filter(s=>parseInt(s.rating)<=2&&parseInt(s.rating)>0);
+  return data;
+}
+window.toggleAdvFilter=function(){
+  advFilterOpen=!advFilterOpen;
+  document.getElementById('adv-filter-panel')?.classList.toggle('open',advFilterOpen);
+};
+window.applyAdvFilter=function(){renderList();};
+
 function renderPrinters(el){
   const q=(document.getElementById('search-inp')?.value||'').trim().toLowerCase();
   if(!suppliers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">لا يوجد موردين حتى الآن</div></div>';return;}
   let data=suppliers;
   if(currentCatFilter) data=suppliers.filter(s=>(s.specialties||[s.printType].filter(Boolean)).includes(currentCatFilter));
   if(q) data=data.filter(s=>(s.name||'').toLowerCase().includes(q)||(s.phone||'').includes(q)||(s.whatsapp||'').includes(q)||(s.specialties||[s.printType||'']).join(' ').toLowerCase().includes(q));
+  data=applyAdvFilterData(data);
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">لا نتائج${q?' لـ "'+q+'"':currentCatFilter?' في "'+currentCatFilter+'"':''}</div></div>`;return;}
-  el.innerHTML=sortSuppliers(data).map(s=>{
+  const sorted=sortSuppliers(data);
+  const paginated=sorted.slice(0,pageSize);
+  const hasMore=sorted.length>pageSize;
+  el.innerHTML=paginated.map(s=>{
     const {purchases,paid,due}=getSupBalance(s._id);
     const creditLimit=parseFloat(s.creditLimit)||0;
     const overCredit=creditLimit>0&&due>creditLimit;
@@ -561,14 +759,24 @@ function renderPrinters(el){
     const specs=(s.specialties?.length?s.specialties:[s.printType].filter(Boolean));
     const statusCls=s.status==='suspended'?'dot-suspended':s.status==='inactive'?'dot-inactive':'dot-active';
     const stripeCls=overCredit?'stripe-danger':due>0?'stripe-warning':'stripe-healthy';
+    const agingDays=getAgingDays(s._id);
+    const trend=getDueTrend(s._id);
+    const avgCost=getAvgCost(s._id);
+    const lateCount=getLateOrders(s._id);
+    const activity=getLastActivity(s._id);
+    const trendArrow=due>0?(trend==='up'?'<span class="trend-arrow trend-up">↑</span>':trend==='down'?'<span class="trend-arrow trend-down">↓</span>':'<span class="trend-arrow trend-flat">←</span>'):'';
+    const waText=due>0?encodeURIComponent(`مرحباً ${s.name}، هذا تذكير بالمستحقات المعلقة: ${fn(due)} ج. شكراً لتعاونكم — Business2Card`):encodeURIComponent(`مرحباً ${s.name}، نود التواصل معكم بخصوص طلب جديد — Business2Card`);
+    const isCompared=compareSet.has(s._id);
     return`<div class="entity-card" onclick="openSup('${s._id}','printer')">
       <div class="entity-card-stripe ${stripeCls}"></div>
       <div class="entity-card-body">
         <div class="entity-identity">
           <div class="entity-id-main">
             <div class="entity-name-row">
+              <input type="checkbox" class="entity-compare-cb" ${isCompared?'checked':''} onclick="event.stopPropagation();toggleCompare('${s._id}')" title="اختر للمقارنة">
               <span class="entity-status-dot ${statusCls}"></span>
               <span class="entity-name">${s.name}</span>
+              ${trendArrow}
               ${s.rating?`<span class="class-tag tag-rating">${'⭐'.repeat(Math.min(s.rating,5))}</span>`:''}
             </div>
             <div class="entity-class-row">
@@ -577,11 +785,18 @@ function renderPrinters(el){
               ${overCredit?`<span class="class-tag tag-credit-warn">⚠️ تجاوز حد الائتمان</span>`:''}
             </div>
             ${svcs.length?`<div class="entity-services">${svcs.slice(0,4).map(sv=>`<span class="svc-tag">${sv}</span>`).join('')}${svcs.length>4?`<span class="svc-tag-more">+${svcs.length-4}</span>`:''}</div>`:''}
+            <div class="entity-meta-row">
+              ${agingDays>0?`<span class="meta-badge ${agingDays>60?'meta-aging-danger':'meta-aging'}">⏳ ${agingDays} يوم</span>`:''}
+              ${avgCost>0?`<span class="meta-badge meta-avg">📊 متوسط ${fn(avgCost)} ج</span>`:''}
+              ${lateCount>0?`<span class="meta-badge meta-late">⚠️ ${lateCount} متأخر</span>`:''}
+              ${activity.days>30?`<span class="meta-badge meta-idle">💤 خامل ${activity.label}</span>`:''}
+              ${activity.days<=30&&activity.days>0?`<span class="meta-badge meta-activity">🕐 ${activity.label}</span>`:''}
+            </div>
           </div>
           <div class="entity-id-actions">
             <button type="button" onclick="event.stopPropagation();openEditDirect('${s._id}','printer')" class="entity-action-btn">✏️ تعديل</button>
             ${s.phone?`<a href="tel:${s.phone}" onclick="event.stopPropagation()" class="entity-action-btn act-call">📞 ${s.phone}</a>`:''}
-            ${s.whatsapp?`<a href="https://wa.me/2${s.whatsapp.replace(/^0/,'')}" target="_blank" onclick="event.stopPropagation()" class="entity-action-btn act-wa">💬 واتساب</a>`:''}
+            ${s.whatsapp?`<a href="https://wa.me/2${s.whatsapp.replace(/^0/,'')}?text=${waText}" target="_blank" onclick="event.stopPropagation()" class="entity-action-btn act-wa">💬 واتساب</a>`:''}
           </div>
         </div>
         <div class="entity-finance">
@@ -591,7 +806,7 @@ function renderPrinters(el){
         </div>
       </div>
     </div>`;
-  }).join('');
+  }).join('')+(hasMore?`<div class="load-more-wrap"><button type="button" class="load-more-btn" onclick="loadMore()">عرض المزيد</button><div class="load-more-count">عُرض ${paginated.length} من ${sorted.length}</div></div>`:'');
 }
 
 function renderShippers(el){
@@ -599,23 +814,35 @@ function renderShippers(el){
   if(!shippers.length){el.innerHTML='<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">لا توجد شركات شحن</div></div>';return;}
   let data=shippers;
   if(q) data=data.filter(s=>(s.name||'').toLowerCase().includes(q)||(s.phone||'').includes(q)||(s.areas||'').toLowerCase().includes(q));
+  data=applyAdvFilterData(data);
   if(!data.length){el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">لا نتائج لـ "${q}"</div></div>`;return;}
-  el.innerHTML=sortShippers(data).map(s=>{
+  const sorted=sortShippers(data);
+  const paginated=sorted.slice(0,pageSize);
+  const hasMore=sorted.length>pageSize;
+  el.innerHTML=paginated.map(s=>{
     const {total,delivered,returned,rate,pendingSettlement}=getShipperStats(s._id);
     const statusCls=s.status==='suspended'?'dot-suspended':s.status==='inactive'?'dot-inactive':'dot-active';
     const stripeCls=pendingSettlement>0?'stripe-danger':rate>=80?'stripe-neutral':'stripe-warning';
+    const activity=getLastActivity(s._id);
+    const lateShip=orders.filter(o=>(o.shipCompanyId===s._id||o.shipperId===s._id)&&o.shipStage==='returned').length;
     return`<div class="entity-card" onclick="openSup('${s._id}','shipper')">
       <div class="entity-card-stripe ${stripeCls}"></div>
       <div class="entity-card-body">
         <div class="entity-identity">
           <div class="entity-id-main">
             <div class="entity-name-row">
+              <input type="checkbox" class="entity-compare-cb" ${compareSet.has(s._id)?'checked':''} onclick="event.stopPropagation();toggleCompare('${s._id}')" title="اختر للمقارنة">
               <span class="entity-status-dot ${statusCls}"></span>
               <span class="entity-name">${s.name}</span>
             </div>
             <div class="entity-class-row">
               ${s.shipFee?`<span class="class-tag tag-fee">💰 ${s.shipFee} ج/طلب</span>`:''}
               ${s.areas?`<span class="class-tag tag-area">📍 ${s.areas}</span>`:''}
+            </div>
+            <div class="entity-meta-row">
+              ${lateShip>0?`<span class="meta-badge meta-late">⚠️ ${lateShip} مرتجع</span>`:''}
+              ${activity.days>30?`<span class="meta-badge meta-idle">💤 خامل ${activity.label}</span>`:''}
+              ${activity.days<=30&&activity.days>0?`<span class="meta-badge meta-activity">🕐 ${activity.label}</span>`:''}
             </div>
           </div>
           <div class="entity-id-actions">
@@ -630,7 +857,7 @@ function renderShippers(el){
         </div>
       </div>
     </div>`;
-  }).join('');
+  }).join('')+(hasMore?`<div class="load-more-wrap"><button type="button" class="load-more-btn" onclick="loadMore()">عرض المزيد</button><div class="load-more-count">عُرض ${paginated.length} من ${sorted.length}</div></div>`:'');
 }
 
 // ══ Panel ══
@@ -742,7 +969,7 @@ function renderPanelContent(sup){
   // organized sections
   const contactRows=[
     sup.phone?`<div class="tx-row"><span class="pn-info-label">📞 موبايل</span><a href="tel:${sup.phone}" class="pn-info-val link-b">${sup.phone}</a></div>`:'',
-    sup.whatsapp?`<div class="tx-row"><span class="pn-info-label">📱 واتساب</span><a href="https://wa.me/2${sup.whatsapp.replace(/^0/,'')}" target="_blank" class="pn-info-val link-g">${sup.whatsapp}</a></div>`:'',
+    sup.whatsapp?`<div class="tx-row"><span class="pn-info-label">📱 واتساب</span><a href="https://wa.me/2${sup.whatsapp.replace(/^0/,'')}?text=${encodeURIComponent('مرحباً '+sup.name+' — Business2Card')}" target="_blank" class="pn-info-val link-g">${sup.whatsapp}</a></div>`:'',
     sup.email?R('✉️ البريد',sup.email,'link-b'):'',
     sup.address?R('📍 العنوان',sup.address+(sup.area?' · '+sup.area:'')):'',
   ].filter(Boolean);
@@ -793,7 +1020,14 @@ function renderPanelContent(sup){
         return{type:'purchase',date:o.createdAt?.seconds||0,dateStr:o.createdDate||'—',label:o.clientName||'—',sub:(o.products||[]).map(p=>p.name+'×'+p.qty).join(' · ')||o.product||'',orderId:o.orderId||o._id.slice(-6),amount:total,items:ci};
       }),
       ...supPays.map(p=>({type:'payment',date:p.createdAt?.seconds||0,dateStr:p.date||'—',label:'دفعة',sub:p.note||'',amount:p.amount,payId:p._id,walletId:p.walletId||''}))
-    ].sort((a,b)=>b.date-a.date);
+    ].sort((a,b)=>b.date-a.date).filter(tx=>{
+      if(!txDateFrom&&!txDateTo)return true;
+      const txDate=tx.dateStr&&tx.dateStr!=='—'?tx.dateStr:'';
+      if(!txDate&&tx.date){const d=new Date(tx.date*1000);const dd=d.toISOString().slice(0,10);if(txDateFrom&&dd<txDateFrom)return false;if(txDateTo&&dd>txDateTo)return false;return true;}
+      if(txDateFrom&&txDate<txDateFrom)return false;
+      if(txDateTo&&txDate>txDateTo)return false;
+      return true;
+    });
 
     balEl.innerHTML=`
       <div class="bal-grid">
@@ -892,7 +1126,17 @@ function renderSupPerformance(supId){
         <span class="txt-bold-base">${supPays.length}</span>
       </div>
       ${avgPayDays!==null?`<div class="perf-row"><span class="txt-meta-base">متوسط دورة الدفع</span><span class="txt-bold-base">${avgPayDays} يوم</span></div>`:''}
-    </div>`;
+    </div>
+    ${(()=>{
+      const now=Date.now()/1000;
+      const periods=[{label:'آخر 30 يوم',from:now-30*86400},{label:'30-60 يوم',from:now-60*86400,to:now-30*86400},{label:'60-90 يوم',from:now-90*86400,to:now-60*86400}];
+      const rows=periods.map(p=>{
+        const ords=orders.filter(o=>{const t=o.createdAt?.seconds||0;return t>=(p.from||0)&&(!p.to||t<p.to)&&(o.costItems||[]).some(c=>c.supplierId===supId);});
+        const total=ords.reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===supId).reduce((ss,c)=>ss+(parseFloat(c.total)||0),0),0);
+        return{label:p.label,total,count:ords.length};
+      }).filter(r=>r.count>0);
+      return rows.length?`<div class="pn-subtitle" style="margin-top:14px">📈 اتجاه التكلفة</div>${rows.map(r=>`<div class="price-trend-row"><span class="price-trend-period">${r.label} (${r.count} طلب)</span><span class="price-trend-val">${fn(r.total)} ج</span></div>`).join('')}`:'';
+    })()}`;
 }
 
 async function loadSupplierOrders(supId){
@@ -1184,6 +1428,18 @@ window.openPay=function(){
     <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مشتريات</span><span style="font-weight:var(--fw-extra);color:var(--b)">${fn(purchases)} ج</span></div>
     <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مدفوع</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fn(paid)} ج</span></div>
     <div class="row-between"><span class="text-muted">مستحق</span><span style="font-weight:var(--fw-heavy);color:var(--r)">${fn(due)} ج</span></div>`;
+  // Purchase context — recent cost items for this supplier
+  const recentCosts=[];
+  orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===activeId)).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,5).forEach(o=>{
+    (o.costItems||[]).filter(c=>c.supplierId===activeId).forEach(c=>{
+      recentCosts.push({type:c.type||'—',total:parseFloat(c.total)||0,order:o.orderId||o._id.slice(-6),client:o.clientName||'—'});
+    });
+  });
+  const ctxEl=document.getElementById('pay-context');
+  if(ctxEl){
+    ctxEl.innerHTML=recentCosts.length?`<div class="pay-context-title">📦 آخر المشتريات</div>${recentCosts.slice(0,5).map(c=>`<div class="pay-context-item"><span>${c.type} · ${c.client} (${c.order})</span><span style="font-weight:var(--fw-bold)">${fn(c.total)} ج</span></div>`).join('')}`:'';
+    ctxEl.style.display=recentCosts.length?'block':'none';
+  }
   document.getElementById('pay-title').textContent='💳 دفعة لـ '+activeSup.name;
   sv('pay-amount','');sv('pay-note','');
   oM('pay');
@@ -1215,6 +1471,65 @@ window.savePay=async function(){
   });
   if(!r.ok){toast('⛔ '+r.errors.join(' · '),'err');return;}
   cM('pay');toast('✅ تم تسجيل الدفعة','ok');
+};
+
+// ══ Pagination ══
+window.loadMore=function(){
+  pageSize+=20;
+  renderList();
+};
+
+// ══ Compare ══
+window.toggleCompare=function(id){
+  if(compareSet.has(id))compareSet.delete(id);
+  else if(compareSet.size<4)compareSet.add(id);
+  else{toast('⚠️ أقصى عدد للمقارنة 4 موردين','err');return;}
+  const bar=document.getElementById('compare-bar');
+  if(bar)bar.classList.toggle('show',compareSet.size>=2);
+  setText('compare-count',compareSet.size+' محدد');
+  renderList();
+};
+window.clearCompare=function(){
+  compareSet.clear();
+  document.getElementById('compare-bar')?.classList.remove('show');
+  renderList();
+};
+window.openCompareModal=function(){
+  if(compareSet.size<2)return toast('⚠️ اختر على الأقل 2 للمقارنة','err');
+  const ids=[...compareSet];
+  const allSups=[...suppliers,...shippers];
+  const sups=ids.map(id=>allSups.find(s=>s._id===id)).filter(Boolean);
+  const cols=sups.length;
+  const rows=[
+    {label:'النوع',get:s=>s.supType==='printer'?'🏭 مورد':'🚚 شحن'},
+    {label:'الحالة',get:s=>s.status==='suspended'?'🚫 موقوف':s.status==='inactive'?'⏸ غير نشط':'✅ نشط'},
+    {label:'مشتريات',get:s=>fn(getSupBalance(s._id).purchases)+' ج'},
+    {label:'مدفوع',get:s=>fn(getSupBalance(s._id).paid)+' ج'},
+    {label:'مستحق',get:s=>fn(getSupBalance(s._id).due)+' ج'},
+    {label:'عمر الدين',get:s=>getAgingDays(s._id)+' يوم'},
+    {label:'متوسط التكلفة',get:s=>fn(getAvgCost(s._id))+' ج'},
+    {label:'متأخرات',get:s=>getLateOrders(s._id)+''},
+    {label:'آخر نشاط',get:s=>getLastActivity(s._id).label},
+    {label:'التقييم',get:s=>s.rating?'⭐'.repeat(s.rating):'—'},
+  ];
+  const body=document.getElementById('compare-body');
+  body.innerHTML=`<div class="compare-grid" style="grid-template-columns:repeat(${cols},1fr)">
+    ${sups.map(s=>`<div class="compare-col"><div class="compare-col-hdr"><div class="compare-col-name">${s.name}</div></div>${rows.map(r=>`<div class="compare-row-label">${r.label}</div><div class="compare-row-val">${r.get(s)}</div>`).join('')}</div>`).join('')}
+  </div>`;
+  oM('compare');
+};
+
+// ══ Date filter for transactions ══
+window.filterTxByDate=function(){
+  txDateFrom=document.getElementById('tx-date-from')?.value||'';
+  txDateTo=document.getElementById('tx-date-to')?.value||'';
+  if(activeSup)renderPanelContent(activeSup);
+};
+window.clearTxDateFilter=function(){
+  txDateFrom='';txDateTo='';
+  const f=document.getElementById('tx-date-from');if(f)f.value='';
+  const t=document.getElementById('tx-date-to');if(t)t.value='';
+  if(activeSup)renderPanelContent(activeSup);
 };
 
 window.delPay=async function(payId,amount,walletId){
