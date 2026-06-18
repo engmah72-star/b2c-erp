@@ -364,7 +364,7 @@ export const supplierActions = {
             paidAmount: increment(parsedAmount),
             lastPaymentAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-          }).catch(() => {})
+          }).catch(e => console.warn('[supplierActions.createPayment] supplier_orders update failed:', soId, e?.message))
         );
         await Promise.all(soUpdates);
       }
@@ -415,7 +415,7 @@ export const supplierActions = {
           updateDoc(doc(db, 'supplier_orders', soId), {
             paidAmount: increment(-parsedAmount),
             updatedAt: serverTimestamp(),
-          }).catch(() => {})
+          }).catch(e => console.warn('[supplierActions.reversePayment] supplier_orders update failed:', soId, e?.message))
         );
         await Promise.all(soUpdates);
       }
