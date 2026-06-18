@@ -388,7 +388,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
 // ═══════════════════════════════════════
 // ORDER OPERATIONS
 // ═══════════════════════════════════════
+/** @deprecated Use orderActions.createOrder() — bypasses idempotency, audit, and validators */
 export async function createOrder(data) {
+  console.warn('[DEPRECATED] shared.createOrder() bypasses action layer — use orderActions.createOrder()');
   const id = 'ORD-' + Date.now().toString().slice(-8);
   const ref = await addDoc(collection(db, 'orders'), {
     ...data, id,
@@ -400,7 +402,9 @@ export async function createOrder(data) {
   return ref.id;
 }
 
+/** @deprecated Use orderActions — bypasses idempotency, audit, and validators */
 export async function updateOrder(orderId, data) {
+  console.warn('[DEPRECATED] shared.updateOrder() bypasses action layer — use orderActions.*');
   await updateDoc(doc(db, 'orders', orderId), {
     ...data, updatedAt: serverTimestamp()
   });
