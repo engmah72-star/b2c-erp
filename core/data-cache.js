@@ -1031,14 +1031,16 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
  * مفيد عند الانتقال بين الصفحات — الصفحة التالية تجد البيانات جاهزة.
  */
 export async function prefetch(collectionName, constraintDescriptors, firestoreConstraints, limitVal) {
-  const qLimit = limitVal || DEFAULT_QUERY_LIMIT;
   const queryKey = stableQueryKey(collectionName, constraintDescriptors);
 
   // لو موجود بالفعل في الكاش ولسه fresh → لا داعي
   const memHit = memGet(queryKey);
   if (memHit) return;
 
-  const allConstraints = [...(firestoreConstraints || []), limit(qLimit)];
+  const hasLimit = (constraintDescriptors || []).some(d => d[0] === 'limit');
+  const allConstraints = hasLimit
+    ? [...(firestoreConstraints || [])]
+    : [...(firestoreConstraints || []), limit(limitVal || DEFAULT_QUERY_LIMIT)];
   const q = query(collection(db, collectionName), ...allConstraints);
 
   try {

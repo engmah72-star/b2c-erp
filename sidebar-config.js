@@ -178,6 +178,17 @@ try {
     document.head.appendChild(s);
   }
 
+  // ── Auto-load Prefetch Map (Phase 3 — cache prefetch on navigation) ──
+  // يسجّل window.__prefetchForPage — navigatePage() يستدعيه تلقائياً
+  // عشان يحمّل بيانات الصفحة التالية في الكاش قبل التنقل.
+  if (!document.getElementById('prefetch-map-loader')) {
+    const s = document.createElement('script');
+    s.id = 'prefetch-map-loader';
+    s.type = 'module';
+    s.src = 'core/prefetch-map.js?v=1';
+    document.head.appendChild(s);
+  }
+
   // ── Auto-load Command Palette (Ctrl+K / Cmd+K) ──
   // ينشر التنقّل السريع على كل صفحة تحمّل sidebar-config.js.
   // Self-contained module — يحقن زرّ بحث ظاهر في الـ topbar + يفتح بـ Ctrl+K.

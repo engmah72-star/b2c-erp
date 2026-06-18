@@ -196,6 +196,7 @@ export async function logout() {
 // opts.useCache (default: true): تفعيل الكاش. false = السلوك القديم (onSnapshot فقط).
 import { startListenersWithCache, dataCache, cachedQuery, prefetch, collectionRegistry } from './core/data-cache.js';
 import { paginatedQuery } from './core/paginated-query.js';
+import { prefetchForPage } from './core/prefetch-map.js';
 
 export function startListeners(callbacks = {}, opts = {}) {
   const useCache = opts.useCache !== false;
@@ -260,7 +261,7 @@ export function startListeners(callbacks = {}, opts = {}) {
   return () => subs.forEach(u => u());
 }
 
-export { dataCache, cachedQuery, prefetch, collectionRegistry, paginatedQuery };
+export { dataCache, cachedQuery, prefetch, collectionRegistry, paginatedQuery, prefetchForPage };
 
 // S0-8 PART 2: Auto-cleanup عند navigation/unload لتفادي memory leak.
 // الصفحات SPA-like (التي تستبدل URL بدون reload) ترث listeners قديمة.
