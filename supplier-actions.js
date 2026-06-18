@@ -22,7 +22,7 @@
 
 import {
   doc, getDoc, addDoc, updateDoc, deleteDoc, collection,
-  query, where, getDocs, limit, serverTimestamp,
+  query, where, getDocs, limit, serverTimestamp, increment,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
@@ -335,6 +335,7 @@ export const supplierActions = {
     db, supplierId, supplierName, supplierType,
     amount, walletId, walletName, note = '',
     costItemRefs = [],
+    supplierOrderIds = [],
     role, userId, userName, userPerms,
   }) {
     const permErr = _checkPaymentPermission(role, userPerms);
@@ -343,16 +344,31 @@ export const supplierActions = {
     const v = _validatePaymentData({ amount, walletId, supplierId, supplierName });
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: [] };
 
+    const parsedAmount = parseFloat(amount) || 0;
     try {
       const result = await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, {
         supplierId, supplierName, supplierType,
-        amount: parseFloat(amount) || 0,
+        amount: parsedAmount,
         walletId, walletName: walletName || '',
         note,
         userId: userId || '', userName: userName || '',
         date: new Date().toISOString().slice(0, 10),
         ...(costItemRefs.length ? { costItemRefs } : {}),
+        ...(supplierOrderIds.length ? { supplierOrderIds } : {}),
       });
+
+      // Update linked supplier_orders paidAmount (best-effort, non-financial)
+      if (supplierOrderIds.length) {
+        const soUpdates = supplierOrderIds.map(soId =>
+          updateDoc(doc(db, 'supplier_orders', soId), {
+            paidAmount: increment(parsedAmount),
+            lastPaymentAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {})
+        );
+        await Promise.all(soUpdates);
+      }
+
       return {
         ok: true, errors: [], warnings: [],
         supplierId, action: 'createPayment',
@@ -369,6 +385,7 @@ export const supplierActions = {
   async reversePayment({
     db, paymentId, supplierId, supplierName,
     amount, walletId, walletName,
+    supplierOrderIds = [],
     role, userId, userName, userPerms,
     reason = '',
   }) {
@@ -380,16 +397,29 @@ export const supplierActions = {
     const v = _validatePaymentData({ amount, walletId, supplierId, supplierName });
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: [] };
 
+    const parsedAmount = parseFloat(amount) || 0;
     try {
       const result = await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT_REVERSAL, {
         paymentId,
         supplierId, supplierName,
-        amount: parseFloat(amount) || 0,
+        amount: parsedAmount,
         walletId, walletName: walletName || '',
         note: reason || 'إلغاء دفعة',
         userId: userId || '', userName: userName || '',
         date: new Date().toISOString().slice(0, 10),
       });
+
+      // Decrement linked supplier_orders paidAmount (best-effort, non-financial)
+      if (supplierOrderIds.length) {
+        const soUpdates = supplierOrderIds.map(soId =>
+          updateDoc(doc(db, 'supplier_orders', soId), {
+            paidAmount: increment(-parsedAmount),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {})
+        );
+        await Promise.all(soUpdates);
+      }
+
       return {
         ok: true, errors: [], warnings: [],
         supplierId, paymentId, action: 'reversePayment',
