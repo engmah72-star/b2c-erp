@@ -1664,6 +1664,8 @@ export const orderActions = {
           orderId, orderClient: order.clientName || '',
           note: `${type}${note ? ' — ' + note : ''}`,
           walletId, walletName,
+          ...(supplierOrderId ? { supplierOrderId } : {}),
+          costItemId,
           date: new Date().toISOString().slice(0, 10),
           createdAt: serverTimestamp(),
           createdBy: userName,
@@ -1698,6 +1700,7 @@ export const orderActions = {
       });
     }
     if (soRef) {
+      const paidInSameBatch = !!spRef;
       batch.set(soRef, {
         costItemId,
         orderId, orderRef: order.orderId || orderId.slice(-6),
@@ -1707,7 +1710,8 @@ export const orderActions = {
         note: note || '',
         status: 'pending',
         deliveryStatus: 'awaiting',
-        paidAmount: 0,
+        paidAmount: paidInSameBatch ? total : 0,
+        ...(paidInSameBatch ? { lastPaymentId: spRef.id, lastPaymentAt: serverTimestamp() } : {}),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: userId || '',
