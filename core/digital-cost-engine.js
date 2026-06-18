@@ -129,6 +129,149 @@ function buildDigitalCostBreakdown({ productSize, qty, material, doubleSided, fi
   };
 }
 
+function buildBookletCostBreakdown({ pageCount, qty, spreadSize, coverMaterial, coverFinishing, coverFinishingSides, innerMaterial, innerFinishing, innerFinishingSides, bindingId, cuttingCost, config }) {
+  const pages = Math.max(4, Math.ceil((parseInt(pageCount) || 4) / 4) * 4);
+  const copies = parseInt(qty) || 0;
+  if (!copies || !spreadSize) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages } };
+
+  const sheetSize = config?.sheetSize || DIGITAL_SHEET_SIZE_DEFAULT;
+  const spreadsPerSheet = fitPiecesPerSheet(spreadSize, sheetSize);
+  if (!spreadsPerSheet) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages } };
+
+  const coverSpreadsPerCopy = 1;
+  const innerSpreadsPerCopy = (pages / 4) - 1;
+
+  const coverSheets = sheetsNeeded(copies * coverSpreadsPerCopy, spreadsPerSheet);
+  const innerSheets = innerSpreadsPerCopy > 0 ? sheetsNeeded(copies * innerSpreadsPerCopy, spreadsPerSheet) : 0;
+
+  const lines = [];
+
+  if (coverSheets > 0 && coverMaterial) {
+    lines.push({
+      type: 'غلاف — خامة',
+      label: coverMaterial.name || '—',
+      qty: coverSheets,
+      unitCost: parseFloat(coverMaterial.baseCost) || 0,
+      total: coverSheets * (parseFloat(coverMaterial.baseCost) || 0),
+      note: `${spreadsPerSheet} فرخة/شيت × ${coverSheets} شيت`,
+    });
+    const coverCat = coverMaterial.category || 'standard';
+    if (coverCat !== DIGITAL_MATERIAL_CATEGORIES.STICKER) {
+      const ssCost = parseFloat((config?.secondSideCosts || {})[coverCat]) || 0;
+      if (ssCost > 0) {
+        lines.push({
+          type: 'غلاف — وجه ثاني',
+          label: 'طباعة وجهين',
+          qty: coverSheets,
+          unitCost: ssCost,
+          total: coverSheets * ssCost,
+          note: '',
+        });
+      }
+    }
+    const cFS = parseInt(coverFinishingSides) || 0;
+    if (coverFinishing && coverFinishing !== 'none' && cFS > 0) {
+      const fin = (config?.finishings || []).find(f => f.id === coverFinishing);
+      if (fin) {
+        const fCost = (parseFloat(fin.costPerSide) || 0) * cFS;
+        lines.push({
+          type: 'غلاف — تشطيب',
+          label: fin.name,
+          qty: coverSheets,
+          unitCost: fCost,
+          total: coverSheets * fCost,
+          note: `${cFS} وجه × ${fin.costPerSide} ج`,
+        });
+      }
+    }
+  }
+
+  if (innerSheets > 0 && innerMaterial) {
+    lines.push({
+      type: 'داخلي — خامة',
+      label: innerMaterial.name || '—',
+      qty: innerSheets,
+      unitCost: parseFloat(innerMaterial.baseCost) || 0,
+      total: innerSheets * (parseFloat(innerMaterial.baseCost) || 0),
+      note: `${innerSpreadsPerCopy} فرخة/نسخة × ${copies} نسخة`,
+    });
+    const innerCat = innerMaterial.category || 'standard';
+    if (innerCat !== DIGITAL_MATERIAL_CATEGORIES.STICKER) {
+      const ssCost = parseFloat((config?.secondSideCosts || {})[innerCat]) || 0;
+      if (ssCost > 0) {
+        lines.push({
+          type: 'داخلي — وجه ثاني',
+          label: 'طباعة وجهين',
+          qty: innerSheets,
+          unitCost: ssCost,
+          total: innerSheets * ssCost,
+          note: '',
+        });
+      }
+    }
+    const iFS = parseInt(innerFinishingSides) || 0;
+    if (innerFinishing && innerFinishing !== 'none' && iFS > 0) {
+      const fin = (config?.finishings || []).find(f => f.id === innerFinishing);
+      if (fin) {
+        const fCost = (parseFloat(fin.costPerSide) || 0) * iFS;
+        lines.push({
+          type: 'داخلي — تشطيب',
+          label: fin.name,
+          qty: innerSheets,
+          unitCost: fCost,
+          total: innerSheets * fCost,
+          note: `${iFS} وجه × ${fin.costPerSide} ج`,
+        });
+      }
+    }
+  }
+
+  if (bindingId && bindingId !== 'none') {
+    const binding = (config?.bindings || []).find(b => b.id === bindingId);
+    if (binding) {
+      const bCost = parseFloat(binding.costPerCopy) || 0;
+      lines.push({
+        type: 'تجليد',
+        label: binding.name,
+        qty: copies,
+        unitCost: bCost,
+        total: copies * bCost,
+        note: `${bCost} ج/نسخة`,
+      });
+    }
+  }
+
+  const cutCost = parseFloat(cuttingCost) || 0;
+  if (cutCost > 0) {
+    lines.push({
+      type: 'قص',
+      label: 'تكلفة القص',
+      qty: 1,
+      unitCost: cutCost,
+      total: cutCost,
+      note: 'ثابت لكل منتج',
+    });
+  }
+
+  const totalCost = lines.reduce((s, l) => s + l.total, 0);
+  const costPerCopy = copies > 0 ? totalCost / copies : 0;
+
+  return {
+    lines,
+    summary: {
+      sheetSize,
+      spreadsPerSheet,
+      coverSheets,
+      innerSheets,
+      totalSheets: coverSheets + innerSheets,
+      pageCount: pages,
+      totalCost: Math.max(0, totalCost),
+      costPerCopy: Math.max(0, costPerCopy),
+      qty: copies,
+    },
+  };
+}
+
 if (typeof window !== 'undefined') {
   window.digitalCostEngine = {
     DIGITAL_SHEET_SIZE_DEFAULT,
@@ -138,6 +281,7 @@ if (typeof window !== 'undefined') {
     sheetsNeeded,
     calcSheetCost,
     buildDigitalCostBreakdown,
+    buildBookletCostBreakdown,
   };
 }
 if (typeof module !== 'undefined') {
@@ -149,5 +293,6 @@ if (typeof module !== 'undefined') {
     sheetsNeeded,
     calcSheetCost,
     buildDigitalCostBreakdown,
+    buildBookletCostBreakdown,
   };
 }
