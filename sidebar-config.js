@@ -71,6 +71,7 @@ try {
 
   const SIDEBAR_PAGES = [
     // ─── الرئيسية (main) ───
+    { file:'quick-input.html',       label:'إدخالات سريعة',    ico:'⚡', group:'main',   public:true },
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
     { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
     { file:'inbox.html',             label:'المحادثات',         ico:'💬', group:'main',   public:true },
