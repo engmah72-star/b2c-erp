@@ -28,7 +28,7 @@ function sheetsNeeded(qty, piecesPerSheet) {
   return Math.ceil(qty / piecesPerSheet);
 }
 
-function calcSheetCost(material, doubleSided, finishingType, config) {
+function calcSheetCost(material, doubleSided, finishingType, finishingSides, config) {
   const baseCost = parseFloat(material?.baseCost) || 0;
   const category = material?.category || DIGITAL_MATERIAL_CATEGORIES.STANDARD;
 
@@ -39,23 +39,24 @@ function calcSheetCost(material, doubleSided, finishingType, config) {
   }
 
   let finishingCost = 0;
-  const sides = doubleSided ? 2 : 1;
-  if (finishingType && finishingType !== 'none') {
+  const fSides = parseInt(finishingSides) || 0;
+  if (finishingType && finishingType !== 'none' && fSides > 0) {
     const finishings = config?.finishings || [];
     const finishing = finishings.find(f => f.id === finishingType);
     if (finishing) {
-      finishingCost = (parseFloat(finishing.costPerSide) || 0) * sides;
+      finishingCost = (parseFloat(finishing.costPerSide) || 0) * fSides;
     }
   }
 
   return Math.max(0, baseCost + secondSideCost + finishingCost);
 }
 
-function buildDigitalCostBreakdown({ productSize, qty, material, doubleSided, finishingType, cuttingCost, config }) {
+function buildDigitalCostBreakdown({ productSize, qty, material, doubleSided, finishingType, finishingSides, cuttingCost, config }) {
   const sheetSize = config?.sheetSize || DIGITAL_SHEET_SIZE_DEFAULT;
   const pcs = fitPiecesPerSheet(productSize, sheetSize);
   const sheets = sheetsNeeded(qty, pcs);
-  const sheetCost = calcSheetCost(material, doubleSided, finishingType, config);
+  const fSides = parseInt(finishingSides) || 0;
+  const sheetCost = calcSheetCost(material, doubleSided, finishingType, fSides, config);
   const cutCost = parseFloat(cuttingCost) || 0;
 
   const lines = [];
@@ -83,19 +84,18 @@ function buildDigitalCostBreakdown({ productSize, qty, material, doubleSided, fi
     });
   }
 
-  if (finishingType && finishingType !== 'none') {
+  if (finishingType && finishingType !== 'none' && fSides > 0) {
     const finishings = config?.finishings || [];
     const finishing = finishings.find(f => f.id === finishingType);
     if (finishing) {
-      const sides = doubleSided ? 2 : 1;
-      const fCostPerSheet = (parseFloat(finishing.costPerSide) || 0) * sides;
+      const fCostPerSheet = (parseFloat(finishing.costPerSide) || 0) * fSides;
       lines.push({
         type: 'تشطيب',
         label: finishing.name,
         qty: sheets,
         unitCost: fCostPerSheet,
         total: sheets * fCostPerSheet,
-        note: `${sides} وجه × ${finishing.costPerSide} ج`,
+        note: `${fSides} وجه × ${finishing.costPerSide} ج`,
       });
     }
   }
