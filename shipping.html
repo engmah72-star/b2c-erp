@@ -1697,8 +1697,8 @@ window.confirmSettle = async () => {
   const note = $('m-settle-note').value.trim();
   const companyName = pendingOrders[0]?.shipCompanyName || '';
 
-  // 📷 إيصال إجباري: لازم يُرفع صورة إيداع الفلوس من شركة الشحن
-  if (!window.__settleReceiptFile) {
+  // 📷 إيصال إجباري لو فيه فلوس فعلية — لو المبلغ = 0 مفيش إيداع فمفيش إيصال
+  if (amount > 0 && !window.__settleReceiptFile) {
     toast('⚠️ ارفع صورة إيصال إيداع الفلوس', 'err');
     document.getElementById('m-settle-receipt-inp')?.click();
     return;
@@ -1707,19 +1707,21 @@ window.confirmSettle = async () => {
   const DIFF_LABELS = { weight: 'فرق وزن', city: 'فرق مدينة', undelivered: 'شحنة لم تُسلَّم', discount: 'خصم/عمولة', other: 'أخرى' };
 
   const btn = $('btn-settle-confirm');
-  btn.disabled = true; btn.textContent = '⏳ جاري رفع الإيصال...';
+  btn.disabled = true; btn.textContent = '⏳ جارٍ التسوية...';
 
-  // ─ رفع الإيصال لـ Storage قبل ما نسجل التسوية ─
+  // ─ رفع الإيصال لـ Storage قبل ما نسجل التسوية (لو فيه فلوس فعلية) ─
   let receiptUrl = '';
-  try {
-    receiptUrl = await uploadSettleReceipt(window.__settleReceiptFile);
-  } catch (e) {
-    btn.disabled = false; btn.textContent = '✅ تأكيد التسوية';
-    toast('❌ فشل رفع الإيصال — حاول ثاني', 'err');
-    return;
+  if (window.__settleReceiptFile) {
+    btn.textContent = '⏳ جاري رفع الإيصال...';
+    try {
+      receiptUrl = await uploadSettleReceipt(window.__settleReceiptFile);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '✅ تأكيد التسوية';
+      toast('❌ فشل رفع الإيصال — حاول ثاني', 'err');
+      return;
+    }
+    btn.textContent = '⏳ جارٍ التسوية...';
   }
-
-  btn.textContent = '⏳ جارٍ التسوية...';
 
   // لو عُدّلت تكلفة الشحن في الشاشة (أوردر مفرد) — نحفظها مركزياً قبل التسوية
   // عبر editShippingCost (idempotent, audit) كي تُحسب التسوية على القيمة الصحيحة.
