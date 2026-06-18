@@ -1586,6 +1586,7 @@ export const orderActions = {
     } = payload;
     const total = parseFloat(rawTotal) || 0;
 
+    const _doRecord = async () => {
     // ── prepare refs + ids ────────────────────────────────
     const orderRef = order._ref;
     const txRef    = (walletId && !isEdit) ? doc(collection(db, 'transactions_v2')) : null;
@@ -1636,7 +1637,15 @@ export const orderActions = {
     batch.update(orderRef, {
       costItems: newCi,
       ...(!order.productionAgent && userId ? { productionAgent: userId, productionAgentName: userName } : {}),
-      timeline: [...(order.timeline || []), { date: nowStr(), action, by: userName }],
+      timeline: [
+        ...(order.timeline || []),
+        auditEntry({
+          action,
+          userId, userName,
+          kind: isEdit ? 'edit' : 'op',
+          meta: { costItemId, type, total, supplierId: supplierId || '', supplierOrderId: supplierOrderId || '' },
+        }),
+      ],
       updatedAt: serverTimestamp(),
     });
 
@@ -1762,6 +1771,17 @@ export const orderActions = {
         orderId,
       };
     }
+    }; // end _doRecord
+
+    if (isEdit) return _doRecord();
+
+    return withIdempotency(db, {
+      actionType: 'record_cost_item',
+      entityId: `${orderId}|${type}|${supplierId}`,
+      actorId: userId,
+      actorName: userName,
+      payload: { total, type, supplierId, walletId },
+    }, _doRecord);
   },
 
   // ─── Production Actions (P2.1) ────────────
