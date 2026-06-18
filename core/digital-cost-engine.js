@@ -130,13 +130,15 @@ function buildDigitalCostBreakdown({ productSize, qty, material, doubleSided, fi
 }
 
 function buildBookletCostBreakdown({ pageCount, qty, spreadSize, coverMaterial, coverFinishing, coverFinishingSides, innerMaterial, innerFinishing, innerFinishingSides, bindingId, cuttingCost, config }) {
-  const pages = Math.max(4, Math.ceil((parseInt(pageCount) || 4) / 4) * 4);
+  const inputPages = parseInt(pageCount) || 4;
+  const pages = Math.max(4, Math.ceil(inputPages / 4) * 4);
+  const blankPages = pages - inputPages;
   const copies = parseInt(qty) || 0;
-  if (!copies || !spreadSize) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages } };
+  if (!copies || !spreadSize) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages, blankPages } };
 
   const sheetSize = config?.sheetSize || DIGITAL_SHEET_SIZE_DEFAULT;
   const spreadsPerSheet = fitPiecesPerSheet(spreadSize, sheetSize);
-  if (!spreadsPerSheet) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages } };
+  if (!spreadsPerSheet) return { lines: [], summary: { totalCost: 0, costPerCopy: 0, qty: copies, pageCount: pages, blankPages } };
 
   const coverSpreadsPerCopy = 1;
   const innerSpreadsPerCopy = (pages / 4) - 1;
@@ -265,6 +267,7 @@ function buildBookletCostBreakdown({ pageCount, qty, spreadSize, coverMaterial, 
       innerSheets,
       totalSheets: coverSheets + innerSheets,
       pageCount: pages,
+      blankPages,
       totalCost: Math.max(0, totalCost),
       costPerCopy: Math.max(0, costPerCopy),
       qty: copies,
