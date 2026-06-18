@@ -889,6 +889,48 @@ export const shippingActions = {
   /** confirmDelivered — alias for markDelivered */
   async confirmDelivered(args) { return shippingActions.markDelivered(args); },
 
+  async skipCollection({ db, orderId, role, userId, userName }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [] };
+    if (order.stage === 'archived') return { ok: false, errors: ['الأوردر مؤرشف'], warnings: [] };
+
+    const remaining = getExpectedCollection(order);
+    if (remaining > 0.01) return { ok: false, errors: [`⚠️ لسه فيه متبقي ${remaining} ج — لازم يتحصّل`], warnings: [] };
+
+    const curSS = normalizeShipStage(order.shipStage);
+    if (curSS !== 'delivered') return { ok: false, errors: ['الأوردر مش في مرحلة التحصيل'], warnings: [] };
+
+    try {
+      await updateDoc(order._ref, {
+        shipStage: 'collected',
+        shipCollectedAt: serverTimestamp(),
+        shipCollectedBy: userName || '',
+        paymentStatus: 'paid',
+        timeline: [...(order.timeline || []),
+          _tlEntry('✅ تخطي التحصيل — العميل دافع مسبقاً', userName, userId),
+        ],
+        updatedAt: serverTimestamp(),
+      });
+
+      let archiveResult = null;
+      if (order.shipMethod !== 'company') {
+        try {
+          archiveResult = await orderActions.archiveOrder({
+            db, orderId, role, userId, userName,
+            source: 'shipping', reason: 'auto-archive — تخطي تحصيل (العميل دافع مسبقاً)',
+            bypassWarnings: true,
+          });
+        } catch (e) {
+          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        }
+      }
+
+      return { ok: true, errors: [], warnings: [], orderId, action: 'skip_collection', archived: archiveResult };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تخطي التحصيل'], warnings: [] };
+    }
+  },
+
   /** markUnderCollection — alias for markCompanyCollected */
   async markUnderCollection(args) { return shippingActions.markCompanyCollected(args); },
 
