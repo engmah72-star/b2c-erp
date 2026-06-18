@@ -38,7 +38,7 @@ import {
   validatePrepareShipping, validateMarkDelivered,
   validatePartialReturn, validateReverseSettle,
   // PR-1 helper:
-  normalizeShipStage,
+  normalizeShipStage, getExpectedCollection,
   // Phase 2 / B6 — block reversal on archived orders:
   ORDER_STAGES,
   // role gate لتعديل تكلفة الشحن (editShippingCost):
@@ -193,17 +193,53 @@ export const shippingActions = {
     if ((order.shipStage || 'ready') !== 'wait_delivery') {
       return { ok: false, errors: ['الأوردر ليس في حالة "في الطريق"'], warnings: [], orderId };
     }
+
+    const remaining = getExpectedCollection(order);
+    const alreadyPaid = remaining <= 0.01;
+
     try {
       const batch = writeBatch(db);
-      batch.update(order._ref, {
-        shipStage: 'wait_collection',
-        deliveredAt: serverTimestamp(),
-        deliveredBy: userName || '',
-        timeline: [...(order.timeline || []), _tlEntry('✅ تم التسليم للعميل — بانتظار التحصيل', userName, userId)],
-        updatedAt: serverTimestamp(),
-      });
+
+      if (alreadyPaid) {
+        batch.update(order._ref, {
+          shipStage: 'collected',
+          deliveredAt: serverTimestamp(),
+          deliveredBy: userName || '',
+          shipCollectedAt: serverTimestamp(),
+          shipCollectedBy: userName || '',
+          paymentStatus: 'paid',
+          timeline: [...(order.timeline || []),
+            _tlEntry('✅ تم التسليم للعميل — محصّل بالكامل (العميل دافع مسبقاً)', userName, userId),
+          ],
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.update(order._ref, {
+          shipStage: 'wait_collection',
+          deliveredAt: serverTimestamp(),
+          deliveredBy: userName || '',
+          timeline: [...(order.timeline || []), _tlEntry('✅ تم التسليم للعميل — بانتظار التحصيل', userName, userId)],
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       await batch.commit();
-      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_delivered' };
+
+      let archiveResult = null;
+      if (alreadyPaid && order.shipMethod !== 'company') {
+        try {
+          archiveResult = await orderActions.archiveOrder({
+            db, orderId,
+            role, userId, userName,
+            source: 'shipping', reason: 'auto-archive بعد تسليم — العميل دافع مسبقاً',
+            bypassWarnings: true,
+          });
+        } catch (e) {
+          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        }
+      }
+
+      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_delivered', alreadyPaid, archived: archiveResult };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل التسليم'], warnings: [], orderId };
     }
