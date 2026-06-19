@@ -260,7 +260,6 @@ export function resolveContext(conv, { allUsers = [], allOrders = [], currentUid
         code: conv.orderRef.orderCode || (conv.orderRef.orderId || '').slice(-6),
         clientName: conv.orderRef.clientName || '',
         stage: conv.orderRef.stage || '',
-        salePrice: conv.orderRef.salePrice || 0,
       };
     }
   }
