@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -303,6 +304,17 @@ let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],currentUser
 let shippers=[];   // شركات الشحن — لقسم "بيانات الشحن" في البانل
 let masterCategories=[];  // خدمات الإنتاج من الإعدادات (master_lists/supplier_categories)
 
+const _ps=PageState.init('production',{
+  fields:()=>({currentFilter,currentSupFilter,mineOnly,activeId}),
+  scroll:'.content'
+});
+const _restored=_ps.data;
+if(_restored){
+  currentFilter=_restored.currentFilter||'all';
+  currentSupFilter=_restored.currentSupFilter||'';
+  mineOnly=_restored.mineOnly??true;
+}
+
 // ── Cost Items Drawer context (consumed by features/cost-items/drawer.js) ──
 window.__costItemsCtx = {
   getOrder:            (id) => orders.find(o => o._id === id) || null,
@@ -441,12 +453,21 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';currentUserPerms=d.permissions||null;const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole==='production_agent'){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';currentUserPerms=d.permissions||null;const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if((isAdm||currentRole==='production_agent')&&!_restored){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}
+    if(_restored){
+      setTimeout(()=>{
+        const mBtn=document.getElementById(mineOnly?'qf-mine':'qf-all');
+        if(mBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));mBtn.classList.add('active');renderList();}
+        const fBtn=document.querySelector(`#status-filter-bar .ftab[onclick*="setFilter('${currentFilter}'"]`);
+        if(fBtn){document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));fBtn.classList.add('active');}
+      },120);
+    }}
   if(__listenersStarted)return;
   __listenersStarted=true;
   let __lastOrderHash='';
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
+  let __stateRestored = false;
   // RULE G3: cap active production/shipping queue (workshop bandwidth bounds it naturally).
   // Cache-first: يعرض البيانات من الكاش فوراً ثم يزامن في الخلفية.
   dataCache.subscribe(
@@ -454,6 +475,10 @@ onAuthStateChanged(auth,async u=>{
     (list) => {
       window.markSynced&&window.markSynced();
       orders=(list||[]).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      if(!__stateRestored && _restored && !__urlOrderId){
+        __stateRestored=true;
+        _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
+      }
       if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
         __urlOpened = true;
         setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 300);

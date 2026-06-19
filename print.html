@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -455,36 +456,16 @@ let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها �
 let statusFilter='all',sortBy='newest',viewMode=localStorage.getItem('print.viewMode')||'list';
 
 // ── Page State Persistence (across navigation) ─────────────────────────
-const _PSK='print.pageState';
-function _savePageState(){
-  try{
-    const s=document.getElementById('search');
-    const c=document.querySelector('.content');
-    sessionStorage.setItem(_PSK,JSON.stringify({
-      statusFilter,sortBy,mineOnly,activeId,
-      search:s?s.value:'',
-      scrollY:c?c.scrollTop:0,
-      ts:Date.now()
-    }));
-  }catch(_){}
-}
-function _loadPageState(){
-  try{
-    const raw=sessionStorage.getItem(_PSK);
-    if(!raw)return null;
-    sessionStorage.removeItem(_PSK);
-    const st=JSON.parse(raw);
-    if(Date.now()-st.ts>30*60*1000)return null;
-    return st;
-  }catch(_){return null;}
-}
-const _restored=_loadPageState();
+const _ps=PageState.init('print',{
+  fields:()=>({statusFilter,sortBy,mineOnly,activeId}),
+  search:'search', scroll:'.content'
+});
+const _restored=_ps.data;
 if(_restored){
   statusFilter=_restored.statusFilter||'all';
   sortBy=_restored.sortBy||'newest';
   mineOnly=_restored.mineOnly??true;
 }
-window.addEventListener('beforeunload',_savePageState);
 
 const STATUS_FILTERS=[
   {id:'all',     label:'📋 الكل',          col:'var(--b)'},
@@ -521,7 +502,7 @@ onAuthStateChanged(auth,async u=>{
       if(mBtn)setMineFilter(mineOnly,mBtn);
       const sortSel=document.getElementById('sort-sel');
       if(sortSel)sortSel.value=sortBy;
-      if(_restored.search){const si=document.getElementById('search');if(si){si.value=_restored.search;filterList(_restored.search);}}
+      if(_restored._search){const si=document.getElementById('search');if(si){si.value=_restored._search;filterList(_restored._search);}}
     }}
   startListeners();
 });
@@ -539,10 +520,7 @@ function startListeners(){
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderPanel(o);}}
       if(!__stateRestored && _restored && !__urlOrderId){
         __stateRestored=true;
-        if(_restored.activeId && !activeId && orders.find(o=>o._id===_restored.activeId)){
-          setTimeout(()=>window.openOrder&&window.openOrder(_restored.activeId),150);
-        }
-        if(_restored.scrollY){setTimeout(()=>{const c=document.querySelector('.content');if(c)c.scrollTop=_restored.scrollY;},200);}
+        _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
       }
       if(window.markSynced)window.markSynced();
       if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){

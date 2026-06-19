@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -493,6 +494,13 @@ let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentRole='admin';
 let currentUser=null,userName='',activeId=null,selClient=null;
 
+const _ps=PageState.init('design',{
+  fields:()=>({activeId,designFocus:window.__designFocus||null}),
+  search:'design-search', scroll:'.content'
+});
+const _restored=_ps.data;
+
+
 // RULE 8.1 — أرقام تليفون العملاء: CS + Admin + Ops + Shipping فقط.
 // Designer + Design Operator يعملون على بيانات التصميم بدون رقم العميل.
 const _PHONE_ROLES = new Set(['admin','operation_manager','customer_service','shipping_officer']);
@@ -817,6 +825,17 @@ window.saveToGallery=async function(){
   }
 };
 
+let __designStateRestored=false;
+function _restoreDesignState(){
+  if(__designStateRestored||!_restored||window.__urlOrderId)return;
+  __designStateRestored=true;
+  if(_restored._search){const si=document.getElementById('design-search');if(si){si.value=_restored._search;window.filterKanban&&window.filterKanban(_restored._search);}}
+  if(_restored.designFocus&&window.designFocus){
+    const btn=document.querySelector(`.design-stat-clickable[data-focus="${_restored.designFocus}"]`);
+    window.designFocus(_restored.designFocus,btn);
+  }
+  _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
+}
 function startListeners(){
   // Deep-link: open specific order if ?orderId= in URL
   window.__urlOrderId = window.__urlOrderId || (new URLSearchParams(window.location.search).get('orderId') || '');
@@ -838,7 +857,7 @@ function startListeners(){
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+      renderKanban();_restoreDesignState();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
@@ -856,7 +875,7 @@ function startListeners(){
       // CS تشوف اللي عملتها + اللي مش مكلّف
       orders=all.filter(o=>o.createdBy===currentUid||!o.designerId)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+      renderKanban();_restoreDesignState();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
@@ -875,7 +894,7 @@ function startListeners(){
       const ids=new Set(assigned.map(o=>o._id));
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+      renderKanban();_restoreDesignState();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
       setText('sub',orders.length+' طلب تصميم');
       setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
       setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
@@ -893,7 +912,7 @@ function startListeners(){
       const ids=new Set(assigned.map(o=>o._id));
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+      renderKanban();_restoreDesignState();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
       renderDesignDashboard();
     });
   }
