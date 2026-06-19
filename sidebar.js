@@ -112,6 +112,43 @@
     }
 
     navEl.innerHTML = html;
+    _attachHoverPrefetch(navEl);
+  }
+
+  // ── Hover Prefetch — تحميل مسبق عند مرور الماوس على رابط ──
+  var _prefetchedUrls = new Set();
+  var _hoverTimer = null;
+
+  function _attachHoverPrefetch(navEl) {
+    navEl.addEventListener('mouseenter', function(e) {
+      var link = e.target.closest('a.nav-link');
+      if (!link || !link.href) return;
+      var file = link.getAttribute('href');
+      if (!file || file === '#' || _prefetchedUrls.has(file)) return;
+      clearTimeout(_hoverTimer);
+      _hoverTimer = setTimeout(function() {
+        _prefetchedUrls.add(file);
+        if (typeof window.__prefetchForPage === 'function') {
+          try { window.__prefetchForPage(file); } catch(_) {}
+        }
+      }, 150);
+    }, true);
+
+    navEl.addEventListener('mouseleave', function(e) {
+      if (e.target.closest('a.nav-link')) clearTimeout(_hoverTimer);
+    }, true);
+
+    // Mobile: prefetch on touchstart (before navigation)
+    navEl.addEventListener('touchstart', function(e) {
+      var link = e.target.closest('a.nav-link');
+      if (!link || !link.href) return;
+      var file = link.getAttribute('href');
+      if (!file || file === '#' || _prefetchedUrls.has(file)) return;
+      _prefetchedUrls.add(file);
+      if (typeof window.__prefetchForPage === 'function') {
+        try { window.__prefetchForPage(file); } catch(_) {}
+      }
+    }, { passive: true });
   }
 
   function guard(userData, currentPage) {

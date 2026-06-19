@@ -30,6 +30,36 @@
   if (typeof window === 'undefined') return;
 
   var TTL = 30 * 60 * 1000; // 30 minutes
+  var _staleEl = null;
+
+  function _showStaleIndicator() {
+    if (_staleEl || typeof document === 'undefined' || !document.body) return;
+    _staleEl = document.createElement('div');
+    _staleEl.id = 'ps-stale';
+    _staleEl.style.cssText =
+      'position:fixed;bottom:16px;left:16px;z-index:9998;' +
+      'background:rgba(245,158,11,.9);color:#fff;' +
+      'padding:5px 14px;border-radius:20px;' +
+      'font-size:12px;font-weight:600;' +
+      'font-family:IBM Plex Sans Arabic,sans-serif;' +
+      'pointer-events:none;transition:opacity .4s;opacity:.85;' +
+      'display:flex;align-items:center;gap:6px;';
+    _staleEl.innerHTML =
+      '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#fff;animation:ps-pulse 1.2s ease-in-out infinite"></span>' +
+      'جاري تحديث البيانات...';
+    var style = document.createElement('style');
+    style.textContent = '@keyframes ps-pulse{0%,100%{opacity:.3}50%{opacity:1}}';
+    _staleEl.appendChild(style);
+    document.body.appendChild(_staleEl);
+  }
+
+  function _hideStaleIndicator() {
+    if (!_staleEl) return;
+    _staleEl.style.opacity = '0';
+    var el = _staleEl;
+    _staleEl = null;
+    setTimeout(function () { el.remove(); }, 400);
+  }
 
   function init(pageKey, opts) {
     var storageKey = pageKey + '.pageState';
@@ -60,8 +90,10 @@
             if (el) { el.innerHTML = restored._htmlSnaps[id]; applied = true; }
           }
         }
+        if (applied) _showStaleIndicator();
         return applied;
       },
+      markFresh: _hideStaleIndicator,
       restoreUI: function (openFn) {
         if (_uiRestored || !restored) return;
         _uiRestored = true;
