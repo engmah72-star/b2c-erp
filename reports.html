@@ -320,7 +320,9 @@ function renderDataContent() {
 let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false,returns:false};
-function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,80);}
+let __cachedFilter=null;
+let __ordersVer=0;
+function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,150);}
 const fn=fmtNum;
 
 // ══ Collection state (search/sort/filters) ══
@@ -577,7 +579,7 @@ onAuthStateChanged(auth,async u=>{
   // the system — previously unbounded, so every page-load streamed the entire
   // history of every collection. Caps reflect "operational analytics" depth;
   // deeper historical analysis uses one-shot getDocs() with date filters.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(10000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.orders=true;scheduleRender();});
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(10000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();});
   onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
   onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
   onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
@@ -730,7 +732,7 @@ function updateDomainStatuses(filtered, range) {
 
 function render(){
   const el=document.getElementById('rep-content');if(!el)return;
-  if(!__loaded.orders||!__loaded.transactions){
+  if(!__loaded.orders||!__loaded.transactions||!__loaded.clients){
     el.innerHTML=renderSkeleton();
     updateCommandCenter([], null);
     setText('rep-sub','جاري التحميل...');
@@ -738,10 +740,12 @@ function render(){
     if (mSub) mSub.textContent = 'جاري تحميل البيانات...';
     return;
   }
-  const range=getRange(filterMode);
-  const prev=getPrevRange(filterMode);
-  const filtered=orders.filter(o=>inRange(o,range));
-  const prevFiltered=orders.filter(o=>inRange(o,prev));
+  if(!__cachedFilter||__cachedFilter.filterMode!==filterMode||__cachedFilter.ordersVer!==__ordersVer){
+    const range=getRange(filterMode);
+    const prev=getPrevRange(filterMode);
+    __cachedFilter={filterMode,ordersVer:__ordersVer,range,prev,filtered:orders.filter(o=>inRange(o,range)),prevFiltered:orders.filter(o=>inRange(o,prev))};
+  }
+  const {filtered,prevFiltered,range}=__cachedFilter;
   setText('rep-sub',`${filtered.length} أوردر · ${orders.length} إجمالي`);
   if(_ps.markFresh) _ps.markFresh();
   updateMasthead(filtered, range);
