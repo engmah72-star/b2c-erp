@@ -160,7 +160,8 @@ export function buildActivityFeedHTML(activities = []) {
   if (!activities.length) {
     return `<div class="mh-empty-state">
       <span class="mh-empty-state-ico" aria-hidden="true">📊</span>
-      <span class="mh-empty-state-text">لا يوجد نشاط حديث</span>
+      <span class="mh-empty-state-title">لا يوجد نشاط حديث</span>
+      <span class="mh-empty-state-text">سيظهر هنا النشاط الأخير للمحادثات والأوردرات</span>
     </div>`;
   }
 
@@ -259,4 +260,47 @@ export function buildActionItemsMiniHTML(items = [], currentUid = '') {
       }).join('')}
       ${pending.length > 3 ? `<div class="mh-action-mini-more">+${pending.length - 3} أخرى</div>` : ''}
     </div>`;
+}
+
+// ═══════════════════════════════════════════
+// 6. SKELETON LOADERS
+// ═══════════════════════════════════════════
+
+/**
+ * Build skeleton loading placeholders for the conversation list.
+ * @param {number} count - number of skeleton rows
+ * @returns {string} HTML
+ */
+export function buildConvListSkeletonHTML(count = 6) {
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += `<div class="ib-skeleton-conv" aria-hidden="true">
+      <div class="ib-skeleton ib-skeleton-circle"></div>
+      <div class="ib-skeleton-conv-body">
+        <div class="ib-skeleton ib-skeleton-line" style="width:${65 + (i % 3) * 10}%"></div>
+        <div class="ib-skeleton ib-skeleton-line ib-skeleton-line--short"></div>
+      </div>
+      <div class="ib-skeleton ib-skeleton-line ib-skeleton-line--xs" style="width:40px;flex-shrink:0"></div>
+    </div>`;
+  }
+  return html;
+}
+
+/**
+ * Build skeleton loading for messages area.
+ * @param {number} count - number of skeleton messages
+ * @returns {string} HTML
+ */
+export function buildMessagesSkeletonHTML(count = 4) {
+  let html = '';
+  const widths = ['55%', '40%', '65%', '35%', '50%', '45%'];
+  const sides = ['in', 'out', 'in', 'in', 'out', 'in'];
+  for (let i = 0; i < count; i++) {
+    const side = sides[i % sides.length];
+    const w = widths[i % widths.length];
+    html += `<div class="ib-msg ${side}" style="max-width:${w}" aria-hidden="true">
+      <div class="ib-skeleton" style="height:${36 + (i % 3) * 12}px;border-radius:10px;width:100%"></div>
+    </div>`;
+  }
+  return html;
 }

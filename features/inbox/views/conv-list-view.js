@@ -76,16 +76,14 @@ function emptyArchived() {
 }
 
 function emptyNoConversations(currentRole, currentUid) {
-  const uidShort = (currentUid || '').slice(0, 6);
   return `<div class="mh-empty-state mh-empty-state--hero">
     <div class="mh-empty-state-icon">💬</div>
-    <strong class="mh-empty-state__title">لا توجد محادثات بعد</strong>
-    <span class="mh-empty-state__detail">role: ${esc(currentRole || 'غير محدد')} · uid: ${esc(uidShort)}…</span>
+    <strong class="mh-empty-state__title">مرحباً بك في مساحة التواصل</strong>
+    <span class="mh-empty-state__detail">تواصل مع فريقك وتابع الأوردرات في مكان واحد</span>
     <div class="mh-empty-state__actions">
-      <button type="button" class="mh-empty-state__btn mh-empty-state__btn--secondary" onclick="retryEnsureChannels()">🔄 إعادة الإعداد</button>
       <button type="button" class="mh-empty-state__btn mh-empty-state__btn--primary" onclick="newDM()">✏️ محادثة جديدة</button>
+      <button type="button" class="mh-empty-state__btn mh-empty-state__btn--secondary" onclick="retryEnsureChannels()">🔄 إعادة الإعداد</button>
     </div>
-    <span class="mh-empty-state__hint">افتح Console (F12) لتفاصيل التشخيص</span>
   </div>`;
 }
 

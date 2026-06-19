@@ -357,15 +357,17 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
 export function buildMessagesHTML({ messages = [], activeConv, currentUid, renderTextWithMentions }) {
   if (!messages.length) {
     return `<div class="ib-empty-state">
-      <div class="ib-empty-wave">\u{1F44B}</div>
+      <div class="ib-empty-wave">💬</div>
       <div class="ib-empty-title">ابدأ المحادثة</div>
-      <div class="ib-empty-desc">أرسل أول رسالة للبدء</div>
+      <div class="ib-empty-desc">أرسل رسالة أو شارك أوردر للبدء</div>
+      <button type="button" class="mh-empty-state__btn mh-empty-state__btn--primary" onclick="document.getElementById('ib-input')?.focus()" style="margin-top:12px">✏️ اكتب رسالة</button>
     </div>`;
   }
 
   let html = '';
   let lastDate = '';
   let lastSender = '';
+  let lastTs = null;
 
   messages.forEach((m, i) => {
     const ts = m.createdAt?.toDate?.();
@@ -379,6 +381,21 @@ export function buildMessagesHTML({ messages = [], activeConv, currentUid, rende
       lastDate = dateStr;
       lastSender = '';
     }
+
+    /* ── time gap (>5 min between messages) ── */
+    if (ts && lastTs) {
+      const gapMin = (ts.getTime() - lastTs.getTime()) / 60000;
+      if (gapMin > 5 && dateStr === lastDate) {
+        const gapLabel = gapMin < 60
+          ? `${Math.floor(gapMin)} دقيقة`
+          : gapMin < 1440
+            ? `${Math.floor(gapMin / 60)} ساعة`
+            : `${Math.floor(gapMin / 1440)} يوم`;
+        html += `<div class="ib-time-gap"><span class="ib-time-gap-label">⏱ ${gapLabel}</span></div>`;
+        lastSender = '';
+      }
+    }
+    if (ts) lastTs = ts;
 
     /* ── system message ── */
     if (m.type === 'system') {
@@ -518,7 +535,7 @@ export function buildMessagesHTML({ messages = [], activeConv, currentUid, rende
       : '';
 
     /* sender name in channels */
-    const senderName = (!isOut && !consec && activeConv?.type === 'channel')
+    const senderName = (!isOut && !consec && activeConv?.type !== 'dm')
       ? `<div class="ib-msg-sender">${esc(m.senderName || '')}</div>`
       : '';
 
@@ -576,7 +593,7 @@ export function buildChatHeaderSub({ activeConv, presenceMap, currentUid }) {
     const p = presenceMap.get(otherUid);
     const typing = p?.typingIn === activeConv._id;
 
-    if (typing) return { text: 'يكتب الآن…', className: 'ib-chat-hdr-sub online' };
+    if (typing) return { text: '<span class="ib-typing-dots"><span></span><span></span><span></span></span> يكتب الآن…', className: 'ib-chat-hdr-sub online', isHTML: true };
     if (isUserOnline(p)) return { text: 'متصل', className: 'ib-chat-hdr-sub online' };
 
     if (p?.lastSeen) {
