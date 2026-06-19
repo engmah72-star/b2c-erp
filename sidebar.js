@@ -120,6 +120,7 @@
   var _hoverTimer = null;
 
   function _attachHoverPrefetch(navEl) {
+    if (!navEl || typeof navEl.addEventListener !== 'function') return;
     navEl.addEventListener('mouseenter', function(e) {
       var link = e.target.closest('a.nav-link');
       if (!link || !link.href) return;
