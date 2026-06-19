@@ -35,6 +35,7 @@
     var storageKey = pageKey + '.pageState';
     var restored = _load(storageKey);
     var _uiRestored = false;
+    var _snapsRestored = false;
 
     window.addEventListener('beforeunload', function () {
       _save(storageKey, opts);
@@ -42,6 +43,25 @@
 
     return {
       data: restored,
+      hasSnapshots: !!(restored && (restored._snaps || restored._htmlSnaps)),
+      restoreSnapshots: function () {
+        if (_snapsRestored || !restored) return false;
+        _snapsRestored = true;
+        var applied = false;
+        if (restored._snaps) {
+          for (var id in restored._snaps) {
+            var el = document.getElementById(id);
+            if (el) { el.textContent = restored._snaps[id]; applied = true; }
+          }
+        }
+        if (restored._htmlSnaps) {
+          for (var id in restored._htmlSnaps) {
+            var el = document.getElementById(id);
+            if (el) { el.innerHTML = restored._htmlSnaps[id]; applied = true; }
+          }
+        }
+        return applied;
+      },
       restoreUI: function (openFn) {
         if (_uiRestored || !restored) return;
         _uiRestored = true;
@@ -68,6 +88,24 @@
       if (opts.scroll) {
         var c = document.querySelector(opts.scroll);
         if (c) state._scrollY = c.scrollTop || 0;
+      }
+      if (opts.snapshots) {
+        state._snaps = {};
+        for (var i = 0; i < opts.snapshots.length; i++) {
+          var sid = opts.snapshots[i];
+          var sel = document.getElementById(sid);
+          if (sel && sel.textContent) state._snaps[sid] = sel.textContent;
+        }
+      }
+      if (opts.htmlSnapshots) {
+        state._htmlSnaps = {};
+        for (var i = 0; i < opts.htmlSnapshots.length; i++) {
+          var hid = opts.htmlSnapshots[i];
+          var hel = document.getElementById(hid);
+          if (hel && hel.innerHTML && hel.innerHTML.length < 8000) {
+            state._htmlSnaps[hid] = hel.innerHTML;
+          }
+        }
       }
       state._ts = Date.now();
       sessionStorage.setItem(key, JSON.stringify(state));
