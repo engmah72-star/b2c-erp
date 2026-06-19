@@ -240,9 +240,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { inboxActions } from "./inbox-actions.js";
-// view → فعل أعمال: حفظ صور المصمم في ملف تصميم الأوردر (يحترم حدّ Messaging↔Business).
 import { orderActions } from "./order-actions.js";
-// الأدوار المخوّلة بحفظ صورة كـ«تصميم» للأوردر (المصمم أساساً + إشراف).
 const DESIGN_CAPTURE_ROLES = new Set(['graphic_designer','design_operator','admin','operation_manager']);
 import {
   fmtTime as _fmtTime, fmtBytes as _fmtBytes, escapeHtml as _esc, initAvatar as _initAvatar,
@@ -250,13 +248,10 @@ import {
   isUserOnline as _isUserOnline,
   getMentionableUsers as _getMentionableUsers, extractMentions as _extractMentions,
   renderTextWithMentions as _renderTextWithMentions,
-  groupStoriesByUser as _groupStoriesByUser,
 } from "./core/inbox-utils.js";
 import { buildConvListHTML } from "./features/inbox/views/conv-list-view.js";
 import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./features/inbox/views/chat-view.js";
 import { buildForwardListHTML, buildShareListHTML, buildUserListHTML, buildOrderPickerHTML } from "./features/inbox/views/picker-views.js";
-import { groupStoriesByUserUid, buildStoriesRowHTML, getCurrentStoryViewInfo } from "./features/inbox/views/stories-view.js";
-// Messaging Hub — workspace views + core engine
 import {
   CONV_CATEGORIES, PRIORITY_LEVELS, ACTIVITY_TYPES, ACTION_ITEM_STATUS,
   WORKSPACE_TABS, categorizeConversation, filterByCategory, countByCategory,
@@ -266,6 +261,12 @@ import {
 } from "./core/messaging-hub.js";
 import { buildCategoryTabsHTML, buildStatsBarHTML, buildActivityFeedHTML, buildListHeaderHTML, buildActionItemsMiniHTML } from "./features/inbox/views/workspace-view.js";
 import { buildContextPanelHTML } from "./features/inbox/views/context-panel-view.js";
+// ━━━ Controllers (extracted from this god-page for G5 compliance) ━━━
+import { createStoriesController } from "./features/inbox/controllers/stories-controller.js";
+import { createVoiceController } from "./features/inbox/controllers/voice-controller.js";
+import { createMessageActionsController } from "./features/inbox/controllers/message-actions-controller.js";
+import { createPinsController } from "./features/inbox/controllers/pins-controller.js";
+import { createSearchController } from "./features/inbox/controllers/search-controller.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'var(--b-bright)',customer_service:'var(--c-bright)',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -281,39 +282,38 @@ const EMOJIS=['😀','😂','🤣','😊','😍','🤩','😘','😗','🙂','�
 // ── State ──
 let currentUser=null, currentUid='', currentUserName='', currentRole='', currentUserData=null;
 let allUsers=[];
-let allOrders=[];   // active orders for the order picker
-let conversations=[];  // all my convs
+let allOrders=[];
+let conversations=[];
 let activeConvId=null;
 let activeConv=null;
-// Deep-link: ?conv=<id> يُفتح مرة واحدة بعد تحميل المحادثات (consumed in subscribeConversations).
 let pendingConvId=(()=>{try{return new URLSearchParams(location.search).get('conv')||null;}catch(_){return null;}})();
 let messages=[];
-let presenceMap=new Map();  // uid → {online,lastSeen,typingIn}
+let presenceMap=new Map();
 let listTab='all';
 let searchQuery='';
 let unsubMessages=null;
 let typingTimer=null;
 let lastReadUpdate=0;
-// Phase 2 state
-let activeMsgForAction=null;   // {id, data} for action sheet target
-let replyTo=null;              // {msgId, preview, senderName}
-let editingMsgId=null;         // when editing an existing message
-let voiceRecorder=null;        // MediaRecorder instance
-let voiceChunks=[];
-let voiceStart=0;
-let voiceTimerInt=null;
-let sharePending=null;         // {orderId, ...} pending share payload
-let mentionState=null;         // {start, query, items}
-const REACTION_EMOJIS=['👍','❤️','😂','😮','😢','🙏'];
+let sharePending=null;
+let mentionState=null;
 const WALLPAPERS=['','#0b141a','#1a3a2e','#1e1a3d','#3d1a2e','#2e1a3d','#3d2e1a'];
-// Workspace state
-let workspaceTab='all';       // active category tab
-let contextVisible=true;      // context panel visibility (desktop)
-let activityVisible=false;    // activity panel overlay
-let actionItems=[];           // current conv action items
-let allActionItems=[];        // global action items for sidebar mini
-let activityFeed=[];          // activity feed items
-let unsubActionItems=null;    // Firestore unsub for action items
+let workspaceTab='all';
+let contextVisible=true;
+let activityVisible=false;
+let actionItems=[];
+let allActionItems=[];
+let activityFeed=[];
+let unsubActionItems=null;
+
+// ── Shared state getter (passed to controllers) ──
+const getState=()=>({currentUid,currentUserName,currentRole,currentUserData,allUsers,allOrders,conversations,activeConvId,activeConv,messages,presenceMap,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,colorOf:role=>ROLE_COLOR[role]||'var(--dim-arch)'});
+
+// ── Controller instances (initialized after imports, wired to window in-place) ──
+const storiesCtrl=createStoriesController({db,storage,onSnapshot,collection,query,orderBy,limit,inboxActions,toast:(m,t)=>toast(m,t),$:id=>document.getElementById(id),getState,ref,uploadBytes,getDownloadURL});
+const voiceCtrl=createVoiceController({storage,ref,uploadBytes,getDownloadURL,toast:(m,t)=>toast(m,t),$:id=>document.getElementById(id),sendMessage:p=>sendMessage(p),getActiveConvId:()=>activeConvId});
+const msgActionsCtrl=createMessageActionsController({$:id=>document.getElementById(id),toast:(m,t)=>toast(m,t),inboxActions,db,getState,sendMessageTo:(cid,p,d)=>sendMessageTo(cid,p,d),renderForwardList:()=>renderForwardList()});
+const pinsCtrl=createPinsController({$:id=>document.getElementById(id),toast:(m,t)=>toast(m,t),inboxActions,db,getState,jumpToMsg:mid=>jumpToMsg(mid),getActiveMsg:()=>msgActionsCtrl.getActiveMsg()});
+const searchCtrl=createSearchController({$:id=>document.getElementById(id),getState,jumpToMsg:mid=>jumpToMsg(mid)});
 
 const $=id=>document.getElementById(id);
 // pure helpers — core/inbox-utils.js
@@ -532,14 +532,7 @@ window.openConv=async function(id){
   activeConvId=id;
   activeConv=conversations.find(c=>c._id===id);
   if(!activeConv){return;}
-  // Reset per-conversation state (search + pin strip)
-  if (typeof __cSearchMatches !== 'undefined') {
-    __cSearchMatches = []; __cSearchIdx = 0;
-    const bar = document.getElementById('csearch-bar');
-    if (bar) bar.classList.remove('show');
-    const ci = document.getElementById('csearch-input'); if (ci) ci.value = '';
-    const info = document.getElementById('csearch-info'); if (info) info.textContent = '—';
-  }
+  searchCtrl.reset();
   const strip = document.getElementById('pin-strip'); if (strip) strip.classList.remove('show');
   $('ib-wrap').classList.add('show-chat');
   // un-archive if was archived
@@ -615,14 +608,8 @@ function renderMessages(){
   wrap.querySelectorAll('.ib-msg').forEach(el=>attachLongPress(el));
   // scroll to bottom
   requestAnimationFrame(()=>{wrap.scrollTop=wrap.scrollHeight;});
-  // refresh pinned strip + restore search highlights
   if (typeof refreshPinStrip === 'function') refreshPinStrip();
-  if (typeof __cSearchMatches !== 'undefined' && __cSearchMatches.length) {
-    __cSearchMatches.forEach(mid => {
-      const el = wrap.querySelector(`.ib-msg[data-mid="${mid}"]`);
-      if (el) el.classList.add('match-hl');
-    });
-  }
+  searchCtrl.reapplyHighlights();
 }
 
 // ── Long-press / right-click on a message ──
@@ -749,21 +736,21 @@ window.sendText=async function(){
   inp.value='';inp.style.height='auto';
   hideMentionPop();
   const mentions=extractMentions(text);
-  pendingMentions=[];  // reset after extract
-  // Edit path: if editingMsgId is set, update instead of sending new
-  if(editingMsgId){
+  pendingMentions=[];
+  const editId=msgActionsCtrl.getEditingMsgId();
+  if(editId){
     try{
-      await inboxActions.editMessage({db,convId:activeConvId,messageId:editingMsgId,text,mentions});
-      editingMsgId=null;
-      cancelReply();
+      await inboxActions.editMessage({db,convId:activeConvId,messageId:editId,text,mentions});
+      msgActionsCtrl.clearEditing();
+      msgActionsCtrl.cancelReply();
     }catch(e){toast('❌ '+e.message,'err');}
     return;
   }
   const payload={type:'text',text};
   if(mentions.length)payload.mentions=mentions;
-  if(replyTo){payload.replyTo=replyTo;cancelReply();}
+  const reply=msgActionsCtrl.getReplyTo();
+  if(reply){payload.replyTo=reply;msgActionsCtrl.cancelReply();}
   await sendMessage(payload);
-  // toggle send/mic back since input is empty
   const send=$('ib-send'),mic=$('ib-mic');if(send&&mic){send.style.display='none';mic.style.display='flex';}
 };
 async function sendMessage(payload){
@@ -902,220 +889,30 @@ window.archiveConv=async function(){
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
-// ════════════════════════════════════════════════════════════════════
-//  Action sheet (long-press on a message)
-// ════════════════════════════════════════════════════════════════════
-function openMsgActions(mid){
-  const m=messages.find(x=>x._id===mid);if(!m||m.deletedAt)return;
-  activeMsgForAction={id:mid,data:m};
-  const isMine=m.senderId===currentUid;
-  // reaction picker row
-  $('react-row').innerHTML=REACTION_EMOJIS.map(e=>`<button type="button" class="ib-react-pick" onclick="actReact('${e}')">${e}</button>`).join('');
-  // PR-848: classList.toggle بدل style.display لأن class="hide" + !important يفضل بيخفي
-  $('act-edit').classList.toggle('hide',!(isMine&&m.type==='text'));
-  $('act-del').classList.toggle('hide',!isMine);
-  // pin/unpin label
-  const pinBtn=$('act-pin');
-  if(pinBtn) pinBtn.textContent=m.pinned?'📌 إلغاء التثبيت':'📌 تثبيت';
-  $('msg-actions').classList.add('show');
-}
-window.closeMsgActions=()=>{$('msg-actions').classList.remove('show');activeMsgForAction=null;};
+// ── Action sheet — delegated to message-actions-controller ──
+function openMsgActions(mid){msgActionsCtrl.open(mid);}
+window.closeMsgActions=()=>msgActionsCtrl.close();
 $('msg-actions').addEventListener('click',e=>{if(e.target.id==='msg-actions')closeMsgActions();});
-
-window.actReact=async function(emo){
-  if(!activeMsgForAction)return;
-  await toggleReact(activeMsgForAction.id,emo);
-  closeMsgActions();
-};
-window.toggleReact=async function(mid,emo){
-  const m=messages.find(x=>x._id===mid);if(!m)return;
-  const cur=(m.reactions?.[emo])||[];
-  const mine=cur.includes(currentUid);
-  try{
-    await inboxActions.toggleMessageReaction({db,convId:activeConvId,messageId:mid,userId:currentUid,emoji:emo,adding:!mine});
-  }catch(e){toast('❌ '+e.message,'err');}
-};
-
-window.actReply=()=>{
-  if(!activeMsgForAction)return;
-  const m=activeMsgForAction.data;
-  const preview=m.text||(m.type==='image'?'📷 صورة':m.type==='file'?'📄 '+(m.attachments?.[0]?.name||''):m.type==='voice'?'🎤 رسالة صوتية':m.type==='order_share'?'📦 أوردر مشارَك':'رسالة');
-  replyTo={msgId:m._id,preview:preview.slice(0,120),senderName:m.senderName||''};
-  $('reply-name').textContent=replyTo.senderName||'رد على رسالة';
-  $('reply-text').textContent=replyTo.preview;
-  $('reply-strip').classList.add('show');
-  $('ib-input')?.focus();
-  closeMsgActions();
-};
-window.cancelReply=()=>{replyTo=null;$('reply-strip').classList.remove('show');};
-
-window.actCopy=async()=>{
-  if(!activeMsgForAction)return;
-  const m=activeMsgForAction.data;
-  const txt=m.text||m.attachments?.[0]?.url||'';
-  try{await navigator.clipboard.writeText(txt);toast('✅ تم النسخ','ok');}catch(_){toast('انسخ يدوياً','err');}
-  closeMsgActions();
-};
-
-window.actForward=()=>{
-  if(!activeMsgForAction)return;
-  closeMsgActions();
-  $('fwd-ov').classList.add('show');
-  renderForwardList();
-  // Debounced — list re-render skipped while user is still typing
-  let __fwdT;
-  $('fwd-search').oninput=()=>{ clearTimeout(__fwdT); __fwdT=setTimeout(renderForwardList,150); };
-  setTimeout(()=>$('fwd-search')?.focus(),100);
-};
+window.actReact=emo=>msgActionsCtrl.react(emo);
+window.toggleReact=(mid,emo)=>msgActionsCtrl.toggleReaction(mid,emo);
+window.actReply=()=>msgActionsCtrl.reply();
+window.cancelReply=()=>msgActionsCtrl.cancelReply();
+window.actCopy=()=>msgActionsCtrl.copy();
+window.actForward=()=>msgActionsCtrl.forward();
 window.closeForward=()=>$('fwd-ov').classList.remove('show');
 function renderForwardList(){
   const body=$('fwd-list');if(!body)return;
-  body.innerHTML=buildForwardListHTML({
-    conversations,allUsers,
-    searchQuery:$('fwd-search')?.value||'',
-    currentUid,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,
-  });
+  body.innerHTML=buildForwardListHTML({conversations,allUsers,searchQuery:$('fwd-search')?.value||'',currentUid,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL});
 }
-window.doForward=async function(kind,id,otherName){
-  if(!activeMsgForAction)return;
-  let targetConvId;
-  try{
-    if(kind==='conv'){
-      targetConvId=id;
-    } else {
-      // user → ensure DM exists
-      const r=await inboxActions.ensureDM({db,currentUserId:currentUid,currentUserName,otherUserId:id,otherUserName:otherName});
-      targetConvId=r.convId;
-    }
-    // forward: clone payload but mark forwarded
-    const src=activeMsgForAction.data;
-    const payload={type:src.type||'text',forwarded:true};
-    if(src.text)payload.text=src.text;
-    if(src.attachments)payload.attachments=src.attachments;
-    if(src.orderRef)payload.orderRef=src.orderRef;
-    await sendMessageTo(targetConvId,payload);
-    closeForward();
-    toast('✅ تم التوجيه','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-};
+window.doForward=(kind,id,name)=>msgActionsCtrl.doForward(kind,id,name);
+window.actEdit=()=>msgActionsCtrl.edit();
+window.actDelete=()=>msgActionsCtrl.del();
 
-window.actEdit=()=>{
-  if(!activeMsgForAction)return;
-  const m=activeMsgForAction.data;
-  if(m.senderId!==currentUid||m.type!=='text')return;
-  editingMsgId=m._id;
-  const inp=$('ib-input');inp.value=m.text||'';inp.focus();
-  $('reply-name').textContent='✏️ تعديل';
-  $('reply-text').textContent=(m.text||'').slice(0,120);
-  $('reply-strip').classList.add('show');
-  closeMsgActions();
-};
-
-window.actDelete=async()=>{
-  if(!activeMsgForAction)return;
-  const m=activeMsgForAction.data;
-  if(m.senderId!==currentUid)return;
-  if(!confirm('حذف الرسالة؟'))return;
-  try{
-    await inboxActions.softDeleteMessage({db,convId:activeConvId,messageId:m._id});
-    toast('🗑 تم الحذف','ok');
-  }catch(e){toast('❌ '+e.message,'err');}
-  closeMsgActions();
-};
-
-// ════════════════════════════════════════════════════════════════════
-//  Voice messages
-// ════════════════════════════════════════════════════════════════════
-window.startVoice=async function(){
-  if(voiceRecorder)return;
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-    voiceChunks=[];
-    voiceRecorder=new MediaRecorder(stream);
-    voiceRecorder.ondataavailable=e=>{if(e.data.size>0)voiceChunks.push(e.data);};
-    voiceRecorder.onstop=async()=>{
-      const blob=new Blob(voiceChunks,{type:'audio/webm'});
-      const duration=Math.floor((Date.now()-voiceStart)/1000);
-      stream.getTracks().forEach(t=>t.stop());
-      // restore composer UI
-      restoreComposer();
-      if(blob.size>0&&duration>=1){
-        await uploadVoice(blob,duration);
-      }
-      voiceRecorder=null;
-    };
-    voiceStart=Date.now();
-    voiceRecorder.start();
-    showRecordingUI();
-  }catch(e){
-    toast('❌ تعذّر الوصول للميكروفون','err');
-    voiceRecorder=null;
-  }
-};
-window.stopVoice=function(){
-  if(voiceRecorder&&voiceRecorder.state==='recording'){
-    voiceRecorder.stop();
-  }
-};
-window.cancelVoice=function(){
-  if(voiceRecorder&&voiceRecorder.state==='recording'){
-    voiceChunks=[];
-    voiceRecorder.onstop=()=>{voiceRecorder=null;restoreComposer();};
-    voiceRecorder.stop();
-  }
-};
-function showRecordingUI(){
-  const composer=$('composer');if(!composer)return;
-  composer.dataset._origHtml=composer.innerHTML;
-  composer.innerHTML=`
-    <button type="button" class="ib-iconbtn" onclick="cancelVoice()">🗑</button>
-    <div class="ib-voice-record-ui">
-      <span class="ib-voice-dot"></span>
-      <span class="ib-voice-time" id="rec-time">0:00</span>
-      <span style="color:var(--ws-text-dim);font-size:var(--fs-base)">اضغط الميكروفون مرة أخرى لإرسال…</span>
-    </div>
-    <button type="button" class="ib-send" onclick="stopVoice()">▶</button>`;
-  if(voiceTimerInt)clearInterval(voiceTimerInt);
-  voiceTimerInt=setInterval(()=>{
-    const s=Math.floor((Date.now()-voiceStart)/1000);
-    const t=$('rec-time');if(t)t.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
-  },500);
-}
-function restoreComposer(){
-  if(voiceTimerInt){clearInterval(voiceTimerInt);voiceTimerInt=null;}
-  const composer=$('composer');if(!composer)return;
-  if(composer.dataset._origHtml){composer.innerHTML=composer.dataset._origHtml;delete composer.dataset._origHtml;}
-}
-async function uploadVoice(blob,duration){
-  if(!activeConvId)return;
-  toast('جاري رفع الرسالة الصوتية…','');
-  try{
-    const path=`chat/${activeConvId}/voice/${Date.now()}.webm`;
-    const r=ref(storage,path);
-    await uploadBytes(r,blob);
-    const url=await getDownloadURL(r);
-    await sendMessage({type:'voice',attachments:[{url,name:'voice.webm',size:blob.size,mime:'audio/webm',duration}]});
-  }catch(e){toast('❌ '+e.message,'err');}
-}
-
-// Voice playback
-let currentAudio=null;
-window.toggleVoice=function(btn,url){
-  if(currentAudio){
-    currentAudio.pause();
-    if(currentAudio._btn)currentAudio._btn.textContent='▶';
-    if(currentAudio._fill)currentAudio._fill.style.width='0%';
-    if(currentAudio.src===url){currentAudio=null;return;}
-  }
-  const a=new Audio(url);
-  currentAudio=a;
-  a._btn=btn;
-  const fill=btn.parentElement.querySelector('.ib-voice-progress-fill');
-  a._fill=fill;
-  a.play().then(()=>{btn.textContent='⏸';}).catch(_=>{});
-  a.ontimeupdate=()=>{if(fill&&a.duration)fill.style.width=(a.currentTime/a.duration*100)+'%';};
-  a.onended=()=>{btn.textContent='▶';if(fill)fill.style.width='0%';currentAudio=null;};
-};
+// ── Voice — delegated to voice-controller ──
+window.startVoice=()=>voiceCtrl.startRecording();
+window.stopVoice=()=>voiceCtrl.stopRecording();
+window.cancelVoice=()=>voiceCtrl.cancelRecording();
+window.toggleVoice=(btn,url)=>voiceCtrl.togglePlayback(btn,url);
 
 // ════════════════════════════════════════════════════════════════════
 //  Order share — public API for other pages
@@ -1556,364 +1353,39 @@ onAuthStateChanged(auth,async u=>{
   }catch(_){}
 });
 
-// ════════════════════════════════════════════════════════════════════
-//  📌 Pinned messages — تثبيت/إلغاء تثبيت + شريط في الأعلى + قائمة
-// ════════════════════════════════════════════════════════════════════
-window.actPin = async function(){
-  if(!activeMsgForAction) return;
-  const m = activeMsgForAction.data;
-  const newState = !m.pinned;
-  try {
-    await inboxActions.setMessagePinned({db,convId:activeConvId,messageId:m._id,pinned:newState,userId:currentUid,userName:currentUserName||''});
-    toast(newState?'📌 تم التثبيت':'تم إلغاء التثبيت','ok');
-  } catch(e){
-    toast('❌ '+e.message,'err');
-  }
-  closeMsgActions();
-};
+// ── Pinned messages — delegated to pins-controller ──
+window.actPin=async()=>{await pinsCtrl.pin();closeMsgActions();};
+function refreshPinStrip(){pinsCtrl.refreshStrip();}
+window.openPinnedList=()=>pinsCtrl.openList();
+window.closePinnedList=()=>pinsCtrl.closeList();
+window.unpinFromList=mid=>pinsCtrl.unpinFromList(mid);
+window.jumpFromPinned=mid=>pinsCtrl.jumpFromPinned(mid);
 
-// Refresh pin-strip whenever messages update
-function refreshPinStrip(){
-  const strip = $('pin-strip'); if (!strip) return;
-  const pinned = messages.filter(m => m.pinned && !m.deletedAt);
-  if (!pinned.length) { strip.classList.remove('show'); return; }
-  const latest = pinned[pinned.length - 1];
-  const preview = latest.text || (latest.type==='image'?'📷 صورة':latest.type==='file'?'📄 ملف':latest.type==='voice'?'🎤 صوتية':latest.type==='order_share'?'📦 أوردر':'رسالة');
-  $('pin-strip-text').textContent = preview.slice(0,80);
-  $('pin-strip-count').textContent = pinned.length;
-  $('pin-strip-count').style.display = pinned.length > 1 ? '' : 'none';
-  strip.classList.add('show');
-}
+// ── In-conversation search — delegated to search-controller ──
+window.toggleConvSearch=()=>searchCtrl.toggle();
+window.onConvSearch=()=>searchCtrl.search();
+window.onConvSearchKey=e=>searchCtrl.onKey(e);
+window.convSearchNav=dir=>searchCtrl.navigate(dir);
 
-window.openPinnedList = function(){
-  // close chat menu if open
-  $('chat-menu')?.classList.remove('show');
-  const list = $('pinned-list'); if (!list) return;
-  const pinned = messages.filter(m => m.pinned && !m.deletedAt).sort((a,b)=>(b.pinnedAt?.seconds||0)-(a.pinnedAt?.seconds||0));
-  if (!pinned.length) {
-    list.innerHTML = '<div class="mh-empty-state mh-empty-state-sm">لا توجد رسائل مثبتة</div>';
-  } else {
-    list.innerHTML = pinned.map(m => {
-      const preview = m.text || (m.type==='image'?'📷 صورة':m.type==='file'?'📄 '+(m.attachments?.[0]?.name||''):m.type==='voice'?'🎤 رسالة صوتية':m.type==='order_share'?'📦 أوردر مشارَك':'رسالة');
-      const when = m.pinnedAt?.toDate?.()?.toLocaleString('ar-EG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})||'';
-      return `<div class="mh-pinned-item" onclick="jumpFromPinned('${m._id}')">
-        <span class="mh-pinned-item-ico">📌</span>
-        <div class="flex-1 min-w-0">
-          <div class="mh-pinned-item-meta">${esc(m.senderName||'—')} · ${when}</div>
-          <div class="mh-pinned-item-text">${esc(preview)}</div>
-          ${m.pinnedByName?`<div class="mh-pinned-item-by">ثبّتها ${esc(m.pinnedByName)}</div>`:''}
-        </div>
-        <button type="button" class="mh-pinned-item-unpin" onclick="event.stopPropagation();unpinFromList('${m._id}')" title="إلغاء التثبيت">✕</button>
-      </div>`;
-    }).join('');
-  }
-  $('pinned-ov').classList.add('show');
-};
-window.closePinnedList = ()=>$('pinned-ov').classList.remove('show');
-window.unpinFromList = async function(mid){
-  try {
-    await inboxActions.setMessagePinned({db,convId:activeConvId,messageId:mid,pinned:false});
-    toast('تم إلغاء التثبيت','ok');
-  } catch(e){ toast('❌ '+e.message,'err'); }
-};
-window.jumpFromPinned = function(mid){
-  closePinnedList();
-  setTimeout(()=>jumpToMsg(mid), 200);
-};
-
-// ════════════════════════════════════════════════════════════════════
-//  🔍 In-conversation search — بحث داخل المحادثة + ↑↓ navigation
-// ════════════════════════════════════════════════════════════════════
-let __cSearchMatches = []; let __cSearchIdx = 0;
-
-window.toggleConvSearch = function(){
-  const bar = $('csearch-bar'); if (!bar) return;
-  const showing = bar.classList.toggle('show');
-  if (showing) {
-    setTimeout(()=>$('csearch-input')?.focus(), 50);
-  } else {
-    $('csearch-input').value = '';
-    clearConvSearchHighlights();
-    __cSearchMatches = []; __cSearchIdx = 0;
-    $('csearch-info').textContent = '—';
-  }
-};
-
-function clearConvSearchHighlights(){
-  document.querySelectorAll('.ib-msg.match-hl').forEach(el => el.classList.remove('match-hl'));
-}
-
-window.onConvSearch = function(){
-  const q = ($('csearch-input').value || '').trim().toLowerCase();
-  clearConvSearchHighlights();
-  if (!q) { __cSearchMatches=[]; __cSearchIdx=0; $('csearch-info').textContent='—'; return; }
-  __cSearchMatches = messages.filter(m => !m.deletedAt && ((m.text||'').toLowerCase().includes(q) || (m.attachments?.[0]?.name||'').toLowerCase().includes(q))).map(m => m._id);
-  if (!__cSearchMatches.length) { $('csearch-info').textContent = '0/0'; return; }
-  __cSearchMatches.forEach(mid => {
-    const el = document.querySelector(`.ib-msg[data-mid="${mid}"]`);
-    if (el) el.classList.add('match-hl');
-  });
-  __cSearchIdx = __cSearchMatches.length - 1; // go to most recent match
-  $('csearch-info').textContent = `${__cSearchIdx+1}/${__cSearchMatches.length}`;
-  jumpToMsg(__cSearchMatches[__cSearchIdx]);
-};
-
-window.onConvSearchKey = function(e){
-  if (e.key === 'Enter') { e.preventDefault(); convSearchNav(e.shiftKey ? -1 : 1); }
-  else if (e.key === 'Escape') { toggleConvSearch(); }
-};
-
-window.convSearchNav = function(dir){
-  if (!__cSearchMatches.length) return;
-  __cSearchIdx = (__cSearchIdx + dir + __cSearchMatches.length) % __cSearchMatches.length;
-  $('csearch-info').textContent = `${__cSearchIdx+1}/${__cSearchMatches.length}`;
-  jumpToMsg(__cSearchMatches[__cSearchIdx]);
-};
-
-// (pin-strip + search highlights are refreshed from inside renderMessages above)
-
-// ════════════════════════════════════════════════════════════════════
-//  📸 اللحظات (Stories) — 24h
-// ════════════════════════════════════════════════════════════════════
-let allStories = [];               // raw docs (non-expired)
-let viewedStoryIds = new Set();    // local set of {storyId} we've marked viewed in this session
-let __sv = { groups: [], gIdx: 0, sIdx: 0, timer: null, paused: false };
-let __as = { mode: 'text', bgColor: '#00a884', imgFile: null, imgPreview: '' };
-
-const AS_COLORS = ['#00a884','#005c4b','#1e88e5','#8e24aa','#e53935','#fb8c00','#43a047','#0097a7','#f57c00','#212121'];
-
-// Subscribe to stories collection — filter expired client-side
-// RULE G3: bounded query. Stories expire after 24h so 200 covers ~3 days
-// of activity even at the high end (66/day = 1 every ~20min). Older docs
-// remain readable on-demand via direct getDoc if ever needed.
-function subscribeStories() {
-  if (!currentUid) return;
-  const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(200));
-  onSnapshot(q, (snap) => {
-    const now = Date.now();
-    allStories = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
-      .filter(s => {
-        const exp = s.expiresAt?.seconds ? s.expiresAt.seconds * 1000 : (s.createdAt?.seconds ? (s.createdAt.seconds + 86400) * 1000 : 0);
-        return exp > now;
-      })
-      .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    renderStoriesRow();
-  }, (err) => {
-    console.warn('[stories] subscription failed:', err.code, err.message);
-  });
-}
-
-// Group stories by user
-// Stories aggregation + row HTML — pure logic في features/inbox/views/stories-view.js
-const groupStoriesByUser = () => groupStoriesByUserUid(allStories, currentUid);
-
-function renderStoriesRow() {
-  const row = $('stories-row'); if (!row) return;
-  row.innerHTML = buildStoriesRowHTML({
-    groups: groupStoriesByUser(),
-    currentUid, currentUserName, currentRole,
-    allUsers, roleColorMap: ROLE_COLOR,
-  });
-}
-
-// ── Story viewer ──
-window.openStoryViewer = function(userId) {
-  const groups = groupStoriesByUser();
-  const idx = groups.findIndex(g => g.uid === userId);
-  if (idx < 0) return;
-  __sv.groups = groups; __sv.gIdx = idx; __sv.sIdx = 0;
-  // skip already-viewed stories for non-self
-  if (userId !== currentUid) {
-    const firstUnviewed = groups[idx].stories.findIndex(s => !(s.viewers || []).includes(currentUid));
-    if (firstUnviewed > 0) __sv.sIdx = firstUnviewed;
-  }
-  $('sv-ov').classList.add('show');
-  showCurrentStory();
-};
-
-window.closeStoryViewer = function() {
-  $('sv-ov').classList.remove('show');
-  if (__sv.timer) { clearInterval(__sv.timer); __sv.timer = null; }
-  __sv.paused = false;
-};
-
-function showCurrentStory() {
-  if (__sv.timer) { clearInterval(__sv.timer); __sv.timer = null; }
-  // pure helper في features/inbox/views/stories-view.js
-  const info = getCurrentStoryViewInfo({
-    group: __sv.groups[__sv.gIdx], sIdx: __sv.sIdx,
-    currentUid, allUsers, roleColorMap: ROLE_COLOR,
-  });
-  if (!info) { closeStoryViewer(); return; }
-  const {story:s, name, color:col, createdAtLabel, barsHTML, viewersCount, canDelete} = info;
-  $('sv-hdr-av').textContent = name.charAt(0).toUpperCase();
-  $('sv-hdr-av').style.background = col;
-  $('sv-hdr-name').textContent = name;
-  $('sv-hdr-time').textContent = createdAtLabel;
-  $('sv-bars').innerHTML = barsHTML;
-
-  // stage
-  const stage = $('sv-stage');
-  const navL = stage.querySelector('.ib-sv-nav-l'); const navR = stage.querySelector('.ib-sv-nav-r');
-  stage.innerHTML = '';
-  if (s.type === 'image' && s.mediaUrl) {
-    const img = document.createElement('img');
-    img.src = s.mediaUrl;
-    stage.appendChild(img);
-    if (s.text) {
-      const cap = document.createElement('div');
-      cap.className = 'ib-sv-caption';
-      cap.textContent = s.text;
-      stage.appendChild(cap);
-    }
-  } else {
-    const div = document.createElement('div');
-    div.className = 'ib-sv-text';
-    div.style.background = s.bgColor || '#00a884';
-    div.textContent = s.text || '';
-    stage.appendChild(div);
-  }
-  stage.appendChild(navL); stage.appendChild(navR);
-
-  $('sv-viewers-count').textContent = viewersCount;
-  $('sv-del-btn').style.display = canDelete ? '' : 'none';
-
-  // mark viewed
-  if (!canDelete && !viewedStoryIds.has(s._id) && !(s.viewers || []).includes(currentUid)) {
-    viewedStoryIds.add(s._id);
-    inboxActions.recordStoryView({db,storyId:s._id,userId:currentUid}).catch(_=>{});
-  }
-
-  // animate progress
-  const DURATION = 5000;
-  const fill = $(`sv-fill-${__sv.sIdx}`);
-  if (fill) {
-    fill.style.transition = 'none';
-    fill.style.width = '0%';
-    requestAnimationFrame(() => { fill.style.transition = `width ${DURATION}ms linear`; fill.style.width = '100%'; });
-  }
-  __sv.timer = setTimeout(() => storyNav(1), DURATION);
-}
-
-window.storyNav = function(dir) {
-  if (__sv.timer) { clearTimeout(__sv.timer); __sv.timer = null; }
-  const group = __sv.groups[__sv.gIdx];
-  if (!group) return;
-  __sv.sIdx += dir;
-  if (__sv.sIdx >= group.stories.length) {
-    // next user
-    __sv.gIdx++; __sv.sIdx = 0;
-    if (__sv.gIdx >= __sv.groups.length) { closeStoryViewer(); return; }
-  } else if (__sv.sIdx < 0) {
-    // prev user
-    __sv.gIdx--;
-    if (__sv.gIdx < 0) { __sv.gIdx = 0; __sv.sIdx = 0; }
-    else { __sv.sIdx = __sv.groups[__sv.gIdx].stories.length - 1; }
-  }
-  showCurrentStory();
-};
-
-window.deleteCurrentStory = async function() {
-  const group = __sv.groups[__sv.gIdx]; if (!group) return;
-  const s = group.stories[__sv.sIdx]; if (!s || s.userId !== currentUid) return;
-  if (!confirm('حذف هذه اللحظة؟')) return;
-  try {
-    await inboxActions.deleteStory({db,storyId:s._id});
-    toast('🗑 تم حذف اللحظة', 'ok');
-    closeStoryViewer();
-  } catch(e) { toast('❌ ' + e.message, 'err'); }
-};
-
-window.toggleViewers = function() {
-  // simple toast with viewer names
-  const group = __sv.groups[__sv.gIdx]; if (!group) return;
-  const s = group.stories[__sv.sIdx]; if (!s) return;
-  const others = (s.viewers || []).filter(u => u !== currentUid);
-  if (!others.length) { toast('لا يوجد مشاهدون بعد', 'ok'); return; }
-  const names = others.slice(0, 5).map(uid => allUsers.find(u => u._id === uid)?.name || 'موظف').join('، ');
-  toast(`👁 شاهدها: ${names}${others.length > 5 ? ` و${others.length - 5} آخرين` : ''}`, 'ok');
-};
-
-// ── Add story ──
-window.openAddStory = function() {
-  __as = { mode: 'text', bgColor: AS_COLORS[0], imgFile: null, imgPreview: '' };
-  $('as-txt').value = '';
-  $('as-caption').value = '';
-  $('as-preview').innerHTML = 'اختر صورة من جهازك';
-  $('as-img-submit').disabled = true;
-  switchAddStoryTab('text');
-  // render colors
-  $('as-colors').innerHTML = AS_COLORS.map((c, i) => `<div class="ib-as-col ${i===0?'sel':''}" style="background:${c}" onclick="pickAsColor('${c}',this)"></div>`).join('');
-  $('as-ov').classList.add('show');
-};
-window.closeAddStory = () => $('as-ov').classList.remove('show');
-window.switchAddStoryTab = function(mode) {
-  __as.mode = mode;
-  $('as-tab-text').classList.toggle('active', mode === 'text');
-  $('as-tab-image').classList.toggle('active', mode === 'image');
-  $('as-body-text').style.display = mode === 'text' ? '' : 'none';
-  $('as-body-image').style.display = mode === 'image' ? '' : 'none';
-};
-window.pickAsColor = function(c, el) {
-  __as.bgColor = c;
-  document.querySelectorAll('.ib-as-col').forEach(x => x.classList.remove('sel'));
-  el.classList.add('sel');
-};
-window.onAsFileSelected = function() {
-  const f = $('as-file').files[0]; if (!f) return;
-  __as.imgFile = f;
-  const url = URL.createObjectURL(f);
-  __as.imgPreview = url;
-  $('as-preview').innerHTML = `<img src="${url}" loading="lazy" decoding="async" alt="">`;
-  $('as-img-submit').disabled = false;
-};
-
-async function postStory(data) {
-  await inboxActions.postStory({
-    db, data,
-    userId: currentUid,
-    userName: currentUserName || 'موظف',
-    color: colorOf(currentRole) || '#00a884',
-  });
-}
-
-window.submitTextStory = async function() {
-  const txt = $('as-txt').value.trim();
-  if (!txt) { toast('اكتب نصاً أولاً', 'err'); return; }
-  try {
-    await postStory({ type: 'text', text: txt, bgColor: __as.bgColor });
-    toast('✅ نُشرت اللحظة', 'ok');
-    closeAddStory();
-  } catch(e) { toast('❌ ' + e.message, 'err'); }
-};
-
-window.submitImageStory = async function() {
-  if (!__as.imgFile) { toast('اختر صورة', 'err'); return; }
-  const btn = $('as-img-submit'); btn.disabled = true; btn.textContent = 'جاري الرفع…';
-  try {
-    const path = `stories/${currentUid}/${Date.now()}_${__as.imgFile.name}`;
-    const r = ref(storage, path);
-    await uploadBytes(r, __as.imgFile);
-    const url = await getDownloadURL(r);
-    await postStory({ type: 'image', mediaUrl: url, text: $('as-caption').value.trim() });
-    toast('✅ نُشرت اللحظة', 'ok');
-    closeAddStory();
-  } catch(e) {
-    toast('❌ ' + e.message, 'err');
-  } finally {
-    btn.disabled = false; btn.textContent = 'نشر اللحظة';
-  }
-};
-
-// Subscribe on auth ready (run after presence subscription)
-const __origSubscribeOnAuth = window.__subscribeChatData;
-// Try kicking off stories once we have currentUid — poll briefly if needed
-(function waitForAuthAndSubscribeStories() {
-  if (typeof currentUid !== 'undefined' && currentUid) {
-    subscribeStories();
-  } else {
-    setTimeout(waitForAuthAndSubscribeStories, 500);
-  }
+// ── Stories — delegated to stories-controller ──
+function subscribeStories(){storiesCtrl.subscribe();}
+function renderStoriesRow(){storiesCtrl.renderRow();}
+window.openStoryViewer=uid=>storiesCtrl.openViewer(uid);
+window.closeStoryViewer=()=>storiesCtrl.closeViewer();
+window.storyNav=dir=>storiesCtrl.navigate(dir);
+window.deleteCurrentStory=()=>storiesCtrl.deleteCurrentStory();
+window.toggleViewers=()=>storiesCtrl.toggleViewers();
+window.openAddStory=()=>storiesCtrl.openAddStory();
+window.closeAddStory=()=>storiesCtrl.closeAddStory();
+window.switchAddStoryTab=mode=>storiesCtrl.switchTab(mode);
+window.pickAsColor=(c,el)=>storiesCtrl.pickColor(c,el);
+window.onAsFileSelected=()=>storiesCtrl.onFileSelected();
+window.submitTextStory=()=>storiesCtrl.submitText();
+window.submitImageStory=()=>storiesCtrl.submitImage();
+// Kick off stories once currentUid is available
+(function waitForAuthAndSubscribeStories(){
+  if(typeof currentUid!=='undefined'&&currentUid){subscribeStories();}
+  else{setTimeout(waitForAuthAndSubscribeStories,500);}
 })();
 </script>
 <script src="sw-register.js"></script>

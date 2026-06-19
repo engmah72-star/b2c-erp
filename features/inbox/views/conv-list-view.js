@@ -63,14 +63,14 @@ function isMuted(c, currentUid) {
 
 function emptySearch() {
   return `<div class="mh-empty-state">
-    <div class="mh-empty-state__icon">🔍</div>
+    <div class="mh-empty-state-icon">🔍</div>
     <div class="mh-empty-state__text">لا نتائج</div>
   </div>`;
 }
 
 function emptyArchived() {
   return `<div class="mh-empty-state">
-    <div class="mh-empty-state__icon">📂</div>
+    <div class="mh-empty-state-icon">📂</div>
     <div class="mh-empty-state__text">لا توجد محادثات مؤرشفة</div>
   </div>`;
 }
@@ -78,7 +78,7 @@ function emptyArchived() {
 function emptyNoConversations(currentRole, currentUid) {
   const uidShort = (currentUid || '').slice(0, 6);
   return `<div class="mh-empty-state mh-empty-state--hero">
-    <div class="mh-empty-state__icon">💬</div>
+    <div class="mh-empty-state-icon">💬</div>
     <strong class="mh-empty-state__title">لا توجد محادثات بعد</strong>
     <span class="mh-empty-state__detail">role: ${esc(currentRole || 'غير محدد')} · uid: ${esc(uidShort)}…</span>
     <div class="mh-empty-state__actions">
@@ -91,7 +91,7 @@ function emptyNoConversations(currentRole, currentUid) {
 
 function emptyDefault() {
   return `<div class="mh-empty-state">
-    <div class="mh-empty-state__icon">✏️</div>
+    <div class="mh-empty-state-icon">✏️</div>
     <div class="mh-empty-state__text">ابدأ محادثة بالضغط على ✏️</div>
   </div>`;
 }

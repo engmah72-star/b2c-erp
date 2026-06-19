@@ -42,6 +42,42 @@ export const ACTION_ITEM_STATUS = Object.freeze({
   DISMISSED: 'dismissed',
 });
 
+export const DELIVERY_STATUS = Object.freeze({
+  SENDING: 'sending',
+  SENT: 'sent',
+  DELIVERED: 'delivered',
+  READ: 'read',
+  FAILED: 'failed',
+});
+
+export const MESSAGE_TEMPLATES = Object.freeze([
+  { id: 'order_update', label: 'تحديث أوردر', text: '📦 تحديث على الأوردر #{code}: {detail}' },
+  { id: 'design_ready', label: 'التصميم جاهز', text: '🎨 التصميم جاهز للمراجعة — الأوردر #{code}' },
+  { id: 'approval_needed', label: 'اعتماد مطلوب', text: '⏳ الأوردر #{code} بحاجة لاعتمادك' },
+  { id: 'shipping_update', label: 'تحديث الشحن', text: '🚚 الشحنة للأوردر #{code}: {detail}' },
+  { id: 'deadline_reminder', label: 'تذكير موعد', text: '⏰ تنبيه: الموعد النهائي للأوردر #{code} بعد {hours} ساعة' },
+]);
+
+// ── Priority scoring weights (named constants) ──
+const SCORE = Object.freeze({
+  URGENT_PRIORITY: 400,
+  HIGH_PRIORITY: 200,
+  UNREAD_PER_MSG: 15,
+  UNREAD_CAP: 150,
+  MENTION_BONUS: 100,
+  RECENT_30MIN: 100,
+  RECENT_2H: 50,
+  RECENT_8H: 20,
+  OVERDUE_ORDER: 150,
+  DUE_24H: 100,
+  DUE_72H: 50,
+  HIGH_UNREAD_THRESHOLD: 5,
+  MAX_SCORE: 1000,
+  RECENCY_30MIN: 30,
+  RECENCY_2H: 120,
+  RECENCY_8H: 480,
+});
+
 export const WORKSPACE_TABS = Object.freeze([
   { id: 'all', label: 'الكل', ico: '💬', filter: null },
   { id: 'priority', label: 'الأولوية', ico: '🔴', filter: 'priority' },
@@ -114,7 +150,7 @@ export function filterByCategory(conversations, category, currentUid) {
     return conversations.filter(c =>
       c.priority === PRIORITY_LEVELS.URGENT ||
       c.priority === PRIORITY_LEVELS.HIGH ||
-      (c.unreadCount?.[currentUid] || 0) > 5 ||
+      (c.unreadCount?.[currentUid] || 0) > SCORE.HIGH_UNREAD_THRESHOLD ||
       c._hasMention
     );
   }
@@ -151,29 +187,24 @@ export function countByCategory(conversations, currentUid) {
  */
 export function computePriorityScore(conv, currentUid, nowMs = Date.now()) {
   let score = 0;
-  // Manual priority
-  if (conv.priority === PRIORITY_LEVELS.URGENT) score += 400;
-  else if (conv.priority === PRIORITY_LEVELS.HIGH) score += 200;
-  // Unread messages
+  if (conv.priority === PRIORITY_LEVELS.URGENT) score += SCORE.URGENT_PRIORITY;
+  else if (conv.priority === PRIORITY_LEVELS.HIGH) score += SCORE.HIGH_PRIORITY;
   const unread = conv.unreadCount?.[currentUid] || 0;
-  score += Math.min(unread * 15, 150);
-  // Mentions
-  if (conv._hasMention) score += 100;
-  // Recency (last message within 30 min = +100, within 2h = +50, etc.)
+  score += Math.min(unread * SCORE.UNREAD_PER_MSG, SCORE.UNREAD_CAP);
+  if (conv._hasMention) score += SCORE.MENTION_BONUS;
   const lastMs = (conv.lastMessageAt?.seconds || 0) * 1000;
   const ageMin = (nowMs - lastMs) / 60000;
-  if (ageMin < 30) score += 100;
-  else if (ageMin < 120) score += 50;
-  else if (ageMin < 480) score += 20;
-  // Order deadline proximity (if order_thread with deadline)
+  if (ageMin < SCORE.RECENCY_30MIN) score += SCORE.RECENT_30MIN;
+  else if (ageMin < SCORE.RECENCY_2H) score += SCORE.RECENT_2H;
+  else if (ageMin < SCORE.RECENCY_8H) score += SCORE.RECENT_8H;
   if (conv.orderRef?.deadline) {
     const dl = new Date(conv.orderRef.deadline).getTime();
     const hoursLeft = (dl - nowMs) / 3600000;
-    if (hoursLeft < 0) score += 150; // overdue
-    else if (hoursLeft < 24) score += 100;
-    else if (hoursLeft < 72) score += 50;
+    if (hoursLeft < 0) score += SCORE.OVERDUE_ORDER;
+    else if (hoursLeft < 24) score += SCORE.DUE_24H;
+    else if (hoursLeft < 72) score += SCORE.DUE_72H;
   }
-  return Math.min(score, 1000);
+  return Math.min(score, SCORE.MAX_SCORE);
 }
 
 /**
@@ -432,4 +463,73 @@ export function stageColor(stage) { return STAGE_COLORS[stage] || '#6b7280'; }
 export function fmtPrice(v) {
   const n = Number(v) || 0;
   return n.toLocaleString('ar-EG') + ' ج.م';
+}
+
+// ══════════════════════════════════════════
+// DELIVERY STATUS
+// ══════════════════════════════════════════
+
+/**
+ * Resolve the delivery status of a message based on its flags.
+ * @param {Object} msg
+ * @param {string} currentUid - the sender
+ * @param {Array} participants - conversation participant UIDs
+ * @returns {string} one of DELIVERY_STATUS values
+ */
+export function resolveDeliveryStatus(msg, currentUid, participants = []) {
+  if (!msg || msg.senderId !== currentUid) return '';
+  if (msg._failed) return DELIVERY_STATUS.FAILED;
+  if (!msg.createdAt) return DELIVERY_STATUS.SENDING;
+  const others = participants.filter(uid => uid !== currentUid);
+  if (!others.length) return DELIVERY_STATUS.SENT;
+  const readBy = msg.readBy || {};
+  const allRead = others.every(uid => readBy[uid]);
+  if (allRead) return DELIVERY_STATUS.READ;
+  const deliveredTo = msg.deliveredTo || {};
+  const allDelivered = others.every(uid => deliveredTo[uid]);
+  if (allDelivered) return DELIVERY_STATUS.DELIVERED;
+  return DELIVERY_STATUS.SENT;
+}
+
+/**
+ * Format a delivery status for display (tick marks).
+ * @param {string} status
+ * @returns {string} icon
+ */
+export function deliveryStatusIcon(status) {
+  switch (status) {
+    case DELIVERY_STATUS.SENDING: return '🕐';
+    case DELIVERY_STATUS.SENT: return '✓';
+    case DELIVERY_STATUS.DELIVERED: return '✓✓';
+    case DELIVERY_STATUS.READ: return '✓✓';
+    case DELIVERY_STATUS.FAILED: return '⚠';
+    default: return '';
+  }
+}
+
+/**
+ * CSS class for delivery status styling.
+ * @param {string} status
+ * @returns {string}
+ */
+export function deliveryStatusClass(status) {
+  if (status === DELIVERY_STATUS.READ) return 'mh-delivery--read';
+  if (status === DELIVERY_STATUS.FAILED) return 'mh-delivery--failed';
+  return 'mh-delivery--default';
+}
+
+// ══════════════════════════════════════════
+// MESSAGE TEMPLATES
+// ══════════════════════════════════════════
+
+/**
+ * Fill a message template with dynamic values.
+ * @param {string} templateId
+ * @param {Object} vars - e.g. { code: 'ABC123', detail: 'تم الطباعة' }
+ * @returns {string|null} filled text or null if template not found
+ */
+export function fillTemplate(templateId, vars = {}) {
+  const tmpl = MESSAGE_TEMPLATES.find(t => t.id === templateId);
+  if (!tmpl) return null;
+  return tmpl.text.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? '');
 }
