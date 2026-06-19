@@ -304,6 +304,44 @@ let actionItems=[];
 let allActionItems=[];
 let activityFeed=[];
 let unsubActionItems=null;
+let _convCacheTimer=null;
+
+// ── Conversation cache (sessionStorage) ──
+function _convCacheKey(){return 'mh_convs_'+currentUid;}
+function _saveConvCache(){
+  if(!currentUid)return;
+  try{
+    const plain=conversations.map(c=>{
+      const o={};
+      for(const[k,v]of Object.entries(c)){
+        if(v&&typeof v==='object'&&typeof v.toDate==='function'){
+          o[k]={seconds:Math.floor(v.toDate().getTime()/1000),nanoseconds:0,_ts:true};
+        }else if(k==='lastMessageAt'&&v&&v.seconds){
+          o[k]={seconds:v.seconds,nanoseconds:v.nanoseconds||0,_ts:true};
+        }else{o[k]=v;}
+      }
+      return o;
+    });
+    sessionStorage.setItem(_convCacheKey(),JSON.stringify(plain));
+  }catch(_){}
+}
+function _restoreConvCache(){
+  if(!currentUid)return false;
+  try{
+    const raw=sessionStorage.getItem(_convCacheKey());
+    if(!raw)return false;
+    const arr=JSON.parse(raw);
+    if(!Array.isArray(arr)||!arr.length)return false;
+    conversations=arr;
+    renderConvList();
+    console.log('[inbox] restored',arr.length,'conversations from cache');
+    return true;
+  }catch(_){return false;}
+}
+function _debouncedSaveConvCache(){
+  if(_convCacheTimer)return;
+  _convCacheTimer=setTimeout(()=>{_convCacheTimer=null;_saveConvCache();},2000);
+}
 
 // ── Shared state getter (passed to controllers) ──
 const getState=()=>({currentUid,currentUserName,currentRole,currentUserData,allUsers,allOrders,conversations,activeConvId,activeConv,messages,presenceMap,roleColorMap:ROLE_COLOR,roleLabelMap:ROLE_LABEL,colorOf:role=>ROLE_COLOR[role]||'var(--dim-arch)'});
@@ -402,6 +440,7 @@ function subscribeConversations(){
     conversations=snap.docs.map(d=>({...d.data(),_id:d.id}));
     console.log('[inbox] conversations updated:',conversations.length);
     renderConvList();
+    _debouncedSaveConvCache();
     // Deep-link ?conv=<id> (مثلاً من زر «محادثة العميل» في صفحة الأوردر): افتح الخيط
     // مرة واحدة فور توفّره في القائمة (الموظف participant).
     if(pendingConvId && activeConvId!==pendingConvId && conversations.some(c=>c._id===pendingConvId)){
@@ -573,6 +612,7 @@ window.openConv=async function(id){
 window.closeChat=function(){
   $('ib-wrap').classList.remove('show-chat');
   activeConvId=null;activeConv=null;
+  _scrollListenerAttached=false;
   if(unsubMessages){unsubMessages();unsubMessages=null;}
   if(unsubActionItems){unsubActionItems();unsubActionItems=null;}
   actionItems=[];
@@ -590,13 +630,42 @@ function renderChat(){
   });
   renderMessages();
   renderChatHeader();
+  // Insert scroll-to-bottom button inside the messages area wrapper
+  const msgsEl=$('ib-msgs');
+  if(msgsEl&&!$('ib-scroll-btn')){
+    const btn=document.createElement('button');
+    btn.type='button';btn.className='ib-scroll-bottom';btn.id='ib-scroll-btn';
+    btn.onclick=()=>scrollToBottom();
+    btn.innerHTML='⬇ <span class="badge" id="scroll-badge"></span>';
+    msgsEl.parentNode.insertBefore(btn,msgsEl.nextSibling);
+  }
+  _attachScrollListener();
   $('ib-input')?.focus();
 }
+
+// ── Scroll-to-bottom button logic ──
+let _scrollListenerAttached=false;
+function _attachScrollListener(){
+  if(_scrollListenerAttached)return;
+  const msgsEl=$('ib-msgs');if(!msgsEl)return;
+  _scrollListenerAttached=true;
+  msgsEl.addEventListener('scroll',()=>{
+    const btn=$('ib-scroll-btn');if(!btn)return;
+    const distFromBottom=msgsEl.scrollHeight-msgsEl.scrollTop-msgsEl.clientHeight;
+    if(distFromBottom>300){btn.classList.add('show');}
+    else{btn.classList.remove('show');}
+  },{passive:true});
+}
+window.scrollToBottom=function(){
+  const msgsEl=$('ib-msgs');if(!msgsEl)return;
+  msgsEl.scrollTo({top:msgsEl.scrollHeight,behavior:'smooth'});
+  const btn=$('ib-scroll-btn');if(btn)btn.classList.remove('show');
+};
 
 function renderChatHeader(){
   const sub=$('chat-hdr-sub');if(!sub||!activeConv)return;
   const r=buildChatHeaderSub({activeConv,presenceMap,currentUid});
-  sub.textContent=r.text;
+  if(r.isHTML){sub.innerHTML=r.text;}else{sub.textContent=r.text;}
   sub.className=r.className;
 }
 
@@ -750,7 +819,27 @@ window.sendText=async function(){
   if(mentions.length)payload.mentions=mentions;
   const reply=msgActionsCtrl.getReplyTo();
   if(reply){payload.replyTo=reply;msgActionsCtrl.cancelReply();}
-  await sendMessage(payload);
+  // Optimistic UI — show the message instantly before Firestore confirms
+  const optId='_opt_'+Date.now();
+  const optMsg={
+    _id:optId,_optimistic:true,
+    senderId:currentUid,senderName:currentUserName,
+    text:text,type:'text',
+    createdAt:{toDate:()=>new Date()},
+    readBy:{},
+    mentions:mentions||[],
+  };
+  if(payload.replyTo)optMsg.replyTo=payload.replyTo;
+  messages.push(optMsg);
+  renderMessages();
+  try{
+    await sendMessage(payload);
+  }catch(e){
+    // Remove optimistic message on failure
+    messages=messages.filter(m=>m._id!==optId);
+    renderMessages();
+    toast('❌ '+e.message,'err');
+  }
   const send=$('ib-send'),mic=$('ib-mic');if(send&&mic){send.style.display='none';mic.style.display='flex';}
 };
 async function sendMessage(payload){
@@ -1322,6 +1411,7 @@ onAuthStateChanged(auth,async u=>{
   }
   buildSidebar();
   startHeartbeat();
+  _restoreConvCache();
   await ensureChannels();
   subscribeConversations();
   subscribePresence();

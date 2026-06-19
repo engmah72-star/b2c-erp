@@ -459,6 +459,7 @@ export function buildMessagesHTML({ messages = [], activeConv, currentUid, rende
       body = `<div class="ib-msg-img-wrap">
         <img class="ib-msg-img" src="${a.url}"
              onclick="openLb('${a.url}')" alt=""
+             style="opacity:0" onload="this.style.opacity=1"
              loading="lazy" decoding="async">
       </div>`;
 
