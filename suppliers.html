@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -453,6 +454,17 @@ let suppliers=[],shippers=[],payments=[],orders=[],wallets=[];
 let masterCategories=[];
 let currentTab='printers',activeId=null,activeSup=null,userName='',role='',userPerms={};
 let pageSize=20,compareSet=new Set(),advFilterOpen=false,txDateFrom='',txDateTo='';
+
+const _ps=PageState.init('suppliers',{
+  fields:()=>({currentTab,activeId}),
+  search:'search-inp', scroll:'.content',
+  snapshots:['k-total','k-due','k-paid','k-orders','ds-total','ds-due','ds-paid','ds-orders','tc-printers','tc-shippers','sub']
+});
+const _restored=_ps.data;
+if(_restored){
+  currentTab=_restored.currentTab||'printers';
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
 let prevMonthPayments=null;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
@@ -485,10 +497,18 @@ onAuthStateChanged(auth,async u=>{
     buildSidebar(d,'suppliers.html');
   }
   loadMasterLists();
+  if(_restored){
+    setTimeout(()=>{
+      if(_restored._search){const si=document.getElementById('search-inp');if(si){si.value=_restored._search;if(suppliers.length||shippers.length)renderList();}}
+      const tabBtn=document.querySelector(`.sup-tab[data-tab="${currentTab}"]`);
+      if(tabBtn)tabBtn.click();
+    },120);
+  }
+  let __supRestored=false;
   // Listeners
   // RULE G3: bound all suppliers-page subscriptions. Safety caps well above
   // realistic counts; the page can later add pagination when data grows.
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{window.markSynced&&window.markSynced();suppliers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'printer'}));renderAll();});
+  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{window.markSynced&&window.markSynced();_ps.markFresh();suppliers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'printer'}));renderAll();if(!__supRestored&&_restored){__supRestored=true;_ps.restoreUI(()=>{if(_restored.activeId)window.openSupplier&&window.openSupplier(_restored.activeId);});}});
   onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id,supType:'shipper'}));renderAll();});
   onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});
   onSnapshot(query(collection(db,'orders'),where('stage','in',['production','printing','shipping','archived']),limit(3000)),s=>{orders=s.docs.map(d=>({...d.data(),_id:d.id}));renderAll();});

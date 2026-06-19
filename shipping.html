@@ -15,6 +15,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
@@ -321,6 +322,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref as _stRef, uploadBytesResumable as _stUploadResumable, getDownloadURL as _stGetURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 import { storage as _storage } from "./core/firebase-init.js";
+import { assetManager } from './core/asset-manager.js';
 import { shippingActions } from './shipping-actions.js';
 import { employeeActions } from './employee-actions.js';
 import { mountAttendanceSelf } from './core/attendance-self-widget.js';
@@ -351,6 +353,18 @@ let todayAtt = null;       // attendance record اليوم (الحضور — م�
 let currentTab = 'ready';
 let pendingOrder = null;   // for modals
 let pendingOrders = [];    // for bulk settle
+
+const _ps=PageState.init('shipping',{
+  fields:()=>({currentTab}),
+  search:'f-search', scroll:'.content',
+  snapshots:['cnt-ready','cnt-upcoming','cnt-transit','cnt-collect','cnt-settle','cnt-delays','cnt-returns'],
+  htmlSnapshots:['kpi-row']
+});
+const _restored=_ps.data;
+if(_restored){
+  currentTab=_restored.currentTab||'ready';
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
 let settlements = [];      // shipping_settlements for reverse list
 const expandedRows = new Set();  // orderIds currently expanded inline
 
@@ -375,10 +389,23 @@ initAuth(async (state) => {
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
 
+  let __shippingRestored=false;
+  if(_restored){
+    setTimeout(()=>{
+      if(_restored._search){const si=$('f-search');if(si){si.value=_restored._search;if(orders.length)refreshAll();}}
+      window.switchTab&&window.switchTab(currentTab);
+    },120);
+  }
+
+  assetManager.observe('.content');
   startListeners({
     onOrders: (list) => {
       orders = list || [];
-      refreshAll();
+      refreshAll();_ps.markFresh();
+      if(!__shippingRestored && _restored && !__urlOrderId){
+        __shippingRestored=true;
+        _ps.restoreUI(null);
+      }
       if (__urlOrderId && !__urlOpened && orders.find(o => o._id === __urlOrderId)) {
         __urlOpened = true;
         setTimeout(() => window.openOrderDetail && window.openOrderDetail(__urlOrderId), 300);

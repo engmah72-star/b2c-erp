@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script type="module" src="inbox-badge.js"></script>
@@ -145,6 +146,21 @@ import { collection, doc, getDoc, getDocs, query, where, orderBy, limit, onSnaps
 let allTx=[],wallets=[],filtered=[],displayLimit=200,currentUser=null,userName='',userRole='';
 const PAGE_SIZE=200;
 
+const _ps=PageState.init('ledger',{
+  fields:()=>{
+    const $=id=>document.getElementById(id);
+    return {
+      fFrom:$('f-from')?.value||'',fTo:$('f-to')?.value||'',
+      fType:$('f-type')?.value||'',fCat:$('f-cat')?.value||'',
+      fWallet:$('f-wallet')?.value||''
+    };
+  },
+  search:'f-search', scroll:'.content',
+  snapshots:['s-in','s-out','s-net','s-cnt','sub']
+});
+const _restored=_ps.data;
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
+
 // ── Helpers ──
 const $ = id => document.getElementById(id);
 const setText = (id,v) => {const e=$(id);if(e)e.textContent=v;};
@@ -231,6 +247,14 @@ onAuthStateChanged(auth,async u=>{
       return;
     }
     initFromUrl();
+    if(_restored){
+      if(_restored.fFrom)$('f-from').value=_restored.fFrom;
+      if(_restored.fTo)$('f-to').value=_restored.fTo;
+      if(_restored.fType)$('f-type').value=_restored.fType;
+      if(_restored._search)$('f-search').value=_restored._search;
+      if(_restored.fCat)window.__pendingCat=_restored.fCat;
+      if(_restored.fWallet)window.__pendingWallet=_restored.fWallet;
+    }
     startListeners();
   }catch(e){
     console.error(e);
@@ -265,6 +289,7 @@ function startListeners(){
     allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
     fillCatSelect();
     applyFilters();
+    if(_ps.markFresh) _ps.markFresh();
   },err=>{
     console.error(err);
     $('lf-tbody').innerHTML='<tr><td colspan="8" class="lt-empty">⛔ '+(err.message||err)+'</td></tr>';

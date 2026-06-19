@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -665,6 +666,18 @@ import { renderDashboard, renderSkeleton } from "./accounts-render.js";
 let wallets=[], transactions=[], allOrders=[], suppliers=[], supplierPays=[], employeePays=[], users=[], employees=[], reconciliations=[], shippingSettlements=[], shippingReturns=[];
 let currentUser=null, currentRole='admin', currentUserPerms=null, currentSection='dashboard';
 let activeWalletId=null;
+
+const _ps=PageState.init('accounts',{
+  fields:()=>({currentSection,activeWalletId,activePeriod}),
+  scroll:'.content',
+  snapshots:['kpi-bal','kpi-in','kpi-out','kpi-profit','kpi-sup-due','kpi-printing']
+});
+const _restored=_ps.data;
+if(_restored){
+  currentSection=_restored.currentSection||'dashboard';
+  activeWalletId=_restored.activeWalletId||null;
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
 let editTxId=null, editTxData=null;
 
 // ── Constants ──
@@ -690,7 +703,7 @@ const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleT
 const isThisMonth=ts=>{const d=ts?.toDate?.()||(ts?new Date(ts):null);if(!d)return false;const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
 
 // ── فلتر الفترة الزمنية ──
-let activePeriod='month';
+let activePeriod=(_restored&&_restored.activePeriod)||'month';
 const PERIOD_NAMES_AR={today:'اليوم',week:'الأسبوع',month:'الشهر',last_month:'الشهر السابق'};
 const MONTHS_AR_ACC=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
@@ -784,6 +797,12 @@ onAuthStateChanged(auth, async u=>{
       document.getElementById('role-badge').textContent=r.label;
       document.getElementById('role-badge').style.cssText=`background:${r.col}18;color:${r.col}`;
       initNotifications(app, u);
+      if(_restored){
+        setTimeout(()=>{
+          const secBtn=document.querySelector(`.nav-link[onclick*="switchSection"][onclick*="'${currentSection}'"]`);
+          if(secBtn)secBtn.click();
+        },120);
+      }
       startListeners();
     }
   }catch(e){console.error('accounts auth:',e);window.location.href='login.html';}
@@ -807,7 +826,7 @@ function startListeners(){
     snap=>{
       wallets=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-      fillSelects(); updateKPIs(); renderSection();
+      fillSelects(); updateKPIs(); renderSection();_ps.markFresh();
     },
     err=>{
       console.error('wallets error:',err.code);

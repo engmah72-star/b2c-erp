@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -292,6 +293,17 @@ let presenceMap=new Map();
 let listTab='all';
 let searchQuery='';
 let unsubMessages=null;
+
+const _ps=PageState.init('inbox',{
+  fields:()=>({activeConvId,listTab}),
+  scroll:'.inbox-sidebar',
+  snapshots:['cnt-all','cnt-arc']
+});
+const _restored=_ps.data;
+if(_restored){
+  listTab=_restored.listTab||'all';
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
 let typingTimer=null;
 let lastReadUpdate=0;
 let sharePending=null;
@@ -439,7 +451,7 @@ function subscribeConversations(){
   onSnapshot(q,snap=>{
     conversations=snap.docs.map(d=>({...d.data(),_id:d.id}));
     console.log('[inbox] conversations updated:',conversations.length);
-    renderConvList();
+    renderConvList();_ps.markFresh();
     _debouncedSaveConvCache();
     // Deep-link ?conv=<id> (مثلاً من زر «محادثة العميل» في صفحة الأوردر): افتح الخيط
     // مرة واحدة فور توفّره في القائمة (الموظف participant).
@@ -1410,6 +1422,13 @@ onAuthStateChanged(auth,async u=>{
     if(typeof toast==='function')toast(`⚠️ تعذّر قراءة حسابك: ${e.code||e.message}`,'err');
   }
   buildSidebar();
+  if(_restored){
+    setTimeout(()=>{
+      if(window.switchListTab)window.switchListTab(listTab);
+      if(_restored.activeConvId && !pendingConvId && window.openConv)
+        setTimeout(()=>window.openConv(_restored.activeConvId),200);
+    },120);
+  }
   startHeartbeat();
   _restoreConvCache();
   await ensureChannels();

@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -418,6 +419,7 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { dataCache, cachedQuery } from './core/data-cache.js';
+import { assetManager } from './core/asset-manager.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 // FSE imports removed — financial writes now go through orderActions.recordPayment/recordPrintAdvance
@@ -453,6 +455,21 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
 let statusFilter='all',sortBy='newest',viewMode=localStorage.getItem('print.viewMode')||'list';
+
+// ── Page State Persistence (across navigation) ─────────────────────────
+const _ps=PageState.init('print',{
+  fields:()=>({statusFilter,sortBy,mineOnly,activeId}),
+  search:'search', scroll:'.content',
+  snapshots:['k-total','k-late','k-rev','k-rem','sub','qf-mine-cnt','qf-all-cnt'],
+  htmlSnapshots:['sf-chips']
+});
+const _restored=_ps.data;
+if(_restored){
+  statusFilter=_restored.statusFilter||'all';
+  sortBy=_restored.sortBy||'newest';
+  mineOnly=_restored.mineOnly??true;
+}
+
 const STATUS_FILTERS=[
   {id:'all',     label:'📋 الكل',          col:'var(--b)'},
   {id:'waiting', label:'⚠️ ينتظر ملف',     col:'var(--r)'},
@@ -475,20 +492,30 @@ function showPhone(p){
 
 // Auth
 let _s=false;
-// عرض skeleton فوراً قبل البيانات
-const __initListEl=document.getElementById('list');if(__initListEl)__initListEl.innerHTML=skeletonCards(4);
+// عرض snapshot أو skeleton
+if(_ps.hasSnapshots){_ps.restoreSnapshots();}
+else{const __initListEl=document.getElementById('list');if(__initListEl)__initListEl.innerHTML=skeletonCards(4);}
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   if(_s)return;_s=true;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);if(isAdm){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);if(isAdm&&!_restored){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);}
+    if(_restored){
+      const mBtn=document.getElementById(mineOnly?'qf-mine':'qf-all');
+      if(mBtn)setMineFilter(mineOnly,mBtn);
+      const sortSel=document.getElementById('sort-sel');
+      if(sortSel)sortSel.value=sortBy;
+      if(_restored._search){const si=document.getElementById('search');if(si){si.value=_restored._search;filterList(_restored._search);}}
+    }}
   startListeners();
+  assetManager.observe('#list');
 });
 
 function startListeners(){
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
+  let __stateRestored = false;
   // RULE G3: cap printing-stage stream — cache-first for instant load.
   dataCache.subscribe(
     cachedQuery('orders').where('stage','==','printing').limit(500).build(),
@@ -496,7 +523,12 @@ function startListeners(){
       orders=(list||[]).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       updateKPIs();renderList();
       if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderPanel(o);}}
+      if(!__stateRestored && _restored && !__urlOrderId){
+        __stateRestored=true;
+        _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
+      }
       if(window.markSynced)window.markSynced();
+      _ps.markFresh();
       if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
         __urlOpened = true;
         setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 250);
