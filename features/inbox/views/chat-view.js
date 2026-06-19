@@ -35,11 +35,13 @@ export function buildChatShellHTML({ activeConv, ctx, EMOJIS = [] }) {
       </div>
       <div class="ib-chat-hdr-actions" style="position:relative">
         <button type="button" class="ib-iconbtn" onclick="toggleConvSearch()" title="بحث في المحادثة">🔍</button>
+        <button type="button" class="ib-iconbtn mh-ctx-toggle" onclick="toggleContextPanel()" title="تفاصيل السياق">📋</button>
         <button type="button" class="ib-iconbtn" id="mute-btn" onclick="toggleMute()" title="كتم">🔔</button>
         <button type="button" class="ib-iconbtn" onclick="archiveConv()" title="أرشفة">📁</button>
         <button type="button" class="ib-iconbtn" onclick="toggleChatMenu()" title="المزيد">⋮</button>
         <div class="ib-chat-menu" id="chat-menu">
           <button type="button" class="ib-cm-item" onclick="openPinnedList()">📌 الرسائل المثبتة</button>
+          <button type="button" class="ib-cm-item" onclick="setPriority()">🔴 تعيين أولوية</button>
           <button type="button" class="ib-cm-item" onclick="clearChatForMe()">🧹 مسح المحادثة (لي فقط)</button>
           <button type="button" class="ib-cm-item" onclick="openWallpaperPicker()">🎨 خلفية المحادثة</button>
         </div>

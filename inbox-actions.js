@@ -437,6 +437,64 @@ export async function setMessagePinned({
 }
 
 // ══════════════════════════════════════════
+// ACTION ITEMS — مهام من المحادثات
+// ══════════════════════════════════════════
+
+/**
+ * ينشئ مهمة (action item) مرتبطة بمحادثة.
+ * @returns {Promise<{itemId: string}>}
+ */
+export async function createActionItem({
+  db, convId, text, messageId = '',
+  createdBy, createdByName = '',
+  assigneeId = '', assigneeName = '',
+  dueDate = null,
+}) {
+  if (!convId || !text) throw new Error('[inbox] convId + text مطلوبين');
+  const item = {
+    text: (text || '').slice(0, 500),
+    convId,
+    messageId,
+    createdBy,
+    createdByName,
+    assigneeId,
+    assigneeName,
+    dueDate: dueDate || null,
+    status: 'pending',
+    createdAt: serverTimestamp(),
+    completedAt: null,
+  };
+  const ref = await addDoc(collection(db, 'action_items'), item);
+  return { itemId: ref.id };
+}
+
+/**
+ * يبدّل حالة المهمة بين pending و done.
+ */
+export async function toggleActionItemStatus({ db, itemId, done }) {
+  return updateDoc(doc(db, 'action_items', itemId), {
+    status: done ? 'done' : 'pending',
+    completedAt: done ? serverTimestamp() : null,
+  });
+}
+
+/**
+ * يحذف مهمة (dismiss).
+ */
+export async function dismissActionItem({ db, itemId }) {
+  return updateDoc(doc(db, 'action_items', itemId), {
+    status: 'dismissed',
+  });
+}
+
+/**
+ * يعيّن أولوية محادثة.
+ */
+export async function setConversationPriority({ db, convId, priority }) {
+  return updateDoc(doc(db, 'conversations', convId), { priority: priority || 'normal' });
+}
+
+// ══════════════════════════════════════════
 // STORIES
 // ══════════════════════════════════════════
 
@@ -498,6 +556,12 @@ export const inboxActions = {
   softDeleteMessage,
   toggleMessageReaction,
   setMessagePinned,
+  // action items
+  createActionItem,
+  toggleActionItemStatus,
+  dismissActionItem,
+  // conversations — workspace
+  setConversationPriority,
   // stories
   postStory,
   recordStoryView,

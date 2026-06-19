@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a0f1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Business2Card — المحادثات</title>
+<title>Business2Card — مساحة التواصل</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://www.gstatic.com">
@@ -21,6 +21,7 @@
 <script src="sync-monitor.js"></script>
 <script type="module" src="inbox-badge.js"></script>
 <link rel="stylesheet" href="inbox.css?v=1">
+<link rel="stylesheet" href="messaging-hub.css?v=1">
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
@@ -43,39 +44,61 @@
   <div class="topbar">
     <div class="topbar-left">
       <button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button>
-      <div><h1 style="font-size:var(--fs-xl)">💬 المحادثات</h1></div>
+      <div><h1 style="font-size:var(--fs-xl)">💬 مساحة التواصل</h1></div>
     </div>
   </div>
 
   <div class="content">
-    <div class="ib-wrap" id="ib-wrap">
-      <!-- LEFT: Conversation list -->
-      <div class="ib-list">
-        <div class="ib-list-hdr">
-          <h2>المحادثات</h2>
-          <div class="ib-list-actions">
-            <button type="button" class="ib-iconbtn" onclick="openNewChat()" title="محادثة جديدة">✏️</button>
-          </div>
-        </div>
-        <div class="ib-search-wrap">
-          <input class="ib-search" id="ib-search" placeholder="🔍 بحث">
-        </div>
+    <div class="mh-workspace" id="ib-wrap">
+      <!-- STATS BAR -->
+      <div class="mh-stats-bar" id="mh-stats-bar"></div>
+
+      <!-- LEFT: Smart Conversation List -->
+      <div class="mh-list" style="position:relative">
+        <!-- List header with search -->
+        <div id="mh-list-hdr-mount"></div>
+        <!-- Category tabs -->
+        <div id="mh-tabs-mount"></div>
         <!-- اللحظات (Stories) -->
         <div class="ib-stories" id="stories-row"></div>
-        <div class="ib-tabs">
+        <!-- Archive toggle -->
+        <div class="ib-tabs" id="archive-tabs">
           <button type="button" class="ib-tab active" data-tab="all" onclick="switchListTab('all')">الكل <span class="cnt" id="cnt-all">0</span></button>
           <button type="button" class="ib-tab" data-tab="archived" onclick="switchListTab('archived')">📁 الأرشيف <span class="cnt" id="cnt-arc">0</span></button>
         </div>
-        <div class="ib-convs" id="ib-convs"></div>
+        <!-- Conversation list -->
+        <div class="mh-convs ib-convs" id="ib-convs"></div>
+        <!-- Action items mini -->
+        <div id="mh-action-mini-mount"></div>
+        <!-- Activity panel overlay -->
+        <div class="mh-activity-panel" id="mh-activity-panel">
+          <div class="mh-activity-hdr">
+            <h3>📊 النشاط الأخير</h3>
+            <button type="button" class="mh-hdr-btn" onclick="toggleActivityPanel()">✕</button>
+          </div>
+          <div id="mh-activity-feed-mount"></div>
+        </div>
       </div>
 
-      <!-- RIGHT: Active chat or empty state -->
-      <div class="ib-chat" id="ib-chat">
+      <!-- CENTER: Chat Panel -->
+      <div class="mh-chat ib-chat" id="ib-chat">
         <div class="ib-empty" id="ib-empty">
           <div class="ib-empty-ico">💬</div>
-          <div class="ib-empty-t">Business2Card Chat</div>
-          <div class="ib-empty-s">اختر محادثة من القائمة، أو ابدأ محادثة جديدة.<br>كل رسائلك آمنة ومحفوظة على Firebase.</div>
+          <div class="ib-empty-t">Business2Card — مساحة التواصل</div>
+          <div class="ib-empty-s">
+            اختر محادثة من القائمة، أو ابدأ محادثة جديدة.<br>
+            <span style="color:var(--ws-text-dim);font-size:var(--fs-sm)">مساحة عمل متكاملة تربط المحادثات بالأوردرات والفرق والمهام</span>
+          </div>
         </div>
+      </div>
+
+      <!-- RIGHT: Context Panel -->
+      <div class="mh-ctx" id="mh-ctx">
+        <div class="mh-ctx-hdr">
+          <h3>📋 تفاصيل</h3>
+          <button type="button" class="mh-ctx-close" onclick="toggleContextPanel()">✕</button>
+        </div>
+        <div id="mh-ctx-body"></div>
       </div>
     </div>
   </div>
@@ -233,6 +256,16 @@ import { buildConvListHTML } from "./features/inbox/views/conv-list-view.js";
 import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./features/inbox/views/chat-view.js";
 import { buildForwardListHTML, buildShareListHTML, buildUserListHTML, buildOrderPickerHTML } from "./features/inbox/views/picker-views.js";
 import { groupStoriesByUserUid, buildStoriesRowHTML, getCurrentStoryViewInfo } from "./features/inbox/views/stories-view.js";
+// Messaging Hub — workspace views + core engine
+import {
+  CONV_CATEGORIES, PRIORITY_LEVELS, ACTIVITY_TYPES, ACTION_ITEM_STATUS,
+  WORKSPACE_TABS, categorizeConversation, filterByCategory, countByCategory,
+  sortByPriority, computePriorityScore, resolveContext, computeWorkspaceStats,
+  buildActivityItem, mergeActivityFeeds, detectActionItem, buildActionItem,
+  sortActionItems, stageLabel, stageColor, fmtPrice,
+} from "./core/messaging-hub.js";
+import { buildCategoryTabsHTML, buildStatsBarHTML, buildActivityFeedHTML, buildListHeaderHTML, buildActionItemsMiniHTML } from "./features/inbox/views/workspace-view.js";
+import { buildContextPanelHTML } from "./features/inbox/views/context-panel-view.js";
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'var(--b-bright)',customer_service:'var(--c-bright)',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
@@ -273,6 +306,14 @@ let sharePending=null;         // {orderId, ...} pending share payload
 let mentionState=null;         // {start, query, items}
 const REACTION_EMOJIS=['👍','❤️','😂','😮','😢','🙏'];
 const WALLPAPERS=['','#0b141a','#1a3a2e','#1e1a3d','#3d1a2e','#2e1a3d','#3d2e1a'];
+// Workspace state
+let workspaceTab='all';       // active category tab
+let contextVisible=true;      // context panel visibility (desktop)
+let activityVisible=false;    // activity panel overlay
+let actionItems=[];           // current conv action items
+let allActionItems=[];        // global action items for sidebar mini
+let activityFeed=[];          // activity feed items
+let unsubActionItems=null;    // Firestore unsub for action items
 
 const $=id=>document.getElementById(id);
 // pure helpers — core/inbox-utils.js
@@ -412,19 +453,72 @@ function subscribeOrders(){
   },err=>console.warn('orders sub:',err.message));
 }
 
-// ── Render conv list ──
+// ── Render conv list (workspace-aware) ──
 function renderConvList(){
   const list=$('ib-convs');if(!list)return;
+  // Apply workspace category filter before passing to view
+  let filtered=conversations;
+  if(workspaceTab && workspaceTab!=='all'){
+    filtered=filterByCategory(conversations,workspaceTab,currentUid);
+  }
   // pure view module: features/inbox/views/conv-list-view.js
   const r=buildConvListHTML({
-    conversations, activeConvId, currentUid, currentRole,
+    conversations:filtered, activeConvId, currentUid, currentRole,
     allUsers, presenceMap, searchQuery, listTab,
     roleColorMap:ROLE_COLOR,
   });
   list.innerHTML=r.html;
   $('cnt-all').textContent=r.countAll;
   $('cnt-arc').textContent=r.countArchived;
+  // Workspace elements
+  renderWorkspaceTabs();
+  renderStatsBar();
+  renderListHeader();
+  renderActionItemsMini();
 }
+
+function renderWorkspaceTabs(){
+  const mount=$('mh-tabs-mount');if(!mount)return;
+  const counts=countByCategory(conversations,currentUid);
+  mount.innerHTML=buildCategoryTabsHTML(workspaceTab,counts);
+}
+
+function renderStatsBar(){
+  const bar=$('mh-stats-bar');if(!bar)return;
+  bar.innerHTML=buildStatsBarHTML(conversations,currentUid);
+  bar.style.display=conversations.length?'':'none';
+}
+
+function renderListHeader(){
+  const mount=$('mh-list-hdr-mount');if(!mount)return;
+  mount.innerHTML=buildListHeaderHTML({searchQuery,activeTab:workspaceTab});
+  // Re-bind search input
+  const inp=$('mh-search');
+  if(inp){
+    inp.addEventListener('input',e=>{searchQuery=e.target.value;renderConvList();});
+  }
+}
+
+function renderActionItemsMini(){
+  const mount=$('mh-action-mini-mount');if(!mount)return;
+  mount.innerHTML=buildActionItemsMiniHTML(allActionItems,currentUid);
+}
+
+// Workspace tab switch
+window.switchWorkspaceTab=function(tab){
+  workspaceTab=tab;
+  renderConvList();
+};
+
+// Workspace search
+window.onWorkspaceSearch=function(val){
+  searchQuery=val||'';
+  renderConvList();
+};
+window.clearWorkspaceSearch=function(){
+  searchQuery='';
+  renderConvList();
+};
 
 // Conversation meta + presence — pure logic مُمَركَزة في core/inbox-utils.js
 const convDisplayName=c=>_convDisplayName(c,{currentUid,allUsers});
@@ -454,6 +548,7 @@ window.openConv=async function(id){
   }
   renderChat();
   updateMuteBtn();
+  renderContextPanel();
   // apply wallpaper preference for this user
   const wpIdx=activeConv.wallpaperBy?.[currentUid]||0;
   applyWallpaper(wpIdx);
@@ -474,7 +569,11 @@ window.openConv=async function(id){
     messages=all;
     renderMessages();
     maybeMarkRead();
+    // Build activity feed from recent messages
+    buildLocalActivityFeed();
   });
+  // Subscribe to action items for this conversation
+  subscribeActionItems(id);
   renderConvList();
 };
 
@@ -482,7 +581,10 @@ window.closeChat=function(){
   $('ib-wrap').classList.remove('show-chat');
   activeConvId=null;activeConv=null;
   if(unsubMessages){unsubMessages();unsubMessages=null;}
-  $('ib-chat').innerHTML=`<div class="ib-empty"><div class="ib-empty-ico">💬</div><div class="ib-empty-t">Business2Card Chat</div><div class="ib-empty-s">اختر محادثة من القائمة، أو ابدأ محادثة جديدة.</div></div>`;
+  if(unsubActionItems){unsubActionItems();unsubActionItems=null;}
+  actionItems=[];
+  $('ib-chat').innerHTML=`<div class="ib-empty"><div class="ib-empty-ico">💬</div><div class="ib-empty-t">Business2Card — مساحة التواصل</div><div class="ib-empty-s">اختر محادثة من القائمة، أو ابدأ محادثة جديدة.<br><span style="color:var(--ws-text-dim);font-size:var(--fs-sm)">مساحة عمل متكاملة تربط المحادثات بالأوردرات والفرق والمهام</span></div></div>`;
+  renderContextPanel();
   renderConvList();
 };
 
@@ -1115,11 +1217,249 @@ window.pickOrderForChat=async function(orderDocId){
   toast('✅ تم إرسال الأوردر','ok');
 };
 
-// ── Search ──
-$('ib-search').addEventListener('input',e=>{searchQuery=e.target.value;renderConvList();});
+// ════════════════════════════════════════════════════════════════════
+//  🏢 Workspace — Context Panel + Activity + Action Items
+// ════════════════════════════════════════════════════════════════════
+
+// Context panel toggle
+window.toggleContextPanel=function(){
+  const ctx=$('mh-ctx');if(!ctx)return;
+  contextVisible=!contextVisible;
+  ctx.classList.toggle('show',contextVisible);
+  $('ib-wrap').classList.toggle('ctx-hidden',!contextVisible);
+  // On tablet/mobile, show as overlay
+  if(window.innerWidth<=1200){
+    ctx.classList.toggle('show',contextVisible);
+  }
+};
+
+// Render context panel based on active conversation
+function renderContextPanel(){
+  const body=$('mh-ctx-body');if(!body)return;
+  if(!activeConv){
+    body.innerHTML=buildContextPanelHTML(null);
+    return;
+  }
+  const ctx=resolveContext(activeConv,{allUsers,allOrders,currentUid});
+  // Fill online status from presenceMap
+  if(ctx?.participants){
+    ctx.participants.forEach(p=>{
+      const pres=presenceMap.get(p.uid);
+      p.isOnline=pres?.online&&((Date.now()-(pres.lastSeen?.seconds||0)*1000)<90000);
+    });
+  }
+  body.innerHTML=buildContextPanelHTML(ctx,{presenceMap,actionItems,currentUid});
+}
+
+// Activity panel toggle
+window.toggleActivityPanel=function(){
+  activityVisible=!activityVisible;
+  $('mh-activity-panel')?.classList.toggle('show',activityVisible);
+  if(activityVisible)renderActivityFeed();
+};
+
+// Build activity feed from current messages + conversations
+function buildLocalActivityFeed(){
+  const items=[];
+  // Recent messages as activity items
+  const recent=messages.slice(-20);
+  for(const m of recent){
+    if(m.deletedAt)continue;
+    const type=m.mentions?.includes(currentUid)?ACTIVITY_TYPES.MENTION:
+      m.type==='order_share'?ACTIVITY_TYPES.ORDER_UPDATE:ACTIVITY_TYPES.MESSAGE;
+    items.push(buildActivityItem({
+      type,
+      title:m.senderName||'مستخدم',
+      subtitle:(m.text||'').slice(0,60)||{image:'📷 صورة',file:'📄 ملف',voice:'🎤 صوتية',order_share:'📦 أوردر'}[m.type]||'رسالة',
+      ico:type===ACTIVITY_TYPES.MENTION?'@':undefined,
+      ts:m.createdAt,
+      convId:activeConvId,
+    }));
+  }
+  // Order stage events from conversations
+  for(const c of conversations.slice(0,20)){
+    if(c.type==='order_thread'&&c.orderRef){
+      items.push(buildActivityItem({
+        type:ACTIVITY_TYPES.ORDER_UPDATE,
+        title:c.name||'أوردر',
+        subtitle:c.lastMessagePreview||'',
+        ico:'📦',
+        ts:c.lastMessageAt,
+        convId:c._id,
+        orderId:c.orderId,
+      }));
+    }
+  }
+  activityFeed=mergeActivityFeeds([items],30);
+}
+
+function renderActivityFeed(){
+  const mount=$('mh-activity-feed-mount');if(!mount)return;
+  mount.innerHTML=buildActivityFeedHTML(activityFeed);
+}
+
+// Subscribe to action items for active conversation
+function subscribeActionItems(convId){
+  if(unsubActionItems){unsubActionItems();unsubActionItems=null;}
+  if(!convId)return;
+  const q=query(collection(db,'action_items'),where('convId','==',convId),limit(50));
+  unsubActionItems=onSnapshot(q,snap=>{
+    actionItems=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    actionItems=sortActionItems(actionItems);
+    renderContextPanel();
+  },_=>{});
+}
+
+// Subscribe to all action items (for sidebar mini)
+function subscribeAllActionItems(){
+  const q=query(collection(db,'action_items'),where('status','==','pending'),limit(100));
+  onSnapshot(q,snap=>{
+    allActionItems=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    renderActionItemsMini();
+  },_=>{});
+}
+
+// Quick actions from context panel
+window.execQuickAction=function(actionId,orderId,category){
+  switch(actionId){
+    case'view_order':
+      if(orderId)window.open('order.html?id='+orderId,'_blank');
+      break;
+    case'view_client':{
+      const order=allOrders.find(o=>o._id===orderId);
+      if(order?.clientId)window.open('clients.html?id='+order.clientId,'_blank');
+      break;}
+    case'view_profile':{
+      if(!activeConv||activeConv.type!=='dm')break;
+      const otherUid=(activeConv.participants||[]).find(p=>p!==currentUid);
+      if(otherUid)window.open('employee-profile.html?id='+otherUid,'_blank');
+      break;}
+    case'add_note':
+      $('ib-input')?.focus();
+      break;
+    case'share_file':
+      pickFile();
+      break;
+    case'share_order':case'send_proof':
+      openOrderPicker();
+      break;
+    case'create_action':
+      openNewActionItem();
+      break;
+  }
+};
+
+// Action item creation modal
+window.openNewActionItem=function(){
+  const ov=document.createElement('div');
+  ov.className='ib-modal-ov show';
+  ov.id='ai-modal-ov';
+  const participants=(activeConv?.participants||[]).map(uid=>{
+    const u=allUsers.find(x=>x._id===uid);
+    return{uid,name:u?.name||'موظف'};
+  }).filter(p=>p.uid!==currentUid);
+  ov.innerHTML=`
+    <div class="ib-modal mh-ai-modal">
+      <div class="ib-modal-hdr">
+        <h3>✅ مهمة جديدة</h3>
+        <button type="button" class="ib-iconbtn" onclick="closeActionItemModal()">✕</button>
+      </div>
+      <div class="mh-ai-form">
+        <div class="mh-ai-field">
+          <label class="mh-ai-label">وصف المهمة</label>
+          <input class="mh-ai-input" id="ai-text" placeholder="ما المطلوب؟" autofocus>
+        </div>
+        <div class="mh-ai-field">
+          <label class="mh-ai-label">تعيين إلى</label>
+          <select class="mh-ai-input" id="ai-assignee">
+            <option value="">— بدون تعيين —</option>
+            ${participants.map(p=>`<option value="${p.uid}" data-name="${p.name}">${p.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="mh-ai-field">
+          <label class="mh-ai-label">تاريخ الاستحقاق (اختياري)</label>
+          <input class="mh-ai-input" id="ai-due" type="date">
+        </div>
+        <button type="button" class="mh-ai-submit" onclick="submitActionItem()">إنشاء المهمة</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  setTimeout(()=>$('ai-text')?.focus(),100);
+};
+
+window.closeActionItemModal=function(){
+  $('ai-modal-ov')?.remove();
+};
+
+window.submitActionItem=async function(){
+  const text=$('ai-text')?.value?.trim();
+  if(!text){toast('اكتب وصف المهمة','err');return;}
+  const sel=$('ai-assignee');
+  const assigneeId=sel?.value||'';
+  const assigneeName=sel?.selectedOptions?.[0]?.dataset?.name||'';
+  const dueDate=$('ai-due')?.value||null;
+  try{
+    await inboxActions.createActionItem({
+      db,convId:activeConvId,text,
+      createdBy:currentUid,createdByName:currentUserName,
+      assigneeId,assigneeName,dueDate,
+    });
+    toast('✅ تم إنشاء المهمة','ok');
+    closeActionItemModal();
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+window.toggleActionItem=async function(itemId){
+  if(!itemId)return;
+  const item=actionItems.find(i=>i._id===itemId);
+  if(!item)return;
+  const done=item.status!=='done';
+  try{
+    await inboxActions.toggleActionItemStatus({db,itemId,done});
+    toast(done?'✅ تم إنجاز المهمة':'⬜ أُعيدت المهمة','ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+};
+
+// Navigate to order from context panel
+window.navigateToOrder=function(orderId){
+  if(orderId)window.open('order.html?id='+orderId,'_blank');
+};
+
+// Set conversation priority
+window.setPriority=async function(){
+  if(!activeConvId)return;
+  $('chat-menu')?.classList.remove('show');
+  const cur=activeConv?.priority||'normal';
+  const levels=[
+    {v:'urgent',l:'🔴 عاجل'},
+    {v:'high',l:'🟡 مرتفع'},
+    {v:'normal',l:'⚪ عادي'},
+  ];
+  const ov=document.createElement('div');
+  ov.className='ib-modal-ov show';
+  ov.innerHTML=`
+    <div class="ib-modal" style="max-width:320px">
+      <div class="ib-modal-hdr">
+        <h3>🔴 تعيين أولوية</h3>
+        <button type="button" class="ib-iconbtn" onclick="this.closest('.ib-modal-ov').remove()">✕</button>
+      </div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:8px">
+        ${levels.map(l=>`<button type="button" onclick="doSetPriority('${l.v}')"
+          style="padding:12px;border:1px solid ${l.v===cur?'var(--b-bright)':'var(--ws-border)'};border-radius:var(--rad);background:var(--ws-bg-elev);color:var(--ws-text);cursor:pointer;font-family:inherit;font-size:var(--fs-md);text-align:start${l.v===cur?';font-weight:var(--fw-bold)':''}">${l.l}${l.v===cur?' ✓':''}</button>`).join('')}
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+};
+window.doSetPriority=async function(p){
+  try{
+    await inboxActions.setConversationPriority({db,convId:activeConvId,priority:p});
+    toast('✅ تم تحديث الأولوية','ok');
+    document.querySelector('.ib-modal-ov.show')?.remove();
+  }catch(e){toast('❌ '+e.message,'err');}
+};
 
 // ── Tabs ──
-window.switchListTab=function(t){listTab=t;document.querySelectorAll('.ib-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));renderConvList();};
+window.switchListTab=function(t){listTab=t;document.querySelectorAll('#archive-tabs .ib-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));renderConvList();};
 
 // ── New chat ──
 window.openNewChat=function(){
@@ -1191,6 +1531,15 @@ onAuthStateChanged(auth,async u=>{
   subscribePresence();
   subscribeUsers();
   subscribeOrders();
+  subscribeAllActionItems();
+  // Initialize context panel visibility for desktop
+  if(window.innerWidth>1200){
+    contextVisible=true;
+    $('mh-ctx')?.classList.add('show');
+  }else{
+    contextVisible=false;
+    $('ib-wrap')?.classList.add('ctx-hidden');
+  }
   // If another page asked us to share an order, pop the picker now
   try{
     const pending=sessionStorage.getItem('inbox_share_order');

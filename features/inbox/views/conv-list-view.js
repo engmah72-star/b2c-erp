@@ -93,16 +93,21 @@ export function buildConvListHTML({
     const lastSender = c.lastSenderId === currentUid ? 'أنت: ' : (isDM ? '' : (c.lastSenderName ? c.lastSenderName + ': ' : ''));
     const tick = c.lastSenderId === currentUid ? (c.lastReadByAll ? '✓✓' : '✓') : '';
     const tickClass = c.lastReadByAll ? 'read' : '';
+    const priorityDot = c.priority === 'urgent' ? '<span class="mh-priority-dot urgent"></span>' :
+      c.priority === 'high' ? '<span class="mh-priority-dot high"></span>' : '';
+    const catBadge = c.type === 'order_thread' && !c.isClientThread ? '<span class="mh-cat-badge">📦</span>' :
+      c.isClientThread ? '<span class="mh-cat-badge">🤝</span>' : '';
     return `<div class="ib-conv ${isActive ? 'active' : ''} ${unread ? 'unread' : ''}" data-id="${c._id}" onclick="openConv('${c._id}')">
       <div class="ib-conv-avatar" style="background:${col}">${ico}${isDM ? `<span class="presence ${isOnline ? 'online' : ''}"></span>` : ''}</div>
       <div class="ib-conv-body">
         <div class="ib-conv-top">
-          <div class="ib-conv-name">${c.isClientThread ? '🔗 ' : ''}${esc(name)}</div>
+          <div class="ib-conv-name">${priorityDot}${c.isClientThread ? '🔗 ' : ''}${esc(name)}</div>
           <div class="ib-conv-time">${lastTime}</div>
         </div>
         <div class="ib-conv-bot">
           <div class="ib-conv-last">${tick ? `<span class="ib-conv-tick ${tickClass}">${tick}</span> ` : ''}${esc(lastSender + (c.lastMessagePreview || ''))}</div>
           <div class="ib-conv-meta">
+            ${catBadge}
             ${unread > 0 ? `<span class="ib-conv-unread">${unread > 99 ? '99+' : unread}</span>` : ''}
           </div>
         </div>
