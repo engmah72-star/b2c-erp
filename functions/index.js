@@ -1143,23 +1143,26 @@ exports.dailyFollowupReminders = onSchedule(
     }
 
     let totalPushed = 0;
-    for (const [uid, items] of byUid.entries()) {
-      const count = items.length;
-      const sample = items.slice(0, 3).map(x => x.clientName || 'عميل').join(', ');
-      const title = `📞 ${count} متابعة مستحقّة اليوم`;
-      const body  = count > 3 ? `${sample} و${count - 3} آخرين` : sample;
-      const link  = '/clients.html?tab=followups';
-      const tokens = await getUserTokens(uid);
-      const r = await sendPush({
-        tokens, title, body,
-        data: { type: 'followup_due', count: String(count) }, link,
-      });
-      totalPushed += r.sent;
-      await createInAppNotification({
-        toUid: uid, title, desc: body, ico: '📞',
-        link, type: 'followup_due', entityId: null,
-      });
-    }
+    const notifResults = await Promise.all(
+      [...byUid.entries()].map(async ([uid, items]) => {
+        const count = items.length;
+        const sample = items.slice(0, 3).map(x => x.clientName || 'عميل').join(', ');
+        const title = `📞 ${count} متابعة مستحقّة اليوم`;
+        const body  = count > 3 ? `${sample} و${count - 3} آخرين` : sample;
+        const link  = '/clients.html?tab=followups';
+        const tokens = await getUserTokens(uid);
+        const r = await sendPush({
+          tokens, title, body,
+          data: { type: 'followup_due', count: String(count) }, link,
+        });
+        await createInAppNotification({
+          toUid: uid, title, desc: body, ico: '📞',
+          link, type: 'followup_due', entityId: null,
+        });
+        return r.sent;
+      })
+    );
+    totalPushed = notifResults.reduce((s, n) => s + n, 0);
     console.log(`[dailyFollowupReminders] ${byUid.size} users notified, ${totalPushed} push delivered`);
   }
 );
@@ -1591,6 +1594,7 @@ exports.weeklyRevenueForecast = onSchedule(
 
     const snap = await db.collection('orders')
       .where('createdAt', '>=', cutoff)
+      .limit(10000)
       .get();
 
     if (snap.empty) {
@@ -3420,60 +3424,60 @@ exports.dailyProjectionDriftScan = onSchedule(
       .limit(2000) // max budget لكل run
       .get();
 
-    for (const doc of ordersSnap.docs) {
-      report.ordersScanned++;
-      const order = { _id: doc.id, ...doc.data() };
+    const round2 = n => Math.round((n || 0) * 100) / 100;
+    const EPS = 0.02;
+    const CHUNK = 50;
+    for (let i = 0; i < ordersSnap.docs.length; i += CHUNK) {
+      const chunk = ordersSnap.docs.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(async (oDoc) => {
+        report.ordersScanned++;
+        const order = { _id: oDoc.id, ...oDoc.data() };
 
-      // نقرأ الـ ledger entries لهذا الأوردر
-      let ledgerSnap;
-      try {
-        ledgerSnap = await db.collection('financial_ledger')
-          .where('orderId', '==', doc.id)
-          .get();
-      } catch (e) {
-        console.warn(`[driftScan] failed to read ledger for ${doc.id}:`, e.message);
-        continue;
-      }
-
-      // نحسب الـ derived projection (نفس منطق core/projection.js)
-      let derivedPaid = 0;
-      let totalSettled = 0;
-      let totalSettlementReversed = 0;
-      for (const ld of ledgerSnap.docs) {
-        const e = ld.data();
-        if (e.isDeleted === true) continue;
-        const amt = parseFloat(e.amount) || 0;
-        const evt = e.eventType || '';
-        switch (evt) {
-          case 'CUSTOMER_PAYMENT':              derivedPaid += amt; break;
-          case 'CUSTOMER_REFUND':               derivedPaid -= amt; break;
-          case 'SHIPPING_SETTLEMENT':           derivedPaid += amt; totalSettled += amt; break;
-          case 'SHIPPING_SETTLEMENT_REVERSAL':  derivedPaid -= amt; totalSettlementReversed += amt; break;
+        let ledgerSnap;
+        try {
+          ledgerSnap = await db.collection('financial_ledger')
+            .where('orderId', '==', oDoc.id)
+            .get();
+        } catch (e) {
+          console.warn(`[driftScan] failed to read ledger for ${oDoc.id}:`, e.message);
+          return;
         }
-      }
-      const round2 = n => Math.round((n || 0) * 100) / 100;
-      derivedPaid = round2(derivedPaid);
-      const storedPaid = round2(parseFloat(order.totalPaid) || 0);
-      const EPS = 0.02;
 
-      if (Math.abs(storedPaid - derivedPaid) > EPS) {
-        report.ordersWithDrift++;
-        const severity = Math.abs(storedPaid - derivedPaid) > 10 ? 'crit' : 'warn';
-        if (severity === 'crit') report.criticalDrift++;
-        const code = 'PROJECTION_DRIFT_TOTALPAID';
-        report.driftByCode[code] = (report.driftByCode[code] || 0) + 1;
-        if (report.samples.length < 50) {
-          report.samples.push({
-            orderId: doc.id,
-            orderNumber: order.orderNumber || '',
-            storedPaid,
-            derivedPaid,
-            delta: round2(storedPaid - derivedPaid),
-            severity,
-            ledgerEntries: ledgerSnap.size,
-          });
+        let derivedPaid = 0;
+        for (const ld of ledgerSnap.docs) {
+          const e = ld.data();
+          if (e.isDeleted === true) continue;
+          const amt = parseFloat(e.amount) || 0;
+          const evt = e.eventType || '';
+          switch (evt) {
+            case 'CUSTOMER_PAYMENT':              derivedPaid += amt; break;
+            case 'CUSTOMER_REFUND':               derivedPaid -= amt; break;
+            case 'SHIPPING_SETTLEMENT':           derivedPaid += amt; break;
+            case 'SHIPPING_SETTLEMENT_REVERSAL':  derivedPaid -= amt; break;
+          }
         }
-      }
+        derivedPaid = round2(derivedPaid);
+        const storedPaid = round2(parseFloat(order.totalPaid) || 0);
+
+        if (Math.abs(storedPaid - derivedPaid) > EPS) {
+          report.ordersWithDrift++;
+          const severity = Math.abs(storedPaid - derivedPaid) > 10 ? 'crit' : 'warn';
+          if (severity === 'crit') report.criticalDrift++;
+          const code = 'PROJECTION_DRIFT_TOTALPAID';
+          report.driftByCode[code] = (report.driftByCode[code] || 0) + 1;
+          if (report.samples.length < 50) {
+            report.samples.push({
+              orderId: oDoc.id,
+              orderNumber: order.orderNumber || '',
+              storedPaid,
+              derivedPaid,
+              delta: round2(storedPaid - derivedPaid),
+              severity,
+              ledgerEntries: ledgerSnap.size,
+            });
+          }
+        }
+      }));
     }
 
     report.durationMs = Date.now() - startedAt;
@@ -3923,6 +3927,7 @@ exports.dailyFinancialReconciliation = onSchedule(
     const activeStages = ['design', 'printing', 'production', 'shipping', 'archived'];
     const orderSnap = await db.collection('orders')
       .where('stage', 'in', activeStages)
+      .limit(5000)
       .get();
 
     let totalOrders = 0, withDrift = 0, criticalCount = 0;
@@ -3945,10 +3950,10 @@ exports.dailyFinancialReconciliation = onSchedule(
     });
 
     // ── 2) Wallet balance vs transactions sum ──
-    const walletSnap = await db.collection('wallets').get();
+    const walletSnap = await db.collection('wallets').limit(200).get();
     const walletDrifts = [];
 
-    for (const wDoc of walletSnap.docs) {
+    await Promise.all(walletSnap.docs.map(async (wDoc) => {
       const w = wDoc.data();
       const walletBalance = _fiNum(w.balance);
 
@@ -3974,7 +3979,7 @@ exports.dailyFinancialReconciliation = onSchedule(
           diff: +(walletBalance - txSum).toFixed(2),
         });
       }
-    }
+    }));
 
     // ── 3) Create alert if drift detected ──
     const hasDrift = criticalCount > 0 || walletDrifts.length > 0;

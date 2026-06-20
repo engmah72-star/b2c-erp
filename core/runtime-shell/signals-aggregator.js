@@ -29,13 +29,11 @@ let _started = false;
 // كل entry: { domain, key, build() → unsubscribe function }
 // build() يعمل subscribe + بيـ emit signals.setMetric(domain, key, count)
 const AGGREGATORS = [
-  // ── Production ──
+  // ── Production (merged: late + no-supplier + problem in single listener) ──
   {
-    domain: 'production', key: 'late',
-    desc: 'Production orders overdue (>3 days in production stage)',
+    domain: 'production', key: 'all',
+    desc: 'Production signals: overdue (>3d), missing supplier, and problem-flagged orders — single listener',
     build() {
-      // الـ overdue threshold = 3 أيام في production stage
-      // queries by stage فقط (cheaper) ثم نفلتر date في الـ JS لتجنب composite index
       const q = query(
         collection(db, 'orders'),
         where('stage', '==', 'production'),
@@ -43,56 +41,29 @@ const AGGREGATORS = [
       );
       return onSnapshot(q, snap => {
         const threshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
-        let count = 0;
+        let lateCount = 0, noSupCount = 0, probCount = 0;
         snap.forEach(doc => {
           const o = doc.data();
+          // late: overdue > 3 days
           const ts = o.stageEnteredAt?.seconds || o.createdAt?.seconds || 0;
-          if (ts && ts * 1000 < threshold) count++;
-        });
-        signals.setMetric('production', 'late', count);
-      }, err => console.warn('[signals:production:late]', err));
-    },
-  },
-  {
-    domain: 'production', key: 'no-supplier',
-    desc: 'Production orders without assigned supplier',
-    build() {
-      const q = query(
-        collection(db, 'orders'),
-        where('stage', '==', 'production'),
-        limit(500),
-      );
-      return onSnapshot(q, snap => {
-        let count = 0;
-        snap.forEach(doc => {
-          const o = doc.data();
+          if (ts && ts * 1000 < threshold) lateCount++;
+          // shared products array for no-supplier + problem
           const products = Array.isArray(o.products) ? o.products : [];
-          // عداد لكل أوردر فيه على الأقل منتج بدون مورد
-          if (products.some(p => !p.supplierId && !p.supplierName)) count++;
+          // no-supplier
+          if (products.some(p => !p.supplierId && !p.supplierName)) noSupCount++;
+          // problem
+          if (products.some(p => p.productStatus === 'problem')) probCount++;
+          else if (o.productionStatus === 'problem') probCount++;
         });
-        signals.setMetric('production', 'no-supplier', count);
-      }, err => console.warn('[signals:production:no-supplier]', err));
-    },
-  },
-  {
-    domain: 'production', key: 'problem',
-    desc: 'Production orders flagged with problems',
-    build() {
-      const q = query(
-        collection(db, 'orders'),
-        where('stage', '==', 'production'),
-        limit(500),
-      );
-      return onSnapshot(q, snap => {
-        let count = 0;
-        snap.forEach(doc => {
-          const o = doc.data();
-          const products = Array.isArray(o.products) ? o.products : [];
-          if (products.some(p => p.productStatus === 'problem')) count++;
-          else if (o.productionStatus === 'problem') count++;
-        });
-        signals.setMetric('production', 'problem', count);
-      }, err => console.warn('[signals:production:problem]', err));
+        signals.setMetric('production', 'late', lateCount);
+        signals.setMetric('production', 'no-supplier', noSupCount);
+        signals.setMetric('production', 'problem', probCount);
+      }, err => {
+        console.warn('[signals:production:all]', err);
+        signals.setMetric('production', 'late', 0);
+        signals.setMetric('production', 'no-supplier', 0);
+        signals.setMetric('production', 'problem', 0);
+      });
     },
   },
 
