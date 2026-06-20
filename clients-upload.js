@@ -14,13 +14,16 @@
  *
  * Why a module?
  *   - compressImage is a pure utility worth reusing across pages
- *   - uploadDesignFiles needs Firebase Storage (compat) which is on
- *     window via firebase.storage() — module can call it directly.
+ *   - uploadDesignFiles needs Firebase Storage (modular SDK via
+ *     firebase-init.js).
  *
  * Storage path pattern:
  *   designs/order_<orderId>_<timestamp>_<index>
  *   (preserved verbatim from the in-page implementation)
  */
+
+import { storage } from './core/firebase-init.js';
+import { ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
 
 /**
  * compressImage(file) → Promise<File>
@@ -105,8 +108,7 @@ export function compressImage(file) {
  * - Returns the first uploaded URL + the full file metadata list.
  * - On empty input → {firstUrl:'', allFiles:[]}.
  *
- * Requires window.firebase (compat SDK) — the page loads it via
- * firebase-app-compat.js. Module reads firebase.storage() lazily.
+ * Uses Firebase Storage modular SDK via firebase-init.js.
  */
 export function uploadDesignFiles({
   files = [],
@@ -117,7 +119,7 @@ export function uploadDesignFiles({
   if (!files.length) {
     return Promise.resolve({ firstUrl: '', allFiles: [] });
   }
-  if (typeof window === 'undefined' || !window.firebase?.storage) {
+  if (!storage) {
     return Promise.reject(new Error('Firebase Storage SDK not loaded'));
   }
   const progress = new Array(files.length).fill(0);
@@ -126,13 +128,13 @@ export function uploadDesignFiles({
     onProgress(avg);
   };
   const uploadOne = (f, i) => compressImage(f).then(cf => new Promise((res, rej) => {
-    const sRef = window.firebase.storage().ref(`${pathPrefix}${orderId}_${Date.now()}_${i}`);
-    const task = sRef.put(cf);
+    const sRef = ref(storage, `${pathPrefix}${orderId}_${Date.now()}_${i}`);
+    const task = uploadBytesResumable(sRef, cf);
     task.on(
       'state_changed',
       (s) => { progress[i] = Math.round(s.bytesTransferred / s.totalBytes * 100); updateProgress(); },
       rej,
-      () => sRef.getDownloadURL()
+      () => getDownloadURL(sRef)
         .then(url => res({ url, name: f.name, type: f.type }))
         .catch(rej),
     );
