@@ -184,6 +184,17 @@
 .prd-sup-sel{flex:1;font-size:11px;padding:5px 8px;border-radius:20px;border:1px solid var(--line);background:var(--bg1);color:var(--snow);font-family:inherit;min-width:0}
 .prd-sup-sel:focus{outline:none;border-color:var(--b)}
 
+/* ══ تكاليف داخل بطاقة المنتج ════════════════════════════════════ */
+.prd-costs{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.prd-cost-row{display:flex;align-items:center;gap:6px;padding:4px 0;font-size:var(--fs-xs);flex-wrap:wrap}
+.prd-cost-type{font-weight:var(--fw-extra);color:var(--snow);min-width:0}
+.prd-cost-sup{color:var(--dim2);font-size:10px}
+.prd-cost-amt{font-weight:var(--fw-heavy);color:var(--y);margin-inline-start:auto;direction:ltr;white-space:nowrap}
+.prd-cost-total{font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--y);text-align:left;direction:ltr;padding:4px 0 2px;border-top:1px solid var(--line);margin-top:4px}
+.prd-add-cost-btn{width:100%;padding:6px;margin-top:6px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-extra);font-family:inherit;cursor:pointer;transition:all .15s}
+.prd-add-cost-btn:hover{border-color:var(--b);color:var(--b);background:rgba(59,158,255,.04)}
+.prd-cost-form{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+
 /* ══ تكاليف — بطاقات منظمة ═══════════════════════════════════════ */
 .cost-card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;transition:border-color .15s}
 .cost-card:last-child{margin-bottom:0}
@@ -820,7 +831,8 @@ document.getElementById('wl-body').addEventListener('click',async e=>{
 });
 
 // ── Detail render ──────────────────────────────────────────────────
-window.switchDetailTab=function(tab){detailTab=tab;if(tab!=='costs')editCostIdx=-1;renderDetail();};
+let addCostForProd=null; // which product's add form is open (null=none, 0+ = prodIdx, -1 = general)
+window.switchDetailTab=function(tab){detailTab=tab;editCostIdx=-1;addCostForProd=null;renderDetail();};
 
 function renderDetail(){
   const o=orders.find(x=>x._id===selectedId);
@@ -835,10 +847,9 @@ function renderDetail(){
   const imgSrc=designUrl(o);
 
   // ── header (compact) ──
-  const costsBadge=canCost()&&costs.length?` <span style="background:rgba(255,193,7,.2);color:var(--y);border-radius:20px;padding:0 5px;font-size:10px">${costs.length}</span>`:'';
   const tabsHTML=`<div class="wd-tabs">
     <button type="button" class="wdt${detailTab==='main'?' on':''}" onclick="switchDetailTab('main')">🏭 التنفيذ</button>
-    ${canCost()?`<button type="button" class="wdt${detailTab==='costs'?' on':''}" onclick="switchDetailTab('costs')">💰 التكاليف${costsBadge}</button>`:''}
+    ${canCost()?`<button type="button" class="wdt${detailTab==='costs'?' on':''}" onclick="switchDetailTab('costs')">📚 القوالب</button>`:''}
     <button type="button" class="wdt${detailTab==='timeline'?' on':''}" onclick="switchDetailTab('timeline')">📋 السجل (${(o.timeline||[]).length})</button>
   </div>`;
 
@@ -866,33 +877,10 @@ function renderDetail(){
     return;
   }
 
-  // ── Costs tab ──
+  // ── Templates tab (was costs tab) ──
   if(detailTab==='costs'&&canCost()){
-    const totalCostVal=orderCost(o);
-    const paidTotal=costs.filter(c=>c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    const unpaidTotal=costs.filter(c=>!c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    const paidPct=totalCostVal>0?Math.round((paidTotal/totalCostVal)*100):0;
-    const costMetrics=costs.length?`
-      <div class="cost-metrics">
-        <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">الإجمالي</div></div>
-        <div class="cost-metric cm-paid"><div class="cost-metric-val">${fn(paidTotal)}</div><div class="cost-metric-lbl">مدفوع</div></div>
-        <div class="cost-metric cm-unpaid"><div class="cost-metric-val">${fn(unpaidTotal)}</div><div class="cost-metric-lbl">متبقي</div></div>
-      </div>
-      ${totalCostVal>0?`<div class="cost-progress"><div class="cost-progress-fill" style="width:${paidPct}%"></div></div>`:''}`:'';
-    // نظام التوصية الذكي
     const{matched,library}=_getTmplMatches(o);
-    const matchedIds=new Set(matched.map(r=>r.template.id));
     const multiProd=products.length>1;
-    // ألرت الإضافات غير المغطاة
-    const uncoveredExtras=[];
-    products.forEach((p,pi)=>{
-      (p.extras||[]).forEach(e=>{
-        const hasCost=costs.some(c=>(c.prodIdx===pi||c.prodIdx==null)&&_normAr(c.type||'').includes(_normAr(e)));
-        if(!hasCost)uncoveredExtras.push(`${esc(p.name||('منتج '+(pi+1)))}: ${esc(e)}`);
-      });
-    });
-    const extrasAlert=uncoveredExtras.length&&costs.length?`<div style="background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.2);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--y);margin-bottom:8px">⚠️ إضافات لم تُسجَّل تكلفتها: ${uncoveredExtras.join(' · ')}</div>`:'';
-    // دالة بطاقة المكتبة
     const _libItem=(r)=>{
       const t=r.template||r,total=(t.costItems||[]).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
       const pidx=r.prodIdx??0;
@@ -910,74 +898,27 @@ function renderDetail(){
         </div>
       </div>`;
     };
-    // بطاقات الاقتراح القوي (score >= 0.55)
     const tmplHTML=matched.map(r=>{
       const t=r.template,total=(t.costItems||[]).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
       const lbl=r.score>=0.85?'تطابق قوي':'مقترح';
-      const reasonsHtml=r.reasons.length?`<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px">${r.reasons.map(x=>`<span style="font-size:9px;background:rgba(139,92,246,.15);color:#c4b5fd;padding:1px 6px;border-radius:10px">${esc(x)}</span>`).join('')}</div>`:'';
       return`<div class="cost-tmpl-box">
         <div class="cost-tmpl-hdr"><span class="cost-tmpl-label">${lbl}</span><span class="cost-tmpl-name">${esc(t.name)}${t.qty?` ×${esc(t.qty)}`:''}</span><span class="cost-tmpl-total">${fn(total)} ج</span><span class="cost-tmpl-prod">📦 ${esc(r.prod.name||'')}</span></div>
-        ${reasonsHtml}
         <div class="cost-tmpl-chips">${(t.costItems||[]).map(c=>`<span class="ctc"><span class="ctc-type">${esc(c.type)}</span><span class="ctc-sep">·</span><span class="ctc-sup">${esc(c.supplierName||'—')}</span><span class="ctc-sep">·</span><strong class="ctc-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
         <button type="button" class="act act-add act-full" data-act="applytmpl" data-tmpl-id="${esc(t.id)}" data-prod-idx="${r.prodIdx}">تطبيق الكل دفعة واحدة</button>
       </div>`;
     }).join('');
-    // المكتبة: قوالب ذات صلة (0.15-0.55)
     let libHTML='';
     const libItems=library.length?library:(matched.length?[]:Object.values(
       costTemplates.reduce((acc,t)=>{const{score,reasons}=_scoreTmpl(t,products[0]||{});if(!acc[t.id])acc[t.id]={template:t,prod:products[0]||{},prodIdx:0,score,reasons};return acc;},{})
     ).sort((a,b)=>b.score-a.score));
     if(libItems.length){
-      libHTML=`<details class="cost-lib"${!matched.length?' open':''}>
-        <summary>${matched.length?'📚 قوالب أخرى':'📚 قوالب ذات صلة'} <span style="color:var(--b)">${libItems.length}</span> ▾</summary>
+      libHTML=`<details class="cost-lib" open>
+        <summary>📚 كل القوالب <span style="color:var(--b)">${libItems.length}</span> ▾</summary>
         ${libItems.map(_libItem).join('')}
       </details>`;
     }
-    // بطاقات التكاليف المنظمة
-    const costCards=costs.length?costs.map((c,i)=>{
-      const prod=products[c.prodIdx];
-      const isEditing=editCostIdx===i;
-      return`<div class="cost-card${isEditing?' editing':''}">
-        <div class="cost-card-top">
-          <span class="cost-card-type">${esc(c.type||'—')}</span>
-          ${prod?`<span class="cost-card-prod">📦 ${esc(prod.name)}</span>`:''}
-        </div>
-        ${c.supplierName||c.note?`<div class="cost-card-mid">${c.supplierName?`<span class="cost-card-sup">🏭 ${esc(c.supplierName)}</span>`:''}${c.note?`<span class="cost-card-note">📝 ${esc(c.note)}</span>`:''}</div>`:''}
-        <div class="cost-card-bottom">
-          <span class="cost-card-amount">${fn(c.total)} ج</span>
-          <span class="cost-card-actions">
-            ${c.walletId?`<span class="paid-pill">مدفوع</span>`:`
-              <span class="unpaid-pill">غير مدفوع</span>
-              <button type="button" class="edit-btn" data-act="editcost" data-idx="${i}">تعديل</button>
-              <button type="button" class="del-btn" data-act="delcost" data-idx="${i}">حذف</button>
-            `}
-          </span>
-        </div>
-      </div>`;
-    }).join(''):`<div style="color:var(--dim2);font-size:var(--fs-sm);padding:20px 0;text-align:center;opacity:.7">لا توجد بنود تكلفة بعد</div>`;
-    const editItem=editCostIdx>=0?costs[editCostIdx]:null;
-    const prodOpts=products.map((p,i)=>`<option value="${i}"${editItem?.prodIdx===i?' selected':''}>${esc(p.name||('منتج '+(i+1)))}</option>`).join('');
-    const supOpts=suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}"${s._id===(editItem?.supplierId||'')?' selected':''}>${esc(s.name||s._id)}</option>`).join('');
-    const walletOpts=wallets.map(w=>`<option value="${esc(w._id)}">${esc(w.name||w._id)}</option>`).join('');
-    const editBanner=editItem?`<div class="cf-full" style="background:rgba(59,158,255,.08);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--b);display:flex;justify-content:space-between;align-items:center">
-      تعديل: <strong>${esc(editItem.type||'')}</strong>
-      <button type="button" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:12px" data-act="canceledit">إلغاء</button>
-    </div>`:'';
-    const addFormHTML=`<div class="cost-form-wrap">
-      <div class="cost-form-title">${editItem?'تعديل بند':'إضافة بند جديد'}</div>
-      <div class="cost-form">
-        ${editBanner}
-        <div><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="c-type">${_buildTypeOptions(editItem?.type||'')}</select></div>
-        <div><div class="cf-lbl">المبلغ (ج) *</div><input type="number" class="cf-inp" id="c-total" min="0" value="${editItem?.total||0}" inputmode="numeric"></div>
-        <div><div class="cf-lbl">المورد</div><select class="cf-inp" id="c-supplier"><option value="">— بدون —</option>${supOpts}</select></div>
-        ${products.length>1?`<div><div class="cf-lbl">المنتج</div><select class="cf-inp" id="c-prodidx"><option value="-1">— عام —</option>${prodOpts}</select></div>`:`<input type="hidden" id="c-prodidx" value="-1"><div></div>`}
-        ${!editItem&&wallets.length?`<div class="cf-full"><div class="cf-lbl">دفع فوري من محفظة</div><select class="cf-inp" id="c-wallet"><option value="">— تسجيل بدون دفع —</option>${walletOpts}</select></div>`:''}
-        <div class="cf-full"><div class="cf-lbl">ملاحظة</div><input type="text" class="cf-inp" id="c-note" value="${esc(editItem?.note||'')}" placeholder="اختياري…" maxlength="120"></div>
-        <div class="cf-full"><button type="button" class="act act-add act-full" data-act="addcost">${editItem?'حفظ التعديل':'تسجيل بند'}</button></div>
-      </div>
-    </div>`;
     const saveTemplateHTML=costs.length?`<div class="cost-form-wrap" style="margin-top:6px">
-      <div class="cost-form-title">حفظ كقالب في المكتبة</div>
+      <div class="cost-form-title">حفظ بنود الأوردر كقالب جديد</div>
       <div style="font-size:11px;color:var(--dim2);margin-bottom:8px">سيُحفظ ${costs.filter(c=>c.supplierId&&c.type).length} بند${costs.some(c=>!c.supplierId)?` <span style="color:var(--y)">(${costs.filter(c=>!c.supplierId).length} بدون مورد — لن تُحفظ)</span>`:''}</div>
       <div class="cost-form">
         <div><div class="cf-lbl">اسم القالب *</div><input type="text" class="cf-inp" id="tmpl-name" value="${esc(products[0]?.name||'')}" placeholder="مثال: كارت شخصي ديجيتال"></div>
@@ -985,21 +926,15 @@ function renderDetail(){
         <div class="cf-full"><button type="button" class="act act-save act-full" data-act="savetmpl">حفظ في المكتبة</button></div>
       </div>
     </div>`:'';
-    panel.innerHTML=hdrHTML+tabsHTML+costMetrics+`<div class="wd">
-      ${extrasAlert}${tmplHTML}${libHTML}
-      <div class="wd-sec">
-        <div class="wd-sec-hdr">البنود <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:normal">(${costs.length})</span> <a href="exec-cost-entry.html?orderId=${esc(o._id)}" class="wd-link" style="margin-right:auto;font-size:10px">أرشيف</a></div>
-        <div class="wd-sec-body">
-          ${costCards}
-        </div>
-      </div>
-      ${addFormHTML}
-      ${saveTemplateHTML}
-    </div>`;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${tmplHTML}${libHTML}${saveTemplateHTML}</div>`;
     return;
   }
 
-  // ── Journey Rail — رحلة الأوردر (4 محطات) ──
+  // ══════════════════════════════════════════════════════════════════
+  // ── MAIN TAB — Product-centric execution ─────────────────────────
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Journey Rail ──
   const allHaveSup=products.length>0&&products.every(p=>p.supplierId);
   const someSup=products.some(p=>p.supplierId);
   const setupState=o.productionAgent&&allHaveSup?'done':o.productionAgent||someSup?'active':'pending';
@@ -1017,7 +952,7 @@ function renderDetail(){
     <div class="jstep ${s.state}"><div class="jdot"></div><div class="jlbl">${s.lbl}</div></div>
   `).join('')}</div>`;
 
-  // ── Alert bar — مشاكل حرجة في السطح ──
+  // ── Alert bar ──
   const alerts=[];
   if(o.deadline&&new Date(o.deadline)<new Date()) alerts.push(`<span class="achip achip-r">⏰ متأخر عن الموعد</span>`);
   if(!o.productionAgent) alerts.push(`<span class="achip achip-b">👷 بدون مندوب تنفيذ</span>`);
@@ -1026,10 +961,39 @@ function renderDetail(){
   if(canCost()&&!costs.length) alerts.push(`<span class="achip achip-y">💰 لم تُسجَّل تكاليف بعد</span>`);
   const alertBar=alerts.length?`<div class="alert-bar">${alerts.join('')}</div>`:'';
 
-  // ── Products ──
+  // ── Helpers for inline cost form ──
+  const _supOpts=(selId)=>suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}"${s._id===selId?' selected':''}>${esc(s.name||s._id)}</option>`).join('');
+  const _walletOpts=()=>wallets.map(w=>`<option value="${esc(w._id)}">${esc(w.name||w._id)}</option>`).join('');
+  const _inlineCostForm=(prodIdx,editItem)=>{
+    const editBanner=editItem?`<div class="cf-full" style="background:rgba(59,158,255,.08);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--b);display:flex;justify-content:space-between;align-items:center">
+      تعديل: <strong>${esc(editItem.type||'')}</strong>
+      <button type="button" style="background:none;border:none;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:12px" data-act="canceledit">إلغاء</button>
+    </div>`:'';
+    return`<div class="prd-cost-form">
+      <div class="cost-form">
+        ${editBanner}
+        <input type="hidden" id="c-prodidx" value="${prodIdx}">
+        <div><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="c-type">${_buildTypeOptions(editItem?.type||'')}</select></div>
+        <div><div class="cf-lbl">المبلغ (ج) *</div><input type="number" class="cf-inp" id="c-total" min="0" value="${editItem?.total||0}" inputmode="numeric"></div>
+        <div class="cf-full"><div class="cf-lbl">المورد</div><select class="cf-inp" id="c-supplier"><option value="">— بدون —</option>${_supOpts(editItem?.supplierId||'')}</select></div>
+        ${!editItem&&wallets.length?`<div class="cf-full"><div class="cf-lbl">دفع فوري من محفظة</div><select class="cf-inp" id="c-wallet"><option value="">— بدون دفع —</option>${_walletOpts()}</select></div>`:''}
+        <div class="cf-full"><div class="cf-lbl">ملاحظة</div><input type="text" class="cf-inp" id="c-note" value="${esc(editItem?.note||'')}" placeholder="اختياري…" maxlength="120"></div>
+        <div class="cf-full"><button type="button" class="act act-add act-full" data-act="addcost">${editItem?'حفظ التعديل':'تسجيل بند'}</button></div>
+      </div>
+    </div>`;
+  };
+
+  // ── Products — each with inline costs ──
+  const showCost=canCost();
   const prodsHTML=products.length?products.map((p,i)=>{
     const cur=p.execStatus||'pending';
-    const statusColor=cur==='done'?'var(--g)':cur==='wip'?'var(--b)':cur==='problem'?'var(--r)':'var(--dim2)';
+    const pCosts=costs.map((c,ci)=>({...c,_gi:ci})).filter(c=>c.prodIdx===i);
+    const pCostTotal=pCosts.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const editingHere=editCostIdx>=0&&costs[editCostIdx]?.prodIdx===i;
+    const editItem=editingHere?costs[editCostIdx]:null;
+    const formOpen=addCostForProd===i||editingHere;
+    // uncovered extras for this product
+    const uncov=(p.extras||[]).filter(e=>!costs.some(c=>(c.prodIdx===i||c.prodIdx==null)&&_normAr(c.type||'').includes(_normAr(e))));
     return `<div class="prd-item">
       <div class="prd-name">${esc(p.name||('منتج '+(i+1)))} ${p.qty?`<span style="color:var(--b);font-weight:var(--fw-extra);font-size:12px">×${esc(p.qty)}</span>`:''}</div>
       <div class="prd-status-row">${EXEC.map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>
@@ -1040,11 +1004,60 @@ function renderDetail(){
           ${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===(p.supplierId||'')?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}
         </select>
       </div>
+      ${showCost?`
+        ${uncov.length&&pCosts.length?`<div style="font-size:10px;color:var(--y);margin-top:4px">⚠️ إضافات ناقصة: ${uncov.map(e=>esc(e)).join(' · ')}</div>`:''}
+        <div class="prd-costs">
+          ${pCosts.length?pCosts.map(c=>`<div class="prd-cost-row">
+            <span class="prd-cost-type">${esc(c.type||'—')}</span>
+            ${c.supplierName?`<span class="prd-cost-sup">${esc(c.supplierName)}</span>`:''}
+            <span class="prd-cost-amt">${fn(c.total)} ج</span>
+            ${c.walletId?`<span class="paid-pill">مدفوع</span>`:`
+              <button type="button" class="edit-btn" data-act="editcost" data-idx="${c._gi}">تعديل</button>
+              <button type="button" class="del-btn" data-act="delcost" data-idx="${c._gi}">حذف</button>
+            `}
+          </div>`).join(''):''}
+          ${pCosts.length?`<div class="prd-cost-total">إجمالي: ${fn(pCostTotal)} ج</div>`:''}
+          ${formOpen?_inlineCostForm(i,editItem):`<button type="button" class="prd-add-cost-btn" data-act="opencostform" data-pidx="${i}">+ تسجيل بند تكلفة</button>`}
+        </div>
+      `:''}
     </div>`;
   }).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد منتجات</div>';
 
+  // ── General costs (prodIdx === -1 or null) ──
+  const genCosts=costs.map((c,ci)=>({...c,_gi:ci})).filter(c=>c.prodIdx==null||c.prodIdx<0);
+  const genEditingHere=editCostIdx>=0&&(costs[editCostIdx]?.prodIdx==null||costs[editCostIdx]?.prodIdx<0);
+  const genEditItem=genEditingHere?costs[editCostIdx]:null;
+  const genFormOpen=addCostForProd===-1||genEditingHere;
+  const genCostsHTML=showCost&&(genCosts.length||genFormOpen)?`<div class="wd-sec">
+    <div class="wd-sec-hdr">تكاليف عامة <span style="font-size:var(--fs-xs);color:var(--dim2);font-weight:normal">(${genCosts.length})</span></div>
+    <div class="wd-sec-body">
+      ${genCosts.map(c=>`<div class="prd-cost-row">
+        <span class="prd-cost-type">${esc(c.type||'—')}</span>
+        ${c.supplierName?`<span class="prd-cost-sup">${esc(c.supplierName)}</span>`:''}
+        <span class="prd-cost-amt">${fn(c.total)} ج</span>
+        ${c.walletId?`<span class="paid-pill">مدفوع</span>`:`
+          <button type="button" class="edit-btn" data-act="editcost" data-idx="${c._gi}">تعديل</button>
+          <button type="button" class="del-btn" data-act="delcost" data-idx="${c._gi}">حذف</button>
+        `}
+      </div>`).join('')}
+      ${genFormOpen?_inlineCostForm(-1,genEditItem):`<button type="button" class="prd-add-cost-btn" data-act="opencostform" data-pidx="-1">+ بند تكلفة عام</button>`}
+    </div>
+  </div>`:'';
 
-  // ── Agent ── (يظهر أولاً لو لا يوجد مندوب — أولوية أعلى)
+  // ── Cost summary bar ──
+  const totalCostVal=orderCost(o);
+  const paidTotal=costs.filter(c=>c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const unpaidTotal=costs.filter(c=>!c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const paidPct=totalCostVal>0?Math.round((paidTotal/totalCostVal)*100):0;
+  const costSummary=showCost&&costs.length?`
+    <div class="cost-metrics">
+      <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">الإجمالي</div></div>
+      <div class="cost-metric cm-paid"><div class="cost-metric-val">${fn(paidTotal)}</div><div class="cost-metric-lbl">مدفوع</div></div>
+      <div class="cost-metric cm-unpaid"><div class="cost-metric-val">${fn(unpaidTotal)}</div><div class="cost-metric-lbl">متبقي</div></div>
+    </div>
+    ${totalCostVal>0?`<div class="cost-progress"><div class="cost-progress-fill" style="width:${paidPct}%"></div></div>`:''}`:'';
+
+  // ── Agent ──
   const agentHTML=`<div class="wd-sec${!o.productionAgent?' ':''}" id="sec-agent">
     <div class="wd-sec-hdr" style="${!o.productionAgent?'color:var(--b)':''}">👷 المندوب ${o.productionAgentName?`<span style="color:var(--snow)">${esc(o.productionAgentName)}</span>`:''}</div>
     <div class="wd-sec-body" style="gap:8px">
@@ -1056,21 +1069,20 @@ function renderDetail(){
     </div>
   </div>`;
 
-  // ── حالة الإرسال للشحن (contextual) ──
+  // ── Ship ──
   const isReadyToShip=st==='done'&&costs.length>0;
-  const shipBtn=`<button type="button" class="act act-full${isReadyToShip?' ship-ready':' act-ship'}" style="font-size:var(--fs-base);padding:13px" data-act="toShip">${isReadyToShip?'✅ جاهز — إرسال للشحن 🚚':'🚚 إرسال للشحن'}</button>`;
+  const shipBtn=`<button type="button" class="act act-full${isReadyToShip?' ship-ready':' act-ship'}" style="font-size:var(--fs-base);padding:13px" data-act="toShip">${isReadyToShip?'جاهز — إرسال للشحن':'إرسال للشحن'}</button>`;
 
-  // ── note ──
-  const noteHTML=`<div class="wd-sec"><div class="wd-sec-hdr">📝 ملاحظة</div><div class="wd-sec-body" style="gap:8px"><textarea class="note-ta" id="prod-note" rows="2" placeholder="ملاحظات خاصة…">${esc(o.prodNote||'')}</textarea><button type="button" class="act act-save act-full" data-act="savenote">💾 حفظ</button></div></div>`;
+  // ── Note ──
+  const noteHTML=`<div class="wd-sec"><div class="wd-sec-hdr">📝 ملاحظة</div><div class="wd-sec-body" style="gap:8px"><textarea class="note-ta" id="prod-note" rows="2" placeholder="ملاحظات خاصة…">${esc(o.prodNote||'')}</textarea><button type="button" class="act act-save act-full" data-act="savenote">حفظ</button></div></div>`;
 
   panel.innerHTML=hdrHTML+tabsHTML+jRail+alertBar+`<div class="wd">
     ${imgSrc?`<img src="${esc(imgSrc)}" alt="" loading="lazy" style="width:100%;max-height:160px;object-fit:contain;border-radius:10px;background:var(--bg2);border:1px solid var(--line)" onerror="this.remove()">`:''}
     ${!o.productionAgent?agentHTML:''}
-    <div class="wd-sec">
-      <div class="wd-sec-hdr">📦 المنتجات <span style="color:${nd===np&&np>0?'var(--g)':'var(--dim2)'};font-weight:var(--fw-heavy)">${nd}/${np} مكتمل</span></div>
-      <div class="wd-sec-body">${prodsHTML}</div>
-    </div>
+    ${prodsHTML}
+    ${genCostsHTML}
     ${o.productionAgent?agentHTML:''}
+    ${costSummary}
     ${noteHTML}
     ${shipBtn}
   </div>`;
@@ -1103,10 +1115,12 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       }
       toast(ok?`✓ أُضيف ${ok} بند${fail?` (${fail} فشل)`:''}`:' تعذّر تطبيق القالب',ok?'ok':'err');
       btn.disabled=false;return;
+    } else if(act==='opencostform'){
+      addCostForProd=parseInt(btn.dataset.pidx,10);editCostIdx=-1;renderDetail();btn.disabled=false;return;
     } else if(act==='editcost'){
-      editCostIdx=parseInt(btn.dataset.idx,10);renderDetail();btn.disabled=false;return;
+      editCostIdx=parseInt(btn.dataset.idx,10);addCostForProd=null;renderDetail();btn.disabled=false;return;
     } else if(act==='canceledit'){
-      editCostIdx=-1;renderDetail();btn.disabled=false;return;
+      editCostIdx=-1;addCostForProd=null;renderDetail();btn.disabled=false;return;
     } else if(act==='addcost'){
       const type=(document.getElementById('c-type')?.value||'').trim();
       const total=parseFloat(document.getElementById('c-total')?.value)||0;
@@ -1120,7 +1134,7 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       const isEdit=editCostIdx>=0;
       const editIdx=editCostIdx;
       r=await orderActions.recordCostItem({...base,prodIdx,payload:{type,total,supplierId:sup?.value||'',supplierName:sup?.value?(sup.options[sup.selectedIndex]?.dataset.name||''):'',note,walletId,paperMeta:{}},wallets,isEdit,editIdx,allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label)});
-      if(r?.ok)editCostIdx=-1;
+      if(r?.ok){editCostIdx=-1;addCostForProd=null;}
     } else if(act==='delcost'){
       if(!confirm('حذف هذه التكلفة؟')){btn.disabled=false;return;}
       r=await orderActions.removeUnpaidCostItem({db,orderId,itemIndex:parseInt(btn.dataset.idx,10),userId:me.uid,userName:me.name});
