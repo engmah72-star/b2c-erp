@@ -184,11 +184,6 @@
 .prd-sup-sel{flex:1;font-size:11px;padding:5px 8px;border-radius:20px;border:1px solid var(--line);background:var(--bg1);color:var(--snow);font-family:inherit;min-width:0}
 .prd-sup-sel:focus{outline:none;border-color:var(--b)}
 
-/* ══ رابط التكاليف داخل بطاقة المنتج ═════════════════════════════ */
-.prd-cost-link{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
-.prd-cost-go{display:flex;align-items:center;justify-content:center;gap:5px;padding:7px;border-radius:8px;border:1px solid var(--line);background:rgba(255,193,7,.04);color:var(--y);font-size:var(--fs-xs);font-weight:var(--fw-extra);font-family:inherit;text-decoration:none;transition:all .15s}
-.prd-cost-go:hover{border-color:rgba(255,193,7,.4);background:rgba(255,193,7,.08)}
-
 /* ══ تكاليف — بطاقات منظمة ═══════════════════════════════════════ */
 .cost-card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;transition:border-color .15s}
 .cost-card:last-child{margin-bottom:0}
@@ -312,9 +307,6 @@
 .ctc-sep{color:var(--dim2)}
 .ctc-sup{color:var(--dim2)}
 .ctc-amt{color:var(--y);font-weight:var(--fw-heavy)}
-.cost-full-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:9px;border-radius:10px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.2);color:var(--b);font-size:var(--fs-sm);font-weight:var(--fw-extra);font-family:inherit;cursor:pointer;margin-top:4px;transition:background .15s}
-.cost-full-btn:hover{background:rgba(59,158,255,.14)}
-
 /* ══ Contextual ship button ═════════════════════════════════════════ */
 .ship-ready{background:rgba(0,217,126,.12);border-color:rgba(0,217,126,.4);color:var(--g);font-size:var(--fs-base);padding:13px}
 .ship-ready:hover:not(:disabled){background:rgba(0,217,126,.2)}
@@ -842,7 +834,7 @@ function renderDetail(){
   // ── header (compact) ──
   const tabsHTML=`<div class="wd-tabs">
     <button type="button" class="wdt${detailTab==='main'?' on':''}" onclick="switchDetailTab('main')">🏭 التنفيذ</button>
-    ${canCost()?`<button type="button" class="wdt${detailTab==='costs'?' on':''}" onclick="switchDetailTab('costs')">📚 القوالب</button>`:''}
+    ${canCost()?`<button type="button" class="wdt${detailTab==='costs'?' on':''}" onclick="switchDetailTab('costs')">💰 التكاليف${costs.length?' ('+costs.length+')':''}</button>`:''}
     <button type="button" class="wdt${detailTab==='timeline'?' on':''}" onclick="switchDetailTab('timeline')">📋 السجل (${(o.timeline||[]).length})</button>
   </div>`;
 
@@ -870,8 +862,87 @@ function renderDetail(){
     return;
   }
 
-  // ── Templates tab (was costs tab) ──
+  // ── Costs tab ──
   if(detailTab==='costs'&&canCost()){
+    // ── Cost summary metrics ──
+    const totalCostVal=orderCost(o);
+    const paidVal=costs.filter(c=>c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+    const unpaidVal=totalCostVal-paidVal;
+    const metricsHTML=costs.length?`
+      <div class="cost-metrics">
+        <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">الإجمالي</div></div>
+        <div class="cost-metric cm-paid"><div class="cost-metric-val">${fn(paidVal)}</div><div class="cost-metric-lbl">مدفوع</div></div>
+        <div class="cost-metric cm-unpaid"><div class="cost-metric-val">${fn(unpaidVal)}</div><div class="cost-metric-lbl">متبقي</div></div>
+      </div>
+      <div class="cost-progress"><div class="cost-progress-fill" style="width:${totalCostVal?Math.round(paidVal/totalCostVal*100):0}%"></div></div>`:'';
+
+    // ── Cost items grouped by product ──
+    const _costCard=(c)=>{
+      const idx=c._idx;
+      const isPaid=!!c.walletId;
+      const isEd=editCostIdx===idx;
+      const prodName=c.prodIdx>=0&&c.prodIdx<products.length?products[c.prodIdx].name:'عام';
+      return`<div class="cost-card${isEd?' editing':''}">
+        <div class="cost-card-top">
+          <span class="cost-card-type">${esc(c.type||'—')}</span>
+          <span class="cost-card-prod">📦 ${esc(prodName)}</span>
+        </div>
+        <div class="cost-card-mid">
+          ${c.supplierName?`<span class="cost-card-sup">🏭 ${esc(c.supplierName)}</span>`:''}
+          ${c.note?`<span class="cost-card-note">📝 ${esc(c.note)}</span>`:''}
+        </div>
+        <div class="cost-card-bottom">
+          <span class="cost-card-amount">${fn(c.total)} ج</span>
+          <div class="cost-card-actions">
+            ${isPaid?`<span class="paid-pill">مدفوع</span>`:`<span class="unpaid-pill">غير مدفوع</span>`}
+            <button type="button" class="edit-btn" data-act="editcost" data-cidx="${idx}">✏️</button>
+            ${!isPaid?`<button type="button" class="del-btn" data-act="delcost" data-cidx="${idx}">🗑</button>`:''}
+          </div>
+        </div>
+      </div>`;
+    };
+    const indexedCosts=costs.map((c,idx)=>({...c,_idx:idx}));
+    let itemsHTML='';
+    products.forEach((p,pi)=>{
+      const pCosts=indexedCosts.filter(c=>c.prodIdx===pi);
+      if(!pCosts.length) return;
+      itemsHTML+=`<div style="margin-bottom:10px">
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--b);margin-bottom:6px;display:flex;align-items:center;gap:5px">📦 ${esc(p.name||('منتج '+(pi+1)))}</div>
+        ${pCosts.map(_costCard).join('')}
+      </div>`;
+    });
+    const generalCosts=indexedCosts.filter(c=>c.prodIdx==null||c.prodIdx<0);
+    if(generalCosts.length){
+      itemsHTML+=`<div style="margin-bottom:10px">
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--dim2);margin-bottom:6px">📋 عام</div>
+        ${generalCosts.map(_costCard).join('')}
+      </div>`;
+    }
+    const itemsSec=costs.length?`<div class="wd-sec">
+      <div class="wd-sec-hdr">📋 البنود <span class="bdg bdg-blue">${costs.length}</span></div>
+      <div class="wd-sec-body">${itemsHTML}</div>
+    </div>`:`<div style="text-align:center;padding:20px;color:var(--dim2);font-size:var(--fs-sm)">لا توجد بنود تكلفة بعد</div>`;
+
+    // ── Add / Edit cost form ──
+    const isEditing=editCostIdx>=0;
+    const editItem=isEditing?costs[editCostIdx]:null;
+    const formHTML=`<div class="cost-form-wrap${isEditing?' editing':''}">
+      <div class="cost-form-title">${isEditing?'✏️ تعديل بند':'➕ إضافة بند تكلفة'}</div>
+      <div class="cost-form">
+        <div><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="cf-type">${_buildTypeOptions(editItem?.type||'')}</select></div>
+        <div><div class="cf-lbl">المبلغ *</div><input type="number" class="cf-inp" id="cf-total" value="${editItem?parseFloat(editItem.total)||'':''}" placeholder="0" min="0"></div>
+        <div><div class="cf-lbl">المورد</div><select class="cf-inp" id="cf-sup"><option value="">— بدون —</option>${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${editItem?.supplierId===s._id?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}</select></div>
+        <div><div class="cf-lbl">المنتج</div><select class="cf-inp" id="cf-prod">${products.map((p,i)=>`<option value="${i}" ${(isEditing?(editItem?.prodIdx??0):0)===i?'selected':''}>${esc(p.name||('منتج '+(i+1)))}</option>`).join('')}<option value="-1" ${isEditing&&editItem?.prodIdx==-1?'selected':''}>عام</option></select></div>
+        ${!isEditing?`<div class="cf-full"><div class="cf-lbl">دفع فوري من محفظة</div><select class="cf-inp" id="cf-wallet"><option value="">— بدون دفع فوري —</option>${wallets.map(w=>`<option value="${esc(w._id)}">${esc(w.name||w._id)} (${fn(w.balance||0)} ج)</option>`).join('')}</select></div>`:''}
+        <div class="cf-full"><div class="cf-lbl">ملاحظة</div><input type="text" class="cf-inp" id="cf-note" value="${esc(editItem?.note||'')}" placeholder="اختياري"></div>
+        <div class="cf-full" style="display:flex;gap:6px">
+          <button type="button" class="act ${isEditing?'act-save':'act-add'} act-full" data-act="${isEditing?'updatecost':'addcost'}">${isEditing?'💾 حفظ التعديل':'➕ إضافة'}</button>
+          ${isEditing?`<button type="button" class="act act-ghost" data-act="canceledit" style="flex-shrink:0">إلغاء</button>`:''}
+        </div>
+      </div>
+    </div>`;
+
+    // ── Templates (matching + library) ──
     const{matched,library}=_getTmplMatches(o);
     const multiProd=products.length>1;
     const _libItem=(r)=>{
@@ -905,8 +976,8 @@ function renderDetail(){
       costTemplates.reduce((acc,t)=>{const{score,reasons}=_scoreTmpl(t,products[0]||{});if(!acc[t.id])acc[t.id]={template:t,prod:products[0]||{},prodIdx:0,score,reasons};return acc;},{})
     ).sort((a,b)=>b.score-a.score));
     if(libItems.length){
-      libHTML=`<details class="cost-lib" open>
-        <summary>📚 كل القوالب <span style="color:var(--b)">${libItems.length}</span> ▾</summary>
+      libHTML=`<details class="cost-lib">
+        <summary>📚 قوالب ذات صلة <span style="color:var(--b)">${libItems.length}</span> ▾</summary>
         ${libItems.map(_libItem).join('')}
       </details>`;
     }
@@ -919,7 +990,7 @@ function renderDetail(){
         <div class="cf-full"><button type="button" class="act act-save act-full" data-act="savetmpl">حفظ في المكتبة</button></div>
       </div>
     </div>`:'';
-    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${tmplHTML}${libHTML}${saveTemplateHTML}</div>`;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}</div>`;
     return;
   }
 
@@ -956,11 +1027,8 @@ function renderDetail(){
 
 
   // ── Products — clean execution cards ──
-  const showCost=canCost();
   const prodsHTML=products.length?products.map((p,i)=>{
     const cur=p.execStatus||'pending';
-    const pCosts=showCost?costs.filter(c=>c.prodIdx===i):[];
-    const pCostTotal=pCosts.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     return `<div class="prd-item">
       <div class="prd-name">${esc(p.name||('منتج '+(i+1)))} ${p.qty?`<span style="color:var(--b);font-weight:var(--fw-extra);font-size:12px">×${esc(p.qty)}</span>`:''}</div>
       <div class="prd-status-row">${EXEC.map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>
@@ -971,22 +1039,8 @@ function renderDetail(){
           ${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===(p.supplierId||'')?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}
         </select>
       </div>
-      ${showCost?`<div class="prd-cost-link">
-        <a href="exec-cost-entry.html?id=${esc(o._id)}" class="prd-cost-go">${pCosts.length?`💰 ${pCosts.length} بند · ${fn(pCostTotal)} ج`:'💰 تسجيل تكاليف'}</a>
-      </div>`:''}
     </div>`;
   }).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد منتجات</div>';
-
-  // ── Cost summary (read-only) ──
-  const totalCostVal=orderCost(o);
-  const costSummary=showCost&&costs.length?`
-    <div class="cost-metrics">
-      <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">الإجمالي</div></div>
-      <div class="cost-metric cm-paid"><div class="cost-metric-val">${fn(costs.filter(c=>c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0))}</div><div class="cost-metric-lbl">مدفوع</div></div>
-      <div class="cost-metric cm-unpaid"><div class="cost-metric-val">${fn(costs.filter(c=>!c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0))}</div><div class="cost-metric-lbl">متبقي</div></div>
-    </div>
-    <a href="exec-cost-entry.html?id=${esc(o._id)}" class="cost-full-btn">💰 فتح مركز التكاليف</a>`:
-    showCost?`<a href="exec-cost-entry.html?id=${esc(o._id)}" class="cost-full-btn">💰 تسجيل تكاليف الأوردر</a>`:'';
 
   // ── Agent ──
   const agentHTML=`<div class="wd-sec${!o.productionAgent?' ':''}" id="sec-agent">
@@ -1012,7 +1066,6 @@ function renderDetail(){
     ${!o.productionAgent?agentHTML:''}
     ${prodsHTML}
     ${o.productionAgent?agentHTML:''}
-    ${costSummary}
     ${noteHTML}
     ${shipBtn}
   </div>`;
@@ -1058,6 +1111,33 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       r=await orderActions.assignProductionAgent({db,orderId,agentId:me.uid,agentName:me.name,userId:me.uid,userName:me.name,pickup:true});
     } else if(act==='savenote'){
       r=await orderActions.updateProductionNote({db,orderId,note:(document.getElementById('prod-note')?.value||'').trim()});
+    } else if(act==='editcost'){
+      editCostIdx=parseInt(btn.dataset.cidx,10);
+      renderDetail();btn.disabled=false;return;
+    } else if(act==='canceledit'){
+      editCostIdx=-1;
+      renderDetail();btn.disabled=false;return;
+    } else if(act==='addcost'||act==='updatecost'){
+      const type=(document.getElementById('cf-type')?.value||'').trim();
+      const total=parseFloat(document.getElementById('cf-total')?.value)||0;
+      if(!type){toast('اختر نوع التكلفة','warn');btn.disabled=false;return;}
+      if(!total||total<=0){toast('أدخل المبلغ','warn');btn.disabled=false;return;}
+      const supSel=document.getElementById('cf-sup');
+      const supplierId=supSel?.value||'';
+      const supplierName=supplierId?(supSel.options[supSel.selectedIndex]?.dataset.name||''):'';
+      const prodIdx=parseInt(document.getElementById('cf-prod')?.value||'0',10);
+      const note=(document.getElementById('cf-note')?.value||'').trim();
+      const walletSel=document.getElementById('cf-wallet');
+      const walletId=walletSel?.value||'';
+      const isEdit=act==='updatecost';
+      const payload={type,total,supplierId,supplierName,note};
+      if(walletId&&!isEdit) payload.walletId=walletId;
+      r=await orderActions.recordCostItem({...base,prodIdx,payload,wallets:walletId?wallets:[],isEdit,editIdx:isEdit?editCostIdx:undefined,allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label)});
+      if(r?.ok) editCostIdx=-1;
+    } else if(act==='delcost'){
+      const cidx=parseInt(btn.dataset.cidx,10);
+      if(!confirm('حذف هذا البند؟')){btn.disabled=false;return;}
+      r=await orderActions.removeUnpaidCostItem({...base,itemIndex:cidx});
     } else if(act==='savetmpl'){
       const name=(document.getElementById('tmpl-name')?.value||'').trim();
       const qty=(document.getElementById('tmpl-qty')?.value||'').trim();
