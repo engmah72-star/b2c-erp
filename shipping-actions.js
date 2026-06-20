@@ -965,6 +965,98 @@ export const shippingActions = {
   async closeShipment(args) {
     return orderActions.archiveOrder({ ...args, source: args?.source || 'shipping' });
   },
+
+  // ════════════════════════════════════════════════════════════
+  // Waybill actions (extracted from waybill.html — H1.1)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * markWaybillPrinted — ختم بيانات الطباعة على الأوردر (fire-and-forget).
+   * يُحدّث printedAt/printedBy/printCount على waybill sub-object.
+   * لا حدث مالي. الدالة best-effort — لا تنفّذ idempotency لأنها
+   * مجرد metadata stamp (العدد التراكمي للطباعة مقبول).
+   */
+  async markWaybillPrinted({ db, orderId, printedAt, userName, currentPrintCount = 0 }) {
+    if (!db || !orderId) return { ok: false, errors: ['⚠️ db و orderId مطلوبان'], warnings: [] };
+    try {
+      const ref = doc(db, 'orders', orderId);
+      await updateDoc(ref, {
+        'waybill.printedAt': printedAt || _ts(),
+        'waybill.printedBy': userName || '',
+        'waybill.printCount': (currentPrintCount || 0) + 1,
+      });
+      return { ok: true, errors: [], warnings: [] };
+    } catch (e) {
+      // Best-effort — caller silently ignores failures (same as original behavior)
+      return { ok: false, errors: [e.message || 'فشل تسجيل الطباعة'], warnings: [] };
+    }
+  },
+
+  /**
+   * updateWaybillFields — تعديل حقول البوليصة (اسم/تليفون/عنوان/محتويات/ملاحظات).
+   * يكتب على waybill sub-object + حقول top-level (shipGov, shipAddress) +
+   * auditLog array + hasUnreviewedAudit + timeline entry.
+   *
+   * Validations:
+   *   - الأوردر لا يكون مؤرشف أو مرتجع
+   *   - سبب التعديل ≥ 10 أحرف
+   *   - وجود تغيير فعلي (changes.length > 0)
+   */
+  async updateWaybillFields({
+    db, orderId, order,
+    newName, newPhone, newGov, newAddress, newCargo, newNotes,
+    reason, changes,
+    userId, userName,
+  }) {
+    if (!db || !orderId) return { ok: false, errors: ['⚠️ db و orderId مطلوبان'], warnings: [] };
+
+    // Validation
+    const errors = [];
+    if (!order) errors.push('الأوردر غير موجود');
+    if (order && order.stage === 'archived') errors.push('⛔ الأوردر مؤرشف');
+    if (order && order.shipStage === 'returned') errors.push('⛔ الأوردر مرتجع');
+    if (!reason || reason.trim().length < 10) errors.push('⚠️ سبب التعديل لا بد ≥ 10 أحرف');
+    if (!changes || !changes.length) errors.push('لا توجد تغييرات');
+    if (errors.length) return { ok: false, errors, warnings: [] };
+
+    const ts = _ts();
+    const auditLogEntry = {
+      type: 'waybill_edit',
+      changedBy: userName, changedById: userId,
+      date: ts, reason: reason.trim(), changes,
+      requiresReview: true,
+    };
+    const updates = {
+      'waybill.recipientName': newName,
+      'waybill.recipientPhone': newPhone,
+      'waybill.recipientGov': newGov,
+      'waybill.recipientAddress': newAddress,
+      'waybill.cargoDescription': newCargo,
+      'waybill.notes': newNotes,
+      'waybill.lastEditedAt': ts,
+      'waybill.lastEditedBy': userName,
+      // Sync with top-level shipping fields so openShipSetup pre-fills correctly
+      shipGov: newGov,
+      shipAddress: newAddress,
+      auditLog: [...(order.auditLog || []), auditLogEntry],
+      hasUnreviewedAudit: true,
+      timeline: [...(order.timeline || []), {
+        date: ts,
+        action: `✏️ تعديل البوليصة — ${changes.map(c => c.label).join(', ')} · ${reason.trim()}`,
+        by: userName,
+      }],
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await updateDoc(doc(db, 'orders', orderId), updates);
+      auditEntry({ action: 'shipping.updateWaybillFields', userId, userName, kind: 'edit', meta: { orderId, changes: changes.map(c => c.field) } });
+      persistAuditLog(db);
+      return { ok: true, errors: [], warnings: [], updates, ts };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تعديل البوليصة'], warnings: [] };
+    }
+  },
 };
 
 export default shippingActions;

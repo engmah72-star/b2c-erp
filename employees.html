@@ -258,10 +258,9 @@ import { setText, gv, fmtNum as _fmtNum } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, serverTimestamp, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { dataCache, cachedQuery } from './core/data-cache.js';
 import { QUERY_LIMITS as QL } from './core/query-limits.js';
-import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 import { dedupEmployees } from "./orders.js";
 import { getRoleDefaultPermissions, canDo } from "./core/permissions-matrix.js";
 import { employeeActions } from "./employee-actions.js";
@@ -1451,7 +1450,8 @@ window.confirmPayroll=async function(){
   const note=gv('pr-note')||'رواتب '+MONTHS_AR[now.getMonth()]+' '+now.getFullYear();
   const date=todayStr();
   try{
-    await dispatchFinancialEvent(db,FE.PAYROLL,{
+    const r=await employeeActions.processPayroll({
+      db,
       employees:selected.map(e=>({
         employeeId:e._id,employeeName:e.name||'',
         amount:parseFloat(document.getElementById('pr-amt-'+e._id)?.value)||parseFloat(e.baseSalary)||0,
@@ -1461,8 +1461,9 @@ window.confirmPayroll=async function(){
       note,month:mKey,date,
       userId:currentUser.uid,userName,
     });
-    document.getElementById('ov-payroll').classList.remove('open');
-    toast(`✅ تم صرف ${selected.length} مرتب · إجمالي ${fn(total)} ج`,'ok');
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');}
+    else{document.getElementById('ov-payroll').classList.remove('open');
+    toast(`✅ تم صرف ${selected.length} مرتب · إجمالي ${fn(total)} ج`,'ok');}
   }catch(e){toast('❌ '+e.message,'err');}
   btn.disabled=false;btn.textContent='✓ صرف الكل';
 };
@@ -1594,15 +1595,17 @@ window.confirmPayOne=async function(){
   const commission=Math.round(calcEmpCommission(e));
   const btn=document.getElementById('pay-one-btn');btn.disabled=true;btn.textContent='جاري...';
   try{
-    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT,{
+    const r=await employeeActions.recordSalaryPayment({
+      db,
       employeeId:e._id,employeeName:e.name||'',
       amount,salaryType:salType,isDeduction,
       walletId:wId,walletName:w.name||'',
       note,month:mKey,baseSalary:base,commission,
       date:todayStr(),userId:currentUser.uid,userName,
     });
-    closePayOne();
-    toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${e.name}`,'ok');
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');}
+    else{closePayOne();
+    toast(`✅ تم تسجيل ${fn(amount)} ج${isDeduction?' (خصم)':''} — ${e.name}`,'ok');}
   }catch(err){toast('❌ '+err.message,'err');}
   btn.disabled=false;btn.textContent='✓ تسجيل';
 };
@@ -1610,13 +1613,15 @@ window.confirmPayOne=async function(){
 window.reverseSalaryTx=async function(txId,employeeId,employeeName,amount,isDeduction,walletId,epId){
   if(!confirm(`إلغاء دفعة ${fn(amount)} ج لـ ${employeeName}؟`))return;
   try{
-    await dispatchFinancialEvent(db,FE.SALARY_PAYMENT_REVERSAL,{
+    const r=await employeeActions.reverseSalaryPayment({
+      db,
       txId,epId:epId||'',employeeId,employeeName,
       amount,isDeduction,walletId,
       userId:currentUser?.uid||'',userName,
     });
-    closePayOne();
-    toast(`✅ تم إلغاء الدفعة — ${employeeName}`,'ok');
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');}
+    else{closePayOne();
+    toast(`✅ تم إلغاء الدفعة — ${employeeName}`,'ok');}
   }catch(e){toast('❌ '+e.message,'err');}
 };
 
