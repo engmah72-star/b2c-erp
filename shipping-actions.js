@@ -477,23 +477,19 @@ export const shippingActions = {
         })),
       });
 
-      // Auto-archive كل الأوردرات المُسوَّاة — الأوردر اكتمل تشغيلياً + مالياً.
-      // buildArchiveSpec في orders.js يحقق إن shipSettled=true قبل الكتابة.
-      // فشل الأرشفة لأي سبب لا يُلغي التسوية (الكتابة المالية كاملة).
-      const archiveResults = [];
-      for (const id of orders.map(o => o._id)) {
-        try {
-          const ar = await orderActions.archiveOrder({
-            db, orderId: id,
-            role, userId, userName,
-            source: 'shipping', reason: 'auto-archive بعد تسوية شركة الشحن',
-            bypassWarnings: true,
-          });
-          archiveResults.push({ orderId: id, ok: ar.ok, errors: ar.errors });
-        } catch (e) {
-          archiveResults.push({ orderId: id, ok: false, errors: [e.message || 'فشل الأرشفة'] });
-        }
+      // T9: bulkArchive بدل N separate archiveOrder calls
+      let bulkAr = { ok: false, errors: [], warnings: [], count: 0, orderIds: [] };
+      try {
+        bulkAr = await orderActions.bulkArchive({
+          db,
+          orderIds: orders.map(o => o._id),
+          role, userId, userName,
+          source: 'shipping', reason: 'auto-archive بعد تسوية شركة الشحن',
+        });
+      } catch (e) {
+        bulkAr = { ok: false, errors: [e.message || 'فشل الأرشفة الجماعية'], warnings: [], count: 0, orderIds: [] };
       }
+      const archiveResults = (bulkAr.orderIds || []).map(id => ({ orderId: id, ok: true, errors: [] }));
 
       return {
         ok: true, errors: [], warnings: v.warnings,

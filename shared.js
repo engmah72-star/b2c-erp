@@ -544,13 +544,17 @@ export function initModals() {
 // ═══════════════════════════════════════
 // UTILS
 // ═══════════════════════════════════════
+const _nf = new Intl.NumberFormat('ar-EG');
+const _df = new Intl.DateTimeFormat('ar-EG');
+const _tf = new Intl.DateTimeFormat('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
 export function nowStr() {
-  return new Date().toLocaleDateString('ar-EG') + ' ' +
-    new Date().toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+  const d = new Date();
+  return _df.format(d) + ' ' + _tf.format(d);
 }
 
 export function fn(n) {
-  return (parseFloat(n) || 0).toLocaleString('ar-EG');
+  return _nf.format(parseFloat(n) || 0);
 }
 
 export function gv(id) {

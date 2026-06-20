@@ -254,11 +254,13 @@
 
 <script type="module">
 import { app, auth, db, FB_CONFIG } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum as _fmtNum } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { collection, doc, onSnapshot, setDoc, getDoc, getDocs, serverTimestamp, query, where, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { QUERY_LIMITS as QL } from './core/query-limits.js';
 import { dispatchFinancialEvent, FE } from "./financial-sync-engine.js";
 import { dedupEmployees } from "./orders.js";
 import { getRoleDefaultPermissions, canDo } from "./core/permissions-matrix.js";
@@ -326,8 +328,15 @@ const scheduleAlerts=()=>{if(__alertsRaf)return;__alertsRaf=requestAnimationFram
 let __ordersVer=0,__empVer=0,__attVer=0,__hrVer=0; // __hrVer: أهداف/إجازات/إخفاقات (مدخلات السكور)
 let __lastActivityMap=null,__lastActivityVer=-1;
 const __kpiCache=new Map(); // key: empId|ordersVer|attVer|monthKey -> breakdown
+let __activeOrders=null,__activeOrdersVer=-1;
+function _getActiveOrders(){
+  if(__activeOrdersVer===__ordersVer&&__activeOrders)return __activeOrders;
+  __activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  __activeOrdersVer=__ordersVer;
+  return __activeOrders;
+}
 
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 // HTML-attribute escape — faithful equivalent of the former inline-string args
 const escAttr=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -648,58 +657,51 @@ onAuthStateChanged(auth,async u=>{
     }
   }
 
-  onSnapshot(query(collection(db,'employee_goals'),limit(2000)),snap=>{
-    empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('employee_goals').limit(QL.EMPLOYEE_GOALS).build(),(docs)=>{
+    empGoals=docs||[];
     __hrVer++;scheduleStats();scheduleList();
   });
   // إخفاقات كل الموظفين — مدخل خصم الجودة في computeScore (مصدر واحد للسكور)
-  onSnapshot(query(collection(db,'employee_incidents'),limit(2000)),snap=>{
-    empIncidentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('employee_incidents').limit(QL.EMPLOYEE_INCIDENTS).build(),(docs)=>{
+    empIncidentsAll=docs||[];
     __hrVer++;scheduleStats();scheduleList();
   });
-  onSnapshot(query(collection(db,'employee_evaluations'),limit(2000)),snap=>{
-    empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('employee_evaluations').limit(QL.EMPLOYEE_EVALUATIONS).build(),(docs)=>{
+    empEvaluations=docs||[];
   });
   let __urlLoaded=false;
-  onSnapshot(query(collection(db,'employees'),limit(500)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    // employees = dedup (طي السجلات المكرّرة لنفس الشخص) ثم ترتيب
+  dataCache.subscribe(cachedQuery('employees').limit(QL.EMPLOYEES).build(),(docs)=>{
+    const raw=docs||[];
     employees=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    // النسخة الخام للعرض في زر "السجلات المكرّرة" فقط
     window.__rawEmployees=raw;
     __empVer++;__empSnapLoaded=true;_ps.markFresh();
     if(!__urlLoaded){loadURL();__urlLoaded=true;}
     scheduleStats();scheduleList();scheduleAlerts();fillWalletSelects();renderSelfFileBanner();
   });
-  // C7: bounded — أحدث 3000 أوردر للـ KPIs (يكفي لمتوسط شركة لمدة سنة).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(QL.ORDERS_OPERATIONAL).build(),(docs)=>{
+    allOrders=docs||[];
     __ordersVer++;
     scheduleStats();scheduleList();scheduleAlerts();
   });
-  // C7: bounded — أحدث 5000 tx (للأرصدة المالية + سجل المرتبات).
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),snap=>{
-    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(QL.TRANSACTIONS_FULL).build(),(docs)=>{
+    transactions=docs||[];
     scheduleStats();scheduleList();
   });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('wallets').limit(QL.WALLETS).build(),(docs)=>{
+    wallets=docs||[];
     fillWalletSelects();
   });
-  // RULE G3: attendance has 1 row per employee per day. limit(10000) covers
-  // ~30 employees × 1 year of attendance with headroom.
-  onSnapshot(query(collection(db,'attendance'),limit(10000)),snap=>{
-    attendanceRecords=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('attendance').limit(QL.ATTENDANCE).build(),(docs)=>{
+    attendanceRecords=docs||[];
     __attVer++;
     scheduleStats();scheduleList();scheduleAlerts();
   });
-  // اليوم: أذونات الحضور (لحالة اليوم + الاعتماد) + الإجازات (لتمييز الإجازة)
-  onSnapshot(query(collection(db,'attendance_permissions'),where('date','==',todayStr()),limit(1000)),snap=>{
-    attPermsToday=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('attendance_permissions').where('date','==',todayStr()).limit(QL.ATTENDANCE_PERMISSIONS).build(),(docs)=>{
+    attPermsToday=docs||[];
     scheduleList();
   });
-  onSnapshot(query(collection(db,'employee_leaves'),limit(2000)),snap=>{
-    empLeavesAll=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('employee_leaves').limit(QL.EMPLOYEE_LEAVES).build(),(docs)=>{
+    empLeavesAll=docs||[];
     __hrVer++;scheduleStats();scheduleList();
   });
 });
@@ -723,8 +725,7 @@ function updateStats(){
     const uid=e.authUid||e._id;
     return !todayAtts.some(a=>a.employeeUid===uid||a.employeeId===e._id);
   }).length;
-  // High pressure: checked in + 4+ active orders assigned
-  const activeOrders=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const activeOrders=_getActiveOrders();
   let highPressure=0;
   active.forEach(e=>{
     const uid=e.authUid||e._id;
@@ -924,7 +925,7 @@ window.renderList=function(){
     __lastActivityMap=lastActivityMap;
     __lastActivityVer=__ordersVer;
   }
-  const activeOrdsAll=allOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const activeOrdsAll=_getActiveOrders();
   const periodOrders=ordersInPeriod();
   const pLbl=getPeriodLabel();
   // ── حالة الحضور اليوم (resolveDayStatus) + ملخّص + أذونات معلّقة (Phase-6) ──

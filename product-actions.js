@@ -23,7 +23,7 @@ import {
   query, where, getDocs, limit, serverTimestamp, arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
-import { auditEntry } from './core/audit.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 
 // ══════════════════════════════════════════
 // CONSTANTS (C2 — لا magic strings)
@@ -128,24 +128,8 @@ function _safeAudit({ action, userId, userName, kind = 'op', meta }) {
   });
 }
 
-/**
- * كتابة سجل غير-حاجزة في audit_logs (H3) — صامتة عند الفشل، لا تُعطّل الـ action.
- * (نفس نمط client-actions.js._logAudit)
- */
 async function _logAudit(db, { action, details, userId, userName }) {
-  try {
-    await addDoc(collection(db, 'audit_logs'), {
-      action,
-      details: details || {},
-      userId: userId || '',
-      userName: userName || '',
-      entity: 'product',
-      timestamp: serverTimestamp(),
-      url: typeof location !== 'undefined' ? location.pathname : '',
-    });
-  } catch (e) {
-    console.warn('[productActions._logAudit] failed (non-blocking):', action, e?.message);
-  }
+  return persistAuditLog({ db, action, details, userId, userName, entity: 'product' });
 }
 
 /** بناء priceHistory entry عند تغيير السعر */

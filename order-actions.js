@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, addDoc, getDocs, query, where }
+import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, getDocs, query, where }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -38,7 +38,7 @@ import {
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
-import { auditEntry } from './core/audit.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 // طبقة المراسلة: «بدء التصميم» يفتح مجموعة العميل بعد تعيين المصمم (side-effect تواصلي).
 // استيراد أعمال→مراسلة مسموح (قفل الحدود يقيّد المراسلة فقط من لمس الأعمال، لا العكس).
 import { inboxActions } from './inbox-actions.js';
@@ -1534,9 +1534,8 @@ export const orderActions = {
       batch.delete(doc(db, 'orders', orderId));
       await batch.commit();
 
-      // سطر مساءلة (best-effort — لا يعيد إنشاء بيانات الأوردر، فقط مَن/متى)
-      addDoc(collection(db, 'audit_logs'), {
-        action: 'order.purge',
+      persistAuditLog({
+        db, action: 'order.purge',
         details: {
           orderId,
           clientName: order.clientName || '',
@@ -1549,9 +1548,8 @@ export const orderActions = {
         },
         userId, userName: userName || '',
         userRole: role || '',
-        timestamp: serverTimestamp(),
         source: 'orderActions.purgeOrder',
-      }).catch(e => console.warn('[audit] purgeOrder log failed:', e?.code || e?.message));
+      });
 
       return {
         ok: true, errors: [], warnings: [],
@@ -1823,10 +1821,8 @@ export const orderActions = {
         timeline: [...(order.timeline || []), entry],
         updatedAt: serverTimestamp(),
       });
-      // Cross-page admin override audit log (best-effort, doesn't block).
-      // Centralized here so every moveStage caller benefits (archive.html
-      // restoreOrder / production.html moveStage / design.html moveStage).
-      addDoc(collection(db, 'audit_logs'), {
+      persistAuditLog({
+        db,
         action: fromStage === 'archived' ? 'order.restore_from_archive' : 'order.admin_stage_override',
         details: {
           orderId,
@@ -1836,9 +1832,8 @@ export const orderActions = {
         },
         userId, userName: userName || '',
         userRole: role || '',
-        timestamp: serverTimestamp(),
         source: 'orderActions.moveStage',
-      }).catch(e => console.warn('[audit] moveStage log failed:', e?.code || e?.message));
+      });
       return { ok: true, errors: [], warnings: [], orderId, action: 'move_stage', from: fromStage, to: targetStage };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل النقل'], warnings: [], orderId };

@@ -25,6 +25,7 @@ import {
   writeBatch, doc, collection, getDoc, serverTimestamp, increment,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
+import { addAuditToBatch as _centralAudit } from './core/audit.js';
 
 console.log('[RET] ↩️ Returns Core v1 loaded');
 
@@ -155,25 +156,20 @@ function markIdempotency(batch, db, idempotencyKey, eventType) {
   });
 }
 
-/**
- * audit_logs entry — RULE 5 لكل حدث غير مالي.
- * audit_logs.rules تتطلب: action، userId، timestamp.
- */
 function addAuditToBatch(batch, db, action, p) {
-  const ref = doc(collection(db, 'audit_logs'));
-  batch.set(ref, {
-    action,
-    userId:    p.userId    || '',
-    userName:  p.userName  || '',
-    timestamp: serverTimestamp(),
-    entityType: 'returns_ticket',
-    entityId:  p.ticketId  || null,
-    orderId:   p.orderId   || null,
-    clientId:  p.clientId  || null,
-    payload:   p.payload   || {},
-    notes:     p.notes     || '',
+  return _centralAudit(batch, {
+    db, action,
+    userId:  p.userId  || '',
+    userName: p.userName || '',
+    entity: 'returns_ticket',
+    details: {
+      entityId: p.ticketId || null,
+      orderId:  p.orderId  || null,
+      clientId: p.clientId || null,
+      payload:  p.payload  || {},
+      notes:    p.notes    || '',
+    },
   });
-  return ref;
 }
 
 function makeTimelineEntry(action, p) {
