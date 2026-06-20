@@ -479,7 +479,11 @@ onAuthStateChanged(auth, async u=>{
         },150);
       }
       if(_restored._search){setTimeout(()=>{const si=document.getElementById('q');if(si){si.value=_restored._search;window.onClientSearchInput&&window.onClientSearchInput(_restored._search);}},180);}
-      _ps.restoreUI(()=>{if(clients.find(c=>c._id===_restored.activeId))window.openClient&&window.openClient(_restored.activeId);});
+      _ps.restoreUI(()=>{
+        // Skip restore if user already opened a different client (race guard)
+        if(activeId && activeId !== _restored.activeId) return;
+        if(clients.find(c=>c._id===_restored.activeId))window.openClient&&window.openClient(_restored.activeId);
+      });
     }
     // Skip secondary banner/strip rebuilds while the add/edit modal is open
     // to keep the form responsive; closeClientModal() flushes them.
@@ -998,13 +1002,17 @@ function openClient(id){
   activeId=id;
   const c = (typeof clients !== 'undefined' ? clients : []).find(x => x._id === id || x.id === id) || null;
   window.AppState?.setOpenEntity?.('client', id, c);
-  document.getElementById('panel-ov').classList.add('open');
+  const panelEl=document.getElementById('panel-ov');
+  panelEl.dataset.clientId=id;
+  panelEl.classList.add('open');
   renderPanel(id);
 }
 function closePanel(){
   activeId=null;
   window.AppState?.clearOpenEntity?.();
-  document.getElementById('panel-ov').classList.remove('open');
+  const panelEl=document.getElementById('panel-ov');
+  delete panelEl.dataset.clientId;
+  panelEl.classList.remove('open');
   const pnTabs=document.getElementById('pn-tabs');
   if(pnTabs)pnTabs.style.display='none';
 }
@@ -1507,6 +1515,13 @@ function addNoProdRow(){
 }
 function openNewOrder(){
   if(!activeId){toast('⚠️ اختر عميل أولاً','err');return;}
+  // Use the panel's data-client-id as source of truth (guards against restore race)
+  const panelEl=document.getElementById('panel-ov');
+  const panelCid=panelEl?.dataset?.clientId;
+  if(panelCid && panelCid!==activeId){
+    console.warn('[openNewOrder] activeId',activeId,'→ panel says',panelCid,'— using panel');
+    activeId=panelCid;
+  }
   let cl=clients.find(x=>x._id===activeId);
   // العميل قد يكون في searchExtras (بحث سيرفر) لكن لم يُدمج بعد في clients
   if(!cl && searchExtras.length){
