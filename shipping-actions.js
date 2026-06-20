@@ -38,7 +38,7 @@ import {
   validatePrepareShipping, validateMarkDelivered,
   validatePartialReturn, validateReverseSettle,
   // PR-1 helper:
-  normalizeShipStage,
+  normalizeShipStage, getExpectedCollection,
   // Phase 2 / B6 — block reversal on archived orders:
   ORDER_STAGES,
   // role gate لتعديل تكلفة الشحن (editShippingCost):
@@ -49,6 +49,7 @@ import {
 } from './financial-sync-engine.js';
 import { orderActions } from './order-actions.js';
 import { withIdempotency } from './core/idempotency.js'; // PR-7-salvage G1
+import { auditEntry, persistAuditLog } from './core/audit.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -161,6 +162,8 @@ export const shippingActions = {
         await updateDoc(order._ref, { ...orderFields, updatedAt: serverTimestamp() });
       }
 
+      auditEntry({ action: 'shipping.dispatch', userId, userName, kind: 'op', meta: { orderId, method, newShipStage, cost: amt } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderId, action: 'dispatch', method, newShipStage,
@@ -193,17 +196,55 @@ export const shippingActions = {
     if ((order.shipStage || 'ready') !== 'wait_delivery') {
       return { ok: false, errors: ['الأوردر ليس في حالة "في الطريق"'], warnings: [], orderId };
     }
+
+    const remaining = getExpectedCollection(order);
+    const alreadyPaid = remaining <= 0.01;
+
     try {
       const batch = writeBatch(db);
-      batch.update(order._ref, {
-        shipStage: 'wait_collection',
-        deliveredAt: serverTimestamp(),
-        deliveredBy: userName || '',
-        timeline: [...(order.timeline || []), _tlEntry('✅ تم التسليم للعميل — بانتظار التحصيل', userName, userId)],
-        updatedAt: serverTimestamp(),
-      });
+
+      if (alreadyPaid) {
+        batch.update(order._ref, {
+          shipStage: 'collected',
+          deliveredAt: serverTimestamp(),
+          deliveredBy: userName || '',
+          shipCollectedAt: serverTimestamp(),
+          shipCollectedBy: userName || '',
+          paymentStatus: 'paid',
+          timeline: [...(order.timeline || []),
+            _tlEntry('✅ تم التسليم للعميل — محصّل بالكامل (العميل دافع مسبقاً)', userName, userId),
+          ],
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.update(order._ref, {
+          shipStage: 'wait_collection',
+          deliveredAt: serverTimestamp(),
+          deliveredBy: userName || '',
+          timeline: [...(order.timeline || []), _tlEntry('✅ تم التسليم للعميل — بانتظار التحصيل', userName, userId)],
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       await batch.commit();
-      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_delivered' };
+
+      let archiveResult = null;
+      if (alreadyPaid && order.shipMethod !== 'company') {
+        try {
+          archiveResult = await orderActions.archiveOrder({
+            db, orderId,
+            role, userId, userName,
+            source: 'shipping', reason: 'auto-archive بعد تسليم — العميل دافع مسبقاً',
+            bypassWarnings: true,
+          });
+        } catch (e) {
+          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        }
+      }
+
+      auditEntry({ action: 'shipping.markDelivered', userId, userName, kind: 'op', meta: { orderId, alreadyPaid } });
+      persistAuditLog(db);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'mark_delivered', alreadyPaid, archived: archiveResult };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل التسليم'], warnings: [], orderId };
     }
@@ -297,6 +338,8 @@ export const shippingActions = {
         }
       }
 
+      auditEntry({ action: 'shipping.collectFromCustomer', userId, userName, kind: 'op', meta: { orderId, amount: amt, walletId, autoCollected } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderId, action: 'collect_customer', autoCollected,
@@ -355,6 +398,8 @@ export const shippingActions = {
           )],
           updatedAt: serverTimestamp(),
         });
+        auditEntry({ action: 'shipping.markCompanyCollected', userId, userName, kind: 'op', meta: { orderId, amount: amt } });
+        persistAuditLog(db);
         return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'mark_company_collected' };
       } catch (e) {
         return { ok: false, errors: [e.message || 'فشل تأكيد التحصيل'], warnings: [], orderId };
@@ -441,24 +486,22 @@ export const shippingActions = {
         })),
       });
 
-      // Auto-archive كل الأوردرات المُسوَّاة — الأوردر اكتمل تشغيلياً + مالياً.
-      // buildArchiveSpec في orders.js يحقق إن shipSettled=true قبل الكتابة.
-      // فشل الأرشفة لأي سبب لا يُلغي التسوية (الكتابة المالية كاملة).
-      const archiveResults = [];
-      for (const id of orders.map(o => o._id)) {
-        try {
-          const ar = await orderActions.archiveOrder({
-            db, orderId: id,
-            role, userId, userName,
-            source: 'shipping', reason: 'auto-archive بعد تسوية شركة الشحن',
-            bypassWarnings: true,
-          });
-          archiveResults.push({ orderId: id, ok: ar.ok, errors: ar.errors });
-        } catch (e) {
-          archiveResults.push({ orderId: id, ok: false, errors: [e.message || 'فشل الأرشفة'] });
-        }
+      // T9: bulkArchive بدل N separate archiveOrder calls
+      let bulkAr = { ok: false, errors: [], warnings: [], count: 0, orderIds: [] };
+      try {
+        bulkAr = await orderActions.bulkArchive({
+          db,
+          orderIds: orders.map(o => o._id),
+          role, userId, userName,
+          source: 'shipping', reason: 'auto-archive بعد تسوية شركة الشحن',
+        });
+      } catch (e) {
+        bulkAr = { ok: false, errors: [e.message || 'فشل الأرشفة الجماعية'], warnings: [], count: 0, orderIds: [] };
       }
+      const archiveResults = (bulkAr.orderIds || []).map(id => ({ orderId: id, ok: true, errors: [] }));
 
+      auditEntry({ action: 'shipping.settleWithCompany', userId, userName, kind: 'op', meta: { orderIds: orders.map(o => o._id), amount: amt, walletId, companyName } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderIds: orders.map(o => o._id),
@@ -548,6 +591,8 @@ export const shippingActions = {
         orderUpdates,
         reversalOperationId: operationId, // PR-7-salvage G2 forensic linkage
       });
+      auditEntry({ action: 'shipping.reverseSettlement', userId, userName, kind: 'reversal', meta: { settlementId, amount: parseFloat(amount) || 0, walletId, orderIds } });
+      persistAuditLog(db);
       return { ok: true, errors: [], warnings: [], action: 'reverse_settlement', settlementId };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل إلغاء التسوية'], warnings: [] };
@@ -615,6 +660,8 @@ export const shippingActions = {
       }
 
       await batch.commit();
+      auditEntry({ action: 'shipping.registerReturn', userId, userName, kind: 'op', meta: { orderId, reason, lossParty, cost: lossAmt, returnType } });
+      persistAuditLog(db);
       return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'register_return' };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع'], warnings: [], orderId };
@@ -687,6 +734,8 @@ export const shippingActions = {
 
     try {
       await updateDoc(order._ref, fields);
+      auditEntry({ action: 'shipping.prepareForShipping', userId, userName, kind: 'op', meta: { orderId, shipMethod } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         orderId, action: 'prepare_for_shipping', shipMethod,
@@ -735,6 +784,8 @@ export const shippingActions = {
         )],
         updatedAt: serverTimestamp(),
       });
+      auditEntry({ action: 'shipping.editShippingCost', userId, userName, kind: 'edit', meta: { orderId, oldCost, newCost: cost } });
+      persistAuditLog(db);
       return { ok: true, errors: [], warnings: [], orderId, action: 'edit_shipping_cost', shippingCost: cost, oldCost };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تعديل تكلفة الشحن'], warnings: [], orderId };
@@ -832,6 +883,8 @@ export const shippingActions = {
           });
         }
         await batch.commit();
+        auditEntry({ action: 'shipping.markPartialReturn', userId, userName, kind: 'op', meta: { orderId, lossCost: loss, salePriceDelta: delta, reason, lossParty } });
+        persistAuditLog(db);
         return {
           ok: true, errors: [], warnings: v.warnings,
           orderId, action: 'mark_partial_return', operationId,
@@ -852,6 +905,50 @@ export const shippingActions = {
 
   /** confirmDelivered — alias for markDelivered */
   async confirmDelivered(args) { return shippingActions.markDelivered(args); },
+
+  async skipCollection({ db, orderId, role, userId, userName }) {
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [] };
+    if (order.stage === 'archived') return { ok: false, errors: ['الأوردر مؤرشف'], warnings: [] };
+
+    const remaining = getExpectedCollection(order);
+    if (remaining > 0.01) return { ok: false, errors: [`⚠️ لسه فيه متبقي ${remaining} ج — لازم يتحصّل`], warnings: [] };
+
+    const curSS = normalizeShipStage(order.shipStage);
+    if (curSS !== 'delivered') return { ok: false, errors: ['الأوردر مش في مرحلة التحصيل'], warnings: [] };
+
+    try {
+      await updateDoc(order._ref, {
+        shipStage: 'collected',
+        shipCollectedAt: serverTimestamp(),
+        shipCollectedBy: userName || '',
+        paymentStatus: 'paid',
+        timeline: [...(order.timeline || []),
+          _tlEntry('✅ تخطي التحصيل — العميل دافع مسبقاً', userName, userId),
+        ],
+        updatedAt: serverTimestamp(),
+      });
+
+      let archiveResult = null;
+      if (order.shipMethod !== 'company') {
+        try {
+          archiveResult = await orderActions.archiveOrder({
+            db, orderId, role, userId, userName,
+            source: 'shipping', reason: 'auto-archive — تخطي تحصيل (العميل دافع مسبقاً)',
+            bypassWarnings: true,
+          });
+        } catch (e) {
+          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        }
+      }
+
+      auditEntry({ action: 'shipping.skipCollection', userId, userName, kind: 'op', meta: { orderId } });
+      persistAuditLog(db);
+      return { ok: true, errors: [], warnings: [], orderId, action: 'skip_collection', archived: archiveResult };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل تخطي التحصيل'], warnings: [] };
+    }
+  },
 
   /** markUnderCollection — alias for markCompanyCollected */
   async markUnderCollection(args) { return shippingActions.markCompanyCollected(args); },

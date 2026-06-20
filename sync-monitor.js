@@ -37,4 +37,31 @@
 
   // متاح للصفحات اللي بتستخدمه
   window.markSynced = function(){ hideBanner(); };
+
+  // ── مؤشر حالة الكاش — يظهر عند عرض بيانات من الكاش وينتهي عند المزامنة ──
+  let cacheBadge = null;
+
+  window.showCacheIndicator = function() {
+    if (cacheBadge || !document.body) return;
+    cacheBadge = document.createElement('div');
+    cacheBadge.id = 'cache-indicator';
+    cacheBadge.style.cssText = `
+      position:fixed;bottom:16px;left:16px;z-index:9998;
+      background:var(--y, #f59e0b);color:#fff;
+      padding:6px 14px;border-radius:20px;
+      font-size:13px;font-weight:600;
+      font-family:IBM Plex Sans Arabic,sans-serif;
+      opacity:0.9;transition:opacity 0.3s;
+      pointer-events:none;
+    `;
+    cacheBadge.textContent = '⏳ بيانات مؤقتة — جاري التحديث...';
+    document.body.appendChild(cacheBadge);
+  };
+
+  window.hideCacheIndicator = function() {
+    if (cacheBadge) {
+      cacheBadge.style.opacity = '0';
+      setTimeout(() => { cacheBadge?.remove(); cacheBadge = null; }, 300);
+    }
+  };
 })();

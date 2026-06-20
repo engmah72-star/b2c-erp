@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -240,7 +241,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText, fmtNum } from "./core/dom-utils.js";
+import { setText, fmtNum, fmtTime } from "./core/dom-utils.js";
 // ══ Sidebar ══
 const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -270,8 +271,23 @@ let appSettings={}; // settings/main — monthly targets (الأهداف الش�
 let currentDomain='home',currentDataView='collection';
 let dateFrom=null,dateTo=null,filterMode='month';
 
+const _ps=PageState.init('reports',{
+  fields:()=>({currentDomain,currentDataView,filterMode}),
+  scroll:'.content',
+  snapshots:['rp-mast-sub'],
+  htmlSnapshots:['rp-mast-metrics']
+});
+const _restored=_ps.data;
+if(_restored){
+  currentDomain=_restored.currentDomain||'home';
+  currentDataView=_restored.currentDataView||'collection';
+  filterMode=_restored.filterMode||'month';
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
+
 window.switchDomain = function(domain, btn) {
   currentDomain = domain;
+  _ensureDomainDeps(domain);
   document.querySelectorAll('.rp-domain-btn').forEach(b => b.classList.toggle('active', b.dataset.domain === domain));
   writeUrlState();
   render();
@@ -305,7 +321,42 @@ function renderDataContent() {
 let userName='',userRole='',userIsAdmin=false;
 let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false,returns:false};
-function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,80);}
+let __cachedFilter=null;
+let __ordersVer=0;
+let __healthStats=null;
+function _getHealthStats(){
+  if(__healthStats&&__healthStats.ver===__ordersVer)return __healthStats;
+  const now=new Date();
+  const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<now&&!['archived','shipping'].includes(o.stage));
+  const stale=orders.filter(o=>isStaleOrder(o)&&(parseFloat(calcRem(o))||0)>0);
+  const noCost=orders.filter(isMissingCost);
+  __healthStats={ver:__ordersVer,late,stale,noCost};
+  return __healthStats;
+}
+function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,150);}
+// T8: Lazy-load secondary collections per domain
+const __DOMAIN_DEPS={
+  home:['suppliers_v2','supplier_payments','returns_tickets'],
+  financial:['suppliers_v2','supplier_payments'],
+  operations:[],
+  clients:[],
+  team:['employees'],
+  shipping:['shippers_v2'],
+  returns:['returns_tickets'],
+  data:['payment_requests'],
+};
+const __lazyStarted={};
+function _ensureCollection(name){
+  if(__lazyStarted[name])return;
+  __lazyStarted[name]=true;
+  if(name==='employees') onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
+  else if(name==='suppliers_v2') onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
+  else if(name==='shippers_v2') onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
+  else if(name==='supplier_payments') onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
+  else if(name==='returns_tickets') onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
+  else if(name==='payment_requests') onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
+}
+function _ensureDomainDeps(domain){(__DOMAIN_DEPS[domain]||[]).forEach(c=>_ensureCollection(c));}
 const fn=fmtNum;
 
 // ══ Collection state (search/sort/filters) ══
@@ -443,6 +494,7 @@ window.applyPreset=function(idx){
   if(s.domain)currentDomain=s.domain;
   if(s.dataView)currentDataView=s.dataView;
   if(s.tab&&!s.domain){const tabToDomain={overview:'home',designers:'team',performance:'operations',shipping:'shipping',clients:'clients',sales:'financial',collection:'data',returns:'returns',approvals:'data',daily:'data',control:'data'};currentDomain=tabToDomain[s.tab]||'home';}
+  _ensureDomainDeps(currentDomain);
   if(s.range)filterMode=s.range;
   if(s.pay)__payFilter=s.pay;
   if(s.stage)__stageFilter=s.stage;
@@ -551,27 +603,27 @@ onAuthStateChanged(auth,async u=>{
     setText('nav-name',userName);
     document.getElementById('nav-av').textContent=(userName[0]||'U').toUpperCase();
     buildSidebar(d,'reports.html');
+    if(_restored){
+      setTimeout(()=>{
+        document.querySelectorAll('.rp-domain-btn').forEach(b=>b.classList.toggle('active',b.dataset.domain===currentDomain));
+        document.querySelectorAll('.rp-data-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===currentDataView));
+      },120);
+    }
   }
   // RULE G3: bound the reports listeners. These are the largest streams in
   // the system — previously unbounded, so every page-load streamed the entire
   // history of every collection. Caps reflect "operational analytics" depth;
   // deeper historical analysis uses one-shot getDocs() with date filters.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(10000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.orders=true;scheduleRender();});
+  // T3: Core listeners — reduced from 10K → 5K (orders + transactions)
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();});
   onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
-  onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
-  onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
-  onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
   onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
-  // settings/main — single doc (G3 exception): الأهداف الشهرية للدخل والعملاء
   onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();});
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(10000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
-  // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
-  onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
-  // payment_requests — تبويب الاعتمادات (P8). bounded؛ يتدهور بأمان لغير المخوّلين مالياً.
-  onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
+  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
+  // T8: secondary collections lazy-loaded per domain (employees, suppliers, shippers, payments, returns, paymentRequests)
+  _ensureDomainDeps(currentDomain);
   // طبّق active class على الـ domain/date button المختارين من URL
   document.querySelectorAll('.rp-domain-btn').forEach(b=>b.classList.toggle('active',b.dataset.domain===currentDomain));
   document.querySelectorAll('.date-bar .d-btn').forEach(b=>{
@@ -664,9 +716,7 @@ function updateCommandCenter(filtered, range) {
   const el = document.getElementById('rp-command');
   if (!el) return;
   if (!__loaded.orders) { el.innerHTML = ''; return; }
-  const late = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !['archived','shipping'].includes(o.stage));
-  const stale = orders.filter(o => isStaleOrder(o) && (parseFloat(calcRem(o)) || 0) > 0);
-  const noCost = orders.filter(isMissingCost);
+  const {late,stale,noCost}=_getHealthStats();
   const supDue = calcSupplierDue(suppliers, orders, payments);
   const issues = (late.length > 0 ? 1 : 0) + (stale.length > 2 ? 1 : 0) + (noCost.length > 0 ? 1 : 0);
   const healthClass = issues === 0 ? 'excellent' : issues === 1 ? 'good' : issues === 2 ? 'warning' : 'critical';
@@ -676,8 +726,7 @@ function updateCommandCenter(filtered, range) {
   if (stale.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('data');switchDataView('collection')">💸 ${fn(stale.length)} راكد</button>`);
   if (noCost.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('financial')">❓ ${fn(noCost.length)} بدون تكلفة</button>`);
   if (supDue > 0) chips.push(`<button class="rp-alert-chip info" onclick="switchDomain('financial')">🏭 ${fn(Math.round(supDue))} ج موردين</button>`);
-  const now = new Date();
-  const ts = now.toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+  const ts = fmtTime(new Date());
   el.innerHTML = `
     <div class="rp-health-pill ${healthClass}">${healthLabel}</div>
     ${chips.length ? '<div class="rp-cmd-sep"></div>' : ''}
@@ -692,9 +741,7 @@ function updateDomainStatuses(filtered, range) {
     if (!el) return;
     el.className = 'rp-domain-status ' + cls;
   };
-  const late = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !['archived','shipping'].includes(o.stage));
-  const stale = orders.filter(o => isStaleOrder(o) && (parseFloat(calcRem(o)) || 0) > 0);
-  const noCost = orders.filter(isMissingCost);
+  const {late,stale,noCost}=_getHealthStats();
   const slaBreach = returns.filter(t => t.slaBreached === true && !['cancelled','closed'].includes(t.status));
   const postDesignRem = filtered.filter(o => isPostDesignWithRem(o));
   setStatus('home', late.length > 0 || stale.length > 2 ? 'crit' : 'ok');
@@ -709,7 +756,7 @@ function updateDomainStatuses(filtered, range) {
 
 function render(){
   const el=document.getElementById('rep-content');if(!el)return;
-  if(!__loaded.orders||!__loaded.transactions){
+  if(!__loaded.orders||!__loaded.transactions||!__loaded.clients){
     el.innerHTML=renderSkeleton();
     updateCommandCenter([], null);
     setText('rep-sub','جاري التحميل...');
@@ -717,11 +764,14 @@ function render(){
     if (mSub) mSub.textContent = 'جاري تحميل البيانات...';
     return;
   }
-  const range=getRange(filterMode);
-  const prev=getPrevRange(filterMode);
-  const filtered=orders.filter(o=>inRange(o,range));
-  const prevFiltered=orders.filter(o=>inRange(o,prev));
+  if(!__cachedFilter||__cachedFilter.filterMode!==filterMode||__cachedFilter.ordersVer!==__ordersVer){
+    const range=getRange(filterMode);
+    const prev=getPrevRange(filterMode);
+    __cachedFilter={filterMode,ordersVer:__ordersVer,range,prev,filtered:orders.filter(o=>inRange(o,range)),prevFiltered:orders.filter(o=>inRange(o,prev))};
+  }
+  const {filtered,prevFiltered,range}=__cachedFilter;
   setText('rep-sub',`${filtered.length} أوردر · ${orders.length} إجمالي`);
+  if(_ps.markFresh) _ps.markFresh();
   updateMasthead(filtered, range);
   updateCommandCenter(filtered, range);
   updateDomainStatuses(filtered, range);
@@ -2228,7 +2278,7 @@ let __wallets=[];
 // جيب المحافظ
 async function loadWallets(){
   if(__wallets.length)return;
-  const snap=await getDocs(collection(db,'wallets'));
+  const snap=await getDocs(query(collection(db,'wallets'),limit(200)));
   __wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
 }
 
@@ -2541,18 +2591,18 @@ function renderControl(){
     deadline:(a,b)=>dl(a)-dl(b),
   };
   const all=[...base].sort(sorters[__ctrlSort]||sorters.recent);
-  // عدّاد لكل مرحلة (للـ chips) — على نطاق العرض الحالي
+  // عدّاد لكل مرحلة + الفلاتر الذكية — مسح واحد بدلاً من 10 مسحات منفصلة
   const cnt={all:all.length};
-  CTRL_STAGES.forEach(s=>cnt[s.key]=all.filter(o=>o.stage===s.key).length);
-  // عدّاد الفلاتر الذكية
-  const isLate=o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage);
-  const fcnt={
-    all:all.length,
-    late:all.filter(isLate).length,
-    nocost:all.filter(isMissingCost).length,
-    rem:all.filter(o=>calcRem(o)>0).length,
-    stale:all.filter(isStaleOrder).length,
-  };
+  const fcnt={all:all.length,late:0,nocost:0,rem:0,stale:0};
+  const _now=new Date();
+  for(const o of all){
+    const st=o.stage;
+    cnt[st]=(cnt[st]||0)+1;
+    if(o.deadline&&new Date(o.deadline)<_now&&st!=='archived'&&st!=='shipping')fcnt.late++;
+    if(isMissingCost(o))fcnt.nocost++;
+    if(calcRem(o)>0)fcnt.rem++;
+    if(isStaleOrder(o))fcnt.stale++;
+  }
 
   const chip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlStage===key?' active':''}" onclick="ctrlSetStage('${key}',this)">${ico} ${label} <span style="opacity:.6">${cnt[key]||0}</span></button>`;
   const fchip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlFlag===key?' active':''}" onclick="ctrlSetFlag('${key}',this)">${ico} ${label} <span style="opacity:.6">${fcnt[key]||0}</span></button>`;

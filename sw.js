@@ -266,6 +266,24 @@ function sameOriginPath(url, path) {
     (url.pathname === '/' + path || url.pathname.endsWith('/' + path));
 }
 
+// ─── Cache Size Management ────────────────────────────────
+const MAX_CACHE_ENTRIES = 500;
+
+self.addEventListener('message', e => {
+  if (e.data === 'TRIM_CACHE') {
+    caches.open(CACHE).then(async cache => {
+      const keys = await cache.keys();
+      if (keys.length <= MAX_CACHE_ENTRIES) return;
+      const imgKeys = keys.filter(r => {
+        const u = r.url;
+        return /\.(png|jpg|jpeg|gif|webp|svg|bmp)(\?|$)/i.test(u);
+      });
+      const toRemove = imgKeys.slice(0, imgKeys.length - Math.floor(MAX_CACHE_ENTRIES * 0.3));
+      for (const r of toRemove) await cache.delete(r).catch(() => {});
+    });
+  }
+});
+
 async function staleWhileRevalidate(req) {
   const cache = await caches.open(CACHE);
   const cached = await cache.match(req);

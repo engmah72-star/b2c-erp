@@ -186,7 +186,7 @@
 <script type="module">
 
 import { app, auth, db, FB_CONFIG } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum as _fmtNum, fmtNow as _fmtNow } from "./core/dom-utils.js";
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
   const nav = document.getElementById('nav-scroll-dynamic') || document.querySelector('.nav-scroll');
@@ -261,6 +261,8 @@ async function buildDynamicSidebar(uid, currentPage) {
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword, updatePassword, createUserWithEmailAndPassword, getAuth } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { QUERY_LIMITS as QL } from './core/query-limits.js';
 import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
 import { computeScore } from "./core/employee-scoring.js";
 import { computeRoleKpis } from "./core/employee-kpis.js";
@@ -317,7 +319,32 @@ let activeTab=(function(){
 })();
 const empId=new URLSearchParams(location.search).get('id');
 
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+let __dirty=new Set();
+let __rafId=0;
+function scheduleSection(section){
+  __dirty.add(section);
+  if(__rafId)return;
+  __rafId=requestAnimationFrame(()=>{
+    __rafId=0;
+    const d=__dirty;
+    __dirty=new Set();
+    if(d.has('all')||d.size>3){renderAll();return;}
+    if(d.has('tasks'))renderTasks();
+    if(d.has('salary'))renderSalaries();
+    if(d.has('leaves'))renderLeaves();
+    if(d.has('attendance'))renderAttendance();
+    if(d.has('goals'))renderGoals();
+    if(d.has('evaluations'))renderEvaluations();
+    if(d.has('incidents'))renderIncidents();
+    if(d.has('score'))renderScore();
+    if(d.has('insights'))renderInsights();
+    if(d.has('pendingInbox'))renderPendingInbox();
+    if(d.has('attPermissions'))renderAttendancePermissions();
+    if(d.has('passwordCard'))renderPasswordCard();
+  });
+}
+
+const fn=_fmtNum;
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
 const now=new Date();
 const MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -338,7 +365,7 @@ const escAttr=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
-function nowStr(){return new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});}
+const nowStr=_fmtNow;
 function isThisMonth(ts){if(!ts?.toDate)return false;const d=ts.toDate();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
 function todayStr(){return now.toISOString().slice(0,10);}
 function monthKey(){return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');}
@@ -535,89 +562,75 @@ onAuthStateChanged(auth,async u=>{
   if(emp.authUid){
     onSnapshot(doc(db,'users',emp.authUid),snap=>{
       empUserDoc=snap.exists()?snap.data():null;
-      renderPasswordCard();
+      scheduleSection('passwordCard');
     });
   }
-  // RULE G3: bound orders to the most recent 5000 (covers ~2 years of
-  // activity for the largest employees). Profile aggregations are weighted
-  // toward current performance — deep history lives in reports.html.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderAll();
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(QL.ORDERS_FULL).build(),(docs)=>{
+    allOrders=docs||[];
+    scheduleSection('all');
   });
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',emp.authUid||empId),limit(500)),snap=>{
-    empTasks=snap.docs.map(d=>({...d.data(),_id:d.id}))
+  dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',emp.authUid||empId).limit(QL.TASKS).build(),(docs)=>{
+    empTasks=(docs||[])
       .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
-    renderTasks();
+    scheduleSection('tasks');
   });
   // ── ATTENDANCE — match by EITHER employeeId OR employeeUid ──
-  // Dashboards (designer, ops, production, shipping) save only `employeeUid`.
-  // Profile previously queried `employeeId` only → 0 records, broken stats.
-  // Fix: subscribe to both queries and merge by doc id.
   let __attById=new Map(),__attByUid=new Map();
   const __mergeAtt=()=>{
     const m=new Map([...__attById,...__attByUid]);
     attendanceRecords=[...m.values()];
     empAttendance=attendanceRecords;
-    // Hero stats (الحضور X/Y, دخل …) are computed inside renderAll on each
-    // pass — re-run it so they reflect the latest attendance, not just the
-    // calendar/score (which refresh independently).
-    if(allOrders.length||emp){renderAll();}
+    if(allOrders.length||emp){scheduleSection('all');}
   };
-  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',empId),limit(1000)),snap=>{
-    __attById=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
+  dataCache.subscribe(cachedQuery('attendance').where('employeeId','==',empId).limit(QL.ATTENDANCE_LIGHT).build(),(docs)=>{
+    __attById=new Map((docs||[]).map(d=>[d._id,d]));
     __mergeAtt();
   });
   if(emp?.authUid){
-    onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',emp.authUid),limit(1000)),snap=>{
-      __attByUid=new Map(snap.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));
+    dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',emp.authUid).limit(QL.ATTENDANCE_LIGHT).build(),(docs)=>{
+      __attByUid=new Map((docs||[]).map(d=>[d._id,d]));
       __mergeAtt();
     });
   }
-  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',empId),limit(500)),snap=>{
-    empSalaries=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    renderSalaries();renderInsights();
+  dataCache.subscribe(cachedQuery('employee_payments').where('employeeId','==',empId).limit(QL.EMPLOYEES_LIGHT).build(),(docs)=>{
+    empSalaries=(docs||[]).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    scheduleSection('salary');scheduleSection('insights');
   });
-  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',empId),limit(200)),snap=>{
-    empLeaves=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
-    renderLeaves();renderAttendance();renderPendingInbox();
+  dataCache.subscribe(cachedQuery('employee_leaves').where('employeeId','==',empId).limit(QL.EMPLOYEE_LEAVES).build(),(docs)=>{
+    empLeaves=(docs||[]).sort((a,b)=>b.startDate?.localeCompare(a.startDate||'')||0);
+    scheduleSection('leaves');scheduleSection('attendance');scheduleSection('pendingInbox');
   });
-  onSnapshot(query(collection(db,'attendance_permissions'),where('employeeId','==',empId),limit(200)),snap=>{
-    empPermissions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderAttendancePermissions();renderSalaries();renderPendingInbox();
+  dataCache.subscribe(cachedQuery('attendance_permissions').where('employeeId','==',empId).limit(QL.ATTENDANCE_PERMISSIONS).build(),(docs)=>{
+    empPermissions=docs||[];
+    scheduleSection('attPermissions');scheduleSection('salary');scheduleSection('pendingInbox');
   });
-  // البند 1 — طلبات مالية معلّقة لهذا الموظف (عرض فقط + رابط). خلف العلم: لا قراءة
-  // إضافية ما لم يُفعَّل الجسر. equality-only + فلترة الحالة client-side (بلا composite index).
   if(PENDING_INBOX_ON){
-    onSnapshot(query(collection(db,'payment_requests'),where('employeeId','==',empId),limit(100)),snap=>{
-      empPaymentRequests=snap.docs.map(d=>({...d.data(),_id:d.id}))
+    dataCache.subscribe(cachedQuery('payment_requests').where('employeeId','==',empId).limit(100).build(),(docs)=>{
+      empPaymentRequests=(docs||[])
         .filter(p=>['requested','awaiting_receipt','pending'].includes(p.status));
-      renderPendingInbox();
-    },err=>console.warn('pay-req:',err.message));
+      scheduleSection('pendingInbox');
+    });
   }
-  // أهداف الموظف
-  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',empId),limit(60)),snap=>{
-    empGoals=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderGoals();
+  dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',empId).limit(60).build(),(docs)=>{
+    empGoals=docs||[];
+    scheduleSection('goals');
   });
-  // تقييمات الموظف
-  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',empId),limit(60)),snap=>{
-    empEvaluations=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-    renderEvaluations();
+  dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',empId).limit(60).build(),(docs)=>{
+    empEvaluations=(docs||[]).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+    scheduleSection('evaluations');
   });
-  // إخفاقات الموظف
-  onSnapshot(query(collection(db,'employee_incidents'),where('employeeId','==',empId),limit(200)),snap=>{
-    empIncidents=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    renderIncidents();renderScore();renderPendingInbox();
+  dataCache.subscribe(cachedQuery('employee_incidents').where('employeeId','==',empId).limit(QL.EMPLOYEE_INCIDENTS).build(),(docs)=>{
+    empIncidents=(docs||[]).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    scheduleSection('incidents');scheduleSection('score');scheduleSection('pendingInbox');
   });
-  // قائمة أسباب الإخفاق المُدارة (master_lists/incident_reasons) — تُدمج مع الافتراضية
+  // قائمة أسباب الإخفاق المُدارة (master_lists/incident_reasons) — single doc, stays onSnapshot
   onSnapshot(doc(db,'master_lists','incident_reasons'),snap=>{
     incidentReasons=resolveReasons(snap.exists()?(snap.data().items||[]):[]);
   },err=>console.warn('inc-reasons:',err.message));
   const autoPayNow=new URLSearchParams(location.search).get('pay')==='1';
   let autoPayFired=false;
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('wallets').limit(QL.WALLETS).build(),(docs)=>{
+    wallets=docs||[];
     const sel=document.getElementById('sal-wallet');
     if(sel)sel.innerHTML='<option value="">— اختر —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} (${fn(w.balance||0)} ج)</option>`).join('');
     if(autoPayNow&&!autoPayFired&&emp){autoPayFired=true;openSalary();}

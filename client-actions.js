@@ -41,7 +41,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
-import { auditEntry, opEntry } from './core/audit.js';
+import { auditEntry, opEntry, persistAuditLog, addAuditToBatch } from './core/audit.js';
 import { planClientMerge } from './features/clients/duplicate-scan.js';
 import { slugUsername } from './core/text-format.js';
 import { isFeatureEnabled, FLAGS } from './core/feature-flags.js';
@@ -144,20 +144,8 @@ async function _findDuplicate(db, { phone1, phone2 = '', email = '', excludeId =
   return null;
 }
 
-/** Audit-log helper (silent on failure — never blocks the main action). */
 async function _logAudit(db, { action, details, userId, userName }) {
-  try {
-    await addDoc(collection(db, 'audit_logs'), {
-      action,
-      details: details || {},
-      userId: userId || '',
-      userName: userName || '',
-      timestamp: serverTimestamp(),
-      url: typeof location !== 'undefined' ? location.pathname : '',
-    });
-  } catch (e) {
-    console.warn('[clientActions._logAudit] failed (non-blocking):', action, e?.message);
-  }
+  return persistAuditLog({ db, action, details, userId, userName });
 }
 
 // ══════════════════════════════════════════
@@ -980,9 +968,8 @@ export const clientActions = {
         updatedAt:           movedAt,
       });
 
-      // audit_logs entry (set inside same batch — atomic)
-      const auditRef = doc(collection(db, 'audit_logs'));
-      batch.set(auditRef, {
+      addAuditToBatch(batch, {
+        db,
         action:  'client.merge',
         details: {
           primaryId,
@@ -994,8 +981,6 @@ export const clientActions = {
         },
         userId:    userId   || '',
         userName:  userName || '',
-        timestamp: serverTimestamp(),
-        url:       typeof location !== 'undefined' ? location.pathname : '',
       });
 
       try {
@@ -1284,35 +1269,11 @@ export const clientActions = {
   // AUDIT LOG (public wrapper — H1.1 fix)
   // ──────────────────────────────────────────
 
-  /**
-   * يكتب دخول في audit_logs. wrapper public لاستخدام الصفحات بدل الكتابة المباشرة.
-   * Non-blocking: لو فشل (rules/network)، يسجّل warning ولا يرمي exception.
-   *
-   * @param {Object} args
-   * @param {Object} [args.db=defaultDb]
-   * @param {string} args.action          — اسم العملية (e.g. 'cgrid_bulk_archive')
-   * @param {Object} [args.details={}]    — payload إضافي
-   * @param {string} args.userId
-   * @param {string} [args.userName]
-   * @param {string} [args.userRole]
-   * @param {string} [args.url]           — pathname للـ context
-   */
-  async logAudit({ db = defaultDb, action, details = {}, userId, userName = '', userRole = '', url = '' }) {
-    try {
-      await addDoc(collection(db, 'audit_logs'), {
-        action,
-        details: details || {},
-        userId: userId || '',
-        userName: userName || '',
-        userRole: userRole || '',
-        timestamp: serverTimestamp(),
-        url: url || (typeof location !== 'undefined' ? location.pathname : ''),
-      });
-      return { ok: true, errors: [], warnings: [] };
-    } catch (e) {
-      console.warn('[clientActions.logAudit] failed (non-blocking):', action, e?.message);
-      return { ok: false, errors: [e?.message || 'audit log failed'], warnings: [] };
-    }
+  async logAudit({ db = defaultDb, action, details = {}, userId, userName = '', userRole = '' }) {
+    const r = await persistAuditLog({ db, action, details, userId, userName, userRole });
+    return r.ok
+      ? { ok: true, errors: [], warnings: [] }
+      : { ok: false, errors: ['audit log failed'], warnings: [] };
   },
 };
 

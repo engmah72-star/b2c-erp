@@ -18,19 +18,31 @@
  *
  * Returns 0 when the order is fully returned (paymentStatus or shipStage).
  *
+ * Memoized: keyed by (id + affecting fields). Auto-invalidates when any
+ * field value changes. Bounded to 10 000 entries then cleared.
+ *
  * @param {object} o — order document
  * @returns {number}
  */
+const _remCache = new Map();
+const _REM_MAX = 10000;
+
 export const calcRem = (o) => {
   if (o.paymentStatus === 'returned' || o.shipStage === 'returned') return 0;
+  const key = `${o._id}|${o.totalPaid}|${o.paid}|${o.deposit}|${o.salePrice}|${o.discount}|${o.customerShipFee}`;
+  const hit = _remCache.get(key);
+  if (hit !== undefined) return hit;
   const f = parseFloat(o.customerShipFee) || 0;
-  return Math.max(
+  const v = Math.max(
     0,
     (parseFloat(o.salePrice) || 0)
       + f
       - (parseFloat(o.discount) || 0)
       - (parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0),
   );
+  if (_remCache.size >= _REM_MAX) _remCache.clear();
+  _remCache.set(key, v);
+  return v;
 };
 
 /**

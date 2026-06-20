@@ -20,6 +20,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -123,10 +124,7 @@ const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
 const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 </script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<!-- SDK v10 modular — loaded via module imports below -->
 
 <!-- Module bridge: expose centralized order functions on window for non-module main script (RULE C1.3) -->
 <script type="module">
@@ -218,7 +216,11 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 <!-- Searchable select primitive (used by product dropdown in order modal) -->
 <script type="module" src="./core/searchable-select.js"></script>
 
-<script>
+<script type="module">
+
+import { app, auth, db } from "./core/firebase-init.js";
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit, startAt, endAt, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ══ Global Error Handler ══
 window.addEventListener('unhandledrejection', e=>{
@@ -233,15 +235,6 @@ window.addEventListener('unhandledrejection', e=>{
   }
   e.preventDefault();
 });
-// ══ CONFIG ══
-const FB={apiKey:"AIzaSyDEK3I06IMrJPiYX09ULF7OIcbsMOsasUk",authDomain:"business2card-c041b.firebaseapp.com",projectId:"business2card-c041b",storageBucket:"business2card-c041b.firebasestorage.app",messagingSenderId:"235622448899",appId:"1:235622448899:web:d8652ff71082f7d003f336"};
-firebase.initializeApp(FB);
-const db=firebase.firestore(), auth=firebase.auth();
-// ملاحظة: الـ offline persistence (IndexedDB) تُفعَّل مركزياً مرة واحدة في
-// core/firebase-init.js عبر persistentLocalCache (RULE G2). كان هنا تفعيل
-// مكرّر بالـ compat API (db.enablePersistence) → تهيئتان للـ persistence على
-// نفس المشروع تتنازعان على نفس الـ IndexedDB/multi-tab lease → تعليق العمليات
-// لدقائق (لوحظ 254 ثانية في telemetry). أُزيل التكرار لإصلاح التعليق.
 
 // ══ EGYPT — التقسيم الإداري الرسمي (محدّث 2024) ══
 // 27 محافظة + ~210 مركز/مدينة/حي حسب التقسيم الرسمي (CAPMAS + وزارة التنمية المحلية)
@@ -293,6 +286,15 @@ let allFollowups=[], followupsByClient=new Map();
 let searchExtras=[];
 window.__clientFilter='all';
 let editId=null, activeId=null, pendingClientId='';
+
+const _ps=PageState.init('clients',{
+  fields:()=>({activeId,quickFilter:window.__quickFilter||'all'}),
+  search:'q', scroll:'.content',
+  snapshots:['kpi-total-clients','kpi-active-clients','kpi-open-orders','kpi-sales-amount','kpi-avg-exec','kpi-late-orders','kpi-clients-delta']
+});
+const _restored=_ps.data;
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
+
 let currentUser=null, currentRole='customer_service', userName='', userPerms={};
 // God-page decomp PR-23: COLORS extracted to clients-constants.js
 
@@ -385,14 +387,14 @@ function toast(msg,t=''){
 // ══ NAV ══
 function toggleNav(){document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');}
 function closeNav(){document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');}
-function doLogout(){auth.signOut().then(()=>window.location.href='login.html');}
+function doLogout(){signOut(auth).then(()=>window.location.href='login.html');}
 
 // ══ AUTH ══
-auth.onAuthStateChanged(async u=>{
+onAuthStateChanged(auth, async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
-  const snap=await db.collection('users').doc(u.uid).get();
-  if(snap.exists){
+  const snap=await getDoc(doc(db,'users',u.uid));
+  if(snap.exists()){
     const d=snap.data();
     if(window.buildDynamicSidebar)window.buildDynamicSidebar(u.uid,'clients.html');
     currentRole=d.role||'customer_service'; userName=d.name||u.email; userPerms=d.permissions||{};
@@ -460,17 +462,25 @@ auth.onAuthStateChanged(async u=>{
   const ORDERS_LIMIT  = 1500;    // was 3000
   const TX_LIMIT      = 1500;    // was 3000
   const FU_LIMIT      = 800;     // was 1500
-  db.collection('clients')
-    .orderBy('createdAt','desc')
-    .limit(CLIENTS_LIMIT)
-    .onSnapshot(snap=>{
-    __clientsListenerFired = true;
+  onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(CLIENTS_LIMIT)),snap=>{
+    __clientsListenerFired = true;_ps.markFresh();
     clearTimeout(__loadWatchdog);
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
     const base=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
     // أعِد دمج نتائج بحث السيرفر (العملاء القدامى) كي لا يمحوها الـ snapshot.
     clients=mergeSearchExtras(base);
     scheduleStatsAndGrid();
+    if(!window.__clientsStateRestored && _restored && !new URLSearchParams(window.location.search).get('openClient')){
+      window.__clientsStateRestored=true;
+      if(_restored.quickFilter && _restored.quickFilter!=='all' && window.setQuickFilter){
+        setTimeout(()=>{
+          const chip=document.querySelector(`.f-chip[onclick*="setQuickFilter('${_restored.quickFilter}'"]`);
+          window.setQuickFilter(_restored.quickFilter,chip);
+        },150);
+      }
+      if(_restored._search){setTimeout(()=>{const si=document.getElementById('q');if(si){si.value=_restored._search;window.onClientSearchInput&&window.onClientSearchInput(_restored._search);}},180);}
+      _ps.restoreUI(()=>{if(clients.find(c=>c._id===_restored.activeId))window.openClient&&window.openClient(_restored.activeId);});
+    }
     // Skip secondary banner/strip rebuilds while the add/edit modal is open
     // to keep the form responsive; closeClientModal() flushes them.
     if(!isClientModalOpen()){
@@ -505,8 +515,8 @@ auth.onAuthStateChanged(async u=>{
           }
         } else {
           // Client not in the recent window — fetch directly and prepend to the in-memory list.
-          db.collection('clients').doc(oc).get().then(docSnap=>{
-            if(!docSnap.exists)return;
+          getDoc(doc(db,'clients',oc)).then(docSnap=>{
+            if(!docSnap.exists())return;
             const c={...docSnap.data(),_id:docSnap.id};
             if(!c.isDeleted && (isAdmin || c.createdBy===u.uid)){
               // أضِف لـ searchExtras أيضاً حتى تبقى بعد أي snapshot مستقبلي
@@ -521,7 +531,7 @@ auth.onAuthStateChanged(async u=>{
       }
     }
   }, err=>__reportListenerError('العملاء', err));
-  db.collection('orders').orderBy('createdAt','desc').limit(ORDERS_LIMIT).onSnapshot(snap=>{
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(ORDERS_LIMIT)),snap=>{
     __ordersListenerFired = true;
     clearTimeout(__loadWatchdog);
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
@@ -529,22 +539,22 @@ auth.onAuthStateChanged(async u=>{
     if(activeId) renderPanel(activeId);
   }, err=>__reportListenerError('الأوردرات', err));
   // T1: wallets — needed for new-order modal (which can open early)
-  db.collection('wallets').limit(100).onSnapshot(snap=>{
+  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
   });
   // T1: settings — affects fillGovSelect (governorate dropdown)
-  db.collection('settings').doc('main').onSnapshot(snap=>{
-    if(snap.exists) settings=snap.data();
+  onSnapshot(doc(db,'settings','main'),snap=>{
+    if(snap.exists()) settings=snap.data();
     fillGovSelect();
   });
 
   // T2: secondary data (products + designers + master_lists) — defer 500ms
   setTimeout(()=>{
-    db.collection('products_v2').limit(500).onSnapshot(snap=>{
+    onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
       products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     });
     // ── المصممون: المصدر الوحيد هو `employees` ──
-    db.collection('employees').limit(500).onSnapshot(snap=>{
+    onSnapshot(query(collection(db,'employees'),limit(500)),snap=>{
       const raw = snap.docs
         .map(d=>({...d.data(),_id:d.id}))
         .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
@@ -571,8 +581,8 @@ auth.onAuthStateChanged(async u=>{
       designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     });
     // Admin override للتقسيم الإداري — لو الوثيقة موجودة في master_lists/egypt_admin
-    db.collection('master_lists').doc('egypt_admin').onSnapshot(snap=>{
-      if(snap.exists){
+    onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
+      if(snap.exists()){
         const data=snap.data();
         const items=data?.items;
         if(items && typeof items==='object' && Object.keys(items).length>0){
@@ -591,7 +601,7 @@ auth.onAuthStateChanged(async u=>{
   // T3: tertiary data (followups + segments + transactions_v2) — defer 1500ms
   // These only show in panel/cgrid; main grid render doesn't need them.
   setTimeout(()=>{
-    db.collection('client_followups').orderBy('createdAt','desc').limit(FU_LIMIT).onSnapshot(snap=>{
+    onSnapshot(query(collection(db,'client_followups'),orderBy('createdAt','desc'),limit(FU_LIMIT)),snap=>{
       allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
       followupsByClient.clear();
       allFollowups.forEach(f=>{
@@ -616,7 +626,7 @@ auth.onAuthStateChanged(async u=>{
 
     // RFM segments — written weekly by Cloud Function. Permission errors are
     // silenced because non-CRM roles don't get read access.
-    db.collection('client_segments').limit(CLIENTS_LIMIT).onSnapshot(snap=>{
+    onSnapshot(query(collection(db,'client_segments'),limit(CLIENTS_LIMIT)),snap=>{
       clientSegments.clear();
       snap.forEach(d=>clientSegments.set(d.id,d.data()));
       scheduleStatsAndGrid();
@@ -624,7 +634,7 @@ auth.onAuthStateChanged(async u=>{
       if(activeId) renderPanel(activeId);
     },err=>console.warn('client_segments listener:',err?.message||err));
 
-    db.collection('transactions_v2').orderBy('createdAt','desc').limit(TX_LIMIT).onSnapshot(snap=>{
+    onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(TX_LIMIT)),snap=>{
       allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
       txByOrder.clear();
       allTx.forEach(tx=>{
@@ -939,15 +949,15 @@ async function remoteClientSearch(rawQ){
   const end=q+'';
   const isPhone=/^[\d+]/.test(q);
   // prefix queries — single-field indexes (تلقائية، لا تحتاج composite index)
-  const col=db.collection('clients');
+  const col=collection(db,'clients');
   const queries = isPhone
     ? [
-        col.orderBy('phone1').startAt(q).endAt(end).limit(LIM).get(),
-        col.orderBy('phone2').startAt(q).endAt(end).limit(LIM).get(),
-        col.orderBy('intlPhone').startAt(q).endAt(end).limit(LIM).get(),
+        getDocs(query(col,orderBy('phone1'),startAt(q),endAt(end),limit(LIM))),
+        getDocs(query(col,orderBy('phone2'),startAt(q),endAt(end),limit(LIM))),
+        getDocs(query(col,orderBy('intlPhone'),startAt(q),endAt(end),limit(LIM))),
       ]
     : [
-        col.orderBy('name').startAt(q).endAt(end).limit(LIM).get(),
+        getDocs(query(col,orderBy('name'),startAt(q),endAt(end),limit(LIM))),
       ];
   try{
     const snaps=await Promise.all(queries.map(p=>p.catch(()=>null)));
@@ -2039,7 +2049,7 @@ async function saveClient(){
   const internalChanged=(prevClient?.internalNotes||'')!==internalNotes;
   const internalNotesLastEdit=internalChanged?{
     by:currentUser?.uid||'',byName:userName||'',
-    at:firebase.firestore.FieldValue.serverTimestamp(),
+    at:serverTimestamp(),
   }:null;
 
   // Schema-faithful payload — pure builder
@@ -2678,8 +2688,8 @@ window.cgridSaveFinancial=async function(orderId,field,newVal,oldVal,walletId){
   let editReason = '';
   if(field==='totalPaid' || field==='salePrice' || field==='discount'){
     try{
-      const txSnap = await db.collection('transactions_v2')
-        .where('orderId','==',orderId).get();
+      const txSnap = await getDocs(query(collection(db,'transactions_v2'),
+        where('orderId','==',orderId)));
       const lockedTxs = txSnap.docs.map(d=>({...d.data(),_id:d.id}))
         .filter(t => t.isLocked === true && !t.isReversal);
       if(lockedTxs.length > 0){
@@ -2948,6 +2958,46 @@ window.setStatusTab=function(tab,btn){
     renderGrid();
   }
 };
+
+// ══ Module → window bridge (compat for inline handlers + companion modules) ══
+Object.assign(window, {
+  doLogout, closePanel, openClient, openNewOrder, closeNav, toggleNav,
+  openAddClient, openAddLegacy, closeClientModal, closeOrderModal,
+  editClient, deleteClient, saveClient, saveNewOrder, renderPanel,
+  toast, canSee, showPhone, fn, renderGrid, updateStats, isClientModalOpen,
+  getClientOrders, checkPhone, updateClientSaveState,
+  onClientNameInput, checkIntlPhone, fillCities, renderDesignFilesList,
+  renderReceiptList, selectOrderType, addNoProdRow, exportCSV,
+  setView, renderListView, showDupModal, dupViewClient, dupAddOrder,
+  buildClientOrdersIndex, invalidateOrdersIndex, mergeSearchExtras,
+  scheduleStatsAndGrid, remoteClientSearch,
+  fillGovSelect, fillFilters, renderBizCardTab,
+  cgridGetFiltered, cgridGetSorted,
+});
+// State getters for companion modules
+const _c=true;
+Object.defineProperties(window, {
+  clients:      { get(){ return clients; },      set(v){ clients=v; }, configurable:_c },
+  allOrders:    { get(){ return allOrders; },     set(v){ allOrders=v; }, configurable:_c },
+  allTx:        { get(){ return allTx; },         set(v){ allTx=v; }, configurable:_c },
+  txByOrder:    { get(){ return txByOrder; }, configurable:_c },
+  products:     { get(){ return products; }, configurable:_c },
+  wallets:      { get(){ return wallets; }, configurable:_c },
+  designers:    { get(){ return designers; }, configurable:_c },
+  settings:     { get(){ return settings; }, configurable:_c },
+  currentUser:  { get(){ return currentUser; }, configurable:_c },
+  currentRole:  { get(){ return currentRole; }, configurable:_c },
+  isAdmin:      { get(){ return ['admin','operation_manager'].includes(currentRole); }, configurable:_c },
+  activeId:     { get(){ return activeId; },      set(v){ activeId=v; }, configurable:_c },
+  searchExtras: { get(){ return searchExtras; },  set(v){ searchExtras=v; }, configurable:_c },
+  editId:       { get(){ return editId; },        set(v){ editId=v; }, configurable:_c },
+  allFollowups: { get(){ return allFollowups; }, configurable:_c },
+  followupsByClient: { get(){ return followupsByClient; }, configurable:_c },
+  clientSegments: { get(){ return clientSegments; }, configurable:_c },
+  userName:     { get(){ return userName; }, configurable:_c },
+  userPerms:    { get(){ return userPerms; }, configurable:_c },
+  EGYPT:        { get(){ return EGYPT; }, configurable:_c },
+});
 
 </script>
 

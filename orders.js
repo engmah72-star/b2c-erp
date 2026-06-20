@@ -2191,7 +2191,7 @@ export function validateReverseSettle({ order, role }) {
  * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
  * @returns { ok, errors, warnings }
  */
-export function validateCostItem({ order, payload, role, wallets = [], isEdit = false }) {
+export function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [] }) {
   const errors = [];
   const warnings = [];
 
@@ -2203,6 +2203,8 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // النوع
   if (!type || !type.trim()) errors.push('اختر نوع البند');
+  else if (allowedTypes.length && !allowedTypes.includes(type.trim()))
+    errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
 
   // المبلغ
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');

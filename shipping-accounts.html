@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -404,7 +405,7 @@ window.doLogout=async()=>{const {getAuth,signOut}=await import("https://www.gsta
 <script type="module">
 import { app, auth, db, storage as _accStorage } from "./core/firebase-init.js";
 import { ref as _accStRef, uploadBytesResumable as _accStUpload, getDownloadURL as _accStGetURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum as _fmtNum, fmtNow as _fmtNow } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, serverTimestamp, increment, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
@@ -416,11 +417,23 @@ import { withIdempotency } from "./core/idempotency.js";
 let allOrders=[],settlements=[],returns=[],wallets=[],currentUser=null,userName='',userRole='';
 let settleCompanyName='',returnCompanyName='';
 
+const _ps=PageState.init('shipping-accounts',{
+  fields:()=>{
+    const fm=document.getElementById('f-month');
+    const fc=document.getElementById('f-company');
+    return {fMonth:fm?.value||'',fCompany:fc?.value||''};
+  },
+  scroll:'.content',
+  snapshots:['s-due','s-collected','s-remaining','s-returns','sub','cnt-tab-ship','cnt-tab-fl','cnt-tab-acc']
+});
+const _restored=_ps.data;
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
+
 // ══ Helpers ══
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const escHtml=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const nowStr=_fmtNow;
 const toast=(msg,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
 
 // Persistent error banner (Step 5.4 — mirrors shipping.html) — survives toast timeout.
@@ -467,6 +480,12 @@ onAuthStateChanged(auth,async u=>{
     buildSidebar(d,'shipping-accounts.html');
     buildMobNav(d.role||'admin','shipping-accounts.html');
   }
+  if(_restored){
+    setTimeout(()=>{
+      const fm=document.getElementById('f-month');if(fm&&_restored.fMonth)fm.value=_restored.fMonth;
+      const fc=document.getElementById('f-company');if(fc&&_restored.fCompany)fc.value=_restored.fCompany;
+    },150);
+  }
   startListeners();
 });
 
@@ -494,6 +513,7 @@ function startListeners(){
       window.__pendingCoFilter=null;
     }
     render();
+    if(_ps.markFresh) _ps.markFresh();
     // Auto-open order panel from ?orderId=X (one-shot)
     if(__pendingOrderId){
       const ord=allOrders.find(o=>o._id===__pendingOrderId);

@@ -19,7 +19,7 @@
  * هذا الملف بديل آمن لـ inline writes في الصفحات.
  */
 
-import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, addDoc, getDocs, query, where }
+import { runTransaction, doc, getDoc, updateDoc, writeBatch, serverTimestamp, collection, increment, getDocs, query, where }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   buildArchiveSpec,
@@ -38,7 +38,7 @@ import {
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
-import { auditEntry } from './core/audit.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 // طبقة المراسلة: «بدء التصميم» يفتح مجموعة العميل بعد تعيين المصمم (side-effect تواصلي).
 // استيراد أعمال→مراسلة مسموح (قفل الحدود يقيّد المراسلة فقط من لمس الأعمال، لا العكس).
 import { inboxActions } from './inbox-actions.js';
@@ -1534,9 +1534,8 @@ export const orderActions = {
       batch.delete(doc(db, 'orders', orderId));
       await batch.commit();
 
-      // سطر مساءلة (best-effort — لا يعيد إنشاء بيانات الأوردر، فقط مَن/متى)
-      addDoc(collection(db, 'audit_logs'), {
-        action: 'order.purge',
+      persistAuditLog({
+        db, action: 'order.purge',
         details: {
           orderId,
           clientName: order.clientName || '',
@@ -1549,9 +1548,8 @@ export const orderActions = {
         },
         userId, userName: userName || '',
         userRole: role || '',
-        timestamp: serverTimestamp(),
         source: 'orderActions.purgeOrder',
-      }).catch(e => console.warn('[audit] purgeOrder log failed:', e?.code || e?.message));
+      });
 
       return {
         ok: true, errors: [], warnings: [],
@@ -1571,11 +1569,12 @@ export const orderActions = {
     role, userId, userName,
     wallets = [],
     isEdit = false, editIdx = -1,
+    allowedTypes = [],
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
-    const v = validateCostItem({ order, payload, role, wallets, isEdit });
+    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes });
     if (!v.ok) return { ...v, orderId };
 
     const {
@@ -1586,6 +1585,7 @@ export const orderActions = {
     } = payload;
     const total = parseFloat(rawTotal) || 0;
 
+    const _doRecord = async () => {
     // ── prepare refs + ids ────────────────────────────────
     const orderRef = order._ref;
     const txRef    = (walletId && !isEdit) ? doc(collection(db, 'transactions_v2')) : null;
@@ -1636,7 +1636,15 @@ export const orderActions = {
     batch.update(orderRef, {
       costItems: newCi,
       ...(!order.productionAgent && userId ? { productionAgent: userId, productionAgentName: userName } : {}),
-      timeline: [...(order.timeline || []), { date: nowStr(), action, by: userName }],
+      timeline: [
+        ...(order.timeline || []),
+        auditEntry({
+          action,
+          userId, userName,
+          kind: isEdit ? 'edit' : 'op',
+          meta: { costItemId, type, total, supplierId: supplierId || '', supplierOrderId: supplierOrderId || '' },
+        }),
+      ],
       updatedAt: serverTimestamp(),
     });
 
@@ -1664,6 +1672,8 @@ export const orderActions = {
           orderId, orderClient: order.clientName || '',
           note: `${type}${note ? ' — ' + note : ''}`,
           walletId, walletName,
+          ...(supplierOrderId ? { supplierOrderId } : {}),
+          costItemId,
           date: new Date().toISOString().slice(0, 10),
           createdAt: serverTimestamp(),
           createdBy: userName,
@@ -1698,6 +1708,7 @@ export const orderActions = {
       });
     }
     if (soRef) {
+      const paidInSameBatch = !!spRef;
       batch.set(soRef, {
         costItemId,
         orderId, orderRef: order.orderId || orderId.slice(-6),
@@ -1707,7 +1718,8 @@ export const orderActions = {
         note: note || '',
         status: 'pending',
         deliveryStatus: 'awaiting',
-        paidAmount: 0,
+        paidAmount: paidInSameBatch ? total : 0,
+        ...(paidInSameBatch ? { lastPaymentId: spRef.id, lastPaymentAt: serverTimestamp() } : {}),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: userId || '',
@@ -1758,6 +1770,17 @@ export const orderActions = {
         orderId,
       };
     }
+    }; // end _doRecord
+
+    if (isEdit) return _doRecord();
+
+    return withIdempotency(db, {
+      actionType: 'record_cost_item',
+      entityId: `${orderId}|${type}|${supplierId}`,
+      actorId: userId,
+      actorName: userName,
+      payload: { total, type, supplierId, walletId },
+    }, _doRecord);
   },
 
   // ─── Production Actions (P2.1) ────────────
@@ -1798,10 +1821,8 @@ export const orderActions = {
         timeline: [...(order.timeline || []), entry],
         updatedAt: serverTimestamp(),
       });
-      // Cross-page admin override audit log (best-effort, doesn't block).
-      // Centralized here so every moveStage caller benefits (archive.html
-      // restoreOrder / production.html moveStage / design.html moveStage).
-      addDoc(collection(db, 'audit_logs'), {
+      persistAuditLog({
+        db,
         action: fromStage === 'archived' ? 'order.restore_from_archive' : 'order.admin_stage_override',
         details: {
           orderId,
@@ -1811,9 +1832,8 @@ export const orderActions = {
         },
         userId, userName: userName || '',
         userRole: role || '',
-        timestamp: serverTimestamp(),
         source: 'orderActions.moveStage',
-      }).catch(e => console.warn('[audit] moveStage log failed:', e?.code || e?.message));
+      });
       return { ok: true, errors: [], warnings: [], orderId, action: 'move_stage', from: fromStage, to: targetStage };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل النقل'], warnings: [], orderId };

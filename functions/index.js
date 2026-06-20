@@ -629,7 +629,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('not-found', 'الموظف غير موجود في users');
     }
     const targetData = targetSnap.data() || {};
-    if (targetData.isStrictAdmin(role)) {
+    if (isStrictAdmin(targetData.role)) {
       throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
     }
     try {
@@ -3878,3 +3878,136 @@ exports.recordGalleryView = onCall(CALL_OPTS, async (req) => {
     return { ok: false };
   }
 });
+
+// ════════════════════════════════════════════════════════════
+// dailyFinancialReconciliation — فحص سلامة الأرصدة المالية
+// ────────────────────────────────────────────────────────────
+// يجري 17 invariant check (I1-I17) على كل الأوردرات النشطة +
+// يقارن أرصدة المحافظ بمجموع المعاملات. يُنشئ admin_alert عند
+// اكتشاف drift مالي. يعمل يومياً الـ 5 صباحاً بتوقيت مصر.
+// Mirror of core/financial-invariants.js (CJS version for CF).
+// ════════════════════════════════════════════════════════════
+const FI_EPS = 0.02;
+
+function _fiNum(x) {
+  const n = parseFloat(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function _detectDrift(order) {
+  const vs = [];
+  const _v = (code, sev, msg, fields) => vs.push({ code, severity: sev, message: msg, fields: fields || [] });
+
+  const sale     = _fiNum(order.salePrice);
+  const shipFee  = order.priceIncludesShipping ? 0 : _fiNum(order.customerShipFee);
+  const discount = _fiNum(order.discount);
+  const total    = Math.max(0, sale + shipFee - discount);
+  const paid     = _fiNum(order.totalPaid) || _fiNum(order.paid) || _fiNum(order.deposit);
+  const remaining = _fiNum(order.remaining);
+
+  if (paid < -FI_EPS) _v('PAID_NEGATIVE', 'crit', `totalPaid سالب: ${paid}`, ['totalPaid']);
+  if (remaining < -FI_EPS) _v('REMAINING_NEGATIVE', 'crit', `remaining سالب: ${remaining}`, ['remaining']);
+  if (sale < -FI_EPS) _v('SALE_NEGATIVE', 'crit', `salePrice سالب: ${sale}`, ['salePrice']);
+  if (paid > total + FI_EPS + 1) _v('OVERPAYMENT', 'warn', `paid(${paid}) > total(${total})`, ['totalPaid']);
+  if (Math.abs((paid + remaining) - total) > 1) _v('CANONICAL_MISMATCH', 'warn',
+    `paid(${paid}) + rem(${remaining}) ≠ total(${total})`, ['totalPaid', 'remaining']);
+  return vs;
+}
+
+exports.dailyFinancialReconciliation = onSchedule(
+  { schedule: '0 5 * * *', timeZone: 'Africa/Cairo', timeoutSeconds: 540, memory: '1GiB' },
+  async () => {
+    console.log('[reconciliation] Starting daily financial reconciliation...');
+
+    // ── 1) Order-level invariant scan ──
+    const activeStages = ['design', 'printing', 'production', 'shipping', 'archived'];
+    const orderSnap = await db.collection('orders')
+      .where('stage', 'in', activeStages)
+      .get();
+
+    let totalOrders = 0, withDrift = 0, criticalCount = 0;
+    const byCode = {};
+    const samples = [];
+
+    orderSnap.forEach(d => {
+      totalOrders++;
+      const o = d.data();
+      const vs = _detectDrift(o);
+      if (!vs.length) return;
+      withDrift++;
+      for (const x of vs) {
+        byCode[x.code] = (byCode[x.code] || 0) + 1;
+        if (x.severity === 'crit') criticalCount++;
+        if (samples.length < 10) {
+          samples.push({ orderId: d.id, orderRef: o.orderId || d.id.slice(-8), code: x.code, message: x.message });
+        }
+      }
+    });
+
+    // ── 2) Wallet balance vs transactions sum ──
+    const walletSnap = await db.collection('wallets').get();
+    const walletDrifts = [];
+
+    for (const wDoc of walletSnap.docs) {
+      const w = wDoc.data();
+      const walletBalance = _fiNum(w.balance);
+
+      const txSnap = await db.collection('transactions_v2')
+        .where('walletId', '==', wDoc.id)
+        .get();
+
+      let txSum = _fiNum(w.initialBalance);
+      txSnap.forEach(td => {
+        const t = td.data();
+        if (t.isReversed || t.isVoided) return;
+        const amt = _fiNum(t.amount);
+        txSum += (t.type === 'in' ? amt : -amt);
+      });
+
+      const diff = Math.abs(walletBalance - txSum);
+      if (diff > 1) {
+        walletDrifts.push({
+          walletId: wDoc.id,
+          walletName: w.name || wDoc.id,
+          recorded: walletBalance,
+          computed: txSum,
+          diff: +(walletBalance - txSum).toFixed(2),
+        });
+      }
+    }
+
+    // ── 3) Create alert if drift detected ──
+    const hasDrift = criticalCount > 0 || walletDrifts.length > 0;
+    console.log(`[reconciliation] Scanned ${totalOrders} orders: ${withDrift} with drift (${criticalCount} critical). Wallet drifts: ${walletDrifts.length}`);
+
+    if (hasDrift) {
+      await db.collection('admin_alerts').add({
+        type: 'financial_reconciliation',
+        severity: criticalCount > 0 ? 'high' : 'medium',
+        source: 'dailyFinancialReconciliation',
+        title: '⚠️ انحراف مالي مكتشف',
+        message: [
+          `فحص ${totalOrders} أوردر — ${withDrift} فيهم drift (${criticalCount} حرج)`,
+          walletDrifts.length ? `${walletDrifts.length} محفظة فيها فرق بين الرصيد المسجل ومجموع المعاملات` : '',
+        ].filter(Boolean).join('\n'),
+        details: {
+          totalOrders, withDrift, criticalCount,
+          byCode,
+          samples: samples.slice(0, 5),
+          walletDrifts: walletDrifts.slice(0, 5),
+        },
+        createdAt: FieldValue.serverTimestamp(),
+        seenAt: null,
+      });
+    }
+
+    // ── 4) Persist run log ──
+    await db.collection('reconciliation_runs').add({
+      ranAt: FieldValue.serverTimestamp(),
+      totalOrders, withDrift, criticalCount,
+      walletDrifts: walletDrifts.length,
+      byCode,
+      status: hasDrift ? 'drift_detected' : 'clean',
+    });
+  }
+);

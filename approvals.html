@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <link rel="stylesheet" href="approvals.css?v=1">
@@ -318,6 +319,7 @@
 
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
+import { assetManager } from './core/asset-manager.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
@@ -342,6 +344,18 @@ let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let searchQuery = '';
 let compactMode = false;
 let filterType='', filterMin=null, filterMax=null, filterFrom='', filterTo='';
+
+const _ps=PageState.init('approvals',{
+  fields:()=>({filterType,searchQuery}),
+  search:'list-search', scroll:'.content',
+  snapshots:['kv-queue','kv-amount','kv-wallets','kv-stale','kv-month-approved','cnt-requested','cnt-awaiting_receipt','cnt-pending','cnt-confirmed','cnt-approved','cnt-rejected']
+});
+const _restored=_ps.data;
+if(_restored){
+  filterType=_restored.filterType||'';
+  searchQuery=_restored.searchQuery||'';
+}
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
 
 // RULE 8 — حماية رقم العميل: إظهار للأدوار المصرّحة فقط (admin/cs/ops/shipping)،
 // والباقي يرى رقم مُقنَّع. canSee/maskPhone مستوردة من shared.js (مصدر واحد).
@@ -428,7 +442,12 @@ onAuthStateChanged(auth, async u=>{
     updateRoleBanner();
     setTab(smartLandingTab());
     (activeEntity=new URLSearchParams(location.search).get('entity')||'')&&document.querySelectorAll('.entity-btn').forEach(b=>b.classList.toggle('on',b.dataset.entity===activeEntity));
+    if(_restored){
+      if(_restored.filterType){const ft=document.getElementById('f-type');if(ft)ft.value=_restored.filterType;}
+      if(_restored._search||_restored.searchQuery){const si=document.getElementById('list-search');if(si)si.value=_restored._search||_restored.searchQuery;}
+    }
     startListeners();
+    assetManager.observe('.content');
     updateWalletsStrip();
   }catch(e){
     console.error('[approvals] init error:', e);
@@ -539,7 +558,7 @@ function startListeners(){
       txs = [...allTxs].filter(t=>t.approvalStatus)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       updateCounts();
-      render();
+      render();_ps.markFresh();
     },
     err=>{
       console.error('[approvals] tx error:', err);

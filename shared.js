@@ -174,6 +174,7 @@ export function initAuth(onReady, onUnauth) {
 
 export async function logout() {
   AppState._unsubs.forEach(u => u?.());
+  dataCache.unsubscribeAll();
   await signOut(auth);
   window.location.href = 'login.html';
 }
@@ -181,24 +182,35 @@ export async function logout() {
 // ═══════════════════════════════════════
 // DATA LISTENERS — subscribe once, share everywhere
 // ═══════════════════════════════════════
-// S0-8 FIX: Bounded listeners. كانت تُحمَّل collections كاملة بدون حد →
-// عند 50k order = browser hang + Firestore reads bill explosion.
-// الآن: limit مفروض على collections الكبيرة (orders, clients).
-// products + wallets صغيرة طبعيًا (عشرات/مئات) — لا limit.
+// Cache-first pattern: يعرض البيانات من الكاش فوراً عند فتح النظام،
+// ثم يزامن مع Firestore في الخلفية عبر onSnapshot.
+// الكاش = طبقة أداء فقط. قاعدة البيانات = المصدر الوحيد للحقيقة.
+//
+// S0-8 FIX: Bounded listeners. limit مفروض على كل query (RULE G3).
 //
 // الـ caller يقدر يخصّص الحدود عبر opts:
 //   startListeners({...}, { orderLimit: 500, clientLimit: 300 })
 // أو يمكنه أن يعطّل listener معين عبر opts.skip = ['orders', ...] لو
 // الصفحة تستخدم repository بديل.
+//
+// opts.useCache (default: true): تفعيل الكاش. false = السلوك القديم (onSnapshot فقط).
+import { startListenersWithCache, dataCache, cachedQuery, prefetch, collectionRegistry } from './core/data-cache.js';
+import { paginatedQuery } from './core/paginated-query.js';
+import { prefetchForPage } from './core/prefetch-map.js';
+
 export function startListeners(callbacks = {}, opts = {}) {
+  const useCache = opts.useCache !== false;
+
+  if (useCache) {
+    return startListenersWithCache(AppState, callbacks, opts);
+  }
+
+  // === السلوك القديم بدون كاش (fallback) ===
   const subs = [];
   const orderLimit  = opts.orderLimit  || 200;
   const clientLimit = opts.clientLimit || 200;
   const skip = new Set(opts.skip || []);
 
-  // Clients — bounded. الـ "آخر 200 عميل" يكفي للـ dropdown lookups والـ
-  // dashboards. الصفحات اللي تحتاج العملاء كاملين (clients.html, reports)
-  // تستخدم paginated queries محلية.
   if (!skip.has('clients')) {
     subs.push(onSnapshot(
       query(collection(db,'clients'), orderBy('createdAt','desc'), limit(clientLimit)),
@@ -209,11 +221,6 @@ export function startListeners(callbacks = {}, opts = {}) {
     ));
   }
 
-  // Orders (unified collection) — bounded. أهم إصلاح أداء.
-  // opts.orderStage (اختياري): يفلتر على مرحلة واحدة (مثلاً 'shipping') —
-  // مهم للصفحات المتخصّصة: بدونه الـ limit يمتلئ بأوردرات مؤرشفة قديمة
-  // (الأرشيف >50%) فتطلع الأوردرات النشطة برّه الـ limit وتختفي من الصفحة.
-  // بدون orderStage: السلوك القديم (آخر N أوردر بكل المراحل) — backward-compatible.
   if (!skip.has('orders')) {
     const ordersQuery = opts.orderStage
       ? query(collection(db,'orders'), where('stage','==',opts.orderStage), orderBy('createdAt','desc'), limit(orderLimit))
@@ -227,8 +234,6 @@ export function startListeners(callbacks = {}, opts = {}) {
     ));
   }
 
-  // Products — safety cap (RULE G3). Typically <200 in practice; cap at
-  // opts.productLimit (default 500) for headroom.
   const productLimit = opts.productLimit || 500;
   if (!skip.has('products')) {
     subs.push(onSnapshot(query(collection(db,'products_v2'), orderBy('name','asc'), limit(productLimit)), snap => {
@@ -237,7 +242,6 @@ export function startListeners(callbacks = {}, opts = {}) {
     }));
   }
 
-  // Wallets — safety cap (RULE G3). Real wallets are tens, never hundreds.
   const walletLimit = opts.walletLimit || 100;
   if (!skip.has('wallets')) {
     subs.push(onSnapshot(query(collection(db,'wallets'), orderBy('name','asc'), limit(walletLimit)), snap => {
@@ -246,7 +250,6 @@ export function startListeners(callbacks = {}, opts = {}) {
     }));
   }
 
-  // Settings — doc واحدة، آمنة.
   if (!skip.has('settings')) {
     subs.push(onSnapshot(doc(db,'settings','main'), snap => {
       if (snap.exists()) AppState.settings = snap.data();
@@ -258,11 +261,16 @@ export function startListeners(callbacks = {}, opts = {}) {
   return () => subs.forEach(u => u());
 }
 
+export { dataCache, cachedQuery, prefetch, collectionRegistry, paginatedQuery, prefetchForPage };
+
 // S0-8 PART 2: Auto-cleanup عند navigation/unload لتفادي memory leak.
 // الصفحات SPA-like (التي تستبدل URL بدون reload) ترث listeners قديمة.
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    try { (AppState._unsubs || []).forEach(u => u?.()); } catch(_){}
+    try {
+      (AppState._unsubs || []).forEach(u => u?.());
+      dataCache.unsubscribeAll();
+    } catch(_){}
   }, { once: true });
 }
 
@@ -380,7 +388,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.
 // ═══════════════════════════════════════
 // ORDER OPERATIONS
 // ═══════════════════════════════════════
+/** @deprecated Use orderActions.createOrder() — bypasses idempotency, audit, and validators */
 export async function createOrder(data) {
+  console.warn('[DEPRECATED] shared.createOrder() bypasses action layer — use orderActions.createOrder()');
   const id = 'ORD-' + Date.now().toString().slice(-8);
   const ref = await addDoc(collection(db, 'orders'), {
     ...data, id,
@@ -392,7 +402,9 @@ export async function createOrder(data) {
   return ref.id;
 }
 
+/** @deprecated Use orderActions — bypasses idempotency, audit, and validators */
 export async function updateOrder(orderId, data) {
+  console.warn('[DEPRECATED] shared.updateOrder() bypasses action layer — use orderActions.*');
   await updateDoc(doc(db, 'orders', orderId), {
     ...data, updatedAt: serverTimestamp()
   });
@@ -532,13 +544,17 @@ export function initModals() {
 // ═══════════════════════════════════════
 // UTILS
 // ═══════════════════════════════════════
+const _nf = new Intl.NumberFormat('ar-EG');
+const _df = new Intl.DateTimeFormat('ar-EG');
+const _tf = new Intl.DateTimeFormat('ar-EG', { hour: '2-digit', minute: '2-digit' });
+
 export function nowStr() {
-  return new Date().toLocaleDateString('ar-EG') + ' ' +
-    new Date().toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+  const d = new Date();
+  return _df.format(d) + ' ' + _tf.format(d);
 }
 
 export function fn(n) {
-  return (parseFloat(n) || 0).toLocaleString('ar-EG');
+  return _nf.format(parseFloat(n) || 0);
 }
 
 export function gv(id) {

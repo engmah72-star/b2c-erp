@@ -3,6 +3,19 @@
  *
  * RULE 8 governance: كل قرار صلاحية يمر هنا.
  *
+ * ══════════════════════════════════════════════════════════
+ * ENTERPRISE RBAC BRIDGE
+ * ══════════════════════════════════════════════════════════
+ * This file now serves as the backward-compatible bridge to the
+ * new Enterprise RBAC system in core/rbac/.
+ *
+ * All existing exports (canSeeField, canDo, hasPage, maskPhone,
+ * DEFAULT_PERMISSIONS, DEFAULT_CAPABILITIES, ROLE_PAGES, etc.)
+ * continue to work exactly as before.
+ *
+ * New code should prefer importing from core/rbac/index.js directly.
+ * ══════════════════════════════════════════════════════════
+ *
  * الاستخدام:
  *   import { canSeeField, ROLE_CAN_SEE, SENSITIVE_FIELDS } from './core/permissions-matrix.js';
  *   if (canSeeField('client_phone', userRole, userPerms)) { show(phone); } else { show(masked); }
@@ -15,6 +28,37 @@
  *
  * المرجع: CLAUDE.md RULE 8 + REGRESSION_PREVENTION.md §7.
  */
+
+// ══ Re-export the full RBAC system for new code ══════════
+export {
+  P,
+  ACTIONS,
+  MODULES,
+  ALL_PERMISSIONS,
+  PERMISSION_GROUPS,
+  PERMISSION_LABELS,
+  SYSTEM_ROLES,
+  SYSTEM_ROLE_IDS,
+  getSystemRole,
+  createBlankRole,
+  cloneRole,
+  createPermissionContext,
+  check,
+  checkAll,
+  checkAny,
+  checkField,
+  checkPage,
+  checkDomain,
+  checkStageAccess,
+  checkStageAdvance,
+  checkStageRevert,
+  getEffectivePermissions,
+  getPermissionDiff,
+  getPermissionSummary,
+  comparePermissions,
+  validateRoleDefinition,
+  validateUserOverrides,
+} from './rbac/index.js';
 
 // ══ Role × Field Access Matrix ══════════════════════════
 // كل دور: ما الحقول التي يقدر يراها افتراضياً.
@@ -137,15 +181,6 @@ export function maskPhone(phone, canShow = false) {
 // ══════════════════════════════════════════════════════════
 // CAPABILITY PERMISSIONS — RULE P1 (Action-Level Permissions)
 // ══════════════════════════════════════════════════════════
-// طبقة ثالثة من الصلاحيات (بجانب field-level و page-level):
-// تتحكم في **الأفعال** التي يمكن للمستخدم تنفيذها.
-//
-// الـ Roles = افتراضات. الـ user overrides في users/{uid}.permissions.capabilities
-// تفوز عند التعارض.
-//
-// الاستخدام:
-//   import { canDo } from './core/permissions-matrix.js';
-//   if (canDo('archive_orders', currentRole, userPerms)) { showButton(); }
 
 export const CAPABILITIES = Object.freeze({
   VIEW_ORDERS:        'view_orders',
@@ -161,19 +196,17 @@ export const CAPABILITIES = Object.freeze({
   VIEW_ALL_SHIPMENTS: 'view_all_shipments',
   VIEW_FINANCIALS:    'view_financials',
   MANAGE_PAYMENTS:    'manage_payments',
-  EXECUTE_PAYMENTS:        'execute_payments',         // تنفيذ/صرف الدفعات + التأكيد + تسوية المحفظة (admin/ops)
-  FINAL_APPROVE_PAYMENTS:  'final_approve_payments',    // الاعتماد النهائي المُقفِل (admin فقط)
+  EXECUTE_PAYMENTS:        'execute_payments',
+  FINAL_APPROVE_PAYMENTS:  'final_approve_payments',
   MANAGE_RETURNS:     'manage_returns',
   MANAGE_EMPLOYEES:        'manage_employees',
-  MANAGE_ATTENDANCE:       'manage_attendance',         // تسجيل/اعتماد حضور أي موظف مركزياً (firestore.rules: attendance)
+  MANAGE_ATTENDANCE:       'manage_attendance',
   MANAGE_PRODUCTS:         'manage_products',
   MANAGE_SUPPLIERS:        'manage_suppliers',
   MANAGE_SUPPLIER_PAYMENTS:'manage_supplier_payments',
   SYSTEM_SETTINGS:         'system_settings',
 });
 
-// كل role وما يستطيع فعلياً.
-// admin/operation_manager = كل شيء. باقي الأدوار حسب طبيعة عملهم.
 export const DEFAULT_CAPABILITIES = {
   admin: {
     execute_payments:true, final_approve_payments:true,
@@ -250,22 +283,8 @@ export const DEFAULT_CAPABILITIES = {
 };
 
 // ══════════════════════════════════════════════════════════
-// DEFAULT_ROLE_PERMISSIONS — Legacy `users.permissions` shape (Phase A — Foundation)
+// DEFAULT_ROLE_PERMISSIONS — Legacy `users.permissions` shape
 // ══════════════════════════════════════════════════════════
-// هذا الـ object يطابق الـ shape المُستخدَم على Firestore: users/{uid}.permissions
-// تاريخياً كان مُكرَّر في 3 ملفات بقيم مختلفة (drift خطير):
-//   - employees.html       (الـ schema الموسَّع — canonical)
-//   - employee-profile.html (مطابق لـ employees.html)
-//   - settings.html         (schema أصغر — مفقود حقول)
-//
-// **هذا هو الـ canonical** — موحَّد من employees.html (الأشمل).
-// migration تدريجي:
-//   PR 1 (هذا): إضافة canonical فقط (foundation). لا تعديل HTML.
-//   PR 2-3:    ترحيل settings.html / employees.html / employee-profile.html
-//             تدريجياً واحد بواحد بعد تحقق دقيق.
-//
-// Resolution:
-//   const perms = DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.customer_service;
 
 export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
   admin: {
@@ -329,7 +348,6 @@ export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
 /** يُرجع نسخة قابلة للتعديل (mutable copy) من الـ defaults للـ role */
 export function getRoleDefaultPermissions(role) {
   const def = DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.customer_service;
-  // Deep copy لتجنب mutation للـ frozen object
   return JSON.parse(JSON.stringify(def));
 }
 
@@ -340,21 +358,13 @@ export function getRoleDefaultPermissions(role) {
  *   1) user-level override (users.permissions.capabilities[capability])
  *   2) role default (DEFAULT_CAPABILITIES[role][capability])
  *   3) fail-closed (false)
- *
- * @param {string} capability — من CAPABILITIES أو string مباشر
- * @param {string} userRole — دور المستخدم
- * @param {Object} userPerms — users.permissions object (اختياري، مع .capabilities)
- * @returns {boolean}
  */
 export function canDo(capability, userRole, userPerms) {
   if (!capability) return false;
-  // user override يفوز
   const caps = userPerms?.capabilities;
   if (caps && caps[capability] !== undefined) return !!caps[capability];
-  // role default
   const def = DEFAULT_CAPABILITIES[userRole]?.[capability];
   if (def !== undefined) return def;
-  // fail-closed
   return false;
 }
 
@@ -364,10 +374,7 @@ export const hasCapability = canDo;
 // ══════════════════════════════════════════════════════════
 // PAGE PERMISSIONS — الطبقة الأولى (Page-level access)
 // ══════════════════════════════════════════════════════════
-// عرض مشتقّ (derived) لخريطة الدور → الصفحات المسموح بها، مصدره الوحيد
-// DEFAULT_ROLE_PERMISSIONS.pages — فلا تكرار لمصدر الحقيقة. '*' = كل الصفحات.
 
-/** خريطة الدور → قائمة صفحاته الافتراضية (مجمّدة، مشتقّة من DEFAULT_ROLE_PERMISSIONS). */
 export const ROLE_PAGES = Object.freeze(
   Object.fromEntries(
     Object.entries(DEFAULT_ROLE_PERMISSIONS).map(
@@ -377,17 +384,7 @@ export const ROLE_PAGES = Object.freeze(
 );
 
 /**
- * hasPage — هل يملك المستخدم صلاحية الوصول لصفحة معيّنة؟ (الطبقة الأولى).
- *
- * Order of resolution:
- *   1) user-level override (users.permissions.pages) إن كانت مصفوفة
- *   2) role default (ROLE_PAGES[role])، مع fallback على customer_service
- * '*' في القائمة = كل الصفحات.
- *
- * @param {string} page — معرّف الصفحة (اسم الـ HTML بدون .html، مثل 'clients')
- * @param {string} userRole — دور المستخدم
- * @param {Object} userPerms — users.permissions object (اختياري، مع .pages)
- * @returns {boolean}
+ * hasPage — هل يملك المستخدم صلاحية الوصول لصفحة معيّنة؟
  */
 export function hasPage(page, userRole, userPerms) {
   if (!page) return false;

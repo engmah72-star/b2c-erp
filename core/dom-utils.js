@@ -28,7 +28,20 @@ export const gv = (id) => document.getElementById(id)?.value || '';
  * Non-numeric → 0. Single Source of Truth for the `(parseFloat||0)
  * .toLocaleString('ar-EG')` idiom duplicated across reports/approvals/kpis.
  */
-export const fmtNum = (n) => (parseFloat(n) || 0).toLocaleString('ar-EG');
+const _nf = new Intl.NumberFormat('ar-EG');
+export const fmtNum = (n) => _nf.format(parseFloat(n) || 0);
+
+const _df = new Intl.DateTimeFormat('ar-EG');
+const _tf = new Intl.DateTimeFormat('ar-EG', { hour: '2-digit', minute: '2-digit' });
+export const fmtDate = (d) => _df.format(d instanceof Date ? d : new Date(d));
+export const fmtTime = (d) => _tf.format(d instanceof Date ? d : new Date(d));
+export const fmtNow = () => _df.format(new Date()) + ' ' + _tf.format(new Date());
+
+export function partition(arr, pred) {
+  const yes = [], no = [];
+  for (const x of arr) (pred(x) ? yes : no).push(x);
+  return [yes, no];
+}
 
 /**
  * Days a deadline is in the past (vs. now). 0 if deadline is in the

@@ -27,6 +27,11 @@
 
   function navigatePage(url) {
     if (!url) return;
+    // Phase 3: تحميل مسبق — prefetch بيانات الصفحة التالية قبل التنقل.
+    // الـ module code يسجّل الـ hook عبر window.__prefetchForPage.
+    if (typeof window.__prefetchForPage === 'function') {
+      try { window.__prefetchForPage(url); } catch (_) {}
+    }
     // Inside shell iframe → window.top.B2CShell is the runtime shell.
     // Standalone page → window.top === window, no B2CShell present.
     var topWin = (function () { try { return window.top; } catch (_) { return null; } })();

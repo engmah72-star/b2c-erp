@@ -14,6 +14,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -382,7 +383,8 @@
 <script type="module">
 
 import { app, auth, db, storage } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum as _fmtNum, fmtNow as _fmtNow } from "./core/dom-utils.js";
+import { assetManager } from './core/asset-manager.js';
 
 // ══ SIDEBAR - Final Solution ══
 async function buildDynamicSidebar(uid, currentPage) {
@@ -493,6 +495,33 @@ let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentRole='admin';
 let currentUser=null,userName='',activeId=null,selClient=null;
 
+const _ps=PageState.init('design',{
+  fields:()=>({activeId,designFocus:window.__designFocus||null}),
+  search:'design-search', scroll:'.content',
+  snapshots:['s-pending','s-wip','s-awaiting','s-late','s-rejected','cnt-pending','cnt-wip','cnt-awaiting','cnt-rejected']
+});
+const _restored=_ps.data;
+if(_ps.hasSnapshots)_ps.restoreSnapshots();
+
+let __rafId=0;
+function scheduleRender(){
+  if(__rafId)return;
+  __rafId=requestAnimationFrame(()=>{
+    __rafId=0;
+    renderKanban();
+    _restoreDesignState();
+    renderDesignDashboard();
+    setText('sub',orders.length+' طلب تصميم');
+    setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
+    setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
+    setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
+    setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
+    setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
+    if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+    window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
+  });
+}
+
 // RULE 8.1 — أرقام تليفون العملاء: CS + Admin + Ops + Shipping فقط.
 // Designer + Design Operator يعملون على بيانات التصميم بدون رقم العميل.
 const _PHONE_ROLES = new Set(['admin','operation_manager','customer_service','shipping_officer']);
@@ -504,9 +533,9 @@ function showPhone(p){
   return s.length<6 ? '****' : s.slice(0,3)+'****'+s.slice(-3);
 }
 
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
-const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const nowStr=_fmtNow;
 const delay=dl=>dl?Math.max(0,Math.floor((new Date()-new Date(dl))/(864e5))):0;
 const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Mgr',col:'var(--b)'},customer_service:{label:'CS',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet',col:'var(--g)'}};
 
@@ -553,15 +582,6 @@ window.moveStage=async function(stage){
   if(!confirm(`نقل الأوردر إلى ${labels[stage]}؟ (override أدمن)`))return;
   const r=await orderActions.moveStage({db,orderId:activeId,targetStage:stage,role:currentRole,userId:currentUser?.uid||'',userName});
   if(!r.ok)return toast('⛔ '+(r.errors||[]).join(' · '),'err');
-  // audit trail لـ admin override — best effort (logAudit بنفس pattern في صفحات أخرى)
-  addDoc(collection(db,'audit_logs'),{
-    action:'order.admin_stage_override',
-    details:{orderId:activeId,clientName:o.clientName||'',fromStage:o.stage||'',toStage:stage},
-    userId:currentUser?.uid||'',userName:userName||'',
-    userRole:currentRole||'',
-    timestamp:serverTimestamp(),
-    url:location.pathname,
-  }).catch(e=>console.warn('[audit] failed:',e?.code||e?.message));
   closePanel();
   toast(`✅ انتقل إلى ${labels[stage]}`,'ok');
 };
@@ -682,6 +702,7 @@ onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   if(__listenersStarted)return;
   __listenersStarted=true;
+  assetManager.observe('.kanban');
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
   if(snap.exists()){
@@ -702,7 +723,7 @@ onAuthStateChanged(auth,async u=>{
     setTimeout(updateDesignerUI,100);
     window.__myEmpId='';
     // جيب بيانات الموظف مرة واحدة (مش onSnapshot)
-    getDocs(collection(db,'employees')).then(snap=>{
+    getDocs(query(collection(db,'employees'),limit(500))).then(snap=>{
       const uid2=auth.currentUser?.uid;
       const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid2||e.email===auth.currentUser?.email);
       window.__myEmpId=emp?._id||'';
@@ -817,6 +838,17 @@ window.saveToGallery=async function(){
   }
 };
 
+let __designStateRestored=false;
+function _restoreDesignState(){
+  if(__designStateRestored||!_restored||window.__urlOrderId)return;
+  __designStateRestored=true;
+  if(_restored._search){const si=document.getElementById('design-search');if(si){si.value=_restored._search;window.filterKanban&&window.filterKanban(_restored._search);}}
+  if(_restored.designFocus&&window.designFocus){
+    const btn=document.querySelector(`.design-stat-clickable[data-focus="${_restored.designFocus}"]`);
+    window.designFocus(_restored.designFocus,btn);
+  }
+  _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
+}
 function startListeners(){
   // Deep-link: open specific order if ?orderId= in URL
   window.__urlOrderId = window.__urlOrderId || (new URLSearchParams(window.location.search).get('orderId') || '');
@@ -838,33 +870,16 @@ function startListeners(){
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-      setText('sub',orders.length+' طلب تصميم');
-      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
-      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-      renderDesignDashboard();
-      if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+      scheduleRender();
     });
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
-      window.markSynced&&window.markSynced();
+      window.markSynced&&window.markSynced();_ps.markFresh();
       const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      // CS تشوف اللي عملتها + اللي مش مكلّف
       orders=all.filter(o=>o.createdBy===currentUid||!o.designerId)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-      setText('sub',orders.length+' طلب تصميم');
-      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
-      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-      renderDesignDashboard();
-      if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+      scheduleRender();
     });
   } else {
     // المصمم — أوردراته المكلّف بيها (limit 200 — per-designer cap)
@@ -875,15 +890,7 @@ function startListeners(){
       const ids=new Set(assigned.map(o=>o._id));
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-      setText('sub',orders.length+' طلب تصميم');
-      setText('s-pending',orders.filter(o=>o.designStage==='pending').length);
-      setText('s-wip',orders.filter(o=>o.designStage==='wip').length);
-      setText('s-awaiting',orders.filter(o=>o.designStage==='awaiting_payment').length);
-      setText('s-late',orders.filter(o=>delay(o.deadline)>0).length);
-      setText('s-rejected',orders.filter(o=>o.designStage==='rejected').length);
-      renderDesignDashboard();
-      if(activeId){const o=orders.find(x=>x._id===activeId);if(o)renderPanel(o);}
+      scheduleRender();
     });
     // أوردرات التصميم بدون مصمم (للسحب) — cap matches admin/CS view
     onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
@@ -893,8 +900,7 @@ function startListeners(){
       const ids=new Set(assigned.map(o=>o._id));
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderKanban();window._maybeOpenFromUrl&&window._maybeOpenFromUrl();
-      renderDesignDashboard();
+      scheduleRender();
     });
   }
 
@@ -1524,7 +1530,7 @@ window.openAssignDesigner=async function(){
   if(!sel)return;
   try{
     // المصدر الوحيد للمصممين: employees collection + dedup مركزي
-    const empSnap=await getDocs(collection(db,'employees'));
+    const empSnap=await getDocs(query(collection(db,'employees'),limit(500)));
     const raw=empSnap.docs
       .map(d=>({...d.data(),_id:d.id}))
       .filter(e=>e.role==='graphic_designer'||e.role==='design_operator');

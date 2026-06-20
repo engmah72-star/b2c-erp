@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -417,6 +418,9 @@
 
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { fmtNum as _fmtNum, fmtNow as _fmtNow, partition } from './core/dom-utils.js';
+import { assetManager } from './core/asset-manager.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, onSnapshot, updateDoc, getDoc, setDoc, query, where, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 // FSE imports removed — financial writes now go through orderActions.recordPayment/recordPrintAdvance
@@ -432,9 +436,9 @@ function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
 
 // Utils
 const FC=window.FinanceCore||window.FC||null;
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
-const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const nowStr=_fmtNow;
 const toast=(m,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'ok':t==='err'?'err':'');el.textContent=m;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
 const delay=dl=>{if(!dl)return 0;const d=new Date(dl);return d<new Date()?Math.floor((new Date()-d)/864e5):0;};
 const getPaid=o=>FC?FC.getPaid(o):(parseFloat(o.totalPaid)||parseFloat(o.paid)||parseFloat(o.deposit)||0);
@@ -451,7 +455,27 @@ if(window.innerWidth<=768){const n=document.getElementById('mob-nav-bar');if(n)n
 // State
 let orders=[],wallets=[],appSettings={},productionServices=[],activeId=null,activeOrder=null,userName='',currentRole='admin',mineOnly=true;
 let shippers=[]; // شركات الشحن (shippers_v2) — لاختيارها ضمن بيانات الشحن
+let __rafId = 0;
+function scheduleRender() {
+  if (__rafId) return;
+  __rafId = requestAnimationFrame(() => { __rafId = 0; updateKPIs(); renderList(); });
+}
 let statusFilter='all',sortBy='newest',viewMode=localStorage.getItem('print.viewMode')||'list';
+
+// ── Page State Persistence (across navigation) ─────────────────────────
+const _ps=PageState.init('print',{
+  fields:()=>({statusFilter,sortBy,mineOnly,activeId}),
+  search:'search', scroll:'.content',
+  snapshots:['k-total','k-late','k-rev','k-rem','sub','qf-mine-cnt','qf-all-cnt'],
+  htmlSnapshots:['sf-chips']
+});
+const _restored=_ps.data;
+if(_restored){
+  statusFilter=_restored.statusFilter||'all';
+  sortBy=_restored.sortBy||'newest';
+  mineOnly=_restored.mineOnly??true;
+}
+
 const STATUS_FILTERS=[
   {id:'all',     label:'📋 الكل',          col:'var(--b)'},
   {id:'waiting', label:'⚠️ ينتظر ملف',     col:'var(--r)'},
@@ -474,50 +498,75 @@ function showPhone(p){
 
 // Auth
 let _s=false;
-// عرض skeleton فوراً قبل البيانات
-const __initListEl=document.getElementById('list');if(__initListEl)__initListEl.innerHTML=skeletonCards(4);
+// عرض snapshot أو skeleton
+if(_ps.hasSnapshots){_ps.restoreSnapshots();}
+else{const __initListEl=document.getElementById('list');if(__initListEl)__initListEl.innerHTML=skeletonCards(4);}
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   if(_s)return;_s=true;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);if(isAdm){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('print')){const RMAP_P={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};window.location.href=RMAP_P[currentRole]||'login.html';return;}userName=d.name||u.email;set('nav-name',userName);const av=document.getElementById('nav-av');if(av)av.textContent=(userName[0]||'A').toUpperCase();set('role-badge',currentRole);buildSidebar(d);if(isAdm&&!_restored){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn)setMineFilter(false,allBtn);},100);}
+    if(_restored){
+      const mBtn=document.getElementById(mineOnly?'qf-mine':'qf-all');
+      if(mBtn)setMineFilter(mineOnly,mBtn);
+      const sortSel=document.getElementById('sort-sel');
+      if(sortSel)sortSel.value=sortBy;
+      if(_restored._search){const si=document.getElementById('search');if(si){si.value=_restored._search;filterList(_restored._search);}}
+    }}
   startListeners();
+  assetManager.observe('#list');
 });
 
 function startListeners(){
-  // Deep-link: open specific order if ?orderId= in URL
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
-  // RULE G3: cap printing-stage stream. An active printing queue should
-  // never approach 500 orders — beyond that it's bottlenecked, not "real-time".
-  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),limit(500)),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    updateKPIs();renderList();
-    if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderPanel(o);}}
-    if(window.markSynced)window.markSynced();
-    if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
-      __urlOpened = true;
-      setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 250);
+  let __stateRestored = false;
+  // RULE G3: cap printing-stage stream — cache-first for instant load.
+  dataCache.subscribe(
+    cachedQuery('orders').where('stage','==','printing').limit(500).build(),
+    (list) => {
+      orders=(list||[]).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      scheduleRender();
+      if(activeId){const o=orders.find(x=>x._id===activeId);if(o){activeOrder=o;renderPanel(o);}}
+      if(!__stateRestored && _restored && !__urlOrderId){
+        __stateRestored=true;
+        _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
+      }
+      if(window.markSynced)window.markSynced();
+      _ps.markFresh();
+      if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
+        __urlOpened = true;
+        setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 250);
+      }
     }
-  });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
-  // شركات الشحن — لاختيارها في بيانات الشحن (validatePrepareShipping يطلبها لطريقة company)
-  onSnapshot(query(collection(db,'shippers_v2'),limit(200)),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));if(activeOrder)renderPanel(activeOrder);},err=>console.error('[print] shippers listener',err));
+  );
+  dataCache.subscribe(
+    cachedQuery('wallets').limit(100).build(),
+    (list) => { wallets = list || []; }
+  );
+  dataCache.subscribe(
+    cachedQuery('shippers_v2').limit(200).build(),
+    (list) => { shippers = list || []; if(activeOrder) renderPanel(activeOrder); }
+  );
+  dataCache.getDoc('settings', 'main').then(r => { if(r.data) appSettings = r.data; });
   onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
-  // Unified production services (RULE M1 + C1.5) — مصدر بنود التكلفة بدل costTypesDigital/Offset
+  dataCache.getDoc('master_lists', 'supplier_categories').then(r => {
+    if(r.data) productionServices = (r.data.items||[]).filter(s=>s.isActive!==false);
+  });
   onSnapshot(doc(db,'master_lists','supplier_categories'),snap=>{
     productionServices=snap.exists()?(snap.data()?.items||[]).filter(s=>s.isActive!==false):[];
   });
-  // المنفّذين (production_agent) لـ pick-prod modal — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    window.__prodAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    const s=document.getElementById('pick-prod-sel');if(!s)return;
-    const cur=s.value;
-    s.innerHTML='<option value="">— أول منفّذ متاح —</option>'+(window.__prodAgents||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
-    if(cur)s.value=cur;
-  });
+  dataCache.subscribe(
+    cachedQuery('employees').where('role','==','production_agent').limit(100).build(),
+    (list) => {
+      window.__prodAgents=dedupEmployees(list||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+      const s=document.getElementById('pick-prod-sel');if(!s)return;
+      const cur=s.value;
+      s.innerHTML='<option value="">— أول منفّذ متاح —</option>'+(window.__prodAgents||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+      if(cur)s.value=cur;
+    }
+  );
 }
 
 // KPIs
@@ -1646,7 +1695,7 @@ function computeOrderReadiness(o){
 function renderOrderReadinessCard(o){
   const agg = computeOrderReadiness(o);
   if(!agg) return '';
-  const readyCount = agg.items.filter(i => i.r.ready).length;
+  const [ready,notReady] = partition(agg.items, i => i.r.ready);
   const allReady = agg.allReady;
   return `<div style="padding:10px 16px;border-bottom:1px solid var(--line);background:${allReady?'rgba(0,217,126,.04)':'rgba(255,170,0,.04)'}">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm)">
@@ -1654,11 +1703,11 @@ function renderOrderReadinessCard(o){
         ${allReady?'✅ كل المنتجات جاهزة للإرسال للمطبعة':'🤖 جاهزية الأوردر للتنفيذ'}
       </div>
       <span style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:${allReady?'var(--g)':'var(--dim2)'}">
-        ${readyCount}/${agg.count} منتج جاهز
+        ${ready.length}/${agg.count} منتج جاهز
       </span>
     </div>
     ${!allReady?`<div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">
-      ${agg.items.filter(i=>!i.r.ready).map(i=>`• ${i.name||'منتج'} — ${i.r.cTotal-i.r.cDone} بند ناقص`).join(' · ')}
+      ${notReady.map(i=>`• ${i.name||'منتج'} — ${i.r.cTotal-i.r.cDone} بند ناقص`).join(' · ')}
     </div>`:''}
   </div>`;
 }
@@ -2340,21 +2389,28 @@ let piProdIdx = null;      // الـ index اللي بنرفعله صورة
 window.setEditProdQty=function(i,v){editProdsData[i].qty=parseInt(v)||1;calcAutoPrice();};
 window.setEditProdPrice=function(i,v){editProdsData[i].unitPrice=parseFloat(v)||0;calcAutoPrice();};
 
-// تحميل الكتالوج مرة واحدة
-onSnapshot(query(collection(db,'products_v2'),limit(500)), snap => {
-  productsCatalog = snap.docs.map(d=>({...d.data(),_id:d.id}))
-    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-});
+// تحميل الكتالوج — cache-first
+dataCache.subscribe(
+  cachedQuery('products_v2').limit(500).build(),
+  (list) => {
+    productsCatalog = (list||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  }
+);
 
-// تحميل الموردين (للمطابع — فلتر حسب الفئة وقت العرض في النموذج)
-onSnapshot(query(collection(db,'suppliers_v2'),limit(500)), snap => {
-  suppliers = snap.docs.map(d=>({...d.data(),_id:d.id}))
-    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-  if(activeOrder) renderPanel(activeOrder);
-}, err => console.warn('suppliers listener:', err?.message||err));
+// تحميل الموردين — cache-first
+dataCache.subscribe(
+  cachedQuery('suppliers_v2').limit(500).build(),
+  (list) => {
+    suppliers = (list||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    if(activeOrder) renderPanel(activeOrder);
+  }
+);
 
 // قوالب الإنتاج (print_brief_templates) من master_lists
 let printBriefTemplates = [];
+dataCache.getDoc('master_lists', 'print_brief_templates').then(r => {
+  if(r.data) printBriefTemplates = r.data.items || [];
+});
 onSnapshot(doc(db,'master_lists','print_brief_templates'), snap => {
   printBriefTemplates = snap.exists() ? (snap.data().items || []) : [];
   if(activeOrder) renderPanel(activeOrder);

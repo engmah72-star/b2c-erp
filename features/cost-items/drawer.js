@@ -32,11 +32,7 @@
   const ctx = () => window.__costItemsCtx;
   const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 
-  const DEFAULT_TYPES = [
-    'طباعة أوفست','طباعة ديجيتال','طباعة UV','طباعة فلكس','طباعة حريرية','طباعة ريزو',
-    'ورق','كرتون','زنكات','قص','سلفنة','تذهيب','نقر','كريز','تجليد','تجميع',
-    'تصميم','تصوير','موشن','شحن','أخرى',
-  ];
+  const DEFAULT_TYPES = [];
 
   const COST_ICO = {طباعة:'🖨️',ورق:'📄',قص:'✂️',سلفنة:'✨',زنكات:'🔵',تجميع:'📦',شحن:'🚚',تصميم:'✏️',أخرى:'📌'};
   function getCostIco(t){
@@ -67,6 +63,14 @@
   let _libLoading    = false;
 
   let _root, _backdrop, _drawer;
+
+  // services (master_lists-backed) > specialties (legacy) > printType (single)
+  function _resolveSpecs(sup){
+    if(!sup) return [];
+    if(Array.isArray(sup.services) && sup.services.length) return sup.services;
+    if(Array.isArray(sup.specialties) && sup.specialties.length) return sup.specialties;
+    return sup.printType ? [sup.printType] : [];
+  }
 
   function newEmptyRow(){
     return {
@@ -480,10 +484,7 @@
         const c = ctx();
         const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
         const sup = suppliers.find(s => s._id === supId);
-        const specs = sup
-          ? (Array.isArray(sup.specialties) && sup.specialties.length
-              ? sup.specialties : (sup.printType ? [sup.printType] : []))
-          : [];
+        const specs = _resolveSpecs(sup);
         if(_editIdx >= 0 && _editDraft){
           Object.assign(_editDraft, { supplierId: supId, supplierName: supName,
             supplierSpecialties: specs, type, total: String(total||'') });
@@ -667,40 +668,34 @@
     const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
     const specs = currentRow.supplierSpecialties || [];
 
-    // Priority: supplier specialties > masterCategories > DEFAULT_TYPES
+    // Priority: masterCats (grouped, supplier specs highlighted) > specs alone > DEFAULT_TYPES
     let typeList;
-    if(specs.length){
-      typeList = specs;
-    } else if(masterCats.length){
-      typeList = masterCats.map(x => x.label);
-    } else {
-      typeList = DEFAULT_TYPES;
-    }
-
-    // If masterCats available, use grouped display
     let bodyHtml;
-    if(masterCats.length && !specs.length){
+    if(masterCats.length){
+      const specSet = new Set(specs);
       const groups = {};
       masterCats.forEach(cat => {
         const g = cat.group || 'أخرى';
         if(!groups[g]) groups[g] = [];
         groups[g].push(cat.label);
       });
-      bodyHtml = Object.entries(groups).map(([g, labels]) => `
+      bodyHtml = (specs.length ? `<div class="cid-pop-section" style="color:var(--b)">🏭 خدمات المورد المحدد</div>` : '')
+        + Object.entries(groups).map(([g, labels]) => `
         <div class="cid-pop-section">${escapeHtml(g)}</div>
         ${labels.map(l => `
-          <div class="cid-pop-item ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
-            ${getCostIco(l)} <span>${escapeHtml(l)}</span>
+          <div class="cid-pop-item ${currentRow.type===l?'is-active':''} ${specSet.has(l)?'is-supplier-svc':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
+            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${specSet.has(l)?'<span style="font-size:9px;color:var(--b);margin-right:auto"> ✓ المورد</span>':''}
           </div>`).join('')}
       `).join('');
-    } else {
-      bodyHtml = (specs.length
-        ? `<div class="cid-pop-section">تخصصات المورد</div>`
-        : `<div class="cid-pop-section">الأنواع</div>`)
+    } else if(specs.length){
+      typeList = specs;
+      bodyHtml = `<div class="cid-pop-section">تخصصات المورد</div>`
         + typeList.map(l => `
           <div class="cid-pop-item ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
             ${getCostIco(l)} <span>${escapeHtml(l)}</span>
           </div>`).join('');
+    } else {
+      bodyHtml = `<div class="cid-pop-section" style="color:var(--err);padding:12px 8px">⚠️ لا توجد خدمات مُعرّفة — عرّف الخدمات من الإعدادات أولاً</div>`;
     }
 
     const pop = document.createElement('div');
@@ -731,11 +726,7 @@
       const c = ctx();
       const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
       const sup = suppliers.find(s => s._id === el.dataset.id);
-      const specs = sup
-        ? (Array.isArray(sup.specialties) && sup.specialties.length
-            ? sup.specialties
-            : (sup.printType ? [sup.printType] : []))
-        : [];
+      const specs = _resolveSpecs(sup);
       row.supplierId  = el.dataset.id;
       row.supplierName = el.dataset.name;
       row.supplierSpecialties = specs;
@@ -834,9 +825,7 @@
     return {
       supplierId:   sup?._id || sug.supplierId || '',
       supplierName: sup?.name || sug.supplierName || '',
-      specs: sup ? (Array.isArray(sup.specialties) && sup.specialties.length
-                    ? sup.specialties : (sup.printType ? [sup.printType] : []))
-                 : [],
+      specs: _resolveSpecs(sup),
     };
   }
 
@@ -879,9 +868,7 @@
     if(item.paid){ toast('⛔ البند مدفوع — التعديل من اللوحة القديمة فقط (admin only)', 'warn'); return; }
     const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
     const sup = suppliers.find(s => s._id === item.supplierId);
-    const specs = sup ? (Array.isArray(sup.specialties) && sup.specialties.length
-                          ? sup.specialties : (sup.printType ? [sup.printType] : []))
-                      : [];
+    const specs = _resolveSpecs(sup);
     _editIdx  = gi;
     _editDraft = {
       supplierId: item.supplierId||'', supplierName: item.supplierName||'',
@@ -937,6 +924,7 @@
     for(let i = 0; i < valid.length; i++){
       const row = valid[i];
       if(btn) btn.textContent = `⏳ ${i+1}/${valid.length}...`;
+      const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
       const res = await actions.recordCostItem({
         db, orderId: _orderId, prodIdx: _prodIdx,
         payload: {
@@ -945,6 +933,7 @@
           note: row.note||'', walletId:'', paperMeta: row.paperMeta||{},
         },
         role, userId, userName, wallets, isEdit:false, editIdx:-1,
+        allowedTypes: masterCats.map(x => x.label),
       });
       if(res.ok){
         okCount++;
@@ -974,6 +963,7 @@
     const { actions, db } = await _getActionsDb() || {};
     if(!actions) return;
     const wallets = c.getWallets ? c.getWallets() : [];
+    const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
     const res = await actions.recordCostItem({
       db, orderId: _orderId, prodIdx: _prodIdx,
       payload: {
@@ -986,6 +976,7 @@
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid)||'',
       userName: c.getUserName ? c.getUserName() : '',
       wallets, isEdit:true, editIdx: _editIdx,
+      allowedTypes: masterCats.map(x => x.label),
     });
     if(!res.ok){ toast('❌ '+(res.errors?.[0]||'فشل التعديل'), 'err'); return; }
     toast(`✅ تم التعديل — ${fn(total)} ج`, 'ok');

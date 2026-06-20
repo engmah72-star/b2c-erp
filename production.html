@@ -16,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
+<script src="core/page-state.js"></script>
 <script src="sidebar-config.js"></script>
 <script src="sidebar.js"></script>
 <script src="sync-monitor.js"></script>
@@ -284,6 +285,9 @@
 
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { fmtNum as _fmtNum, fmtNow as _fmtNow } from './core/dom-utils.js';
+import { assetManager } from './core/asset-manager.js';
 const SBPAGES=[{file:'inbox.html',label:'المحادثات',ico:'💬',alwaysShow:true},{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'exec-cost-entry.html',label:'بنود التكلفة',ico:'💰',roles:['production_agent','admin','operation_manager']},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'supplier-requests.html',label:'طلبات الموردين',ico:'🏭',roles:['production_agent']},{file:'my-requests.html',label:'طلباتي',ico:'📋',alwaysShow:true},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 const MOB_NAV_CFG={shipping_officer:[{h:'shipping-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'shipping.html',i:'🚚',l:'الشحن'},{h:'shipping-accounts.html',i:'📦',l:'حسابات'}],production_agent:[{h:'production-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'production.html',i:'🏭',l:'تنفيذ'}],customer_service:[{h:'cs-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'clients.html',i:'👤',l:'العملاء'},{h:'design.html',i:'✏️',l:'تصميم'}],graphic_designer:[{h:'designer-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'design.html',i:'✏️',l:'تصميم'}],design_operator:[{h:'designer-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'design.html',i:'✏️',l:'تصميم'}],wallet_manager:[{h:'accounts.html',i:'💰',l:'حسابات'}],admin:[{h:'accounts.html',i:'💰',l:'مالية'},{h:'clients.html',i:'👤',l:'عملاء'},{h:'production.html',i:'🏭',l:'تنفيذ'},{h:'shipping.html',i:'🚚',l:'شحن'}],operation_manager:[{h:'ops-dashboard.html',i:'⬡',l:'داشبوردي'},{h:'clients.html',i:'👤',l:'عملاء'},{h:'production.html',i:'🏭',l:'تنفيذ'},{h:'shipping.html',i:'🚚',l:'شحن'},{h:'accounts.html',i:'💰',l:'مالية'}]};
@@ -300,28 +304,45 @@ import { canSeeField, maskPhone as _centralMaskPhone } from "./core/permissions-
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 let orders=[],suppliers=[],printers=[],productsCatalog=[],wallets=[],currentUser=null,userName='',activeId=null,currentFilter='all',currentSupFilter='',currentRole='admin',currentUserPerms=null,activeProdIdx=-1,mineOnly=true;
 let shippers=[];   // شركات الشحن — لقسم "بيانات الشحن" في البانل
+let __rafId = 0;
+function scheduleRender() {
+  if (__rafId) return;
+  __rafId = requestAnimationFrame(() => { __rafId = 0; renderList(); });
+}
+let masterCategories=[];  // خدمات الإنتاج من الإعدادات (master_lists/supplier_categories)
+
+const _ps=PageState.init('production',{
+  fields:()=>({currentFilter,currentSupFilter,mineOnly,activeId}),
+  scroll:'.content',
+  snapshots:['s-pending','s-wip','s-done','qf-mine-cnt','qf-all-cnt']
+});
+const _restored=_ps.data;
+if(_restored){
+  currentFilter=_restored.currentFilter||'all';
+  currentSupFilter=_restored.currentSupFilter||'';
+  mineOnly=_restored.mineOnly??true;
+}
 
 // ── Cost Items Drawer context (consumed by features/cost-items/drawer.js) ──
 window.__costItemsCtx = {
   getOrder:            (id) => orders.find(o => o._id === id) || null,
   getSuppliers:        ()   => suppliers,
   getWallets:          ()   => wallets,
-  getMasterCategories: ()   => [],   // production.html doesn't load master_lists;
-                                     // drawer falls back to supplier specialties / DEFAULT_TYPES
+  getMasterCategories: ()   => masterCategories,
   getProductsCatalog:  ()   => productsCatalog,
   getCurrentRole:      ()   => currentRole,
   getActiveOrderId:    ()   => activeId,
   getCurrentUser:      ()   => currentUser,
   getUserName:         ()   => userName,
 };
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const gv=id=>document.getElementById(id)?.value||'';
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
 const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
 window.cM=cM;window.oM=oM;
-const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const nowStr=_fmtNow;
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
@@ -433,87 +454,119 @@ window.deleteOrderFull=async function(){
 // ════════════════════════
 
 let __listenersStarted=false; // منع التكرار
-// عرض skeleton فوراً قبل البيانات
-{const __l=document.getElementById('list');if(__l)__l.innerHTML=skeletonCards(4);}
+// عرض snapshot أو skeleton
+if(_ps.hasSnapshots){_ps.restoreSnapshots();}
+else{const __l=document.getElementById('list');if(__l)__l.innerHTML=skeletonCards(4);}
 
 onAuthStateChanged(auth,async u=>{
   if(!u){window.location.href='login.html';return;}
   currentUser=u;
   const snap=await getDoc(doc(db,'users',u.uid));
-  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';currentUserPerms=d.permissions||null;const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if(isAdm||currentRole==='production_agent'){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}}
+  if(snap.exists()){const d=snap.data();currentRole=d.role||'admin';currentUserPerms=d.permissions||null;const isAdm=['admin','operation_manager'].includes(currentRole);const pages=(d.permissions?.pages)||[];if(!isAdm&&!pages.includes('*')&&!pages.includes('production')){window.location.href=RMAP[currentRole]||'login.html';return;}userName=d.name||u.email;setText('nav-name',userName);document.getElementById('nav-av').textContent=userName[0]?.toUpperCase();buildSidebar(d,'production.html');buildMobNav(currentRole,'production.html');if((isAdm||currentRole==='production_agent')&&!_restored){mineOnly=false;setTimeout(()=>{const allBtn=document.getElementById('qf-all');if(allBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderList();}},100);}
+    if(_restored){
+      setTimeout(()=>{
+        const mBtn=document.getElementById(mineOnly?'qf-mine':'qf-all');
+        if(mBtn){document.querySelectorAll('#mine-filter-bar .ftab').forEach(b=>b.classList.remove('active'));mBtn.classList.add('active');renderList();}
+        const fBtn=document.querySelector(`#status-filter-bar .ftab[onclick*="setFilter('${currentFilter}'"]`);
+        if(fBtn){document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));fBtn.classList.add('active');}
+      },120);
+    }}
   if(__listenersStarted)return;
   __listenersStarted=true;
+  assetManager.observe('#list');
   let __lastOrderHash='';
   const __urlOrderId = new URLSearchParams(window.location.search).get('orderId') || '';
   let __urlOpened = false;
+  let __stateRestored = false;
   // RULE G3: cap active production/shipping queue (workshop bandwidth bounds it naturally).
-  onSnapshot(query(collection(db,'orders'),where('stage','in',['production','shipping']),limit(1000)),snap=>{
-    window.markSynced&&window.markSynced();
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
-      __urlOpened = true;
-      setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 300);
-    }
-
-    const hash=orders.map(o=>{
-      const pSig=(o.products||[]).map(p=>(p.execStatus||'')+':'+(p.supplierId||'')).join(';');
-      return o._id+'|'+o.stage+'|'+o.prodStatus+'|'+o.supplierId+'|'+(o.costItems?.length||0)+'|'+pSig;
-    }).join(',');
-    const changed = hash !== __lastOrderHash;
-    __lastOrderHash = hash;
-
-    const prodOrders=orders.filter(o=>o.stage==='production');
-    let cP=0,cW=0,cD=0;
-    prodOrders.forEach(o=>{
-      const prods=o.products||[];
-      if(!prods.length){
-        if(!o.prodStatus||o.prodStatus==='pending')cP++;
-        else if(['wip','received'].includes(o.prodStatus))cW++;
-        else if(o.prodStatus==='done')cD++;
-      } else {
-        prods.forEach(p=>{
-          const s=p.execStatus||'pending';
-          if(s==='done')cD++;
-          else if(s==='wip')cW++;
-          else cP++; // pending or problem
-        });
+  // Cache-first: يعرض البيانات من الكاش فوراً ثم يزامن في الخلفية.
+  dataCache.subscribe(
+    cachedQuery('orders').where('stage', 'in', ['production','shipping']).limit(1000).build(),
+    (list) => {
+      window.markSynced&&window.markSynced();_ps.markFresh();
+      orders=(list||[]).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      if(!__stateRestored && _restored && !__urlOrderId){
+        __stateRestored=true;
+        _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
       }
-    });
-    setText('s-pending',cP);
-    setText('s-wip',cW);
-    setText('s-done',cD);
-    const shipMissing=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length).length;
-    setText('sub',prodOrders.length+' تنفيذ'+(shipMissing?` · ${shipMissing} شحن بدون تكلفة`:''));
-
-    if(changed){renderList();}
-    if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
+      if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
+        __urlOpened = true;
+        setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 300);
+      }
+      const hash=orders.map(o=>{
+        const pSig=(o.products||[]).map(p=>(p.execStatus||'')+':'+(p.supplierId||'')).join(';');
+        return o._id+'|'+o.stage+'|'+o.prodStatus+'|'+o.supplierId+'|'+(o.costItems?.length||0)+'|'+pSig;
+      }).join(',');
+      const changed = hash !== __lastOrderHash;
+      __lastOrderHash = hash;
+      const prodOrders=orders.filter(o=>o.stage==='production');
+      let cP=0,cW=0,cD=0;
+      prodOrders.forEach(o=>{
+        const prods=o.products||[];
+        if(!prods.length){
+          if(!o.prodStatus||o.prodStatus==='pending')cP++;
+          else if(['wip','received'].includes(o.prodStatus))cW++;
+          else if(o.prodStatus==='done')cD++;
+        } else {
+          prods.forEach(p=>{
+            const s=p.execStatus||'pending';
+            if(s==='done')cD++;
+            else if(s==='wip')cW++;
+            else cP++;
+          });
+        }
+      });
+      setText('s-pending',cP);
+      setText('s-wip',cW);
+      setText('s-done',cD);
+      const shipMissing=orders.filter(o=>o.stage==='shipping'&&!(o.costItems||[]).length).length;
+      setText('sub',prodOrders.length+' تنفيذ'+(shipMissing?` · ${shipMissing} شحن بدون تكلفة`:''));
+      if(changed){scheduleRender();}
+      if(activeId){const u=orders.find(x=>x._id===activeId);if(u){renderPanel(u);const cpOv=document.getElementById('cpanel-ov');if(cpOv?.classList.contains('open'))renderCostPanel(u,activeProdIdx);}}
+    }
+  );
+  dataCache.subscribe(
+    cachedQuery('products_v2').limit(500).build(),
+    (list) => { productsCatalog = list || []; }
+  );
+  dataCache.subscribe(
+    cachedQuery('suppliers_v2').limit(500).build(),
+    (list) => {
+      suppliers = list || [];
+      printers=suppliers.filter(s=>s.type==='مطبعة'||s.category==='مطبعة');
+      buildSupFilter();
+    }
+  );
+  dataCache.subscribe(
+    cachedQuery('wallets').limit(100).build(),
+    (list) => { wallets = list || []; }
+  );
+  dataCache.subscribe(
+    cachedQuery('shippers_v2').limit(200).build(),
+    (list) => { shippers = list || []; if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderProdShipBox(u);} }
+  );
+  // خدمات الإنتاج — المصدر الموحّد (master_lists/supplier_categories)
+  onSnapshot(doc(db,'master_lists','supplier_categories'),snap=>{
+    if(!snap.exists())return;
+    const items=snap.data()?.items||[];
+    masterCategories=items.filter(c=>c.isActive!==false&&c.isCostItem);
   });
-  onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
-    productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
-  });
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    // المطابع فقط للـ panel
-    printers=suppliers.filter(s=>s.type==='مطبعة'||s.category==='مطبعة');
-    buildSupFilter();
-  });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));});
-  // شركات الشحن — لتعبئة قائمة "بيانات الشحن" في البانل (يكملها التنفيذ).
-  onSnapshot(query(collection(db,'shippers_v2'),limit(200)),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));if(activeId){const u=orders.find(x=>x._id===activeId);if(u)renderProdShipBox(u);}});
-  // موظفي الشحن (shipping_officer) لـ pick-ship modal — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','shipping_officer'),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    window.__shipOfficers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    const s=document.getElementById('pick-ship-sel');if(!s)return;
-    const cur=s.value;
-    s.innerHTML='<option value="">— أول موظف متاح —</option>'+(window.__shipOfficers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
-    if(cur)s.value=cur;
-  });
-  // موظفو التنفيذ (production_agent) لتعيين المندوب — مع dedup
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    window.__productionAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-  });
+  dataCache.subscribe(
+    cachedQuery('employees').where('role','==','shipping_officer').limit(100).build(),
+    (list) => {
+      window.__shipOfficers=dedupEmployees(list||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+      const s=document.getElementById('pick-ship-sel');if(!s)return;
+      const cur=s.value;
+      s.innerHTML='<option value="">— أول موظف متاح —</option>'+(window.__shipOfficers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+      if(cur)s.value=cur;
+    }
+  );
+  dataCache.subscribe(
+    cachedQuery('employees').where('role','==','production_agent').limit(100).build(),
+    (list) => {
+      window.__productionAgents=dedupEmployees(list||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    }
+  );
 });
 
 window.setFilter=function(f,btn){currentFilter=f;document.querySelectorAll('#status-filter-bar .ftab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderList();};
@@ -594,7 +647,7 @@ function renderAgentTab(){
   const listEl=document.getElementById('agent-exp-list');
   const totalEl=document.getElementById('agent-exp-total');
   const totalValEl=document.getElementById('agent-exp-total-val');
-  const fn2=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+  const fn2=_fmtNum;
   if(!exps.length){
     listEl.innerHTML='<div style="color:var(--dim2);font-size:var(--fs-base);text-align:center;padding:10px 0">لا توجد مصاريف مسجلة بعد</div>';
     if(totalEl)totalEl.style.display='none';
