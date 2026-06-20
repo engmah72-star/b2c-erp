@@ -646,6 +646,8 @@ window.addEventListener('unhandledrejection', e=>{
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, getDoc, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { QUERY_LIMITS as QL } from './core/query-limits.js';
 import { calcOrderPayment } from "./financial-sync-engine.js";
 import { walletActions } from "./wallet-actions.js";
 import { ORDER_STAGES, USER_ROLES } from "./orders.js";
@@ -813,76 +815,43 @@ onAuthStateChanged(auth, async u=>{
 // RULE 1 محفوظة: wallet balances (المصدر الوحيد) قراءة كاملة من collection wallets.
 // المعاملات/الأوردرات/الدفعات — يستعملها الـ KPIs على فترات زمنية حديثة، فالسقف
 // يغطّي أشهر/سنوات من النشاط الطبيعي. التاريخ الأقدم متاح في reports.html.
-const TX_LIMIT       = 5000;
-const ORDERS_LIMIT   = 3000;
-const SUP_PAY_LIMIT  = 2000;
-const EMP_PAY_LIMIT  = 2000;
-const RECON_LIMIT    = 1000;
-const SHIP_SET_LIMIT = 2000;
-const SHIP_RET_LIMIT = 1500;
+// T1: dataCache.subscribe — cache-first with background sync
 function startListeners(){
-  // RULE G3: cap remaining unbounded subscriptions (wallets/suppliers/users/employees).
-  onSnapshot(query(collection(db,'wallets'),limit(100)),
-    snap=>{
-      wallets=snap.docs.map(d=>({...d.data(),_id:d.id}))
-        .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-      fillSelects(); updateKPIs(); renderSection();_ps.markFresh();
-    },
-    err=>{
-      console.error('wallets error:',err.code);
-      document.getElementById('section-content').innerHTML=
-        `<div class="empty"><div class="empty-icon">🔒</div><div class="empty-text">خطأ: ${err.message}</div></div>`;
-    }
-  );
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(TX_LIMIT)),snap=>{
-    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateKPIs(); renderSection();
+  dataCache.subscribe(cachedQuery('wallets').limit(QL.WALLETS).build(),(docs)=>{
+    wallets=(docs||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+    fillSelects(); updateKPIs(); renderSection();_ps.markFresh();
   });
-  // أوردرات الـ ERP الجديد — collection واحدة
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(ORDERS_LIMIT)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    // force update الـ KPIs بعد ما الأوردرات توصل
-    updateKPIs();
-    renderSection();
-    // تحديث الـ pending/earned مرة ثانية للتأكد
-    setTimeout(()=>updateKPIs(),500);
+  dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(QL.TRANSACTIONS_FULL).build(),(docs)=>{
+    transactions=docs||[]; updateKPIs(); renderSection();
   });
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(QL.ORDERS_OPERATIONAL).build(),(docs)=>{
+    allOrders=docs||[]; updateKPIs(); renderSection();
+  });
+  dataCache.subscribe(cachedQuery('suppliers_v2').limit(QL.SUPPLIERS).build(),(docs)=>{
+    suppliers=(docs||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     fillSelects(); renderSection();
   });
-  // print_costs_v2 replaced by costItems inside orders
-  onSnapshot(query(collection(db,'supplier_payments'),orderBy('createdAt','desc'),limit(SUP_PAY_LIMIT)),snap=>{
-    supplierPays=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    updateKPIs(); renderSection();
+  dataCache.subscribe(cachedQuery('supplier_payments').orderBy('createdAt','desc').limit(QL.SUPPLIER_PAYMENTS).build(),(docs)=>{
+    supplierPays=docs||[]; updateKPIs(); renderSection();
   });
-  onSnapshot(query(collection(db,'employee_payments'),orderBy('createdAt','desc'),limit(EMP_PAY_LIMIT)),snap=>{
-    employeePays=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderSection();
+  dataCache.subscribe(cachedQuery('employee_payments').orderBy('createdAt','desc').limit(QL.EMPLOYEE_PAYMENTS).build(),(docs)=>{
+    employeePays=docs||[]; renderSection();
   });
-  onSnapshot(query(collection(db,'users'),limit(500)),snap=>{
-    users=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('users').limit(QL.USERS).build(),(docs)=>{
+    users=docs||[]; fillSelects(); renderSection();
+  });
+  dataCache.subscribe(cachedQuery('employees').limit(QL.EMPLOYEES_LIGHT).build(),(docs)=>{
+    employees=(docs||[]).filter(e=>e.status!=='deleted').sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     fillSelects(); renderSection();
   });
-  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
-    employees=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(e=>e.status!=='deleted')
-      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    fillSelects(); renderSection();
+  dataCache.subscribe(cachedQuery('reconciliations').orderBy('createdAt','desc').limit(QL.RECONCILIATIONS).build(),(docs)=>{
+    reconciliations=docs||[]; renderSection();
   });
-  onSnapshot(query(collection(db,'reconciliations'),orderBy('createdAt','desc'),limit(RECON_LIMIT)),snap=>{
-    reconciliations=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderSection();
+  dataCache.subscribe(cachedQuery('shipping_settlements').orderBy('createdAt','desc').limit(QL.SHIPPING_SETTLEMENTS).build(),(docs)=>{
+    shippingSettlements=(docs||[]).filter(s=>s.reversed!==true); updateKPIs(); renderSection();
   });
-  onSnapshot(query(collection(db,'shipping_settlements'),orderBy('createdAt','desc'),limit(SHIP_SET_LIMIT)),snap=>{
-    // PR-7-salvage G2: append-only — filter out reversed entries.
-    shippingSettlements=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(s=>s.reversed!==true);
-    updateKPIs(); renderSection();
-  });
-  onSnapshot(query(collection(db,'shipping_returns'),orderBy('createdAt','desc'),limit(SHIP_RET_LIMIT)),snap=>{
-    shippingReturns=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderSection();
+  dataCache.subscribe(cachedQuery('shipping_returns').orderBy('createdAt','desc').limit(QL.SHIPPING_RETURNS).build(),(docs)=>{
+    shippingReturns=docs||[]; renderSection();
   });
 }
 

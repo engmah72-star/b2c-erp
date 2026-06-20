@@ -142,6 +142,8 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { collection, doc, getDoc, getDocs, query, where, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { QUERY_LIMITS as QL } from './core/query-limits.js';
 // ── State ──
 let allTx=[],wallets=[],filtered=[],displayLimit=200,currentUser=null,userName='',userRole='';
 const PAGE_SIZE=200;
@@ -278,21 +280,14 @@ function initFromUrl(){
 }
 
 // ── Listeners ──
+// T1: dataCache.subscribe — cache-first with background sync
 function startListeners(){
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    fillWalletSelect();
+  dataCache.subscribe(cachedQuery('wallets').limit(QL.WALLETS).build(),(docs)=>{
+    wallets=docs||[]; fillWalletSelect();
   });
-  // C7: bounded — أحدث 5000 tx. للسجلات الأقدم يستخدم المستخدم date filter
-  // أو reports.html (التي لها بنية pagination منفصلة).
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),snap=>{
-    allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    fillCatSelect();
-    applyFilters();
+  dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(QL.TRANSACTIONS_FULL).build(),(docs)=>{
+    allTx=docs||[]; fillCatSelect(); applyFilters();
     if(_ps.markFresh) _ps.markFresh();
-  },err=>{
-    console.error(err);
-    $('lf-tbody').innerHTML='<tr><td colspan="8" class="lt-empty">⛔ '+(err.message||err)+'</td></tr>';
   });
 }
 
