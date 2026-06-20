@@ -42,6 +42,22 @@ const MAX_MEMORY_ENTRIES = 500;             // أقصى عدد مدخلات في
 const MAX_IDB_ENTRIES = 2000;               // أقصى عدد في IndexedDB قبل التنظيف
 
 // ═══════════════════════════════════════
+// BroadcastChannel — مزامنة بين التابات (T10)
+// ═══════════════════════════════════════
+const _tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+let _channel = null;
+const _crossTabStats = { sent: 0, received: 0, syncsApplied: 0 };
+
+if (typeof BroadcastChannel !== 'undefined') {
+  try { _channel = new BroadcastChannel('b2c-data-cache'); } catch (_) {}
+}
+
+function _broadcast(msg) {
+  if (!_channel) return;
+  try { _channel.postMessage({ ...msg, _from: _tabId }); _crossTabStats.sent++; } catch (_) {}
+}
+
+// ═══════════════════════════════════════
 // IndexedDB Manager
 // ═══════════════════════════════════════
 let _dbPromise = null;
@@ -269,6 +285,59 @@ const _activeListeners = new Map();
  */
 
 // ═══════════════════════════════════════
+// BroadcastChannel — message handler (T10)
+// ═══════════════════════════════════════
+if (_channel) {
+  _channel.onmessage = (e) => {
+    const msg = e.data;
+    if (!msg || msg._from === _tabId) return;
+    _crossTabStats.received++;
+
+    if (msg.type === 'query-sync') {
+      const entry = _activeListeners.get(msg.queryKey);
+      if (!entry || entry.subscribers.size === 0) return;
+      const qs = _getQueryState(msg.queryKey);
+      if (qs.state === 'synced' && qs.updatedAt >= msg.ts) return;
+      idbGet(STORE_QUERIES, msg.queryKey).then(idbHit => {
+        if (!idbHit || !idbHit.docs || idbHit.syncedAt < msg.ts - 5000) return;
+        const docs = idbHit.docs.map(d => {
+          const r = deserializeDoc(d.data);
+          r._id = d._id;
+          return r;
+        });
+        memSet(msg.queryKey, docs, msg.collection);
+        _setQueryState(msg.queryKey, 'synced', { docCount: docs.length, source: 'cross-tab' });
+        _crossTabStats.syncsApplied++;
+        for (const cb of entry.subscribers) {
+          try { cb(docs, 'cross-tab'); } catch (_) {}
+        }
+      }).catch(() => {});
+    }
+
+    if (msg.type === 'doc-sync') {
+      const cacheKey = `${msg.collection}/${msg.docId}`;
+      idbGet(STORE_DOCS, cacheKey).then(idbHit => {
+        if (!idbHit) return;
+        const data = deserializeDoc(idbHit.data);
+        data._id = idbHit._id;
+        memSet(cacheKey, data, msg.collection);
+        _crossTabStats.syncsApplied++;
+      }).catch(() => {});
+    }
+
+    if (msg.type === 'invalidate-doc') {
+      memInvalidate(`${msg.collection}/${msg.docId}`);
+    }
+
+    if (msg.type === 'invalidate-collection') {
+      for (const [key, meta] of _memoryCacheMeta) {
+        if (meta.collection === msg.collection) meta.syncedAt = 0;
+      }
+    }
+  };
+}
+
+// ═══════════════════════════════════════
 // Serialization — تحويل Firestore docs لشكل قابل للتخزين
 // ═══════════════════════════════════════
 function serializeDoc(docData) {
@@ -373,6 +442,7 @@ export const dataCache = {
         _syncedAt: Date.now(),
         data: serializeDoc(data),
       });
+      _broadcast({ type: 'doc-sync', collection: collectionName, docId });
 
       return { data, source: 'server' };
     } catch (err) {
@@ -387,6 +457,7 @@ export const dataCache = {
       if (!snap.exists()) {
         memInvalidate(cacheKey);
         await idbDelete(STORE_DOCS, cacheKey);
+        _broadcast({ type: 'invalidate-doc', collection: collectionName, docId });
         return;
       }
       const data = { ...snap.data(), _id: snap.id };
@@ -398,6 +469,7 @@ export const dataCache = {
         _syncedAt: Date.now(),
         data: serializeDoc(data),
       });
+      _broadcast({ type: 'doc-sync', collection: collectionName, docId });
     } catch (err) {
       console.warn('[data-cache] revalidateDoc error:', err);
     }
@@ -541,6 +613,7 @@ export const dataCache = {
   },
 
   async _persistQueryResult(queryKey, collectionName, docs) {
+    const ts = Date.now();
     try {
       const serialized = docs.map(d => ({
         _id: d._id,
@@ -549,7 +622,7 @@ export const dataCache = {
       await idbPut(STORE_QUERIES, {
         queryKey,
         collection: collectionName,
-        syncedAt: Date.now(),
+        syncedAt: ts,
         docs: serialized,
       });
 
@@ -558,12 +631,14 @@ export const dataCache = {
         _cacheKey: `${collectionName}/${d._id}`,
         _collection: collectionName,
         _id: d._id,
-        _syncedAt: Date.now(),
+        _syncedAt: ts,
         data: serializeDoc(d),
       }));
       if (docEntries.length > 0) {
         await idbBatchPut(STORE_DOCS, docEntries);
       }
+
+      _broadcast({ type: 'query-sync', queryKey, collection: collectionName, ts });
     } catch (err) {
       console.warn('[data-cache] persist error:', err);
     }
@@ -591,35 +666,29 @@ export const dataCache = {
     memInvalidate(cacheKey);
     await idbDelete(STORE_DOCS, cacheKey);
 
-    // إبطال أي query يخص هذا الـ collection
-    // الـ onSnapshot listeners ستُحدّث تلقائياً، لكن هذا يُعلم
-    // أي getDoc قادم بأن الكاش قديم
     for (const [key, meta] of _memoryCacheMeta) {
       if (meta.collection === collectionName && key !== cacheKey) {
-        // لا نحذف — الـ listener سيُحدّث. نُعلّم فقط كـ stale
         meta.syncedAt = 0;
       }
     }
+    _broadcast({ type: 'invalidate-doc', collection: collectionName, docId });
   },
 
   /**
    * إبطال كل كاش collection كامل
    */
   async invalidateCollection(collectionName) {
-    // L1
     for (const [key, meta] of _memoryCacheMeta) {
       if (meta.collection === collectionName) {
         memInvalidate(key);
       }
     }
 
-    // L2 — حذف كل وثائق الـ collection
     try {
       const allDocs = await idbGetAll(STORE_DOCS, 'collection', collectionName);
       for (const d of allDocs) {
         await idbDelete(STORE_DOCS, d._cacheKey);
       }
-      // حذف queries المرتبطة
       const allQueries = await idbGetAll(STORE_QUERIES);
       for (const q of allQueries) {
         if (q.collection === collectionName) {
@@ -629,6 +698,7 @@ export const dataCache = {
     } catch (err) {
       console.warn('[data-cache] invalidateCollection error:', err);
     }
+    _broadcast({ type: 'invalidate-collection', collection: collectionName });
   },
 
   /**
@@ -744,6 +814,7 @@ export const dataCache = {
       memoryCacheSize: _memoryCache.size,
       pendingReads: _pendingReads.size,
       queryStates: _queryStates.size,
+      crossTab: { ..._crossTabStats, channelActive: !!_channel, tabId: _tabId },
       registry: collectionRegistry.getSummary(),
     };
   },
@@ -925,13 +996,11 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
         callbacks.onSettings?.(result.data, result.source);
       }
     });
-    // listener للتحديث
     const unsub = onSnapshot(doc(db, 'settings', 'main'), snap => {
       if (snap.exists()) {
         const data = snap.data();
         AppState.settings = data;
         callbacks.onSettings?.(data, 'server');
-        // تحديث الكاش
         memSet(settingsKey, data, 'settings');
         idbPut(STORE_DOCS, {
           _cacheKey: settingsKey,
@@ -940,6 +1009,7 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
           _syncedAt: Date.now(),
           data: serializeDoc(data),
         });
+        _broadcast({ type: 'doc-sync', collection: 'settings', docId: 'main' });
       }
     });
     unsubs.push(unsub);
@@ -1012,6 +1082,7 @@ export function startListenersWithCache(AppState, callbacks = {}, opts = {}) {
             _syncedAt: Date.now(),
             data: serializeDoc(data),
           });
+          _broadcast({ type: 'doc-sync', collection: 'master_lists', docId: mlDocId });
         }
       });
       unsubs.push(unsub);
@@ -1075,6 +1146,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     dataCache.unsubscribeAll();
     if (_cleanupInterval) clearInterval(_cleanupInterval);
+    if (_channel) { try { _channel.close(); } catch (_) {} _channel = null; }
   }, { once: true });
 }
 
@@ -1089,4 +1161,4 @@ if (typeof window !== 'undefined') {
 // Re-export collection registry for convenience
 export { collectionRegistry } from './collection-registry.js';
 
-console.log('[data-cache] ✓ Cache & sync layer initialized (v2: dedup + LRU + state)');
+console.log(`[data-cache] ✓ Cache & sync layer initialized (v3: dedup + LRU + state + cross-tab${_channel ? '' : ' [no BroadcastChannel]'})`);
