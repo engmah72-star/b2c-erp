@@ -104,6 +104,85 @@
     document.addEventListener('mousedown', (e) => {
       if(_pop && !_pop.contains(e.target) && !e.target.closest('[data-cid-pop-anchor]')) closePop();
     });
+
+    _drawer.addEventListener('click', _onDrawerClick);
+    _drawer.addEventListener('input', _onDrawerInput);
+    _drawer.addEventListener('keydown', _onDrawerKeydown);
+  }
+
+  function _onDrawerClick(e){
+    if(e.target.closest('.cid-close')){ close(); return; }
+    const el = e.target.closest('[data-action]');
+    if(!el) return;
+    switch(el.dataset.action){
+      case 'add-lib-item': {
+        const type=el.dataset.type||'', supId=el.dataset.supId||'', supName=el.dataset.supName||'', total=parseFloat(el.dataset.total)||0;
+        const c=ctx(), suppliers=c?.getSuppliers?c.getSuppliers():[];
+        const sup=suppliers.find(s=>s._id===supId), specs=_resolveSpecs(sup);
+        if(_editIdx>=0&&_editDraft){
+          Object.assign(_editDraft,{supplierId:supId,supplierName:supName,supplierSpecialties:specs,type,total:String(total||'')});
+        } else {
+          const emptyRow=_drafts.find(r=>!r.supplierId&&!r.type&&!r.total);
+          const target=emptyRow||(()=>{const r=newEmptyRow();_drafts.push(r);return r;})();
+          Object.assign(target,{supplierId:supId,supplierName:supName,supplierSpecialties:specs,type,total:String(total||'')});
+        }
+        render(); break;
+      }
+      case 'apply-sugg': {
+        const sug=_getSuggestions()[parseInt(el.dataset.i,10)];
+        if(!sug) return;
+        if(_editIdx>=0) _applyToEdit(sug); else _addSuggestionAsRow(sug);
+        break;
+      }
+      case 'apply-all-sugg': _applyAllSuggestions(_getSuggestions()); break;
+      case 'add-row':
+        _drafts.push(newEmptyRow()); render();
+        setTimeout(()=>{const rows=_drawer.querySelectorAll('.cid-batch-row');rows[rows.length-1]?.querySelector('[data-action="open-supplier-pop"]')?.focus();},30);
+        break;
+      case 'remove-row': _removeRow(el.dataset.rid); break;
+      case 'submit-all': _submitAll(); break;
+      case 'submit-edit': _submitEdit(); break;
+      case 'cancel-edit': _cancelEdit(); break;
+      case 'edit-item': _startEdit(parseInt(el.dataset.gi,10)); break;
+      case 'delete-item': _deleteItem(parseInt(el.dataset.gi,10)); break;
+      case 'open-supplier-pop': _openSupplierPop(el,el.dataset.rid); break;
+      case 'open-type-pop': if(!el.hasAttribute('disabled')) _openTypePop(el,el.dataset.rid); break;
+    }
+  }
+
+  function _onDrawerInput(e){
+    const el=e.target, field=el.dataset?.cidField, rid=el.dataset?.rid;
+    if(field==='total'&&rid){
+      if(rid==='edit'){if(_editDraft)_editDraft.total=el.value;}
+      else{const r=_drafts.find(x=>x.id===rid);if(r)r.total=el.value;}
+      _updateTotals();
+    } else if(field==='note'&&rid){
+      if(rid==='edit'){if(_editDraft)_editDraft.note=el.value;}
+      else{const r=_drafts.find(x=>x.id===rid);if(r)r.note=el.value;}
+    } else if(el.dataset?.cidPaper){
+      if(!_editDraft)return;
+      if(!_editDraft.paperMeta)_editDraft.paperMeta={};
+      const pf=el.dataset.cidPaper;
+      _editDraft.paperMeta[pf]=pf==='paperType'?el.value:(parseFloat(el.value)||0);
+      const sheets=parseFloat(_editDraft.paperMeta.sheets)||0;
+      const price=parseFloat(_editDraft.paperMeta.pricePerSheet)||0;
+      if(sheets>0&&price>0){
+        _editDraft.total=String(Math.round(sheets*price*100)/100);
+        const ti=_drawer.querySelector('[data-cid-field="total"][data-rid="edit"]');
+        if(ti)ti.value=_editDraft.total;
+      }
+    }
+  }
+
+  function _onDrawerKeydown(e){
+    const el=e.target;
+    if(el.dataset?.cidField==='total'&&el.dataset?.rid&&e.key==='Enter'){
+      e.preventDefault();
+      const rid=el.dataset.rid;
+      if(rid==='edit'){_submitEdit();return;}
+      _drafts.push(newEmptyRow()); render();
+      setTimeout(()=>{const rows=_drawer.querySelectorAll('.cid-batch-row');rows[rows.length-1]?.querySelector('[data-action="open-supplier-pop"]')?.focus();},30);
+    }
   }
 
   // ── Main render ───────────────────────────────────────────
@@ -208,7 +287,6 @@
       </div>
     `;
 
-    _bindEvents();
   }
 
   // ── Suggestions section ───────────────────────────────────
@@ -468,139 +546,6 @@
           <input type="text" placeholder="مثال: دفعة جزئية، طلب خاص..." value="${escapeHtml(d?.note||'')}" data-cid-field="note" data-rid="edit"/>
         </label>
       </div>`;
-  }
-
-  // ── Event binding (delegated) ─────────────────────────────
-  function _bindEvents(){
-    _drawer.querySelector('.cid-close')?.addEventListener('click', close);
-
-    // Library suggestions
-    _drawer.querySelectorAll('[data-action="add-lib-item"]').forEach(el => {
-      el.addEventListener('click', () => {
-        const type    = el.dataset.type    || '';
-        const supId   = el.dataset.supId   || '';
-        const supName = el.dataset.supName || '';
-        const total   = parseFloat(el.dataset.total) || 0;
-        const c = ctx();
-        const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
-        const sup = suppliers.find(s => s._id === supId);
-        const specs = _resolveSpecs(sup);
-        if(_editIdx >= 0 && _editDraft){
-          Object.assign(_editDraft, { supplierId: supId, supplierName: supName,
-            supplierSpecialties: specs, type, total: String(total||'') });
-        } else {
-          const emptyRow = _drafts.find(r => !r.supplierId && !r.type && !r.total);
-          const target   = emptyRow || (() => { const r = newEmptyRow(); _drafts.push(r); return r; })();
-          Object.assign(target, { supplierId: supId, supplierName: supName,
-            supplierSpecialties: specs, type, total: String(total||'') });
-        }
-        render();
-      });
-    });
-
-    // Suggestions
-    _drawer.querySelectorAll('[data-action="apply-sugg"]').forEach(el => {
-      el.addEventListener('click', () => {
-        const sug = _getSuggestions()[parseInt(el.dataset.i, 10)];
-        if(!sug) return;
-        if(_editIdx >= 0) _applyToEdit(sug);
-        else _addSuggestionAsRow(sug);
-      });
-    });
-    _drawer.querySelector('[data-action="apply-all-sugg"]')?.addEventListener('click', () => {
-      _applyAllSuggestions(_getSuggestions());
-    });
-
-    // Batch: add row
-    _drawer.querySelector('[data-action="add-row"]')?.addEventListener('click', () => {
-      _drafts.push(newEmptyRow());
-      render();
-      setTimeout(() => {
-        const rows = _drawer.querySelectorAll('.cid-batch-row');
-        rows[rows.length-1]?.querySelector('[data-action="open-supplier-pop"]')?.focus();
-      }, 30);
-    });
-
-    // Batch: remove row
-    _drawer.querySelectorAll('[data-action="remove-row"]').forEach(el => {
-      el.addEventListener('click', () => _removeRow(el.dataset.rid));
-    });
-
-    // Batch: submit all
-    _drawer.querySelector('[data-action="submit-all"]')?.addEventListener('click', _submitAll);
-
-    // Edit: submit edit
-    _drawer.querySelector('[data-action="submit-edit"]')?.addEventListener('click', _submitEdit);
-
-    // Edit: cancel
-    _drawer.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', _cancelEdit);
-
-    // Edit/delete existing items
-    _drawer.querySelectorAll('[data-action="edit-item"]').forEach(el => {
-      el.addEventListener('click', () => _startEdit(parseInt(el.dataset.gi, 10)));
-    });
-    _drawer.querySelectorAll('[data-action="delete-item"]').forEach(el => {
-      el.addEventListener('click', () => _deleteItem(parseInt(el.dataset.gi, 10)));
-    });
-
-    // Supplier/type popover triggers
-    _drawer.querySelectorAll('[data-action="open-supplier-pop"]').forEach(el => {
-      el.addEventListener('click', (e) => _openSupplierPop(e.currentTarget, el.dataset.rid));
-    });
-    _drawer.querySelectorAll('[data-action="open-type-pop"]').forEach(el => {
-      el.addEventListener('click', (e) => {
-        if(e.currentTarget.hasAttribute('disabled')) return;
-        _openTypePop(e.currentTarget, el.dataset.rid);
-      });
-    });
-
-    // Amount inputs
-    _drawer.querySelectorAll('[data-cid-field="total"][data-rid]').forEach(el => {
-      const rid = el.dataset.rid;
-      el.addEventListener('input', (e) => {
-        if(rid === 'edit'){ if(_editDraft) _editDraft.total = e.target.value; }
-        else { const r = _drafts.find(x => x.id === rid); if(r) r.total = e.target.value; }
-        _updateTotals();
-      });
-      el.addEventListener('keydown', (e) => {
-        if(e.key !== 'Enter') return;
-        e.preventDefault();
-        if(rid === 'edit'){ _submitEdit(); return; }
-        // Enter on amount = add new row
-        _drafts.push(newEmptyRow());
-        render();
-        setTimeout(() => {
-          const rows = _drawer.querySelectorAll('.cid-batch-row');
-          rows[rows.length-1]?.querySelector('[data-action="open-supplier-pop"]')?.focus();
-        }, 30);
-      });
-    });
-
-    // Note inputs
-    _drawer.querySelectorAll('[data-cid-field="note"][data-rid]').forEach(el => {
-      const rid = el.dataset.rid;
-      el.addEventListener('input', (e) => {
-        if(rid === 'edit'){ if(_editDraft) _editDraft.note = e.target.value; }
-        else { const r = _drafts.find(x => x.id === rid); if(r) r.note = e.target.value; }
-      });
-    });
-
-    // Paper calc inputs (edit mode only)
-    _drawer.querySelectorAll('[data-cid-paper]').forEach(el => {
-      el.addEventListener('input', (e) => {
-        if(!_editDraft) return;
-        if(!_editDraft.paperMeta) _editDraft.paperMeta = {};
-        const field = el.dataset.cidPaper;
-        _editDraft.paperMeta[field] = field === 'paperType' ? e.target.value : (parseFloat(e.target.value)||0);
-        const sheets = parseFloat(_editDraft.paperMeta.sheets)||0;
-        const price  = parseFloat(_editDraft.paperMeta.pricePerSheet)||0;
-        if(sheets > 0 && price > 0){
-          _editDraft.total = String(Math.round(sheets * price * 100) / 100);
-          const ti = _drawer.querySelector('[data-cid-field="total"][data-rid="edit"]');
-          if(ti) ti.value = _editDraft.total;
-        }
-      });
-    });
   }
 
   // ── Cheap totals update (no re-render) ────────────────────

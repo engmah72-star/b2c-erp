@@ -85,6 +85,32 @@ export function mountDateRangePicker({ container, storageKey, onChange }){
   if(!container){ console.warn('[date-range-picker] container missing'); return null; }
   let state = loadState(storageKey);
 
+  container.addEventListener('click', (e) => {
+    const chip = e.target.closest('.drp-chip');
+    if(!chip) return;
+    state = { ...state, key: chip.dataset.key };
+    saveState(storageKey, state);
+    render();
+    if(state.key !== 'custom' || (state.customStart && state.customEnd)){
+      notify();
+    }
+  });
+
+  container.addEventListener('change', (e) => {
+    if(e.target.id !== 'drp-from' && e.target.id !== 'drp-to') return;
+    const from = container.querySelector('#drp-from');
+    const to   = container.querySelector('#drp-to');
+    if(!from || !to) return;
+    state = { ...state, key:'custom', customStart: from.value, customEnd: to.value };
+    saveState(storageKey, state);
+    if(from.value && to.value) notify();
+    const label = container.querySelector('.drp-current');
+    if(label){
+      const r2 = computeRange(state.key, state.customStart, state.customEnd);
+      label.textContent = r2.label;
+    }
+  });
+
   function render(){
     const active = state.key;
     const r = computeRange(state.key, state.customStart, state.customEnd);
@@ -103,35 +129,6 @@ export function mountDateRangePicker({ container, storageKey, onChange }){
         </div>
         <div class="drp-current">${r.label}</div>
       </div>`;
-
-    container.querySelectorAll('.drp-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        state = { ...state, key: btn.dataset.key };
-        saveState(storageKey, state);
-        render();
-        if(state.key !== 'custom' || (state.customStart && state.customEnd)){
-          notify();
-        }
-      });
-    });
-
-    const from = container.querySelector('#drp-from');
-    const to   = container.querySelector('#drp-to');
-    if(from && to){
-      const onCustom = () => {
-        state = { ...state, key:'custom', customStart: from.value, customEnd: to.value };
-        saveState(storageKey, state);
-        if(from.value && to.value) notify();
-        // Update label without re-rendering (preserve focus)
-        const label = container.querySelector('.drp-current');
-        if(label){
-          const r2 = computeRange(state.key, state.customStart, state.customEnd);
-          label.textContent = r2.label;
-        }
-      };
-      from.addEventListener('change', onCustom);
-      to.addEventListener('change', onCustom);
-    }
   }
 
   function notify(){

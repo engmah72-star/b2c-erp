@@ -189,7 +189,11 @@ export function createStoriesController(deps) {
     $('as-ov').classList.add('show');
   }
 
-  function closeAddStory() { $('as-ov').classList.remove('show'); }
+  function closeAddStory() {
+    if (__as.imgPreview) { URL.revokeObjectURL(__as.imgPreview); __as.imgPreview = null; }
+    __as.imgFile = null;
+    $('as-ov').classList.remove('show');
+  }
 
   function switchTab(mode) {
     __as.mode = mode;

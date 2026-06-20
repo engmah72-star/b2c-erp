@@ -105,8 +105,9 @@ onAuthStateChanged(auth, async u => {
     return;
   }
 
+  const _unsubs = [];
   // اشترك في الأوردر
-  onSnapshot(doc(db, 'orders', resolvedId), snap => {
+  _unsubs.push(onSnapshot(doc(db, 'orders', resolvedId), snap => {
     if (!snap.exists()) {
       document.getElementById('wrap').innerHTML = '<div class="error-card">❌ الأوردر غير موجود</div>';
       return;
@@ -116,16 +117,17 @@ onAuthStateChanged(auth, async u => {
   }, err => {
     console.warn('[order-tracking] order snapshot error', err);
     document.getElementById('wrap').innerHTML = '<div class="error-card">⚠️ تعذّر تحميل الأوردر — تحقق من الصلاحيات أو الاتصال</div>';
-  });
+  }));
   // اشترك في القيود المالية المرتبطة
-  onSnapshot(query(collection(db, 'financial_ledger'), where('orderId', '==', resolvedId), limit(200)), snap => {
+  _unsubs.push(onSnapshot(query(collection(db, 'financial_ledger'), where('orderId', '==', resolvedId), limit(200)), snap => {
     ledger = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
       .filter(x => !x.isDeleted)
       .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     render();
   }, err => {
     console.warn('[order-tracking] ledger snapshot error', err);
-  });
+  }));
+  window.addEventListener('beforeunload', () => { _unsubs.forEach(u => u()); }, { once: true });
 });
 
 function render() {
