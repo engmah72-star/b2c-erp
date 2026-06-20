@@ -38,6 +38,7 @@ const state = {
   leaves: [], permsToday: [], incidentReasons: [],
   filter: { q: '', status: 'all', flagged: false },
 };
+let __searchTimer = 0;
 
 function notice(html) {
   const root = document.getElementById('ec-root');
@@ -107,7 +108,7 @@ function reRenderGroups() {
 
 function wireFilters() {
   const q = document.getElementById('ec-q');
-  if (q) q.addEventListener('input', () => { state.filter.q = q.value; reRenderGroups(); });
+  if (q) q.addEventListener('input', () => { state.filter.q = q.value; clearTimeout(__searchTimer); __searchTimer = setTimeout(reRenderGroups, 200); });
   const st = document.getElementById('ec-status');
   if (st) st.addEventListener('change', () => { state.filter.status = st.value; reRenderGroups(); });
   const fl = document.getElementById('ec-flagged');
@@ -209,19 +210,26 @@ function wireActions() {
   });
 }
 
+// RAF coalescing — multiple onSnapshot callbacks coalesce into one render per frame
+let __rafId = 0;
+function scheduleRender() {
+  if (__rafId) return;
+  __rafId = requestAnimationFrame(() => { __rafId = 0; render(); });
+}
+
 // ── bounded data listeners (RULE G3) ────────────────────────────────
 function startListeners() {
   onSnapshot(query(collection(db, 'employees'), limit(500)), snap => {
     state.employees = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    render();
+    scheduleRender();
   });
   onSnapshot(query(collection(db, 'attendance'), where('date', '==', todayStr()), limit(800)), snap => {
     state.attToday = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    if (state.employees.length) render();
+    if (state.employees.length) scheduleRender();
   });
   onSnapshot(query(collection(db, 'employee_incidents'), where('monthKey', '==', monthKey()), limit(1000)), snap => {
     state.incidents = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    if (state.employees.length) render();
+    if (state.employees.length) scheduleRender();
   });
   // أسباب الإخفاقات المُدارة — لتوحيد مودال «تسجيل إخفاق» مع البروفايل
   onSnapshot(doc(db, 'master_lists', 'incident_reasons'), snap => {
@@ -230,15 +238,15 @@ function startListeners() {
   // attendance permissions (today) + leaves — for the accurate day-status summary
   onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', todayStr()), limit(800)), snap => {
     state.permsToday = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    if (state.employees.length) render();
+    if (state.employees.length) scheduleRender();
   });
   onSnapshot(query(collection(db, 'employee_leaves'), limit(2000)), snap => {
     state.leaves = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    if (state.employees.length) render();
+    if (state.employees.length) scheduleRender();
   });
   onSnapshot(query(collection(db, 'tasks'), where('status', '==', 'pending'), limit(2000)), snap => {
     state.tasks = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    if (state.employees.length) render();
+    if (state.employees.length) scheduleRender();
   });
   // wallets for the finance quick-action (read-only — RULE 4)
   if (state.caps.finance) {

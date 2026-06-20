@@ -175,6 +175,9 @@ window.logout=async()=>{await signOut(auth);location.href='login.html';};
 // ── Data ──
 let orders=[],clients=[],wallets=[],transactions=[],users=[],supPayments=[],employees=[],suppliers=[];
 let _ordersReady=false,_txReady=false;
+// T13: version-tracked filter cache — avoid re-filtering 2000+ orders on every render
+let __dataVer=0,__rangeVer=0;
+let __opsCache=null,__finCache=null,__netCache=null;
 
 // ── Auth ──
 let _started=false;
@@ -227,20 +230,20 @@ function startListeners(){
   const onErr=(name)=>(err)=>{console.error(`[${name}]`,err);showDashError(`فشل تحميل ${name}`);};
   onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
     orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _ordersReady=true;scheduleRenderAll();
+    _ordersReady=true;__dataVer++;scheduleRenderAll();
   }, onErr('orders'));
   onSnapshot(query(collection(db,'clients'),limit(2000)),snap=>{
-    clients=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
+    clients=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
   }, onErr('clients'));
   onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
+    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
   }, onErr('wallets'));
   onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(2000)),snap=>{
     transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _txReady=true;scheduleRenderAll();
+    _txReady=true;__dataVer++;scheduleRenderAll();
   }, onErr('transactions'));
   onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),snap=>{
-    supPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
+    supPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
   }, onErr('supplier_payments'));
   getDocs(query(collection(db,'users'),limit(500))).then(snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
@@ -263,7 +266,7 @@ function initRangePicker(){
   const picker = mountDateRangePicker({
     container: host,
     storageKey: RANGE_STORAGE_KEY,
-    onChange: (r) => { CURRENT_RANGE = r; scheduleRenderAll(); }
+    onChange: (r) => { CURRENT_RANGE = r; __rangeVer++; scheduleRenderAll(); }
   });
   if(picker){ CURRENT_RANGE = picker.getRange(); }
 }
@@ -290,6 +293,9 @@ function renderAll(){
 //  1 — OPERATIONS KPIs
 // ═══════════════════════════════════════
 function renderOps(){
+  if(__opsCache&&__opsCache.v===__dataVer){
+    document.getElementById('ops-grid').innerHTML=__opsCache.html;return;
+  }
   const active=orders.filter(o=>!['archived','delivered'].includes(o.stage));
   const late=active.filter(o=>o.deadline&&delayDays(o.deadline)>0);
   const design=active.filter(o=>o.stage==='design');
@@ -311,19 +317,25 @@ function renderOps(){
       ${late>0?`<div class="ekpi-sub text-r">⚠️ ${late} متأخر</div>`:'<div class="ekpi-sub text-muted"> </div>'}
     </div>`;
 
-  document.getElementById('ops-grid').innerHTML=
+  const opsHtml=
     card('📋',active.length,'إجمالي النشطة','var(--b)','clients.html',late.length)+
     card('⏰',late.length,'المتأخرة','var(--r)','clients.html',0)+
     card('✏️',design.length,'تحت التصميم','var(--p)','design.html',lateDesign)+
     card('🖨️',printing.length,'تحت الطباعة','var(--y)','print.html',latePrint)+
     card('🏭',production.length,'تحت التنفيذ','var(--o)','production.html',lateProd)+
     card('🚚',shipping.length,'جاهزة للشحن','var(--c)','shipping.html',lateShip);
+  __opsCache={v:__dataVer,html:opsHtml};
+  document.getElementById('ops-grid').innerHTML=opsHtml;
 }
 
 // ═══════════════════════════════════════
 //  2 — FINANCIAL KPIs (driven by selected date range)
 // ═══════════════════════════════════════
 function renderFin(){
+  const cacheKey=__dataVer+'_'+__rangeVer;
+  if(__finCache&&__finCache.k===cacheKey){
+    document.getElementById('fin-grid').innerHTML=__finCache.html;return;
+  }
   const {startMs,endMs,label}=CURRENT_RANGE;
   const inRange=(ts)=>ts>=startMs && ts<=endMs;
 
@@ -362,12 +374,14 @@ function renderFin(){
       <div style="font-size:8px;color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">${label}</div>
     </div>`;
 
-  document.getElementById('fin-grid').innerHTML=
+  const finHtml=
     fCard('🛒','مبيعات الفترة',rangeSales,'var(--b)',label)+
     fCard('📥','تحصيل الفترة',rangeIn,'var(--g)',label)+
     fCard('⏳','المتبقي للتحصيل',totalRem,'var(--r)','إجمالي')+
     fCard('📤','مصروفات الفترة',rangeOut,'var(--y)',label)+
     netCard;
+  __finCache={k:cacheKey,html:finHtml};
+  document.getElementById('fin-grid').innerHTML=finHtml;
 }
 
 // ═══════════════════════════════════════
@@ -377,6 +391,10 @@ function renderFin(){
 //  during the selected period.
 // ═══════════════════════════════════════
 function renderNetwork(){
+  const netKey=__dataVer+'_'+__rangeVer;
+  if(__netCache&&__netCache.k===netKey){
+    document.getElementById('net-grid').innerHTML=__netCache.html;return;
+  }
   const {startMs,endMs,label}=CURRENT_RANGE;
   const inRange=(ts)=>ts>=startMs && ts<=endMs;
 
@@ -425,7 +443,7 @@ function renderNetwork(){
       <div class="nkpi-sub">${sub}</div>
     </div>`;
 
-  document.getElementById('net-grid').innerHTML=
+  const netHtml=
     nCard('🎨',activeDesigners,'مصمّمون نشطون','var(--p)','employees.html',label)+
     nCard('🏭',activeSuppliers,'موردون نشطون','var(--o)','suppliers.html',label)+
     nCard('👥',activeClients,'عملاء نشطون','var(--b)','clients.html',label)+
@@ -437,6 +455,8 @@ function renderNetwork(){
        <div class="nkpi-lbl">GMV — قيمة التداول</div>
        <div class="nkpi-sub">${orderCount} أوردر · ${label}</div>
      </div>`;
+  __netCache={k:netKey,html:netHtml};
+  document.getElementById('net-grid').innerHTML=netHtml;
 }
 
 // ═══════════════════════════════════════
