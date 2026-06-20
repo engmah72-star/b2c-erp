@@ -42,7 +42,7 @@ export const STAGES = {
 export const STAGE_PERMISSIONS = {
   design:     ['admin','operation_manager','customer_service','graphic_designer','design_operator'],
   printing:   ['admin','operation_manager','customer_service','production_agent'],
-  production: ['admin','operation_manager','production_agent'],
+  production: ['admin','operation_manager'],
   shipping:   ['admin','operation_manager','shipping_officer'],
   archived:   ['admin','operation_manager'],
 };
