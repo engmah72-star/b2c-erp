@@ -34,31 +34,15 @@ import {
 import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
-import { auditEntry } from './core/audit.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 import { computeLateMinutes, attendanceDocId } from './core/attendance-core.js';
 
 // ══════════════════════════════════════════
 // INCIDENTS
 // ══════════════════════════════════════════
 
-/**
- * سجل تدقيق غير-حاجز في audit_logs (H3) — صامت عند الفشل، لا يُعطّل الـ action.
- * (نفس نمط product-actions._logAudit — audit_logs.rules تتطلّب action+userId+timestamp).
- */
 async function _logAudit(db, { action, details, userId, userName }) {
-  try {
-    await addDoc(collection(db, 'audit_logs'), {
-      action,
-      details: details || {},
-      userId: userId || '',
-      userName: userName || '',
-      entity: 'employee_incident',
-      timestamp: serverTimestamp(),
-      url: typeof location !== 'undefined' ? location.pathname : '',
-    });
-  } catch (e) {
-    console.warn('[employeeActions._logAudit] failed (non-blocking):', action, e?.message);
-  }
+  return persistAuditLog({ db, action, details, userId, userName, entity: 'employee_incident' });
 }
 
 /**

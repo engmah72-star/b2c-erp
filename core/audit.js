@@ -18,6 +18,8 @@
  *   3. validateAuditShape(e)   — يتحقّق من entry موجودة
  *   4. auditTimelineHealth([]) — diagnostic counts على array
  *   5. AUDIT_KINDS             — enum للأنواع المسموحة
+ *   6. persistAuditLog({...})  — centralized best-effort write to audit_logs
+ *   7. addAuditToBatch(batch,{...}) — audit_logs ref for atomic batches
  *
  * Usage:
  *   import { auditEntry } from './core/audit.js';
@@ -36,6 +38,14 @@
  * Even system actions (Cloud Functions) must pass a meaningful actor id
  * (e.g., 'system:cloud-function-name' or 'system:cron').
  */
+
+import {
+  addDoc,
+  collection,
+  doc,
+  serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db as defaultDb } from './firebase-init.js';
 
 // ── Audit kinds enum ──────────────────────────────────────────────
 export const AUDIT_KINDS = Object.freeze({
@@ -194,4 +204,74 @@ export function auditTimelineHealth(timeline) {
     stats.byKind[k] = (stats.byKind[k] || 0) + 1;
   }
   return stats;
+}
+
+// ── Centralized audit_logs persistence ──────────────────────────
+/**
+ * Best-effort write to the `audit_logs` collection. Non-blocking: catches
+ * errors and logs a warning instead of throwing. Every inline `addDoc` to
+ * `audit_logs` across the codebase should delegate here.
+ *
+ * @param {Object} p
+ * @param {import('firebase/firestore').Firestore} [p.db]
+ * @param {string} p.action
+ * @param {Object} [p.details]
+ * @param {string} p.userId
+ * @param {string} [p.userName]
+ * @param {string} [p.userRole]
+ * @param {string} [p.entity]
+ * @param {string} [p.source]
+ * @returns {Promise<{ok:boolean}>}
+ */
+export async function persistAuditLog({
+  db = defaultDb,
+  action, details, userId, userName = '', userRole = '',
+  entity = '', source = '',
+}) {
+  try {
+    await addDoc(collection(db, 'audit_logs'), {
+      action,
+      details: details || {},
+      userId: userId || '',
+      userName,
+      userRole,
+      ...(entity ? { entity } : {}),
+      ...(source ? { source } : {}),
+      timestamp: serverTimestamp(),
+      url: typeof location !== 'undefined' ? location.pathname : '',
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn('[audit.persistAuditLog] failed (non-blocking):', action, e?.message);
+    return { ok: false };
+  }
+}
+
+/**
+ * Adds an `audit_logs` document ref to an existing WriteBatch (atomic).
+ * Used when the audit entry must succeed or fail with the rest of the batch.
+ *
+ * @param {import('firebase/firestore').WriteBatch} batch
+ * @param {Object} p — same shape as persistAuditLog params (minus db)
+ * @param {import('firebase/firestore').Firestore} [p.db]
+ * @returns {import('firebase/firestore').DocumentReference}
+ */
+export function addAuditToBatch(batch, {
+  db = defaultDb,
+  action, details, userId, userName = '', userRole = '',
+  entity = '', source = '',
+}) {
+  const ref = doc(collection(db, 'audit_logs'));
+  batch.set(ref, {
+    action,
+    details: details || {},
+    userId: userId || '',
+    userName,
+    userRole,
+    ...(entity ? { entity } : {}),
+    ...(source ? { source } : {}),
+    timestamp: serverTimestamp(),
+    url: typeof location !== 'undefined' ? location.pathname : '',
+  });
+  return ref;
 }
