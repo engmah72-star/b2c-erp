@@ -26,6 +26,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
+import { withIdempotency } from './core/idempotency.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 
 // ══════════════════════════════════════════
 // CONSTANTS
@@ -123,6 +125,8 @@ export const supplierActions = {
         createdBy: userId || '',
         createdByName: userName || '',
       });
+      auditEntry({ action: 'supplier.create', userId, userName, kind: 'op', meta: { supplierId: ref.id, supType: data.supType, name: data.name } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         supplierId: ref.id, supType: data.supType, collection: col,
@@ -155,6 +159,8 @@ export const supplierActions = {
         updatedBy: userId || '',
         updatedByName: userName || '',
       });
+      auditEntry({ action: 'supplier.update', userId, userName, kind: 'edit', meta: { supplierId, supType } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: v.warnings,
         supplierId, supType, action: 'update',
@@ -255,6 +261,8 @@ export const supplierActions = {
     const col = _collectionFor(supType);
     try {
       await deleteDoc(doc(db, col, supplierId));
+      auditEntry({ action: 'supplier.delete', userId, userName, kind: 'op', meta: { supplierId, supType, forced: !!force } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: [],
         supplierId, supType, action: 'delete',
@@ -286,6 +294,8 @@ export const supplierActions = {
         archiveReason: reason || '',
         updatedAt: serverTimestamp(),
       });
+      auditEntry({ action: 'supplier.archive', userId, userName, kind: 'op', meta: { supplierId, supType, reason } });
+      persistAuditLog(db);
       return {
         ok: true, errors: [], warnings: [],
         supplierId, supType, action: 'archive',
@@ -315,6 +325,8 @@ export const supplierActions = {
         unarchivedBy: userId || '',
         updatedAt: serverTimestamp(),
       });
+      auditEntry({ action: 'supplier.unarchive', userId, userName, kind: 'op', meta: { supplierId, supType } });
+      persistAuditLog(db);
       return { ok: true, errors: [], warnings: [], supplierId, action: 'unarchive' };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل الاستعادة'], warnings: [] };
@@ -345,6 +357,12 @@ export const supplierActions = {
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: [] };
 
     const parsedAmount = parseFloat(amount) || 0;
+    return withIdempotency(db, {
+      actionType: 'supplier_create_payment',
+      entityId: supplierId,
+      actorId: userId || '',
+      payload: { amount: parsedAmount, walletId },
+    }, async (operationId) => {
     try {
       const result = await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT, {
         supplierId, supplierName, supplierType,
@@ -355,6 +373,7 @@ export const supplierActions = {
         date: new Date().toISOString().slice(0, 10),
         ...(costItemRefs.length ? { costItemRefs } : {}),
         ...(supplierOrderIds.length ? { supplierOrderIds } : {}),
+        operationId,
       });
 
       // Update linked supplier_orders paidAmount (best-effort, non-financial)
@@ -369,6 +388,9 @@ export const supplierActions = {
         await Promise.all(soUpdates);
       }
 
+      auditEntry({ action: 'supplier.createPayment', userId, userName, kind: 'op', meta: { supplierId, supplierName, amount: parsedAmount, walletId, operationId } });
+      persistAuditLog(db);
+
       return {
         ok: true, errors: [], warnings: [],
         supplierId, action: 'createPayment',
@@ -377,6 +399,7 @@ export const supplierActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل الدفعة'], warnings: [] };
     }
+    }); // end withIdempotency
   },
 
   /**
@@ -398,6 +421,12 @@ export const supplierActions = {
     if (v.errors.length) return { ok: false, errors: v.errors, warnings: [] };
 
     const parsedAmount = parseFloat(amount) || 0;
+    return withIdempotency(db, {
+      actionType: 'supplier_reverse_payment',
+      entityId: paymentId,
+      actorId: userId || '',
+      payload: { amount: parsedAmount, walletId },
+    }, async (operationId) => {
     try {
       const result = await dispatchFinancialEvent(db, FE.VENDOR_PAYMENT_REVERSAL, {
         paymentId,
@@ -407,6 +436,7 @@ export const supplierActions = {
         note: reason || 'إلغاء دفعة',
         userId: userId || '', userName: userName || '',
         date: new Date().toISOString().slice(0, 10),
+        operationId,
       });
 
       // Decrement linked supplier_orders paidAmount (best-effort, non-financial)
@@ -420,6 +450,9 @@ export const supplierActions = {
         await Promise.all(soUpdates);
       }
 
+      auditEntry({ action: 'supplier.reversePayment', userId, userName, kind: 'reversal', meta: { paymentId, supplierId, supplierName, amount: parsedAmount, walletId, reason, operationId } });
+      persistAuditLog(db);
+
       return {
         ok: true, errors: [], warnings: [],
         supplierId, paymentId, action: 'reversePayment',
@@ -428,6 +461,7 @@ export const supplierActions = {
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل عكس الدفعة'], warnings: [] };
     }
+    }); // end withIdempotency
   },
 };
 

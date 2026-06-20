@@ -629,7 +629,7 @@ exports.impersonateUser = onCall(CALL_OPTS, async (req) => {
       throw new HttpsError('not-found', 'الموظف غير موجود في users');
     }
     const targetData = targetSnap.data() || {};
-    if (targetData.isStrictAdmin(role)) {
+    if (isStrictAdmin(targetData.role)) {
       throw new HttpsError('permission-denied', 'لا يمكن انتحال أدمن آخر');
     }
     try {

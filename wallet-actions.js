@@ -35,6 +35,7 @@ import {
   FE,
   approvalFields,
 } from './financial-sync-engine.js';
+import { auditEntry, persistAuditLog } from './core/audit.js';
 
 // ══════════════════════════════════════════
 // HELPERS
@@ -68,6 +69,8 @@ export async function updateWalletProvider({
       providerChangedByName: userName || '',
       providerChangedAt: serverTimestamp(),
     });
+    auditEntry({ action: 'wallet.updateProvider', userId, userName, kind: 'edit', meta: { walletId, provider, previousProvider } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
@@ -120,6 +123,8 @@ export async function createWallet({
       });
     }
     await batch.commit();
+    auditEntry({ action: 'wallet.create', userId, userName, kind: 'op', meta: { walletId: walletRef.id, name: name.trim(), type, openingBalance: bal } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], walletId: walletRef.id, openingBalance: bal };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الإنشاء'], warnings: [] };
@@ -183,6 +188,8 @@ export async function saveReconciliation({
       createdAt: serverTimestamp(),
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.reconcile', userId, userName, kind: 'op', meta: { walletId, diff, systemBalance: sysBal, actualBalance: actual } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], diff, newBalance: actual };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسوية'], warnings: [] };
@@ -241,6 +248,8 @@ export async function setOpeningBalance({
       });
     }
     await batch.commit();
+    auditEntry({ action: 'wallet.setOpeningBalance', userId, userName, kind: 'op', meta: { walletId, oldBalance: oldBal, newBalance: newBal, diff } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], diff };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [] };
@@ -290,6 +299,8 @@ export async function deleteTransaction({
       userId, userName: userName || '',
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.deleteTransaction', userId, userName, kind: 'op', meta: { transactionId, walletId, amount, type } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
@@ -401,6 +412,8 @@ export async function recordTransaction({
       userId, userName: userName || '',
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.recordTransaction', userId, userName, kind: 'op', meta: { transactionId: txRef.id, walletId, type, amount: amt, category } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], transactionId: txRef.id };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
@@ -513,6 +526,8 @@ export async function editTransaction({
       userId, userName: userName || '',
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.editTransaction', userId, userName, kind: 'edit', meta: { transactionId, walletId, type, amount, category } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التعديل'], warnings: [] };
@@ -570,6 +585,8 @@ export async function recordSupplierPayment({
       userId, userName: userName || '',
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.recordSupplierPayment', userId, userName, kind: 'op', meta: { paymentId: spRef.id, walletId, supplierId, supplierName, amount: amt } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], paymentId: spRef.id };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
@@ -667,6 +684,8 @@ export async function walletTransfer({
       userId, userName: userName || '',
     });
     await batch.commit();
+    auditEntry({ action: 'wallet.transfer', userId, userName, kind: 'op', meta: { transferGroupId, fromWalletId, toWalletId, amount: amt, fee, kind } });
+    persistAuditLog(db);
     return { ok: true, errors: [], warnings: [], transferGroupId, fee, isWithdrawal };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التحويل'], warnings: [] };
@@ -680,10 +699,14 @@ export async function walletTransfer({
 /**
  * حذف محفظة (admin-only). الـ caller يتحقق إن المحفظة فاضية + يأخذ confirm.
  */
-export async function deleteWallet({ db = defaultDb, walletId }) {
+export async function deleteWallet({ db = defaultDb, walletId, userId, userName }) {
   if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
   try {
     await deleteDoc(doc(db, 'wallets', walletId));
+    if (userId) {
+      auditEntry({ action: 'wallet.delete', userId, userName, kind: 'op', meta: { walletId } });
+      persistAuditLog(db);
+    }
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
