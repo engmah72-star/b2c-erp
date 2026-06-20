@@ -287,6 +287,7 @@ if(_ps.hasSnapshots)_ps.restoreSnapshots();
 
 window.switchDomain = function(domain, btn) {
   currentDomain = domain;
+  _ensureDomainDeps(domain);
   document.querySelectorAll('.rp-domain-btn').forEach(b => b.classList.toggle('active', b.dataset.domain === domain));
   writeUrlState();
   render();
@@ -333,6 +334,29 @@ function _getHealthStats(){
   return __healthStats;
 }
 function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,150);}
+// T8: Lazy-load secondary collections per domain
+const __DOMAIN_DEPS={
+  home:['suppliers_v2','supplier_payments','returns_tickets'],
+  financial:['suppliers_v2','supplier_payments'],
+  operations:[],
+  clients:[],
+  team:['employees'],
+  shipping:['shippers_v2'],
+  returns:['returns_tickets'],
+  data:['payment_requests'],
+};
+const __lazyStarted={};
+function _ensureCollection(name){
+  if(__lazyStarted[name])return;
+  __lazyStarted[name]=true;
+  if(name==='employees') onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
+  else if(name==='suppliers_v2') onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
+  else if(name==='shippers_v2') onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
+  else if(name==='supplier_payments') onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
+  else if(name==='returns_tickets') onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
+  else if(name==='payment_requests') onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
+}
+function _ensureDomainDeps(domain){(__DOMAIN_DEPS[domain]||[]).forEach(c=>_ensureCollection(c));}
 const fn=fmtNum;
 
 // ══ Collection state (search/sort/filters) ══
@@ -470,6 +494,7 @@ window.applyPreset=function(idx){
   if(s.domain)currentDomain=s.domain;
   if(s.dataView)currentDataView=s.dataView;
   if(s.tab&&!s.domain){const tabToDomain={overview:'home',designers:'team',performance:'operations',shipping:'shipping',clients:'clients',sales:'financial',collection:'data',returns:'returns',approvals:'data',daily:'data',control:'data'};currentDomain=tabToDomain[s.tab]||'home';}
+  _ensureDomainDeps(currentDomain);
   if(s.range)filterMode=s.range;
   if(s.pay)__payFilter=s.pay;
   if(s.stage)__stageFilter=s.stage;
@@ -589,22 +614,16 @@ onAuthStateChanged(auth,async u=>{
   // the system — previously unbounded, so every page-load streamed the entire
   // history of every collection. Caps reflect "operational analytics" depth;
   // deeper historical analysis uses one-shot getDocs() with date filters.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(10000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();});
+  // T3: Core listeners — reduced from 10K → 5K (orders + transactions)
+  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();});
   onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
-  onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
-  onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
-  onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
   onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
-  // settings/main — single doc (G3 exception): الأهداف الشهرية للدخل والعملاء
   onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();});
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(10000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
-  // returns_tickets — bounded (C7): أحدث 2000، يكفي لتحليلات السنة الكاملة
-  onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
-  // payment_requests — تبويب الاعتمادات (P8). bounded؛ يتدهور بأمان لغير المخوّلين مالياً.
-  onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
+  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
+  // T8: secondary collections lazy-loaded per domain (employees, suppliers, shippers, payments, returns, paymentRequests)
+  _ensureDomainDeps(currentDomain);
   // طبّق active class على الـ domain/date button المختارين من URL
   document.querySelectorAll('.rp-domain-btn').forEach(b=>b.classList.toggle('active',b.dataset.domain===currentDomain));
   document.querySelectorAll('.date-bar .d-btn').forEach(b=>{
