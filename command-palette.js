@@ -184,7 +184,8 @@
     input = modal.querySelector('.cp-input');
     list = modal.querySelector('.cp-list');
 
-    input.addEventListener('input', () => { selectedIdx = 0; render(input.value); });
+    let __cpTimer = 0;
+    input.addEventListener('input', () => { selectedIdx = 0; clearTimeout(__cpTimer); __cpTimer = setTimeout(() => render(input.value), 120); });
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
 
     render('');
@@ -225,13 +226,20 @@
       });
     });
     list.innerHTML = html;
-    list.querySelectorAll('.cp-item').forEach(el => {
-      el.addEventListener('click', () => navigate(el.dataset.file));
-      el.addEventListener('mouseenter', () => {
-        selectedIdx = parseInt(el.dataset.idx, 10);
-        updateActive();
+    if (!list.dataset.delegated) {
+      list.dataset.delegated = '1';
+      list.addEventListener('click', e => {
+        const el = e.target.closest('.cp-item');
+        if (el) navigate(el.dataset.file);
       });
-    });
+      list.addEventListener('mouseover', e => {
+        const el = e.target.closest('.cp-item');
+        if (el) {
+          selectedIdx = parseInt(el.dataset.idx, 10);
+          updateActive();
+        }
+      });
+    }
     if (selectedIdx >= flatItems.length) selectedIdx = Math.max(0, flatItems.length - 1);
     updateActive();
   }

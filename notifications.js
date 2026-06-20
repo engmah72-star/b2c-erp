@@ -252,6 +252,7 @@ export function initNotifications(app, currentUser) {
     mergeNotifs('order_prod', prodNotifs);
   }));
 
+  let __notifRaf = 0;
   function mergeNotifs(group, items) {
     const prefixMap = {
       task:         'task_',
@@ -265,9 +266,14 @@ export function initNotifications(app, currentUser) {
     const prefix = prefixMap[group] || (group + '_');
     allNotifs = allNotifs.filter(n => !n.id.startsWith(prefix));
     allNotifs = [...items, ...allNotifs];
-    allNotifs.sort((a, b) => b.time - a.time);
-    updateBadge();
-    if (panelOpen) renderPanel();
+    if (__notifRaf) return;
+    __notifRaf = requestAnimationFrame(() => {
+      __notifRaf = 0;
+      allNotifs.sort((a, b) => b.time - a.time);
+      if (allNotifs.length > 500) allNotifs.length = 500;
+      updateBadge();
+      if (panelOpen) renderPanel();
+    });
   }
 
   function unreadCount() {
