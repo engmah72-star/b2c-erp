@@ -685,22 +685,30 @@ function renderMessages(){
   const wrap=$('ib-msgs');if(!wrap)return;
   // pure view module: features/inbox/views/chat-view.js
   wrap.innerHTML=buildMessagesHTML({messages,activeConv,currentUid,renderTextWithMentions});
-  // attach long-press listeners
-  wrap.querySelectorAll('.ib-msg').forEach(el=>attachLongPress(el));
+  if(!wrap.__longPressAttached){
+    wrap.__longPressAttached=true;
+    attachLongPressDelegate(wrap);
+  }
   // scroll to bottom
   requestAnimationFrame(()=>{wrap.scrollTop=wrap.scrollHeight;});
   if (typeof refreshPinStrip === 'function') refreshPinStrip();
   searchCtrl.reapplyHighlights();
 }
 
-// ── Long-press / right-click on a message ──
-function attachLongPress(el){
-  let pressTimer=null,moved=false;
-  const trigger=()=>{const mid=el.dataset.mid;if(mid)openMsgActions(mid);};
-  el.addEventListener('touchstart',()=>{moved=false;pressTimer=setTimeout(trigger,500);},{passive:true});
-  el.addEventListener('touchmove',()=>{moved=true;clearTimeout(pressTimer);},{passive:true});
-  el.addEventListener('touchend',()=>{clearTimeout(pressTimer);});
-  el.addEventListener('contextmenu',e=>{e.preventDefault();trigger();});
+// ── Long-press / right-click on a message (delegated) ──
+function attachLongPressDelegate(wrap){
+  let pressTimer=null,activeEl=null;
+  const trigger=(el)=>{const mid=el.dataset.mid;if(mid)openMsgActions(mid);};
+  wrap.addEventListener('touchstart',e=>{
+    const el=e.target.closest('.ib-msg');if(!el)return;
+    activeEl=el;pressTimer=setTimeout(()=>trigger(el),500);
+  },{passive:true});
+  wrap.addEventListener('touchmove',()=>{clearTimeout(pressTimer);activeEl=null;},{passive:true});
+  wrap.addEventListener('touchend',()=>{clearTimeout(pressTimer);activeEl=null;});
+  wrap.addEventListener('contextmenu',e=>{
+    const el=e.target.closest('.ib-msg');if(!el)return;
+    e.preventDefault();trigger(el);
+  });
 }
 window.onMsgClick=function(e,_mid){
   // click on bubble (not buttons) toggles selection on desktop — we keep it for action sheet via long-press
@@ -731,7 +739,7 @@ window.onComposerKey=function(e){
 };
 window.onTyping=async function(el){
   // auto-grow
-  el.style.height='auto';el.style.height=Math.min(120,el.scrollHeight)+'px';
+  requestAnimationFrame(()=>{el.style.height='auto';el.style.height=Math.min(120,el.scrollHeight)+'px';});
   // toggle send vs mic visibility
   const send=$('ib-send'),mic=$('ib-mic');
   if(send&&mic){
