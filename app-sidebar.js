@@ -20,6 +20,7 @@ import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { ROLE_PAGES } from './core/permissions-matrix.js';
 import { computeNavModel, topUsed } from './core/sidebar-model.js';
+import { searchOrders } from './core/global-search.js';
 import * as signals from './core/runtime-shell/signals.js';
 import * as signalsAgg from './core/runtime-shell/signals-aggregator.js';
 
@@ -189,7 +190,20 @@ class AppSidebar extends HTMLElement {
       '.app-sb-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.24);border-radius:6px;border:2px solid transparent;background-clip:content-box;}' +
       '.app-sb-scroll::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42);background-clip:content-box;}' +
       // الـ nav الداخلي ما يعملش سكرول لوحده (الـ wrapper هو اللي يسكرول) — يمنع تضارب وتسرّب
-      '.app-sb .app-sb-scroll .nav-scroll{flex:none;overflow:visible;min-height:0;}';
+      '.app-sb .app-sb-scroll .nav-scroll{flex:none;overflow:visible;min-height:0;}' +
+      // ── global order search results ──
+      '.app-sb-gsr{position:absolute;top:100%;left:0;right:0;z-index:100;background:var(--bg2,#1e1e2e);border:1px solid rgba(255,255,255,.1);border-radius:0 0 10px 10px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4);overscroll-behavior:contain;}' +
+      '.app-sb-tools{position:relative;}' +
+      '.app-sb-gsr-item{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;text-decoration:none;color:inherit;border-bottom:1px solid rgba(255,255,255,.04);transition:background .12s;}' +
+      '.app-sb-gsr-item:last-child{border-bottom:none;}' +
+      '.app-sb-gsr-item:hover,.app-sb-gsr-item.active{background:rgba(167,139,250,.12);}' +
+      '.app-sb-gsr-ico{font-size:var(--fs-base);flex-shrink:0;}' +
+      '.app-sb-gsr-info{flex:1;min-width:0;}' +
+      '.app-sb-gsr-id{font-size:var(--fs-sm,13px);font-weight:var(--fw-bold,700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+      '.app-sb-gsr-client{font-size:var(--fs-xs,11px);color:rgba(255,255,255,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+      '.app-sb-gsr-stage{font-size:var(--fs-xs,11px);padding:2px 7px;border-radius:6px;background:rgba(167,139,250,.15);color:var(--p,#a78bfa);white-space:nowrap;flex-shrink:0;font-weight:var(--fw-bold,700);}' +
+      '.app-sb-gsr-loading{padding:12px;text-align:center;color:rgba(255,255,255,.4);font-size:var(--fs-sm,13px);}' +
+      '.app-sb-gsr-empty{padding:12px;text-align:center;color:rgba(255,255,255,.4);font-size:var(--fs-sm,13px);font-style:italic;}';
     document.head.appendChild(st);
   }
 
@@ -202,8 +216,8 @@ class AppSidebar extends HTMLElement {
           '<div class="nav-brand-role" id="app-sb-role">' + esc(roleLabel) + '</div></div></div>' +
         '<div class="app-sb-tools"><div class="app-sb-search">' +
           '<span aria-hidden="true">🔍</span>' +
-          '<input type="text" placeholder="ابحث في القائمة..." aria-label="بحث في القائمة">' +
-        '</div></div>' +
+          '<input type="text" placeholder="بحث سريع عن طلب..." aria-label="بحث سريع عن طلب">' +
+        '</div><div class="app-sb-gsr" id="app-sb-gsr" hidden></div></div>' +
         '<div class="app-sb-triage" id="app-sb-triage" aria-label="المطلوب الآن" hidden></div>' +
         '<div class="app-sb-scroll">' +
           '<div class="app-sb-smart" id="app-sb-smart" aria-label="اختصارات" hidden></div>' +
@@ -426,13 +440,106 @@ class AppSidebar extends HTMLElement {
       g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     });
 
-    // wire search (once)
+    // wire search (once) — local menu filter + global order search (debounced)
     const input = this.querySelector('.app-sb-search input');
     if (input && !input.dataset.bound) {
       input.dataset.bound = '1';
-      input.addEventListener('input', () => this._filter(linksEl, input.value.trim().toLowerCase()));
-      input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.value = ''; this._filter(linksEl, ''); } });
+      let gsTimer = null;
+      input.addEventListener('input', () => {
+        const val = input.value.trim();
+        // Local menu filter (immediate)
+        this._filter(linksEl, val.toLowerCase());
+        // Global order search (debounced 400ms, min 2 chars)
+        clearTimeout(gsTimer);
+        if (val.length >= 2) {
+          gsTimer = setTimeout(() => this._globalSearch(val), 400);
+        } else {
+          this._hideGlobalResults();
+        }
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          input.value = '';
+          this._filter(linksEl, '');
+          this._hideGlobalResults();
+        }
+        // Keyboard navigation for global search results
+        const gsr = this.querySelector('#app-sb-gsr');
+        if (gsr && !gsr.hidden) {
+          const items = gsr.querySelectorAll('.app-sb-gsr-item');
+          if (!items.length) return;
+          const active = gsr.querySelector('.app-sb-gsr-item.active');
+          let idx = active ? Array.from(items).indexOf(active) : -1;
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (active) active.classList.remove('active');
+            idx = (idx + 1) % items.length;
+            items[idx].classList.add('active');
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (active) active.classList.remove('active');
+            idx = idx <= 0 ? items.length - 1 : idx - 1;
+            items[idx].classList.add('active');
+          } else if (e.key === 'Enter' && active) {
+            e.preventDefault();
+            active.click();
+          }
+        }
+      });
+      // Close results when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.app-sb-tools')) this._hideGlobalResults();
+      });
     }
+  }
+
+  // ── Global order search (cross-stage) ──
+  async _globalSearch(term) {
+    const gsr = this.querySelector('#app-sb-gsr');
+    if (!gsr) return;
+    // Show loading state
+    gsr.innerHTML = '<div class="app-sb-gsr-loading">جاري البحث...</div>';
+    gsr.hidden = false;
+    try {
+      const results = await searchOrders(term);
+      if (!results.length) {
+        gsr.innerHTML = '<div class="app-sb-gsr-empty">لا توجد نتائج</div>';
+        return;
+      }
+      gsr.innerHTML = results.map((r, i) =>
+        '<a class="app-sb-gsr-item' + (i === 0 ? ' active' : '') + '" href="' + esc(r.url) + '" data-gs-url="' + esc(r.url) + '">' +
+          '<span class="app-sb-gsr-ico" aria-hidden="true">' + r.stageIcon + '</span>' +
+          '<div class="app-sb-gsr-info">' +
+            '<div class="app-sb-gsr-id">#' + esc(r.orderId) + '</div>' +
+            '<div class="app-sb-gsr-client">' + esc(r.clientName) + '</div>' +
+          '</div>' +
+          '<span class="app-sb-gsr-stage">' + esc(r.stageLabel) + '</span>' +
+        '</a>'
+      ).join('');
+      // Wire click navigation
+      gsr.querySelectorAll('.app-sb-gsr-item').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const url = a.getAttribute('data-gs-url');
+          if (url) {
+            if (typeof window.navigatePage === 'function') window.navigatePage(url);
+            else location.href = url;
+          }
+          this._hideGlobalResults();
+          const input = this.querySelector('.app-sb-search input');
+          if (input) input.value = '';
+          this._close(); // close mobile drawer if open
+        });
+      });
+    } catch (e) {
+      console.warn('[global-search] error:', e);
+      gsr.innerHTML = '<div class="app-sb-gsr-empty">حدث خطأ في البحث</div>';
+    }
+  }
+
+  _hideGlobalResults() {
+    const gsr = this.querySelector('#app-sb-gsr');
+    if (gsr) { gsr.hidden = true; gsr.innerHTML = ''; }
   }
 
   _filter(linksEl, q) {

@@ -1714,6 +1714,14 @@ window.moveToShipping=function(){
   const s=execSummary(o);
   const isPartial=s.total>0&&s.done>0&&s.done<s.total;
   if(s.total>0&&s.done===0)return toast('⚠️ لا يوجد بند منفّذ بعد','err');
+
+  // P1.3: تنبيه تكلفة — لو مفيش بنود تكلفة، المستخدم يشوف تحذير قبل ما يكمّل
+  if ((o.costItems || []).length === 0) {
+    _showCostWarningBanner(o._id);
+    return;
+  }
+  _removeCostWarningBanner();
+
   if(isPartial){
     // شحن جزئي — تأكيد قبل فتح الـ modal
     if(!confirm(`🔀 شحن جزئي:\n${s.done} بند منفّذ → الشحن\n${s.total-s.done} بند يبقى في التنفيذ\n\nسيُنشأ أوردر فرعي لنفس العميل بالبنود المنفّذة. المتابعة؟`))return;
@@ -1731,6 +1739,64 @@ window.moveToShipping=function(){
   // افتح modal اختيار موظف الشحن
   const sel=document.getElementById('pick-ship-sel');
   if(sel)sel.value='';
+  document.getElementById('ov-pick-ship').classList.add('open');
+};
+
+/** P1.3: بانر تحذير — لا يوجد بند تكلفة */
+function _showCostWarningBanner(orderId) {
+  _removeCostWarningBanner();
+  const shipBtn = document.getElementById('ship-btn');
+  if (!shipBtn) return;
+  const banner = document.createElement('div');
+  banner.id = 'cost-warning-banner';
+  banner.style.cssText = 'background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:12px;padding:12px 14px;margin-bottom:10px';
+  banner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:var(--fs-xl)">⚠️</span>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--y-amber);margin-bottom:2px">لا يوجد بند تكلفة — لن يمكن التحويل للشحن بدونه</div>
+        <div style="font-size:var(--fs-sm);color:var(--dim2)">سجّل بنود التكلفة أولاً أو تجاهل وتابع</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn btn-y btn-sm" onclick="window._openCostFromWarning()">💰 فتح بنود التكلفة</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="window._bypassCostWarning()">تجاهل والمتابعة</button>
+      </div>
+    </div>
+  `;
+  shipBtn.parentElement.insertBefore(banner, shipBtn);
+}
+
+function _removeCostWarningBanner() {
+  const b = document.getElementById('cost-warning-banner');
+  if (b) b.remove();
+}
+
+window._openCostFromWarning = function() {
+  _removeCostWarningBanner();
+  if (typeof window.openCostPanel === 'function') window.openCostPanel(-1);
+};
+
+window._bypassCostWarning = function() {
+  _removeCostWarningBanner();
+  if (!activeId) return;
+  const o = orders.find(x => x._id === activeId);
+  if (!o) return;
+  const s = execSummary(o);
+  const isPartial = s.total > 0 && s.done > 0 && s.done < s.total;
+  if (isPartial) {
+    if (!confirm(`🔀 شحن جزئي:\n${s.done} بند منفّذ → الشحن\n${s.total-s.done} بند يبقى في التنفيذ\n\nسيُنشأ أوردر فرعي لنفس العميل بالبنود المنفّذة. المتابعة؟`)) return;
+  } else {
+    const v = buildStageAdvance({ order: o, role: currentRole, userId: currentUser?.uid || '', userName });
+    if (v.errors && v.errors.length) return toast('⛔ ' + v.errors.join(' · '), 'err');
+    if (v.warnings && v.warnings.length) {
+      if (!confirm('⚠️ ملاحظات قبل التحويل للشحن:\n• ' + v.warnings.join('\n• ') + '\n\nهل تريد المتابعة؟')) return;
+      window.__bypassWarningsShipping = true;
+    } else {
+      window.__bypassWarningsShipping = false;
+    }
+  }
+  const sel = document.getElementById('pick-ship-sel');
+  if (sel) sel.value = '';
   document.getElementById('ov-pick-ship').classList.add('open');
 };
 

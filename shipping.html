@@ -71,6 +71,7 @@
       <button type="button" class="ship-tab"        data-tab="delays"           onclick="switchTab('delays')">⏰ المتأخرات <span class="ship-tab-count alert" id="cnt-delays">0</span></button>
       <button type="button" class="ship-tab"        data-tab="returns"          onclick="switchTab('returns')">↩️ المرتجعات <span class="ship-tab-count" id="cnt-returns">0</span></button>
       <button type="button" class="ship-tab"        data-tab="dashboard"        onclick="switchTab('dashboard')">📊 لوحة المؤشرات</button>
+      <button type="button" class="ship-tab"        data-tab="archive-ready"    onclick="switchTab('archive-ready')">📁 جاهز للأرشفة <span class="ship-tab-count" id="cnt-archive-ready">0</span></button>
     </div>
 
     <!-- Filters (per-tab visibility controlled in JS) -->
@@ -327,7 +328,8 @@ import { shippingActions } from './shipping-actions.js';
 import { employeeActions } from './employee-actions.js';
 import { mountAttendanceSelf } from './core/attendance-self-widget.js';
 // PR-1 helpers (scalable-drifting-ember): central method/stage labels.
-import { getShipMethodLabel, getShipStageLabel, normalizeShipStage, getExpectedCollection } from "./orders.js";
+import { getShipMethodLabel, getShipStageLabel, normalizeShipStage, getExpectedCollection, buildArchiveSpec } from "./orders.js";
+import { loadPricingRules, isPricingLoaded, getExpectedCost } from './shipping-pricing.js';
 import {
   getOrdersReadyToDispatch, getOrdersUpcomingFromProduction, getOrdersInTransit, getOrdersWaitingCollection,
   getOrdersPendingSettlement, getOrdersSettled, getOrdersReturned,
@@ -425,6 +427,9 @@ initAuth(async (state) => {
 
   // ⏰ الحضور/الانصراف/الإجازات — widget مركزي موحّد (مصدر واحد لكل الصفحات)
   try { mountAttendanceSelf({ container: document.getElementById('att-self-host'), db, user: me }); } catch (_) {}
+
+  // 💰 تحميل جدول أسعار الشحن (للتعبئة التلقائية في modal التسليم)
+  loadPricingRules(db).catch(() => {});
 }, () => { window.location.href = 'login.html'; });
 
 // renderAttBox() + doAtt() — removed: check-in/out now lives in the central
@@ -494,7 +499,7 @@ window.switchTab = (tab) => {
   });
 
   // Hide filters for some tabs
-  const noFilterTabs = ['accounts', 'dashboard'];
+  const noFilterTabs = ['accounts', 'dashboard', 'archive-ready'];
   $('filters').style.display = noFilterTabs.includes(tab) ? 'none' : '';
 
   refreshAll();
@@ -549,6 +554,7 @@ function renderTabCounts() {
   $('cnt-settle').textContent = getOrdersPendingSettlement(orders).length;
   $('cnt-delays').textContent = getDelayedOrders(orders).length;
   $('cnt-returns').textContent = getOrdersReturned(orders).length;
+  { const _ar = $('cnt-archive-ready'); if (_ar) _ar.textContent = orders.filter(o => o.stage === 'shipping').length; }
 }
 
 function renderDelayBanner() {
@@ -577,6 +583,7 @@ function renderTabContent() {
     case 'delays':    c.innerHTML = renderDelaysTable(); break;
     case 'accounts':  c.innerHTML = renderAccountsTab(); break;
     case 'dashboard': c.innerHTML = renderDashboardTab(); break;
+    case 'archive-ready': c.innerHTML = renderArchiveReadyTab(); break;
     default:          c.innerHTML = '';
   }
 }
@@ -1380,6 +1387,96 @@ function renderDashboardTab() {
 }
 
 // ══════════════════════════════════════════
+// 📁 ARCHIVE-READY TAB (P1.2)
+// ══════════════════════════════════════════
+function renderArchiveReadyTab() {
+  const shippingOrders = orders.filter(o => o.stage === 'shipping');
+  if (!shippingOrders.length) {
+    return `<div class="empty"><div class="empty-ico">📁</div><div class="empty-msg">لا توجد طلبات في مرحلة الشحن</div></div>`;
+  }
+  const ready = [];
+  const blocked = [];
+  for (const o of shippingOrders) {
+    const spec = buildArchiveSpec({
+      order: o,
+      role: myRole,
+      userId: me?.uid || '',
+      userName: myUserName,
+      source: 'shipping',
+    });
+    if (spec.ok || (spec.errors.length === 0 && spec.needsConfirmation)) {
+      ready.push({ order: o, spec });
+    } else {
+      blocked.push({ order: o, spec });
+    }
+  }
+  let html = '';
+  // جاهز للأرشفة
+  html += `<div style="margin-bottom:20px">
+    <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--g);margin-bottom:12px">✅ جاهز للأرشفة (${ready.length} طلب)</div>`;
+  if (ready.length) {
+    html += `<div class="gallery">${ready.map(({ order: o, spec }) => {
+      const num = o.orderNumber || o._id.slice(0, 6);
+      const warnHtml = (spec.warnings || []).length
+        ? `<div style="margin-top:6px;padding:6px 8px;background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:8px;font-size:var(--fs-xs);color:var(--y-amber);line-height:1.5">⚠️ ${spec.warnings.join(' · ')}</div>`
+        : '';
+      return `<div class="card" style="padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><span style="font-weight:var(--fw-heavy);color:var(--snow)">#${escAttr(num)}</span> · <span>${escAttr(o.clientName || '—')}</span></div>
+          <span style="font-size:var(--fs-sm);color:var(--dim2)">${fmtMoney(parseFloat(o.salePrice) || 0)} ج</span>
+        </div>
+        ${warnHtml}
+        <button type="button" class="btn btn-g btn-sm" style="margin-top:10px;width:100%" onclick="archiveFromTab('${escAttr(o._id)}')">📁 أرشف</button>
+      </div>`;
+    }).join('')}</div>`;
+  } else {
+    html += `<div style="color:var(--dim2);font-size:var(--fs-sm);padding:10px">— لا يوجد</div>`;
+  }
+  html += `</div>`;
+  // محجوب
+  html += `<div>
+    <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--r);margin-bottom:12px">❌ محجوب (${blocked.length} طلب)</div>`;
+  if (blocked.length) {
+    html += `<div class="gallery">${blocked.map(({ order: o, spec }) => {
+      const num = o.orderNumber || o._id.slice(0, 6);
+      const errList = (spec.errors || []).map(e =>
+        `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px"><span style="color:var(--r)">•</span><span>${escAttr(e)}</span></div>`
+      ).join('');
+      return `<div class="card" style="padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><span style="font-weight:var(--fw-heavy);color:var(--snow)">#${escAttr(num)}</span> · <span>${escAttr(o.clientName || '—')}</span></div>
+          <span style="font-size:var(--fs-sm);color:var(--dim2)">${fmtMoney(parseFloat(o.salePrice) || 0)} ج</span>
+        </div>
+        <div style="margin-top:6px;padding:8px 10px;background:rgba(255,61,110,.06);border:1px solid rgba(255,61,110,.2);border-radius:8px;font-size:var(--fs-xs);line-height:1.6;color:var(--dim1)">
+          ${errList}
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+  } else {
+    html += `<div style="color:var(--dim2);font-size:var(--fs-sm);padding:10px">— لا يوجد</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+window.archiveFromTab = async (orderId) => {
+  const o = orders.find(x => x._id === orderId);
+  if (!o) return;
+  // dry-run أولاً
+  const spec = buildArchiveSpec({ order: o, role: myRole, userId: me?.uid || '', userName: myUserName, source: 'shipping' });
+  if (spec.errors?.length) return toast('⛔ ' + spec.errors.join(' · '), 'err');
+  let bypass = false;
+  if (spec.needsConfirmation) {
+    if (!confirm('⚠️ ' + (spec.warnings || []).join(' · ') + '\n\nالمتابعة بالأرشفة؟')) return;
+    bypass = true;
+  }
+  if (!confirm('\u{1F4C1} أرشفة الطلب #' + (o.orderNumber || orderId.slice(0,6)) + '؟')) return;
+  const r = await shippingActions.closeShipment({ db, orderId, role: myRole, userId: me?.uid || '', userName: myUserName, source: 'shipping', bypassWarnings: bypass });
+  if (!r.ok) return toast('⛔ ' + (r.errors || []).join(' · '), 'err');
+  toast('✅ تم الأرشفة', 'ok');
+};
+
+// ══════════════════════════════════════════
 // MODAL HELPERS
 // ══════════════════════════════════════════
 // Wallet-using modals: refresh their <select> options on open so the
@@ -1425,6 +1522,8 @@ window.openDispatch = (orderId) => {
   $('m-dispatch-note').value = '';
   // تكلفة الشحن علينا — تُملأ من القيمة الحالية لو موجودة (تسجيل فقط، تُخصم بالتسوية)
   if ($('m-dispatch-cost')) $('m-dispatch-cost').value = (parseFloat(o.shippingCost) > 0) ? o.shippingCost : '';
+  // 💰 تعبئة تلقائية من جدول الأسعار لو الحقل فاضي
+  _autoFillShippingCost(o);
   // الشحن شامل/غير شامل — من الأوردر (يُدخَل عادةً في الطباعة، يقدر يعدّله هنا)
   setDispatchIncl(!!o.priceIncludesShipping);
   // حقول العنوان: تُملأ من العنوان الحالي (لو موجود) وتظهر فقط لو ناقص
@@ -1466,6 +1565,8 @@ window.onDispatchMethodChange = () => {
     addrRow.style.display = (m !== 'pickup' && !hasAddr) ? '' : 'none';
   }
   updateDispatchCalc();
+  // P1.1: إعادة حساب التكلفة التقديرية عند تغيير طريقة الشحن/الشركة
+  if (pendingOrder) _autoFillShippingCost(pendingOrder);
 };
 
 // التسليم = تسجيل فقط (لا حركة مالية ولا تكلفة). الـ calc panel لم يعد مستخدماً.
@@ -1473,6 +1574,56 @@ window.updateDispatchCalc = () => {
   const panel = $('m-dispatch-calc-panel');
   if (panel) panel.style.display = 'none';
 };
+
+/** P1.1: تعبئة تلقائية لتكلفة الشحن من جدول الأسعار */
+function _autoFillShippingCost(o) {
+  const costEl = $('m-dispatch-cost');
+  if (!costEl) return;
+  // لا تكتب فوق قيمة موجودة (سواء من الأوردر أو أدخلها المستخدم)
+  if (costEl.value && parseFloat(costEl.value) > 0) {
+    _removeAutoFillHint();
+    return;
+  }
+  if (!isPricingLoaded()) { _removeAutoFillHint(); return; }
+  const addr = getDeliveryAddress(o);
+  const companyId = $('m-dispatch-company')?.value || o.shipCompanyId || '';
+  const firstProd = (o.products || [])[0];
+  const result = getExpectedCost({
+    companyId,
+    gov: addr.gov || '',
+    city: o.deliveryAddress?.city || '',
+    weightKg: parseFloat(o.totalWeightKg) || 0,
+    productName: firstProd?.name || '',
+  });
+  if (result && typeof result.expected === 'number' && result.expected > 0) {
+    costEl.value = result.expected;
+    _showAutoFillHint();
+  } else {
+    _removeAutoFillHint();
+  }
+}
+
+function _showAutoFillHint() {
+  _removeAutoFillHint();
+  const costRow = $('m-dispatch-cost-row');
+  if (!costRow) return;
+  const hint = document.createElement('div');
+  hint.id = 'm-dispatch-cost-autofill-hint';
+  hint.style.cssText = 'font-size:var(--fs-xs);color:var(--y-amber);margin-top:4px;line-height:1.5';
+  hint.textContent = '\u{1F4A1} سعر تقديري من جدول الأسعار';
+  // أضف الـ hint بعد حقل التكلفة مباشرة
+  const costEl = $('m-dispatch-cost');
+  if (costEl && costEl.nextElementSibling) {
+    costEl.parentElement.insertBefore(hint, costEl.nextElementSibling);
+  } else if (costEl) {
+    costEl.parentElement.appendChild(hint);
+  }
+}
+
+function _removeAutoFillHint() {
+  const h = document.getElementById('m-dispatch-cost-autofill-hint');
+  if (h) h.remove();
+}
 
 window.confirmDispatch = async () => {
   if (!pendingOrder) return;

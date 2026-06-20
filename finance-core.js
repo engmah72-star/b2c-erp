@@ -23,17 +23,25 @@ window.FinanceCore = {
   },
 
   // ══ الباقي على العميل ══
+  // Single Source of Truth: delegates to calcRem() from core/order-math.js
+  // (exposed on window by that module). Falls back to inline calculation
+  // only when order-math.js hasn't been loaded yet.
   getRemaining(order) {
-    const stored = parseFloat(order?.remaining);
-    if (!isNaN(stored) && stored >= 0) return stored;
+    if (typeof window !== 'undefined' && typeof window.calcRem === 'function') {
+      return window.calcRem(order);
+    }
+    // Fallback — must match calcRem in core/order-math.js exactly:
+    //   sale + customerShipFee − discount − totalPaid (clamp ≥ 0),
+    //   returns 0 for fully returned orders.
+    if (order?.paymentStatus === 'returned' || order?.shipStage === 'returned') return 0;
     return Math.max(0, this.getNet(order) - this.getPaid(order));
   },
 
   // ══ ما على شركة الشحن (dueByCo) ══
+  // Per CLAUDE.md: rem === dueByCo for company shipping.
+  // Delegates to the same canonical source as getRemaining().
   getDueByCo(order) {
-    const net = this.getNet(order);
-    const paid = this.getPaid(order);
-    return Math.max(0, net - paid);
+    return this.getRemaining(order);
   },
 
   // ══ حالة الدفع ══

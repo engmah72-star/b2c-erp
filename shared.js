@@ -641,6 +641,33 @@ export function renderPipeline(orders, onStageClick) {
   </div>`;
 }
 
+// ═══════════════════════════════════════
+// DEEP-LINK HELPERS — unified order URL access
+// ═══════════════════════════════════════
+// Pages use inconsistent param names (?orderId=, ?id=, etc.).
+// These helpers normalise access so callers don't need to guess.
+
+/**
+ * Read the current order ID from the URL query string.
+ * Checks both `orderId` and `id` params for backward compatibility.
+ * @returns {string} order ID or empty string
+ */
+export function getOrderIdFromURL() {
+  const p = new URLSearchParams(location.search);
+  return p.get('orderId') || p.get('id') || '';
+}
+
+/**
+ * Build a URL pointing to a specific order on the given page.
+ * Always uses the canonical `orderId` param.
+ * @param {string} page — target page filename (e.g. 'order.html')
+ * @param {string} orderId — order document ID
+ * @returns {string} e.g. 'order.html?orderId=abc123'
+ */
+export function buildOrderURL(page, orderId) {
+  return `${page}?orderId=${encodeURIComponent(orderId)}`;
+}
+
 // Export db helpers for direct use
 export { onSnapshot, addDoc, updateDoc, deleteDoc, getDoc, getDocs,
          collection, doc, query, orderBy, serverTimestamp, where };
