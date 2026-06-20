@@ -1422,15 +1422,9 @@ window.healOrder=async function(orderId){
   if(!issues.length){toast('✅ لا توجد مشاكل','ok');return;}
   const summary=issues.map(i=>'• '+i.label+' → '+i.fixDesc).join('\n');
   if(!confirm(`🔧 إصلاح فوري لـ ${o.clientName||'الأوردر'}:\n\n${summary}\n\nيتم تطبيق كل الإصلاحات في batch ذرّي واحد. هل تريد المتابعة؟`))return;
-  try{
-    const batch=writeBatch(db);
-    applyOrderHealPatch(batch,doc(db,'orders',orderId),o,issues,userName);
-    await batch.commit();
-    toast(`✅ تم إصلاح ${issues.length} مشكلة`,'ok');
-  }catch(e){
-    console.error(e);
-    toast('❌ '+(e.message||e),'err');
-  }
+  const r=await healSingleOrder({db, order:o, userName});
+  if(!r.ok) toast('❌ '+((r.errors||[]).join(' · ')||'فشل الإصلاح'),'err');
+  else toast(`✅ تم إصلاح ${r.issueCount} مشكلة`,'ok');
 };
 
 // ══ Self-Healer: إصلاح كل أوردرات شركة في batch واحد ══
@@ -1440,23 +1434,9 @@ window.healAll=async function(){
   if(!candidates.length){toast('✅ لا توجد مشاكل في كل النظام','ok');return;}
   const totalIssues=candidates.reduce((s,x)=>s+x.issues.length,0);
   if(!confirm(`🔧 إصلاح كل المشاكل في النظام:\n\n${candidates.length} أوردر · ${totalIssues} مشكلة\n\nيتم تطبيق الإصلاحات في batch ذرّي (مقسّمة على chunks of 400 لو لزم).\n\nهل تريد المتابعة؟`))return;
-  try{
-    const CHUNK=400;
-    let done=0;
-    for(let i=0;i<candidates.length;i+=CHUNK){
-      const slice=candidates.slice(i,i+CHUNK);
-      const batch=writeBatch(db);
-      slice.forEach(({o,issues})=>{
-        applyOrderHealPatch(batch,doc(db,'orders',o._id),o,issues,userName);
-      });
-      await batch.commit();
-      done+=slice.length;
-    }
-    toast(`✅ تم إصلاح ${totalIssues} مشكلة في ${done} أوردر · النظام نظيف الآن 🎉`,'ok');
-  }catch(e){
-    console.error(e);
-    toast('❌ '+(e.message||e),'err');
-  }
+  const r=await healOrdersBulk({db, orders:allOrders, userName});
+  if(!r.ok) toast('❌ '+((r.errors||[]).join(' · ')||'فشل الإصلاح'),'err');
+  else toast(`✅ تم إصلاح ${r.totalIssues} مشكلة في ${r.healedOrders} أوردر · النظام نظيف الآن 🎉`,'ok');
 };
 
 window.healCompany=async function(coName){
@@ -1465,24 +1445,9 @@ window.healCompany=async function(coName){
   if(!ordsWithIssues.length){toast('✅ لا توجد مشاكل في هذه الشركة','ok');return;}
   const totalIssues=ordsWithIssues.reduce((s,x)=>s+x.issues.length,0);
   if(!confirm(`🔧 إصلاح فوري لكل مشاكل شركة "${coName}":\n\n${ordsWithIssues.length} أوردر · ${totalIssues} مشكلة\n\nيتم تطبيق كل الإصلاحات في batch ذرّي واحد. هل تريد المتابعة؟`))return;
-  try{
-    // Firestore batch limit = 500 → split if needed (each order is one update)
-    const CHUNK=400;
-    let done=0;
-    for(let i=0;i<ordsWithIssues.length;i+=CHUNK){
-      const slice=ordsWithIssues.slice(i,i+CHUNK);
-      const batch=writeBatch(db);
-      slice.forEach(({o,issues})=>{
-        applyOrderHealPatch(batch,doc(db,'orders',o._id),o,issues,userName);
-      });
-      await batch.commit();
-      done+=slice.length;
-    }
-    toast(`✅ تم إصلاح ${totalIssues} مشكلة في ${done} أوردر`,'ok');
-  }catch(e){
-    console.error(e);
-    toast('❌ '+(e.message||e),'err');
-  }
+  const r=await healOrdersBulk({db, orders:coOrds, userName});
+  if(!r.ok) toast('❌ '+((r.errors||[]).join(' · ')||'فشل الإصلاح'),'err');
+  else toast(`✅ تم إصلاح ${r.totalIssues} مشكلة في ${r.healedOrders} أوردر`,'ok');
 };
 
 window.markManualSettled=async function(orderId){
@@ -1506,56 +1471,9 @@ window.markManualSettled=async function(orderId){
   if(reason===null)return;
   const r=(reason||'').trim();
   if(r.length<5)return toast('⚠️ السبب لازم ≥ 5 أحرف','err');
-  try{
-    const now=nowStr();
-    const auditEntry={
-      type:'manual_settle',
-      changedBy:userName, changedById:currentUser?.uid||'',
-      date:now, reason:r,
-      changes:[{field:'shipSettled',label:'تسوية شركة الشحن',before:'false',after:'true (يدوي)'}],
-      requiresReview:true,
-    };
-    // قرار التحديث: لو totalPaid أقل من الإجمالي، نرفعه للإجمالي عشان الأوردر يبقى consistent
-    // (الفلوس فعلياً وصلتنا — يا من الشركة، يا من العميل مباشرة، يا من بره النظام)
-    const needsTotalPaidUpdate = paid+0.01 < totalDue;
-    const newTotalPaid = needsTotalPaidUpdate ? totalDue : paid;
-    const newRemaining = Math.max(0, totalDue - newTotalPaid);
-    // FIX (RULE 3): writeBatch بدل updateDoc — لمنع race conditions مع saveSettle المتزامنة
-    const batch=writeBatch(db);
-    batch.update(doc(db,'orders',orderId),{
-      shipSettled:true,
-      shipSettledAmount:Math.max(totalDue,paid),  // best-effort: نسجل الـ due أو الـ paid أيهما أكبر
-      shipSettledManual:true,
-      shipSettledManualBy:userName,
-      shipSettledManualByUid:currentUser?.uid||'',
-      shipSettledManualAt:now,
-      shipSettledManualReason:r,
-      // نحدّث totalPaid عشان الأوردر يطلع consistent (الفلوس فعلياً وصلت سواء عبر الشركة أو خارج النظام)
-      ...(needsTotalPaidUpdate?{
-        totalPaid:newTotalPaid,
-        remaining:newRemaining,
-        paymentStatus:'paid',
-      }:{}),
-      auditLog:[...(o.auditLog||[]),auditEntry],
-      hasUnreviewedAudit:true,
-      timeline:[...(o.timeline||[]),{date:now,action:`🏁 تسوية يدوية (مسوّى من بره النظام) — ${r}${needsTotalPaidUpdate?` · ضبط المحصّل ${fn(paid)} → ${fn(newTotalPaid)} ج`:''}`,by:userName}],
-      updatedAt:serverTimestamp(),
-    });
-    // FIX (RULE 5): manual settle = financial event من خارج النظام — لازم ledger entry للـ audit trail
-    // amount = شكلي (totalDue) لأن المال لم يمر بالـ wallet — الـ ledger هنا audit-only
-    addLedgerToBatch(batch,db,FE.SHIPPING_SETTLEMENT,{
-      amount:Math.max(totalDue,paid),
-      walletId:'',walletName:'',
-      orderId,clientId:o.clientId||'',clientName:o.clientName||'',
-      vendorId:'',vendorName:o.shipCompanyName||'',
-      notes:`🏁 تسوية يدوية (manual): ${r}${needsTotalPaidUpdate?` · totalPaid ${fn(paid)}→${fn(newTotalPaid)}`:''}`,
-      userId:currentUser?.uid||'',userName,
-    });
-    await batch.commit();
-    toast(`✅ تم تسجيل التسوية اليدوية${needsTotalPaidUpdate?` · المحصّل اتضبط على ${fn(newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
-  }catch(e){
-    toast('❌ '+(e.message||e),'err');
-  }
+  const res=await markOrderManualSettled({db, order:o, reason:r, userId:currentUser?.uid||'', userName});
+  if(!res.ok) toast('❌ '+((res.errors||[]).join(' · ')||'فشل التسوية اليدوية'),'err');
+  else toast(`✅ تم تسجيل التسوية اليدوية${res.totalPaidUpdated?` · المحصّل اتضبط على ${fn(res.newTotalPaid)} ج`:''} · تنبيه أُرسل للأدمن`,'ok');
 };
 
 // ══ Quick Collect: محوّل لصفحة المتابعة ══
