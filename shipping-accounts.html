@@ -1562,41 +1562,13 @@ window.saveShipFeeEdit=async function(){
     return toast(`⛔ رسوم الشحن الجديدة تجعل الإجمالي (${fn(newDue)} ج) أقل من المحصّل (${fn(paid)} ج). عدّل التحصيل أولاً.`,'err');
   }
   const newRem=Math.max(0,newDue-paid);
-  const costDelta=newCost-oldCost;
   const btn=document.getElementById('btn-save-sf');btn.disabled=true;btn.textContent='...';
   try{
-    const batch=writeBatch(db);
-    // delta tx لـ shipCost
-    if(costDelta!==0){
-      const adjRef=doc(collection(db,'transactions_v2'));
-      batch.set(adjRef,{
-        type:costDelta>0?'out':'in',
-        amount:Math.abs(costDelta),
-        description:`تعديل تكلفة الشحن (${costDelta>0?'+':'-'}${fn(Math.abs(costDelta))} ج) — ${o.clientName||''} — ${o.shipCompanyName||''}`,
-        category:costDelta>0?'shipping_cost':'shipping_cost_reversal',
-        orderId:__sfOrderId,clientName:o.clientName||'',walletId:'',
-        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName,
-        createdAt:serverTimestamp(),...approvalFields()
-      });
-      addLedgerToBatch(batch,db,FE.SHIPPING_EXPENSE,{
-        amount:Math.abs(costDelta),walletId:'',walletName:'',
-        orderId:__sfOrderId,clientId:o.clientId||'',clientName:o.clientName||'',
-        notes:`تعديل تكلفة شحن (${costDelta>0?'+':'-'}${fn(Math.abs(costDelta))} ج) — ${o.shipCompanyName||''}`,
-        userId:currentUser?.uid||'',userName,
-        direction:costDelta>0?'out':'in',
-      });
+    const res=await saveShippingFeeEdit({db, order:o, newCost, newCust, userId:currentUser?.uid||'', userName});
+    if(!res.ok){
+      toast('❌ '+((res.errors||[]).join(' · ')||'فشل التعديل'),'err');
+      return;
     }
-    // تحديث الأوردر
-    const tlEntry=`✏️ تعديل شحن: ${oldCost!==newCost?`تكلفة ${fn(oldCost)}→${fn(newCost)} ج`:''}${oldCost!==newCost&&oldCust!==newCust?' · ':''}${oldCust!==newCust?`رسوم العميل ${fn(oldCust)}→${fn(newCust)} ج`:''}`;
-    batch.update(doc(db,'orders',__sfOrderId),{
-      shipCost:newCost,
-      customerShipFee:newCust,
-      remaining:newRem,
-      paymentStatus:newRem<=0?'paid':paid>0?'partial':'pending',
-      timeline:[...(o.timeline||[]),{date:nowStr(),action:tlEntry,by:userName}],
-      updatedAt:serverTimestamp(),
-    });
-    await batch.commit();
     document.getElementById('ov-ship-fee').classList.remove('open');
     toast('✅ تم التعديل','ok');
   }catch(e){
