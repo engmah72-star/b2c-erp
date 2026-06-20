@@ -270,6 +270,7 @@ export function initNotifications(app, currentUser) {
     __notifRaf = requestAnimationFrame(() => {
       __notifRaf = 0;
       allNotifs.sort((a, b) => b.time - a.time);
+      if (allNotifs.length > 500) allNotifs.length = 500;
       updateBadge();
       if (panelOpen) renderPanel();
     });

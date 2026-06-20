@@ -110,45 +110,52 @@ function wireActions() {
 }
 
 // ── bounded, person-scoped listeners (RULE G3 + RULE 8) ──────────────
+let __mhUnsubs = [];
+function stopListeners() {
+  __mhUnsubs.forEach(u => { try { u(); } catch (_) {} });
+  __mhUnsubs = [];
+}
 function startListeners() {
-  onSnapshot(query(collection(db, 'tasks'), where('assignedTo', '==', S.me.uid), limit(100)), snap => {
+  stopListeners();
+  __mhUnsubs.push(onSnapshot(query(collection(db, 'tasks'), where('assignedTo', '==', S.me.uid), limit(100)), snap => {
     S.tasks = snap.docs.map(d => ({ ...d.data(), _id: d.id })); render();
-  });
-  onSnapshot(query(collection(db, 'attendance'), where('employeeUid', '==', S.me.uid), where('date', '==', todayStr()), limit(3)), snap => {
+  }));
+  __mhUnsubs.push(onSnapshot(query(collection(db, 'attendance'), where('employeeUid', '==', S.me.uid), where('date', '==', todayStr()), limit(3)), snap => {
     S.attToday = snap.empty ? null : { ...snap.docs[0].data(), _id: snap.docs[0].id }; render();
-  });
+  }));
   if (S.empId) {
     // فلتر بـ authUid (مش employeeId) عشان يطابق rule employee_incidents
     // (allow read if authUid == request.auth.uid) — زي ما my-profile.html بيعمل.
     // الـ query بـ employeeId كان بيسبّب permission-denied (الـ rule بيتحقق authUid).
-    onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
+    __mhUnsubs.push(onSnapshot(query(collection(db, 'employee_incidents'), where('authUid', '==', S.me.uid), where('monthKey', '==', monthKey()), limit(100)), snap => {
       // المُلغى أثره (تم قبول تظلّمه) لا يُحتسب ولا يُعرض كتنبيه نشط
       const active = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
         .filter(i => !(i.appeal && i.appeal.status === 'accepted'));
       S.incidents = active.length;
       S.incidentList = active;
       render();
-    });
+    }));
   }
   // البند 3 — عدّادات «التواصل»: تطابق استعلامات my-requests (requestedBy==uid).
   // خلف العلم: لا قراءة إضافية ما لم تُفعَّل البطاقة.
   if (COMM_HUB_ON) {
-    onSnapshot(query(collection(db, 'payment_requests'), where('requestedBy', '==', S.me.uid), limit(200)), snap => {
+    __mhUnsubs.push(onSnapshot(query(collection(db, 'payment_requests'), where('requestedBy', '==', S.me.uid), limit(200)), snap => {
       S.payReqOpen = snap.docs.map(d => d.data()).filter(r => REQ_OPEN.has(r.status)).length;
       render();
-    }, err => console.warn('commhub-pay:', err.message));
-    onSnapshot(query(collection(db, 'employee_leaves'), where('requestedBy', '==', S.me.uid), limit(100)), snap => {
+    }, err => console.warn('commhub-pay:', err.message)));
+    __mhUnsubs.push(onSnapshot(query(collection(db, 'employee_leaves'), where('requestedBy', '==', S.me.uid), limit(100)), snap => {
       S.leavesPending = snap.docs.map(d => d.data()).filter(l => l.status === 'pending').length;
       render();
-    }, err => console.warn('commhub-leave:', err.message));
+    }, err => console.warn('commhub-leave:', err.message)));
   }
   const field = ROLE_ORDER_FIELD[S.role];
   if (field) {
-    onSnapshot(query(collection(db, 'orders'), where(field, '==', S.me.uid), limit(100)), snap => {
+    __mhUnsubs.push(onSnapshot(query(collection(db, 'orders'), where(field, '==', S.me.uid), limit(100)), snap => {
       S.orders = snap.docs.map(d => ({ ...d.data(), _id: d.id })).filter(o => ACTIVE_STAGES(o.stage));
       render();
-    });
+    }));
   }
+  window.addEventListener('beforeunload', stopListeners, { once: true });
 }
 
 export function initMyHome() {

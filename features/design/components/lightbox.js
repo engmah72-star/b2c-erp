@@ -81,6 +81,8 @@ export function openLightbox(items, startIndex = 0) {
 export function closeLightbox() {
   $('dh-lightbox')?.classList.remove('open');
   document.body.style.overflow = '';
+  _items = [];
+  _index = 0;
 }
 
 export function navLightbox(dir) {
