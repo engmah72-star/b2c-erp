@@ -614,7 +614,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--b);outline-offset:2
 <script type="module">
 
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, partition, fmtNum as _fmtNum, fmtDate, fmtNow } from "./core/dom-utils.js";
 import {
   calcWalletBalanceTotal, calcPeriodFlow,
   calcPendingRevenue, calcEarnedRevenue,
@@ -693,13 +693,13 @@ const CAT=Object.freeze(Object.fromEntries(Object.entries(TX_CAT_META).map(([k,v
 const SPCOL={ورق:'var(--b)',زنكات:'var(--p)',طباعة:'var(--y)',قص:'var(--r)',سلفنة:'var(--g)',شحن:'var(--c)'};
 
 // ── Utils ──
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+const fn=_fmtNum;
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
 window.oM=oM;
 const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
 window.cM=cM;
-const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+const nowStr=fmtNow;
 const isThisMonth=ts=>{const d=ts?.toDate?.()||(ts?new Date(ts):null);if(!d)return false;const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
 
 // ── فلتر الفترة الزمنية ──
@@ -733,12 +733,12 @@ function isInPeriod(ts){
 
 function getPeriodSubLabel(){
   const now=new Date();
-  if(activePeriod==='today') return now.toLocaleDateString('ar-EG');
+  if(activePeriod==='today') return fmtDate(now);
   if(activePeriod==='week'){
     const dow=now.getDay(),sinceMon=dow===0?6:dow-1;
     const mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-sinceMon);
     const sun=new Date(mon); sun.setDate(sun.getDate()+6);
-    return mon.toLocaleDateString('ar-EG')+' — '+sun.toLocaleDateString('ar-EG');
+    return fmtDate(mon)+' — '+fmtDate(sun);
   }
   if(activePeriod==='month') return MONTHS_AR_ACC[now.getMonth()]+' '+now.getFullYear();
   if(activePeriod==='last_month'){
@@ -914,8 +914,7 @@ function updateKPIs(){
   const pEl=document.getElementById('kpi-profit');
   if(pEl){pEl.textContent=(flow.profit>=0?'+':'-')+fn(Math.abs(flow.profit))+' ج';pEl.style.color=flow.profit>=0?'var(--g)':'var(--r)';}
 
-  const activeOrders=allOrders.filter(o=>o.stage!==ORDER_STAGES.ARCHIVED);
-  const archivedOrders=allOrders.filter(o=>o.stage===ORDER_STAGES.ARCHIVED);
+  const [archivedOrders,activeOrders]=partition(allOrders,o=>o.stage===ORDER_STAGES.ARCHIVED);
   const pend=calcPendingRevenue(activeOrders,calcRem);
   const earn=calcEarnedRevenue(archivedOrders,calcRem);
   const remTotal=pend.remTotal+earn.archivedRemTotal;
@@ -995,14 +994,13 @@ function renderWallets(){
     el.innerHTML=`<div class="empty"><div class="empty-icon">💼</div><div class="empty-text">لا توجد حسابات</div><a href="settings.html" data-page="settings" class="btn btn-g btn-sm" style="margin-top:12px">⚙️ أضف من الإعدادات</a></div>`;
     return;
   }
-  const nonCash=wallets.filter(w=>w.type!=='cash');
-  const cash=wallets.filter(w=>w.type==='cash');
+  const [cash,nonCash]=partition(wallets,w=>w.type==='cash');
   const renderCards=(list,opts={})=>list.map((w,i)=>{
     const col=WTONE[w.type]||WCOLS[i%WCOLS.length];
     const mgr=users.find(u=>u._id===w.managerId);
     const wTx=transactions.filter(t=>t.walletId===w._id&&isInPeriod(t.createdAt));
-    const todayIn=wTx.filter(t=>t.type==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-    const todayOut=wTx.filter(t=>t.type==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+    let todayIn=0,todayOut=0;
+    for(const t of wTx){const a=parseFloat(t.amount)||0;if(t.type==='in')todayIn+=a;else if(t.type==='out')todayOut+=a;}
     const lastRec=reconciliations.filter(r=>r.walletId===w._id)[0];
     return`<div class="wcard${opts.wide?' wcard-wide':''}" style="--wc:${col}" onclick="openWallet('${w._id}')">
       <div class="wc-top">
@@ -1299,12 +1297,12 @@ function inRange(ts,range){
 function periodLabel(period){
   const now=new Date();
   const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
-  if(period==='today') return 'اليوم '+now.toLocaleDateString('ar-EG');
+  if(period==='today') return 'اليوم '+fmtDate(now);
   if(period==='week'){
     const dow=now.getDay(),sinceMon=dow===0?6:dow-1;
     const mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-sinceMon);
     const sun=new Date(mon); sun.setDate(sun.getDate()+6);
-    return mon.toLocaleDateString('ar-EG')+' — '+sun.toLocaleDateString('ar-EG');
+    return fmtDate(mon)+' — '+fmtDate(sun);
   }
   if(period==='month') return MONTHS_AR[now.getMonth()]+' '+now.getFullYear();
   if(period==='last_month'){const m=now.getMonth()===0?11:now.getMonth()-1,y=now.getMonth()===0?now.getFullYear()-1:now.getFullYear();return MONTHS_AR[m]+' '+y;}

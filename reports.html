@@ -241,7 +241,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText, fmtNum } from "./core/dom-utils.js";
+import { setText, fmtNum, fmtTime } from "./core/dom-utils.js";
 // ══ Sidebar ══
 const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -322,6 +322,16 @@ let __renderTimer=null;
 const __loaded={orders:false,clients:false,employees:false,suppliers:false,shippers:false,payments:false,transactions:false,returns:false};
 let __cachedFilter=null;
 let __ordersVer=0;
+let __healthStats=null;
+function _getHealthStats(){
+  if(__healthStats&&__healthStats.ver===__ordersVer)return __healthStats;
+  const now=new Date();
+  const late=orders.filter(o=>o.deadline&&new Date(o.deadline)<now&&!['archived','shipping'].includes(o.stage));
+  const stale=orders.filter(o=>isStaleOrder(o)&&(parseFloat(calcRem(o))||0)>0);
+  const noCost=orders.filter(isMissingCost);
+  __healthStats={ver:__ordersVer,late,stale,noCost};
+  return __healthStats;
+}
 function scheduleRender(){if(__renderTimer)clearTimeout(__renderTimer);__renderTimer=setTimeout(render,150);}
 const fn=fmtNum;
 
@@ -687,9 +697,7 @@ function updateCommandCenter(filtered, range) {
   const el = document.getElementById('rp-command');
   if (!el) return;
   if (!__loaded.orders) { el.innerHTML = ''; return; }
-  const late = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !['archived','shipping'].includes(o.stage));
-  const stale = orders.filter(o => isStaleOrder(o) && (parseFloat(calcRem(o)) || 0) > 0);
-  const noCost = orders.filter(isMissingCost);
+  const {late,stale,noCost}=_getHealthStats();
   const supDue = calcSupplierDue(suppliers, orders, payments);
   const issues = (late.length > 0 ? 1 : 0) + (stale.length > 2 ? 1 : 0) + (noCost.length > 0 ? 1 : 0);
   const healthClass = issues === 0 ? 'excellent' : issues === 1 ? 'good' : issues === 2 ? 'warning' : 'critical';
@@ -699,8 +707,7 @@ function updateCommandCenter(filtered, range) {
   if (stale.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('data');switchDataView('collection')">💸 ${fn(stale.length)} راكد</button>`);
   if (noCost.length > 0) chips.push(`<button class="rp-alert-chip warn" onclick="switchDomain('financial')">❓ ${fn(noCost.length)} بدون تكلفة</button>`);
   if (supDue > 0) chips.push(`<button class="rp-alert-chip info" onclick="switchDomain('financial')">🏭 ${fn(Math.round(supDue))} ج موردين</button>`);
-  const now = new Date();
-  const ts = now.toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+  const ts = fmtTime(new Date());
   el.innerHTML = `
     <div class="rp-health-pill ${healthClass}">${healthLabel}</div>
     ${chips.length ? '<div class="rp-cmd-sep"></div>' : ''}
@@ -715,9 +722,7 @@ function updateDomainStatuses(filtered, range) {
     if (!el) return;
     el.className = 'rp-domain-status ' + cls;
   };
-  const late = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !['archived','shipping'].includes(o.stage));
-  const stale = orders.filter(o => isStaleOrder(o) && (parseFloat(calcRem(o)) || 0) > 0);
-  const noCost = orders.filter(isMissingCost);
+  const {late,stale,noCost}=_getHealthStats();
   const slaBreach = returns.filter(t => t.slaBreached === true && !['cancelled','closed'].includes(t.status));
   const postDesignRem = filtered.filter(o => isPostDesignWithRem(o));
   setStatus('home', late.length > 0 || stale.length > 2 ? 'crit' : 'ok');
@@ -2567,18 +2572,18 @@ function renderControl(){
     deadline:(a,b)=>dl(a)-dl(b),
   };
   const all=[...base].sort(sorters[__ctrlSort]||sorters.recent);
-  // عدّاد لكل مرحلة (للـ chips) — على نطاق العرض الحالي
+  // عدّاد لكل مرحلة + الفلاتر الذكية — مسح واحد بدلاً من 10 مسحات منفصلة
   const cnt={all:all.length};
-  CTRL_STAGES.forEach(s=>cnt[s.key]=all.filter(o=>o.stage===s.key).length);
-  // عدّاد الفلاتر الذكية
-  const isLate=o=>o.deadline&&new Date(o.deadline)<new Date()&&!['archived','shipping'].includes(o.stage);
-  const fcnt={
-    all:all.length,
-    late:all.filter(isLate).length,
-    nocost:all.filter(isMissingCost).length,
-    rem:all.filter(o=>calcRem(o)>0).length,
-    stale:all.filter(isStaleOrder).length,
-  };
+  const fcnt={all:all.length,late:0,nocost:0,rem:0,stale:0};
+  const _now=new Date();
+  for(const o of all){
+    const st=o.stage;
+    cnt[st]=(cnt[st]||0)+1;
+    if(o.deadline&&new Date(o.deadline)<_now&&st!=='archived'&&st!=='shipping')fcnt.late++;
+    if(isMissingCost(o))fcnt.nocost++;
+    if(calcRem(o)>0)fcnt.rem++;
+    if(isStaleOrder(o))fcnt.stale++;
+  }
 
   const chip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlStage===key?' active':''}" onclick="ctrlSetStage('${key}',this)">${ico} ${label} <span style="opacity:.6">${cnt[key]||0}</span></button>`;
   const fchip=(key,label,ico)=>`<button type="button" class="d-btn${__ctrlFlag===key?' active':''}" onclick="ctrlSetFlag('${key}',this)">${ico} ${label} <span style="opacity:.6">${fcnt[key]||0}</span></button>`;
