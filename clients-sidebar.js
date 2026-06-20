@@ -15,6 +15,9 @@
  * Centralizing it across pages is a future refactor.
  */
 
+import { db } from './core/firebase-init.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
 const ROLE_DASH = {
   admin:             'accounts.html',
   operation_manager: 'ops-dashboard.html',
@@ -55,8 +58,8 @@ export function buildDynamicSidebar(uid, currentPage) {
   // للقائمة المحلية لو مش متاح (نادراً). الأقسام: الرئيسية/الأوردرات/الإدارة.
   const PAGES  = (typeof window !== 'undefined' && window.SIDEBAR_PAGES) || ALL_PAGES;
   const GROUPS = (typeof window !== 'undefined' && window.GROUP_LABELS) || {};
-  firebase.firestore().collection('users').doc(uid).get().then(function (usnap) {
-    const ud = usnap.exists ? usnap.data() : {};
+  getDoc(doc(db, 'users', uid)).then(function (usnap) {
+    const ud = usnap.exists() ? usnap.data() : {};
     const role = ud.role || 'admin';
     const perms = ud.permissions || {};
     const userPages = perms.pages || [];
