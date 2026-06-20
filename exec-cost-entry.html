@@ -1047,10 +1047,32 @@ function _populateWorkspace(o){
 
   // Products (renderItemsBox below already delegates to _renderProductsCostView)
   const sel=document.getElementById('cost-prod-idx');
+  const prodFg=sel?.closest('.fg');
   if(sel){
     const prods=o.products||[];
-    sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name||'منتج'} × ${p.qty||1}</option>`).join('');
-    sel.value='-1';
+    // P3.5: Smart cost-product linking
+    if(prods.length===1){
+      // Single product: auto-link, hide selector
+      sel.innerHTML=`<option value="0">${prods[0].name||'منتج'} × ${prods[0].qty||1}</option>`;
+      sel.value='0';
+      if(prodFg)prodFg.style.display='none';
+    } else if(prods.length>1){
+      // Multiple products: make selector prominent
+      sel.innerHTML='<option value="-1">— عام للأوردر —</option>'+prods.map((p,i)=>`<option value="${i}">${p.name||'منتج'} × ${p.qty||1}</option>`).join('');
+      sel.value='-1';
+      if(prodFg){
+        prodFg.style.display='';
+        prodFg.style.background='rgba(34,211,238,.06)';
+        prodFg.style.border='1.5px solid rgba(34,211,238,.25)';
+        prodFg.style.borderRadius='var(--rad)';
+        prodFg.style.padding='10px 12px';
+      }
+    } else {
+      // No products: show default
+      sel.innerHTML='<option value="-1">— عام للأوردر —</option>';
+      sel.value='-1';
+      if(prodFg){prodFg.style.display='';prodFg.style.background='';prodFg.style.border='';prodFg.style.borderRadius='';prodFg.style.padding='';}
+    }
     sel.onchange=()=>{
       const v=parseInt(sel.value);
       addCostForProd(isNaN(v)?-1:v);
@@ -1636,6 +1658,37 @@ function _renderProductsCostView(o){
     </div>`;
   }
   if(genItems.length) html+=`<button type="button" class="save-as-tmpl-btn" onclick="saveCurrentCostAsTemplate(-1)">💾 حفظ البنود العامة كقالب</button>`;
+
+  // P3.5: Per-product cost summary
+  if(prods.length>0&&allItems.length>0){
+    html+=`<div style="background:var(--bg3);border:1.5px solid var(--line2);border-radius:var(--rad);padding:12px 14px;margin-top:14px">`;
+    html+=`<div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--snow);margin-bottom:8px">\u{1F4E6} تكلفة كل منتج</div>`;
+    prods.forEach((p,i)=>{
+      const pItems=allItems.filter(c=>c.prodIdx===i);
+      const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      const itemNames=pItems.map(c=>c.type||'بند').join(' + ');
+      const isLast=i===prods.length-1&&!genItems.length;
+      const prefix=isLast?'\u{2514}':'\u{251C}';
+      html+=`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:var(--fs-sm);${!isLast?'border-bottom:1px dashed var(--line);margin-bottom:4px':''}">
+        <span style="color:var(--dim2);font-family:monospace">${prefix}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--snow);font-weight:var(--fw-bold)">${p.name||'منتج'}</span>
+        <span style="flex-shrink:0;font-weight:var(--fw-heavy);color:${pTotal>0?'var(--c)':'var(--dim2)'}">${pTotal>0?fn(pTotal)+' ج':'—'}</span>
+        ${pItems.length?`<span style="flex-shrink:0;font-size:var(--fs-xs);color:var(--dim2)">(${itemNames})</span>`:'<span style="flex-shrink:0;font-size:var(--fs-xs);color:var(--y)">بدون بنود</span>'}
+      </div>`;
+    });
+    if(genItems.length){
+      const genTotal=genItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      const genNames=genItems.map(c=>c.type||'بند').join(' + ');
+      html+=`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:var(--fs-sm)">
+        <span style="color:var(--dim2);font-family:monospace">\u{2514}</span>
+        <span style="flex:1;min-width:0;color:var(--dim2);font-weight:var(--fw-bold)">غير مربوط</span>
+        <span style="flex-shrink:0;font-weight:var(--fw-heavy);color:var(--y)">${fn(genTotal)} ج</span>
+        <span style="flex-shrink:0;font-size:var(--fs-xs);color:var(--dim2)">(${genNames})</span>
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+
   el.innerHTML=html;
   const box=document.getElementById('items-box');if(box)box.innerHTML='';
 }

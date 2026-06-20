@@ -104,6 +104,15 @@ export const isFullyPaid = (o) => {
   return paid >= gross - 0.01;
 };
 
+// ── Expose to non-module scripts (e.g. finance-core.js) ──
+// finance-core.js is a plain <script> that cannot import ES modules.
+// By attaching calcRem to window, FinanceCore.getRemaining() and
+// FinanceCore.getDueByCo() can delegate to the canonical implementation.
+if (typeof window !== 'undefined') {
+  window.calcRem = calcRem;
+  window.orderGrossTotal = orderGrossTotal;
+}
+
 /**
  * Net amount the shipping company owes us for this order = collected − cost.
  *

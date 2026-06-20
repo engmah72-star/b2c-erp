@@ -43,6 +43,8 @@ import {
   ORDER_STAGES,
   // role gate لتعديل تكلفة الشحن (editShippingCost):
   SHIPPING_DISPATCH_ROLES,
+  // P3.3: archive validation before auto-archive:
+  buildArchiveSpec,
 } from './orders.js';
 import {
   dispatchFinancialEvent, addLedgerToBatch, approvalFields, FE,
@@ -227,15 +229,29 @@ export const shippingActions = {
 
       let archiveResult = null;
       if (alreadyPaid && order.shipMethod !== 'company') {
-        try {
-          archiveResult = await orderActions.archiveOrder({
-            db, orderId,
-            role, userId, userName,
-            source: 'shipping', reason: 'auto-archive بعد تسليم — العميل دافع مسبقاً',
-            bypassWarnings: true,
-          });
-        } catch (e) {
-          archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+        // P3.3: Pre-check with buildArchiveSpec to ensure auto-archive uses the
+        // SAME validation as manual archive. If the spec fails, skip auto-archive
+        // and leave the order in delivered state — the user can archive manually.
+        const archiveSpec = buildArchiveSpec({
+          order: { ...order, shipStage: 'collected', paymentStatus: 'paid' },
+          role, userId, userName,
+          source: 'shipping',
+          reason: 'auto-archive بعد تسليم — العميل دافع مسبقاً',
+          bypassWarnings: true,
+        });
+        if (!archiveSpec.ok) {
+          archiveResult = { ok: false, errors: archiveSpec.errors, skipped: true };
+        } else {
+          try {
+            archiveResult = await orderActions.archiveOrder({
+              db, orderId,
+              role, userId, userName,
+              source: 'shipping', reason: 'auto-archive بعد تسليم — العميل دافع مسبقاً',
+              bypassWarnings: true,
+            });
+          } catch (e) {
+            archiveResult = { ok: false, errors: [e.message || 'فشل الأرشفة'] };
+          }
         }
       }
 
