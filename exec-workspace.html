@@ -310,6 +310,51 @@
 /* ══ Contextual ship button ═════════════════════════════════════════ */
 .ship-ready{background:rgba(0,217,126,.12);border-color:rgba(0,217,126,.4);color:var(--g);font-size:var(--fs-base);padding:13px}
 .ship-ready:hover:not(:disabled){background:rgba(0,217,126,.2)}
+
+/* ══ Shift dashboard ═══════════════════════════════════════════════ */
+.shift-bar{display:flex;align-items:center;gap:10px;padding:6px 16px;background:rgba(139,92,246,.06);border-bottom:1px solid rgba(139,92,246,.15);font-size:var(--fs-xs);color:var(--dim2);flex-wrap:wrap}
+.shift-stat{display:flex;align-items:center;gap:3px;font-weight:var(--fw-extra)}
+.shift-stat b{color:var(--snow)}
+
+/* ══ Checklist ═════════════════════════════════════════════════════ */
+.prod-cl{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.cl-item{display:flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;transition:all .12s}
+.cl-item.checked{border-color:rgba(0,217,126,.4);background:rgba(0,217,126,.08);color:var(--g);text-decoration:line-through}
+.cl-item:hover{border-color:var(--b)}
+
+/* ══ Per-product ship ══════════════════════════════════════════════ */
+.prd-ship-btn{margin-top:6px;width:100%;padding:6px;border-radius:8px;border:1px solid rgba(0,217,126,.3);background:rgba(0,217,126,.06);color:var(--g);font-size:var(--fs-xs);font-weight:var(--fw-extra);font-family:inherit;cursor:pointer;transition:background .15s}
+.prd-ship-btn:hover{background:rgba(0,217,126,.15)}
+
+/* ══ Photo upload ══════════════════════════════════════════════════ */
+.photo-sec{margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.photo-thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;border:1px solid var(--line);cursor:pointer}
+.photo-add{width:40px;height:40px;border-radius:6px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--dim2);cursor:pointer;background:transparent;font-family:inherit}
+.photo-add:hover{border-color:var(--b);color:var(--b)}
+
+/* ══ Quick entry chips ═════════════════════════════════════════════ */
+.qe-strip{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.qe-chip{padding:3px 10px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:11px;font-weight:var(--fw-extra);font-family:inherit;cursor:pointer;transition:all .12s}
+.qe-chip:hover{border-color:var(--b);color:var(--b)}
+.qe-chip.recorded{border-color:rgba(0,217,126,.3);background:rgba(0,217,126,.06);color:var(--g)}
+
+/* ══ Completeness bar ══════════════════════════════════════════════ */
+.compl-row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim2);margin-top:4px}
+.compl-track{flex:1;max-width:80px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+.compl-fill{height:100%;border-radius:2px;background:var(--g);transition:width .3s}
+
+/* ══ Similar order suggestion ══════════════════════════════════════ */
+.sim-card{background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.2);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sim-info{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--dim2)}
+.sim-info b{color:var(--snow)}
+
+/* ══ Supplier stats badge ══════════════════════════════════════════ */
+.sup-stats{font-size:9px;color:var(--dim2);margin-top:2px;display:flex;gap:8px}
+
+/* ══ Pin button ════════════════════════════════════════════════════ */
+.pin-btn{position:absolute;top:6px;inset-inline-end:6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}
+.wl-card:hover .pin-btn,.pin-btn.pinned{opacity:1}
+.pin-btn.pinned{color:var(--y);border-color:rgba(255,193,7,.4);background:rgba(255,193,7,.08)}
 </style>
 </head>
 <body>
@@ -340,6 +385,8 @@
       <div class="day-prog"><div class="day-fill" id="day-fill" style="width:0%"></div></div>
       <span id="day-pct" style="font-size:10px;font-weight:var(--fw-extra)"></span>
     </div>
+    <!-- #4 شريط الوردية -->
+    <div class="shift-bar" id="shift-bar" style="display:none"></div>
   </div>
 
   <div class="ws-wrap" style="flex:1;min-height:0">
@@ -418,6 +465,7 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { orderActions } from "./order-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
 import { getCostTemplates, saveCostTemplate } from "./core/cost-template-actions.js";
+import { uploadOrderFile } from "./core/storage-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -446,6 +494,9 @@ let loaded=false, selectedId=null, detailTab='main', editCostIdx=-1, costFormPro
 let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
 let __started=false;
+let shiftStart=Date.now(), shiftDone=0, shiftCosts=0;
+let pinnedIds=new Set(JSON.parse(localStorage.getItem('exec-pinned')||'[]'));
+let prodChecks={};
 
 // ── Helpers ────────────────────────────────────────────────────────
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG',{maximumFractionDigits:0});
@@ -461,6 +512,45 @@ const designUrl=o=>o.printFinalUrl||o.designFileUrl||(o.designFiles||[])[0]?.url
 
 // urgency score (5 = late, 3 = no-sup, 1 = no-cost)
 const urgency=o=>{let s=0;if(o.deadline&&new Date(o.deadline)<new Date())s+=5;if(hasNoSup(o))s+=3;if(hasNoCost(o))s+=1;return s;};
+const savePins=()=>localStorage.setItem('exec-pinned',JSON.stringify([...pinnedIds]));
+
+// ── #2 Similar orders (same product name with costs) ──────────────
+const _normName=s=>(s||'').replace(/[٠-٩0-9×x]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+const findSimilar=o=>{
+  const names=new Set((o.products||[]).map(p=>_normName(p.name)));
+  return orders.filter(x=>x._id!==o._id&&(x.costItems||[]).length>0&&
+    (x.products||[]).some(p=>names.has(_normName(p.name)))).slice(0,3);
+};
+
+// ── #5 Expected cost types per product ────────────────────────────
+const getExpectedTypes=prod=>{
+  const pt=(prod.printType||'').toLowerCase();
+  return masterCategories
+    .filter(c=>c.isCostItem!==false&&(!c.printTypes?.length||c.printTypes.some(t=>(t||'').toLowerCase().includes(pt)||pt.includes((t||'').toLowerCase()))))
+    .map(c=>c.label);
+};
+const getCompleteness=(costs,pi,prod)=>{
+  const exp=getExpectedTypes(prod);
+  const rec=new Set(costs.filter(c=>c.prodIdx===pi).map(c=>c.type));
+  const done=exp.filter(t=>rec.has(t)).length;
+  return{expected:exp,recorded:rec,pct:exp.length?Math.round(done/exp.length*100):0};
+};
+
+// ── #7 Derive production checklist ────────────────────────────────
+const deriveChecklist=prod=>{
+  const steps=[];
+  steps.push(prod.printType==='digital'?'طباعة ديجيتال':prod.printType==='offset'?'طباعة أوفست':'طباعة');
+  (prod.extras||[]).forEach(e=>steps.push(e));
+  steps.push('مراجعة جودة');
+  return steps;
+};
+
+// ── #8 Supplier stats from loaded orders ──────────────────────────
+const getSupStats=sid=>{
+  const so=orders.filter(o=>(o.products||[]).some(p=>p.supplierId===sid));
+  return{active:so.length,done:so.filter(o=>deriveSt(o)==='done').length,
+    prob:so.filter(o=>deriveSt(o)==='problem').length};
+};
 
 // ── Cost type select options (same source as exec-cost-entry: master_lists/supplier_categories) ──
 function _buildTypeOptions(sel=''){
@@ -623,6 +713,15 @@ function renderKPIs(){
     document.getElementById('day-fill').style.width=pct+'%';
     document.getElementById('day-pct').textContent=pct+'%';
   }
+  // #4 شريط الوردية
+  const elapsed=Math.round((Date.now()-shiftStart)/60000);
+  const hrs=Math.floor(elapsed/60),mins=elapsed%60;
+  document.getElementById('shift-bar').innerHTML=
+    `<span class="shift-stat">⏱ <b>${hrs?hrs+'س ':''}${mins}د</b></span>`+
+    `<span class="shift-stat">✅ أنجزت <b>${shiftDone}</b></span>`+
+    `<span class="shift-stat">💰 سجلت <b>${shiftCosts}</b> بند</span>`+
+    (shiftDone&&elapsed?`<span class="shift-stat">⚡ <b>${Math.round(elapsed/shiftDone)}</b> د/أوردر</span>`:'');
+  document.getElementById('shift-bar').style.display=shiftDone||shiftCosts?'flex':'none';
 }
 
 // ── Filtered list ──────────────────────────────────────────────────
@@ -634,8 +733,10 @@ function filtered(){
   else if(filterK==='nocost') l=l.filter(hasNoCost);
   else if(filterK!=='all') l=l.filter(o=>deriveSt(o)===filterK);
   if(searchQ) l=l.filter(o=>(o.clientName||'').toLowerCase().includes(searchQ)||(oCode(o)).toLowerCase().includes(searchQ));
-  // 5. ترتيب ذكي: الأكثر إلحاحاً أولاً ثم الـ deadline
+  // #10 pinned first, then urgency, then deadline
   return l.slice().sort((a,b)=>{
+    const pa=pinnedIds.has(a._id)?1:0,pb=pinnedIds.has(b._id)?1:0;
+    if(pa!==pb)return pb-pa;
     const d=urgency(b)-urgency(a); if(d)return d;
     const da=a.deadline?new Date(a.deadline):new Date(9999,0);
     const db2=b.deadline?new Date(b.deadline):new Date(9999,0);
@@ -687,7 +788,9 @@ function renderList(){
     const mineStr=ismine&&!mineOnly?' · <span style="color:var(--b)">لي</span>':'';
     const lateTag=late?' <span class="bdg bdg-danger" style="font-size:8px">⏰</span>':'';
     const clientLine=`<div class="wl-client-line">👤 ${esc(o.clientName||'—')} · ${esc(oCode(o))}${agentStr}${mineStr}${lateTag}${costSum?` · ${costSum}`:''}</div>`;
+    const isPinned=pinnedIds.has(o._id);
     return `<div class="wl-card${selectedId===o._id?' active':''}${selectMode?' sel-mode':''}" data-id="${esc(o._id)}" onclick="handleCardClick(event,'${esc(o._id)}')">
+      <button type="button" class="pin-btn${isPinned?' pinned':''}" onclick="event.stopPropagation();togglePin('${esc(o._id)}')" title="${isPinned?'إلغاء التثبيت':'تثبيت أعلى'}">${isPinned?'📌':'📍'}</button>
       <div class="wl-check${isSel?' checked':''}" data-check="${esc(o._id)}"></div>
       ${imgSrc?`<img class="wl-thumb" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'">`:
                `<div class="wl-thumb-ph" style="color:var(--dim2);opacity:.4">🏭</div>`}
@@ -718,6 +821,7 @@ window.handleCardClick=function(e,id){
 window.setFilter=function(k){filterK=k;renderList();};
 window.setMine=function(v){mineOnly=v;syncMine();renderList();};
 window.onSearch=function(v){searchQ=v.toLowerCase().trim();renderList();};
+window.togglePin=function(id){if(pinnedIds.has(id))pinnedIds.delete(id);else pinnedIds.add(id);savePins();renderList();};
 window.setSupFilter=function(v){supFilter=v;renderList();};
 function syncMine(){document.getElementById('btn-mine').classList.toggle('on',mineOnly);document.getElementById('btn-all').classList.toggle('on',!mineOnly);}
 
@@ -876,6 +980,16 @@ function renderDetail(){
       </div>
       <div class="cost-progress"><div class="cost-progress-fill" style="width:${totalCostVal?Math.round(paidVal/totalCostVal*100):0}%"></div></div>`:'';
 
+    // ── #2 Similar order suggestion ──
+    const simOrders=!costs.length?findSimilar(o):[];
+    const simHTML=simOrders.map(s=>{
+      const sc=(s.costItems||[]).length,st2=orderCost(s);
+      return`<div class="sim-card">
+        <div class="sim-info">📋 <b>${esc(oCode(s))}</b> · ${esc(s.clientName||'—')} · <b>${sc}</b> بند · <b>${fn(st2)}</b> ج</div>
+        <button type="button" class="act act-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" data-act="copycosts" data-src="${esc(s._id)}">نسخ التكاليف</button>
+      </div>`;
+    }).join('');
+
     // ── Cost items grouped by product ──
     const _costCard=(c)=>{
       const idx=c._idx;
@@ -906,14 +1020,16 @@ function renderDetail(){
     products.forEach((p,pi)=>{
       const pCosts=indexedCosts.filter(c=>c.prodIdx===pi);
       const pTotal=pCosts.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+      const comp=getCompleteness(costs,pi,p);
       itemsHTML+=`<div style="margin-bottom:10px">
-        <div style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--b);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:5px">
+        <div style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--b);margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:5px">
           <span style="display:flex;align-items:center;gap:5px">📦 ${esc(p.name||('منتج '+(pi+1)))} ${p.qty?`<span style="color:var(--dim2);font-weight:var(--fw-extra)">×${esc(p.qty)}</span>`:''}</span>
           <span style="display:flex;align-items:center;gap:6px">
             ${pCosts.length?`<span style="font-size:10px;color:var(--y);font-weight:var(--fw-heavy)">${fn(pTotal)} ج · ${pCosts.length} بند</span>`:`<span style="font-size:10px;color:var(--dim2)">لا توجد بنود</span>`}
             <button type="button" class="edit-btn" style="color:var(--b);border-color:rgba(59,158,255,.3)" data-act="addcostfor" data-pidx="${pi}">➕</button>
           </span>
         </div>
+        ${comp.expected.length?`<div class="compl-row"><span>${comp.pct}% مكتمل</span><div class="compl-track"><div class="compl-fill" style="width:${comp.pct}%"></div></div><span>${[...comp.expected].filter(t=>!comp.recorded.has(t)).slice(0,3).map(t=>'⬜ '+esc(t)).join(' · ')||'✅'}</span></div>`:''}
         ${pCosts.map(_costCard).join('')}
       </div>`;
     });
@@ -929,6 +1045,12 @@ function renderDetail(){
       <div class="wd-sec-body">${itemsHTML}</div>
     </div>`;
 
+    // ── #5 Quick entry strip ──
+    const formProdForQE=costFormProdIdx>=0&&costFormProdIdx<products.length?products[costFormProdIdx]:products[0];
+    const qeTypes=formProdForQE?getExpectedTypes(formProdForQE):[];
+    const qeRecorded=new Set(costs.filter(c=>c.prodIdx===costFormProdIdx).map(c=>c.type));
+    const qeHTML=qeTypes.length?`<div class="qe-strip">${qeTypes.map(t=>`<button type="button" class="qe-chip${qeRecorded.has(t)?' recorded':''}" data-act="qefill" data-type="${esc(t)}">${qeRecorded.has(t)?'✓ ':''}${esc(t)}</button>`).join('')}</div>`:'';
+
     // ── Add / Edit cost form ──
     const isEditing=editCostIdx>=0;
     const editItem=isEditing?costs[editCostIdx]:null;
@@ -936,6 +1058,7 @@ function renderDetail(){
     const formProdName=formProd>=0&&formProd<products.length?products[formProd].name:'عام';
     const formHTML=`<div class="cost-form-wrap${isEditing?' editing':''}" id="cost-form-area">
       <div class="cost-form-title">${isEditing?'✏️ تعديل بند':`➕ إضافة بند — <span style="color:var(--b)">📦 ${esc(formProdName)}</span>`}</div>
+      ${!isEditing?qeHTML:''}
       <div class="cost-form">
         <div><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="cf-type">${_buildTypeOptions(editItem?.type||'')}</select></div>
         <div><div class="cf-lbl">المبلغ *</div><input type="number" class="cf-inp" id="cf-total" value="${editItem?parseFloat(editItem.total)||'':''}" placeholder="0" min="0"></div>
@@ -998,7 +1121,8 @@ function renderDetail(){
         <div class="cf-full"><button type="button" class="act act-save act-full" data-act="savetmpl">حفظ في المكتبة</button></div>
       </div>
     </div>`:'';
-    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}</div>`;
+    const costCenterLink=`<a href="exec-cost-entry.html?id=${esc(o._id)}" class="act act-ghost act-full" style="margin-top:6px;text-decoration:none;justify-content:center">🧮 فتح مركز التكاليف المتقدم</a>`;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${simHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
     return;
   }
 
@@ -1024,19 +1148,34 @@ function renderDetail(){
     <div class="jstep ${s.state}"><div class="jdot"></div><div class="jlbl">${s.lbl}</div></div>
   `).join('')}</div>`;
 
-  // ── Alert bar ──
+  // ── #6 Smart Alert bar ──
   const alerts=[];
-  if(o.deadline&&new Date(o.deadline)<new Date()) alerts.push(`<span class="achip achip-r">⏰ متأخر عن الموعد</span>`);
+  if(o.deadline&&new Date(o.deadline)<new Date()){
+    const daysLate=Math.ceil((Date.now()-new Date(o.deadline).getTime())/86400000);
+    alerts.push(`<span class="achip achip-r">⏰ متأخر ${daysLate} يوم</span>`);
+  }
   if(!o.productionAgent) alerts.push(`<span class="achip achip-b">👷 بدون مندوب تنفيذ</span>`);
   const noSupCount=products.filter(p=>!p.supplierId).length;
   if(noSupCount) alerts.push(`<span class="achip achip-y">🏭 ${noSupCount} منتج بدون مورد</span>`);
-  if(canCost()&&!costs.length) alerts.push(`<span class="achip achip-y">💰 لم تُسجَّل تكاليف بعد</span>`);
+  if(canCost()&&!costs.length){
+    const sim=findSimilar(o);
+    alerts.push(`<span class="achip achip-y">💰 لم تُسجَّل تكاليف${sim.length?' — '+sim.length+' أوردر مشابه متاح للنسخ':''}</span>`);
+  }
+  if(canCost()&&costs.length){
+    const avgCost=orders.filter(x=>x._id!==o._id&&(x.costItems||[]).length).reduce((acc,x)=>{acc.sum+=orderCost(x);acc.n++;return acc;},{sum:0,n:0});
+    if(avgCost.n>2){const avg=avgCost.sum/avgCost.n;const cur=orderCost(o);if(cur>avg*1.4) alerts.push(`<span class="achip achip-y">📊 تكلفة أعلى من المتوسط بـ ${Math.round((cur/avg-1)*100)}%</span>`);}
+  }
   const alertBar=alerts.length?`<div class="alert-bar">${alerts.join('')}</div>`:'';
 
 
-  // ── Products — clean execution cards ──
+  // ── Products — execution cards with #3 ship + #7 checklist + #8 sup stats + #9 photos ──
   const prodsHTML=products.length?products.map((p,i)=>{
     const cur=p.execStatus||'pending';
+    const ck=deriveChecklist(p);
+    const checkKey=o._id+'_'+i;
+    if(!prodChecks[checkKey])prodChecks[checkKey]=new Set();
+    const supSt=p.supplierId?getSupStats(p.supplierId):null;
+    const photos=(o.productionPhotos||[]).filter(ph=>ph.prodIdx===i||ph.prodIdx==null);
     return `<div class="prd-item">
       <div class="prd-name">${esc(p.name||('منتج '+(i+1)))} ${p.qty?`<span style="color:var(--b);font-weight:var(--fw-extra);font-size:12px">×${esc(p.qty)}</span>`:''}</div>
       <div class="prd-status-row">${EXEC.map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>
@@ -1047,6 +1186,13 @@ function renderDetail(){
           ${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===(p.supplierId||'')?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}
         </select>
       </div>
+      ${supSt?`<div class="sup-stats">📊 ${supSt.active} نشط · ✅ ${supSt.done} مكتمل${supSt.prob?' · ⚠️ '+supSt.prob+' مشكلة':''}</div>`:''}
+      <div class="prod-cl">${ck.map(s=>`<button type="button" class="cl-item${prodChecks[checkKey].has(s)?' checked':''}" data-act="togglecheck" data-ck="${esc(checkKey)}" data-step="${esc(s)}">${prodChecks[checkKey].has(s)?'✓':''} ${esc(s)}</button>`).join('')}</div>
+      <div class="photo-sec">
+        ${photos.map(ph=>`<img src="${esc(ph.url)}" class="photo-thumb" title="${esc(ph.fileName||'')}" onclick="window.open('${esc(ph.url)}','_blank')">`).join('')}
+        <label class="photo-add" title="رفع صورة إنتاج"><input type="file" accept="image/*" style="display:none" data-act="uploadphoto" data-pidx="${i}">📷</label>
+      </div>
+      ${cur==='done'&&products.length>1&&st!=='done'?`<button type="button" class="prd-ship-btn" data-act="shipproduct" data-pidx="${i}">📦 شحن هذا المنتج فقط</button>`:''}
     </div>`;
   }).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد منتجات</div>';
 
@@ -1147,7 +1293,34 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       const payload={type,total,supplierId,supplierName,note};
       if(walletId&&!isEdit) payload.walletId=walletId;
       r=await orderActions.recordCostItem({...base,prodIdx,payload,wallets:walletId?wallets:[],isEdit,editIdx:isEdit?editCostIdx:undefined,allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label)});
-      if(r?.ok) editCostIdx=-1;
+      if(r?.ok){editCostIdx=-1;shiftCosts++;renderKPIs();}
+    } else if(act==='qefill'){
+      const type=btn.dataset.type;
+      const sel=document.getElementById('cf-type');if(sel){sel.value=type;}
+      const inp=document.getElementById('cf-total');if(inp){inp.focus();inp.select();}
+      btn.disabled=false;return;
+    } else if(act==='copycosts'){
+      const srcId=btn.dataset.src;
+      const src=orders.find(x=>x._id===srcId);
+      if(!src||!(src.costItems||[]).length){toast('لا توجد بنود للنسخ','warn');btn.disabled=false;return;}
+      let ok=0,fail=0;
+      for(const c of src.costItems){
+        const ri=await orderActions.recordCostItem({...base,prodIdx:c.prodIdx??0,payload:{type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId||'',supplierName:c.supplierName||'',note:c.note||''},wallets:[],allowedTypes:masterCategories.filter(x=>x.isCostItem!==false).map(x=>x.label)});
+        if(ri?.ok){ok++;shiftCosts++;}else fail++;
+      }
+      renderKPIs();
+      toast(ok?`✓ نُسخ ${ok} بند${fail?' ('+fail+' فشل)':''}`:' تعذّر النسخ',ok?'ok':'err');
+      btn.disabled=false;return;
+    } else if(act==='togglecheck'){
+      const ck=btn.dataset.ck,step=btn.dataset.step;
+      if(!prodChecks[ck])prodChecks[ck]=new Set();
+      if(prodChecks[ck].has(step))prodChecks[ck].delete(step);else prodChecks[ck].add(step);
+      renderDetail();btn.disabled=false;return;
+    } else if(act==='shipproduct'){
+      const pidx=parseInt(btn.dataset.pidx,10);
+      if(!confirm(`شحن المنتج رقم ${pidx+1} فقط — باقي المنتجات ستبقى في الإنتاج. متأكد؟`)){btn.disabled=false;return;}
+      r=await orderActions.submitProductionToShipping?.({...base,prodIdx:pidx}).catch(()=>null);
+      if(!r) r=await orderActions.submitToShipping({...base,bypassWarnings:true}).catch(err=>({ok:false,errors:[err.message]}));
     } else if(act==='delcost'){
       const cidx=parseInt(btn.dataset.cidx,10);
       if(!confirm('حذف هذا البند؟')){btn.disabled=false;return;}
@@ -1168,20 +1341,43 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       }
       toast((sr?.errors||[])[0]||'تعذر الحفظ','err');btn.disabled=false;return;
     }
-    if(r?.ok){toast(r.warnings?.length?'تم ✓ · '+r.warnings[0]:'تم ✓','ok');if(act==='toShip'){selectedId=null;document.body.classList.remove('detail-open');renderList();}}
+    if(r?.ok){
+      if(act==='toShip'||act==='shipproduct'){shiftDone++;renderKPIs();}
+      toast(r.warnings?.length?'تم ✓ · '+r.warnings[0]:'تم ✓','ok');
+      if(act==='toShip'){selectedId=null;document.body.classList.remove('detail-open');renderList();}
+    }
     else toast((r?.errors||[])[0]||'تعذّر','err');
   }catch(err){console.warn('[exec-ws]',act,err);toast(err.message||'خطأ','err');}
   btn.disabled=false;
 });
 
-// ── Supplier per product (select change) ──────────────────────────
+// ── Supplier per product + #9 Photo upload (change events) ────────
 document.getElementById('ws-detail').addEventListener('change',async e=>{
-  const sel=e.target.closest('[data-act="setsup"]');if(!sel||!selectedId)return;
-  const prodIdx=parseInt(sel.dataset.pidx,10),supplierId=sel.value;
-  const supplierName=sel.value?(sel.options[sel.selectedIndex]?.dataset.name||''):'';
-  const r=await orderActions.setProductSupplier({db,orderId:selectedId,prodIdx,supplierId,supplierName,userId:me.uid,userName:me.name});
-  if(r?.ok) toast('تم تحديث المورد ✓','ok');
-  else toast((r?.errors||[])[0]||'تعذّر','err');
+  const sel=e.target.closest('[data-act="setsup"]');
+  if(sel&&selectedId){
+    const prodIdx=parseInt(sel.dataset.pidx,10),supplierId=sel.value;
+    const supplierName=sel.value?(sel.options[sel.selectedIndex]?.dataset.name||''):'';
+    const r=await orderActions.setProductSupplier({db,orderId:selectedId,prodIdx,supplierId,supplierName,userId:me.uid,userName:me.name});
+    if(r?.ok) toast('تم تحديث المورد ✓','ok');
+    else toast((r?.errors||[])[0]||'تعذّر','err');
+    return;
+  }
+  const fileIn=e.target.closest('[data-act="uploadphoto"]');
+  if(fileIn&&selectedId&&fileIn.files?.length){
+    const file=fileIn.files[0];
+    if(!file.type.startsWith('image/')){toast('صور فقط','warn');return;}
+    toast('جارٍ الرفع…','ok');
+    try{
+      const res=await uploadOrderFile({orderId:selectedId,file,kind:'production'});
+      const o=orders.find(x=>x._id===selectedId);
+      if(o){
+        if(!o.productionPhotos)o.productionPhotos=[];
+        o.productionPhotos.push({url:res.url,fileName:res.fileName,prodIdx:parseInt(fileIn.dataset.pidx,10),ts:Date.now()});
+      }
+      toast('تم رفع الصورة ✓','ok');
+      renderDetail();
+    }catch(err){toast('فشل الرفع: '+err.message,'err');}
+  }
 });
 </script>
 </body>
