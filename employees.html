@@ -130,6 +130,7 @@
     <div id="emp-alerts" class="emp2-alerts-wrap"></div>
     <!-- لوحة الحضور اليومية المصغّرة (Phase-6) -->
     <div id="att-strip" class="emp2-att-strip"></div>
+    <div id="pending-strip"></div>
     <div id="dept-overview"></div>
     <div class="emp2-section-hdr">
       <span class="emp2-section-title">👥 فريق العمل</span>
@@ -281,6 +282,7 @@ import { buildBoardSummaryHTML } from "./features/attendance-board/render.js";
 import { buildAllEmployeeModalsHTML } from "./features/employees/views/render-employees-modals.js";
 import { openQuickAction } from "./features/employee-control/quick-actions.js";
 import { buildDeptOverviewHTML } from "./features/employees/views/render-employees-team.js";
+import { buildPendingStripHTML } from "./features/employees/views/render-employees-pending.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -327,10 +329,11 @@ if(_ps.hasSnapshots)_ps.restoreSnapshots();
 const PAGE_SIZE=20;
 let currentPage=1;
 // Render scheduler (debounces multiple snapshot bursts into one paint)
-let __statsRaf=0,__listRaf=0,__alertsRaf=0;
+let __statsRaf=0,__listRaf=0,__alertsRaf=0,__pendRaf=0;
 const scheduleStats=()=>{if(__statsRaf)return;__statsRaf=requestAnimationFrame(()=>{__statsRaf=0;updateStats();});};
 const scheduleList=()=>{if(__listRaf)return;__listRaf=requestAnimationFrame(()=>{__listRaf=0;renderList();});};
 const scheduleAlerts=()=>{if(__alertsRaf)return;__alertsRaf=requestAnimationFrame(()=>{__alertsRaf=0;renderAlerts();});};
+const schedulePending=()=>{if(__pendRaf)return;__pendRaf=requestAnimationFrame(()=>{__pendRaf=0;renderPendingStrip();});};
 // Caches — invalidated by version counters
 let __ordersVer=0,__empVer=0,__attVer=0,__hrVer=0; // __hrVer: أهداف/إجازات/إخفاقات (مدخلات السكور)
 let __lastActivityMap=null,__lastActivityVer=-1;
@@ -480,6 +483,17 @@ function renderAlerts(){
   if(shouldAutoCollapse&&!__alertsCollapsed)__alertsCollapsed=true;
   const dismissedCount=__dismissedAlerts.size;
   el.innerHTML=buildEmployeesAlertsHTML({visible,dismissedCount,collapsed:__alertsCollapsed,escAttr});
+}
+
+function renderPendingStrip(){
+  const el=document.getElementById('pending-strip');if(!el)return;
+  if(!canDo('manage_attendance',currentRole,__myUserDoc?.permissions)){el.innerHTML='';return;}
+  const empNameMap=new Map();
+  employees.forEach(e=>{empNameMap.set(e._id,e.name||'—');if(e.authUid)empNameMap.set(e.authUid,e.name||'—');});
+  const pendingLeaves=empLeavesAll.filter(lv=>lv.status==='pending');
+  const pendingAppeals=empIncidentsAll.filter(i=>i.appeal&&i.appeal.status==='pending');
+  const pendingPerms=attPermsToday.filter(p=>p.status==='pending');
+  el.innerHTML=buildPendingStripHTML({pendingLeaves,pendingAppeals,pendingPerms,empNameMap});
 }
 
 // ══ EDIT EMPLOYEE ══
@@ -676,7 +690,7 @@ onAuthStateChanged(auth,async u=>{
   // إخفاقات كل الموظفين — مدخل خصم الجودة في computeScore (مصدر واحد للسكور)
   dataCache.subscribe(cachedQuery('employee_incidents').limit(QL.EMPLOYEE_INCIDENTS).build(),(docs)=>{
     empIncidentsAll=docs||[];
-    __hrVer++;scheduleStats();scheduleList();
+    __hrVer++;scheduleStats();scheduleList();schedulePending();
   });
   dataCache.subscribe(cachedQuery('employee_evaluations').limit(QL.EMPLOYEE_EVALUATIONS).build(),(docs)=>{
     empEvaluations=docs||[];
@@ -688,7 +702,7 @@ onAuthStateChanged(auth,async u=>{
     window.__rawEmployees=raw;
     __empVer++;__empSnapLoaded=true;_ps.markFresh();
     if(!__urlLoaded){loadURL();__urlLoaded=true;}
-    scheduleStats();scheduleList();scheduleAlerts();fillWalletSelects();renderSelfFileBanner();
+    scheduleStats();scheduleList();scheduleAlerts();schedulePending();fillWalletSelects();renderSelfFileBanner();
   });
   dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(QL.ORDERS_OPERATIONAL).build(),(docs)=>{
     allOrders=docs||[];
@@ -710,11 +724,11 @@ onAuthStateChanged(auth,async u=>{
   });
   dataCache.subscribe(cachedQuery('attendance_permissions').where('date','==',todayStr()).limit(QL.ATTENDANCE_PERMISSIONS).build(),(docs)=>{
     attPermsToday=docs||[];
-    scheduleList();
+    scheduleList();schedulePending();
   });
   dataCache.subscribe(cachedQuery('employee_leaves').limit(QL.EMPLOYEE_LEAVES).build(),(docs)=>{
     empLeavesAll=docs||[];
-    __hrVer++;scheduleStats();scheduleList();
+    __hrVer++;scheduleStats();scheduleList();schedulePending();
   });
 });
 
@@ -1786,6 +1800,32 @@ document.getElementById('dept-overview')?.addEventListener('click',e=>{
   currentPage=1;syncURL();renderList();
 });
 
+// Pending actions strip — delegated
+document.getElementById('pending-strip')?.addEventListener('click',async e=>{
+  const btn=e.target.closest('[data-act]');if(!btn)return;
+  const act=btn.dataset.act,id=btn.dataset.id;
+  if(!id)return;
+  btn.disabled=true;
+  if(act==='pend-approve-leave'||act==='pend-reject-leave'){
+    const r=await employeeActions.decideEmployeeLeave({db,leaveId:id,decision:act==='pend-approve-leave'?'approved':'rejected',decidedBy:currentUser?.uid||'',decidedByName:userName});
+    toast(r.ok?(act==='pend-approve-leave'?'✅ تم اعتماد الإجازة':'🚫 تم رفض الإجازة'):('❌ '+(r.errors||[]).join(' · ')),r.ok?'ok':'err');
+    if(!r.ok)btn.disabled=false;
+    return;
+  }
+  if(act==='pend-accept-appeal'||act==='pend-reject-appeal'){
+    const r=await employeeActions.decideIncidentAppeal({db,incidentId:id,decision:act==='pend-accept-appeal'?'accepted':'rejected',userId:currentUser?.uid||'',userName});
+    toast(r.ok?(act==='pend-accept-appeal'?'✅ تم قبول التظلّم':'🚫 تم رفض التظلّم'):('❌ '+(r.errors||[]).join(' · ')),r.ok?'ok':'err');
+    if(!r.ok)btn.disabled=false;
+    return;
+  }
+  if(act==='pend-approve-perm'||act==='pend-reject-perm'){
+    const r=await employeeActions.decideAttendancePermission({db,permissionId:id,decision:act==='pend-approve-perm'?'approved':'rejected',decidedBy:currentUser?.uid||'',decidedByName:userName});
+    toast(r.ok?(act==='pend-approve-perm'?'✅ تم اعتماد الإذن':'🚫 تم رفض الإذن'):('❌ '+(r.errors||[]).join(' · ')),r.ok?'ok':'err');
+    if(!r.ok)btn.disabled=false;
+    return;
+  }
+});
+
 // Filter chips (rendered into #filter-chips) — delegated
 document.getElementById('filter-chips')?.addEventListener('click',e=>{
   if(e.target.closest('[data-act="remove-chip"]')){ removeChip(e.target.closest('[data-act="remove-chip"]').dataset.key); return; }
@@ -1826,6 +1866,8 @@ document.getElementById('list')?.addEventListener('click',e=>{
     if(mfin){ closeActMenu(); quickAction('finance',mfin.dataset.eid,mfin.dataset.uid||'',mfin.dataset.ename); return; }
     const mprm=e.target.closest('[data-act="menu-perms"]');
     if(mprm){ closeActMenu(); quickAction('perms',mprm.dataset.eid,mprm.dataset.uid||'',mprm.dataset.ename); return; }
+    const mdm=e.target.closest('[data-act="menu-dm"]');
+    if(mdm){ closeActMenu(); const empUid=mdm.dataset.uid; if(empUid&&currentUser?.uid){ const pair=[currentUser.uid,empUid].sort(); const go=typeof navigatePage==='function'?navigatePage:u=>location.href=u; go(`inbox.html?conv=dm_${pair.join('_')}`); } return; }
     const ms=e.target.closest('[data-act="menu-toggle-status"]');
     if(ms){ closeActMenu(); toggleEmpStatus(ms.dataset.eid,ms.dataset.newstatus); return; }
     if(e.target.closest('[data-act="menu-close"]')){ closeActMenu(); return; } // tel:/wa links navigate naturally

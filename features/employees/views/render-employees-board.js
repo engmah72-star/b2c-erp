@@ -181,6 +181,7 @@ export function buildEmployeeCardHTML(e, ctx) {
           <div class="act-sep"></div>
           ${phone?`<a href="tel:${phone}" class="emp2-act-link" data-act="menu-close">📞 اتصال</a>`:''}
           ${waHref?`<a href="${waHref}" target="_blank" class="emp2-act-link" data-act="menu-close">💬 واتساب</a>`:''}
+          <button type="button" data-act="menu-dm" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">💬 محادثة</button>
           <div class="act-sep"></div>
           <button type="button" data-act="menu-toggle-status" data-eid="${escAttr(e._id)}" data-newstatus="${isActive?'inactive':'active'}" style="color:${isActive?'var(--y)':'var(--g)'}">${isActive?'⏸ إيقاف الموظف':'▶ تفعيل الموظف'}</button>
         </div>
