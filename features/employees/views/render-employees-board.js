@@ -52,7 +52,7 @@ export function buildEmployeesEmptyHTML({ hasEmployees, hasFilter, sug, escAttr 
         </div>`;
 }
 
-/* ── Single employee card (former renderList lines 1066–1195) ── */
+/* ── Single employee card ── */
 export function buildEmployeeCardHTML(e, ctx) {
   const { paidEmpIds, attendedToday, todayAttMap, attendedInPeriod, activeOrdsAll,
           periodOrders, allOrders, lastActivityMap, periodFilter, pLbl,
@@ -62,67 +62,50 @@ export function buildEmployeeCardHTML(e, ctx) {
     const isPaid=paidEmpIds.has(e._id);
     const isActive=e.status==='active';
     const uid=e.authUid||e._id;
-    const hasTodayAtt=attendedToday.has(e._id)||attendedToday.has(uid);
     const todayRec=todayAttMap.get(uid)||todayAttMap.get(e._id)||null;
     const monthAtt=attendedInPeriod[e._id]||attendedInPeriod[uid]||0;
     const phone=e.phone||'';
     const waHref=phone?'https://wa.me/2'+phone.replace(/^0/,''):'';
     const activeOrderCnt=activeOrdsAll.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficerId===uid||o.createdBy===uid).length;
     const empSt=isActive?getEmpStatus(uid,e._id,todayRec,activeOrderCnt):{label:'غير نشط',col:'var(--dim2)',bg:'rgba(78,86,114,.12)'};
-    // today attendance status (resolveDayStatus) — drives the dot + a chip + quick actions
     const attSt=isActive&&attStatusMap?(attStatusMap.get(uid)||attStatusMap.get(e._id)||null):null;
     const attMeta=attSt?(ATT_META[attSt.status]||ATT_META.off):null;
     const pendPerms=(isActive&&pendingPermMap?(pendingPermMap.get(e._id)||pendingPermMap.get(uid)):null)||[];
     const kpiScore=isActive?calcKpi(e,uid):0;
     const kpiCol=kpiScore>=90?'var(--g)':kpiScore>=70?'var(--b)':kpiScore>=50?'var(--y)':'var(--r)';
     const lastAct=lastActivityMap.get(e.name)||null;
+    const eSafe=e.name?.replace(/'/g,'')||'';
 
-    // أداء حسب الدور
+    // Role-specific data for metrics strip + performance detail
     const myOrders=periodOrders;
-    let perfHtml='';
+    let roleMetricVal=activeOrderCnt,roleMetricLbl='نشط',perfDetail='';
     if(e.role==='graphic_designer'||e.role==='design_operator'){
       const mine=myOrders.filter(o=>o.designerId===uid||o.designerId===e._id);
       const printed=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage)).length;
       const commission=mine.filter(o=>['printing','production','shipping','archived'].includes(o.stage))
         .reduce((s,o)=>s+((parseFloat(o.salePrice)||0)*(parseFloat(e.commissionPct)||0)/100),0);
-      perfHtml=`<div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">🎨 ${pLbl}</span>
-        <span class="txt-bold-base">${mine.length} تصميم · ${printed} طُبع</span>
-      </div>
-      ${commission>0?`<div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">💸 عمولة</span>
-        <span class="emp2-card-commission">${fn(Math.round(commission))} ج</span>
-      </div>`:''}`;
+      roleMetricVal=mine.length;roleMetricLbl='تصميم';
+      const parts=[];
+      if(printed)parts.push('🎨 '+printed+' طُبع');
+      if(commission>0)parts.push('💸 '+fn(Math.round(commission))+' ج');
+      if(parts.length)perfDetail=`<div class="emp2-card-detail">${parts.join(' · ')}</div>`;
     } else if(e.role==='customer_service'){
       const mine=myOrders.filter(o=>o.createdBy===uid);
       const sales=mine.reduce((s,o)=>s+(parseFloat(o.salePrice)||0),0);
       const allMine=allOrders.filter(o=>o.createdBy===uid);
       const uClients=new Set(allMine.map(o=>o.clientPhone||o.clientId||o.clientName)).size;
-      perfHtml=`<div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">📦 أوردرات ${pLbl}</span>
-        <span class="txt-bold-base">${mine.length} · ${fn(sales)} ج</span>
-      </div>
-      <div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">👤 عملاء (إجمالي)</span>
-        <span class="emp2-card-clients">${uClients} عميل</span>
-      </div>`;
+      roleMetricVal=mine.length;roleMetricLbl='أوردر';
+      perfDetail=`<div class="emp2-card-detail">💰 ${fn(sales)} ج · 👤 ${uClients} عميل</div>`;
     } else if(e.role==='production_agent'){
       const mine=myOrders.filter(o=>o.productionAgent===uid||o.productionAgent===e._id);
       const done=mine.filter(o=>['shipping','archived'].includes(o.stage)).length;
-      perfHtml=`<div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">🏭 تنفيذ</span>
-        <span class="txt-bold-base">${mine.length} أوردر · ${done} مكتمل</span>
-      </div>`;
+      roleMetricVal=mine.length;roleMetricLbl='تنفيذ';
+      if(done)perfDetail=`<div class="emp2-card-detail">✅ ${done} مكتمل</div>`;
     } else if(e.role==='shipping_officer'){
       const mine=myOrders.filter(o=>['shipping','archived'].includes(o.stage)&&(o.shippingOfficerId===uid||o.shippingOfficerId===e._id));
-      perfHtml=`<div class="emp-metric emp2-card-perf">
-        <span class="txt-meta-sm">🚚 شحنات</span>
-        <span class="txt-bold-base">${mine.length}</span>
-      </div>`;
+      roleMetricVal=mine.length;roleMetricLbl='شحنة';
     }
 
-    const eSafe=e.name?.replace(/'/g,'')||'';
-    // KPI ring (SVG): radius=18 → circumference≈113.1
     const ringDash=isActive?(113.1*kpiScore/100).toFixed(1):0;
     const ringHtml=isActive?`<div class="kpi-ring" data-act="open-kpi" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" title="تقييم الأداء">
       <svg width="44" height="44" viewBox="0 0 44 44">
@@ -132,8 +115,10 @@ export function buildEmployeeCardHTML(e, ctx) {
       <div class="ring-num" style="color:${kpiCol}">${kpiScore}</div>
     </div>`:'';
     const avColor=nameToColor(e.name);
+    const paidBadge=isActive?(isPaid?'<span style="color:var(--g)">✓</span>':'<span style="color:var(--y)">⏳</span>'):'';
+    const attCol=monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)';
+
     return `<div class="emp-card" style="--ec:${r.col}">
-      <!-- Header: avatar + name + KPI ring -->
       <div class="emp2-card-head">
         <div class="emp-avatar" style="background:${avColor}">
           ${(e.name||'?')[0].toUpperCase()}
@@ -143,46 +128,40 @@ export function buildEmployeeCardHTML(e, ctx) {
           <div class="emp2-card-name">${e.name||'—'}</div>
           <div class="emp2-card-chiprow">
             <span class="emp-chip" style="background:${r.col}18;color:${r.col};border:1px solid ${r.col}30">${r.ico} ${r.label}</span>
-            ${isActive&&todayRec?`<span class="emp2-card-time">${todayRec.checkInStr||''}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:' ●'}</span>`:''}
             ${isActive&&attMeta?`<span class="emp2-att-chip" style="color:${attMeta.col}">${attMeta.ico} ${attMeta.lbl}${(attSt.lateMinutes||0)>0?' '+attSt.lateMinutes+'د':''}</span>`:''}
+            ${isActive&&todayRec?`<span class="emp2-card-time">${todayRec.checkInStr||''}${todayRec.checkOutStr?' → '+todayRec.checkOutStr:' ●'}</span>`:''}
           </div>
         </div>
         ${ringHtml}
       </div>
 
-      <!-- Salary line -->
-      <div class="emp2-card-salary">
-        <span class="txt-meta-sm">💰 المرتب</span>
-        <div class="emp2-card-salary-r">
-          <span class="emp2-card-salary-amt">${fn(e.baseSalary||0)} ج</span>
-          ${isActive?(isPaid
-            ?`<span class="emp2-card-paid">✅ مصروف</span>`
-            :`<span class="emp2-card-unpaid">⏳ متبقي</span>`):''}
+      <div class="emp2-card-metrics">
+        <div class="emp2-card-metric">
+          <div class="emp2-metric-val">${fn(e.baseSalary||0)}</div>
+          <div class="emp2-metric-lbl">المرتب ${paidBadge}</div>
+        </div>
+        <div class="emp2-card-metric"${isActive?` data-act="open-att" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" title="سجل الحضور"`:''}>
+          <div class="emp2-metric-val" style="color:${isActive?attCol:'var(--dim2)'}">${isActive?monthAtt:'—'}</div>
+          <div class="emp2-metric-lbl">يوم حضور</div>
+        </div>
+        <div class="emp2-card-metric">
+          <div class="emp2-metric-val">${roleMetricVal}</div>
+          <div class="emp2-metric-lbl">${roleMetricLbl}</div>
         </div>
       </div>
 
-      <!-- Performance metrics -->
-      ${perfHtml}
+      ${perfDetail}
 
-      <!-- Attendance row -->
-      ${isActive?`<div class="emp-metric emp2-card-att" data-act="open-att" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" title="اضغط لعرض السجل">
-        <span class="txt-meta-sm">📅 حضور ${pLbl}</span>
-        <span style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:${monthAtt>=20?'var(--g)':monthAtt>=10?'var(--y)':'var(--r)'}">${monthAtt} يوم</span>
-      </div>`:''}
-
-      <!-- Quick attendance actions (manager): central check-in / approve permissions -->
       ${isActive&&canManage&&((attSt&&attSt.status==='absent')||pendPerms.length)?`<div class="emp2-att-actions">
         ${attSt&&attSt.status==='absent'?`<button type="button" class="btn btn-b btn-xs" data-act="att-checkin" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}" data-start="${escAttr(e.workSchedule?.startTime||'')}">✓ تسجيل حضور</button>`:''}
         ${pendPerms.map(p=>`<span class="emp2-att-pend"><span class="bdg-mini">🟡 إذن</span><button type="button" class="btn btn-g btn-xs" data-act="att-approve" data-perm="${escAttr(p._id)}" title="اعتماد">✅</button><button type="button" class="btn btn-ghost btn-xs" data-act="att-reject" data-perm="${escAttr(p._id)}" title="رفض">🚫</button></span>`).join('')}
       </div>`:''}
 
-      <!-- Last activity -->
       ${lastAct?`<div class="emp2-card-lastact">
         <span class="emp2-card-lastact-txt">⚡ ${lastAct.action||'—'}</span>
         <span class="emp2-card-lastact-date">${(lastAct.date||'').slice(5)||''}</span>
       </div>`:''}
 
-      <!-- Primary actions: pay (if needed) + profile + overflow -->
       <div class="emp2-card-actions">
         ${isActive&&!isPaid&&periodFilter==='month_cur'
           ?`<button type="button" class="btn btn-g btn-sm emp2-card-act-pay" data-act="open-pay-one" data-eid="${escAttr(e._id)}">💰 صرف</button>`

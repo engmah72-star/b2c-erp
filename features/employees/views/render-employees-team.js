@@ -1,12 +1,12 @@
 /**
  * Business2Card ERP — features/employees/views/render-employees-team.js
  *
- * ━━━ DEPARTMENT OVERVIEW + KPI DISTRIBUTION (Phase CTO) ━━━
+ * ━━━ DEPARTMENT OVERVIEW + KPI DISTRIBUTION ━━━
  *
  * Pure HTML builder for the department-level team overview strip on
- * employees.html. Shows each department as a compact card with key metrics
- * (headcount, attendance, avg KPI, active orders). Also renders a KPI tier
- * distribution row for quick performance oversight.
+ * employees.html. Shows each department as a card with key metrics
+ * (headcount, attendance progress, avg KPI, active orders) and a
+ * KPI tier distribution row for quick performance oversight.
  *
  * View only — no DOM, no Firestore, no globals (RULE L1.5).
  */
@@ -51,12 +51,12 @@ export function buildDeptOverviewHTML({ employees, calcKpi, attStatusMap, active
         o.shippingOfficerId === uid || o.createdBy === uid).length;
     }, 0);
     const allPresent = presentCount === inDept.length;
-    return { ...dept, count: inDept.length, presentCount, avgKpi, kpiCol, orderCount, allPresent };
+    const attPct = Math.round(presentCount / inDept.length * 100);
+    return { ...dept, count: inDept.length, presentCount, avgKpi, kpiCol, orderCount, allPresent, attPct };
   }).filter(Boolean);
 
   if (!depts.length) return '';
 
-  // KPI tier distribution across all active employees
   const tiers = { excellent: 0, good: 0, attention: 0, danger: 0 };
   active.forEach(e => {
     const score = calcKpi(e, e.authUid || e._id) || 0;
@@ -65,6 +65,8 @@ export function buildDeptOverviewHTML({ employees, calcKpi, attStatusMap, active
     else if (score >= 50) tiers.attention++;
     else tiers.danger++;
   });
+
+  const totalPresent = depts.reduce((s, d) => s + d.presentCount, 0);
 
   const tierHtml = `<div class="emp2-kpi-tiers">
     ${tiers.excellent ? `<span class="emp2-tier" style="--tc:var(--g)" title="ممتاز (90+)">⭐ ${tiers.excellent}</span>` : ''}
@@ -78,18 +80,19 @@ export function buildDeptOverviewHTML({ employees, calcKpi, attStatusMap, active
       <div class="emp2-dept-head">
         <span class="emp2-dept-ico">${d.ico}</span>
         <span class="emp2-dept-name">${d.label}</span>
-        <span class="emp2-dept-cnt">👥 ${d.count}</span>
+        <span class="emp2-dept-cnt">${d.count}</span>
       </div>
       <div class="emp2-dept-metrics">
         <span class="emp2-dept-m" title="حاضر اليوم" style="color:${d.allPresent ? 'var(--g)' : d.presentCount === 0 ? 'var(--r)' : 'var(--dim2)'}">🟢 ${d.presentCount}/${d.count}</span>
         <span class="emp2-dept-m" title="متوسط الأداء" style="color:${d.kpiCol}">📊 ${d.avgKpi}</span>
         ${d.orderCount ? `<span class="emp2-dept-m" title="أوردرات نشطة">📦 ${d.orderCount}</span>` : ''}
       </div>
+      <div class="emp2-dept-prog"><div class="emp2-dept-prog-fill" style="width:${d.attPct}%;background:${d.allPresent ? 'var(--g)' : d.presentCount === 0 ? 'var(--r)' : 'var(--b)'}"></div></div>
     </div>`).join('');
 
   return `<div class="emp2-team-section">
     <div class="emp2-team-hdr">
-      <span class="emp2-team-title">🏢 الأقسام</span>
+      <span class="emp2-team-title">🏢 الأقسام · <span style="color:var(--dim2);font-weight:var(--fw-bold)">${active.length} موظف · ${totalPresent} حاضر</span></span>
       ${tierHtml}
     </div>
     <div class="emp2-dept-grid">${deptsHtml}</div>
