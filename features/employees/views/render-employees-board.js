@@ -165,7 +165,7 @@ export function buildEmployeeCardHTML(e, ctx) {
       <div class="emp2-card-actions">
         ${isActive&&!isPaid&&periodFilter==='month_cur'
           ?`<button type="button" class="btn btn-g btn-sm emp2-card-act-pay" data-act="open-pay-one" data-eid="${escAttr(e._id)}">💰 صرف</button>`
-          :''}
+          :`<button type="button" class="btn btn-ghost btn-sm emp2-card-act-pay" data-act="menu-finance" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">💸 مالي</button>`}
         <a href="employee-profile.html?id=${e._id}" class="btn btn-ghost btn-sm emp2-card-act-profile" data-act="noop">👤 بروفايل</a>
         <button type="button" class="btn btn-ghost btn-sm emp2-card-act-more" data-act="toggle-act-menu" data-eid="${escAttr(e._id)}" aria-label="إجراءات">⋯</button>
         <div class="act-menu" id="am-${e._id}" data-act="menu-stop">
@@ -174,7 +174,10 @@ export function buildEmployeeCardHTML(e, ctx) {
           <div class="act-sep"></div>
           <button type="button" data-act="menu-add-task" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">📋 إسناد مهمة</button>
           <button type="button" data-act="menu-add-incident" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">⚠️ تسجيل ملاحظة</button>
+          <button type="button" data-act="menu-finance" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">💸 مكافأة / خصم</button>
+          <div class="act-sep"></div>
           <button type="button" data-act="menu-schedule" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">🕐 جدول العمل</button>
+          <button type="button" data-act="menu-perms" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">🔐 الصلاحيات</button>
           <div class="act-sep"></div>
           ${phone?`<a href="tel:${phone}" class="emp2-act-link" data-act="menu-close">📞 اتصال</a>`:''}
           ${waHref?`<a href="${waHref}" target="_blank" class="emp2-act-link" data-act="menu-close">💬 واتساب</a>`:''}
