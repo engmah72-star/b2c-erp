@@ -458,8 +458,33 @@
 <!-- Bulk action bar -->
 <div class="bulk-bar" id="bulk-bar">
   <span class="bulk-info" id="bulk-info">0 محدد</span>
-  <button type="button" class="bulk-btn bulk-sup" onclick="openBulkModal()">🏭 تعيين مورد</button>
+  <button type="button" class="bulk-btn bulk-sup" onclick="openBulkModal()">🏭 مورد</button>
+  <button type="button" class="bulk-btn" style="background:rgba(0,217,126,.12);border-color:rgba(0,217,126,.35);color:var(--g)" onclick="bulkShip()">📦 شحن</button>
+  <button type="button" class="bulk-btn" style="background:rgba(255,61,110,.1);border-color:rgba(255,61,110,.3);color:var(--r)" onclick="openCancelModal(true)">❌ إلغاء</button>
   <button type="button" class="bulk-btn bulk-clr" onclick="clearSelection()">✕</button>
+</div>
+
+<!-- Cancel modal -->
+<div class="sup-modal-ov" id="cancel-modal-ov" onclick="if(event.target===this)closeCancelModal()">
+  <div class="sup-modal">
+    <h3>❌ إلغاء أوردر</h3>
+    <div id="cancel-modal-info" style="font-size:var(--fs-xs);color:var(--dim2)"></div>
+    <select id="cancel-reason-sel">
+      <option value="">— اختر السبب —</option>
+      <option value="العميل ألغى التنفيذ">العميل ألغى التنفيذ</option>
+      <option value="مشكلة في التصميم">مشكلة في التصميم</option>
+      <option value="مشكلة في الإنتاج">مشكلة في الإنتاج</option>
+      <option value="أوردر مكرر">أوردر مكرر</option>
+      <option value="خطأ في البيانات">خطأ في البيانات</option>
+      <option value="تعذر التنفيذ">تعذر التنفيذ</option>
+      <option value="سبب آخر">سبب آخر</option>
+    </select>
+    <input type="text" class="cf-inp" id="cancel-note" placeholder="ملاحظة إضافية (اختياري)" style="width:100%">
+    <div class="sup-modal-foot">
+      <button type="button" class="act act-ghost" onclick="closeCancelModal()" style="flex:1;justify-content:center">تراجع</button>
+      <button type="button" class="act" style="flex:2;justify-content:center;background:rgba(255,61,110,.12);border-color:rgba(255,61,110,.4);color:var(--r)" onclick="applyCancelOrder()">❌ تأكيد الإلغاء</button>
+    </div>
+  </div>
 </div>
 
 <div id="toasts"></div>
@@ -889,6 +914,59 @@ window.applyBulkSupplier=async function(){
   toast(`تم تعيين المورد لـ ${ok} ${fail?'· فشل '+fail:''}`,'ok');
   clearSelection();
 };
+
+// ── Bulk ship ─────────────────────────────────────────────────────
+window.bulkShip=async function(){
+  if(!selected.size){toast('حدد أوردر أولاً','warn');return;}
+  const ids=[...selected];
+  const noCost=ids.filter(id=>{const o=orders.find(x=>x._id===id);return o&&!(o.costItems||[]).length;}).length;
+  const msg=noCost
+    ?`سيتم تحريك ${ids.length} أوردر للشحن (${noCost} بدون تكاليف — يمكن تسجيلها لاحقاً). متأكد؟`
+    :`سيتم تحريك ${ids.length} أوردر للشحن. متأكد؟`;
+  if(!confirm(msg))return;
+  let ok=0,fail=0;
+  for(const orderId of ids){
+    let r=await orderActions.submitToShipping({db,orderId,role:me.role,userId:me.uid,userName:me.name}).catch(err=>({ok:false,errors:[err.message]}));
+    if(r&&!r.ok&&(r.warnings||[]).length&&!(r.errors||[]).length){
+      r=await orderActions.submitToShipping({db,orderId,role:me.role,userId:me.uid,userName:me.name,bypassWarnings:true}).catch(err=>({ok:false,errors:[err.message]}));
+    }
+    r?.ok?ok++:fail++;
+  }
+  if(ok){shiftDone+=ok;renderKPIs();}
+  toast(`✓ ${ok} أوردر تم تحريكه للشحن${fail?' · '+fail+' فشل':''}`,'ok');
+  clearSelection();
+};
+
+// ── Cancel modal ──────────────────────────────────────────────────
+let cancelIsBulk=false, cancelSingleId=null;
+window.openCancelModal=function(bulk,singleId){
+  cancelIsBulk=bulk;
+  cancelSingleId=singleId||null;
+  if(bulk&&!selected.size){toast('حدد أوردر أولاً','warn');return;}
+  const n=bulk?selected.size:1;
+  document.getElementById('cancel-modal-info').textContent=`سيتم إلغاء ${n} أوردر — هذا الإجراء لا يمكن التراجع عنه`;
+  document.getElementById('cancel-reason-sel').value='';
+  document.getElementById('cancel-note').value='';
+  document.getElementById('cancel-modal-ov').classList.add('open');
+};
+window.closeCancelModal=function(){document.getElementById('cancel-modal-ov').classList.remove('open');};
+window.applyCancelOrder=async function(){
+  const reason=document.getElementById('cancel-reason-sel').value;
+  const note=document.getElementById('cancel-note').value.trim();
+  if(!reason){toast('اختر سبب الإلغاء','warn');return;}
+  const ids=cancelIsBulk?[...selected]:[cancelSingleId].filter(Boolean);
+  if(!ids.length){toast('لا يوجد أوردر','warn');return;}
+  closeCancelModal();
+  let ok=0,fail=0;
+  for(const orderId of ids){
+    const r=await orderActions.cancelOrder({db,orderId,reason,note,userId:me.uid,userName:me.name}).catch(err=>({ok:false,errors:[err.message]}));
+    r?.ok?ok++:fail++;
+  }
+  toast(`✓ تم إلغاء ${ok} أوردر${fail?' · '+fail+' فشل':''}`,'ok');
+  if(cancelIsBulk)clearSelection();
+  if(!cancelIsBulk&&ok){selectedId=null;document.body.classList.remove('detail-open');renderList();}
+};
+
 function buildSupSel(){
   const usedIds=new Set(orders.flatMap(o=>(o.products||[]).map(p=>p.supplierId).filter(Boolean)));
   const used=suppliers.filter(s=>usedIds.has(s._id));
@@ -1241,6 +1319,7 @@ function renderDetail(){
     ${o.productionAgent?agentHTML:''}
     ${noteHTML}
     ${shipBtn}
+    <button type="button" class="act act-full" style="background:rgba(255,61,110,.06);border-color:rgba(255,61,110,.2);color:var(--r);margin-top:4px" onclick="openCancelModal(false,'${esc(o._id)}')">❌ إلغاء الأوردر</button>
   </div>`;
 }
 
