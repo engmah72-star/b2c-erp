@@ -61,7 +61,7 @@ export function buildBoardSummaryHTML(counts = {}) {
  * @param {boolean} [args.canManage] — show check-in / approve / reject actions
  * @returns {string} HTML
  */
-export function buildAttendanceBoardHTML({ rows = [], canManage = false, showHours = false }) {
+export function buildAttendanceBoardHTML({ rows = [], canManage = false, showHours = false, selfUid = '' }) {
   if (!rows.length) {
     return `<div class="empty-cta"><div class="empty-icon">🕐</div>
       <div class="empty-text">لا يوجد موظفون لعرضهم</div></div>`;
@@ -75,8 +75,15 @@ export function buildAttendanceBoardHTML({ rows = [], canManage = false, showHou
       ? `<span class="txt-meta-sm" style="color:var(--y)">⏰ ${r.lateMinutes}د</span>` : '';
     const otBit = r.overtime
       ? `<span class="txt-meta-sm" style="color:var(--y)" title="${esc(r.overtimeNote || '')}">⏱️ أوفر تايم${r.overtimeNote ? ' · ' + esc(r.overtimeNote) : ''}</span>` : '';
+    const isSelf = selfUid && r.authUid === selfUid;
     const checkinBtn = (canManage && r.canCheckin)
       ? `<button type="button" class="btn btn-b btn-xs" data-act="board-checkin" data-emp="${esc(r.empId)}" data-uid="${esc(r.authUid)}" data-name="${esc(r.name)}" data-start="${esc(r.expectedStart || '')}">✓ حضور</button>`
+      : '';
+    const selfCheckinBtn = (!canManage && isSelf && r.canCheckin)
+      ? `<button type="button" class="btn btn-g btn-xs" data-act="board-self-checkin" data-emp="${esc(r.empId)}" data-uid="${esc(r.authUid)}" data-name="${esc(r.name)}" data-start="${esc(r.expectedStart || '')}">✓ تسجيل حضور</button>`
+      : '';
+    const selfCheckoutBtn = (!canManage && isSelf && r.checkInStr && !r.checkOutStr)
+      ? `<button type="button" class="btn btn-xs" style="border-color:var(--y);color:var(--y)" data-act="board-self-checkout" data-emp="${esc(r.empId)}" data-uid="${esc(r.authUid)}">← تسجيل انصراف</button>`
       : '';
     // overtime confirmation (manager): approve the self-started overtime
     const otOk = (canManage && r.overtime && !r.overtimeApproved)
@@ -106,7 +113,7 @@ export function buildAttendanceBoardHTML({ rows = [], canManage = false, showHou
         </div>
         <div class="ab-meta">
           <span class="ab-badge" style="border-color:${m.color};color:${m.color}">${m.lbl}</span>
-          ${timeBit}${lateBit}${otBit}${otDone}${checkinBtn}${otOk}${hoursBtn}
+          ${timeBit}${lateBit}${otBit}${otDone}${checkinBtn}${selfCheckinBtn}${selfCheckoutBtn}${otOk}${hoursBtn}
         </div>
       </div>
       ${pend}
