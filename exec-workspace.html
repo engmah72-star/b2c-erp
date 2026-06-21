@@ -212,6 +212,12 @@
 .cost-metric.cm-total .cost-metric-val{color:var(--y)}
 .cost-metric.cm-paid .cost-metric-val{color:var(--g)}
 .cost-metric.cm-unpaid .cost-metric-val{color:var(--b)}
+.cost-metric.cm-profit .cost-metric-val{color:var(--g)}
+.cost-metric.cm-loss .cost-metric-val{color:var(--r)}
+.cost-sup-summary{display:flex;flex-wrap:wrap;gap:5px;padding:4px 14px 8px;font-size:11px}
+.cost-sup-chip{padding:3px 9px;border-radius:20px;background:var(--bg2);border:1px solid var(--line);color:var(--dim2);display:inline-flex;align-items:center;gap:4px}
+.cost-sup-chip b{color:var(--y);direction:ltr;font-weight:var(--fw-heavy)}
+.cost-card-audit{font-size:10px;color:var(--dim3);margin-top:2px;display:flex;gap:8px}
 .cost-progress{height:4px;border-radius:2px;background:var(--line);margin:0 14px 6px;overflow:hidden}
 .cost-progress-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--g),var(--b));transition:width .4s}
 
@@ -972,13 +978,25 @@ function renderDetail(){
     const totalCostVal=orderCost(o);
     const paidVal=costs.filter(c=>c.walletId).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const unpaidVal=totalCostVal-paidVal;
+    const salePrice=parseFloat(o.salePrice)||0;
+    const disc=parseFloat(o.discount)||0;
+    const custShip=parseFloat(o.customerShippingFee||o.shippingFee)||0;
+    const grossTotal=salePrice+custShip-disc;
+    const profit=grossTotal-totalCostVal;
+    const profitPct=grossTotal>0?Math.round((profit/grossTotal)*100):0;
+    const isProfit=profit>=0;
     const metricsHTML=costs.length?`
-      <div class="cost-metrics">
-        <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">الإجمالي</div></div>
+      <div class="cost-metrics" style="grid-template-columns:1fr 1fr 1fr 1fr">
+        <div class="cost-metric cm-total"><div class="cost-metric-val">${fn(totalCostVal)}</div><div class="cost-metric-lbl">التكاليف</div></div>
         <div class="cost-metric cm-paid"><div class="cost-metric-val">${fn(paidVal)}</div><div class="cost-metric-lbl">مدفوع</div></div>
         <div class="cost-metric cm-unpaid"><div class="cost-metric-val">${fn(unpaidVal)}</div><div class="cost-metric-lbl">متبقي</div></div>
+        <div class="cost-metric ${isProfit?'cm-profit':'cm-loss'}"><div class="cost-metric-val">${isProfit?'':'-'}${fn(Math.abs(profit))}</div><div class="cost-metric-lbl">${isProfit?'ربح':'خسارة'} ${profitPct}%</div></div>
       </div>
       <div class="cost-progress"><div class="cost-progress-fill" style="width:${totalCostVal?Math.round(paidVal/totalCostVal*100):0}%"></div></div>`:'';
+    // ── Supplier summary chips ──
+    const supMap={};
+    costs.forEach(c=>{const k=c.supplierName||'بدون مورد';supMap[k]=(supMap[k]||0)+(parseFloat(c.total)||0);});
+    const supChipsHTML=Object.keys(supMap).length>1?`<div class="cost-sup-summary">${Object.entries(supMap).map(([name,total])=>`<span class="cost-sup-chip">🏭 ${esc(name)} <b>${fn(total)} ج</b></span>`).join('')}</div>`:'';
 
     // ── #2 Similar order suggestion ──
     const simOrders=!costs.length?findSimilar(o):[];
@@ -1005,6 +1023,7 @@ function renderDetail(){
           ${c.supplierName?`<span class="cost-card-sup">🏭 ${esc(c.supplierName)}</span>`:''}
           ${c.note?`<span class="cost-card-note">📝 ${esc(c.note)}</span>`:''}
         </div>
+        ${c.addedBy||c.date?`<div class="cost-card-audit">${c.addedBy?`<span>👤 ${esc(c.addedBy)}</span>`:''}${c.date||c.addedAt?`<span>📅 ${esc(c.date||c.addedAt)}</span>`:''}</div>`:''}
         <div class="cost-card-bottom">
           <span class="cost-card-amount">${fn(c.total)} ج</span>
           <div class="cost-card-actions">
@@ -1122,7 +1141,7 @@ function renderDetail(){
       </div>
     </div>`:'';
     const costCenterLink=`<a href="exec-cost-entry.html?id=${esc(o._id)}" class="act act-ghost act-full" style="margin-top:6px;text-decoration:none;justify-content:center">🧮 فتح مركز التكاليف المتقدم</a>`;
-    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${simHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${supChipsHTML}${simHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
     return;
   }
 
