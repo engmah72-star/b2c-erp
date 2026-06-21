@@ -72,7 +72,7 @@ try {
   const SIDEBAR_PAGES = [
     // ─── الرئيسية (main) ───
     { file:'my-requests.html',       label:'طلباتي',           ico:'📋', group:'main',   public:true },
-    { file:'my-profile.html',        label:'ملفي',             ico:'👤', group:'main',   public:true },
+    { file:'my-profile.html',        label:'مساحة العمل',      ico:'🏠', group:'main',   public:true },
     { file:'inbox.html',             label:'مساحة التواصل',     ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───

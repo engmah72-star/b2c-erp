@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a0f1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Business2Card — ملفي</title>
+<title>Business2Card — مساحة العمل</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://www.gstatic.com">
@@ -58,7 +58,7 @@
     <div class="topbar-left">
       <button type="button" class="mob-menu-btn" id="mob-menu-btn">☰</button>
       <div>
-        <h1>👤 ملفي</h1>
+        <h1>🏠 مساحة العمل</h1>
         <p id="sub" class="txt-meta-base">جاري التحميل…</p>
       </div>
     </div>
@@ -86,7 +86,7 @@
 </div>
 
 <nav class="mob-nav"><div class="mob-nav-items">
-  <a class="mob-nav-item active" href="my-profile.html"><div class="mob-nav-ico">👤</div><div class="mob-nav-lbl">ملفي</div></a>
+  <a class="mob-nav-item active" href="my-profile.html"><div class="mob-nav-ico">🏠</div><div class="mob-nav-lbl">مساحة العمل</div></a>
   <a class="mob-nav-item" href="reports.html"><div class="mob-nav-ico">📊</div><div class="mob-nav-lbl">تقارير</div></a>
 </div></nav>
 <div class="nav-overlay" id="nav-ov"></div>
@@ -99,6 +99,8 @@ import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, get
 import { employeeActions } from "./employee-actions.js";
 import { annotateRecurrence, isVoided, APPEAL_STATUS } from "./core/incident-reasons.js";
 import { computeScore } from "./core/employee-scoring.js";
+import { computeRoleKpis } from "./core/employee-kpis.js";
+import { filterEmployeeOrders } from "./core/employee-orders.js";
 import { isWorkDayFor } from "./core/attendance-core.js";
 const ROLES={
   admin:{label:'Admin',col:'var(--r)',ico:'👑'},
@@ -126,9 +128,10 @@ const INC_SEV={low:{lbl:'منخفض',col:'var(--dim2)'},medium:{lbl:'متوسط'
 // ── State ──
 let me=null, myEmpId='', myAuthUid='', myRecoveryEmail='';
 let myAttendance=[], myPayments=[], myIncidents=[], myEvaluations=[], myGoals=[], myOrders=[];
+let myTasks=[], myLeaves=[], myPermissions=[], allOrdersRaw=[];
 // RULE N1.3 — page tabs live in ?tab=, never in location.hash (shell reserves #ctx=).
 // Backward-compat: also accept legacy #tab and migrate it to ?tab= on read.
-const TAB_KEYS_MP=['overview','attendance','salary','feedback'];
+const TAB_KEYS_MP=['overview','attendance','salary','tasks','feedback'];
 let activeTab=(function(){
   const qp=new URLSearchParams(location.search).get('tab');
   if(qp&&TAB_KEYS_MP.includes(qp))return qp;
@@ -168,9 +171,9 @@ window.setTab=function(t){
   history.replaceState(null,'',u.toString());
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.id==='tab-'+t?'':'none');
-  // ارسم محتوى التبويب الكسول عند التبديل إليه
   if(t==='attendance')renderAttendanceTab();
   else if(t==='salary')renderSalaryTab();
+  else if(t==='tasks')renderTasksTab();
   else if(t==='feedback')renderFeedbackTab();
   document.getElementById('main-content')?.scrollIntoView({behavior:'smooth',block:'start'});
 };
@@ -190,9 +193,9 @@ document.addEventListener('keydown',e=>{
   const tag=(e.target?.tagName||'').toUpperCase();
   if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
   if(e.key==='Escape')document.querySelectorAll('.overlay.open').forEach(o=>o.classList.remove('open'));
-  if(['1','2','3','4'].includes(e.key)){
+  if(['1','2','3','4','5'].includes(e.key)){
     e.preventDefault();
-    setTab(['overview','attendance','salary','feedback'][+e.key-1]);
+    setTab(['overview','attendance','salary','tasks','feedback'][+e.key-1]);
   }
 });
 
@@ -204,6 +207,63 @@ window.saveRecoveryEmail=async function(){
   if(!r.ok){if(msg)msg.innerHTML='<span class="text-r">❌ '+((r.errors||[]).join(' · '))+'</span>';return;}
   myRecoveryEmail=v;
   if(msg)msg.innerHTML=v?'<span class="text-g">✅ تم الحفظ</span>':'<span class="text-g">✅ تم المسح</span>';
+};
+
+// ── Self-service attendance (punch-in/out via central employee-actions) ──
+window.selfCheckIn=async function(){
+  if(!me||!myAuthUid)return;
+  const today=todayStr();
+  const r=await employeeActions.recordAttendanceCheckIn({
+    db,employeeId:myEmpId,employeeUid:myAuthUid,employeeName:me.name||'',
+    date:today,monthKey:monthKey(),
+    expectedStart:me.workSchedule?.startTime||'',
+    graceMinutes:parseInt(me.workSchedule?.graceMinutes)||0,
+    source:'self',recordedBy:myAuthUid,recordedByName:me.name||''
+  });
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر تسجيل الحضور'));return;}
+  alert('✅ تم تسجيل حضورك');
+};
+window.selfCheckOut=async function(){
+  if(!me||!myAuthUid)return;
+  const r=await employeeActions.recordAttendanceCheckOut({
+    db,employeeId:myEmpId,employeeUid:myAuthUid,date:todayStr()
+  });
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر تسجيل الانصراف'));return;}
+  alert('✅ تم تسجيل انصرافك');
+};
+
+// ── Self-service leave request ──
+window.requestLeave=async function(){
+  const type=prompt('نوع الإجازة:\n1 = سنوية\n2 = مرضية\n3 = طارئة\n(اكتب الرقم)','1');
+  if(type===null)return;
+  const types={1:'annual',2:'sick',3:'emergency'};
+  const leaveType=types[type?.trim()]||'annual';
+  const startDate=prompt('تاريخ البداية (YYYY-MM-DD):',todayStr());
+  if(!startDate)return;
+  const daysStr=prompt('عدد الأيام:','1');
+  if(!daysStr)return;
+  const days=parseInt(daysStr)||1;
+  const reason=prompt('سبب الإجازة (اختياري):','');
+  if(reason===null)return;
+  const r=await employeeActions.requestEmployeeLeave({db,employeeId:myEmpId,employeeUid:myAuthUid,employeeName:me.name||'',startDate,days,type:leaveType,reason:reason||'',userId:myAuthUid,userName:me.name||''});
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر إرسال الطلب'));return;}
+  alert('✅ تم إرسال طلب الإجازة — بانتظار موافقة المدير');
+};
+
+// ── Mark task as done ──
+window.markTaskDone=async function(taskId){
+  if(!taskId||!confirm('تأكيد إتمام هذه المهمة؟'))return;
+  const task=myTasks.find(t=>t._id===taskId);
+  if(task&&task.taskType==='recurring'){
+    const pKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const r=await employeeActions.completeRecurringTask({db,taskId,periodKey:pKey});
+    if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر الإتمام'));return;}
+    alert('✅ تم تسجيل إتمام المهمة المتكررة');
+  }else{
+    const r=await employeeActions.setTaskStatus({db,taskId,status:'done'});
+    if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر الإتمام'));return;}
+    alert('✅ تم إتمام المهمة');
+  }
 };
 
 // ── Schedule helpers — مصدر واحد: core/attendance-core.js (RULE 1) ──
@@ -246,10 +306,22 @@ function renderAll(){
   const greet=h<12?'صباح الخير':h<17?'مساء الخير':'مساء الخير';
   setText('sub',`${greet}، ${(me.name||'').split(' ')[0]} · ${MONTHS[now.getMonth()]} ${now.getFullYear()}`);
 
+  // Role-specific KPIs (via core/employee-kpis.js — single source)
+  const myFilteredOrders=filterEmployeeOrders({orders:myOrders,employee:me,employeeId:myEmpId,uid:myAuthUid});
+  const kpiResult=computeRoleKpis({employee:me,employeeId:myEmpId,myOrders:myFilteredOrders,allOrders:allOrdersRaw,mKey:monthKey(),format:fn});
+
   // Salaries this month (paid+pending)
   const mPays=myPayments.filter(p=>p.month===monthKey());
   const paidThisMonth=mPays.reduce((s,p)=>s+(p.isDeduction?-(parseFloat(p.amount)||0):(parseFloat(p.amount)||0)),0);
   const baseS=parseFloat(me.baseSalary)||0;
+
+  // Open tasks count
+  const openTasks=myTasks.filter(t=>t.status==='pending').length;
+
+  // Today's attendance
+  const todayAtt=myAttendance.find(a=>a.date===todayStr());
+  const checkedIn=!!todayAtt;
+  const checkedOut=!!(todayAtt&&todayAtt.checkOut);
 
   // Open incidents this month
   const monthInc=myIncidents.filter(i=>(i.date||'').startsWith(monthKey())&&!isVoided(i)).length;
@@ -278,6 +350,21 @@ function renderAll(){
       </div>
     </div>
 
+    <!-- ATTENDANCE ACTION BAR -->
+    <div class="mp-att-bar">
+      <div class="mp-att-status">
+        ${checkedIn?`<span class="mp-att-chip on">🟢 حاضر${todayAtt.checkInStr?' منذ '+todayAtt.checkInStr:''}</span>`
+          :`<span class="mp-att-chip off">⚪ لم تسجّل حضورك بعد</span>`}
+        ${checkedOut?`<span class="mp-att-chip done">✓ انصراف ${todayAtt.checkOutStr||''}</span>`:''}
+        ${todayAtt&&parseInt(todayAtt.lateMinutes)>0?`<span class="mp-att-chip late">⏰ متأخر ${todayAtt.lateMinutes}د</span>`:''}
+      </div>
+      <div class="mp-att-acts">
+        ${!checkedIn?`<button type="button" class="btn btn-g btn-xs" onclick="selfCheckIn()">✓ تسجيل حضور</button>`:''}
+        ${checkedIn&&!checkedOut?`<button type="button" class="btn btn-xs mp-btn-out" onclick="selfCheckOut()">← تسجيل انصراف</button>`:''}
+        <button type="button" class="btn btn-ghost btn-xs" onclick="requestLeave()">🏖️ طلب إجازة</button>
+      </div>
+    </div>
+
     ${monthInc>0?`<!-- INCIDENTS ALERT BANNER (ظاهر دائماً عند وجود إخفاقات) -->
     <button type="button" class="mp-inc-banner" onclick="setTab('feedback')">
       <span class="mp-inc-banner-ico">⚠️</span>
@@ -289,22 +376,26 @@ function renderAll(){
     </button>`:''}
 
     <!-- QUICK STATS -->
-    <div class="qstats">
-      <div class="qstat mp-acc-g">
+    <div class="qstats mp-qs-5">
+      <div class="qstat mp-acc-g" onclick="setTab('attendance')">
         <div class="qstat-val">${cur.breakdown.att.present}/${cur.breakdown.att.workDays}</div>
         <div class="qstat-lbl">الحضور</div>
       </div>
-      <div class="qstat mp-acc-y">
+      <div class="qstat mp-acc-y" onclick="setTab('attendance')">
         <div class="qstat-val">${cur.breakdown.att.lateMins}</div>
         <div class="qstat-lbl">دقائق تأخير</div>
       </div>
-      <div class="qstat mp-acc-b">
+      <div class="qstat mp-acc-b" onclick="setTab('salary')">
         <div class="qstat-val">${fn(paidThisMonth)}</div>
         <div class="qstat-lbl">مصروف ج</div>
       </div>
-      <div class="qstat" style="--qc:${monthInc>0?'var(--r)':'var(--g)'}">
+      <div class="qstat" style="--qc:${openTasks>0?'var(--b)':'var(--dim2)'}" onclick="setTab('tasks')">
+        <div class="qstat-val">${openTasks}</div>
+        <div class="qstat-lbl">مهام مفتوحة</div>
+      </div>
+      <div class="qstat" style="--qc:${monthInc>0?'var(--r)':'var(--g)'}" onclick="setTab('feedback')">
         <div class="qstat-val">${monthInc}</div>
-        <div class="qstat-lbl">ملاحظات الشهر</div>
+        <div class="qstat-lbl">ملاحظات</div>
       </div>
     </div>
 
@@ -313,6 +404,7 @@ function renderAll(){
       <button type="button" class="tab${activeTab==='overview'?' active':''}" data-tab="overview">📊 نظرة عامة</button>
       <button type="button" class="tab${activeTab==='attendance'?' active':''}" data-tab="attendance">📅 حضوري</button>
       <button type="button" class="tab${activeTab==='salary'?' active':''}" data-tab="salary">💰 مرتباتي</button>
+      <button type="button" class="tab${activeTab==='tasks'?' active':''}" data-tab="tasks">✅ مهامي${openTasks?` <span class="badge-c">${openTasks}</span>`:''}</button>
       <button type="button" class="tab${activeTab==='feedback'?' active':''}" data-tab="feedback">💬 ملاحظات${monthInc?` <span class="badge-c">${monthInc}</span>`:''}</button>
     </div>
 
@@ -349,6 +441,21 @@ function renderAll(){
           </div>
         </div>
       </div>
+
+      <!-- Role KPIs -->
+      ${kpiResult.kpis.length>0?`<div class="section mp-mb-14">
+        <div class="section-head mp-mb-10">
+          <div class="section-title">📈 مؤشرات أدائك</div>
+          <span class="txt-meta-xs">${MONTHS[now.getMonth()]} ${now.getFullYear()}</span>
+        </div>
+        <div class="kpi-row-mp">
+          ${kpiResult.kpis.map(k=>`<div class="kpi-mp" style="--kc:${k.col}"><div class="kpi-mp-val">${k.val}</div><div class="kpi-mp-lbl">${k.lbl}</div></div>`).join('')}
+        </div>
+        ${kpiResult.income.commission>0?`<div class="mp-card mp-mt-10">
+          <div class="mp-lv-row mb-6"><span class="txt-meta-sm">💰 العمولة المتوقعة</span><strong class="text-g">${fn(kpiResult.income.commission)} ج</strong></div>
+          <div class="mp-subnote">تُحسب من الأوردرات المحصّلة هذا الشهر</div>
+        </div>`:''}
+      </div>`:''}
 
       <!-- Goal -->
       ${cur.meta.goal?`<div class="section mp-mb-14">
@@ -391,6 +498,11 @@ function renderAll(){
       <div id="sal-section"></div>
     </div>
 
+    <!-- TAB: Tasks -->
+    <div class="tab-pane" id="tab-tasks" style="${activeTab==='tasks'?'':'display:none'}">
+      <div id="tasks-section"></div>
+    </div>
+
     <!-- TAB: Feedback -->
     <div class="tab-pane" id="tab-feedback" style="${activeTab==='feedback'?'':'display:none'}">
       <div id="fb-section"></div>
@@ -398,7 +510,56 @@ function renderAll(){
 
   if(activeTab==='attendance')renderAttendanceTab();
   else if(activeTab==='salary')renderSalaryTab();
+  else if(activeTab==='tasks')renderTasksTab();
   else if(activeTab==='feedback')renderFeedbackTab();
+}
+
+function renderTasksTab(){
+  const el=document.getElementById('tasks-section');if(!el)return;
+  const pending=myTasks.filter(t=>t.status==='pending');
+  const done=myTasks.filter(t=>t.status==='done').slice(0,10);
+  const escA=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const taskCard=t=>{
+    const isUrgent=t.priority==='urgent';
+    const isRecurring=t.taskType==='recurring';
+    const dueDate=t.dueDate||'';
+    const overdue=dueDate&&dueDate<todayStr()&&t.status==='pending';
+    return`<div class="list-row${isUrgent?' danger':overdue?' warning':''}">
+      <div class="bd-icon" style="--bdc:${isUrgent?'var(--r)':overdue?'var(--y)':'var(--b)'}">
+        ${isRecurring?'🔁':isUrgent?'🔴':'📋'}</div>
+      <div class="flex-1 min-w-0">
+        <div class="mp-inc-head">
+          <strong class="mp-inc-title">${escA(t.title||'مهمة')}</strong>
+          ${isUrgent?'<span class="mp-inc-sev" style="background:var(--r)1f;color:var(--r)">عاجل</span>':''}
+          ${isRecurring?'<span class="mp-inc-sev" style="background:var(--b)1f;color:var(--b)">متكررة</span>':''}
+        </div>
+        ${t.description?`<div class="mp-desc">${escA(t.description)}</div>`:''}
+        <div class="mp-meta-tiny3">${t.assignedByName?'بواسطة '+escA(t.assignedByName):''} ${dueDate?' · موعد '+dueDate:''}</div>
+        ${t.status==='pending'?`<button type="button" class="btn btn-g btn-xs mp-mt-10" onclick="markTaskDone('${escA(t._id)}')">✓ تم الإنجاز</button>`:''}
+      </div>
+      ${t.status==='done'?'<span class="mp-task-done">✅</span>':''}
+    </div>`;
+  };
+
+  el.innerHTML=`
+    <div class="section mp-mb-14">
+      <div class="section-head mp-mb-10">
+        <div class="section-title">📋 مهام مطلوبة (${pending.length})</div>
+      </div>
+      ${pending.length===0?`<div class="empty">
+        <div class="empty-i">✨</div>
+        <div class="empty-t">لا توجد مهام مفتوحة</div>
+        <div class="empty-h">أحسنت! لا يوجد شيء مطلوب منك حالياً</div>
+      </div>`:pending.map(taskCard).join('')}
+    </div>
+    ${done.length>0?`<div class="section">
+      <div class="section-head mp-mb-10">
+        <div class="section-title">✅ مهام منجزة</div>
+        <span class="txt-meta-xs">${done.length}</span>
+      </div>
+      ${done.map(taskCard).join('')}
+    </div>`:''}`;
 }
 
 function renderAttendanceTab(){
@@ -459,6 +620,26 @@ function renderAttendanceTab(){
         <div class="mp-rowtitle">جدول عملك</div>
         <div class="txt-meta-sm">بداية ${me.workSchedule.startTime||'—'} · نهاية ${me.workSchedule.endTime||'—'} · ${me.workSchedule.days?.length||0} أيام/أسبوع</div>
       </div>
+    </div>`:''}
+
+    ${myLeaves.length>0?`<div class="section mp-mt-14">
+      <div class="section-head mp-mb-10">
+        <div class="section-title">🏖️ إجازاتي</div>
+        <span class="txt-meta-xs">${myLeaves.length}</span>
+      </div>
+      ${myLeaves.slice(0,8).map(lv=>{
+        const st=lv.status||'approved';
+        const stLbl=st==='approved'?'✅ موافق':st==='pending'?'⏳ بانتظار الموافقة':'❌ مرفوض';
+        const stCol=st==='approved'?'var(--g)':st==='pending'?'var(--y)':'var(--r)';
+        const types={annual:'سنوية',sick:'مرضية',emergency:'طارئة'};
+        return`<div class="list-row">
+          <div class="bd-icon" style="--bdc:${stCol}">🏖️</div>
+          <div class="flex-1 min-w-0">
+            <div class="mp-lv-row gap-md"><span>${types[lv.leaveType]||lv.leaveType||'إجازة'} · ${lv.days||1} يوم</span><span style="color:${stCol}">${stLbl}</span></div>
+            <div class="mp-meta-tiny">${lv.startDate||''} ${lv.reason?' · '+lv.reason:''}</div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>`:''}`;
 }
 
@@ -708,12 +889,26 @@ onAuthStateChanged(auth,async u=>{
     renderAll();
   },err=>console.warn('goal:',err.message));
 
-  // Orders relevant to me — for productivity score (bounded, RULE G3).
-  // Reads the most recent 3000 orders; productivity is current-quarter heavy.
+  // Tasks assigned to me
+  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',myAuthUid),limit(200)),s=>{
+    myTasks=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>{
+      if(a.status==='pending'&&b.status!=='pending')return -1;
+      if(a.status!=='pending'&&b.status==='pending')return 1;
+      return (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0);
+    });
+    renderAll();
+  },err=>console.warn('tasks:',err.message));
+
+  // My leaves
+  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',myEmpId),limit(200)),s=>{
+    myLeaves=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+    renderAll();
+  },err=>console.warn('leaves:',err.message));
+
+  // Orders relevant to me — for productivity score + KPIs (bounded, RULE G3).
   onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),s=>{
-    const all=s.docs.map(d=>({...d.data(),_id:d.id}));
-    const uid=myAuthUid;
-    myOrders=all.filter(o=>o.designerId===uid||o.productionAgent===uid||o.shippingOfficerId===uid||o.createdBy===uid||o.designerId===myEmpId||o.productionAgent===myEmpId||o.shippingOfficerId===myEmpId);
+    allOrdersRaw=s.docs.map(d=>({...d.data(),_id:d.id}));
+    myOrders=filterEmployeeOrders({orders:allOrdersRaw,employee:me,employeeId:myEmpId,uid:myAuthUid});
     renderAll();
   },err=>console.warn('orders:',err.message));
 });

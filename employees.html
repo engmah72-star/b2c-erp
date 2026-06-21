@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="B2C ERP">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Business2Card — الموظفين</title>
+<title>Business2Card — مركز إدارة الموظفين</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://www.gstatic.com">
@@ -1067,6 +1067,41 @@ function nameToColor(name){
   return `hsl(${hue},58%,52%)`;
 }
 
+// ══ Inline quick actions (reduce navigation — PC3 integration) ══
+window.quickAddTask=async function(empId,empUid,empName){
+  const title=prompt('عنوان المهمة:','');
+  if(!title||!title.trim())return;
+  const priorityStr=prompt('الأولوية:\n1 = عادية\n2 = عاجلة','1');
+  const priority=(priorityStr?.trim()==='2')?'urgent':'normal';
+  const r=await employeeActions.addEmployeeTask({
+    db,assignedToUid:empUid,assignedToName:empName,
+    title:title.trim(),description:'',priority,
+    userId:currentUser?.uid||'',userName
+  });
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر إسناد المهمة'));return;}
+  alert('✅ تم إسناد المهمة لـ '+empName);
+};
+
+window.quickAddIncident=async function(empId,empUid,empName){
+  const typeStr=prompt('نوع الملاحظة:\n1 = تصميم مرفوض\n2 = أوردر متأخر\n3 = شكوى عميل\n4 = مخالفة حضور\n5 = مشكلة جودة\n6 = أخرى','6');
+  if(typeStr===null)return;
+  const types={1:'design_rejected',2:'order_late',3:'customer_complaint',4:'attendance',5:'quality',6:'other'};
+  const type=types[typeStr?.trim()]||'other';
+  const title=prompt('وصف الملاحظة:','');
+  if(!title||!title.trim())return;
+  const severity=prompt('مستوى الخطورة:\n1 = منخفض\n2 = متوسط\n3 = مرتفع','1');
+  const sevMap={1:'low',2:'medium',3:'high'};
+  const r=await employeeActions.addIncident({
+    db,employeeId:empId,employeeName:empName,authUid:empUid,
+    date:new Date().toISOString().slice(0,10),
+    type,title:title.trim(),severity:sevMap[severity?.trim()]||'low',
+    reasonLabel:title.trim(),
+    userId:currentUser?.uid||'',userName
+  });
+  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر تسجيل الملاحظة'));return;}
+  alert('✅ تم تسجيل الملاحظة على '+empName);
+};
+
 // ══ Animated counter ══
 function animateCount(elId,target,format=fn){
   const el=document.getElementById(elId);if(!el)return;
@@ -1768,6 +1803,12 @@ document.getElementById('list')?.addEventListener('click',e=>{
     if(mk){ closeActMenu(); openKpiPanel(mk.dataset.eid,mk.dataset.uid,mk.dataset.ename); return; }
     const me=e.target.closest('[data-act="menu-edit"]');
     if(me){ closeActMenu(); openEditEmp(me.dataset.eid); return; }
+    const mt=e.target.closest('[data-act="menu-add-task"]');
+    if(mt){ closeActMenu(); quickAddTask(mt.dataset.eid,mt.dataset.uid,mt.dataset.ename); return; }
+    const mi=e.target.closest('[data-act="menu-add-incident"]');
+    if(mi){ closeActMenu(); quickAddIncident(mi.dataset.eid,mi.dataset.uid,mi.dataset.ename); return; }
+    const msch=e.target.closest('[data-act="menu-schedule"]');
+    if(msch){ closeActMenu(); location.href='employee-profile.html?id='+msch.dataset.eid+'&tab=attendance'; return; }
     const ms=e.target.closest('[data-act="menu-toggle-status"]');
     if(ms){ closeActMenu(); toggleEmpStatus(ms.dataset.eid,ms.dataset.newstatus); return; }
     if(e.target.closest('[data-act="menu-close"]')){ closeActMenu(); return; } // tel:/wa links navigate naturally
