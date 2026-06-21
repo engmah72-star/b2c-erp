@@ -15,8 +15,8 @@
 
 import { installErrorReporter, setUser } from './core/error-reporter.js';
 import { auth, db } from './core/firebase-init.js';
-import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // 1) Install hooks ASAP — db is non-null, errors get buffered if offline
 installErrorReporter({ db });

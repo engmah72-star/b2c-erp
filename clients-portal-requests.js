@@ -10,8 +10,8 @@
  * orderActions فقط (H1.1). التوكنز/الستايل في clients.css (U1).
  */
 import { auth, db } from './core/firebase-init.js';
-import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { collection, doc, getDoc, query, where, orderBy, limit, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { collection, doc, getDoc, query, where, orderBy, limit, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { orderActions } from './order-actions.js';
 
 const REQ_KIND = { new: '🆕 طلب جديد', reorder: '🔁 إعادة طلب', quote: '🧾 عرض سعر' };

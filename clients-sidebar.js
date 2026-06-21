@@ -16,7 +16,7 @@
  */
 
 import { db } from './core/firebase-init.js';
-import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ROLE_DASH = {
   admin:             'accounts.html',

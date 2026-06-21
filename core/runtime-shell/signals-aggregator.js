@@ -19,7 +19,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { db, auth } from '../firebase-init.js';
-import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import * as signals from './signals.js';
 
 const _unsubscribers = [];

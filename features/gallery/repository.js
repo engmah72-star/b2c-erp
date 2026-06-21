@@ -13,7 +13,7 @@ import { db } from '../../core/firebase-init.js';
 import {
   collection, doc, getDoc,
   onSnapshot, query, where, orderBy, limit,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 export const GALLERY_LIMIT = 120;
 

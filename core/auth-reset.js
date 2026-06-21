@@ -6,7 +6,7 @@
 // (Firestore-trigger onPasswordResetRequested): يلاقي الموظف بالموبايل ويرسل
 // رابط إعادة التعيين لإيميل الاسترداد المسجّل.
 
-import { collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const PHONE_RE = /^01[0125][0-9]{8}$/;
 

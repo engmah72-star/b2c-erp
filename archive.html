@@ -164,8 +164,8 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 let orders=[],currentUser=null,userName='',activeId=null,currentRole='';
 
@@ -188,7 +188,7 @@ const ROLES_MAP={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
-window.doLogout=async()=>{const {signOut}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");await signOut(auth);window.location.href='login.html';};
+window.doLogout=async()=>{const {signOut}=await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js");await signOut(auth);window.location.href='login.html';};
 
 // ── Sidebar (موحَّد عبر sidebar.js) + Mobile Nav (خاص بالصفحة) ──
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -652,28 +652,17 @@ window.saveReorder=async function(){
   const deadline=gv('ro-deadline');
   const notes=gv('ro-notes');
   const orderId='ORD-'+Date.now().toString().slice(-8);
-  const now=nowStr();
-  const productName=newProds.map(p=>p.name).join(' + ');
-  const totalQty=newProds.reduce((s,p)=>s+(parseFloat(p.qty)||0),0);
-  const orderData={
-    orderId,stage:'design',designStage:'pending',
-    clientId:o.clientId||'',clientName:o.clientName||'',clientPhone:o.clientPhone||'',
-    products:newProds,product:productName,qty:totalQty,
-    salePrice,deposit:0,totalPaid:0,remaining:salePrice,
-    paymentStatus:'pending',
-    designerId:o.designerId||'',designerName:o.designerName||'',
-    deadline:deadline||'',notes,
-    designFileUrl:o.designFileUrl||'',
-    designFiles:o.designFiles||[],
-    reorderedFrom:activeId,
-    costItems:[],printAddons:[],
-    createdDate:new Date().toLocaleDateString('ar-EG'),
-    createdBy:currentUser.uid,createdByName:userName,
-    timeline:[{date:now,action:`🔁 إعادة طلب — ${productName} (من الأوردر ${o.orderId||activeId.slice(-6)})`,by:userName}],
-    createdAt:serverTimestamp(),updatedAt:serverTimestamp()
-  };
   try{
-    await addDoc(collection(db,'orders'),orderData);
+    const r=await orderActions.createOrder({
+      db,orderId,stage:'design',
+      clientId:o.clientId||'',clientName:o.clientName||'',clientPhone:o.clientPhone||'',
+      products:newProds,salePrice,
+      designerId:o.designerId||'',designerName:o.designerName||'',
+      deadline:deadline||'',notes,
+      designFileUrl:o.designFileUrl||'',designFiles:o.designFiles||[],
+      userId:currentUser.uid,userName,
+    });
+    if(!r.ok){toast('❌ '+(r.errors||[]).join(' '),'err');return;}
     toast('✅ تم إنشاء الطلب الجديد — '+orderId,'ok');
     closeReorder();
     setTimeout(()=>(typeof navigatePage==='function'?navigatePage:url=>location.href=url)('design.html'),800);

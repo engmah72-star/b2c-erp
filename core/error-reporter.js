@@ -25,7 +25,7 @@
  */
 
 import { collection, addDoc, serverTimestamp, increment, doc, updateDoc, query, where, getDocs, limit }
-  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // ─── Configuration ──────────────────────────────────────────────────
 const RATE_LIMIT_PER_MIN = 10;

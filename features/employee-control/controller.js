@@ -7,8 +7,8 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { auth, db } from '../../core/firebase-init.js';
-import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { collection, doc, getDoc, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { collection, doc, getDoc, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { canDo } from '../../core/permissions-matrix.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
 import { renderKpiBar, renderGroups } from './render.js';

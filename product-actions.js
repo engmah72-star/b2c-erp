@@ -21,7 +21,7 @@
 import {
   doc, getDoc, addDoc, updateDoc, deleteDoc, collection,
   query, where, getDocs, limit, serverTimestamp, arrayUnion,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { auditEntry, persistAuditLog } from './core/audit.js';
 

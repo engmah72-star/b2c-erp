@@ -29,7 +29,7 @@ import {
   arrayRemove,
   increment,
   Timestamp,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 // Messaging Policy (Phase 0): مصدر الثوابت الواحد للنمط. محادثات الإنبوكس
 // (DM/قناة/خيط أوردر بين الموظفين) = نمط «زمالة». import مراسلة→مراسلة (يمر قفل الحدود).
 import { MODES, resolve as resolveMessagingPolicy, PARTIES } from './core/messaging-policy.js';

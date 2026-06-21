@@ -11,13 +11,13 @@
  * هذا الملف Stable Core (RULE G1) — يحتاج 2-reviewer approval لأي تعديل.
  */
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   getFirestore, initializeFirestore,
   persistentLocalCache, persistentMultipleTabManager,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
 // ═══════════════════════════════════════
 // FIREBASE CONFIG — المصدر الوحيد
@@ -47,7 +47,7 @@ try {
   _app = initializeApp(FB_CONFIG);
 } catch (e) {
   // App already initialized by legacy page — استرجعه
-  const { getApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+  const { getApp } = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js");
   _app = getApp();
 }
 export const app = _app;

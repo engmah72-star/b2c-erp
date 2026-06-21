@@ -20,7 +20,7 @@ import {
   collection, doc, getDoc, setDoc, updateDoc, deleteDoc,
   getDocs, query, where, orderBy, limit,
   serverTimestamp, increment,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // ── Deterministic document ID: type + productName + supplierId ──
 function _libDocId(type, productName, supplierId) {

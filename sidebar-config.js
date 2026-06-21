@@ -66,6 +66,9 @@ try {
   } catch(_) {}
 })();
 
+// ── Global Error Reporter (loads on all pages via sidebar-config) ──
+import('./error-reporter-init.js').catch(function(){});
+
 (function() {
   'use strict';
 

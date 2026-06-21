@@ -38,7 +38,7 @@
 import {
   doc, collection, getDoc, getDocs, addDoc, setDoc, updateDoc, writeBatch,
   query, where, limit, serverTimestamp, increment,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, opEntry, persistAuditLog, addAuditToBatch } from './core/audit.js';
