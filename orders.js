@@ -2200,7 +2200,7 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // النوع
   if (!type || !type.trim()) errors.push('اختر نوع البند');
-  else if (allowedTypes.length && !allowedTypes.includes(type.trim()))
+  else if (allowedTypes.length && !allowedTypes.map(t=>t.trim()).includes(type.trim()))
     errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
 
   // المبلغ

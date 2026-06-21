@@ -963,7 +963,7 @@ async function _doOrderBulkApply(items){
         payload:{type:item.type,total:item.total,supplierId:item.supplierId,supplierName:item.supplierName,note:'',walletId:'',paperMeta:{}},
         role:currentRole,userId:currentUser?.uid||'',userName,
         wallets,isEdit:false,editIdx:-1,
-        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       });
       if(r.ok)saved++;
     }
@@ -1482,7 +1482,7 @@ window.saveBulkCost=async function(){
       payload:{type,total,supplierId,supplierName,note,walletId:'',paperMeta:{}},
       role:currentRole,userId:currentUser?.uid||'',userName,
       wallets,isEdit:false,editIdx:-1,
-      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
     });
     if(r.ok)saved++;
   }
@@ -1527,7 +1527,7 @@ window.applyToSimilar=async function(targets,type,supplierId,supplierName,total)
       payload:{type,total,supplierId,supplierName,note:'',walletId:'',paperMeta:{}},
       role:currentRole,userId:currentUser?.uid||'',userName,
       wallets,isEdit:false,editIdx:-1,
-      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
     });
     if(r.ok)saved++;
   }
@@ -1835,8 +1835,8 @@ window.deleteCost=async function(idx){
    SAVE COST — all writes via orderActions.recordCostItem (H1.1)
    ═══════════════════════════════════════════════════ */
 window.saveCost=async function(){
-  if(!activeId)return;
-  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  if(!activeId)return toast('⚠️ اختر أوردر أولاً','err');
+  const o=orders.find(x=>x._id===activeId);if(!o)return toast('⚠️ الأوردر غير موجود في القائمة','err');
   const isEdit=editCostIdx>=0;
   const type=gv('ac-type').trim();
   const total=parseFloat(gv('ac-total'))||0;
@@ -1874,15 +1874,21 @@ window.saveCost=async function(){
     }
   }
 
+  const btn=document.getElementById('cost-save-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ جارٍ الحفظ...';}
+
   try{
     const r=await orderActions.recordCostItem({
       db,orderId:activeId,prodIdx,
       payload:{type,total,supplierId,supplierName,note,walletId,paperMeta},
       role:currentRole,userId:currentUser?.uid||'',userName,
       wallets,isEdit,editIdx:editCostIdx,
-      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
     });
-    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    if(!r.ok){
+      if(btn){btn.disabled=false;btn.textContent=isEdit?'💾 حفظ التعديل':'＋ إضافة البند';}
+      return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    }
 
     // auto-archive if awaitingFinalArchive and payment complete
     const rem=parseFloat(o.remaining)||0;
@@ -1919,7 +1925,11 @@ window.saveCost=async function(){
       const fresh=orders.find(x=>x._id===activeId);
       if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}
     },350);
-  }catch(e){toast('❌ '+(e.message||'فشل الحفظ'),'err');}
+  }catch(e){
+    toast('❌ '+(e.message||'فشل الحفظ'),'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=editCostIdx>=0?'💾 حفظ التعديل':'＋ إضافة البند';}
+  }
 };
 // Legacy alias (deep-link compat)
 window.openCostModal=window.openWorkspace;
@@ -2588,7 +2598,7 @@ window.applyFullTemplate=async function(templateId,prodIdx,btnId){
         db,orderId:activeId,prodIdx:prodIdx>=0?prodIdx:-1,
         payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId,supplierName:item.supplierName||'',note:'',walletId:'',paperMeta:{}},
         role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       });
       if(r.ok)done++;else{failed++;console.warn('tmpl item fail:',r.errors);}
     }catch(e){failed++;console.error(e);}
@@ -2657,7 +2667,7 @@ window.bulkApplyTemplate=async function(templateId){
           db,orderId:o._id,prodIdx,
           payload:{type:item.type,total:parseFloat(item.amount)||0,supplierId:item.supplierId,supplierName:item.supplierName||'',note:'',walletId:'',paperMeta:{}},
           role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-          allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+          allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
         });
         if(!r.ok){ok=false;break;}
       }catch(e){ok=false;break;}
@@ -2942,7 +2952,7 @@ window._qeSaveOne=async function(btn){
       db,orderId:activeId,prodIdx:parseInt(row.dataset.prod),
       payload:{type:row.dataset.type,total:amount,supplierId:row.dataset.supId,supplierName:row.dataset.supName,note:'',walletId:'',paperMeta:{}},
       role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
     });
     if(r.ok){
       btn.textContent='✅';row.classList.add('qe-row-done');_qeUpdateTotal();
@@ -2969,7 +2979,7 @@ window.saveQuickEntry=async function(){
         db,orderId:activeId,prodIdx:item.prodIdx,
         payload:{type:item.type,total:item.amount,supplierId:item.supplierId,supplierName:item.supplierName,note:'',walletId:'',paperMeta:{}},
         role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       });
       if(r.ok)done++;else failed++;
     }catch(e){failed++;}
@@ -3072,7 +3082,7 @@ window.saveMultiApply=async function(){
         db,orderId:item.orderId,prodIdx:item.prodIdx,
         payload:{type,total:item.amount,supplierId,supplierName,note:'',walletId:'',paperMeta:{}},
         role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       });
       if(r.ok)done++;else failed++;
     }catch(e){failed++;}
@@ -3118,7 +3128,7 @@ window.applySmartItem=async function(idx){
       db,orderId:activeId,prodIdx:s.prodIdx>=0?s.prodIdx:-1,
       payload:{type:s.type,total:s.avgAmt,supplierId:s.supplierId,supplierName:s.supplierName,note:'',walletId:'',paperMeta:{}},
       role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+      allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
     });
     if(r.ok){toast(`✅ ${s.type} · ${fn(s.avgAmt)} ج`,'ok');}
     else toast('❌ '+(r.errors||[]).join(' · '),'err');
@@ -3136,7 +3146,7 @@ window.applyAllSmartSuggestions=async function(){
         db,orderId:activeId,prodIdx:s.prodIdx>=0?s.prodIdx:-1,
         payload:{type:s.type,total:s.avgAmt,supplierId:s.supplierId,supplierName:s.supplierName,note:'',walletId:'',paperMeta:{}},
         role:currentRole,userId:currentUser?.uid||'',userName,wallets,isEdit:false,editIdx:-1,
-        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>c.label),
+        allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       });
       if(r.ok)done++;else failed++;
     }catch(e){failed++;}
